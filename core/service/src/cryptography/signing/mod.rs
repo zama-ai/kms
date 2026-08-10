@@ -116,9 +116,9 @@ impl SigningSchemeType {
         match self {
             SigningSchemeType::Ecdsa256k1 => 20, // The Ethereum address, which is 20 bytes for ECDSA/secp256k1.
             SigningSchemeType::Ed25519 => 32, // The full public key, which should be 32 bytes for ed25519.
-            SigningSchemeType::MlDsa44 => 32, // The full public key, which should be 32 bytes for ML-DSA.
-            SigningSchemeType::MlDsa65 => 32, // The full public key, which should be 32 bytes for ML-DSA.
-            SigningSchemeType::MlDsa87 => 32, // The full public key, which should be 32 bytes for ML-DSA.
+            SigningSchemeType::MlDsa44 => 32, // A Shake256 digest of the public key, since an ML-DSA public key does not fit in 32 bytes.
+            SigningSchemeType::MlDsa65 => 32, // A Shake256 digest of the public key, since an ML-DSA public key does not fit in 32 bytes.
+            SigningSchemeType::MlDsa87 => 32, // A Shake256 digest of the public key, since an ML-DSA public key does not fit in 32 bytes.
         }
     }
 }

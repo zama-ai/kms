@@ -279,16 +279,19 @@ impl TryFrom<kms_grpc::kms::v1::MpcNode> for NodeInfo {
                 "extra signer address",
             )?);
         }
-        let mut scheme_digests: BTreeMap<SigningSchemeType, Vec<u8>> = value
-            .scheme_digests
-            .iter()
-            .map(|cur_s| {
-                Ok((
-                    SigningSchemeType::try_from(cur_s.scheme)?,
-                    cur_s.digest.clone(),
-                ))
-            })
-            .collect::<anyhow::Result<_>>()?;
+        let mut scheme_digests: BTreeMap<SigningSchemeType, Vec<u8>> = BTreeMap::new();
+        for cur_s in &value.scheme_digests {
+            let scheme = SigningSchemeType::try_from(cur_s.scheme)?;
+            let previous = scheme_digests.insert(scheme, cur_s.digest.clone());
+            // Repeating the same scheme is only allowed if the digests agree; a disagreement means
+            // the sender has an inconsistent view of this node's identity, so we cannot pick one.
+            if previous.is_some_and(|previous| previous != cur_s.digest) {
+                return Err(anyhow::anyhow!(
+                    "Conflicting {scheme} scheme digests for node {}",
+                    value.mpc_identity
+                ));
+            }
+        }
 
         // The dedicated `signer_address` field predates `scheme_digests` and carries the same
         // Ethereum address that is now the ECDSA-256k1 digest, so export it into `scheme_digests`.
@@ -396,6 +399,7 @@ impl ContextInfo {
     /// before the context passed to the KMS, it should have been validated on the gateway.
     pub async fn verify<S: StorageReader>(&self, storage: &S) -> anyhow::Result<Option<Role>> {
         // Check the signing key is consistent with the private key in storage.
+        // TODO should not be read from storage, but passed in as a parameter to the context
         let signing_key = get_core_signing_key(storage).await?;
         // The ECDSA-256k1 digest of a verification key is its Ethereum address.
         let core_address = signing_key.verf_key().verf_key_id();
