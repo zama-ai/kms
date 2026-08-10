@@ -1,8 +1,8 @@
 //! ML-DSA (FIPS 204) signing backend, generic over the parameter set.
 
-use super::{SigningError, SigningScheme};
+use super::{DSEP_SIGKEY_DIGEST, SigningError, SigningScheme, SigningSchemeType};
 use core::marker::PhantomData;
-use hashing::{DomainSep, hash_element_w_size};
+use hashing::{DIGEST_BYTES, DomainSep, unsafe_hash_list_w_size};
 use ml_dsa::{
     B32, KeyExport, Keypair, MlDsaParams, Signature as MlDsaSignature, SignatureEncoding, Signer,
     SigningKey as MlDsaSigningKey, Verifier, VerifyingKey as MlDsaVerifyingKey,
@@ -10,7 +10,6 @@ use ml_dsa::{
 
 /// The number of seed bytes consumed to build an ML-DSA signing key.
 pub const SEED_LEN: usize = 32;
-pub const DSEP_MLDSA: DomainSep = *b"MLDSA___";
 
 /// Marker type for the ML-DSA signature scheme with parameter set `P`.
 pub struct MlDsa<P>(PhantomData<P>);
@@ -47,17 +46,22 @@ impl<P: MlDsaParams> SigningScheme for MlDsa<P> {
     fn verifying_key(sk: &MlDsaSigningKey<P>) -> Result<MlDsaVerifyingKey<P>, SigningError> {
         Ok(sk.verifying_key())
     }
-
-    fn digest(vk: &Self::VerificationKey) -> Vec<u8> {
-        let bytes = vk.to_bytes();
-        hash_element_w_size(&DSEP_MLDSA, &bytes, 32)
-    }
 }
 
 impl<P: MlDsaParams> MlDsa<P> {
     /// Deterministically derive the signing key from a 32-byte seed.
     pub fn keygen_from_seed(seed: &[u8; SEED_LEN]) -> MlDsaSigningKey<P> {
         MlDsaSigningKey::<P>::from_seed(&B32::from(*seed))
+    }
+
+    /// The identifier of `vk`; a [`DIGEST_BYTES`] digest of the scheme's tag, concatenated with the key's bytes.
+    pub fn digest(scheme: SigningSchemeType, vk: &MlDsaVerifyingKey<P>) -> Vec<u8> {
+        let bytes = vk.to_bytes();
+        unsafe_hash_list_w_size(
+            &DSEP_SIGKEY_DIGEST,
+            &[&scheme.tag()[..], bytes.as_ref()],
+            DIGEST_BYTES,
+        )
     }
 }
 

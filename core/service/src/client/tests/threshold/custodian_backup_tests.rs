@@ -21,10 +21,9 @@ use crate::consts::{
 use crate::cryptography::internal_crypto_types::WrappedDKGParams;
 use crate::cryptography::signatures::PrivateSigKey;
 use crate::cryptography::signatures::PublicSigKey;
-use crate::cryptography::signing::SigningSchemeType;
 use crate::engine::base::derive_request_id;
 use crate::engine::base::{CrsGenMetadata, DSEP_PUBDATA_KEY};
-use crate::engine::context::ContextInfo;
+use crate::engine::context::{ContextInfo, SchemeDigests};
 use crate::testing::setup::ThresholdTestEnv;
 use crate::util::key_setup::test_tools::EncryptionConfig;
 use crate::util::key_setup::test_tools::TestingPlaintext;
@@ -860,8 +859,7 @@ async fn test_mpc_context_backup_threshold() {
             )
             .await
             .unwrap();
-            node.scheme_digests
-                .insert(SigningSchemeType::Ecdsa256k1, pk.verf_key_id());
+            node.scheme_digests = SchemeDigests::from_ecdsa_verification_key(&pk);
             node.external_url = format!("http://example.com:8080/party{}", node.party_id);
         }
         ctx

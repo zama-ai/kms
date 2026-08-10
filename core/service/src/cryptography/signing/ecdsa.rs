@@ -570,10 +570,6 @@ impl SigningScheme for Ecdsa256k1 {
     fn verifying_key(sk: &PrivateSigKey) -> Result<PublicSigKey, SigningError> {
         Ok(sk.verf_key())
     }
-
-    fn digest(vk: &Self::VerificationKey) -> Vec<u8> {
-        vk.address().to_vec()
-    }
 }
 
 #[cfg(test)]

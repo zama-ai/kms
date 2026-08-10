@@ -778,14 +778,14 @@ message TypedSignature {
   bytes signature = 2;
 }
 
-// A list of scheme-digest pairs of the possible signature verification keys.
+// A scheme-digest pair of the possible signature verification keys.
 // Each entry is stored as a byte array and its serialization and length depends on the underlying scheme.
 // For example for ECDSA256K1 it is a 20-byte Ethereum address.
 message SchemeDigest {
   // The signature scheme whose public key we use to derive the digest.
   SigningSchemeType scheme = 1;
 
-  // The raw, scheme-specific public key digeset bytes.
+  // The raw, scheme-specific public key digests bytes.
   // For ECDSA256K1     20 byte Ethereum address
   // For ED25519        the whole 32 byte public key
   // For MLDSA44        a 32 byte Shake256 domain separated digest

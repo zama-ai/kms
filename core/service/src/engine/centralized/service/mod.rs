@@ -24,8 +24,7 @@ pub use preprocessing::*;
 mod tests {
     use crate::conf::{CoreConfig, init_conf};
     use crate::consts::{DEFAULT_MPC_CONTEXT, SIGNING_KEY_ID};
-    use crate::cryptography::signing::SigningSchemeType;
-    use crate::engine::context::{NodeInfo, SoftwareVersion};
+    use crate::engine::context::{NodeInfo, SchemeDigests, SoftwareVersion};
     use crate::engine::traits::ContextManager;
     use crate::vault::storage::store_versioned_at_request_id;
     use crate::{
@@ -36,7 +35,6 @@ mod tests {
     use aes_prng::AesRng;
     use kms_grpc::kms::v1::{MpcContext, NewMpcContextRequest};
     use kms_grpc::rpc_types::PrivDataType;
-    use std::collections::BTreeMap;
 
     /// This also adds a dummy context
     pub(crate) async fn setup_central_test_kms(
@@ -75,10 +73,7 @@ mod tests {
             public_storage_url: "http://test_storage.com:1234".to_string(),
             public_storage_prefix: None,
             extra_signer_addresses: vec![],
-            scheme_digests: BTreeMap::from([(
-                SigningSchemeType::Ecdsa256k1,
-                verf_key.verf_key_id(),
-            )]),
+            scheme_digests: SchemeDigests::from_ecdsa_verification_key(&verf_key),
         };
         kms.context_manager
             .new_mpc_context(tonic::Request::new(NewMpcContextRequest {

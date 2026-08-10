@@ -18,7 +18,8 @@ use crate::{
         DEFAULT_EPOCH_ID, DEFAULT_MPC_CONTEXT, PRIVATE_STORAGE_PREFIX_THRESHOLD_ALL,
         PUBLIC_STORAGE_PREFIX_THRESHOLD_ALL, SIGNING_KEY_ID, TEST_PARAM, TEST_THRESHOLD_KEY_ID_4P,
     },
-    cryptography::{signatures::PublicSigKey, signing::SigningSchemeType},
+    cryptography::signatures::PublicSigKey,
+    engine::context::SchemeDigests,
     testing::prelude::{TestMaterialSpec, ThresholdTestEnv},
     util::{
         key_setup::test_tools::{EncryptionConfig, TestingPlaintext},
@@ -126,8 +127,7 @@ async fn do_context_switch(
             )
             .await
             .unwrap();
-            node.scheme_digests
-                .insert(SigningSchemeType::Ecdsa256k1, pk.verf_key_id());
+            node.scheme_digests = SchemeDigests::from_ecdsa_verification_key(&pk);
         }
         new_context
     };

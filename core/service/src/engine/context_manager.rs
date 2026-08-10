@@ -7,8 +7,7 @@ use crate::cryptography::encryption::{
     Encryption, PkeScheme, PkeSchemeType, UnifiedPrivateEncKey, UnifiedPublicEncKey,
 };
 use crate::cryptography::signatures::{PrivateSigKey, PublicSigKey};
-use crate::cryptography::signing::SigningSchemeType;
-use crate::engine::context::{ContextInfo, NodeInfo, SoftwareVersion};
+use crate::engine::context::{ContextInfo, NodeInfo, SchemeDigests, SoftwareVersion};
 use crate::engine::threshold::service::session::SessionMaker;
 use crate::engine::traits::ContextManager;
 use crate::engine::utils::MetricedError;
@@ -42,7 +41,7 @@ use observability::metrics_names::{
     OP_DESTROY_CUSTODIAN_CONTEXT, OP_DESTROY_MPC_CONTEXT, OP_NEW_CUSTODIAN_CONTEXT,
     OP_NEW_MPC_CONTEXT,
 };
-use std::collections::{BTreeMap, HashSet};
+use std::collections::HashSet;
 use std::sync::Arc;
 use tfhe::safe_serialization::safe_serialize;
 use threshold_types::role::Role;
@@ -534,10 +533,7 @@ pub async fn create_default_centralized_context_in_storage<
             public_storage_url: "".to_string(),
             public_storage_prefix: None, // None will default to "PUB"
             extra_signer_addresses: vec![],
-            scheme_digests: BTreeMap::from([(
-                SigningSchemeType::Ecdsa256k1,
-                verification_key.verf_key_id(),
-            )]),
+            scheme_digests: SchemeDigests::from_ecdsa_verification_key(&verification_key),
         }],
         context_id: *DEFAULT_MPC_CONTEXT,
         software_version: SoftwareVersion::current()?,
@@ -598,12 +594,12 @@ pub async fn ensure_default_threshold_context_in_storage<
                         .my_id
                         .is_some_and(|my_id| peer.party_id == my_id)
                     {
-                        BTreeMap::from([(SigningSchemeType::Ecdsa256k1, verf_key.verf_key_id())])
+                        SchemeDigests::from_ecdsa_verification_key(verf_key)
                     } else {
                         // If the MPC parties are started for the first time, they do not know about any context.
                         // Consequently, if we must use a default context, the default context cannot hold the
                         // verification key of other parties since they don't know about it at start up.
-                        BTreeMap::new()
+                        SchemeDigests::new()
                     };
                     Ok(NodeInfo {
                         mpc_identity: identity.mpc_identity().to_string(),
@@ -1222,8 +1218,9 @@ mod tests {
             encryption::{Encryption, PkeScheme, PkeSchemeType},
             signatures::{PublicSigKey, gen_sig_keys},
             signcryption::{UnifiedUnsigncryptionKey, Unsigncrypt},
+            signing::SigningSchemeType,
         },
-        engine::context::{NodeInfo, SoftwareVersion},
+        engine::context::{NodeInfo, SchemeDigests, SoftwareVersion},
         util::meta_store::MetaStore,
         vault::{
             Vault,
@@ -1311,10 +1308,7 @@ mod tests {
                         public_storage_url: "http://storage".to_string(),
                         public_storage_prefix: None,
                         extra_signer_addresses: vec![],
-                        scheme_digests: BTreeMap::from([(
-                            SigningSchemeType::Ecdsa256k1,
-                            pk.verf_key_id(),
-                        )]),
+                        scheme_digests: SchemeDigests::from_ecdsa_verification_key(&pk),
                     }],
                     context_id: *DEFAULT_MPC_CONTEXT,
                     software_version: SoftwareVersion {
@@ -1354,10 +1348,7 @@ mod tests {
                 public_storage_url: "http://storage".to_string(),
                 public_storage_prefix: None,
                 extra_signer_addresses: vec![],
-                scheme_digests: BTreeMap::from([(
-                    SigningSchemeType::Ecdsa256k1,
-                    verification_key.verf_key_id(),
-                )]),
+                scheme_digests: SchemeDigests::from_ecdsa_verification_key(&verification_key),
             }],
             context_id,
             software_version: SoftwareVersion {
@@ -1399,8 +1390,8 @@ mod tests {
             assert_eq!(
                 stored_context.mpc_nodes[0]
                     .scheme_digests
-                    .get(&SigningSchemeType::Ecdsa256k1),
-                Some(&verification_key.verf_key_id())
+                    .get(SigningSchemeType::Ecdsa256k1),
+                Some(verification_key.verf_key_id().as_slice())
             );
         }
         // Try to make a context with the same context ID (should fail)
@@ -1445,10 +1436,7 @@ mod tests {
                 public_storage_url: "http://storage".to_string(),
                 public_storage_prefix: None,
                 extra_signer_addresses: vec![],
-                scheme_digests: BTreeMap::from([(
-                    SigningSchemeType::Ecdsa256k1,
-                    verification_key.verf_key_id(),
-                )]),
+                scheme_digests: SchemeDigests::from_ecdsa_verification_key(&verification_key),
             }],
             context_id: keeper_context_id,
             software_version: SoftwareVersion {
@@ -1520,10 +1508,7 @@ mod tests {
                 public_storage_url: "http://storage".to_string(),
                 public_storage_prefix: None,
                 extra_signer_addresses: vec![],
-                scheme_digests: BTreeMap::from([(
-                    SigningSchemeType::Ecdsa256k1,
-                    verification_key.verf_key_id(),
-                )]),
+                scheme_digests: SchemeDigests::from_ecdsa_verification_key(&verification_key),
             }],
             context_id,
             software_version: SoftwareVersion {
@@ -1571,8 +1556,8 @@ mod tests {
             assert_eq!(
                 stored_context.mpc_nodes[0]
                     .scheme_digests
-                    .get(&SigningSchemeType::Ecdsa256k1),
-                Some(&verification_key.verf_key_id())
+                    .get(SigningSchemeType::Ecdsa256k1),
+                Some(verification_key.verf_key_id().as_slice())
             );
         }
 
@@ -1630,10 +1615,9 @@ mod tests {
                         public_storage_url: "http://storage".to_string(),
                         public_storage_prefix: None,
                         extra_signer_addresses: vec![],
-                        scheme_digests: BTreeMap::from([(
-                            SigningSchemeType::Ecdsa256k1,
-                            verification_key.verf_key_id(),
-                        )]),
+                        scheme_digests: SchemeDigests::from_ecdsa_verification_key(
+                            &verification_key,
+                        ),
                     }],
                     context_id: *context_id,
                     software_version: SoftwareVersion {
@@ -1716,10 +1700,9 @@ mod tests {
                         public_storage_url: "http://storage".to_string(),
                         public_storage_prefix: None,
                         extra_signer_addresses: vec![],
-                        scheme_digests: BTreeMap::from([(
-                            SigningSchemeType::Ecdsa256k1,
-                            verification_key.verf_key_id(),
-                        )]),
+                        scheme_digests: SchemeDigests::from_ecdsa_verification_key(
+                            &verification_key,
+                        ),
                     }],
                     context_id: *context_id,
                     software_version: SoftwareVersion {
@@ -1759,10 +1742,7 @@ mod tests {
                     public_storage_url: "http://storage".to_string(),
                     public_storage_prefix: None,
                     extra_signer_addresses: vec![],
-                    scheme_digests: BTreeMap::from([(
-                        SigningSchemeType::Ecdsa256k1,
-                        verification_key.verf_key_id(),
-                    )]),
+                    scheme_digests: SchemeDigests::from_ecdsa_verification_key(&verification_key),
                 }],
                 software_version: SoftwareVersion {
                     major: 0,
@@ -1831,10 +1811,7 @@ mod tests {
                 public_storage_url: "http://storage".to_string(),
                 public_storage_prefix: None,
                 extra_signer_addresses: vec![],
-                scheme_digests: BTreeMap::from([(
-                    SigningSchemeType::Ecdsa256k1,
-                    verification_key.verf_key_id(),
-                )]),
+                scheme_digests: SchemeDigests::from_ecdsa_verification_key(&verification_key),
             }],
             context_id,
             software_version: SoftwareVersion {
@@ -2394,10 +2371,7 @@ mod tests {
                 public_storage_url: "http://storage".to_string(),
                 public_storage_prefix: None,
                 extra_signer_addresses: vec![],
-                scheme_digests: BTreeMap::from([(
-                    SigningSchemeType::Ecdsa256k1,
-                    verification_key.verf_key_id(),
-                )]),
+                scheme_digests: SchemeDigests::from_ecdsa_verification_key(&verification_key),
             }],
             context_id,
             software_version: SoftwareVersion {
@@ -2466,10 +2440,7 @@ mod tests {
                 public_storage_url: "http://storage".to_string(),
                 public_storage_prefix: None,
                 extra_signer_addresses: vec![],
-                scheme_digests: BTreeMap::from([(
-                    SigningSchemeType::Ecdsa256k1,
-                    verification_key.verf_key_id(),
-                )]),
+                scheme_digests: SchemeDigests::from_ecdsa_verification_key(&verification_key),
             }],
             context_id: keeper_context_id,
             software_version: SoftwareVersion {
@@ -2530,10 +2501,7 @@ mod tests {
                 public_storage_url: "http://storage".to_string(),
                 public_storage_prefix: None,
                 extra_signer_addresses: vec![],
-                scheme_digests: BTreeMap::from([(
-                    SigningSchemeType::Ecdsa256k1,
-                    verification_key.verf_key_id(),
-                )]),
+                scheme_digests: SchemeDigests::from_ecdsa_verification_key(&verification_key),
             }],
             context_id,
             software_version: SoftwareVersion {
@@ -2585,10 +2553,7 @@ mod tests {
                 public_storage_url: "http://storage".to_string(),
                 public_storage_prefix: None,
                 extra_signer_addresses: vec![],
-                scheme_digests: BTreeMap::from([(
-                    SigningSchemeType::Ecdsa256k1,
-                    verification_key.verf_key_id(),
-                )]),
+                scheme_digests: SchemeDigests::from_ecdsa_verification_key(&verification_key),
             }],
             context_id: keeper_context_id,
             software_version: SoftwareVersion {
@@ -2653,10 +2618,7 @@ mod tests {
                     public_storage_url: "http://storage".to_string(),
                     public_storage_prefix: None,
                     extra_signer_addresses: vec![],
-                    scheme_digests: BTreeMap::from([(
-                        SigningSchemeType::Ecdsa256k1,
-                        verification_key.verf_key_id(),
-                    )]),
+                    scheme_digests: SchemeDigests::from_ecdsa_verification_key(&verification_key),
                 }],
                 context_id: *context_id,
                 software_version: SoftwareVersion {

@@ -12,9 +12,12 @@ pub mod ecdsa;
 mod eddsa;
 mod mldsa;
 
+use alloy_primitives::Address;
 use ecdsa::Ecdsa256k1;
 use ecdsa::{PrivateSigKey, PublicSigKey};
-use ed25519_dalek::{SigningKey as Ed25519SigningKey, VerifyingKey as Ed25519VerifyingKey};
+use ed25519_dalek::{
+    PUBLIC_KEY_LENGTH, SigningKey as Ed25519SigningKey, VerifyingKey as Ed25519VerifyingKey,
+};
 use eddsa::Ed25519;
 use hashing::{DIGEST_BYTES, DomainSep, hash_element};
 use ml_dsa::{
@@ -31,6 +34,9 @@ use zeroize::{Zeroize, ZeroizeOnDrop, Zeroizing};
 /// Domain separator for deriving per-scheme signing keys from the persisted
 /// ECDSA [`PrivateSigKey`].
 const DSEP_SIGKEY_DERIVE: DomainSep = *b"SIGKDERV";
+
+/// Domain separator for the digests that identify a verification key.
+const DSEP_SIGKEY_DIGEST: DomainSep = *b"SIGKDGST";
 
 /// Version of the per-scheme key-derivation scheme.
 const SIGKEY_DERIVATION_VERSION: u8 = 1;
@@ -112,14 +118,23 @@ pub enum SigningSchemeType {
 
 impl SigningSchemeType {
     /// The expected length of the digest for this scheme.
-    pub fn expected_digest_len(&self) -> usize {
+    pub fn expected_digest_len(self) -> usize {
         match self {
-            SigningSchemeType::Ecdsa256k1 => 20, // The Ethereum address, which is 20 bytes for ECDSA/secp256k1.
-            SigningSchemeType::Ed25519 => 32, // The full public key, which should be 32 bytes for ed25519.
-            SigningSchemeType::MlDsa44 => 32, // A Shake256 digest of the public key, since an ML-DSA public key does not fit in 32 bytes.
-            SigningSchemeType::MlDsa65 => 32, // A Shake256 digest of the public key, since an ML-DSA public key does not fit in 32 bytes.
-            SigningSchemeType::MlDsa87 => 32, // A Shake256 digest of the public key, since an ML-DSA public key does not fit in 32 bytes.
+            // The Ethereum address of the key.
+            SigningSchemeType::Ecdsa256k1 => Address::len_bytes(),
+            // The full public key.
+            SigningSchemeType::Ed25519 => PUBLIC_KEY_LENGTH,
+            // A Shake256 digest of the public key, since an ML-DSA public key is far too large
+            // to serve as an identifier itself.
+            SigningSchemeType::MlDsa44
+            | SigningSchemeType::MlDsa65
+            | SigningSchemeType::MlDsa87 => DIGEST_BYTES,
         }
+    }
+
+    /// The scheme's stable 4-byte tag, for binding a scheme into a hash input.
+    fn tag(self) -> [u8; 4] {
+        (kms_grpc::kms::v1::SigningSchemeType::from(self) as i32).to_le_bytes()
     }
 }
 
@@ -178,9 +193,6 @@ pub trait SigningScheme {
 
     /// Derive the verification key from the signing key if possible, otherwise return an error.
     fn verifying_key(sk: &Self::SigningKey) -> Result<Self::VerificationKey, SigningError>;
-
-    /// Compute a digest of the verification key. Specific depending on the scheme.
-    fn digest(vk: &Self::VerificationKey) -> Vec<u8>;
 }
 
 /// A digital signature together with the scheme that produced it.
@@ -350,13 +362,16 @@ pub enum UnifiedPublicSigKey {
 }
 
 impl UnifiedPublicSigKey {
-    fn digest(&self) -> Vec<u8> {
+    /// The identifier of this verification key, used to identify its operator in an MPC context.
+    /// The encoding is scheme specific; see [`SigningSchemeType::expected_digest_len`] for the
+    /// length each one has.
+    pub fn digest(&self) -> Vec<u8> {
         match self {
-            UnifiedPublicSigKey::Ecdsa256k1(vk) => Ecdsa256k1::digest(vk),
+            UnifiedPublicSigKey::Ecdsa256k1(vk) => vk.verf_key_id(),
             UnifiedPublicSigKey::Ed25519(vk) => Ed25519::digest(vk),
-            UnifiedPublicSigKey::MlDsa44(vk) => MlDsa::<MlDsa44>::digest(vk),
-            UnifiedPublicSigKey::MlDsa65(vk) => MlDsa::<MlDsa65>::digest(vk),
-            UnifiedPublicSigKey::MlDsa87(vk) => MlDsa::<MlDsa87>::digest(vk),
+            UnifiedPublicSigKey::MlDsa44(vk) => MlDsa::digest(SigningSchemeType::MlDsa44, vk),
+            UnifiedPublicSigKey::MlDsa65(vk) => MlDsa::digest(SigningSchemeType::MlDsa65, vk),
+            UnifiedPublicSigKey::MlDsa87(vk) => MlDsa::digest(SigningSchemeType::MlDsa87, vk),
         }
     }
 }
@@ -456,15 +471,12 @@ impl PrivateSigKey {
     ///
     /// The seed is
     /// `SHAKE256(DSEP_SIGKEY_DERIVE ‖ scheme_tag ‖ version ‖ sk_bytes)`, where `scheme_tag`
-    /// is the 4-byte little-endian gRPC discriminant of the scheme and `version` is
-    /// [`SIGKEY_DERIVATION_VERSION`].
+    /// is [`SigningSchemeType::tag`] and `version` is [`SIGKEY_DERIVATION_VERSION`].
     fn derived_seed(&self, scheme: SigningSchemeType) -> Zeroizing<[u8; DIGEST_BYTES]> {
         let mut sk_bytes = self.raw_signing_key().to_bytes();
         // Use Zeroizing to ensure that the `msg` gets wiped at dropping
         let mut msg = Zeroizing::new(Vec::with_capacity(4 + 1 + sk_bytes.len()));
-        msg.extend_from_slice(
-            &(<kms_grpc::kms::v1::SigningSchemeType>::from(scheme) as i32).to_le_bytes(),
-        );
+        msg.extend_from_slice(&scheme.tag());
         msg.push(SIGKEY_DERIVATION_VERSION);
         // Notice this is the only variable length value, hence the concatenation is unambiguous.
         msg.extend_from_slice(&sk_bytes);

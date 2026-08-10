@@ -53,16 +53,17 @@ impl SigningScheme for Ed25519 {
     fn verifying_key(sk: &Ed25519SigningKey) -> Result<Ed25519VerifyingKey, SigningError> {
         Ok(sk.verifying_key())
     }
-
-    fn digest(vk: &Self::VerificationKey) -> Vec<u8> {
-        vk.as_bytes().to_vec()
-    }
 }
 
 impl Ed25519 {
     /// Deterministically derive the signing key from a 32-byte seed.
     pub fn keygen_from_seed(seed: &[u8; SEED_LEN]) -> Ed25519SigningKey {
         Ed25519SigningKey::from_bytes(seed)
+    }
+
+    /// The identifier of `vk`: the raw public key, which is also its Solana address.
+    pub fn digest(vk: &Ed25519VerifyingKey) -> Vec<u8> {
+        vk.as_bytes().to_vec()
     }
 }
 

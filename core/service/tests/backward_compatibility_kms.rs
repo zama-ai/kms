@@ -59,7 +59,7 @@ use kms_lib::{
             CrsGenMetadata, CrsSignedPayload, KeyGenMetadata, KeyGenMetadataInner,
             KeygenSignedPayload, KmsFheKeyHandles, PrepKeygenSignedPayload, StoredTypedSignature,
         },
-        context::{ContextInfo, NodeInfo, SignerAddress, SoftwareVersion},
+        context::{ContextInfo, NodeInfo, SchemeDigests, SignerAddress, SoftwareVersion},
         threshold::service::{
             EpochData, PublicKeyMaterial, ThresholdFheKeys, session::PRSSSetupCombined,
         },
@@ -767,7 +767,7 @@ fn test_context_info(
         public_storage_url: "https://storage.example.com/node42".to_string(),
         public_storage_prefix: Some("PUB".to_string()),
         extra_signer_addresses: vec![],
-        scheme_digests: BTreeMap::new(),
+        scheme_digests: SchemeDigests::new(),
     };
     let software_version = SoftwareVersion {
         major: 2,
@@ -818,7 +818,7 @@ fn test_node_info(
         public_storage_url: test.public_storage_url.to_string(),
         public_storage_prefix: Some(test.public_storage_prefix.to_string()),
         extra_signer_addresses: vec![SignerAddress(verf_key2.address())],
-        scheme_digests: BTreeMap::from([(SigningSchemeType::Ecdsa256k1, verf_key.verf_key_id())]),
+        scheme_digests: SchemeDigests::from_ecdsa_verification_key(&verf_key),
     };
 
     if original_versionized != new_versionized {

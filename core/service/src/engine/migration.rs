@@ -819,7 +819,7 @@ where
 mod tests {
     use super::*;
     use crate::conf::ContextEpochAssociation;
-    use crate::engine::context::{ContextInfo, NodeInfo, SoftwareVersion};
+    use crate::engine::context::{ContextInfo, NodeInfo, SchemeDigests, SoftwareVersion};
     use crate::vault::storage::file::FileStorage;
     use crate::vault::storage::ram::{self, RamStorage};
     use crate::vault::storage::{
@@ -827,7 +827,6 @@ mod tests {
         store_versioned_at_request_id,
     };
     use kms_grpc::RequestId;
-    use std::collections::BTreeMap;
     use std::str::FromStr;
 
     /// Test migration of threshold FHE keys (FheKeyInfo)
@@ -1175,7 +1174,7 @@ mod tests {
                 public_storage_url: "".to_string(),
                 public_storage_prefix: None,
                 extra_signer_addresses: vec![],
-                scheme_digests: BTreeMap::new(),
+                scheme_digests: SchemeDigests::new(),
             });
         }
         let context_info = ContextInfo {
