@@ -732,6 +732,112 @@ mod tests {
         );
     }
 
+    const ALL_SCHEMES: [SigningSchemeType; 5] = [
+        SigningSchemeType::Ecdsa256k1,
+        SigningSchemeType::Ed25519,
+        SigningSchemeType::MlDsa44,
+        SigningSchemeType::MlDsa65,
+        SigningSchemeType::MlDsa87,
+    ];
+
+    fn node_proto_with_schemes(
+        party_id: u32,
+        schemes: &[SigningSchemeType],
+    ) -> (NodeInfo, kms_grpc::kms::v1::MpcNode) {
+        let (verification_key, _sk) = gen_sig_keys(&mut rand::rngs::OsRng);
+        let scheme_digests = schemes
+            .iter()
+            .map(|scheme| {
+                let digest = match scheme {
+                    SigningSchemeType::Ecdsa256k1 => verification_key.verf_key_id(),
+                    _ => vec![*scheme as u8; scheme.expected_digest_len()],
+                };
+                (*scheme, digest)
+            })
+            .collect();
+        let node = NodeInfo {
+            mpc_identity: format!("Node{party_id}"),
+            party_id,
+            external_url: format!("http://node{party_id}.example.com:12345"),
+            ca_cert: None,
+            public_storage_url: "http://storage".to_string(),
+            public_storage_prefix: None,
+            extra_signer_addresses: vec![],
+            scheme_digests,
+        };
+        let proto = kms_grpc::kms::v1::MpcNode::try_from(node.clone()).unwrap();
+        (node, proto)
+    }
+
+    #[test]
+    fn mpc_node_proto_round_trip_all_schemes() {
+        let (node, proto) = node_proto_with_schemes(1, &ALL_SCHEMES);
+
+        assert_eq!(proto.scheme_digests.len(), ALL_SCHEMES.len());
+        // Peers that only know the legacy field must still find the ECDSA-256k1 digest there.
+        assert_eq!(
+            proto.signer_address.as_ref(),
+            node.scheme_digests.get(&SigningSchemeType::Ecdsa256k1)
+        );
+
+        let recovered = NodeInfo::try_from(proto).unwrap();
+        assert_eq!(recovered, node);
+        // Every scheme's digest can be looked up individually.
+        for scheme in ALL_SCHEMES {
+            let digest = recovered
+                .scheme_digests
+                .get(&scheme)
+                .unwrap_or_else(|| panic!("no digest for {scheme}"));
+            assert_eq!(digest.len(), scheme.expected_digest_len());
+        }
+    }
+
+    #[test]
+    fn mpc_node_accepts_identical_repeated_scheme() {
+        let (node, mut proto) = node_proto_with_schemes(
+            1,
+            &[SigningSchemeType::Ecdsa256k1, SigningSchemeType::Ed25519],
+        );
+        let repeated = proto
+            .scheme_digests
+            .iter()
+            .find(|entry| entry.scheme == SigningSchemeType::Ed25519 as i32)
+            .unwrap()
+            .clone();
+        proto.scheme_digests.push(repeated);
+
+        let recovered = NodeInfo::try_from(proto).unwrap();
+        assert_eq!(recovered, node);
+    }
+
+    #[test]
+    fn mpc_node_rejects_conflicting_repeated_scheme() {
+        let (_node, mut proto) = node_proto_with_schemes(
+            1,
+            &[SigningSchemeType::Ecdsa256k1, SigningSchemeType::Ed25519],
+        );
+        proto.scheme_digests.push(SchemeDigest {
+            scheme: SigningSchemeType::Ed25519 as i32,
+            digest: vec![0xab; SigningSchemeType::Ed25519.expected_digest_len()],
+        });
+
+        let err = NodeInfo::try_from(proto).unwrap_err().to_string();
+        assert!(err.contains("Conflicting Ed25519 scheme digests"), "{err}");
+    }
+
+    #[test]
+    fn mpc_node_rejects_signer_address_disagreeing_with_ecdsa_digest() {
+        let (_node, mut proto) = node_proto_with_schemes(1, &[SigningSchemeType::Ecdsa256k1]);
+        let (other_key, _sk) = gen_sig_keys(&mut rand::rngs::OsRng);
+        proto.signer_address = Some(other_key.verf_key_id());
+
+        let err = NodeInfo::try_from(proto).unwrap_err().to_string();
+        assert!(
+            err.contains("Signer address and ECDSA-256k1 scheme digest disagree"),
+            "{err}"
+        );
+    }
+
     #[test]
     fn parse_software_semantic_version() {
         {
