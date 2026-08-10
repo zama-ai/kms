@@ -5,7 +5,6 @@ use super::Party;
 use itertools::Itertools;
 use observability::conf::TelemetryConfig;
 use serde::{Deserialize, Serialize};
-use threshold_execution::online::preprocessing::redis::RedisConf;
 use threshold_networking::grpc::CoreToCoreNetworkConfig;
 use tokio_rustls::rustls::{
     RootCertStore,
@@ -39,7 +38,6 @@ impl Protocol {
 pub struct PartyConf {
     protocol: Protocol,
     pub telemetry: Option<TelemetryConfig>,
-    pub redis: Option<RedisConf>,
     /// If [certpaths] is Some(_), then TLS will be enabled
     /// for the core-to-core communication
     pub certpaths: Option<CertificatePaths>,
@@ -196,9 +194,6 @@ impl CertificatePaths {
 /// service_name = "moby"
 /// endpoint = "http://localhost:4317"
 ///
-/// [redis]
-/// host = "redis://127.0.0.1"
-///
 /// [certpaths]
 /// cert = "/path/to/cert"
 /// key = "/path/to/key"
@@ -228,7 +223,7 @@ impl CertificatePaths {
 /// not using the `peers` field, but it is there for future use.
 /// If it is present, the `peers` field will be `Some(Vec<Party>)`.
 /// The `peers` field is a list of `Party` struct.
-/// The telemetry, redis and certpaths fields are also optional.
+/// The telemetry and certpaths fields are also optional.
 /// Core-to-core TLS will be enabled if certpaths is not empty.
 impl PartyConf {
     /// Returns the protocol configuration.

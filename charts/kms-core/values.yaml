@@ -317,10 +317,6 @@ socat:
 
 runMode: dev
 
-redis:
-  enabled: false
-  host: "redis://redis-master.common.svc.cluster.local"
-
 tracing:
   enabled: false
   endpoint: "http://otel-deployment-opentelemetry-collector.observability.svc.cluster.local:4317"

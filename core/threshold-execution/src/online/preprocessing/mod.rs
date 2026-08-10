@@ -1,4 +1,3 @@
-use self::redis::{CorrelatedRandomnessType, RedisConf, redis_factory};
 use super::secret_distributions::{RealSecretDistributions, SecretDistributions};
 use super::triple::Triple;
 use crate::constants::{B_SWITCH_SQUASH, LOG_B_SWITCH_SQUASH, STATSEC};
@@ -132,7 +131,7 @@ pub trait BitDecPreprocessing<const EXTENSION_DEGREE: usize>:
     ) -> anyhow::Result<()>;
 
     /// Load the correlated randomness from where
-    /// it is stored (e.g. redis) into RAM.
+    /// it is stored into RAM.
     fn cast_to_in_memory_impl(
         &mut self,
         num_ctxts: usize,
@@ -204,21 +203,6 @@ where
                 .collect(),
         );
         Ok(())
-    }
-}
-
-impl NoiseBounds {
-    pub(crate) fn get_type(&self) -> CorrelatedRandomnessType {
-        match self {
-            NoiseBounds::LweNoise(_) => CorrelatedRandomnessType::NoiseLwe,
-            NoiseBounds::LweHatNoise(_) => CorrelatedRandomnessType::NoiseLweHat,
-            NoiseBounds::GlweNoise(_) => CorrelatedRandomnessType::NoiseGlwe,
-            NoiseBounds::GlweNoiseSnS(_) => CorrelatedRandomnessType::NoiseGlweSnS,
-            NoiseBounds::CompressionKSKNoise(_) => CorrelatedRandomnessType::NoiseCompressionKSK,
-            NoiseBounds::SnsCompressionKSKNoise(_) => {
-                CorrelatedRandomnessType::SnsNoiseCompressionKSK
-            }
-        }
     }
 }
 
@@ -390,21 +374,9 @@ where
     memory_factory::<EXTENSION_DEGREE>()
 }
 
-pub fn create_redis_factory<const EXTENSION_DEGREE: usize>(
-    key_prefix: String,
-    redis_conf: &RedisConf,
-) -> Box<dyn PreprocessorFactory<EXTENSION_DEGREE>>
-where
-    ResiduePoly<Z64, EXTENSION_DEGREE>: ErrorCorrect + Invert + Solve,
-    ResiduePoly<Z128, EXTENSION_DEGREE>: ErrorCorrect + Invert + Solve,
-{
-    redis_factory::<EXTENSION_DEGREE>(key_prefix, redis_conf)
-}
-
 pub mod dummy;
 pub mod memory;
 pub mod orchestration;
-pub mod redis;
 
 // The non_local_effect_before_error_return lint complains
 // about as_mut() calls but I believe that's a false positive.

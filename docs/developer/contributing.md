@@ -58,7 +58,6 @@ In particular if you add any new public functions then you must add positive (su
 If you are editing any business logic or cryptographic methods, negative tests must be supplied as well (i.e. it must be validated that checks fail when expected).
 
 Unit testing suites are heavy and can require a lot of computing power and RAM.
-Similarly, for integration tests, which also **requires** a running Redis instance with standard ports.
 Whilst tests are run automatically in the continuous integration (CI) pipeline, you can run tests locally.
 
 All tests executed by the CI (including integration tests) can be run with:
