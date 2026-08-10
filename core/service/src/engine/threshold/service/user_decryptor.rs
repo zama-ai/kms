@@ -32,6 +32,7 @@ use observability::{
     },
 };
 use rand::{CryptoRng, RngCore};
+use thread_handles::spawn_compute_bound;
 use threshold_execution::{
     endpoints::decryption::{
         DecryptionMode, LowLevelCiphertextAndKeys, OfflineNoiseFloodSession,
@@ -380,14 +381,19 @@ impl<
             degree: threshold as u32,
         };
 
-        sign_user_decryption_result(
-            &signcryption_key.signing_key,
-            &signing_schemes,
-            payload,
-            &client_enc_key_bytes_orig,
-            extra_data,
-            domain,
-        )
+        let domain = domain.clone();
+        spawn_compute_bound(move || {
+            sign_user_decryption_result(
+                &signcryption_key.signing_key,
+                &signing_schemes,
+                payload,
+                &client_enc_key_bytes_orig,
+                extra_data,
+                &domain,
+            )
+        })
+        .await
+        .map_err(|e| anyhow!("Failed to run signing task for user decryption {req_id}: {e}"))?
     }
 
     #[cfg(test)]

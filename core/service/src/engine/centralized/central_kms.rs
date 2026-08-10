@@ -31,6 +31,7 @@ use crate::vault::storage::{StorageExt, read_all_data_from_all_epochs_versioned}
 #[cfg(feature = "non-wasm")]
 use observability::conf::TelemetryConfig;
 use observability::metrics_names::OP_BOOT;
+use thread_handles::spawn_compute_bound;
 use threshold_execution::keyset_config::KeyGenSecretKeyConfig;
 use tokio_util::sync::CancellationToken;
 
@@ -582,14 +583,26 @@ pub async fn async_user_decrypt<
         degree: 0,   // In the centralized KMS, the degree is always 0 since result is a constant
     };
 
-    sign_user_decryption_result(
-        sig_key,
-        signing_schemes,
-        payload,
-        client_enc_key_bytes,
-        extra_data,
-        domain,
-    )
+    let sig_key = sig_key.clone();
+    let signing_schemes = signing_schemes.to_vec();
+    let client_enc_key_bytes = client_enc_key_bytes.to_vec();
+    let domain = domain.clone();
+    spawn_compute_bound(move || {
+        sign_user_decryption_result(
+            &sig_key,
+            &signing_schemes,
+            payload,
+            &client_enc_key_bytes,
+            extra_data,
+            &domain,
+        )
+    })
+    .await
+    .map_err(|e| {
+        anyhow_error_and_log(format!(
+            "Failed to run signing task for user decryption: {e}"
+        ))
+    })?
 }
 
 // impl fmt::Debug for CentralizedKms, we don't want to include the decryption key in the debug output
