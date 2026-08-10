@@ -1,12 +1,10 @@
 use alloy_dyn_abi::Eip712Domain;
 use alloy_primitives::Address;
 use hashing::DomainSep;
-use itertools::Itertools;
-use kms_grpc::{
-    kms::v1::{TypedSigncryptedCiphertext, UserDecryptionResponse, UserDecryptionResponsePayload},
-    rpc_types::FheTypeResponse,
-};
+use kms_grpc::kms::v1::{UserDecryptionResponse, UserDecryptionResponsePayload};
 use std::collections::{HashMap, HashSet};
+use tfhe::FheTypes;
+use threshold_types::role::Role;
 
 use crate::{
     anyhow_error_and_log,
@@ -25,24 +23,120 @@ pub(crate) const DSEP_USER_DECRYPTION: DomainSep = *b"USER_DEC";
 /// The expectation is that no unvalidated data coming from e.g., the network should be used in this type.
 /// All fields MUST originate from the client's own configuration or some trusted source.
 pub(crate) struct UserDecTrustedValidationContext<'a> {
-    pub server_addresses: &'a HashMap<u32, Address>,
-    pub client_request: &'a ParsedUserDecryptionRequest,
-    pub eip712_domain: &'a Eip712Domain,
-    pub threshold: Option<usize>,
+    server_addresses: &'a HashMap<u32, Address>,
+    client_request: &'a ParsedUserDecryptionRequest,
+    eip712_domain: &'a Eip712Domain,
+    threshold: usize,
 }
 
-/// User decryption response payloads that have passed validation
-/// (signature verification, metadata consistency, majority-vote pivot selection).
-#[derive(Debug, PartialEq)]
-pub(crate) struct VerifiedUserDecryptionPayloads(Vec<UserDecryptionResponsePayload>);
+impl<'a> UserDecTrustedValidationContext<'a> {
+    pub fn num_parties(&self) -> usize {
+        self.server_addresses.len()
+    }
+}
 
-impl VerifiedUserDecryptionPayloads {
-    pub fn into_inner(self) -> Vec<UserDecryptionResponsePayload> {
-        self.0
+impl<'a> UserDecTrustedValidationContext<'a> {
+    /// Creates a new context and check sanity
+    pub fn new(
+        server_addresses: &'a HashMap<u32, Address>,
+        client_request: &'a ParsedUserDecryptionRequest,
+        eip712_domain: &'a Eip712Domain,
+        threshold: Option<usize>,
+    ) -> anyhow::Result<Self> {
+        if server_addresses.is_empty() {
+            anyhow::bail!("Server addresses must not be empty");
+        }
+
+        let max_threshold = (server_addresses.len() - 1) / 3; // Note that this is floored division.
+        let threshold = threshold.unwrap_or(max_threshold); // Note that this is floored division.
+
+        if threshold > max_threshold {
+            anyhow::bail!("Threshold is too high for the number of servers");
+        }
+
+        if server_addresses.contains_key(&0) {
+            anyhow::bail!("Server addresses must not contain party ID 0");
+        }
+
+        // Check that all server addresses are unique
+        let mut unique_addresses = HashSet::new();
+        for (party_id, address) in server_addresses {
+            if !unique_addresses.insert(address) {
+                anyhow::bail!("Duplicate server address found for party ID {party_id}");
+            }
+        }
+
+        Ok(Self {
+            server_addresses,
+            client_request,
+            eip712_domain,
+            threshold,
+        })
+    }
+}
+
+/// Why a response was dropped during the (secret-free) authenticity/consensus validation, or later
+/// during recovery. The authenticity variants are produced by [`validate_user_decrypt_responses`];
+/// [`UserDecRejectReason::Unrecoverable`] is produced by the client while un-signcrypting.
+#[derive(Debug)]
+pub(crate) enum UserDecRejectReason {
+    /// The response carried no payload.
+    MissingPayload,
+    /// Failed authenticity / consensus validation (unknown or duplicate server, bad signature,
+    /// disagreement with the consensus, ...); the fine-grained reason is logged as the response is
+    /// dropped.
+    FailedValidation,
+    /// Authenticated, but a signcryption could not be un-signcrypted or its inner bytes could not be
+    /// decoded during recovery — so it is not a fully-verified accepted response.
+    Unrecoverable,
+}
+
+/// A response that did not make it into the accepted set, with the reason it was dropped.
+#[derive(Debug)]
+pub(crate) struct RejectedUserDecResponse {
+    /// The role of the server that sent the response, `None` if we weren't able to authenticate it.
+    pub role: Option<Role>,
+    pub reason: UserDecRejectReason,
+}
+
+/// A response that passed the secret-free authenticity/consensus validation, paired with its
+/// verification key deserialized **once** here. The client uses the carried key to un-signcrypt
+/// without re-parsing the raw bytes.
+#[derive(Debug)]
+pub(crate) struct AuthenticatedUserDecResponse {
+    pub verification_key: PublicSigKey,
+    pub role: Role,
+    pub signcrypted_ciphertexts: Vec<Vec<u8>>,
+}
+
+/// The outcome of the (secret-free) authenticity/consensus validation pass: the
+/// [`UserDecryptionInvariants`] established from the pivot at the moment of consensus, the
+/// authenticated responses (each carrying its parsed verification key), and the typed rejections for
+/// those that did not pass. The invariants are computed once, here, and every response was classified
+/// against them — so downstream code never re-derives "what the servers agreed on" from an individual
+/// payload, and never has to recompute which responses were rejected.
+#[derive(Debug)]
+pub(crate) struct AuthenticatedUserDecResponses {
+    invariants: UserDecryptionInvariants,
+    authenticated: Vec<AuthenticatedUserDecResponse>,
+    rejected: Vec<RejectedUserDecResponse>,
+}
+
+impl AuthenticatedUserDecResponses {
+    /// The authenticated responses. Only used by tests to count how many passed.
+    #[cfg(test)]
+    pub fn as_slice(&self) -> &[AuthenticatedUserDecResponse] {
+        &self.authenticated
     }
 
-    pub fn as_slice(&self) -> &[UserDecryptionResponsePayload] {
-        &self.0
+    pub fn into_parts(
+        self,
+    ) -> (
+        UserDecryptionInvariants,
+        Vec<AuthenticatedUserDecResponse>,
+        Vec<RejectedUserDecResponse>,
+    ) {
+        (self.invariants, self.authenticated, self.rejected)
     }
 }
 
@@ -56,12 +150,6 @@ pub(crate) struct Eip712VerificationParams<'a> {
 const ERR_EXT_USER_DECRYPTION_SIG_VERIFICATION_FAILURE: &str =
     "External PT signature verification failed";
 
-const ERR_VALIDATE_USER_DECRYPTION_BAD_FHETYPE_LENGTH: &str =
-    "Incorrect FHE type lengths in user decryption response";
-const ERR_VALIDATE_USER_DECRYPTION_FHETYPE_MISMATCH: &str =
-    "FHE type in user decryption response mismatch";
-const ERR_VALIDATE_USER_DECRYPTION_DIGEST_MISMATCH: &str =
-    "Digest in user decryption response mismatch";
 const ERR_VALIDATE_USER_DECRYPTION_MISSING_SIGNATURE: &str =
     "Missing signature in user decryption response";
 const ERR_VALIDATE_USER_DECRYPTION_ID_NOT_FOUND: &str = "ID claimed in payload not found";
@@ -94,53 +182,25 @@ pub(crate) fn check_ext_user_decryption_signature(
     Ok(())
 }
 
-fn validate_user_decrypt_meta_data_and_signature(
+/// Authenticate a single (untrusted) response: look its `party_id` up in
+/// `trusted_ctx.server_addresses` and verify its signature under the key registered for that party —
+/// so on success the party identity is *verified*, not merely claimed. Agreement with the consensus
+/// (degree, link, per-slot fhe_type / packing) is **not** checked here; that is a single invariants
+/// equality in [`classify_user_decrypt_response`].
+///
+/// Returns the (verified) role and verification key it deserialized, so the caller can reuse it without
+/// parsing the raw bytes a second time.
+fn authenticate_user_decrypt_and_check_meta_data(
     trusted_ctx: &UserDecTrustedValidationContext,
-    pivot_resp: &UserDecryptionResponsePayload,
-    other_resp: &UserDecryptionResponsePayload,
+    response: &UserDecryptionResponsePayload,
     signature: &[u8],
     eip712_params: &Eip712VerificationParams,
-) -> anyhow::Result<()> {
-    let pivot_type = pivot_resp.fhe_types()?;
-    let check_type = other_resp.fhe_types()?;
-    if pivot_type.len() != check_type.len() || pivot_type.is_empty() || check_type.is_empty() {
-        anyhow::bail!(
-            "{}: {}, {}",
-            ERR_VALIDATE_USER_DECRYPTION_BAD_FHETYPE_LENGTH,
-            pivot_type.len(),
-            check_type.len()
-        );
-    }
-
-    for i in 0..pivot_type.len() {
-        if pivot_type[i] != check_type[i] {
-            anyhow::bail!(
-                "{}: pivot is has verification key {:?} with type {:?}, other has verification key {:?} with type {:?}",
-                ERR_VALIDATE_USER_DECRYPTION_FHETYPE_MISMATCH,
-                pivot_resp.verification_key,
-                pivot_type[i],
-                other_resp.verification_key,
-                check_type[i],
-            );
-        }
-    }
-
-    if pivot_resp.digest != other_resp.digest {
-        anyhow::bail!(
-            "{}: pivot has verification key {:?} gave digest {:?}, other has verification key {:?} with digest {:?}",
-            ERR_VALIDATE_USER_DECRYPTION_DIGEST_MISMATCH,
-            pivot_resp.verification_key,
-            pivot_resp.digest,
-            other_resp.verification_key,
-            other_resp.digest,
-        );
-    }
-
+) -> anyhow::Result<(PublicSigKey, Role)> {
     // TODO: Need to update this to a safer deserialization (which checks versions) with #2781 ?
-    let resp_verf_key: PublicSigKey = bc2wrap::deserialize_slice(&other_resp.verification_key)?;
+    let resp_verf_key: PublicSigKey = bc2wrap::deserialize_slice(&response.verification_key)?;
 
     let expected_addr =
-        if let Some(expected_addr) = trusted_ctx.server_addresses.get(&(other_resp.party_id)) {
+        if let Some(expected_addr) = trusted_ctx.server_addresses.get(&(response.party_id)) {
             if *expected_addr != resp_verf_key.address() {
                 anyhow::bail!(ERR_VALIDATE_USER_DECRYPTION_WRONG_ADDRESS)
             }
@@ -169,7 +229,7 @@ fn validate_user_decrypt_meta_data_and_signature(
 
         check_ext_user_decryption_signature(
             eip712_params.response_external_signature,
-            other_resp,
+            response,
             trusted_ctx.client_request,
             eip712_params.trusted_eip712_domain,
             expected_addr,
@@ -181,7 +241,7 @@ fn validate_user_decrypt_meta_data_and_signature(
         // because `BaseKmsStruct` cannot be compiled for wasm (it has an async mutex).
         if internal_verify_sig(
             &DSEP_USER_DECRYPTION,
-            &bc2wrap::serialize(&other_resp)?,
+            &bc2wrap::serialize(&response)?,
             &sig,
             &resp_verf_key,
         )
@@ -191,54 +251,18 @@ fn validate_user_decrypt_meta_data_and_signature(
         }
     }
 
-    Ok(())
+    Ok((
+        resp_verf_key,
+        Role::indexed_from_one(response.party_id as usize),
+    ))
 }
 
-#[derive(Hash, PartialEq, Eq)]
-struct TypedSigncryptedCiphertextInvariants {
-    packing_factor: u32,
-    fhe_type: i32,
-    external_handle: Vec<u8>,
-}
-
-impl From<TypedSigncryptedCiphertext> for TypedSigncryptedCiphertextInvariants {
-    fn from(value: TypedSigncryptedCiphertext) -> Self {
-        Self {
-            packing_factor: value.packing_factor,
-            fhe_type: value.fhe_type,
-            external_handle: value.external_handle,
-        }
-    }
-}
-
-/// Fields in [UserDecryptionResponsePayload] that should remain the same
-/// for the same request.
-#[derive(Hash, PartialEq, Eq)]
-struct UserDecryptionResponseInvariants {
-    degree: u32,
-    digest: Vec<u8>,
-    signcrypted_ciphertext_metadata: Vec<TypedSigncryptedCiphertextInvariants>,
-}
-
-impl TryFrom<UserDecryptionResponsePayload> for UserDecryptionResponseInvariants {
-    type Error = anyhow::Error;
-    fn try_from(value: UserDecryptionResponsePayload) -> anyhow::Result<Self> {
-        Ok(Self {
-            degree: value.degree,
-            digest: value.digest,
-            signcrypted_ciphertext_metadata: value
-                .signcrypted_ciphertexts
-                .into_iter()
-                .map(|x| x.into())
-                .collect(),
-        })
-    }
-}
-
+/// Return the invariants key `T` shared by the largest group of responses, provided that group has
+/// at least `min_occurence` members (else `None`).
 pub(crate) fn select_most_common<'a, P, T>(
     min_occurence: usize,
     agg_resp: impl Iterator<Item = Option<&'a P>>,
-) -> anyhow::Result<Option<usize>>
+) -> Option<T>
 where
     P: Clone + 'a,
     T: TryFrom<P, Error = anyhow::Error> + std::cmp::Eq + std::hash::Hash,
@@ -247,75 +271,135 @@ where
     // and its values contain a tuple (x, y), where x is the occurence and y is the original index
     let mut occurence_map: HashMap<T, (usize, usize), _> = HashMap::new();
     for (i, resp) in agg_resp.enumerate() {
-        match resp {
-            Some(inner) => {
-                occurence_map
-                    .entry(inner.clone().try_into()?)
-                    .or_insert_with(|| (0, i))
-                    .0 += 1;
-            }
-            None => {
+        let Some(inner) = resp else {
+            continue;
+        };
+        // A single (untrusted) response whose invariants cannot even be built — e.g. a malformed
+        // request ID that fails to parse — must NOT abort the whole vote. Treat it like a missing
+        // response: it simply does not get counted, so the honest majority can still form a pivot.
+        // The response is independently surfaced as a rejection during classification.
+        let key: T = match inner.clone().try_into() {
+            Ok(key) => key,
+            Err(e) => {
+                tracing::warn!("Dropping a response whose invariants could not be built: {e}");
                 continue;
             }
+        };
+        occurence_map.entry(key).or_insert_with(|| (0, i)).0 += 1;
+    }
+
+    // Winner: highest occurence, ties broken by lowest original index.
+    occurence_map
+        .into_iter()
+        .max_by(|(_, a), (_, b)| a.0.cmp(&b.0).then(b.1.cmp(&a.1)))
+        .filter(|(_, (count, _))| *count >= min_occurence)
+        .map(|(key, _)| key)
+}
+
+fn find_most_common_invariants_udec(
+    min_occurence: usize,
+    agg_resp: &[UserDecryptionResponse],
+) -> Option<UserDecryptionInvariants> {
+    let iter = agg_resp.iter().map(|resp| resp.payload.as_ref());
+    select_most_common::<_, UserDecryptionInvariants>(min_occurence, iter)
+}
+
+/// Classify a single (untrusted) user-decryption response against the consensus `invariants`.
+///
+/// Mirrors `classify_public_decrypt_response` on the public side: it is **infallible w.r.t. the
+/// response content** — every failure mode is a
+/// typed [`UserDecRejectReason`], never a propagated error, so no single response can abort the
+/// batch.
+///
+/// On success it returns the authenticated response — the (cloned) payload together with its
+/// verification key deserialized once — ready to be un-signcrypted by the client.
+fn classify_user_decrypt_response(
+    trusted_ctx: &UserDecTrustedValidationContext,
+    invariants: &UserDecryptionInvariants,
+    cur_resp: &UserDecryptionResponse,
+) -> Result<AuthenticatedUserDecResponse, UserDecRejectReason> {
+    let Some(cur_payload) = &cur_resp.payload else {
+        tracing::warn!("No payload in current response from server!");
+        return Err(UserDecRejectReason::MissingPayload);
+    };
+
+    // Does this response carry exactly the agreed-upon invariants? This single equality subsumes the
+    // per-slot fhe_type, packing factor, slot count, digest/link and degree checks — they are all
+    // just the fields of `UserDecryptionInvariants`.
+    match UserDecryptionInvariants::try_from(cur_payload.clone()) {
+        Ok(resp_invariants) if &resp_invariants == invariants => {}
+        Ok(_) => {
+            tracing::warn!(
+                "Response from party {} does not match the consensus invariants",
+                cur_payload.party_id
+            );
+            return Err(UserDecRejectReason::FailedValidation);
+        }
+        Err(e) => {
+            tracing::warn!(
+                "Could not build invariants for party {}: {e}",
+                cur_payload.party_id
+            );
+            return Err(UserDecRejectReason::FailedValidation);
         }
     }
 
-    // Turn the values in the hashmap to a vector and sort by occurence.
-    // If there is a tie, we use the original index as tie breaker,
-    // which is why we compare on the occurence and then on the index.
-    // The lower index should come first, which is why we do b.1.cmp(a.1),
-    // to make sure the lowest index is selected in the end using next_back.
-    let first = occurence_map
-        .values()
-        .sorted_by(|a, b| a.0.cmp(&b.0).then(b.1.cmp(&a.1)))
-        .next_back();
-
-    Ok(match first {
-        Some(inner) => {
-            if inner.0 >= min_occurence {
-                Some(inner.1)
-            } else {
-                None
-            }
+    // Authenticate the response (identity + signature). The verified role and verification key
+    // is returned so we can carry it to the client without re-parsing.
+    let eip712_params = Eip712VerificationParams {
+        response_external_signature: &cur_resp.external_signature,
+        response_extra_data: &cur_resp.extra_data,
+        trusted_eip712_domain: trusted_ctx.eip712_domain,
+    };
+    // The deprecated scalar `signature` field carries the raw internal ECDSA
+    // signature over the serialized payload.
+    // TODO(0.16) verify `signatures` and drop the two deprecated fields.
+    let (verification_key, role) = match authenticate_user_decrypt_and_check_meta_data(
+        trusted_ctx,
+        cur_payload,
+        &cur_resp.signature,
+        &eip712_params,
+    ) {
+        Ok(key) => key,
+        Err(e) => {
+            tracing::warn!(
+                "User decryption validation failed for party {} with error: {e:?}",
+                cur_payload.party_id
+            );
+            return Err(UserDecRejectReason::FailedValidation);
         }
-        None => None,
+    };
+
+    Ok(AuthenticatedUserDecResponse {
+        verification_key,
+        role,
+        signcrypted_ciphertexts: cur_payload
+            .signcrypted_ciphertexts
+            .iter()
+            .map(|ct| ct.signcrypted_ciphertext.clone())
+            .collect(),
     })
 }
 
-fn select_most_common_user_dec(
-    min_occurence: usize,
-    agg_resp: &[UserDecryptionResponse],
-) -> Option<UserDecryptionResponsePayload> {
-    let iter = agg_resp.iter().map(|resp| resp.payload.as_ref());
-    let idx = match select_most_common::<_, UserDecryptionResponseInvariants>(min_occurence, iter) {
-        Ok(x) => x,
-        Err(e) => {
-            tracing::error!("Error selecting most common user decryption response: {e}");
-            None
-        }
-    };
-    idx.and_then(|i| agg_resp[i].payload.clone())
-}
-
-/// Validates individual user decryption responses against a majority-vote pivot,
+/// Validates individual user decryption responses against the consensus invariants,
 /// checking metadata consistency, signatures, and degree constraints.
-/// This function only supports thresholds t that is n = 3t + 1,
-/// if n > 3t + 1, then the responses with a party ID that is higher than 3t + 1 are ignored.
 ///
 /// # Arguments
 /// * `trusted_ctx` — Trusted client-side configuration and request.
 /// * `agg_resp` — Untrusted aggregated server responses received over the network.
 ///
 /// # Returns
-/// * `Ok(payloads)` — More than `degree` responses passed validation;
-///   `payloads` contains the verified [`UserDecryptionResponsePayload`]s
-///   (pivot first, then the remaining valid responses).
-///   The caller should check if the list is empty.
+/// * `Ok(verified)` — More than `degree` responses passed validation; `verified` carries the
+///   consensus invariants, the payloads that passed,
+///   and the typed rejections for those that were dropped, so the caller never has to recompute
+///   which responses failed.
 /// * `Err(_)` — An unrecoverable error occurred during validation
-fn validate_user_decrypt_responses(
+///
+/// __NOTE__: Order of responses in `agg_resp` is not preserved in the returned `verified.authenticated` or `verified.rejected` vectors. The caller should not rely on any ordering.
+pub(crate) fn validate_user_decrypt_responses(
     trusted_ctx: &UserDecTrustedValidationContext,
     agg_resp: &[UserDecryptionResponse],
-) -> anyhow::Result<VerifiedUserDecryptionPayloads> {
+) -> anyhow::Result<AuthenticatedUserDecResponses> {
     if agg_resp.is_empty() {
         anyhow::bail!(ERR_VALIDATE_USER_DECRYPTION_NO_RESP);
     }
@@ -324,182 +408,154 @@ fn validate_user_decrypt_responses(
     }
 
     // Pick a pivot response
-    let threshold = trusted_ctx
+    let min_occurence = trusted_ctx
         .threshold
-        .unwrap_or_else(|| (trusted_ctx.server_addresses.len() - 1) / 3); // Note that this is floored division.
-    let min_occurence = threshold
         .checked_add(1)
         .ok_or_else(|| anyhow::anyhow!("Invalid user decryption threshold: overflow"))?; // We need t+1 responses at least to find the pivot response.
-    let pivot_payload = match select_most_common_user_dec(min_occurence, agg_resp) {
+
+    // Select the pivot: `find_most_common_invariants_udec` returns the consensus invariants directly (the
+    // vote key *is* the invariants), so there is no separate "establish from the pivot payload" step.
+    let invariants = match find_most_common_invariants_udec(min_occurence, agg_resp) {
         Some(inner) => inner,
         None => anyhow::bail!("Cannot find user decryption pivot"),
     };
-    let mut resp_parsed_payloads = Vec::with_capacity(agg_resp.len());
-    let mut party_ids = HashSet::new();
-    let mut verification_keys = HashSet::new();
+    invariants.sanity_check(trusted_ctx)?;
 
-    // if the pivot response degree does not match the threshold, we cannot proceed
-    if pivot_payload.degree != threshold as u32 {
-        anyhow::bail!(
-            "Pivot user decrypt responses gave degree {} which does not match expected threshold {} for {} known servers",
-            pivot_payload.degree,
-            threshold,
-            trusted_ctx.server_addresses.len()
-        );
-    }
+    let mut authenticated = HashMap::with_capacity(agg_resp.len());
+    let mut rejected = Vec::new();
 
+    // Sanity check: ensure that no two responses from the same role are accepted.
     for cur_resp in agg_resp {
-        let cur_payload = match &cur_resp.payload {
-            Some(cur_payload) => cur_payload,
-            None => {
-                tracing::warn!("No payload in current response from server!");
-                continue;
+        match classify_user_decrypt_response(trusted_ctx, &invariants, cur_resp) {
+            Ok(authenticated_resp) => {
+                if let std::collections::hash_map::Entry::Vacant(e) =
+                    authenticated.entry(authenticated_resp.role)
+                {
+                    e.insert(authenticated_resp);
+                } else {
+                    tracing::warn!(
+                        "Duplicate response from role {:?} in user decryption, keeping the first one we saw",
+                        authenticated_resp.role
+                    );
+                }
             }
-        };
-
-        // Validate that all the responses agree with the pivot on the static parts of the
-        // response
-        let eip712_params = Eip712VerificationParams {
-            response_external_signature: &cur_resp.external_signature,
-            response_extra_data: &cur_resp.extra_data,
-            trusted_eip712_domain: trusted_ctx.eip712_domain,
-        };
-        // The deprecated scalar `signature` field carries the raw internal ECDSA
-        // signature over the serialized payload.
-        // TODO(0.16) verify `signatures` and drop the two deprecated fields.
-        if let Err(e) = validate_user_decrypt_meta_data_and_signature(
-            trusted_ctx,
-            &pivot_payload,
-            cur_payload,
-            &cur_resp.signature,
-            &eip712_params,
-        ) {
-            tracing::warn!(
-                "User decryption validation failed for party {} with error: {e:?}",
-                cur_payload.party_id
-            );
-            continue;
+            Err(reason) => {
+                rejected.push(RejectedUserDecResponse { role: None, reason });
+            }
         }
-        if pivot_payload.degree != cur_payload.degree {
-            tracing::warn!(
-                "Server with claimed ID {} gave degree {} which is inconsistent with the pivot response {}",
-                cur_payload.party_id,
-                cur_payload.degree,
-                pivot_payload.degree
-            );
-            continue;
-        }
-        // Sanity check the ID of the server.
-        // However, this will not catch all cheating since a server could claim the ID of another server
-        // and we can't know who lies without consulting the verification key to ID mapping on the blockchain.
-        // Furthermore, observe that we assume the optimal threshold is set.
-        if cur_payload.party_id > cur_payload.degree * 3 + 1 {
-            tracing::warn!(
-                "Server claimed ID {} is too large. The largest allowed id {}",
-                cur_payload.party_id,
-                cur_payload.degree * 3 + 1
-            );
-            continue;
-        }
-        if cur_payload.party_id == 0 {
-            tracing::warn!("A server ID is set to 0");
-            continue;
-        }
-        if party_ids.contains(&cur_payload.party_id) {
-            tracing::warn!(
-                "At least two servers gave the same ID {}",
-                cur_payload.party_id,
-            );
-            continue;
-        }
-
-        // Check that verification keys are unique
-        party_ids.insert(cur_payload.party_id);
-        if verification_keys.contains(&cur_payload.verification_key) {
-            tracing::warn!(
-                "At least two servers gave the same verification key {}",
-                hex::encode(&cur_payload.verification_key),
-            );
-            continue;
-        }
-
-        if pivot_payload.signcrypted_ciphertexts.len() != cur_payload.signcrypted_ciphertexts.len()
-        {
-            tracing::warn!(
-                "Server who gave ID {} has different number of ciphertexts than the pivot response {} ",
-                cur_payload.party_id,
-                pivot_payload.party_id
-            );
-            continue;
-        }
-        // Check that the packing factor is consistent across all ciphertexts
-        // Observe that we have already validated the amount of ciphertexts is equal in both the pivot and current payloads.
-        // Hence we can use `zip_eq` to compare the packing factors.
-        if !pivot_payload
-            .signcrypted_ciphertexts
-            .iter()
-            .map(|ct| ct.packing_factor)
-            .zip_eq(
-                cur_payload
-                    .signcrypted_ciphertexts
-                    .iter()
-                    .map(|ct| ct.packing_factor),
-            )
-            .all(|(left, right)| left == right)
-        {
-            tracing::warn!("Inconsistent packing factor for {}", cur_payload.party_id);
-            continue;
-        }
-
-        // only add the verified keys and responses at the end
-        verification_keys.insert(cur_payload.verification_key.clone());
-        resp_parsed_payloads.push(cur_payload.clone());
     }
 
-    if resp_parsed_payloads.len() <= pivot_payload.degree as usize {
+    if authenticated.len() <= invariants.degree {
         anyhow::bail!(ERR_VALIDATE_USER_DECRYPTION_NOT_ENOUGH_RESP);
     }
-    Ok(VerifiedUserDecryptionPayloads(resp_parsed_payloads))
+    Ok(AuthenticatedUserDecResponses {
+        invariants,
+        authenticated: authenticated.into_values().collect(),
+        rejected,
+    })
 }
 
-/// Validates the aggregated user decryption responses received from the servers
-/// against the given user decryption request. Returns the validated responses
-/// mapped to the server ID on success.
-/// This function only supports thresholds t that is n = 3t + 1,
-/// if n > 3t + 1, then the responses with a party ID that is higher than 3t + 1 are ignored.
+/// Consensus metadata for a single signcrypted-ciphertext slot.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct CiphertextSlotInvariant {
+    /// The plaintext type, parsed from `i32` a single time so it is never re-parsed from a
+    /// (potentially adversarial) contribution during reconstruction.
+    pub fhe_type: FheTypes,
+    pub packing_factor: u32,
+    /// The ciphertext handle the response echoes. Not read during reconstruction, but part of the
+    /// consensus (see the manual `Hash` impl): the request `link` already binds the handles, so this
+    /// is redundant, yet kept so the vote groups responses exactly as before.
+    pub external_handle: Vec<u8>,
+}
+
+/// The fields every honest user-decryption response must agree on for a given request.
 ///
-/// # Arguments
-/// * `trusted_ctx` — Trusted client-side configuration and request.
-/// * `agg_resp` — Untrusted aggregated server responses received over the network.
-///
-/// # Returns
-/// * `Ok(Some(payloads))` — All checks passed: individual response validation
-///   succeeded (see [`validate_user_decrypt_responses`]) **and** the pivot
-///   response's digest matches the expected link derived from the client request,
-///   confirming the responses correspond to the original request.
-/// * `Ok(None)` — The responses were individually valid but the request-linkage
-///   check failed (digest mismatch), meaning the responses do not belong to
-///   the given request.
-/// * `Err(_)` — An unrecoverable error from individual response validation.
-pub(crate) fn validate_user_decrypt_responses_against_request(
-    trusted_ctx: &UserDecTrustedValidationContext,
-    agg_resp: &[UserDecryptionResponse],
-) -> anyhow::Result<Option<VerifiedUserDecryptionPayloads>> {
-    let resp_parsed = validate_user_decrypt_responses(trusted_ctx, agg_resp)?;
-    if resp_parsed.as_slice().is_empty() {
-        anyhow::bail!("VerifiedUserDecryptionPayloads is empty")
+/// Like `PublicDecryptionInvariants` on the public side, this single type is both the
+/// **majority-vote key** (responses are grouped by it to find the ≥ `t + 1` pivot) and the
+/// **consensus result** read downstream (degree, link, per-slot fhe_type / packing / slot count).
+/// Because `FheTypes` is not `Hash`, `Hash` is implemented by hand (hashing the `fhe_type`
+/// discriminant); the derived `Eq` compares the same fields, so the two stay consistent.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct UserDecryptionInvariants {
+    /// Sharing degree = corruption threshold `t`. Checked `== trusted threshold` during validation.
+    pub degree: usize,
+    /// EIP-712 request link (`digest`); also the signcryption link.
+    pub link: Vec<u8>,
+    /// One entry per signcrypted-ciphertext slot; `slots.len()` is the batch count.
+    pub slots: Vec<CiphertextSlotInvariant>,
+}
+
+impl UserDecryptionInvariants {
+    /// Sanity-check the invariants against the trusted context.
+    pub fn sanity_check(
+        &self,
+        trusted_ctx: &UserDecTrustedValidationContext,
+    ) -> anyhow::Result<()> {
+        let expected_link = compute_link(trusted_ctx.client_request, trusted_ctx.eip712_domain)?;
+        // Compare against the consensus link established from the pivot, not against an individual
+        // response's digest.
+        if expected_link != self.link {
+            anyhow::bail!("The user decryption response is not linked to the correct request");
+        }
+
+        // if the pivot response degree does not match the threshold, we cannot proceed
+        if self.degree != trusted_ctx.threshold {
+            anyhow::bail!(
+                "Pivot user decrypt responses gave degree {} which does not match expected threshold {} for {} known servers",
+                self.degree,
+                trusted_ctx.threshold,
+                trusted_ctx.server_addresses.len()
+            );
+        }
+
+        // The consensus must decrypt at least one ciphertext. Checked once here on the pivot, since the
+        // per-response equality below no longer catches an all-empty consensus.
+        if self.slots.is_empty() {
+            anyhow::bail!("Consensus user decryption response has no ciphertext slots");
+        }
+
+        Ok(())
     }
+}
 
-    let expected_link = compute_link(trusted_ctx.client_request, trusted_ctx.eip712_domain)?;
-
-    // Only index into the pivot if we've checked that the slice is not empty earlier
-    let pivot_resp = &resp_parsed.as_slice()[0];
-    if expected_link != pivot_resp.digest {
-        tracing::warn!("The user decryption response is not linked to the correct request");
-        return Ok(None);
+impl std::hash::Hash for UserDecryptionInvariants {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.degree.hash(state);
+        self.link.hash(state);
+        // `Vec<SlotInvariant>` can't derive `Hash` (`FheTypes` isn't `Hash`), so hash the slots by
+        // hand. `FheTypes` is `#[repr(i32)]` and its `Eq` is by discriminant, so hashing `as i32`
+        // is consistent with the derived `Eq`.
+        self.slots.len().hash(state);
+        for slot in &self.slots {
+            (slot.fhe_type as i32).hash(state);
+            slot.packing_factor.hash(state);
+            slot.external_handle.hash(state);
+        }
     }
+}
 
-    Ok(Some(resp_parsed))
+impl TryFrom<UserDecryptionResponsePayload> for UserDecryptionInvariants {
+    type Error = anyhow::Error;
+
+    /// Build the consensus invariants (and the majority-vote key) from a response payload. The
+    /// per-slot `fhe_type` is parsed from `i32` here; during voting a response whose `fhe_type`
+    /// fails to parse is simply skipped from the tally (see [`select_most_common`]).
+    fn try_from(value: UserDecryptionResponsePayload) -> anyhow::Result<Self> {
+        let mut slots = Vec::with_capacity(value.signcrypted_ciphertexts.len());
+        for ct in value.signcrypted_ciphertexts {
+            let fhe_type = ct.fhe_type()?;
+            slots.push(CiphertextSlotInvariant {
+                fhe_type,
+                packing_factor: ct.packing_factor,
+                external_handle: ct.external_handle,
+            });
+        }
+        Ok(Self {
+            degree: value.degree as usize,
+            link: value.digest,
+            slots,
+        })
+    }
 }
 
 #[cfg(test)]
@@ -525,24 +581,23 @@ mod tests {
             },
         },
         dummy_domain,
-        engine::base::sign_user_decryption_result,
-        engine::validation_wasm::{
-            ERR_EXT_USER_DECRYPTION_SIG_VERIFICATION_FAILURE,
-            ERR_VALIDATE_USER_DECRYPTION_ID_NOT_FOUND, ERR_VALIDATE_USER_DECRYPTION_NO_RESP,
-            ERR_VALIDATE_USER_DECRYPTION_WRONG_ADDRESS,
+        engine::{
+            base::sign_user_decryption_result,
+            validation::ERR_VALIDATE_USER_DECRYPTION_MISMATCH_EXTRA_DATA,
+            validation_wasm::{
+                ERR_EXT_USER_DECRYPTION_SIG_VERIFICATION_FAILURE,
+                ERR_VALIDATE_USER_DECRYPTION_ID_NOT_FOUND, ERR_VALIDATE_USER_DECRYPTION_NO_RESP,
+                ERR_VALIDATE_USER_DECRYPTION_WRONG_ADDRESS,
+                authenticate_user_decrypt_and_check_meta_data, find_most_common_invariants_udec,
+            },
         },
     };
 
     use super::{
-        DSEP_USER_DECRYPTION, ERR_VALIDATE_USER_DECRYPTION_BAD_FHETYPE_LENGTH,
-        ERR_VALIDATE_USER_DECRYPTION_DIGEST_MISMATCH,
-        ERR_VALIDATE_USER_DECRYPTION_FHETYPE_MISMATCH,
-        ERR_VALIDATE_USER_DECRYPTION_MISMATCH_EXTRA_DATA,
-        ERR_VALIDATE_USER_DECRYPTION_MISSING_SIGNATURE,
+        DSEP_USER_DECRYPTION, ERR_VALIDATE_USER_DECRYPTION_MISSING_SIGNATURE,
         ERR_VALIDATE_USER_DECRYPTION_NOT_ENOUGH_RESP, Eip712VerificationParams,
-        UserDecTrustedValidationContext, check_ext_user_decryption_signature,
-        select_most_common_user_dec, validate_user_decrypt_meta_data_and_signature,
-        validate_user_decrypt_responses, validate_user_decrypt_responses_against_request,
+        UserDecTrustedValidationContext, UserDecryptionInvariants,
+        check_ext_user_decryption_signature, validate_user_decrypt_responses,
     };
 
     /// Helper method to be removed in 0.16 when the external signature is no longer used in production.
@@ -782,106 +837,17 @@ mod tests {
         )
         .unwrap();
 
-        let trusted_ctx = UserDecTrustedValidationContext {
-            server_addresses: &server_addresses,
-            client_request: &client_request,
-            eip712_domain: &dummy_domain,
-            threshold: None,
-        };
+        let trusted_ctx = UserDecTrustedValidationContext::new(
+            &server_addresses,
+            &client_request,
+            &dummy_domain,
+            None,
+        )
+        .unwrap();
 
-        // incorrect length
-        {
-            let other_resp = UserDecryptionResponsePayload {
-                verification_key: bc2wrap::serialize(&pks[&1]).unwrap(),
-                digest: vec![1, 2, 3, 4],
-                signcrypted_ciphertexts: vec![], // the ciphertext is just an empty vector
-                party_id: 1,
-                degree: 1,
-            };
-            let params = Eip712VerificationParams {
-                response_external_signature: &external_signature,
-                response_extra_data: &extra_data,
-                trusted_eip712_domain: &dummy_domain,
-            };
-            assert!(
-                validate_user_decrypt_meta_data_and_signature(
-                    &trusted_ctx,
-                    &pivot_resp,
-                    &other_resp,
-                    &[], // the ECDSA signature may be empty, thus we check the external one
-                    &params,
-                )
-                .unwrap_err()
-                .to_string()
-                .contains(ERR_VALIDATE_USER_DECRYPTION_BAD_FHETYPE_LENGTH)
-            );
-        }
-
-        // mismatch type
-        {
-            let other_resp = UserDecryptionResponsePayload {
-                verification_key: bc2wrap::serialize(&pks[&1]).unwrap(),
-                digest: vec![1, 2, 3, 4],
-                signcrypted_ciphertexts: vec![TypedSigncryptedCiphertext {
-                    fhe_type: tfhe::FheTypes::Uint8 as i32, // in the pivot the type is 1
-                    signcrypted_ciphertext: vec![1, 2, 3, 4],
-                    external_handle: ciphertext_handle.clone(),
-                    packing_factor: 1,
-                }],
-                party_id: 1,
-                degree: 1,
-            };
-            let params = Eip712VerificationParams {
-                response_external_signature: &external_signature,
-                response_extra_data: &extra_data,
-                trusted_eip712_domain: &dummy_domain,
-            };
-            assert!(
-                validate_user_decrypt_meta_data_and_signature(
-                    &trusted_ctx,
-                    &pivot_resp,
-                    &other_resp,
-                    &[], // the ECDSA signature may be empty, thus we check the external one
-                    &params,
-                )
-                .unwrap_err()
-                .to_string()
-                .contains(ERR_VALIDATE_USER_DECRYPTION_FHETYPE_MISMATCH)
-            );
-        }
-
-        // digest mismatch
-        {
-            let other_resp = UserDecryptionResponsePayload {
-                verification_key: bc2wrap::serialize(&pks[&1]).unwrap(),
-                digest: vec![1, 2, 3, 4, 5], // the digest should be [1, 2, 3, 4]
-                signcrypted_ciphertexts: vec![TypedSigncryptedCiphertext {
-                    fhe_type: tfhe::FheTypes::Uint4 as i32,
-                    signcrypted_ciphertext: vec![1, 2, 3, 4],
-                    external_handle: ciphertext_handle.clone(),
-                    packing_factor: 1,
-                }],
-                party_id: 1,
-                degree: 1,
-            };
-            let params = Eip712VerificationParams {
-                response_external_signature: &external_signature,
-                response_extra_data: &extra_data,
-                trusted_eip712_domain: &dummy_domain,
-            };
-            assert!(
-                validate_user_decrypt_meta_data_and_signature(
-                    &trusted_ctx,
-                    &pivot_resp,
-                    &other_resp,
-                    &[], // the ECDSA signature may be empty, thus we check the external one
-                    &params,
-                )
-                .unwrap_err()
-                .to_string()
-                .contains(ERR_VALIDATE_USER_DECRYPTION_DIGEST_MISMATCH)
-            );
-        }
+        // Consensus-agreement checks (fhe type length / mismatch, digest mismatch) are no longer
+        // done here — they are a single `UserDecryptionInvariants` equality in
+        // `classify_user_decrypt_response`, exercised via `test_validate_user_decrypt_responses`.
 
         // no signatures are provided
         {
@@ -891,9 +857,8 @@ mod tests {
                 trusted_eip712_domain: &dummy_domain,
             };
             assert!(
-                validate_user_decrypt_meta_data_and_signature(
+                authenticate_user_decrypt_and_check_meta_data(
                     &trusted_ctx,
-                    &pivot_resp,
                     &pivot_resp,
                     &[], // the ECDSA signature may be empty, thus we check the external one
                     &params,
@@ -914,9 +879,8 @@ mod tests {
                 trusted_eip712_domain: &dummy_domain,
             };
             assert!(
-                validate_user_decrypt_meta_data_and_signature(
+                authenticate_user_decrypt_and_check_meta_data(
                     &trusted_ctx,
-                    &pivot_resp,
                     &other_resp,
                     &[],
                     &params,
@@ -927,7 +891,27 @@ mod tests {
             );
         }
 
-        // if the ID does not match with the claimed address, return error
+        // no signatures are provided
+        {
+            let params = Eip712VerificationParams {
+                response_external_signature: &[],
+                response_extra_data: &extra_data,
+                trusted_eip712_domain: &dummy_domain,
+            };
+            assert!(
+                authenticate_user_decrypt_and_check_meta_data(
+                    &trusted_ctx,
+                    &pivot_resp,
+                    &[], // the ECDSA signature may be empty, thus we check the external one
+                    &params,
+                )
+                .unwrap_err()
+                .to_string()
+                .contains(ERR_VALIDATE_USER_DECRYPTION_MISSING_SIGNATURE)
+            );
+        }
+
+        // if the ID is changed to something that does not exist, return error
         {
             let mut other_resp = pivot_resp.clone();
             other_resp.party_id = 2; // originally the ID is 1
@@ -937,9 +921,8 @@ mod tests {
                 trusted_eip712_domain: &dummy_domain,
             };
             assert!(
-                validate_user_decrypt_meta_data_and_signature(
+                authenticate_user_decrypt_and_check_meta_data(
                     &trusted_ctx,
-                    &pivot_resp,
                     &other_resp,
                     &[],
                     &params,
@@ -962,9 +945,8 @@ mod tests {
                 trusted_eip712_domain: &dummy_domain,
             };
             assert!(
-                validate_user_decrypt_meta_data_and_signature(
+                authenticate_user_decrypt_and_check_meta_data(
                     &trusted_ctx,
-                    &pivot_resp,
                     &pivot_resp,
                     &signature_buf,
                     &params,
@@ -982,9 +964,8 @@ mod tests {
                 response_extra_data: &extra_data,
                 trusted_eip712_domain: &dummy_domain,
             };
-            validate_user_decrypt_meta_data_and_signature(
+            authenticate_user_decrypt_and_check_meta_data(
                 &trusted_ctx,
-                &pivot_resp,
                 &pivot_resp,
                 &[], // the ECDSA signature may be empty, thus we check the external one
                 &params,
@@ -1002,9 +983,8 @@ mod tests {
                 response_extra_data: &extra_data,
                 trusted_eip712_domain: &dummy_domain,
             };
-            validate_user_decrypt_meta_data_and_signature(
+            authenticate_user_decrypt_and_check_meta_data(
                 &trusted_ctx,
-                &pivot_resp,
                 &pivot_resp,
                 &signature_buf,
                 &params,
@@ -1055,17 +1035,20 @@ mod tests {
             vec![],
         );
 
-        let trusted_ctx = UserDecTrustedValidationContext {
-            server_addresses: &server_addresses,
-            client_request: &client_request,
-            eip712_domain: &dummy_domain,
-            threshold: None,
-        };
+        let trusted_ctx = UserDecTrustedValidationContext::new(
+            &server_addresses,
+            &client_request,
+            &dummy_domain,
+            None,
+        )
+        .unwrap();
+
+        let digest = compute_link(&client_request, &dummy_domain).unwrap();
 
         let resp1 = {
             let payload0 = UserDecryptionResponsePayload {
                 verification_key: bc2wrap::serialize(&pks[&1]).unwrap(),
-                digest: vec![1, 2, 3, 4],
+                digest: digest.clone(),
                 signcrypted_ciphertexts: vec![TypedSigncryptedCiphertext {
                     fhe_type: tfhe::FheTypes::Uint4 as i32,
                     signcrypted_ciphertext: vec![1, 2, 3, 4],
@@ -1095,7 +1078,7 @@ mod tests {
         let resp2 = {
             let payload = UserDecryptionResponsePayload {
                 verification_key: bc2wrap::serialize(&pks[&2]).unwrap(),
-                digest: vec![1, 2, 3, 4],
+                digest: digest.clone(),
                 signcrypted_ciphertexts: vec![TypedSigncryptedCiphertext {
                     fhe_type: tfhe::FheTypes::Uint4 as i32,
                     signcrypted_ciphertext: vec![1, 2, 3, 4],
@@ -1125,7 +1108,7 @@ mod tests {
         let resp3 = {
             let payload = UserDecryptionResponsePayload {
                 verification_key: bc2wrap::serialize(&pks[&3]).unwrap(),
-                digest: vec![1, 2, 3, 4],
+                digest: digest.clone(),
                 signcrypted_ciphertexts: vec![TypedSigncryptedCiphertext {
                     fhe_type: tfhe::FheTypes::Uint4 as i32,
                     signcrypted_ciphertext: vec![1, 2, 3, 4],
@@ -1155,7 +1138,7 @@ mod tests {
         let resp4 = {
             let payload = UserDecryptionResponsePayload {
                 verification_key: bc2wrap::serialize(&pks[&4]).unwrap(),
-                digest: vec![1, 2, 3, 4],
+                digest: digest.clone(),
                 signcrypted_ciphertexts: vec![TypedSigncryptedCiphertext {
                     fhe_type: tfhe::FheTypes::Uint4 as i32,
                     signcrypted_ciphertext: vec![1, 2, 3, 4],
@@ -1272,6 +1255,23 @@ mod tests {
             );
         }
 
+        // one response has a mismatching fhe_type, so it is dropped by the invariants equality
+        // (exercises the per-slot fhe_type comparison that used to live in the meta-data validator)
+        {
+            let mut bad_resp2 = resp2.clone();
+            bad_resp2.payload.as_mut().unwrap().signcrypted_ciphertexts[0].fhe_type =
+                tfhe::FheTypes::Uint8 as i32; // the others are Uint4
+            let agg_resp = vec![resp1.clone(), bad_resp2, resp3.clone()];
+
+            assert_eq!(
+                validate_user_decrypt_responses(&trusted_ctx, &agg_resp)
+                    .unwrap()
+                    .as_slice()
+                    .len(),
+                2
+            );
+        }
+
         // degree (0) does not match threshold (1) for 4 parties, so we must get an error
         {
             let mut bad_resp3 = resp3.clone();
@@ -1331,10 +1331,12 @@ mod tests {
             );
         };
 
+        let digest = compute_link(&client_request, &dummy_domain).unwrap();
+
         // sanity check the closure passes with the correct arguments
         {
             let result = std::panic::catch_unwind(|| {
-                run_with_customized_resp2(3, vec![1, 2, 3, 4], &pks[&3], 1);
+                run_with_customized_resp2(3, digest.clone(), &pks[&3], 1);
             });
             assert!(result.is_err());
         }
@@ -1346,28 +1348,28 @@ mod tests {
 
         // invalid party ID (too big)
         {
-            run_with_customized_resp2(10, vec![1, 2, 3, 4], &pks[&3], 1);
+            run_with_customized_resp2(10, digest.clone(), &pks[&3], 1);
         }
 
         // invalid party ID (cannot be 0)
         {
-            run_with_customized_resp2(0, vec![1, 2, 3, 4], &pks[&3], 1);
+            run_with_customized_resp2(0, digest.clone(), &pks[&3], 1);
         }
 
         // invalid party ID (same as another party)
         {
-            run_with_customized_resp2(1, vec![1, 2, 3, 4], &pks[&3], 1);
+            run_with_customized_resp2(1, digest.clone(), &pks[&3], 1);
         }
 
         // invalid packing factor
         {
-            run_with_customized_resp2(3, vec![1, 2, 3, 4], &pks[&3], 2);
+            run_with_customized_resp2(3, digest.clone(), &pks[&3], 2);
         }
 
         // invalid verification key
         {
             let (vk, _sk) = gen_sig_keys(&mut rng);
-            run_with_customized_resp2(3, vec![1, 2, 3, 4], &vk, 1);
+            run_with_customized_resp2(3, digest.clone(), &vk, 1);
         }
 
         // not enough correct responses: exactly `degree` valid ones should error
@@ -1386,6 +1388,22 @@ mod tests {
             );
         }
 
+        // Duplicate party IDs: resp1 and bad_resp2 have the same party ID, so only 1 valid response is counted
+        // resp2 is valid, so we should have 2 valid responses in total, which is enough for degree=1
+        {
+            let mut bad_resp2 = resp2.clone();
+            bad_resp2.payload.as_mut().unwrap().party_id = 1; // same as resp1
+            let agg_resp = vec![resp1.clone(), bad_resp2, resp2.clone()];
+
+            assert_eq!(
+                validate_user_decrypt_responses(&trusted_ctx, &agg_resp)
+                    .unwrap()
+                    .as_slice()
+                    .len(),
+                2
+            );
+        }
+
         // happy path
         {
             let agg_resp = vec![resp1.clone(), resp2.clone(), resp3.clone()];
@@ -1400,7 +1418,7 @@ mod tests {
     }
 
     #[test]
-    fn test_validate_user_decrypt_responses_against_request() {
+    fn test_validate_user_decrypt_responses_bis() {
         let mut rng = AesRng::seed_from_u64(0);
         let (vk1, sk1) = gen_sig_keys(&mut rng);
         let (vk2, sk2) = gen_sig_keys(&mut rng);
@@ -1518,31 +1536,28 @@ mod tests {
                 dummy_domain.verifying_contract.unwrap(),
                 vec![],
             );
-            let bad_ctx = UserDecTrustedValidationContext {
-                server_addresses: &server_addresses,
-                client_request: &bad_client_request,
-                eip712_domain: &dummy_domain,
-                threshold: None,
-            };
-            assert!(
-                validate_user_decrypt_responses_against_request(&bad_ctx, &agg_resp)
-                    .unwrap()
-                    .is_none()
-            );
+            let bad_ctx = UserDecTrustedValidationContext::new(
+                &server_addresses,
+                &bad_client_request,
+                &dummy_domain,
+                None,
+            )
+            .unwrap();
+            assert!(validate_user_decrypt_responses(&bad_ctx, &agg_resp).is_err());
         }
 
         // happy path
         {
             let agg_resp = vec![resp0.clone(), resp1.clone()];
-            let trusted_ctx = UserDecTrustedValidationContext {
-                server_addresses: &server_addresses,
-                client_request: &client_request,
-                eip712_domain: &dummy_domain,
-                threshold: None,
-            };
+            let trusted_ctx = UserDecTrustedValidationContext::new(
+                &server_addresses,
+                &client_request,
+                &dummy_domain,
+                None,
+            )
+            .unwrap();
             assert_eq!(
-                validate_user_decrypt_responses_against_request(&trusted_ctx, &agg_resp)
-                    .unwrap()
+                validate_user_decrypt_responses(&trusted_ctx, &agg_resp)
                     .unwrap()
                     .as_slice()
                     .len(),
@@ -1585,7 +1600,7 @@ mod tests {
                 .iter_mut()
                 .for_each(|x| x.signcrypted_ciphertexts[0].packing_factor = 2);
             let agg_resp = vec![resp0.clone(), resp1.clone()];
-            assert_eq!(select_most_common_user_dec(2, &agg_resp), None);
+            assert_eq!(find_most_common_invariants_udec(2, &agg_resp), None);
         }
 
         // two responses, second response has modified fhe_type
@@ -1596,7 +1611,7 @@ mod tests {
                 .iter_mut()
                 .for_each(|x| x.signcrypted_ciphertexts[0].fhe_type = 2);
             let agg_resp = vec![resp0.clone(), resp1.clone()];
-            assert_eq!(select_most_common_user_dec(2, &agg_resp), None);
+            assert_eq!(find_most_common_invariants_udec(2, &agg_resp), None);
         }
 
         // two responses, second response has modified handle
@@ -1607,7 +1622,7 @@ mod tests {
                 .iter_mut()
                 .for_each(|x| x.signcrypted_ciphertexts[0].external_handle = vec![42]);
             let agg_resp = vec![resp0.clone(), resp1.clone()];
-            assert_eq!(select_most_common_user_dec(2, &agg_resp), None);
+            assert_eq!(find_most_common_invariants_udec(2, &agg_resp), None);
         }
 
         // two responses, second response has modified degree
@@ -1615,7 +1630,7 @@ mod tests {
             let mut resp1 = resp0.clone();
             resp1.payload.iter_mut().for_each(|x| x.degree = 2);
             let agg_resp = vec![resp0.clone(), resp1.clone()];
-            assert_eq!(select_most_common_user_dec(2, &agg_resp), None);
+            assert_eq!(find_most_common_invariants_udec(2, &agg_resp), None);
         }
 
         // two responses, second response has modified digest
@@ -1626,7 +1641,7 @@ mod tests {
                 .iter_mut()
                 .for_each(|x| x.digest = vec![9, 9, 9, 9]);
             let agg_resp = vec![resp0.clone(), resp1.clone()];
-            assert_eq!(select_most_common_user_dec(2, &agg_resp), None);
+            assert_eq!(find_most_common_invariants_udec(2, &agg_resp), None);
         }
 
         // two responses, no modification
@@ -1634,8 +1649,8 @@ mod tests {
             let resp1 = resp0.clone();
             let agg_resp = vec![resp0.clone(), resp1.clone()];
             assert_eq!(
-                select_most_common_user_dec(2, &agg_resp),
-                resp0.payload.clone()
+                find_most_common_invariants_udec(2, &agg_resp),
+                Some(UserDecryptionInvariants::try_from(resp0.payload.clone().unwrap()).unwrap())
             );
         }
 
@@ -1667,7 +1682,7 @@ mod tests {
         // three responses, but does not exceed threshold, we should have None
         {
             let agg_resp = vec![resp0.clone(), resp1.clone(), resp2.clone()];
-            assert_eq!(select_most_common_user_dec(3, &agg_resp), None);
+            assert_eq!(find_most_common_invariants_udec(3, &agg_resp), None);
         }
 
         // three responses where the second response is modified field that's unrelated to the hashmap key
@@ -1676,8 +1691,8 @@ mod tests {
             resp1.external_signature = vec![1, 2, 3, 4];
             let agg_resp = vec![resp0.clone(), resp1, resp2.clone()];
             assert_eq!(
-                select_most_common_user_dec(2, &agg_resp),
-                resp0.payload.clone()
+                find_most_common_invariants_udec(2, &agg_resp),
+                Some(UserDecryptionInvariants::try_from(resp0.payload.clone().unwrap()).unwrap())
             );
         }
     }
@@ -1760,17 +1775,17 @@ mod tests {
                 }
             };
 
-        let digest = vec![1, 2, 3, 4];
+        let digest = compute_link(&client_request, &dummy_domain).unwrap();
 
         // Test 1: happy path with threshold=Some(1), all 5 responses valid.
-        // Note: party_id 5 is filtered because degree=1 means max party_id is degree*3+1=4.
         {
-            let trusted_ctx = UserDecTrustedValidationContext {
-                server_addresses: &server_addresses,
-                client_request: &client_request,
-                eip712_domain: &dummy_domain,
-                threshold: Some(1),
-            };
+            let trusted_ctx = UserDecTrustedValidationContext::new(
+                &server_addresses,
+                &client_request,
+                &dummy_domain,
+                Some(1),
+            )
+            .unwrap();
             let agg_resp: Vec<_> = (1..=5)
                 .map(|i| make_resp(i, sks[i as usize - 1], digest.clone()))
                 .collect();
@@ -1780,19 +1795,20 @@ mod tests {
                     .unwrap()
                     .as_slice()
                     .len(),
-                4
+                5
             );
         }
 
         // Test 2: all responses have different digests, no 2 match;
         // threshold=Some(1) means min_occurence=2, so pivot selection fails
         {
-            let trusted_ctx = UserDecTrustedValidationContext {
-                server_addresses: &server_addresses,
-                client_request: &client_request,
-                eip712_domain: &dummy_domain,
-                threshold: Some(1),
-            };
+            let trusted_ctx = UserDecTrustedValidationContext::new(
+                &server_addresses,
+                &client_request,
+                &dummy_domain,
+                Some(1),
+            )
+            .unwrap();
             let agg_resp = vec![
                 make_resp(1, &sk1, vec![1, 1, 1, 1]),
                 make_resp(2, &sk2, vec![2, 2, 2, 2]),
