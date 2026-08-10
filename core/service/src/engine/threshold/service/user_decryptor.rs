@@ -382,7 +382,7 @@ impl<
         };
 
         let domain = domain.clone();
-        spawn_compute_bound(move || {
+        let signed = spawn_compute_bound(move || {
             sign_user_decryption_result(
                 &signcryption_key.signing_key,
                 &signing_schemes,
@@ -393,7 +393,8 @@ impl<
             )
         })
         .await
-        .map_err(|e| anyhow!("Failed to run signing task for user decryption {req_id}: {e}"))?
+        .map_err(|e| anyhow!("Failed to run signing task for user decryption {req_id}: {e}"))?;
+        signed.map_err(|e| anyhow!("Failed to sign user decryption {req_id}: {e}"))
     }
 
     #[cfg(test)]
