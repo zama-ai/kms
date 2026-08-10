@@ -436,6 +436,13 @@ impl CoreMetrics {
             .inc();
     }
 
+    /// Current value of `kms_operations_total` for `operation`.
+    pub fn request_counter_value(&self, operation: impl AsRef<str>) -> u64 {
+        self.request_counter
+            .with_label_values(&[operation.as_ref()])
+            .get()
+    }
+
     pub fn increment_error_counter(&self, operation: impl AsRef<str>, error: impl AsRef<str>) {
         self.error_counter
             .with_label_values(&[operation.as_ref(), error.as_ref()])
@@ -1167,6 +1174,18 @@ mod tests {
         assert!(
             !operation_values.iter().any(|v| v == "_test_spoofed"),
             "a TAG_OPERATION_TYPE tag must not override the operation_type label"
+        );
+    }
+
+    #[test]
+    fn request_counter_value_tracks_increments() {
+        assert_eq!(METRICS.request_counter_value("_test_counter_unused"), 0);
+
+        let before = METRICS.request_counter_value("_test_counter_op");
+        METRICS.increment_request_counter("_test_counter_op");
+        assert_eq!(
+            METRICS.request_counter_value("_test_counter_op"),
+            before + 1
         );
     }
 

@@ -168,12 +168,14 @@ impl<
             .map_err(|e| e.into())
     }
 
+    // NOTE: unlike other endpoints, the decryption counters are incremented inside the
+    // implementations rather than here, so that async/sync endpoints share metric handling.
+
     #[tracing::instrument(skip(self, request))]
     async fn user_decrypt(
         &self,
         request: Request<kms_grpc::kms::v1::UserDecryptionRequest>,
     ) -> Result<Response<Empty>, Status> {
-        METRICS.increment_request_counter(OP_USER_DECRYPT_REQUEST);
         user_decrypt_impl(self, request).await.map_err(|e| e.into())
     }
 
@@ -182,7 +184,6 @@ impl<
         &self,
         request: Request<v1::RequestId>,
     ) -> Result<Response<kms_grpc::kms::v1::UserDecryptionResponse>, Status> {
-        METRICS.increment_request_counter(OP_USER_DECRYPT_RESULT);
         get_user_decryption_result_impl(self, request)
             .await
             .map_err(|e| e.into())
@@ -193,7 +194,6 @@ impl<
         &self,
         request: Request<kms_grpc::kms::v1::UserDecryptionRequest>,
     ) -> Result<Response<kms_grpc::kms::v1::UserDecryptionResponse>, Status> {
-        METRICS.increment_request_counter(OP_USER_DECRYPT_SYNC);
         user_decrypt_sync_impl(self, request)
             .await
             .map_err(|e| e.into())
@@ -204,7 +204,6 @@ impl<
         &self,
         request: Request<kms_grpc::kms::v1::PublicDecryptionRequest>,
     ) -> Result<Response<Empty>, Status> {
-        METRICS.increment_request_counter(OP_PUBLIC_DECRYPT_REQUEST);
         public_decrypt_impl(self, request)
             .await
             .map_err(|e| e.into())
@@ -215,7 +214,6 @@ impl<
         &self,
         request: Request<v1::RequestId>,
     ) -> Result<Response<kms_grpc::kms::v1::PublicDecryptionResponse>, Status> {
-        METRICS.increment_request_counter(OP_PUBLIC_DECRYPT_RESULT);
         get_public_decryption_result_impl(self, request)
             .await
             .map_err(|e| e.into())
@@ -226,7 +224,6 @@ impl<
         &self,
         request: Request<kms_grpc::kms::v1::PublicDecryptionRequest>,
     ) -> Result<Response<kms_grpc::kms::v1::PublicDecryptionResponse>, Status> {
-        METRICS.increment_request_counter(OP_PUBLIC_DECRYPT_SYNC);
         public_decrypt_sync_impl(self, request)
             .await
             .map_err(|e| e.into())

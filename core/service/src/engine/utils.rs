@@ -546,12 +546,6 @@ impl MetricedError {
         self.error_code
     }
 
-    /// Re-attribute this error to another operation metric.
-    pub(crate) fn retag(mut self, op_metric: &'static str) -> Self {
-        self.op_metric = op_metric;
-        self
-    }
-
     /// Consume an error that the caller expected and has already accounted for, without recording
     /// it.
     pub(crate) fn defuse(mut self) {
