@@ -5,7 +5,6 @@ use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use strum_macros::EnumIs;
 use threshold_execution::endpoints::decryption::DecryptionMode;
-use threshold_execution::online::preprocessing::redis::RedisConf;
 use threshold_networking::{
     grpc::CoreToCoreNetworkConfig,
     tls::{ReleasePCRValues, extract_subject_from_cert},
@@ -39,7 +38,6 @@ pub struct ThresholdPartyConf {
 
     pub dec_capacity: usize,
     pub min_dec_cache: usize,
-    pub preproc_redis: Option<RedisConf>,
     pub num_sessions_preproc: Option<u16>,
     // NOTE: eventually the peer list will be removed in favor of context
     #[validate(nested)]

@@ -178,10 +178,6 @@ data:
         {{- end }}
       {{- end }}
 
-      {{- if .Values.redis.enabled -}}
-    [threshold.preproc_redis]
-    host = {{ .Values.redis.host | quote }}
-      {{- end }}
     {{ end }}
 
     [telemetry]

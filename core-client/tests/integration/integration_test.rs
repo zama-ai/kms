@@ -149,7 +149,6 @@ fn build_test_core_config(
             my_id: Some(my_id),
             dec_capacity: 100,
             min_dec_cache: 10,
-            preproc_redis: None,
             num_sessions_preproc: Some(2),
             peers: Some(peers),
             core_to_core_net: None,

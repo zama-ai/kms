@@ -32,7 +32,7 @@ use threshold_execution::endpoints::reshare_sk::SecureReshareSecretKeys;
 use threshold_execution::{
     endpoints::keygen::SecureOnlineDistributedKeyGen128,
     online::preprocessing::{
-        DKGPreprocessing, create_memory_factory, create_redis_factory,
+        DKGPreprocessing, create_memory_factory,
         orchestration::producer_traits::SecureSmallProducerFactory,
     },
     small_execution::prss::RobustSecurePrssInit,
@@ -666,13 +666,9 @@ where
         Ok(())
     });
 
-    // If no RedisConf is provided, we just use in-memory storage for storing preprocessing materials
-    let preproc_factory = match &threshold_config.preproc_redis {
-        None => create_memory_factory(),
-        Some(conf) => {
-            create_redis_factory(format!("REDIS_{}", base_kms.verf_key().address()), conf)
-        }
-    };
+    // Create a factory for producing preprocessing material,
+    // the only backend available in production is the in-memory one.
+    let preproc_factory = create_memory_factory();
 
     let num_sessions_preproc = threshold_config
         .num_sessions_preproc

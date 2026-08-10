@@ -6,9 +6,7 @@ use algebra::{
 };
 use observability::telemetry::make_span;
 use std::sync::Arc;
-use threshold_execution::online::preprocessing::{
-    PreprocessorFactory, create_memory_factory, create_redis_factory,
-};
+use threshold_execution::online::preprocessing::{PreprocessorFactory, create_memory_factory};
 use threshold_networking::constants::NETWORK_TIMEOUT_LONG;
 use threshold_networking::grpc::{GrpcNetworkingManager, GrpcServer, TlsExtensionGetter};
 use threshold_types::role::Role;
@@ -45,10 +43,7 @@ where
     let networking = Arc::new(GrpcNetworkingManager::new(tls_conf, settings.net_conf)?);
     let networking_server = networking.new_server(TlsExtensionGetter::TlsConnectInfo);
 
-    let factory = match &settings.redis {
-        None => create_memory_factory::<EXTENSION_DEGREE>(),
-        Some(conf) => create_redis_factory::<EXTENSION_DEGREE>(format!("{my_role}"), conf),
-    };
+    let factory = create_memory_factory::<EXTENSION_DEGREE>();
 
     // create a server that uses TLS
     // if [try_use_tls] is true and settings.certpaths is not None

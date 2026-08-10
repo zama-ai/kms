@@ -66,7 +66,6 @@ threshold-execution = { workspace = true, features = ["testing"] }
 threshold-bgv.workspace = true
 paste.workspace = true
 rayon.workspace = true
-redis.workspace = true
 thread-handles.workspace = true
 test-utils.workspace = true
 tfhe-zk-pok = { workspace = true, features = ["experimental"] }
