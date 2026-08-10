@@ -1,9 +1,7 @@
+use crate::anyhow_error_and_log;
 use crate::client::client_wasm::Client;
-use crate::cryptography::signatures::{PublicSigKey, Signature, internal_verify_sig};
-use crate::engine::validation::DSEP_PUBLIC_DECRYPTION;
 use crate::engine::validation::PublicDecTrustedValidationContext;
 use crate::engine::validation::validate_public_decrypt_responses_against_request;
-use crate::{anyhow_error_and_log, some_or_err};
 use alloy_sol_types::Eip712Domain;
 use kms_grpc::identifiers::ContextId;
 use kms_grpc::kms::v1::{PublicDecryptionRequest, PublicDecryptionResponse, TypedCiphertext};
@@ -76,8 +74,6 @@ impl Client {
         min_agree_count: u32,
         agg_resp: &[PublicDecryptionResponse],
     ) -> anyhow::Result<Vec<TypedPlaintext>> {
-        use crate::engine::validation::select_most_common_public_dec;
-
         let eip712_domain = match &request {
             Some(req) => Some(optional_protobuf_to_alloy_domain(req.domain.as_ref())?),
             None => None,
@@ -91,53 +87,26 @@ impl Client {
             None => vec![],
         };
         let extra_data = request.as_ref().map(|req| req.extra_data.as_slice());
-        let trusted_ctx = PublicDecTrustedValidationContext {
-            server_pks: self.get_server_pks()?,
-            eip712_domain: eip712_domain.as_ref(),
-            ext_handles_bytes: &ext_handles_bytes,
+        let trusted_ctx = PublicDecTrustedValidationContext::new(
+            self.get_server_pks()?,
+            eip712_domain.as_ref(),
+            &ext_handles_bytes,
             extra_data,
-            request: request.as_ref(),
-        };
-        validate_public_decrypt_responses_against_request(&trusted_ctx, min_agree_count, agg_resp)?;
-
-        let pivot_payload = some_or_err(
-            select_most_common_public_dec(min_agree_count as usize, agg_resp),
-            "No elements in public decryption response".to_string(),
+            request.as_ref(),
         )?;
 
-        for cur_resp in agg_resp {
-            let cur_payload = some_or_err(
-                cur_resp.payload.to_owned(),
-                "No payload in current response!".to_string(),
-            )?;
-            // The deprecated scalar `signature` field carries the raw internal
-            // ECDSA signature over the serialized payload.
-            // TODO(0.16) verify `signatures` and drop the two deprecated fields.
-            if cur_resp.signature.is_empty() {
-                // [validate_public_decrypt_responses_against_request] above has already
-                // ensured that at least `min_agree_count` validly signed responses agree
-                // with the pivot selected below, so a response that carries no signature
-                // can simply be skipped here.
-                tracing::warn!("Response carries no ECDSA signature to verify!");
-                continue;
-            }
-            let sig =
-                Signature::from_ecdsa(k256::ecdsa::Signature::from_slice(&cur_resp.signature)?);
+        // Partition the untrusted responses and enforce the majority threshold. Partitioning is
+        // infallible w.r.t. any individual response's content — a Byzantine party can only land
+        // itself in `rejected` — so a single malformed signature or verification key can not
+        // abort the whole decryption.
+        // The plaintext result is a consensus value read from the established
+        // invariants, never from one contribution.
+        let partitioned = validate_public_decrypt_responses_against_request(
+            &trusted_ctx,
+            min_agree_count,
+            agg_resp,
+        )?;
 
-            // Observe that it has already been verified in [self.validate_meta_data] that server
-            // verification key is in the set of permissible keys
-            let cur_verf_key: PublicSigKey =
-                bc2wrap::deserialize_slice(&cur_payload.verification_key)?;
-            internal_verify_sig(
-                &DSEP_PUBLIC_DECRYPTION,
-                &bc2wrap::serialize(&cur_payload)?,
-                &sig,
-                &cur_verf_key,
-            )
-            .inspect_err(|e| {
-                tracing::warn!("Signature on received response is not valid! {}", e);
-            })?;
-        }
-        Ok(pivot_payload.plaintexts)
+        Ok(partitioned.invariants.plaintexts)
     }
 }

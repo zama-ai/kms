@@ -45,12 +45,35 @@ pub(crate) const DSEP_PUBLIC_DECRYPTION: DomainSep = *b"PUBL_DEC";
 /// The expectation is that no unvalidated data coming from e.g., the network should be used in this type.
 /// All fields MUST originate from the client's own configuration or some trusted source.
 pub(crate) struct PublicDecTrustedValidationContext<'a> {
-    pub server_pks: &'a HashMap<u32, PublicSigKey>,
-    pub eip712_domain: Option<&'a Eip712Domain>,
-    pub ext_handles_bytes: &'a [Vec<u8>],
-    #[allow(unused)]
-    pub extra_data: Option<&'a [u8]>,
-    pub request: Option<&'a PublicDecryptionRequest>,
+    server_pks: &'a HashMap<u32, PublicSigKey>,
+    eip712_domain: Option<&'a Eip712Domain>,
+    ext_handles_bytes: &'a [Vec<u8>],
+    extra_data: Option<&'a [u8]>,
+    request: Option<&'a PublicDecryptionRequest>,
+}
+
+impl<'a> PublicDecTrustedValidationContext<'a> {
+    pub fn new(
+        server_pks: &'a HashMap<u32, PublicSigKey>,
+        eip712_domain: Option<&'a Eip712Domain>,
+        ext_handles_bytes: &'a [Vec<u8>],
+        extra_data: Option<&'a [u8]>,
+        request: Option<&'a PublicDecryptionRequest>,
+    ) -> anyhow::Result<Self> {
+        // Sanity check uniqueness of server public keys. This is a trusted context, so if the server keys are not unique, it is a configuration error.
+        let unique_keys: HashSet<&PublicSigKey> = server_pks.values().collect();
+        if unique_keys.len() != server_pks.len() {
+            anyhow::bail!("Duplicate server public keys found in trusted validation context");
+        }
+
+        Ok(Self {
+            server_pks,
+            eip712_domain,
+            ext_handles_bytes,
+            extra_data,
+            request,
+        })
+    }
 }
 
 const ERR_VALIDATE_PUBLIC_DECRYPTION_EMPTY_CTS: &str =
@@ -410,149 +433,374 @@ pub(crate) fn verify_user_decrypt_eip712(
     Ok(domain)
 }
 
-/// This function checks that the digest in [other_resp] matches [pivot_resp],
-/// [other_resp] contains one of the valid [server_pks] and the signature
-/// is correct with respect to this key.
+/// Check that a single (untrusted) public-decryption `response` agrees with the established
+/// consensus [`PublicDecryptionInvariants`] on the static parts of the payload (request id and
+/// plaintexts) and carries a valid signature from one of the trusted `server_pks`.
 ///
 /// Note that `eip712_params` needs to be optional because for some tests, e.g.,
 /// when the core-client just tried to query for a decryption result without knowing the
 /// original request, we will not have EIP-712 parameters.
 /// See the call `get_public_decrypt_responses` in core-client/src/lib.rs.
+///
+/// This function is **infallible with respect to the (untrusted) response
+/// content**: any malformed field — an unparseable signature, a payload that fails to serialize — is
+/// treated exactly like a mismatch and yields `false`, never an error. This is
+/// what lets [`partition_public_decrypt_responses`] tolerate up to `t` Byzantine
+/// responses without a single one being able to abort the whole validation.
+///
+/// `verification_key` is the response's key, already deserialized by the caller
+/// ([`classify_public_decrypt_response`]) so it is not parsed twice.
 fn validate_public_decrypt_meta_data(
     ext_handles_bytes: &[Vec<u8>],
-    pivot_resp: &PublicDecryptionResponsePayload,
-    other_resp: &PublicDecryptionResponsePayload,
+    invariants: &PublicDecryptionInvariants,
+    response: &PublicDecryptionResponsePayload,
+    verification_key: &PublicSigKey,
     signature: &[u8],
     eip712_params: Option<&Eip712VerificationParams>,
-) -> anyhow::Result<bool> {
-    if pivot_resp.request_id != other_resp.request_id {
+) -> bool {
+    // The response must be bound to the same request as the consensus. `invariants.request_id` is
+    // the parsed link established from the pivot; parse the (untrusted) response's id the same way,
+    // treating an unparseable id as a mismatch.
+    let response_request_id: Option<RequestId> = match &response.request_id {
+        Some(id) => match id.try_into() {
+            Ok(parsed) => Some(parsed),
+            Err(e) => {
+                tracing::warn!("Could not parse request ID in public decryption response: {e}");
+                return false;
+            }
+        },
+        None => None,
+    };
+    if invariants.request_id != response_request_id {
         tracing::warn!(
-            "Response from server with verification key {:?} gave request ID {:?}, whereas the pivot server gave request ID {:?}, and its verification key is {:?}",
-            pivot_resp.verification_key,
-            pivot_resp.request_id,
-            other_resp.request_id,
-            other_resp.verification_key
+            "Response from server with verification key {:?} gave request ID {:?}, whereas the consensus request ID is {:?}",
+            response.verification_key,
+            response_request_id,
+            invariants.request_id,
         );
-        return Ok(false);
+        return false;
     }
 
     // the plaintexts should match
-    if pivot_resp.plaintexts != other_resp.plaintexts {
-        tracing::warn!("Plaintext does not match the pivot.");
-        return Ok(false);
+    if invariants.plaintexts != response.plaintexts {
+        tracing::warn!("Plaintext does not match the consensus.");
+        return false;
     }
 
-    let sig = Signature::from_ecdsa(k256::ecdsa::Signature::from_slice(signature)?);
-
-    // TODO: Need to update this to a safer deserialization (which checks versions) with #2781 ?
-    let cur_verf_key: PublicSigKey = bc2wrap::deserialize_slice(&other_resp.verification_key)?;
+    let sig = match k256::ecdsa::Signature::from_slice(signature) {
+        Ok(sig) => Signature::from_ecdsa(sig),
+        Err(e) => {
+            tracing::warn!("Could not parse signature in public decryption response: {e}");
+            return false;
+        }
+    };
 
     // NOTE that we cannot use `BaseKmsStruct::verify_sig`
     // because `BaseKmsStruct` cannot be compiled for wasm (it has an async mutex).
-    if internal_verify_sig(
-        &DSEP_PUBLIC_DECRYPTION,
-        &bc2wrap::serialize(&other_resp)?,
-        &sig,
-        // TODO: Need to update this to a safer deserialization (which checks versions) with #2781 ?
-        &cur_verf_key,
-    )
-    .is_err()
-    {
+    let payload = match bc2wrap::serialize(&response) {
+        Ok(payload) => payload,
+        Err(e) => {
+            tracing::warn!("Could not serialize public decryption response: {e}");
+            return false;
+        }
+    };
+
+    if internal_verify_sig(&DSEP_PUBLIC_DECRYPTION, &payload, &sig, verification_key).is_err() {
         tracing::warn!("Signature on received public decryption response is not valid!");
-        return Ok(false);
+        return false;
     }
 
     // Verify the external (EIP-712) signature if params are provided
     if let Some(params) = eip712_params {
         if params.response_external_signature.is_empty() {
             tracing::warn!("External signature is empty!");
-            return Ok(false);
+            return false;
         }
-        let message = compute_public_decryption_message(
+        let message = match compute_public_decryption_message(
             ext_handles_bytes,
-            &other_resp.plaintexts,
+            &response.plaintexts,
             params.response_extra_data,
-        )?;
+        ) {
+            Ok(msg) => msg,
+            Err(e) => {
+                tracing::warn!("Failed to compute public decryption message: {e}");
+                return false;
+            }
+        };
         match recover_address_from_ext_signature(
             &message,
             params.trusted_eip712_domain,
             params.response_external_signature,
         ) {
             Ok(recovered_addr) => {
-                let expected_addr = cur_verf_key.address();
+                let expected_addr = verification_key.address();
                 if recovered_addr != expected_addr {
                     tracing::warn!(
                         "External signature address mismatch: recovered {} but expected {}",
                         recovered_addr,
                         expected_addr
                     );
-                    return Ok(false);
+                    return false;
                 }
             }
             Err(e) => {
                 tracing::warn!("Failed to recover address from external signature: {e}");
-                return Ok(false);
+                return false;
             }
         }
     }
 
-    Ok(true)
+    true
 }
 
-/// Fields in [PublicDecryptionResponsePayload] that should remain the same
-/// for the same request.
-#[derive(Hash, PartialEq, Eq)]
-struct PublicDecryptionResponseInvariants {
-    request_id: Option<RequestId>,
-    plaintexts: Vec<TypedPlaintext>,
+/// The fields every honest public-decryption response must agree on for a given request.
+///
+/// This single type plays both roles: it is the **majority-vote key** (responses are grouped by it
+/// to find the ≥ `t + 1` pivot) *and* the **consensus result** read downstream — so the invariants
+/// literally *are* what the servers voted on. In public decryption every party returns the same,
+/// already-reconstructed plaintext, so the result *is* one of the invariants; there is no share
+/// reconstruction to perform. All downstream reads of "what the servers agreed on" come from here,
+/// never from an individual (untrusted) response.
+#[derive(Debug, Clone, Hash, PartialEq, Eq)]
+pub(crate) struct PublicDecryptionInvariants {
+    /// The agreed-upon decrypted plaintexts: a consensus value (≥ `t + 1` servers returned it),
+    /// not a per-party read. This is the public-decryption result.
+    pub plaintexts: Vec<TypedPlaintext>,
+    /// The request link every agreeing response is bound to; the yardstick each response is
+    /// classified against (so classification compares against the consensus, never against another
+    /// untrusted response).
+    pub request_id: Option<RequestId>,
 }
 
-impl TryFrom<PublicDecryptionResponsePayload> for PublicDecryptionResponseInvariants {
+impl PublicDecryptionInvariants {
+    /// Sanity-check the invariants against the trusted context.
+    fn sanity_check(&self, trusted_ctx: &PublicDecTrustedValidationContext) -> anyhow::Result<()> {
+        let Some(req) = trusted_ctx.request else {
+            tracing::warn!(ERR_VALIDATE_PUBLIC_DECRYPTION_EMPTY_REQUEST);
+            return Ok(());
+        };
+
+        // The consensus plaintext count must match the number of ciphertexts the client asked to
+        // decrypt. This is a property of the (majority-backed) consensus, so a mismatch is a genuine
+        // hard error rather than something a minority of adversaries can induce.
+        if req.ciphertexts.len() != self.plaintexts.len() {
+            return Err(anyhow_error_and_log(
+                ERR_VALIDATE_PUBLIC_DECRYPTION_BAD_CT_COUNT,
+            ));
+        }
+
+        for (ct, pt) in req.ciphertexts.iter().zip_eq(self.plaintexts.iter()) {
+            if ct.fhe_type != pt.fhe_type {
+                return Err(anyhow_error_and_log(
+                    ERR_VALIDATE_PUBLIC_DECRYPTION_BAD_FHE_TYPE,
+                ));
+            }
+        }
+
+        // `invariants.request_id` is the parsed consensus link; compare it to the client's own request
+        // id (parsing the request's — a failure there is a client-side error, not adversarial).
+        match (&req.request_id, &self.request_id) {
+            (Some(expected), Some(actual)) => {
+                let expected: RequestId = expected.try_into()?;
+                if &expected != actual {
+                    return Err(anyhow_error_and_log(
+                        ERR_VALIDATE_PUBLIC_DECRYPTION_BAD_LINK,
+                    ));
+                }
+            }
+            _ => {
+                return Err(anyhow_error_and_log(
+                    ERR_VALIDATE_PUBLIC_DECRYPTION_MISSING_REQ_ID,
+                ));
+            }
+        }
+
+        Ok(())
+    }
+}
+
+impl TryFrom<PublicDecryptionResponsePayload> for PublicDecryptionInvariants {
     type Error = anyhow::Error;
     fn try_from(value: PublicDecryptionResponsePayload) -> anyhow::Result<Self> {
         Ok(Self {
-            request_id: match value.request_id.clone() {
+            request_id: match &value.request_id {
                 Some(id) => Some(id.try_into()?),
                 None => None,
             },
-            plaintexts: value.plaintexts.clone(),
+            plaintexts: value.plaintexts,
         })
     }
 }
 
-pub(crate) fn select_most_common_public_dec(
-    min_occurence: usize,
-    agg_resp: &[PublicDecryptionResponse],
-) -> Option<PublicDecryptionResponsePayload> {
-    let iter = agg_resp.iter().map(|resp| resp.payload.as_ref());
-    let idx = match crate::engine::validation::select_most_common::<
-        _,
-        PublicDecryptionResponseInvariants,
-    >(min_occurence, iter)
-    {
-        Ok(x) => x,
-        Err(e) => {
-            tracing::error!("Error selecting most common public decryption response: {e}");
-            None
-        }
-    };
-    idx.and_then(|i| agg_resp[i].payload.clone())
+/// A public-decryption response that matched the invariants and carried a valid signature from a
+/// known, unique server. Only the *count* of accepted responses matters (it must reach the
+/// agreement threshold), so this carries no payload.
+#[derive(Debug)]
+pub(crate) struct AcceptedPublicResponse;
+
+/// Why a response was placed in the `rejected` bucket. Typed so rejections are log- and
+/// test-friendly rather than silently dropped.
+#[derive(Debug)]
+pub(crate) enum PublicRejectReason {
+    MissingPayload,
+    MissingRequestId,
+    ExtraDataMismatch,
+    MalformedVerificationKey,
+    UnknownOrDuplicateVerificationKey,
+    MetadataOrSignatureMismatch,
+    SlotCountMismatch,
 }
 
-/// Pick the pivot as the first response and call [validate_dec_meta_data]
-/// on every response. Additionally, ensure that verification keys are unique.
+#[derive(Debug)]
+pub(crate) struct RejectedPublicResponse {
+    pub reason: PublicRejectReason,
+}
+
+/// Result of partitioning untrusted public-decryption responses against invariants established
+/// from the majority pivot. Construction is infallible w.r.t. the *content* of any individual
+/// response: a malformed/inconsistent response lands in `rejected`, never propagated as an error.
+#[derive(Debug)]
+pub(crate) struct PartitionedPublicResponses {
+    pub invariants: PublicDecryptionInvariants,
+    pub accepted: Vec<AcceptedPublicResponse>,
+    pub rejected: Vec<RejectedPublicResponse>,
+}
+
+pub(crate) fn find_most_common_invariants_pubdec(
+    min_occurence: usize,
+    agg_resp: &[PublicDecryptionResponse],
+) -> Option<PublicDecryptionInvariants> {
+    let iter = agg_resp.iter().map(|resp| resp.payload.as_ref());
+    // `select_most_common` returns the winning invariants key directly (the vote key *is* the
+    // consensus result for public decryption), so there is nothing to re-derive from a payload.
+    crate::engine::validation::select_most_common::<_, PublicDecryptionInvariants>(
+        min_occurence,
+        iter,
+    )
+}
+
+/// Classify a single (untrusted) public-decryption response against the majority pivot.
+///
+/// This is **infallible w.r.t. the response content**: every failure mode is a typed
+/// [`PublicRejectReason`], never a propagated error.
+/// A malformed verification key (previously `deserialize_slice(..)?`) and any signature /
+/// metadata problem yield a rejection and do not abort the whole batch.
+fn classify_public_decrypt_response(
+    trusted_ctx: &PublicDecTrustedValidationContext,
+    invariants: &PublicDecryptionInvariants,
+    cur_resp: &PublicDecryptionResponse,
+    verification_keys: &mut HashSet<PublicSigKey>,
+) -> Result<AcceptedPublicResponse, PublicRejectReason> {
+    let cur_payload = match &cur_resp.payload {
+        Some(cur_payload) => cur_payload,
+        None => {
+            tracing::warn!("No payload in current public decryption response from server!");
+            return Err(PublicRejectReason::MissingPayload);
+        }
+    };
+    if cur_payload.request_id.is_none() {
+        tracing::warn!("A request ID must be present!");
+        return Err(PublicRejectReason::MissingRequestId);
+    }
+    if let Some(expected_extra_data) = trusted_ctx.extra_data
+        && cur_resp.extra_data != expected_extra_data
+    {
+        tracing::warn!("Extra data mismatch in public decryption!");
+        return Err(PublicRejectReason::ExtraDataMismatch);
+    }
+    // TODO: Need to update this to a safer deserialization (which checks versions) with #2781 ?
+    let cur_verf_key: PublicSigKey = match bc2wrap::deserialize_slice(&cur_payload.verification_key)
+    {
+        Ok(key) => key,
+        Err(e) => {
+            // A single party sending a malformed verification key must not abort validation of
+            // all responses: reject it like every other bad response.
+            tracing::warn!(
+                "Could not deserialize verification key {} in public decryption response: {e}",
+                hex::encode(&cur_payload.verification_key),
+            );
+            return Err(PublicRejectReason::MalformedVerificationKey);
+        }
+    };
+    let mut found_new_verf_key = false;
+    // Validate the verf key
+    for (cur_id, key_to_check_against) in trusted_ctx.server_pks {
+        if key_to_check_against == &cur_verf_key {
+            if verification_keys.contains(&cur_verf_key) {
+                tracing::warn!(
+                    "Verification key {} for server {} has already been found. This means at least two servers are using the same verification key, which should not happen!",
+                    hex::encode(&cur_payload.verification_key),
+                    cur_id
+                );
+            } else {
+                found_new_verf_key = true;
+            }
+            // We found the key so break the inner loop
+            break;
+        }
+    }
+    if !found_new_verf_key {
+        tracing::warn!(
+            "Verification key {} in public decryption could not be matched with a unique and validated verification key",
+            hex::encode(&cur_payload.verification_key),
+        );
+        return Err(PublicRejectReason::UnknownOrDuplicateVerificationKey);
+    }
+
+    // Validate that all the responses agree with the pivot on the static parts of the
+    // response
+    let eip712_params = trusted_ctx
+        .eip712_domain
+        .map(|domain| Eip712VerificationParams {
+            response_external_signature: &cur_resp.external_signature,
+            response_extra_data: &cur_resp.extra_data,
+            trusted_eip712_domain: domain,
+        });
+    // The deprecated scalar `signature` field carries the raw internal ECDSA
+    // signature over the serialized payload.
+    // TODO(0.16) verify `signatures` and drop the two deprecated fields.
+    if cur_resp.signature.is_empty() {
+        tracing::warn!("Response carries no ECDSA signature to verify!");
+    }
+    if !validate_public_decrypt_meta_data(
+        trusted_ctx.ext_handles_bytes,
+        invariants,
+        cur_payload,
+        &cur_verf_key,
+        &cur_resp.signature,
+        eip712_params.as_ref(),
+    ) {
+        tracing::warn!("Some server did not provide the proper response!");
+        return Err(PublicRejectReason::MetadataOrSignatureMismatch);
+    }
+
+    if invariants.plaintexts.len() != cur_payload.plaintexts.len() {
+        tracing::warn!("Plaintext count mismatch!");
+        return Err(PublicRejectReason::SlotCountMismatch);
+    }
+
+    // add the verified response
+    verification_keys.insert(cur_verf_key);
+    Ok(AcceptedPublicResponse)
+}
+
+/// Partition untrusted public-decryption responses into (accepted, rejected) against invariants
+/// established from the majority pivot.
+///
+/// Infallible w.r.t. adversarial per-response content: any malformed/inconsistent response is
+/// placed in `rejected`, never propagated. Returns `Err` ONLY when the honest invariant set cannot
+/// be established at all: no responses, no configured servers, no pivot with ≥ `t + 1` agreement,
+/// or — when a request is provided — the agreed result does not match the client's own request.
+/// With ≥ `2t + 1` honest responses present, none of those `Err` cases can be triggered by ≤ `t`
+/// adversaries.
 ///
 /// # Arguments
 /// * `trusted_ctx` — Trusted client-side configuration and request.
 /// * `agg_resp` — Untrusted aggregated server responses received over the network.
-///
-/// # Returns
-/// * `Ok(vec![])` — no responses passed verification or there were no responses.
-/// * `Ok(vec![...])` — verified response payloads.
-fn validate_public_decrypt_responses(
+pub(crate) fn partition_public_decrypt_responses(
     trusted_ctx: &PublicDecTrustedValidationContext,
     agg_resp: &[PublicDecryptionResponse],
-) -> anyhow::Result<Vec<PublicDecryptionResponsePayload>> {
+) -> anyhow::Result<PartitionedPublicResponses> {
     if agg_resp.is_empty() {
         anyhow::bail!(ERR_VALIDATE_PUBLIC_DECRYPTION_NO_RESP);
     }
@@ -560,96 +808,50 @@ fn validate_public_decrypt_responses(
         anyhow::bail!("No servers configured in trusted public decryption context");
     }
 
-    // Pick a pivot response
+    // Select the pivot from the majority (≥ t+1 identical invariants). The selector returns the
+    // consensus invariants directly — the vote key *is* the result.
     let min_occurence = (trusted_ctx.server_pks.len() - 1) / 3 + 1; // note that this is floored division
-    let pivot_payload = match select_most_common_public_dec(min_occurence, agg_resp) {
+    let invariants = match find_most_common_invariants_pubdec(min_occurence, agg_resp) {
         Some(inner) => inner,
         None => anyhow::bail!("Cannot find public decryption pivot"),
     };
-    let mut resp_parsed_payloads = Vec::with_capacity(agg_resp.len());
+    invariants.sanity_check(trusted_ctx)?;
+
+    // Classify every response against the invariants.
+    // No single response can abort.
+    let mut accepted = Vec::with_capacity(agg_resp.len());
+    let mut rejected = Vec::new();
     let mut verification_keys = HashSet::new();
     for cur_resp in agg_resp {
-        let cur_payload = match &cur_resp.payload {
-            Some(cur_payload) => cur_payload,
-            None => {
-                tracing::warn!("No payload in current public decryption response from server!");
-                continue;
-            }
-        };
-        if cur_payload.request_id.is_none() {
-            tracing::warn!("A request ID must be present!");
-            continue;
+        match classify_public_decrypt_response(
+            trusted_ctx,
+            &invariants,
+            cur_resp,
+            &mut verification_keys,
+        ) {
+            Ok(accepted_resp) => accepted.push(accepted_resp),
+            Err(reason) => rejected.push(RejectedPublicResponse { reason }),
         }
-        if let Some(expected_extra_data) = trusted_ctx.extra_data
-            && cur_resp.extra_data != expected_extra_data
-        {
-            tracing::warn!("Extra data mismatch in public decryption!");
-            continue;
-        }
-        // TODO: Need to update this to a safer deserialization (which checks versions) with #2781 ?
-        let cur_verf_key: PublicSigKey = bc2wrap::deserialize_slice(&cur_payload.verification_key)?;
-        let mut found_new_verf_key = false;
-        // Validate the verf key
-        for (cur_id, key_to_check_against) in trusted_ctx.server_pks {
-            if key_to_check_against == &cur_verf_key {
-                if verification_keys.contains(&cur_verf_key) {
-                    tracing::warn!(
-                        "Verification key {} for server {} has already been found. This means at least two servers are using the same verification key, which should not happen!",
-                        hex::encode(&cur_payload.verification_key),
-                        cur_id
-                    );
-                } else {
-                    found_new_verf_key = true;
-                }
-                // We found the key so break the inner loop
-                break;
-            }
-        }
-        if !found_new_verf_key {
-            tracing::warn!(
-                "Verification key {} in public decryption could not be matched with a unique and validated verification key",
-                hex::encode(&cur_payload.verification_key),
-            );
-            continue;
-        }
-
-        // Validate that all the responses agree with the pivot on the static parts of the
-        // response
-        let eip712_params = trusted_ctx
-            .eip712_domain
-            .map(|domain| Eip712VerificationParams {
-                response_external_signature: &cur_resp.external_signature,
-                response_extra_data: &cur_resp.extra_data,
-                trusted_eip712_domain: domain,
-            });
-        // The deprecated scalar `signature` field carries the raw internal ECDSA
-        // signature over the serialized payload.
-        // TODO(0.16) verify `signatures` and drop the two deprecated fields.
-        if cur_resp.signature.is_empty() {
-            tracing::warn!("Response carries no ECDSA signature to verify!");
-            continue;
-        }
-        if !validate_public_decrypt_meta_data(
-            trusted_ctx.ext_handles_bytes,
-            &pivot_payload,
-            cur_payload,
-            &cur_resp.signature,
-            eip712_params.as_ref(),
-        )? {
-            tracing::warn!("Some server did not provide the proper response!");
-            continue;
-        }
-
-        if pivot_payload.plaintexts.len() != cur_payload.plaintexts.len() {
-            tracing::warn!("Plaintext count mismatch!");
-            continue;
-        }
-
-        // add the verified response
-        verification_keys.insert(cur_verf_key);
-        resp_parsed_payloads.push(cur_payload.clone());
     }
-    Ok(resp_parsed_payloads)
+
+    let partitioned = PartitionedPublicResponses {
+        invariants,
+        accepted,
+        rejected,
+    };
+    if !partitioned.rejected.is_empty() {
+        tracing::warn!(
+            "Public decryption partition rejected {} of {} response(s): {:?}",
+            partitioned.rejected.len(),
+            agg_resp.len(),
+            partitioned
+                .rejected
+                .iter()
+                .map(|r| &r.reason)
+                .collect::<Vec<_>>(),
+        );
+    }
+    Ok(partitioned)
 }
 
 /// Validates the aggregated decryption response by checking:
@@ -660,6 +862,10 @@ fn validate_public_decrypt_responses(
 /// In addition, if the original request is provided (via `trusted_ctx.request`):
 /// - The response matches the original request
 ///
+/// This is a thin wrapper over [`partition_public_decrypt_responses`] that additionally enforces
+/// the `min_agree_count` majority threshold and returns the resulting partition (whose
+/// `invariants.plaintexts` is the agreed decryption result).
+///
 /// # Arguments
 /// * `trusted_ctx` — Trusted client-side configuration and request.
 /// * `min_agree_count` — Trusted minimum number of agreeing responses required.
@@ -668,61 +874,14 @@ pub(crate) fn validate_public_decrypt_responses_against_request(
     trusted_ctx: &PublicDecTrustedValidationContext,
     min_agree_count: u32,
     agg_resp: &[PublicDecryptionResponse],
-) -> anyhow::Result<()> {
-    let resp_parsed_payloads = validate_public_decrypt_responses(trusted_ctx, agg_resp)?;
-    if resp_parsed_payloads.len() < min_agree_count as usize {
+) -> anyhow::Result<PartitionedPublicResponses> {
+    let partitioned = partition_public_decrypt_responses(trusted_ctx, agg_resp)?;
+    if partitioned.accepted.len() < min_agree_count as usize {
         return Err(anyhow_error_and_log(
             ERR_VALIDATE_PUBLIC_DECRYPTION_NOT_ENOUGH_RESP,
         ));
     }
-
-    match trusted_ctx.request {
-        Some(req) => {
-            let pivot_payload = resp_parsed_payloads[0].clone();
-
-            // NOTE: this error never happen since the number of handles
-            // is checked in `validate_public_decrypt_responses` so when we reach this point
-            // they should all match.
-            if req.ciphertexts.len() != pivot_payload.plaintexts.len() {
-                return Err(anyhow_error_and_log(
-                    ERR_VALIDATE_PUBLIC_DECRYPTION_BAD_CT_COUNT,
-                ));
-            }
-
-            for (ct, pt) in req
-                .ciphertexts
-                .iter()
-                .zip_eq(pivot_payload.plaintexts.iter())
-            {
-                if ct.fhe_type != pt.fhe_type {
-                    return Err(anyhow_error_and_log(
-                        ERR_VALIDATE_PUBLIC_DECRYPTION_BAD_FHE_TYPE,
-                    ));
-                }
-            }
-
-            match (&req.request_id, pivot_payload.request_id) {
-                (Some(expected), Some(actual)) => {
-                    if *expected != actual {
-                        return Err(anyhow_error_and_log(
-                            ERR_VALIDATE_PUBLIC_DECRYPTION_BAD_LINK,
-                        ));
-                    }
-                }
-                _ => {
-                    return Err(anyhow_error_and_log(
-                        ERR_VALIDATE_PUBLIC_DECRYPTION_MISSING_REQ_ID,
-                    ));
-                }
-            }
-
-            Ok(())
-        }
-        None => {
-            tracing::warn!(ERR_VALIDATE_PUBLIC_DECRYPTION_EMPTY_REQUEST);
-            Ok(())
-        }
-    }
+    Ok(partitioned)
 }
 
 #[expect(clippy::type_complexity)]
@@ -1067,8 +1226,8 @@ mod tests {
                 RequestIdParsingErr, parse_grpc_request_id, validate_new_mpc_epoch_request,
             },
             validation_non_wasm::{
-                ERR_VALIDATE_PUBLIC_DECRYPTION_NO_RESP, select_most_common_public_dec,
-                validate_public_decrypt_responses,
+                ERR_VALIDATE_PUBLIC_DECRYPTION_NO_RESP, find_most_common_invariants_pubdec,
+                partition_public_decrypt_responses,
             },
         },
     };
@@ -1151,6 +1310,12 @@ mod tests {
 
         // An unknown scheme is an error.
         assert!(resolve_signing_schemes(&[9999]).is_err());
+    }
+
+    /// The verification key a response carries, deserialized — as `classify_public_decrypt_response`
+    /// does before calling `validate_public_decrypt_meta_data`.
+    fn vk_of(payload: &PublicDecryptionResponsePayload) -> PublicSigKey {
+        bc2wrap::deserialize_slice(&payload.verification_key).unwrap()
     }
 
     #[test]
@@ -1579,16 +1744,21 @@ mod tests {
         };
 
         let pivot_buf = bc2wrap::serialize(&pivot).unwrap();
+        let pivot_inv = pivot.clone().try_into().unwrap();
 
         // use a bad signature (signed with wrong private key)
         {
             let signature = &internal_sign(&DSEP_PUBLIC_DECRYPTION, &pivot_buf, &sk1).unwrap();
             let signature_buf = signature.to_bytes();
 
-            assert!(
-                !validate_public_decrypt_meta_data(&[], &pivot, &pivot, &signature_buf, None,)
-                    .unwrap()
-            );
+            assert!(!validate_public_decrypt_meta_data(
+                &[],
+                &pivot_inv,
+                &pivot,
+                &vk_of(&pivot),
+                &signature_buf,
+                None,
+            ));
         }
 
         // use a bad signature (malformed signature)
@@ -1597,10 +1767,14 @@ mod tests {
             // The signature is malformed because it's using bincode to serialize instead of `signature.to_bytes()`.
             let signature_buf = bc2wrap::serialize(&signature).unwrap();
 
-            assert!(
-                validate_public_decrypt_meta_data(&[], &pivot, &pivot, &signature_buf, None,)
-                    .is_err()
-            );
+            assert!(!validate_public_decrypt_meta_data(
+                &[],
+                &pivot_inv,
+                &pivot,
+                &vk_of(&pivot),
+                &signature_buf,
+                None,
+            ));
         }
 
         // use a bad signature (signing the wrong value)
@@ -1624,10 +1798,14 @@ mod tests {
                 &internal_sign(&DSEP_PUBLIC_DECRYPTION, &bad_value_buf, &sk0).unwrap();
             let bad_signature_buf = bad_signature.to_bytes();
 
-            assert!(
-                !validate_public_decrypt_meta_data(&[], &pivot, &pivot, &bad_signature_buf, None,)
-                    .unwrap()
-            );
+            assert!(!validate_public_decrypt_meta_data(
+                &[],
+                &pivot_inv,
+                &pivot,
+                &vk_of(&pivot),
+                &bad_signature_buf,
+                None,
+            ));
         }
 
         // use a bad response (digest mismatch)
@@ -1650,10 +1828,14 @@ mod tests {
             let signature = &internal_sign(&DSEP_PUBLIC_DECRYPTION, &bad_value_buf, &sk0).unwrap();
             let signature_buf = signature.to_bytes();
 
-            assert!(
-                !validate_public_decrypt_meta_data(&[], &pivot, &bad_value, &signature_buf, None,)
-                    .unwrap()
-            );
+            assert!(!validate_public_decrypt_meta_data(
+                &[],
+                &pivot_inv,
+                &bad_value,
+                &vk_of(&bad_value),
+                &signature_buf,
+                None,
+            ));
         }
 
         // use a bad response (bad validation key)
@@ -1672,10 +1854,14 @@ mod tests {
             let signature = &internal_sign(&DSEP_PUBLIC_DECRYPTION, &bad_value_buf, &sk0).unwrap();
             let signature_buf = signature.to_bytes();
 
-            assert!(
-                !validate_public_decrypt_meta_data(&[], &pivot, &bad_value, &signature_buf, None,)
-                    .unwrap()
-            );
+            assert!(!validate_public_decrypt_meta_data(
+                &[],
+                &pivot_inv,
+                &bad_value,
+                &vk_of(&bad_value),
+                &signature_buf,
+                None,
+            ));
         }
 
         // use a bad response (mismatch plaintext)
@@ -1694,10 +1880,14 @@ mod tests {
             let signature = &internal_sign(&DSEP_PUBLIC_DECRYPTION, &bad_value_buf, &sk0).unwrap();
             let signature_buf = signature.to_bytes();
 
-            assert!(
-                !validate_public_decrypt_meta_data(&[], &pivot, &bad_value, &signature_buf, None,)
-                    .unwrap()
-            );
+            assert!(!validate_public_decrypt_meta_data(
+                &[],
+                &pivot_inv,
+                &bad_value,
+                &vk_of(&bad_value),
+                &signature_buf,
+                None,
+            ));
         }
 
         // happy path
@@ -1705,10 +1895,14 @@ mod tests {
             let signature = &internal_sign(&DSEP_PUBLIC_DECRYPTION, &pivot_buf, &sk0).unwrap();
             let signature_buf = signature.to_bytes(); // NOTE: signatures are not serialized with bincode
 
-            assert!(
-                validate_public_decrypt_meta_data(&[], &pivot, &pivot, &signature_buf, None,)
-                    .unwrap()
-            );
+            assert!(validate_public_decrypt_meta_data(
+                &[],
+                &pivot_inv,
+                &pivot,
+                &vk_of(&pivot),
+                &signature_buf,
+                None,
+            ));
         }
     }
 
@@ -1782,8 +1976,9 @@ mod tests {
             empty_resp.payload = None;
             let mut bad_agg_resp = vec![resp0.clone(), empty_resp];
             assert_eq!(
-                validate_public_decrypt_responses(&trusted_ctx, &bad_agg_resp,)
+                partition_public_decrypt_responses(&trusted_ctx, &bad_agg_resp,)
                     .unwrap()
+                    .accepted
                     .len(),
                 1
             );
@@ -1791,8 +1986,9 @@ mod tests {
             // reverse the aggregate response so the empty one is the first
             bad_agg_resp.reverse();
             assert_eq!(
-                validate_public_decrypt_responses(&trusted_ctx, &bad_agg_resp,)
+                partition_public_decrypt_responses(&trusted_ctx, &bad_agg_resp,)
                     .unwrap()
+                    .accepted
                     .len(),
                 1
             );
@@ -1802,8 +1998,9 @@ mod tests {
         {
             let bad_agg_resp = vec![resp0.clone(), resp0.clone()];
             assert_eq!(
-                validate_public_decrypt_responses(&trusted_ctx, &bad_agg_resp,)
+                partition_public_decrypt_responses(&trusted_ctx, &bad_agg_resp,)
                     .unwrap()
+                    .accepted
                     .len(),
                 1
             );
@@ -1841,8 +2038,9 @@ mod tests {
             };
             let agg_resp = vec![resp0.clone(), bad_resp];
             assert_eq!(
-                validate_public_decrypt_responses(&trusted_ctx, &agg_resp,)
+                partition_public_decrypt_responses(&trusted_ctx, &agg_resp,)
                     .unwrap()
+                    .accepted
                     .len(),
                 1
             );
@@ -1854,8 +2052,9 @@ mod tests {
             bad_resp.extra_data = vec![0];
             let agg_resp = vec![resp0.clone(), bad_resp];
             assert_eq!(
-                validate_public_decrypt_responses(&trusted_ctx, &agg_resp,)
+                partition_public_decrypt_responses(&trusted_ctx, &agg_resp,)
                     .unwrap()
+                    .accepted
                     .len(),
                 1 // instead of 2
             );
@@ -1867,8 +2066,9 @@ mod tests {
             bad_resp.payload.as_mut().unwrap().request_id = None;
             let agg_resp = vec![resp0.clone(), bad_resp];
             assert_eq!(
-                validate_public_decrypt_responses(&trusted_ctx, &agg_resp,)
+                partition_public_decrypt_responses(&trusted_ctx, &agg_resp,)
                     .unwrap()
+                    .accepted
                     .len(),
                 1 // instead of 2
             );
@@ -1878,8 +2078,9 @@ mod tests {
         {
             let agg_resp = vec![resp0.clone(), resp1.clone()];
             assert_eq!(
-                validate_public_decrypt_responses(&trusted_ctx, &agg_resp,)
+                partition_public_decrypt_responses(&trusted_ctx, &agg_resp,)
                     .unwrap()
+                    .accepted
                     .len(),
                 2
             );
@@ -2125,6 +2326,8 @@ mod tests {
         let ext_handles_bytes = vec![vec![1, 2, 3, 4]];
         let extra_data = vec![1, 2, 3, 4];
 
+        let pivot_inv = pivot.clone().try_into().unwrap();
+
         let signed = sign_ecdsa_public_decrypt_result(
             &sk0,
             pivot.clone(),
@@ -2132,6 +2335,7 @@ mod tests {
             extra_data.clone(),
             &alloy_domain,
         );
+
         // NOTE: signatures are not serialized with bincode
         let signature_buf = signed.signature;
         let external_signature = signed.external_signature;
@@ -2140,52 +2344,46 @@ mod tests {
         bad_external_signature[0] ^= 1;
 
         // return false for empty external signature
-        assert!(
-            !validate_public_decrypt_meta_data(
-                &ext_handles_bytes,
-                &pivot,
-                &pivot,
-                &signature_buf,
-                Some(&Eip712VerificationParams {
-                    response_external_signature: &[],
-                    response_extra_data: &extra_data,
-                    trusted_eip712_domain: &alloy_domain,
-                }),
-            )
-            .unwrap()
-        );
+        assert!(!validate_public_decrypt_meta_data(
+            &ext_handles_bytes,
+            &pivot_inv,
+            &pivot,
+            &vk_of(&pivot),
+            &signature_buf,
+            Some(&Eip712VerificationParams {
+                response_external_signature: &[],
+                response_extra_data: &extra_data,
+                trusted_eip712_domain: &alloy_domain,
+            }),
+        ));
 
         // return false for bad external signature
-        assert!(
-            !validate_public_decrypt_meta_data(
-                &ext_handles_bytes,
-                &pivot,
-                &pivot,
-                &signature_buf,
-                Some(&Eip712VerificationParams {
-                    response_external_signature: &bad_external_signature,
-                    response_extra_data: &extra_data,
-                    trusted_eip712_domain: &alloy_domain,
-                }),
-            )
-            .unwrap()
-        );
+        assert!(!validate_public_decrypt_meta_data(
+            &ext_handles_bytes,
+            &pivot_inv,
+            &pivot,
+            &vk_of(&pivot),
+            &signature_buf,
+            Some(&Eip712VerificationParams {
+                response_external_signature: &bad_external_signature,
+                response_extra_data: &extra_data,
+                trusted_eip712_domain: &alloy_domain,
+            }),
+        ));
 
         // happy path
-        assert!(
-            validate_public_decrypt_meta_data(
-                &ext_handles_bytes,
-                &pivot,
-                &pivot,
-                &signature_buf,
-                Some(&Eip712VerificationParams {
-                    response_external_signature: &external_signature,
-                    response_extra_data: &extra_data,
-                    trusted_eip712_domain: &alloy_domain,
-                }),
-            )
-            .unwrap()
-        );
+        assert!(validate_public_decrypt_meta_data(
+            &ext_handles_bytes,
+            &pivot_inv,
+            &pivot,
+            &vk_of(&pivot),
+            &signature_buf,
+            Some(&Eip712VerificationParams {
+                response_external_signature: &external_signature,
+                response_extra_data: &extra_data,
+                trusted_eip712_domain: &alloy_domain,
+            }),
+        ));
     }
 
     #[test]
@@ -2287,7 +2485,7 @@ mod tests {
                 )
             });
             let agg_resp = vec![resp0.clone(), resp1];
-            assert_eq!(select_most_common_public_dec(2, &agg_resp), None);
+            assert_eq!(find_most_common_invariants_pubdec(2, &agg_resp), None);
         }
 
         // two responses, second response has modified plaintext
@@ -2300,7 +2498,7 @@ mod tests {
                 }]
             });
             let agg_resp = vec![resp0.clone(), resp1];
-            assert_eq!(select_most_common_public_dec(2, &agg_resp), None);
+            assert_eq!(find_most_common_invariants_pubdec(2, &agg_resp), None);
         }
 
         // happy path
@@ -2308,8 +2506,8 @@ mod tests {
             let resp1 = resp0.clone();
             let agg_resp = vec![resp0.clone(), resp1];
             assert_eq!(
-                select_most_common_public_dec(2, &agg_resp),
-                resp0.payload.clone()
+                find_most_common_invariants_pubdec(2, &agg_resp),
+                Some(resp0.payload.as_ref().unwrap().clone().try_into().unwrap())
             );
         }
 
@@ -2337,7 +2535,7 @@ mod tests {
         // threshold is too high
         {
             let agg_resp = vec![resp0.clone(), resp1.clone(), resp2.clone()];
-            assert_eq!(select_most_common_public_dec(3, &agg_resp), None);
+            assert_eq!(find_most_common_invariants_pubdec(3, &agg_resp), None);
         }
 
         // second response has a modified field unrelated to the hashmap key
@@ -2346,8 +2544,8 @@ mod tests {
             resp1.signatures = kms_grpc::rpc_types::ecdsa_signatures(vec![2, 2, 2, 2]);
             let agg_resp = vec![resp0.clone(), resp1.clone(), resp2.clone()];
             assert_eq!(
-                select_most_common_public_dec(2, &agg_resp),
-                resp1.payload.clone()
+                find_most_common_invariants_pubdec(2, &agg_resp),
+                Some(resp1.payload.as_ref().unwrap().clone().try_into().unwrap())
             );
         }
     }
