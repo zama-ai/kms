@@ -7,8 +7,9 @@ use crate::engine::traits::{BackupOperator, ContextManager};
 use crate::engine::utils::query_key_material_availability;
 use crate::vault::storage::{Storage, StorageExt};
 use kms_grpc::kms::v1::{
-    self, CustodianRecoveryRequest, Empty, HealthStatusResponse, KeyGenPreprocRequest,
-    KeyGenPreprocResult, KeyMaterialAvailabilityResponse, NodeType, OperatorPublicKey,
+    self, CustodianRecoveryRequest, DestroyMpcContextResponse, Empty, HealthStatusResponse,
+    KeyGenPreprocRequest, KeyGenPreprocResult, KeyMaterialAvailabilityResponse, NodeType,
+    OperatorPublicKey,
 };
 use kms_grpc::kms_service::v1::core_service_endpoint_server::CoreServiceEndpoint;
 use kms_grpc::rpc_types::KMSType;
@@ -24,7 +25,7 @@ use crate::engine::centralized::service::{crs_gen_impl, get_crs_gen_result_impl}
 use crate::engine::centralized::service::{get_key_gen_result_impl, key_gen_impl};
 use crate::engine::centralized::service::{
     get_public_decryption_result_impl, get_user_decryption_result_impl, public_decrypt_impl,
-    user_decrypt_impl,
+    public_decrypt_sync_impl, user_decrypt_impl, user_decrypt_sync_impl,
 };
 #[cfg(feature = "insecure")]
 use crate::engine::utils::MetricedError;
@@ -188,6 +189,17 @@ impl<
     }
 
     #[tracing::instrument(skip(self, request))]
+    async fn user_decrypt_sync(
+        &self,
+        request: Request<kms_grpc::kms::v1::UserDecryptionRequest>,
+    ) -> Result<Response<kms_grpc::kms::v1::UserDecryptionResponse>, Status> {
+        METRICS.increment_request_counter(OP_USER_DECRYPT_SYNC);
+        user_decrypt_sync_impl(self, request)
+            .await
+            .map_err(|e| e.into())
+    }
+
+    #[tracing::instrument(skip(self, request))]
     async fn public_decrypt(
         &self,
         request: Request<kms_grpc::kms::v1::PublicDecryptionRequest>,
@@ -205,6 +217,17 @@ impl<
     ) -> Result<Response<kms_grpc::kms::v1::PublicDecryptionResponse>, Status> {
         METRICS.increment_request_counter(OP_PUBLIC_DECRYPT_RESULT);
         get_public_decryption_result_impl(self, request)
+            .await
+            .map_err(|e| e.into())
+    }
+
+    #[tracing::instrument(skip(self, request))]
+    async fn public_decrypt_sync(
+        &self,
+        request: Request<kms_grpc::kms::v1::PublicDecryptionRequest>,
+    ) -> Result<Response<kms_grpc::kms::v1::PublicDecryptionResponse>, Status> {
+        METRICS.increment_request_counter(OP_PUBLIC_DECRYPT_SYNC);
+        public_decrypt_sync_impl(self, request)
             .await
             .map_err(|e| e.into())
     }
@@ -282,12 +305,16 @@ impl<
     async fn destroy_mpc_context(
         &self,
         request: Request<kms_grpc::kms::v1::DestroyMpcContextRequest>,
-    ) -> Result<Response<Empty>, Status> {
+    ) -> Result<Response<DestroyMpcContextResponse>, Status> {
         METRICS.increment_request_counter(OP_DESTROY_MPC_CONTEXT);
         self.context_manager
             .destroy_mpc_context(request)
             .await
-            .map_err(|e| e.into())
+            .map_err(Status::from)?;
+        // Note that there are no epochs in the centralized case, so we return an empty list of epoch IDs
+        Ok(Response::new(DestroyMpcContextResponse {
+            epoch_ids: Vec::new(),
+        }))
     }
 
     #[tracing::instrument(skip(self, request))]

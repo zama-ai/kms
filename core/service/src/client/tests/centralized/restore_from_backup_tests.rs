@@ -33,6 +33,7 @@ async fn key_gen(
     let preproc_id = derive_request_id(&format!("preproc-for-{:?}", request_id))?;
     let domain_msg = domain_to_msg(&dummy_domain());
     let preproc_req = KeyGenPreprocRequest {
+        signing_schemes: vec![kms_grpc::kms::v1::SigningSchemeType::Ecdsa256k1 as i32],
         request_id: Some(preproc_id.into()),
         params: params as i32,
         keyset_config: None,
@@ -59,6 +60,7 @@ async fn key_gen(
 
     // Key generation
     let keygen_req = KeyGenRequest {
+        signing_schemes: vec![kms_grpc::kms::v1::SigningSchemeType::Ecdsa256k1 as i32],
         request_id: Some((*request_id).into()),
         params: Some(params as i32),
         preproc_id: Some(preproc_id.into()),
@@ -292,6 +294,7 @@ async fn nightly_test_insecure_central_crs_backup() -> Result<()> {
 
     let domain_msg = domain_to_msg(&dummy_domain());
     let req = CrsGenRequest {
+        signing_schemes: vec![],
         request_id: Some(req_id.into()),
         params: FheParameter::Test as i32,
         max_num_bits: Some(16),

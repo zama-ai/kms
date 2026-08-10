@@ -97,16 +97,21 @@ message KeyGenPreprocRequest {
   Eip712DomainMsg domain = 4;
 
   // MPC context ID which is used to identify the context to use for this request.
-  //
-  // NOTE: at the moment this can be None since we do not fully support multiple contexts.
-  // See https://github.com/zama-ai/kms-internal/issues/2530
+  // If unset, the server's default context is used.
   RequestId context_id = 5;
 
-  // The epoch number placeholder (zama-ai/kms-internal#2743).
+  // The epoch ID for the key generation preprocessing, i.e., the shares
+  // produced under this preprocessing will be stored and registered under
+  // this epoch.
   RequestId epoch_id = 6;
 
   // Extra data used in the EIP712 signature - external_signature
   bytes extra_data = 7;
+
+  // The signature schemes to include in the response `signatures` field.
+  // If empty, the response `signatures` list is empty; legacy ECDSA signatures
+  // remain available via the deprecated scalar fields for backward compatibility.
+  repeated SigningSchemeType signing_schemes = 8;
 }
 
 message PartialKeyGenPreprocParams {
@@ -154,7 +159,12 @@ enum CompressedKeyConfig {
 message KeyGenPreprocResult {
   // Preprocessing ID used for keygen
   RequestId preprocessing_id = 1;
+  // DEPRECATED: To be removed in 0.16 TODO(0.16)
   bytes external_signature = 2;
+
+  // Per-scheme KMS signatures, one per scheme requested in the request's
+  // `signing_schemes`.
+  repeated TypedSignature signatures = 3;
 }
 
 // Request for generating new keys under a certain handle and return a URI where
@@ -193,9 +203,7 @@ message KeyGenRequest {
   KeySetAddedInfo keyset_added_info = 6;
 
   // MPC context ID which is used to identify the context to use for this request.
-  //
-  // NOTE: at the moment this can be None since we do not fully support multiple contexts.
-  // See https://github.com/zama-ai/kms-internal/issues/2530
+  // If unset, the server's default context is used.
   RequestId context_id = 7;
 
   // The epoch ID for the key generation, i.e., the shares produced
@@ -204,6 +212,11 @@ message KeyGenRequest {
 
   // Extra data used in the EIP712 signature - external_signature.
   bytes extra_data = 9;
+
+  // The signature schemes to include in the response `signatures` field.
+  // If empty, the response `signatures` list is empty; legacy ECDSA signatures
+  // remain available via the deprecated scalar fields for backward compatibility.
+  repeated SigningSchemeType signing_schemes = 10;
 }
 
 message KeyDigest {
@@ -246,7 +259,12 @@ message KeyGenResult {
   //     /// @notice The digest of the generated key.
   //     bytes digest;
   // }
+  // DEPRECATED: To be removed in 0.16 TODO(0.16)
   bytes external_signature = 4;
+
+  // Per-scheme KMS signatures, one per scheme requested in the request's
+  // `signing_schemes`.
+  repeated TypedSignature signatures = 5;
 }
 
 // Keeping the fields in lowercase is important because
@@ -277,9 +295,7 @@ message CrsGenRequest {
   Eip712DomainMsg domain = 4;
 
   // MPC context ID which is used to identify the context to use for this request.
-  //
-  // NOTE: at the moment this can be None since we do not fully support multiple contexts.
-  // See https://github.com/zama-ai/kms-internal/issues/2530
+  // If unset, the server's default context is used.
   RequestId context_id = 5;
 
   // MPC Epoch ID because we tie all key material to epochs
@@ -288,6 +304,11 @@ message CrsGenRequest {
 
   // Extra data used in the EIP712 signature - external_signature.
   bytes extra_data = 7;
+
+  // The signature schemes to include in the response `signatures` field.
+  // If empty, the response `signatures` list is empty; legacy ECDSA signatures
+  // remain available via the deprecated scalar fields for backward compatibility.
+  repeated SigningSchemeType signing_schemes = 8;
 }
 
 message CrsGenResult {
@@ -311,7 +332,12 @@ message CrsGenResult {
   //     /// @notice The digest of the generated CRS.
   //     bytes crsDigest;
   // }
+  // DEPRECATED: To be removed in 0.16 TODO(0.16)
   bytes external_signature = 4;
+
+  // Per-scheme KMS signatures, one per scheme requested in the request's
+  // `signing_schemes`.
+  repeated TypedSignature signatures = 5;
 }
 
 // This enum tells the KMS how to deserialize ciphertexts.
@@ -323,7 +349,6 @@ enum CiphertextFormat {
   // we can directly decrypt this ciphertext.
   SmallExpanded = 1;
   // Big (128-bit) compressed ciphertexts.
-  // WARNING! currently not supported.
   BigCompressed = 2;
   // Big (128-bit) expanded ciphertexts.
   // This is only useful when doing the second half of
@@ -364,13 +389,17 @@ message PublicDecryptionRequest {
   bytes extra_data = 5;
 
   // MPC context ID which is used to identify the context to use for this request.
-  //
-  // NOTE: at the moment this can be None since we do not fully support multiple contexts.
-  // See https://github.com/zama-ai/kms-internal/issues/2530
+  // If unset, the server's default context is used.
   RequestId context_id = 6;
 
-  // The epoch number placeholder (zama-ai/kms-internal#2743).
+  // The MPC epoch ID identifying which epoch's key material and session to
+  // use for this request.
   RequestId epoch_id = 7;
+
+  // The signature schemes to include in the response `signatures` field.
+  // If empty, the response `signatures` list is empty; legacy ECDSA signatures
+  // remain available via the deprecated scalar fields for backward compatibility.
+  repeated SigningSchemeType signing_schemes = 8;
 }
 
 // KMS-internal Public Decryption Response Payload, containing meta data, plaintexts
@@ -393,11 +422,16 @@ message PublicDecryptionResponsePayload {
 
 // KMS-internal Public Decryption Response
 message PublicDecryptionResponse {
-  // Signature of the serialization of [PublicDecryptionResponsePayload].
+  // DEPRECATED to be removed in 0.16.0 TODO(0.16)
+  // The KMS-internal ECDSA/secp256k1 authenticity signature over
+  // the serialization of [PublicDecryptionResponsePayload]. Kept at field 1 (and
+  // kept populated) for wire backward-compatibility with clients that predate
+  // the multi-scheme `signatures` list.
   bytes signature = 1;
 
-  // the signature on external_decryption_result for the external recipient
-  // (e.g. using EIP712 for fhevm)
+  // The ECDSA/secp256k1 EIP-712 signature on external_decryption_result for the
+  // external recipient (e.g. using EIP712 for fhevm).
+  // DEPRECATED: To be removed in 0.16 TODO(0.16)
   bytes external_signature = 2;
 
   // The payload that is signed
@@ -405,6 +439,10 @@ message PublicDecryptionResponse {
 
   // Extra data used in the EIP712 signature - external_signature.
   bytes extra_data = 4;
+
+  // Per-scheme KMS signatures, one per scheme requested in the request's
+  // `signing_schemes`.
+  repeated TypedSignature signatures = 5;
 }
 
 // Eip712 domain information.
@@ -444,19 +482,28 @@ message UserDecryptionRequest {
   bytes extra_data = 7;
 
   // MPC context ID which is used to identify the context to use for this request.
-  //
-  // NOTE: at the moment this can be None since we do not fully support multiple contexts.
-  // See https://github.com/zama-ai/kms-internal/issues/2530
+  // If unset, the server's default context is used.
   RequestId context_id = 8;
 
-  // The epoch number placeholder (zama-ai/kms-internal#2743).
+  // The MPC epoch ID identifying which epoch's key material and session to
+  // use for this request.
   RequestId epoch_id = 9;
+
+  // The signature schemes to include in the response `signatures` field.
+  // If empty, the response `signatures` list is empty; legacy ECDSA signatures
+  // remain available via the deprecated scalar fields for backward compatibility.
+  repeated SigningSchemeType signing_schemes = 10;
 }
 
 message UserDecryptionResponse {
+  // DEPRECATED to be removed in 0.16.0 TODO(0.16)
+  // The KMS-internal ECDSA/secp256k1 authenticity signature over
+  // the serialization of [UserDecryptionResponsePayload]. Kept at field 1 (and
+  // kept populated) for wire backward-compatibility with clients that predate
+  // the multi-scheme `signatures` list.
   bytes signature = 1;
 
-  // This is the external signature created from the Eip712 domain
+  // This is the external ECDSA signature created from the Eip712 domain
   // on the structure, where userDecryptedShare is bc2wrap::serialize(&payload)
   // struct UserDecryptResponseVerification {
   //     bytes publicKey;
@@ -464,6 +511,7 @@ message UserDecryptionResponse {
   //     bytes userDecryptedShare; // serialization of payload
   //     bytes extraData;
   // }
+  // DEPRECATED: To be removed in 0.16 TODO(0.16)
   bytes external_signature = 2;
 
   // The actual [UserDecryptionResponsePayload].
@@ -471,6 +519,10 @@ message UserDecryptionResponse {
 
   // Extra data used in the EIP712 signature - external_signature.
   bytes extra_data = 4;
+
+  // Per-scheme KMS signatures, one per scheme requested in the request's
+  // `signing_schemes`.
+  repeated TypedSignature signatures = 5;
 }
 
 message UserDecryptionResponsePayload {
@@ -633,10 +685,11 @@ message NewMpcContextRequest {
 // Context information is removed and cannot be used anymore.
 message DestroyMpcContextRequest {
   RequestId context_id = 1;
-  // The epochs associated with this context that must be destroyed together with it. The caller (kms-connector) is the
-  // source of truth for which epochs belong to the context and is responsible for supplying the complete set; the KMS
-  // destroys exactly the epochs listed here. May be empty when the context has no associated epochs.
-  repeated RequestId epoch_ids = 2;
+}
+
+message DestroyMpcContextResponse {
+  // The ID of the epochs destroyed as part of the context.
+  repeated RequestId epoch_ids = 1;
 }
 
 message NewCustodianContextRequest {
@@ -690,8 +743,30 @@ enum PkeSchemeType {
   MLKEM1024 = 1;
 }
 
+// A signing *suite*: the signature algorithm together, which will implicitely also define the serialization approach
+// of the message to sign. 
 enum SigningSchemeType {
-  ECDSA256K1 = 0;
+  // WARNING: only append to this type!
+  // Furthermore, keep these values and their numbering in lock-step with the
+  // `SigningSchemeType` enum in `core/service/src/cryptography/signing/mod.rs`.
+  ECDSA256K1 = 0;   // using eip712
+  ED25519 = 1;      // raw serialization
+  MLDSA44 = 2;      // raw serialization
+  MLDSA65 = 3;      // raw serialization
+  MLDSA87 = 4;      // raw serialization
+}
+
+// A single signature together with the scheme that produced it.
+//
+// Used to carry a chain-native signature for one signing scheme when a response
+// may be signed under several schemes at once (e.g. ECDSA/secp256k1 EIP-712 for
+// an EVM, ed25519 for Solana, ML-DSA for post-quantum).
+message TypedSignature {
+  // The signature scheme that produced `signature`.
+  SigningSchemeType scheme = 1;
+
+  // The raw, scheme-specific signature bytes.
+  bytes signature = 2;
 }
 
 // The request constructed by a KMS to initiate custodian based backup recovery
@@ -699,7 +774,7 @@ message RecoveryRequest {
   // The ephemeral encryption key of the operator used when signcrypting the recovered data during transit to the operator.
   bytes ephem_op_enc_key = 1;
   // The public verification key of the KMS server. MUST be manually validated by custodian
-  bytes operator_verf_key = 2; 
+  bytes operator_verf_key = 2;
   /// The ciphertexts that are the backup. Indexed by the custodian role.
   map<uint64, OperatorBackupOutput> cts = 3;
 }
@@ -778,7 +853,10 @@ message KeyInfo {
   // keyID of the key to be reshared.
   RequestId key_id = 1;
   // Preprocessing ID that was used to generate the key initially
-  // required for the EIP struct
+  // required for the EIP struct.
+  // This must be the preprocessing ID the key was actually generated with: each KMS core
+  // compares it against the preprocessing ID it has stored for the key and rejects the
+  // request with InvalidArgument on a mismatch.
   RequestId preproc_id = 2;
   // Parameters of the key to be reshard
   FheParameter key_parameters = 3;
@@ -815,9 +893,7 @@ message NewMpcEpochRequest {
   // The KMS context of the parties that will receive
   // the shares of the private key at the end of the reshare execution
   RequestId context_id = 1;
-  // The epoch number placeholder (zama-ai/kms-internal#2743).
-  // This is the epochId we reshare the shares from.
-  // Note: currently unused but reserved for future use.
+  // The ID of the new epoch being created by this request.
   RequestId epoch_id = 2;
   // Information about the previous epoch, used to perform resharing.
   // If not set, no keys will exist for the new epoch. (e.g. during init)
@@ -827,6 +903,11 @@ message NewMpcEpochRequest {
   Eip712DomainMsg domain = 4;
   // Extra data used in the EIP712 signature - external_signature - for the newly signed key and CRS info
   bytes extra_data = 5;
+  // The signature schemes to include in the `signatures` field of the reshared
+  // key and CRS results. If empty, those `signatures` lists are empty; legacy
+  // ECDSA signatures remain available via the deprecated scalar fields for
+  // backward compatibility.
+  repeated SigningSchemeType signing_schemes = 6;
 }
 
 message EpochResultResponse {

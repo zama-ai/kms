@@ -546,6 +546,18 @@ impl MetricedError {
         self.error_code
     }
 
+    /// Re-attribute this error to another operation metric.
+    pub(crate) fn retag(mut self, op_metric: &'static str) -> Self {
+        self.op_metric = op_metric;
+        self
+    }
+
+    /// Consume an error that the caller expected and has already accounted for, without recording
+    /// it.
+    pub(crate) fn defuse(mut self) {
+        self.returned = true;
+    }
+
     pub fn internal_err(&self) -> &(dyn std::error::Error + Send + Sync + 'static) {
         &*self.internal_error
     }
@@ -645,6 +657,16 @@ impl From<MetricedError> for Status {
 #[cfg(test)]
 thread_local! {
     static HANDLE_ERROR_CALL_COUNT: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+/// How many errors have been recorded on the current thread so far.
+///
+/// Test-only hook for asserting that a code path does *not* report a failure, which
+/// is the regression guard for control-flow errors that must be defused rather than
+/// dropped (see [`MetricedError::defuse`]).
+#[cfg(test)]
+pub(crate) fn handle_error_call_count() -> usize {
+    HANDLE_ERROR_CALL_COUNT.with(|c| c.get())
 }
 
 /// Serialize an element to a base64 string using safe serialization.
@@ -782,6 +804,7 @@ mod tests {
     impl TestStoredMaterial {
         fn current_metadata(&self) -> KeyGenMetadata {
             KeyGenMetadata::Current(KeyGenMetadataInner {
+                signatures: vec![],
                 key_id: self.key_id,
                 preprocessing_id: self.preproc_id,
                 key_digest_map: self.key_digest_map.clone(),
@@ -814,6 +837,7 @@ mod tests {
                 })
                 .collect();
             KeyGenMetadata::Current(KeyGenMetadataInner {
+                signatures: vec![],
                 key_id: self.key_id,
                 preprocessing_id: self.preproc_id,
                 key_digest_map,
@@ -1028,6 +1052,7 @@ mod tests {
             max_num_bits: 64,
             extra_data: None,
             external_signature: vec![],
+            signatures: vec![],
         });
 
         let entries = HashMap::from_iter([(crs_id, metadata)]);
@@ -1052,6 +1077,7 @@ mod tests {
             max_num_bits: 64,
             extra_data: None,
             external_signature: vec![],
+            signatures: vec![],
         });
 
         let entries = HashMap::from_iter([(crs_id, metadata)]);
@@ -1421,6 +1447,7 @@ mod tests {
 
         let (crs, metadata) = gen_centralized_crs(
             &sk,
+            &[crate::cryptography::signing::SigningSchemeType::Ecdsa256k1],
             &params,
             Some(max_num_bits),
             &domain,

@@ -271,7 +271,7 @@ impl RecoveryValidationMaterial {
             anyhow_error_and_log(format!("Could not serialize inner recovery request: {e:?}"))
         })?;
         let signature = &internal_sign(&DSEP_BACKUP_RECOVERY, &serialized_payload, sk)?;
-        let signature_buf = signature.sig.to_vec();
+        let signature_buf = signature.to_bytes();
         let res = Self {
             payload,
             signature: signature_buf,
@@ -323,7 +323,7 @@ impl RecoveryValidationMaterial {
                 return false;
             }
         };
-        let signature = Signature { sig };
+        let signature = Signature::from_ecdsa(sig);
         match internal_verify_sig(
             &DSEP_BACKUP_RECOVERY,
             &serialized_payload,

@@ -19,8 +19,8 @@ use kms_grpc::{
 use observability::{
     metrics::{self},
     metrics_names::{
-        OP_PUBLIC_DECRYPT_INNER, OP_PUBLIC_DECRYPT_REQUEST, OP_PUBLIC_DECRYPT_RESULT, TAG_PARTY_ID,
-        TAG_PUBLIC_DECRYPTION_KIND, TAG_TFHE_TYPE,
+        OP_PUBLIC_DECRYPT_INNER, OP_PUBLIC_DECRYPT_REQUEST, OP_PUBLIC_DECRYPT_RESULT,
+        OP_PUBLIC_DECRYPT_SYNC, TAG_PARTY_ID, TAG_PUBLIC_DECRYPTION_KIND, TAG_TFHE_TYPE,
     },
 };
 use tfhe::FheTypes;
@@ -37,7 +37,7 @@ use threshold_execution::{
 use threshold_types::session_id::SessionId;
 use tokio::sync::RwLock;
 use tokio_util::task::TaskTracker;
-use tonic::{Request, Response};
+use tonic::{Code, Request, Response};
 use tracing::Instrument;
 
 // === Internal Crate ===
@@ -47,24 +47,24 @@ use crate::{
     cryptography::internal_crypto_types::LegacySerialization,
     engine::{
         base::{
-            BaseKmsStruct, PubDecCallValues, compute_external_pt_signature,
-            deserialize_to_low_level,
+            BaseKmsStruct, PubDecCallValues, deserialize_to_low_level,
+            sign_public_decryption_result,
         },
         threshold::{
             service::session::{ImmutableSessionMaker, validate_context_and_epoch},
             traits::PublicDecryptor,
         },
-        traits::BaseKms,
         utils::MetricedError,
         validation::{
-            DSEP_PUBLIC_DECRYPTION, RequestIdParsingErr, parse_grpc_request_id,
+            RequestIdParsingErr, parse_grpc_request_id, parse_optional_grpc_request_id,
             validate_public_decrypt_req,
         },
     },
     util::{
         meta_store::{
-            MetaStore, add_or_redo_failed_in_meta_store, retrieve_from_meta_store_with_timeout,
-            update_err_req_in_meta_store, update_req_in_meta_store,
+            EntryState, MetaStore, add_or_redo_failed_in_meta_store,
+            retrieve_from_meta_store_with_timeout, update_err_req_in_meta_store,
+            update_req_in_meta_store,
         },
         rate_limiter::RateLimiter,
     },
@@ -286,8 +286,16 @@ impl<
         tracing::info!("{}", format_public_request(&inner));
 
         // Check and extract the parameters from the request in a separate thread
-        let (ciphertexts, req_id, key_id, context_id, epoch_id, eip712_domain, extra_data) =
-            validate_public_decrypt_req(&inner)?;
+        let (
+            ciphertexts,
+            req_id,
+            key_id,
+            context_id,
+            epoch_id,
+            eip712_domain,
+            extra_data,
+            signing_schemes,
+        ) = validate_public_decrypt_req(&inner)?;
         let my_role = validate_context_and_epoch(
             OP_PUBLIC_DECRYPT_REQUEST,
             &self.session_maker,
@@ -325,6 +333,14 @@ impl<
                 Some(req_id),
                 e,
                 tonic::Code::FailedPrecondition,
+            )
+        })?;
+        let server_verf_key = self.base_kms.verf_key().to_legacy_bytes().map_err(|e| {
+            MetricedError::new(
+                OP_PUBLIC_DECRYPT_REQUEST,
+                Some(req_id),
+                anyhow!("Failed to serialize server verification key: {e:?}"),
+                tonic::Code::Internal,
             )
         })?;
 
@@ -573,25 +589,30 @@ impl<
                 .map(|idx| decs.get(idx).unwrap().clone()) // unwrap is fine here, since we iterate over all keys.
                 .collect();
 
-            // Compute expensive signature OUTSIDE the lock
-            let external_sig = {
-                let extra_data = extra_data.clone();
-                let pts = pts.clone();
-                spawn_compute_bound(move || {
-                    compute_external_pt_signature(
-                        &sigkey,
-                        &ext_handles_bytes,
-                        &pts,
-                        &extra_data,
-                        &eip712_domain,
-                    )
-                })
-                .await
+            // Assemble the full response payload here so it is signed once,
+            // from one snapshot, rather than re-signed on every result fetch.
+            let payload = PublicDecryptionResponsePayload {
+                plaintexts: pts,
+                verification_key: server_verf_key,
+                request_id: Some(req_id.into()),
             };
-            let res = match external_sig {
-                Ok(Ok(sig)) => Ok((req_id, pts, sig, extra_data)),
+
+            // Compute expensive signatures OUTSIDE the lock
+            let signed = spawn_compute_bound(move || {
+                sign_public_decryption_result(
+                    &sigkey,
+                    &signing_schemes,
+                    payload,
+                    &ext_handles_bytes,
+                    extra_data,
+                    &eip712_domain,
+                )
+            })
+            .await;
+            let res = match signed {
+                Ok(Ok(values)) => Ok(values),
                 Err(e) | Ok(Err(e)) => Err(format!(
-                    "Failed to compute external signature for decryption request {req_id}: {e:?}"
+                    "Failed to sign decryption result for request {req_id}: {e:?}"
                 )),
             };
 
@@ -613,6 +634,41 @@ impl<
                 .await;
         });
         Ok(Response::new(Empty {}))
+    }
+
+    async fn public_decrypt_sync(
+        &self,
+        request: Request<PublicDecryptionRequest>,
+    ) -> Result<Response<PublicDecryptionResponse>, MetricedError> {
+        let _timer = metrics::METRICS
+            .time_operation(OP_PUBLIC_DECRYPT_SYNC)
+            .start();
+
+        let req_id = parse_optional_grpc_request_id(
+            &request.get_ref().request_id,
+            RequestIdParsingErr::PublicDecRequest,
+        )
+        .map_err(|e| MetricedError::new(OP_PUBLIC_DECRYPT_SYNC, None, e, Code::InvalidArgument))?;
+
+        let should_start = match self.pub_dec_meta_store.read().await.retrieve(&req_id) {
+            None => true,                           // fresh request ID
+            Some(EntryState::Done(Err(_))) => true, // previously failed, redo it under the same ID
+            Some(EntryState::Done(Ok(_))) => false, // already succeeded, return the stored result
+            Some(EntryState::Pending) => false,     // in flight, attach to it
+            Some(EntryState::Deleted) => false,     // tombstoned, let the wait report `NotFound`
+        };
+        if should_start {
+            match self.public_decrypt(request).await {
+                Ok(_empty) => (),
+                // Another call won the race to start or redo this request: attach to that attempt
+                Err(e) if e.code() == tonic::Code::AlreadyExists => e.defuse(),
+                Err(e) => return Err(e.retag(OP_PUBLIC_DECRYPT_SYNC)),
+            }
+        }
+
+        self.get_result(Request::new(req_id.into()))
+            .await
+            .map_err(|e| e.retag(OP_PUBLIC_DECRYPT_SYNC))
     }
 
     async fn get_result(
@@ -639,57 +695,30 @@ impl<
             DURATION_WAITING_ON_RESULT_SECONDS,
         )
         .await?;
-        let (retrieved_req_id, plaintexts, external_signature, extra_data) = (*arc).clone();
+        let PubDecCallValues {
+            payload,
+            signature,
+            external_signature,
+            extra_data,
+            signatures,
+        } = (*arc).clone();
 
-        if request_id != retrieved_req_id {
+        if payload.request_id != Some(request_id.into()) {
             return Err(MetricedError::new(
                 OP_PUBLIC_DECRYPT_RESULT,
                 Some(request_id),
                 anyhow::anyhow!(
-                    "Request ID mismatch: expected {request_id}, got {retrieved_req_id}"
+                    "Request ID mismatch: expected {request_id}, got {:?}",
+                    payload.request_id
                 ),
                 tonic::Code::Internal,
             ));
         }
 
-        let server_verf_key = self.base_kms.verf_key().to_legacy_bytes().map_err(|e| {
-            MetricedError::new(
-                OP_PUBLIC_DECRYPT_RESULT,
-                Some(request_id),
-                anyhow!("Failed to serialize server verification key: {e:?}"),
-                tonic::Code::Internal,
-            )
-        })?;
-        let sig_payload = PublicDecryptionResponsePayload {
-            plaintexts,
-            verification_key: server_verf_key,
-            request_id: Some(retrieved_req_id.into()),
-        };
-
-        let sig_payload_vec = bc2wrap::serialize(&sig_payload).map_err(|e| {
-            MetricedError::new(
-                OP_PUBLIC_DECRYPT_RESULT,
-                Some(request_id),
-                anyhow!("Could not convert payload to bytes {sig_payload:?}: {e:?}"),
-                tonic::Code::Internal,
-            )
-        })?;
-
-        let sig = self
-            .base_kms
-            .sign(&DSEP_PUBLIC_DECRYPTION, &sig_payload_vec)
-            .map_err(|e| {
-                MetricedError::new(
-                    OP_PUBLIC_DECRYPT_RESULT,
-                    Some(request_id),
-                    anyhow!("Could not sign payload {sig_payload:?}: {e:?}"),
-                    tonic::Code::Internal,
-                )
-            })?;
-
         Ok(Response::new(PublicDecryptionResponse {
-            signature: sig.sig.to_vec(),
-            payload: Some(sig_payload),
+            signature,
+            signatures,
+            payload: Some(payload),
             external_signature,
             extra_data,
         }))
@@ -717,7 +746,7 @@ mod tests {
         vault::storage::{crypto_material::PublicKeySet, ram},
     };
     use aes_prng::AesRng;
-    use kms_grpc::RequestId;
+    use kms_grpc::{RequestId, kms::v1::SigningSchemeType};
     use kms_grpc::{
         kms::v1::TypedCiphertext,
         rpc_types::{KMSType, alloy_to_protobuf_domain},
@@ -817,6 +846,31 @@ mod tests {
         }
     }
 
+    fn make_valid_request(
+        req_id: RequestId,
+        key_id: RequestId,
+        epoch_id: EpochId,
+        ct_buf: Vec<u8>,
+    ) -> PublicDecryptionRequest {
+        PublicDecryptionRequest {
+            signing_schemes: vec![SigningSchemeType::Ecdsa256k1 as i32],
+            request_id: Some(req_id.into()),
+            ciphertexts: vec![TypedCiphertext {
+                ciphertext: ct_buf,
+                fhe_type: FheTypes::Uint8 as i32,
+                external_handle: vec![],
+                // NOTE: because the way [setup_public_decryptor] is implemented,
+                // the ciphertext format must be SmallExpanded for the dummy decryptor to work
+                ciphertext_format: CiphertextFormat::SmallExpanded as i32,
+            }],
+            key_id: Some(key_id.into()),
+            domain: Some(alloy_to_protobuf_domain(&dummy_domain()).unwrap()),
+            extra_data: vec![],
+            context_id: Some((*DEFAULT_MPC_CONTEXT).into()),
+            epoch_id: Some(epoch_id.into()),
+        }
+    }
+
     async fn setup_public_decryptor(
         rng: &mut AesRng,
     ) -> (
@@ -903,30 +957,20 @@ mod tests {
         // Set bucket size to zero, so no operations are allowed
         public_decryptor.set_bucket_size(0);
 
-        let domain = alloy_to_protobuf_domain(&dummy_domain()).unwrap();
         let req_id = RequestId::new_random(&mut rng);
-        let request = Request::new(PublicDecryptionRequest {
-            request_id: Some(req_id.into()),
-            ciphertexts: vec![TypedCiphertext {
-                ciphertext: ct_buf.clone(),
-                fhe_type: FheTypes::Uint8 as i32,
-                external_handle: vec![],
-                ciphertext_format: CiphertextFormat::SmallCompressed as i32,
-            }],
-            key_id: Some(key_id.into()),
-            domain: Some(domain),
-            extra_data: vec![],
-            context_id: Some((*DEFAULT_MPC_CONTEXT).into()),
-            epoch_id: Some(epoch_id.into()),
-        });
-        assert_eq!(
-            public_decryptor
-                .public_decrypt(request)
-                .await
-                .unwrap_err()
-                .code(),
-            tonic::Code::ResourceExhausted
-        );
+        let request = make_valid_request(req_id, key_id, epoch_id, ct_buf);
+        let err = public_decryptor
+            .public_decrypt(Request::new(request.clone()))
+            .await
+            .unwrap_err();
+        assert_eq!(err.code(), tonic::Code::ResourceExhausted);
+
+        // the sync endpoint is rate-limited the same way
+        let err = public_decryptor
+            .public_decrypt_sync(Request::new(request))
+            .await
+            .unwrap_err();
+        assert_eq!(err.code(), tonic::Code::ResourceExhausted);
 
         // finally reset the bucket size to a non-zero value
         public_decryptor.set_bucket_size(100);
@@ -937,260 +981,192 @@ mod tests {
         let mut rng = AesRng::seed_from_u64(12);
         let (key_id, epoch_id, ct_buf, public_decryptor) = setup_public_decryptor(&mut rng).await;
         let req_id = RequestId::new_random(&mut rng);
-        let domain = alloy_to_protobuf_domain(&dummy_domain()).unwrap();
-        let request = PublicDecryptionRequest {
-            request_id: Some(req_id.into()),
-            ciphertexts: vec![TypedCiphertext {
-                ciphertext: ct_buf,
-                fhe_type: FheTypes::Uint8 as i32,
-                external_handle: vec![],
-                ciphertext_format: CiphertextFormat::SmallExpanded as i32,
-            }],
-            key_id: Some(key_id.into()),
-            domain: Some(domain),
-            extra_data: vec![],
-            context_id: Some((*DEFAULT_MPC_CONTEXT).into()),
-            epoch_id: Some(epoch_id.into()),
-        };
+        let request = make_valid_request(req_id, key_id, epoch_id, ct_buf);
         public_decryptor
             .public_decrypt(Request::new(request.clone()))
             .await
             .unwrap();
-        assert_eq!(
-            public_decryptor
-                .public_decrypt(Request::new(request))
-                .await
-                .unwrap_err()
-                .code(),
-            tonic::Code::AlreadyExists
-        );
+
+        // try sending the same request again
+        let err = public_decryptor
+            .public_decrypt(Request::new(request))
+            .await
+            .unwrap_err();
+        assert_eq!(err.code(), tonic::Code::AlreadyExists);
     }
 
     #[tokio::test]
     async fn not_found() {
         let mut rng = AesRng::seed_from_u64(1123);
         let (key_id, epoch_id, ct_buf, public_decryptor) = setup_public_decryptor(&mut rng).await;
-        let domain = alloy_to_protobuf_domain(&dummy_domain()).unwrap();
+
+        let req_id = RequestId::new_random(&mut rng);
+        let valid_request = make_valid_request(req_id, key_id, epoch_id, ct_buf);
 
         {
-            // bad key ID
-            let req_id = RequestId::new_random(&mut rng);
-            let bad_key_id = RequestId::new_random(&mut rng);
-            let request = Request::new(PublicDecryptionRequest {
-                request_id: Some(req_id.into()),
-                ciphertexts: vec![TypedCiphertext {
-                    ciphertext: ct_buf.clone(),
-                    fhe_type: FheTypes::Uint8 as i32,
-                    external_handle: vec![],
-                    ciphertext_format: CiphertextFormat::SmallExpanded as i32,
-                }],
-                key_id: Some(bad_key_id.into()),
-                domain: Some(domain.clone()),
-                extra_data: vec![],
-                context_id: Some((*DEFAULT_MPC_CONTEXT).into()),
-                epoch_id: Some(epoch_id.into()),
-            });
-            assert_eq!(
-                public_decryptor
-                    .public_decrypt(request)
-                    .await
-                    .unwrap_err()
-                    .code(),
-                tonic::Code::NotFound
-            );
+            // unknown key ID
+            let mut request = valid_request.clone();
+            request.key_id = Some(RequestId::new_random(&mut rng).into());
+            let err = public_decryptor
+                .public_decrypt(Request::new(request.clone()))
+                .await
+                .unwrap_err();
+            assert_eq!(err.code(), tonic::Code::NotFound);
+
+            let err = public_decryptor
+                .public_decrypt_sync(Request::new(request))
+                .await
+                .unwrap_err();
+            assert_eq!(err.code(), tonic::Code::NotFound);
         }
 
         {
-            // bad epoch ID
-            let req_id = RequestId::new_random(&mut rng);
-            let bad_epoch_id = EpochId::new_random(&mut rng);
-            let request = Request::new(PublicDecryptionRequest {
-                request_id: Some(req_id.into()),
-                ciphertexts: vec![TypedCiphertext {
-                    ciphertext: ct_buf,
-                    fhe_type: FheTypes::Uint8 as i32,
-                    external_handle: vec![],
-                    ciphertext_format: CiphertextFormat::SmallExpanded as i32,
-                }],
-                key_id: Some(key_id.into()),
-                domain: Some(domain),
-                extra_data: vec![],
-                context_id: Some((*DEFAULT_MPC_CONTEXT).into()),
-                epoch_id: Some(bad_epoch_id.into()),
-            });
-            assert_eq!(
-                public_decryptor
-                    .public_decrypt(request)
-                    .await
-                    .unwrap_err()
-                    .code(),
-                tonic::Code::NotFound
-            );
+            // unknown epoch ID
+            let mut request = valid_request.clone();
+            request.epoch_id = Some(EpochId::new_random(&mut rng).into());
+            let err = public_decryptor
+                .public_decrypt(Request::new(request.clone()))
+                .await
+                .unwrap_err();
+            assert_eq!(err.code(), tonic::Code::NotFound);
+
+            let err = public_decryptor
+                .public_decrypt_sync(Request::new(request))
+                .await
+                .unwrap_err();
+            assert_eq!(err.code(), tonic::Code::NotFound);
         }
 
-        // try to get result for a non-existing request ID
-        let another_req_id = RequestId::new_random(&mut rng);
-        assert_eq!(
-            public_decryptor
+        {
+            // unknown request ID on the result endpoint
+            let another_req_id = RequestId::new_random(&mut rng);
+            let err = public_decryptor
                 .get_result(Request::new(another_req_id.into()))
                 .await
-                .unwrap_err()
-                .code(),
-            tonic::Code::NotFound
-        );
+                .unwrap_err();
+            assert_eq!(err.code(), tonic::Code::NotFound);
+        }
     }
 
     #[tokio::test]
     async fn invalid_argument() {
         let mut rng = AesRng::seed_from_u64(13);
         let (key_id, epoch_id, ct_buf, public_decryptor) = setup_public_decryptor(&mut rng).await;
+
+        let req_id = RequestId::new_random(&mut rng);
+        let valid_request = make_valid_request(req_id, key_id, epoch_id, ct_buf);
         {
-            // Bad request ID
-            let bad_req_id = kms_grpc::kms::v1::RequestId {
+            // missing request ID
+            let mut request = valid_request.clone();
+            request.request_id = None;
+            let err = public_decryptor
+                .public_decrypt(Request::new(request.clone()))
+                .await
+                .unwrap_err();
+            assert_eq!(err.code(), tonic::Code::InvalidArgument);
+
+            let err = public_decryptor
+                .public_decrypt_sync(Request::new(request))
+                .await
+                .unwrap_err();
+            assert_eq!(err.code(), tonic::Code::InvalidArgument);
+        }
+        {
+            // wrongly formatted request ID
+            let mut request = valid_request.clone();
+            request.request_id = Some(kms_grpc::kms::v1::RequestId {
                 request_id: "invalid_request_id".to_string(),
-            };
-            let domain = alloy_to_protobuf_domain(&dummy_domain()).unwrap();
-            let request = Request::new(PublicDecryptionRequest {
-                request_id: Some(bad_req_id),
-                ciphertexts: vec![TypedCiphertext {
-                    ciphertext: ct_buf.clone(),
-                    fhe_type: FheTypes::Uint8 as i32,
-                    external_handle: vec![],
-                    ciphertext_format: CiphertextFormat::SmallExpanded as i32,
-                }],
-                key_id: Some(key_id.into()),
-                domain: Some(domain),
-                extra_data: vec![],
-                context_id: Some((*DEFAULT_MPC_CONTEXT).into()),
-                epoch_id: Some(epoch_id.into()),
             });
-            assert_eq!(
-                public_decryptor
-                    .public_decrypt(request)
-                    .await
-                    .unwrap_err()
-                    .code(),
-                tonic::Code::InvalidArgument
-            );
+            let err = public_decryptor
+                .public_decrypt(Request::new(request.clone()))
+                .await
+                .unwrap_err();
+            assert_eq!(err.code(), tonic::Code::InvalidArgument);
+
+            let err = public_decryptor
+                .public_decrypt_sync(Request::new(request))
+                .await
+                .unwrap_err();
+            assert_eq!(err.code(), tonic::Code::InvalidArgument);
         }
         {
             // empty ciphertexts
-            let req_id = RequestId::new_random(&mut rng);
-            let domain = alloy_to_protobuf_domain(&dummy_domain()).unwrap();
-            let request = Request::new(PublicDecryptionRequest {
-                request_id: Some(req_id.into()),
-                ciphertexts: vec![],
-                key_id: Some(key_id.into()),
-                domain: Some(domain),
-                extra_data: vec![],
-                context_id: Some((*DEFAULT_MPC_CONTEXT).into()),
-                epoch_id: Some(epoch_id.into()),
-            });
-            assert_eq!(
-                public_decryptor
-                    .public_decrypt(request)
-                    .await
-                    .unwrap_err()
-                    .code(),
-                tonic::Code::InvalidArgument
-            );
+            let mut request = valid_request.clone();
+            request.ciphertexts.clear();
+            let err = public_decryptor
+                .public_decrypt(Request::new(request.clone()))
+                .await
+                .unwrap_err();
+            assert_eq!(err.code(), tonic::Code::InvalidArgument);
+
+            let err = public_decryptor
+                .public_decrypt_sync(Request::new(request))
+                .await
+                .unwrap_err();
+            assert_eq!(err.code(), tonic::Code::InvalidArgument);
         }
         {
-            // bad key ID
-            let req_id = RequestId::new_random(&mut rng);
-            let bad_key_id = kms_grpc::kms::v1::RequestId {
+            // wrongly formatted key ID
+            let mut request = valid_request.clone();
+            request.key_id = Some(kms_grpc::kms::v1::RequestId {
                 request_id: "invalid_request_id".to_string(),
-            };
-            let domain = alloy_to_protobuf_domain(&dummy_domain()).unwrap();
-            let request = Request::new(PublicDecryptionRequest {
-                request_id: Some(req_id.into()),
-                ciphertexts: vec![TypedCiphertext {
-                    ciphertext: ct_buf.clone(),
-                    fhe_type: FheTypes::Uint8 as i32,
-                    external_handle: vec![],
-                    ciphertext_format: CiphertextFormat::SmallExpanded as i32,
-                }],
-                key_id: Some(bad_key_id),
-                domain: Some(domain),
-                extra_data: vec![],
-                context_id: Some((*DEFAULT_MPC_CONTEXT).into()),
-                epoch_id: Some(epoch_id.into()),
             });
-            assert_eq!(
-                public_decryptor
-                    .public_decrypt(request)
-                    .await
-                    .unwrap_err()
-                    .code(),
-                tonic::Code::InvalidArgument
-            );
+            let err = public_decryptor
+                .public_decrypt(Request::new(request.clone()))
+                .await
+                .unwrap_err();
+            assert_eq!(err.code(), tonic::Code::InvalidArgument);
+
+            let err = public_decryptor
+                .public_decrypt_sync(Request::new(request))
+                .await
+                .unwrap_err();
+            assert_eq!(err.code(), tonic::Code::InvalidArgument);
         }
         {
             // missing domain
-            let req_id = RequestId::new_random(&mut rng);
-            let request = Request::new(PublicDecryptionRequest {
-                request_id: Some(req_id.into()),
-                ciphertexts: vec![TypedCiphertext {
-                    ciphertext: ct_buf.clone(),
-                    fhe_type: FheTypes::Uint8 as i32,
-                    external_handle: vec![],
-                    ciphertext_format: CiphertextFormat::SmallExpanded as i32,
-                }],
-                key_id: Some(key_id.into()),
-                domain: None,
-                extra_data: vec![],
-                context_id: Some((*DEFAULT_MPC_CONTEXT).into()),
-                epoch_id: Some(epoch_id.into()),
-            });
-            assert_eq!(
-                public_decryptor
-                    .public_decrypt(request)
-                    .await
-                    .unwrap_err()
-                    .code(),
-                tonic::Code::InvalidArgument
-            );
+            let mut request = valid_request.clone();
+            request.domain = None;
+            let err = public_decryptor
+                .public_decrypt(Request::new(request.clone()))
+                .await
+                .unwrap_err();
+            assert_eq!(err.code(), tonic::Code::InvalidArgument);
+
+            let err = public_decryptor
+                .public_decrypt_sync(Request::new(request))
+                .await
+                .unwrap_err();
+            assert_eq!(err.code(), tonic::Code::InvalidArgument);
         }
         {
             // wrong domain
-            let req_id = RequestId::new_random(&mut rng);
+            let mut request = valid_request.clone();
             let mut domain = alloy_to_protobuf_domain(&dummy_domain()).unwrap();
             domain.verifying_contract = "invalid_contract".to_string();
-            let request = Request::new(PublicDecryptionRequest {
-                request_id: Some(req_id.into()),
-                ciphertexts: vec![TypedCiphertext {
-                    ciphertext: ct_buf,
-                    fhe_type: FheTypes::Uint8 as i32,
-                    external_handle: vec![],
-                    ciphertext_format: CiphertextFormat::SmallExpanded as i32,
-                }],
-                key_id: Some(key_id.into()),
-                domain: Some(domain),
-                extra_data: vec![],
-                context_id: Some((*DEFAULT_MPC_CONTEXT).into()),
-                epoch_id: Some(epoch_id.into()),
-            });
-            assert_eq!(
-                public_decryptor
-                    .public_decrypt(request)
-                    .await
-                    .unwrap_err()
-                    .code(),
-                tonic::Code::InvalidArgument
-            );
+            request.domain = Some(domain);
+            let err = public_decryptor
+                .public_decrypt(Request::new(request.clone()))
+                .await
+                .unwrap_err();
+            assert_eq!(err.code(), tonic::Code::InvalidArgument);
+
+            let err = public_decryptor
+                .public_decrypt_sync(Request::new(request))
+                .await
+                .unwrap_err();
+            assert_eq!(err.code(), tonic::Code::InvalidArgument);
         }
         {
-            // bad request ID while getting response
-            assert_eq!(
-                public_decryptor
-                    .get_result(Request::new(kms_grpc::kms::v1::RequestId {
-                        request_id: "invalid_request_id".to_string(),
-                    },))
-                    .await
-                    .unwrap_err()
-                    .code(),
-                tonic::Code::InvalidArgument
-            );
+            // wrongly formatted request ID on the result endpoint
+            let bad_req_id = kms_grpc::kms::v1::RequestId {
+                request_id: "invalid_request_id".to_string(),
+            };
+            let err = public_decryptor
+                .get_result(Request::new(bad_req_id))
+                .await
+                .unwrap_err();
+            assert_eq!(err.code(), tonic::Code::InvalidArgument);
         }
     }
 
@@ -1199,24 +1175,13 @@ mod tests {
         let mut rng = AesRng::seed_from_u64(13);
         let (key_id, epoch_id, ct_buf, public_decryptor) = setup_public_decryptor(&mut rng).await;
         let req_id = RequestId::new_random(&mut rng);
-        let domain = alloy_to_protobuf_domain(&dummy_domain()).unwrap();
-        let request = Request::new(PublicDecryptionRequest {
-            request_id: Some(req_id.into()),
-            ciphertexts: vec![TypedCiphertext {
-                ciphertext: ct_buf,
-                fhe_type: FheTypes::Uint8 as i32,
-                external_handle: vec![],
-                // NOTE: because the way [setup_public_decryptor] is implemented,
-                // the ciphertext format must be SmallExpanded for the dummy decryptor to work
-                ciphertext_format: CiphertextFormat::SmallExpanded as i32,
-            }],
-            key_id: Some(key_id.into()),
-            domain: Some(domain),
-            extra_data: vec![],
-            context_id: Some((*DEFAULT_MPC_CONTEXT).into()),
-            epoch_id: Some(epoch_id.into()),
-        });
-        public_decryptor.public_decrypt(request).await.unwrap();
+        let mut request = make_valid_request(req_id, key_id, epoch_id, ct_buf);
+        // no signing scheme means ecdsa256k1 is used by default
+        request.signing_schemes.clear();
+        public_decryptor
+            .public_decrypt(Request::new(request))
+            .await
+            .unwrap();
         // there's no need to check the decryption result since it's a dummy protocol
         // and always produces the same response.
         crate::testing::utils::poll_result_until_ready(|| {
@@ -1224,5 +1189,201 @@ mod tests {
         })
         .await
         .unwrap();
+    }
+
+    #[tokio::test]
+    async fn sunshine_sync() {
+        let mut rng = AesRng::seed_from_u64(13);
+        let (key_id, epoch_id, ct_buf, public_decryptor) = setup_public_decryptor(&mut rng).await;
+
+        let req_id = RequestId::new_random(&mut rng);
+        let request = make_valid_request(req_id, key_id, epoch_id, ct_buf);
+
+        // The sync endpoint returns the response directly, no polling needed.
+        let response = public_decryptor
+            .public_decrypt_sync(Request::new(request.clone()))
+            .await
+            .unwrap()
+            .into_inner();
+        let payload = response
+            .payload
+            .clone()
+            .expect("sync response carries a payload");
+        assert_eq!(payload.plaintexts.len(), 1);
+        assert!(!response.signature.is_empty());
+
+        // The request went through the meta-store, so the result stays retrievable through the
+        // async result endpoint...
+        let again = public_decryptor
+            .get_result(Request::new(req_id.into()))
+            .await
+            .unwrap()
+            .into_inner();
+        assert_eq!(response.payload, again.payload);
+
+        // ...and re-sending the same sync request returns that stored result instead of failing
+        // with `AlreadyExists`. Attaching is a success path, so nothing may be recorded as a
+        // failure along the way.
+        let recorded_errors_before = crate::engine::utils::handle_error_call_count();
+        let retry = public_decryptor
+            .public_decrypt_sync(Request::new(request))
+            .await
+            .unwrap()
+            .into_inner();
+        assert_eq!(response.payload, retry.payload);
+        assert_eq!(
+            crate::engine::utils::handle_error_call_count(),
+            recorded_errors_before,
+            "attaching to an already-known request ID must not report a failure"
+        );
+    }
+
+    #[tokio::test]
+    async fn sync_attaches_to_async_request() {
+        let mut rng = AesRng::seed_from_u64(13);
+        let (key_id, epoch_id, ct_buf, public_decryptor) = setup_public_decryptor(&mut rng).await;
+
+        let req_id = RequestId::new_random(&mut rng);
+        let request = make_valid_request(req_id, key_id, epoch_id, ct_buf);
+
+        // Start the decryption through the async endpoint...
+        public_decryptor
+            .public_decrypt(Request::new(request.clone()))
+            .await
+            .unwrap();
+
+        // ...then a sync request with the same request ID attaches to that entry rather than
+        // starting a second decryption, without reporting a failure along the way.
+        let recorded_errors_before = crate::engine::utils::handle_error_call_count();
+        let response = public_decryptor
+            .public_decrypt_sync(Request::new(request))
+            .await
+            .unwrap()
+            .into_inner();
+        assert_eq!(
+            response
+                .payload
+                .clone()
+                .expect("sync response carries a payload")
+                .plaintexts
+                .len(),
+            1
+        );
+        assert_eq!(
+            crate::engine::utils::handle_error_call_count(),
+            recorded_errors_before,
+            "attaching to an in-flight request must not report a failure"
+        );
+
+        // The entry the sync call waited on is the one the async request created.
+        let stored = public_decryptor
+            .get_result(Request::new(req_id.into()))
+            .await
+            .unwrap()
+            .into_inner();
+        assert_eq!(response.payload, stored.payload);
+    }
+
+    /// A `request_id` whose previous attempt failed is redone, exactly as re-sending it to the
+    /// async endpoint would be, and the sync call returns the new attempt's outcome.
+    #[tokio::test]
+    async fn sync_redoes_failed_request() {
+        let mut rng = AesRng::seed_from_u64(13);
+        let (key_id, epoch_id, ct_buf, public_decryptor) = setup_public_decryptor(&mut rng).await;
+
+        let req_id = RequestId::new_random(&mut rng);
+        let request = make_valid_request(req_id, key_id, epoch_id, ct_buf);
+
+        // Leave the request ID in the state a failed attempt would leave it in.
+        let permit = public_decryptor
+            .pub_dec_meta_store
+            .write()
+            .await
+            .insert(&req_id)
+            .unwrap();
+        crate::util::meta_store::update_err_req_in_meta_store(
+            &public_decryptor.pub_dec_meta_store,
+            permit,
+            "forced failure".to_string(),
+            OP_PUBLIC_DECRYPT_REQUEST,
+        )
+        .await;
+        assert!(matches!(
+            public_decryptor
+                .pub_dec_meta_store
+                .read()
+                .await
+                .retrieve(&req_id),
+            Some(EntryState::Done(Err(_)))
+        ));
+
+        // The sync call redoes the decryption instead of returning the stored failure.
+        let response = public_decryptor
+            .public_decrypt_sync(Request::new(request))
+            .await
+            .unwrap()
+            .into_inner();
+        assert_eq!(
+            response
+                .payload
+                .expect("redone decryption carries a payload")
+                .plaintexts
+                .len(),
+            1
+        );
+    }
+
+    /// A failed entry that is still permit-held cannot be redone, so `public_decrypt` answers
+    /// `AlreadyExists`, which the sync endpoint reads as "attach to the existing entry". That
+    /// internal signal must be defused rather than dropped: dropping a `MetricedError` records
+    /// an error and logs a failure for what is only a control-flow decision.
+    #[tokio::test]
+    async fn sync_attach_signal_is_not_recorded_as_error() {
+        let mut rng = AesRng::seed_from_u64(13);
+        let (key_id, epoch_id, ct_buf, public_decryptor) = setup_public_decryptor(&mut rng).await;
+
+        let req_id = RequestId::new_random(&mut rng);
+        let request = make_valid_request(req_id, key_id, epoch_id, ct_buf);
+
+        // Fail the entry, then hold a permit on it so that `redo_failed` reports `Locked`.
+        let permit = public_decryptor
+            .pub_dec_meta_store
+            .write()
+            .await
+            .insert(&req_id)
+            .unwrap();
+        crate::util::meta_store::update_err_req_in_meta_store(
+            &public_decryptor.pub_dec_meta_store,
+            permit,
+            "forced failure".to_string(),
+            OP_PUBLIC_DECRYPT_REQUEST,
+        )
+        .await;
+        let _held_permit = public_decryptor
+            .pub_dec_meta_store
+            .write()
+            .await
+            .lock_entry(&req_id)
+            .unwrap();
+
+        let recorded_errors_before = crate::engine::utils::handle_error_call_count();
+        let err = public_decryptor
+            .public_decrypt_sync(Request::new(request))
+            .await
+            .unwrap_err();
+        assert_eq!(err.code(), tonic::Code::Internal);
+        // `err` has not been returned to a caller yet, so nothing should have been recorded so
+        // far: an `AlreadyExists` dropped instead of defused would already show up here.
+        assert_eq!(
+            crate::engine::utils::handle_error_call_count(),
+            recorded_errors_before,
+            "the internal attach signal must not be recorded as a failure"
+        );
+        // Handing the error back to the caller records it exactly once.
+        drop(err);
+        assert_eq!(
+            crate::engine::utils::handle_error_call_count(),
+            recorded_errors_before + 1
+        );
     }
 }

@@ -549,25 +549,48 @@ pub struct NetworkRoundValue {
     pub round_counter: usize,
 }
 
+/// Per-sender receiver plus a bounded buffer of future-round messages that
+/// arrived before the local session advanced to their round.
+///
+/// The receiver is a bounded mpsc whose ordering is fully controlled by the
+/// (possibly malicious) peer, so `receive` must not treat "next packet" as
+/// "current-round packet". Messages tagged with a strictly future round are
+/// parked here — keyed by their round counter — until the session reaches that
+/// round, at which point they are delivered from the fast path. The buffer is
+/// bounded by [`MAX_BUFFERED_FUTURE_MSGS`] to prevent
+/// a peer from exhausting memory with distinct future round numbers.
+#[derive(Debug)]
+pub(crate) struct ReceiverState {
+    /// The bounded mpsc receiver for this sender.
+    pub(crate) rx: Receiver<NetworkRoundValue>,
+    /// Future-round messages, keyed by round counter (all strictly greater than
+    /// the current round when inserted). Holds at most one value per round.
+    pub(crate) future: std::collections::BTreeMap<usize, Vec<u8>>,
+}
+
+impl ReceiverState {
+    /// Wrap a freshly created receiver with an empty future-round buffer.
+    pub(crate) fn new(rx: Receiver<NetworkRoundValue>) -> Self {
+        Self {
+            rx,
+            future: std::collections::BTreeMap::new(),
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub(crate) struct InitializedMessageQueueStore {
     // role assignment is needed because the message store
     // needs to translate between identity and role
     tx: DashMap<MpcIdentity, Arc<Sender<NetworkRoundValue>>>,
-    rx: DashMap<RoleKind, Arc<Mutex<Receiver<NetworkRoundValue>>>>,
+    receiver_state: DashMap<RoleKind, Arc<Mutex<ReceiverState>>>,
 }
 
 #[expect(clippy::type_complexity)]
 #[derive(Debug, Clone)]
 pub(crate) enum MessageQueueStore {
     Uninitialized(
-        DashMap<
-            MpcIdentity,
-            (
-                Arc<Sender<NetworkRoundValue>>,
-                Arc<Mutex<Receiver<NetworkRoundValue>>>,
-            ),
-        >,
+        DashMap<MpcIdentity, (Arc<Sender<NetworkRoundValue>>, Arc<Mutex<ReceiverState>>)>,
     ),
     Initialized(InitializedMessageQueueStore),
 }
@@ -577,10 +600,7 @@ impl MessageQueueStore {
     pub(crate) fn new_uninitialized(
         channel_maps: DashMap<
             MpcIdentity,
-            (
-                Arc<Sender<NetworkRoundValue>>,
-                Arc<Mutex<Receiver<NetworkRoundValue>>>,
-            ),
+            (Arc<Sender<NetworkRoundValue>>, Arc<Mutex<ReceiverState>>),
         >,
     ) -> Self {
         MessageQueueStore::Uninitialized(channel_maps)
@@ -625,13 +645,16 @@ impl MessageQueueStore {
                 } else {
                     let (tx, rx) = channel::<NetworkRoundValue>(channel_size_limit);
                     tx_map.insert(identity.mpc_identity(), Arc::new(tx));
-                    rx_map.insert(role.get_role_kind(), Arc::new(Mutex::new(rx)));
+                    rx_map.insert(
+                        role.get_role_kind(),
+                        Arc::new(Mutex::new(ReceiverState::new(rx))),
+                    );
                 }
             }
 
             *self = MessageQueueStore::Initialized(InitializedMessageQueueStore {
                 tx: tx_map,
-                rx: rx_map,
+                receiver_state: rx_map,
             });
         } else {
             tracing::warn!("MessageQueueStore is already initialized");
@@ -653,13 +676,13 @@ impl MessageQueueStore {
         }
     }
 
-    pub(crate) fn get_rx<R: RoleTrait>(
+    pub(crate) fn get_receiver_state<R: RoleTrait>(
         &self,
         role: &R,
-    ) -> anyhow::Result<Option<Arc<Mutex<Receiver<NetworkRoundValue>>>>> {
+    ) -> anyhow::Result<Option<Arc<Mutex<ReceiverState>>>> {
         match &self {
             MessageQueueStore::Initialized(store) => Ok(store
-                .rx
+                .receiver_state
                 .get(&role.get_role_kind())
                 .map(|entry| entry.value().clone())),
             MessageQueueStore::Uninitialized(_) => Err(anyhow::anyhow!(
@@ -677,10 +700,7 @@ impl MessageQueueStore {
         dashmap::mapref::entry::Entry<
             '_,
             MpcIdentity,
-            (
-                Arc<Sender<NetworkRoundValue>>,
-                Arc<Mutex<Receiver<NetworkRoundValue>>>,
-            ),
+            (Arc<Sender<NetworkRoundValue>>, Arc<Mutex<ReceiverState>>),
         >,
     > {
         match &self {
@@ -698,7 +718,9 @@ impl MessageQueueStore {
             MessageQueueStore::Uninitialized(_) => Err(Box::new(tonic::Status::internal(
                 "trying to iterate keys when message queue is not initialized",
             ))),
-            MessageQueueStore::Initialized(inner) => Ok(inner.rx.iter().map(|entry| *entry.key())),
+            MessageQueueStore::Initialized(inner) => {
+                Ok(inner.receiver_state.iter().map(|entry| *entry.key()))
+            }
         }
     }
 }
@@ -852,7 +874,10 @@ impl NetworkingImpl {
                         // Create a new channel for the sender
                         let (tx, rx) = channel::<NetworkRoundValue>(self.channel_size_limit);
                         let tx = Arc::new(tx);
-                        vacant_entry_tx.insert((Arc::clone(&tx), Arc::new(Mutex::new(rx))));
+                        vacant_entry_tx.insert((
+                            Arc::clone(&tx),
+                            Arc::new(Mutex::new(ReceiverState::new(rx))),
+                        ));
 
                         // Update the opened sessions tracker
                         *opened_session_tracker_entry += 1;
@@ -1134,7 +1159,10 @@ impl Gnetworking for NetworkingImpl {
                     let tx = Arc::new(tx);
                     channel_maps.insert(
                         tag.sender.clone(),
-                        (Arc::clone(&tx), Arc::new(Mutex::new(rx))),
+                        (
+                            Arc::clone(&tx),
+                            Arc::new(Mutex::new(ReceiverState::new(rx))),
+                        ),
                     );
 
                     // Insert the new session into the store
@@ -1297,7 +1325,10 @@ mod tests {
         // Insert an inactive session with existing sender channel
         let channel_maps = DashMap::new();
         let (tx, rx) = channel::<NetworkRoundValue>(100);
-        channel_maps.insert(sender.clone(), (Arc::new(tx), Arc::new(Mutex::new(rx))));
+        channel_maps.insert(
+            sender.clone(),
+            (Arc::new(tx), Arc::new(Mutex::new(ReceiverState::new(rx)))),
+        );
 
         session_store.insert(
             session_id,

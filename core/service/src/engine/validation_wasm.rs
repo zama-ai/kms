@@ -67,7 +67,7 @@ const ERR_VALIDATE_USER_DECRYPTION_MISSING_SIGNATURE: &str =
 const ERR_VALIDATE_USER_DECRYPTION_ID_NOT_FOUND: &str = "ID claimed in payload not found";
 const ERR_VALIDATE_USER_DECRYPTION_WRONG_ADDRESS: &str =
     "ID or address claimed in payload is incorrect";
-const ERR_VALIDATE_USER_DECRYPTION_MISMATCH_EXTRA_DATA: &str =
+pub(crate) const ERR_VALIDATE_USER_DECRYPTION_MISMATCH_EXTRA_DATA: &str =
     "Extra data mismatch in user decryption";
 const ERR_VALIDATE_USER_DECRYPTION_NO_RESP: &str = "No response to verify in user decryption";
 const ERR_VALIDATE_USER_DECRYPTION_NOT_ENOUGH_RESP: &str =
@@ -149,18 +149,21 @@ fn validate_user_decrypt_meta_data_and_signature(
             anyhow::bail!(ERR_VALIDATE_USER_DECRYPTION_ID_NOT_FOUND)
         };
 
+    // The response must echo the request's extra data whichever signature we go
+    // on to verify below. The EIP-712 signature covers `extraData`, but the raw
+    // ECDSA one does not, so this check has to happen outside the branch.
+    if eip712_params.response_extra_data != trusted_ctx.client_request.extra_data() {
+        return Err(anyhow_error_and_log(
+            ERR_VALIDATE_USER_DECRYPTION_MISMATCH_EXTRA_DATA,
+        ));
+    }
+
     // Prefer ECDSA signature over the eip712 one
     if signature.is_empty() {
         // check signature
         if eip712_params.response_external_signature.is_empty() {
             return Err(anyhow_error_and_log(
                 ERR_VALIDATE_USER_DECRYPTION_MISSING_SIGNATURE,
-            ));
-        }
-
-        if eip712_params.response_extra_data != trusted_ctx.client_request.extra_data() {
-            return Err(anyhow_error_and_log(
-                ERR_VALIDATE_USER_DECRYPTION_MISMATCH_EXTRA_DATA,
             ));
         }
 
@@ -173,9 +176,7 @@ fn validate_user_decrypt_meta_data_and_signature(
         )
         .inspect_err(|e| tracing::warn!("signature on received response is not valid ({})!", e))?;
     } else {
-        let sig = Signature {
-            sig: k256::ecdsa::Signature::from_slice(signature)?,
-        };
+        let sig = Signature::from_ecdsa(k256::ecdsa::Signature::from_slice(signature)?);
         // NOTE that we cannot use `BaseKmsStruct::verify_sig`
         // because `BaseKmsStruct` cannot be compiled for wasm (it has an async mutex).
         if internal_verify_sig(
@@ -363,6 +364,9 @@ fn validate_user_decrypt_responses(
             response_extra_data: &cur_resp.extra_data,
             trusted_eip712_domain: trusted_ctx.eip712_domain,
         };
+        // The deprecated scalar `signature` field carries the raw internal ECDSA
+        // signature over the serialized payload.
+        // TODO(0.16) verify `signatures` and drop the two deprecated fields.
         if let Err(e) = validate_user_decrypt_meta_data_and_signature(
             trusted_ctx,
             &pivot_payload,
@@ -503,6 +507,7 @@ mod tests {
     use std::collections::HashMap;
 
     use aes_prng::AesRng;
+    use alloy_dyn_abi::Eip712Domain;
     use kms_grpc::kms::v1::{
         TypedSigncryptedCiphertext, UserDecryptionResponse, UserDecryptionResponsePayload,
     };
@@ -513,7 +518,6 @@ mod tests {
             CiphertextHandle, ParsedUserDecryptionRequest, compute_link,
         },
         cryptography::{
-            compute_external_user_decrypt_signature,
             encryption::{Encryption, PkeScheme, PkeSchemeType},
             signatures::{
                 ERR_EXT_USER_DECRYPTION_SIG_BAD_LENGTH, PrivateSigKey, PublicSigKey, gen_sig_keys,
@@ -521,6 +525,7 @@ mod tests {
             },
         },
         dummy_domain,
+        engine::base::sign_user_decryption_result,
         engine::validation_wasm::{
             ERR_EXT_USER_DECRYPTION_SIG_VERIFICATION_FAILURE,
             ERR_VALIDATE_USER_DECRYPTION_ID_NOT_FOUND, ERR_VALIDATE_USER_DECRYPTION_NO_RESP,
@@ -532,12 +537,33 @@ mod tests {
         DSEP_USER_DECRYPTION, ERR_VALIDATE_USER_DECRYPTION_BAD_FHETYPE_LENGTH,
         ERR_VALIDATE_USER_DECRYPTION_DIGEST_MISMATCH,
         ERR_VALIDATE_USER_DECRYPTION_FHETYPE_MISMATCH,
+        ERR_VALIDATE_USER_DECRYPTION_MISMATCH_EXTRA_DATA,
         ERR_VALIDATE_USER_DECRYPTION_MISSING_SIGNATURE,
         ERR_VALIDATE_USER_DECRYPTION_NOT_ENOUGH_RESP, Eip712VerificationParams,
         UserDecTrustedValidationContext, check_ext_user_decryption_signature,
         select_most_common_user_dec, validate_user_decrypt_meta_data_and_signature,
         validate_user_decrypt_responses, validate_user_decrypt_responses_against_request,
     };
+
+    /// Helper method to be removed in 0.16 when the external signature is no longer used in production.
+    /// TODO(0.16)
+    fn compute_external_user_decrypt_signature(
+        server_sk: &PrivateSigKey,
+        payload: &UserDecryptionResponsePayload,
+        eip712_domain: &Eip712Domain,
+        user_pk_buf: &[u8],
+        extra_data: &[u8],
+    ) -> anyhow::Result<Vec<u8>> {
+        Ok(sign_user_decryption_result(
+            server_sk,
+            &[],
+            payload.clone(),
+            user_pk_buf,
+            extra_data.to_vec(),
+            eip712_domain,
+        )?
+        .external_signature)
+    }
 
     #[test]
     fn test_check_ext_user_decryption_signature() {
@@ -925,6 +951,29 @@ mod tests {
         }
 
         // no need to explicitly test the signature issues again since they were tested in [test_check_ext_user_decryption_signature]
+        {
+            let pivot_buf = bc2wrap::serialize(&pivot_resp).unwrap();
+            let signature_buf = internal_sign(&DSEP_USER_DECRYPTION, &pivot_buf, &sk0)
+                .unwrap()
+                .to_bytes();
+            let params = Eip712VerificationParams {
+                response_external_signature: &[],
+                response_extra_data: &[42], // the request's extra data is [1, 2, 3, 4]
+                trusted_eip712_domain: &dummy_domain,
+            };
+            assert!(
+                validate_user_decrypt_meta_data_and_signature(
+                    &trusted_ctx,
+                    &pivot_resp,
+                    &pivot_resp,
+                    &signature_buf,
+                    &params,
+                )
+                .unwrap_err()
+                .to_string()
+                .contains(ERR_VALIDATE_USER_DECRYPTION_MISMATCH_EXTRA_DATA)
+            );
+        }
 
         // happy path for empty ECDSA, so we check external signature
         {
@@ -947,7 +996,7 @@ mod tests {
         {
             let pivot_buf = bc2wrap::serialize(&pivot_resp).unwrap();
             let signature = &internal_sign(&DSEP_USER_DECRYPTION, &pivot_buf, &sk0).unwrap();
-            let signature_buf = signature.sig.to_vec();
+            let signature_buf = signature.to_bytes();
             let params = Eip712VerificationParams {
                 response_external_signature: &[],
                 response_extra_data: &extra_data,
@@ -1036,6 +1085,7 @@ mod tests {
             .unwrap();
             UserDecryptionResponse {
                 signature: vec![],
+                signatures: vec![],
                 external_signature,
                 payload: Some(payload0),
                 extra_data: vec![],
@@ -1065,6 +1115,7 @@ mod tests {
             .unwrap();
             UserDecryptionResponse {
                 signature: vec![],
+                signatures: vec![],
                 external_signature,
                 payload: Some(payload),
                 extra_data: vec![],
@@ -1094,6 +1145,7 @@ mod tests {
             .unwrap();
             UserDecryptionResponse {
                 signature: vec![],
+                signatures: vec![],
                 external_signature,
                 payload: Some(payload),
                 extra_data: vec![],
@@ -1123,6 +1175,7 @@ mod tests {
             .unwrap();
             UserDecryptionResponse {
                 signature: vec![],
+                signatures: vec![],
                 external_signature,
                 payload: Some(payload),
                 extra_data: vec![],
@@ -1261,6 +1314,7 @@ mod tests {
                 .unwrap();
                 UserDecryptionResponse {
                     signature: vec![],
+                    signatures: vec![],
                     external_signature,
                     payload: Some(payload),
                     extra_data: vec![],
@@ -1411,6 +1465,7 @@ mod tests {
             .unwrap();
             UserDecryptionResponse {
                 signature: vec![],
+                signatures: vec![],
                 external_signature,
                 payload: Some(payload0),
                 extra_data: vec![],
@@ -1440,6 +1495,7 @@ mod tests {
             .unwrap();
             UserDecryptionResponse {
                 signature: vec![],
+                signatures: vec![],
                 external_signature,
                 payload: Some(payload),
                 extra_data: vec![],
@@ -1514,6 +1570,7 @@ mod tests {
             };
             UserDecryptionResponse {
                 signature: vec![],
+                signatures: vec![],
                 external_signature: vec![],
                 payload: Some(payload),
                 extra_data: vec![],
@@ -1600,6 +1657,7 @@ mod tests {
             };
             UserDecryptionResponse {
                 signature: vec![],
+                signatures: vec![],
                 external_signature: vec![],
                 payload: Some(payload),
                 extra_data: vec![],
@@ -1695,6 +1753,7 @@ mod tests {
                 .unwrap();
                 UserDecryptionResponse {
                     signature: vec![],
+                    signatures: vec![],
                     external_signature,
                     payload: Some(payload),
                     extra_data: vec![],

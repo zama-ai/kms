@@ -6,6 +6,7 @@ use crate::cryptography::encryption::{
 use crate::{anyhow_error_and_log, some_or_err};
 use alloy_sol_types::Eip712Domain;
 use kms_grpc::RequestId;
+use kms_grpc::kms::v1::SigningSchemeType;
 use kms_grpc::kms::v1::{TypedCiphertext, UserDecryptionRequest};
 use kms_grpc::rpc_types::alloy_to_protobuf_domain;
 use kms_grpc::{ContextId, EpochId};
@@ -71,6 +72,7 @@ impl Client {
                 extra_data: extra_data.to_vec(),
                 context_id: context_id.map(|c| (*c).into()),
                 epoch_id: epoch_id.map(|e| (*e).into()),
+                signing_schemes: vec![SigningSchemeType::Ecdsa256k1 as i32],
             },
             enc_pk,
             enc_sk,

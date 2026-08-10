@@ -8,6 +8,7 @@ fn default_builder() -> Builder {
         .type_attribute("OperatorBackupOutput", EXTENDED_DERIVES)
         .type_attribute("PkeSchemeType", DERIVES)
         .type_attribute("SigningSchemeType", DERIVES)
+        .type_attribute("TypedSignature", DERIVES)
         .type_attribute("PublicDecryptionRequest", DERIVES)
         .type_attribute("PublicDecryptionResponsePayload", DERIVES)
         .type_attribute("ExternalDecryptionResult", DERIVES)
@@ -72,6 +73,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         )
         .type_attribute(
             "TypedSigncryptedCiphertext",
+            "#[wasm_bindgen::prelude::wasm_bindgen(getter_with_clone)]",
+        )
+        .type_attribute(
+            "TypedSignature",
             "#[wasm_bindgen::prelude::wasm_bindgen(getter_with_clone)]",
         )
         .type_attribute(

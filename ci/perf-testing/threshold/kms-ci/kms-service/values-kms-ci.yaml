@@ -131,7 +131,7 @@ kmsCoreClientTesting:
   # - fi
   # - key_id=$(cat /app/key-files/key-id.txt)
   # - crs_id=$(cat /app/key-files/crs-id.txt)
-  # - bin/kms-core-client --logs -f config.toml public-decrypt from-args -d euint64 -k $key_id -e ffffffffffffffff --precompute-sns --num-requests 100
+  # - bin/kms-core-client --logs -f config.toml public-decrypt from-args -d euint64 -k $key_id -e ffffffffffffffff --rate 100 --duration 60
   # - bin/kms-core-client --logs -f config.toml user-decrypt from-args -d euint64 -k $key_id -e ffffffffffffffff --precompute-sns --rate 100 --duration 1 --max-in-flight 1000
 podSecurityContext:
   # To set when the image will support non root user

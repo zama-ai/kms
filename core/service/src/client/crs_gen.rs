@@ -54,6 +54,7 @@ impl Client {
             context_id: Some(context_id.into()),
             epoch_id: Some(epoch_id.into()),
             extra_data: make_extra_data(2, Some(&context_id), Some(&epoch_id))?,
+            signing_schemes: vec![kms_grpc::kms::v1::SigningSchemeType::Ecdsa256k1 as i32],
         })
     }
 
