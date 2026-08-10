@@ -587,7 +587,7 @@ pub async fn async_user_decrypt<
     let signing_schemes = signing_schemes.to_vec();
     let client_enc_key_bytes = client_enc_key_bytes.to_vec();
     let domain = domain.clone();
-    spawn_compute_bound(move || {
+    let signed = spawn_compute_bound(move || {
         sign_user_decryption_result(
             &sig_key,
             &signing_schemes,
@@ -602,7 +602,8 @@ pub async fn async_user_decrypt<
         anyhow_error_and_log(format!(
             "Failed to run signing task for user decryption: {e}"
         ))
-    })?
+    })?;
+    signed.map_err(|e| anyhow_error_and_log(format!("Failed to sign user decryption result: {e}")))
 }
 
 // impl fmt::Debug for CentralizedKms, we don't want to include the decryption key in the debug output
