@@ -5,8 +5,12 @@
 //! changing it alone moves the 32 bytes. A field with no such test is a field that could quietly
 //! stop being bound.
 //!
-//! These tests assert difference, never a particular digest — the layout is not frozen until the
-//! vectors are published, and difference is the property that survives a layout change.
+//! These tests assert difference, never a particular digest. The layout is frozen now that the
+//! vectors are published (`core/grpc/test-vectors/solana_linker_v1.json`,
+//! `solana_frozen_constants.rs`), but this suite stays digest-free on purpose: difference is the
+//! property that survives a deliberate version bump, and it is the property a reviewer can check by
+//! reading. Every class enumerated here has a matching negative record in the published set — this
+//! file says the link *moves*, the vectors say *to what*.
 
 mod common;
 

@@ -43,9 +43,10 @@ impl Separator {
 
 /// Every `DomainSep` declared in the workspace, sorted by value.
 ///
-/// The linker's separator, `SOLLNK01`, is proposed rather than frozen: it is frozen together with
-/// the golden vectors. Until then it may change freely — but never into a value already listed
-/// here, which is what this file is for.
+/// The linker's separator, `SOLLNK01`, is frozen: it was published together with the normative
+/// vectors in `core/grpc/test-vectors/solana_linker_v1.json`, so it can no longer change at all —
+/// a new construction takes a new separator and a new scheme-tag version. Every other entry may
+/// still move, but never into a value already listed here, which is what this file is for.
 const INVENTORY: &[Separator] = &[
     Separator::new(
         "AGREERND",

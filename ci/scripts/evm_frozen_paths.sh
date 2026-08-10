@@ -40,10 +40,19 @@ CHANGED="$(git diff --name-only --diff-filter=MD "${MERGE_BASE}" HEAD)"
 # Frozen assets: references, not implementations. Modifying one is the failure this gate exists
 # for. Note the deliberate absence of core/grpc/proto: the Solana work adds fields there, and
 # additivity of field numbers is checked in Rust, where the wire rule actually lives.
+#
+# The Solana entries below are the same rule pointing the other way. The EVM entries freeze what
+# the Solana work must not disturb; the Solana entries freeze what the Solana work published and
+# other repositories now reproduce — the normative linker vectors, their set digest, and the
+# constants snapshot. Modifying any of them is a version bump in the linker's scheme tag, which is
+# a protocol decision and needs its own reviewed change.
 FROZEN_GLOBS=(
     'backward-compatibility/data/*'
     'backward-compatibility/generate-*/*'
     'core/service/tests/evm_path_byte_frozen.rs'
+    'core/grpc/test-vectors/solana_linker_v1.json'
+    'core/grpc/test-vectors/solana_linker_v1.sha256'
+    'core/grpc/tests/solana_frozen_constants.rs'
 )
 
 violations=()

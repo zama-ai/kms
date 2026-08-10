@@ -7,9 +7,13 @@
 //!
 //! What this file cannot catch, stated plainly: if the implementation and this test share the same
 //! misreading of the layout, both agree and both are wrong. Only a second, independent
-//! implementation closes that gap — the published vectors and the SDK that consumes them. Until
-//! those exist, no digest is hard-coded here: pinning one now would buy confidence this layer
-//! cannot supply, and would double the cost of the layout changes that are still expected.
+//! implementation closes that gap. That gap is now closed elsewhere, and deliberately not here:
+//! `core/grpc/test-vectors/solana_linker_v1.json` publishes the preimage and digest of every
+//! record, and `solana_frozen_constants.rs` pins one digest against a preimage assembled by hand
+//! from the specified layout. This file keeps its original job — reading like the specification,
+//! so that a layout change fails with a legible byte diff rather than an opaque digest mismatch —
+//! which is why no digest is hard-coded here even now. The two are complements: fix the diff this
+//! file reports first, then decide whether the frozen digests were meant to move.
 
 mod common;
 

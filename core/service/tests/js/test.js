@@ -22,6 +22,7 @@ const {
     u8vec_to_ml_kem_pke_pk,
     u8vec_to_ml_kem_pke_sk,
     new_client,
+    new_solana_client,
     new_server_id_addr,
 } = require("../../pkg");
 
@@ -66,6 +67,36 @@ function loadVector(name) {
     const enc_pk = u8vec_to_ml_kem_pke_pk(hexToBytes(data.enc_pk));
     const enc_sk = u8vec_to_ml_kem_pke_sk(hexToBytes(data.enc_sk));
     return { data, client, enc_pk, enc_sk };
+}
+
+// Load a stable Solana JSON test vector (see `StableSolanaUserDecryptionTestVector` on the Rust
+// side) and reconstruct the inputs to the stable Solana WASM API. The client is built from the
+// vector's own trusted configuration: the registered signer set and the FHE parameter choice.
+function loadSolanaVector(name) {
+    const data = JSON.parse(fs.readFileSync(path.join(TRANSCRIPT_DIR, name)));
+    const server_addrs = data.server_addrs.map(s => new_server_id_addr(s.id, s.addr));
+    const client = new_solana_client(server_addrs, data.fhe_parameter);
+    const enc_pk = u8vec_to_ml_kem_pke_pk(hexToBytes(data.enc_pk));
+    const enc_sk = u8vec_to_ml_kem_pke_sk(hexToBytes(data.enc_sk));
+    return { data, client, enc_pk, enc_sk };
+}
+
+// Call the Solana WASM entry point with a vector's own fields, overriding the client when a test
+// needs a differently-configured one (e.g. a foreign signer set).
+function processSolanaVector(client, data, enc_pk, enc_sk) {
+    return process_user_decryption_resp_solana_from_js(
+        client,
+        data.request,
+        hexToBytes(data.solana_user_pubkey),
+        BigInt(data.host_chain_id),
+        hexToBytes(data.verifying_program_id),
+        hexToBytes(data.kms_context_id),
+        hexToBytes(data.kms_epoch_id),
+        data.responses,
+        enc_pk,
+        enc_sk,
+        data.eip712_domain,
+    );
 }
 
 // Assert that the decrypted plaintexts (BE) match the expected plaintexts (LE) from the vector.
@@ -150,6 +181,8 @@ test('threshold user decryption response', (_t) => {
 
 test('solana chain ID crosses the WASM boundary as an exact bigint', (_t) => {
     const { data, enc_pk, enc_sk } = loadVector('test-central-wasm-transcript.8.json');
+    const client = new_solana_client(
+        [new_server_id_addr(1, "0x66f9664f97F2b50F62D13eA064982f936dE76657")], 'test');
     const solanaChainId = (1n << 63n) | 12345n;
     const handle = new Uint8Array(32).fill(0xab);
     for (let i = 0; i < 8; i++) {
@@ -167,18 +200,73 @@ test('solana chain ID crosses the WASM boundary as an exact bigint', (_t) => {
 
     assert.throws(
         () => process_user_decryption_resp_solana_from_js(
-            request, pubkey, solanaChainId, programId, contextId, epochId, [], enc_pk, enc_sk),
+            client, request, pubkey, solanaChainId, programId, contextId, epochId,
+            [], enc_pk, enc_sk),
         /Response does not exist/,
     );
     assert.throws(
         () => process_user_decryption_resp_solana_from_js(
-            request, pubkey, solanaChainId + 1n, programId, contextId, epochId, [], enc_pk, enc_sk),
+            client, request, pubkey, solanaChainId + 1n, programId, contextId, epochId,
+            [], enc_pk, enc_sk),
         /does not match handle chain ID/,
     );
     assert.throws(
         () => process_user_decryption_resp_solana_from_js(
-            request, pubkey, Number(solanaChainId), programId, contextId, epochId, [], enc_pk, enc_sk),
+            client, request, pubkey, Number(solanaChainId), programId, contextId, epochId,
+            [], enc_pk, enc_sk),
         TypeError,
+    );
+
+    // The full arity with a trailing EIP-712 domain: marshalling it must not change what an
+    // empty response reports.
+    assert.throws(
+        () => process_user_decryption_resp_solana_from_js(
+            client, request, pubkey, solanaChainId, programId, contextId, epochId,
+            [], enc_pk, enc_sk, null),
+        /Response does not exist/,
+    );
+});
+
+test('solana centralized user decryption response', (_t) => {
+    // TEST_SOLANA_CENTRAL_WASM_TRANSCRIPT_PATH
+    const { data, client, enc_pk, enc_sk } = loadSolanaVector('test-solana-central-wasm-transcript.json');
+
+    // the successful call through the public JS/WASM function: the share is authenticated by its
+    // EIP-712 external signature against the vector's trusted signer set, linked to the request,
+    // and de-signcrypted to the expected plaintext
+    const pt = processSolanaVector(client, data, enc_pk, enc_sk);
+    assertExpected(pt, data.expected);
+
+    // a client trusting a different signer set must reject the very same response: the trusted
+    // keys come from the caller's configuration, never from the response
+    const foreign = new_solana_client(
+        data.server_addrs.map(s => new_server_id_addr(s.id, "0x66f9664f97F2b50F62D13eA064982f936dE76657")),
+        data.fhe_parameter);
+    assert.throws(
+        () => processSolanaVector(foreign, data, enc_pk, enc_sk),
+        /does not carry that party's trusted key/,
+    );
+});
+
+test('solana threshold user decryption response', (_t) => {
+    // TEST_SOLANA_THRESHOLD_WASM_TRANSCRIPT_PATH
+    const { data, client, enc_pk, enc_sk } = loadSolanaVector('test-solana-threshold-wasm-transcript.json');
+    assert.equal(data.server_addrs.length, 4);
+
+    // all four shares reconstruct
+    const pt = processSolanaVector(client, data, enc_pk, enc_sk);
+    assertExpected(pt, data.expected);
+
+    // t-of-n, not n-of-n: reconstruction must still succeed with fewer (but enough) shares
+    data.responses.pop();
+    const pt2 = processSolanaVector(client, data, enc_pk, enc_sk);
+    assertExpected(pt2, data.expected);
+
+    // but not with too few: n = 4 needs t + 1 = 2 shares carrying the recomputed link
+    data.responses.length = 1;
+    assert.throws(
+        () => processSolanaVector(client, data, enc_pk, enc_sk),
+        /required user decryption shares/,
     );
 });
 

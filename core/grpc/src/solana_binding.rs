@@ -16,15 +16,20 @@ use hashing::{DSEP_LIST, DomainSep, unsafe_hash_list_w_size};
 /// Scheme and version tag, first element of the hashed list. Exactly 29 bytes.
 ///
 /// A change to any normative rule of the construction bumps the version in this tag rather than
-/// silently reinterpreting the same bytes.
+/// silently reinterpreting the same bytes. Frozen: see [`DSEP_SOLANA_LINKER`].
 pub const SOLANA_LINKER_SCHEME_TAG: &[u8; 29] = b"SolanaUserDecryptionLinker:v1";
 
 /// Call separator for the linker's list hash.
 ///
 /// The linker is a KMS-domain object that is never validated on chain, so the hash is SHAKE-256
-/// with an 8-byte call separator, per the KMS hashing policy. This value is frozen together with
-/// the golden vectors; until then it may change, and it MUST stay unique among the codebase's
-/// [`DomainSep`] constants.
+/// with an 8-byte call separator, per the KMS hashing policy. It MUST stay unique among the
+/// codebase's [`DomainSep`] constants; `core/grpc/tests/domain_separator_inventory.rs` enforces
+/// that.
+///
+/// **Frozen**, together with [`SOLANA_LINKER_SCHEME_TAG`], the element layout, and the normative
+/// vectors in `core/grpc/test-vectors/solana_linker_v1.json`. Other implementations now reproduce
+/// these bytes, so changing this value — or anything else the vectors pin — is a deliberate version
+/// bump in the scheme tag, not an edit. `core/grpc/tests/solana_frozen_constants.rs` is the gate.
 pub const DSEP_SOLANA_LINKER: DomainSep = *b"SOLLNK01";
 
 /// Width of every identity the binding accepts: handles, the recipient, the program id, and the

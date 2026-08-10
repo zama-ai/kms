@@ -27,9 +27,6 @@ use kms_grpc::kms::v1::{
     TypedPlaintext, UserDecryptionRequest, UserDecryptionResponse, UserDecryptionResponsePayload,
 };
 use kms_grpc::rpc_types::{SigncryptionReceiver, fhe_types_to_num_blocks};
-use kms_grpc::solana_binding::{
-    SOLANA_IDENTITY_LEN, SolanaUserDecryptBinding, SolanaUserDecryptBindingError,
-};
 use kms_grpc::solidity_types::UserDecryptionLinker;
 use std::num::Wrapping;
 use tfhe::FheTypes;
@@ -42,33 +39,6 @@ use threshold_execution::tfhe_internals::parameters::AugmentedCiphertextParamete
 use threshold_types::role::Role;
 use wasm_bindgen::prelude::wasm_bindgen;
 use wasm_bindgen::{JsError, JsValue};
-
-/// Recomputes the request's link from the client's own trusted state.
-///
-/// The client holds a chain id of its own — the one its permit was signed for — so unlike a KMS
-/// party it can check the value the handles embed against a declared one, and does.
-fn compute_solana_user_decrypt_link(
-    request: &ParsedUserDecryptionRequest,
-    solana_user_pubkey: &[u8; SOLANA_IDENTITY_LEN],
-    declared_chain_id: u64,
-    verifying_program_id: &[u8; SOLANA_IDENTITY_LEN],
-    kms_context_id: &[u8; SOLANA_IDENTITY_LEN],
-    kms_epoch_id: &[u8; SOLANA_IDENTITY_LEN],
-) -> Result<Vec<u8>, SolanaUserDecryptBindingError> {
-    let binding = SolanaUserDecryptBinding::new(
-        verifying_program_id,
-        solana_user_pubkey,
-        kms_context_id,
-        kms_epoch_id,
-        request
-            .ciphertext_handles
-            .iter()
-            .map(|handle| handle.0.as_slice()),
-        &request.enc_key,
-    )?;
-    binding.validate_declared_chain_id(declared_chain_id)?;
-    Ok(binding.compute_link())
-}
 
 impl Client {
     /// Processes the aggregated user decryption responses to attempt to decrypt
@@ -248,116 +218,6 @@ impl Client {
             .collect()
     }
 
-    /// Solana centralized de-signcryption.
-    ///
-    /// Identical to [`Self::centralized_user_decryption_resp`] except for two values, both of
-    /// which the client recomputes from its own state rather than trusting the response for:
-    /// the request<->response binding `link`, which on Solana is
-    /// [`SolanaUserDecryptBinding::compute_link`] over the deployment pair, the recipient, the KMS
-    /// context and epoch, the handles and the transport key, instead of the EVM
-    /// `UserDecryptionLinker` EIP-712 hash; and the signcryption `receiver_id`, which is the
-    /// 32-byte wallet key itself, never a hash of it. The link is opaque AAD to the signcryption
-    /// layer, so the unsigncryption is mechanically the EVM path with a different link.
-    ///
-    /// Server authenticity is checked via the internal ECDSA signature over the response payload;
-    /// the external EIP-712 certificate is the on-chain-consumable artifact and is not needed to
-    /// recover the plaintext client-side. Every handle must embed the same high-bit Solana chain
-    /// ID, and that ID must equal `host_chain_id`, before the link is computed.
-    #[expect(
-        clippy::too_many_arguments,
-        reason = "every argument is a value the link commits to; collapsing them into a struct is \
-                  the response-verification work, not this seam"
-    )]
-    pub fn process_user_decryption_resp_solana(
-        &self,
-        request: &ParsedUserDecryptionRequest,
-        solana_user_pubkey: &[u8; SOLANA_IDENTITY_LEN],
-        host_chain_id: u64,
-        verifying_program_id: &[u8; SOLANA_IDENTITY_LEN],
-        kms_context_id: &[u8; SOLANA_IDENTITY_LEN],
-        kms_epoch_id: &[u8; SOLANA_IDENTITY_LEN],
-        enc_key: &UnifiedPublicEncKey,
-        dec_key: &UnifiedPrivateEncKey,
-        agg_resp: &[UserDecryptionResponse],
-    ) -> anyhow::Result<Vec<TypedPlaintext>> {
-        let link = compute_solana_user_decrypt_link(
-            request,
-            solana_user_pubkey,
-            host_chain_id,
-            verifying_program_id,
-            kms_context_id,
-            kms_epoch_id,
-        )?;
-
-        let resp = some_or_err(agg_resp.last(), "Response does not exist".to_owned())?;
-        let payload = some_or_err(resp.payload.clone(), "Payload does not exist".to_owned())?;
-        if link != payload.digest {
-            return Err(anyhow_error_and_log(format!(
-                "solana link mismatch ({} != {})",
-                hex::encode(&link),
-                hex::encode(&payload.digest),
-            )));
-        }
-
-        let stored_server_addrs = &self.get_server_addrs();
-        if stored_server_addrs.len() != 1 {
-            return Err(anyhow_error_and_log("incorrect length for addresses"));
-        }
-        let cur_verf_key: PublicSigKey = bc2wrap::deserialize_slice(&payload.verification_key)?;
-        match stored_server_addrs.get(&1) {
-            Some(server_addr) if *server_addr == cur_verf_key.address() => {}
-            Some(_) => return Err(anyhow_error_and_log("server address is not consistent")),
-            None => return Err(anyhow_error_and_log("missing server address at ID 1")),
-        }
-
-        // Authenticity: the relayer/gateway path carries only the KMS external (EIP-712) signature,
-        // already verified on-chain by gateway consensus, with the internal ECDSA `signature` empty;
-        // the direct-gRPC path carries the internal ECDSA signature. Verify the internal signature
-        // when present; otherwise rely on the gateway-verified external signature plus the link/AEAD
-        // binding below (the opaque `link` must equal payload.digest, and unsigncryption is an AEAD
-        // keyed to the server verf key + receiver id, so a forged response cannot be unsigncrypted).
-        if resp.signature.is_empty() {
-            if resp.external_signature.is_empty() {
-                return Err(anyhow_error_and_log(
-                    "solana user-decrypt response has neither internal nor external signature",
-                ));
-            }
-        } else {
-            let sig = Signature {
-                sig: k256::ecdsa::Signature::from_slice(&resp.signature)?,
-            };
-            internal_verify_sig(
-                &DSEP_USER_DECRYPTION,
-                &bc2wrap::serialize(&payload)?,
-                &sig,
-                &cur_verf_key,
-            )
-            .inspect_err(|e| {
-                tracing::warn!("solana user-decrypt response signature invalid ({e})")
-            })?;
-        }
-
-        // Through the same mapping the server used, not a second copy of it: the recipient is the
-        // wallet key itself. Two keys colliding under a hash-and-truncate would be one recipient to
-        // signcryption, and the result would open under the wrong key.
-        let receiver_id = SigncryptionReceiver::Solana(*solana_user_pubkey)
-            .as_bytes()
-            .to_vec();
-        let unsign_key =
-            UnifiedUnsigncryptionKey::new(dec_key, enc_key, &cur_verf_key, &receiver_id);
-
-        payload
-            .signcrypted_ciphertexts
-            .into_iter()
-            .map(|ct| {
-                unsign_key
-                    .unsigncrypt_plaintext(&DSEP_USER_DECRYPTION, &ct.signcrypted_ciphertext, &link)
-                    .map(|res| res.plaintext)
-                    .map_err(|e| anyhow::anyhow!("unsigncrypt_plaintext failed: {}", e))
-            })
-            .collect()
-    }
-
     /// Decrypt the user decryption response from the centralized KMS.
     /// This function does *not* do any verification and is thus insecure and should be used only for testing.
     /// TODO hide behind flag for insecure function?
@@ -402,6 +262,29 @@ impl Client {
             "Could not validate request".to_owned(),
         )?
         .into_inner();
+        self.reconstruct_validated_user_decryption(
+            SigncryptionReceiver::Evm(self.client_address),
+            &validated_resps,
+            enc_key,
+            dec_key,
+        )
+    }
+
+    /// Reconstructs plaintexts from already-validated threshold response payloads — the second
+    /// half of every threshold user decryption, shared by the EVM and Solana paths.
+    ///
+    /// Receiver-agnostic by construction: the caller has already decided which payloads are
+    /// trustworthy (the EVM path in [validate_user_decrypt_responses_against_request], the Solana
+    /// path in its verify-then-release rules) and passes the receiver the shares were signcrypted
+    /// to. The two paths differ only in that decision and in the receiver; the share recovery and
+    /// reconstruction below exist exactly once.
+    pub(crate) fn reconstruct_validated_user_decryption(
+        &self,
+        receiver: SigncryptionReceiver,
+        validated_resps: &[UserDecryptionResponsePayload],
+        enc_key: &UnifiedPublicEncKey,
+        dec_key: &UnifiedPrivateEncKey,
+    ) -> anyhow::Result<Vec<TypedPlaintext>> {
         let degree = some_or_err(
             validated_resps.first(),
             "No valid responses parsed".to_string(),
@@ -428,7 +311,7 @@ impl Client {
             DecryptionMode::BitDecSmall => {
                 // Note: We will create way too many shares here, if we use BitDec kind of decryption we can actually fit 4*64 bits of actual data in a single share.
                 let all_sharings =
-                    self.recover_sharings::<Z64>(&validated_resps, enc_key, dec_key)?;
+                    self.recover_sharings::<Z64>(&receiver, validated_resps, enc_key, dec_key)?;
 
                 let mut out = vec![];
                 for (fhe_type, packing_factor, sharings, recovery_errors) in all_sharings {
@@ -491,7 +374,7 @@ impl Client {
             }
             DecryptionMode::NoiseFloodSmall => {
                 let all_sharings =
-                    self.recover_sharings::<Z128>(&validated_resps, enc_key, dec_key)?;
+                    self.recover_sharings::<Z128>(&receiver, validated_resps, enc_key, dec_key)?;
 
                 let mut out = vec![];
                 for (fhe_type, packing_factor, sharings, recovery_errors) in all_sharings {
@@ -782,6 +665,7 @@ impl Client {
     #[expect(clippy::type_complexity)]
     fn recover_sharings<Z: BaseRing>(
         &self,
+        receiver: &SigncryptionReceiver,
         agg_resp: &[UserDecryptionResponsePayload],
         enc_key: &UnifiedPublicEncKey,
         dec_key: &UnifiedPrivateEncKey,
@@ -825,9 +709,12 @@ impl Client {
                 // that it matches with the original request
                 let cur_verf_key: PublicSigKey =
                     bc2wrap::deserialize_slice(&cur_resp.verification_key)?; // TODO(#2781)
-                let client_id = self.client_address.to_vec();
-                let unsign_key =
-                    UnifiedUnsigncryptionKey::new(dec_key, enc_key, &cur_verf_key, &client_id);
+                let unsign_key = UnifiedUnsigncryptionKey::new(
+                    dec_key,
+                    enc_key,
+                    &cur_verf_key,
+                    receiver.as_bytes(),
+                );
                 match unsign_key.unsigncrypt_plaintext(
                     &DSEP_USER_DECRYPTION,
                     &cur_resp.signcrypted_ciphertexts[batch_i].signcrypted_ciphertext,
@@ -1096,84 +983,16 @@ impl ParsedUserDecryptionRequest {
     pub fn extra_data(&self) -> &[u8] {
         &self.extra_data
     }
-}
 
-#[cfg(test)]
-mod solana_request_link_tests {
-    use super::{
-        CiphertextHandle, ParsedUserDecryptionRequest, SolanaUserDecryptBindingError,
-        compute_solana_user_decrypt_link,
-    };
-
-    const SOLANA_CHAIN_ID: u64 = (1 << 63) | 12_345;
-    const PROGRAM_ID: [u8; 32] = [0x22; 32];
-    const CONTEXT_ID: [u8; 32] = [0x44; 32];
-    const EPOCH_ID: [u8; 32] = [0x55; 32];
-
-    fn handle(chain_id: u64) -> Vec<u8> {
-        let mut handle = vec![0xabu8; 32];
-        handle[22..30].copy_from_slice(&chain_id.to_be_bytes());
-        handle
-    }
-
-    /// The client-side link for `request`, under the fixed deployment and key-selection fields.
-    fn link(
-        request: &ParsedUserDecryptionRequest,
-        pubkey: &[u8; 32],
-        declared_chain_id: u64,
-    ) -> Result<Vec<u8>, SolanaUserDecryptBindingError> {
-        compute_solana_user_decrypt_link(
-            request,
-            pubkey,
-            declared_chain_id,
-            &PROGRAM_ID,
-            &CONTEXT_ID,
-            &EPOCH_ID,
-        )
-    }
-
-    fn request(handles: Vec<Vec<u8>>) -> ParsedUserDecryptionRequest {
-        ParsedUserDecryptionRequest::new(
-            None,
-            alloy_primitives::Address::ZERO,
-            vec![0x33; 64],
-            handles.into_iter().map(CiphertextHandle::new).collect(),
-            alloy_primitives::Address::ZERO,
-            vec![],
-        )
-    }
-
-    #[test]
-    fn validates_the_declared_chain_id_before_processing_a_response() {
-        let request = request(vec![handle(SOLANA_CHAIN_ID)]);
-        let pubkey = [0x11; 32];
-        assert_eq!(link(&request, &pubkey, SOLANA_CHAIN_ID).unwrap().len(), 32);
-        assert_eq!(
-            link(&request, &pubkey, SOLANA_CHAIN_ID + 1),
-            Err(SolanaUserDecryptBindingError::DeclaredChainIdMismatch {
-                declared: SOLANA_CHAIN_ID + 1,
-                embedded: SOLANA_CHAIN_ID,
-            })
-        );
-    }
-
-    #[test]
-    fn rejects_invalid_handle_chain_ids_and_widths() {
-        let pubkey = [0x11; 32];
-        assert_eq!(
-            link(&request(vec![handle(12_345)]), &pubkey, 12_345),
-            Err(SolanaUserDecryptBindingError::InvalidHandleChainId {
-                index: 0,
-                chain_id: 12_345,
-            })
-        );
-        assert_eq!(
-            link(&request(vec![vec![0; 31]]), &pubkey, SOLANA_CHAIN_ID),
-            Err(SolanaUserDecryptBindingError::InvalidHandleLength {
-                index: 0,
-                actual: 31,
-            })
-        );
+    /// The ciphertext handles, in request order and with duplicates preserved, as plain bytes.
+    ///
+    /// Order and multiplicity are what a linker binds, so this must stay a faithful copy of the
+    /// request's list — never deduplicated, never sorted.
+    pub fn ciphertext_handle_bytes(&self) -> Vec<Vec<u8>> {
+        self.ciphertext_handles
+            .iter()
+            .map(|handle| handle.0.clone())
+            .collect()
     }
 }
 
