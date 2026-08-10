@@ -134,7 +134,7 @@ pub enum SchemeDigestErr {
 /// This explicit type is here to ensure embedded validation of digests.
 /// For now this validation is limited to ensuring the length is as expected.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
-// Route serialization through the this type, hence doing needed checks upon insertion.
+// Route serialization through this type, hence doing needed checks upon insertion.
 #[serde(
     try_from = "BTreeMap<SigningSchemeType, Vec<u8>>",
     into = "BTreeMap<SigningSchemeType, Vec<u8>>"
@@ -480,9 +480,7 @@ impl ContextInfo {
     /// before the context passed to the KMS, it should have been validated on the gateway.
     pub async fn verify<S: StorageReader>(&self, storage: &S) -> anyhow::Result<Option<Role>> {
         // Check the signing key is consistent with the private key in storage.
-        // TODO should not be read from storage, but passed in as a parameter to the context
         let signing_key = get_core_signing_key(storage).await?;
-        // The ECDSA-256k1 digest of a verification key is its Ethereum address.
         let core_address = signing_key.verf_key().verf_key_id();
 
         let my_node = self.mpc_nodes.iter().find(|node| {
