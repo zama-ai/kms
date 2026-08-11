@@ -50,6 +50,7 @@ use rand::{RngCore, SeedableRng};
 use std::collections::BTreeMap;
 use std::num::Wrapping;
 use std::{borrow::Cow, collections::HashMap, fs::create_dir_all, path::PathBuf};
+use strum::IntoEnumIterator;
 use tfhe_1_6_2::safe_serialization::safe_serialize;
 use tfhe_1_6_2::shortint::parameters::{
     AtomicPatternParameters, Backend, LweCiphertextCount, MetaNoiseSquashingParameters,
