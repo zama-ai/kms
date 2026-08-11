@@ -169,7 +169,9 @@ impl<
     }
 
     // NOTE: unlike other endpoints, the decryption counters are incremented inside the
-    // implementations rather than here, so that async/sync endpoints share metric handling.
+    // shared implementation, not here: one place instead of two (sync/async), and the
+    // sync path calls `get_result` directly, bypassing this dispatch, so incrementing
+    // here would skip that counter bump entirely.
 
     #[tracing::instrument(skip(self, request))]
     async fn user_decrypt(
