@@ -11,18 +11,19 @@ use crate::engine::validation::{
     validate_public_decrypt_req, validate_user_decrypt_req,
 };
 use crate::util::meta_store::{
-    EntryState, add_or_redo_failed_in_meta_store, retrieve_from_meta_store_with_timeout,
+    add_or_redo_failed_in_meta_store, retrieve_from_meta_store_with_timeout,
     update_req_in_meta_store,
 };
 use crate::vault::storage::{Storage, StorageExt};
+use kms_grpc::RequestId;
 use kms_grpc::kms::v1::{
     Empty, PublicDecryptionRequest, PublicDecryptionResponse, PublicDecryptionResponsePayload,
     UserDecryptionRequest, UserDecryptionResponse,
 };
 use observability::metrics::METRICS;
 use observability::metrics_names::{
-    CENTRAL_TAG, OP_PUBLIC_DECRYPT_REQUEST, OP_PUBLIC_DECRYPT_RESULT, OP_PUBLIC_DECRYPT_SYNC,
-    OP_USER_DECRYPT_REQUEST, OP_USER_DECRYPT_RESULT, OP_USER_DECRYPT_SYNC, TAG_PARTY_ID,
+    CENTRAL_TAG, OP_PUBLIC_DECRYPT_REQUEST, OP_PUBLIC_DECRYPT_RESULT, OP_USER_DECRYPT_REQUEST,
+    OP_USER_DECRYPT_RESULT, TAG_PARTY_ID,
 };
 use std::sync::Arc;
 use thread_handles::spawn_compute_bound;
@@ -39,6 +40,8 @@ pub async fn user_decrypt_impl<
     service: &CentralizedKms<PubS, PrivS, CM, BO>,
     request: Request<UserDecryptionRequest>,
 ) -> Result<Response<Empty>, MetricedError> {
+    METRICS.increment_request_counter(OP_USER_DECRYPT_REQUEST);
+
     let permit = service.rate_limiter.start_user_decrypt().await?;
     let timer = METRICS
         .time_operation(OP_USER_DECRYPT_REQUEST)
@@ -156,42 +159,24 @@ pub async fn user_decrypt_sync_impl<
     service: &CentralizedKms<PubS, PrivS, CM, BO>,
     request: Request<UserDecryptionRequest>,
 ) -> Result<Response<UserDecryptionResponse>, MetricedError> {
-    // Time the whole call, wait included: this is the latency the sync endpoint exists to cut.
-    let _timer = METRICS
-        .time_operation(OP_USER_DECRYPT_SYNC)
-        .tag(TAG_PARTY_ID, CENTRAL_TAG.to_string())
-        .start();
+    // `user_decrypt_impl` consumes the request, so keep the raw id for fetching the result below.
+    let raw_request_id = request.get_ref().request_id.clone();
 
-    let request_id = parse_optional_grpc_request_id(
-        &request.get_ref().request_id,
-        RequestIdParsingErr::UserDecRequest,
-    )
-    .map_err(|e| MetricedError::new(OP_USER_DECRYPT_SYNC, None, e, tonic::Code::InvalidArgument))?;
-
-    let should_start = match service
-        .user_dec_meta_store
-        .read()
-        .await
-        .retrieve(&request_id)
-    {
-        None => true,                           // fresh request ID
-        Some(EntryState::Done(Err(_))) => true, // previously failed, redo it under the same ID
-        Some(EntryState::Done(Ok(_))) => false, // already succeeded, return the stored result
-        Some(EntryState::Pending) => false,     // in flight, attach to it
-        Some(EntryState::Deleted) => false,     // tombstoned, let the wait report `NotFound`
-    };
-    if should_start {
-        match user_decrypt_impl(service, request).await {
-            Ok(_empty) => (),
-            // Another call won the race to start or redo this request: attach to that attempt
-            Err(e) if e.code() == tonic::Code::AlreadyExists => e.defuse(),
-            Err(e) => return Err(e.retag(OP_USER_DECRYPT_SYNC)),
-        }
+    match user_decrypt_impl(service, request).await {
+        Ok(_empty) => (),
+        // Already succeeded, in flight, or tombstoned: attach to the existing entry
+        Err(e) if e.code() == tonic::Code::AlreadyExists => e.defuse(),
+        Err(e) => return Err(e),
     }
 
-    get_user_decryption_result_impl(service, Request::new(request_id.into()))
-        .await
-        .map_err(|e| e.retag(OP_USER_DECRYPT_SYNC))
+    // `user_decrypt_impl` accepted the request, so its id must parse.
+    let request_id: RequestId =
+        parse_optional_grpc_request_id(&raw_request_id, RequestIdParsingErr::UserDecRequest)
+            .map_err(|e| {
+                MetricedError::new(OP_USER_DECRYPT_REQUEST, None, e, Code::InvalidArgument)
+            })?;
+
+    get_user_decryption_result_impl(service, Request::new(request_id.into())).await
 }
 
 /// Implementation of the get_user_decryption_result endpoint
@@ -204,6 +189,8 @@ pub async fn get_user_decryption_result_impl<
     service: &CentralizedKms<PubS, PrivS, CM, BO>,
     request: Request<kms_grpc::kms::v1::RequestId>,
 ) -> Result<Response<UserDecryptionResponse>, MetricedError> {
+    METRICS.increment_request_counter(OP_USER_DECRYPT_RESULT);
+
     let request_id =
         parse_grpc_request_id(&request.into_inner(), RequestIdParsingErr::UserDecRequest).map_err(
             |e| {
@@ -250,6 +237,8 @@ pub async fn public_decrypt_impl<
     service: &CentralizedKms<PubS, PrivS, CM, BO>,
     request: Request<PublicDecryptionRequest>,
 ) -> Result<Response<Empty>, MetricedError> {
+    METRICS.increment_request_counter(OP_PUBLIC_DECRYPT_REQUEST);
+
     let permit = service.rate_limiter.start_pub_decrypt().await?;
     let timer = METRICS
         .time_operation(OP_PUBLIC_DECRYPT_REQUEST)
@@ -402,37 +391,24 @@ pub async fn public_decrypt_sync_impl<
     service: &CentralizedKms<PubS, PrivS, CM, BO>,
     request: Request<PublicDecryptionRequest>,
 ) -> Result<Response<PublicDecryptionResponse>, MetricedError> {
-    // Time the whole call, wait included: this is the latency the sync endpoint exists to cut.
-    let _timer = METRICS
-        .time_operation(OP_PUBLIC_DECRYPT_SYNC)
-        .tag(TAG_PARTY_ID, CENTRAL_TAG.to_string())
-        .start();
+    // `public_decrypt_impl` consumes the request, so keep the raw id for fetching the result below
+    let raw_request_id = request.get_ref().request_id.clone();
 
-    let req_id = parse_optional_grpc_request_id(
-        &request.get_ref().request_id,
-        RequestIdParsingErr::PublicDecRequest,
-    )
-    .map_err(|e| MetricedError::new(OP_PUBLIC_DECRYPT_SYNC, None, e, Code::InvalidArgument))?;
-
-    let should_start = match service.pub_dec_meta_store.read().await.retrieve(&req_id) {
-        None => true,                           // fresh request ID
-        Some(EntryState::Done(Err(_))) => true, // previously failed, redo it under the same ID
-        Some(EntryState::Done(Ok(_))) => false, // already succeeded, return the stored result
-        Some(EntryState::Pending) => false,     // in flight, attach to it
-        Some(EntryState::Deleted) => false,     // tombstoned, let the wait report `NotFound`
-    };
-    if should_start {
-        match public_decrypt_impl(service, request).await {
-            Ok(_empty) => (),
-            // Another call won the race to start or redo this request: attach to that attempt
-            Err(e) if e.code() == tonic::Code::AlreadyExists => e.defuse(),
-            Err(e) => return Err(e.retag(OP_PUBLIC_DECRYPT_SYNC)),
-        }
+    match public_decrypt_impl(service, request).await {
+        Ok(_empty) => (),
+        // Already succeeded, in flight, or tombstoned: attach to the existing entry
+        Err(e) if e.code() == tonic::Code::AlreadyExists => e.defuse(),
+        Err(e) => return Err(e),
     }
 
-    get_public_decryption_result_impl(service, Request::new(req_id.into()))
-        .await
-        .map_err(|e| e.retag(OP_PUBLIC_DECRYPT_SYNC))
+    // `public_decrypt_impl` accepted the request, so its id must parse.
+    let req_id: RequestId =
+        parse_optional_grpc_request_id(&raw_request_id, RequestIdParsingErr::PublicDecRequest)
+            .map_err(|e| {
+                MetricedError::new(OP_PUBLIC_DECRYPT_REQUEST, None, e, Code::InvalidArgument)
+            })?;
+
+    get_public_decryption_result_impl(service, Request::new(req_id.into())).await
 }
 
 /// Implementation of the get_public_decryption_result endpoint
@@ -445,6 +421,8 @@ pub async fn get_public_decryption_result_impl<
     service: &CentralizedKms<PubS, PrivS, CM, BO>,
     request: Request<kms_grpc::kms::v1::RequestId>,
 ) -> Result<Response<PublicDecryptionResponse>, MetricedError> {
+    METRICS.increment_request_counter(OP_PUBLIC_DECRYPT_RESULT);
+
     let request_id = parse_grpc_request_id(
         &request.into_inner(),
         RequestIdParsingErr::PublicDecResponse,
@@ -815,6 +793,26 @@ mod tests_public_decryption {
     }
 
     #[tokio::test]
+    async fn sync_call_shares_request_and_result_counters() {
+        let mut rng = AesRng::seed_from_u64(1234);
+        let key_id = derive_request_id("keyid_decryption_sync_counters").unwrap();
+        let (kms, pk, _) = setup_test_kms_with_key(&mut rng, &key_id).await;
+        let domain = alloy_to_protobuf_domain(&dummy_domain()).unwrap();
+        let request_id = derive_request_id("req_id_decryption_sync_counters").unwrap();
+        let (_msg, ciphertexts) = make_test_msg_ct(&pk, true);
+        let request = make_valid_request(request_id, key_id, ciphertexts, &domain);
+
+        let requests_before = METRICS.request_counter_value(OP_PUBLIC_DECRYPT_REQUEST);
+        let results_before = METRICS.request_counter_value(OP_PUBLIC_DECRYPT_RESULT);
+        public_decrypt_sync_impl(&kms, tonic::Request::new(request))
+            .await
+            .unwrap();
+        // Check global growth: the counters are shared at the process level.
+        assert!(METRICS.request_counter_value(OP_PUBLIC_DECRYPT_REQUEST) > requests_before);
+        assert!(METRICS.request_counter_value(OP_PUBLIC_DECRYPT_RESULT) > results_before);
+    }
+
+    #[tokio::test]
     async fn sunshine_sync() {
         let mut rng = AesRng::seed_from_u64(1234);
         let key_id = derive_request_id("keyid_decryption_sunshine_sync").unwrap();
@@ -1174,6 +1172,27 @@ mod test_user_decryption {
             recorded_errors_before,
             "attaching to an already-known request ID must not report a failure"
         );
+    }
+
+    #[tokio::test]
+    async fn sync_call_shares_request_and_result_counters() {
+        let mut rng = AesRng::seed_from_u64(1234);
+        let key_id = derive_request_id("keyid_decryption_sync_counters").unwrap();
+        let (kms, pk, _verf_key) = setup_test_kms_with_key(&mut rng, &key_id).await;
+        let domain = alloy_to_protobuf_domain(&dummy_domain()).unwrap();
+        let request_id = derive_request_id("req_id_decryption_sync_counters").unwrap();
+        let (_msg, ciphertexts) = make_test_msg_ct(&pk, true);
+        let (enc_key_buf, _enc_sk) = make_test_pk(&mut rng);
+        let request = make_valid_request(request_id, key_id, ciphertexts, enc_key_buf, &domain);
+
+        let requests_before = METRICS.request_counter_value(OP_USER_DECRYPT_REQUEST);
+        let results_before = METRICS.request_counter_value(OP_USER_DECRYPT_RESULT);
+        user_decrypt_sync_impl(&kms, tonic::Request::new(request))
+            .await
+            .unwrap();
+        // Check global growth: the counters are shared at the process level.
+        assert!(METRICS.request_counter_value(OP_USER_DECRYPT_REQUEST) > requests_before);
+        assert!(METRICS.request_counter_value(OP_USER_DECRYPT_RESULT) > results_before);
     }
 
     #[tokio::test]
