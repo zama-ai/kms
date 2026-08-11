@@ -1033,12 +1033,77 @@ mod tests {
 
         // check that the old shares have been zeroized
         for osh in old_shares.into_iter().flatten() {
-            osh.glwe_secret_key_share_sns_as_lwe
-                .unwrap()
-                .data_iter()
-                .for_each(|x| assert!(x.is_zero()));
+            check_privatekeyset_zeroized(&osh);
         }
         Ok(())
+    }
+
+    fn check_privatekeyset_zeroized<const EXTENSION_DEGREE: usize>(
+        keyset: &PrivateKeySet<EXTENSION_DEGREE>,
+    ) where
+        ResiduePoly<Z128, EXTENSION_DEGREE>: ErrorCorrect + Invert + QuotientMaximalIdeal,
+        ResiduePoly<Z64, EXTENSION_DEGREE>: ErrorCorrect + Invert + QuotientMaximalIdeal,
+    {
+        match &keyset.lwe_encryption_secret_key_share {
+            LweSecretKeyShareEnum::Z64(x) => {
+                x.data.iter().for_each(|x| assert!(x.value().is_zero()))
+            }
+            LweSecretKeyShareEnum::Z128(x) => {
+                x.data.iter().for_each(|x| assert!(x.value().is_zero()))
+            }
+        }
+
+        match &keyset.lwe_compute_secret_key_share {
+            LweSecretKeyShareEnum::Z64(x) => {
+                x.data.iter().for_each(|x| assert!(x.value().is_zero()))
+            }
+            LweSecretKeyShareEnum::Z128(x) => {
+                x.data.iter().for_each(|x| assert!(x.value().is_zero()))
+            }
+        }
+
+        if let Some(x) = keyset.oprf_secret_key_share.as_ref() {
+            match x {
+                LweSecretKeyShareEnum::Z64(x) => {
+                    x.data.iter().for_each(|x| assert!(x.value().is_zero()))
+                }
+                LweSecretKeyShareEnum::Z128(x) => {
+                    x.data.iter().for_each(|x| assert!(x.value().is_zero()))
+                }
+            }
+        }
+
+        match &keyset.glwe_secret_key_share {
+            GlweSecretKeyShareEnum::Z64(x) => {
+                x.data.iter().for_each(|x| assert!(x.value().is_zero()))
+            }
+            GlweSecretKeyShareEnum::Z128(x) => {
+                x.data.iter().for_each(|x| assert!(x.value().is_zero()))
+            }
+        }
+
+        if let Some(x) = keyset.glwe_secret_key_share_sns_as_lwe.as_ref() {
+            x.data.iter().for_each(|x| assert!(x.value().is_zero()))
+        }
+
+        if let Some(x) = keyset.glwe_secret_key_share_compression.as_ref() {
+            match x {
+                CompressionPrivateKeySharesEnum::Z64(x) => x
+                    .post_packing_ks_key
+                    .data
+                    .iter()
+                    .for_each(|x| assert!(x.value().is_zero())),
+                CompressionPrivateKeySharesEnum::Z128(x) => x
+                    .post_packing_ks_key
+                    .data
+                    .iter()
+                    .for_each(|x| assert!(x.value().is_zero())),
+            }
+        }
+
+        if let Some(x) = keyset.glwe_sns_compression_key_as_lwe.as_ref() {
+            x.data.iter().for_each(|x| assert!(x.value().is_zero()))
+        }
     }
 
     async fn simulate_reshare_two_sets<const EXTENSION_DEGREE: usize>(
