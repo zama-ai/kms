@@ -858,6 +858,9 @@ mod tests {
     use crate::cryptography::signatures::gen_sig_keys;
     use crate::cryptography::signing::SigningSchemeType;
     use crate::engine::context::{ContextInfo, NodeInfo, SchemeDigests, SoftwareVersion};
+    use crate::util::key_setup::{
+        ensure_central_server_signing_keys_exist, ensure_threshold_server_signing_keys_exist,
+    };
     use crate::vault::storage::file::FileStorage;
     use crate::vault::storage::ram::{self, RamStorage};
     use crate::vault::storage::{
@@ -2927,6 +2930,15 @@ mod tests {
         // survives and migrate_prss_to_epoch converts it into EpochData.
         store_combined_prss_at_epoch(&mut priv_storage, &DEFAULT_EPOCH_ID, num_parties, threshold)
             .await;
+        // Derive signing key and use central for convenience since we test with a single server
+        let _ = ensure_central_server_signing_keys_exist(
+            &mut pub_storage,
+            &mut priv_storage,
+            &SIGNING_KEY_ID,
+            true,
+        )
+        .await;
+
         let mut rng = AesRng::seed_from_u64(234);
         let (_pk, sk) = gen_sig_keys(&mut rng);
         store_versioned_at_request_id(
@@ -2982,16 +2994,14 @@ mod tests {
         let mut pub_storage = RamStorage::new();
         let mut priv_storage = RamStorage::new();
         store_combined_prss_at_epoch(&mut priv_storage, &DEFAULT_EPOCH_ID, 4, 1).await;
-        let mut rng = AesRng::seed_from_u64(234);
-        let (_pk, sk) = gen_sig_keys(&mut rng);
-        store_versioned_at_request_id(
+        // Derive signing key and use central for convenience since we test with a single server
+        let _ = ensure_central_server_signing_keys_exist(
+            &mut pub_storage,
             &mut priv_storage,
             &SIGNING_KEY_ID,
-            &sk,
-            &PrivDataType::SigningKey.to_string(),
+            true,
         )
-        .await
-        .unwrap();
+        .await;
 
         let config = default_migration_config();
 
@@ -3066,7 +3076,15 @@ mod tests {
     async fn test_migrate_to_0_15_x_centralized_empty() {
         let mut pub_storage = RamStorage::new();
         let mut priv_storage = RamStorage::new();
-        // Centralized on empty storage: no config needed, nothing to migrate.
+        // Derive signing key
+        let _ = ensure_central_server_signing_keys_exist(
+            &mut pub_storage,
+            &mut priv_storage,
+            &SIGNING_KEY_ID,
+            true,
+        )
+        .await;
+
         migrate_to_0_15_x(
             &mut pub_storage,
             &mut priv_storage,
@@ -3075,6 +3093,22 @@ mod tests {
         )
         .await
         .unwrap();
+        // Check validation keys exist
+        for scheme in SigningSchemeType::iter() {
+            let id = signing_material_id(scheme);
+            assert!(
+                pub_storage
+                    .data_exists(&id, &PubDataType::VerfKey.to_string())
+                    .await
+                    .unwrap()
+            );
+            assert!(
+                pub_storage
+                    .data_exists(&SIGNING_KEY_ID, &PubDataType::VerfAddress.to_string())
+                    .await
+                    .unwrap()
+            );
+        }
     }
 
     // ── Tests for migrate_to_0_16_x (orchestrator) ──
