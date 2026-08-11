@@ -1,4 +1,6 @@
 #[cfg(feature = "non-wasm")]
+use crate::cryptography::signing::SigningSchemeType;
+#[cfg(feature = "non-wasm")]
 use crate::engine::base::derive_request_id;
 #[cfg(feature = "non-wasm")]
 use kms_grpc::{EpochId, RequestId, identifiers::ContextId};
@@ -154,7 +156,6 @@ pub static SIGNING_KEY_ID: LazyLock<RequestId> =
 /// folders.
 #[cfg(feature = "non-wasm")]
 pub fn signing_material_id(scheme: crate::cryptography::signing::SigningSchemeType) -> RequestId {
-    use crate::cryptography::signing::SigningSchemeType;
     match scheme {
         // Note that for compatibility and legacy reasons we keep the ECDSA/secp256k1 scheme's signing material at the historical [`SIGNING_KEY_ID`].
         SigningSchemeType::Ecdsa256k1 => *SIGNING_KEY_ID,

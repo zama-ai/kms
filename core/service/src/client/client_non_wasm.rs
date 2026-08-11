@@ -1,16 +1,16 @@
 use crate::anyhow_error_and_log;
 use crate::client::client_wasm::Client;
+use crate::consts::SIGNING_KEY_ID;
 use crate::cryptography::signatures::recover_address_from_ext_signature;
 use crate::vault::storage::{
     Storage, StorageReader,
-    crypto_material::{
-        get_client_signing_key, get_client_verification_key, get_core_verification_key,
-    },
+    crypto_material::{get_client_signing_key, get_client_verification_key},
 };
 use alloy_dyn_abi::Eip712Domain;
 use alloy_sol_types::SolStruct;
 use futures_util::future::{TryFutureExt, try_join_all};
 use itertools::Itertools;
+use kms_grpc::rpc_types::PubDataType;
 use std::collections::HashMap;
 use std::fmt;
 use threshold_execution::endpoints::decryption::DecryptionMode;
@@ -53,8 +53,11 @@ impl Client {
         params: &DKGParams,
         decryption_mode: Option<DecryptionMode>,
     ) -> anyhow::Result<Client> {
+        let verf_key_type = PubDataType::VerfKey.to_string();
         let pks = try_join_all(pub_storages.iter().map(|(party_id, cur_storage)| {
-            get_core_verification_key(cur_storage).map_ok(|pk| (*party_id, pk))
+            cur_storage
+                .read_data(&SIGNING_KEY_ID, &verf_key_type)
+                .map_ok(move |pk| (*party_id, pk))
         }))
         .await?
         .into_iter()

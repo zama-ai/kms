@@ -378,12 +378,6 @@ pub async fn get_core_signing_key<S: StorageReader>(storage: &S) -> anyhow::Resu
     get_unique::<S, PrivateSigKey, PrivDataType>(storage, PrivDataType::SigningKey).await
 }
 
-pub async fn get_core_verification_key<S: StorageReader>(
-    storage: &S,
-) -> anyhow::Result<PublicSigKey> {
-    get_unique::<S, PublicSigKey, PubDataType>(storage, PubDataType::VerfKey).await
-}
-
 pub async fn get_client_signing_key<S: Storage>(storage: &S) -> anyhow::Result<PrivateSigKey> {
     get_unique::<S, PrivateSigKey, ClientDataType>(storage, ClientDataType::SigningKey).await
 }

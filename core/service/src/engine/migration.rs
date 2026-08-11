@@ -855,7 +855,6 @@ mod tests {
     use super::*;
     use crate::conf::ContextEpochAssociation;
     use crate::consts::signing_material_id;
-    use crate::cryptography::signatures::gen_sig_keys;
     use crate::cryptography::signing::SigningSchemeType;
     use crate::engine::context::{ContextInfo, NodeInfo, SchemeDigests, SoftwareVersion};
     use crate::util::key_setup::ensure_central_server_signing_keys_exist;
@@ -865,10 +864,8 @@ mod tests {
         Storage, StorageExt, StorageReader, StorageReaderExt, StorageType, store_context_at_id,
         store_versioned_at_request_id,
     };
-    use aes_prng::AesRng;
     use kms_grpc::RequestId;
     use kms_grpc::rpc_types::PubDataType;
-    use rand::SeedableRng;
     use std::str::FromStr;
     use strum::IntoEnumIterator;
 
@@ -2936,17 +2933,6 @@ mod tests {
             true,
         )
         .await;
-
-        let mut rng = AesRng::seed_from_u64(234);
-        let (_pk, sk) = gen_sig_keys(&mut rng);
-        store_versioned_at_request_id(
-            &mut priv_storage,
-            &SIGNING_KEY_ID,
-            &sk,
-            &PrivDataType::SigningKey.to_string(),
-        )
-        .await
-        .unwrap();
 
         migrate_to_0_15_x(
             &mut pub_storage,
