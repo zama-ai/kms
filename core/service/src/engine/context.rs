@@ -440,14 +440,12 @@ impl TryFrom<ContextInfo> for kms_grpc::kms::v1::MpcContext {
 
 #[cfg(test)]
 mod tests {
-    use kms_grpc::rpc_types::PrivDataType;
-
+    use super::*;
     use crate::{
         cryptography::signatures::gen_sig_keys,
         vault::storage::{ram::RamStorage, store_versioned_at_request_id},
     };
-
-    use super::*;
+    use kms_grpc::rpc_types::PrivDataType;
 
     #[test]
     fn test_software_version_display() {
