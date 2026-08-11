@@ -22,7 +22,11 @@
 //!   contributes at most one accepted share, and there must be at least as many of them as the
 //!   release needs. Fewer means the response fails as a whole: no plaintext is released from a
 //!   partially valid response. The one-share-per-party half is what makes the threshold a count of
-//!   *distinct* nodes: a replayed share is discarded, never counted twice.
+//!   *distinct* nodes: a replayed share is discarded, never counted twice. A multi-share set is
+//!   further required to be one consistent threshold response — degree, ciphertext count and
+//!   types, packing, handles, distinct signer identities — checked by running the accepted
+//!   originals through the EVM path's own validation, unchanged, so the definition of a
+//!   well-formed threshold response exists exactly once for both paths.
 //!
 //! The centralized case is the degenerate single-share case of exactly these rules, not a weaker
 //! path of its own.
@@ -78,13 +82,16 @@ use kms_grpc::solana_binding::{
 };
 
 use crate::client::client_wasm::Client;
+use crate::client::user_decryption_wasm::{CiphertextHandle, ParsedUserDecryptionRequest};
 use crate::cryptography::compute_user_decrypt_message;
 use crate::cryptography::encryption::{UnifiedPrivateEncKey, UnifiedPublicEncKey};
 use crate::cryptography::signatures::{
     PublicSigKey, Signature, internal_verify_sig, recover_address_from_ext_signature,
 };
 use crate::cryptography::signcryption::{UnifiedUnsigncryptionKey, UnsigncryptFHEPlaintext};
-use crate::engine::validation::DSEP_USER_DECRYPTION;
+use crate::engine::validation::{
+    DSEP_USER_DECRYPTION, UserDecTrustedValidationContext, validate_user_decrypt_responses,
+};
 
 /// A Solana user-decryption request, in the client's own typed terms.
 ///
@@ -357,6 +364,15 @@ pub enum SolanaUserDecryptionResponseError {
         rejections: ShareRejections,
     },
 
+    /// The accepted shares do not form one consistent threshold response. Each share individually
+    /// authenticated and carried the recomputed link, but as a set they disagree on the metadata
+    /// reconstruction relies on — degree against the configured threshold, ciphertext count, FHE
+    /// types, packing, handles — or reuse one signer identity under two party ids. The check is the
+    /// EVM path's own validation, run here unchanged, so what a threshold response must look like
+    /// is defined exactly once.
+    #[error("the accepted shares are not one consistent threshold response: {reason}")]
+    InconsistentShares { reason: String },
+
     /// A verified share could not be unsigncrypted under the recomputed link and the client's
     /// ephemeral key pair.
     #[error("could not unsigncrypt the response from party {party_id}: {reason}")]
@@ -554,7 +570,10 @@ fn external_signature_authenticates(
 /// # Returns
 ///
 /// The accepted shares and the single link they carry, or the first rule that made the response as
-/// a whole unusable.
+/// a whole unusable. A multi-share set is additionally required to be one consistent threshold
+/// response — degree matching the configured threshold, uniform ciphertext metadata, one signer
+/// identity per party — checked by the EVM path's own validation run over the accepted originals,
+/// so the release's reconstruction never sees a share set the EVM path would have refused.
 pub fn verify_solana_user_decryption_response(
     request: &SolanaUserDecryptionRequest,
     trusted_signers: &HashMap<u32, alloy_primitives::Address>,
@@ -574,6 +593,7 @@ pub fn verify_solana_user_decryption_response(
     }
 
     let mut shares = Vec::with_capacity(agg_resp.len());
+    let mut accepted_responses = Vec::with_capacity(agg_resp.len());
     let mut accepted_parties = BTreeSet::new();
     let mut rejections = ShareRejections::default();
     let mut first_rejection = None;
@@ -583,7 +603,12 @@ pub fn verify_solana_user_decryption_response(
             // or equivocating share is discarded rather than counted towards the threshold twice.
             // Only *accepted* shares claim their party — a party whose earlier share failed a rule
             // is still represented by a later valid one.
-            Ok(share) if accepted_parties.insert(share.party_id) => shares.push(share),
+            Ok(share) if accepted_parties.insert(share.party_id) => {
+                shares.push(share);
+                // The original response, kept for the consistency gate below, which re-reads the
+                // signatures itself.
+                accepted_responses.push(response.clone());
+            }
             Ok(share) => {
                 let rejection = ShareRejection::DuplicateParty {
                     party_id: share.party_id,
@@ -596,6 +621,55 @@ pub fn verify_solana_user_decryption_response(
                 first_rejection.get_or_insert(rejection);
             }
         }
+    }
+
+    // The consistency gate, for the multi-share sets that will reach the shared reconstruction:
+    // per-share rules say nothing about the payload metadata reconstruction relies on — degree,
+    // ciphertext count and types, packing, handles, one signer identity per party. Rather than
+    // restate what a consistent threshold response is, the accepted originals are run through the
+    // EVM path's own validation, unchanged, so that definition exists exactly once and the two
+    // paths cannot drift. Its threshold is derived from the same trusted signer set as
+    // `required_shares`, its pivot needs t + 1 agreeing payloads, and a share it drops as
+    // inconsistent stops counting here too. The single-share case is the centralized shape, which
+    // never reconstructs and carries nothing to cross-check — the same split the EVM entry point
+    // makes.
+    if shares.len() > 1 && shares.len() >= required_shares {
+        let parsed = ParsedUserDecryptionRequest::new(
+            None,
+            // Unread by the validation, which authenticates KMS nodes, not the caller — and the
+            // Solana path has no wallet address to put here anyway.
+            alloy_primitives::Address::ZERO,
+            request.enc_key.clone(),
+            request
+                .handles
+                .iter()
+                .cloned()
+                .map(CiphertextHandle::new)
+                .collect(),
+            request
+                .response_domain
+                .verifying_contract
+                .unwrap_or_default(),
+            request.extra_data.clone(),
+        );
+        let trusted_ctx = UserDecTrustedValidationContext {
+            server_addresses: trusted_signers,
+            client_request: &parsed,
+            eip712_domain: &request.response_domain,
+            threshold: None,
+        };
+        let consistent = validate_user_decrypt_responses(&trusted_ctx, &accepted_responses)
+            .map_err(
+                |error| SolanaUserDecryptionResponseError::InconsistentShares {
+                    reason: error.to_string(),
+                },
+            )?;
+        let surviving: BTreeSet<u32> = consistent
+            .as_slice()
+            .iter()
+            .map(|payload| payload.party_id)
+            .collect();
+        shares.retain(|share| surviving.contains(&share.party_id));
     }
 
     // l4: enough distinct parties carry the recomputed link, or the response fails as a whole.
@@ -1110,6 +1184,9 @@ mod tests {
                     "l4: a party counted twice"
                 }
                 SolanaUserDecryptionResponseError::BelowThreshold { .. } => "l4: too few shares",
+                SolanaUserDecryptionResponseError::InconsistentShares { .. } => {
+                    "l4: not one consistent threshold response"
+                }
                 SolanaUserDecryptionResponseError::Unsigncryption { .. } => "release failed",
                 SolanaUserDecryptionResponseError::Reconstruction { .. } => {
                     "threshold reconstruction failed"
@@ -1247,7 +1324,7 @@ mod tests {
         let (dec_key, enc_key, _) = transport_key(0);
         let agg_resp = vec![canonical_centralized_response(&request, &sks[0], &pks[&1])];
 
-        let zero_address = Client::new_solana(pks.clone(), TEST_PARAM, None);
+        let zero_address = Client::new_solana(trusted(&pks), TEST_PARAM, None);
         let other_address = Client::new(
             pks,
             alloy_primitives::address!("66f9664f97F2b50F62D13eA064982f936dE76657"),
@@ -1933,7 +2010,8 @@ mod tests {
         let (agg_resp, expected) =
             reconstructable_threshold_response(&request, &pks, &sks, &enc_key, &mut rng);
 
-        let client = Client::new_solana(pks.clone(), TEST_PARAM, Some(DecryptionMode::BitDecSmall));
+        let client =
+            Client::new_solana(trusted(&pks), TEST_PARAM, Some(DecryptionMode::BitDecSmall));
         let verified = verify_solana_user_decryption_response(
             &request,
             &trusted(&pks),
@@ -1959,7 +2037,8 @@ mod tests {
         let (agg_resp, expected) =
             reconstructable_threshold_response(&request, &pks, &sks, &enc_key, &mut rng);
 
-        let client = Client::new_solana(pks.clone(), TEST_PARAM, Some(DecryptionMode::BitDecSmall));
+        let client =
+            Client::new_solana(trusted(&pks), TEST_PARAM, Some(DecryptionMode::BitDecSmall));
         let verified = verify_solana_user_decryption_response(
             &request,
             &trusted(&pks),
@@ -2003,7 +2082,7 @@ mod tests {
             &sks[0],
         )];
 
-        let client = Client::new_solana(pks.clone(), TEST_PARAM, None);
+        let client = Client::new_solana(trusted(&pks), TEST_PARAM, None);
         let verified =
             verify_solana_user_decryption_response(&request, &trusted(&pks), 1, &agg_resp)
                 .expect("a canonical centralized response verifies");
@@ -2054,7 +2133,251 @@ mod tests {
     }
 
     // ---------------------------------------------------------------------------------------
-    // Block 7 — the stable JS/WASM test vectors (`wasm_tests` builds only).
+    // Block 7 — the consistency gate: a multi-share set must be one threshold response.
+    // ---------------------------------------------------------------------------------------
+
+    /// `response`, its payload changed by `mutate` and re-signed by the same node: a share that is
+    /// perfectly authenticated and correctly linked, wrong only in the mutated metadata. The
+    /// consistency gate exists exactly for these — every per-share rule accepts them.
+    fn mutated_and_resigned(
+        mut response: UserDecryptionResponse,
+        sk: &PrivateSigKey,
+        mutate: impl FnOnce(&mut UserDecryptionResponsePayload),
+    ) -> UserDecryptionResponse {
+        let payload = response.payload.as_mut().expect("a fixture payload");
+        mutate(payload);
+        response.signature = sign(payload, sk);
+        response
+    }
+
+    #[test]
+    fn a_signed_zero_ciphertext_share_cannot_shape_the_reconstruction() {
+        // n = 4, t = 1: two distinct parties satisfy the count, so a correctly signed share with
+        // zero ciphertexts plus one honest share used to reach reconstruction, which takes the
+        // batch shape from the first payload and would release an empty plaintext list as
+        // success. The two shares do not agree on what is being released, and the gate refuses
+        // the set.
+        let mut rng = AesRng::seed_from_u64(21);
+        let (pks, sks) = node_keys(4);
+        let request = canonical_request();
+        let (dec_key, enc_key, _) = transport_key(0);
+        let (agg_resp, _) =
+            reconstructable_threshold_response(&request, &pks, &sks, &enc_key, &mut rng);
+
+        let hollow = mutated_and_resigned(agg_resp[0].clone(), &sks[0], |payload| {
+            payload.signcrypted_ciphertexts.clear();
+        });
+        let two = vec![hollow, agg_resp[1].clone()];
+
+        let client =
+            Client::new_solana(trusted(&pks), TEST_PARAM, Some(DecryptionMode::BitDecSmall));
+        let result = client.process_user_decryption_resp_solana(&request, &enc_key, &dec_key, &two);
+        assert!(
+            matches!(
+                result,
+                Err(SolanaUserDecryptionResponseError::InconsistentShares { .. })
+            ),
+            "a hollow share must fail the consistency gate, got {result:?}",
+        );
+    }
+
+    #[test]
+    fn a_shorter_share_later_in_the_list_is_dropped_not_indexed() {
+        // The same mutation surrounded by an honest majority: the pivot is the three consistent
+        // shares, the hollow one is dropped as disagreeing with it, and the release still
+        // reconstructs — reconstruction never indexes past the short ciphertext list, because the
+        // short list never reaches it.
+        let mut rng = AesRng::seed_from_u64(22);
+        let (pks, sks) = node_keys(4);
+        let request = canonical_request();
+        let (dec_key, enc_key, _) = transport_key(0);
+        let (mut agg_resp, expected) =
+            reconstructable_threshold_response(&request, &pks, &sks, &enc_key, &mut rng);
+
+        agg_resp[3] = mutated_and_resigned(agg_resp[3].clone(), &sks[3], |payload| {
+            payload.signcrypted_ciphertexts.clear();
+        });
+
+        let client =
+            Client::new_solana(trusted(&pks), TEST_PARAM, Some(DecryptionMode::BitDecSmall));
+        let released = client
+            .process_user_decryption_resp_solana(&request, &enc_key, &dec_key, &agg_resp)
+            .expect("three consistent shares reconstruct around the dropped one");
+        assert_eq!(released, vec![expected]);
+    }
+
+    #[test]
+    fn a_degree_other_than_the_configured_threshold_is_refused() {
+        // Four shares agreeing with each other on degree 2 under a four-server set: internally
+        // uniform, but not a response of the t = 1 deployment the client is configured for, and
+        // reconstruction would run Shamir under the response's own parameters.
+        let (pks, sks) = node_keys(4);
+        let request = canonical_request();
+        let agg_resp = canonical_threshold_response(&request, &pks, &sks, 2);
+
+        let result = verify_solana_user_decryption_response(
+            &request,
+            &trusted(&pks),
+            solana_required_shares(4),
+            &agg_resp,
+        );
+        assert!(
+            matches!(
+                result,
+                Err(SolanaUserDecryptionResponseError::InconsistentShares { .. })
+            ),
+            "a foreign degree must fail the consistency gate, got {result:?}",
+        );
+    }
+
+    #[test]
+    fn shares_disagreeing_on_degree_are_not_one_response() {
+        // Two shares, two degrees: no t + 1 of them agree on anything, so no pivot exists and
+        // neither share's shape can borrow a majority it does not have.
+        let (pks, sks) = node_keys(4);
+        let request = canonical_request();
+        let base = canonical_threshold_response(&request, &pks, &sks, 1);
+
+        let skewed = mutated_and_resigned(base[1].clone(), &sks[1], |payload| payload.degree = 2);
+        let two = vec![base[0].clone(), skewed];
+
+        let result = verify_solana_user_decryption_response(
+            &request,
+            &trusted(&pks),
+            solana_required_shares(4),
+            &two,
+        );
+        assert!(
+            matches!(
+                result,
+                Err(SolanaUserDecryptionResponseError::InconsistentShares { .. })
+            ),
+            "disagreeing degrees must fail the consistency gate, got {result:?}",
+        );
+    }
+
+    #[test]
+    fn shares_disagreeing_on_ciphertext_metadata_are_not_one_response() {
+        // One mutation per round — FHE type, packing factor, external handle — each re-signed, so
+        // the named field is the only inconsistency in the set. Each one changes what the shared
+        // reconstruction would do with the payload bytes, so each must refuse the set.
+        let (pks, sks) = node_keys(4);
+        let request = canonical_request();
+        let base = canonical_threshold_response(&request, &pks, &sks, 1);
+
+        let mutations = [
+            (
+                "fhe type",
+                (|payload: &mut UserDecryptionResponsePayload| {
+                    payload.signcrypted_ciphertexts[0].fhe_type = FheTypes::Uint32 as i32;
+                }) as fn(&mut UserDecryptionResponsePayload),
+            ),
+            ("packing factor", |payload| {
+                payload.signcrypted_ciphertexts[0].packing_factor = 2;
+            }),
+            ("external handle", |payload| {
+                payload.signcrypted_ciphertexts[0].external_handle = handle(0xb2);
+            }),
+        ];
+
+        for (name, mutate) in mutations {
+            let skewed = mutated_and_resigned(base[1].clone(), &sks[1], mutate);
+            let two = vec![base[0].clone(), skewed];
+
+            let result = verify_solana_user_decryption_response(
+                &request,
+                &trusted(&pks),
+                solana_required_shares(4),
+                &two,
+            );
+            assert!(
+                matches!(
+                    result,
+                    Err(SolanaUserDecryptionResponseError::InconsistentShares { .. })
+                ),
+                "a {name} mismatch must fail the consistency gate, got {result:?}",
+            );
+        }
+    }
+
+    #[test]
+    fn one_signer_identity_cannot_vote_under_two_party_ids() {
+        // A trusted set that (mis)registers one address under two party ids is the only way one
+        // key can pass the per-share address binding twice. The set-level rule still refuses the
+        // pair: a verification key backs at most one accepted party, so the two shares collapse
+        // to one and the response is no quorum.
+        let (pks, sks) = node_keys(4);
+        let request = canonical_request();
+        let link = request.expected_link().expect("a canonical request");
+
+        let mut signers = trusted(&pks);
+        signers.insert(2, pks[&1].address());
+
+        let double = vec![
+            signed_response(
+                payload(1, &pks[&1], link.clone(), 1, dummy_signcrypted()),
+                &sks[0],
+            ),
+            signed_response(payload(2, &pks[&1], link, 1, dummy_signcrypted()), &sks[0]),
+        ];
+
+        let result = verify_solana_user_decryption_response(
+            &request,
+            &signers,
+            solana_required_shares(4),
+            &double,
+        );
+        assert!(
+            matches!(
+                result,
+                Err(SolanaUserDecryptionResponseError::InconsistentShares { .. })
+            ),
+            "one identity under two party ids must fail the consistency gate, got {result:?}",
+        );
+    }
+
+    #[test]
+    fn the_gate_verifies_external_signed_shares_with_the_requests_own_fields() {
+        // The gate re-checks signatures through the shared validation, whose external branch
+        // rebuilds the signed message from the request's transport key, extra_data and response
+        // domain. A fully external-signed threshold set passing end to end pins that the Solana
+        // request supplies those fields to the shared code exactly as an EVM request would — the
+        // liveness half of reusing the EVM validation.
+        let (pks, sks) = node_keys(4);
+        let request = canonical_request();
+        let link = request.expected_link().expect("a canonical request");
+
+        let agg_resp: Vec<UserDecryptionResponse> = sks
+            .iter()
+            .enumerate()
+            .map(|(index, sk)| {
+                let party_id = index as u32 + 1;
+                external_signed_response(
+                    &request,
+                    payload(
+                        party_id,
+                        &pks[&party_id],
+                        link.clone(),
+                        1,
+                        dummy_signcrypted(),
+                    ),
+                    sk,
+                )
+            })
+            .collect();
+
+        let verified = verify_solana_user_decryption_response(
+            &request,
+            &trusted(&pks),
+            solana_required_shares(4),
+            &agg_resp,
+        )
+        .expect("an external-signed threshold set passes both gates");
+        assert_eq!(verified.party_ids(), vec![1, 2, 3, 4]);
+    }
+
+    // ---------------------------------------------------------------------------------------
+    // Block 8 — the stable JS/WASM test vectors (`wasm_tests` builds only).
     // ---------------------------------------------------------------------------------------
 
     /// The Solana counterpart of the EVM transcript generation: a deterministic fixture written as
@@ -2131,20 +2454,21 @@ mod tests {
                 .response_domain
                 .verifying_contract
                 .expect("the fixture domain names a verifying contract");
-            let request_hex = ParsedUserDecryptionRequestHex::from(&ParsedUserDecryptionRequest::new(
-                None,
-                // The Solana path has no wallet address; the field is only part of the EVM-shaped
-                // request marshalling and is ignored by the Solana rules.
-                alloy_primitives::Address::ZERO,
-                request.enc_key.clone(),
-                request
-                    .handles
-                    .iter()
-                    .map(|handle| CiphertextHandle::new(handle.clone()))
-                    .collect(),
-                verifying_contract,
-                request.extra_data.clone(),
-            ));
+            let request_hex =
+                ParsedUserDecryptionRequestHex::from(&ParsedUserDecryptionRequest::new(
+                    None,
+                    // The Solana path has no wallet address; the field is only part of the EVM-shaped
+                    // request marshalling and is ignored by the Solana rules.
+                    alloy_primitives::Address::ZERO,
+                    request.enc_key.clone(),
+                    request
+                        .handles
+                        .iter()
+                        .map(|handle| CiphertextHandle::new(handle.clone()))
+                        .collect(),
+                    verifying_contract,
+                    request.extra_data.clone(),
+                ));
 
             StableSolanaUserDecryptionTestVector {
                 fhe_parameter: "test".to_string(),
@@ -2215,8 +2539,8 @@ mod tests {
             let bits_in_block = pbs.message_modulus_log();
             let total_block_bits = pbs.total_block_bits() as usize;
             let delta_pad_bits = 128 - (total_block_bits + 1);
-            let num_blocks = fhe_types_to_num_blocks(FheTypes::Uint8, &pbs, 1)
-                .expect("block count for Uint8");
+            let num_blocks =
+                fhe_types_to_num_blocks(FheTypes::Uint8, &pbs, 1).expect("block count for Uint8");
 
             // Least significant block first, in expanded form with zero noise.
             let mut expanded_blocks = Vec::with_capacity(num_blocks);
@@ -2250,8 +2574,7 @@ mod tests {
                 .enumerate()
                 .map(|(index, polys)| {
                     let party_id = index as u32 + 1;
-                    let serialized =
-                        bc2wrap::serialize(polys).expect("serialize the share vector");
+                    let serialized = bc2wrap::serialize(polys).expect("serialize the share vector");
                     let signcrypted =
                         UnifiedSigncryptionKey::new(&sks[index], enc_key, &receiver_id)
                             .signcrypt_plaintext(
@@ -2317,7 +2640,7 @@ mod tests {
                 &sks[0],
             )];
 
-            let client = Client::new_solana(pks.clone(), TEST_PARAM, None);
+            let client = Client::new_solana(trusted(&pks), TEST_PARAM, None);
             let released = client
                 .process_user_decryption_resp_solana(&request, &enc_key, &dec_key, &agg_resp)
                 .expect("the centralized fixture releases");
@@ -2338,7 +2661,7 @@ mod tests {
                 &request, &pks, &sks, &enc_key, &mut rng,
             );
 
-            let client = Client::new_solana(pks.clone(), TEST_PARAM, None);
+            let client = Client::new_solana(trusted(&pks), TEST_PARAM, None);
             let released = client
                 .process_user_decryption_resp_solana(&request, &enc_key, &dec_key, &agg_resp)
                 .expect("the threshold fixture reconstructs");

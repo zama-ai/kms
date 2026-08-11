@@ -139,18 +139,24 @@ const KMS_EPOCH_ID_HEX: &str = "7772d6a5c7fc28db485c51abbe18cba52b775baf1015b59a
 /// a run of zeros, an ascending pattern — can make a layout bug look correct.
 const HANDLE_DERIVATION_TAG: &str = "zama-solana-linker-vectors/v1 handle ";
 
-/// Name of the transport key shared with the permit set, in both files' `transport_keys` tables.
+/// Name of the canonical transport key: the 869-byte serialized `UnifiedPublicEncKey::MlKem512`
+/// container a KMS user-decryption request actually carries. The name is the one the permit set's
+/// `transport_keys` table uses; that set still records the bare 800-byte encapsulation key under it
+/// and regenerates to this container under the settled permit-v1 representation, after which the
+/// two files share the key byte-for-byte again.
 const TRANSPORT_REFERENCE: &str = "reference-mlkem-512";
 
 /// A second key of the same width, for the substitution record.
 const TRANSPORT_ATTACKER: &str = "attacker-mlkem-512";
 
-/// A key of the width a KMS request actually carries, rather than the raw encapsulation-key width.
-const TRANSPORT_REQUEST_CONTAINER: &str = "request-container-869";
+/// The bare 800-byte ML-KEM-512 encapsulation key — a width no conforming KMS request carries.
+const TRANSPORT_BARE: &str = "bare-mlkem-512-800";
 
-/// The permit set's `reference-mlkem-512`, byte-identical. 800 bytes: the ML-KEM-512 encapsulation
-/// key as the permit fixtures carry it.
-const REFERENCE_MLKEM_512_HEX: &str = concat!(
+/// The bare ML-KEM-512 encapsulation key, 800 bytes — the permit set's current `reference-mlkem-512`,
+/// byte-identical to it. Demoted from reference to a single negative record: production KMS request
+/// validation rejects this width, so no accepted request ever carries it, and it survives here only
+/// to show that the linker as an algorithm binds whatever bytes it is given.
+const BARE_MLKEM_512_HEX: &str = concat!(
     "27b792b8740145b905d2b19f3575cb5cc27746ec1869b89a80217182c06d9e66877492ac1a515d31e275244712769b10fde778e1e9b6ff9c1fbeec2f51b63377",
     "e621ce408035fc9c7fb6a4846c12ab82b3fe75cc91544a5ea511aed07712f60250989d9ff46a38f7a999120b924a6100f278eb25422a1278732a1082d85b9397",
     "8e31d5b462b7ad319c8749519238d0b82e5760de9ca49a6b52826b07a6a8134051aef3b63b225c0201126f36e23657dc0f67a9b59c0a5bea89393952674a3156",
@@ -166,8 +172,9 @@ const REFERENCE_MLKEM_512_HEX: &str = concat!(
     "8bfdd3c82d8e64cf6d91e5b1815df57d2791eb20bc6c0bc208eb7db167f454e0",
 );
 
-/// A genuine serialized `UnifiedPublicEncKey::MlKem512` container: 869 bytes, the width a KMS
-/// user-decryption request actually carries.
+/// The canonical reference transport key: a genuine serialized `UnifiedPublicEncKey::MlKem512`
+/// container, 869 bytes, the width and representation a KMS user-decryption request actually
+/// carries. Every reference record binds these bytes.
 ///
 /// Generated deterministically, once, by the KMS crate's own machinery, so that any reviewer can
 /// reproduce these bytes rather than take them on trust. The generation expression, verbatim:
@@ -186,9 +193,9 @@ const REFERENCE_MLKEM_512_HEX: &str = concat!(
 /// the JSON and safe-deserializes them on the side of the tree that can.
 ///
 /// The linker itself is indifferent: it hashes the transport key verbatim and enforces no
-/// structure. A real container is used anyway so that the 869-byte record is a request a consumer
-/// could actually have sent, not a width with arbitrary bytes behind it.
-const REQUEST_CONTAINER_MLKEM_512_HEX: &str = concat!(
+/// structure. A real container is used anyway so that every reference record is a request a
+/// consumer could actually have sent, not a width with arbitrary bytes behind it.
+const REFERENCE_CONTAINER_MLKEM_512_HEX: &str = concat!(
     "0300000000000000302e35000000000300000000000000302e311300000000000000556e69666965645075626c6963456e634b65790000000000000000200300",
     "000000000050813ec9f7b53c004191429786739a5660a2a05451c5431c0815745c43956f175449da6cd4702335acaa51064f761508cb262b0457561086a28ee5",
     "acd3ecbe7be095d554b34b61bde9744a7cc67f1189a2714180cf0c4475548813a970e26011a0c0bf28e56b5a16608ff2c7103583f95240a7a18bc37aaace2120",
@@ -233,17 +240,20 @@ const CLUSTER_REGISTRY_NOTE: &str = concat!(
 /// Provenance of the shared inputs, written into the file so a reader of the JSON alone can tell
 /// which values are supposed to match the permit set and which are this layer's own.
 const SHARED_INPUTS: &str = concat!(
-    "Recipient, verifying program id, KMS context and epoch ids, the reference transport key and ",
-    "the reference cluster are the fhevm permit set's (test-fixtures/permit/permit_v1.json, ",
-    "record reference-permit-two-domains): the two halves of the specification's fixture set bind ",
-    "the same objects. Handles are this layer's own — the permit carries none. Two deliberate ",
+    "Recipient, verifying program id, KMS context and epoch ids and the reference cluster are the ",
+    "fhevm permit set's (test-fixtures/permit/permit_v1.json, record ",
+    "reference-permit-two-domains): the two halves of the specification's fixture set bind the ",
+    "same objects. Handles are this layer's own — the permit carries none. Two deliberate ",
     "divergences from the permit set as it stands today: (1) chain ids here are derived by the ",
     "settled zama-solana-chain-id-v1 rule, while the permit set still records a stand-in ",
     "derivation, so the same genesis hash yields a different id there and that set is due for ",
-    "regeneration; (2) the permit layer's accepted transport-key width is 800 bytes (the bare ",
-    "ML-KEM-512 encapsulation key), while a KMS request carries the 869-byte serialized ",
-    "UnifiedPublicEncKey::MlKem512 container — the linker binds whatever the request carries and ",
-    "enforces no width, so both appear here.",
+    "regeneration; (2) the canonical transport key here is the 869-byte serialized ",
+    "UnifiedPublicEncKey::MlKem512 container a KMS request actually carries — the selected ",
+    "permit-v1 representation, which the permit signs as well — while the permit set still ",
+    "records the bare 800-byte encapsulation key under the shared name reference-mlkem-512 and ",
+    "regenerates to this container. The bare key survives here only as bare-mlkem-512-800, in a ",
+    "negative record: production request validation rejects that width, and the linker's ",
+    "indifference to it is the one thing the record shows.",
 );
 
 // ---------------------------------------------------------------------------
@@ -541,7 +551,14 @@ fn handle(chain_id: u64, index: u8) -> Vec<u8> {
 
 /// The transport keys, by name.
 fn transport_keys() -> BTreeMap<String, Vec<u8>> {
-    let reference = bytes(REFERENCE_MLKEM_512_HEX);
+    // A real serialized UnifiedPublicEncKey::MlKem512, not a filler of the right width: see
+    // REFERENCE_CONTAINER_MLKEM_512_HEX for the seed and the expression that produced it.
+    let reference = bytes(REFERENCE_CONTAINER_MLKEM_512_HEX);
+    assert_eq!(
+        reference.len(),
+        869,
+        "the canonical key is the width a request carries",
+    );
 
     // The reference key with its first byte flipped: a different key of the same width. The
     // smallest possible difference is the strongest test — the linker binds bytes, so a one-bit
@@ -549,19 +566,17 @@ fn transport_keys() -> BTreeMap<String, Vec<u8>> {
     let mut attacker = reference.clone();
     attacker[0] ^= 0xff;
 
-    // A real serialized UnifiedPublicEncKey::MlKem512, not a filler of the right width: see
-    // REQUEST_CONTAINER_MLKEM_512_HEX for the seed and the expression that produced it.
-    let container = bytes(REQUEST_CONTAINER_MLKEM_512_HEX);
+    let bare = bytes(BARE_MLKEM_512_HEX);
     assert_eq!(
-        container.len(),
-        869,
-        "the embedded container is the width a request carries",
+        bare.len(),
+        800,
+        "the bare key is the raw encapsulation-key width",
     );
 
     BTreeMap::from([
         (TRANSPORT_REFERENCE.to_string(), reference),
         (TRANSPORT_ATTACKER.to_string(), attacker),
-        (TRANSPORT_REQUEST_CONTAINER.to_string(), container),
+        (TRANSPORT_BARE.to_string(), bare),
     ])
 }
 
@@ -809,8 +824,9 @@ fn drafts() -> Vec<Draft> {
         Draft::valid(
             "reference-two-handles",
             "The reference request: the permit set's recipient, program id and KMS pair, two \
-             handles on the permit set's cluster, and the transport key both files share. Every \
-             record below that names a base names this one unless it says otherwise.",
+             handles on the permit set's cluster, and the canonical transport key — the 869-byte \
+             serialized UnifiedPublicEncKey::MlKem512 container a KMS request actually carries. \
+             Every record below that names a base names this one unless it says otherwise.",
             Inputs::reference(),
         ),
         Draft::valid(
@@ -833,21 +849,26 @@ fn drafts() -> Vec<Draft> {
              wrote the count as anything narrower than u64 little-endian still agrees here.",
             Inputs::reference().with_handles((1..=8).map(h).collect()),
         ),
-        Draft::valid(
-            "request-width-transport-key",
-            "The transport key at the width a KMS request actually carries: 869 bytes, and a \
-             genuine tfhe-safe-serialized UnifiedPublicEncKey::MlKem512 container rather than \
-             filler of that width — generated deterministically from a fixed seed by the KMS \
-             crate's own key generation, so the bytes are reproducible and a consumer could \
-             actually have sent them. The linker enforces no width — that rule lives in the wallet \
-             permit and the connector — so this record exists to show the construction is \
-             indifferent to it, and to give the 869-byte case a digest.",
+        // --- link divergence -----------------------------------------------
+        Draft::invalid(
+            "bare-encapsulation-key-width",
+            "The bare 800-byte ML-KEM-512 encapsulation key — the permit set's current reference \
+             key — in place of the canonical 869-byte container. No conforming request carries \
+             this width: production KMS request validation rejects it before any linker runs. The \
+             linker as an algorithm enforces no width — that rule lives in the request layer, the \
+             wallet permit and the connector — so a link exists for these fields, and the record \
+             pins that it is not the reference link: a consumer that froze the bare key as its \
+             linker input diverges here.",
+            VectorClass::LinkDivergence,
+            rule::WRONG_TRANSPORT_KEY,
+            "reference-two-handles",
+            "the transport key replaced by the bare 800-byte encapsulation key, a width request \
+             validation rejects",
             Inputs {
-                transport_key: TRANSPORT_REQUEST_CONTAINER,
+                transport_key: TRANSPORT_BARE,
                 ..Inputs::reference()
             },
         ),
-        // --- link divergence -----------------------------------------------
         Draft::invalid(
             "changed-handle",
             "One handle replaced by another on the same cluster. A relayer substituting a handle \
@@ -1393,7 +1414,7 @@ fn every_valid_record_builds_and_carries_the_link_the_binding_computes() {
     // recorded 32 bytes are what a conforming response must carry.
     let file = committed();
     let valid = records_of(&file, VectorClass::Valid);
-    assert!(valid.len() >= 5, "the set lost its positive records");
+    assert!(valid.len() >= 4, "the set lost its positive records");
 
     for record in valid {
         assert_eq!(record.result, VectorResult::Valid, "{}", record.name);
@@ -1774,28 +1795,44 @@ fn the_reference_cluster_is_the_permit_sets_cluster() {
     assert_eq!(
         file.transport_keys
             .get(TRANSPORT_REFERENCE)
-            .expect("the shared key"),
-        REFERENCE_MLKEM_512_HEX,
+            .expect("the canonical key"),
+        REFERENCE_CONTAINER_MLKEM_512_HEX,
+    );
+    // The permit set's current reference key, byte-identical, demoted here to its one negative
+    // record. This is the pin that keeps "the permit set regenerates to the container" checkable:
+    // until it does, the bytes it still calls reference-mlkem-512 are exactly these.
+    assert_eq!(
+        file.transport_keys
+            .get(TRANSPORT_BARE)
+            .expect("the demoted permit-width key"),
+        BARE_MLKEM_512_HEX,
     );
 }
 
 #[test]
-fn the_request_width_key_is_the_committed_869_byte_container() {
-    // The width is the point of the record, and the *structure* is what makes it a request a
-    // consumer could have sent. This side of the tree can only check the width and the bytes —
-    // kms-grpc cannot deserialize a container — so the structural half is
-    // `core/service/tests/solana_vector_container.rs`, reading these same committed bytes.
+fn the_reference_key_is_the_committed_869_byte_container() {
+    // The width is normative — a KMS request carries exactly this container — and the *structure*
+    // is what makes the reference a request a consumer could have sent. This side of the tree can
+    // only check the width and the bytes — kms-grpc cannot deserialize a container — so the
+    // structural half is `core/service/tests/solana_vector_container.rs`, reading these same
+    // committed bytes.
     let file = committed();
     let key = file
         .transport_keys
-        .get(TRANSPORT_REQUEST_CONTAINER)
-        .expect("the request-width key");
+        .get(TRANSPORT_REFERENCE)
+        .expect("the canonical key");
 
-    assert_eq!(key, REQUEST_CONTAINER_MLKEM_512_HEX);
+    assert_eq!(key, REFERENCE_CONTAINER_MLKEM_512_HEX);
     assert_eq!(hex::decode(key).expect("hex").len(), 869);
+
+    let bare = file
+        .transport_keys
+        .get(TRANSPORT_BARE)
+        .expect("the bare key");
+    assert_eq!(hex::decode(bare).expect("hex").len(), 800);
     assert_eq!(
-        file.record("request-width-transport-key").transport_key,
-        TRANSPORT_REQUEST_CONTAINER,
+        file.record("bare-encapsulation-key-width").transport_key,
+        TRANSPORT_BARE,
     );
 }
 

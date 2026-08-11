@@ -104,7 +104,6 @@ use kms_grpc::kms::v1::{Eip712DomainMsg, TypedPlaintext, UserDecryptionResponseP
 use kms_grpc::rpc_types::protobuf_to_alloy_domain;
 use rand::SeedableRng;
 use std::collections::HashMap;
-use threshold_execution::endpoints::decryption::DecryptionMode;
 use threshold_execution::tfhe_internals::parameters::BC_PARAMS_SNS;
 use wasm_bindgen::{JsError, JsValue, prelude::wasm_bindgen};
 
@@ -213,11 +212,7 @@ pub fn new_solana_client(
 ) -> Result<Client, JsError> {
     console_error_panic_hook::set_once();
 
-    client_from_config(
-        server_addrs,
-        alloy_primitives::Address::ZERO,
-        fhe_parameter,
-    )
+    client_from_config(server_addrs, alloy_primitives::Address::ZERO, fhe_parameter)
 }
 
 /// The shared tail of [new_client] and [new_solana_client]: resolve the parameter choice, reject
@@ -246,15 +241,13 @@ fn client_from_config(
         return Err(JsError::new("some server IDs have duplicate keys"));
     }
 
-    let server_identities = ServerIdentities::Addrs(addrs_hash_map);
-
-    Ok(Client {
-        server_identities,
+    Ok(Client::from_identities(
+        ServerIdentities::Addrs(addrs_hash_map),
         client_address,
-        client_sk: None,
+        None,
         params,
-        decryption_mode: DecryptionMode::default(),
-    })
+        None,
+    ))
 }
 
 #[wasm_bindgen]

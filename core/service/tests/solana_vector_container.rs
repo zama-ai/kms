@@ -1,10 +1,10 @@
 //! Framing canary for the transport-key container published in the Solana linker vectors.
 //!
-//! The vector set (`core/grpc/test-vectors/solana_linker_v1.json`) carries a transport key named
-//! `request-container-869`: 869 bytes, a genuine tfhe-safe-serialized `UnifiedPublicEncKey::MlKem512`
-//! rather than filler of that width. It has to be genuine, because the width is a normative claim —
-//! a KMS user-decryption request carries a serialized container of exactly this size, and a fixture
-//! that merely asserts "869 bytes" proves nothing about that.
+//! The vector set (`core/grpc/test-vectors/solana_linker_v1.json`) carries its canonical transport
+//! key under the name `reference-mlkem-512`: 869 bytes, a genuine tfhe-safe-serialized
+//! `UnifiedPublicEncKey::MlKem512` rather than filler of that width. It has to be genuine, because
+//! the width is a normative claim — a KMS user-decryption request carries a serialized container of
+//! exactly this size, and a fixture that merely asserts "869 bytes" proves nothing about that.
 //!
 //! It cannot be checked where it is generated. `kms-grpc`, which owns the vector set, does not
 //! depend on the encryption or safe-serialization machinery, so the bytes are embedded there as a
@@ -24,8 +24,9 @@ use std::path::PathBuf;
 use kms_lib::consts::SAFE_SER_SIZE_LIMIT;
 use kms_lib::cryptography::encryption::UnifiedPublicEncKey;
 
-/// Name of the transport key under test, in the set's `transport_keys` table.
-const CONTAINER_KEY: &str = "request-container-869";
+/// Name of the transport key under test, in the set's `transport_keys` table: the canonical
+/// reference key every reference record binds.
+const CONTAINER_KEY: &str = "reference-mlkem-512";
 
 /// The width a serialized `UnifiedPublicEncKey::MlKem512` has, and the width a request carries.
 const CONTAINER_LEN: usize = 869;
@@ -46,7 +47,7 @@ fn committed_transport_key(name: &str) -> Vec<u8> {
 }
 
 #[test]
-fn the_request_width_vector_key_is_a_real_serialized_ml_kem_512_container() {
+fn the_reference_vector_key_is_a_real_serialized_ml_kem_512_container() {
     let bytes = committed_transport_key(CONTAINER_KEY);
 
     assert_eq!(
