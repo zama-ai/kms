@@ -262,12 +262,6 @@ impl GrpcNetworkingManager {
             }
         };
 
-        let timeout = match network_mode {
-            // If we have waited for the network as long as we keep inactive sessions, we might as well timeout
-            NetworkMode::Async => self.conf.get_discard_inactive_sessions_interval(),
-            NetworkMode::Sync => self.conf.get_network_timeout(),
-        };
-
         let (connection_channel, completed_parties) =
             self.sending_service.add_connections(&others).await?;
 
@@ -300,7 +294,6 @@ impl GrpcNetworkingManager {
                     completed_parties,
                     network_mode,
                     self.conf,
-                    timeout,
                 ));
 
                 *mutable_status = SessionStatus::Active(Arc::downgrade(&session));
@@ -322,7 +315,6 @@ impl GrpcNetworkingManager {
                     completed_parties,
                     network_mode,
                     self.conf,
-                    timeout,
                 ));
 
                 vacant.insert(SessionStatus::Active(Arc::downgrade(&session)));

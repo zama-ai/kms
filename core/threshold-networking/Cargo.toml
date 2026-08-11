@@ -41,6 +41,7 @@ tonic-prost.workspace = true
 tonic-tls.workspace = true
 tower = { workspace = true, features = ["retry", "timeout"] }
 tracing.workspace = true
+validator.workspace = true
 x509-parser.workspace = true
 
 [dev-dependencies]

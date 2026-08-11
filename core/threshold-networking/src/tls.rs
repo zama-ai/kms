@@ -62,9 +62,7 @@ type UserDataVerifier = dyn Fn(ReleasePCRValues, Vec<u8>) -> anyhow::Result<bool
 
 /// The rustls client + server verifiers plus the trusted PCR set selected for a
 /// particular peer certificate, returned by
-/// [`AttestedVerifier::get_verifiers_and_pcrs_for_x509_cert`]. Naming this triple
-/// keeps the accessors free of a `type_complexity` return and turns `.0/.1/.2`
-/// into self-documenting field access.
+/// [`AttestedVerifier::get_verifiers_and_pcrs_for_x509_cert`].
 struct Verifiers {
     client: Arc<dyn ClientCertVerifier>,
     server: Arc<dyn ServerCertVerifier>,

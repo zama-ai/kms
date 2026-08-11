@@ -347,7 +347,6 @@ impl NetworkSession {
     /// 14-field literal and had to be kept in lock-step by hand. All the
     /// round-independent fields (round counter, timers, byte counter, activity
     /// time) are initialised here; callers supply only what actually differs.
-    #[allow(clippy::too_many_arguments)]
     pub(crate) fn new(
         owner: Identity,
         session_id: SessionId,
@@ -356,8 +355,12 @@ impl NetworkSession {
         completed_parties: Arc<DashSet<RoleKind>>,
         network_mode: NetworkMode,
         conf: CoreToCoreNetworkConfig,
-        timeout: Duration,
     ) -> Self {
+        let timeout = match network_mode {
+            // Since we discard active sessions after some time not receiving messages, we can use this as a timeout for async networking
+            NetworkMode::Async => conf.get_discard_inactive_sessions_interval(),
+            NetworkMode::Sync => conf.get_network_timeout(),
+        };
         NetworkSession {
             owner,
             session_id,
@@ -383,9 +386,7 @@ impl NetworkSession {
     /// nested `select!`) behind a small enum. The invariants:
     /// - If a packet is available on the channel it is always returned as
     ///   [`RecvOutcome::Packet`] — even when it arrives *during* the grace
-    ///   period. (Silently dropping such a message was the bug fixed in PR #624,
-    ///   which is why the grace period `select!`s on `rx.recv()` and does not
-    ///   merely sleep.)
+    ///   period.
     /// - A plain tick while the sender is *not* completed yields
     ///   [`RecvOutcome::Retry`] (keep waiting), never a spurious abort.
     /// - The grace period is entered only once the sender has declared the

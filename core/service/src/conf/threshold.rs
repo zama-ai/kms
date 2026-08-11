@@ -44,10 +44,7 @@ pub struct ThresholdPartyConf {
     // NOTE: eventually the peer list will be removed in favor of context
     #[validate(nested)]
     pub peers: Option<Vec<PeerConf>>,
-    // Not an `Option`: an absent `[core_to_core_net]` section is equivalent to
-    // `CoreToCoreNetworkConfig::default()` (all fields unset → all defaults),
-    // since every field inside is itself optional. `#[serde(default)]` lets the
-    // whole section be omitted from the config file.
+    // `#[serde(default)]` lets the whole section be omitted from the config file.
     #[serde(default)]
     pub core_to_core_net: CoreToCoreNetworkConfig,
     pub decryption_mode: DecryptionMode,

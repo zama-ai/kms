@@ -69,7 +69,10 @@ impl ReceiverState {
         current: usize,
         max_buffered: usize,
     ) -> bool {
-        if round <= current.saturating_add(max_buffered) && self.future.len() < max_buffered {
+        if round > current
+            && round <= current.saturating_add(max_buffered)
+            && self.future.len() < max_buffered
+        {
             self.future.entry(round).or_insert(value);
             true
         } else {
@@ -214,6 +217,43 @@ impl MessageQueueStore {
             MessageQueueStore::Initialized(inner) => {
                 Ok(inner.receiver_state.iter().map(|entry| *entry.key()))
             }
+        }
+    }
+}
+
+// Unit tests for the struct defined in this file
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_take_current() {
+        let (_, rx) = channel::<NetworkRoundValue>(10);
+        let mut receiver_state = ReceiverState::new(rx);
+        let mut current_round = 2;
+        let window_size = 5;
+        for i in 0..10 {
+            let res = receiver_state.buffer_future(i, vec![i as u8], current_round, window_size);
+
+            // Check that messages for rounds outside the window are dropped, and those within the window are buffered.
+            if i <= current_round || i > current_round + 5 {
+                assert!(!res, "Message for round {i} should be dropped");
+            } else {
+                assert!(res, "Message for round {i} should be buffered");
+            }
+        }
+
+        // Move to next round and verify we do have window size messages in the buffer
+        current_round += 1;
+        for _ in 0..window_size {
+            let current = receiver_state.take_current(current_round);
+            let expected_msg = current_round as u8;
+            assert_eq!(
+                current,
+                Some(vec![expected_msg]),
+                "Expected message for round {current_round}: {expected_msg}"
+            );
+            current_round += 1;
         }
     }
 }

@@ -9,6 +9,7 @@ use crate::constants::{
 };
 use serde::{Deserialize, Serialize};
 use tokio::time::Duration;
+use validator::Validate;
 
 /// Network configuration for core-to-core communication.
 ///
@@ -21,26 +22,47 @@ use tokio::time::Duration;
 ///
 /// WARNING: this may be printed for debugging and hence should NOT contain any secrets, such as private keys.
 /// If minor secrets needs to be added, then ensure fields are annotated with `#[serde(skip_serializing)]` to avoid accidentally diclosing them.
-#[derive(Serialize, Deserialize, Clone, Copy, Debug, Default)]
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, Default, Validate)]
 #[serde(deny_unknown_fields)]
 pub struct CoreToCoreNetworkConfig {
+    /// Maximum number of messages that can be buffered in the message queue.
+    #[validate(range(min = 1))]
     pub message_limit: Option<u64>,
+    /// Multiplier for exponential backoff in retrying failed requests
+    #[validate(range(min = 1.0))]
     pub multiplier: Option<f64>,
+    /// Maximum interval for exponential backoff in seconds
+    #[validate(range(min = 1))]
     pub max_interval: Option<u64>,
+    /// Maximum elapsed time for exponential backoff in seconds
+    #[validate(range(min = 1))]
     pub max_elapsed_time: Option<u64>,
     /// Initial interval for exponential backoff in milliseconds
+    #[validate(range(min = 1))]
     pub initial_interval_ms: Option<u64>,
+    /// Network timeout for core-to-core communication in seconds
+    #[validate(range(min = 1))]
     pub network_timeout: Option<u64>,
+    /// Network timeout for core-to-core communication in seconds for BK key gen (if DKG not run in async mode)
+    #[validate(range(min = 1))]
     pub network_timeout_bk: Option<u64>,
+    /// Network timeout for core-to-core communication in seconds for BK SNS key gen (if DKG run in async mode)
+    #[validate(range(min = 1))]
     pub network_timeout_bk_sns: Option<u64>,
+    /// Maximum size of the message that can be decoded from the network in bytes
+    #[validate(range(min = 1024))]
     pub max_en_decode_message_size: Option<u64>,
     /// Background interval for updating session status
+    #[validate(range(min = 1))]
     pub session_update_interval_secs: Option<u64>,
     /// Background interval for cleaning up completed sessions
+    #[validate(range(min = 1))]
     pub session_cleanup_interval_secs: Option<u64>,
     /// Background interval for discarding inactive sessions
+    #[validate(range(min = 1))]
     pub discard_inactive_sessions_interval: Option<u64>,
     /// Maximum waiting time for trying to push the message in the queue
+    #[validate(range(min = 1))]
     pub max_waiting_time_for_message_queue: Option<u64>,
     /// Maximum number of "Inactive" sessions a party can open before I refuse to open more
     pub max_opened_inactive_sessions_per_party: Option<u64>,

@@ -8050,6 +8050,7 @@ dependencies = [
  "tonic-tls",
  "tower",
  "tracing",
+ "validator",
  "x509-parser 0.18.1",
 ]
 
