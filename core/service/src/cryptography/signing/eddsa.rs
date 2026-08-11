@@ -74,7 +74,7 @@ impl Ed25519 {
 ///
 /// Serializes as the raw [`PUBLIC_KEY_LENGTH`]-byte public key (its canonical
 /// encoding, which doubles as the key's Solana address). Exists so
-/// [`super::UnifiedPublicSigKey`] can be versioned and stored in an externally 
+/// [`super::UnifiedPublicSigKey`] can be versioned and stored in an externally
 /// compatible manner.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Ed25519VerfKey(pub(crate) Ed25519VerifyingKey);
@@ -115,11 +115,11 @@ impl Visitor<'_> for Ed25519VerfKeyVisitor {
     where
         E: serde::de::Error,
     {
-        let bytes: [u8; PUBLIC_KEY_LENGTH] =
-            v.try_into().map_err(|_| E::invalid_length(v.len(), &self))?;
-        let vk = Ed25519VerifyingKey::from_bytes(&bytes).map_err(|e| {
-            E::custom(format!("could not decode ed25519 verification key: {e:?}"))
-        })?;
+        let bytes: [u8; PUBLIC_KEY_LENGTH] = v
+            .try_into()
+            .map_err(|_| E::invalid_length(v.len(), &self))?;
+        let vk = Ed25519VerifyingKey::from_bytes(&bytes)
+            .map_err(|e| E::custom(format!("could not decode ed25519 verification key: {e:?}")))?;
         Ok(Ed25519VerfKey(vk))
     }
 }

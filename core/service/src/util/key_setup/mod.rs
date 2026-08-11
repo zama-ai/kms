@@ -1651,6 +1651,12 @@ mod scheme_material_tests {
                 .await
                 .unwrap()
         );
+        assert!(
+            !pub_storage
+                .data_exists(&SIGNING_KEY_ID, &PubDataType::VerfAddress.to_string())
+                .await
+                .unwrap()
+        );
     }
 
     /// `Generate` refuses to run against storage that already holds material.
@@ -1688,11 +1694,17 @@ mod scheme_material_tests {
             .await
             .unwrap();
 
-        for scheme in derived_schemes() {
+        for scheme in SigningSchemeType::iter() {
             let id = signing_material_id(scheme);
             assert!(
                 pub_storage
                     .data_exists(&id, &PubDataType::VerfKey.to_string())
+                    .await
+                    .unwrap()
+            );
+            assert!(
+                pub_storage
+                    .data_exists(&id, &PubDataType::VerfAddress.to_string())
                     .await
                     .unwrap()
             );
