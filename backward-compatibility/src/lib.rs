@@ -116,6 +116,30 @@ impl TestType for PublicSigKeyTest {
     }
 }
 
+// KMS test
+/// Backward-compatibility metadata for the scheme-tagged verification key
+/// [`UnifiedPublicSigKey`] (the persisted `VerfKey` form for every signature
+/// scheme).
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct UnifiedPublicSigKeyTest {
+    pub test_filename: Cow<'static, str>,
+    pub state: u64,
+}
+
+impl TestType for UnifiedPublicSigKeyTest {
+    fn module(&self) -> String {
+        KMS_MODULE_NAME.to_string()
+    }
+
+    fn target_type(&self) -> String {
+        "UnifiedPublicSigKey".to_string()
+    }
+
+    fn test_filename(&self) -> String {
+        self.test_filename.to_string()
+    }
+}
+
 /// Test metadata for TypedPlaintext backward compatibility.
 ///
 /// TypedPlaintext is serialized with bc2wrap and embedded in user decryption responses.
@@ -1063,6 +1087,7 @@ impl TestType for CrsSignedPayloadTest {
 pub enum TestMetadataKMS {
     PrivateSigKey(PrivateSigKeyTest),
     PublicSigKey(PublicSigKeyTest),
+    UnifiedPublicSigKey(UnifiedPublicSigKeyTest),
     TypedPlaintext(TypedPlaintextTest),
     KmsFheKeyHandles(KmsFheKeyHandlesTest),
     ThresholdFheKeys(ThresholdFheKeysTest),

@@ -414,7 +414,7 @@ impl PrivateSigKey {
 
     /// The verification key that [`Self::unified_sign_with`] signatures under
     /// `scheme` verify against.
-    pub(crate) fn unified_verifying_key(
+    pub fn unified_verifying_key(
         &self,
         scheme: SigningSchemeType,
     ) -> Result<UnifiedPublicSigKey, SigningError> {
