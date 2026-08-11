@@ -974,6 +974,7 @@ where
         {
             ensure_ca_cert_exists(pub_storage, sk, request_id, subject, tls_wildcard).await?;
         }
+        // Ensure we actually store verification material for signing schemes
         ensure_derived_verification_material(pub_storage, sk, SchemeMaterialMode::Populate).await?;
 
         return Ok(());
@@ -1642,21 +1643,20 @@ mod scheme_material_tests {
                 hex::encode(expected.digest()),
                 "{scheme:?} digest mismatch"
             );
+            // ECDSA material is the primary identity and is not written here.
+            assert!(
+                !pub_storage
+                    .data_exists(&id, &PubDataType::VerfKey.to_string())
+                    .await
+                    .unwrap()
+            );
+            assert!(
+                !pub_storage
+                    .data_exists(&id, &PubDataType::VerfAddress.to_string())
+                    .await
+                    .unwrap()
+            );
         }
-
-        // ECDSA material is the primary identity and is not written here.
-        assert!(
-            !pub_storage
-                .data_exists(&SIGNING_KEY_ID, &PubDataType::VerfKey.to_string())
-                .await
-                .unwrap()
-        );
-        assert!(
-            !pub_storage
-                .data_exists(&SIGNING_KEY_ID, &PubDataType::VerfAddress.to_string())
-                .await
-                .unwrap()
-        );
     }
 
     /// `Generate` refuses to run against storage that already holds material.

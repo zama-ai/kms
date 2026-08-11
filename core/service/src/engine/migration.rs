@@ -858,9 +858,7 @@ mod tests {
     use crate::cryptography::signatures::gen_sig_keys;
     use crate::cryptography::signing::SigningSchemeType;
     use crate::engine::context::{ContextInfo, NodeInfo, SchemeDigests, SoftwareVersion};
-    use crate::util::key_setup::{
-        ensure_central_server_signing_keys_exist, ensure_threshold_server_signing_keys_exist,
-    };
+    use crate::util::key_setup::ensure_central_server_signing_keys_exist;
     use crate::vault::storage::file::FileStorage;
     use crate::vault::storage::ram::{self, RamStorage};
     use crate::vault::storage::{
@@ -2982,7 +2980,7 @@ mod tests {
             );
             assert!(
                 pub_storage
-                    .data_exists(&SIGNING_KEY_ID, &PubDataType::VerfAddress.to_string())
+                    .data_exists(&id, &PubDataType::VerfAddress.to_string())
                     .await
                     .unwrap()
             );
@@ -3030,7 +3028,7 @@ mod tests {
             );
             assert!(
                 pub_storage
-                    .data_exists(&SIGNING_KEY_ID, &PubDataType::VerfAddress.to_string())
+                    .data_exists(&id, &PubDataType::VerfAddress.to_string())
                     .await
                     .unwrap()
             );
@@ -3065,7 +3063,7 @@ mod tests {
             );
             assert!(
                 pub_storage
-                    .data_exists(&SIGNING_KEY_ID, &PubDataType::VerfAddress.to_string())
+                    .data_exists(&id, &PubDataType::VerfAddress.to_string())
                     .await
                     .unwrap()
             );
@@ -3104,7 +3102,7 @@ mod tests {
             );
             assert!(
                 pub_storage
-                    .data_exists(&SIGNING_KEY_ID, &PubDataType::VerfAddress.to_string())
+                    .data_exists(&id, &PubDataType::VerfAddress.to_string())
                     .await
                     .unwrap()
             );

@@ -473,13 +473,6 @@ async fn handle_repopulate_cmd<PubS: Storage, PrivS: Storage>(
     pub_storage: &mut PubS,
     priv_storage: &PrivS,
 ) -> anyhow::Result<()> {
-    ensure!(
-        priv_storage
-            .data_exists(&SIGNING_KEY_ID, &PrivDataType::SigningKey.to_string())
-            .await?,
-        "cannot repopulate verification material: no ECDSA signing key found under handle {}",
-        *SIGNING_KEY_ID
-    );
     let sk = get_core_signing_key(priv_storage).await?;
     ensure_derived_verification_material(pub_storage, &sk, SchemeMaterialMode::Populate).await?;
     tracing::info!(
