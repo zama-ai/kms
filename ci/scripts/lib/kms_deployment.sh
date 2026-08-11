@@ -223,6 +223,14 @@ deploy_threshold_mode() {
             )
         fi
 
+        # Enable OTLP tracing export when an endpoint is provided.
+        if [[ -n "${TRACING_ENDPOINT:-}" ]]; then
+            HELM_ARGS+=(
+                --set tracing.enabled=true
+                --set-string tracing.endpoint="${TRACING_ENDPOINT}"
+            )
+        fi
+
         # Performance testing specific overrides
         if [[ "${is_performance_testing}" == "true" ]]; then
             log_info "Performance testing mode - ENABLE_TLS=${ENABLE_TLS}, DEPLOYMENT_TYPE=${DEPLOYMENT_TYPE}"
@@ -397,6 +405,14 @@ deploy_centralized_mode() {
         HELM_ARGS+=(
             --set kmsCore.serviceMonitor.enabled=true
             --set kmsCore.serviceMonitor.metricNamePrefix=ci_
+        )
+    fi
+
+    # Enable OTLP tracing export when an endpoint is provided.
+    if [[ -n "${TRACING_ENDPOINT:-}" ]]; then
+        HELM_ARGS+=(
+            --set tracing.enabled=true
+            --set-string tracing.endpoint="${TRACING_ENDPOINT}"
         )
     fi
 
