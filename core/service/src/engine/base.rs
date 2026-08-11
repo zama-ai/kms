@@ -347,7 +347,12 @@ where
     Ok(buf)
 }
 
-fn keygen_payload_bytes(
+/// The canonical bytes a non-ECDSA scheme signs for a keygen result.
+///
+/// Shared between signing and after-the-fact verification (see
+/// [`crate::engine::public_material_verification`]) so there is exactly one definition of
+/// what was signed.
+pub(crate) fn keygen_payload_bytes(
     prep_id: &RequestId,
     key_id: &RequestId,
     key_digests: &BTreeMap<PubDataType, Vec<u8>>,
@@ -357,6 +362,25 @@ fn keygen_payload_bytes(
         prep_id: *prep_id,
         key_id: *key_id,
         key_digests: key_digests.clone(),
+        extra_data: extra_data.to_vec(),
+    })
+}
+
+/// The canonical bytes a non-ECDSA scheme signs for a CRS result.
+///
+/// Shared between signing and after-the-fact verification (see
+/// [`crate::engine::public_material_verification`]) so there is exactly one definition of
+/// what was signed.
+pub(crate) fn crs_payload_bytes(
+    crs_id: &RequestId,
+    max_num_bits: u32,
+    crs_digest: &[u8],
+    extra_data: &[u8],
+) -> anyhow::Result<Vec<u8>> {
+    signed_payload_bytes(&CrsSignedPayload {
+        crs_id: *crs_id,
+        max_num_bits,
+        crs_digest: crs_digest.to_vec(),
         extra_data: extra_data.to_vec(),
     })
 }
@@ -493,12 +517,7 @@ pub(crate) fn compute_info_crs_from_digest(
 ) -> anyhow::Result<CrsGenMetadata> {
     let sol_type =
         CrsgenVerification::new(crs_id, max_num_bits, crs_digest.clone(), extra_data.clone());
-    let payload_bytes = signed_payload_bytes(&CrsSignedPayload {
-        crs_id: *crs_id,
-        max_num_bits: max_num_bits as u32,
-        crs_digest: crs_digest.clone(),
-        extra_data: extra_data.clone(),
-    })?;
+    let payload_bytes = crs_payload_bytes(crs_id, max_num_bits as u32, &crs_digest, &extra_data)?;
     let (external_signature, signatures) = sign_result(
         sk,
         schemes,

@@ -80,6 +80,9 @@ The service crate is the main surface area. Key subdirectories under
   [context.rs](core/service/src/engine/context.rs),
   [backup_operator.rs](core/service/src/engine/backup_operator.rs),
   [keyset_configuration.rs](core/service/src/engine/keyset_configuration.rs),
+  [public_material_verification.rs](core/service/src/engine/public_material_verification.rs)
+  (boot-time verification of public storage — see
+  [Boot-time storage verification](#boot-time-storage-verification)),
   [validation_non_wasm.rs](core/service/src/engine/validation_non_wasm.rs) and
   [validation_wasm.rs](core/service/src/engine/validation_wasm.rs) (the
   validation logic is compiled for both native and WASM so that clients can
@@ -247,6 +250,54 @@ end-to-end tests live at
 [core/service/src/client/tests/centralized/custodian_backup_tests.rs](core/service/src/client/tests/centralized/custodian_backup_tests.rs)
 and
 [core/service/src/client/tests/threshold/custodian_backup_tests.rs](core/service/src/client/tests/threshold/custodian_backup_tests.rs).
+
+## Boot-time storage verification
+
+Every node checks its storage during service construction, before it serves any request.
+Two independent things happen.
+
+**The backup vault is repaired.** `update_backup_vault(false, OP_BOOT)` copies anything
+present in private storage but missing from the backup vault, so a vault that moved or lost
+entries is brought back up to date. Existing entries are not re-read or re-verified.
+
+**Public storage is verified but never touched.** Public storage can drift out of a
+consistent state: a misconfigured bucket or prefix can point a node at the wrong material, and
+writes are not atomic, so a crash mid-operation can leave an entry missing, truncated, or
+stale. Private storage holds the digests and signatures describing what should be published,
+so it is the reference. The checks live in
+[public_material_verification.rs](core/service/src/engine/public_material_verification.rs),
+entered through `verify_public_material`, and follow three rules:
+
+1. **Private storage is the reference.** Iteration is always "for each entry in private
+   storage, look up its counterpart in public storage" — never the reverse.
+2. **Extra material in public storage is ignored,** with no error and no warning. Much of it
+   is deliberate: a node may periodically replicate other parties' public material into its
+   own public storage, so entries it never generated and holds no private counterpart for are
+   expected. Retired keysets and leftovers from a previous deployment sharing the bucket land
+   there too. This is why the verification key is read at `SIGNING_KEY_ID` specifically rather
+   than by enumerating the folder.
+3. **Read-only.** Nothing is written, repaired, or fetched from peers.
+
+What it verifies, and how failures are treated:
+
+| Check | On failure |
+|---|---|
+| Published keysets and CRSes are present, and their raw stored bytes hash to the digests in `KeyGenMetadata` / `CrsGenMetadata` | boot fails |
+| Per-scheme `signatures` on that metadata verify against the node's own verification key — a corruption check on the reference itself | boot fails |
+| `VerfKey` and `VerfAddress` at `SIGNING_KEY_ID` match the key derived from the private `SigningKey` | boot fails |
+| A secret-sharing keychain is configured but no `RecoveryMaterial` is published | warning |
+
+Digests are always computed over the **raw stored bytes**, never over a re-serialization of
+the deserialized value: a tfhe format change since the material was generated would alter the
+bytes and report intact material as corrupt.
+
+Two limits are worth knowing. `external_signature`, and the ECDSA entry of `signatures`, sign
+an EIP-712 hash whose `Eip712Domain` arrives on the originating gRPC request and is never
+persisted, so those signatures cannot be reconstructed at boot and are skipped — and since
+`signatures` defaults to empty, the signature check is a no-op for material generated without
+an explicitly requested post-quantum or Ed25519 scheme. And `PubDataType::DecompressionKey`
+has no private-storage counterpart at all (`write_decompression_key` persists no private
+data), so a published decompression key cannot be verified.
 
 ## Backward compatibility
 

@@ -1,10 +1,11 @@
 use crate::{
     engine::{
         context::ContextInfo,
-        utils::{
-            MetricedError, verify_compressed_key_digest_from_bytes, verify_crs_digest_from_bytes,
+        public_material_verification::{
+            verify_compressed_key_digest_from_bytes, verify_crs_digest_from_bytes,
             verify_key_digest_from_bytes,
         },
+        utils::MetricedError,
     },
     vault::storage::{
         Storage, StorageExt, StorageReader, StorageType,
@@ -605,10 +606,10 @@ mod tests {
     use crate::engine::context::ContextInfo;
     use crate::engine::context::SoftwareVersion;
     use crate::engine::context::{NodeInfo, SchemeDigests};
+    use crate::engine::public_material_verification::ERR_SERVER_KEY_DIGEST_MISMATCH;
     use crate::engine::threshold::service::reshare_utils::ERR_FAILED_TO_FETCH_PUBLIC_MATERIALS;
     use crate::engine::threshold::service::reshare_utils::fetch_public_fhe_materials_from_peers;
     use crate::engine::threshold::service::reshare_utils::get_verified_fhe_public_materials;
-    use crate::engine::utils::ERR_SERVER_KEY_DIGEST_MISMATCH;
     use crate::vault::storage::crypto_material::ThresholdCryptoMaterialStorage;
     use crate::vault::storage::ram::RamStorage;
     use crate::vault::storage::s3::DummyReadOnlyS3Storage;
@@ -999,7 +1000,7 @@ mod tests {
 
     // ==================== Compressed Key Tests ====================
     use super::VerifiedPublicMaterial;
-    use crate::engine::utils::ERR_COMPRESSED_KEYSET_DIGEST_MISMATCH;
+    use crate::engine::public_material_verification::ERR_COMPRESSED_KEYSET_DIGEST_MISMATCH;
     use tfhe::core_crypto::prelude::NormalizedHammingWeightBound;
     use tfhe::xof_key_set::CompressedXofKeySet;
 

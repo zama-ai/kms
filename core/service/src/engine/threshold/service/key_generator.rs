@@ -57,6 +57,7 @@ use crate::{
             stored_scheme_signatures_to_proto,
         },
         keyset_configuration::InternalKeySetConfig,
+        public_material_verification::verify_public_key_digest_from_bytes,
         threshold::{
             service::{
                 PublicKeyMaterial, ThresholdFheKeys,
@@ -64,7 +65,7 @@ use crate::{
             },
             traits::KeyGenerator,
         },
-        utils::{MetricedError, verify_public_key_digest_from_bytes},
+        utils::MetricedError,
         validation::{
             RequestIdParsingErr, parse_grpc_request_id, parse_optional_grpc_request_id,
             validate_key_gen_request,

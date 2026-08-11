@@ -18,6 +18,8 @@ pub mod keyset_configuration;
 #[cfg(feature = "non-wasm")]
 pub mod migration;
 #[cfg(feature = "non-wasm")]
+pub mod public_material_verification;
+#[cfg(feature = "non-wasm")]
 pub mod threshold;
 #[cfg(feature = "non-wasm")]
 pub mod traits;
