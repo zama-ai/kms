@@ -32,7 +32,6 @@ use threshold_types::protocol::ProtocolDescription;
 use threshold_types::role::Role;
 use tracing::instrument;
 
-pub(crate) const LOCAL_SINGLE_MAX_ITER: usize = 30;
 
 pub type SecureLocalSingleShare =
     RealLocalSingleShare<SecureCoinflip, SecureShareDispute, SyncReliableBroadcast>;
@@ -120,8 +119,26 @@ impl<C: Coinflip, S: ShareDispute, BCast: Broadcast> LocalSingleShare
             ));
         }
 
-        // Keeps executing until verification passes, excluding malicious players every time it does not
-        for _ in 0..LOCAL_SINGLE_MAX_ITER {
+        // NOTE TO REVIEWER: For some reason it seems we want to explicitly bound this loop
+        // although theory tells us it's bound to finish. But the bound we had was very optimistic.
+        //
+        // Each iteration adds at least one dispute pair
+        // After a party is in dispute with (strictly) more than threshold
+        // parties, it is declared corrupt, and we can have at most t corrupt parties
+        // Worst case we thus have t * (t+1) dispute-driven restarts and t corrupt driven restarts
+        // (Note: Maybe not tight)
+        // so we can have at most t * (t + 2) + 1 iterations
+        let max_iter = session.threshold() * (session.threshold() + 2) + 1;
+        // Implements LocalSingleShare (spec Fig. 88); the //Step N.x comments below reference
+        // that figure.
+        //
+        // Keeps executing until verification passes, excluding malicious players every time it
+        // does not. Re-entering this outer loop is the spec's "return to step 1 for all parallel
+        // executions" (Steps 5, 6.f, 6.g and 6.h). Step 1 itself (a corrupt dealer contributes
+        // the all-zero sharing) is realized on the receiver side: ShareDispute hands out zero
+        // shares for corrupt/disputed dealers, and verify_sharing zero-fills the output of any
+        // sender that becomes corrupt.
+        for _ in 0..max_iter {
             let mut shared_secrets;
             let mut x;
             let mut shared_pads;
@@ -132,20 +149,24 @@ impl<C: Coinflip, S: ShareDispute, BCast: Broadcast> LocalSingleShare
             loop {
                 let corrupt_start = session.corrupt_roles().clone();
 
-                // ShareDispute will fill shares from disputed parties with 0s.
-                // The secrets <s> and pads <r> are shared together in a single ShareDispute
-                // round and split back apart afterwards.
+                //Step 2 & Step 3: share the secrets <s_j> and the m pads <r_g> via ShareDispute,
+                //merged into a single round.
+                //ShareDispute will fill shares from disputed parties with 0s.
                 (shared_secrets, shared_pads) =
                     share_secrets_and_pads(session, &self.share_dispute, secrets).await?;
 
+                //Step 4: x <- CoinFlip(Corrupt); a single coinflip shared by all n parallel dealers
                 x = self.coinflip.execute(session).await?;
 
-                // if the corrupt roles have not changed, we can exit the loop and move on, otherwise start from the top
+                //Step 5: if Corrupt grew (during ShareDispute or the coinflip), start from the
+                //top so ShareDispute is consistent with the new Corrupt (and Dispute) sets;
+                //otherwise exit the loop and move on
                 if *session.corrupt_roles() == corrupt_start {
                     break;
                 }
             }
 
+            //Step 6: the m-fold checked opening (see verify_sharing for Steps 6.a-6.h)
             if verify_sharing(
                 session,
                 &mut shared_secrets,
@@ -156,6 +177,7 @@ impl<C: Coinflip, S: ShareDispute, BCast: Broadcast> LocalSingleShare
             )
             .await?
             {
+                //Step 7: return the (verified) degree-t sharings of every dealer
                 return Ok(shared_secrets.all_shares);
             }
         }
@@ -165,8 +187,9 @@ impl<C: Coinflip, S: ShareDispute, BCast: Broadcast> LocalSingleShare
     }
 }
 
-/// Sample the `m` pads and share `secrets ‖ pads` in a single [`ShareDispute`] round,
-/// then split the output back into the `(secrets, pads)` [`ShareDisputeOutput`]s.
+/// Fig. 88 Steps 2 & 3: sample the `m` pads and share `secrets ‖ pads` in a single
+/// [`ShareDispute`] round, then split the output back into the `(secrets, pads)`
+/// [`ShareDisputeOutput`]s.
 ///
 /// Merging the two sharings (the spec's <s> and <r>) saves one communication round.
 /// Note the pads are sampled *before* ShareDispute samples its sharing polynomials, so the
@@ -188,6 +211,8 @@ where
     Ok(split_share_dispute_output(merged, secrets.len()))
 }
 
+/// Fig. 88 Step 6: the m-fold checked opening, verifying every dealer's batch at once.
+/// Sub-steps 6.a-6.h are annotated inline; all m challenge indices ride a single broadcast.
 pub(crate) async fn verify_sharing<
     Z: Ring + Derive + ErrorCorrect,
     L: LargeSessionHandles,
@@ -230,11 +255,12 @@ pub(crate) async fn verify_sharing<
             (0..m)
                 .into_par_iter()
                 .map(|g| -> anyhow::Result<MapsSharesChallenges<Z>> {
+                    //Step 6.a: (x_{1,g},..,x_{l,g}) = H_LDS(x, g, i); one challenge vector per dealer i
                     let map_challenges =
                         Z::derive_challenges_from_coinflip(&x, g.try_into()?, l, &roles);
 
-                    //Compute my share of check values for every local single share happening in parallel
-                    //<y>
+                    //Step 6.b: my share of <y_g> = <r_g> + sum_j x_{j,g}*<s_j> for every dealer's
+                    //local single share happening in parallel
                     let checks_for_all = compute_check_values(
                         &pads_shares_all,
                         &map_challenges,
@@ -243,8 +269,8 @@ pub(crate) async fn verify_sharing<
                         None,
                     )?;
 
-                    //Compute the share of the check value for MY local single share
-                    //<y^*>_j
+                    //Step 6.c: the full claimed sharing <y_g^*>_j (all j) of MY OWN check value,
+                    //computed from the values remembered when dealing ShareDispute
                     let checks_for_mine = compute_check_values(
                         &my_shared_pads,
                         &map_challenges,
@@ -265,9 +291,10 @@ pub(crate) async fn verify_sharing<
 
     let corrupt_before_bc = session.corrupt_roles().clone();
 
-    //Broadcast both my share of check values on all lsl as well as all the shares of check values for lsl where I am sender
+    //Steps 6.d & 6.e in one batched round: as receiver I broadcast my Step-6.b shares for every
+    //dealer (6.d), and as dealer I broadcast my full Step-6.c claimed sharing (6.e) - for all m
+    //challenge indices at once, via the Corrupt-set-updating broadcast (spec Fig. 71).
     //All roles will be mapped to an output, but it may be Bot if they are malicious
-    // Step (d)
     let bcast_data = broadcast
         .broadcast_from_all_w_corrupt_set_update(
             session,
@@ -275,7 +302,7 @@ pub(crate) async fn verify_sharing<
         )
         .await?;
 
-    // If the corrupt roles have not changed, we can continue, otherwise start from beginning
+    //Step 6.f: if any of the broadcasts increased Corrupt, return to Step 1
     if *session.corrupt_roles() != corrupt_before_bc {
         return Ok(false);
     }
@@ -283,7 +310,8 @@ pub(crate) async fn verify_sharing<
     //Reshape the (owned) broadcast into one map per challenge index `g`, moving each sender's
     //`MapsSharesChallenges` out of its batch (no clone). Each per-`g` map is wrapped in an `Arc`
     //so it can be shared cheaply between the reconstruction compute task and `look_for_disputes`.
-    //Senders that did not broadcast a batch of the expected length `m` are marked corrupt.
+    //Senders that did not broadcast a batch of the expected length `m` are marked corrupt
+    //(treated like a Bot broadcast, i.e. the Fig. 71 convention).
     let mut per_g: Vec<HashMap<Role, MapsSharesChallenges<Z>>> =
         (0..m).map(|_| HashMap::new()).collect();
     let mut wrong_type_corrupts = HashSet::new();
@@ -302,27 +330,49 @@ pub(crate) async fn verify_sharing<
     let per_g: Vec<Arc<HashMap<Role, MapsSharesChallenges<Z>>>> =
         per_g.into_iter().map(Arc::new).collect();
 
-    //Process each challenge index locally against the single broadcast.
-    // We do this in sequence because the verification of each challenge index
-    // may add new corrupt parties to the session, which will affect the verification of subsequent challenge indices.
-    for (g, bcast_output) in per_g.iter().enumerate() {
-        let threshold = session.threshold() as usize;
-        let mut bcast_corrupts =
-            verify_sender_challenge(Arc::clone(bcast_output), session, threshold, &mut None)
-                .await?;
+    //Compute the per-sender verdicts (the Step 6.g checks) for all m challenge indices in one
+    //compute task. The verdicts are pure functions of
+    //the broadcast data and the start-of-pass `VerifyCtx` snapshot, so precomputing the later
+    //indices is safe: the decision loop below restarts the protocol on the first index that
+    //changes the corrupt or dispute set, hence any verdict actually consumed was computed
+    //against exactly the session state a sequential computation would have observed.
+    let threshold = session.threshold() as usize;
+    let verdicts: Vec<Vec<(Role, Option<Z>)>> = {
+        let ctx = VerifyCtx::new(session);
+        let per_g = per_g.clone(); // one Arc bump per challenge index
+        spawn_compute_bound(move || {
+            per_g
+                .par_iter()
+                .map(|bcast_g| sender_verdicts(bcast_g, &ctx, threshold))
+                .collect::<anyhow::Result<Vec<_>>>()
+        })
+        .await??
+    };
+
+    //Sequentially apply each challenge index's outcome against the single broadcast.
+    //Restarting (Ok(false)) on the FIRST index that reveals a new corrupt party or dispute is
+    //load-bearing, not an optimization: a later index's dispute-zero checks would otherwise
+    //judge sharings created under the old dispute set against the new one, marking honest
+    //dealers corrupt.
+    for (g, (bcast_output, g_verdicts)) in per_g.iter().zip(verdicts.iter()).enumerate() {
+        //`None` verdicts are the newly-corrupt senders; the reconstructed check values are
+        //not needed for the single sharing.
+        let (mut bcast_corrupts, _) = split_verdicts(g_verdicts);
         //Wrong-type senders are corrupt across every challenge index; fold them in on the first pass.
         if g == 0 {
             bcast_corrupts.extend(wrong_type_corrupts.iter().cloned());
         }
 
-        //Set 0 share for newly_corrupt senders and add them to the corrupt set
+        //Step 6.g (application): add failing dealers to Corrupt and set their sharings to the
+        //all-zero sharing (the Step 1 convention for corrupt dealers)
         let mut should_return = false;
         for role_pi in bcast_corrupts {
             secrets_shares_all.insert(role_pi, vec![Z::ZERO; l]);
             should_return |= session.add_corrupt(role_pi);
         }
 
-        //Returns as soon as we have a new dispute
+        //Step 6.h: compare receivers' broadcast shares against each dealer's claimed sharing;
+        //any new dispute - or a new corrupt party from Step 6.g - returns to Step 1
         if should_return || !look_for_disputes(bcast_output, session)? {
             tracing::warn!(
                 "RESTARTING LocalSingleShare as we detected a new dispute or corrupt party"
@@ -335,6 +385,8 @@ pub(crate) async fn verify_sharing<
     Ok(true)
 }
 
+// The linear combination of Fig. 88 Step 6.b / Fig. 89 Step 7.b - and of Step 6.c / 7.c when
+// `my_role` is set (it then evaluates the dealer's own remembered shares for every receiver).
 // Inputs:
 // map_pads_shares maps a role to a vector of size m ( { r_g }_g in the protocol description)
 // map_challenges maps a role to a vector of size l ( { x_{jg} }_j in the protocol description)
@@ -377,115 +429,147 @@ pub(crate) fn compute_check_values<Z: Ring>(
         .try_collect()
 }
 
-//Verify that the sender for each lsl did give a 0 share to parties it is in dispute with
-//and that the overall sharing is a degree t polynomial
-pub(crate) async fn verify_sender_challenge<Z: Ring + ErrorCorrect, L: LargeSessionHandles>(
-    bcast_data: Arc<HashMap<Role, MapsSharesChallenges<Z>>>,
-    session: &mut L,
+/// Start-of-pass snapshot of the session state read by [`sender_verdicts`]: our role, the
+/// full role set, and each other party's dispute set as they stood when the verification
+/// pass began.
+///
+/// One snapshot is shared by the verdict computation for every challenge index. This is
+/// sound because the per-`g` decision loop restarts the whole protocol (`Ok(false)`) on the
+/// first index that adds a corrupt party or a dispute: any execution that actually consumes
+/// index `g`'s verdicts has applied no session mutation since the pass began, so the
+/// snapshot is exactly the state a per-`g` computation would have observed.
+pub(crate) struct VerifyCtx {
+    pub(crate) my_role: Role,
+    pub(crate) roles: HashSet<Role>,
+    pub(crate) sender_disputes: HashMap<Role, BTreeSet<Role>>,
+}
+
+impl VerifyCtx {
+    /// Snapshot the session at the start of a verification pass.
+    pub(crate) fn new<L: LargeSessionHandles>(session: &L) -> Self {
+        let my_role = session.my_role();
+        Self {
+            my_role,
+            roles: session.roles().clone(),
+            sender_disputes: session
+                .roles()
+                .iter()
+                .filter(|role| **role != my_role)
+                .map(|role| (*role, session.disputed_roles().get(role).clone()))
+                .collect(),
+        }
+    }
+}
+
+/// Fig. 88 Step 6.g / Fig. 89 Step 7.g: verify that each sender did give a 0 share to parties
+/// it is in dispute with and that its claimed check-value sharing is a degree-`threshold`
+/// polynomial. Maps every sender in `bcast_g` (other than ourselves) to `Some(reconstructed
+/// check value)` if the sharing is valid, or to `None`, which proves the sender corrupt.
+///
+/// This is a pure function of the broadcast data and the start-of-pass [`VerifyCtx`]
+/// snapshot — no session access — so callers can compute the verdicts for *all* `m`
+/// challenge indices (and, for the double sharing, both degrees) in a single
+/// `spawn_compute_bound` task before the sequential per-`g` decision loop runs. The
+/// per-sender work (dominated by the error-correcting `error_reconstruct` decode) fans out
+/// across rayon; the caller merges verdicts sequentially via [`split_verdicts`], so the
+/// outcome is identical to processing senders (and indices) one by one.
+pub(crate) fn sender_verdicts<Z: Ring + ErrorCorrect>(
+    bcast_g: &HashMap<Role, MapsSharesChallenges<Z>>,
+    ctx: &VerifyCtx,
     threshold: usize,
-    result_map: &mut Option<HashMap<Role, Z>>,
-) -> anyhow::Result<HashSet<Role>> {
-    let my_role = session.my_role();
-    let roles = session.roles().clone();
-    // Snapshot only the dispute sets of the senders we are checking, so the compute task below
-    // needs no access to the session.
-    let sender_disputes: HashMap<Role, BTreeSet<Role>> = bcast_data
-        .keys()
-        .filter(|role_pi| **role_pi != my_role)
-        .map(|role_pi| (*role_pi, session.disputed_roles().get(role_pi).clone()))
-        .collect();
+) -> anyhow::Result<Vec<(Role, Option<Z>)>> {
+    let my_role = ctx.my_role;
+    bcast_g
+        .par_iter()
+        .filter(|(role_pi, _)| **role_pi != my_role)
+        .map(|(role_pi, bcast_value)| -> anyhow::Result<(Role, Option<Z>)> {
+            let sharing_from_sender = &bcast_value.checks_for_mine;
+            //Well-formedness of Step 6.e/7.e: the dealer must have broadcast a claimed share
+            //for every party, otherwise it is corrupt
+            if sharing_from_sender
+                .keys()
+                .cloned()
+                .collect::<HashSet<Role>>()
+                != ctx.roles
+            {
+                tracing::warn!(
+                    "[{my_role}] Party {role_pi} did not send a check value for all parties, adding it to the corrupt set"
+                );
+                return Ok((*role_pi, None));
+            }
 
-    // The heavy per-sender work is the error-correcting `error_reconstruct` decode; it and the
-    // dispute-zero check only need a read-only snapshot, so we run the fan-out on the dedicated
-    // MPC rayon pool via `spawn_compute_bound` (freeing the tokio worker) rather than blocking on
-    // an inline `par_iter`. The broadcast is shared in (cheaply) via `Arc` rather than cloned.
-    // Each sender maps to either `None` (corrupt) or `Some(reconstructed check value)`; the
-    // corrupt set / result_map are then updated sequentially, so the outcome is identical to
-    // processing senders one by one.
-    let verdicts: Vec<(Role, Option<Z>)> = spawn_compute_bound(move || {
-        bcast_data
-            .par_iter()
-            .filter(|(role_pi, _)| **role_pi != my_role)
-            .map(|(role_pi, bcast_value)| -> anyhow::Result<(Role, Option<Z>)> {
-                let sharing_from_sender = &bcast_value.checks_for_mine;
-                //Make sure the current sender has sent a value to check against for all parties
-                if sharing_from_sender
-                    .keys()
-                    .cloned()
-                    .collect::<HashSet<Role>>()
-                    != roles
-                {
-                    tracing::warn!(
-                        "[{my_role}] Party {role_pi} did not send a check value for all parties, adding it to the corrupt set"
-                    );
-                    return Ok((*role_pi, None));
-                }
-
-                //Check parties in dispute with pi have shares = 0  - Step (g)
-                //This should never fail, if there is no dispute the set is empty but exists
-                if let Some(pi_disputes) = sender_disputes.get(role_pi) {
-                    for pj_dispute_pi in pi_disputes {
-                        //Add pi to corrupt if sharing from pi to pj is not zero
-                        if sharing_from_sender
-                            .get(pj_dispute_pi)
-                            //This should never fail due to the above check
-                            .ok_or_else(|| {
-                                anyhow_error_and_log(format!(
-                                    "[{my_role}] Can not find the share for {pj_dispute_pi}"
-                                ))
-                            })?
-                            != &Z::ZERO
-                        {
-                            tracing::warn!(
-                                "[{my_role}] Expected to find a 0 share for {pj_dispute_pi} from {role_pi} due to dispute, but did not. Adding {role_pi} it to corrupt"
-                            );
-                            return Ok((*role_pi, None));
-                        }
-                    }
-                }
-
-                //Check correct degree
-                let sharing = sharing_from_sender
-                    .iter()
-                    .map(|(role, share)| Share::new(*role, *share))
-                    .collect_vec();
-                let sharing = ShamirSharings::create(sharing);
-                match sharing.error_reconstruct(threshold, 0) {
-                    Ok(value) => Ok((*role_pi, Some(value))),
-                    Err(e) => {
+            //Step 6.g/7.g (zero condition): parties in dispute with pi must hold the zero share
+            //This should never fail, if there is no dispute the set is empty but exists
+            if let Some(pi_disputes) = ctx.sender_disputes.get(role_pi) {
+                for pj_dispute_pi in pi_disputes {
+                    //Add pi to corrupt if sharing from pi to pj is not zero
+                    if sharing_from_sender
+                        .get(pj_dispute_pi)
+                        //This should never fail due to the above check
+                        .ok_or_else(|| {
+                            anyhow_error_and_log(format!(
+                                "[{my_role}] Can not find the share for {pj_dispute_pi}"
+                            ))
+                        })?
+                        != &Z::ZERO
+                    {
                         tracing::warn!(
-                            "[{my_role}] Reconstruction from {role_pi} failed, adding it to corrupt. {:?}",
-                            e
+                            "[{my_role}] Expected to find a 0 share for {pj_dispute_pi} from {role_pi} due to dispute, but did not. Adding {role_pi} it to corrupt"
                         );
-                        Ok((*role_pi, None))
+                        return Ok((*role_pi, None));
                     }
                 }
-            })
-            .collect::<anyhow::Result<Vec<_>>>()
-    })
-    .await??;
+            }
 
-    let mut newly_corrupt = HashSet::<Role>::new();
+            //Step 6.g/7.g (degree condition): the claimed sharing must be a valid
+            //degree-`threshold` polynomial; the reconstructed value feeds Fig. 89
+            //Step 7.g's t/2t equality check
+            let sharing = sharing_from_sender
+                .iter()
+                .map(|(role, share)| Share::new(*role, *share))
+                .collect_vec();
+            let sharing = ShamirSharings::create(sharing);
+            match sharing.error_reconstruct(threshold, 0) {
+                Ok(value) => Ok((*role_pi, Some(value))),
+                Err(e) => {
+                    tracing::warn!(
+                        "[{my_role}] Reconstruction from {role_pi} failed, adding it to corrupt. {:?}",
+                        e
+                    );
+                    Ok((*role_pi, None))
+                }
+            }
+        })
+        .collect::<anyhow::Result<Vec<_>>>()
+}
+
+/// The sequential-merge half of the per-sender verification: split one challenge index's
+/// verdicts into the newly-corrupt senders (`None` verdicts) and the reconstructed check
+/// values of the valid ones.
+pub(crate) fn split_verdicts<Z: Ring>(
+    verdicts: &[(Role, Option<Z>)],
+) -> (HashSet<Role>, HashMap<Role, Z>) {
+    let mut newly_corrupt = HashSet::new();
+    let mut result_map = HashMap::new();
     for (role_pi, verdict) in verdicts {
         match verdict {
             //Corrupt sender
             None => {
-                newly_corrupt.insert(role_pi);
+                newly_corrupt.insert(*role_pi);
             }
-            //Valid sharing: record the reconstructed check value if the caller wants it
+            //Valid sharing: record the reconstructed check value
             Some(value) => {
-                if let Some(result_map) = result_map {
-                    result_map.insert(role_pi, value);
-                }
+                result_map.insert(*role_pi, *value);
             }
         }
     }
-
-    Ok(newly_corrupt)
+    (newly_corrupt, result_map)
 }
 
-/// Add party to dispute based on the challenges in bcast_data
-/// returns true if no new dispute appeared, false else
+/// Fig. 88 Step 6.h / Fig. 89 Step 7.h: add a dispute {sender, receiver} for every receiver in
+/// Agree_i whose broadcast share (Step 6.d/7.d) disagrees with the dealer's claimed share for
+/// it (Step 6.e/7.e).
+/// Returns true if no new dispute appeared, false else
 pub(crate) fn look_for_disputes<Z: Ring, L: LargeSessionHandles>(
     bcast_data: &HashMap<Role, MapsSharesChallenges<Z>>,
     session: &mut L,
@@ -500,8 +584,9 @@ pub(crate) fn look_for_disputes<Z: Ring, L: LargeSessionHandles>(
             let sender_vote = &bcast_value.checks_for_mine;
             //Similarly, we know that sender maps all the parties to something from before
             for (role_receiver, sender_value) in sender_vote {
-                //If the receiver is in dispute with the sender, its value is defined to be 0
-                //and we checked that the sender did send a 0 in [verify_sender_challenge]
+                //Agree_i restriction of Step 6.h/7.h: receivers in dispute with the sender are
+                //"defined" to broadcast 0 (Step 6.d/7.d convention) - the matching dealer-side
+                //zero was checked in [sender_verdicts] - so they are skipped here.
                 //If the receiver is corrupt, we just dont take its opinion into account
                 if !session.corrupt_roles().contains(role_receiver)
                     && !sender_dispute_set.contains(role_receiver)
@@ -514,7 +599,7 @@ pub(crate) fn look_for_disputes<Z: Ring, L: LargeSessionHandles>(
                     })?;
                     let receiver_value = &receiver_bcast_value.checks_for_all.get(role_sender);
 
-                    //If sender and receiver don't agree, add (pi,pj) to dispute
+                    //Step 6.h/7.h: <y_g>_j != <y_g^*>_j => add {pi, pj} to Dispute
                     match receiver_value {
                         Some(rcv_value) if *rcv_value == sender_value => {}
                         _ => {
