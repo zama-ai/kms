@@ -32,19 +32,24 @@ cfg_if::cfg_if! {
     }
 }
 
+use crate::anyhow_error_and_log;
 use crate::client::client_non_wasm::ClientDataType;
-use crate::cryptography::signatures::{PrivateSigKey, gen_sig_keys};
+use crate::consts::{SIGNING_KEY_ID, signing_material_id};
+use crate::cryptography::signatures::{
+    PrivateSigKey, PublicSigKey, SigningSchemeType, gen_sig_keys,
+};
 use crate::engine::base::compute_handle;
 use crate::vault::storage::crypto_material::{get_rng, log_data_exists, log_storage_success};
 use crate::vault::storage::{
     Storage, StorageReader, StorageType, file::FileStorage, read_all_data_versioned,
-    store_text_at_request_id, store_versioned_at_request_id,
+    read_text_at_request_id, store_text_at_request_id, store_versioned_at_request_id,
 };
 use k256::pkcs8::EncodePrivateKey;
 use kms_grpc::RequestId;
 use kms_grpc::rpc_types::{PrivDataType, PubDataType};
 use std::collections::HashMap;
 use std::path::Path;
+use strum::IntoEnumIterator;
 
 /// Compact public key for FHE operations
 pub type FhePublicKey = tfhe::CompactPublicKey;
@@ -255,6 +260,15 @@ where
                     tracing::info!("Regenerated VerfKey from existing signing key");
                 }
             }
+
+            // Backfill any missing non-ECDSA verification material and validate
+            // the existing ECDSA material against the signing key.
+            if let Err(e) =
+                ensure_derived_verification_material(pub_storage, sk, SchemeMaterialMode::Populate)
+                    .await
+            {
+                tracing::error!("Failed to backfill derived scheme verification material: {e}");
+            }
         }
 
         return false;
@@ -322,7 +336,134 @@ where
         false,
     );
 
+    // Derive and persist the non-ECDSA schemes' verification material from the
+    // freshly generated ECDSA signing key.
+    if let Err(e) =
+        ensure_derived_verification_material(pub_storage, &sk, SchemeMaterialMode::Generate).await
+    {
+        tracing::error!("Failed to store derived scheme verification material: {e}");
+        return false;
+    }
+
     true
+}
+
+/// Whether to create fresh material or backfilling around an already-persisted
+/// ECDSA identity.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SchemeMaterialMode {
+    /// Generate all material from scratch.
+    Generate,
+    /// Backfill from an already-persisted ECDSA signing key.
+    Populate,
+}
+
+/// Persist the per-scheme verification material derived from a KMS node's ECDSA
+/// signing key `sk`.
+pub async fn ensure_derived_verification_material<PubS>(
+    pub_storage: &mut PubS,
+    sk: &PrivateSigKey,
+    mode: SchemeMaterialMode,
+) -> anyhow::Result<()>
+where
+    PubS: Storage,
+{
+    for scheme in SigningSchemeType::iter() {
+        if scheme == SigningSchemeType::Ecdsa256k1 {
+            // ECDSA is the persisted primary identity, handled by the
+            // signing-key setup itself; only validate it here when backfilling.
+            if mode == SchemeMaterialMode::Populate {
+                validate_ecdsa_verification_material(pub_storage, sk).await?;
+            }
+            continue;
+        }
+
+        let req_id = signing_material_id(scheme);
+        let verf_key = sk.unified_verifying_key(scheme).map_err(|e| {
+            anyhow_error_and_log(format!("could not derive {scheme} verification key: {e}"))
+        })?;
+
+        let verf_key_type = PubDataType::VerfKey.to_string();
+        if scheme_object_should_be_written(pub_storage, &req_id, &verf_key_type, mode, scheme)
+            .await?
+        {
+            store_versioned_at_request_id(pub_storage, &req_id, &verf_key, &verf_key_type).await?;
+            tracing::info!("Stored {scheme} verification key under handle {req_id}");
+        }
+
+        let addr_type = PubDataType::VerfAddress.to_string();
+        if scheme_object_should_be_written(pub_storage, &req_id, &addr_type, mode, scheme).await? {
+            store_text_at_request_id(
+                pub_storage,
+                &req_id,
+                &hex::encode(verf_key.digest()),
+                &addr_type,
+            )
+            .await?;
+            tracing::info!("Stored {scheme} verification digest under handle {req_id}");
+        }
+    }
+    Ok(())
+}
+
+/// Decide whether a per-scheme object should be written, per [`SchemeMaterialMode`].
+///
+/// `Generate` requires the object to be absent — a present object is an error
+/// (keygen ran against dirty storage). `Populate` writes only when the object is
+/// absent and never overwrites.
+async fn scheme_object_should_be_written<PubS: Storage>(
+    pub_storage: &PubS,
+    req_id: &RequestId,
+    data_type: &str,
+    mode: SchemeMaterialMode,
+    scheme: SigningSchemeType,
+) -> anyhow::Result<bool> {
+    let exists = pub_storage.data_exists(req_id, data_type).await?;
+    match (mode, exists) {
+        (SchemeMaterialMode::Generate, true) => Err(anyhow_error_and_log(format!(
+            "refusing to generate {data_type} for scheme {scheme}: an object already exists at \
+             handle {req_id} (key generation ran against non-empty storage)"
+        ))),
+        (SchemeMaterialMode::Generate, false) => Ok(true),
+        (SchemeMaterialMode::Populate, exists) => Ok(!exists),
+    }
+}
+
+/// Verify that any ECDSA verification material already in storage matches
+/// the signing key `sk`.
+async fn validate_ecdsa_verification_material<PubS: Storage>(
+    pub_storage: &PubS,
+    sk: &PrivateSigKey,
+) -> anyhow::Result<()> {
+    let expected_pk = sk.verf_key();
+
+    let verf_key_type = PubDataType::VerfKey.to_string();
+    if pub_storage
+        .data_exists(&SIGNING_KEY_ID, &verf_key_type)
+        .await?
+    {
+        let stored: PublicSigKey = pub_storage
+            .read_data(&SIGNING_KEY_ID, &verf_key_type)
+            .await?;
+        if stored != expected_pk {
+            return Err(anyhow_error_and_log(
+                "stored ECDSA verification key does not match the provided signing key".to_string(),
+            ));
+        }
+    }
+
+    let addr_type = PubDataType::VerfAddress.to_string();
+    if pub_storage.data_exists(&SIGNING_KEY_ID, &addr_type).await? {
+        let stored = read_text_at_request_id(pub_storage, &SIGNING_KEY_ID, &addr_type).await?;
+        let expected_addr = expected_pk.address().to_string();
+        if stored != expected_addr {
+            return Err(anyhow_error_and_log(format!(
+                "stored ECDSA verification address {stored} does not match the signing key address \
+                 {expected_addr}"
+            )));
+        }
+    }
+    Ok(())
 }
 
 /// Generates and stores a Common Reference String (CRS) if it doesn't exist.
@@ -833,6 +974,7 @@ where
         {
             ensure_ca_cert_exists(pub_storage, sk, request_id, subject, tls_wildcard).await?;
         }
+        ensure_derived_verification_material(pub_storage, sk, SchemeMaterialMode::Populate).await?;
 
         return Ok(());
     }
@@ -919,6 +1061,7 @@ where
 
     // Generate CA certificate
     ensure_ca_cert_exists(pub_storage, &sk, request_id, subject, tls_wildcard).await?;
+    ensure_derived_verification_material(pub_storage, &sk, SchemeMaterialMode::Generate).await?;
     Ok(())
 }
 
@@ -1445,5 +1588,144 @@ mod tests {
             .unwrap();
             assert_eq!(max_num_bits as usize, max_num_bits_from_crs(&crs));
         }
+    }
+}
+
+#[cfg(test)]
+mod scheme_material_tests {
+    use super::{SchemeMaterialMode, ensure_derived_verification_material};
+    use crate::consts::{SIGNING_KEY_ID, signing_material_id};
+    use crate::cryptography::signatures::gen_sig_keys;
+    use crate::cryptography::signing::{SigningSchemeType, UnifiedPublicSigKey};
+    use crate::vault::storage::ram::RamStorage;
+    use crate::vault::storage::{
+        StorageReader, read_text_at_request_id, store_versioned_at_request_id,
+    };
+    use aes_prng::AesRng;
+    use kms_grpc::rpc_types::PubDataType;
+    use rand::SeedableRng;
+    use strum::IntoEnumIterator;
+
+    /// All the non-ECDSA schemes.
+    fn derived_schemes() -> impl Iterator<Item = SigningSchemeType> {
+        SigningSchemeType::iter().filter(|s| *s != SigningSchemeType::Ecdsa256k1)
+    }
+
+    /// `Generate` writes each non-ECDSA scheme's verification key and digest
+    /// (matching what the signing key derives) and leaves the ECDSA slot alone.
+    #[tokio::test]
+    async fn generate_writes_all_non_ecdsa_material() {
+        let mut rng = AesRng::seed_from_u64(7);
+        let (_pk, sk) = gen_sig_keys(&mut rng);
+        let mut pub_storage = RamStorage::new();
+
+        ensure_derived_verification_material(&mut pub_storage, &sk, SchemeMaterialMode::Generate)
+            .await
+            .unwrap();
+
+        for scheme in derived_schemes() {
+            let id = signing_material_id(scheme);
+            let expected = sk.unified_verifying_key(scheme).unwrap();
+
+            let stored_vk: UnifiedPublicSigKey = pub_storage
+                .read_data(&id, &PubDataType::VerfKey.to_string())
+                .await
+                .unwrap();
+            assert_eq!(stored_vk, expected, "{scheme:?} verf key mismatch");
+
+            let stored_addr =
+                read_text_at_request_id(&pub_storage, &id, &PubDataType::VerfAddress.to_string())
+                    .await
+                    .unwrap();
+            assert_eq!(
+                stored_addr,
+                hex::encode(expected.digest()),
+                "{scheme:?} digest mismatch"
+            );
+        }
+
+        // ECDSA material is the primary identity and is not written here.
+        assert!(
+            !pub_storage
+                .data_exists(&SIGNING_KEY_ID, &PubDataType::VerfKey.to_string())
+                .await
+                .unwrap()
+        );
+    }
+
+    /// `Generate` refuses to run against storage that already holds material.
+    #[tokio::test]
+    async fn generate_rejects_preexisting_material() {
+        let mut rng = AesRng::seed_from_u64(8);
+        let (_pk, sk) = gen_sig_keys(&mut rng);
+        let mut pub_storage = RamStorage::new();
+
+        ensure_derived_verification_material(&mut pub_storage, &sk, SchemeMaterialMode::Generate)
+            .await
+            .unwrap();
+        assert!(
+            ensure_derived_verification_material(
+                &mut pub_storage,
+                &sk,
+                SchemeMaterialMode::Generate
+            )
+            .await
+            .is_err()
+        );
+    }
+
+    /// `Populate` writes missing material and is a no-op when re-run.
+    #[tokio::test]
+    async fn populate_is_idempotent() {
+        let mut rng = AesRng::seed_from_u64(9);
+        let (_pk, sk) = gen_sig_keys(&mut rng);
+        let mut pub_storage = RamStorage::new();
+
+        ensure_derived_verification_material(&mut pub_storage, &sk, SchemeMaterialMode::Populate)
+            .await
+            .unwrap();
+        ensure_derived_verification_material(&mut pub_storage, &sk, SchemeMaterialMode::Populate)
+            .await
+            .unwrap();
+
+        for scheme in derived_schemes() {
+            let id = signing_material_id(scheme);
+            assert!(
+                pub_storage
+                    .data_exists(&id, &PubDataType::VerfKey.to_string())
+                    .await
+                    .unwrap()
+            );
+        }
+    }
+
+    /// `Populate` fails loudly if the stored ECDSA verification key does not
+    /// match the signing key it is asked to derive from.
+    #[tokio::test]
+    async fn populate_rejects_mismatched_ecdsa_verf_key() {
+        let mut rng = AesRng::seed_from_u64(10);
+        let (_pk_a, sk_a) = gen_sig_keys(&mut rng);
+        let (pk_b, _sk_b) = gen_sig_keys(&mut rng);
+        let mut pub_storage = RamStorage::new();
+
+        // Publish a verification key belonging to a *different* signing key.
+        store_versioned_at_request_id(
+            &mut pub_storage,
+            &SIGNING_KEY_ID,
+            &pk_b,
+            &PubDataType::VerfKey.to_string(),
+        )
+        .await
+        .unwrap();
+
+        assert!(
+            ensure_derived_verification_material(
+                &mut pub_storage,
+                &sk_a,
+                SchemeMaterialMode::Populate
+            )
+            .await
+            .is_err()
+        );
     }
 }

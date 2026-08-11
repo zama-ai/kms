@@ -696,7 +696,9 @@ where
 #[tokio::test]
 async fn test_purge() {
     use crate::consts::SIGNING_KEY_ID;
+    use crate::cryptography::signatures::SigningSchemeType;
     use kms_grpc::rpc_types::PrivDataType;
+    use strum::EnumCount;
 
     let temp_dir = tempfile::tempdir().unwrap();
     let test_prefix = Some(temp_dir.path());
@@ -728,25 +730,22 @@ async fn test_purge() {
         )
         .await
     );
-    // Validate the keys were made
+    // Validate the keys were made: one verification key per signature scheme
+    // (ECDSA plus each derived scheme), and a single ECDSA private signing key.
     let pub_ids = central_pub_storage
         .all_data_ids(&PubDataType::VerfKey.to_string())
         .await
         .unwrap();
-    assert_eq!(pub_ids.len(), 1);
+    assert_eq!(pub_ids.len(), SigningSchemeType::COUNT);
     let priv_ids = central_priv_storage
         .all_data_ids(&PrivDataType::SigningKey.to_string())
         .await
         .unwrap();
     assert_eq!(priv_ids.len(), 1);
-    crate::util::key_setup::test_tools::purge(
-        test_prefix,
-        test_prefix,
-        &pub_ids.into_iter().next().unwrap(),
-        &[None],
-        &[None],
-    )
-    .await;
+    for id in &pub_ids {
+        crate::util::key_setup::test_tools::purge(test_prefix, test_prefix, id, &[None], &[None])
+            .await;
+    }
     // Check the keys were deleted
     assert!(
         central_pub_storage

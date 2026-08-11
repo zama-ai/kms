@@ -12,13 +12,17 @@ use kms_lib::{
     consts::SIGNING_KEY_ID,
     cryptography::attestation::make_security_module,
     util::key_setup::{
-        ensure_central_server_signing_keys_exist, ensure_threshold_server_signing_key_exists,
+        SchemeMaterialMode, ensure_central_server_signing_keys_exist,
+        ensure_derived_verification_material, ensure_threshold_server_signing_key_exists,
     },
     vault::{
         Vault,
         aws::build_aws_sdk_config,
         keychain::{awskms::build_aws_kms_client, make_keychain_proxy},
-        storage::{Storage, StorageType, delete_at_request_id, make_storage, s3::build_s3_client},
+        storage::{
+            Storage, StorageType, crypto_material::get_core_signing_key, delete_at_request_id,
+            make_storage, s3::build_s3_client,
+        },
     },
 };
 use observability::conf::TelemetryConfig;
@@ -113,6 +117,12 @@ struct KeygenConfig {
     /// Print existing signing-material handles instead of generating or deleting keys. Defaults to false.
     #[serde(default)]
     show_existing: bool,
+    /// Repopulate the non-ECDSA schemes' verification material from an existing
+    /// ECDSA signing key instead of generating keys. Requires the ECDSA signing
+    /// key to already exist; validates any existing ECDSA verification material
+    /// against it. Defaults to false.
+    #[serde(default)]
+    repopulate: bool,
 }
 
 /// Optional `[threshold]` section used when generating one threshold party's signing material.
@@ -361,6 +371,14 @@ async fn main() -> anyhow::Result<()> {
         keychain: private_keychain,
     };
 
+    // Repopulate the derived (non-ECDSA) verification material from an existing
+    // ECDSA signing key, then stop.
+    if config.keygen.repopulate {
+        handle_repopulate_cmd(&mut pub_storage, &priv_vault).await?;
+        tracing::info!("Repopulation finished successfully.");
+        return Ok(());
+    }
+
     // generate keys
     match mode {
         KeygenMode::Centralized => {
@@ -446,6 +464,30 @@ async fn handle_threshold_cmd<PubS: Storage, PrivS: Storage>(
     .expect("Could not access storage");
 }
 
+/// Repopulate the non-ECDSA schemes' verification material from the existing
+/// ECDSA signing key.
+///
+/// Requires the ECDSA signing key to already be present in private storage;
+/// derives and stores every other scheme's public verification key and digest.
+async fn handle_repopulate_cmd<PubS: Storage, PrivS: Storage>(
+    pub_storage: &mut PubS,
+    priv_storage: &PrivS,
+) -> anyhow::Result<()> {
+    ensure!(
+        priv_storage
+            .data_exists(&SIGNING_KEY_ID, &PrivDataType::SigningKey.to_string())
+            .await?,
+        "cannot repopulate verification material: no ECDSA signing key found under handle {}",
+        *SIGNING_KEY_ID
+    );
+    let sk = get_core_signing_key(priv_storage).await?;
+    ensure_derived_verification_material(pub_storage, &sk, SchemeMaterialMode::Populate).await?;
+    tracing::info!(
+        "Repopulated multi-scheme verification material from the existing ECDSA signing key"
+    );
+    Ok(())
+}
+
 async fn process_signing_key_cmds<PubS: Storage, PrivS: Storage>(
     pub_storage: &mut PubS,
     priv_storage: &mut PrivS,
@@ -527,6 +569,7 @@ mod tests {
                 deterministic: false,
                 overwrite: false,
                 show_existing: false,
+                repopulate: false,
             },
             aws: None,
             public_vault: None,
@@ -594,6 +637,7 @@ mod tests {
             deterministic: true,
             overwrite: true,
             show_existing: true,
+            repopulate: false,
         };
 
         #[cfg(any(test, feature = "testing", feature = "insecure"))]

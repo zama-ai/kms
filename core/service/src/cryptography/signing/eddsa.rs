@@ -1,11 +1,14 @@
 //! EdDSA over ed25519 signing backend.
 
 use super::{SigningError, SigningScheme};
+use crate::impl_generic_versionize;
 use ed25519_dalek::{
-    Signature as Ed25519Signature, Signer, SigningKey as Ed25519SigningKey,
+    PUBLIC_KEY_LENGTH, Signature as Ed25519Signature, Signer, SigningKey as Ed25519SigningKey,
     VerifyingKey as Ed25519VerifyingKey,
 };
 use hashing::DomainSep;
+use serde::{Deserialize, Serialize, de::Visitor};
+use tfhe::named::Named;
 
 /// The fixed encoded length of an ed25519 signature (`R‖s`), in bytes.
 pub const SIG_SIZE: usize = 64;
@@ -64,6 +67,60 @@ impl Ed25519 {
     /// The identifier of `vk`: the raw public key, which is also its Solana address.
     pub fn digest(vk: &Ed25519VerifyingKey) -> Vec<u8> {
         vk.as_bytes().to_vec()
+    }
+}
+
+/// Persistable wrapper around an ed25519 verifying key.
+///
+/// Serializes as the raw [`PUBLIC_KEY_LENGTH`]-byte public key (its canonical
+/// encoding, which doubles as the key's Solana address). Exists so
+/// [`super::UnifiedPublicSigKey`] can be versioned and stored in an externally 
+/// compatible manner.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Ed25519VerfKey(pub(crate) Ed25519VerifyingKey);
+
+impl_generic_versionize!(Ed25519VerfKey);
+
+impl Named for Ed25519VerfKey {
+    const NAME: &'static str = "Ed25519VerfKey";
+}
+
+impl Serialize for Ed25519VerfKey {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        serializer.serialize_bytes(self.0.as_bytes())
+    }
+}
+
+impl<'de> Deserialize<'de> for Ed25519VerfKey {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        deserializer.deserialize_bytes(Ed25519VerfKeyVisitor)
+    }
+}
+
+struct Ed25519VerfKeyVisitor;
+impl Visitor<'_> for Ed25519VerfKeyVisitor {
+    type Value = Ed25519VerfKey;
+
+    fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
+        write!(formatter, "a {PUBLIC_KEY_LENGTH}-byte ed25519 public key")
+    }
+
+    fn visit_bytes<E>(self, v: &[u8]) -> Result<Self::Value, E>
+    where
+        E: serde::de::Error,
+    {
+        let bytes: [u8; PUBLIC_KEY_LENGTH] =
+            v.try_into().map_err(|_| E::invalid_length(v.len(), &self))?;
+        let vk = Ed25519VerifyingKey::from_bytes(&bytes).map_err(|e| {
+            E::custom(format!("could not decode ed25519 verification key: {e:?}"))
+        })?;
+        Ok(Ed25519VerfKey(vk))
     }
 }
 

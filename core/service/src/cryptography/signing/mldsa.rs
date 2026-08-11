@@ -4,9 +4,13 @@ use super::{DSEP_SIGKEY_DIGEST, SigningError, SigningScheme, SigningSchemeType};
 use core::marker::PhantomData;
 use hashing::{DIGEST_BYTES, DomainSep, unsafe_hash_list_w_size};
 use ml_dsa::{
-    B32, KeyExport, Keypair, MlDsaParams, Signature as MlDsaSignature, SignatureEncoding, Signer,
-    SigningKey as MlDsaSigningKey, Verifier, VerifyingKey as MlDsaVerifyingKey,
+    B32, EncodedVerifyingKey, KeyExport, Keypair, MlDsaParams, Signature as MlDsaSignature,
+    SignatureEncoding, Signer, SigningKey as MlDsaSigningKey, Verifier,
+    VerifyingKey as MlDsaVerifyingKey,
 };
+use serde::{Deserialize, Serialize, de::Visitor};
+use tfhe::named::Named;
+use tfhe_versionable::{NotVersioned, Unversionize, Versionize, VersionizeOwned};
 
 /// The number of seed bytes consumed to build an ML-DSA signing key.
 pub const SEED_LEN: usize = 32;
@@ -64,6 +68,104 @@ impl<P: MlDsaParams> MlDsa<P> {
         )
     }
 }
+
+/// Persistable wrapper around an ML-DSA verifying key, generic over the
+/// parameter set `P`.
+///
+/// Serializes as the fixed-size FIPS-204 `pkEncode` byte string (the same
+/// encoding [`MlDsa::digest`] hashes). Exists so [`super::UnifiedPublicSigKey`]
+/// can be versioned and stored in an externally compatible manner.
+pub struct MlDsaVerfKey<P: MlDsaParams>(pub(crate) MlDsaVerifyingKey<P>);
+
+impl<P: MlDsaParams> Clone for MlDsaVerfKey<P> {
+    fn clone(&self) -> Self {
+        MlDsaVerfKey(self.0.clone())
+    }
+}
+
+impl<P: MlDsaParams> std::fmt::Debug for MlDsaVerfKey<P> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_tuple("MlDsaVerfKey")
+            .field(&self.0.encode())
+            .finish()
+    }
+}
+
+impl<P: MlDsaParams> PartialEq for MlDsaVerfKey<P> {
+    fn eq(&self, other: &Self) -> bool {
+        self.0 == other.0
+    }
+}
+
+impl<P: MlDsaParams> Named for MlDsaVerfKey<P> {
+    const NAME: &'static str = "MlDsaVerfKey";
+}
+
+impl<P: MlDsaParams> Serialize for MlDsaVerfKey<P> {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        serializer.serialize_bytes(self.0.encode().as_ref())
+    }
+}
+
+impl<'de, P: MlDsaParams> Deserialize<'de> for MlDsaVerfKey<P> {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        deserializer.deserialize_bytes(MlDsaVerfKeyVisitor(PhantomData))
+    }
+}
+
+struct MlDsaVerfKeyVisitor<P: MlDsaParams>(PhantomData<P>);
+impl<P: MlDsaParams> Visitor<'_> for MlDsaVerfKeyVisitor<P> {
+    type Value = MlDsaVerfKey<P>;
+
+    fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
+        write!(formatter, "an ML-DSA verifying key (pkEncode byte string)")
+    }
+
+    fn visit_bytes<E>(self, v: &[u8]) -> Result<Self::Value, E>
+    where
+        E: serde::de::Error,
+    {
+        // `try_from` enforces the exact `pkEncode` length; `decode` is then
+        // infallible for a correctly sized encoding (FIPS-204 Algorithm 23).
+        let enc =
+            EncodedVerifyingKey::<P>::try_from(v).map_err(|_| E::invalid_length(v.len(), &self))?;
+        Ok(MlDsaVerfKey(MlDsaVerifyingKey::<P>::decode(&enc)))
+    }
+}
+
+impl<P: MlDsaParams> Versionize for MlDsaVerfKey<P> {
+    type Versioned<'vers>
+        = &'vers MlDsaVerfKey<P>
+    where
+        P: 'vers;
+
+    fn versionize(&self) -> Self::Versioned<'_> {
+        self
+    }
+}
+
+impl<P: MlDsaParams> VersionizeOwned for MlDsaVerfKey<P> {
+    type VersionedOwned = MlDsaVerfKey<P>;
+    fn versionize_owned(self) -> Self::VersionedOwned {
+        self
+    }
+}
+
+impl<P: MlDsaParams> Unversionize for MlDsaVerfKey<P> {
+    fn unversionize(
+        versioned: Self::VersionedOwned,
+    ) -> Result<Self, tfhe_versionable::UnversionizeError> {
+        Ok(versioned)
+    }
+}
+
+impl<P: MlDsaParams> NotVersioned for MlDsaVerfKey<P> {}
 
 #[cfg(test)]
 mod tests {
