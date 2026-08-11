@@ -38,6 +38,7 @@ KMS_CORE_CLIENT_IMAGE_NAME="${KMS_CORE_CLIENT_IMAGE_NAME:-hub.zama.org/ghcr/zama
 CLEANUP="false"
 BUILD_IMAGES="false"
 ENABLE_METRICS="false"
+TRACING_ENDPOINT=""
 
 # Perf-testing defaults (can be overridden by env/args)
 KMS_CHART_VERSION="${KMS_CHART_VERSION:-repository}"
@@ -114,6 +115,7 @@ main() {
     log_info "Client Tag:      ${KMS_CLIENT_TAG}"
     log_info "TLS:             ${TLS}"
     log_info "Metrics:         ${ENABLE_METRICS}"
+    log_info "Tracing:         ${TRACING_ENDPOINT:-disabled}"
     log_info "========================================="
 
     #=========================================================================
