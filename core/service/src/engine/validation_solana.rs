@@ -74,14 +74,7 @@ pub(super) fn validate_solana_request(
                 "Error deserializing UnifiedPublicEncKey from Solana UserDecryptionRequest: {error}"
             )
         })?;
-    // An allow-list of one: ML-KEM-1024 is retained for older EVM integrations only, and the Solana
-    // path carries no such history. Deliberately not a match on the other variants — a future
-    // variant should have to be admitted here explicitly rather than inherited.
-    if !matches!(transport_key, UnifiedPublicEncKey::MlKem512(_)) {
-        return Err(
-            anyhow::anyhow!("Solana user decryption requires an ML-KEM-512 transport key").into(),
-        );
-    }
+    require_mlkem512_transport_key(&transport_key)?;
 
     // The one construction, given the request's own bytes: the transport key exactly as the request
     // carries it, and the handles in request order with duplicates preserved.
@@ -105,6 +98,21 @@ pub(super) fn validate_solana_request(
         SigncryptionReceiver::Solana(*binding.receiver_id()),
         response_domain,
     )))
+}
+
+/// An allow-list of one: the Solana path pins its transport key to ML-KEM-512. Deserialization
+/// already rejects ML-KEM-1024 on every path, so today this cannot fire — it is defense-in-depth
+/// for the day deserialization admits another variant again. Deliberately not a match on the other
+/// variants: a future variant should have to be admitted here explicitly rather than inherited.
+fn require_mlkem512_transport_key(
+    transport_key: &UnifiedPublicEncKey,
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    if !matches!(transport_key, UnifiedPublicEncKey::MlKem512(_)) {
+        return Err(
+            anyhow::anyhow!("Solana user decryption requires an ML-KEM-512 transport key").into(),
+        );
+    }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -365,8 +373,11 @@ mod adapter_tests {
 
     #[test]
     fn an_mlkem1024_transport_key_is_rejected() {
-        // ML-KEM-512 is the only accepted variant on this path; the larger key is retained only
-        // for older EVM integrations, and the Solana path carries no such history.
+        // The gate is exercised with an already-deserialized key on purpose: on the request path,
+        // deserialization rejects ML-KEM-1024 first, so feeding serialized bytes through the
+        // adapter would pass no matter what the allow-list does. Handing the variant to the gate
+        // directly is what pins the branch itself.
+        use super::require_mlkem512_transport_key;
         use ml_kem::KemCore;
 
         let mut rng = AesRng::seed_from_u64(0);
@@ -374,14 +385,14 @@ mod adapter_tests {
         #[allow(deprecated)]
         let key = UnifiedPublicEncKey::MlKem1024(PublicEncKey(ek));
 
-        let mut buf = Vec::new();
-        tfhe::safe_serialization::safe_serialize(&key, &mut buf, SAFE_SER_SIZE_LIMIT)
-            .expect("serialize");
+        let error = require_mlkem512_transport_key(&key)
+            .expect_err("the allow-list must reject a non-512 variant")
+            .to_string();
 
-        let mut wrong = solana_request();
-        wrong.enc_key = buf;
-
-        assert!(!error_of(&wrong).is_empty());
+        assert!(
+            error.contains("requires an ML-KEM-512 transport key"),
+            "the rejection must come from the allow-list, got: {error}",
+        );
     }
 
     #[test]

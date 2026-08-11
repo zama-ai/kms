@@ -87,11 +87,19 @@ impl TryFrom<u64> for SolanaHostChainId {
 ///
 /// Fields are private, so a caller cannot assemble an unvalidated binding:
 ///
-/// ```compile_fail
+/// ```compile_fail,E0451
 /// // Paired with the positive example below: if this snippet ever compiles, the validating
-/// // constructor stopped being the only way in.
+/// // constructor stopped being the only way in. Every field is initialized, so the one thing
+/// // that can stop it from compiling is field privacy — the error code on the fence.
 /// let binding = kms_grpc::solana_binding::SolanaUserDecryptBinding {
+///     verifying_program_id: [0u8; 32],
+///     // The chain id's type is itself private, so its name cannot even be written here.
+///     chain_id: todo!(),
+///     receiver_id: [0u8; 32],
+///     kms_context_id: [0u8; 32],
+///     kms_epoch_id: [0u8; 32],
 ///     handles: vec![[0u8; 32]],
+///     transport_key: vec![],
 /// };
 /// ```
 ///

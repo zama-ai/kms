@@ -91,11 +91,6 @@ const INVENTORY: &[Separator] = &[
     Separator::new("EQUALITY", "core-client/src/backup.rs", Kind::Production),
     Separator::new(
         "HASH_LST",
-        "core/grpc/tests/common/mod.rs",
-        Kind::TestFixture,
-    ),
-    Separator::new(
-        "HASH_LST",
         "core/threshold-hashing/src/lib.rs",
         Kind::Production,
     ),
@@ -317,27 +312,15 @@ fn no_two_purposes_share_a_separator() {
         by_value.entry(separator.value).or_default().push(separator);
     }
 
+    // No exceptions: a test that needs a production separator imports it — the fixtures
+    // re-export `hashing::DSEP_LIST` instead of restating it — and a test that needs its own
+    // domain declares a fresh value.
     for (value, declarations) in by_value {
-        if declarations.len() == 1 {
-            continue;
-        }
-
-        // The one legitimate repeat: a test fixture that deliberately mirrors a production
-        // separator, because the production one is private and the test must reproduce it.
-        let production: Vec<_> = declarations
-            .iter()
-            .filter(|separator| separator.kind == Kind::Production)
-            .collect();
-
         assert_eq!(
-            production.len(),
+            declarations.len(),
             1,
-            "separator {value:?} is declared by more than one production purpose: {declarations:#?}",
-        );
-        assert_eq!(
-            value, "HASH_LST",
-            "a test fixture mirrors production separator {value:?}; if that is intentional, say so \
-             here, and if it is not, the fixture is hashing into a production domain",
+            "separator {value:?} is declared for more than one purpose: {declarations:#?}\n\
+             Two purposes sharing a separator hash into each other's domain; pick a fresh value.",
         );
     }
 }

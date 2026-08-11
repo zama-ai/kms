@@ -24,9 +24,12 @@
 //!   partially valid response. The one-share-per-party half is what makes the threshold a count of
 //!   *distinct* nodes: a replayed share is discarded, never counted twice. A multi-share set is
 //!   further required to be one consistent threshold response — degree, ciphertext count and
-//!   types, packing, handles, distinct signer identities — checked by running the accepted
+//!   types, packing, handles, byte-distinct verification keys — checked by running the accepted
 //!   originals through the EVM path's own validation, unchanged, so the definition of a
-//!   well-formed threshold response exists exactly once for both paths.
+//!   well-formed threshold response exists exactly once for both paths. Key distinctness there is
+//!   equality of the key's exact bytes: it collapses a replayed key, not a re-encoding of the same
+//!   key, so keeping one physical signer to one slot rests on the registry mapping distinct
+//!   addresses to distinct party ids.
 //!
 //! The centralized case is the degenerate single-share case of exactly these rules, not a weaker
 //! path of its own.
@@ -179,8 +182,11 @@ impl SolanaUserDecryptionRequest {
 /// only, because l3 is never reached for it: if a bad-signature share could still increment
 /// [`Self::link_mismatch`], the comparison would have run on an unauthenticated payload.
 ///
-/// Every counter therefore corresponds to the first rule the share failed, and the counters sum to
-/// the number of shares that did not make it into [`VerifiedSolanaShares`].
+/// Every counter therefore corresponds to the first per-share rule the share failed, and the
+/// counters sum to the number of shares rejected by that per-share verification. A share that
+/// passes every per-share rule can still be dropped by the whole-set consistency gate, which may
+/// discard an outlier while accepting the set; such a drop is not counted here, so the sum is not
+/// necessarily everything kept out of [`VerifiedSolanaShares`].
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub struct ShareRejections {
     /// The response carried no payload at all.
@@ -202,7 +208,7 @@ pub struct ShareRejections {
 }
 
 impl ShareRejections {
-    /// How many shares were discarded in total.
+    /// How many shares the per-share verification discarded in total.
     pub fn total(&self) -> usize {
         self.missing_payload
             + self.unknown_party
@@ -2301,11 +2307,13 @@ mod tests {
     }
 
     #[test]
-    fn one_signer_identity_cannot_vote_under_two_party_ids() {
+    fn a_byte_identical_key_cannot_vote_under_two_party_ids() {
         // A trusted set that (mis)registers one address under two party ids is the only way one
-        // key can pass the per-share address binding twice. The set-level rule still refuses the
-        // pair: a verification key backs at most one accepted party, so the two shares collapse
-        // to one and the response is no quorum.
+        // key can pass the per-share address binding twice. The set-level rule refuses the
+        // byte-identical pair — a verification key backs at most one accepted party, so the two
+        // shares collapse to one and the response is no quorum. That rule compares the key's
+        // exact bytes, so it pins the replay case only: the same key re-encoded would slip past
+        // it, and a registry with a distinct address per party id is what rules that out.
         let (pks, sks) = node_keys(4);
         let request = canonical_request();
         let link = request.expected_link().expect("a canonical request");
@@ -2332,7 +2340,7 @@ mod tests {
                 result,
                 Err(SolanaUserDecryptionResponseError::InconsistentShares { .. })
             ),
-            "one identity under two party ids must fail the consistency gate, got {result:?}",
+            "a byte-identical key under two party ids must fail the consistency gate, got {result:?}",
         );
     }
 

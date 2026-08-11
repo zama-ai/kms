@@ -4,8 +4,8 @@
 //! for X", which is what makes a sensitivity suite reviewable: the reader can see that exactly one
 //! thing changed.
 
-// Each test binary compiles this module and uses a subset of it.
-#![allow(dead_code)]
+// Each test binary compiles this module and uses a subset of it, including its re-exports.
+#![allow(dead_code, unused_imports)]
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -14,7 +14,8 @@ use hashing::{DomainSep, hash_element_w_size};
 use kms_grpc::solana_binding::{SolanaUserDecryptBinding, SolanaUserDecryptBindingError};
 
 /// The list-setting separator the KMS list hash prepends, ahead of the per-call separator.
-pub const DSEP_LIST: DomainSep = *b"HASH_LST";
+/// Re-exported from the production crate so the tests hash with the real value, not a copy.
+pub use hashing::DSEP_LIST;
 
 /// A Solana-kind host chain id: bit 63 set, as every embedded handle chain id must be.
 pub const CHAIN_ID: u64 = (1 << 63) | 12_345;

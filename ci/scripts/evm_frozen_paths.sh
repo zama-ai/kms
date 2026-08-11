@@ -34,8 +34,10 @@ MERGE_BASE="$(git merge-base "${BASE_REF}" HEAD)"
 
 # Modified or deleted only. Adding a reference (a new backward-compatibility snapshot for a new
 # release) is ordinary work; changing or removing one that already exists is what breaks
-# byte-compatibility, and that is what this gate refuses.
-CHANGED="$(git diff --name-only --diff-filter=MD "${MERGE_BASE}" HEAD)"
+# byte-compatibility, and that is what this gate refuses. Rename detection is disabled so a
+# renamed-and-edited frozen asset still shows up as a deletion at the frozen path instead of an
+# `R` entry that the `MD` filter would miss.
+CHANGED="$(git diff --no-renames --name-only --diff-filter=MD "${MERGE_BASE}" HEAD)"
 
 # Frozen assets: references, not implementations. Modifying one is the failure this gate exists
 # for. Note the deliberate absence of core/grpc/proto: the Solana work adds fields there, and
