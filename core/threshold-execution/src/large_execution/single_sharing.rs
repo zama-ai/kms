@@ -106,9 +106,10 @@ impl<Z: Invert + Derive + ErrorCorrect, S: LocalSingleShare> SingleSharing<Z>
             .execute(session, &my_secrets)
             .await?;
 
+        // Run every fallible step before mutating `self`, so a failure leaves the sharing
+        // state untouched (all-or-nothing), as in `load_local_single_shares`.
         // Prepare data from the map output by LocalSingleShare to the vector ready to be multiplied with the VDM matrix
-        self.available_lsl = format_for_next(shares, l)?;
-        self.max_num_iterations = l;
+        let available_lsl = format_for_next(shares, l)?;
 
         //Init vdm matrix only once or when dim changes
         let curr_height = session.num_parties();
@@ -117,11 +118,11 @@ impl<Z: Invert + Derive + ErrorCorrect, S: LocalSingleShare> SingleSharing<Z>
             || curr_height != self.vdm_matrix.height()
             || curr_width != self.vdm_matrix.width()
         {
-            self.vdm_matrix = VdmMatrix::from_exceptional_sequence(
-                session.num_parties(),
-                session.num_parties() - session.threshold() as usize,
-            )?;
+            self.vdm_matrix = VdmMatrix::from_exceptional_sequence(curr_height, curr_width)?;
         }
+
+        self.available_lsl = available_lsl;
+        self.max_num_iterations = l;
         Ok(())
     }
 
@@ -135,8 +136,10 @@ impl<Z: Invert + Derive + ErrorCorrect, S: LocalSingleShare> SingleSharing<Z>
             return Ok(());
         }
 
-        self.available_lsl = format_for_next(local_single_shares, l)?;
-        self.max_num_iterations = l;
+        // Run every fallible step before mutating `self`, so a failure leaves the sharing
+        // state untouched (all-or-nothing; also keeps the
+        // `non_local_effect_before_error_return` lint happy).
+        let available_lsl = format_for_next(local_single_shares, l)?;
 
         //Init vdm matrix only once or when dim changes
         let curr_height = session.num_parties();
@@ -145,11 +148,11 @@ impl<Z: Invert + Derive + ErrorCorrect, S: LocalSingleShare> SingleSharing<Z>
             || curr_height != self.vdm_matrix.height()
             || curr_width != self.vdm_matrix.width()
         {
-            self.vdm_matrix = VdmMatrix::from_exceptional_sequence(
-                session.num_parties(),
-                session.num_parties() - session.threshold() as usize,
-            )?;
+            self.vdm_matrix = VdmMatrix::from_exceptional_sequence(curr_height, curr_width)?;
         }
+
+        self.available_lsl = available_lsl;
+        self.max_num_iterations = l;
         Ok(())
     }
 

@@ -129,9 +129,10 @@ impl<Z: Derive + ErrorCorrect + Invert, S: LocalDoubleShare> DoubleSharing<Z>
             .execute(session, &my_secrets)
             .await?;
 
+        // Run every fallible step before mutating `self`, so a failure leaves the sharing
+        // state untouched (all-or-nothing), as in `load_local_single_shares`.
         //Prepare data from the map output by LocalDoubleShare to 2 vectors ready to be multiplied with the VDM matrix
-        self.available_ldl = format_for_next(ldl, l)?;
-        self.max_num_iterations = l;
+        let available_ldl = format_for_next(ldl, l)?;
 
         //Init vdm matrix only once or when dim changes
         let curr_height = session.num_parties();
@@ -140,11 +141,11 @@ impl<Z: Derive + ErrorCorrect + Invert, S: LocalDoubleShare> DoubleSharing<Z>
             || curr_height != self.vdm_matrix.height()
             || curr_width != self.vdm_matrix.width()
         {
-            self.vdm_matrix = VdmMatrix::from_exceptional_sequence(
-                session.num_parties(),
-                session.num_parties() - session.threshold() as usize,
-            )?;
+            self.vdm_matrix = VdmMatrix::from_exceptional_sequence(curr_height, curr_width)?;
         }
+
+        self.available_ldl = available_ldl;
+        self.max_num_iterations = l;
         Ok(())
     }
 
@@ -172,9 +173,10 @@ impl<Z: Derive + ErrorCorrect + Invert, S: LocalDoubleShare> DoubleSharing<Z>
             .execute(session, &single_secrets, &double_secrets)
             .await?;
 
-        //Store the double-sharing material for next()
-        self.available_ldl = format_for_next(double, l_double)?;
-        self.max_num_iterations = l_double;
+        // Run every fallible step before mutating `self`, so a failure leaves the sharing
+        // state untouched (all-or-nothing), as in `load_local_single_shares`.
+        //Prepare the double-sharing material for next()
+        let available_ldl = format_for_next(double, l_double)?;
 
         //Init vdm matrix only once or when dim changes
         let curr_height = session.num_parties();
@@ -183,11 +185,12 @@ impl<Z: Derive + ErrorCorrect + Invert, S: LocalDoubleShare> DoubleSharing<Z>
             || curr_height != self.vdm_matrix.height()
             || curr_width != self.vdm_matrix.width()
         {
-            self.vdm_matrix = VdmMatrix::from_exceptional_sequence(
-                session.num_parties(),
-                session.num_parties() - session.threshold() as usize,
-            )?;
+            self.vdm_matrix = VdmMatrix::from_exceptional_sequence(curr_height, curr_width)?;
         }
+
+        //Store the double-sharing material for next()
+        self.available_ldl = available_ldl;
+        self.max_num_iterations = l_double;
 
         //Return the single-sharing material for the companion SingleSharing to load
         Ok(single)
