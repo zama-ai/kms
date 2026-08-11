@@ -28,8 +28,6 @@ use threshold_types::protocol::ProtocolDescription;
 use threshold_types::role::Role;
 use tracing::instrument;
 
-pub(crate) const LOCAL_DOUBLE_MAX_ITER: usize = 30;
-
 pub type SecureLocalDoubleShare =
     RealLocalDoubleShare<SecureCoinflip, SecureShareDispute, SyncReliableBroadcast>;
 
@@ -161,7 +159,7 @@ impl<C: Coinflip, S: ShareDispute, BCast: Broadcast> LocalDoubleShare
             }
         }
         Err(anyhow_error_and_log(
-            "Failed to verify sharing after {LOCAL_DOUBLE_MAX_ITER} iterations for `RealLocalDoubleShare`",
+            "Failed to verify sharing after {max_iter} iterations for `RealLocalDoubleShare`",
         ))
     }
 }
@@ -416,7 +414,7 @@ pub(crate) async fn verify_sharing<
     //per-`g` computation would have observed.
     let threshold_t = session.threshold() as usize;
     let threshold_2t = 2 * threshold_t;
-    let (verdicts_t, verdicts_2t): (Vec<Vec<(Role, Option<Z>)>>, Vec<Vec<(Role, Option<Z>)>>) = {
+    let (verdicts_t, verdicts_2t) = {
         let ctx = VerifyCtx::new(session);
         let per_g_t = per_g_t.clone(); // one Arc bump per challenge index
         let per_g_2t = per_g_2t.clone();

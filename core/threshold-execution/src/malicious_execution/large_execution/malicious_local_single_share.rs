@@ -2,9 +2,7 @@ use crate::{
     communication::broadcast::Broadcast,
     large_execution::{
         coinflip::Coinflip,
-        local_single_share::{
-            LOCAL_SINGLE_MAX_ITER, LocalSingleShare, share_secrets_and_pads, verify_sharing,
-        },
+        local_single_share::{LocalSingleShare, share_secrets_and_pads, verify_sharing},
         share_dispute::ShareDispute,
     },
     runtime::sessions::large_session::LargeSessionHandles,
@@ -66,8 +64,9 @@ impl<C: Coinflip, S: ShareDispute, BCast: Broadcast> LocalSingleShare
         session: &mut L,
         secrets: &[Z],
     ) -> anyhow::Result<HashMap<Role, Vec<Z>>> {
+        let max_iter = session.threshold() * (session.threshold() + 2) + 1;
         //Keeps executing til verification passes
-        for _ in 0..LOCAL_SINGLE_MAX_ITER {
+        for _ in 0..max_iter {
             let mut shared_secrets;
             let mut x;
             let mut shared_pads;
@@ -114,7 +113,7 @@ impl<C: Coinflip, S: ShareDispute, BCast: Broadcast> LocalSingleShare
             }
         }
         Err(anyhow_error_and_log(format!(
-            "Failed to verify sharing after {LOCAL_SINGLE_MAX_ITER} iterations for `MaliciousSenderLocalSingleShare`"
+            "Failed to verify sharing after {max_iter} iterations for `MaliciousSenderLocalSingleShare`"
         )))
     }
 }
@@ -170,7 +169,8 @@ impl<C: Coinflip, S: ShareDispute, BCast: Broadcast> LocalSingleShare
         session: &mut L,
         secrets: &[Z],
     ) -> anyhow::Result<HashMap<Role, Vec<Z>>> {
-        for _ in 0..LOCAL_SINGLE_MAX_ITER {
+        let max_iter = session.threshold() * (session.threshold() + 2) + 1;
+        for _ in 0..max_iter {
             let mut shared_secrets;
             let mut x;
             let mut shared_pads;
@@ -216,7 +216,7 @@ impl<C: Coinflip, S: ShareDispute, BCast: Broadcast> LocalSingleShare
             }
         }
         Err(anyhow_error_and_log(format!(
-            "Failed to verify sharing after {LOCAL_SINGLE_MAX_ITER} iterations for `MaliciousReceiverLocalSingleShare`",
+            "Failed to verify sharing after {max_iter} iterations for `MaliciousReceiverLocalSingleShare`",
         )))
     }
 }

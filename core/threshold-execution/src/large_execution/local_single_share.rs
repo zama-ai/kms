@@ -32,7 +32,6 @@ use threshold_types::protocol::ProtocolDescription;
 use threshold_types::role::Role;
 use tracing::instrument;
 
-
 pub type SecureLocalSingleShare =
     RealLocalSingleShare<SecureCoinflip, SecureShareDispute, SyncReliableBroadcast>;
 
@@ -182,7 +181,7 @@ impl<C: Coinflip, S: ShareDispute, BCast: Broadcast> LocalSingleShare
             }
         }
         Err(anyhow_error_and_log(
-            "Failed to verify sharing after {LOCAL_SINGLE_MAX_ITER} iterations for `RealLocalSingleShare`",
+            "Failed to verify sharing after {max_iter} iterations for `RealLocalSingleShare`",
         ))
     }
 }
@@ -337,7 +336,7 @@ pub(crate) async fn verify_sharing<
     //changes the corrupt or dispute set, hence any verdict actually consumed was computed
     //against exactly the session state a sequential computation would have observed.
     let threshold = session.threshold() as usize;
-    let verdicts: Vec<Vec<(Role, Option<Z>)>> = {
+    let verdicts = {
         let ctx = VerifyCtx::new(session);
         let per_g = per_g.clone(); // one Arc bump per challenge index
         spawn_compute_bound(move || {
