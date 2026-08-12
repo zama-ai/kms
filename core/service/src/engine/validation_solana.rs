@@ -105,7 +105,7 @@ fn require_mlkem512_transport_key(
 }
 
 #[cfg(test)]
-mod adapter_tests {
+mod tests {
     use super::validate_solana_request;
     use crate::consts::SAFE_SER_SIZE_LIMIT;
     use crate::cryptography::encryption::{
@@ -197,7 +197,7 @@ mod adapter_tests {
     }
 
     #[test]
-    fn an_evm_request_is_left_to_the_evm_path() {
+    fn evm_request_left_to_evm_path() {
         // The adapter's first duty is to not exist for EVM traffic.
         let mut evm = solana_request();
         evm.solana_pubkey = None;
@@ -208,7 +208,7 @@ mod adapter_tests {
     }
 
     #[test]
-    fn the_dispatch_table_is_closed() {
+    fn dispatch_table_is_closed() {
         // The dispatch field (`solana_pubkey`) and the load-bearing invariant (bit 63 of the
         // chain id embedded in every handle) are pinned together, in all four combinations, so a
         // request cannot reach the wrong linker by carrying the wrong field. The two rejecting
@@ -258,7 +258,7 @@ mod adapter_tests {
     }
 
     #[test]
-    fn a_canonical_solana_request_validates() {
+    fn canonical_solana_request_validates() {
         let (link, receiver, _domain) = validate_solana_request(&solana_request())
             .expect("no error")
             .expect("a Solana request");
@@ -268,7 +268,7 @@ mod adapter_tests {
     }
 
     #[test]
-    fn the_link_equals_the_canonical_bindings_link() {
+    fn link_matches_canonical_binding() {
         // One canonical binding function: the adapter must not carry a second construction that
         // merely agrees today. If this test can be satisfied without calling the binding, the
         // property it is meant to protect is already gone.
@@ -290,7 +290,7 @@ mod adapter_tests {
     }
 
     #[test]
-    fn the_recipient_is_the_typed_pubkey_unchanged() {
+    fn recipient_is_typed_pubkey_unchanged() {
         let (_link, receiver, _domain) = validate_solana_request(&solana_request())
             .expect("no error")
             .expect("a Solana request");
@@ -304,7 +304,7 @@ mod adapter_tests {
     }
 
     #[test]
-    fn a_legacy_string_identity_alongside_the_typed_field_is_rejected() {
+    fn legacy_string_identity_alongside_typed_field_rejected() {
         // Migration rule: while both a legacy string identity and the typed field can appear, a
         // request carrying both is ambiguous about who the recipient is, and guessing is how the
         // result gets sealed to the wrong party.
@@ -323,7 +323,7 @@ mod adapter_tests {
     }
 
     #[test]
-    fn an_identity_of_the_wrong_width_is_rejected() {
+    fn wrong_width_identity_rejected() {
         for width in [20usize, 31, 33] {
             let mut wrong = solana_request();
             wrong.solana_pubkey = Some(vec![0x11; width]);
@@ -336,7 +336,7 @@ mod adapter_tests {
     }
 
     #[test]
-    fn a_request_without_the_program_id_is_rejected() {
+    fn request_without_program_id_rejected() {
         // Half the deployment domain: without it the link would commit to a deployment the
         // request never named, and a permit signed for one program would answer for another.
         let mut missing = solana_request();
@@ -346,7 +346,7 @@ mod adapter_tests {
     }
 
     #[test]
-    fn a_program_id_without_the_pubkey_is_rejected() {
+    fn program_id_without_pubkey_rejected() {
         // The mirror of the missing-program-id case: a request carrying the other Solana field
         // without the identity is contradictory, and must fail here rather than be silently
         // reinterpreted as EVM traffic with the field ignored.
@@ -361,7 +361,7 @@ mod adapter_tests {
     }
 
     #[test]
-    fn a_program_id_of_the_wrong_width_is_rejected() {
+    fn wrong_width_program_id_rejected() {
         for width in [20usize, 31, 33] {
             let mut wrong = solana_request();
             wrong.solana_verifying_program_id = Some(vec![0x22; width]);
@@ -371,7 +371,7 @@ mod adapter_tests {
     }
 
     #[test]
-    fn the_context_and_epoch_come_from_the_typed_fields() {
+    fn context_and_epoch_come_from_typed_fields() {
         // They are what selected the keys that produced the result, so the link must move when
         // they do.
         let canonical = link_of(&solana_request());
@@ -414,7 +414,7 @@ mod adapter_tests {
     }
 
     #[test]
-    fn an_mlkem1024_transport_key_is_rejected() {
+    fn mlkem1024_transport_key_is_rejected() {
         // The gate is exercised with an already-deserialized key on purpose: on the request path,
         // deserialization rejects ML-KEM-1024 first, so feeding serialized bytes through the
         // adapter would pass no matter what the allow-list does. Handing the variant to the gate
@@ -438,7 +438,7 @@ mod adapter_tests {
     }
 
     #[test]
-    fn an_unparseable_transport_key_is_rejected() {
+    fn unparseable_transport_key_is_rejected() {
         let mut wrong = solana_request();
         wrong.enc_key = b"not a key".to_vec();
 
@@ -446,7 +446,7 @@ mod adapter_tests {
     }
 
     #[test]
-    fn handle_validation_is_the_bindings_and_not_a_second_copy() {
+    fn handle_validation_delegates_to_binding() {
         // The adapter must not re-check what the binding checks; it must fail because the binding
         // failed. These are the retained backstops, exercised through the adapter.
         let mut evm_kind = solana_request();
@@ -469,7 +469,7 @@ mod adapter_tests {
     }
 
     #[test]
-    fn the_response_domain_is_carried_through_unchanged() {
+    fn response_domain_is_carried_through_unchanged() {
         // The Solana path does not invent a response domain: the gateway domain the connector
         // configured is what the response signature is produced under, exactly as on the EVM path.
         let (_link, _receiver, domain) = validate_solana_request(&solana_request())

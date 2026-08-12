@@ -1,20 +1,17 @@
 #!/usr/bin/env bash
 #
-# Second half of the EVM byte-freeze gate (the first half is
-# core/service/tests/evm_path_byte_frozen.rs).
+# Byte-freeze gate for frozen reference assets, complementing the digest test
+# core/service/tests/evm_path_byte_frozen.rs.
 #
-# The Solana user-decryption work must be additive: no commit may edit an existing EVM test or a
-# frozen vector asset. Hard-failing paths below are pure frozen assets — anything that changes
-# there changes a reference, not an implementation.
+# The hard-failing paths below are pure frozen assets — anything that changes there changes a
+# reference, not an implementation.
 #
-# LIMIT, stated rather than hidden: in this repository the EVM path's own tests live in inline
-# `#[cfg(test)]` modules inside the production files the Solana work legitimately edits
-# (validation_non_wasm.rs, decryption.rs, user_decryptor.rs, signcryption.rs). A path deny-list
-# cannot separate "edited the production code" from "edited the EVM test next to it", so those
-# files are *reported* for the reviewer instead of failed, and the byte-level guarantee for them
-# comes from the frozen-digest test, not from this script.
+# The EVM path's own tests live in inline `#[cfg(test)]` modules inside production files, so a
+# path deny-list cannot separate "edited the production code" from "edited the EVM test next to
+# it". Those files are therefore *reported* for the reviewer instead of failed, and the byte-level
+# guarantee for them comes from the frozen-digest test, not from this script.
 #
-# Usage: ci/scripts/evm_frozen_paths.sh [base-ref]
+# Usage: ci/scripts/frozen_paths.sh [base-ref]
 #   base-ref defaults to $GITHUB_BASE_REF, then to main.
 
 set -euo pipefail
@@ -40,14 +37,13 @@ MERGE_BASE="$(git merge-base "${BASE_REF}" HEAD)"
 CHANGED="$(git diff --no-renames --name-only --diff-filter=MD "${MERGE_BASE}" HEAD)"
 
 # Frozen assets: references, not implementations. Modifying one is the failure this gate exists
-# for. Note the deliberate absence of core/grpc/proto: the Solana work adds fields there, and
-# additivity of field numbers is checked in Rust, where the wire rule actually lives.
+# for. core/grpc/proto is deliberately absent: proto changes must be additive in field numbers,
+# and that rule is checked in Rust, where the wire rule actually lives.
 #
-# The Solana entries below are the same rule pointing the other way. The EVM entries freeze what
-# the Solana work must not disturb; the Solana entries freeze what the Solana work published and
-# other repositories now reproduce — the normative linker vectors, their set digest, and the
-# constants snapshot. Modifying any of them is a version bump in the linker's scheme tag, which is
-# a protocol decision and needs its own reviewed change.
+# The EVM entries freeze the shipped EVM references; the Solana entries freeze the published
+# linker vectors, their set digest, and the constants snapshot, which other repositories
+# reproduce. Modifying any of the latter is a version bump in the linker's scheme tag — a protocol
+# decision that needs its own reviewed change.
 FROZEN_GLOBS=(
     'backward-compatibility/data/*'
     'backward-compatibility/generate-*/*'
@@ -69,7 +65,7 @@ while IFS= read -r file; do
 done <<<"${CHANGED}"
 
 if [ ${#violations[@]} -ne 0 ]; then
-    echo "EVM byte-freeze gate FAILED — frozen assets modified against ${BASE_REF}:" >&2
+    echo "Byte-freeze gate FAILED — frozen assets modified against ${BASE_REF}:" >&2
     printf '  %s\n' "${violations[@]}" >&2
     echo >&2
     echo "These paths hold frozen references. If a reference genuinely must move, that is a" >&2
@@ -77,7 +73,7 @@ if [ ${#violations[@]} -ne 0 ]; then
     exit 1
 fi
 
-echo "EVM byte-freeze gate: no frozen asset modified against ${BASE_REF}."
+echo "Byte-freeze gate: no frozen asset modified against ${BASE_REF}."
 
 # Report-only half: files that mix production code with inline tests.
 mixed=()

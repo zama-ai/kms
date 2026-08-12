@@ -1,16 +1,13 @@
 # Solana user decryption (client path)
 
-This guide documents the state of the Solana user-decryption client path: what a caller must
-supply, which guarantees the client enforces, what is deliberately not implemented yet, and how
-the frozen protocol bytes are protected. It is the rollout reference for
-integrators (fhevm SDK, relayer, Connector): if this document and the code disagree, that is a
-bug — file it.
+This guide documents the Solana user-decryption client path: what a caller must supply, which
+guarantees the client enforces, what is out of scope, and how the frozen protocol bytes are
+protected. If this document and the code disagree, that is a bug — file it.
 
-## What works today, and what does not
+## Scope
 
-The current proof of concept keeps the Gateway: requests travel to the KMS through the same
-Gateway-backed flow as EVM. Within that flow, the client-side handling of user-decryption
-responses is complete and fail-closed:
+Requests travel to the KMS through the same Gateway-backed flow as EVM. Within that flow, the
+client-side handling of user-decryption responses is complete and fail-closed:
 
 - **Centralized deployments** (one KMS node) work end to end: verify, then release the plaintext.
 - **Threshold deployments** work end to end as well: a multi-share response passes the full
@@ -19,7 +16,7 @@ responses is complete and fail-closed:
   The two paths differ only in what they validated and which receiver they open under; there is no
   Solana-only reconstruction to diverge from the EVM one.
 
-Out of scope for this stage, and planned for the FHEVM integration that follows:
+Out of scope here, and belonging to the FHEVM integration:
 
 - reading the selected KMS context (the trusted signer set) from on-chain Solana state — today the
   caller passes it in;
@@ -30,7 +27,7 @@ Out of scope for this stage, and planned for the FHEVM integration that follows:
   direct Connector-to-KMS requests is an open question, not a commitment. The verification rules
   below are transport-agnostic on purpose, so the response format survives either answer.
 
-## The linker, in one paragraph
+## The linker
 
 Every Solana user-decryption request produces one 32-byte **link**: a SHAKE256 list-hash over the
 deployment pair (`verifying_program_id`, host chain id), the recipient (the raw 32-byte ed25519
@@ -90,11 +87,10 @@ the response call takes that client plus the request-side values the link commit
   **`eip712_domain`** argument is the EIP-712 domain KMS nodes produced the response's
   `external_signature` under, in the same JS shape the EVM wrapper takes.
 
-Both fail closed: omitting the domain leaves an empty domain under which no real external
-signature verifies, and a client holding an empty signer set leaves every share an unknown party.
-A caller built against the previous signature therefore stops decrypting instead of silently
-accepting response-supplied key material — this is intentional. There is no migration window;
-integrators must pass both.
+Both arguments are required, and both fail closed: omitting the domain leaves an empty domain
+under which no real external signature verifies, and a client holding an empty signer set leaves
+every share an unknown party. A caller therefore stops decrypting instead of silently accepting
+response-supplied key material — this is intentional.
 
 The successful path is pinned across the wasm boundary by `core/service/tests/js/test.js`: stable
 Solana vectors (one centralized, one threshold; generated deterministically by
@@ -115,21 +111,15 @@ The linker v1 construction is frozen by a normative vector set:
 Five implementations (SDK TypeScript, relayer, Connector Rust, KMS Core Rust, KMS client/WASM)
 must consume the same bytes. Each repository holding a copy commits the same two files, and CI
 compares digests: an edited copy and a stale copy are both caught. In this repository the set is
-consumed by the Rust runner `core/grpc/tests/solana_linker_vectors.rs`, which also regenerates it
-under `ZAMA_UPDATE_SOLANA_LINKER_VECTORS=1`; the WASM build's agreement is pinned end to end by
+consumed by the Rust runner `core/grpc/tests/solana_linker_vectors.rs`, and
+`make generate-solana-linker-vectors` regenerates it; the WASM build's agreement is pinned end to
+end by
 `core/service/tests/js/test.js`, whose stable transcripts fail to decrypt if the wasm-compiled
 linker diverges.
 
 The scheme tag `SolanaUserDecryptionLinker:v1`, the call separator `SOLLNK01` and the element
-layout are pinned by `core/grpc/tests/solana_frozen_constants.rs`. From this point a change to any
-of those bytes is a version bump in the scheme tag, not an edit. The EVM path is protected in the
-other direction: `ci/scripts/evm_frozen_paths.sh` fails the build if byte-frozen EVM paths change
-without an explicit override.
+layout are pinned by `core/grpc/tests/solana_frozen_constants.rs`. A change to any of those bytes
+is a version bump in the scheme tag, not an edit. In CI, `ci/scripts/frozen_paths.sh` fails the
+build if any byte-frozen asset — the EVM references or the published Solana vectors — is modified
+or deleted.
 
-## Rollout order
-
-1. **Now (this branch):** Solana user decryption — centralized and threshold — is safe to use
-   behind the Gateway, with the caller supplying the signer set and response domain.
-2. **Then (FHEVM integration):** the signer set read from the on-chain KMS context instead of
-   configuration, permit verification, Connector checks, and — separately — any transport changes.
-   The response format and verification rules above are designed to survive that step unchanged.

@@ -83,9 +83,6 @@ impl TryFrom<u64> for SolanaHostChainId {
 /// Fields are private, so a caller cannot assemble an unvalidated binding:
 ///
 /// ```compile_fail,E0451
-/// // Paired with the positive example below: if this snippet ever compiles, the validating
-/// // constructor stopped being the only way in. Every field is initialized, so the one thing
-/// // that can stop it from compiling is field privacy — the error code on the fence.
 /// let binding = kms_grpc::solana_binding::SolanaUserDecryptBinding {
 ///     verifying_program_id: [0u8; 32],
 ///     // The chain id's type is itself private, so its name cannot even be written here.
@@ -231,11 +228,10 @@ impl SolanaUserDecryptBinding {
         )
     }
 
-    /// The exact byte sequence fed to the hasher, in order.
-    ///
-    /// Public because it is a specified artifact, not a debugging aid: it is the vector field that
-    /// lets five implementations compare their construction before comparing digests, which is
-    /// where a single-byte disagreement is actually diagnosable.
+    /// The exact byte sequence fed to the hasher, in order — the `linker_hasher_input` field of
+    /// the published vectors. Consumed by the vector generator and the freeze gate; not part of
+    /// the client contract.
+    #[doc(hidden)]
     pub fn linker_hasher_input(&self) -> Vec<u8> {
         let chain_id = self.chain_id.get().to_be_bytes();
         let elements = self.hashed_elements(&chain_id);
@@ -387,7 +383,7 @@ mod tests {
     }
 
     #[test]
-    fn scheme_tag_is_the_specified_twenty_nine_bytes() {
+    fn scheme_tag_is_specified_twenty_nine_bytes() {
         // Length is part of the layout: every element before the transport key has a
         // position-determined constant length, which is what makes the list hash injective.
         assert_eq!(SOLANA_LINKER_SCHEME_TAG.len(), 29);
@@ -403,7 +399,7 @@ mod tests {
     }
 
     #[test]
-    fn accepts_a_canonical_request() {
+    fn accepts_canonical_request() {
         let binding = canonical(&[handle(CHAIN_ID, 1), handle(CHAIN_ID, 2)])
             .expect("a canonical request must validate");
 
@@ -423,7 +419,7 @@ mod tests {
     }
 
     #[test]
-    fn rejects_an_empty_handle_list() {
+    fn rejects_empty_handle_list() {
         assert_eq!(
             canonical(&[]).unwrap_err(),
             SolanaUserDecryptBindingError::EmptyHandles
@@ -431,7 +427,7 @@ mod tests {
     }
 
     #[test]
-    fn rejects_a_handle_of_the_wrong_width() {
+    fn rejects_wrong_width_handle() {
         let valid = handle(CHAIN_ID, 1);
 
         for (bytes, actual) in [(&valid[..31], 31usize), (&[0u8; 33][..], 33)] {
@@ -453,7 +449,7 @@ mod tests {
     }
 
     #[test]
-    fn rejects_a_handle_without_the_chain_kind_bit() {
+    fn rejects_handle_without_chain_kind_bit() {
         // An EVM-kind handle must not be bindable by the Solana linker: the bit is the only
         // structural separator between the two request families.
         let low_bit = handle(12_345, 1);
@@ -468,7 +464,7 @@ mod tests {
     }
 
     #[test]
-    fn rejects_a_chain_kind_violation_at_a_later_index() {
+    fn rejects_chain_kind_violation_at_later_index() {
         // "First handle is the source of truth" is the failure mode this guards: the check runs
         // per handle, so a foreign handle mixed into a valid batch is caught at its own index.
         assert_eq!(
@@ -495,7 +491,7 @@ mod tests {
     }
 
     #[test]
-    fn rejects_a_declared_chain_id_without_the_chain_kind_bit() {
+    fn rejects_declared_chain_id_without_chain_kind_bit() {
         assert_eq!(
             SolanaHostChainId::try_from(12_345).unwrap_err(),
             SolanaUserDecryptBindingError::InvalidDeclaredChainId { chain_id: 12_345 },
@@ -503,7 +499,7 @@ mod tests {
     }
 
     #[test]
-    fn rejects_a_declared_chain_id_that_disagrees_with_the_handles() {
+    fn rejects_declared_chain_id_disagreeing_with_handles() {
         let binding = canonical(&[handle(CHAIN_ID, 1)]).expect("canonical");
 
         assert_eq!(
@@ -519,7 +515,7 @@ mod tests {
     }
 
     #[test]
-    fn rejects_a_program_id_of_the_wrong_width() {
+    fn rejects_wrong_width_program_id() {
         for actual in [31usize, 33] {
             let error = SolanaUserDecryptBinding::new(
                 &vec![0x22; actual],
@@ -539,7 +535,7 @@ mod tests {
     }
 
     #[test]
-    fn rejects_a_recipient_of_the_wrong_width() {
+    fn rejects_wrong_width_recipient() {
         // The recipient is a checked 32-byte value end to end. A 20-byte value reaching here
         // would mean an EVM address, or a truncated key, was accepted as a Solana identity.
         for actual in [20usize, 31, 33] {
@@ -561,7 +557,7 @@ mod tests {
     }
 
     #[test]
-    fn rejects_a_context_id_of_the_wrong_width() {
+    fn rejects_wrong_width_context_id() {
         let error = SolanaUserDecryptBinding::new(
             &PROGRAM_ID,
             &RECEIVER,
@@ -579,7 +575,7 @@ mod tests {
     }
 
     #[test]
-    fn rejects_an_epoch_id_of_the_wrong_width() {
+    fn rejects_wrong_width_epoch_id() {
         let error = SolanaUserDecryptBinding::new(
             &PROGRAM_ID,
             &RECEIVER,
@@ -597,7 +593,7 @@ mod tests {
     }
 
     #[test]
-    fn accepts_a_transport_key_of_any_length() {
+    fn accepts_transport_key_of_any_length() {
         // The 869-byte rule lives in the wallet permit and the connector, not here: the KMS takes
         // the transport key as the request carries it, exactly as the EVM linker takes publicKey.
         // A width check here would be a second, diverging copy of a rule enforced upstream.
@@ -619,7 +615,7 @@ mod tests {
     }
 
     #[test]
-    fn identity_width_constant_matches_the_handle_layout() {
+    fn identity_width_constant_matches_handle_layout() {
         assert_eq!(SOLANA_IDENTITY_LEN, 32);
         assert_eq!(handle(CHAIN_ID, 1).len(), SOLANA_IDENTITY_LEN);
     }

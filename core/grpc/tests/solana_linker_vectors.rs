@@ -1,49 +1,26 @@
 //! The normative Solana linker v1 vectors, and the runner that consumes them.
 //!
-//! One code path builds the set and checks it. `cargo test` builds every record in memory from the
-//! canonical binding and compares byte-for-byte with the committed
-//! `core/grpc/test-vectors/solana_linker_v1.json`; running the same binary with
-//! `ZAMA_UPDATE_SOLANA_LINKER_VECTORS=1` rewrites that file and its digest instead. There is no
-//! second generator to drift from the runner, and no committed byte that was not produced by the
-//! code under test.
+//! One code path builds the set and checks it: `cargo test` builds every record in memory from
+//! the canonical binding and compares byte-for-byte with the committed
+//! `core/grpc/test-vectors/solana_linker_v1.json`; `make generate-solana-linker-vectors` runs the
+//! same binary with `ZAMA_UPDATE_SOLANA_LINKER_VECTORS=1` set to rewrite that file and its digest
+//! instead. There is no second generator to drift from the runner.
 //!
-//! # The cross-repository contract
+//! The vectors are shared across repositories (SDK TypeScript, relayer, Connector Rust, KMS Core
+//! Rust, KMS client/WASM), so the set carries its own SHA-256 in `solana_linker_v1.sha256`
+//! (`sha256sum` line format); each repository commits the same two files and CI compares digests,
+//! catching both locally edited and stale copies.
 //!
-//! These vectors are the linker half of the specification's shared fixture set; the permit
-//! half lives in the fhevm repository. Five implementations — SDK TypeScript, relayer, Connector
-//! Rust, KMS Core Rust, KMS client/WASM — must consume *the same bytes*, so the set carries its own
-//! SHA-256 in `solana_linker_v1.sha256`, in `sha256sum` line format:
+//! Conventions: every 64-bit value is a decimal string, because every chain id sets bit 63 and a
+//! JSON number would be silently rounded by a TypeScript consumer. Every rejecting record names
+//! its rule and derives from a named accepted base with exactly one mutation. `cluster_registry`
+//! is the reviewed registry of public-cluster chain ids, derived by the same code as every
+//! record's chain id. The file deliberately does not use `tests/common`: a published reference
+//! must not move because a shared test helper was edited.
 //!
-//! ```text
-//! <64 lowercase hex digits>  solana_linker_v1.json
-//! ```
-//!
-//! Any repository holding a copy writes the same two files and CI compares the digests. A copy that
-//! was "adjusted locally" changes the digest and is caught; a copy that is merely stale is caught
-//! too. That is the whole mechanism — deliberately smaller than a submodule or a published artifact,
-//! and it fails loudly rather than silently diverging.
-//!
-//! # Conventions that carry weight
-//!
-//! * **Every 64-bit value is a decimal string.** A JSON number reaches a TypeScript consumer as an
-//!   IEEE-754 double. Every chain id here sets bit 63, so every one of them exceeds 2^53 and would
-//!   be silently rounded. The set contains no JSON numbers at all, and a test enforces that.
-//! * **Every rejecting record names its rule and its single mutation.** A negative vector that
-//!   fails "somehow" tests nothing: an implementation could reject it for an unrelated reason and
-//!   look correct. `derived_from` names an accepted base, `mutation` names the one change.
-//! * **The registry is part of the published surface.** `cluster_registry` is the reviewed registry
-//!   of public-cluster chain ids, shared with the deployment procedure: a cluster configuration is
-//!   reviewed against these entries, and they are derived by the same rule and the same code as
-//!   every record's chain id, so the two cannot drift apart.
-//! * **The set is self-contained.** This file deliberately does not use `tests/common`: a published
-//!   reference must not move because a shared test helper was edited. It mirrors the conventions of
-//!   the permit set's `permit_vectors.rs` rather than importing anything from it.
-//!
-//! # Frozen
-//!
-//! The scheme tag `SolanaUserDecryptionLinker:v1`, the call separator `SOLLNK01` and the specified
-//! element layout are frozen by this set. `solana_frozen_constants.rs` pins them independently;
-//! after this point a change to any of those bytes is a version bump in the scheme tag, not an edit.
+//! The scheme tag `SolanaUserDecryptionLinker:v1`, the call separator `SOLLNK01` and the element
+//! layout are frozen by this set and pinned independently by `solana_frozen_constants.rs`;
+//! changing any of those bytes is a version bump in the scheme tag, not an edit.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
@@ -279,13 +256,13 @@ enum VectorClass {
     /// Accepted, and its link is the reference for these fields.
     Valid,
     /// Constructible, but its link differs from its base's: a response carrying this link answers a
-    /// different request, and l3 byte equality rejects it.
+    /// different request, and the client's byte-equality rule rejects it.
     LinkDivergence,
     /// The canonical constructor refuses these fields; no link exists for them.
     ConstructionReject,
     /// A 32-byte value computed over the same fields under a scheme tag this version does not
-    /// define. It is not the v1 link, and l3 must reject it on byte inequality alone — no consumer
-    /// may parse the tag out of a response to decide.
+    /// define. It is not the v1 link, and byte inequality alone must reject it — no consumer may
+    /// parse the tag out of a response to decide.
     ForeignSchemeLink,
 }
 
@@ -1353,7 +1330,7 @@ fn records_of(file: &VectorFile, class: VectorClass) -> Vec<&Record> {
 // ---------------------------------------------------------------------------
 
 #[test]
-fn the_committed_set_is_what_the_canonical_function_produces() {
+fn committed_set_matches_canonical_output() {
     // The whole point of generator-equals-runner: no committed byte may exist that this tree does
     // not reproduce, and the failure is a readable JSON diff rather than a digest mismatch.
     assert_eq!(
@@ -1366,14 +1343,14 @@ fn the_committed_set_is_what_the_canonical_function_produces() {
 }
 
 #[test]
-fn the_committed_digest_matches_the_set() {
+fn committed_digest_matches_set() {
     // The cross-repository mechanism: the digest file is what another repository's copy is
     // compared against, so it has to be right here before it can mean anything there.
     assert_eq!(committed_digest(), digest_line(&committed_json()));
 }
 
 #[test]
-fn the_digest_file_is_a_single_sha256sum_line() {
+fn digest_file_is_single_sha256sum_line() {
     // Format is part of the contract: `sha256sum -c` must accept it unmodified.
     let line = committed_digest();
     let (digest, name) = line
@@ -1392,7 +1369,7 @@ fn the_digest_file_is_a_single_sha256sum_line() {
 }
 
 #[test]
-fn the_header_pins_the_frozen_constants() {
+fn header_pins_frozen_constants() {
     // The scheme tag and the separator are frozen by this set, so the set has to say which
     // values it was frozen at — a consumer reading the JSON alone gets them from here.
     let file = committed();
@@ -1406,7 +1383,7 @@ fn the_header_pins_the_frozen_constants() {
 }
 
 #[test]
-fn every_valid_record_builds_and_carries_the_link_the_binding_computes() {
+fn valid_records_carry_binding_computed_link() {
     // The positive half: `valid` means the canonical constructor accepts these fields and the
     // recorded 32 bytes are what a conforming response must carry.
     let file = committed();
@@ -1438,9 +1415,9 @@ fn every_valid_record_builds_and_carries_the_link_the_binding_computes() {
 }
 
 #[test]
-fn every_link_divergence_record_builds_and_differs_from_its_base() {
-    // Rule l3: these records are well-formed requests whose link is not the base's, which is the
-    // property that makes response substitution detectable rather than silent.
+fn link_divergence_records_differ_from_base() {
+    // These records are well-formed requests whose link is not the base's, which is the property
+    // that makes response substitution detectable rather than silent.
     let file = committed();
     let divergences = records_of(&file, VectorClass::LinkDivergence);
     assert!(
@@ -1476,7 +1453,7 @@ fn every_link_divergence_record_builds_and_differs_from_its_base() {
 }
 
 #[test]
-fn no_two_records_that_have_a_link_share_one() {
+fn record_links_are_unique() {
     // Pairwise, not just against the reference: two mutated requests colliding with each other is
     // the same failure as either colliding with the original. The one deliberate exception is the
     // declared-chain-id record, whose mutation is by construction not hashed.
@@ -1502,7 +1479,7 @@ fn no_two_records_that_have_a_link_share_one() {
 }
 
 #[test]
-fn every_construction_reject_record_is_refused_by_the_rule_it_names() {
+fn construction_reject_records_refused_by_named_rule() {
     // A negative that fails "somehow" tests nothing: the rule name says *which* check must fire,
     // and an implementation rejecting for another reason is not conforming.
     let file = committed();
@@ -1557,10 +1534,10 @@ fn every_construction_reject_record_is_refused_by_the_rule_it_names() {
 }
 
 #[test]
-fn every_foreign_scheme_record_is_not_the_v1_link_for_its_fields() {
-    // Cross-version replay needs no rule of its own — a foreign-tag value fails l3 byte
-    // equality. The assertion is inequality with the link the canonical function computes for
-    // exactly these fields, which is the strongest form the claim can take.
+fn foreign_scheme_records_never_match_v1_link() {
+    // Cross-version replay needs no rule of its own — a foreign-tag value fails byte equality
+    // with the recomputed v1 link. The assertion is inequality with the link the canonical
+    // function computes for exactly these fields.
     let file = committed();
     let foreign = records_of(&file, VectorClass::ForeignSchemeLink);
     assert!(
@@ -1587,7 +1564,7 @@ fn every_foreign_scheme_record_is_not_the_v1_link_for_its_fields() {
 }
 
 #[test]
-fn the_hasher_input_of_every_v1_record_is_the_canonical_functions_input() {
+fn hasher_inputs_match_canonical_function() {
     // The published "hasher input" field is the byte sequence the digest is actually taken over,
     // so a consumer that reproduces the input and gets a different digest knows the disagreement
     // is in the hash, not in the layout.
@@ -1621,7 +1598,7 @@ fn the_hasher_input_of_every_v1_record_is_the_canonical_functions_input() {
 }
 
 #[test]
-fn every_rejecting_record_isolates_exactly_one_violation() {
+fn rejecting_records_isolate_exactly_one_violation() {
     // `derived_from` is a claim that the base is accepted and one thing was changed. If the base
     // did not validate, the record would prove nothing about the mutation it names.
     let file = committed();
@@ -1669,7 +1646,7 @@ fn record_names_are_unique_and_every_reference_resolves() {
 }
 
 #[test]
-fn the_rule_dictionary_is_covered_in_both_directions() {
+fn rule_dictionary_is_covered_in_both_directions() {
     // A dictionary with unexercised names promises coverage the set does not have; a record with an
     // unknown name is a rule no other implementation can map onto its own errors.
     let file = committed();
@@ -1699,7 +1676,7 @@ fn the_rule_dictionary_is_covered_in_both_directions() {
 }
 
 #[test]
-fn the_set_contains_no_json_numbers() {
+fn set_contains_no_json_numbers() {
     // Every 64-bit value is a decimal string. A JSON number reaches a TypeScript consumer as a
     // double, and every chain id here is above 2^53, so the rounding would be silent.
     fn numbers(value: &Value, path: &str, found: &mut Vec<String>) {
@@ -1727,7 +1704,7 @@ fn the_set_contains_no_json_numbers() {
 }
 
 #[test]
-fn every_chain_id_exceeds_the_javascript_safe_integer() {
+fn chain_ids_exceed_javascript_safe_integer() {
     // Not an accident to be preserved by luck: the chain-kind bit is bit 63, so a Solana chain id
     // is always above 2^53. The canary is the whole set, not one record.
     let file = committed();
@@ -1742,7 +1719,7 @@ fn every_chain_id_exceeds_the_javascript_safe_integer() {
 }
 
 #[test]
-fn the_three_chain_id_forms_agree_with_the_rule_recomputed_in_test() {
+fn three_chain_id_forms_agree_with_recomputed_rule() {
     // The shared fixture format requires three forms; three forms that disagree are worse than one.
     // The rule is recomputed here from the record's own genesis hash rather than trusted from the
     // file.
@@ -1777,7 +1754,7 @@ fn the_three_chain_id_forms_agree_with_the_rule_recomputed_in_test() {
 }
 
 #[test]
-fn the_reference_cluster_is_the_permit_sets_cluster() {
+fn reference_cluster_matches_permit_set() {
     // The shared-input alignment, as an assertion rather than a claim in prose: both halves of the
     // fixture set are about the same deployment. What the two sets do *not* agree on today is the
     // derived chain id — the permit set still records a stand-in derivation and is due for
@@ -1813,7 +1790,7 @@ fn the_reference_cluster_is_the_permit_sets_cluster() {
 }
 
 #[test]
-fn the_reference_key_is_the_committed_869_byte_container() {
+fn reference_key_is_committed_869_byte_container() {
     // The width is normative — a KMS request carries exactly this container — and the *structure*
     // is what makes the reference a request a consumer could have sent. This side of the tree can
     // only check the width and the bytes — kms-grpc cannot deserialize a container — so the
@@ -1877,7 +1854,7 @@ fn recomputed_chain_id(genesis_hash_base58: &str) -> u64 {
 }
 
 #[test]
-fn the_cluster_registry_is_the_rule_applied_to_each_public_genesis_hash() {
+fn cluster_registry_matches_rule_on_each_genesis_hash() {
     // This table is what a deployment review checks a cluster configuration against, so it has to
     // be right *and* has to be visibly the same rule the records use. Every id is recomputed
     // here from the entry's own base58 genesis hash by the independent reading above; nothing in
@@ -1940,7 +1917,7 @@ fn the_cluster_registry_is_the_rule_applied_to_each_public_genesis_hash() {
 }
 
 #[test]
-fn the_registrys_mainnet_entry_is_the_wrong_chain_id_records_cluster() {
+fn registry_mainnet_entry_matches_wrong_chain_id_record() {
     // The registry and the records are not two tables that happen to agree: mainnet-beta appears in
     // both, so an error in the derivation would have to be made twice, identically, to hide.
     let file = committed();
@@ -1958,7 +1935,7 @@ fn the_registrys_mainnet_entry_is_the_wrong_chain_id_records_cluster() {
 }
 
 #[test]
-fn the_derivation_rule_sets_the_chain_kind_bit_and_keeps_the_rest() {
+fn derivation_rule_sets_chain_kind_bit_and_keeps_lower_bits() {
     // The rule is two operations: take the leading 63 bits of the digest, force bit 63. Checked
     // against a digest computed here rather than against another call to the same function.
     let expected = recomputed_chain_id(REFERENCE_GENESIS);

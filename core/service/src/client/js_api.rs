@@ -560,9 +560,7 @@ pub fn process_user_decryption_resp_solana_from_js(
     })?;
 
     // Marshalling only: the hex/JSON request becomes the client's typed request, and every rule
-    // that decides whether a response is acceptable lives in
-    // [crate::client::solana_response]. This wrapper must never grow a check of its own — a second
-    // copy of a rule here would be the one a caller can reach past.
+    // that decides whether a response is acceptable lives in [crate::client::solana_response].
     let request = SolanaUserDecryptionRequest {
         user_pubkey: solana_identity(&fields.user_pubkey, "user_pubkey")?,
         host_chain_id,
@@ -580,9 +578,9 @@ pub fn process_user_decryption_resp_solana_from_js(
         extra_data: parsed.extra_data().to_vec(),
     };
 
-    // Marshalling done; the one client method every caller of this path goes through. All of
-    // l1-l4 and the release live in [crate::client::solana_response] — this wrapper must never
-    // grow a rule of its own.
+    // The one client method every caller of this path goes through. Every verification rule and
+    // the release live in [crate::client::solana_response] — this wrapper must never grow a rule
+    // of its own; a second copy of a rule here would be the one a caller can reach past.
     let released = client.process_user_decryption_resp_solana(
         &request,
         &UnifiedPublicEncKey::MlKem512(enc_pk.0.clone()),

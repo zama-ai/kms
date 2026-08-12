@@ -93,7 +93,7 @@ fn user_decryption_request_field_numbers_are_frozen() {
 }
 
 #[test]
-fn no_reserved_gap_has_been_filled() {
+fn reserved_gaps_stay_unfilled() {
     let declared = declared_fields();
 
     for gap in RESERVED_GAPS {
@@ -106,7 +106,7 @@ fn no_reserved_gap_has_been_filled() {
 }
 
 #[test]
-fn the_solana_fields_survive_a_protobuf_round_trip() {
+fn solana_fields_survive_protobuf_round_trip() {
     let request = UserDecryptionRequest {
         client_address: String::new(),
         solana_pubkey: Some(vec![0x11; 32]),
@@ -121,7 +121,7 @@ fn the_solana_fields_survive_a_protobuf_round_trip() {
 }
 
 #[test]
-fn an_evm_request_leaves_the_solana_fields_unset() {
+fn evm_request_leaves_solana_fields_unset() {
     // An EVM producer that predates the Solana fields emits exactly this, and it must keep
     // meaning what it always meant.
     let request = UserDecryptionRequest {
@@ -138,7 +138,7 @@ fn an_evm_request_leaves_the_solana_fields_unset() {
 }
 
 #[test]
-fn a_request_carrying_an_unknown_field_still_decodes() {
+fn request_with_unknown_field_still_decodes() {
     // The other direction of the mixed-version window, and the one that actually matters: a party
     // running the older version receives a request from a newer producer. It must parse what it
     // knows and ignore the rest, so that it can refuse the request on its merits instead of

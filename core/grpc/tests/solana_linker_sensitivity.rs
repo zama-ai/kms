@@ -27,7 +27,7 @@ fn assert_all_distinct(links: &[(&str, Vec<u8>)]) {
 }
 
 #[test]
-fn swapping_two_handles_changes_the_link() {
+fn swapping_handles_changes_link() {
     // Order is bound: a relayer that reorders a batch produces a request the client did not make,
     // and the mismatch has to surface as a link mismatch rather than as a reordered result.
     let canonical = Request::canonical();
@@ -37,7 +37,7 @@ fn swapping_two_handles_changes_the_link() {
 }
 
 #[test]
-fn inserting_a_handle_changes_the_link() {
+fn inserting_handle_changes_link() {
     let canonical = Request::canonical();
     let inserted = Request::canonical().with_handles(vec![handle(1), handle(3), handle(2)]);
 
@@ -45,7 +45,7 @@ fn inserting_a_handle_changes_the_link() {
 }
 
 #[test]
-fn removing_a_handle_changes_the_link() {
+fn removing_handle_changes_link() {
     // Oversize input must be rejected, never truncated. The linker is what makes a truncated
     // request detectable instead of silently answered as a request the client never made.
     let canonical = Request::canonical();
@@ -55,7 +55,7 @@ fn removing_a_handle_changes_the_link() {
 }
 
 #[test]
-fn a_duplicated_handle_differs_from_a_single_occurrence() {
+fn duplicate_handle_differs_from_single_occurrence() {
     // Duplicates are legal upstream, so they must be bound positionally rather than collapsed:
     // [h, h] and [h] are different requests and cannot share a link.
     let once = Request::canonical().with_handles(vec![handle(1)]);
@@ -65,7 +65,7 @@ fn a_duplicated_handle_differs_from_a_single_occurrence() {
 }
 
 #[test]
-fn changing_the_transport_key_changes_the_link() {
+fn changing_transport_key_changes_link() {
     // The substitution this closes: an attacker swapping in their own transport key would receive
     // the result sealed to a key they hold.
     let canonical = Request::canonical();
@@ -76,7 +76,7 @@ fn changing_the_transport_key_changes_the_link() {
 }
 
 #[test]
-fn a_transport_key_of_a_different_length_changes_the_link() {
+fn different_length_transport_key_changes_link() {
     let canonical = Request::canonical();
     let mut shorter = Request::canonical();
     shorter.transport_key.pop();
@@ -85,7 +85,7 @@ fn a_transport_key_of_a_different_length_changes_the_link() {
 }
 
 #[test]
-fn changing_the_recipient_changes_the_link() {
+fn changing_recipient_changes_link() {
     let canonical = Request::canonical();
     let mut other = Request::canonical();
     other.receiver_id[0] ^= 0xff;
@@ -94,7 +94,7 @@ fn changing_the_recipient_changes_the_link() {
 }
 
 #[test]
-fn changing_the_verifying_program_id_changes_the_link() {
+fn changing_verifying_program_id_changes_link() {
     // One half of the deployment domain: the same handles under a different program are a
     // different deployment, even on the same cluster.
     let canonical = Request::canonical();
@@ -105,7 +105,7 @@ fn changing_the_verifying_program_id_changes_the_link() {
 }
 
 #[test]
-fn changing_the_chain_id_changes_the_link() {
+fn changing_chain_id_changes_link() {
     // The other half, and it does not travel as its own field: it is read out of the handles, so
     // this variant necessarily changes the handles too. That is the deployment pair working as
     // intended — one program id deployed to two clusters yields two distinct links.
@@ -119,7 +119,7 @@ fn changing_the_chain_id_changes_the_link() {
 }
 
 #[test]
-fn changing_the_kms_context_changes_the_link() {
+fn changing_kms_context_changes_link() {
     // The party set that produced the result. A response from a different context answers a
     // different question, however similar the request looks.
     let canonical = Request::canonical();
@@ -130,7 +130,7 @@ fn changing_the_kms_context_changes_the_link() {
 }
 
 #[test]
-fn changing_the_kms_epoch_changes_the_link() {
+fn changing_kms_epoch_changes_link() {
     let canonical = Request::canonical();
     let mut other = Request::canonical();
     other.kms_epoch_id[0] ^= 0xff;
@@ -165,7 +165,7 @@ fn same_width_fields_are_not_interchangeable() {
 }
 
 #[test]
-fn no_two_single_field_variants_share_a_link() {
+fn single_field_variant_links_are_unique() {
     // Pairwise, not just against the canonical request: two different requests colliding with
     // each other is the same failure as either colliding with the original.
     let mut other_receiver = Request::canonical();
@@ -225,7 +225,7 @@ fn no_two_single_field_variants_share_a_link() {
 }
 
 #[test]
-fn the_recipient_is_stored_as_the_raw_key() {
+fn recipient_stored_as_raw_key() {
     // The recipient reaches signcryption as the exact 32 bytes the request carried, never a
     // derivative of them: two keys colliding under a hash-and-truncate would be one recipient to
     // signcryption, and the result would be readable by the wrong key.

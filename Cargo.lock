@@ -4587,7 +4587,6 @@ dependencies = [
  "rasn-cms",
  "rayon",
  "rcgen",
- "reqwest",
  "rsa",
  "rstest",
  "rustls-webpki",

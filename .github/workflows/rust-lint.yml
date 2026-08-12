@@ -12,10 +12,10 @@ permissions:
   actions: read # Required to read workflow run information
 
 jobs:
-  # Byte-freeze gate for the EVM user-decryption path: refuses commits that modify or delete a
-  # frozen reference asset. Needs no toolchain at all, so it runs as its own fast job.
-  evm-frozen-paths:
-    name: rust-lint/evm-frozen-paths
+  # Byte-freeze gate for frozen reference assets: refuses commits that modify or delete one.
+  # Needs no toolchain at all, so it runs as its own fast job.
+  frozen-paths:
+    name: rust-lint/frozen-paths
     permissions:
       contents: read # Required to checkout repository code
     runs-on: ubuntu-latest
@@ -27,12 +27,12 @@ jobs:
           # Full history so the base commit is present for `git merge-base`.
           fetch-depth: 0
 
-      - name: Check EVM frozen paths
+      - name: Check frozen paths
         env:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
         run: |
-          echo "EXECUTING: ci/scripts/evm_frozen_paths.sh ${BASE_SHA}"
-          ci/scripts/evm_frozen_paths.sh "${BASE_SHA}"
+          echo "EXECUTING: ci/scripts/frozen_paths.sh ${BASE_SHA}"
+          ci/scripts/frozen_paths.sh "${BASE_SHA}"
 
   # Formatting only needs rustfmt: no protoc, no nextest, no workspace build.
   # Kept as its own job so it gives near-instant feedback in parallel with the

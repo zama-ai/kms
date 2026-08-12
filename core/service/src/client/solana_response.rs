@@ -1,44 +1,34 @@
 //! Solana user-decryption **response** verification, and the release that may follow it.
 //!
 //! The request-side half of the linker contract lives in [`SolanaUserDecryptBinding`]: a request
-//! that validates produces one 32-byte link. This module owns the response-side half — recompute,
-//! authenticate, compare, discard — expressed as the specification's four rules, in fixed order:
+//! that validates produces one 32-byte link. This module owns the response-side half, as four
+//! rules in fixed order:
 //!
-//! * **l1 — recompute, don't parse.** The expected link is recomputed by handing the client's own
-//!   typed request fields to the canonical binding. The `digest` embedded in a response payload is
-//!   never a source of the expectation; it is only ever the thing compared against it.
-//! * **l2 — authenticate before comparing.** Each share's KMS node signature is verified against
-//!   the caller-supplied trusted key set before its link is looked at. Whichever signature the
-//!   share carries is the one verified, exactly as on the EVM path: a non-empty internal
-//!   `signature` is ECDSA over `bc2wrap::serialize(&payload)`, and an empty one falls back to the
-//!   EIP-712 `external_signature`, checked under the request's response domain, transport key and
-//!   `extra_data`. The external signature is *verified*, not merely observed to be present. A share
-//!   carrying neither is unauthenticated. The trusted set is the registered 20-byte signer
-//!   addresses — the same set the host chain's KMS context carries — and a key found inside a
-//!   response acts only under its binding to one of them, never on its own authority.
-//! * **l3 — byte equality.** The embedded digest must equal the recomputed link byte for byte,
-//!   length included. A share that fails is discarded and contributes nothing.
-//! * **l4 — uniformity and threshold.** Every accepted share must carry the *same* link, a party
-//!   contributes at most one accepted share (a replayed share is discarded, never counted twice),
-//!   and there must be at least as many of them as the release needs — fewer fails the response as
-//!   a whole. A multi-share set must additionally be one consistent threshold response, checked by
-//!   running the accepted originals through the EVM path's own validation, unchanged, so the
-//!   definition of a well-formed threshold response exists exactly once for both paths.
+//! * **Recompute, don't parse.** The expected link is recomputed from the client's own typed
+//!   request fields through the canonical binding. The `digest` embedded in a response payload is
+//!   never a source of the expectation, only the thing compared against it.
+//! * **Authenticate before comparing.** Each share's KMS node signature is verified against the
+//!   caller-supplied trusted key set before its link is looked at, exactly as on the EVM path: a
+//!   non-empty internal `signature` is ECDSA over the serialized payload, an empty one falls back
+//!   to the EIP-712 `external_signature`, verified in full under the request's response domain,
+//!   transport key and `extra_data`. A key found inside a response acts only under its binding to
+//!   a registered signer address, never on its own authority.
+//! * **Byte equality.** The embedded digest must equal the recomputed link byte for byte, length
+//!   included. A share that fails is discarded and contributes nothing.
+//! * **Uniformity and threshold.** Every accepted share must carry the same link, a party
+//!   contributes at most one accepted share, and there must be at least as many of them as the
+//!   release needs — fewer fails the response as a whole. A multi-share set must additionally be
+//!   one consistent threshold response, checked by the EVM path's own validation, unchanged.
 //!
-//! The centralized case is the degenerate single-share case of exactly these rules, not a weaker
-//! path of its own.
+//! The centralized case is the degenerate single-share case of the same rules.
 //!
-//! # Verify, then release
-//!
-//! The two halves are separate on purpose. [`verify_solana_user_decryption_response`] returns a
-//! [`VerifiedSolanaShares`] — the accepted shares, the single link all of them carry, and a census
-//! of what was discarded — and [`release_solana_user_decryption`] consumes that value. There is no
-//! way to reach the release half without having gone through the verification half, and no public
-//! entry point anywhere in this module accepts a link as an argument:
+//! Verification and release are separate on purpose: [`verify_solana_user_decryption_response`]
+//! returns a [`VerifiedSolanaShares`] and [`release_solana_user_decryption`] consumes it, so
+//! there is no path to a plaintext that skips verification, and no public entry point in this
+//! module accepts a link as an argument. `VerifiedSolanaShares` has private fields and no
+//! constructor:
 //!
 //! ```compile_fail
-//! // If this ever compiles, "take the link from the response and call it the expectation" became
-//! // expressible, and l1 stopped being a rule.
 //! let shares = kms_lib::client::solana_response::VerifiedSolanaShares {
 //!     link: vec![0u8; 32],
 //! };
@@ -60,8 +50,8 @@
 //!     kms_epoch_id: [0x55; 32],
 //!     handles: vec![handle.to_vec()],
 //!     enc_key: vec![0x66; 869],
-//!     // Neither of these is an input to the link; they are what l2 verifies an external
-//!     // signature against, and a caller that only wants the link can leave them empty.
+//!     // Neither is an input to the link; they are what an external node signature is verified
+//!     // against, and a caller that only wants the link can leave them empty.
 //!     response_domain: Default::default(),
 //!     extra_data: Vec::new(),
 //! };
@@ -97,10 +87,10 @@ use crate::engine::validation::{
 /// struct is ever taken from a response.
 ///
 /// Two groups of fields, and the split matters. Everything down to [`Self::enc_key`] is an input
-/// the link commits to, and [`Self::expected_link`] is built from exactly those (l1).
+/// the link commits to, and [`Self::expected_link`] is built from exactly those.
 /// [`Self::response_domain`] and [`Self::extra_data`] commit to nothing: they are the request-side
 /// inputs to the EIP-712 message a KMS node's `external_signature` is made over, and they exist
-/// here so that l2 can verify such a signature instead of merely noticing one is present.
+/// here so a node's external signature can be verified instead of merely noticed.
 ///
 /// The fields are public because they carry no invariant of their own: validation happens where it
 /// is defined, in the canonical binding's constructor, which [`Self::binding`] calls. A request
@@ -127,14 +117,14 @@ pub struct SolanaUserDecryptionRequest {
     ///
     /// The gateway's own domain, as the client's configuration holds it. The Solana path invents no
     /// domain of its own — the server-side adapter carries the request's domain through unchanged —
-    /// so the client must be told the same one, and l2 verifies an external signature against it.
+    /// so the client must be told the same one to verify an external signature against.
     /// Not an input to the link.
     pub response_domain: Eip712Domain,
     /// The request's `extra_data`, verbatim.
     ///
     /// Opaque bytes. The KMS never parses `extra_data` and neither does this module: it is
     /// signature-verification input and nothing else. It is one of the fields the EIP-712 message
-    /// behind an `external_signature` is built from, so l2 cannot verify one without it, and a
+    /// behind an `external_signature` is built from, so one cannot be verified without it, and a
     /// response carrying different `extra_data` is not a response to this request. Not an input to
     /// the link.
     pub extra_data: Vec<u8>,
@@ -160,7 +150,7 @@ impl SolanaUserDecryptionRequest {
         Ok(binding)
     }
 
-    /// The link this request expects a response to carry — rule l1.
+    /// The link this request expects a response to carry.
     ///
     /// Recomputed from the fields above through the one canonical construction. This is the only
     /// value the response's `digest` is ever compared against.
@@ -183,18 +173,18 @@ pub struct ShareRejections {
     /// The payload's verification key could not be parsed, or its address is not the registered
     /// signer address for the claimed party id.
     pub malformed_verification_key: usize,
-    /// Rule l2: the share carries no KMS node signature at all, or the one it carries — internal
+    /// The share carries no KMS node signature at all, or the one it carries — internal
     /// ECDSA, or the EIP-712 external signature an empty internal one falls back to — does not
     /// verify under the trusted key.
     pub node_signature: usize,
-    /// Rule l3: the payload's digest is not, byte for byte, the recomputed link.
+    /// The payload's digest is not, byte for byte, the recomputed link.
     pub link_mismatch: usize,
-    /// Rule l4: the share verified, but a share from the same party was already accepted. Only the
+    /// The share verified, but a share from the same party was already accepted. Only the
     /// first accepted share of a party counts; every later one lands here.
     pub duplicate_party: usize,
 }
 
-/// One share that passed l1–l3: authenticated by a trusted KMS node, and carrying the recomputed
+/// One share that passed the per-share rules: authenticated by a trusted KMS node, carrying the recomputed
 /// link.
 ///
 /// Fields are private and there is no constructor: an accepted share can only come out of
@@ -206,7 +196,7 @@ pub struct VerifiedSolanaShare {
     payload: UserDecryptionResponsePayload,
 }
 
-/// The outcome of rules l1–l4: the accepted shares and the single link every one of them carries.
+/// The outcome of verification: the accepted shares and the single link every one of them carries.
 ///
 /// Fields are private. In particular `link` has no setter and no constructor argument anywhere in
 /// this module's public surface — it is always the value recomputed from the request, which is
@@ -238,7 +228,7 @@ pub enum SolanaUserDecryptionResponseError {
     #[error("Response does not exist")]
     EmptyResponse,
 
-    /// Rule l1: the request itself is not a valid binding, so there is no expectation to compare
+    /// The request itself is not a valid binding, so there is no expectation to compare
     /// against. Checked before any response is examined.
     #[error(transparent)]
     Binding(#[from] SolanaUserDecryptBindingError),
@@ -256,25 +246,25 @@ pub enum SolanaUserDecryptionResponseError {
     #[error("the response from party {party_id} does not carry that party's trusted key")]
     MalformedVerificationKey { party_id: u32 },
 
-    /// Rule l2: the KMS node signature on the payload — internal ECDSA, or the external EIP-712 one
+    /// The KMS node signature on the payload — internal ECDSA, or the external EIP-712 one
     /// an empty internal signature falls back to — is absent or does not verify. A response whose
     /// `extra_data` is not the request's lands here too: the message an external signature commits
     /// to is then not this request's, which is the same failure said differently.
     #[error("the KMS node signature on the response from party {party_id} is not valid")]
     NodeSignature { party_id: u32 },
 
-    /// Rule l3: the payload's digest is not the recomputed link.
+    /// The payload's digest is not the recomputed link.
     #[error(
         "the response from party {party_id} carries a digest that is not the link recomputed from the request"
     )]
     LinkMismatch { party_id: u32 },
 
-    /// Rule l4: a share verified, but a share from the same party had already been accepted. The
+    /// A share verified, but a share from the same party had already been accepted. The
     /// threshold counts distinct parties, so a party's later shares are discarded, not re-counted.
     #[error("the response carries more than one share from party {party_id}")]
     DuplicateParty { party_id: u32 },
 
-    /// Rule l4: too few shares carry one common link for the release to be attempted. All or
+    /// Too few shares carry one common link for the release to be attempted. All or
     /// nothing — a partially valid response releases no plaintext.
     #[error(
         "only {valid} of the {needed} required user decryption shares carry the recomputed link ({rejections:?})"
@@ -364,7 +354,7 @@ impl From<ShareRejection> for SolanaUserDecryptionResponseError {
 /// Runs one share through the per-share rules, in order, and stops at the first failure.
 ///
 /// The order is the contract: payload present, party known, advertised key's address is the
-/// registered one, node signature verifies (l2), digest equals the recomputed link (l3). A share
+/// registered one, node signature verifies, digest equals the recomputed link. A share
 /// failing an earlier rule never reaches a later one, which is what makes the rejection counters
 /// a record of the order and not just of the outcome.
 fn verify_share(
@@ -393,7 +383,7 @@ fn verify_share(
         return Err(ShareRejection::MalformedVerificationKey { party_id });
     }
 
-    // l2: whichever signature the share carries is the one verified — a non-empty internal
+    // Whichever signature the share carries is the one verified — a non-empty internal
     // signature is ECDSA over the serialized payload, an empty one falls back to the EIP-712
     // external signature, and the branches never cross: a present-but-wrong internal signature
     // is not rescued by a valid external one sitting next to it. The internal branch verifies
@@ -408,7 +398,7 @@ fn verify_share(
         return Err(ShareRejection::NodeSignature { party_id });
     }
 
-    // l3: byte equality, length included. An unauthenticated share never gets here.
+    // Byte equality, length included. An unauthenticated share never gets here.
     if payload.digest != expected_link {
         return Err(ShareRejection::LinkMismatch { party_id });
     }
@@ -420,7 +410,7 @@ fn verify_share(
     })
 }
 
-/// The internal branch of l2: ECDSA over the serialized payload, under the user-decryption
+/// The internal authentication branch: ECDSA over the serialized payload, under the user-decryption
 /// domain separator, against the advertised key — already admitted by its address binding.
 fn internal_signature_authenticates(
     payload: &UserDecryptionResponsePayload,
@@ -437,7 +427,7 @@ fn internal_signature_authenticates(
     internal_verify_sig(&DSEP_USER_DECRYPTION, &serialized, &sig, verification_key).is_ok()
 }
 
-/// The external branch of l2: the EIP-712 signature a share carries when the internal one is
+/// The external authentication branch: the EIP-712 signature a share carries when the internal one is
 /// empty — the only authentication a share that travelled the wire has.
 ///
 /// The message is rebuilt from the payload and the *request's* transport key and `extra_data`,
@@ -471,19 +461,19 @@ fn external_signature_authenticates(
 }
 
 /// Verifies an aggregated Solana user-decryption response against the request that produced it —
-/// rules l1 through l4.
+/// recompute, authenticate, compare, count.
 ///
 /// # Arguments
 ///
-/// * `request` — trusted client state. The expected link is recomputed from it (l1); the response
+/// * `request` — trusted client state. The expected link is recomputed from it; the response
 ///   never contributes to the expectation. It also carries the two values an external node
-///   signature is verified against (l2): the response EIP-712 domain and the request's
+///   signature is verified against: the response EIP-712 domain and the request's
 ///   `extra_data`.
 /// * `trusted_signers` — the registered KMS signer addresses, keyed by party id, as the client's
 ///   own configuration holds them — on Solana, the host program's KMS-context signer set. A key
 ///   appearing inside a response is admitted only under its binding to one of these addresses
-///   (l2); it is never trusted on its own. The signer count also fixes how many same-link shares
-///   the release needs (l4): one for a single-node deployment, `t + 1` for `n = 3t + 1` nodes —
+///   ; it is never trusted on its own. The signer count also fixes how many same-link shares
+///   the release needs: one for a single-node deployment, `t + 1` for `n = 3t + 1` nodes —
 ///   the demand is derived here and is not a caller-supplied parameter, so it cannot be weakened.
 /// * `agg_resp` — the untrusted responses.
 ///
@@ -500,13 +490,13 @@ pub fn verify_solana_user_decryption_response(
     agg_resp: &[UserDecryptionResponse],
 ) -> Result<VerifiedSolanaShares, SolanaUserDecryptionResponseError> {
     let required_shares = solana_required_shares(trusted_signers.len());
-    // l1 first: the expectation comes from the request's own fields and nowhere else, and a
+    // Recompute first: the expectation comes from the request's own fields and nowhere else, and a
     // request that is not a valid binding fails before any response — even an absent one — is
     // examined. JS callers pin this order: an invalid request with no responses reports the
     // request's problem, not the response's.
     let expected_link = request.expected_link()?;
 
-    // The degenerate case of l4: no shares is not a below-threshold response but the absence of
+    // No shares is not a below-threshold response but the absence of
     // one, and JS callers pin this message.
     if agg_resp.is_empty() {
         return Err(SolanaUserDecryptionResponseError::EmptyResponse);
@@ -519,7 +509,7 @@ pub fn verify_solana_user_decryption_response(
     let mut first_rejection = None;
     for response in agg_resp {
         match verify_share(request, &expected_link, trusted_signers, response) {
-            // The one-share-per-party half of l4: acceptance is keyed on the party, so a replayed
+            // One share per party: acceptance is keyed on the party, so a replayed
             // or equivocating share is discarded rather than counted towards the threshold twice.
             // Only *accepted* shares claim their party — a party whose earlier share failed a rule
             // is still represented by a later valid one.
@@ -592,7 +582,7 @@ pub fn verify_solana_user_decryption_response(
         shares.retain(|share| surviving.contains(&share.party_id));
     }
 
-    // l4: enough distinct parties carry the recomputed link, or the response fails as a whole.
+    // The threshold: enough distinct parties carry the recomputed link, or the response fails as a whole.
     // Uniformity needs no extra pass — acceptance in `verify_share` is equality with the one
     // recomputed link, so every accepted share carries it by construction — and distinctness was
     // enforced at acceptance above.
@@ -646,8 +636,8 @@ pub fn release_solana_user_decryption(
     let receiver = SigncryptionReceiver::Solana(receiver_id);
 
     if shares.len() > 1 {
-        // Every accepted payload carries the recomputed link as its digest — that is what l3
-        // accepted it for — so the shared reconstruction unsigncrypts under exactly the link the
+        // Every accepted payload carries the recomputed link as its digest — that is what it was
+        // accepted for — so the shared reconstruction unsigncrypts under exactly the link the
         // request expects, same as the centralized arm below.
         let payloads: Vec<UserDecryptionResponsePayload> =
             shares.into_iter().map(|share| share.payload).collect();
@@ -691,9 +681,8 @@ impl Client {
     /// Recovers the plaintexts of a Solana user-decryption response.
     ///
     /// A thin composition and nothing else: [`verify_solana_user_decryption_response`], then
-    /// [`release_solana_user_decryption`]. All of l1–l4 lives in those functions, so there is
-    /// exactly one implementation of each rule for every caller — Rust, WASM, or test — to
-    /// exercise.
+    /// [`release_solana_user_decryption`]. Every verification rule lives in those functions, so
+    /// there is exactly one implementation of each for every caller — Rust, WASM, or test.
     ///
     /// The trusted signer set is this client's own
     /// [`crate::client::client_wasm::ServerIdentities`], reduced to addresses — a configuration
@@ -716,7 +705,6 @@ impl Client {
 mod tests {
     use std::collections::HashMap;
     use std::num::Wrapping;
-    use std::path::{Path, PathBuf};
 
     use aes_prng::AesRng;
     use algebra::base_ring::Z64;
@@ -856,7 +844,7 @@ mod tests {
         }
     }
 
-    /// The KMS node signature the client checks in l2: ECDSA over `bc2wrap::serialize(&payload)`
+    /// The KMS node signature the client authenticates: ECDSA over `bc2wrap::serialize(&payload)`
     /// under the user-decryption domain separator.
     fn sign(payload: &UserDecryptionResponsePayload, sk: &PrivateSigKey) -> Vec<u8> {
         let serialized = bc2wrap::serialize(payload).expect("serialize a payload");
@@ -867,7 +855,7 @@ mod tests {
     }
 
     /// A response carrying `payload` and a valid *internal* node signature over it — the ECDSA
-    /// branch of l2, with no external signature to fall back to.
+    /// authentication branch, with no external signature to fall back to.
     fn signed_response(
         payload: UserDecryptionResponsePayload,
         sk: &PrivateSigKey,
@@ -1041,68 +1029,29 @@ mod tests {
     }
 
     // ---------------------------------------------------------------------------------------
-    // Block 1 — the shape of the API itself.
+    // The shape of the API itself.
     // ---------------------------------------------------------------------------------------
 
-    /// The exact shape of the verification half: trusted request state, the registered signer
-    /// addresses, a share count, untrusted responses — and no link anywhere among them.
-    type VerifyFn = fn(
-        &SolanaUserDecryptionRequest,
-        &HashMap<u32, alloy_primitives::Address>,
-        &[UserDecryptionResponse],
-    ) -> Result<VerifiedSolanaShares, SolanaUserDecryptionResponseError>;
-
-    /// The exact shape of the release half: it consumes the verification result by value, so it
-    /// cannot run without one. The client supplies the FHE parameters and decryption mode the
-    /// threshold reconstruction runs under — never trust, which was settled in verification.
-    type ReleaseFn = fn(
-        &Client,
-        VerifiedSolanaShares,
-        &UnifiedPublicEncKey,
-        &UnifiedPrivateEncKey,
-    ) -> Result<Vec<TypedPlaintext>, SolanaUserDecryptionResponseError>;
-
-    /// The client surface that replaces the nine-argument one: one typed request, two ephemeral
-    /// keys, the responses.
-    type ClientFn = fn(
-        &Client,
-        &SolanaUserDecryptionRequest,
-        &UnifiedPublicEncKey,
-        &UnifiedPrivateEncKey,
-        &[UserDecryptionResponse],
-    ) -> Result<Vec<TypedPlaintext>, SolanaUserDecryptionResponseError>;
-
     #[test]
-    fn the_public_verification_and_release_signatures_are_pinned() {
-        // Coercion is the assertion: each function must have exactly the shape declared above, so
-        // an argument added, removed, or retyped breaks this test rather than a caller elsewhere.
-        let _verify: VerifyFn = verify_solana_user_decryption_response;
-        let _release: ReleaseFn = release_solana_user_decryption;
-        let _client: ClientFn = Client::process_user_decryption_resp_solana;
-    }
-
-    #[test]
-    fn the_response_error_taxonomy_is_matched_without_a_catch_all() {
+    fn response_error_taxonomy_matched_without_catch_all() {
         // A build-time canary, not a behaviour test: this match has no `_` arm, so adding a
         // variant to the taxonomy breaks this suite and forces a decision about which rule the new
         // failure belongs to. Every arm names the rule it stands for.
         let describe = |error: &SolanaUserDecryptionResponseError| -> &'static str {
             match error {
                 SolanaUserDecryptionResponseError::EmptyResponse => "no shares at all",
-                SolanaUserDecryptionResponseError::Binding(_) => "l1: the request is not a binding",
+                SolanaUserDecryptionResponseError::Binding(_) => "the request is not a binding",
                 SolanaUserDecryptionResponseError::MissingPayload { .. } => "share without payload",
-                SolanaUserDecryptionResponseError::UnknownParty { .. } => "l2: no trusted key",
+                SolanaUserDecryptionResponseError::UnknownParty { .. } => "no trusted key",
                 SolanaUserDecryptionResponseError::MalformedVerificationKey { .. } => {
-                    "l2: not the trusted key"
+                    "not the trusted key"
                 }
-                SolanaUserDecryptionResponseError::NodeSignature { .. } => "l2: bad node signature",
-                SolanaUserDecryptionResponseError::LinkMismatch { .. } => "l3: digest is not link",
-                SolanaUserDecryptionResponseError::DuplicateParty { .. } => {
-                    "l4: a party counted twice"
-                }
-                SolanaUserDecryptionResponseError::BelowThreshold { .. } => "l4: too few shares",
+                SolanaUserDecryptionResponseError::NodeSignature { .. } => "bad node signature",
+                SolanaUserDecryptionResponseError::LinkMismatch { .. } => "digest is not link",
+                SolanaUserDecryptionResponseError::DuplicateParty { .. } => "a party counted twice",
+                SolanaUserDecryptionResponseError::BelowThreshold { .. } => "too few shares",
                 SolanaUserDecryptionResponseError::InconsistentShares { .. } => {
-                    "l4: not one consistent threshold response"
+                    "not one consistent threshold response"
                 }
                 SolanaUserDecryptionResponseError::Unsigncryption { .. } => "release failed",
                 SolanaUserDecryptionResponseError::Reconstruction { .. } => {
@@ -1117,12 +1066,12 @@ mod tests {
         );
         assert_eq!(
             describe(&SolanaUserDecryptionResponseError::LinkMismatch { party_id: 1 }),
-            "l3: digest is not link"
+            "digest is not link"
         );
     }
 
     #[test]
-    fn the_two_error_messages_the_js_tests_pin_still_surface() {
+    fn js_pinned_error_messages_still_surface() {
         // tests/js/test.js asserts on these two strings across the WASM boundary. They are part of
         // the published behaviour of the JS export, so they are pinned on the Rust side too rather
         // than only in a suite that needs a wasm build to run.
@@ -1145,95 +1094,9 @@ mod tests {
         );
     }
 
-    /// Every Rust source under `src/client`, as `(path relative to that directory, contents)`.
-    fn client_sources() -> Vec<(String, String)> {
-        fn collect(root: &Path, dir: &Path, out: &mut Vec<(String, String)>) {
-            for entry in std::fs::read_dir(dir)
-                .expect("src/client is readable")
-                .flatten()
-            {
-                let path = entry.path();
-                if path.is_dir() {
-                    collect(root, &path, out);
-                } else if path.extension().is_some_and(|ext| ext == "rs") {
-                    let relative = path
-                        .strip_prefix(root)
-                        .expect("collected under the root")
-                        .to_string_lossy()
-                        .replace('\\', "/");
-                    out.push((relative, std::fs::read_to_string(&path).expect("readable")));
-                }
-            }
-        }
-
-        let root: PathBuf = Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("src")
-            .join("client");
-        let mut out = Vec::new();
-        collect(&root, &root, &mut out);
-        out.sort();
-        // A scan that reads nothing passes forever; every absence below is only meaningful above
-        // this floor.
-        assert!(
-            out.len() >= 20,
-            "the scan found only {} client sources, so the assertions below are vacuous",
-            out.len(),
-        );
-        out
-    }
-
-    #[test]
-    fn the_client_carries_exactly_one_implementation_of_the_link_rule() {
-        // l1 is "recompute through the canonical binding". Two places constructing a binding is how
-        // that stops being one rule — the second one agrees today and drifts tomorrow.
-        // Spelled in pieces so the scanner does not report itself from an unrelated file.
-        let binding_type = ["SolanaUserDecrypt", "Binding"].concat();
-
-        let found: Vec<_> = client_sources()
-            .into_iter()
-            .filter(|(_, contents)| contents.contains(&binding_type))
-            .map(|(path, _)| path)
-            .collect();
-
-        assert_eq!(
-            found,
-            vec!["solana_response.rs".to_string()],
-            "the client's Solana link rule must be constructed in exactly one module",
-        );
-    }
-
-    #[test]
-    fn the_wasm_wrapper_carries_no_second_copy_of_the_response_rules() {
-        // The JS export is a marshalling layer: bytes in, bytes out. It cannot be exercised from a
-        // host test (it only compiles for wasm), so the property is asserted structurally — none of
-        // the primitives that l2, l3 and the release are made of appear in it.
-        let verify_helper = ["internal_verify", "_sig"].concat();
-        let unsigncrypt_helper = ["unsigncrypt", "_plaintext"].concat();
-        let binding_type = ["SolanaUserDecrypt", "Binding"].concat();
-        let digest_field = [".dig", "est"].concat();
-
-        let (_, wrapper) = client_sources()
-            .into_iter()
-            .find(|(path, _)| path == "js_api.rs")
-            .expect("the JS API module is part of the client tree");
-
-        for needle in [
-            &verify_helper,
-            &unsigncrypt_helper,
-            &binding_type,
-            &digest_field,
-        ] {
-            assert!(
-                !wrapper.contains(needle),
-                "the WASM wrapper mentions {needle}, which means a second copy of the response \
-                 rules is growing there instead of in solana_response.rs",
-            );
-        }
-    }
-
     #[test]
     fn solana_path_ignores_client_address() {
-        // Deferred from PR5: the Solana client has no wallet address, and the recipient is the
+        // The Solana client has no wallet address, and the recipient is the
         // 32-byte key carried by the request. Two clients differing only in `client_address` must
         // therefore be indistinguishable on this path.
         let (pks, sks) = node_keys(1);
@@ -1259,8 +1122,8 @@ mod tests {
     }
 
     #[test]
-    fn the_required_share_count_follows_the_configured_server_count() {
-        // l4's "needed": one share centralized, t+1 for n = 3t + 1.
+    fn required_share_count_follows_server_count() {
+        // The release's "needed": one share centralized, t+1 for n = 3t + 1.
         assert_eq!(solana_required_shares(1), 1);
         assert_eq!(solana_required_shares(4), 2);
         assert_eq!(solana_required_shares(7), 3);
@@ -1268,12 +1131,12 @@ mod tests {
     }
 
     // ---------------------------------------------------------------------------------------
-    // Block 2 — l1: the expectation is recomputed, never parsed out of the response.
+    // The expectation is recomputed, never parsed out of the response.
     // ---------------------------------------------------------------------------------------
 
     #[test]
-    fn the_expected_link_is_recomputed_from_the_requests_own_typed_fields() {
-        // l1. Built independently here through the canonical binding: if the request struct grew a
+    fn expected_link_recomputed_from_request_fields() {
+        // Built independently here through the canonical binding: if the request struct grew a
         // second construction of its own that merely agrees today, this comparison is what fails.
         let request = canonical_request();
 
@@ -1294,8 +1157,8 @@ mod tests {
     }
 
     #[test]
-    fn validates_the_declared_chain_id_before_processing_a_response() {
-        // l1. The client holds a chain id of its own — the one its permit was signed for — so
+    fn declared_chain_id_validated_before_response_processing() {
+        // The client holds a chain id of its own — the one its permit was signed for — so
         // unlike a KMS party it can check the value the handles embed against a declared one.
         let request = canonical_request();
         assert_eq!(request.expected_link().unwrap().len(), 32);
@@ -1313,7 +1176,7 @@ mod tests {
 
     #[test]
     fn rejects_invalid_handle_chain_ids_and_widths() {
-        // l1. A handle without the chain-kind bit belongs to the EVM linker, and a handle of the
+        // A handle without the chain-kind bit belongs to the EVM linker, and a handle of the
         // wrong width is not a handle at all; neither can reach a link.
         let mut evm_handle = canonical_request();
         evm_handle.host_chain_id = 12_345;
@@ -1338,8 +1201,8 @@ mod tests {
     }
 
     #[test]
-    fn a_correctly_signed_share_carrying_a_foreign_digest_is_a_link_mismatch() {
-        // l1 + l3. The share is authentic — it is the *expectation* that does not come from it.
+    fn signed_share_with_foreign_digest_is_link_mismatch() {
+        // The share is authentic — it is the *expectation* that does not come from it.
         // The digest below is the link of a different request, so a client that took the response's
         // digest as its expectation would accept this share.
         let (pks, sks) = node_keys(1);
@@ -1360,7 +1223,7 @@ mod tests {
     }
 
     // ---------------------------------------------------------------------------------------
-    // Block 3 — l2: whichever node signature the share carries is verified, before l3.
+    // Whichever node signature the share carries is verified, before its link is read.
     //
     // The rule mirrors the EVM branch exactly (see
     // `engine::validation_wasm::validate_user_decrypt_meta_data_and_signature`): a non-empty
@@ -1369,8 +1232,8 @@ mod tests {
     // ---------------------------------------------------------------------------------------
 
     #[test]
-    fn an_internal_signature_alone_authenticates_a_share() {
-        // l2, sunshine, internal branch. The share carries an ECDSA signature over the serialized
+    fn internal_signature_alone_authenticates_share() {
+        // Sunshine, internal authentication branch. The share carries an ECDSA signature over the serialized
         // payload and nothing else, and that is enough to be authenticated.
         let (pks, sks) = node_keys(1);
         let request = canonical_request();
@@ -1391,8 +1254,8 @@ mod tests {
     }
 
     #[test]
-    fn an_external_signature_alone_authenticates_a_share() {
-        // l2, sunshine, external branch — and this is the shape the wire actually has: the relayer
+    fn external_signature_alone_authenticates_share() {
+        // Sunshine, external authentication branch — and this is the shape the wire actually has: the relayer
         // forwards `signature: vec![]`, so the EIP-712 `external_signature` is the only
         // authentication a real Solana response carries. It must be *verified* against the response
         // domain, the request's transport key and its extra_data, which is precisely what the
@@ -1417,8 +1280,8 @@ mod tests {
     }
 
     #[test]
-    fn a_single_share_response_names_the_signature_rule_it_failed() {
-        // l2, internal branch. Three ways for an internal signature to be wrong plus the share that
+    fn single_share_response_names_failed_signature_rule() {
+        // Internal branch. Three ways for an internal signature to be wrong plus the share that
         // carries no signature at all; all four are the same rule, and none of them may be reported
         // as a link problem.
         let (pks, sks) = node_keys(2);
@@ -1464,8 +1327,8 @@ mod tests {
     }
 
     #[test]
-    fn an_external_signature_that_does_not_verify_is_the_signature_rule() {
-        // l2, external branch. The mirror of the case above: every way the EIP-712 signature can
+    fn failed_external_signature_is_signature_error() {
+        // External branch. The mirror of the case above: every way the EIP-712 signature can
         // fail to be party 1's signature over this request's message is the same rule. A share is
         // rejected here for reasons that have nothing to do with its digest, which is correct
         // throughout.
@@ -1516,8 +1379,8 @@ mod tests {
     }
 
     #[test]
-    fn an_external_signature_over_other_extra_data_is_rejected() {
-        // l2. The EVM path requires the response's extra_data to be the request's before it
+    fn external_signature_over_other_extra_data_is_rejected() {
+        // The EVM path requires the response's extra_data to be the request's before it
         // verifies anything, and this path mirrors it. The bytes stay opaque — nothing here parses
         // them — but they are an input to the signed message, so a share committing to other bytes
         // is authentic for a request that was never made. Everything else about this share is
@@ -1543,10 +1406,10 @@ mod tests {
     }
 
     #[test]
-    fn a_share_advertising_a_key_with_a_foreign_address_is_rejected() {
+    fn share_advertising_foreign_address_key_rejected() {
         // The advertised key is admitted by its address binding to the registered signer set. A
         // share advertising a different party's key — with a signature that even verifies under
-        // that key — fails the key gate, before l2: a valid signature by the wrong signer is not
+        // that key — fails the key gate, before authentication: a valid signature by the wrong signer is not
         // a signature failure but a key that is not this party's.
         let (pks, sks) = node_keys(2);
         let request = canonical_request();
@@ -1563,7 +1426,7 @@ mod tests {
     }
 
     #[test]
-    fn an_empty_trusted_signer_set_authenticates_nothing() {
+    fn empty_trusted_signer_set_authenticates_nothing() {
         // Fail-closed: with no registered signers every share is an unknown party, however well
         // signed. This is the semantics the wasm wrapper leans on when its caller omits the
         // signer set — omission weakens nothing into acceptance.
@@ -1578,8 +1441,8 @@ mod tests {
     }
 
     #[test]
-    fn a_present_internal_signature_is_the_one_verified() {
-        // l2 branches on which signature is present, exactly as the EVM path does — it does not try
+    fn present_internal_signature_takes_precedence() {
+        // Authentication branches on which signature is present, exactly as the EVM path does — it does not try
         // both and accept either. A share with a forged internal signature must not be waved
         // through on a valid external one sitting next to it.
         let (pks, sks) = node_keys(2);
@@ -1598,8 +1461,8 @@ mod tests {
     }
 
     #[test]
-    fn a_share_with_a_bad_signature_is_rejected_before_its_link_is_compared() {
-        // l2 before l3. The share carries the byte-correct link, so the only reason to reject it is
+    fn bad_signature_rejected_before_link_compared() {
+        // Authentication before comparison. The share carries the byte-correct link, so the only reason to reject it is
         // the signature — and `link_mismatch` staying at zero is what shows the comparison was
         // never reached for an unauthenticated payload.
         let (pks, sks) = node_keys(4);
@@ -1616,8 +1479,8 @@ mod tests {
     }
 
     #[test]
-    fn a_share_failing_both_rules_is_rejected_for_its_signature_not_its_link() {
-        // l2 before l3. The rejection is the *first* rule failed, so a share that is both
+    fn share_failing_both_rules_reported_as_signature_error() {
+        // Authentication before comparison. The rejection is the *first* rule failed, so a share that is both
         // unauthenticated and wrongly linked never reaches the link comparison.
         let (pks, sks) = node_keys(1);
         let request = canonical_request();
@@ -1635,12 +1498,12 @@ mod tests {
     }
 
     // ---------------------------------------------------------------------------------------
-    // Block 4 — l3 is byte equality, and a mismatching share contributes nothing.
+    // The digest comparison is byte equality, and a mismatching share contributes nothing.
     // ---------------------------------------------------------------------------------------
 
     #[test]
-    fn a_single_share_carrying_the_recomputed_link_verifies() {
-        // l1-l4, sunshine. The centralized case is the one-share case of the same rules.
+    fn single_share_with_recomputed_link_verifies() {
+        // Sunshine. The centralized case is the one-share case of the same rules.
         let (pks, sks) = node_keys(1);
         let request = canonical_request();
         let agg_resp = vec![canonical_centralized_response(&request, &sks[0], &pks[&1])];
@@ -1664,8 +1527,8 @@ mod tests {
     }
 
     #[test]
-    fn a_digest_of_the_wrong_length_is_rejected() {
-        // l3. Byte equality includes the length: a 31-byte digest is not a prefix match, and an
+    fn wrong_length_digest_rejected() {
+        // Byte equality includes the length: a 31-byte digest is not a prefix match, and an
         // empty one is not a wildcard.
         let (pks, sks) = node_keys(1);
         let request = canonical_request();
@@ -1688,8 +1551,8 @@ mod tests {
     }
 
     #[test]
-    fn a_single_byte_flip_in_the_digest_is_rejected() {
-        // l3. The comparison is over all 32 bytes; there is no tolerance anywhere in it.
+    fn single_byte_digest_flip_rejected() {
+        // The comparison is over all 32 bytes; there is no tolerance anywhere in it.
         let (pks, sks) = node_keys(1);
         let request = canonical_request();
         let link = request.expected_link().expect("a canonical request");
@@ -1711,8 +1574,8 @@ mod tests {
     }
 
     #[test]
-    fn a_wrongly_linked_share_is_excluded_while_the_others_survive() {
-        // l3 + l4. The discarded share contributes nothing: it is neither in the accepted set nor
+    fn wrongly_linked_share_excluded_others_survive() {
+        // The discarded share contributes nothing: it is neither in the accepted set nor
         // counted towards the threshold, and the rest of the response is unaffected by it.
         let (pks, sks) = node_keys(4);
         let request = canonical_request();
@@ -1728,12 +1591,12 @@ mod tests {
     }
 
     // ---------------------------------------------------------------------------------------
-    // Block 5 — l4: one common link, and all or nothing.
+    // One common link, and all or nothing.
     // ---------------------------------------------------------------------------------------
 
     #[test]
-    fn only_the_shares_carrying_the_recomputed_link_are_accepted() {
-        // l4. Two groups of shares, each internally consistent, both correctly signed. The group
+    fn only_shares_carrying_recomputed_link_accepted() {
+        // Two groups of shares, each internally consistent, both correctly signed. The group
         // that matters is the one carrying the *recomputed* link — "the majority agrees" is not a
         // rule here, and a majority carrying a foreign link would still be rejected.
         let (pks, sks) = node_keys(4);
@@ -1758,7 +1621,7 @@ mod tests {
 
     #[test]
     fn too_few_same_link_shares_release_no_plaintext_at_all() {
-        // l4. All or nothing: a response that is partially valid is not partially released. This is
+        // All or nothing: a response that is partially valid is not partially released. This is
         // the EVM behaviour preserved as an explicit rule rather than as an accident of
         // reconstruction failing later.
         let (pks, sks) = node_keys(4);
@@ -1784,8 +1647,8 @@ mod tests {
     }
 
     #[test]
-    fn shares_dropped_down_to_exactly_the_threshold_still_verify() {
-        // l4, at the boundary. Dropping shares one at a time must keep verifying until the count
+    fn shares_at_exact_threshold_still_verify() {
+        // The threshold boundary. Dropping shares one at a time must keep verifying until the count
         // falls below what is needed, and fail on the very next one.
         let (pks, sks) = node_keys(4);
         let request = canonical_request();
@@ -1812,8 +1675,8 @@ mod tests {
     }
 
     #[test]
-    fn a_replayed_share_does_not_fill_the_threshold() {
-        // The one-share-per-party half of l4. A single node's share, replayed, is one distinct
+    fn replayed_share_does_not_fill_threshold() {
+        // One share per party. A single node's share, replayed, is one distinct
         // party — never two — so the threshold cannot be met by echoing one share.
         let (pks, sks) = node_keys(4);
         let request = canonical_request();
@@ -1834,7 +1697,7 @@ mod tests {
     }
 
     #[test]
-    fn only_a_partys_first_accepted_share_is_counted() {
+    fn only_first_accepted_share_per_party_counted() {
         // A replay next to an otherwise complete response is discarded into the census; the
         // accepted set still carries each party exactly once.
         let (pks, sks) = node_keys(4);
@@ -1849,7 +1712,7 @@ mod tests {
     }
 
     #[test]
-    fn a_party_whose_first_share_failed_is_still_represented_by_a_valid_one() {
+    fn party_with_failed_first_share_still_counted_via_valid_share() {
         // Distinctness is keyed on *accepted* shares. A garbage share planted in front of a
         // party's real one must not consume that party's slot — otherwise anyone able to inject
         // bytes into the aggregate could vote a trusted node out of the count.
@@ -1867,8 +1730,8 @@ mod tests {
     }
 
     #[test]
-    fn an_empty_response_is_rejected_before_any_share_is_examined() {
-        // l4's degenerate case, and the message the JS tests pin.
+    fn empty_response_rejected_before_examining_shares() {
+        // The degenerate case: no shares at all, and the message the JS tests pin.
         let (pks, _sks) = node_keys(1);
         let request = canonical_request();
 
@@ -1879,7 +1742,7 @@ mod tests {
     }
 
     #[test]
-    fn a_verified_threshold_response_reconstructs_the_shared_plaintext() {
+    fn verified_threshold_response_reconstructs_shared_plaintext() {
         // The threshold release end to end: four real shares of one plaintext, Shamir-shared and
         // signcrypted exactly as servers publish them, reconstruct through the same code the EVM
         // path runs after its own validation — no Solana-only reconstruction exists to diverge.
@@ -1901,7 +1764,7 @@ mod tests {
     }
 
     #[test]
-    fn a_threshold_response_missing_one_share_still_reconstructs() {
+    fn threshold_response_missing_one_share_still_reconstructs() {
         // t-of-n, not n-of-n: with degree 1 and four parties any t + 1 = 2 shares interpolate, so
         // dropping a whole response must not change the released plaintext — the same one-share
         // drop the EVM threshold tests perform.
@@ -1924,7 +1787,7 @@ mod tests {
     }
 
     #[test]
-    fn a_centralized_response_releases_the_plaintext_it_was_signcrypted_to() {
+    fn centralized_response_releases_its_signcrypted_plaintext() {
         // The whole path, with real signcryption: the link is the associated data and the raw
         // 32-byte wallet key is the receiver id, so a plaintext only comes out if the client
         // recomputed both exactly as the server used them.
@@ -1963,11 +1826,11 @@ mod tests {
     }
 
     // ---------------------------------------------------------------------------------------
-    // Block 6 — duplicate handles are bound by position.
+    // Duplicate handles are bound by position.
     // ---------------------------------------------------------------------------------------
 
     #[test]
-    fn a_request_naming_the_same_handle_twice_binds_both_occurrences() {
+    fn repeated_handle_binds_both_occurrences() {
         // Duplicates are legal upstream — each occurrence is authorized independently — so the
         // linker binds every occurrence at its position, and [h, h] is not [h].
         let once = request_over(vec![handle(0xa1)]);
@@ -1981,7 +1844,7 @@ mod tests {
     }
 
     #[test]
-    fn a_digest_computed_over_the_deduplicated_handles_is_a_link_mismatch() {
+    fn digest_over_deduplicated_handles_is_link_mismatch() {
         // A server (or relayer) that collapsed the repeated handle answered a request the client
         // did not make. The client asked for two decryptions and must not accept a response bound
         // to one.
@@ -2003,7 +1866,7 @@ mod tests {
     }
 
     // ---------------------------------------------------------------------------------------
-    // Block 7 — the consistency gate: a multi-share set must be one threshold response.
+    // The consistency gate: a multi-share set must be one threshold response.
     // ---------------------------------------------------------------------------------------
 
     /// `response`, its payload changed by `mutate` and re-signed by the same node: a share that is
@@ -2021,7 +1884,7 @@ mod tests {
     }
 
     #[test]
-    fn a_signed_zero_ciphertext_share_cannot_shape_the_reconstruction() {
+    fn signed_zero_ciphertext_share_cannot_shape_reconstruction() {
         // n = 4, t = 1: two distinct parties satisfy the count, so a correctly signed share with
         // zero ciphertexts plus one honest share used to reach reconstruction, which takes the
         // batch shape from the first payload and would release an empty plaintext list as
@@ -2052,7 +1915,7 @@ mod tests {
     }
 
     #[test]
-    fn a_shorter_share_later_in_the_list_is_dropped_not_indexed() {
+    fn shorter_late_share_dropped_not_indexed() {
         // The same mutation surrounded by an honest majority: the pivot is the three consistent
         // shares, the hollow one is dropped as disagreeing with it, and the release still
         // reconstructs — reconstruction never indexes past the short ciphertext list, because the
@@ -2077,7 +1940,7 @@ mod tests {
     }
 
     #[test]
-    fn a_degree_other_than_the_configured_threshold_is_refused() {
+    fn degree_other_than_configured_threshold_refused() {
         // Four shares agreeing with each other on degree 2 under a four-server set: internally
         // uniform, but not a response of the t = 1 deployment the client is configured for, and
         // reconstruction would run Shamir under the response's own parameters.
@@ -2156,7 +2019,7 @@ mod tests {
     }
 
     #[test]
-    fn a_byte_identical_key_cannot_vote_under_two_party_ids() {
+    fn byte_identical_key_cannot_vote_under_two_party_ids() {
         // A trusted set that (mis)registers one address under two party ids is the only way one
         // key can pass the per-share address binding twice. The set-level rule refuses the
         // byte-identical pair — a verification key backs at most one accepted party, so the two
@@ -2189,7 +2052,7 @@ mod tests {
     }
 
     #[test]
-    fn the_gate_verifies_external_signed_shares_with_the_requests_own_fields() {
+    fn gate_verifies_external_signatures_with_request_fields() {
         // The gate re-checks signatures through the shared validation, whose external branch
         // rebuilds the signed message from the request's transport key, extra_data and response
         // domain. A fully external-signed threshold set passing end to end pins that the Solana
@@ -2224,7 +2087,7 @@ mod tests {
     }
 
     // ---------------------------------------------------------------------------------------
-    // Block 8 — the stable JS/WASM test vectors (`wasm_tests` builds only).
+    // The stable JS/WASM test vectors (`wasm_tests` builds only).
     // ---------------------------------------------------------------------------------------
 
     /// The Solana counterpart of the EVM transcript generation: a deterministic fixture written as

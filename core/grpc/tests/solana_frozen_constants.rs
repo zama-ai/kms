@@ -1,26 +1,15 @@
 //! Byte-freeze gate for Solana user-decryption linker v1.
 //!
-//! What freezing means, stated once so the next reader does not have to infer it: before this
-//! point the preimage layout, the scheme tag and the call separator could move freely — v1 shipped
-//! nowhere and no cross-version compatibility existed. With the normative vectors published
-//! (`core/grpc/test-vectors/solana_linker_v1.json`) a second party now depends on these bytes.
-//! From here, changing any of them is a **deliberate version bump in the scheme tag**, not an
-//! edit: five implementations reproduce this construction, and a silent reinterpretation of the
-//! same bytes is exactly the failure the tag exists to prevent.
+//! The scheme tag, the call separator, the preimage layout and the digest below are frozen
+//! together with the published vectors (`core/grpc/test-vectors/solana_linker_v1.json`): other
+//! implementations reproduce these bytes, so changing any of them is a version bump in the scheme
+//! tag, not an edit.
 //!
-//! **This test failing is the signal, not the accident.** If it fails, the question is never "what
-//! constant do I paste here" — it is "did I mean to define v2".
-//!
-//! Method, and the one way this file differs from `evm_path_byte_frozen.rs`: the EVM goldens there
-//! were legitimately read off the implementation, because the EVM path already shipped and the
-//! reference *is* today's output. Solana v1 is new, so its goldens may not be captured that way.
-//! The expected hasher input below is assembled by hand, element by element, from the specified
-//! preimage layout, and only the hashing of that hand-assembled sequence uses the SHAKE-256
-//! primitive. `compute_link` is then required to agree — it is the thing under test, never the
-//! source of the expectation.
-//!
-//! Fixtures are spelled out locally and this file imports no test helper on purpose: a frozen
-//! golden must not move because a shared helper was edited.
+//! Unlike `evm_path_byte_frozen.rs`, whose goldens were read off the already-shipped EVM
+//! implementation, the expected hasher input here is assembled by hand from the specified
+//! preimage layout; `compute_link` is required to agree and is never the source of the
+//! expectation. Fixtures are spelled out locally: a frozen golden must not move because a shared
+//! test helper was edited.
 
 use std::path::PathBuf;
 
@@ -179,7 +168,7 @@ mod offset {
 // ---------------------------------------------------------------------------
 
 #[test]
-fn the_call_separator_is_frozen() {
+fn call_separator_is_frozen() {
     // One explicit versioned domain per cryptographic purpose. This value is now published.
     assert_eq!(&DSEP_SOLANA_LINKER, &FROZEN_DSEP);
     assert_eq!(&DSEP_SOLANA_LINKER, b"SOLLNK01");
@@ -187,7 +176,7 @@ fn the_call_separator_is_frozen() {
 }
 
 #[test]
-fn the_scheme_tag_and_its_length_are_frozen() {
+fn scheme_tag_and_its_length_are_frozen() {
     // Length carries meaning of its own: the tag is a fixed-width element, so a shorter or longer
     // one shifts every byte that follows it into the hash.
     assert_eq!(
@@ -199,7 +188,7 @@ fn the_scheme_tag_and_its_length_are_frozen() {
 }
 
 #[test]
-fn the_element_layout_sits_at_its_frozen_offsets() {
+fn element_layout_sits_at_its_frozen_offsets() {
     // The specified element order and widths, checked against the hand-assembled preimage. A
     // layout change fails here with a legible byte diff before it fails as an opaque digest
     // mismatch below.
@@ -256,7 +245,7 @@ fn the_element_layout_sits_at_its_frozen_offsets() {
 }
 
 #[test]
-fn the_hand_assembled_preimage_hashes_to_the_frozen_link() {
+fn hand_assembled_preimage_hashes_to_frozen_link() {
     // The independent half: SHAKE-256 over bytes this file wrote, with the linker not involved.
     assert_eq!(
         hex::encode(shake256_32(&expected_hasher_input())),
@@ -265,7 +254,7 @@ fn the_hand_assembled_preimage_hashes_to_the_frozen_link() {
 }
 
 #[test]
-fn the_linker_digest_is_byte_frozen() {
+fn linker_digest_is_byte_frozen() {
     // The dependent half: the implementation must agree with the specification read by hand.
     let link = frozen_request().compute_link();
 
@@ -274,7 +263,7 @@ fn the_linker_digest_is_byte_frozen() {
 }
 
 #[test]
-fn the_published_hasher_input_is_the_frozen_preimage() {
+fn published_hasher_input_matches_frozen_preimage() {
     // The vectors publish this field so that implementations can compare their construction before
     // comparing digests. It is frozen with everything else.
     assert_eq!(
@@ -284,7 +273,7 @@ fn the_published_hasher_input_is_the_frozen_preimage() {
 }
 
 #[test]
-fn the_frozen_chain_id_carries_the_solana_kind_bit() {
+fn frozen_chain_id_carries_solana_kind_bit() {
     // The backstop that keeps Solana handles off the EVM linker and vice versa. The low bits are
     // the EVM freeze fixture's host chain id, so the two frozen digests cover the same deployment
     // number under two different chain kinds.
@@ -297,7 +286,7 @@ fn the_frozen_chain_id_carries_the_solana_kind_bit() {
 }
 
 #[test]
-fn the_published_vector_set_is_frozen_at_the_same_constants() {
+fn published_vector_set_frozen_at_same_constants() {
     // The freeze and the vectors are one decision. Read as raw text rather than through the vector
     // runner's schema types, so that a rename there cannot quietly relax this.
     let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))

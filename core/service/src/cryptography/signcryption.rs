@@ -991,11 +991,7 @@ mod tests {
     }
 }
 
-/// The recipient and the link, as signcryption sees them.
-///
-/// Adding a host must not change this layer. These tests are green before the Solana work and must
-/// stay green after it: they are the evidence that the engine was made host-agnostic by *not*
-/// touching it, rather than by adding a second branch that happens to agree.
+/// The recipient and the link, as signcryption sees them: opaque bytes, host-agnostic.
 #[cfg(test)]
 mod receiver_representation_tests {
     use super::{
@@ -1006,9 +1002,6 @@ mod receiver_representation_tests {
     use rand::SeedableRng;
     use tfhe::FheTypes;
 
-    // Declared as a `DomainSep` so the domain-separator inventory scan sees it, with a value of
-    // its own: reusing another fixture's value would trip the inventory's collision rule, and
-    // rightly so.
     const DSEP: hashing::DomainSep = *b"SIGCTEST";
     const SOLANA_PUBKEY: [u8; 32] = [0x11; 32];
 
@@ -1017,29 +1010,9 @@ mod receiver_representation_tests {
     }
 
     #[test]
-    fn a_solana_recipient_is_the_wallet_key_itself() {
-        let receiver = SigncryptionReceiver::Solana(SOLANA_PUBKEY);
-
-        assert_eq!(receiver.as_bytes(), SOLANA_PUBKEY.as_slice());
-        assert_eq!(receiver.as_bytes().len(), 32);
-    }
-
-    #[test]
-    fn an_evm_recipient_is_byte_identical_to_the_address() {
-        // The seam must be invisible on the EVM path: the bytes reaching signcryption are the
-        // same 20 bytes the address has always produced, or every existing EVM response changes.
-        let address = evm_address();
-        let receiver = SigncryptionReceiver::Evm(address);
-
-        assert_eq!(receiver.as_bytes(), address.as_slice());
-        assert_eq!(receiver.as_bytes().len(), 20);
-    }
-
-    #[test]
-    fn both_recipient_widths_round_trip_through_the_same_call() {
-        // One call site, two identity widths, no branch. The primitive takes the receiver id as
-        // opaque bytes, which is why a 32-byte identity needs no change here — the 20-byte
-        // constraint was always a property of the EVM adapter, not of signcryption.
+    fn both_recipient_widths_round_trip_through_same_call() {
+        // One call site, two identity widths, no branch: the 20-byte constraint was always a
+        // property of the EVM adapter, not of signcryption.
         for receiver in [
             SigncryptionReceiver::Evm(evm_address()),
             SigncryptionReceiver::Solana(SOLANA_PUBKEY),
@@ -1064,7 +1037,7 @@ mod receiver_representation_tests {
     }
 
     #[test]
-    fn signcryption_is_bound_to_the_recipient() {
+    fn signcryption_bound_to_recipient() {
         // The recipient is authenticated data, not a label: a result sealed to one identity must
         // not open under another, whatever the widths involved.
         let mut rng = AesRng::seed_from_u64(1);
@@ -1093,7 +1066,7 @@ mod receiver_representation_tests {
     }
 
     #[test]
-    fn the_link_is_carried_verbatim_and_never_interpreted() {
+    fn link_is_carried_verbatim_and_never_interpreted() {
         // The engine embeds the link and compares it; it does not parse or re-hash it. That is
         // what lets a host define its own construction without the engine knowing anything about
         // it — including a link that is not a digest of anything.

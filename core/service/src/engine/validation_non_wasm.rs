@@ -280,7 +280,7 @@ fn unpack_user_decrypt_req(
     // embedded in every ciphertext handle backstops it — `validate_solana_request` rejects
     // EVM-kind handles, and `compute_link_checked` below rejects Solana-kind ones, so a request
     // cannot cross over by carrying the wrong field. All four field-by-handle-kind combinations
-    // are pinned by `validation_solana::adapter_tests::the_dispatch_table_is_closed`.
+    // are pinned by `validation_solana::tests::dispatch_table_is_closed`.
     if let Some((link, receiver, response_domain)) =
         super::validation_solana::validate_solana_request(req)?
     {
@@ -422,7 +422,6 @@ fn unpack_public_decrypt_req(
     ))
 }
 
-/// Verify the EIP-712 encoded payload in the request.
 /// This function checks that the digest in [other_resp] matches [pivot_resp],
 /// [other_resp] contains one of the valid [server_pks] and the signature
 /// is correct with respect to this key.
@@ -1624,7 +1623,7 @@ mod tests {
     }
 
     #[test]
-    fn the_solana_link_binds_the_context_and_epoch_the_kms_selected() {
+    fn solana_link_binds_kms_selected_context_and_epoch() {
         // The Solana adapter parses `context_id`/`epoch_id` — including their defaults — a second
         // time, separately from the parse a few lines above its call site. Today the two agree;
         // this pins that the link is computed over the values the returned tuple actually carries,

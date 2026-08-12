@@ -119,7 +119,7 @@ fn evm_linker_digest_is_byte_frozen() {
 }
 
 #[test]
-fn evm_linker_digest_ignores_the_solana_request_fields() {
+fn evm_linker_digest_ignores_solana_request_fields() {
     let baseline = frozen_request().compute_link_checked().expect("baseline").0;
 
     // Every field the Solana branch reads must be invisible to the EVM digest. A party that
@@ -147,7 +147,7 @@ fn evm_linker_digest_ignores_the_solana_request_fields() {
 }
 
 #[test]
-fn evm_path_rejects_handles_of_the_solana_chain_kind() {
+fn evm_path_rejects_solana_chain_kind_handles() {
     // The chain-kind backstop keeps a Solana-embedded handle off the EVM path entirely, so the
     // two linkers can never be asked to bind the same handle.
     let mut solana_kind = frozen_request();

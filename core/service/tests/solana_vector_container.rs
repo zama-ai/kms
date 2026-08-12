@@ -12,10 +12,9 @@
 //! of the tree that *can* deserialize: it reads the committed JSON — the same file five
 //! implementations consume, not a locally rebuilt copy — and requires the bytes to still parse.
 //!
-//! **What a failure here means.** Not "update the constant". If tfhe's safe-serialization framing
-//! moves — a header field, a version prefix, a length encoding — this test fails against frozen
-//! vector bytes that other repositories are already comparing digests against. That is a
-//! cross-repository fixture break and a deliberate regeneration of the set, not an edit.
+//! A failure here means tfhe's safe-serialization framing moved against frozen vector bytes that
+//! other repositories compare digests of — a cross-repository fixture break that requires a
+//! deliberate regeneration of the set, not a constant update.
 
 #![cfg(feature = "non-wasm")]
 
@@ -47,7 +46,7 @@ fn committed_transport_key(name: &str) -> Vec<u8> {
 }
 
 #[test]
-fn the_reference_vector_key_is_a_real_serialized_ml_kem_512_container() {
+fn reference_vector_key_is_real_ml_kem_512_container() {
     let bytes = committed_transport_key(CONTAINER_KEY);
 
     assert_eq!(
@@ -69,7 +68,7 @@ fn the_reference_vector_key_is_a_real_serialized_ml_kem_512_container() {
 }
 
 #[test]
-fn the_container_re_serializes_to_the_published_bytes() {
+fn container_re_serializes_to_published_bytes() {
     // Round trip, not just parse: a framing change that happened to remain readable would still be
     // a change to bytes another repository compares a digest against, and this catches that too.
     let bytes = committed_transport_key(CONTAINER_KEY);

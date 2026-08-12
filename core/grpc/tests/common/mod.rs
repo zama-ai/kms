@@ -1,11 +1,8 @@
-//! Shared fixtures for the Solana linker v1 test binaries.
+//! Fixtures for the Solana linker sensitivity suite.
 //!
 //! A single canonical request, mutated one field at a time. Tests read as "this request, except
 //! for X", which is what makes a sensitivity suite reviewable: the reader can see that exactly one
 //! thing changed.
-
-// Each test binary compiles this module and uses a subset of it.
-#![allow(dead_code)]
 
 use kms_grpc::solana_binding::{SolanaUserDecryptBinding, SolanaUserDecryptBindingError};
 
