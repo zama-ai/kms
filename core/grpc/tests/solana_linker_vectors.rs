@@ -640,10 +640,7 @@ impl Inputs {
 // Building the set
 // ---------------------------------------------------------------------------
 
-/// The v0 scheme tag, spelled in pieces.
-///
-/// `solana_v0_removed.rs` scans the tree for the literal and would report this file as v0 residue;
-/// the tag genuinely is gone from the implementation, and it appears here only as the thing a
+/// The retired v0 scheme tag: gone from the implementation, it appears here only as the thing a
 /// response must not be believed for. The JSON carries it in full — that is the vector.
 fn retired_scheme_tag() -> String {
     ["SolanaUserDecryptionLinker", ":v0"].concat()
@@ -1429,7 +1426,14 @@ fn every_valid_record_builds_and_carries_the_link_the_binding_computes() {
             record.name
         );
         assert_eq!(record.link_bytes().len(), LINK_LEN, "{}", record.name);
-        assert_eq!(binding.chain_id(), record.chain_id(), "{}", record.name);
+        binding
+            .validate_declared_chain_id(record.chain_id())
+            .unwrap_or_else(|error| {
+                panic!(
+                    "{}: the record's declared chain id must match its handles: {error}",
+                    record.name
+                )
+            });
     }
 }
 
@@ -1584,10 +1588,9 @@ fn every_foreign_scheme_record_is_not_the_v1_link_for_its_fields() {
 
 #[test]
 fn the_hasher_input_of_every_v1_record_is_the_canonical_functions_input() {
-    // Closes the gap solana_linker_layout.rs states it cannot close on its own: the published
-    // "hasher input" field is the byte sequence the digest is actually taken over, so a consumer
-    // that reproduces the input and gets a different digest knows the disagreement is in the hash,
-    // not in the layout.
+    // The published "hasher input" field is the byte sequence the digest is actually taken over,
+    // so a consumer that reproduces the input and gets a different digest knows the disagreement
+    // is in the hash, not in the layout.
     let file = committed();
     let mut checked = 0;
 

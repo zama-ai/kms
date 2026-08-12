@@ -4,18 +4,10 @@
 //! for X", which is what makes a sensitivity suite reviewable: the reader can see that exactly one
 //! thing changed.
 
-// Each test binary compiles this module and uses a subset of it, including its re-exports.
-#![allow(dead_code, unused_imports)]
+// Each test binary compiles this module and uses a subset of it.
+#![allow(dead_code)]
 
-use std::fs;
-use std::path::{Path, PathBuf};
-
-use hashing::{DomainSep, hash_element_w_size};
 use kms_grpc::solana_binding::{SolanaUserDecryptBinding, SolanaUserDecryptBindingError};
-
-/// The list-setting separator the KMS list hash prepends, ahead of the per-call separator.
-/// Re-exported from the production crate so the tests hash with the real value, not a copy.
-pub use hashing::DSEP_LIST;
 
 /// A Solana-kind host chain id: bit 63 set, as every embedded handle chain id must be.
 pub const CHAIN_ID: u64 = (1 << 63) | 12_345;
@@ -95,80 +87,4 @@ impl Request {
     pub fn link(&self) -> Vec<u8> {
         self.build().compute_link()
     }
-}
-
-/// SHAKE-256 with a 32-byte output, over `bytes` in full.
-///
-/// Expressed through the codebase's own helper rather than a second hashing dependency: the helper
-/// computes `SHAKE256(separator ‖ element)`, so feeding it the input's first eight bytes as the
-/// separator and the rest as the element hashes exactly `bytes`. The identity is verified by
-/// `list_hash_helper_matches_the_specified_construction` rather than assumed.
-pub fn shake256_32(bytes: &[u8]) -> Vec<u8> {
-    let (separator, rest) = bytes.split_at(8);
-    hash_element_w_size(
-        &DomainSep::try_from(separator).expect("split at eight bytes"),
-        rest,
-        32,
-    )
-}
-
-/// Root of the workspace, two levels above this crate.
-pub fn workspace_root() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("..")
-        .join("..")
-        .canonicalize()
-        .expect("the workspace root is two levels above this crate")
-}
-
-/// Directories that hold build output or vendored data rather than source.
-fn is_skipped(name: &str) -> bool {
-    matches!(name, "target" | ".git" | "node_modules" | "data")
-}
-
-fn collect_rust_files(dir: &Path, files: &mut Vec<PathBuf>) {
-    let entries = match fs::read_dir(dir) {
-        Ok(entries) => entries,
-        // An unreadable directory cannot hide a declaration that matters: anything invisible here
-        // is equally invisible to the compiler.
-        Err(_) => return,
-    };
-
-    for entry in entries.flatten() {
-        let path = entry.path();
-        let name = entry.file_name().to_string_lossy().to_string();
-
-        if path.is_dir() {
-            if !is_skipped(&name) {
-                collect_rust_files(&path, files);
-            }
-        } else if name.ends_with(".rs") {
-            files.push(path);
-        }
-    }
-}
-
-/// Every Rust source file in the workspace, as `(workspace-relative path, contents)`.
-///
-/// Source-scanning tests are only worth having if they cannot pass by finding nothing, so every
-/// caller must assert something about the corpus itself — a count, or a set equality — and not
-/// merely the absence of a match.
-pub fn rust_sources() -> Vec<(String, String)> {
-    let root = workspace_root();
-    let mut files = Vec::new();
-    collect_rust_files(&root, &mut files);
-    files.sort();
-
-    files
-        .into_iter()
-        .filter_map(|file| {
-            let contents = fs::read_to_string(&file).ok()?;
-            let relative = file
-                .strip_prefix(&root)
-                .expect("collected under the root")
-                .to_string_lossy()
-                .replace('\\', "/");
-            Some((relative, contents))
-        })
-        .collect()
 }

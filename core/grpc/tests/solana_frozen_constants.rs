@@ -290,7 +290,6 @@ fn the_frozen_chain_id_carries_the_solana_kind_bit() {
     // number under two different chain kinds.
     assert_ne!(FROZEN_CHAIN_ID & (1 << 63), 0);
     assert_eq!(FROZEN_CHAIN_ID & !(1u64 << 63), 8006);
-    assert_eq!(frozen_request().chain_id(), FROZEN_CHAIN_ID);
     assert_eq!(
         &frozen_handle(0xa1)[HANDLE_CHAIN_ID],
         &FROZEN_CHAIN_ID.to_be_bytes(),
