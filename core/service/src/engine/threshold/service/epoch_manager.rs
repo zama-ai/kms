@@ -1540,6 +1540,7 @@ pub(crate) mod tests {
             PUBLIC_STORAGE_PREFIX_THRESHOLD_ALL, SIGNING_KEY_ID, default_extra_data,
         },
         cryptography::signatures::gen_sig_keys,
+        dummy_domain,
         engine::{
             base::{BaseKmsStruct, derive_request_id},
             threshold::service::session::PRSSSetupCombined,
@@ -1556,20 +1557,23 @@ pub(crate) mod tests {
             StorageType,
             file::FileStorage,
             ram::{self, RamStorage},
-            read_all_data_versioned, store_versioned_at_request_id,
+            read_all_data_versioned, store_versioned_at_request_and_epoch_id,
+            store_versioned_at_request_id,
         },
     };
     use aes_prng::AesRng;
     use kms_grpc::{
         RequestId,
         kms::v1::{CrsInfo, FheParameter, KeyInfo, NewMpcEpochRequest},
-        rpc_types::{KMSType, PrivDataType},
+        rpc_types::{KMSType, PrivDataType, alloy_to_protobuf_domain},
     };
     use rand::SeedableRng;
     use threshold_execution::{
         endpoints::reshare_sk::SecureReshareSecretKeys,
         malicious_execution::small_execution::malicious_prss::EmptyPrss,
+        tfhe_internals::test_feature::gen_key_set,
     };
+    use threshold_types::role::Role;
 
     impl<
         Init: PRSSInit<ResiduePolyF4Z64, OutputType = PRSSSetup<ResiduePolyF4Z64>>
@@ -1830,20 +1834,14 @@ pub(crate) mod tests {
             .session_maker
             .add_epoch(
                 prev_epoch_id,
-                EpochData {
-                    prss: PRSSSetupCombined {
-                        prss_setup_z128: PRSSSetup::<ResiduePolyF4Z128>::new_testing_prss(
-                            vec![],
-                            vec![],
-                        ),
-                        prss_setup_z64: PRSSSetup::<ResiduePolyF4Z64>::new_testing_prss(
-                            vec![],
-                            vec![],
-                        ),
-                        num_parties: 4,
-                        threshold: 1,
-                    },
-                    context_id: prev_context_id,
+                PRSSSetupCombined {
+                    prss_setup_z128: PRSSSetup::<ResiduePolyF4Z128>::new_testing_prss(
+                        vec![],
+                        vec![],
+                    ),
+                    prss_setup_z64: PRSSSetup::<ResiduePolyF4Z64>::new_testing_prss(vec![], vec![]),
+                    num_parties: 4,
+                    threshold: 1,
                 },
             )
             .await;
@@ -1860,7 +1858,6 @@ pub(crate) mod tests {
                 }),
                 domain: Some(alloy_to_protobuf_domain(&dummy_domain()).unwrap()),
                 extra_data: make_extra_data(2, Some(&context_id), Some(&epoch_id)).unwrap(),
-                signing_schemes: vec![kms_grpc::kms::v1::SigningSchemeType::Ecdsa256k1 as i32],
             }))
             .await
             .unwrap();
@@ -1885,7 +1882,6 @@ pub(crate) mod tests {
                 }),
                 domain: Some(alloy_to_protobuf_domain(&dummy_domain()).unwrap()),
                 extra_data: make_extra_data(2, Some(&context_id), Some(&epoch_id_2)).unwrap(),
-                signing_schemes: vec![kms_grpc::kms::v1::SigningSchemeType::Ecdsa256k1 as i32],
             }))
             .await
             .unwrap();
@@ -2459,7 +2455,6 @@ pub(crate) mod tests {
                     crs_info: vec![],
                 }),
                 domain: Some(alloy_to_protobuf_domain(&dummy_domain()).unwrap()),
-                signing_schemes: vec![kms_grpc::kms::v1::SigningSchemeType::Ecdsa256k1 as i32],
                 extra_data: make_extra_data(2, Some(&DEFAULT_MPC_CONTEXT), Some(&new_epoch_id))
                     .unwrap(),
             }))

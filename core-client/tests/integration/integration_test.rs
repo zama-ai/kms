@@ -3122,7 +3122,7 @@ async fn test_threshold_mpc_context_switch_6() -> Result<()> {
     let key_id_arg = KeyId::from_str(&key_id.to_string())?;
     let decrypt_new = cmd_config(
         &config_path_5634,
-        CCCommand::PublicDecrypt(DecryptArguments::FromArgs(DecryptParameters {
+        CCCommand::PublicDecrypt(CipherArguments::FromArgs(CipherParameters {
             context_id: Some(context_2_id),
             epoch_id: Some(epoch_2_id),
             ..public_decrypt_params(
@@ -3146,7 +3146,7 @@ async fn test_threshold_mpc_context_switch_6() -> Result<()> {
     info!("========== SWITCH BACK TO CONTEXT 1 ==========");
     let decrypt_old = cmd_config(
         &config_path_1234,
-        CCCommand::PublicDecrypt(DecryptArguments::FromArgs(DecryptParameters {
+        CCCommand::PublicDecrypt(CipherArguments::FromArgs(CipherParameters {
             context_id: Some(context_1_id),
             epoch_id: Some(epoch_1_id),
             ..public_decrypt_params(
