@@ -14,7 +14,7 @@ use backward_compatibility::{
     InternalCustodianSetupMessageTest, InternalRecoveryRequestTest, KeyGenMetadataTest,
     KeyGenMetadataWithExtraDataTest, KeygenSignedPayloadTest, KmsFheKeyHandlesTest, NodeInfoTest,
     OperatorBackupOutputTest, PrepKeygenSignedPayloadTest, PrivateSigKeyTest,
-    PrssSetupCombinedTest, PublicSigKeyTest, RecoveryValidationMaterialTest,
+    PrssSetupCombinedTest, PublicSigKeyTest, RecoveryValidationMaterialTest, SchemeDigestsTest,
     SigncryptionPayloadTest, SoftwareVersionTest, StoredTypedSignatureTest, TestMetadataKMS,
     TestType, Testcase, ThresholdFheKeysTest, TypedPlaintextTest, UnifiedCipherTest,
     UnifiedSigncryptionKeyTest, UnifiedSigncryptionTest, UnifiedUnsigncryptionKeyTest, data_dir,
@@ -833,6 +833,39 @@ fn test_node_info(
     }
 }
 
+fn test_scheme_digests(
+    dir: &Path,
+    test: &SchemeDigestsTest,
+    format: DataFormat,
+) -> Result<TestSuccess, TestFailure> {
+    let original_versionized: SchemeDigests = load_and_unversionize(dir, test, format)?;
+
+    let mut new_versionized = SchemeDigests::new();
+    for (scheme_name, digest) in test.digests.iter() {
+        // A pinned digest that no longer has the length its scheme expects is a compatibility
+        // break in itself, so it is reported as a test failure rather than a panic.
+        new_versionized
+            .insert(scheme_from_name(scheme_name), digest.to_vec())
+            .map_err(|e| {
+                test.failure(
+                    format!("Invalid {scheme_name} digest in SchemeDigests: {e}"),
+                    format,
+                )
+            })?;
+    }
+
+    if original_versionized != new_versionized {
+        Err(test.failure(
+            format!(
+                "Invalid SchemeDigests:\n Expected :\n{original_versionized:?}\nGot:\n{new_versionized:?}"
+            ),
+            format,
+        ))
+    } else {
+        Ok(test.success(format))
+    }
+}
+
 fn test_software_version(
     dir: &Path,
     test: &SoftwareVersionTest,
@@ -1473,6 +1506,9 @@ impl TestedModule for KMS {
             }
             Self::Metadata::NodeInfo(test) => {
                 test_node_info(test_dir.as_ref(), test, format).into()
+            }
+            Self::Metadata::SchemeDigests(test) => {
+                test_scheme_digests(test_dir.as_ref(), test, format).into()
             }
             Self::Metadata::SoftwareVersion(test) => {
                 test_software_version(test_dir.as_ref(), test, format).into()
