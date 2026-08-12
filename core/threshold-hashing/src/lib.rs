@@ -14,7 +14,11 @@ pub const DIGEST_BYTES: usize = 256 / 8;
 /// The maximum size of the serialized element in bytes. Limit set for security reasons as well as a sanity check.
 pub const SAFE_SER_SIZE_LIMIT: u64 = 1024 * 1024 * 1024 * 2;
 
-const DSEP_LIST: DomainSep = *b"HASH_LST";
+/// The setting separator [`unsafe_hash_list_w_size`] prepends, ahead of the per-call separator.
+///
+/// Public so that a caller which must expose the exact byte sequence it hashes can reproduce the
+/// prefix without declaring a second copy of this value.
+pub const DSEP_LIST: DomainSep = *b"HASH_LST";
 
 /// Hash an element using SHAKE-256 with a chosen domain separator and a specified output size in bytes.
 pub fn hash_element_w_size<T>(domain_separator: &DomainSep, element: &T, bytes: usize) -> Vec<u8>
