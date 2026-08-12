@@ -75,16 +75,6 @@
 //! node --test 'tests/js/**/*.js'
 //! ```
 //!
-//! The Solana linker has a second JS suite, tests/js/linker_vectors.test.js, which needs no
-//! transcript and no `wasm_tests` build: steps 1, 3 and 4 alone are enough for it. It loads the
-//! committed normative vector set core/grpc/test-vectors/solana_linker_v1.json — the very bytes the
-//! KMS Core Rust runner (core/grpc/tests/solana_linker_vectors.rs) checks itself against, resolved
-//! by a path relative to the test file so the two sides can never drift onto separate copies — and
-//! drives every record through [compute_solana_user_decrypt_link_from_js]. Each record's typed
-//! fields go in and the recomputed link is compared byte for byte with the record's published
-//! `link`; records under a foreign scheme tag are asserted *unequal* to the v1 link for their own
-//! fields, and the rejecting records must make the export throw. The suite also verifies the set's
-//! SHA-256 against its committed companion file, so a locally edited vector fails on this side too.
 use crate::client::client_wasm::{Client, ServerIdentities};
 use crate::client::solana_response::SolanaUserDecryptionRequest;
 use crate::client::user_decryption_wasm::{
@@ -484,18 +474,38 @@ pub fn process_user_decryption_resp_from_js(
     }
 }
 
-/// A 32-byte Solana identity from a JS byte array. The argument is named in the error because four
-/// same-width values arrive here and a bare width complaint would not say which one was wrong.
+/// A 32-byte Solana identity from a hex field. The field is named in the error because four
+/// same-width values arrive together and a bare width complaint would not say which one was wrong.
 fn solana_identity(
-    bytes: &[u8],
+    hex: &str,
     name: &str,
 ) -> Result<[u8; kms_grpc::solana_binding::SOLANA_IDENTITY_LEN], JsError> {
-    bytes.try_into().map_err(|_| {
+    hex_decode_js_err(hex)?.as_slice().try_into().map_err(|_| {
         JsError::new(&format!(
             "{name} must be {} bytes",
             kms_grpc::solana_binding::SOLANA_IDENTITY_LEN
         ))
     })
+}
+
+/// The Solana-owned request fields, as one named JS object.
+///
+/// Identities are hex strings, and `host_chain_id` is a decimal string — the same convention as
+/// the published vector set and the stable transcripts: a Solana chain id sets bit 63, so it does
+/// not fit a JS number, and a `Number` in this field is a parse error, never a silent rounding.
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct SolanaRequestFieldsJs {
+    /// The recipient's raw 32-byte ed25519 wallet key, hex.
+    user_pubkey: String,
+    /// The host chain id the client's permit was signed for, as a decimal string.
+    host_chain_id: String,
+    /// The on-chain verifying program, 32 bytes, hex.
+    verifying_program_id: String,
+    /// The KMS context id, 32 bytes, hex.
+    kms_context_id: String,
+    /// The KMS epoch id, 32 bytes, hex.
+    kms_epoch_id: String,
 }
 
 /// Solana variant of [process_user_decryption_resp_from_js]. The signed link is the Solana
@@ -511,6 +521,11 @@ fn solana_identity(
 /// set authenticates nothing. The client's wallet address plays no part on this path — the
 /// recipient is the 32-byte ed25519 key below.
 ///
+/// * `solana_request` - the Solana-owned request fields, as one named object:
+/// `{ user_pubkey, host_chain_id, verifying_program_id, kms_context_id, kms_epoch_id }`.
+/// Identities are 32-byte hex strings; `host_chain_id` is a decimal string, the vector-set
+/// convention, because a Solana chain id sets bit 63 and does not fit a JS number.
+///
 /// * `eip712_domain` - the EIP-712 domain a KMS node produced the response's `external_signature`
 /// under, in the same JS shape [process_user_decryption_resp_from_js] takes it. A wasm response
 /// never carries an internal ECDSA signature (see [js_to_resp]), so this is the domain every share
@@ -518,18 +533,10 @@ fn solana_identity(
 /// domain — under which no real external signature verifies, so such a response is rejected by the
 /// signature rule rather than accepted unchecked.
 #[wasm_bindgen]
-#[expect(
-    clippy::too_many_arguments,
-    reason = "every argument is a value the link commits to; a JS-facing struct would hide that"
-)]
 pub fn process_user_decryption_resp_solana_from_js(
     client: &Client,
     request: JsValue,
-    solana_user_pubkey: Vec<u8>,
-    host_chain_id: u64,
-    verifying_program_id: Vec<u8>,
-    kms_context_id: Vec<u8>,
-    kms_epoch_id: Vec<u8>,
+    solana_request: JsValue,
     agg_resp: JsValue,
     enc_pk: &PublicEncKeyMlKem512,
     enc_sk: &PrivateEncKeyMlKem512,
@@ -546,21 +553,25 @@ pub fn process_user_decryption_resp_solana_from_js(
             .map_err(|e| JsError::new(&format!("domain parsing failed with error {}", e)))?;
         protobuf_to_alloy_domain(&pb_domain).map_err(|e| JsError::new(&e.to_string()))?
     };
-    let solana_user_pubkey = solana_identity(&solana_user_pubkey, "solana_user_pubkey")?;
-    let verifying_program_id = solana_identity(&verifying_program_id, "verifying_program_id")?;
-    let kms_context_id = solana_identity(&kms_context_id, "kms_context_id")?;
-    let kms_epoch_id = solana_identity(&kms_epoch_id, "kms_epoch_id")?;
+    let fields: SolanaRequestFieldsJs = serde_wasm_bindgen::from_value(solana_request)
+        .map_err(|e| JsError::new(&format!("solana_request parsing failed with error {e}")))?;
+    let host_chain_id: u64 = fields.host_chain_id.parse().map_err(|_| {
+        JsError::new("host_chain_id must be a decimal string holding an unsigned 64-bit value")
+    })?;
 
     // Marshalling only: the hex/JSON request becomes the client's typed request, and every rule
     // that decides whether a response is acceptable lives in
     // [crate::client::solana_response]. This wrapper must never grow a check of its own — a second
     // copy of a rule here would be the one a caller can reach past.
     let request = SolanaUserDecryptionRequest {
-        user_pubkey: solana_user_pubkey,
+        user_pubkey: solana_identity(&fields.user_pubkey, "user_pubkey")?,
         host_chain_id,
-        verifying_program_id,
-        kms_context_id,
-        kms_epoch_id,
+        verifying_program_id: solana_identity(
+            &fields.verifying_program_id,
+            "verifying_program_id",
+        )?,
+        kms_context_id: solana_identity(&fields.kms_context_id, "kms_context_id")?,
+        kms_epoch_id: solana_identity(&fields.kms_epoch_id, "kms_epoch_id")?,
         handles: parsed.ciphertext_handle_bytes(),
         enc_key: parsed.enc_key().to_vec(),
         response_domain,
@@ -590,79 +601,6 @@ pub fn process_user_decryption_resp_solana_from_js(
             .collect()),
         Err(e) => Err(JsError::new(&e.to_string())),
     }
-}
-
-/// Compute the link a Solana user-decryption request expects its response to carry.
-///
-/// The request half of the same contract [process_user_decryption_resp_solana_from_js] enforces:
-/// given the fields the client already holds, it returns the 32-byte value a KMS node must have
-/// signcrypted against. A caller can use it to check a response digest without running the whole
-/// response path, and the JS vector suite uses it to check this build against the committed
-/// normative set (see the module docs).
-///
-/// This is marshalling and nothing else — JS values in, the typed request built, and the one
-/// canonical link computation in [crate::client::solana_response] called. No part of the
-/// construction is repeated here: a second copy would be a link rule that agrees today and drifts
-/// tomorrow.
-///
-/// * `solana_user_pubkey` - the recipient's raw 32-byte ed25519 wallet key.
-///
-/// * `host_chain_id` - the Solana host chain id the client's permit was signed for, as a JS
-/// `BigInt`. It is a `u64` with bit 63 set, so it does not fit a JS number exactly and a `Number`
-/// argument is rejected by the boundary rather than silently rounded.
-///
-/// * `verifying_program_id` - the on-chain verifying program, 32 bytes.
-///
-/// * `kms_context_id` - the KMS context id, 32 bytes.
-///
-/// * `kms_epoch_id` - the KMS epoch id, 32 bytes.
-///
-/// * `handles` - the ciphertext handles as an array of hex strings (with or without a leading
-/// "0x"), in request order and with duplicates preserved, exactly as the request lists them: order
-/// and multiplicity are bound.
-///
-/// * `enc_key` - the serialized transport (ephemeral ML-KEM) public key, as the request carries it.
-/// The bytes are bound verbatim and no width is enforced.
-///
-/// Returns the 32-byte link, or throws if the fields are not a valid request — a wrong-width
-/// identity, a handle that is not a 32-byte Solana handle, an empty handle list, handles disagreeing
-/// on the embedded chain id, or a `host_chain_id` that is not the one the handles embed.
-#[wasm_bindgen]
-pub fn compute_solana_user_decrypt_link_from_js(
-    solana_user_pubkey: Vec<u8>,
-    host_chain_id: u64,
-    verifying_program_id: Vec<u8>,
-    kms_context_id: Vec<u8>,
-    kms_epoch_id: Vec<u8>,
-    handles: JsValue,
-    enc_key: Vec<u8>,
-) -> Result<Vec<u8>, JsError> {
-    console_error_panic_hook::set_once();
-
-    let handles: Vec<String> = serde_wasm_bindgen::from_value(handles)
-        .map_err(|e| JsError::new(&format!("handle parsing failed with error {e:?}")))?;
-    let handles = handles
-        .iter()
-        .map(|handle| hex_decode_js_err(handle))
-        .collect::<Result<Vec<_>, JsError>>()?;
-
-    let request = SolanaUserDecryptionRequest {
-        user_pubkey: solana_identity(&solana_user_pubkey, "solana_user_pubkey")?,
-        host_chain_id,
-        verifying_program_id: solana_identity(&verifying_program_id, "verifying_program_id")?,
-        kms_context_id: solana_identity(&kms_context_id, "kms_context_id")?,
-        kms_epoch_id: solana_identity(&kms_epoch_id, "kms_epoch_id")?,
-        handles,
-        enc_key,
-        // The link commits to neither of these — they are what a *response* signature is verified
-        // against — so this link-only export does not ask its caller for them.
-        response_domain: Eip712Domain::default(),
-        extra_data: Vec::new(),
-    };
-
-    request
-        .expected_link()
-        .map_err(|e| JsError::new(&e.to_string()))
 }
 
 /// Process the user_decryption response from Rust objects.
