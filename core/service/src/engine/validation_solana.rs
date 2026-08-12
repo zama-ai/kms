@@ -11,24 +11,17 @@ use kms_grpc::{
 /// sealed to, and the domain the response signature is produced under.
 type SolanaValidation = (Vec<u8>, SigncryptionReceiver, alloy_sol_types::Eip712Domain);
 
-/// Builds the canonical binding for a Solana user-decryption request.
+/// Builds the canonical binding for a Solana user-decryption request, or returns `Ok(None)` for a
+/// request that carries no Solana identity — that request belongs to the EVM path.
 ///
-/// Returns `Ok(None)` for a request that carries no Solana identity: that request belongs to the
-/// EVM path, which this function must leave exactly as it found it.
-///
-/// The adapter is where host knowledge ends. It reads the typed Solana fields, hands them to the
-/// checked binding, and returns bytes — it does not parse relayer payloads, wallet signatures,
-/// PDAs, ACL or MMR evidence, or delegation policy, all of which are settled before a request
-/// reaches any KMS party. It also does not parse `extra_data`: the KMS is agnostic to its content
-/// by design, and the values the linker commits to arrive as typed fields, parsed by the connector
-/// that verified the signature over them.
+/// The adapter is where host knowledge ends: it reads the typed Solana fields, hands them to the
+/// checked binding, and returns bytes. Wallet signatures, PDAs, ACL/MMR evidence, delegation and
+/// `extra_data` are all settled upstream, by the connector that verified the signed request.
 pub(super) fn validate_solana_request(
     req: &UserDecryptionRequest,
 ) -> Result<Option<SolanaValidation>, Box<dyn std::error::Error + Send + Sync>> {
     let Some(pubkey) = req.solana_pubkey.as_deref() else {
-        // A request that carries the other Solana field without the identity is contradictory, not
-        // EVM: reinterpreting it silently would surface a connector bug as a client-side link
-        // mismatch instead of an error that names the field.
+        // The other Solana field without the identity is a contradictory request, not an EVM one.
         if req.solana_verifying_program_id.is_some() {
             return Err(anyhow::anyhow!(
                 "user decryption request sets solana_verifying_program_id without solana_pubkey"
@@ -56,9 +49,8 @@ pub(super) fn validate_solana_request(
         )
     })?;
 
-    // The KMS binds the same context and epoch it selects keys by, taken from the typed fields the
-    // connector parsed out of the signed request. The defaults mirror the shared request path, so a
-    // request that omits them is bound to the values the KMS actually used.
+    // The same context and epoch the KMS selects keys by; the defaults mirror the shared request
+    // path, so a request that omits them is bound to the values the KMS actually used.
     let context_id: ContextId = match &req.context_id {
         Some(context_id) => context_id.try_into()?,
         None => *DEFAULT_MPC_CONTEXT,
@@ -76,8 +68,7 @@ pub(super) fn validate_solana_request(
         })?;
     require_mlkem512_transport_key(&transport_key)?;
 
-    // The one construction, given the request's own bytes: the transport key exactly as the request
-    // carries it, and the handles in request order with duplicates preserved.
+    // The one construction, given the request's own bytes.
     let binding = SolanaUserDecryptBinding::new(
         verifying_program_id,
         &pubkey,
@@ -91,8 +82,8 @@ pub(super) fn validate_solana_request(
 
     let response_domain = optional_protobuf_to_alloy_domain(req.domain.as_ref())?;
 
-    // Read back off the binding rather than from the request: a value that failed validation has no
-    // path to signcryption.
+    // Read back off the binding, not the request: a value that failed validation has no path to
+    // signcryption.
     Ok(Some((
         binding.compute_link(),
         SigncryptionReceiver::Solana(*binding.receiver_id()),
@@ -101,9 +92,7 @@ pub(super) fn validate_solana_request(
 }
 
 /// An allow-list of one: the Solana path pins its transport key to ML-KEM-512. Deserialization
-/// already rejects ML-KEM-1024 on every path, so today this cannot fire — it is defense-in-depth
-/// for the day deserialization admits another variant again. Deliberately not a match on the other
-/// variants: a future variant should have to be admitted here explicitly rather than inherited.
+/// already rejects everything else today; a future variant must be admitted here explicitly.
 fn require_mlkem512_transport_key(
     transport_key: &UnifiedPublicEncKey,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
@@ -216,6 +205,56 @@ mod adapter_tests {
         evm.client_address = "0xdadB0d80178819F2319190D340ce9A924f783711".to_string();
 
         assert!(validate_solana_request(&evm).expect("no error").is_none());
+    }
+
+    #[test]
+    fn the_dispatch_table_is_closed() {
+        // The dispatch field (`solana_pubkey`) and the load-bearing invariant (bit 63 of the
+        // chain id embedded in every handle) are pinned together, in all four combinations, so a
+        // request cannot reach the wrong linker by carrying the wrong field. The two rejecting
+        // cells live in two crates — `validate_solana_request` here and `compute_link_checked` in
+        // kms-grpc — and this is the one place they are read as one table.
+        let evm_handle = |discriminator: u8| {
+            let mut handle = [discriminator; 32];
+            handle[22..30].copy_from_slice(&(CHAIN_ID & !(1u64 << 63)).to_be_bytes());
+            handle.to_vec()
+        };
+
+        // pubkey present + Solana-kind handles: the Solana branch accepts.
+        assert!(
+            validate_solana_request(&solana_request())
+                .expect("no error")
+                .is_some()
+        );
+
+        // pubkey present + EVM-kind handles: the Solana branch rejects at the handle's own index.
+        let mut wrong_kind = solana_request();
+        wrong_kind.typed_ciphertexts[1].external_handle = evm_handle(0xa2);
+        assert!(error_of(&wrong_kind).contains("does not set bit 63"));
+
+        // pubkey absent + EVM-kind handles: left to the EVM path, which accepts them.
+        let mut evm = solana_request();
+        evm.solana_pubkey = None;
+        evm.solana_verifying_program_id = None;
+        evm.client_address = "0xdadB0d80178819F2319190D340ce9A924f783711".to_string();
+        evm.typed_ciphertexts
+            .iter_mut()
+            .enumerate()
+            .for_each(|(i, ct)| ct.external_handle = evm_handle(0xa1 + i as u8));
+        assert!(validate_solana_request(&evm).expect("no error").is_none());
+        evm.compute_link_checked()
+            .expect("the EVM linker accepts EVM-kind handles");
+
+        // pubkey absent + Solana-kind handles: left to the EVM path, whose linker refuses them.
+        let mut crossed = evm.clone();
+        crossed.typed_ciphertexts[0].external_handle = handle(0xa1);
+        assert!(
+            crossed
+                .compute_link_checked()
+                .expect_err("a Solana-kind handle must not reach the EVM linker")
+                .to_string()
+                .contains("embeds Solana chain ID")
+        );
     }
 
     #[test]

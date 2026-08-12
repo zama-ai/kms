@@ -276,6 +276,11 @@ fn unpack_user_decrypt_req(
         return Err(anyhow::anyhow!(ERR_VALIDATE_USER_DECRYPTION_EMPTY_CTS).into());
     }
 
+    // Dispatch: presence of the Solana identity selects the branch, and the chain-kind bit
+    // embedded in every ciphertext handle backstops it — `validate_solana_request` rejects
+    // EVM-kind handles, and `compute_link_checked` below rejects Solana-kind ones, so a request
+    // cannot cross over by carrying the wrong field. All four field-by-handle-kind combinations
+    // are pinned by `validation_solana::adapter_tests::the_dispatch_table_is_closed`.
     if let Some((link, receiver, response_domain)) =
         super::validation_solana::validate_solana_request(req)?
     {
@@ -304,15 +309,10 @@ fn unpack_user_decrypt_req(
         )
     })?;
 
-    let domain = match verify_user_decrypt_eip712(req) {
-        Ok(domain) => {
-            tracing::debug!("🔒 Signature verified successfully");
-            domain
-        }
-        Err(e) => return Err(anyhow::anyhow!("Failed to verify the EIP-712 domain: {e}").into()),
-    };
-
-    let (link, _) = req.compute_link_checked()?;
+    // One validating construction: the request's EIP-712 linker digest, and the domain it is
+    // computed under. Note there is no signature to verify here — the user's EIP-712 signature is
+    // checked by the gateway and the connector and never reaches the KMS.
+    let (link, domain) = req.compute_link_checked()?;
     // Deserialize to validate the enc_key bytes, but don't return the typed key —
     // callers use raw bytes for EIP-712 and deserialize at point-of-use for crypto.
     let _client_enc_key =
@@ -423,13 +423,6 @@ fn unpack_public_decrypt_req(
 }
 
 /// Verify the EIP-712 encoded payload in the request.
-pub(crate) fn verify_user_decrypt_eip712(
-    request: &UserDecryptionRequest,
-) -> anyhow::Result<alloy_sol_types::Eip712Domain> {
-    let (_, domain) = request.compute_link_checked()?;
-    Ok(domain)
-}
-
 /// This function checks that the digest in [other_resp] matches [pivot_resp],
 /// [other_resp] contains one of the valid [server_pks] and the signature
 /// is correct with respect to this key.
@@ -1101,7 +1094,6 @@ mod tests {
         Eip712VerificationParams, PublicDecTrustedValidationContext, unpack_public_decrypt_req,
         unpack_user_decrypt_req, validate_public_decrypt_meta_data,
         validate_public_decrypt_responses_against_request, verify_max_num_bits,
-        verify_user_decrypt_eip712,
     };
 
     /// Sign a public decryption result the way the server does, under ECDSA only.
@@ -1732,7 +1724,7 @@ mod tests {
     }
 
     #[test]
-    fn test_verify_user_decrypt_eip712() {
+    fn test_user_decrypt_link_validation() {
         let mut rng = AesRng::from_random_seed();
         let (client_pk, _client_sk) = gen_sig_keys(&mut rng);
         let client_address = client_pk.address();
@@ -1773,13 +1765,13 @@ mod tests {
 
         {
             // happy path
-            verify_user_decrypt_eip712(&req).unwrap();
+            req.compute_link_checked().unwrap();
         }
         {
             // use a wrong client address (invalid string length)
             let mut bad_req = req.clone();
             bad_req.client_address = "66f9664f97F2b50F62D13eA064982f936dE76657".to_string();
-            match verify_user_decrypt_eip712(&bad_req) {
+            match bad_req.compute_link_checked() {
                 Ok(_) => panic!("expected failure"),
                 Err(e) => {
                     assert_eq!(
@@ -1796,7 +1788,7 @@ mod tests {
             bad_domain.verifying_contract = Some(client_address);
             let mut bad_req = req.clone();
             bad_req.domain = Some(alloy_to_protobuf_domain(&bad_domain).unwrap());
-            match verify_user_decrypt_eip712(&bad_req) {
+            match bad_req.compute_link_checked() {
                 Ok(_) => panic!("expected failure"),
                 Err(_e) => {}
             }
