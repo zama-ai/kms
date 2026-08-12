@@ -3123,17 +3123,18 @@ async fn test_threshold_mpc_context_switch_6() -> Result<()> {
     let decrypt_new = cmd_config(
         &config_path_5634,
         CCCommand::PublicDecrypt(CipherArguments::FromArgs(CipherParameters {
+            to_encrypt: "0x123456".to_string(),
+            data_type: FheType::Euint64,
+            no_compression: false,
+            no_precompute_sns: false,
+            key_id: key_id_arg,
             context_id: Some(context_2_id),
             epoch_id: Some(epoch_2_id),
-            ..public_decrypt_params(
-                "0x123456",
-                FheType::Euint64,
-                key_id_arg,
-                1,
-                false,
-                false,
-                None,
-            )
+            batch_size: 1,
+            num_requests: 1,
+            ciphertext_output_path: None,
+            parallel_requests: 1,
+            inter_request_delay_ms: 0,
         })),
         200,
     );
@@ -3147,17 +3148,18 @@ async fn test_threshold_mpc_context_switch_6() -> Result<()> {
     let decrypt_old = cmd_config(
         &config_path_1234,
         CCCommand::PublicDecrypt(CipherArguments::FromArgs(CipherParameters {
+            to_encrypt: "0x654321".to_string(),
+            data_type: FheType::Euint64,
+            no_compression: false,
+            no_precompute_sns: false,
+            key_id: key_id_arg,
             context_id: Some(context_1_id),
             epoch_id: Some(epoch_1_id),
-            ..public_decrypt_params(
-                "0x654321",
-                FheType::Euint64,
-                key_id_arg,
-                1,
-                false,
-                false,
-                None,
-            )
+            batch_size: 1,
+            num_requests: 1,
+            ciphertext_output_path: None,
+            parallel_requests: 1,
+            inter_request_delay_ms: 0,
         })),
         200,
     );
