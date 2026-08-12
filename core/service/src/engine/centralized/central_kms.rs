@@ -20,9 +20,7 @@ use crate::engine::base::{BaseKmsStruct, KmsFheKeyHandles};
 use crate::engine::base::{KeyGenMetadata, PubDecCallValues, UserDecryptCallValues};
 use crate::engine::context_manager::CentralizedContextManager;
 #[cfg(feature = "non-wasm")]
-use crate::engine::public_material_verification::{
-    keychain_expects_custodian_context, verify_public_material,
-};
+use crate::engine::public_material_verification::verify_public_material;
 use crate::engine::traits::{BackupOperator, ContextManager};
 use crate::engine::traits::{BaseKms, Kms};
 use crate::engine::validation::DSEP_USER_DECRYPTION;
@@ -952,14 +950,7 @@ impl<
         // Verify that public storage holds exactly what private storage says it should, and
         // that it is intact. Private storage is the reference; extra material in public
         // storage is ignored.
-        verify_public_material(
-            &public_storage,
-            &entries,
-            &crs_info,
-            Some(&sk),
-            keychain_expects_custodian_context(backup_vault.as_ref()),
-        )
-        .await?;
+        verify_public_material(&public_storage, &entries, &crs_info, Some(&sk)).await?;
 
         let validation_material: HashMap<RequestId, RecoveryValidationMaterial> =
             read_all_data_versioned(&public_storage, &PubDataType::RecoveryMaterial.to_string())

@@ -73,9 +73,7 @@ use crate::{
         },
         context_manager::{ThresholdContextManager, ensure_default_threshold_context_in_storage},
         prepare_shutdown_signals,
-        public_material_verification::{
-            keychain_expects_custodian_context, verify_public_material,
-        },
+        public_material_verification::verify_public_material,
         threshold::{
             service::{
                 public_decryptor::SecureNoiseFloodDecryptor,
@@ -587,14 +585,7 @@ where
     // signature and verification-key checks are skipped rather than compared against
     // themselves; see `verify_public_material`.
     let signing_key = base_kms.sig_key().ok();
-    verify_public_material(
-        &public_storage,
-        &entries,
-        &crs_info,
-        signing_key.as_deref(),
-        keychain_expects_custodian_context(backup_storage.as_ref()),
-    )
-    .await?;
+    verify_public_material(&public_storage, &entries, &crs_info, signing_key.as_deref()).await?;
 
     let networking_manager = Arc::new(RwLock::new(GrpcNetworkingManager::new(
         tls_config

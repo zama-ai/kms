@@ -119,10 +119,10 @@ service CoreServiceEndpoint {
   // # Returns
   // * `Response<KeyGenResult>`
   //   - If the key generation completed successfully for `request`, then this ID will be relayed in `request_id`.
-  //   - Furthermore, the `key_results` in the response will contain the result information of each relevant public key; e.g. public encryption key, server key, and SnS key.
-  //   - The [`SignedPubDataHandle`] will be populated s.t. `key_handle` will contain the SHAKE-256 hash of the serialization of the given result.
-  //   - Similarely the `signature` will contain the regular ECDSA signature of the public decryption result, signed by the KMS' secret signing key.
-  //   - Finally the `external_signature` will contain the EIP-712 signature of the public decryption result using the `domain` provided in the request.
+  //   - `preprocessing_id` will contain the ID of the preprocessing that was consumed by the key generation.
+  //   - `key_digests` will contain one [`kms.v1.KeyDigest`] per piece of generated public key material — either the public encryption key and the server key, or the public encryption key and the compressed keyset. Each digest is the SHAKE-256 hash of the stored key material, hashed with the domain separator `DSEP_PUBDATA_KEY="PDAT_KEY"`.
+  //   - `external_signature` will contain the EIP-712 signature over the `KeygenVerification` structure, using the `domain` provided in the key generation request. This field is deprecated; see [`kms.v1.KeyGenResult`].
+  //   - `signatures` will contain one KMS signature per scheme requested in the key generation request's `signing_schemes`, each tagged with the scheme that produced it.
   //
   // # Conditions
   // ## Pre-condition:
@@ -336,9 +336,9 @@ service CoreServiceEndpoint {
   // # Returns
   // * `Response<CrsGenResult>`
   //   - If the CRS generation completed successfully for `request`, then this ID will be relayed in `request_id`.
-  //   - Furthermore the `crs_results` [`SignedPubDataHandle`] will be set and `key_handle` will contain the SHAKE-256 hash of the serialization of the CRS result.
-  //   - Similarely the `signature` will contain the regular ECDSA signature of the CRS result, signed by the KMS' secret signing key,
-  //   - Finally the `external_signature` will contain the EIP-712 signature of the CRS result using the `domain` provided in the request.
+  //   - `crs_digest` will contain the SHAKE-256 hash of the stored CRS, hashed with the domain separator `DSEP_PUBDATA_CRS="PDAT_CRS"`, and `max_num_bits` the maximum number of bits that can be proven with it.
+  //   - `external_signature` will contain the EIP-712 signature over the `CrsgenVerification` structure, using the `domain` provided in the CRS generation request. This field is deprecated; see [`kms.v1.CrsGenResult`].
+  //   - `signatures` will contain one KMS signature per scheme requested in the CRS generation request's `signing_schemes`, each tagged with the scheme that produced it.
   //
   // # Conditions
   // ## Pre-condition:

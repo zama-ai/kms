@@ -18,6 +18,10 @@
 //!    sharing the bucket land there too. Verification therefore never asks "is there anything
 //!    here I do not recognise", and orphans produce neither errors nor warnings.
 //! 3. **Read-only.** Nothing here writes to, repairs, or re-fetches public storage.
+//!
+//! Startup verification operates on raw stored bytes. It never deserializes stored keys or
+//! CRSes: current material is checked by hashing those bytes, while legacy material (which has
+//! no digest) is checked for presence only.
 
 use crate::consts::SIGNING_KEY_ID;
 use crate::cryptography::signing::ecdsa::{PrivateSigKey, PublicSigKey};
@@ -26,20 +30,17 @@ use crate::engine::base::{
     CrsGenMetadata, DSEP_PUBDATA_CRS, DSEP_PUBDATA_KEY, KeyGenMetadata, StoredTypedSignature,
     crs_payload_bytes, keygen_payload_bytes,
 };
-use crate::vault::Vault;
-use crate::vault::keychain::KeychainProxy;
-use crate::vault::storage::{StorageReader, read_text_at_request_id, read_versioned_at_request_id};
-use hashing::{DomainSep, hash_element};
+use crate::engine::material_integrity::{
+    verify_compressed_key_digest_from_bytes, verify_crs_digest_from_bytes,
+    verify_public_key_digest_from_bytes, verify_server_key_digest_from_bytes,
+};
+use crate::vault::storage::{StorageReader, read_text_at_request_id};
+use hashing::DomainSep;
 use kms_grpc::RequestId;
 use kms_grpc::rpc_types::PubDataType;
-use std::collections::{BTreeMap, HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap};
 use std::str::FromStr;
 
-pub(crate) const ERR_SERVER_KEY_DIGEST_MISMATCH: &str = "Server key digest mismatch";
-pub(crate) const ERR_PUBLIC_KEY_DIGEST_MISMATCH: &str = "Public key digest mismatch";
-pub(crate) const ERR_COMPRESSED_KEYSET_DIGEST_MISMATCH: &str =
-    "Compressed xof keyset digest mismatch";
-pub(crate) const ERR_CRS_DIGEST_MISMATCH: &str = "CRS digest mismatch";
 const ERR_INVALID_CURRENT_PUBLIC_KEY_SHAPE: &str = "Invalid current public key metadata shape";
 const ERR_INVALID_LEGACY_PUBLIC_KEY_SHAPE: &str = "Invalid legacy public key metadata shape";
 pub(crate) const ERR_METADATA_SIGNATURE_INVALID: &str = "Result metadata signature invalid";
@@ -57,114 +58,50 @@ enum CurrentPublicMaterialLayout {
 }
 
 fn classify_current_public_material(
-    pub_data_types: &HashSet<PubDataType>,
+    key_digest_map: &BTreeMap<PubDataType, Vec<u8>>,
 ) -> anyhow::Result<CurrentPublicMaterialLayout> {
-    let has_public_key = pub_data_types.contains(&PubDataType::PublicKey);
-    let has_server_key = pub_data_types.contains(&PubDataType::ServerKey);
-    let has_compressed_keyset = pub_data_types.contains(&PubDataType::CompressedXofKeySet);
+    let has_public_key = key_digest_map.contains_key(&PubDataType::PublicKey);
+    let has_server_key = key_digest_map.contains_key(&PubDataType::ServerKey);
+    let has_compressed_keyset = key_digest_map.contains_key(&PubDataType::CompressedXofKeySet);
 
     match (
         has_public_key,
         has_server_key,
         has_compressed_keyset,
-        pub_data_types.len(),
+        key_digest_map.len(),
     ) {
         (true, true, false, 2) => Ok(CurrentPublicMaterialLayout::Standard),
         (true, false, true, 2) => Ok(CurrentPublicMaterialLayout::Compressed),
         _ => anyhow::bail!(
             "{ERR_INVALID_CURRENT_PUBLIC_KEY_SHAPE}: expected either \
              {{PublicKey, ServerKey}} or {{PublicKey, CompressedXofKeySet}}, got {:?}",
-            pub_data_types
+            key_digest_map.keys().collect::<Vec<_>>()
         ),
     }
 }
 
-fn validate_legacy_public_material_shape(
-    pub_data_types: &HashSet<PubDataType>,
+fn validate_legacy_public_material_shape<T>(
+    public_materials: &HashMap<PubDataType, T>,
 ) -> anyhow::Result<()> {
-    let has_public_key = pub_data_types.contains(&PubDataType::PublicKey);
-    let has_server_key = pub_data_types.contains(&PubDataType::ServerKey);
+    let has_public_key = public_materials.contains_key(&PubDataType::PublicKey);
+    let has_server_key = public_materials.contains_key(&PubDataType::ServerKey);
 
-    if has_public_key && has_server_key && pub_data_types.len() == 2 {
+    if has_public_key && has_server_key && public_materials.len() == 2 {
         return Ok(());
     }
 
     anyhow::bail!(
         "{ERR_INVALID_LEGACY_PUBLIC_KEY_SHAPE}: expected exactly {{PublicKey, ServerKey}}, got {:?}",
-        pub_data_types
+        public_materials.keys().collect::<Vec<_>>()
     );
-}
-
-/// Verify key digests using raw bytes from storage.
-/// This avoids re-serializing the keys, which would produce different bytes
-/// if there was a version upgrade since the original digest was computed.
-pub(crate) fn verify_key_digest_from_bytes(
-    server_key_bytes: &[u8],
-    public_key_bytes: &[u8],
-    expected_server_key_digest: &[u8],
-    expected_public_key_digest: &[u8],
-) -> anyhow::Result<()> {
-    let actual_server_key_digest = hash_element(&DSEP_PUBDATA_KEY, server_key_bytes);
-    let actual_public_key_digest = hash_element(&DSEP_PUBDATA_KEY, public_key_bytes);
-
-    if actual_server_key_digest != expected_server_key_digest {
-        anyhow::bail!(ERR_SERVER_KEY_DIGEST_MISMATCH);
-    }
-    if actual_public_key_digest != expected_public_key_digest {
-        anyhow::bail!(ERR_PUBLIC_KEY_DIGEST_MISMATCH);
-    }
-
-    Ok(())
-}
-
-/// Verify a standalone public key digest using raw bytes from storage.
-/// This avoids re-serializing the key, which would produce different bytes
-/// if there was a version upgrade since the original digest was computed.
-pub(crate) fn verify_public_key_digest_from_bytes(
-    public_key_bytes: &[u8],
-    expected_digest: &[u8],
-) -> anyhow::Result<()> {
-    let actual_digest = hash_element(&DSEP_PUBDATA_KEY, public_key_bytes);
-    if actual_digest != expected_digest {
-        anyhow::bail!(ERR_PUBLIC_KEY_DIGEST_MISMATCH);
-    }
-    Ok(())
-}
-
-/// Verify compressed key digest using raw bytes from storage.
-/// This avoids re-serializing the keys, which would produce different bytes
-/// if there was a version upgrade since the original digest was computed.
-pub(crate) fn verify_compressed_key_digest_from_bytes(
-    compressed_keyset_bytes: &[u8],
-    expected_digest: &[u8],
-) -> anyhow::Result<()> {
-    let actual_digest = hash_element(&DSEP_PUBDATA_KEY, compressed_keyset_bytes);
-    if actual_digest != expected_digest {
-        anyhow::bail!(ERR_COMPRESSED_KEYSET_DIGEST_MISMATCH);
-    }
-    Ok(())
-}
-
-/// Verify CRS digest using raw bytes from storage.
-/// This avoids re-serializing the CRS, which would produce different bytes
-/// if there was a version upgrade since the original digest was computed.
-pub(crate) fn verify_crs_digest_from_bytes(
-    crs_bytes: &[u8],
-    expected_digest: &[u8],
-) -> anyhow::Result<()> {
-    let actual_digest = hash_element(&DSEP_PUBDATA_CRS, crs_bytes);
-    if actual_digest != expected_digest {
-        anyhow::bail!(ERR_CRS_DIGEST_MISMATCH);
-    }
-    Ok(())
 }
 
 /// Load the raw bytes of one public material entry, failing with a message that names both
 /// the missing entry and the reason on its own.
 ///
-/// Digests are always checked against these raw bytes rather than against a re-serialization
-/// of the deserialized value: a tfhe format change since the material was generated would
-/// otherwise alter the bytes and report intact material as corrupt.
+/// Digests are always checked against these raw bytes rather than against a serialization of a
+/// decoded value: a tfhe format change since the material was generated would otherwise alter
+/// the bytes and report intact material as corrupt.
 async fn load_public_bytes<S: StorageReader + Sync>(
     storage: &S,
     id: &RequestId,
@@ -188,43 +125,31 @@ async fn verify_digests<S: StorageReader + Sync>(
     id: &RequestId,
     key_digest_map: &BTreeMap<PubDataType, Vec<u8>>,
 ) -> anyhow::Result<()> {
-    let pub_data_types: HashSet<_> = key_digest_map.keys().cloned().collect();
-    match classify_current_public_material(&pub_data_types)? {
-        CurrentPublicMaterialLayout::Standard => {
-            let public_key_bytes = load_public_bytes(storage, id, PubDataType::PublicKey).await?;
-            // TODO(dp): this is potentially enormous. Figure out why we're doing this and if we can stop. Is `verify_digests` called from production code? Loading gigabytes of data
-            // and then hashing it is silly for tests. Let the tests fail instead.
-            let server_key_bytes = load_public_bytes(storage, id, PubDataType::ServerKey).await?;
+    let layout = classify_current_public_material(key_digest_map)?;
+    let expected_public_key_digest = key_digest_map
+        .get(&PubDataType::PublicKey)
+        .ok_or_else(|| anyhow::anyhow!("missing digest for public key, id={id}"))?;
+    {
+        let public_key_bytes = load_public_bytes(storage, id, PubDataType::PublicKey).await?;
+        verify_public_key_digest_from_bytes(&public_key_bytes, expected_public_key_digest)?;
+    }
 
+    match layout {
+        CurrentPublicMaterialLayout::Standard => {
+            let server_key_bytes = load_public_bytes(storage, id, PubDataType::ServerKey).await?;
             let expected_server_key_digest = key_digest_map
                 .get(&PubDataType::ServerKey)
                 .ok_or_else(|| anyhow::anyhow!("missing digest for server key, id={id}"))?;
-            let expected_public_key_digest = key_digest_map
-                .get(&PubDataType::PublicKey)
-                .ok_or_else(|| anyhow::anyhow!("missing digest for public key, id={id}"))?;
-
-            verify_key_digest_from_bytes(
-                &server_key_bytes,
-                &public_key_bytes,
-                expected_server_key_digest,
-                expected_public_key_digest,
-            )
+            verify_server_key_digest_from_bytes(&server_key_bytes, expected_server_key_digest)
         }
         CurrentPublicMaterialLayout::Compressed => {
-            let public_key_bytes = load_public_bytes(storage, id, PubDataType::PublicKey).await?;
             let compressed_keyset_bytes =
                 load_public_bytes(storage, id, PubDataType::CompressedXofKeySet).await?;
-
-            let expected_public_key_digest = key_digest_map
-                .get(&PubDataType::PublicKey)
-                .ok_or_else(|| anyhow::anyhow!("missing digest for public key, id={id}"))?;
             let expected_compressed_keyset_digest = key_digest_map
                 .get(&PubDataType::CompressedXofKeySet)
                 .ok_or_else(|| {
                     anyhow::anyhow!("missing digest for compressed xof keyset, id={id}")
                 })?;
-
-            verify_public_key_digest_from_bytes(&public_key_bytes, expected_public_key_digest)?;
             verify_compressed_key_digest_from_bytes(
                 &compressed_keyset_bytes,
                 expected_compressed_keyset_digest,
@@ -233,38 +158,28 @@ async fn verify_digests<S: StorageReader + Sync>(
     }
 }
 
-/// Deserialize public key materials from storage to verify they are readable.
-/// Used for legacy metadata that lacks digest information.
-async fn check_readability<S: StorageReader + Sync>(
+/// Check that the public objects described by legacy metadata are present and readable as raw
+/// bytes. Legacy metadata has no digest, so no integrity check is possible, but startup must not
+/// deserialize these non-production compatibility objects.
+async fn check_legacy_keyset_presence<S: StorageReader + Sync, T>(
     storage: &S,
     id: &RequestId,
-    pub_data_types: &HashSet<PubDataType>,
+    public_materials: &HashMap<PubDataType, T>,
 ) -> anyhow::Result<()> {
-    validate_legacy_public_material_shape(pub_data_types)?;
+    validate_legacy_public_material_shape(public_materials)?;
 
-    read_versioned_at_request_id::<_, tfhe::CompactPublicKey>(
-        storage,
-        id,
-        &PubDataType::PublicKey.to_string(),
-    )
-    .await?;
-    read_versioned_at_request_id::<_, tfhe::ServerKey>(
-        storage,
-        id,
-        &PubDataType::ServerKey.to_string(),
-    )
-    .await?;
+    for data_type in [PubDataType::PublicKey, PubDataType::ServerKey] {
+        load_public_bytes(storage, id, data_type).await?;
+    }
 
     Ok(())
 }
 
-/// Sanity check that public key materials can be read from storage and verify their integrity.
+/// Verify the public objects described by private keyset metadata.
 ///
-/// For each entry, verifies that the public key materials can be successfully retrieved
-/// from public storage. When `KeyGenMetadata::Current` metadata is available, also verifies
-/// the integrity of the loaded data by comparing digests. For `KeyGenMetadata::LegacyV0`
-/// entries (which lack digest information), only readability is checked.
-pub async fn sanity_check_public_materials<S>(
+/// Current metadata is verified by digest; legacy metadata has no digest and is checked only
+/// for the presence of its raw public objects.
+async fn verify_keysets<S>(
     public_storage: &S,
     entries: &[(RequestId, KeyGenMetadata)],
 ) -> anyhow::Result<()>
@@ -278,23 +193,20 @@ where
             }
             KeyGenMetadata::LegacyV0(hash_map) => {
                 tracing::info!(
-                    "Legacy metadata for id={id}, performing readability check only (no digest verification)"
+                    "Legacy metadata for id={id}, checking raw object presence only (no digest verification)"
                 );
-                let pub_data_types: HashSet<PubDataType> = hash_map.keys().cloned().collect();
-                check_readability(public_storage, id, &pub_data_types).await?;
+                check_legacy_keyset_presence(public_storage, id, hash_map).await?;
             }
         }
     }
     Ok(())
 }
 
-/// Sanity check that CRS materials can be read from storage and verify their integrity.
+/// Verify the public objects described by private CRS metadata.
 ///
-/// For each entry, verifies that the CRS can be successfully retrieved from public storage.
-/// When `CrsGenMetadata::Current` metadata is available, also verifies the integrity of the
-/// loaded data by comparing digests. For `CrsGenMetadata::LegacyV0` entries (which lack digest
-/// information), only readability is checked.
-pub async fn sanity_check_crs_materials<S>(
+/// Current metadata is verified by digest; legacy metadata has no digest and is checked only
+/// for the presence of its raw public object.
+async fn verify_crses<S>(
     public_storage: &S,
     crs_entries: &HashMap<RequestId, CrsGenMetadata>,
 ) -> anyhow::Result<()>
@@ -309,14 +221,9 @@ where
             }
             CrsGenMetadata::LegacyV0(_) => {
                 tracing::info!(
-                    "Legacy CRS metadata for id={id}, performing readability check only (no digest verification)"
+                    "Legacy CRS metadata for id={id}, checking raw object presence only (no digest verification)"
                 );
-                read_versioned_at_request_id::<_, tfhe::zk::CompactPkeCrs>(
-                    public_storage,
-                    id,
-                    &PubDataType::CRS.to_string(),
-                )
-                .await?;
+                load_public_bytes(public_storage, id, PubDataType::CRS).await?;
             }
         }
     }
@@ -396,7 +303,7 @@ fn verify_keygen_metadata_signatures(
         &inner.key_id,
         &inner.key_digest_map,
         // `extra_data` is stored as `None` when it was empty at signing time, so map it back.
-        &inner.extra_data.clone().unwrap_or_default(),
+        inner.extra_data.as_deref().unwrap_or_default(),
     )?;
     verify_stored_signatures(
         sk,
@@ -434,7 +341,7 @@ fn verify_crs_metadata_signatures(
         &inner.crs_id,
         inner.max_num_bits,
         &inner.crs_digest,
-        &inner.extra_data.clone().unwrap_or_default(),
+        inner.extra_data.as_deref().unwrap_or_default(),
     )?;
     verify_stored_signatures(
         sk,
@@ -460,28 +367,22 @@ where
     S: StorageReader + Sync,
 {
     let expected_verf_key = PublicSigKey::from_sk(sk);
+    let expected_address = expected_verf_key.address();
     let signing_key_id = *SIGNING_KEY_ID;
 
-    let stored_verf_key: PublicSigKey = read_versioned_at_request_id(
-        public_storage,
-        &signing_key_id,
-        &PubDataType::VerfKey.to_string(),
-    )
-    .await
-    .map_err(|e| {
-        anyhow::anyhow!(
-            "missing or unreadable public material {} for id={signing_key_id} in storage \"{}\": {e}",
-            PubDataType::VerfKey,
-            public_storage.info()
-        )
+    let stored_verf_key_bytes =
+        load_public_bytes(public_storage, &signing_key_id, PubDataType::VerfKey).await?;
+    let expected_verf_key_digest = hashing::hash_versioned(&DSEP_PUBDATA_KEY, &expected_verf_key)
+        .map_err(|e| {
+        anyhow::anyhow!("failed to hash the verification key derived from private storage: {e}")
     })?;
-    if stored_verf_key != expected_verf_key {
-        anyhow::bail!(
-            "{ERR_VERF_KEY_MISMATCH}: public storage holds the key for address {}, expected {}",
-            stored_verf_key.address(),
-            expected_verf_key.address()
-        );
-    }
+    verify_public_key_digest_from_bytes(&stored_verf_key_bytes, &expected_verf_key_digest)
+        .map_err(|e| {
+            anyhow::anyhow!(
+                "{ERR_VERF_KEY_MISMATCH}: expected the key for address {}: {e}",
+                expected_address
+            )
+        })?;
 
     let stored_address_text = read_text_at_request_id(
         public_storage,
@@ -500,60 +401,17 @@ where
     // `parse_checksummed`, so an address written without EIP-55 casing still compares equal.
     let stored_address = alloy_primitives::Address::from_str(stored_address_text.trim())
         .map_err(|e| anyhow::anyhow!("{ERR_VERF_ADDRESS_MISMATCH}: {stored_address_text:?} in public storage is not a valid Ethereum address: {e}"))?;
-    if stored_address != expected_verf_key.address() {
+    if stored_address != expected_address {
         anyhow::bail!(
-            "{ERR_VERF_ADDRESS_MISMATCH}: public storage holds {stored_address}, expected {}",
-            expected_verf_key.address()
+            "{ERR_VERF_ADDRESS_MISMATCH}: public storage holds {stored_address}, expected {expected_address}"
         );
     }
 
     tracing::info!(
         "Verification key and address in public storage match the private signing key (address {})",
-        expected_verf_key.address()
+        expected_address
     );
     Ok(())
-}
-
-/// Whether the backup vault's keychain needs a custodian context to be published in public
-/// storage before it can encrypt anything.
-///
-/// Only the backup vault matters here: it is the vault
-/// `CryptoMaterialStorage::inner_update_backup_vault` writes through, and the one whose
-/// keychain silently skips the update when no backup encryption key has been set.
-pub fn keychain_expects_custodian_context(backup_vault: Option<&Vault>) -> bool {
-    backup_vault
-        .is_some_and(|vault| matches!(vault.keychain, Some(KeychainProxy::SecretSharing(_))))
-}
-
-/// Warn when a custodian-backed vault has no recovery material published.
-///
-/// Without it the backup encryption key is never set, and the boot-time backup update turns
-/// into a silent no-op. Never fatal: custodian material cannot be reproduced, and a node is
-/// legitimately booted in this state before its first custodian setup.
-async fn warn_if_custodian_context_missing<S>(public_storage: &S, keychain_expects_context: bool)
-where
-    S: StorageReader + Sync,
-{
-    if !keychain_expects_context {
-        return;
-    }
-    match public_storage
-        .all_data_ids(&PubDataType::RecoveryMaterial.to_string())
-        .await
-    {
-        Ok(ids) if ids.is_empty() => tracing::warn!(
-            "A secret-sharing keychain is configured but public storage \"{}\" holds no {}. \
-             Backups will be skipped until a custodian context is set up.",
-            public_storage.info(),
-            PubDataType::RecoveryMaterial
-        ),
-        Ok(_) => {}
-        Err(e) => tracing::warn!(
-            "Could not list {} in public storage \"{}\" to confirm a custodian context exists: {e}",
-            PubDataType::RecoveryMaterial,
-            public_storage.info()
-        ),
-    }
 }
 
 /// Verify everything private storage says public storage should contain.
@@ -570,21 +428,17 @@ where
 /// node's verification key then came out of public storage itself, so checking it back against
 /// public storage would be circular — the signature and signing-key checks are skipped with a
 /// warning, while the digest checks still run.
-///
-/// `keychain_expects_context` says whether a secret-sharing keychain is configured, which
-/// decides the warn-only custodian check.
 pub async fn verify_public_material<S>(
     public_storage: &S,
     key_entries: &[(RequestId, KeyGenMetadata)],
     crs_entries: &HashMap<RequestId, CrsGenMetadata>,
     signing_key: Option<&PrivateSigKey>,
-    keychain_expects_context: bool,
 ) -> anyhow::Result<()>
 where
     S: StorageReader + Sync,
 {
-    sanity_check_public_materials(public_storage, key_entries).await?;
-    sanity_check_crs_materials(public_storage, crs_entries).await?;
+    verify_keysets(public_storage, key_entries).await?;
+    verify_crses(public_storage, crs_entries).await?;
 
     match signing_key {
         Some(sk) => {
@@ -611,8 +465,6 @@ where
         ),
     }
 
-    warn_if_custodian_context_missing(public_storage, keychain_expects_context).await;
-
     tracing::info!(
         "Verified public material in storage \"{}\": {} keyset(s), {} CRS(es)",
         public_storage.info(),
@@ -628,11 +480,15 @@ mod tests {
     use crate::cryptography::signatures::gen_sig_keys;
     use crate::engine::base::KeyGenMetadataInner;
     use crate::engine::centralized::central_kms::gen_centralized_crs;
+    use crate::engine::material_integrity::{
+        ERR_COMPRESSED_KEYSET_DIGEST_MISMATCH, ERR_CRS_DIGEST_MISMATCH,
+        ERR_PUBLIC_KEY_DIGEST_MISMATCH, ERR_SERVER_KEY_DIGEST_MISMATCH,
+    };
     use crate::vault::storage::ram::RamStorage;
-    use crate::vault::storage::{delete_at_request_id, store_versioned_at_request_id};
+    use crate::vault::storage::{Storage, delete_at_request_id, store_versioned_at_request_id};
 
     use aes_prng::AesRng;
-    use hashing::hash_versioned;
+    use hashing::{hash_element, hash_versioned};
     use kms_grpc::rpc_types::SignedPubDataHandleInternal;
     use rand::SeedableRng;
     use tfhe::core_crypto::prelude::NormalizedHammingWeightBound;
@@ -725,9 +581,74 @@ mod tests {
         let material = setup_standard_keys(&mut storage, 69).await;
 
         let entries = vec![(material.key_id, material.current_metadata())];
-        sanity_check_public_materials(&storage, &entries)
+        verify_keysets(&storage, &entries)
             .await
             .expect("valid digests should pass");
+    }
+
+    #[tokio::test]
+    async fn current_hash_checks_do_not_deserialize_keys_or_crs() {
+        let mut rng = AesRng::seed_from_u64(0xA11CE);
+        let key_id = RequestId::new_random(&mut rng);
+        let preprocessing_id = RequestId::new_random(&mut rng);
+        let crs_id = RequestId::new_random(&mut rng);
+        let public_key_bytes = b"not a serialized TFHE public key";
+        let server_key_bytes = b"not a serialized TFHE server key";
+        let crs_bytes = b"not a serialized TFHE CRS";
+        let mut storage = RamStorage::new();
+
+        for (data_type, bytes) in [
+            (PubDataType::PublicKey, public_key_bytes.as_slice()),
+            (PubDataType::ServerKey, server_key_bytes.as_slice()),
+        ] {
+            storage
+                .store_bytes(bytes, &key_id, &data_type.to_string())
+                .await
+                .unwrap();
+        }
+        storage
+            .store_bytes(crs_bytes, &crs_id, &PubDataType::CRS.to_string())
+            .await
+            .unwrap();
+
+        let key_entries = vec![(
+            key_id,
+            KeyGenMetadata::Current(KeyGenMetadataInner {
+                signatures: vec![],
+                key_id,
+                preprocessing_id,
+                key_digest_map: BTreeMap::from([
+                    (
+                        PubDataType::PublicKey,
+                        hash_element(&DSEP_PUBDATA_KEY, public_key_bytes),
+                    ),
+                    (
+                        PubDataType::ServerKey,
+                        hash_element(&DSEP_PUBDATA_KEY, server_key_bytes),
+                    ),
+                ]),
+                external_signature: vec![],
+                extra_data: None,
+            }),
+        )];
+        let crs_entries = HashMap::from([(
+            crs_id,
+            CrsGenMetadata::Current(crate::engine::base::CrsGenMetadataInner {
+                crs_id,
+                crs_digest: hash_element(&DSEP_PUBDATA_CRS, crs_bytes),
+                max_num_bits: 64,
+                extra_data: None,
+                external_signature: vec![],
+                signatures: vec![],
+            }),
+        )]);
+
+        verify_keysets(&storage, &key_entries)
+            .await
+            .expect("matching raw key bytes should pass without deserialization");
+        verify_crses(&storage, &crs_entries)
+            .await
+            .expect("matching raw CRS bytes should pass without deserialization");
     }
 
     #[tokio::test]
@@ -739,9 +660,7 @@ mod tests {
         }
 
         let entries = vec![(material.key_id, material.current_metadata())];
-        let err = sanity_check_public_materials(&storage, &entries)
-            .await
-            .unwrap_err();
+        let err = verify_keysets(&storage, &entries).await.unwrap_err();
         assert!(
             err.to_string().contains(ERR_SERVER_KEY_DIGEST_MISMATCH),
             "expected server key digest mismatch, got: {err}"
@@ -754,7 +673,7 @@ mod tests {
         let material = setup_compressed_keys(&mut storage, 44).await;
 
         let entries = vec![(material.key_id, material.current_metadata())];
-        sanity_check_public_materials(&storage, &entries)
+        verify_keysets(&storage, &entries)
             .await
             .expect("valid digests should pass");
     }
@@ -768,9 +687,7 @@ mod tests {
         }
 
         let entries = vec![(material.key_id, material.current_metadata())];
-        let err = sanity_check_public_materials(&storage, &entries)
-            .await
-            .unwrap_err();
+        let err = verify_keysets(&storage, &entries).await.unwrap_err();
         assert!(
             err.to_string().contains(ERR_PUBLIC_KEY_DIGEST_MISMATCH),
             "expected public key digest mismatch, got: {err}"
@@ -789,9 +706,7 @@ mod tests {
         }
 
         let entries = vec![(material.key_id, material.current_metadata())];
-        let err = sanity_check_public_materials(&storage, &entries)
-            .await
-            .unwrap_err();
+        let err = verify_keysets(&storage, &entries).await.unwrap_err();
         assert!(
             err.to_string()
                 .contains(ERR_COMPRESSED_KEYSET_DIGEST_MISMATCH),
@@ -806,9 +721,7 @@ mod tests {
         delete_data(&mut storage, &material.key_id, PubDataType::PublicKey).await;
 
         let entries = vec![(material.key_id, material.current_metadata())];
-        let err = sanity_check_public_materials(&storage, &entries)
-            .await
-            .unwrap_err();
+        let err = verify_keysets(&storage, &entries).await.unwrap_err();
         assert!(
             err.to_string()
                 .contains(&PubDataType::PublicKey.to_string()),
@@ -823,9 +736,7 @@ mod tests {
         let metadata = material.current_metadata_with_types(&[PubDataType::CompressedXofKeySet]);
 
         let entries = vec![(material.key_id, metadata)];
-        let err = sanity_check_public_materials(&storage, &entries)
-            .await
-            .unwrap_err();
+        let err = verify_keysets(&storage, &entries).await.unwrap_err();
         assert!(
             err.to_string()
                 .contains(ERR_INVALID_CURRENT_PUBLIC_KEY_SHAPE),
@@ -834,14 +745,25 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn sanity_check_legacy_standard_metadata_readability_only() {
+    async fn legacy_keyset_presence_check_does_not_deserialize_objects() {
         let mut storage = RamStorage::new();
         let material = setup_standard_keys(&mut storage, 49).await;
+        for data_type in [PubDataType::PublicKey, PubDataType::ServerKey] {
+            delete_data(&mut storage, &material.key_id, data_type).await;
+            storage
+                .store_bytes(
+                    b"deliberately not a serialized TFHE key",
+                    &material.key_id,
+                    &data_type.to_string(),
+                )
+                .await
+                .unwrap();
+        }
 
         let entries = vec![(material.key_id, material.legacy_standard_metadata())];
-        sanity_check_public_materials(&storage, &entries)
+        verify_keysets(&storage, &entries)
             .await
-            .expect("legacy readability check should pass");
+            .expect("legacy raw objects only need to be present");
     }
 
     #[tokio::test]
@@ -860,9 +782,7 @@ mod tests {
         ]));
 
         let entries = vec![(material.key_id, metadata)];
-        let err = sanity_check_public_materials(&storage, &entries)
-            .await
-            .unwrap_err();
+        let err = verify_keysets(&storage, &entries).await.unwrap_err();
         assert!(
             err.to_string()
                 .contains(ERR_INVALID_LEGACY_PUBLIC_KEY_SHAPE),
@@ -880,9 +800,7 @@ mod tests {
         )]));
 
         let entries = vec![(material.key_id, metadata)];
-        let err = sanity_check_public_materials(&storage, &entries)
-            .await
-            .unwrap_err();
+        let err = verify_keysets(&storage, &entries).await.unwrap_err();
         assert!(
             err.to_string()
                 .contains(ERR_INVALID_LEGACY_PUBLIC_KEY_SHAPE),
@@ -900,9 +818,7 @@ mod tests {
         )]));
 
         let entries = vec![(material.key_id, metadata)];
-        let err = sanity_check_public_materials(&storage, &entries)
-            .await
-            .unwrap_err();
+        let err = verify_keysets(&storage, &entries).await.unwrap_err();
         assert!(
             err.to_string()
                 .contains(ERR_INVALID_LEGACY_PUBLIC_KEY_SHAPE),
@@ -928,7 +844,7 @@ mod tests {
         });
 
         let entries = HashMap::from_iter([(crs_id, metadata)]);
-        sanity_check_crs_materials(&storage, &entries)
+        verify_crses(&storage, &entries)
             .await
             .expect("valid CRS digest should pass");
     }
@@ -953,9 +869,7 @@ mod tests {
         });
 
         let entries = HashMap::from_iter([(crs_id, metadata)]);
-        let err = sanity_check_crs_materials(&storage, &entries)
-            .await
-            .unwrap_err();
+        let err = verify_crses(&storage, &entries).await.unwrap_err();
         assert!(
             err.to_string().contains(ERR_CRS_DIGEST_MISMATCH),
             "expected CRS digest mismatch, got: {err}"
@@ -963,22 +877,32 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn sanity_check_crs_legacy_readability_only() {
+    async fn legacy_crs_presence_check_does_not_deserialize_object() {
         let mut rng = AesRng::seed_from_u64(72);
         let crs_id = RequestId::new_random(&mut rng);
         let mut storage = RamStorage::new();
 
-        // Set up CRS in storage (we won't use the digest — legacy has no digest info)
+        // Replace a valid fixture with bytes that cannot be decoded as a CRS. Legacy metadata
+        // has no digest, so startup deliberately checks only that the raw object is present.
         let _crs_and_digest = setup_crs(&mut storage, &crs_id).await;
+        delete_data(&mut storage, &crs_id, PubDataType::CRS).await;
+        storage
+            .store_bytes(
+                b"deliberately not a serialized TFHE CRS",
+                &crs_id,
+                &PubDataType::CRS.to_string(),
+            )
+            .await
+            .unwrap();
 
         use kms_grpc::rpc_types::SignedPubDataHandleInternal;
         let legacy_handle = SignedPubDataHandleInternal::new(String::new(), vec![], vec![]);
         let metadata = CrsGenMetadata::LegacyV0(legacy_handle);
 
         let entries = HashMap::from_iter([(crs_id, metadata)]);
-        sanity_check_crs_materials(&storage, &entries)
+        verify_crses(&storage, &entries)
             .await
-            .expect("legacy CRS readability check should pass");
+            .expect("legacy raw CRS object only needs to be present");
     }
 
     // === A2 / B1: explicit presence errors ===
@@ -990,9 +914,7 @@ mod tests {
         delete_data(&mut storage, &material.key_id, PubDataType::ServerKey).await;
 
         let entries = vec![(material.key_id, material.current_metadata())];
-        let err = sanity_check_public_materials(&storage, &entries)
-            .await
-            .unwrap_err();
+        let err = verify_keysets(&storage, &entries).await.unwrap_err();
         let msg = err.to_string();
         assert!(
             msg.contains("missing or unreadable public material")
@@ -1012,9 +934,7 @@ mod tests {
 
         let entries =
             HashMap::from_iter([(crs_id, crs_metadata_with_signatures(&crs_id, digest, &[]).0)]);
-        let err = sanity_check_crs_materials(&storage, &entries)
-            .await
-            .unwrap_err();
+        let err = verify_crses(&storage, &entries).await.unwrap_err();
         let msg = err.to_string();
         assert!(
             msg.contains("missing or unreadable public material")
@@ -1358,7 +1278,7 @@ mod tests {
         let orphan_crs_id = RequestId::new_random(&mut rng);
         let _orphan_crs = setup_crs(&mut storage, &orphan_crs_id).await;
 
-        verify_public_material(&storage, &[], &HashMap::new(), Some(&sk), false)
+        verify_public_material(&storage, &[], &HashMap::new(), Some(&sk))
             .await
             .expect("material with no private counterpart must be ignored");
     }
@@ -1372,7 +1292,7 @@ mod tests {
         let entries = vec![(material.key_id, material.current_metadata())];
 
         // No VerfKey/VerfAddress stored at all, so this only passes because C is skipped.
-        verify_public_material(&storage, &entries, &HashMap::new(), None, false)
+        verify_public_material(&storage, &entries, &HashMap::new(), None)
             .await
             .expect("recovery mode skips the signing-key dependent checks");
     }
@@ -1386,7 +1306,7 @@ mod tests {
         }
         let entries = vec![(material.key_id, material.current_metadata())];
 
-        let err = verify_public_material(&storage, &entries, &HashMap::new(), None, false)
+        let err = verify_public_material(&storage, &entries, &HashMap::new(), None)
             .await
             .unwrap_err();
         assert!(
@@ -1416,45 +1336,9 @@ mod tests {
 
         let entries = vec![(material.key_id, metadata)];
         let crs_entries = HashMap::from_iter([(crs_id, crs_metadata)]);
-        verify_public_material(&storage, &entries, &crs_entries, Some(&sk), false)
+        verify_public_material(&storage, &entries, &crs_entries, Some(&sk))
             .await
             .expect("consistent public storage must verify");
-    }
-
-    // === D2 helper ===
-
-    #[tokio::test]
-    async fn keychain_expects_custodian_context_is_false_without_a_backup_vault() {
-        assert!(!keychain_expects_custodian_context(None));
-    }
-
-    #[tokio::test]
-    async fn keychain_expects_custodian_context_detects_secret_sharing() {
-        use crate::vault::keychain::secretsharing::SecretShareKeychain;
-
-        let keychain = SecretShareKeychain::new(AesRng::seed_from_u64(170), None::<&RamStorage>)
-            .await
-            .unwrap();
-        let vault = Vault {
-            storage: RamStorage::new().into(),
-            keychain: Some(KeychainProxy::SecretSharing(keychain)),
-        };
-        assert!(keychain_expects_custodian_context(Some(&vault)));
-
-        let no_keychain = Vault {
-            storage: RamStorage::new().into(),
-            keychain: None,
-        };
-        assert!(!keychain_expects_custodian_context(Some(&no_keychain)));
-    }
-
-    #[tokio::test]
-    async fn missing_custodian_context_warns_without_failing() {
-        let storage = RamStorage::new();
-        // Warn-only: nothing to assert beyond it returning normally, since custodian material
-        // cannot be reproduced and a node legitimately boots before its first setup.
-        warn_if_custodian_context_missing(&storage, true).await;
-        warn_if_custodian_context_missing(&storage, false).await;
     }
 
     // === Helpers ===

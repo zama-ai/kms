@@ -12,7 +12,7 @@ use crate::{
     cryptography::signatures::{PrivateSigKey, compute_eip712_signature},
     engine::{
         base::{CrsGenMetadata, KeyGenMetadata},
-        public_material_verification::verify_public_key_digest_from_bytes,
+        material_integrity::verify_public_key_digest_from_bytes,
         threshold::service::{ThresholdFheKeys, epoch_manager::EpochData},
     },
     util::meta_store::{MetaStore, MetaStorePermit, with_overwriting_claim},

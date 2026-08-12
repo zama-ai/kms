@@ -16,6 +16,8 @@ pub mod context_manager;
 #[cfg(feature = "non-wasm")]
 pub mod keyset_configuration;
 #[cfg(feature = "non-wasm")]
+pub mod material_integrity;
+#[cfg(feature = "non-wasm")]
 pub mod migration;
 #[cfg(feature = "non-wasm")]
 pub mod public_material_verification;

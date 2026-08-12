@@ -57,7 +57,7 @@ use crate::{
             stored_scheme_signatures_to_proto,
         },
         keyset_configuration::InternalKeySetConfig,
-        public_material_verification::verify_public_key_digest_from_bytes,
+        material_integrity::verify_public_key_digest_from_bytes,
         threshold::{
             service::{
                 PublicKeyMaterial, ThresholdFheKeys,

@@ -80,8 +80,11 @@ The service crate is the main surface area. Key subdirectories under
   [context.rs](core/service/src/engine/context.rs),
   [backup_operator.rs](core/service/src/engine/backup_operator.rs),
   [keyset_configuration.rs](core/service/src/engine/keyset_configuration.rs),
+  [material_integrity.rs](core/service/src/engine/material_integrity.rs) (digest
+  primitives over raw stored bytes, depended on by both the storage layer and the
+  startup checks) and
   [public_material_verification.rs](core/service/src/engine/public_material_verification.rs)
-  (boot-time verification of public storage — see
+  (the startup orchestration built on top of them — see
   [Boot-time storage verification](#boot-time-storage-verification)),
   [validation_non_wasm.rs](core/service/src/engine/validation_non_wasm.rs) and
   [validation_wasm.rs](core/service/src/engine/validation_wasm.rs) (the
@@ -264,9 +267,14 @@ entries is brought back up to date. Existing entries are not re-read or re-verif
 consistent state: a misconfigured bucket or prefix can point a node at the wrong material, and
 writes are not atomic, so a crash mid-operation can leave an entry missing, truncated, or
 stale. Private storage holds the digests and signatures describing what should be published,
-so it is the reference. The checks live in
-[public_material_verification.rs](core/service/src/engine/public_material_verification.rs),
-entered through `verify_public_material`, and follow three rules:
+so it is the reference.
+
+The code is split by level. [material_integrity.rs](core/service/src/engine/material_integrity.rs)
+holds the digest primitives — pure functions over raw stored bytes, with no storage or
+orchestration — so the vault layer can reuse them without depending on startup logic.
+[public_material_verification.rs](core/service/src/engine/public_material_verification.rs)
+sits above it and owns the startup orchestration, entered through `verify_public_material`.
+The checks follow three rules:
 
 1. **Private storage is the reference.** Iteration is always "for each entry in private
    storage, look up its counterpart in public storage" — never the reverse.
@@ -285,11 +293,18 @@ What it verifies, and how failures are treated:
 | Published keysets and CRSes are present, and their raw stored bytes hash to the digests in `KeyGenMetadata` / `CrsGenMetadata` | boot fails |
 | Per-scheme `signatures` on that metadata verify against the node's own verification key — a corruption check on the reference itself | boot fails |
 | `VerfKey` and `VerfAddress` at `SIGNING_KEY_ID` match the key derived from the private `SigningKey` | boot fails |
-| A secret-sharing keychain is configured but no `RecoveryMaterial` is published | warning |
 
-Digests are always computed over the **raw stored bytes**, never over a re-serialization of
-the deserialized value: a tfhe format change since the material was generated would alter the
-bytes and report intact material as corrupt.
+Custodian backup readiness is deliberately *not* part of this. It is a property of the vault's
+keychain rather than of the published material, and the backup path already reports it:
+`keychain_initialized` ([backup_operator.rs](core/service/src/engine/backup_operator.rs)) asks
+the keychain directly whether a backup encryption key is set, and `inner_update_backup_vault`
+warns and skips the update when it is not — during the same boot, from
+`update_backup_vault(false, OP_BOOT)`.
+
+Startup verification never deserializes stored keys or CRSes. Digests are always computed over
+the **raw stored bytes**, never over a serialization of a decoded value: a tfhe format change
+since the material was generated would alter the bytes and report intact material as corrupt.
+Legacy metadata has no digest, so its public objects receive a raw presence check only.
 
 Two limits are worth knowing. `external_signature`, and the ECDSA entry of `signatures`, sign
 an EIP-712 hash whose `Eip712Domain` arrives on the originating gRPC request and is never

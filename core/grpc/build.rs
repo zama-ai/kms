@@ -21,7 +21,6 @@ fn default_builder() -> Builder {
         .type_attribute("KeyGenResult", DERIVES)
         .type_attribute("RequestId", EXTENDED_DERIVES)
         .type_attribute("Config", EXTENDED_DERIVES)
-        .type_attribute("SignedPubDataHandle", EXTENDED_DERIVES)
         .type_attribute("CrsGenRequest", DERIVES)
         .type_attribute("CrsGenResult", DERIVES)
         .type_attribute("VerifyProvenCtResponse", DERIVES)
