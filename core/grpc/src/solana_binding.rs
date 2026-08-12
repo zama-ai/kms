@@ -83,9 +83,6 @@ impl TryFrom<u64> for SolanaHostChainId {
 /// Fields are private, so a caller cannot assemble an unvalidated binding:
 ///
 /// ```compile_fail,E0451
-/// // Paired with the positive example below: if this snippet ever compiles, the validating
-/// // constructor stopped being the only way in. Every field is initialized, so the one thing
-/// // that can stop it from compiling is field privacy — the error code on the fence.
 /// let binding = kms_grpc::solana_binding::SolanaUserDecryptBinding {
 ///     verifying_program_id: [0u8; 32],
 ///     // The chain id's type is itself private, so its name cannot even be written here.
@@ -231,11 +228,10 @@ impl SolanaUserDecryptBinding {
         )
     }
 
-    /// The exact byte sequence fed to the hasher, in order.
-    ///
-    /// Public because it is a specified artifact, not a debugging aid: it is the vector field that
-    /// lets five implementations compare their construction before comparing digests, which is
-    /// where a single-byte disagreement is actually diagnosable.
+    /// The exact byte sequence fed to the hasher, in order — the `linker_hasher_input` field of
+    /// the published vectors. Consumed by the vector generator and the freeze gate; not part of
+    /// the client contract.
+    #[doc(hidden)]
     pub fn linker_hasher_input(&self) -> Vec<u8> {
         let chain_id = self.chain_id.get().to_be_bytes();
         let elements = self.hashed_elements(&chain_id);
