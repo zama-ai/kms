@@ -990,3 +990,6 @@ mod tests {
         );
     }
 }
+
+/// The recipient and the link, as signcryption sees them.
+///

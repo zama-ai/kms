@@ -466,7 +466,7 @@ impl<
             typed_ciphertexts,
             link,
             client_enc_key_bytes_orig, // the original bytes for the encryption key
-            client_address,
+            receiver,
             req_id,
             key_id,
             context_id,
@@ -517,7 +517,7 @@ impl<
         let signcryption_key = Arc::new(UnifiedSigncryptionKeyOwned::new(
             sk,
             client_enc_key,
-            client_address.to_vec(),
+            receiver.as_bytes().to_vec(),
         ));
         // the result of the computation is tracked the tracker
         let session_maker = self.session_maker.clone();
@@ -764,6 +764,8 @@ mod tests {
             extra_data: vec![],
             context_id: Some((*DEFAULT_MPC_CONTEXT).into()),
             epoch_id: Some(epoch_id.into()),
+            // This is the EVM test path; the Solana fields are exercised by
+            // `validation_solana` and the Solana response tests.
             solana_pubkey: None,
             solana_verifying_program_id: None,
         }
