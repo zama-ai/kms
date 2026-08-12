@@ -1,7 +1,7 @@
 //! Live RFC-021 Solana V2 user-decryption client (the user-side SDK piece), as an `#[ignore]`d
 //! integration test driven against a running fhevm-cli stack with the Solana user-decrypt path
 //! deployed (gateway V2 `userDecryptionRequest`, relayer `/v3/user-decrypt` ed25519 seam,
-//! kms-connector Solana V2 arm, kms-core `compute_link_solana`).
+//! kms-connector Solana V2 arm, the kms-core Solana user-decryption binding).
 //!
 //! Flow:
 //!   1. ML-KEM ephemeral keygen (Rust — this is also where the response is de-signcrypted).
@@ -10,10 +10,13 @@
 //!      ML-KEM public key, handles, identity, nonce, allowed ACL domain keys, and validity window.
 //!   3. POST the V2 request as the v3 typed-attestation envelope (`solana-ed25519-user-decrypt-v1`)
 //!      to `/v3/user-decrypt`, poll the job.
-//!   4. De-signcrypt via `process_user_decryption_resp_solana` and assert the cleartext.
+//!   4. De-signcrypt via `process_user_decryption_resp_solana` and assert the cleartext. The
+//!      trusted KMS signer set comes from deployment configuration (`SOLANA_UD_KMS_SIGNERS`),
+//!      never from the response: a response must not supply the key it is then verified against.
 //!
 //! Run (after a handle is granted USE to the user's Solana pubkey on the host ACL):
 //!   SOLANA_UD_HANDLE=0x... SOLANA_UD_EXPECTED=55 \
+//!   SOLANA_UD_KMS_SIGNERS=0x... \
 //!   cargo test -p kms --features non-wasm --test solana_user_decrypt_live -- --ignored --nocapture
 #![cfg(feature = "non-wasm")]
 
@@ -22,13 +25,12 @@ use std::env;
 use std::process::Command;
 
 use aes_prng::AesRng;
-use alloy_primitives::{Address, U256};
+use alloy_primitives::U256;
 use kms_grpc::kms::v1::{UserDecryptionResponse, UserDecryptionResponsePayload};
 use kms_lib::client::client_wasm::Client;
-use kms_lib::client::user_decryption_wasm::{CiphertextHandle, ParsedUserDecryptionRequest};
+use kms_lib::client::solana_response::SolanaUserDecryptionRequest;
 use kms_lib::consts::{DEFAULT_PARAM, SAFE_SER_SIZE_LIMIT};
 use kms_lib::cryptography::encryption::{Encryption, PkeScheme, PkeSchemeType};
-use kms_lib::cryptography::signatures::PublicSigKey;
 use rand::SeedableRng;
 
 fn env_or(key: &str, default: &str) -> String {
@@ -229,6 +231,18 @@ async fn solana_user_decrypt_live() {
     )
     .unwrap();
     let context_id: [u8; 32] = context_u256.to_be_bytes();
+
+    // The other two values the response binding commits to. The program id is the host deployment
+    // the connector sent as `solana_verifying_program_id`; the epoch id is the one the KMS answered
+    // under, defaulting to the KMS default epoch for a request that omits it.
+    let program_id: [u8; 32] = alloy_primitives::hex::decode(
+        env_or("SOLANA_UD_PROGRAM_ID", &hex0x(&[0u8; 32])).trim_start_matches("0x"),
+    )
+    .expect("SOLANA_UD_PROGRAM_ID must be hex")
+    .try_into()
+    .expect("SOLANA_UD_PROGRAM_ID must be 32 bytes");
+    let epoch_id: [u8; 32] = *kms_lib::consts::DEFAULT_EPOCH_ID.as_bytes();
+
     let nonce: [u8; 32] = rand::random();
 
     let now = std::time::SystemTime::now()
@@ -380,7 +394,6 @@ async fn solana_user_decrypt_live() {
         .as_array()
         .expect("launcher shares[] array");
     let mut agg_resp = Vec::new();
-    let mut kms_pk: Option<PublicSigKey> = None;
     for share in shares {
         let external_signature = alloy_primitives::hex::decode(
             share["signature"]
@@ -398,9 +411,6 @@ async fn solana_user_decrypt_live() {
         .unwrap();
         let payload: UserDecryptionResponsePayload =
             bc2wrap::deserialize_slice(&payload_bytes).unwrap();
-        if kms_pk.is_none() {
-            kms_pk = Some(bc2wrap::deserialize_slice(&payload.verification_key).unwrap());
-        }
         agg_resp.push(UserDecryptionResponse {
             signature: vec![],
             external_signature,
@@ -409,32 +419,67 @@ async fn solana_user_decrypt_live() {
         });
     }
 
-    // 6. Build a client bound to the KMS verification key and de-signcrypt.
-    let derived = Address::from_slice(&alloy_primitives::keccak256(pubkey)[12..]);
-    let mut server_pks = HashMap::new();
-    server_pks.insert(
-        1u32,
-        kms_pk.expect("KMS verification key in response payload"),
-    );
-    let client = Client::new(server_pks, derived, None, DEFAULT_PARAM, None);
-    let request = ParsedUserDecryptionRequest::new(
+    // 6. Build a client bound to the deployment's registered KMS signer set and de-signcrypt. The
+    //    trust anchor is configuration — the KMS-context signer addresses, in party-id order —
+    //    never anything read out of the response: verification admits a key carried by a response
+    //    only under its binding to one of these addresses and rejects parties outside the set. The
+    //    Solana client has no wallet address: the recipient is the ed25519 key itself, passed per
+    //    call.
+    let kms_signers: HashMap<u32, alloy_primitives::Address> = env::var("SOLANA_UD_KMS_SIGNERS")
+        .expect(
+            "SOLANA_UD_KMS_SIGNERS (comma-separated KMS signer addresses, party-id order) required",
+        )
+        .split(',')
+        .enumerate()
+        .map(|(i, addr)| {
+            (
+                i as u32 + 1,
+                addr.trim()
+                    .parse::<alloy_primitives::Address>()
+                    .expect("SOLANA_UD_KMS_SIGNERS entries must be hex addresses"),
+            )
+        })
+        .collect();
+    let client = Client::new_solana(kms_signers, DEFAULT_PARAM, None);
+    // The shares above carry no internal ECDSA signature, only the gateway EIP-712
+    // `external_signature`, so the client must be given the domain it was produced under — the
+    // `Decryption` contract's domain, exactly as the connector was configured with it. The Solana
+    // path invents no domain of its own, so a wrong value here is a rejected response, not a
+    // different one.
+    let response_domain = alloy_sol_types::Eip712Domain::new(
+        Some(std::borrow::Cow::Borrowed("Decryption")),
+        Some(std::borrow::Cow::Borrowed("1")),
+        Some(U256::from(
+            env_or("GATEWAY_CHAIN_ID", "54321").parse::<u64>().unwrap(),
+        )),
+        Some(
+            env_or("DECRYPTION_ADDRESS", &hex0x(&[0u8; 20]))
+                .parse::<alloy_primitives::Address>()
+                .expect("DECRYPTION_ADDRESS must be a hex address"),
+        ),
         None,
-        derived,
-        pk_bytes.clone(),
-        vec![CiphertextHandle::new(handle32.to_vec())],
-        Address::ZERO,
-        vec![0x00],
     );
+    let request = SolanaUserDecryptionRequest {
+        user_pubkey: pubkey,
+        host_chain_id: contracts_chain_id,
+        verifying_program_id: program_id,
+        kms_context_id: context_id,
+        kms_epoch_id: epoch_id,
+        handles: vec![handle32.to_vec()],
+        enc_key: pk_bytes.clone(),
+        response_domain,
+        // Opaque to the KMS and to this client: `extra_data` is only ever an input to the message
+        // the external signature commits to, so the client must present the same bytes the
+        // connector forwarded (the SDK's context-only v0x01 container) and never parse them.
+        // Overridable because the container is the SDK's to build, not this harness's.
+        extra_data: alloy_primitives::hex::decode(
+            env_or("SOLANA_UD_EXTRA_DATA", "").trim_start_matches("0x"),
+        )
+        .expect("SOLANA_UD_EXTRA_DATA must be hex"),
+    };
 
     let plaintexts = client
-        .process_user_decryption_resp_solana(
-            &request,
-            &pubkey,
-            contracts_chain_id,
-            &unified_pk,
-            &unified_sk,
-            &agg_resp,
-        )
+        .process_user_decryption_resp_solana(&request, &unified_pk, &unified_sk, &agg_resp)
         .expect("solana de-signcryption failed");
     assert!(!plaintexts.is_empty(), "no plaintexts returned");
 

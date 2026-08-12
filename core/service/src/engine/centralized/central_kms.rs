@@ -26,6 +26,7 @@ use crate::grpc::metastore_status_service::CustodianMetaStore;
 use crate::util::key_setup::FhePublicKey;
 use crate::util::meta_store::MetaStore;
 use crate::vault::storage::{StorageExt, read_all_data_from_all_epochs_versioned};
+use kms_grpc::rpc_types::SigncryptionReceiver;
 #[cfg(feature = "non-wasm")]
 use observability::conf::TelemetryConfig;
 use observability::metrics_names::OP_BOOT;
@@ -511,7 +512,7 @@ pub async fn async_user_decrypt<
     typed_ciphertexts: &[TypedCiphertext],
     req_digest: &[u8],
     client_enc_key_bytes: &[u8],
-    client_address: &alloy_primitives::Address,
+    receiver: &SigncryptionReceiver,
     server_verf_key: Vec<u8>,
     domain: &alloy_sol_types::Eip712Domain,
     extra_data: &[u8],
@@ -544,7 +545,7 @@ pub async fn async_user_decrypt<
             ct_format,
             req_digest,
             &client_enc_key,
-            client_address.as_ref(),
+            receiver.as_bytes(),
         )?;
         all_signcrypted_cts.push(TypedSigncryptedCiphertext {
             fhe_type: fhe_type as i32,

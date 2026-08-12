@@ -311,7 +311,7 @@ fn select_most_common_user_dec(
 ///   (pivot first, then the remaining valid responses).
 ///   The caller should check if the list is empty.
 /// * `Err(_)` — An unrecoverable error occurred during validation
-fn validate_user_decrypt_responses(
+pub(crate) fn validate_user_decrypt_responses(
     trusted_ctx: &UserDecTrustedValidationContext,
     agg_resp: &[UserDecryptionResponse],
 ) -> anyhow::Result<VerifiedUserDecryptionPayloads> {

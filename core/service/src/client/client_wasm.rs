@@ -72,16 +72,64 @@ impl Client {
         params: DKGParams,
         decryption_mode: Option<DecryptionMode>,
     ) -> Self {
-        let decryption_mode = decryption_mode.unwrap_or_default();
-        Client {
-            #[cfg(feature = "non-wasm")]
-            rng: Box::new(AesRng::from_entropy()), // todo should be argument
-            server_identities: ServerIdentities::Pks(server_pks),
+        Self::from_identities(
+            ServerIdentities::Pks(server_pks),
             client_address,
             client_sk,
             params,
             decryption_mode,
+        )
+    }
+
+    /// The one place a [Client] is assembled from parts: every public constructor differs only in
+    /// which identity variant it holds and which fields it fixes.
+    pub(crate) fn from_identities(
+        server_identities: ServerIdentities,
+        client_address: alloy_primitives::Address,
+        client_sk: Option<PrivateSigKey>,
+        params: DKGParams,
+        decryption_mode: Option<DecryptionMode>,
+    ) -> Self {
+        Client {
+            #[cfg(feature = "non-wasm")]
+            rng: Box::new(AesRng::from_entropy()), // todo should be argument
+            server_identities,
+            client_address,
+            client_sk,
+            params,
+            decryption_mode: decryption_mode.unwrap_or_default(),
         }
+    }
+
+    /// Constructor for the Solana user-decryption path.
+    ///
+    /// Additive: it exists because a Solana client has no EVM wallet address to supply, and the
+    /// recipient it de-signcrypts under is its 32-byte ed25519 key, passed per call. The
+    /// `client_address` field is therefore zero and unused on this path — never a derivative of the
+    /// wallet key, which is what a truncating derivation would make it.
+    ///
+    /// * `server_addrs` - the registered KMS node signer addresses, keyed by party id — on Solana,
+    ///   the host program's KMS-context signer set, which the caller holds as its own trusted
+    ///   configuration or reads on chain. This set is the trust anchor of response verification: a
+    ///   key carried inside a response acts only under its binding to one of these addresses, so
+    ///   nothing read out of a response may populate it — a response must never supply the trust
+    ///   it is then verified against. Addresses rather than full keys, because an address is what
+    ///   the on-chain KMS context records; a caller holding full keys passes the addresses they
+    ///   determine, as [`Self::get_server_addrs`] derives them.
+    /// * `params` - the FHE parameters.
+    /// * `decryption_mode` - as in [`Self::new`].
+    pub fn new_solana(
+        server_addrs: HashMap<u32, alloy_primitives::Address>,
+        params: DKGParams,
+        decryption_mode: Option<DecryptionMode>,
+    ) -> Self {
+        Self::from_identities(
+            ServerIdentities::Addrs(server_addrs),
+            alloy_primitives::Address::ZERO,
+            None,
+            params,
+            decryption_mode,
+        )
     }
 
     pub fn get_server_pks(&self) -> anyhow::Result<&HashMap<u32, PublicSigKey>> {
