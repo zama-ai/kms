@@ -82,7 +82,11 @@ the response call takes that client plus the request-side values the link commit
   configuration, exactly as the EVM SDK does. It is never learned from a response. Unlike
   `new_client` there is no wallet address — the recipient is the 32-byte ed25519 key passed per
   call.
-- **`process_user_decryption_resp_solana_from_js(client, …)`** verifies and releases. Its trailing
+- **`process_user_decryption_resp_solana_from_js(client, request, solana_request, …)`** verifies
+  and releases. The Solana-owned request fields travel as one named object,
+  `{ user_pubkey, host_chain_id, verifying_program_id, kms_context_id, kms_epoch_id }`, with
+  identities as 32-byte hex strings and `host_chain_id` as a decimal string — the vector-set
+  convention, because a Solana chain id sets bit 63 and does not fit a JS number. Its trailing
   **`eip712_domain`** argument is the EIP-712 domain KMS nodes produced the response's
   `external_signature` under, in the same JS shape the EVM wrapper takes.
 
@@ -111,9 +115,10 @@ The linker v1 construction is frozen by a normative vector set:
 Five implementations (SDK TypeScript, relayer, Connector Rust, KMS Core Rust, KMS client/WASM)
 must consume the same bytes. Each repository holding a copy commits the same two files, and CI
 compares digests: an edited copy and a stale copy are both caught. In this repository the set is
-consumed twice, independently — by the Rust runner `core/grpc/tests/solana_linker_vectors.rs`
-(which also regenerates the set under `ZAMA_UPDATE_SOLANA_LINKER_VECTORS=1`) and by the JS suite
-`core/service/tests/js/linker_vectors.test.js` driving the WASM export.
+consumed by the Rust runner `core/grpc/tests/solana_linker_vectors.rs`, which also regenerates it
+under `ZAMA_UPDATE_SOLANA_LINKER_VECTORS=1`; the WASM build's agreement is pinned end to end by
+`core/service/tests/js/test.js`, whose stable transcripts fail to decrypt if the wasm-compiled
+linker diverges.
 
 The scheme tag `SolanaUserDecryptionLinker:v1`, the call separator `SOLLNK01` and the element
 layout are pinned by `core/grpc/tests/solana_frozen_constants.rs`. From this point a change to any

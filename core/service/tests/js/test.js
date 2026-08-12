@@ -81,17 +81,25 @@ function loadSolanaVector(name) {
     return { data, client, enc_pk, enc_sk };
 }
 
+// The Solana-owned request fields of a stable vector, in the named shape the WASM entry point
+// takes: identities as hex strings, the chain id as a decimal string.
+function solanaRequestFields(data) {
+    return {
+        user_pubkey: data.solana_user_pubkey,
+        host_chain_id: data.host_chain_id,
+        verifying_program_id: data.verifying_program_id,
+        kms_context_id: data.kms_context_id,
+        kms_epoch_id: data.kms_epoch_id,
+    };
+}
+
 // Call the Solana WASM entry point with a vector's own fields, overriding the client when a test
 // needs a differently-configured one (e.g. a foreign signer set).
 function processSolanaVector(client, data, enc_pk, enc_sk) {
     return process_user_decryption_resp_solana_from_js(
         client,
         data.request,
-        hexToBytes(data.solana_user_pubkey),
-        BigInt(data.host_chain_id),
-        hexToBytes(data.verifying_program_id),
-        hexToBytes(data.kms_context_id),
-        hexToBytes(data.kms_epoch_id),
+        solanaRequestFields(data),
         data.responses,
         enc_pk,
         enc_sk,
@@ -179,7 +187,7 @@ test('threshold user decryption response', (_t) => {
     assertExpected(pt3, data.expected);
 });
 
-test('solana chain ID crosses the WASM boundary as an exact bigint', (_t) => {
+test('solana chain ID crosses the WASM boundary as an exact decimal string', (_t) => {
     const { data, enc_pk, enc_sk } = loadVector('test-central-wasm-transcript.8.json');
     const client = new_solana_client(
         [new_server_id_addr(1, "0x66f9664f97F2b50F62D13eA064982f936dE76657")], 'test');
@@ -193,37 +201,33 @@ test('solana chain ID crosses the WASM boundary as an exact bigint', (_t) => {
         ...data.request,
         ciphertext_handles: [Buffer.from(handle).toString('hex')],
     };
-    const pubkey = new Uint8Array(32).fill(0x11);
-    const programId = new Uint8Array(32).fill(0x22);
-    const contextId = new Uint8Array(32).fill(0x33);
-    const epochId = new Uint8Array(32).fill(0x44);
+    const fields = {
+        user_pubkey: '11'.repeat(32),
+        host_chain_id: solanaChainId.toString(),
+        verifying_program_id: '22'.repeat(32),
+        kms_context_id: '33'.repeat(32),
+        kms_epoch_id: '44'.repeat(32),
+    };
 
+    // The rules run in order even with no responses: an invalid request reports its own problem.
     assert.throws(
         () => process_user_decryption_resp_solana_from_js(
-            client, request, pubkey, solanaChainId, programId, contextId, epochId,
-            [], enc_pk, enc_sk),
+            client, request, fields, [], enc_pk, enc_sk, null),
         /Response does not exist/,
     );
     assert.throws(
         () => process_user_decryption_resp_solana_from_js(
-            client, request, pubkey, solanaChainId + 1n, programId, contextId, epochId,
-            [], enc_pk, enc_sk),
+            client, request, { ...fields, host_chain_id: (solanaChainId + 1n).toString() },
+            [], enc_pk, enc_sk, null),
         /does not match handle chain ID/,
     );
+    // A JS Number cannot carry a bit-63 chain id exactly, so the field is a decimal string and a
+    // Number is a parse error — never a silent rounding.
     assert.throws(
         () => process_user_decryption_resp_solana_from_js(
-            client, request, pubkey, Number(solanaChainId), programId, contextId, epochId,
-            [], enc_pk, enc_sk),
-        TypeError,
-    );
-
-    // The full arity with a trailing EIP-712 domain: marshalling it must not change what an
-    // empty response reports.
-    assert.throws(
-        () => process_user_decryption_resp_solana_from_js(
-            client, request, pubkey, solanaChainId, programId, contextId, epochId,
+            client, request, { ...fields, host_chain_id: Number(solanaChainId) },
             [], enc_pk, enc_sk, null),
-        /Response does not exist/,
+        /solana_request parsing failed/,
     );
 });
 
