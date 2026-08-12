@@ -390,7 +390,7 @@ async fn main() -> anyhow::Result<()> {
                 overwrite: config.keygen.overwrite,
                 show_existing: config.keygen.show_existing,
             };
-            handle_central_cmd(&mut cmdargs).await;
+            handle_central_cmd(&mut cmdargs).await?;
         }
         KeygenMode::Threshold {
             signing_key_party_id,
@@ -408,7 +408,7 @@ async fn main() -> anyhow::Result<()> {
                 tls_subject,
                 tls_wildcard,
             };
-            handle_threshold_cmd(&mut cmdargs).await;
+            handle_threshold_cmd(&mut cmdargs).await?;
         }
     }
     tracing::info!("Keygen finished successfully.");
@@ -417,7 +417,7 @@ async fn main() -> anyhow::Result<()> {
 
 async fn handle_central_cmd<PubS: Storage, PrivS: Storage>(
     args: &mut CentralCmdArgs<'_, PubS, PrivS>,
-) {
+) -> anyhow::Result<()> {
     process_signing_key_cmds(
         args.pub_storage,
         args.priv_storage,
@@ -433,15 +433,16 @@ async fn handle_central_cmd<PubS: Storage, PrivS: Storage>(
         #[cfg(any(test, feature = "testing", feature = "insecure"))]
         args.deterministic,
     )
-    .await
+    .await?
     {
         tracing::warn!("Signing keys already exist, skipping generation");
     }
+    Ok(())
 }
 
 async fn handle_threshold_cmd<PubS: Storage, PrivS: Storage>(
     args: &mut ThresholdCmdArgs<'_, PubS, PrivS>,
-) {
+) -> anyhow::Result<()> {
     process_signing_key_cmds(
         args.pub_storage,
         args.priv_storage,
@@ -450,7 +451,7 @@ async fn handle_threshold_cmd<PubS: Storage, PrivS: Storage>(
         args.overwrite,
     )
     .await;
-    ensure_threshold_server_signing_key_exists(
+    if !ensure_threshold_server_signing_key_exists(
         args.pub_storage,
         args.priv_storage,
         &SIGNING_KEY_ID,
@@ -460,8 +461,11 @@ async fn handle_threshold_cmd<PubS: Storage, PrivS: Storage>(
         args.tls_subject.clone(),
         args.tls_wildcard,
     )
-    .await
-    .expect("Could not access storage");
+    .await?
+    {
+        tracing::warn!("Signing keys already exist, skipping generation");
+    }
+    Ok(())
 }
 
 /// Repopulate the non-ECDSA schemes' verification material from the existing
@@ -474,7 +478,13 @@ async fn handle_repopulate_cmd<PubS: Storage, PrivS: Storage>(
     priv_storage: &PrivS,
 ) -> anyhow::Result<()> {
     let sk = get_core_signing_key(priv_storage).await?;
-    ensure_derived_verification_material(pub_storage, &sk, SchemeMaterialMode::Populate).await?;
+    ensure_derived_verification_material(
+        pub_storage,
+        &sk,
+        &SIGNING_KEY_ID,
+        SchemeMaterialMode::Populate,
+    )
+    .await?;
     tracing::info!(
         "Repopulated multi-scheme verification material from the existing ECDSA signing key"
     );

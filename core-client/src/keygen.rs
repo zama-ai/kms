@@ -898,7 +898,8 @@ mod tests {
             &SIGNING_KEY_ID,
             true,
         )
-        .await;
+        .await
+        .unwrap();
 
         // generate a small FHE keyset for testing
         let key_id = &TEST_CENTRAL_KEY_ID;

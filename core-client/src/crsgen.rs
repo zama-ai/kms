@@ -446,7 +446,8 @@ mod tests {
             &SIGNING_KEY_ID,
             true,
         )
-        .await;
+        .await
+        .unwrap();
 
         // compute a small CRS for testing
         let crs_id = &TEST_CENTRAL_CRS_ID;

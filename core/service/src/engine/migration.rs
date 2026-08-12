@@ -183,7 +183,13 @@ where
         return Ok(());
     }
     let sk = get_core_signing_key(priv_storage).await?;
-    ensure_derived_verification_material(pub_storage, &sk, SchemeMaterialMode::Populate).await
+    ensure_derived_verification_material(
+        pub_storage,
+        &sk,
+        &SIGNING_KEY_ID,
+        SchemeMaterialMode::Populate,
+    )
+    .await
 }
 
 async fn migrate_prss_to_epoch<PrivS>(
@@ -2926,13 +2932,14 @@ mod tests {
         store_combined_prss_at_epoch(&mut priv_storage, &DEFAULT_EPOCH_ID, num_parties, threshold)
             .await;
         // Derive signing key and use central for convenience since we test with a single server
-        let _ = ensure_central_server_signing_keys_exist(
+        ensure_central_server_signing_keys_exist(
             &mut pub_storage,
             &mut priv_storage,
             &SIGNING_KEY_ID,
             true,
         )
-        .await;
+        .await
+        .unwrap();
 
         migrate_to_0_15_x(
             &mut pub_storage,
@@ -2979,13 +2986,14 @@ mod tests {
         let mut priv_storage = RamStorage::new();
         store_combined_prss_at_epoch(&mut priv_storage, &DEFAULT_EPOCH_ID, 4, 1).await;
         // Derive signing key and use central for convenience since we test with a single server
-        let _ = ensure_central_server_signing_keys_exist(
+        ensure_central_server_signing_keys_exist(
             &mut pub_storage,
             &mut priv_storage,
             &SIGNING_KEY_ID,
             true,
         )
-        .await;
+        .await
+        .unwrap();
 
         let config = default_migration_config();
 
@@ -3061,13 +3069,14 @@ mod tests {
         let mut pub_storage = RamStorage::new();
         let mut priv_storage = RamStorage::new();
         // Derive signing key
-        let _ = ensure_central_server_signing_keys_exist(
+        ensure_central_server_signing_keys_exist(
             &mut pub_storage,
             &mut priv_storage,
             &SIGNING_KEY_ID,
             true,
         )
-        .await;
+        .await
+        .unwrap();
 
         migrate_to_0_15_x(
             &mut pub_storage,

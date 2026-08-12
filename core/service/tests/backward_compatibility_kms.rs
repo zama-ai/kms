@@ -77,6 +77,7 @@ use std::{
     path::Path,
     sync::Arc,
 };
+use strum::IntoEnumIterator;
 use tfhe::integer::compression_keys::DecompressionKey;
 use threshold_execution::{
     small_execution::prss::PRSSSetup, tfhe_internals::public_keysets::FhePubKeySet,

@@ -678,7 +678,7 @@ async fn setup_party_resharing_servers(
     use kms_lib::util::key_setup::{
         ThresholdSigningKeyConfig, ensure_threshold_server_signing_keys_exist,
     };
-    let _ = ensure_threshold_server_signing_keys_exist(
+    ensure_threshold_server_signing_keys_exist(
         &mut pub_storages,
         &mut priv_storages,
         &SIGNING_KEY_ID,
@@ -686,7 +686,8 @@ async fn setup_party_resharing_servers(
         ThresholdSigningKeyConfig::AllParties((1..=6).map(|i| format!("party-{i}")).collect()),
         false, // don't skip if exists
     )
-    .await;
+    .await
+    .unwrap();
 
     // Create peer configurations for party resharing:
     // - Servers 1-4: peers [1,2,3,4] (standard 4-party setup)

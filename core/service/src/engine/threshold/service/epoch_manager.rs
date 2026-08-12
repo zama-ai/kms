@@ -1891,7 +1891,7 @@ pub(crate) mod tests {
         // from each private storage and panics if it's missing. Populate the
         // tempdir with signing + client keys (same calls `ThresholdTestEnv`
         // makes internally via `setup_test_material_temp`).
-        let _ = ensure_threshold_server_signing_keys_exist(
+        ensure_threshold_server_signing_keys_exist(
             &mut pub_storage,
             &mut priv_storage,
             &SIGNING_KEY_ID,
@@ -1903,7 +1903,8 @@ pub(crate) mod tests {
             ),
             false,
         )
-        .await;
+        .await
+        .unwrap();
         ensure_client_keys_exist(Some(material_path), &SIGNING_KEY_ID, true).await;
 
         // create parties and run PrssSetup

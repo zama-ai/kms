@@ -567,7 +567,8 @@ pub mod setup {
             &SIGNING_KEY_ID,
             true,
         )
-        .await;
+        .await
+        .unwrap();
         ensure_central_keys_exist(
             &mut central_pub_storage,
             &mut central_priv_storage,
@@ -615,7 +616,7 @@ pub mod setup {
             );
         }
 
-        let _ = ensure_threshold_server_signing_keys_exist(
+        ensure_threshold_server_signing_keys_exist(
             &mut threshold_pub_storages,
             &mut threshold_priv_storages,
             &SIGNING_KEY_ID,
@@ -625,7 +626,8 @@ pub mod setup {
             ),
             false,
         )
-        .await;
+        .await
+        .unwrap();
         ensure_threshold_keys_exist(
             &mut threshold_pub_storages,
             &mut threshold_priv_storages,
@@ -729,6 +731,7 @@ async fn test_purge() {
             true,
         )
         .await
+        .unwrap()
     );
     // Validate the keys were made: one verification key per signature scheme
     // (ECDSA plus each derived scheme), and a single ECDSA private signing key.
