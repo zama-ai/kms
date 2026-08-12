@@ -19,17 +19,11 @@
 //! * **l3 — byte equality.** The embedded digest must equal the recomputed link byte for byte,
 //!   length included. A share that fails is discarded and contributes nothing.
 //! * **l4 — uniformity and threshold.** Every accepted share must carry the *same* link, a party
-//!   contributes at most one accepted share, and there must be at least as many of them as the
-//!   release needs. Fewer means the response fails as a whole: no plaintext is released from a
-//!   partially valid response. The one-share-per-party half is what makes the threshold a count of
-//!   *distinct* nodes: a replayed share is discarded, never counted twice. A multi-share set is
-//!   further required to be one consistent threshold response — degree, ciphertext count and
-//!   types, packing, handles, byte-distinct verification keys — checked by running the accepted
-//!   originals through the EVM path's own validation, unchanged, so the definition of a
-//!   well-formed threshold response exists exactly once for both paths. Key distinctness there is
-//!   equality of the key's exact bytes: it collapses a replayed key, not a re-encoding of the same
-//!   key, so keeping one physical signer to one slot rests on the registry mapping distinct
-//!   addresses to distinct party ids.
+//!   contributes at most one accepted share (a replayed share is discarded, never counted twice),
+//!   and there must be at least as many of them as the release needs — fewer fails the response as
+//!   a whole. A multi-share set must additionally be one consistent threshold response, checked by
+//!   running the accepted originals through the EVM path's own validation, unchanged, so the
+//!   definition of a well-formed threshold response exists exactly once for both paths.
 //!
 //! The centralized case is the degenerate single-share case of exactly these rules, not a weaker
 //! path of its own.
@@ -175,18 +169,11 @@ impl SolanaUserDecryptionRequest {
     }
 }
 
-/// Why each rejected share was rejected, as counters.
+/// Why each rejected share was rejected, as counters — the census a failed response reports in
+/// [`SolanaUserDecryptionResponseError::BelowThreshold`].
 ///
-/// The counts exist so that the *order* of the rules is observable through data rather than
-/// through timing. A share that fails both l2 and l3 is counted under [`Self::node_signature`]
-/// only, because l3 is never reached for it: if a bad-signature share could still increment
-/// [`Self::link_mismatch`], the comparison would have run on an unauthenticated payload.
-///
-/// Every counter therefore corresponds to the first per-share rule the share failed, and the
-/// counters sum to the number of shares rejected by that per-share verification. A share that
-/// passes every per-share rule can still be dropped by the whole-set consistency gate, which may
-/// discard an outlier while accepting the set; such a drop is not counted here, so the sum is not
-/// necessarily everything kept out of [`VerifiedSolanaShares`].
+/// Each share is counted under the *first* rule it failed, in rule order; shares dropped later by
+/// the whole-set consistency gate are not counted here.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub struct ShareRejections {
     /// The response carried no payload at all.
@@ -207,18 +194,6 @@ pub struct ShareRejections {
     pub duplicate_party: usize,
 }
 
-impl ShareRejections {
-    /// How many shares the per-share verification discarded in total.
-    pub fn total(&self) -> usize {
-        self.missing_payload
-            + self.unknown_party
-            + self.malformed_verification_key
-            + self.node_signature
-            + self.link_mismatch
-            + self.duplicate_party
-    }
-}
-
 /// One share that passed l1–l3: authenticated by a trusted KMS node, and carrying the recomputed
 /// link.
 ///
@@ -231,27 +206,7 @@ pub struct VerifiedSolanaShare {
     payload: UserDecryptionResponsePayload,
 }
 
-impl VerifiedSolanaShare {
-    /// The party this share was authenticated as.
-    pub fn party_id(&self) -> u32 {
-        self.party_id
-    }
-
-    /// The key the share's signature verified under: the payload's advertised key, admitted
-    /// because its address is the one registered for this party. The trust anchor is the caller's
-    /// signer set — the key material merely has to match it.
-    pub fn verification_key(&self) -> &PublicSigKey {
-        &self.verification_key
-    }
-
-    /// The payload, now that it is known to be authentic and linked to the request.
-    pub fn payload(&self) -> &UserDecryptionResponsePayload {
-        &self.payload
-    }
-}
-
-/// The outcome of rules l1–l4: the accepted shares, the single link every one of them carries, and
-/// a census of everything that was discarded.
+/// The outcome of rules l1–l4: the accepted shares and the single link every one of them carries.
 ///
 /// Fields are private. In particular `link` has no setter and no constructor argument anywhere in
 /// this module's public surface — it is always the value recomputed from the request, which is
@@ -262,46 +217,6 @@ pub struct VerifiedSolanaShares {
     link: Vec<u8>,
     receiver_id: [u8; SOLANA_IDENTITY_LEN],
     shares: Vec<VerifiedSolanaShare>,
-    rejections: ShareRejections,
-}
-
-impl VerifiedSolanaShares {
-    /// The recomputed link that every accepted share carries — rule l4's uniformity, as a value.
-    pub fn link(&self) -> &[u8] {
-        &self.link
-    }
-
-    /// The recipient the accepted shares are signcrypted to: the raw 32-byte wallet key.
-    pub fn receiver_id(&self) -> &[u8; SOLANA_IDENTITY_LEN] {
-        &self.receiver_id
-    }
-
-    /// The accepted shares.
-    pub fn shares(&self) -> &[VerifiedSolanaShare] {
-        &self.shares
-    }
-
-    /// The party ids of the accepted shares, in response order.
-    pub fn party_ids(&self) -> Vec<u32> {
-        self.shares.iter().map(|share| share.party_id).collect()
-    }
-
-    /// How many shares were accepted.
-    pub fn len(&self) -> usize {
-        self.shares.len()
-    }
-
-    /// Whether no share was accepted. Verification never returns such a value — it fails instead —
-    /// but the predicate exists because `len` without `is_empty` is a clippy lint and a reader's
-    /// trap.
-    pub fn is_empty(&self) -> bool {
-        self.shares.is_empty()
-    }
-
-    /// Why the shares that were not accepted were dropped.
-    pub fn rejections(&self) -> &ShareRejections {
-        &self.rejections
-    }
 }
 
 /// Why a Solana user-decryption response did not yield a plaintext.
@@ -391,11 +306,10 @@ pub enum SolanaUserDecryptionResponseError {
     Reconstruction { reason: String },
 }
 
-/// How many same-link shares a release needs, for a deployment of `server_count` KMS nodes.
-///
-/// One for the centralized deployment, and `t + 1` for a threshold deployment of `n = 3t + 1`
-/// nodes — the same derivation the EVM path uses when no threshold is supplied.
-pub fn solana_required_shares(server_count: usize) -> usize {
+/// How many same-link shares a release needs, for a deployment of `server_count` KMS nodes: one
+/// for the centralized deployment, and `t + 1` for a threshold deployment of `n = 3t + 1` nodes —
+/// the same derivation the EVM path uses when no threshold is supplied.
+fn solana_required_shares(server_count: usize) -> usize {
     if server_count <= 1 {
         1
     } else {
@@ -568,9 +482,9 @@ fn external_signature_authenticates(
 /// * `trusted_signers` — the registered KMS signer addresses, keyed by party id, as the client's
 ///   own configuration holds them — on Solana, the host program's KMS-context signer set. A key
 ///   appearing inside a response is admitted only under its binding to one of these addresses
-///   (l2); it is never trusted on its own.
-/// * `required_shares` — how many shares carrying one common link the caller needs, typically
-///   [`solana_required_shares`] of the trusted signer count (l4).
+///   (l2); it is never trusted on its own. The signer count also fixes how many same-link shares
+///   the release needs (l4): one for a single-node deployment, `t + 1` for `n = 3t + 1` nodes —
+///   the demand is derived here and is not a caller-supplied parameter, so it cannot be weakened.
 /// * `agg_resp` — the untrusted responses.
 ///
 /// # Returns
@@ -583,9 +497,9 @@ fn external_signature_authenticates(
 pub fn verify_solana_user_decryption_response(
     request: &SolanaUserDecryptionRequest,
     trusted_signers: &HashMap<u32, alloy_primitives::Address>,
-    required_shares: usize,
     agg_resp: &[UserDecryptionResponse],
 ) -> Result<VerifiedSolanaShares, SolanaUserDecryptionResponseError> {
+    let required_shares = solana_required_shares(trusted_signers.len());
     // l1 first: the expectation comes from the request's own fields and nowhere else, and a
     // request that is not a valid binding fails before any response — even an absent one — is
     // examined. JS callers pin this order: an invalid request with no responses reports the
@@ -687,7 +601,6 @@ pub fn verify_solana_user_decryption_response(
             link: expected_link,
             receiver_id: request.user_pubkey,
             shares,
-            rejections,
         });
     }
     match first_rejection {
@@ -728,11 +641,8 @@ pub fn release_solana_user_decryption(
         link,
         receiver_id,
         shares,
-        ..
     } = shares;
-    // The same receiver mapping the server signcrypted under — the raw 32-byte wallet key. It
-    // comes from the verified set, so a plaintext only opens if the client recomputed it exactly
-    // as the server used it.
+    // The same receiver mapping the server signcrypted under: the raw 32-byte wallet key.
     let receiver = SigncryptionReceiver::Solana(receiver_id);
 
     if shares.len() > 1 {
@@ -780,10 +690,10 @@ pub fn release_solana_user_decryption(
 impl Client {
     /// Recovers the plaintexts of a Solana user-decryption response.
     ///
-    /// A thin composition and nothing else: derive the required share count from the configured
-    /// servers, [`verify_solana_user_decryption_response`], [`release_solana_user_decryption`]. All
-    /// of l1–l4 lives in those functions, so there is exactly one implementation of each rule for
-    /// every caller — Rust, WASM, or test — to exercise.
+    /// A thin composition and nothing else: [`verify_solana_user_decryption_response`], then
+    /// [`release_solana_user_decryption`]. All of l1–l4 lives in those functions, so there is
+    /// exactly one implementation of each rule for every caller — Rust, WASM, or test — to
+    /// exercise.
     ///
     /// The trusted signer set is this client's own
     /// [`crate::client::client_wasm::ServerIdentities`], reduced to addresses — a configuration
@@ -797,12 +707,7 @@ impl Client {
         agg_resp: &[UserDecryptionResponse],
     ) -> Result<Vec<TypedPlaintext>, SolanaUserDecryptionResponseError> {
         let trusted_signers = self.get_server_addrs();
-        let verified = verify_solana_user_decryption_response(
-            request,
-            &trusted_signers,
-            solana_required_shares(trusted_signers.len()),
-            agg_resp,
-        )?;
+        let verified = verify_solana_user_decryption_response(request, &trusted_signers, agg_resp)?;
         release_solana_user_decryption(self, verified, enc_key, dec_key)
     }
 }
@@ -916,6 +821,11 @@ mod tests {
     /// The trusted signer set as `verify` consumes it: the registered address of each node key.
     fn trusted(pks: &HashMap<u32, PublicSigKey>) -> HashMap<u32, alloy_primitives::Address> {
         pks.iter().map(|(id, pk)| (*id, pk.address())).collect()
+    }
+
+    /// The accepted parties, in response order — the tests' shorthand for "which shares survived".
+    fn party_ids(verified: &VerifiedSolanaShares) -> Vec<u32> {
+        verified.shares.iter().map(|share| share.party_id).collect()
     }
 
     /// Signcrypted bytes that are never opened — enough for a test whose subject is the
@@ -1139,7 +1049,6 @@ mod tests {
     type VerifyFn = fn(
         &SolanaUserDecryptionRequest,
         &HashMap<u32, alloy_primitives::Address>,
-        usize,
         &[UserDecryptionResponse],
     ) -> Result<VerifiedSolanaShares, SolanaUserDecryptionResponseError>;
 
@@ -1445,7 +1354,7 @@ mod tests {
         )];
 
         assert_eq!(
-            verify_solana_user_decryption_response(&request, &trusted(&pks), 1, &agg_resp),
+            verify_solana_user_decryption_response(&request, &trusted(&pks), &agg_resp),
             Err(SolanaUserDecryptionResponseError::LinkMismatch { party_id: 1 })
         );
     }
@@ -1475,12 +1384,10 @@ mod tests {
             "this fixture must exercise the internal branch alone",
         );
 
-        let verified =
-            verify_solana_user_decryption_response(&request, &trusted(&pks), 1, &agg_resp)
-                .expect("an internally signed share is authenticated");
+        let verified = verify_solana_user_decryption_response(&request, &trusted(&pks), &agg_resp)
+            .expect("an internally signed share is authenticated");
 
-        assert_eq!(verified.party_ids(), vec![1]);
-        assert_eq!(verified.rejections().total(), 0);
+        assert_eq!(party_ids(&verified), vec![1]);
     }
 
     #[test]
@@ -1503,12 +1410,10 @@ mod tests {
             "this fixture must exercise the external branch alone",
         );
 
-        let verified =
-            verify_solana_user_decryption_response(&request, &trusted(&pks), 1, &agg_resp)
-                .expect("an externally signed share is authenticated");
+        let verified = verify_solana_user_decryption_response(&request, &trusted(&pks), &agg_resp)
+            .expect("an externally signed share is authenticated");
 
-        assert_eq!(verified.party_ids(), vec![1]);
-        assert_eq!(verified.rejections().total(), 0);
+        assert_eq!(party_ids(&verified), vec![1]);
     }
 
     #[test]
@@ -1551,7 +1456,7 @@ mod tests {
             ("no signature at all", unsigned),
         ] {
             assert_eq!(
-                verify_solana_user_decryption_response(&request, &trusted(&pks), 1, &[response]),
+                verify_solana_user_decryption_response(&request, &trusted(&pks), &[response]),
                 Err(SolanaUserDecryptionResponseError::NodeSignature { party_id: 1 }),
                 "{name} must be reported as the signature rule",
             );
@@ -1603,7 +1508,7 @@ mod tests {
             ("a signature made under another domain", foreign_domain),
         ] {
             assert_eq!(
-                verify_solana_user_decryption_response(&request, &trusted(&pks), 1, &[response]),
+                verify_solana_user_decryption_response(&request, &trusted(&pks), &[response]),
                 Err(SolanaUserDecryptionResponseError::NodeSignature { party_id: 1 }),
                 "{name} must be reported as the signature rule",
             );
@@ -1632,7 +1537,7 @@ mod tests {
         )];
 
         assert_eq!(
-            verify_solana_user_decryption_response(&request, &trusted(&pks), 1, &agg_resp),
+            verify_solana_user_decryption_response(&request, &trusted(&pks), &agg_resp),
             Err(SolanaUserDecryptionResponseError::NodeSignature { party_id: 1 })
         );
     }
@@ -1652,7 +1557,7 @@ mod tests {
         let response = signed_response(foreign_key, &sks[1]);
 
         assert_eq!(
-            verify_solana_user_decryption_response(&request, &trusted(&pks), 1, &[response]),
+            verify_solana_user_decryption_response(&request, &trusted(&pks), &[response]),
             Err(SolanaUserDecryptionResponseError::MalformedVerificationKey { party_id: 1 })
         );
     }
@@ -1667,7 +1572,7 @@ mod tests {
         let agg_resp = vec![canonical_centralized_response(&request, &sks[0], &pks[&1])];
 
         assert_eq!(
-            verify_solana_user_decryption_response(&request, &HashMap::new(), 1, &agg_resp),
+            verify_solana_user_decryption_response(&request, &HashMap::new(), &agg_resp),
             Err(SolanaUserDecryptionResponseError::UnknownParty { party_id: 1 })
         );
     }
@@ -1687,7 +1592,7 @@ mod tests {
         response.signature = sign(&good, &sks[1]);
 
         assert_eq!(
-            verify_solana_user_decryption_response(&request, &trusted(&pks), 1, &[response]),
+            verify_solana_user_decryption_response(&request, &trusted(&pks), &[response]),
             Err(SolanaUserDecryptionResponseError::NodeSignature { party_id: 1 })
         );
     }
@@ -1704,37 +1609,28 @@ mod tests {
         let party_one = agg_resp[0].payload.clone().expect("a payload");
         agg_resp[0].signature = sign(&party_one, &sks[1]);
 
-        let verified =
-            verify_solana_user_decryption_response(&request, &trusted(&pks), 2, &agg_resp)
-                .expect("three good shares are more than the two needed");
+        let verified = verify_solana_user_decryption_response(&request, &trusted(&pks), &agg_resp)
+            .expect("three good shares are more than the two needed");
 
-        assert_eq!(verified.party_ids(), vec![2, 3, 4]);
-        assert_eq!(verified.rejections().node_signature, 1);
-        assert_eq!(verified.rejections().link_mismatch, 0);
+        assert_eq!(party_ids(&verified), vec![2, 3, 4]);
     }
 
     #[test]
-    fn a_share_failing_both_rules_counts_only_as_a_signature_failure() {
-        // l2 before l3. Rejection reasons are the *first* rule failed, so a share that is both
+    fn a_share_failing_both_rules_is_rejected_for_its_signature_not_its_link() {
+        // l2 before l3. The rejection is the *first* rule failed, so a share that is both
         // unauthenticated and wrongly linked never reaches the link comparison.
-        let (pks, sks) = node_keys(4);
+        let (pks, sks) = node_keys(1);
         let request = canonical_request();
-        let mut agg_resp = canonical_threshold_response(&request, &pks, &sks, 1);
+        let mut agg_resp = vec![canonical_centralized_response(&request, &sks[0], &pks[&1])];
         let mut broken = agg_resp[0].payload.clone().expect("a payload");
         broken.digest[0] ^= 0xff;
         agg_resp[0].payload = Some(broken.clone());
-        agg_resp[0].signature = sign(&broken, &sks[1]);
-
-        let verified =
-            verify_solana_user_decryption_response(&request, &trusted(&pks), 2, &agg_resp)
-                .expect("three good shares are more than the two needed");
+        agg_resp[0].signature = sign(&broken, &sks[0]);
+        agg_resp[0].signature[0] ^= 0xff;
 
         assert_eq!(
-            verified.rejections(),
-            &ShareRejections {
-                node_signature: 1,
-                ..ShareRejections::default()
-            }
+            verify_solana_user_decryption_response(&request, &trusted(&pks), &agg_resp),
+            Err(SolanaUserDecryptionResponseError::NodeSignature { party_id: 1 }),
         );
     }
 
@@ -1749,29 +1645,22 @@ mod tests {
         let request = canonical_request();
         let agg_resp = vec![canonical_centralized_response(&request, &sks[0], &pks[&1])];
 
-        let verified =
-            verify_solana_user_decryption_response(&request, &trusted(&pks), 1, &agg_resp)
-                .expect("a canonical centralized response verifies");
+        let verified = verify_solana_user_decryption_response(&request, &trusted(&pks), &agg_resp)
+            .expect("a canonical centralized response verifies");
 
-        assert_eq!(verified.party_ids(), vec![1]);
-        assert_eq!(verified.len(), 1);
-        assert!(!verified.is_empty());
+        assert_eq!(party_ids(&verified), vec![1]);
         assert_eq!(
-            verified.link(),
-            request
-                .expected_link()
-                .expect("a canonical request")
-                .as_slice()
+            verified.link,
+            request.expected_link().expect("a canonical request"),
         );
-        assert_eq!(verified.receiver_id(), &PUBKEY);
-        assert_eq!(verified.rejections().total(), 0);
+        assert_eq!(verified.receiver_id, PUBKEY);
 
         // The accepted share carries the trusted key it verified under — the client's own, not the
         // one the payload advertises — and the payload it was taken from.
-        let share = &verified.shares()[0];
-        assert_eq!(share.party_id(), 1);
-        assert_eq!(share.verification_key(), &pks[&1]);
-        assert_eq!(share.payload().party_id, 1);
+        let share = &verified.shares[0];
+        assert_eq!(share.party_id, 1);
+        assert_eq!(share.verification_key, pks[&1]);
+        assert_eq!(share.payload.party_id, 1);
     }
 
     #[test]
@@ -1791,7 +1680,7 @@ mod tests {
             )];
 
             assert_eq!(
-                verify_solana_user_decryption_response(&request, &trusted(&pks), 1, &agg_resp),
+                verify_solana_user_decryption_response(&request, &trusted(&pks), &agg_resp),
                 Err(SolanaUserDecryptionResponseError::LinkMismatch { party_id: 1 }),
                 "a {length}-byte digest must not pass the link comparison",
             );
@@ -1814,7 +1703,7 @@ mod tests {
             )];
 
             assert_eq!(
-                verify_solana_user_decryption_response(&request, &trusted(&pks), 1, &agg_resp),
+                verify_solana_user_decryption_response(&request, &trusted(&pks), &agg_resp),
                 Err(SolanaUserDecryptionResponseError::LinkMismatch { party_id: 1 }),
                 "a flipped bit at byte {index} must not pass the link comparison",
             );
@@ -1832,13 +1721,10 @@ mod tests {
         wrong_link.digest[7] ^= 0xff;
         agg_resp[2] = signed_response(wrong_link, &sks[2]);
 
-        let verified =
-            verify_solana_user_decryption_response(&request, &trusted(&pks), 2, &agg_resp)
-                .expect("three good shares are more than the two needed");
+        let verified = verify_solana_user_decryption_response(&request, &trusted(&pks), &agg_resp)
+            .expect("three good shares are more than the two needed");
 
-        assert_eq!(verified.party_ids(), vec![1, 2, 4]);
-        assert_eq!(verified.rejections().link_mismatch, 1);
-        assert_eq!(verified.rejections().node_signature, 0);
+        assert_eq!(party_ids(&verified), vec![1, 2, 4]);
     }
 
     // ---------------------------------------------------------------------------------------
@@ -1863,13 +1749,11 @@ mod tests {
             agg_resp[index] = signed_response(divergent, &sks[index]);
         }
 
-        let verified =
-            verify_solana_user_decryption_response(&request, &trusted(&pks), 2, &agg_resp)
-                .expect("two shares carry the recomputed link, which is what is needed");
+        let verified = verify_solana_user_decryption_response(&request, &trusted(&pks), &agg_resp)
+            .expect("two shares carry the recomputed link, which is what is needed");
 
-        assert_eq!(verified.party_ids(), vec![1, 2]);
-        assert_ne!(verified.link(), foreign_link.as_slice());
-        assert_eq!(verified.rejections().link_mismatch, 2);
+        assert_eq!(party_ids(&verified), vec![1, 2]);
+        assert_ne!(verified.link, foreign_link);
     }
 
     #[test]
@@ -1887,7 +1771,7 @@ mod tests {
         }
 
         assert_eq!(
-            verify_solana_user_decryption_response(&request, &trusted(&pks), 2, &agg_resp),
+            verify_solana_user_decryption_response(&request, &trusted(&pks), &agg_resp),
             Err(SolanaUserDecryptionResponseError::BelowThreshold {
                 valid: 1,
                 needed: 2,
@@ -1909,22 +1793,14 @@ mod tests {
         let needed = solana_required_shares(4);
 
         for count in (needed..=full.len()).rev() {
-            let verified = verify_solana_user_decryption_response(
-                &request,
-                &trusted(&pks),
-                needed,
-                &full[..count],
-            )
-            .unwrap_or_else(|error| panic!("{count} shares must verify, got {error}"));
-            assert_eq!(verified.len(), count);
+            let verified =
+                verify_solana_user_decryption_response(&request, &trusted(&pks), &full[..count])
+                    .unwrap_or_else(|error| panic!("{count} shares must verify, got {error}"));
+            assert_eq!(verified.shares.len(), count);
         }
 
-        let below = verify_solana_user_decryption_response(
-            &request,
-            &trusted(&pks),
-            needed,
-            &full[..needed - 1],
-        );
+        let below =
+            verify_solana_user_decryption_response(&request, &trusted(&pks), &full[..needed - 1]);
         assert_eq!(
             below,
             Err(SolanaUserDecryptionResponseError::BelowThreshold {
@@ -1945,7 +1821,7 @@ mod tests {
         let replayed = vec![agg_resp[0].clone(), agg_resp[0].clone()];
 
         assert_eq!(
-            verify_solana_user_decryption_response(&request, &trusted(&pks), 2, &replayed),
+            verify_solana_user_decryption_response(&request, &trusted(&pks), &replayed),
             Err(SolanaUserDecryptionResponseError::BelowThreshold {
                 valid: 1,
                 needed: 2,
@@ -1966,12 +1842,10 @@ mod tests {
         let mut agg_resp = canonical_threshold_response(&request, &pks, &sks, 1);
         agg_resp.push(agg_resp[0].clone());
 
-        let verified =
-            verify_solana_user_decryption_response(&request, &trusted(&pks), 2, &agg_resp)
-                .expect("four distinct parties are more than the two needed");
+        let verified = verify_solana_user_decryption_response(&request, &trusted(&pks), &agg_resp)
+            .expect("four distinct parties are more than the two needed");
 
-        assert_eq!(verified.party_ids(), vec![1, 2, 3, 4]);
-        assert_eq!(verified.rejections().duplicate_party, 1);
+        assert_eq!(party_ids(&verified), vec![1, 2, 3, 4]);
     }
 
     #[test]
@@ -1986,13 +1860,10 @@ mod tests {
         planted.signature = sign(&planted.payload.clone().expect("a payload"), &sks[1]);
         agg_resp.insert(0, planted);
 
-        let verified =
-            verify_solana_user_decryption_response(&request, &trusted(&pks), 2, &agg_resp)
-                .expect("all four real shares verify");
+        let verified = verify_solana_user_decryption_response(&request, &trusted(&pks), &agg_resp)
+            .expect("all four real shares verify");
 
-        assert_eq!(verified.party_ids(), vec![1, 2, 3, 4]);
-        assert_eq!(verified.rejections().node_signature, 1);
-        assert_eq!(verified.rejections().duplicate_party, 0);
+        assert_eq!(party_ids(&verified), vec![1, 2, 3, 4]);
     }
 
     #[test]
@@ -2002,7 +1873,7 @@ mod tests {
         let request = canonical_request();
 
         assert_eq!(
-            verify_solana_user_decryption_response(&request, &trusted(&pks), 1, &[]),
+            verify_solana_user_decryption_response(&request, &trusted(&pks), &[]),
             Err(SolanaUserDecryptionResponseError::EmptyResponse)
         );
     }
@@ -2021,13 +1892,8 @@ mod tests {
 
         let client =
             Client::new_solana(trusted(&pks), TEST_PARAM, Some(DecryptionMode::BitDecSmall));
-        let verified = verify_solana_user_decryption_response(
-            &request,
-            &trusted(&pks),
-            solana_required_shares(4),
-            &agg_resp,
-        )
-        .expect("four good shares verify");
+        let verified = verify_solana_user_decryption_response(&request, &trusted(&pks), &agg_resp)
+            .expect("four good shares verify");
         let released = release_solana_user_decryption(&client, verified, &enc_key, &dec_key)
             .expect("the threshold release reconstructs");
 
@@ -2048,13 +1914,9 @@ mod tests {
 
         let client =
             Client::new_solana(trusted(&pks), TEST_PARAM, Some(DecryptionMode::BitDecSmall));
-        let verified = verify_solana_user_decryption_response(
-            &request,
-            &trusted(&pks),
-            solana_required_shares(4),
-            &agg_resp[1..],
-        )
-        .expect("three good shares are more than the two needed");
+        let verified =
+            verify_solana_user_decryption_response(&request, &trusted(&pks), &agg_resp[1..])
+                .expect("three good shares are more than the two needed");
         let released = release_solana_user_decryption(&client, verified, &enc_key, &dec_key)
             .expect("the threshold release tolerates a missing share");
 
@@ -2092,9 +1954,8 @@ mod tests {
         )];
 
         let client = Client::new_solana(trusted(&pks), TEST_PARAM, None);
-        let verified =
-            verify_solana_user_decryption_response(&request, &trusted(&pks), 1, &agg_resp)
-                .expect("a canonical centralized response verifies");
+        let verified = verify_solana_user_decryption_response(&request, &trusted(&pks), &agg_resp)
+            .expect("a canonical centralized response verifies");
         let released = release_solana_user_decryption(&client, verified, &enc_key, &dec_key)
             .expect("the centralized release opens the share");
 
@@ -2136,7 +1997,7 @@ mod tests {
         )];
 
         assert_eq!(
-            verify_solana_user_decryption_response(&request, &trusted(&pks), 1, &agg_resp),
+            verify_solana_user_decryption_response(&request, &trusted(&pks), &agg_resp),
             Err(SolanaUserDecryptionResponseError::LinkMismatch { party_id: 1 })
         );
     }
@@ -2224,12 +2085,7 @@ mod tests {
         let request = canonical_request();
         let agg_resp = canonical_threshold_response(&request, &pks, &sks, 2);
 
-        let result = verify_solana_user_decryption_response(
-            &request,
-            &trusted(&pks),
-            solana_required_shares(4),
-            &agg_resp,
-        );
+        let result = verify_solana_user_decryption_response(&request, &trusted(&pks), &agg_resp);
         assert!(
             matches!(
                 result,
@@ -2250,12 +2106,7 @@ mod tests {
         let skewed = mutated_and_resigned(base[1].clone(), &sks[1], |payload| payload.degree = 2);
         let two = vec![base[0].clone(), skewed];
 
-        let result = verify_solana_user_decryption_response(
-            &request,
-            &trusted(&pks),
-            solana_required_shares(4),
-            &two,
-        );
+        let result = verify_solana_user_decryption_response(&request, &trusted(&pks), &two);
         assert!(
             matches!(
                 result,
@@ -2293,12 +2144,7 @@ mod tests {
             let skewed = mutated_and_resigned(base[1].clone(), &sks[1], mutate);
             let two = vec![base[0].clone(), skewed];
 
-            let result = verify_solana_user_decryption_response(
-                &request,
-                &trusted(&pks),
-                solana_required_shares(4),
-                &two,
-            );
+            let result = verify_solana_user_decryption_response(&request, &trusted(&pks), &two);
             assert!(
                 matches!(
                     result,
@@ -2332,12 +2178,7 @@ mod tests {
             signed_response(payload(2, &pks[&1], link, 1, dummy_signcrypted()), &sks[0]),
         ];
 
-        let result = verify_solana_user_decryption_response(
-            &request,
-            &signers,
-            solana_required_shares(4),
-            &double,
-        );
+        let result = verify_solana_user_decryption_response(&request, &signers, &double);
         assert!(
             matches!(
                 result,
@@ -2377,14 +2218,9 @@ mod tests {
             })
             .collect();
 
-        let verified = verify_solana_user_decryption_response(
-            &request,
-            &trusted(&pks),
-            solana_required_shares(4),
-            &agg_resp,
-        )
-        .expect("an external-signed threshold set passes both gates");
-        assert_eq!(verified.party_ids(), vec![1, 2, 3, 4]);
+        let verified = verify_solana_user_decryption_response(&request, &trusted(&pks), &agg_resp)
+            .expect("an external-signed threshold set passes both gates");
+        assert_eq!(party_ids(&verified), vec![1, 2, 3, 4]);
     }
 
     // ---------------------------------------------------------------------------------------
