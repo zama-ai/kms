@@ -15,7 +15,7 @@ cfg_if::cfg_if! {
             calculate_max_num_bits,  data_exists, get_core_signing_key,
         };
         use crate::vault::storage::crypto_material::check_data_exists_at_epoch;
-        use crate::vault::storage::{delete_at_request_and_epoch_id, delete_at_request_id, store_versioned_at_request_and_epoch_id, StorageExt};
+        use crate::vault::storage::{delete_at_request_and_epoch_id, store_versioned_at_request_and_epoch_id, StorageExt};
 
         use hashing::hash_versioned;
         use futures_util::future;
@@ -41,8 +41,9 @@ use crate::cryptography::signatures::{
 use crate::engine::base::compute_handle;
 use crate::vault::storage::crypto_material::{get_rng, log_data_exists, log_storage_success};
 use crate::vault::storage::{
-    Storage, StorageReader, StorageType, file::FileStorage, read_all_data_versioned,
-    read_text_at_request_id, store_text_at_request_id, store_versioned_at_request_id,
+    Storage, StorageReader, StorageType, delete_at_request_id, file::FileStorage,
+    read_all_data_versioned, read_text_at_request_id, store_text_at_request_id,
+    store_versioned_at_request_id,
 };
 use k256::pkcs8::EncodePrivateKey;
 use kms_grpc::RequestId;
@@ -202,6 +203,11 @@ where
         );
     }
 
+    // Reject a storage that still holds material derived from a previous signing
+    // key. We already checked no signing key exists so if verification material
+    // exist it means inconsistent storage.
+    ensure_no_derived_verification_material(pub_storage).await?;
+
     #[cfg(any(test, feature = "testing", feature = "insecure"))]
     let mut rng = get_rng(deterministic, Some(0));
     #[cfg(not(any(test, feature = "testing", feature = "insecure")))]
@@ -353,6 +359,64 @@ pub enum SchemeMaterialMode {
     Populate,
 }
 
+/// The public-storage handles of the verification material derived from a KMS
+/// node's ECDSA signing key: one [`signing_material_id`] per non-ECDSA scheme.
+///
+/// The ECDSA scheme is excluded since it is the persisted primary identity,
+/// stored under the handle its signing key uses rather than a derived one.
+fn derived_material_handles() -> impl Iterator<Item = (SigningSchemeType, RequestId)> {
+    SigningSchemeType::iter()
+        .filter(|scheme| *scheme != SigningSchemeType::Ecdsa256k1)
+        .map(|scheme| (scheme, signing_material_id(scheme)))
+}
+
+/// Validate that no derived verification material is present, i.e. that
+/// generating a fresh ECDSA signing key will not leave behind material derived
+/// from a different one.
+pub async fn ensure_no_derived_verification_material<PubS>(pub_storage: &PubS) -> anyhow::Result<()>
+where
+    PubS: StorageReader,
+{
+    for (scheme, req_id) in derived_material_handles() {
+        for data_type in [
+            PubDataType::VerfKey.to_string(),
+            PubDataType::VerfAddress.to_string(),
+        ] {
+            if pub_storage.data_exists(&req_id, &data_type).await? {
+                return Err(anyhow_error_and_log(format!(
+                    "data already exist for {data_type} for scheme {scheme:?}"
+                )));
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Delete the verification material derived from a KMS node's ECDSA signing key.
+pub async fn delete_derived_verification_material<PubS>(
+    pub_storage: &mut PubS,
+) -> anyhow::Result<()>
+where
+    PubS: Storage,
+{
+    for (scheme, req_id) in derived_material_handles() {
+        for data_type in [
+            PubDataType::VerfKey.to_string(),
+            PubDataType::VerfAddress.to_string(),
+        ] {
+            delete_at_request_id(pub_storage, &req_id, &data_type)
+                .await
+                .map_err(|e| {
+                    anyhow_error_and_log(format!(
+                        "Failed to delete {data_type} for scheme {scheme} under the handle \
+                         {req_id}: {e}"
+                    ))
+                })?;
+        }
+    }
+    Ok(())
+}
+
 /// Persist the per-scheme verification material derived from a KMS node's ECDSA
 /// signing key `sk`.
 ///
@@ -369,17 +433,13 @@ pub async fn ensure_derived_verification_material<PubS>(
 where
     PubS: Storage,
 {
-    for scheme in SigningSchemeType::iter() {
-        if scheme == SigningSchemeType::Ecdsa256k1 {
-            // ECDSA is the persisted primary identity, handled by the
-            // signing-key setup itself; only validate it here when backfilling.
-            if mode == SchemeMaterialMode::Populate {
-                validate_ecdsa_verification_material(pub_storage, sk, ecdsa_req_id).await?;
-            }
-            continue;
-        }
+    // ECDSA is the persisted primary identity, handled by the signing-key setup
+    // itself; only validate it here when backfilling.
+    if mode == SchemeMaterialMode::Populate {
+        validate_ecdsa_verification_material(pub_storage, sk, ecdsa_req_id).await?;
+    }
 
-        let req_id = signing_material_id(scheme);
+    for (scheme, req_id) in derived_material_handles() {
         let verf_key = sk.unified_verifying_key(scheme).map_err(|e| {
             anyhow_error_and_log(format!("could not derive {scheme} verification key: {e}"))
         })?;
@@ -944,6 +1004,13 @@ where
             request_id
         );
     }
+
+    // Reject a storage that still holds material derived from a previous signing
+    // key. We already checked no signing key exists so if verification material
+    // exist it means inconsistent storage.
+    ensure_no_derived_verification_material(pub_storage)
+        .await
+        .map_err(|e| anyhow::anyhow!("Party {party_id}: {e}"))?;
 
     let (pk, sk) = gen_sig_keys(&mut rng);
 
@@ -1558,7 +1625,11 @@ mod tests {
 
 #[cfg(test)]
 mod scheme_material_tests {
-    use super::{SchemeMaterialMode, ensure_derived_verification_material};
+    use super::{
+        SchemeMaterialMode, delete_derived_verification_material,
+        ensure_central_server_signing_keys_exist, ensure_derived_verification_material,
+        ensure_no_derived_verification_material,
+    };
     use crate::consts::{SIGNING_KEY_ID, signing_material_id};
     use crate::cryptography::signatures::gen_sig_keys;
     use crate::cryptography::signing::{SigningSchemeType, UnifiedPublicSigKey};
@@ -1567,7 +1638,7 @@ mod scheme_material_tests {
         StorageReader, read_text_at_request_id, store_versioned_at_request_id,
     };
     use aes_prng::AesRng;
-    use kms_grpc::rpc_types::PubDataType;
+    use kms_grpc::rpc_types::{PrivDataType, PubDataType};
     use rand::SeedableRng;
     use strum::IntoEnumIterator;
 
@@ -1654,6 +1725,72 @@ mod scheme_material_tests {
             .await
             .is_err()
         );
+    }
+
+    #[tokio::test]
+    async fn delete_allows_regenerating_from_a_new_signing_key() {
+        let mut rng = AesRng::seed_from_u64(11);
+        let (_pk_old, sk_old) = gen_sig_keys(&mut rng);
+        let (_pk_new, sk_new) = gen_sig_keys(&mut rng);
+        let mut pub_storage = RamStorage::new();
+
+        ensure_derived_verification_material(
+            &mut pub_storage,
+            &sk_old,
+            &SIGNING_KEY_ID,
+            SchemeMaterialMode::Generate,
+        )
+        .await
+        .unwrap();
+
+        delete_derived_verification_material(&mut pub_storage)
+            .await
+            .unwrap();
+        for scheme in derived_schemes() {
+            let id = signing_material_id(scheme);
+            assert!(
+                !pub_storage
+                    .data_exists(&id, &PubDataType::VerfKey.to_string())
+                    .await
+                    .unwrap()
+            );
+            assert!(
+                !pub_storage
+                    .data_exists(&id, &PubDataType::VerfAddress.to_string())
+                    .await
+                    .unwrap()
+            );
+        }
+
+        ensure_derived_verification_material(
+            &mut pub_storage,
+            &sk_new,
+            &SIGNING_KEY_ID,
+            SchemeMaterialMode::Generate,
+        )
+        .await
+        .unwrap();
+        for scheme in derived_schemes() {
+            let stored_vk: UnifiedPublicSigKey = pub_storage
+                .read_data(
+                    &signing_material_id(scheme),
+                    &PubDataType::VerfKey.to_string(),
+                )
+                .await
+                .unwrap();
+            assert_eq!(stored_vk, sk_new.unified_verifying_key(scheme).unwrap());
+        }
+    }
+
+    #[tokio::test]
+    async fn delete_is_a_no_op_on_empty_storage() {
+        let mut pub_storage = RamStorage::new();
+        delete_derived_verification_material(&mut pub_storage)
+            .await
+            .unwrap();
+        ensure_no_derived_verification_material(&pub_storage)
+            .await
+            .unwrap();
     }
 
     /// `Populate` writes missing material and is a no-op when re-run.

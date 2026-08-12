@@ -12,8 +12,9 @@ use kms_lib::{
     consts::SIGNING_KEY_ID,
     cryptography::attestation::make_security_module,
     util::key_setup::{
-        SchemeMaterialMode, ensure_central_server_signing_keys_exist,
-        ensure_derived_verification_material, ensure_threshold_server_signing_key_exists,
+        SchemeMaterialMode, delete_derived_verification_material,
+        ensure_central_server_signing_keys_exist, ensure_derived_verification_material,
+        ensure_threshold_server_signing_key_exists,
     },
     vault::{
         Vault,
@@ -425,7 +426,7 @@ async fn handle_central_cmd<PubS: Storage, PrivS: Storage>(
         args.show_existing,
         args.overwrite,
     )
-    .await;
+    .await?;
     if !ensure_central_server_signing_keys_exist(
         args.pub_storage,
         args.priv_storage,
@@ -450,7 +451,7 @@ async fn handle_threshold_cmd<PubS: Storage, PrivS: Storage>(
         args.show_existing,
         args.overwrite,
     )
-    .await;
+    .await?;
     if !ensure_threshold_server_signing_key_exists(
         args.pub_storage,
         args.priv_storage,
@@ -497,7 +498,7 @@ async fn process_signing_key_cmds<PubS: Storage, PrivS: Storage>(
     req_id: &RequestId,
     show_existing: bool,
     overwrite: bool,
-) {
+) -> anyhow::Result<()> {
     process_cmd(
         pub_storage,
         vec![
@@ -510,6 +511,10 @@ async fn process_signing_key_cmds<PubS: Storage, PrivS: Storage>(
         overwrite,
     )
     .await;
+    // Only delete something if we `show_existing` is false, since `show_existing` takes presidence.
+    if overwrite && !show_existing {
+        delete_derived_verification_material(pub_storage).await?;
+    }
     process_cmd(
         priv_storage,
         vec![&PrivDataType::SigningKey],
@@ -518,6 +523,7 @@ async fn process_signing_key_cmds<PubS: Storage, PrivS: Storage>(
         overwrite,
     )
     .await;
+    Ok(())
 }
 
 async fn process_cmd<S: Storage, D: fmt::Display>(

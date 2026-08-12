@@ -126,8 +126,11 @@ All under [core/service/src/bin/](core/service/src/bin/):
   `--config-file`; `[keygen] repopulate = true` backfills the per-scheme
   verification material from an existing ECDSA signing key instead of
   generating keys (the same backfill runs automatically on server start via
-  `migration::migrate_public_verification_material`). Supports `mock_enclave` in
-  config for local dev when compiled with the `insecure` feature.
+  `migration::migrate_public_verification_material`), and `[keygen] overwrite =
+  true` deletes the signing key together with the verification material derived
+  from it, since generating a key alongside another key's derived material is
+  rejected. Supports `mock_enclave` in config for local dev when compiled with
+  the `insecure` feature.
 - [kms-custodian.rs](core/service/src/bin/kms-custodian.rs) — custodian-side
   tool for producing and recovering backup shares.
 - [kms-gen-tls-certs.rs](core/service/src/bin/kms-gen-tls-certs.rs) — TLS
