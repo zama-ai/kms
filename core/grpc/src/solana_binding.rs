@@ -19,16 +19,11 @@ use hashing::{DSEP_LIST, DomainSep, unsafe_hash_list_w_size};
 /// silently reinterpreting the same bytes. Frozen: see [`DSEP_SOLANA_LINKER`].
 pub const SOLANA_LINKER_SCHEME_TAG: &[u8; 29] = b"SolanaUserDecryptionLinker:v1";
 
-/// Call separator for the linker's list hash.
-///
-/// The linker is a KMS-domain object that is never validated on chain, so the hash is SHAKE-256
-/// with an 8-byte call separator, per the KMS hashing policy. It MUST stay unique among the
-/// codebase's [`DomainSep`] constants; `core/grpc/tests/domain_separator_inventory.rs` enforces
-/// that.
+/// Call separator for the linker's list hash: SHAKE-256 with an 8-byte call separator, per the
+/// KMS hashing policy. Must stay unique among the codebase's [`DomainSep`] constants.
 ///
 /// **Frozen**, together with [`SOLANA_LINKER_SCHEME_TAG`], the element layout, and the normative
-/// vectors in `core/grpc/test-vectors/solana_linker_v1.json`. Other implementations now reproduce
-/// these bytes, so changing this value — or anything else the vectors pin — is a deliberate version
+/// vectors in `core/grpc/test-vectors/solana_linker_v1.json`; changing any of them is a version
 /// bump in the scheme tag, not an edit. `core/grpc/tests/solana_frozen_constants.rs` is the gate.
 pub const DSEP_SOLANA_LINKER: DomainSep = *b"SOLLNK01";
 
@@ -300,19 +295,9 @@ impl SolanaUserDecryptBinding {
         Ok(())
     }
 
-    /// The common chain id embedded in every handle of the request.
-    pub fn chain_id(&self) -> u64 {
-        self.chain_id.get()
-    }
-
     /// The recipient the result is signcrypted to: the raw 32-byte ed25519 wallet key.
     pub fn receiver_id(&self) -> &[u8; SOLANA_IDENTITY_LEN] {
         &self.receiver_id
-    }
-
-    /// The ciphertext handles, in request order, duplicates preserved.
-    pub fn handles(&self) -> &[[u8; SOLANA_IDENTITY_LEN]] {
-        &self.handles
     }
 }
 
