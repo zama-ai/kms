@@ -764,6 +764,8 @@ mod tests {
             extra_data: vec![],
             context_id: Some((*DEFAULT_MPC_CONTEXT).into()),
             epoch_id: Some(epoch_id.into()),
+            solana_pubkey: None,
+            solana_verifying_program_id: None,
         }
     }
 

@@ -1309,6 +1309,8 @@ mod tests {
                 extra_data: vec![],
                 context_id: None,
                 epoch_id: None,
+                solana_pubkey: None,
+                solana_verifying_program_id: None,
             };
             assert!(
                 unpack_user_decrypt_req(&req)
@@ -1331,6 +1333,8 @@ mod tests {
                 extra_data: vec![],
                 context_id: None,
                 epoch_id: None,
+                solana_pubkey: None,
+                solana_verifying_program_id: None,
             };
             assert!(
                 unpack_user_decrypt_req(&req)
@@ -1356,6 +1360,8 @@ mod tests {
                 extra_data: vec![],
                 context_id: None,
                 epoch_id: None,
+                solana_pubkey: None,
+                solana_verifying_program_id: None,
             };
             assert!(
                 unpack_user_decrypt_req(&req)
@@ -1378,6 +1384,8 @@ mod tests {
                 extra_data: vec![],
                 context_id: None,
                 epoch_id: None,
+                solana_pubkey: None,
+                solana_verifying_program_id: None,
             };
             assert!(
                 unpack_user_decrypt_req(&req)
@@ -1400,6 +1408,8 @@ mod tests {
                 extra_data: vec![],
                 context_id: None,
                 epoch_id: None,
+                solana_pubkey: None,
+                solana_verifying_program_id: None,
             };
             assert!(
                 unpack_user_decrypt_req(&req).unwrap_err().to_string().contains(
@@ -1427,6 +1437,8 @@ mod tests {
                 extra_data: vec![],
                 context_id: None,
                 epoch_id: None,
+                solana_pubkey: None,
+                solana_verifying_program_id: None,
             };
             assert!(
                 unpack_user_decrypt_req(&req)
@@ -1449,6 +1461,8 @@ mod tests {
                 extra_data: vec![],
                 context_id: None,
                 epoch_id: None,
+                solana_pubkey: None,
+                solana_verifying_program_id: None,
             };
             assert!(unpack_user_decrypt_req(&req).is_ok());
         }
@@ -1516,6 +1530,8 @@ mod tests {
             extra_data: vec![],
             context_id: None,
             epoch_id: None,
+            solana_pubkey: None,
+            solana_verifying_program_id: None,
         };
 
         {

@@ -73,6 +73,10 @@ impl Client {
                 context_id: context_id.map(|c| (*c).into()),
                 epoch_id: epoch_id.map(|e| (*e).into()),
                 signing_schemes: vec![SigningSchemeType::Ecdsa256k1 as i32],
+                // This reference client is EVM-only. The KMS Connector sets the Solana fields for
+                // Solana requests.
+                solana_pubkey: None,
+                solana_verifying_program_id: None,
             },
             enc_pk,
             enc_sk,

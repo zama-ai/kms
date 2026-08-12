@@ -943,6 +943,8 @@ mod test_user_decryption {
             extra_data: vec![],
             context_id: None,
             epoch_id: None,
+            solana_pubkey: None,
+            solana_verifying_program_id: None,
         }
     }
 

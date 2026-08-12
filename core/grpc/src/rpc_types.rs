@@ -20,6 +20,7 @@ use tfhe_versionable::{
 cfg_if::cfg_if! {
     if #[cfg(feature = "non-wasm")] {
         use crate::anyhow_error_and_log;
+        use crate::solana_binding::{SOLANA_CHAIN_TYPE_BIT, handle_chain_id};
         use alloy_sol_types::SolStruct;
         use alloy_primitives::{Bytes};
         use alloy_dyn_abi::DynSolValue;
@@ -175,6 +176,51 @@ pub fn alloy_to_protobuf_domain(domain: &Eip712Domain) -> anyhow::Result<Eip712D
         salt: domain.salt.map(|x| x.to_vec()),
     };
     Ok(domain_msg)
+}
+
+/// The validated identity a signcrypted user-decryption result is sealed to.
+///
+/// Signcryption itself takes the receiver id as opaque bytes and has no notion of host chains; the
+/// width of those bytes is a property of the adapter that produced them. This type carries that
+/// property to the seam without teaching the engine what a host is: the adapter decides once, and
+/// everything downstream sees bytes.
+///
+/// Variants are matched exhaustively — there is deliberately no wildcard arm anywhere, so adding a
+/// host makes every place that must decide fail to compile rather than silently take a default.
+///
+/// Each width is a property of its variant rather than a check somewhere, so a truncated identity
+/// is not a value this type can hold:
+///
+/// ```compile_fail
+/// // A hashed-and-truncated Solana key is 20 bytes. It has no representation here.
+/// let receiver = kms_grpc::rpc_types::SigncryptionReceiver::Solana([0u8; 20]);
+/// ```
+///
+/// ```
+/// use kms_grpc::rpc_types::SigncryptionReceiver;
+///
+/// assert_eq!(SigncryptionReceiver::Solana([0u8; 32]).as_bytes().len(), 32);
+/// assert_eq!(
+///     SigncryptionReceiver::Evm(alloy_primitives::Address::ZERO).as_bytes().len(),
+///     20,
+/// );
+/// ```
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum SigncryptionReceiver {
+    /// A 20-byte EVM address, exactly as the EVM path has always passed it.
+    Evm(alloy_primitives::Address),
+    /// A 32-byte Solana ed25519 wallet key, never hashed and never truncated.
+    Solana([u8; 32]),
+}
+
+impl SigncryptionReceiver {
+    /// The receiver id as signcryption consumes it.
+    pub fn as_bytes(&self) -> &[u8] {
+        match self {
+            Self::Evm(address) => address.as_slice(),
+            Self::Solana(pubkey) => pubkey.as_slice(),
+        }
+    }
 }
 
 #[derive(
@@ -571,6 +617,15 @@ impl crate::kms::v1::UserDecryptionRequest {
 
         if handles.is_empty() {
             anyhow::bail!(ERR_THERE_ARE_NO_HANDLES);
+        }
+
+        for (index, handle) in handles.iter().enumerate() {
+            let chain_id = handle_chain_id(handle);
+            if chain_id & SOLANA_CHAIN_TYPE_BIT != 0 {
+                anyhow::bail!(
+                    "EVM ciphertext handle at index {index} embeds Solana chain ID {chain_id}"
+                );
+            }
         }
 
         let client_address =
@@ -1381,6 +1436,8 @@ mod tests {
                 extra_data: vec![],
                 context_id: Some(context_id.into()),
                 epoch_id: None,
+                solana_pubkey: None,
+                solana_verifying_program_id: None,
             };
             assert!(
                 req.compute_link_checked()
@@ -1403,6 +1460,8 @@ mod tests {
                 extra_data: vec![],
                 context_id: Some(context_id.into()),
                 epoch_id: None,
+                solana_pubkey: None,
+                solana_verifying_program_id: None,
             };
             assert!(
                 req.compute_link_checked()
@@ -1428,6 +1487,8 @@ mod tests {
                 extra_data: vec![],
                 context_id: Some(context_id.into()),
                 epoch_id: None,
+                solana_pubkey: None,
+                solana_verifying_program_id: None,
             };
 
             assert!(
@@ -1451,6 +1512,8 @@ mod tests {
                 extra_data: vec![],
                 context_id: Some(context_id.into()),
                 epoch_id: None,
+                solana_pubkey: None,
+                solana_verifying_program_id: None,
             };
             assert!(req.compute_link_checked().is_ok());
         }
