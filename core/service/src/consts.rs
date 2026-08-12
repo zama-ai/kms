@@ -134,6 +134,13 @@ cfg_if::cfg_if! {
         // generation in the user decryption tests), e.g. `temp/test-central-wasm-transcript.8.json`.
         pub const TEST_CENTRAL_WASM_TRANSCRIPT_PATH: &str = "temp/test-central-wasm-transcript";
         pub const TEST_THRESHOLD_WASM_TRANSCRIPT_PATH: &str = "temp/test-threshold-wasm-transcript";
+        // The Solana vectors carry no plaintext-bits suffix: one centralized and one threshold
+        // fixture are generated, both over the test parameters (see the wasm transcript
+        // generation in client::solana_response).
+        pub const TEST_SOLANA_CENTRAL_WASM_TRANSCRIPT_PATH: &str =
+            "temp/test-solana-central-wasm-transcript.json";
+        pub const TEST_SOLANA_THRESHOLD_WASM_TRANSCRIPT_PATH: &str =
+            "temp/test-solana-threshold-wasm-transcript.json";
         pub const DEFAULT_CENTRAL_WASM_TRANSCRIPT_PATH: &str = "temp/default-central-wasm-transcript";
         pub const DEFAULT_THRESHOLD_WASM_TRANSCRIPT_PATH: &str = "temp/default-threshold-wasm-transcript";
 
