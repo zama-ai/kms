@@ -162,7 +162,7 @@ pub fn signing_material_id(scheme: crate::cryptography::signing::SigningSchemeTy
         // `scheme` renders via its `Display` impl (e.g. "Ed25519", "MlDsa44").
         // The input is a fixed string, so derivation cannot fail in correct
         // execution.
-        other => derive_request_id(&format!("SIGNING_KEY_ID_{other}"))
+        other => derive_request_id(&format!("SIGNING_KEY_ID_{other:?}"))
             .expect("deriving a signing-material id from a fixed scheme name cannot fail"),
     }
 }

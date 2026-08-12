@@ -863,7 +863,9 @@ mod tests {
     use crate::consts::signing_material_id;
     use crate::cryptography::signing::SigningSchemeType;
     use crate::engine::context::{ContextInfo, NodeInfo, SchemeDigests, SoftwareVersion};
-    use crate::util::key_setup::ensure_central_server_signing_keys_exist;
+    use crate::util::key_setup::{
+        ensure_central_server_signing_keys_exist, verification_material_types,
+    };
     use crate::vault::storage::file::FileStorage;
     use crate::vault::storage::ram::{self, RamStorage};
     use crate::vault::storage::{
@@ -871,7 +873,6 @@ mod tests {
         store_versioned_at_request_id,
     };
     use kms_grpc::RequestId;
-    use kms_grpc::rpc_types::PubDataType;
     use std::str::FromStr;
     use strum::IntoEnumIterator;
 
@@ -2965,18 +2966,9 @@ mod tests {
         // Check validation keys exist
         for scheme in SigningSchemeType::iter() {
             let id = signing_material_id(scheme);
-            assert!(
-                pub_storage
-                    .data_exists(&id, &PubDataType::VerfKey.to_string())
-                    .await
-                    .unwrap()
-            );
-            assert!(
-                pub_storage
-                    .data_exists(&id, &PubDataType::VerfAddress.to_string())
-                    .await
-                    .unwrap()
-            );
+            for data_type in verification_material_types(scheme).map(|t| t.to_string()) {
+                assert!(pub_storage.data_exists(&id, &data_type).await.unwrap());
+            }
         }
     }
 
@@ -3014,18 +3006,9 @@ mod tests {
         // Check validation keys exist
         for scheme in SigningSchemeType::iter() {
             let id = signing_material_id(scheme);
-            assert!(
-                pub_storage
-                    .data_exists(&id, &PubDataType::VerfKey.to_string())
-                    .await
-                    .unwrap()
-            );
-            assert!(
-                pub_storage
-                    .data_exists(&id, &PubDataType::VerfAddress.to_string())
-                    .await
-                    .unwrap()
-            );
+            for data_type in verification_material_types(scheme).map(|t| t.to_string()) {
+                assert!(pub_storage.data_exists(&id, &data_type).await.unwrap());
+            }
         }
 
         // Second run: EpochData already exists, so PRSS migration short-circuits without error.
@@ -3049,18 +3032,9 @@ mod tests {
         // Check validation keys exist
         for scheme in SigningSchemeType::iter() {
             let id = signing_material_id(scheme);
-            assert!(
-                pub_storage
-                    .data_exists(&id, &PubDataType::VerfKey.to_string())
-                    .await
-                    .unwrap()
-            );
-            assert!(
-                pub_storage
-                    .data_exists(&id, &PubDataType::VerfAddress.to_string())
-                    .await
-                    .unwrap()
-            );
+            for data_type in verification_material_types(scheme).map(|t| t.to_string()) {
+                assert!(pub_storage.data_exists(&id, &data_type).await.unwrap());
+            }
         }
     }
 
@@ -3089,18 +3063,9 @@ mod tests {
         // Check validation keys exist
         for scheme in SigningSchemeType::iter() {
             let id = signing_material_id(scheme);
-            assert!(
-                pub_storage
-                    .data_exists(&id, &PubDataType::VerfKey.to_string())
-                    .await
-                    .unwrap()
-            );
-            assert!(
-                pub_storage
-                    .data_exists(&id, &PubDataType::VerfAddress.to_string())
-                    .await
-                    .unwrap()
-            );
+            for data_type in verification_material_types(scheme).map(|t| t.to_string()) {
+                assert!(pub_storage.data_exists(&id, &data_type).await.unwrap());
+            }
         }
     }
 

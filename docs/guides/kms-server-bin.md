@@ -31,6 +31,23 @@ subject is read from `threshold.tls_subject` when present; otherwise it is
 derived from the matching `[[threshold.peers]]` entry, preferring `mpc_identity`
 and falling back to `address`.
 
+### What is written to public storage
+
+A node signs with a single persisted ECDSA signing key, and the verification keys
+of the other supported signature schemes are derived from it. Each scheme's public
+material is written to its own data-type folder, so that every folder holds exactly
+one kind of object:
+
+| Folder | Contents |
+| --- | --- |
+| `VerfKey` | The node's ECDSA verification key, under the fixed `SIGNING_KEY_ID` handle. Unchanged from earlier releases. |
+| `VerfAddress` | The matching Ethereum address (checksummed, `0x`-prefixed), under the same handle. Unchanged from earlier releases. |
+| `SchemeVerfKey` | One derived verification key per non-ECDSA scheme, each under its own scheme-specific handle. |
+| `SchemeVerfAddress` | The digest identifying each derived verification key, as hex text. |
+
+Consumers that already read the ECDSA key or address by handle are unaffected: the
+derived schemes never appear in the `VerfKey`/`VerfAddress` folders.
+
 For local test/dev runs that need pre-baked FHE keys + CRS, use `generate-test-material` instead (see the `generate-test-material-*` targets in the top-level `Makefile`).
 
 ## Threshold KMS TLS Certificates

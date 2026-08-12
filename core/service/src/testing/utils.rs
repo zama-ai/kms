@@ -697,10 +697,11 @@ where
 // because we don't want it to have the "testing" feature
 #[tokio::test]
 async fn test_purge() {
-    use crate::consts::SIGNING_KEY_ID;
+    use crate::consts::{SIGNING_KEY_ID, signing_material_id};
     use crate::cryptography::signatures::SigningSchemeType;
+    use crate::util::key_setup::verification_material_types;
     use kms_grpc::rpc_types::PrivDataType;
-    use strum::EnumCount;
+    use strum::IntoEnumIterator;
 
     let temp_dir = tempfile::tempdir().unwrap();
     let test_prefix = Some(temp_dir.path());
@@ -733,30 +734,48 @@ async fn test_purge() {
         .await
         .unwrap()
     );
-    // Validate the keys were made: one verification key per signature scheme
-    // (ECDSA plus each derived scheme), and a single ECDSA private signing key.
-    let pub_ids = central_pub_storage
-        .all_data_ids(&PubDataType::VerfKey.to_string())
-        .await
-        .unwrap();
-    assert_eq!(pub_ids.len(), SigningSchemeType::COUNT);
+    // Validate the keys were made
+    for scheme in SigningSchemeType::iter() {
+        let id = signing_material_id(scheme);
+        for data_type in verification_material_types(scheme).map(|t| t.to_string()) {
+            assert!(
+                central_pub_storage
+                    .all_data_ids(&data_type)
+                    .await
+                    .unwrap()
+                    .contains(&id),
+                "{scheme} material missing from {data_type}"
+            );
+        }
+    }
     let priv_ids = central_priv_storage
         .all_data_ids(&PrivDataType::SigningKey.to_string())
         .await
         .unwrap();
     assert_eq!(priv_ids.len(), 1);
-    for id in &pub_ids {
-        crate::util::key_setup::test_tools::purge(test_prefix, test_prefix, id, &[None], &[None])
-            .await;
+    for scheme in SigningSchemeType::iter() {
+        crate::util::key_setup::test_tools::purge(
+            test_prefix,
+            test_prefix,
+            &signing_material_id(scheme),
+            &[None],
+            &[None],
+        )
+        .await;
     }
     // Check the keys were deleted
-    assert!(
-        central_pub_storage
-            .all_data_ids(&PubDataType::VerfKey.to_string())
-            .await
-            .unwrap()
-            .is_empty()
-    );
+    for scheme in SigningSchemeType::iter() {
+        for data_type in verification_material_types(scheme).map(|t| t.to_string()) {
+            assert!(
+                central_pub_storage
+                    .all_data_ids(&data_type)
+                    .await
+                    .unwrap()
+                    .is_empty(),
+                "{data_type} still holds material after purging"
+            );
+        }
+    }
     assert!(
         central_priv_storage
             .all_data_ids(&PrivDataType::SigningKey.to_string())

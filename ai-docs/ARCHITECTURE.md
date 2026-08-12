@@ -101,12 +101,16 @@ The service crate is the main surface area. Key subdirectories under
   `unified_sign`/`unified_verify` entry points. The historic
   `cryptography::signatures` path is now a re-export facade. A node still
   persists a single ECDSA signing key; the other schemes' keys are derived from
-  it on demand. Each scheme's public verification key is stored (versioned, as a
-  `UnifiedPublicSigKey`) under `PubDataType::VerfKey`, and its digest under
-  `PubDataType::VerfAddress`, keyed by `consts::signing_material_id(scheme)` —
-  ECDSA keeps the historic `SIGNING_KEY_ID` location so external consumers are
-  unaffected, while each other scheme gets its own derived id in the same
-  folders.
+  it on demand. Each scheme's public verification key and digest are stored under
+  the handle `consts::signing_material_id(scheme)` gives, in the data types
+  `key_setup::verification_material_types(scheme)` names: ECDSA keeps its
+  historic `PubDataType::VerfKey`/`VerfAddress` location at `SIGNING_KEY_ID`
+  (holding a `PublicSigKey` and a checksummed Ethereum address) so external
+  consumers are unaffected, while every derived scheme lives under
+  `PubDataType::SchemeVerfKey`/`SchemeVerfAddress` (holding a versioned
+  `UnifiedPublicSigKey` and its hex digest). The two are deliberately kept in
+  separate folders so that each data type holds exactly one kind of object and a
+  consumer can read a whole folder at a single type.
 - [client/](core/service/src/client/) and
   [testing/](core/service/src/testing/) — client-side helpers and
   test-only wiring.
