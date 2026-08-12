@@ -1507,7 +1507,7 @@ impl DkgParamsAvailable {
 pub const BC_PARAMS_SNS: DKGParams = DKGParams {
     dkg_mode: DkgMode::Z128,
     sec: 128,
-    meta: tfhe::shortint::parameters::v1_6::meta::cpu::V1_6_META_PARAM_CPU_2_2_KS_PBS_PKE_TO_SMALL_ZKV2_TUNIFORM_2M128,
+    meta: tfhe::shortint::parameters::v1_7::meta::cpu::V1_7_META_PARAM_CPU_2_2_KS_PBS_PKE_TO_SMALL_ZKV2_TUNIFORM_2M128,
     secret_key_deviations: None,
 };
 

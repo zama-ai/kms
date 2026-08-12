@@ -322,8 +322,7 @@ pub async fn run_key_gen_centralized(
                 )
                 .await
                 .unwrap();
-            let (derived_public_key, server_key) =
-                compressed_keyset.decompress().unwrap().into_raw_parts();
+            let (derived_public_key, server_key) = compressed_keyset.decompress().into_raw_parts();
             // For fresh compressed keygen the stored public key must match the one we derive
             // from the compressed keyset (migration flow would differ, but this test path is
             // always a fresh keygen). CompactPublicKey does not implement PartialEq, so we
@@ -410,7 +409,7 @@ pub async fn run_key_gen_centralized(
                 .get_key(&keyid_1, PubDataType::CompressedXofKeySet, &pub_storage)
                 .await
                 .unwrap();
-            let (_pk_1, server_key_1) = compressed_keyset_1.decompress().unwrap().into_raw_parts();
+            let (_pk_1, server_key_1) = compressed_keyset_1.decompress().into_raw_parts();
 
             // get decompression key
             let decompression_key = internal_client
