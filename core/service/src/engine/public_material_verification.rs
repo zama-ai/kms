@@ -479,7 +479,6 @@ mod tests {
     use super::*;
     use crate::cryptography::signatures::gen_sig_keys;
     use crate::engine::base::KeyGenMetadataInner;
-    use crate::engine::centralized::central_kms::gen_centralized_crs;
     use crate::engine::material_integrity::{
         ERR_COMPRESSED_KEYSET_DIGEST_MISMATCH, ERR_CRS_DIGEST_MISMATCH,
         ERR_PUBLIC_KEY_DIGEST_MISMATCH, ERR_SERVER_KEY_DIGEST_MISMATCH,
@@ -488,12 +487,16 @@ mod tests {
     use crate::vault::storage::{Storage, delete_at_request_id, store_versioned_at_request_id};
 
     use aes_prng::AesRng;
-    use hashing::{hash_element, hash_versioned};
+    use hashing::hash_element;
     use kms_grpc::rpc_types::SignedPubDataHandleInternal;
     use rand::SeedableRng;
-    use tfhe::core_crypto::prelude::NormalizedHammingWeightBound;
-    use tfhe::shortint::ClassicPBSParameters;
-    use tfhe::xof_key_set::CompressedXofKeySet;
+
+    // Success cases deliberately use invalid encodings: if startup ever starts deserializing
+    // key or CRS objects again, the ordinary matching-digest tests will fail.
+    const RAW_PUBLIC_KEY: &[u8] = b"deliberately not a serialized TFHE public key";
+    const RAW_SERVER_KEY: &[u8] = b"deliberately not a serialized TFHE server key";
+    const RAW_COMPRESSED_KEYSET: &[u8] = b"deliberately not a serialized TFHE compressed keyset";
+    const RAW_CRS: &[u8] = b"deliberately not a serialized TFHE CRS";
 
     #[derive(Clone)]
     struct TestStoredMaterial {
@@ -515,16 +518,7 @@ mod tests {
         }
 
         fn legacy_standard_metadata(&self) -> KeyGenMetadata {
-            KeyGenMetadata::LegacyV0(HashMap::from_iter([
-                (
-                    PubDataType::PublicKey,
-                    SignedPubDataHandleInternal::new(String::new(), vec![], vec![]),
-                ),
-                (
-                    PubDataType::ServerKey,
-                    SignedPubDataHandleInternal::new(String::new(), vec![], vec![]),
-                ),
-            ]))
+            legacy_keyset_metadata(&[PubDataType::PublicKey, PubDataType::ServerKey])
         }
 
         /// Metadata produced the way `key_gen` produces it, so the per-scheme signatures
@@ -584,71 +578,6 @@ mod tests {
         verify_keysets(&storage, &entries)
             .await
             .expect("valid digests should pass");
-    }
-
-    #[tokio::test]
-    async fn current_hash_checks_do_not_deserialize_keys_or_crs() {
-        let mut rng = AesRng::seed_from_u64(0xA11CE);
-        let key_id = RequestId::new_random(&mut rng);
-        let preprocessing_id = RequestId::new_random(&mut rng);
-        let crs_id = RequestId::new_random(&mut rng);
-        let public_key_bytes = b"not a serialized TFHE public key";
-        let server_key_bytes = b"not a serialized TFHE server key";
-        let crs_bytes = b"not a serialized TFHE CRS";
-        let mut storage = RamStorage::new();
-
-        for (data_type, bytes) in [
-            (PubDataType::PublicKey, public_key_bytes.as_slice()),
-            (PubDataType::ServerKey, server_key_bytes.as_slice()),
-        ] {
-            storage
-                .store_bytes(bytes, &key_id, &data_type.to_string())
-                .await
-                .unwrap();
-        }
-        storage
-            .store_bytes(crs_bytes, &crs_id, &PubDataType::CRS.to_string())
-            .await
-            .unwrap();
-
-        let key_entries = vec![(
-            key_id,
-            KeyGenMetadata::Current(KeyGenMetadataInner {
-                signatures: vec![],
-                key_id,
-                preprocessing_id,
-                key_digest_map: BTreeMap::from([
-                    (
-                        PubDataType::PublicKey,
-                        hash_element(&DSEP_PUBDATA_KEY, public_key_bytes),
-                    ),
-                    (
-                        PubDataType::ServerKey,
-                        hash_element(&DSEP_PUBDATA_KEY, server_key_bytes),
-                    ),
-                ]),
-                external_signature: vec![],
-                extra_data: None,
-            }),
-        )];
-        let crs_entries = HashMap::from([(
-            crs_id,
-            CrsGenMetadata::Current(crate::engine::base::CrsGenMetadataInner {
-                crs_id,
-                crs_digest: hash_element(&DSEP_PUBDATA_CRS, crs_bytes),
-                max_num_bits: 64,
-                extra_data: None,
-                external_signature: vec![],
-                signatures: vec![],
-            }),
-        )]);
-
-        verify_keysets(&storage, &key_entries)
-            .await
-            .expect("matching raw key bytes should pass without deserialization");
-        verify_crses(&storage, &crs_entries)
-            .await
-            .expect("matching raw CRS bytes should pass without deserialization");
     }
 
     #[tokio::test]
@@ -748,17 +677,6 @@ mod tests {
     async fn legacy_keyset_presence_check_does_not_deserialize_objects() {
         let mut storage = RamStorage::new();
         let material = setup_standard_keys(&mut storage, 49).await;
-        for data_type in [PubDataType::PublicKey, PubDataType::ServerKey] {
-            delete_data(&mut storage, &material.key_id, data_type).await;
-            storage
-                .store_bytes(
-                    b"deliberately not a serialized TFHE key",
-                    &material.key_id,
-                    &data_type.to_string(),
-                )
-                .await
-                .unwrap();
-        }
 
         let entries = vec![(material.key_id, material.legacy_standard_metadata())];
         verify_keysets(&storage, &entries)
@@ -767,63 +685,23 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn sanity_check_legacy_metadata_with_compressed_keyset_fails() {
-        let mut storage = RamStorage::new();
-        let material = setup_compressed_keys(&mut storage, 50).await;
-        let metadata = KeyGenMetadata::LegacyV0(HashMap::from_iter([
-            (
-                PubDataType::PublicKey,
-                SignedPubDataHandleInternal::new(String::new(), vec![], vec![]),
-            ),
-            (
-                PubDataType::CompressedXofKeySet,
-                SignedPubDataHandleInternal::new(String::new(), vec![], vec![]),
-            ),
-        ]));
+    async fn legacy_keysets_reject_invalid_metadata_shapes() {
+        let storage = RamStorage::new();
+        let key_id = RequestId::new_random(&mut AesRng::seed_from_u64(50));
 
-        let entries = vec![(material.key_id, metadata)];
-        let err = verify_keysets(&storage, &entries).await.unwrap_err();
-        assert!(
-            err.to_string()
-                .contains(ERR_INVALID_LEGACY_PUBLIC_KEY_SHAPE),
-            "expected invalid legacy shape error, got: {err}"
-        );
-    }
-
-    #[tokio::test]
-    async fn sanity_check_legacy_metadata_with_only_public_key_fails() {
-        let mut storage = RamStorage::new();
-        let material = setup_standard_keys(&mut storage, 51).await;
-        let metadata = KeyGenMetadata::LegacyV0(HashMap::from_iter([(
-            PubDataType::PublicKey,
-            SignedPubDataHandleInternal::new(String::new(), vec![], vec![]),
-        )]));
-
-        let entries = vec![(material.key_id, metadata)];
-        let err = verify_keysets(&storage, &entries).await.unwrap_err();
-        assert!(
-            err.to_string()
-                .contains(ERR_INVALID_LEGACY_PUBLIC_KEY_SHAPE),
-            "expected invalid legacy shape error, got: {err}"
-        );
-    }
-
-    #[tokio::test]
-    async fn sanity_check_legacy_metadata_with_only_server_key_fails() {
-        let mut storage = RamStorage::new();
-        let material = setup_standard_keys(&mut storage, 52).await;
-        let metadata = KeyGenMetadata::LegacyV0(HashMap::from_iter([(
-            PubDataType::ServerKey,
-            SignedPubDataHandleInternal::new(String::new(), vec![], vec![]),
-        )]));
-
-        let entries = vec![(material.key_id, metadata)];
-        let err = verify_keysets(&storage, &entries).await.unwrap_err();
-        assert!(
-            err.to_string()
-                .contains(ERR_INVALID_LEGACY_PUBLIC_KEY_SHAPE),
-            "expected invalid legacy shape error, got: {err}"
-        );
+        for data_types in [
+            vec![PubDataType::PublicKey, PubDataType::CompressedXofKeySet],
+            vec![PubDataType::PublicKey],
+            vec![PubDataType::ServerKey],
+        ] {
+            let entries = vec![(key_id, legacy_keyset_metadata(&data_types))];
+            let err = verify_keysets(&storage, &entries).await.unwrap_err();
+            assert!(
+                err.to_string()
+                    .contains(ERR_INVALID_LEGACY_PUBLIC_KEY_SHAPE),
+                "expected invalid legacy shape error for {data_types:?}, got: {err}"
+            );
+        }
     }
 
     #[tokio::test]
@@ -832,16 +710,8 @@ mod tests {
         let crs_id = RequestId::new_random(&mut rng);
         let mut storage = RamStorage::new();
 
-        let (_crs, digest) = setup_crs(&mut storage, &crs_id).await;
-
-        let metadata = CrsGenMetadata::Current(crate::engine::base::CrsGenMetadataInner {
-            crs_id,
-            crs_digest: digest,
-            max_num_bits: 64,
-            extra_data: None,
-            external_signature: vec![],
-            signatures: vec![],
-        });
+        let digest = setup_crs(&mut storage, &crs_id).await;
+        let metadata = current_crs_metadata(crs_id, digest);
 
         let entries = HashMap::from_iter([(crs_id, metadata)]);
         verify_crses(&storage, &entries)
@@ -855,18 +725,9 @@ mod tests {
         let crs_id = RequestId::new_random(&mut rng);
         let mut storage = RamStorage::new();
 
-        let (_crs, mut digest) = setup_crs(&mut storage, &crs_id).await;
-        // Corrupt the digest
+        let mut digest = setup_crs(&mut storage, &crs_id).await;
         digest[0] ^= 0xFF;
-
-        let metadata = CrsGenMetadata::Current(crate::engine::base::CrsGenMetadataInner {
-            crs_id,
-            crs_digest: digest,
-            max_num_bits: 64,
-            extra_data: None,
-            external_signature: vec![],
-            signatures: vec![],
-        });
+        let metadata = current_crs_metadata(crs_id, digest);
 
         let entries = HashMap::from_iter([(crs_id, metadata)]);
         let err = verify_crses(&storage, &entries).await.unwrap_err();
@@ -882,20 +743,8 @@ mod tests {
         let crs_id = RequestId::new_random(&mut rng);
         let mut storage = RamStorage::new();
 
-        // Replace a valid fixture with bytes that cannot be decoded as a CRS. Legacy metadata
-        // has no digest, so startup deliberately checks only that the raw object is present.
-        let _crs_and_digest = setup_crs(&mut storage, &crs_id).await;
-        delete_data(&mut storage, &crs_id, PubDataType::CRS).await;
-        storage
-            .store_bytes(
-                b"deliberately not a serialized TFHE CRS",
-                &crs_id,
-                &PubDataType::CRS.to_string(),
-            )
-            .await
-            .unwrap();
+        let _digest = setup_crs(&mut storage, &crs_id).await;
 
-        use kms_grpc::rpc_types::SignedPubDataHandleInternal;
         let legacy_handle = SignedPubDataHandleInternal::new(String::new(), vec![], vec![]);
         let metadata = CrsGenMetadata::LegacyV0(legacy_handle);
 
@@ -929,11 +778,10 @@ mod tests {
         let mut rng = AesRng::seed_from_u64(101);
         let crs_id = RequestId::new_random(&mut rng);
         let mut storage = RamStorage::new();
-        let (_crs, digest) = setup_crs(&mut storage, &crs_id).await;
+        let digest = setup_crs(&mut storage, &crs_id).await;
         delete_data(&mut storage, &crs_id, PubDataType::CRS).await;
 
-        let entries =
-            HashMap::from_iter([(crs_id, crs_metadata_with_signatures(&crs_id, digest, &[]).0)]);
+        let entries = HashMap::from([(crs_id, current_crs_metadata(crs_id, digest))]);
         let err = verify_crses(&storage, &entries).await.unwrap_err();
         let msg = err.to_string();
         assert!(
@@ -1055,7 +903,7 @@ mod tests {
         let mut rng = AesRng::seed_from_u64(120);
         let crs_id = RequestId::new_random(&mut rng);
         let mut storage = RamStorage::new();
-        let (_crs, digest) = setup_crs(&mut storage, &crs_id).await;
+        let digest = setup_crs(&mut storage, &crs_id).await;
         let (metadata, sk) =
             crs_metadata_with_signatures(&crs_id, digest, &[SigningSchemeType::MlDsa65]);
 
@@ -1069,7 +917,7 @@ mod tests {
         let mut rng = AesRng::seed_from_u64(121);
         let crs_id = RequestId::new_random(&mut rng);
         let mut storage = RamStorage::new();
-        let (_crs, digest) = setup_crs(&mut storage, &crs_id).await;
+        let digest = setup_crs(&mut storage, &crs_id).await;
         let (mut metadata, sk) =
             crs_metadata_with_signatures(&crs_id, digest, &[SigningSchemeType::MlDsa65]);
         if let CrsGenMetadata::Current(inner) = &mut metadata {
@@ -1088,7 +936,7 @@ mod tests {
         let mut rng = AesRng::seed_from_u64(122);
         let crs_id = RequestId::new_random(&mut rng);
         let mut storage = RamStorage::new();
-        let (_crs, digest) = setup_crs(&mut storage, &crs_id).await;
+        let digest = setup_crs(&mut storage, &crs_id).await;
         let (mut metadata, sk) =
             crs_metadata_with_signatures(&crs_id, digest, &[SigningSchemeType::MlDsa65]);
         if let CrsGenMetadata::Current(inner) = &mut metadata {
@@ -1108,7 +956,7 @@ mod tests {
         let crs_id = RequestId::new_random(&mut rng);
         let other_id = RequestId::new_random(&mut rng);
         let mut storage = RamStorage::new();
-        let (_crs, digest) = setup_crs(&mut storage, &crs_id).await;
+        let digest = setup_crs(&mut storage, &crs_id).await;
         let (metadata, sk) =
             crs_metadata_with_signatures(&crs_id, digest, &[SigningSchemeType::MlDsa65]);
 
@@ -1326,8 +1174,8 @@ mod tests {
         store_signing_key_material(&mut storage, &sk, None).await;
 
         let crs_id = RequestId::new_random(&mut rng);
-        let (_crs, crs_digest) = setup_crs(&mut storage, &crs_id).await;
-        let (crs_metadata, _crs_sk) = crs_metadata_with_signatures_using(
+        let crs_digest = setup_crs(&mut storage, &crs_id).await;
+        let crs_metadata = crs_metadata_with_signatures_using(
             &sk,
             &crs_id,
             crs_digest,
@@ -1377,7 +1225,7 @@ mod tests {
         schemes: &[SigningSchemeType],
     ) -> (CrsGenMetadata, PrivateSigKey) {
         let (_pk, sk) = gen_sig_keys(&mut AesRng::seed_from_u64(0xC5));
-        let (metadata, _) = crs_metadata_with_signatures_using(&sk, crs_id, crs_digest, schemes);
+        let metadata = crs_metadata_with_signatures_using(&sk, crs_id, crs_digest, schemes);
         (metadata, sk)
     }
 
@@ -1387,8 +1235,8 @@ mod tests {
         crs_id: &RequestId,
         crs_digest: Vec<u8>,
         schemes: &[SigningSchemeType],
-    ) -> (CrsGenMetadata, PrivateSigKey) {
-        let metadata = crate::engine::base::compute_info_crs_from_digest(
+    ) -> CrsGenMetadata {
+        crate::engine::base::compute_info_crs_from_digest(
             sk,
             schemes,
             crs_id,
@@ -1397,43 +1245,68 @@ mod tests {
             &crate::dummy_domain(),
             vec![],
         )
-        .unwrap();
-        (metadata, sk.clone())
+        .unwrap()
+    }
+
+    fn legacy_keyset_metadata(data_types: &[PubDataType]) -> KeyGenMetadata {
+        KeyGenMetadata::LegacyV0(
+            data_types
+                .iter()
+                .map(|data_type| {
+                    (
+                        *data_type,
+                        SignedPubDataHandleInternal::new(String::new(), vec![], vec![]),
+                    )
+                })
+                .collect(),
+        )
+    }
+
+    fn current_crs_metadata(crs_id: RequestId, crs_digest: Vec<u8>) -> CrsGenMetadata {
+        CrsGenMetadata::Current(crate::engine::base::CrsGenMetadataInner {
+            crs_id,
+            crs_digest,
+            max_num_bits: 64,
+            extra_data: None,
+            external_signature: vec![],
+            signatures: vec![],
+        })
+    }
+
+    async fn store_raw_material(
+        storage: &mut RamStorage,
+        id: &RequestId,
+        data_type: PubDataType,
+        bytes: &[u8],
+        domain_separator: &DomainSep,
+    ) -> Vec<u8> {
+        storage
+            .store_bytes(bytes, id, &data_type.to_string())
+            .await
+            .unwrap();
+        hash_element(domain_separator, bytes)
     }
 
     async fn setup_standard_keys(storage: &mut RamStorage, seed: u64) -> TestStoredMaterial {
         let mut rng = AesRng::seed_from_u64(seed);
         let key_id = RequestId::new_random(&mut rng);
         let preproc_id = RequestId::new_random(&mut rng);
-        let params = crate::consts::TEST_PARAM;
-        let pbs_params: ClassicPBSParameters = params.classic_pbs();
-        let config = tfhe::ConfigBuilder::with_custom_parameters(pbs_params);
-        let client_key = tfhe::ClientKey::generate(config);
-        let server_key = client_key.generate_server_key();
-        let public_key = tfhe::CompactPublicKey::new(&client_key);
-
-        let server_key_digest =
-            hash_versioned(&crate::engine::base::DSEP_PUBDATA_KEY, &server_key).unwrap();
-        let public_key_digest =
-            hash_versioned(&crate::engine::base::DSEP_PUBDATA_KEY, &public_key).unwrap();
-
-        store_versioned_at_request_id(
+        let public_key_digest = store_raw_material(
             storage,
             &key_id,
-            &public_key,
-            &PubDataType::PublicKey.to_string(),
+            PubDataType::PublicKey,
+            RAW_PUBLIC_KEY,
+            &DSEP_PUBDATA_KEY,
         )
-        .await
-        .unwrap();
-
-        store_versioned_at_request_id(
+        .await;
+        let server_key_digest = store_raw_material(
             storage,
             &key_id,
-            &server_key,
-            &PubDataType::ServerKey.to_string(),
+            PubDataType::ServerKey,
+            RAW_SERVER_KEY,
+            &DSEP_PUBDATA_KEY,
         )
-        .await
-        .unwrap();
+        .await;
 
         TestStoredMaterial {
             key_id,
@@ -1449,44 +1322,22 @@ mod tests {
         let mut rng = AesRng::seed_from_u64(seed);
         let key_id = RequestId::new_random(&mut rng);
         let preproc_id = RequestId::new_random(&mut rng);
-        let params = crate::consts::TEST_PARAM;
-        let config = params.to_tfhe_config();
-        let max_norm_hwt = params.sk_deviations().map(|x| x.pmax).unwrap_or(1.0);
-        let max_norm_hwt = NormalizedHammingWeightBound::new(max_norm_hwt).unwrap();
-        let tag = key_id.into();
-
-        let (_client_key, compressed_keyset) = CompressedXofKeySet::generate(
-            config,
-            vec![42, 43, 44, 45],
-            params.sec() as u32,
-            max_norm_hwt,
-            tag,
-        )
-        .unwrap();
-        let compact_public_key = compressed_keyset.clone().decompress().into_raw_parts().0;
-
-        let compressed_keyset_digest =
-            hash_versioned(&crate::engine::base::DSEP_PUBDATA_KEY, &compressed_keyset).unwrap();
-        let public_key_digest =
-            hash_versioned(&crate::engine::base::DSEP_PUBDATA_KEY, &compact_public_key).unwrap();
-
-        store_versioned_at_request_id(
+        let public_key_digest = store_raw_material(
             storage,
             &key_id,
-            &compressed_keyset,
-            &PubDataType::CompressedXofKeySet.to_string(),
+            PubDataType::PublicKey,
+            RAW_PUBLIC_KEY,
+            &DSEP_PUBDATA_KEY,
         )
-        .await
-        .unwrap();
-
-        store_versioned_at_request_id(
+        .await;
+        let compressed_keyset_digest = store_raw_material(
             storage,
             &key_id,
-            &compact_public_key,
-            &PubDataType::PublicKey.to_string(),
+            PubDataType::CompressedXofKeySet,
+            RAW_COMPRESSED_KEYSET,
+            &DSEP_PUBDATA_KEY,
         )
-        .await
-        .unwrap();
+        .await;
 
         TestStoredMaterial {
             key_id,
@@ -1504,37 +1355,14 @@ mod tests {
             .unwrap();
     }
 
-    async fn setup_crs(
-        storage: &mut RamStorage,
-        crs_id: &RequestId,
-    ) -> (tfhe::zk::CompactPkeCrs, Vec<u8>) {
-        let mut rng = AesRng::seed_from_u64(42);
-        let (_pk, sk) = gen_sig_keys(&mut rng);
-        let params = crate::consts::TEST_PARAM;
-        let domain = crate::dummy_domain();
-        let max_num_bits = 64u32;
-
-        let (crs, metadata) = gen_centralized_crs(
-            &sk,
-            &[crate::cryptography::signing::SigningSchemeType::Ecdsa256k1],
-            &params,
-            Some(max_num_bits),
-            &domain,
-            vec![],
+    async fn setup_crs(storage: &mut RamStorage, crs_id: &RequestId) -> Vec<u8> {
+        store_raw_material(
+            storage,
             crs_id,
-            &mut rng,
+            PubDataType::CRS,
+            RAW_CRS,
+            &DSEP_PUBDATA_CRS,
         )
-        .unwrap();
-
-        let digest = match &metadata {
-            CrsGenMetadata::Current(inner) => inner.crs_digest.clone(),
-            _ => panic!("expected Current metadata, instead got {:?}", metadata),
-        };
-
-        store_versioned_at_request_id(storage, crs_id, &crs, &PubDataType::CRS.to_string())
-            .await
-            .unwrap();
-
-        (crs, digest)
+        .await
     }
 }
