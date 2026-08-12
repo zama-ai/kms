@@ -19,17 +19,11 @@
 //! * **l3 — byte equality.** The embedded digest must equal the recomputed link byte for byte,
 //!   length included. A share that fails is discarded and contributes nothing.
 //! * **l4 — uniformity and threshold.** Every accepted share must carry the *same* link, a party
-//!   contributes at most one accepted share, and there must be at least as many of them as the
-//!   release needs. Fewer means the response fails as a whole: no plaintext is released from a
-//!   partially valid response. The one-share-per-party half is what makes the threshold a count of
-//!   *distinct* nodes: a replayed share is discarded, never counted twice. A multi-share set is
-//!   further required to be one consistent threshold response — degree, ciphertext count and
-//!   types, packing, handles, byte-distinct verification keys — checked by running the accepted
-//!   originals through the EVM path's own validation, unchanged, so the definition of a
-//!   well-formed threshold response exists exactly once for both paths. Key distinctness there is
-//!   equality of the key's exact bytes: it collapses a replayed key, not a re-encoding of the same
-//!   key, so keeping one physical signer to one slot rests on the registry mapping distinct
-//!   addresses to distinct party ids.
+//!   contributes at most one accepted share (a replayed share is discarded, never counted twice),
+//!   and there must be at least as many of them as the release needs — fewer fails the response as
+//!   a whole. A multi-share set must additionally be one consistent threshold response, checked by
+//!   running the accepted originals through the EVM path's own validation, unchanged, so the
+//!   definition of a well-formed threshold response exists exactly once for both paths.
 //!
 //! The centralized case is the degenerate single-share case of exactly these rules, not a weaker
 //! path of its own.
@@ -175,18 +169,11 @@ impl SolanaUserDecryptionRequest {
     }
 }
 
-/// Why each rejected share was rejected, as counters.
+/// Why each rejected share was rejected, as counters — the census a failed response reports in
+/// [`SolanaUserDecryptionResponseError::BelowThreshold`].
 ///
-/// The counts exist so that the *order* of the rules is observable through data rather than
-/// through timing. A share that fails both l2 and l3 is counted under [`Self::node_signature`]
-/// only, because l3 is never reached for it: if a bad-signature share could still increment
-/// [`Self::link_mismatch`], the comparison would have run on an unauthenticated payload.
-///
-/// Every counter therefore corresponds to the first per-share rule the share failed, and the
-/// counters sum to the number of shares rejected by that per-share verification. A share that
-/// passes every per-share rule can still be dropped by the whole-set consistency gate, which may
-/// discard an outlier while accepting the set; such a drop is not counted here, so the sum is not
-/// necessarily everything kept out of [`VerifiedSolanaShares`].
+/// Each share is counted under the *first* rule it failed, in rule order; shares dropped later by
+/// the whole-set consistency gate are not counted here.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub struct ShareRejections {
     /// The response carried no payload at all.
@@ -207,18 +194,6 @@ pub struct ShareRejections {
     pub duplicate_party: usize,
 }
 
-impl ShareRejections {
-    /// How many shares the per-share verification discarded in total.
-    pub fn total(&self) -> usize {
-        self.missing_payload
-            + self.unknown_party
-            + self.malformed_verification_key
-            + self.node_signature
-            + self.link_mismatch
-            + self.duplicate_party
-    }
-}
-
 /// One share that passed l1–l3: authenticated by a trusted KMS node, and carrying the recomputed
 /// link.
 ///
@@ -231,27 +206,7 @@ pub struct VerifiedSolanaShare {
     payload: UserDecryptionResponsePayload,
 }
 
-impl VerifiedSolanaShare {
-    /// The party this share was authenticated as.
-    pub fn party_id(&self) -> u32 {
-        self.party_id
-    }
-
-    /// The key the share's signature verified under: the payload's advertised key, admitted
-    /// because its address is the one registered for this party. The trust anchor is the caller's
-    /// signer set — the key material merely has to match it.
-    pub fn verification_key(&self) -> &PublicSigKey {
-        &self.verification_key
-    }
-
-    /// The payload, now that it is known to be authentic and linked to the request.
-    pub fn payload(&self) -> &UserDecryptionResponsePayload {
-        &self.payload
-    }
-}
-
-/// The outcome of rules l1–l4: the accepted shares, the single link every one of them carries, and
-/// a census of everything that was discarded.
+/// The outcome of rules l1–l4: the accepted shares and the single link every one of them carries.
 ///
 /// Fields are private. In particular `link` has no setter and no constructor argument anywhere in
 /// this module's public surface — it is always the value recomputed from the request, which is
@@ -262,46 +217,6 @@ pub struct VerifiedSolanaShares {
     link: Vec<u8>,
     receiver_id: [u8; SOLANA_IDENTITY_LEN],
     shares: Vec<VerifiedSolanaShare>,
-    rejections: ShareRejections,
-}
-
-impl VerifiedSolanaShares {
-    /// The recomputed link that every accepted share carries — rule l4's uniformity, as a value.
-    pub fn link(&self) -> &[u8] {
-        &self.link
-    }
-
-    /// The recipient the accepted shares are signcrypted to: the raw 32-byte wallet key.
-    pub fn receiver_id(&self) -> &[u8; SOLANA_IDENTITY_LEN] {
-        &self.receiver_id
-    }
-
-    /// The accepted shares.
-    pub fn shares(&self) -> &[VerifiedSolanaShare] {
-        &self.shares
-    }
-
-    /// The party ids of the accepted shares, in response order.
-    pub fn party_ids(&self) -> Vec<u32> {
-        self.shares.iter().map(|share| share.party_id).collect()
-    }
-
-    /// How many shares were accepted.
-    pub fn len(&self) -> usize {
-        self.shares.len()
-    }
-
-    /// Whether no share was accepted. Verification never returns such a value — it fails instead —
-    /// but the predicate exists because `len` without `is_empty` is a clippy lint and a reader's
-    /// trap.
-    pub fn is_empty(&self) -> bool {
-        self.shares.is_empty()
-    }
-
-    /// Why the shares that were not accepted were dropped.
-    pub fn rejections(&self) -> &ShareRejections {
-        &self.rejections
-    }
 }
 
 /// Why a Solana user-decryption response did not yield a plaintext.
@@ -391,11 +306,10 @@ pub enum SolanaUserDecryptionResponseError {
     Reconstruction { reason: String },
 }
 
-/// How many same-link shares a release needs, for a deployment of `server_count` KMS nodes.
-///
-/// One for the centralized deployment, and `t + 1` for a threshold deployment of `n = 3t + 1`
-/// nodes — the same derivation the EVM path uses when no threshold is supplied.
-pub fn solana_required_shares(server_count: usize) -> usize {
+/// How many same-link shares a release needs, for a deployment of `server_count` KMS nodes: one
+/// for the centralized deployment, and `t + 1` for a threshold deployment of `n = 3t + 1` nodes —
+/// the same derivation the EVM path uses when no threshold is supplied.
+fn solana_required_shares(server_count: usize) -> usize {
     if server_count <= 1 {
         1
     } else {
@@ -568,9 +482,9 @@ fn external_signature_authenticates(
 /// * `trusted_signers` — the registered KMS signer addresses, keyed by party id, as the client's
 ///   own configuration holds them — on Solana, the host program's KMS-context signer set. A key
 ///   appearing inside a response is admitted only under its binding to one of these addresses
-///   (l2); it is never trusted on its own.
-/// * `required_shares` — how many shares carrying one common link the caller needs, typically
-///   [`solana_required_shares`] of the trusted signer count (l4).
+///   (l2); it is never trusted on its own. The signer count also fixes how many same-link shares
+///   the release needs (l4): one for a single-node deployment, `t + 1` for `n = 3t + 1` nodes —
+///   the demand is derived here and is not a caller-supplied parameter, so it cannot be weakened.
 /// * `agg_resp` — the untrusted responses.
 ///
 /// # Returns
@@ -583,9 +497,9 @@ fn external_signature_authenticates(
 pub fn verify_solana_user_decryption_response(
     request: &SolanaUserDecryptionRequest,
     trusted_signers: &HashMap<u32, alloy_primitives::Address>,
-    required_shares: usize,
     agg_resp: &[UserDecryptionResponse],
 ) -> Result<VerifiedSolanaShares, SolanaUserDecryptionResponseError> {
+    let required_shares = solana_required_shares(trusted_signers.len());
     // l1 first: the expectation comes from the request's own fields and nowhere else, and a
     // request that is not a valid binding fails before any response — even an absent one — is
     // examined. JS callers pin this order: an invalid request with no responses reports the
@@ -687,7 +601,6 @@ pub fn verify_solana_user_decryption_response(
             link: expected_link,
             receiver_id: request.user_pubkey,
             shares,
-            rejections,
         });
     }
     match first_rejection {
@@ -728,11 +641,8 @@ pub fn release_solana_user_decryption(
         link,
         receiver_id,
         shares,
-        ..
     } = shares;
-    // The same receiver mapping the server signcrypted under — the raw 32-byte wallet key. It
-    // comes from the verified set, so a plaintext only opens if the client recomputed it exactly
-    // as the server used it.
+    // The same receiver mapping the server signcrypted under: the raw 32-byte wallet key.
     let receiver = SigncryptionReceiver::Solana(receiver_id);
 
     if shares.len() > 1 {
@@ -780,10 +690,10 @@ pub fn release_solana_user_decryption(
 impl Client {
     /// Recovers the plaintexts of a Solana user-decryption response.
     ///
-    /// A thin composition and nothing else: derive the required share count from the configured
-    /// servers, [`verify_solana_user_decryption_response`], [`release_solana_user_decryption`]. All
-    /// of l1–l4 lives in those functions, so there is exactly one implementation of each rule for
-    /// every caller — Rust, WASM, or test — to exercise.
+    /// A thin composition and nothing else: [`verify_solana_user_decryption_response`], then
+    /// [`release_solana_user_decryption`]. All of l1–l4 lives in those functions, so there is
+    /// exactly one implementation of each rule for every caller — Rust, WASM, or test — to
+    /// exercise.
     ///
     /// The trusted signer set is this client's own
     /// [`crate::client::client_wasm::ServerIdentities`], reduced to addresses — a configuration
@@ -797,12 +707,7 @@ impl Client {
         agg_resp: &[UserDecryptionResponse],
     ) -> Result<Vec<TypedPlaintext>, SolanaUserDecryptionResponseError> {
         let trusted_signers = self.get_server_addrs();
-        let verified = verify_solana_user_decryption_response(
-            request,
-            &trusted_signers,
-            solana_required_shares(trusted_signers.len()),
-            agg_resp,
-        )?;
+        let verified = verify_solana_user_decryption_response(request, &trusted_signers, agg_resp)?;
         release_solana_user_decryption(self, verified, enc_key, dec_key)
     }
 }
