@@ -27,7 +27,7 @@ use itertools::Itertools;
 use kms_grpc::kms::v1::{
     TypedPlaintext, UserDecryptionRequest, UserDecryptionResponse, UserDecryptionResponsePayload,
 };
-use kms_grpc::rpc_types::fhe_types_to_num_blocks;
+use kms_grpc::rpc_types::{SigncryptionReceiver, fhe_types_to_num_blocks};
 use kms_grpc::solidity_types::UserDecryptionLinker;
 use std::num::Wrapping;
 use tfhe::FheTypes;
@@ -273,6 +273,29 @@ impl Client {
             "Could not validate request".to_owned(),
         )?
         .into_inner();
+        self.reconstruct_validated_user_decryption(
+            SigncryptionReceiver::Evm(self.client_address),
+            &validated_resps,
+            enc_key,
+            dec_key,
+        )
+    }
+
+    /// Reconstructs plaintexts from already-validated threshold response payloads — the second
+    /// half of every threshold user decryption, shared by the EVM and Solana paths.
+    ///
+    /// Receiver-agnostic by construction: the caller has already decided which payloads are
+    /// trustworthy (the EVM path in [validate_user_decrypt_responses_against_request], the Solana
+    /// path in its verify-then-release rules) and passes the receiver the shares were signcrypted
+    /// to. The two paths differ only in that decision and in the receiver; the share recovery and
+    /// reconstruction below exist exactly once.
+    pub(crate) fn reconstruct_validated_user_decryption(
+        &self,
+        receiver: SigncryptionReceiver,
+        validated_resps: &[UserDecryptionResponsePayload],
+        enc_key: &UnifiedPublicEncKey,
+        dec_key: &UnifiedPrivateEncKey,
+    ) -> anyhow::Result<Vec<TypedPlaintext>> {
         let degree = some_or_err(
             validated_resps.first(),
             "No valid responses parsed".to_string(),
@@ -299,7 +322,7 @@ impl Client {
             DecryptionMode::BitDecSmall => {
                 // Note: We will create way too many shares here, if we use BitDec kind of decryption we can actually fit 4*64 bits of actual data in a single share.
                 let all_sharings =
-                    self.recover_sharings::<Z64>(&validated_resps, enc_key, dec_key)?;
+                    self.recover_sharings::<Z64>(&receiver, validated_resps, enc_key, dec_key)?;
 
                 let mut out = vec![];
                 for (fhe_type, packing_factor, sharings, recovery_errors) in all_sharings {
@@ -362,7 +385,7 @@ impl Client {
             }
             DecryptionMode::NoiseFloodSmall => {
                 let all_sharings =
-                    self.recover_sharings::<Z128>(&validated_resps, enc_key, dec_key)?;
+                    self.recover_sharings::<Z128>(&receiver, validated_resps, enc_key, dec_key)?;
 
                 let mut out = vec![];
                 for (fhe_type, packing_factor, sharings, recovery_errors) in all_sharings {
@@ -653,6 +676,7 @@ impl Client {
     #[expect(clippy::type_complexity)]
     fn recover_sharings<Z: BaseRing>(
         &self,
+        receiver: &SigncryptionReceiver,
         agg_resp: &[UserDecryptionResponsePayload],
         enc_key: &UnifiedPublicEncKey,
         dec_key: &UnifiedPrivateEncKey,
@@ -696,9 +720,12 @@ impl Client {
                 // that it matches with the original request
                 let cur_verf_key: PublicSigKey =
                     bc2wrap::deserialize_slice(&cur_resp.verification_key)?; // TODO(#2781)
-                let client_id = self.client_address.to_vec();
-                let unsign_key =
-                    UnifiedUnsigncryptionKey::new(dec_key, enc_key, &cur_verf_key, &client_id);
+                let unsign_key = UnifiedUnsigncryptionKey::new(
+                    dec_key,
+                    enc_key,
+                    &cur_verf_key,
+                    receiver.as_bytes(),
+                );
                 match unsign_key.unsigncrypt_plaintext(
                     &DSEP_USER_DECRYPTION,
                     &cur_resp.signcrypted_ciphertexts[batch_i].signcrypted_ciphertext,
@@ -966,6 +993,17 @@ impl ParsedUserDecryptionRequest {
 
     pub fn extra_data(&self) -> &[u8] {
         &self.extra_data
+    }
+
+    /// The ciphertext handles, in request order and with duplicates preserved, as plain bytes.
+    ///
+    /// Order and multiplicity are what a linker binds, so this must stay a faithful copy of the
+    /// request's list — never deduplicated, never sorted.
+    pub fn ciphertext_handle_bytes(&self) -> Vec<Vec<u8>> {
+        self.ciphertext_handles
+            .iter()
+            .map(|handle| handle.0.clone())
+            .collect()
     }
 }
 
