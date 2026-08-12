@@ -14,6 +14,7 @@
 - [Using KMS as a SaaS](guides/saas_usage.md)
 - [On-Premises Installation Guide](guides/on_prem_installation.md)
 - [Calling KMS main entry points](guides/entry_points.md)
+- [Solana user decryption](guides/solana_user_decryption.md)
 - [KMS Core Service Binaries](guides/kms-server-bin.md)
 - [KMS Core Client](guides/core_client.md)
 - [KMS backup CLI Tool](guides/backup.md)
