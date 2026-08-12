@@ -147,13 +147,7 @@ fn main() {
 
     let (client_key, compressed_server_key) = generate_keys(params);
 
-    set_server_key(
-        compressed_server_key
-            .decompress()
-            .expect("Decompression failed")
-            .into_raw_parts()
-            .1,
-    );
+    set_server_key(compressed_server_key.decompress().into_raw_parts().1);
 
     let (ciphertext_43, ciphertext_4445, ciphertext_add, ciphertext_mult) =
         generate_ciphertexts(&client_key);

@@ -1107,13 +1107,7 @@ where
 
     // Derive the CompactPublicKey from the compressed keyset once; store and sign it
     // along with the compressed keyset for each party.
-    let compact_public_key = match compressed_keyset.decompress() {
-        Ok(ks) => ks.into_raw_parts().0,
-        Err(e) => {
-            tracing::error!("Failed to decompress compressed keyset: {}", e);
-            return false;
-        }
-    };
+    let compact_public_key = compressed_keyset.decompress().into_raw_parts().0;
 
     // Hash the compact public key once; reuse per party.
     let public_key_digest = match hash_versioned(&DSEP_PUBDATA_KEY, &compact_public_key) {

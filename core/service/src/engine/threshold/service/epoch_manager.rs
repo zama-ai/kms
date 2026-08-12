@@ -726,13 +726,7 @@ impl<
                     // from the newly generated compressed keyset. Revisit whether it should
                     // instead preserve the old keyset's CompactPublicKey to keep the
                     // externally visible public key stable across epochs of the same key_id.
-                    let compact_public_key = compressed_keyset
-                        .decompress()
-                        .map_err(|e| {
-                            anyhow::anyhow!("Failed to decompress reshared compressed keyset: {e}")
-                        })?
-                        .into_raw_parts()
-                        .0;
+                    let compact_public_key = compressed_keyset.decompress().into_raw_parts().0;
 
                     let info = match compute_info_compressed_keygen(
                         sk,
