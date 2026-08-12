@@ -60,6 +60,11 @@ impl Ed25519 {
     pub fn keygen_from_seed(seed: &[u8; SEED_LEN]) -> Ed25519SigningKey {
         Ed25519SigningKey::from_bytes(seed)
     }
+
+    /// The identifier of `vk`: the raw public key, which is also its Solana address.
+    pub fn digest(vk: &Ed25519VerifyingKey) -> Vec<u8> {
+        vk.as_bytes().to_vec()
+    }
 }
 
 #[cfg(test)]

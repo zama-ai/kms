@@ -819,7 +819,7 @@ where
 mod tests {
     use super::*;
     use crate::conf::ContextEpochAssociation;
-    use crate::engine::context::{ContextInfo, NodeInfo, SoftwareVersion};
+    use crate::engine::context::{ContextInfo, NodeInfo, SchemeDigests, SoftwareVersion};
     use crate::vault::storage::file::FileStorage;
     use crate::vault::storage::ram::{self, RamStorage};
     use crate::vault::storage::{
@@ -1169,12 +1169,12 @@ mod tests {
             mpc_nodes.push(NodeInfo {
                 mpc_identity: format!("testnode{}", i),
                 party_id: (i + 1) as u32,
-                signer_address: None,
                 external_url: "https://doesnotexist.zama.ai".to_string(),
                 ca_cert: None,
                 public_storage_url: "".to_string(),
                 public_storage_prefix: None,
                 extra_signer_addresses: vec![],
+                scheme_digests: SchemeDigests::new(),
             });
         }
         let context_info = ContextInfo {

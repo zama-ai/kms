@@ -1,10 +1,10 @@
 //! ML-DSA (FIPS 204) signing backend, generic over the parameter set.
 
-use super::{SigningError, SigningScheme};
+use super::{DSEP_SIGKEY_DIGEST, SigningError, SigningScheme, SigningSchemeType};
 use core::marker::PhantomData;
-use hashing::DomainSep;
+use hashing::{DIGEST_BYTES, DomainSep, unsafe_hash_list_w_size};
 use ml_dsa::{
-    B32, Keypair, MlDsaParams, Signature as MlDsaSignature, SignatureEncoding, Signer,
+    B32, KeyExport, Keypair, MlDsaParams, Signature as MlDsaSignature, SignatureEncoding, Signer,
     SigningKey as MlDsaSigningKey, Verifier, VerifyingKey as MlDsaVerifyingKey,
 };
 
@@ -52,6 +52,16 @@ impl<P: MlDsaParams> MlDsa<P> {
     /// Deterministically derive the signing key from a 32-byte seed.
     pub fn keygen_from_seed(seed: &[u8; SEED_LEN]) -> MlDsaSigningKey<P> {
         MlDsaSigningKey::<P>::from_seed(&B32::from(*seed))
+    }
+
+    /// The identifier of `vk`; a [`DIGEST_BYTES`] digest of the scheme's tag, concatenated with the key's bytes.
+    pub fn digest(scheme: SigningSchemeType, vk: &MlDsaVerifyingKey<P>) -> Vec<u8> {
+        let bytes = vk.to_bytes();
+        unsafe_hash_list_w_size(
+            &DSEP_SIGKEY_DIGEST,
+            &[&scheme.tag()[..], bytes.as_ref()],
+            DIGEST_BYTES,
+        )
     }
 }
 
