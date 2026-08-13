@@ -81,7 +81,6 @@ where
     ) -> anyhow::Result<Option<Vec<(FheTypes, u32, Vec<ResiduePolyF4<Z>>)>>> {
         let n = self.num_parties;
         let degree = self.invariants.degree;
-        // Single fault count for the whole partition: every non-accepted party is a bot.
         let num_bots = n.saturating_sub(self.accepted.len());
 
         let mut out = Vec::with_capacity(self.invariants.slots.len());
@@ -104,7 +103,7 @@ where
             }
             match Client::reconstruct_blocks(n, degree, num_bots, &sharings)? {
                 Some(blocks) => out.push((slot.fhe_type, slot.packing_factor, blocks)),
-                None => return Ok(None),
+                None => anyhow::bail!("No shares to reconstruct for slot {slot_idx}"),
             }
         }
         Ok(Some(out))
@@ -674,6 +673,15 @@ impl Client {
             };
         let num_parties = trusted_ctx.num_parties();
 
+        // If we don't have at least 2t+1 authenticated responses
+        if authenticated.len() < 2 * trusted_ctx.threshold() {
+            anyhow::bail!(
+                "Not enough authenticated responses to reconstruct: {} < {}",
+                authenticated.len(),
+                invariants.degree + 1
+            );
+        }
+
         let client_id = self.client_address.to_vec();
 
         let mut accepted = Vec::with_capacity(authenticated.len());
@@ -736,9 +744,12 @@ impl Client {
         };
         if !partitioned.rejected.is_empty() {
             tracing::warn!(
-                "User decryption partition rejected {} of {} response(s): {:?}",
+                "User decryption accepted {} responses out of {} authenticated. \
+                Rejected {} out of {} total response(s): {:?}",
+                partitioned.accepted.len(),
+                authenticated.len(),
                 partitioned.rejected.len(),
-                partitioned.num_parties,
+                agg_resp.len(),
                 partitioned
                     .rejected
                     .iter()
@@ -749,15 +760,13 @@ impl Client {
         Ok(partitioned)
     }
 
-    /// Reconstruct every block of one slot from its Shamir sharings, tolerating up
-    /// to `t = degree` faulty contributions.
+    /// Reconstruct every block of one slot from its Shamir sharings
+    /// Expects all sharings to have the same degree and the same number of parties, and that `num_bots`
+    /// is the number of missing/rejected/unrecoverable responses.
     ///
-    /// `num_bots` (parties whose share is absent — missing, rejected, or recovery-failed) is the
-    /// single source of truth for the fault count, so `num_heard_from == num_parties` always and
-    /// `reconstruct_w_errors_sync` never underflows. A `num_bots > degree` means the liveness
-    /// assumption (≥ `2t + 1` honest responses) was violated, so we fail cleanly here rather than
-    /// hitting the opaque underflow inside `reconstruct_w_errors_sync`.
-    ///
+    /// We can correct up to threshold.saturated_sub(num_bots) errors, so
+    /// the numbers of corrupted shares + num_bots must be <= threshold,
+    /// otherwise reconstruction fails (hence the NOTE about optimism in the code).
     /// Returns `Ok(None)` when there are no shares at all (empty slot).
     fn reconstruct_blocks<Z: BaseRing>(
         num_parties: usize,
