@@ -189,6 +189,10 @@ when the optional `[threshold]` section is present; see the sample
 files in `core/service/config/` (`default_centralized.toml`,
 `default_1.toml`..`default_4.toml`, and the compose-specific variants).
 
+In both modes, when the same key or CRS ID has metadata under multiple epochs,
+startup loads the metadata from the greatest epoch ID into the result meta
+store. Epoch IDs are compared as big-endian integers.
+
 ### Centralized
 
 A single `RealCentralizedKms` instance holds all key material. No MPC; keys

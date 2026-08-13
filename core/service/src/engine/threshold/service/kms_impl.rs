@@ -91,6 +91,7 @@ use crate::{
         storage::{
             Storage, StorageExt, crypto_material::ThresholdCryptoMaterialStorage,
             read_all_data_from_all_epochs_versioned, read_all_data_versioned,
+            select_data_from_max_epoch,
         },
     },
 };
@@ -540,7 +541,6 @@ where
         )
         .await?;
 
-    let mut public_key_info = HashMap::new();
     let validation_material: HashMap<RequestId, RecoveryValidationMaterial> =
         read_all_data_versioned(&public_storage, &PubDataType::RecoveryMaterial.to_string())
             .await?;
@@ -554,10 +554,14 @@ where
         }
     }
 
-    // Build public_key_info map
-    for ((id, _), info) in &key_info_versioned {
-        public_key_info.insert(*id, info.meta_data.clone());
-    }
+    // Build public_key_info map using the chronologically latest epoch for each key ID.
+    // Epoch IDs are ordered chronologically by comparing their raw bytes as a
+    // big-endian integer.
+    let public_key_info = select_data_from_max_epoch(
+        key_info_versioned
+            .iter()
+            .map(|((id, epoch_id), info)| ((*id, *epoch_id), info.meta_data.clone())),
+    );
 
     // sanity check the public materials
     let entries: Vec<_> = key_info_versioned
@@ -567,14 +571,13 @@ where
     sanity_check_public_materials(&public_storage, &entries).await?;
 
     // load crs_info (roughly hashes of CRS) from storage
-    let crs_info: HashMap<RequestId, CrsGenMetadata> = read_all_data_from_all_epochs_versioned(
-        &private_storage,
-        &PrivDataType::CrsInfo.to_string(),
-    )
-    .await?
-    .into_iter()
-    .map(|((req, _epoch), v)| (req, v))
-    .collect();
+    let crs_info: HashMap<RequestId, CrsGenMetadata> = select_data_from_max_epoch(
+        read_all_data_from_all_epochs_versioned(
+            &private_storage,
+            &PrivDataType::CrsInfo.to_string(),
+        )
+        .await?,
+    );
 
     sanity_check_crs_materials(&public_storage, &crs_info).await?;
 
