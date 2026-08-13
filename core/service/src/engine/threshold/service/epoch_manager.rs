@@ -491,8 +491,9 @@ impl<
         SmallSession<ResiduePolyF4Z64>,
     )> {
         let session_z128 =
-            // Note that we need to use the new epoch ID when deriving the session ID, otherwise we would not be able to create multiple new epochs from the same previous epoch
-            // as the session ID would be the same and the session maker would return an error.
+            // Note that we need to use the new epoch ID when deriving the session ID, otherwise we would not be able to create multiple 
+            // new epochs from the same previous epoch, in case an epoch creation failed, as the session ID would be the same and the 
+            // session maker would return an error.
             async { new_epoch_id.derive_session_id_with_counter(LIFT_Z128_SESSION_COUNTER) }
                 .and_then(|id| {
                     session_maker_immutable.make_small_sync_session_z128(
@@ -1888,7 +1889,6 @@ pub(crate) mod tests {
         ensure_threshold_server_signing_keys_exist(
             &mut pub_storage,
             &mut priv_storage,
-            &SIGNING_KEY_ID,
             true, // deterministic
             ThresholdSigningKeyConfig::AllParties(
                 (1..=PRSS_AMOUNT_PARTIES)

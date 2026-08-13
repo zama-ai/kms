@@ -227,6 +227,33 @@ path = "{private_path}"
         assert!(scheme_verf_key_path.exists());
     }
 
+    /// `repopulate = true` has nothing to derive from without the ECDSA signing key,
+    /// so it must fail with a clear message rather than write partial material
+    #[test]
+    #[integration_test]
+    fn central_repopulate_without_signing_key_fails() {
+        let (temp_dir_priv, temp_dir_pub, config_dir) =
+            (tempdir().unwrap(), tempdir().unwrap(), tempdir().unwrap());
+        let config_path = write_file_storage_config(
+            &config_dir,
+            temp_dir_priv.path(),
+            temp_dir_pub.path(),
+            "repopulate = true",
+            None,
+        );
+        let output = kms_gen_keys_command()
+            .arg("--config-file")
+            .arg(config_path)
+            .output()
+            .unwrap();
+
+        assert!(!output.status.success());
+        assert!(
+            !temp_dir_pub.path().join("PUB/SchemeVerfKey").exists(),
+            "verification material was written without a signing key to derive it from"
+        );
+    }
+
     #[test]
     #[integration_test]
     fn central_signing_address_format() {
@@ -269,9 +296,9 @@ path = "{private_path}"
     #[test]
     #[integration_test]
     fn threshold_party_id_validation() {
-        for (threshold_config, expected_err) in [
+        for (case, threshold_config, expected_err) in [
             (
-                // Party ID is 0, i.e. not 1-indexed.
+                "party id 0 is rejected, since parties are 1-indexed",
                 r#"
 [threshold]
 my_id = 0
@@ -281,6 +308,7 @@ tls_subject = "kms-party"
                 "invalid kms-gen-keys config",
             ),
             (
+                "a [threshold] section without a party id is rejected",
                 r#"
 [threshold]
 tls_subject = "kms-party"
@@ -305,8 +333,12 @@ tls_subject = "kms-party"
                 .output()
                 .unwrap();
 
-            assert!(!output.status.success());
-            assert!(String::from_utf8_lossy(&output.stderr).contains(expected_err));
+            assert!(!output.status.success(), "{case}: expected a failure");
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            assert!(
+                stderr.contains(expected_err),
+                "{case}: stderr did not mention {expected_err}: {stderr}"
+            );
         }
     }
 

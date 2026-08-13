@@ -329,7 +329,6 @@ impl ThresholdTestEnvBuilder {
         ensure_threshold_server_signing_keys_exist(
             &mut pub_storages,
             &mut priv_storages,
-            &SIGNING_KEY_ID,
             true, // deterministic
             ThresholdSigningKeyConfig::AllParties(
                 (1..=self.party_count)

@@ -561,7 +561,6 @@ pub mod setup {
         ensure_central_server_signing_keys_exist(
             &mut central_pub_storage,
             &mut central_priv_storage,
-            &SIGNING_KEY_ID,
             true,
         )
         .await
@@ -616,7 +615,6 @@ pub mod setup {
         ensure_threshold_server_signing_keys_exist(
             &mut threshold_pub_storages,
             &mut threshold_priv_storages,
-            &SIGNING_KEY_ID,
             true,
             ThresholdSigningKeyConfig::AllParties(
                 (1..=amount_parties).map(|i| format!("party-{i}")).collect(),
@@ -694,7 +692,7 @@ where
 // because we don't want it to have the "testing" feature
 #[tokio::test]
 async fn test_purge() {
-    use crate::consts::{SIGNING_KEY_ID, signing_material_id};
+    use crate::consts::signing_material_id;
     use crate::cryptography::signatures::SigningSchemeType;
     use crate::util::key_setup::SCHEME_MATERIAL_TYPES;
     use kms_grpc::rpc_types::PrivDataType;
@@ -725,7 +723,6 @@ async fn test_purge() {
         crate::util::key_setup::ensure_central_server_signing_keys_exist(
             &mut central_pub_storage,
             &mut central_priv_storage,
-            &SIGNING_KEY_ID,
             true,
         )
         .await

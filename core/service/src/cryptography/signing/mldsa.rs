@@ -1,6 +1,7 @@
 //! ML-DSA (FIPS 204) signing backend, generic over the parameter set.
 
 use super::{DSEP_SIGKEY_DIGEST, SigningError, SigningScheme, SigningSchemeType};
+use crate::impl_generic_versionize;
 use core::marker::PhantomData;
 use hashing::{DIGEST_BYTES, DomainSep, unsafe_hash_list_w_size};
 use ml_dsa::{
@@ -10,7 +11,6 @@ use ml_dsa::{
 };
 use serde::{Deserialize, Serialize, de::Visitor};
 use tfhe::named::Named;
-use tfhe_versionable::{NotVersioned, Unversionize, Versionize, VersionizeOwned};
 
 /// The number of seed bytes consumed to build an ML-DSA signing key.
 pub const SEED_LEN: usize = 32;
@@ -99,8 +99,25 @@ impl<P: MlDsaParams> PartialEq for MlDsaVerfKey<P> {
     }
 }
 
-impl<P: MlDsaParams> Named for MlDsaVerfKey<P> {
-    const NAME: &'static str = "MlDsaVerfKey";
+/// The FIPS-204 parameter set's own name.
+pub trait MlDsaParamSet {
+    const PARAM_SET_NAME: &'static str;
+}
+
+impl MlDsaParamSet for ml_dsa::MlDsa44 {
+    const PARAM_SET_NAME: &'static str = "MlDsa44VerfKey";
+}
+
+impl MlDsaParamSet for ml_dsa::MlDsa65 {
+    const PARAM_SET_NAME: &'static str = "MlDsa65VerfKey";
+}
+
+impl MlDsaParamSet for ml_dsa::MlDsa87 {
+    const PARAM_SET_NAME: &'static str = "MlDsa87VerfKey";
+}
+
+impl<P: MlDsaParams + MlDsaParamSet> Named for MlDsaVerfKey<P> {
+    const NAME: &'static str = P::PARAM_SET_NAME;
 }
 
 impl<P: MlDsaParams> Serialize for MlDsaVerfKey<P> {
@@ -141,33 +158,7 @@ impl<P: MlDsaParams> Visitor<'_> for MlDsaVerfKeyVisitor<P> {
     }
 }
 
-impl<P: MlDsaParams> Versionize for MlDsaVerfKey<P> {
-    type Versioned<'vers>
-        = &'vers MlDsaVerfKey<P>
-    where
-        P: 'vers;
-
-    fn versionize(&self) -> Self::Versioned<'_> {
-        self
-    }
-}
-
-impl<P: MlDsaParams> VersionizeOwned for MlDsaVerfKey<P> {
-    type VersionedOwned = MlDsaVerfKey<P>;
-    fn versionize_owned(self) -> Self::VersionedOwned {
-        self
-    }
-}
-
-impl<P: MlDsaParams> Unversionize for MlDsaVerfKey<P> {
-    fn unversionize(
-        versioned: Self::VersionedOwned,
-    ) -> Result<Self, tfhe_versionable::UnversionizeError> {
-        Ok(versioned)
-    }
-}
-
-impl<P: MlDsaParams> NotVersioned for MlDsaVerfKey<P> {}
+impl_generic_versionize!(<P: MlDsaParams> MlDsaVerfKey<P>);
 
 #[cfg(test)]
 mod tests {

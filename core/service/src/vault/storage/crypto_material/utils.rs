@@ -4,9 +4,10 @@
 //! storage management, and common operations needed by the cryptographic material
 //! storage system.
 
+use crate::consts::signing_material_id;
 use crate::cryptography::signatures::{PrivateSigKey, PublicSigKey};
 use crate::cryptography::signing::{
-    Ed25519VerfKey, MlDsaVerfKey, SigningSchemeType, UnifiedPublicSigKey,
+    Ed25519VerfKey, HasSigningScheme, MlDsaVerfKey, SigningSchemeType, UnifiedPublicSigKey,
 };
 use crate::vault::storage::crypto_material::base::StorageError;
 use crate::vault::storage::{StorageExt, StorageReader, StorageReaderExt};
@@ -390,63 +391,60 @@ pub async fn get_client_verification_key<S: Storage>(storage: &S) -> anyhow::Res
     get_unique::<S, PublicSigKey, ClientDataType>(storage, ClientDataType::VerfKey).await
 }
 
-/// Persist `verf_key` under `req_id` in the [`PubDataType::SchemeVerfKey`] folder.
-///
-/// What is written is the scheme's *own* verification key type — a [`PublicSigKey`]
-/// for ECDSA, an [`Ed25519VerfKey`] for ed25519, an [`MlDsaVerfKey`] for ML-DSA —
-/// not the scheme-tagged [`UnifiedPublicSigKey`] that wraps it.
+/// Persist `verf_key` in the [`PubDataType::SchemeVerfKey`] folder, under the
+/// handle [`signing_material_id`] gives for its scheme.
 pub async fn store_scheme_verification_key<S: Storage>(
     storage: &mut S,
-    req_id: &RequestId,
     verf_key: &UnifiedPublicSigKey,
 ) -> anyhow::Result<()> {
+    let req_id = signing_material_id(verf_key.signing_scheme_type());
     let data_type = PubDataType::SchemeVerfKey.to_string();
     match verf_key {
         UnifiedPublicSigKey::Ecdsa256k1(vk) => {
-            store_versioned_at_request_id(storage, req_id, vk, &data_type).await
+            store_versioned_at_request_id(storage, &req_id, vk, &data_type).await
         }
         UnifiedPublicSigKey::Ed25519(vk) => {
-            store_versioned_at_request_id(storage, req_id, vk, &data_type).await
+            store_versioned_at_request_id(storage, &req_id, vk, &data_type).await
         }
         UnifiedPublicSigKey::MlDsa44(vk) => {
-            store_versioned_at_request_id(storage, req_id, vk.as_ref(), &data_type).await
+            store_versioned_at_request_id(storage, &req_id, vk.as_ref(), &data_type).await
         }
         UnifiedPublicSigKey::MlDsa65(vk) => {
-            store_versioned_at_request_id(storage, req_id, vk.as_ref(), &data_type).await
+            store_versioned_at_request_id(storage, &req_id, vk.as_ref(), &data_type).await
         }
         UnifiedPublicSigKey::MlDsa87(vk) => {
-            store_versioned_at_request_id(storage, req_id, vk.as_ref(), &data_type).await
+            store_versioned_at_request_id(storage, &req_id, vk.as_ref(), &data_type).await
         }
     }
 }
 
 /// Read the verification key that [`store_scheme_verification_key`] wrote for
-/// `scheme` under `req_id`, and tag it back up into a [`UnifiedPublicSigKey`].
+/// `scheme`, and tag it back up into a [`UnifiedPublicSigKey`].
 pub async fn read_scheme_verification_key<S: StorageReader>(
     storage: &S,
-    req_id: &RequestId, // TODO can't we just derive this based on the type of scheme we want to read from below?
     scheme: SigningSchemeType,
 ) -> anyhow::Result<UnifiedPublicSigKey> {
+    let req_id = signing_material_id(scheme);
     let data_type = PubDataType::SchemeVerfKey.to_string();
     Ok(match scheme {
         SigningSchemeType::Ecdsa256k1 => {
-            let vk: PublicSigKey = storage.read_data(req_id, &data_type).await?;
+            let vk: PublicSigKey = storage.read_data(&req_id, &data_type).await?;
             UnifiedPublicSigKey::Ecdsa256k1(vk)
         }
         SigningSchemeType::Ed25519 => {
-            let vk: Ed25519VerfKey = storage.read_data(req_id, &data_type).await?;
+            let vk: Ed25519VerfKey = storage.read_data(&req_id, &data_type).await?;
             UnifiedPublicSigKey::Ed25519(vk)
         }
         SigningSchemeType::MlDsa44 => {
-            let vk: MlDsaVerfKey<MlDsa44> = storage.read_data(req_id, &data_type).await?;
+            let vk: MlDsaVerfKey<MlDsa44> = storage.read_data(&req_id, &data_type).await?;
             UnifiedPublicSigKey::MlDsa44(Box::new(vk))
         }
         SigningSchemeType::MlDsa65 => {
-            let vk: MlDsaVerfKey<MlDsa65> = storage.read_data(req_id, &data_type).await?;
+            let vk: MlDsaVerfKey<MlDsa65> = storage.read_data(&req_id, &data_type).await?;
             UnifiedPublicSigKey::MlDsa65(Box::new(vk))
         }
         SigningSchemeType::MlDsa87 => {
-            let vk: MlDsaVerfKey<MlDsa87> = storage.read_data(req_id, &data_type).await?;
+            let vk: MlDsaVerfKey<MlDsa87> = storage.read_data(&req_id, &data_type).await?;
             UnifiedPublicSigKey::MlDsa87(Box::new(vk))
         }
     })

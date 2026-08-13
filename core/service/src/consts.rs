@@ -152,16 +152,15 @@ pub static SIGNING_KEY_ID: LazyLock<RequestId> =
     LazyLock::new(|| derive_request_id("SIGNING_KEY_ID").unwrap());
 
 /// The storage `RequestId` (filename) under which a KMS party's verification
-/// material for `scheme` is stored, within the `VerfKey`/`VerfAddress` data-type
-/// folders.
+/// material for `scheme` is stored, within the `SchemeVerfKey`/`SchemeVerfAddress`
+/// data-type folders.
 #[cfg(feature = "non-wasm")]
 pub fn signing_material_id(scheme: SigningSchemeType) -> RequestId {
     match scheme {
         // Note that for compatibility and legacy reasons we keep the ECDSA/secp256k1 scheme's signing material at the historical [`SIGNING_KEY_ID`].
         SigningSchemeType::Ecdsa256k1 => *SIGNING_KEY_ID,
-        // `scheme` renders via its `Display` impl (e.g. "Ed25519", "MlDsa44").
-        // The input is a fixed string, so derivation cannot fail in correct
-        // execution.
+        // `scheme` renders as its variant name (e.g. "Ed25519", "MlDsa44"). The
+        // input is a fixed string, so derivation cannot fail in correct execution.
         other => derive_request_id(&format!("SIGNING_KEY_ID_{other:?}"))
             .expect("deriving a signing-material id from a fixed scheme name cannot fail"),
     }

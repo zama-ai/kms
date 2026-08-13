@@ -407,9 +407,7 @@ pub(crate) async fn do_new_epoch(
 
                 anyhow::ensure!(
                     verified,
-                    "External signature verification failed for the reshared key {key_id} \
-                     (preproc {preproc_id}) under neither the new nor the previous epoch's \
-                     extra data"
+                    "External signature verification failed for the reshared key {key_id}"
                 );
             }
         }

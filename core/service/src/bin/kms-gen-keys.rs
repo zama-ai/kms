@@ -12,9 +12,8 @@ use kms_lib::{
     consts::SIGNING_KEY_ID,
     cryptography::attestation::make_security_module,
     util::key_setup::{
-        SchemeMaterialMode, delete_scheme_verification_material,
-        ensure_central_server_signing_keys_exist, ensure_scheme_verification_material,
-        ensure_threshold_server_signing_key_exists,
+        delete_scheme_verification_material, ensure_central_server_signing_keys_exist,
+        ensure_scheme_verification_material, ensure_threshold_server_signing_key_exists,
     },
     vault::{
         Vault,
@@ -430,7 +429,6 @@ async fn handle_central_cmd<PubS: Storage, PrivS: Storage>(
     if !ensure_central_server_signing_keys_exist(
         args.pub_storage,
         args.priv_storage,
-        &SIGNING_KEY_ID,
         #[cfg(any(test, feature = "testing", feature = "insecure"))]
         args.deterministic,
     )
@@ -455,7 +453,6 @@ async fn handle_threshold_cmd<PubS: Storage, PrivS: Storage>(
     if !ensure_threshold_server_signing_key_exists(
         args.pub_storage,
         args.priv_storage,
-        &SIGNING_KEY_ID,
         #[cfg(any(test, feature = "testing", feature = "insecure"))]
         args.deterministic,
         args.signing_key_party_id,
@@ -480,7 +477,7 @@ async fn handle_repopulate_cmd<PubS: Storage, PrivS: Storage>(
     priv_storage: &PrivS,
 ) -> anyhow::Result<()> {
     let sk = get_core_signing_key(priv_storage).await?;
-    ensure_scheme_verification_material(pub_storage, &sk, SchemeMaterialMode::Populate).await?;
+    ensure_scheme_verification_material(pub_storage, &sk).await?;
     tracing::info!(
         "Repopulated multi-scheme verification material from the existing ECDSA signing key"
     );

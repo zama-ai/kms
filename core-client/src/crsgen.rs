@@ -440,14 +440,9 @@ mod tests {
         let mut priv_storage = RamStorage::new();
 
         // make sure signing keys exist
-        ensure_central_server_signing_keys_exist(
-            &mut pub_storage,
-            &mut priv_storage,
-            &SIGNING_KEY_ID,
-            true,
-        )
-        .await
-        .unwrap();
+        ensure_central_server_signing_keys_exist(&mut pub_storage, &mut priv_storage, true)
+            .await
+            .unwrap();
 
         // compute a small CRS for testing
         let crs_id = &TEST_CENTRAL_CRS_ID;

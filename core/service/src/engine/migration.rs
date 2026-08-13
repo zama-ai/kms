@@ -3,7 +3,7 @@ use crate::consts::{DEFAULT_EPOCH_ID, DEFAULT_MPC_CONTEXT, SIGNING_KEY_ID};
 use crate::engine::base::derive_request_id;
 use crate::engine::threshold::service::epoch_manager::EpochData;
 use crate::engine::threshold::service::session::PRSSSetupCombined;
-use crate::util::key_setup::{SchemeMaterialMode, ensure_scheme_verification_material};
+use crate::util::key_setup::ensure_scheme_verification_material;
 use crate::vault::storage::crypto_material::get_core_signing_key;
 use crate::vault::storage::{
     Storage, StorageExt, StorageReader, read_context_at_id, read_versioned_at_request_id,
@@ -183,7 +183,7 @@ where
         return Ok(());
     }
     let sk = get_core_signing_key(priv_storage).await?;
-    ensure_scheme_verification_material(pub_storage, &sk, SchemeMaterialMode::Populate).await
+    ensure_scheme_verification_material(pub_storage, &sk).await
 }
 
 async fn migrate_prss_to_epoch<PrivS>(
@@ -2912,6 +2912,21 @@ mod tests {
 
     // ── Tests for migrate_to_0_15_x (orchestrator) ──
 
+    /// Asserts every scheme's verification material is (or is not) present in public
+    /// storage.
+    async fn assert_scheme_material_present<S: StorageReader>(pub_storage: &S, expected: bool) {
+        for scheme in SigningSchemeType::iter() {
+            let id = signing_material_id(scheme);
+            for data_type in SCHEME_MATERIAL_TYPES.map(|t| t.to_string()) {
+                assert_eq!(
+                    pub_storage.data_exists(&id, &data_type).await.unwrap(),
+                    expected,
+                    "{scheme} {data_type} presence did not match"
+                );
+            }
+        }
+    }
+
     #[tokio::test]
     async fn test_migrate_to_0_15_x_threshold_sunshine() {
         let mut pub_storage = RamStorage::new();
@@ -2925,14 +2940,9 @@ mod tests {
         store_combined_prss_at_epoch(&mut priv_storage, &DEFAULT_EPOCH_ID, num_parties, threshold)
             .await;
         // Derive signing key and use central for convenience since we test with a single server
-        ensure_central_server_signing_keys_exist(
-            &mut pub_storage,
-            &mut priv_storage,
-            &SIGNING_KEY_ID,
-            true,
-        )
-        .await
-        .unwrap();
+        ensure_central_server_signing_keys_exist(&mut pub_storage, &mut priv_storage, true)
+            .await
+            .unwrap();
 
         migrate_to_0_15_x(
             &mut pub_storage,
@@ -2955,13 +2965,7 @@ mod tests {
         assert_eq!(epoch.prss.num_parties, num_parties);
         assert_eq!(epoch.prss.threshold, threshold);
 
-        // Check validation keys exist
-        for scheme in SigningSchemeType::iter() {
-            let id = signing_material_id(scheme);
-            for data_type in SCHEME_MATERIAL_TYPES.map(|t| t.to_string()) {
-                assert!(pub_storage.data_exists(&id, &data_type).await.unwrap());
-            }
-        }
+        assert_scheme_material_present(&pub_storage, true).await;
     }
 
     #[tokio::test]
@@ -2970,79 +2974,43 @@ mod tests {
         let mut priv_storage = RamStorage::new();
         store_combined_prss_at_epoch(&mut priv_storage, &DEFAULT_EPOCH_ID, 4, 1).await;
         // Derive signing key and use central for convenience since we test with a single server
-        ensure_central_server_signing_keys_exist(
-            &mut pub_storage,
-            &mut priv_storage,
-            &SIGNING_KEY_ID,
-            true,
-        )
-        .await
-        .unwrap();
-
-        let config = default_migration_config();
-
-        migrate_to_0_15_x(
-            &mut pub_storage,
-            &mut priv_storage,
-            KMSType::Threshold,
-            Some(&config),
-        )
-        .await
-        .unwrap();
-        // Check epoch ids
-        let ids = priv_storage
-            .all_data_ids(&PrivDataType::EpochData.to_string())
+        ensure_central_server_signing_keys_exist(&mut pub_storage, &mut priv_storage, true)
             .await
             .unwrap();
-        assert_eq!(ids.len(), 1);
-        // Check validation keys exist
-        for scheme in SigningSchemeType::iter() {
-            let id = signing_material_id(scheme);
-            for data_type in SCHEME_MATERIAL_TYPES.map(|t| t.to_string()) {
-                assert!(pub_storage.data_exists(&id, &data_type).await.unwrap());
-            }
-        }
+
+        let config = default_migration_config();
 
         // Second run: EpochData already exists, so PRSS migration short-circuits without error.
         // Furthermore, validation keys should already have been made and hence key migration
         // also short-circuits without error.
-        migrate_to_0_15_x(
-            &mut pub_storage,
-            &mut priv_storage,
-            KMSType::Threshold,
-            Some(&config),
-        )
-        .await
-        .unwrap();
-
-        // Check epoch ids
-        let ids = priv_storage
-            .all_data_ids(&PrivDataType::EpochData.to_string())
+        for _ in 0..2 {
+            migrate_to_0_15_x(
+                &mut pub_storage,
+                &mut priv_storage,
+                KMSType::Threshold,
+                Some(&config),
+            )
             .await
             .unwrap();
-        assert_eq!(ids.len(), 1);
-        // Check validation keys exist
-        for scheme in SigningSchemeType::iter() {
-            let id = signing_material_id(scheme);
-            for data_type in SCHEME_MATERIAL_TYPES.map(|t| t.to_string()) {
-                assert!(pub_storage.data_exists(&id, &data_type).await.unwrap());
-            }
+
+            // Check epoch ids
+            let ids = priv_storage
+                .all_data_ids(&PrivDataType::EpochData.to_string())
+                .await
+                .unwrap();
+            assert_eq!(ids.len(), 1);
+            assert_scheme_material_present(&pub_storage, true).await;
         }
     }
 
     #[tokio::test]
-    async fn test_migrate_to_0_15_x_centralized_empty() {
+    async fn test_migrate_to_0_15_x_centralized_with_signing_key() {
         let mut pub_storage = RamStorage::new();
         let mut priv_storage = RamStorage::new();
         // Derive signing key
-        ensure_central_server_signing_keys_exist(
-            &mut pub_storage,
-            &mut priv_storage,
-            &SIGNING_KEY_ID,
-            true,
-        )
-        .await
-        .unwrap();
+        ensure_central_server_signing_keys_exist(&mut pub_storage, &mut priv_storage, true)
+            .await
+            .unwrap();
 
         migrate_to_0_15_x(
             &mut pub_storage,
@@ -3052,13 +3020,24 @@ mod tests {
         )
         .await
         .unwrap();
-        // Check validation keys exist
-        for scheme in SigningSchemeType::iter() {
-            let id = signing_material_id(scheme);
-            for data_type in SCHEME_MATERIAL_TYPES.map(|t| t.to_string()) {
-                assert!(pub_storage.data_exists(&id, &data_type).await.unwrap());
-            }
-        }
+        assert_scheme_material_present(&pub_storage, true).await;
+    }
+
+    #[tokio::test]
+    async fn test_migrate_to_0_15_x_centralized_empty() {
+        let mut pub_storage = RamStorage::new();
+        let mut priv_storage = RamStorage::new();
+
+        migrate_to_0_15_x(
+            &mut pub_storage,
+            &mut priv_storage,
+            KMSType::Centralized,
+            None,
+        )
+        .await
+        .unwrap();
+
+        assert_scheme_material_present(&pub_storage, false).await;
     }
 
     // ── Tests for migrate_to_0_16_x (orchestrator) ──
