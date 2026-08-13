@@ -1416,7 +1416,7 @@ mod tests {
     }
 
     #[test]
-    fn test_validate_user_decrypt_responses_bis() {
+    fn test_validate_user_decrypt_responses_request_linkage() {
         let mut rng = AesRng::seed_from_u64(0);
         let (vk1, sk1) = gen_sig_keys(&mut rng);
         let (vk2, sk2) = gen_sig_keys(&mut rng);
