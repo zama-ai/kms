@@ -1047,9 +1047,23 @@ mod tests {
 
         let digest = compute_link(&client_request, &dummy_domain).unwrap();
 
-        let resp1 = {
-            let payload0 = UserDecryptionResponsePayload {
-                verification_key: bc2wrap::serialize(&pks[&1]).unwrap(),
+        // Build a fully-signed response for `party_id` (1..=4), applying `tweak` to the payload
+        // *before* signing so the signature stays valid. The baseline responses below use the identity
+        // tweak; a non-trivial tweak lets a block exercise the consensus/invariants layer (a response
+        // that authenticates but disagrees with the majority) instead of accidentally tripping the
+        // signature check: `degree`, `digest`, `fhe_type`, etc. are all part of the signed payload, so
+        // mutating them *after* signing would silently reject the response at authentication rather
+        // than where the test intends.
+        let make_signed_resp = |party_id: u32, tweak: &dyn Fn(&mut UserDecryptionResponsePayload)| {
+            let sk = match party_id {
+                1 => &sk1,
+                2 => &sk2,
+                3 => &sk3,
+                4 => &sk4,
+                _ => panic!("unsupported party_id {party_id} in make_signed_resp"),
+            };
+            let mut payload = UserDecryptionResponsePayload {
+                verification_key: bc2wrap::serialize(&pks[&party_id]).unwrap(),
                 digest: digest.clone(),
                 signcrypted_ciphertexts: vec![TypedSigncryptedCiphertext {
                     fhe_type: tfhe::FheTypes::Uint4 as i32,
@@ -1057,41 +1071,12 @@ mod tests {
                     external_handle: ciphertext_handle.clone(),
                     packing_factor: 1,
                 }],
-                party_id: 1,
+                party_id,
                 degree: 1,
             };
+            tweak(&mut payload);
             let external_signature = compute_external_user_decrypt_signature(
-                &sk1,
-                &payload0,
-                &dummy_domain,
-                client_request.enc_key(),
-                &[],
-            )
-            .unwrap();
-            UserDecryptionResponse {
-                signature: vec![],
-                signatures: vec![],
-                external_signature,
-                payload: Some(payload0),
-                extra_data: vec![],
-            }
-        };
-
-        let resp2 = {
-            let payload = UserDecryptionResponsePayload {
-                verification_key: bc2wrap::serialize(&pks[&2]).unwrap(),
-                digest: digest.clone(),
-                signcrypted_ciphertexts: vec![TypedSigncryptedCiphertext {
-                    fhe_type: tfhe::FheTypes::Uint4 as i32,
-                    signcrypted_ciphertext: vec![1, 2, 3, 4],
-                    external_handle: ciphertext_handle.clone(),
-                    packing_factor: 1,
-                }],
-                party_id: 2,
-                degree: 1,
-            };
-            let external_signature = compute_external_user_decrypt_signature(
-                &sk2,
+                sk,
                 &payload,
                 &dummy_domain,
                 client_request.enc_key(),
@@ -1107,65 +1092,13 @@ mod tests {
             }
         };
 
-        let resp3 = {
-            let payload = UserDecryptionResponsePayload {
-                verification_key: bc2wrap::serialize(&pks[&3]).unwrap(),
-                digest: digest.clone(),
-                signcrypted_ciphertexts: vec![TypedSigncryptedCiphertext {
-                    fhe_type: tfhe::FheTypes::Uint4 as i32,
-                    signcrypted_ciphertext: vec![1, 2, 3, 4],
-                    external_handle: ciphertext_handle.clone(),
-                    packing_factor: 1,
-                }],
-                party_id: 3,
-                degree: 1,
-            };
-            let external_signature = compute_external_user_decrypt_signature(
-                &sk3,
-                &payload,
-                &dummy_domain,
-                client_request.enc_key(),
-                &[],
-            )
-            .unwrap();
-            UserDecryptionResponse {
-                signature: vec![],
-                signatures: vec![],
-                external_signature,
-                payload: Some(payload),
-                extra_data: vec![],
-            }
-        };
+        let resp1 = make_signed_resp(1, &|_| {});
 
-        let resp4 = {
-            let payload = UserDecryptionResponsePayload {
-                verification_key: bc2wrap::serialize(&pks[&4]).unwrap(),
-                digest: digest.clone(),
-                signcrypted_ciphertexts: vec![TypedSigncryptedCiphertext {
-                    fhe_type: tfhe::FheTypes::Uint4 as i32,
-                    signcrypted_ciphertext: vec![1, 2, 3, 4],
-                    external_handle: ciphertext_handle.clone(),
-                    packing_factor: 1,
-                }],
-                party_id: 4,
-                degree: 1,
-            };
-            let external_signature = compute_external_user_decrypt_signature(
-                &sk4,
-                &payload,
-                &dummy_domain,
-                client_request.enc_key(),
-                &[],
-            )
-            .unwrap();
-            UserDecryptionResponse {
-                signature: vec![],
-                signatures: vec![],
-                external_signature,
-                payload: Some(payload),
-                extra_data: vec![],
-            }
-        };
+        let resp2 = make_signed_resp(2, &|_| {});
+
+        let resp3 = make_signed_resp(3, &|_| {});
+
+        let resp4 = make_signed_resp(4, &|_| {});
 
         // happy path / sunshine; we should have 4 valid responses
         {
@@ -1224,13 +1157,14 @@ mod tests {
             );
         }
 
-        // not enough correct payloads (only 1 is valid)
-        // 2 "good enough ones" are needed to find a pivot for t=1
+        // not enough correct payloads: bad_resp3 authenticates fine but carries a *different* (yet
+        // properly signed) digest, so it forms its own singleton group; bad_resp2 has no payload at
+        // all. That leaves resp1 and bad_resp3 in two distinct groups of one each — neither reaches
+        // the t+1 = 2 quorum, so no pivot can be formed.
         {
             let mut bad_resp2 = resp2.clone();
             bad_resp2.payload = None; // no payload here, cannot be used for pivot
-            let mut bad_resp3 = resp3.clone();
-            bad_resp3.payload.as_mut().unwrap().digest[0] ^= 1; // corrupt digest so it can't match for pivot
+            let bad_resp3 = make_signed_resp(3, &|p| p.digest[0] ^= 1); // signed, but different digest
 
             let agg_resp = vec![resp1.clone(), bad_resp2, bad_resp3];
 
@@ -1242,10 +1176,11 @@ mod tests {
             );
         }
 
-        // one repsonse has a wrong degree, but should pass since majority is fine
+        // one response has a wrong degree, but validation should still pass: it authenticates, then
+        // the degree-1 majority (resp1 + resp3) out-votes it, so it is dropped by the invariants
+        // equality rather than by the signature check.
         {
-            let mut bad_resp2 = resp2.clone();
-            bad_resp2.payload.as_mut().unwrap().degree = 35; // wrong degree here
+            let bad_resp2 = make_signed_resp(2, &|p| p.degree = 35); // authenticates, but wrong degree
             let agg_resp = vec![resp1.clone(), bad_resp2, resp3.clone()];
 
             assert_eq!(
@@ -1257,12 +1192,13 @@ mod tests {
             );
         }
 
-        // one response has a mismatching fhe_type, so it is dropped by the invariants equality
-        // (exercises the per-slot fhe_type comparison that used to live in the meta-data validator)
+        // one response has a mismatching fhe_type: it authenticates, then is dropped by the per-slot
+        // fhe_type field of the invariants equality (the comparison that used to live in the meta-data
+        // validator), leaving the degree-1 / Uint4 majority.
         {
-            let mut bad_resp2 = resp2.clone();
-            bad_resp2.payload.as_mut().unwrap().signcrypted_ciphertexts[0].fhe_type =
-                tfhe::FheTypes::Uint8 as i32; // the others are Uint4
+            let bad_resp2 = make_signed_resp(2, &|p| {
+                p.signcrypted_ciphertexts[0].fhe_type = tfhe::FheTypes::Uint8 as i32; // others are Uint4
+            });
             let agg_resp = vec![resp1.clone(), bad_resp2, resp3.clone()];
 
             assert_eq!(
@@ -1274,21 +1210,17 @@ mod tests {
             );
         }
 
-        // degree (0) does not match threshold (1) for 4 parties, so we must get an error
+        // the whole (authenticated) quorum agrees on degree 0, which does not match the trusted
+        // threshold 1 for 4 parties: a pivot *is* formed, but the invariants sanity-check rejects it.
         {
-            let mut bad_resp3 = resp3.clone();
-            bad_resp3.payload.as_mut().unwrap().degree = 0; // payload, but with degree
-            let mut bad_resp2 = resp2.clone();
-            bad_resp2.payload.as_mut().unwrap().degree = 0; // payload, but with degree
-
+            let bad_resp2 = make_signed_resp(2, &|p| p.degree = 0);
+            let bad_resp3 = make_signed_resp(3, &|p| p.degree = 0);
             let agg_resp = vec![bad_resp2, bad_resp3];
 
-            assert!(validate_user_decrypt_responses(
-                &trusted_ctx,
-                &agg_resp,
-            )
-            .unwrap_err().to_string()
-            .contains("Pivot user decrypt responses gave degree 0 which does not match expected threshold 1 for 4 known servers"));
+            assert!(validate_user_decrypt_responses(&trusted_ctx, &agg_resp)
+                .unwrap_err()
+                .to_string()
+                .contains("Pivot user decrypt responses gave degree 0 which does not match expected threshold 1 for 4 known servers"));
         }
 
         let run_with_customized_resp2 = |party_id, digest, pk, packing_factor| {
