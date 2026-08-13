@@ -272,11 +272,55 @@ fn verify_stored_signatures(
     Ok(skipped)
 }
 
+/// Check that keyset metadata declares the same key ID it is stored under.
+///
+/// The published bytes are loaded under the storage ID, while the digests and signatures cover
+/// `inner.key_id`. If those disagree, every other check is describing a different key and none
+/// of their results mean anything — so this runs before them, and needs no signing key.
+/// `LegacyV0` metadata declares no ID, so there is nothing to compare.
+fn ensure_keygen_metadata_id_matches(
+    key_id: &RequestId,
+    metadata: &KeyGenMetadata,
+) -> anyhow::Result<()> {
+    let KeyGenMetadata::Current(inner) = metadata else {
+        return Ok(());
+    };
+    if inner.key_id != *key_id {
+        anyhow::bail!(
+            "{ERR_METADATA_ID_MISMATCH}: keygen metadata stored under key_id={key_id} declares \
+             key_id={}",
+            inner.key_id
+        );
+    }
+    Ok(())
+}
+
+/// Check that CRS metadata declares the same CRS ID it is stored under.
+///
+/// See [`ensure_keygen_metadata_id_matches`].
+fn ensure_crs_metadata_id_matches(
+    crs_id: &RequestId,
+    metadata: &CrsGenMetadata,
+) -> anyhow::Result<()> {
+    let CrsGenMetadata::Current(inner) = metadata else {
+        return Ok(());
+    };
+    if inner.crs_id != *crs_id {
+        anyhow::bail!(
+            "{ERR_METADATA_ID_MISMATCH}: CRS metadata stored under crs_id={crs_id} declares \
+             crs_id={}",
+            inner.crs_id
+        );
+    }
+    Ok(())
+}
+
 /// Verify the signatures persisted alongside a keygen result's digests.
 ///
 /// Returns the number of signatures skipped because they are ECDSA/EIP-712; see
 /// [`verify_stored_signatures`]. `LegacyV0` metadata carries no per-scheme signatures, so
-/// there is nothing to check for it.
+/// there is nothing to check for it. Assumes the declared ID has already been checked by
+/// [`ensure_keygen_metadata_id_matches`].
 fn verify_keygen_metadata_signatures(
     sk: &PrivateSigKey,
     key_id: &RequestId,
@@ -285,16 +329,6 @@ fn verify_keygen_metadata_signatures(
     let KeyGenMetadata::Current(inner) = metadata else {
         return Ok(0);
     };
-    // The published bytes are loaded under the storage ID, while the signature covers
-    // `inner.key_id`. If those disagree, the two checks are talking about different keys and
-    // neither result means anything.
-    if inner.key_id != *key_id {
-        anyhow::bail!(
-            "{ERR_METADATA_ID_MISMATCH}: keygen metadata stored under key_id={key_id} declares \
-             key_id={}",
-            inner.key_id
-        );
-    }
     if inner.signatures.is_empty() {
         return Ok(0);
     }
@@ -317,7 +351,8 @@ fn verify_keygen_metadata_signatures(
 /// Verify the signatures persisted alongside a CRS result's digest.
 ///
 /// Returns the number of signatures skipped because they are ECDSA/EIP-712; see
-/// [`verify_stored_signatures`].
+/// [`verify_stored_signatures`]. Assumes the declared ID has already been checked by
+/// [`ensure_crs_metadata_id_matches`].
 fn verify_crs_metadata_signatures(
     sk: &PrivateSigKey,
     crs_id: &RequestId,
@@ -326,14 +361,6 @@ fn verify_crs_metadata_signatures(
     let CrsGenMetadata::Current(inner) = metadata else {
         return Ok(0);
     };
-    // See the equivalent check in `verify_keygen_metadata_signatures`.
-    if inner.crs_id != *crs_id {
-        anyhow::bail!(
-            "{ERR_METADATA_ID_MISMATCH}: CRS metadata stored under crs_id={crs_id} declares \
-             crs_id={}",
-            inner.crs_id
-        );
-    }
     if inner.signatures.is_empty() {
         return Ok(0);
     }
@@ -421,13 +448,22 @@ where
 /// a persisted signature does not verify, or when the published verification key disagrees
 /// with the private signing key. Extra material in public storage is ignored.
 ///
+/// The checks run in order of what they can attribute a fault to: each metadata entry must
+/// declare the ID it is stored under, then the metadata is validated against its own signatures,
+/// then the published verification key, and only then are the metadata digests used as the
+/// reference for the published keysets and CRSes. That ordering matters for diagnosis rather
+/// than for whether the boot fails — every one of these is fatal — but checking digests first
+/// would report corruption of a signed digest as a mismatch against intact published bytes.
+///
 /// Pass `signing_key` as `None` only when the node has no private signing key, i.e. when
 /// [`crate::engine::base::BaseKmsStruct::sig_key`] returns an error because the struct was
 /// built by `new_no_signing_key`. `kms-server` does that when the private signing key cannot
 /// be read, logging "ENTERING RECOVERY MODE"; there is no separate flag for that state. The
 /// node's verification key then came out of public storage itself, so checking it back against
-/// public storage would be circular — the signature and signing-key checks are skipped with a
-/// warning, while the digest checks still run.
+/// public storage would be circular — so only the cryptographic checks are skipped there: the
+/// signature verification and the signing-key comparison. The declared-ID and digest checks
+/// need no key and still run, though a digest that is itself corrupt cannot then be
+/// distinguished from corrupt published material.
 pub async fn verify_public_material<S>(
     public_storage: &S,
     key_entries: &[(RequestId, KeyGenMetadata)],
@@ -437,9 +473,24 @@ pub async fn verify_public_material<S>(
 where
     S: StorageReader + Sync,
 {
-    verify_keysets(public_storage, key_entries).await?;
-    verify_crses(public_storage, crs_entries).await?;
+    // Every metadata entry must declare the ID it is stored under before anything else uses it.
+    // This needs no signing key, so it runs in recovery mode too: otherwise metadata filed under
+    // the wrong ID could pass whenever the bytes published under that ID happen to match its
+    // digests.
+    for (key_id, metadata) in key_entries {
+        ensure_keygen_metadata_id_matches(key_id, metadata)?;
+    }
+    for (crs_id, metadata) in crs_entries {
+        ensure_crs_metadata_id_matches(crs_id, metadata)?;
+    }
 
+    // Validate the private metadata before treating its digests as the reference, so that a
+    // corrupted digest is attributed to the side that is actually damaged. The signature covers
+    // the digest map, so a digest damaged in private storage fails here; were the digest checks
+    // to run first they would merely report a mismatch against intact published bytes and blame
+    // public storage. The verification key is checked next for the same reason: when a node is
+    // pointed at the wrong bucket, "this is not your verification key" localises the fault far
+    // better than a digest mismatch on every keyset.
     match signing_key {
         Some(sk) => {
             let mut skipped = 0;
@@ -461,9 +512,13 @@ where
         None => tracing::warn!(
             "No signing key available (recovery mode): skipping signature verification of result \
              metadata and the verification-key check against public storage. Digest verification \
-             of the published material still ran."
+             of the published material still runs, but a digest that is itself corrupt cannot be \
+             told apart from corrupt published material."
         ),
     }
+
+    verify_keysets(public_storage, key_entries).await?;
+    verify_crses(public_storage, crs_entries).await?;
 
     tracing::info!(
         "Verified public material in storage \"{}\": {} keyset(s), {} CRS(es)",
@@ -884,15 +939,46 @@ mod tests {
     async fn keygen_metadata_stored_under_a_different_id_is_rejected() {
         let mut storage = RamStorage::new();
         let material = setup_standard_keys(&mut storage, 116).await;
-        let (metadata, sk) = material.signed_metadata(&[SigningSchemeType::MlDsa65]);
+        let (metadata, _sk) = material.signed_metadata(&[SigningSchemeType::MlDsa65]);
         // A different seed than `setup_standard_keys` used, so this really is another ID.
         let other_id = RequestId::new_random(&mut AesRng::seed_from_u64(0xA116));
         assert_ne!(other_id, material.key_id);
 
-        let err = verify_keygen_metadata_signatures(&sk, &other_id, &metadata).unwrap_err();
+        let err = ensure_keygen_metadata_id_matches(&other_id, &metadata).unwrap_err();
         assert!(
             err.to_string().contains(ERR_METADATA_ID_MISMATCH),
             "expected an ID mismatch, got: {err}"
+        );
+        ensure_keygen_metadata_id_matches(&material.key_id, &metadata)
+            .expect("the ID it was stored under must be accepted");
+    }
+
+    #[tokio::test]
+    async fn keygen_metadata_id_is_checked_without_a_signing_key() {
+        let mut storage = RamStorage::new();
+        // Two keysets whose published bytes are identical, so their digests are too. Filing one
+        // keyset's metadata under the other's ID therefore satisfies every digest check, and only
+        // the declared-ID check can catch it.
+        let material = setup_standard_keys(&mut storage, 117).await;
+        let other = setup_standard_keys(&mut storage, 118).await;
+        assert_ne!(other.key_id, material.key_id);
+        assert_eq!(other.key_digest_map, material.key_digest_map);
+
+        let (metadata, _sk) = material.signed_metadata(&[SigningSchemeType::MlDsa65]);
+        let entries = vec![(other.key_id, metadata)];
+
+        // Nothing but the ID check stands between this and a clean boot: the digests match.
+        verify_keysets(&storage, &entries)
+            .await
+            .expect("the digests match, so the digest checks alone cannot catch this");
+
+        // Recovery mode skips the cryptographic checks, but the declared ID needs no key.
+        let err = verify_public_material(&storage, &entries, &HashMap::new(), None)
+            .await
+            .unwrap_err();
+        assert!(
+            err.to_string().contains(ERR_METADATA_ID_MISMATCH),
+            "expected an ID mismatch without a signing key, got: {err}"
         );
     }
 
@@ -957,13 +1043,35 @@ mod tests {
         let other_id = RequestId::new_random(&mut rng);
         let mut storage = RamStorage::new();
         let digest = setup_crs(&mut storage, &crs_id).await;
-        let (metadata, sk) =
+        let (metadata, _sk) =
             crs_metadata_with_signatures(&crs_id, digest, &[SigningSchemeType::MlDsa65]);
 
-        let err = verify_crs_metadata_signatures(&sk, &other_id, &metadata).unwrap_err();
+        let err = ensure_crs_metadata_id_matches(&other_id, &metadata).unwrap_err();
         assert!(
             err.to_string().contains(ERR_METADATA_ID_MISMATCH),
             "expected an ID mismatch, got: {err}"
+        );
+        ensure_crs_metadata_id_matches(&crs_id, &metadata)
+            .expect("the ID it was stored under must be accepted");
+    }
+
+    #[tokio::test]
+    async fn crs_metadata_id_is_checked_without_a_signing_key() {
+        let mut rng = AesRng::seed_from_u64(124);
+        let crs_id = RequestId::new_random(&mut rng);
+        let other_id = RequestId::new_random(&mut rng);
+        let mut storage = RamStorage::new();
+        let digest = setup_crs(&mut storage, &crs_id).await;
+        let (metadata, _sk) =
+            crs_metadata_with_signatures(&crs_id, digest, &[SigningSchemeType::MlDsa65]);
+
+        let entries = HashMap::from([(other_id, metadata)]);
+        let err = verify_public_material(&storage, &[], &entries, None)
+            .await
+            .unwrap_err();
+        assert!(
+            err.to_string().contains(ERR_METADATA_ID_MISMATCH),
+            "expected an ID mismatch without a signing key, got: {err}"
         );
     }
 
