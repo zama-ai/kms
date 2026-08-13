@@ -480,13 +480,7 @@ async fn handle_repopulate_cmd<PubS: Storage, PrivS: Storage>(
     priv_storage: &PrivS,
 ) -> anyhow::Result<()> {
     let sk = get_core_signing_key(priv_storage).await?;
-    ensure_scheme_verification_material(
-        pub_storage,
-        &sk,
-        &SIGNING_KEY_ID,
-        SchemeMaterialMode::Populate,
-    )
-    .await?;
+    ensure_scheme_verification_material(pub_storage, &sk, SchemeMaterialMode::Populate).await?;
     tracing::info!(
         "Repopulated multi-scheme verification material from the existing ECDSA signing key"
     );

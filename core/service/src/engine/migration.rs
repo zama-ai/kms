@@ -183,13 +183,7 @@ where
         return Ok(());
     }
     let sk = get_core_signing_key(priv_storage).await?;
-    ensure_scheme_verification_material(
-        pub_storage,
-        &sk,
-        &SIGNING_KEY_ID,
-        SchemeMaterialMode::Populate,
-    )
-    .await
+    ensure_scheme_verification_material(pub_storage, &sk, SchemeMaterialMode::Populate).await
 }
 
 async fn migrate_prss_to_epoch<PrivS>(

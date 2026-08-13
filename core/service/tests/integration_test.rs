@@ -289,7 +289,8 @@ tls_subject = "kms-party"
                 "threshold.my_id",
             ),
         ] {
-            let (temp_dir_priv, temp_dir_pub, config_dir) = temp_storage_dirs();
+            let (temp_dir_priv, temp_dir_pub, config_dir) =
+                (tempdir().unwrap(), tempdir().unwrap(), tempdir().unwrap());
             let config_path = write_file_storage_config(
                 &config_dir,
                 temp_dir_priv.path(),
