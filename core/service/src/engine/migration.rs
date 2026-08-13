@@ -863,9 +863,7 @@ mod tests {
     use crate::consts::signing_material_id;
     use crate::cryptography::signing::SigningSchemeType;
     use crate::engine::context::{ContextInfo, NodeInfo, SchemeDigests, SoftwareVersion};
-    use crate::util::key_setup::{
-        SCHEME_MATERIAL_TYPES, ensure_central_server_signing_keys_exist,
-    };
+    use crate::util::key_setup::{SCHEME_MATERIAL_TYPES, ensure_central_server_signing_keys_exist};
     use crate::vault::storage::file::FileStorage;
     use crate::vault::storage::ram::{self, RamStorage};
     use crate::vault::storage::{

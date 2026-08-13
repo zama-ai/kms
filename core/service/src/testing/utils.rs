@@ -764,17 +764,15 @@ async fn test_purge() {
         .await;
     }
     // Check the keys were deleted
-    for scheme in SigningSchemeType::iter() {
-        for data_type in SCHEME_MATERIAL_TYPES.map(|t| t.to_string()) {
-            assert!(
-                central_pub_storage
-                    .all_data_ids(&data_type)
-                    .await
-                    .unwrap()
-                    .is_empty(),
-                "{data_type} still holds material after purging"
-            );
-        }
+    for data_type in SCHEME_MATERIAL_TYPES.map(|t| t.to_string()) {
+        assert!(
+            central_pub_storage
+                .all_data_ids(&data_type)
+                .await
+                .unwrap()
+                .is_empty(),
+            "{data_type} still holds material after purging"
+        );
     }
     assert!(
         central_priv_storage

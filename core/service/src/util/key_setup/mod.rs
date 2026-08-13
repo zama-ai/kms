@@ -266,9 +266,7 @@ where
     // freshly generated ECDSA signing key.
     ensure_scheme_verification_material(pub_storage, &sk, req_id, SchemeMaterialMode::Generate)
         .await
-        .map_err(|e| {
-            anyhow::anyhow!("Failed to store scheme verification material: {e}")
-        })?;
+        .map_err(|e| anyhow::anyhow!("Failed to store scheme verification material: {e}"))?;
 
     Ok(true)
 }
@@ -393,9 +391,7 @@ where
 }
 
 /// Delete every scheme's verification material, ECDSA's included.
-pub async fn delete_scheme_verification_material<PubS>(
-    pub_storage: &mut PubS,
-) -> anyhow::Result<()>
+pub async fn delete_scheme_verification_material<PubS>(pub_storage: &mut PubS) -> anyhow::Result<()>
 where
     PubS: Storage,
 {
@@ -1120,18 +1116,13 @@ where
 
     // Generate CA certificate
     ensure_ca_cert_exists(pub_storage, &sk, request_id, subject, tls_wildcard).await?;
-    ensure_scheme_verification_material(
-        pub_storage,
-        &sk,
-        request_id,
-        SchemeMaterialMode::Generate,
-    )
-    .await
-    .map_err(|e| {
-        anyhow::anyhow!(
-            "Failed to store scheme verification material for party {party_id}: {e}"
-        )
-    })?;
+    ensure_scheme_verification_material(pub_storage, &sk, request_id, SchemeMaterialMode::Generate)
+        .await
+        .map_err(|e| {
+            anyhow::anyhow!(
+                "Failed to store scheme verification material for party {party_id}: {e}"
+            )
+        })?;
     Ok(true)
 }
 
@@ -1660,10 +1651,9 @@ mod tests {
 #[cfg(test)]
 mod scheme_material_tests {
     use super::{
-        SchemeMaterialMode, delete_scheme_verification_material,
-        ensure_central_server_signing_keys_exist, ensure_scheme_verification_material,
-        LEGACY_ECDSA_MATERIAL_TYPES, SCHEME_MATERIAL_TYPES,
-        ensure_no_scheme_verification_material,
+        LEGACY_ECDSA_MATERIAL_TYPES, SCHEME_MATERIAL_TYPES, SchemeMaterialMode,
+        delete_scheme_verification_material, ensure_central_server_signing_keys_exist,
+        ensure_no_scheme_verification_material, ensure_scheme_verification_material,
     };
     use crate::consts::{SIGNING_KEY_ID, signing_material_id};
     use crate::cryptography::signatures::{PublicSigKey, gen_sig_keys};
@@ -1724,12 +1714,11 @@ mod scheme_material_tests {
         // ECDSA's entry is the scheme-tagged key, and its text is the very same
         // Ethereum address the deprecated location holds.
         let ecdsa_id = signing_material_id(SigningSchemeType::Ecdsa256k1);
-        let stored_ecdsa: UnifiedPublicSigKey =
-            pub_storage.read_data(&ecdsa_id, &verf_key_type).await.unwrap();
-        assert!(matches!(
-            stored_ecdsa,
-            UnifiedPublicSigKey::Ecdsa256k1(_)
-        ));
+        let stored_ecdsa: UnifiedPublicSigKey = pub_storage
+            .read_data(&ecdsa_id, &verf_key_type)
+            .await
+            .unwrap();
+        assert!(matches!(stored_ecdsa, UnifiedPublicSigKey::Ecdsa256k1(_)));
         assert_eq!(
             read_text_at_request_id(&pub_storage, &ecdsa_id, &addr_type)
                 .await
