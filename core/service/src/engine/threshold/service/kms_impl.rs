@@ -554,6 +554,8 @@ where
     }
 
     // Build public_key_info map using the chronologically latest epoch for each key ID.
+    // Epoch IDs are ordered chronologically by comparing their raw bytes as a
+    // big-endian integer.
     let public_key_info = select_data_from_max_epoch(
         key_info_versioned
             .iter()
