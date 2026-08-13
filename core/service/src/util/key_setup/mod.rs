@@ -1586,7 +1586,7 @@ mod scheme_material_tests {
     };
     use crate::vault::storage::ram::RamStorage;
     use crate::vault::storage::{
-        Storage, StorageReader, read_text_at_request_id, store_text_at_request_id,
+        StorageReader, read_text_at_request_id, store_text_at_request_id,
         store_versioned_at_request_id,
     };
     use aes_prng::AesRng;
