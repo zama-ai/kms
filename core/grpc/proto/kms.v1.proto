@@ -468,14 +468,15 @@ message UserDecryptionRequest {
   // used for key generation
   RequestId key_id = 3;
 
-  // The client's (blockchain wallet) address, encoded using EIP-55. I.e. including `0x`.
+  // The EVM client's (blockchain wallet) address, encoded using EIP-55, including `0x`.
+  // Solana requests MUST leave this empty and use `solana_pubkey` instead.
   string client_address = 4;
 
   // Encoding of the user's public encryption key for this request.
   // This must be a bincode (v.1) encoded ML-KEM 512 key.
   bytes enc_key = 5;
 
-  // The user's EIP712 domain. This MUST be present. Furthermore, the `verifying_contract` MUST be set and be distinct from `client_address`.
+  // The user's EIP712 domain. This MUST be present. Furthermore, the `verifying_contract` MUST be set and, for EVM requests, be distinct from `client_address`.
   Eip712DomainMsg domain = 6;
 
   // Extra data used in the EIP712 signature - external_signature.
@@ -493,6 +494,20 @@ message UserDecryptionRequest {
   // If empty, the response `signatures` list is empty; legacy ECDSA signatures
   // remain available via the deprecated scalar fields for backward compatibility.
   repeated SigningSchemeType signing_schemes = 10;
+  // The Solana user's 32-byte ed25519 public key. Solana requests MUST set this field and do not
+  // use `client_address`. EVM requests leave it unset and keep using `client_address` unchanged.
+  optional bytes solana_pubkey = 11;
+
+  // The 32-byte Solana program id of the host deployment this request belongs to.
+  //
+  // Half of the deployment domain the response binding commits to; the other half, the chain id,
+  // is read from the chain id the ciphertext handles embed. Solana requests MUST set this field.
+  // EVM requests leave it unset — their deployment domain travels in `domain` instead.
+  //
+  // Additive with a fresh field number: existing fields keep their numbers and types, so a party
+  // that predates this field parses the request and rejects it safely rather than answering it
+  // differently.
+  optional bytes solana_verifying_program_id = 12;
 }
 
 message UserDecryptionResponse {
