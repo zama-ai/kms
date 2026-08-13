@@ -53,13 +53,13 @@ use std::collections::BTreeMap;
 use std::num::Wrapping;
 use std::{borrow::Cow, collections::HashMap, fs::create_dir_all, path::PathBuf};
 use strum::IntoEnumIterator;
-use tfhe_1_6_2::safe_serialization::safe_serialize;
-use tfhe_1_6_2::shortint::parameters::{
+use tfhe_1_7_0::safe_serialization::safe_serialize;
+use tfhe_1_7_0::shortint::parameters::{
     AtomicPatternParameters, Backend, LweCiphertextCount, MetaNoiseSquashingParameters,
     MetaParameters, NoiseSquashingClassicParameters, NoiseSquashingCompressionParameters,
     PBSParameters,
 };
-use tfhe_1_6_2::{
+use tfhe_1_7_0::{
     core_crypto::commons::{
         ciphertext_modulus::CiphertextModulus,
         generators::DeterministicSeeder,
@@ -190,7 +190,7 @@ fn convert_classic_pbs_parameters(value: ClassicPBSParametersTest) -> ClassicPBS
         },
         // no need to test this as it's from tfhe-rs
         modulus_switch_noise_reduction_params:
-            tfhe_1_6_2::shortint::prelude::ModulusSwitchType::Standard,
+            tfhe_1_7_0::shortint::prelude::ModulusSwitchType::Standard,
     }
 }
 
@@ -203,7 +203,7 @@ fn convert_sns_parameters(value: SwitchAndSquashParametersTest) -> NoiseSquashin
         decomp_level_count: DecompositionLevelCount(value.pbs_level),
         ciphertext_modulus: CiphertextModulus::<u128>::new_native(),
         modulus_switch_noise_reduction_params:
-            tfhe_1_6_2::shortint::prelude::ModulusSwitchType::Standard,
+            tfhe_1_7_0::shortint::prelude::ModulusSwitchType::Standard,
         message_modulus: MessageModulus(value.message_modulus),
         carry_modulus: CarryModulus(value.carry_modulus),
     })

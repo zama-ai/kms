@@ -61,7 +61,7 @@ object and can be read whole:
 
 | Folder | Contents |
 | --- | --- |
-| `SchemeVerfKey` | One verification key per scheme, ECDSA's included, as a scheme-tagged `UnifiedPublicSigKey`. |
+| `SchemeVerfKey` | One verification key per scheme, ECDSA's included; natively encoded. |
 | `SchemeVerfAddress` | The digest identifying each of those keys, as `0x`-prefixed hex text. For ECDSA it is the node's Ethereum address. |
 | `VerfKey` | **Deprecated.** The node's ECDSA verification key as a bare `PublicSigKey`, under the fixed `SIGNING_KEY_ID` handle. Unchanged from earlier releases. |
 | `VerfAddress` | **Deprecated.** The matching Ethereum address (checksummed, `0x`-prefixed), under the same handle. Unchanged from earlier releases. |
