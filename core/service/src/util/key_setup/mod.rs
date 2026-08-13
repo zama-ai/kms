@@ -1667,7 +1667,8 @@ mod scheme_material_tests {
     /// included, and leaves the deprecated ECDSA-only location alone.
     #[tokio::test]
     async fn generate_writes_material_for_every_scheme() {
-        let sk = new_signing_key(7);
+        let mut rng = AesRng::seed_from_u64(7);
+        let (_pk, sk) = gen_sig_keys(&mut rng);
         let mut pub_storage = RamStorage::new();
 
         ensure_scheme_verification_material(&mut pub_storage, &sk, SchemeMaterialMode::Generate)
