@@ -91,6 +91,33 @@ path = "{private_path}"
         config_path
     }
 
+    /// Runs `kms-gen-keys` once with `overwrite = true`, asserts it succeeds, and
+    /// returns its stdout log.
+    fn run_centralized_overwrite(
+        config_dir: &tempfile::TempDir,
+        temp_dir_priv: &tempfile::TempDir,
+        temp_dir_pub: &tempfile::TempDir,
+    ) -> String {
+        let config_path = write_file_storage_config(
+            config_dir,
+            temp_dir_priv.path(),
+            temp_dir_pub.path(),
+            "overwrite = true",
+            None,
+        );
+        let output = kms_gen_keys_command()
+            .arg("--config-file")
+            .arg(config_path)
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "stderr: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        String::from_utf8_lossy(&output.stdout).into_owned()
+    }
+
     #[test]
     #[integration_test]
     fn help() {
@@ -120,25 +147,11 @@ path = "{private_path}"
     #[test]
     #[integration_test]
     fn central_signing_keys_overwrite() {
-        // Both invocations must share storage so the second run sees the keys
-        // written by the first.
-        let temp_dir_priv = tempdir().unwrap();
-        let temp_dir_pub = tempdir().unwrap();
-        let config_dir = tempdir().unwrap();
-        let config_path = write_file_storage_config(
-            &config_dir,
-            temp_dir_priv.path(),
-            temp_dir_pub.path(),
-            "overwrite = true",
-            None,
-        );
-        let output = kms_gen_keys_command()
-            .arg("--config-file")
-            .arg(&config_path)
-            .output()
-            .unwrap();
-        let log = String::from_utf8_lossy(&output.stdout);
-        assert!(output.status.success());
+        // All invocations must share storage so each run sees the keys written
+        // by the previous one.
+        let (temp_dir_priv, temp_dir_pub, config_dir) =
+            (tempdir().unwrap(), tempdir().unwrap(), tempdir().unwrap());
+        let log = run_centralized_overwrite(&config_dir, &temp_dir_priv, &temp_dir_pub);
         assert!(log.contains("Deleting VerfKey under request ID"));
         assert!(log.contains("Deleting SigningKey under request ID "));
         assert!(log.contains(
@@ -165,24 +178,8 @@ path = "{private_path}"
         // must also succeed: it has to purge the per-scheme material alongside
         // the legacy VerfKey/VerfAddress/CACert/SigningKey handles before
         // regenerating, or key generation would fail against its own leftovers.
-        let config_path = write_file_storage_config(
-            &config_dir,
-            temp_dir_priv.path(),
-            temp_dir_pub.path(),
-            "overwrite = true",
-            None,
-        );
-        let overwrite_again_output = kms_gen_keys_command()
-            .arg("--config-file")
-            .arg(config_path)
-            .output()
-            .unwrap();
-        assert!(
-            overwrite_again_output.status.success(),
-            "stderr: {}",
-            String::from_utf8_lossy(&overwrite_again_output.stderr)
-        );
-        let overwrite_again_log = String::from_utf8_lossy(&overwrite_again_output.stdout);
+        let overwrite_again_log =
+            run_centralized_overwrite(&config_dir, &temp_dir_priv, &temp_dir_pub);
         assert!(overwrite_again_log.contains("Deleting VerfKey under request ID"));
         assert!(overwrite_again_log.contains(
             "Successfully stored public centralized server signing key under the handle"
@@ -196,26 +193,9 @@ path = "{private_path}"
     #[test]
     #[integration_test]
     fn central_repopulate_after_partial_purge() {
-        let temp_dir_priv = tempdir().unwrap();
-        let temp_dir_pub = tempdir().unwrap();
-        let config_dir = tempdir().unwrap();
-        let config_path = write_file_storage_config(
-            &config_dir,
-            temp_dir_priv.path(),
-            temp_dir_pub.path(),
-            "overwrite = true",
-            None,
-        );
-        let output = kms_gen_keys_command()
-            .arg("--config-file")
-            .arg(&config_path)
-            .output()
-            .unwrap();
-        assert!(
-            output.status.success(),
-            "stderr: {}",
-            String::from_utf8_lossy(&output.stderr)
-        );
+        let (temp_dir_priv, temp_dir_pub, config_dir) =
+            (tempdir().unwrap(), tempdir().unwrap(), tempdir().unwrap());
+        run_centralized_overwrite(&config_dir, &temp_dir_priv, &temp_dir_pub);
 
         let ed25519_id = signing_material_id(SigningSchemeType::Ed25519);
         let scheme_verf_key_path = temp_dir_pub
@@ -250,9 +230,8 @@ path = "{private_path}"
     #[test]
     #[integration_test]
     fn central_signing_address_format() {
-        let temp_dir_priv = tempdir().unwrap();
-        let temp_dir_pub = tempdir().unwrap();
-        let config_dir = tempdir().unwrap();
+        let (temp_dir_priv, temp_dir_pub, config_dir) =
+            (tempdir().unwrap(), tempdir().unwrap(), tempdir().unwrap());
         let config_path = write_file_storage_config(
             &config_dir,
             temp_dir_priv.path(),
@@ -289,75 +268,53 @@ path = "{private_path}"
 
     #[test]
     #[integration_test]
-    fn threshold_party_id_zero_rejected() {
-        let temp_dir_priv = tempdir().unwrap();
-        let temp_dir_pub = tempdir().unwrap();
-
-        // party id 0 is invalid (parties are 1-indexed).
-        let config_dir = tempdir().unwrap();
-        let config_path = write_file_storage_config(
-            &config_dir,
-            temp_dir_priv.path(),
-            temp_dir_pub.path(),
-            "",
-            Some(
+    fn threshold_party_id_validation() {
+        for (threshold_config, expected_err) in [
+            (
+                // Party ID is 0, i.e. not 1-indexed.
                 r#"
 [threshold]
 my_id = 0
 tls_subject = "kms-party"
 
 "#,
+                "invalid kms-gen-keys config",
             ),
-        );
-        let output = Command::cargo_bin(KMS_GEN_KEYS)
-            .unwrap()
-            .arg("--config-file")
-            .arg(config_path)
-            .output()
-            .unwrap();
-
-        assert!(!output.status.success());
-        assert!(String::from_utf8_lossy(&output.stderr).contains("invalid kms-gen-keys config"));
-    }
-
-    #[test]
-    #[integration_test]
-    fn threshold_party_id_required() {
-        let temp_dir_priv = tempdir().unwrap();
-        let temp_dir_pub = tempdir().unwrap();
-
-        let config_dir = tempdir().unwrap();
-        let config_path = write_file_storage_config(
-            &config_dir,
-            temp_dir_priv.path(),
-            temp_dir_pub.path(),
-            "",
-            Some(
+            (
                 r#"
 [threshold]
 tls_subject = "kms-party"
 
 "#,
+                "threshold.my_id",
             ),
-        );
-        let output = Command::cargo_bin(KMS_GEN_KEYS)
-            .unwrap()
-            .arg("--config-file")
-            .arg(config_path)
-            .output()
-            .unwrap();
+        ] {
+            let (temp_dir_priv, temp_dir_pub, config_dir) = temp_storage_dirs();
+            let config_path = write_file_storage_config(
+                &config_dir,
+                temp_dir_priv.path(),
+                temp_dir_pub.path(),
+                "",
+                Some(threshold_config),
+            );
+            let output = Command::cargo_bin(KMS_GEN_KEYS)
+                .unwrap()
+                .arg("--config-file")
+                .arg(config_path)
+                .output()
+                .unwrap();
 
-        assert!(!output.status.success());
-        assert!(String::from_utf8_lossy(&output.stderr).contains("threshold.my_id"));
+            assert!(!output.status.success());
+            assert!(String::from_utf8_lossy(&output.stderr).contains(expected_err));
+        }
     }
 
     #[test]
     #[integration_test]
     #[persistent_traces]
     fn threshold_signing_key() {
-        let temp_dir_priv = tempdir().unwrap();
-        let temp_dir_pub = tempdir().unwrap();
-        let config_dir = tempdir().unwrap();
+        let (temp_dir_priv, temp_dir_pub, config_dir) =
+            (tempdir().unwrap(), tempdir().unwrap(), tempdir().unwrap());
         let config_path = write_file_storage_config(
             &config_dir,
             temp_dir_priv.path(),
@@ -396,9 +353,8 @@ tls_subject = "kms-party"
     #[test]
     #[integration_test]
     fn central_deterministic_signing_keys() {
-        let temp_dir_priv = tempdir().unwrap();
-        let temp_dir_pub = tempdir().unwrap();
-        let config_dir = tempdir().unwrap();
+        let (temp_dir_priv, temp_dir_pub, config_dir) =
+            (tempdir().unwrap(), tempdir().unwrap(), tempdir().unwrap());
         let config_path = write_file_storage_config(
             &config_dir,
             temp_dir_priv.path(),
