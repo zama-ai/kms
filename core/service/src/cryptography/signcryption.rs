@@ -990,3 +990,109 @@ mod tests {
         );
     }
 }
+
+/// The recipient and the link, as signcryption sees them: opaque bytes, host-agnostic.
+#[cfg(test)]
+mod receiver_representation_tests {
+    use super::{
+        SigncryptFHEPlaintext, UnsigncryptFHEPlaintext, ephemeral_signcryption_key_generation,
+    };
+    use aes_prng::AesRng;
+    use kms_grpc::rpc_types::SigncryptionReceiver;
+    use rand::SeedableRng;
+    use tfhe::FheTypes;
+
+    const DSEP: hashing::DomainSep = *b"SIGCTEST";
+    const SOLANA_PUBKEY: [u8; 32] = [0x11; 32];
+
+    fn evm_address() -> alloy_primitives::Address {
+        alloy_primitives::address!("dadB0d80178819F2319190D340ce9A924f783711")
+    }
+
+    #[test]
+    fn both_recipient_widths_round_trip_through_same_call() {
+        // One call site, two identity widths, no branch: the 20-byte constraint was always a
+        // property of the EVM adapter, not of signcryption.
+        for receiver in [
+            SigncryptionReceiver::Evm(evm_address()),
+            SigncryptionReceiver::Solana(SOLANA_PUBKEY),
+        ] {
+            let mut rng = AesRng::seed_from_u64(1);
+            let keys = ephemeral_signcryption_key_generation(&mut rng, receiver.as_bytes(), None);
+            let link = vec![0xab; 32];
+            let plaintext = [7u8; 4];
+
+            let cipher = keys
+                .signcrypt_key
+                .signcrypt_plaintext(&mut rng, &DSEP, &plaintext, FheTypes::Uint32, &link)
+                .expect("signcrypt");
+
+            let recovered = keys
+                .unsigncryption_key
+                .unsigncrypt_plaintext(&DSEP, &cipher.payload, &link)
+                .expect("unsigncrypt");
+
+            assert_eq!(recovered.plaintext.bytes, plaintext);
+        }
+    }
+
+    #[test]
+    fn signcryption_bound_to_recipient() {
+        // The recipient is authenticated data, not a label: a result sealed to one identity must
+        // not open under another, whatever the widths involved.
+        let mut rng = AesRng::seed_from_u64(1);
+        let keys = ephemeral_signcryption_key_generation(&mut rng, SOLANA_PUBKEY.as_slice(), None);
+        let link = vec![0xab; 32];
+
+        let cipher = keys
+            .signcrypt_key
+            .signcrypt_plaintext(&mut rng, &DSEP, &[7u8; 4], FheTypes::Uint32, &link)
+            .expect("signcrypt");
+
+        let mut other_pubkey = SOLANA_PUBKEY;
+        other_pubkey[0] ^= 0xff;
+        let impostor = super::UnifiedUnsigncryptionKey::new(
+            &keys.unsigncryption_key.decryption_key,
+            &keys.unsigncryption_key.encryption_key,
+            &keys.unsigncryption_key.sender_verf_key,
+            other_pubkey.as_slice(),
+        );
+
+        assert!(
+            impostor
+                .unsigncrypt_plaintext(&DSEP, &cipher.payload, &link)
+                .is_err(),
+        );
+    }
+
+    #[test]
+    fn link_is_carried_verbatim_and_never_interpreted() {
+        // The engine embeds the link and compares it; it does not parse or re-hash it. That is
+        // what lets a host define its own construction without the engine knowing anything about
+        // it — including a link that is not a digest of anything.
+        let mut rng = AesRng::seed_from_u64(1);
+        let keys = ephemeral_signcryption_key_generation(&mut rng, SOLANA_PUBKEY.as_slice(), None);
+
+        for link in [
+            vec![],
+            vec![0x00],
+            b"not a digest at all".to_vec(),
+            vec![0xff; 64],
+        ] {
+            let cipher = keys
+                .signcrypt_key
+                .signcrypt_plaintext(&mut rng, &DSEP, &[7u8; 4], FheTypes::Uint32, &link)
+                .expect("signcrypt");
+
+            let recovered = keys
+                .unsigncryption_key
+                .unsigncrypt_plaintext(&DSEP, &cipher.payload, &link)
+                .expect("unsigncrypt");
+
+            assert_eq!(
+                recovered.link, link,
+                "the link comes back exactly as it went in"
+            );
+        }
+    }
+}

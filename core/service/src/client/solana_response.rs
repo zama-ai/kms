@@ -700,3 +700,1687 @@ impl Client {
         release_solana_user_decryption(self, verified, enc_key, dec_key)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use std::collections::HashMap;
+    use std::num::Wrapping;
+
+    use aes_prng::AesRng;
+    use algebra::base_ring::Z64;
+    use algebra::galois_rings::degree_4::ResiduePolyF4;
+    use algebra::sharing::shamir::{InputOp, ShamirSharings};
+    use kms_grpc::kms::v1::{
+        TypedPlaintext, TypedSigncryptedCiphertext, UserDecryptionResponse,
+        UserDecryptionResponsePayload,
+    };
+    use kms_grpc::rpc_types::{SigncryptionReceiver, fhe_types_to_num_blocks};
+    use kms_grpc::solana_binding::{SolanaUserDecryptBinding, SolanaUserDecryptBindingError};
+    use rand::SeedableRng;
+    use tfhe::FheTypes;
+    use threshold_execution::endpoints::decryption::DecryptionMode;
+    use threshold_execution::tfhe_internals::parameters::AugmentedCiphertextParameters;
+
+    use super::{
+        ShareRejections, SolanaUserDecryptionRequest, SolanaUserDecryptionResponseError,
+        VerifiedSolanaShares, release_solana_user_decryption, solana_required_shares,
+        verify_solana_user_decryption_response,
+    };
+    use crate::client::client_wasm::Client;
+    use crate::consts::{SAFE_SER_SIZE_LIMIT, TEST_PARAM};
+    use crate::cryptography::compute_user_decrypt_message;
+    use crate::cryptography::encryption::{
+        Encryption, PkeScheme, PkeSchemeType, UnifiedPrivateEncKey, UnifiedPublicEncKey,
+    };
+    use crate::cryptography::signatures::{
+        PrivateSigKey, PublicSigKey, compute_eip712_signature, gen_sig_keys, internal_sign,
+    };
+    use crate::cryptography::signcryption::{SigncryptFHEPlaintext, UnifiedSigncryptionKey};
+    use crate::dummy_domain;
+    use crate::engine::validation::DSEP_USER_DECRYPTION;
+
+    const CHAIN_ID: u64 = (1 << 63) | 12_345;
+    const PUBKEY: [u8; 32] = [0x11; 32];
+    const PROGRAM_ID: [u8; 32] = [0x22; 32];
+    const CONTEXT_ID: [u8; 32] = [0x44; 32];
+    const EPOCH_ID: [u8; 32] = [0x55; 32];
+    /// The request's opaque `extra_data`. Non-empty on purpose: it is an input to the message an
+    /// external node signature commits to, so an all-empty fixture would let an implementation that
+    /// ignores the field pass by coincidence.
+    const EXTRA_DATA: [u8; 3] = [0x9a, 0x9b, 0x9c];
+
+    /// A ciphertext handle on the canonical chain, `discriminator` filling every other byte so that
+    /// two handles of one request stay distinguishable.
+    fn handle(discriminator: u8) -> Vec<u8> {
+        handle_for_chain(CHAIN_ID, discriminator)
+    }
+
+    fn handle_for_chain(chain_id: u64, discriminator: u8) -> Vec<u8> {
+        let mut handle = [discriminator; 32];
+        handle[22..30].copy_from_slice(&chain_id.to_be_bytes());
+        handle.to_vec()
+    }
+
+    /// An ephemeral ML-KEM-512 pair plus the serialized public key, in the form a request carries
+    /// it and the linker binds it.
+    fn transport_key(seed: u64) -> (UnifiedPrivateEncKey, UnifiedPublicEncKey, Vec<u8>) {
+        let mut rng = AesRng::seed_from_u64(seed);
+        let (sk, pk) = Encryption::new(PkeSchemeType::MlKem512, &mut rng)
+            .keygen()
+            .expect("ML-KEM-512 keygen");
+        let mut serialized = Vec::new();
+        tfhe::safe_serialization::safe_serialize(&pk, &mut serialized, SAFE_SER_SIZE_LIMIT)
+            .expect("serialize the transport key");
+        (sk, pk, serialized)
+    }
+
+    /// The canonical request every test below deviates from in exactly one field.
+    fn request_over(handles: Vec<Vec<u8>>) -> SolanaUserDecryptionRequest {
+        SolanaUserDecryptionRequest {
+            user_pubkey: PUBKEY,
+            host_chain_id: CHAIN_ID,
+            verifying_program_id: PROGRAM_ID,
+            kms_context_id: CONTEXT_ID,
+            kms_epoch_id: EPOCH_ID,
+            handles,
+            enc_key: transport_key(0).2,
+            response_domain: dummy_domain(),
+            extra_data: EXTRA_DATA.to_vec(),
+        }
+    }
+
+    fn canonical_request() -> SolanaUserDecryptionRequest {
+        request_over(vec![handle(0xa1)])
+    }
+
+    /// `count` KMS node key pairs, and the trusted key set keyed by party id (ids start at 1).
+    fn node_keys(count: u32) -> (HashMap<u32, PublicSigKey>, Vec<PrivateSigKey>) {
+        let mut rng = AesRng::seed_from_u64(42);
+        let mut pks = HashMap::new();
+        let mut sks = Vec::new();
+        for party_id in 1..=count {
+            let (vk, sk) = gen_sig_keys(&mut rng);
+            pks.insert(party_id, vk);
+            sks.push(sk);
+        }
+        (pks, sks)
+    }
+
+    /// The trusted signer set as `verify` consumes it: the registered address of each node key.
+    fn trusted(pks: &HashMap<u32, PublicSigKey>) -> HashMap<u32, alloy_primitives::Address> {
+        pks.iter().map(|(id, pk)| (*id, pk.address())).collect()
+    }
+
+    /// The accepted parties, in response order — the tests' shorthand for "which shares survived".
+    fn party_ids(verified: &VerifiedSolanaShares) -> Vec<u32> {
+        verified.shares.iter().map(|share| share.party_id).collect()
+    }
+
+    /// Signcrypted bytes that are never opened — enough for a test whose subject is the
+    /// verification layer, which treats them as opaque.
+    fn dummy_signcrypted() -> Vec<u8> {
+        vec![1, 2, 3, 4]
+    }
+
+    /// A response payload for `party_id`, claiming `digest` and carrying opaque ciphertext bytes.
+    fn payload(
+        party_id: u32,
+        vk: &PublicSigKey,
+        digest: Vec<u8>,
+        degree: u32,
+        signcrypted: Vec<u8>,
+    ) -> UserDecryptionResponsePayload {
+        UserDecryptionResponsePayload {
+            verification_key: bc2wrap::serialize(vk).expect("serialize a verification key"),
+            digest,
+            signcrypted_ciphertexts: vec![TypedSigncryptedCiphertext {
+                fhe_type: FheTypes::Uint64 as i32,
+                signcrypted_ciphertext: signcrypted,
+                external_handle: handle(0xa1),
+                packing_factor: 1,
+            }],
+            party_id,
+            degree,
+        }
+    }
+
+    /// The KMS node signature the client authenticates: ECDSA over `bc2wrap::serialize(&payload)`
+    /// under the user-decryption domain separator.
+    fn sign(payload: &UserDecryptionResponsePayload, sk: &PrivateSigKey) -> Vec<u8> {
+        let serialized = bc2wrap::serialize(payload).expect("serialize a payload");
+        internal_sign(&DSEP_USER_DECRYPTION, &serialized, sk)
+            .expect("sign a payload")
+            .sig
+            .to_vec()
+    }
+
+    /// A response carrying `payload` and a valid *internal* node signature over it — the ECDSA
+    /// authentication branch, with no external signature to fall back to.
+    fn signed_response(
+        payload: UserDecryptionResponsePayload,
+        sk: &PrivateSigKey,
+    ) -> UserDecryptionResponse {
+        let signature = sign(&payload, sk);
+        UserDecryptionResponse {
+            signature,
+            external_signature: vec![],
+            payload: Some(payload),
+            extra_data: EXTRA_DATA.to_vec(),
+            signatures: vec![],
+        }
+    }
+
+    /// A response authenticated the way the wire authenticates one: no internal ECDSA signature at
+    /// all, and an EIP-712 `external_signature` over the payload, the request's transport key and
+    /// `extra_data`, under the request's response domain — the very message the server builds.
+    ///
+    /// `extra_data` is passed explicitly so a test can sign over bytes other than the request's; the
+    /// response carries the same bytes the signature commits to, which is what makes the mismatch a
+    /// disagreement with the *request* rather than a self-inconsistent share.
+    fn external_signed_response_over(
+        request: &SolanaUserDecryptionRequest,
+        payload: UserDecryptionResponsePayload,
+        sk: &PrivateSigKey,
+        extra_data: &[u8],
+    ) -> UserDecryptionResponse {
+        // The two steps the server takes, composed here rather than borrowed from a shared shim:
+        // build the EIP-712 message from the payload, the request's transport key and `extra_data`,
+        // then sign it under the request's response domain.
+        let message = compute_user_decrypt_message(&payload, &request.enc_key, extra_data)
+            .expect("build the external user-decryption message");
+        let external_signature = compute_eip712_signature(sk, &message, &request.response_domain)
+            .expect("compute an external user decryption signature");
+        UserDecryptionResponse {
+            signature: vec![],
+            external_signature,
+            payload: Some(payload),
+            extra_data: extra_data.to_vec(),
+            // Main's multi-scheme `signatures` list; the Solana path authenticates the legacy
+            // scalar signature fields, so a share carries an empty list.
+            signatures: vec![],
+        }
+    }
+
+    /// [`external_signed_response_over`] with the request's own `extra_data`: a share whose
+    /// external signature is exactly the one this request expects.
+    fn external_signed_response(
+        request: &SolanaUserDecryptionRequest,
+        payload: UserDecryptionResponsePayload,
+        sk: &PrivateSigKey,
+    ) -> UserDecryptionResponse {
+        external_signed_response_over(request, payload, sk, &request.extra_data)
+    }
+
+    /// A one-share response for the canonical request, correctly signed and correctly linked.
+    fn canonical_centralized_response(
+        request: &SolanaUserDecryptionRequest,
+        sk: &PrivateSigKey,
+        vk: &PublicSigKey,
+    ) -> UserDecryptionResponse {
+        let link = request.expected_link().expect("a canonical request");
+        signed_response(payload(1, vk, link, 0, dummy_signcrypted()), sk)
+    }
+
+    /// A `count`-share response for the canonical request, every share correctly signed by its own
+    /// node and carrying the recomputed link.
+    fn canonical_threshold_response(
+        request: &SolanaUserDecryptionRequest,
+        pks: &HashMap<u32, PublicSigKey>,
+        sks: &[PrivateSigKey],
+        degree: u32,
+    ) -> Vec<UserDecryptionResponse> {
+        let link = request.expected_link().expect("a canonical request");
+        sks.iter()
+            .enumerate()
+            .map(|(index, sk)| {
+                let party_id = index as u32 + 1;
+                signed_response(
+                    payload(
+                        party_id,
+                        &pks[&party_id],
+                        link.clone(),
+                        degree,
+                        dummy_signcrypted(),
+                    ),
+                    sk,
+                )
+            })
+            .collect()
+    }
+
+    /// An `n = 4`, `t = 1` threshold response whose shares actually reconstruct — the server-side
+    /// arithmetic in miniature, with no MPC underneath. The plaintext is split into message blocks
+    /// exactly as servers publish them under `BitDecSmall`, every block is Shamir-shared, and each
+    /// party's share vector is signcrypted for the canonical receiver under the recomputed link.
+    /// Returns the responses and the plaintext they share.
+    fn reconstructable_threshold_response(
+        request: &SolanaUserDecryptionRequest,
+        pks: &HashMap<u32, PublicSigKey>,
+        sks: &[PrivateSigKey],
+        enc_key: &UnifiedPublicEncKey,
+        rng: &mut AesRng,
+    ) -> (Vec<UserDecryptionResponse>, TypedPlaintext) {
+        const DEGREE: usize = 1;
+        let num_parties = sks.len();
+        assert_eq!(num_parties, 3 * DEGREE + 1, "the fixture is n = 3t + 1");
+
+        let link = request.expected_link().expect("a canonical request");
+        let receiver_id = SigncryptionReceiver::Solana(PUBKEY).as_bytes().to_vec();
+        let expected = TypedPlaintext::new(0xAB, FheTypes::Uint8);
+
+        // Least significant block first, one Shamir sharing per block: party i's payload is its
+        // share of every block, in block order — the byte layout `recover_sharings` expects.
+        let pbs = TEST_PARAM.classic_pbs();
+        let bits_in_block = pbs.message_modulus_log();
+        let num_blocks =
+            fhe_types_to_num_blocks(FheTypes::Uint8, &pbs, 1).expect("block count for Uint8");
+        let mut per_party_blocks = vec![Vec::new(); num_parties];
+        let mut value = 0xABu64;
+        for _ in 0..num_blocks {
+            let block = value & ((1u64 << bits_in_block) - 1);
+            value >>= bits_in_block;
+            let sharing = ShamirSharings::share(
+                rng,
+                ResiduePolyF4::<Z64>::from_scalar(Wrapping(block)),
+                num_parties,
+                DEGREE,
+            )
+            .expect("share a block");
+            for (party_blocks, share) in per_party_blocks.iter_mut().zip(&sharing.shares) {
+                party_blocks.push(share.value());
+            }
+        }
+
+        let responses = per_party_blocks
+            .iter()
+            .enumerate()
+            .map(|(index, blocks)| {
+                let party_id = index as u32 + 1;
+                let serialized = bc2wrap::serialize(blocks).expect("serialize the share vector");
+                let signcrypted = UnifiedSigncryptionKey::new(&sks[index], enc_key, &receiver_id)
+                    .signcrypt_plaintext(
+                        rng,
+                        &DSEP_USER_DECRYPTION,
+                        &serialized,
+                        FheTypes::Uint8,
+                        &link,
+                    )
+                    .expect("signcrypt the share")
+                    .payload;
+                signed_response(
+                    UserDecryptionResponsePayload {
+                        verification_key: bc2wrap::serialize(&pks[&party_id])
+                            .expect("serialize a verification key"),
+                        digest: link.clone(),
+                        signcrypted_ciphertexts: vec![TypedSigncryptedCiphertext {
+                            fhe_type: FheTypes::Uint8 as i32,
+                            signcrypted_ciphertext: signcrypted,
+                            external_handle: handle(0xa1),
+                            packing_factor: 1,
+                        }],
+                        party_id,
+                        degree: DEGREE as u32,
+                    },
+                    &sks[index],
+                )
+            })
+            .collect();
+        (responses, expected)
+    }
+
+    // ---------------------------------------------------------------------------------------
+    // The shape of the API itself.
+    // ---------------------------------------------------------------------------------------
+
+    #[test]
+    fn response_error_taxonomy_matched_without_catch_all() {
+        // A build-time canary, not a behaviour test: this match has no `_` arm, so adding a
+        // variant to the taxonomy breaks this suite and forces a decision about which rule the new
+        // failure belongs to. Every arm names the rule it stands for.
+        let describe = |error: &SolanaUserDecryptionResponseError| -> &'static str {
+            match error {
+                SolanaUserDecryptionResponseError::EmptyResponse => "no shares at all",
+                SolanaUserDecryptionResponseError::Binding(_) => "the request is not a binding",
+                SolanaUserDecryptionResponseError::MissingPayload { .. } => "share without payload",
+                SolanaUserDecryptionResponseError::UnknownParty { .. } => "no trusted key",
+                SolanaUserDecryptionResponseError::MalformedVerificationKey { .. } => {
+                    "not the trusted key"
+                }
+                SolanaUserDecryptionResponseError::NodeSignature { .. } => "bad node signature",
+                SolanaUserDecryptionResponseError::LinkMismatch { .. } => "digest is not link",
+                SolanaUserDecryptionResponseError::DuplicateParty { .. } => "a party counted twice",
+                SolanaUserDecryptionResponseError::BelowThreshold { .. } => "too few shares",
+                SolanaUserDecryptionResponseError::InconsistentShares { .. } => {
+                    "not one consistent threshold response"
+                }
+                SolanaUserDecryptionResponseError::Unsigncryption { .. } => "release failed",
+                SolanaUserDecryptionResponseError::Reconstruction { .. } => {
+                    "threshold reconstruction failed"
+                }
+            }
+        };
+
+        assert_eq!(
+            describe(&SolanaUserDecryptionResponseError::EmptyResponse),
+            "no shares at all"
+        );
+        assert_eq!(
+            describe(&SolanaUserDecryptionResponseError::LinkMismatch { party_id: 1 }),
+            "digest is not link"
+        );
+    }
+
+    #[test]
+    fn js_pinned_error_messages_still_surface() {
+        // tests/js/test.js asserts on these two strings across the WASM boundary. They are part of
+        // the published behaviour of the JS export, so they are pinned on the Rust side too rather
+        // than only in a suite that needs a wasm build to run.
+        assert_eq!(
+            SolanaUserDecryptionResponseError::EmptyResponse.to_string(),
+            "Response does not exist"
+        );
+
+        let declared_mismatch = SolanaUserDecryptionResponseError::Binding(
+            SolanaUserDecryptBindingError::DeclaredChainIdMismatch {
+                declared: CHAIN_ID + 1,
+                embedded: CHAIN_ID,
+            },
+        );
+        assert!(
+            declared_mismatch
+                .to_string()
+                .contains("does not match handle chain ID"),
+            "the JS-visible chain-id message changed: {declared_mismatch}",
+        );
+    }
+
+    #[test]
+    fn solana_path_ignores_client_address() {
+        // The Solana client has no wallet address, and the recipient is the
+        // 32-byte key carried by the request. Two clients differing only in `client_address` must
+        // therefore be indistinguishable on this path.
+        let (pks, sks) = node_keys(1);
+        let request = canonical_request();
+        let (dec_key, enc_key, _) = transport_key(0);
+        let agg_resp = vec![canonical_centralized_response(&request, &sks[0], &pks[&1])];
+
+        let zero_address = Client::new_solana(trusted(&pks), TEST_PARAM, None);
+        let other_address = Client::new(
+            pks,
+            alloy_primitives::address!("66f9664f97F2b50F62D13eA064982f936dE76657"),
+            None,
+            TEST_PARAM,
+            None,
+        );
+
+        assert_eq!(
+            zero_address
+                .process_user_decryption_resp_solana(&request, &enc_key, &dec_key, &agg_resp),
+            other_address
+                .process_user_decryption_resp_solana(&request, &enc_key, &dec_key, &agg_resp),
+        );
+    }
+
+    #[test]
+    fn required_share_count_follows_server_count() {
+        // The release's "needed": one share centralized, t+1 for n = 3t + 1.
+        assert_eq!(solana_required_shares(1), 1);
+        assert_eq!(solana_required_shares(4), 2);
+        assert_eq!(solana_required_shares(7), 3);
+        assert_eq!(solana_required_shares(13), 5);
+    }
+
+    // ---------------------------------------------------------------------------------------
+    // The expectation is recomputed, never parsed out of the response.
+    // ---------------------------------------------------------------------------------------
+
+    #[test]
+    fn expected_link_recomputed_from_request_fields() {
+        // Built independently here through the canonical binding: if the request struct grew a
+        // second construction of its own that merely agrees today, this comparison is what fails.
+        let request = canonical_request();
+
+        let binding = SolanaUserDecryptBinding::new(
+            &PROGRAM_ID,
+            &PUBKEY,
+            &CONTEXT_ID,
+            &EPOCH_ID,
+            request.handles.iter().map(|handle| handle.as_slice()),
+            &request.enc_key,
+        )
+        .expect("a canonical request");
+
+        assert_eq!(
+            request.expected_link().expect("a canonical request"),
+            binding.compute_link()
+        );
+    }
+
+    #[test]
+    fn declared_chain_id_validated_before_response_processing() {
+        // The client holds a chain id of its own — the one its permit was signed for — so
+        // unlike a KMS party it can check the value the handles embed against a declared one.
+        let request = canonical_request();
+        assert_eq!(request.expected_link().unwrap().len(), 32);
+
+        let mut wrong_chain = canonical_request();
+        wrong_chain.host_chain_id = CHAIN_ID + 1;
+        assert_eq!(
+            wrong_chain.expected_link(),
+            Err(SolanaUserDecryptBindingError::DeclaredChainIdMismatch {
+                declared: CHAIN_ID + 1,
+                embedded: CHAIN_ID,
+            })
+        );
+    }
+
+    #[test]
+    fn rejects_invalid_handle_chain_ids_and_widths() {
+        // A handle without the chain-kind bit belongs to the EVM linker, and a handle of the
+        // wrong width is not a handle at all; neither can reach a link.
+        let mut evm_handle = canonical_request();
+        evm_handle.host_chain_id = 12_345;
+        evm_handle.handles = vec![handle_for_chain(12_345, 0xa1)];
+        assert_eq!(
+            evm_handle.expected_link(),
+            Err(SolanaUserDecryptBindingError::InvalidHandleChainId {
+                index: 0,
+                chain_id: 12_345,
+            })
+        );
+
+        let mut short_handle = canonical_request();
+        short_handle.handles = vec![vec![0; 31]];
+        assert_eq!(
+            short_handle.expected_link(),
+            Err(SolanaUserDecryptBindingError::InvalidHandleLength {
+                index: 0,
+                actual: 31,
+            })
+        );
+    }
+
+    #[test]
+    fn signed_share_with_foreign_digest_is_link_mismatch() {
+        // The share is authentic — it is the *expectation* that does not come from it.
+        // The digest below is the link of a different request, so a client that took the response's
+        // digest as its expectation would accept this share.
+        let (pks, sks) = node_keys(1);
+        let request = canonical_request();
+        let foreign_link = request_over(vec![handle(0xbb)])
+            .expected_link()
+            .expect("a canonical request");
+
+        let agg_resp = vec![signed_response(
+            payload(1, &pks[&1], foreign_link, 0, dummy_signcrypted()),
+            &sks[0],
+        )];
+
+        assert_eq!(
+            verify_solana_user_decryption_response(&request, &trusted(&pks), &agg_resp),
+            Err(SolanaUserDecryptionResponseError::LinkMismatch { party_id: 1 })
+        );
+    }
+
+    // ---------------------------------------------------------------------------------------
+    // Whichever node signature the share carries is verified, before its link is read.
+    //
+    // The rule mirrors the EVM branch exactly (see
+    // `engine::validation_wasm::validate_user_decrypt_meta_data_and_signature`): a non-empty
+    // internal `signature` is checked as ECDSA over the serialized payload, an empty one falls back
+    // to the EIP-712 `external_signature`, and neither means unauthenticated.
+    // ---------------------------------------------------------------------------------------
+
+    #[test]
+    fn internal_signature_alone_authenticates_share() {
+        // Sunshine, internal authentication branch. The share carries an ECDSA signature over the serialized
+        // payload and nothing else, and that is enough to be authenticated.
+        let (pks, sks) = node_keys(1);
+        let request = canonical_request();
+        let link = request.expected_link().expect("a canonical request");
+        let agg_resp = vec![signed_response(
+            payload(1, &pks[&1], link, 0, dummy_signcrypted()),
+            &sks[0],
+        )];
+        assert!(
+            agg_resp[0].external_signature.is_empty(),
+            "this fixture must exercise the internal branch alone",
+        );
+
+        let verified = verify_solana_user_decryption_response(&request, &trusted(&pks), &agg_resp)
+            .expect("an internally signed share is authenticated");
+
+        assert_eq!(party_ids(&verified), vec![1]);
+    }
+
+    #[test]
+    fn external_signature_alone_authenticates_share() {
+        // Sunshine, external authentication branch — and this is the shape the wire actually has: the relayer
+        // forwards `signature: vec![]`, so the EIP-712 `external_signature` is the only
+        // authentication a real Solana response carries. It must be *verified* against the response
+        // domain, the request's transport key and its extra_data, which is precisely what the
+        // earlier Solana code did not do.
+        let (pks, sks) = node_keys(1);
+        let request = canonical_request();
+        let link = request.expected_link().expect("a canonical request");
+        let agg_resp = vec![external_signed_response(
+            &request,
+            payload(1, &pks[&1], link, 0, dummy_signcrypted()),
+            &sks[0],
+        )];
+        assert!(
+            agg_resp[0].signature.is_empty() && !agg_resp[0].external_signature.is_empty(),
+            "this fixture must exercise the external branch alone",
+        );
+
+        let verified = verify_solana_user_decryption_response(&request, &trusted(&pks), &agg_resp)
+            .expect("an externally signed share is authenticated");
+
+        assert_eq!(party_ids(&verified), vec![1]);
+    }
+
+    #[test]
+    fn single_share_response_names_failed_signature_rule() {
+        // Internal branch. Three ways for an internal signature to be wrong plus the share that
+        // carries no signature at all; all four are the same rule, and none of them may be reported
+        // as a link problem.
+        let (pks, sks) = node_keys(2);
+        let request = canonical_request();
+        let link = request.expected_link().expect("a canonical request");
+        let good = payload(1, &pks[&1], link, 0, dummy_signcrypted());
+
+        // Signed by a key that is not party 1's.
+        let wrong_key = signed_response(good.clone(), &sks[1]);
+
+        // The right signature, with a corrupted byte.
+        let mut corrupted = signed_response(good.clone(), &sks[0]);
+        corrupted.signature[0] ^= 0xff;
+
+        // A signature over a payload that was mutated after signing.
+        let mut mutated = signed_response(good.clone(), &sks[0]);
+        let mut after = good.clone();
+        after.degree += 1;
+        mutated.payload = Some(after);
+
+        // Neither signature: unauthenticated is unauthenticated, and an empty internal signature is
+        // not a licence to skip the check when there is nothing to fall back to.
+        let unsigned = UserDecryptionResponse {
+            signature: vec![],
+            external_signature: vec![],
+            payload: Some(good),
+            extra_data: EXTRA_DATA.to_vec(),
+            signatures: vec![],
+        };
+
+        for (name, response) in [
+            ("a foreign signing key", wrong_key),
+            ("a corrupted signature", corrupted),
+            ("a payload mutated after signing", mutated),
+            ("no signature at all", unsigned),
+        ] {
+            assert_eq!(
+                verify_solana_user_decryption_response(&request, &trusted(&pks), &[response]),
+                Err(SolanaUserDecryptionResponseError::NodeSignature { party_id: 1 }),
+                "{name} must be reported as the signature rule",
+            );
+        }
+    }
+
+    #[test]
+    fn failed_external_signature_is_signature_error() {
+        // External branch. The mirror of the case above: every way the EIP-712 signature can
+        // fail to be party 1's signature over this request's message is the same rule. A share is
+        // rejected here for reasons that have nothing to do with its digest, which is correct
+        // throughout.
+        let (pks, sks) = node_keys(2);
+        let request = canonical_request();
+        let link = request.expected_link().expect("a canonical request");
+        let good = payload(1, &pks[&1], link, 0, dummy_signcrypted());
+
+        // Signed by a key that is not party 1's.
+        let wrong_key = external_signed_response(&request, good.clone(), &sks[1]);
+
+        // Party 1's own signature, with a corrupted byte.
+        let mut corrupted = external_signed_response(&request, good.clone(), &sks[0]);
+        corrupted.external_signature[0] ^= 0xff;
+
+        // A signature over a payload that was mutated after signing.
+        let mut mutated = external_signed_response(&request, good.clone(), &sks[0]);
+        let mut after = good.clone();
+        after.degree += 1;
+        mutated.payload = Some(after);
+
+        // Party 1's own signature over this very payload, made under a different EIP-712 domain: a
+        // signature from another deployment is not a signature for this one.
+        let mut other_domain = canonical_request();
+        other_domain.response_domain = alloy_sol_types::eip712_domain!(
+            name: "Authorization token",
+            version: "2",
+            chain_id: 8006,
+            verifying_contract: alloy_primitives::address!(
+                "66f9664f97F2b50F62D13eA064982f936dE76657"
+            ),
+        );
+        assert_ne!(other_domain.response_domain, request.response_domain);
+        let foreign_domain = external_signed_response(&other_domain, good, &sks[0]);
+
+        for (name, response) in [
+            ("a foreign signing key", wrong_key),
+            ("a corrupted external signature", corrupted),
+            ("a payload mutated after signing", mutated),
+            ("a signature made under another domain", foreign_domain),
+        ] {
+            assert_eq!(
+                verify_solana_user_decryption_response(&request, &trusted(&pks), &[response]),
+                Err(SolanaUserDecryptionResponseError::NodeSignature { party_id: 1 }),
+                "{name} must be reported as the signature rule",
+            );
+        }
+    }
+
+    #[test]
+    fn external_signature_over_other_extra_data_is_rejected() {
+        // The EVM path requires the response's extra_data to be the request's before it
+        // verifies anything, and this path mirrors it. The bytes stay opaque — nothing here parses
+        // them — but they are an input to the signed message, so a share committing to other bytes
+        // is authentic for a request that was never made. Everything else about this share is
+        // right: party 1's own key, the recomputed link, a signature that verifies against the
+        // bytes it was made over.
+        let (pks, sks) = node_keys(1);
+        let request = canonical_request();
+        let link = request.expected_link().expect("a canonical request");
+        let other_extra_data = [0xde, 0xad];
+        assert_ne!(other_extra_data.as_slice(), request.extra_data.as_slice());
+
+        let agg_resp = vec![external_signed_response_over(
+            &request,
+            payload(1, &pks[&1], link, 0, dummy_signcrypted()),
+            &sks[0],
+            &other_extra_data,
+        )];
+
+        assert_eq!(
+            verify_solana_user_decryption_response(&request, &trusted(&pks), &agg_resp),
+            Err(SolanaUserDecryptionResponseError::NodeSignature { party_id: 1 })
+        );
+    }
+
+    #[test]
+    fn share_advertising_foreign_address_key_rejected() {
+        // The advertised key is admitted by its address binding to the registered signer set. A
+        // share advertising a different party's key — with a signature that even verifies under
+        // that key — fails the key gate, before authentication: a valid signature by the wrong signer is not
+        // a signature failure but a key that is not this party's.
+        let (pks, sks) = node_keys(2);
+        let request = canonical_request();
+        let link = request.expected_link().expect("a canonical request");
+
+        // Party 2's key and party 2's valid signature, claiming to be party 1.
+        let foreign_key = payload(1, &pks[&2], link, 0, dummy_signcrypted());
+        let response = signed_response(foreign_key, &sks[1]);
+
+        assert_eq!(
+            verify_solana_user_decryption_response(&request, &trusted(&pks), &[response]),
+            Err(SolanaUserDecryptionResponseError::MalformedVerificationKey { party_id: 1 })
+        );
+    }
+
+    #[test]
+    fn empty_trusted_signer_set_authenticates_nothing() {
+        // Fail-closed: with no registered signers every share is an unknown party, however well
+        // signed. This is the semantics the wasm wrapper leans on when its caller omits the
+        // signer set — omission weakens nothing into acceptance.
+        let (pks, sks) = node_keys(1);
+        let request = canonical_request();
+        let agg_resp = vec![canonical_centralized_response(&request, &sks[0], &pks[&1])];
+
+        assert_eq!(
+            verify_solana_user_decryption_response(&request, &HashMap::new(), &agg_resp),
+            Err(SolanaUserDecryptionResponseError::UnknownParty { party_id: 1 })
+        );
+    }
+
+    #[test]
+    fn present_internal_signature_takes_precedence() {
+        // Authentication branches on which signature is present, exactly as the EVM path does — it does not try
+        // both and accept either. A share with a forged internal signature must not be waved
+        // through on a valid external one sitting next to it.
+        let (pks, sks) = node_keys(2);
+        let request = canonical_request();
+        let link = request.expected_link().expect("a canonical request");
+        let good = payload(1, &pks[&1], link, 0, dummy_signcrypted());
+
+        let mut response = external_signed_response(&request, good.clone(), &sks[0]);
+        // Party 2's ECDSA over party 1's payload: the internal signature is present and wrong.
+        response.signature = sign(&good, &sks[1]);
+
+        assert_eq!(
+            verify_solana_user_decryption_response(&request, &trusted(&pks), &[response]),
+            Err(SolanaUserDecryptionResponseError::NodeSignature { party_id: 1 })
+        );
+    }
+
+    #[test]
+    fn bad_signature_rejected_before_link_compared() {
+        // Authentication before comparison. The share carries the byte-correct link, so the only reason to reject it is
+        // the signature — and `link_mismatch` staying at zero is what shows the comparison was
+        // never reached for an unauthenticated payload.
+        let (pks, sks) = node_keys(4);
+        let request = canonical_request();
+        let mut agg_resp = canonical_threshold_response(&request, &pks, &sks, 1);
+        // Party 1's payload is re-signed by party 2's key: correct link, wrong signer.
+        let party_one = agg_resp[0].payload.clone().expect("a payload");
+        agg_resp[0].signature = sign(&party_one, &sks[1]);
+
+        let verified = verify_solana_user_decryption_response(&request, &trusted(&pks), &agg_resp)
+            .expect("three good shares are more than the two needed");
+
+        assert_eq!(party_ids(&verified), vec![2, 3, 4]);
+    }
+
+    #[test]
+    fn share_failing_both_rules_reported_as_signature_error() {
+        // Authentication before comparison. The rejection is the *first* rule failed, so a share that is both
+        // unauthenticated and wrongly linked never reaches the link comparison.
+        let (pks, sks) = node_keys(1);
+        let request = canonical_request();
+        let mut agg_resp = vec![canonical_centralized_response(&request, &sks[0], &pks[&1])];
+        let mut broken = agg_resp[0].payload.clone().expect("a payload");
+        broken.digest[0] ^= 0xff;
+        agg_resp[0].payload = Some(broken.clone());
+        agg_resp[0].signature = sign(&broken, &sks[0]);
+        agg_resp[0].signature[0] ^= 0xff;
+
+        assert_eq!(
+            verify_solana_user_decryption_response(&request, &trusted(&pks), &agg_resp),
+            Err(SolanaUserDecryptionResponseError::NodeSignature { party_id: 1 }),
+        );
+    }
+
+    // ---------------------------------------------------------------------------------------
+    // The digest comparison is byte equality, and a mismatching share contributes nothing.
+    // ---------------------------------------------------------------------------------------
+
+    #[test]
+    fn single_share_with_recomputed_link_verifies() {
+        // Sunshine. The centralized case is the one-share case of the same rules.
+        let (pks, sks) = node_keys(1);
+        let request = canonical_request();
+        let agg_resp = vec![canonical_centralized_response(&request, &sks[0], &pks[&1])];
+
+        let verified = verify_solana_user_decryption_response(&request, &trusted(&pks), &agg_resp)
+            .expect("a canonical centralized response verifies");
+
+        assert_eq!(party_ids(&verified), vec![1]);
+        assert_eq!(
+            verified.link,
+            request.expected_link().expect("a canonical request"),
+        );
+        assert_eq!(verified.receiver_id, PUBKEY);
+
+        // The accepted share carries the trusted key it verified under — the client's own, not the
+        // one the payload advertises — and the payload it was taken from.
+        let share = &verified.shares[0];
+        assert_eq!(share.party_id, 1);
+        assert_eq!(share.verification_key, pks[&1]);
+        assert_eq!(share.payload.party_id, 1);
+    }
+
+    #[test]
+    fn wrong_length_digest_rejected() {
+        // Byte equality includes the length: a 31-byte digest is not a prefix match, and an
+        // empty one is not a wildcard.
+        let (pks, sks) = node_keys(1);
+        let request = canonical_request();
+        let link = request.expected_link().expect("a canonical request");
+
+        for length in [0usize, 31, 33] {
+            let mut digest = link.clone();
+            digest.resize(length, 0);
+            let agg_resp = vec![signed_response(
+                payload(1, &pks[&1], digest, 0, dummy_signcrypted()),
+                &sks[0],
+            )];
+
+            assert_eq!(
+                verify_solana_user_decryption_response(&request, &trusted(&pks), &agg_resp),
+                Err(SolanaUserDecryptionResponseError::LinkMismatch { party_id: 1 }),
+                "a {length}-byte digest must not pass the link comparison",
+            );
+        }
+    }
+
+    #[test]
+    fn single_byte_digest_flip_rejected() {
+        // The comparison is over all 32 bytes; there is no tolerance anywhere in it.
+        let (pks, sks) = node_keys(1);
+        let request = canonical_request();
+        let link = request.expected_link().expect("a canonical request");
+
+        for index in [0usize, 15, 31] {
+            let mut digest = link.clone();
+            digest[index] ^= 1;
+            let agg_resp = vec![signed_response(
+                payload(1, &pks[&1], digest, 0, dummy_signcrypted()),
+                &sks[0],
+            )];
+
+            assert_eq!(
+                verify_solana_user_decryption_response(&request, &trusted(&pks), &agg_resp),
+                Err(SolanaUserDecryptionResponseError::LinkMismatch { party_id: 1 }),
+                "a flipped bit at byte {index} must not pass the link comparison",
+            );
+        }
+    }
+
+    #[test]
+    fn wrongly_linked_share_excluded_others_survive() {
+        // The discarded share contributes nothing: it is neither in the accepted set nor
+        // counted towards the threshold, and the rest of the response is unaffected by it.
+        let (pks, sks) = node_keys(4);
+        let request = canonical_request();
+        let mut agg_resp = canonical_threshold_response(&request, &pks, &sks, 1);
+        let mut wrong_link = agg_resp[2].payload.clone().expect("a payload");
+        wrong_link.digest[7] ^= 0xff;
+        agg_resp[2] = signed_response(wrong_link, &sks[2]);
+
+        let verified = verify_solana_user_decryption_response(&request, &trusted(&pks), &agg_resp)
+            .expect("three good shares are more than the two needed");
+
+        assert_eq!(party_ids(&verified), vec![1, 2, 4]);
+    }
+
+    // ---------------------------------------------------------------------------------------
+    // One common link, and all or nothing.
+    // ---------------------------------------------------------------------------------------
+
+    #[test]
+    fn only_shares_carrying_recomputed_link_accepted() {
+        // Two groups of shares, each internally consistent, both correctly signed. The group
+        // that matters is the one carrying the *recomputed* link — "the majority agrees" is not a
+        // rule here, and a majority carrying a foreign link would still be rejected.
+        let (pks, sks) = node_keys(4);
+        let request = canonical_request();
+        let foreign_link = request_over(vec![handle(0xbb)])
+            .expected_link()
+            .expect("a canonical request");
+
+        let mut agg_resp = canonical_threshold_response(&request, &pks, &sks, 1);
+        for index in [2usize, 3] {
+            let mut divergent = agg_resp[index].payload.clone().expect("a payload");
+            divergent.digest = foreign_link.clone();
+            agg_resp[index] = signed_response(divergent, &sks[index]);
+        }
+
+        let verified = verify_solana_user_decryption_response(&request, &trusted(&pks), &agg_resp)
+            .expect("two shares carry the recomputed link, which is what is needed");
+
+        assert_eq!(party_ids(&verified), vec![1, 2]);
+        assert_ne!(verified.link, foreign_link);
+    }
+
+    #[test]
+    fn too_few_same_link_shares_release_no_plaintext_at_all() {
+        // All or nothing: a response that is partially valid is not partially released. This is
+        // the EVM behaviour preserved as an explicit rule rather than as an accident of
+        // reconstruction failing later.
+        let (pks, sks) = node_keys(4);
+        let request = canonical_request();
+        let mut agg_resp = canonical_threshold_response(&request, &pks, &sks, 1);
+        for index in [1usize, 2, 3] {
+            let mut broken = agg_resp[index].payload.clone().expect("a payload");
+            broken.digest[0] ^= 0xff;
+            agg_resp[index] = signed_response(broken, &sks[index]);
+        }
+
+        assert_eq!(
+            verify_solana_user_decryption_response(&request, &trusted(&pks), &agg_resp),
+            Err(SolanaUserDecryptionResponseError::BelowThreshold {
+                valid: 1,
+                needed: 2,
+                rejections: ShareRejections {
+                    link_mismatch: 3,
+                    ..ShareRejections::default()
+                },
+            })
+        );
+    }
+
+    #[test]
+    fn shares_at_exact_threshold_still_verify() {
+        // The threshold boundary. Dropping shares one at a time must keep verifying until the count
+        // falls below what is needed, and fail on the very next one.
+        let (pks, sks) = node_keys(4);
+        let request = canonical_request();
+        let full = canonical_threshold_response(&request, &pks, &sks, 1);
+        let needed = solana_required_shares(4);
+
+        for count in (needed..=full.len()).rev() {
+            let verified =
+                verify_solana_user_decryption_response(&request, &trusted(&pks), &full[..count])
+                    .unwrap_or_else(|error| panic!("{count} shares must verify, got {error}"));
+            assert_eq!(verified.shares.len(), count);
+        }
+
+        let below =
+            verify_solana_user_decryption_response(&request, &trusted(&pks), &full[..needed - 1]);
+        assert_eq!(
+            below,
+            Err(SolanaUserDecryptionResponseError::BelowThreshold {
+                valid: needed - 1,
+                needed,
+                rejections: ShareRejections::default(),
+            })
+        );
+    }
+
+    #[test]
+    fn replayed_share_does_not_fill_threshold() {
+        // One share per party. A single node's share, replayed, is one distinct
+        // party — never two — so the threshold cannot be met by echoing one share.
+        let (pks, sks) = node_keys(4);
+        let request = canonical_request();
+        let agg_resp = canonical_threshold_response(&request, &pks, &sks, 1);
+        let replayed = vec![agg_resp[0].clone(), agg_resp[0].clone()];
+
+        assert_eq!(
+            verify_solana_user_decryption_response(&request, &trusted(&pks), &replayed),
+            Err(SolanaUserDecryptionResponseError::BelowThreshold {
+                valid: 1,
+                needed: 2,
+                rejections: ShareRejections {
+                    duplicate_party: 1,
+                    ..ShareRejections::default()
+                },
+            })
+        );
+    }
+
+    #[test]
+    fn only_first_accepted_share_per_party_counted() {
+        // A replay next to an otherwise complete response is discarded into the census; the
+        // accepted set still carries each party exactly once.
+        let (pks, sks) = node_keys(4);
+        let request = canonical_request();
+        let mut agg_resp = canonical_threshold_response(&request, &pks, &sks, 1);
+        agg_resp.push(agg_resp[0].clone());
+
+        let verified = verify_solana_user_decryption_response(&request, &trusted(&pks), &agg_resp)
+            .expect("four distinct parties are more than the two needed");
+
+        assert_eq!(party_ids(&verified), vec![1, 2, 3, 4]);
+    }
+
+    #[test]
+    fn party_with_failed_first_share_still_counted_via_valid_share() {
+        // Distinctness is keyed on *accepted* shares. A garbage share planted in front of a
+        // party's real one must not consume that party's slot — otherwise anyone able to inject
+        // bytes into the aggregate could vote a trusted node out of the count.
+        let (pks, sks) = node_keys(4);
+        let request = canonical_request();
+        let mut agg_resp = canonical_threshold_response(&request, &pks, &sks, 1);
+        let mut planted = agg_resp[0].clone();
+        planted.signature = sign(&planted.payload.clone().expect("a payload"), &sks[1]);
+        agg_resp.insert(0, planted);
+
+        let verified = verify_solana_user_decryption_response(&request, &trusted(&pks), &agg_resp)
+            .expect("all four real shares verify");
+
+        assert_eq!(party_ids(&verified), vec![1, 2, 3, 4]);
+    }
+
+    #[test]
+    fn empty_response_rejected_before_examining_shares() {
+        // The degenerate case: no shares at all, and the message the JS tests pin.
+        let (pks, _sks) = node_keys(1);
+        let request = canonical_request();
+
+        assert_eq!(
+            verify_solana_user_decryption_response(&request, &trusted(&pks), &[]),
+            Err(SolanaUserDecryptionResponseError::EmptyResponse)
+        );
+    }
+
+    #[test]
+    fn verified_threshold_response_reconstructs_shared_plaintext() {
+        // The threshold release end to end: four real shares of one plaintext, Shamir-shared and
+        // signcrypted exactly as servers publish them, reconstruct through the same code the EVM
+        // path runs after its own validation — no Solana-only reconstruction exists to diverge.
+        let mut rng = AesRng::seed_from_u64(9);
+        let (pks, sks) = node_keys(4);
+        let request = canonical_request();
+        let (dec_key, enc_key, _) = transport_key(0);
+        let (agg_resp, expected) =
+            reconstructable_threshold_response(&request, &pks, &sks, &enc_key, &mut rng);
+
+        let client =
+            Client::new_solana(trusted(&pks), TEST_PARAM, Some(DecryptionMode::BitDecSmall));
+        let verified = verify_solana_user_decryption_response(&request, &trusted(&pks), &agg_resp)
+            .expect("four good shares verify");
+        let released = release_solana_user_decryption(&client, verified, &enc_key, &dec_key)
+            .expect("the threshold release reconstructs");
+
+        assert_eq!(released, vec![expected]);
+    }
+
+    #[test]
+    fn threshold_response_missing_one_share_still_reconstructs() {
+        // t-of-n, not n-of-n: with degree 1 and four parties any t + 1 = 2 shares interpolate, so
+        // dropping a whole response must not change the released plaintext — the same one-share
+        // drop the EVM threshold tests perform.
+        let mut rng = AesRng::seed_from_u64(9);
+        let (pks, sks) = node_keys(4);
+        let request = canonical_request();
+        let (dec_key, enc_key, _) = transport_key(0);
+        let (agg_resp, expected) =
+            reconstructable_threshold_response(&request, &pks, &sks, &enc_key, &mut rng);
+
+        let client =
+            Client::new_solana(trusted(&pks), TEST_PARAM, Some(DecryptionMode::BitDecSmall));
+        let verified =
+            verify_solana_user_decryption_response(&request, &trusted(&pks), &agg_resp[1..])
+                .expect("three good shares are more than the two needed");
+        let released = release_solana_user_decryption(&client, verified, &enc_key, &dec_key)
+            .expect("the threshold release tolerates a missing share");
+
+        assert_eq!(released, vec![expected]);
+    }
+
+    #[test]
+    fn centralized_response_releases_its_signcrypted_plaintext() {
+        // The whole path, with real signcryption: the link is the associated data and the raw
+        // 32-byte wallet key is the receiver id, so a plaintext only comes out if the client
+        // recomputed both exactly as the server used them.
+        let mut rng = AesRng::seed_from_u64(7);
+        let (pks, sks) = node_keys(1);
+        let request = canonical_request();
+        let link = request.expected_link().expect("a canonical request");
+        let (dec_key, enc_key, enc_key_bytes) = transport_key(0);
+        assert_eq!(request.enc_key, enc_key_bytes, "the request binds this key");
+
+        let expected = TypedPlaintext::new(42, FheTypes::Uint64);
+        let receiver_id = SigncryptionReceiver::Solana(PUBKEY).as_bytes().to_vec();
+        let signcrypted = UnifiedSigncryptionKey::new(&sks[0], &enc_key, &receiver_id)
+            .signcrypt_plaintext(
+                &mut rng,
+                &DSEP_USER_DECRYPTION,
+                &expected.bytes,
+                FheTypes::Uint64,
+                &link,
+            )
+            .expect("signcrypt the share")
+            .payload;
+
+        let agg_resp = vec![signed_response(
+            payload(1, &pks[&1], link, 0, signcrypted),
+            &sks[0],
+        )];
+
+        let client = Client::new_solana(trusted(&pks), TEST_PARAM, None);
+        let verified = verify_solana_user_decryption_response(&request, &trusted(&pks), &agg_resp)
+            .expect("a canonical centralized response verifies");
+        let released = release_solana_user_decryption(&client, verified, &enc_key, &dec_key)
+            .expect("the centralized release opens the share");
+
+        assert_eq!(released, vec![expected]);
+    }
+
+    // ---------------------------------------------------------------------------------------
+    // Duplicate handles are bound by position.
+    // ---------------------------------------------------------------------------------------
+
+    #[test]
+    fn repeated_handle_binds_both_occurrences() {
+        // Duplicates are legal upstream — each occurrence is authorized independently — so the
+        // linker binds every occurrence at its position, and [h, h] is not [h].
+        let once = request_over(vec![handle(0xa1)]);
+        let twice = request_over(vec![handle(0xa1), handle(0xa1)]);
+
+        assert_eq!(twice.handles.len(), 2);
+        assert_ne!(
+            once.expected_link().expect("a canonical request"),
+            twice.expected_link().expect("a canonical request"),
+        );
+    }
+
+    #[test]
+    fn digest_over_deduplicated_handles_is_link_mismatch() {
+        // A server (or relayer) that collapsed the repeated handle answered a request the client
+        // did not make. The client asked for two decryptions and must not accept a response bound
+        // to one.
+        let (pks, sks) = node_keys(1);
+        let request = request_over(vec![handle(0xa1), handle(0xa1)]);
+        let deduplicated = request_over(vec![handle(0xa1)])
+            .expected_link()
+            .expect("a canonical request");
+
+        let agg_resp = vec![signed_response(
+            payload(1, &pks[&1], deduplicated, 0, dummy_signcrypted()),
+            &sks[0],
+        )];
+
+        assert_eq!(
+            verify_solana_user_decryption_response(&request, &trusted(&pks), &agg_resp),
+            Err(SolanaUserDecryptionResponseError::LinkMismatch { party_id: 1 })
+        );
+    }
+
+    // ---------------------------------------------------------------------------------------
+    // The consistency gate: a multi-share set must be one threshold response.
+    // ---------------------------------------------------------------------------------------
+
+    /// `response`, its payload changed by `mutate` and re-signed by the same node: a share that is
+    /// perfectly authenticated and correctly linked, wrong only in the mutated metadata. The
+    /// consistency gate exists exactly for these — every per-share rule accepts them.
+    fn mutated_and_resigned(
+        mut response: UserDecryptionResponse,
+        sk: &PrivateSigKey,
+        mutate: impl FnOnce(&mut UserDecryptionResponsePayload),
+    ) -> UserDecryptionResponse {
+        let payload = response.payload.as_mut().expect("a fixture payload");
+        mutate(payload);
+        response.signature = sign(payload, sk);
+        response
+    }
+
+    #[test]
+    fn signed_zero_ciphertext_share_cannot_shape_reconstruction() {
+        // n = 4, t = 1: two distinct parties satisfy the count, so a correctly signed share with
+        // zero ciphertexts plus one honest share used to reach reconstruction, which takes the
+        // batch shape from the first payload and would release an empty plaintext list as
+        // success. The two shares do not agree on what is being released, and the gate refuses
+        // the set.
+        let mut rng = AesRng::seed_from_u64(21);
+        let (pks, sks) = node_keys(4);
+        let request = canonical_request();
+        let (dec_key, enc_key, _) = transport_key(0);
+        let (agg_resp, _) =
+            reconstructable_threshold_response(&request, &pks, &sks, &enc_key, &mut rng);
+
+        let hollow = mutated_and_resigned(agg_resp[0].clone(), &sks[0], |payload| {
+            payload.signcrypted_ciphertexts.clear();
+        });
+        let two = vec![hollow, agg_resp[1].clone()];
+
+        let client =
+            Client::new_solana(trusted(&pks), TEST_PARAM, Some(DecryptionMode::BitDecSmall));
+        let result = client.process_user_decryption_resp_solana(&request, &enc_key, &dec_key, &two);
+        assert!(
+            matches!(
+                result,
+                Err(SolanaUserDecryptionResponseError::InconsistentShares { .. })
+            ),
+            "a hollow share must fail the consistency gate, got {result:?}",
+        );
+    }
+
+    #[test]
+    fn shorter_late_share_dropped_not_indexed() {
+        // The same mutation surrounded by an honest majority: the pivot is the three consistent
+        // shares, the hollow one is dropped as disagreeing with it, and the release still
+        // reconstructs — reconstruction never indexes past the short ciphertext list, because the
+        // short list never reaches it.
+        let mut rng = AesRng::seed_from_u64(22);
+        let (pks, sks) = node_keys(4);
+        let request = canonical_request();
+        let (dec_key, enc_key, _) = transport_key(0);
+        let (mut agg_resp, expected) =
+            reconstructable_threshold_response(&request, &pks, &sks, &enc_key, &mut rng);
+
+        agg_resp[3] = mutated_and_resigned(agg_resp[3].clone(), &sks[3], |payload| {
+            payload.signcrypted_ciphertexts.clear();
+        });
+
+        let client =
+            Client::new_solana(trusted(&pks), TEST_PARAM, Some(DecryptionMode::BitDecSmall));
+        let released = client
+            .process_user_decryption_resp_solana(&request, &enc_key, &dec_key, &agg_resp)
+            .expect("three consistent shares reconstruct around the dropped one");
+        assert_eq!(released, vec![expected]);
+    }
+
+    #[test]
+    fn degree_other_than_configured_threshold_refused() {
+        // Four shares agreeing with each other on degree 2 under a four-server set: internally
+        // uniform, but not a response of the t = 1 deployment the client is configured for, and
+        // reconstruction would run Shamir under the response's own parameters.
+        let (pks, sks) = node_keys(4);
+        let request = canonical_request();
+        let agg_resp = canonical_threshold_response(&request, &pks, &sks, 2);
+
+        let result = verify_solana_user_decryption_response(&request, &trusted(&pks), &agg_resp);
+        assert!(
+            matches!(
+                result,
+                Err(SolanaUserDecryptionResponseError::InconsistentShares { .. })
+            ),
+            "a foreign degree must fail the consistency gate, got {result:?}",
+        );
+    }
+
+    #[test]
+    fn shares_disagreeing_on_degree_are_not_one_response() {
+        // Two shares, two degrees: no t + 1 of them agree on anything, so no pivot exists and
+        // neither share's shape can borrow a majority it does not have.
+        let (pks, sks) = node_keys(4);
+        let request = canonical_request();
+        let base = canonical_threshold_response(&request, &pks, &sks, 1);
+
+        let skewed = mutated_and_resigned(base[1].clone(), &sks[1], |payload| payload.degree = 2);
+        let two = vec![base[0].clone(), skewed];
+
+        let result = verify_solana_user_decryption_response(&request, &trusted(&pks), &two);
+        assert!(
+            matches!(
+                result,
+                Err(SolanaUserDecryptionResponseError::InconsistentShares { .. })
+            ),
+            "disagreeing degrees must fail the consistency gate, got {result:?}",
+        );
+    }
+
+    #[test]
+    fn shares_disagreeing_on_ciphertext_metadata_are_not_one_response() {
+        // One mutation per round — FHE type, packing factor, external handle — each re-signed, so
+        // the named field is the only inconsistency in the set. Each one changes what the shared
+        // reconstruction would do with the payload bytes, so each must refuse the set.
+        let (pks, sks) = node_keys(4);
+        let request = canonical_request();
+        let base = canonical_threshold_response(&request, &pks, &sks, 1);
+
+        let mutations = [
+            (
+                "fhe type",
+                (|payload: &mut UserDecryptionResponsePayload| {
+                    payload.signcrypted_ciphertexts[0].fhe_type = FheTypes::Uint32 as i32;
+                }) as fn(&mut UserDecryptionResponsePayload),
+            ),
+            ("packing factor", |payload| {
+                payload.signcrypted_ciphertexts[0].packing_factor = 2;
+            }),
+            ("external handle", |payload| {
+                payload.signcrypted_ciphertexts[0].external_handle = handle(0xb2);
+            }),
+        ];
+
+        for (name, mutate) in mutations {
+            let skewed = mutated_and_resigned(base[1].clone(), &sks[1], mutate);
+            let two = vec![base[0].clone(), skewed];
+
+            let result = verify_solana_user_decryption_response(&request, &trusted(&pks), &two);
+            assert!(
+                matches!(
+                    result,
+                    Err(SolanaUserDecryptionResponseError::InconsistentShares { .. })
+                ),
+                "a {name} mismatch must fail the consistency gate, got {result:?}",
+            );
+        }
+    }
+
+    #[test]
+    fn byte_identical_key_cannot_vote_under_two_party_ids() {
+        // A trusted set that (mis)registers one address under two party ids is the only way one
+        // key can pass the per-share address binding twice. The set-level rule refuses the
+        // byte-identical pair — a verification key backs at most one accepted party, so the two
+        // shares collapse to one and the response is no quorum. That rule compares the key's
+        // exact bytes, so it pins the replay case only: the same key re-encoded would slip past
+        // it, and a registry with a distinct address per party id is what rules that out.
+        let (pks, sks) = node_keys(4);
+        let request = canonical_request();
+        let link = request.expected_link().expect("a canonical request");
+
+        let mut signers = trusted(&pks);
+        signers.insert(2, pks[&1].address());
+
+        let double = vec![
+            signed_response(
+                payload(1, &pks[&1], link.clone(), 1, dummy_signcrypted()),
+                &sks[0],
+            ),
+            signed_response(payload(2, &pks[&1], link, 1, dummy_signcrypted()), &sks[0]),
+        ];
+
+        let result = verify_solana_user_decryption_response(&request, &signers, &double);
+        assert!(
+            matches!(
+                result,
+                Err(SolanaUserDecryptionResponseError::InconsistentShares { .. })
+            ),
+            "a byte-identical key under two party ids must fail the consistency gate, got {result:?}",
+        );
+    }
+
+    #[test]
+    fn gate_verifies_external_signatures_with_request_fields() {
+        // The gate re-checks signatures through the shared validation, whose external branch
+        // rebuilds the signed message from the request's transport key, extra_data and response
+        // domain. A fully external-signed threshold set passing end to end pins that the Solana
+        // request supplies those fields to the shared code exactly as an EVM request would — the
+        // liveness half of reusing the EVM validation.
+        let (pks, sks) = node_keys(4);
+        let request = canonical_request();
+        let link = request.expected_link().expect("a canonical request");
+
+        let agg_resp: Vec<UserDecryptionResponse> = sks
+            .iter()
+            .enumerate()
+            .map(|(index, sk)| {
+                let party_id = index as u32 + 1;
+                external_signed_response(
+                    &request,
+                    payload(
+                        party_id,
+                        &pks[&party_id],
+                        link.clone(),
+                        1,
+                        dummy_signcrypted(),
+                    ),
+                    sk,
+                )
+            })
+            .collect();
+
+        let verified = verify_solana_user_decryption_response(&request, &trusted(&pks), &agg_resp)
+            .expect("an external-signed threshold set passes both gates");
+        assert_eq!(party_ids(&verified), vec![1, 2, 3, 4]);
+    }
+
+    // ---------------------------------------------------------------------------------------
+    // The stable JS/WASM test vectors (`wasm_tests` builds only).
+    // ---------------------------------------------------------------------------------------
+
+    /// The Solana counterpart of the EVM transcript generation: a deterministic fixture written as
+    /// a stable JSON vector that `tests/js/test.js` drives through the *public* wasm API
+    /// (`new_solana_client` + `process_user_decryption_resp_solana_from_js`). Unlike the EVM
+    /// transcripts it needs no running KMS — the responses are built with the same seeded
+    /// primitives the host tests above use — so the shares travel exactly as the wire carries
+    /// them: no internal ECDSA signature, an EIP-712 `external_signature` only.
+    #[cfg(feature = "wasm_tests")]
+    mod wasm_transcripts {
+        use super::*;
+        use algebra::base_ring::Z128;
+        use kms_grpc::rpc_types::alloy_to_protobuf_domain;
+
+        use crate::client::user_decryption_wasm::{
+            CiphertextHandle, ParsedUserDecryptionRequest, ParsedUserDecryptionRequestHex,
+            StableExpectedPlaintext, StableServerIdAddr, UserDecryptionResponseHex,
+        };
+
+        /// The stable JSON shape `tests/js/test.js` loads for the Solana path. Like the EVM
+        /// [crate::client::user_decryption_wasm::StableUserDecryptionTestVector], every field is
+        /// encoded in the exact hex/JSON form the stable public wasm API already accepts, and the
+        /// format is append-only: new fields must be optional so an older `test.js` keeps working.
+        #[derive(serde::Serialize)]
+        struct StableSolanaUserDecryptionTestVector {
+            /// FHE parameter name accepted by `new_solana_client` (`"test"` or `"default"`).
+            fhe_parameter: String,
+            /// The registered KMS signer set, the trust anchor `new_solana_client` is built from.
+            server_addrs: Vec<StableServerIdAddr>,
+            /// The recipient's raw 32-byte ed25519 wallet key, hex.
+            solana_user_pubkey: String,
+            /// The host chain id as a decimal string: bit 63 is set, so the value does not fit a
+            /// JS number exactly and must cross the boundary as a `BigInt`.
+            host_chain_id: String,
+            /// The on-chain verifying program id, 32 bytes hex.
+            verifying_program_id: String,
+            /// The KMS context id, 32 bytes hex.
+            kms_context_id: String,
+            /// The KMS epoch id, 32 bytes hex.
+            kms_epoch_id: String,
+            /// The request in the hex shape `process_user_decryption_resp_solana_from_js` expects.
+            request: ParsedUserDecryptionRequestHex,
+            /// The EIP-712 domain the responses' external signatures were produced under.
+            eip712_domain: kms_grpc::kms::v1::Eip712DomainMsg,
+            /// The aggregated responses in hex shape: external signature only, as on the wire.
+            responses: Vec<UserDecryptionResponseHex>,
+            /// Ephemeral public encryption key, hex of `ml_kem_pke_pk_to_u8vec` (safe-serialized).
+            enc_pk: String,
+            /// Ephemeral private decryption key, hex of `ml_kem_pke_sk_to_u8vec` (bincode).
+            enc_sk: String,
+            /// Expected plaintext(s) for assertions.
+            expected: Vec<StableExpectedPlaintext>,
+        }
+
+        /// Assembles the stable vector from the very values the fixture was built from.
+        fn stable_solana_vector(
+            request: &SolanaUserDecryptionRequest,
+            pks: &HashMap<u32, PublicSigKey>,
+            agg_resp: &[UserDecryptionResponse],
+            dec_key: &UnifiedPrivateEncKey,
+            expected: &[TypedPlaintext],
+        ) -> StableSolanaUserDecryptionTestVector {
+            let mut server_addrs: Vec<StableServerIdAddr> = pks
+                .iter()
+                .map(|(id, pk)| StableServerIdAddr {
+                    id: *id,
+                    addr: pk.address().to_checksum(None),
+                })
+                .collect();
+            // A HashMap iterates in random order; the file must not change bytes between runs.
+            server_addrs.sort_by_key(|id_addr| id_addr.id);
+
+            let verifying_contract = request
+                .response_domain
+                .verifying_contract
+                .expect("the fixture domain names a verifying contract");
+            let request_hex =
+                ParsedUserDecryptionRequestHex::from(&ParsedUserDecryptionRequest::new(
+                    None,
+                    // The Solana path has no wallet address; the field is only part of the EVM-shaped
+                    // request marshalling and is ignored by the Solana rules.
+                    alloy_primitives::Address::ZERO,
+                    request.enc_key.clone(),
+                    request
+                        .handles
+                        .iter()
+                        .map(|handle| CiphertextHandle::new(handle.clone()))
+                        .collect(),
+                    verifying_contract,
+                    request.extra_data.clone(),
+                ));
+
+            StableSolanaUserDecryptionTestVector {
+                fhe_parameter: "test".to_string(),
+                server_addrs,
+                solana_user_pubkey: hex::encode(request.user_pubkey),
+                host_chain_id: request.host_chain_id.to_string(),
+                verifying_program_id: hex::encode(request.verifying_program_id),
+                kms_context_id: hex::encode(request.kms_context_id),
+                kms_epoch_id: hex::encode(request.kms_epoch_id),
+                request: request_hex,
+                eip712_domain: alloy_to_protobuf_domain(&request.response_domain)
+                    .expect("the fixture domain converts"),
+                responses: agg_resp
+                    .iter()
+                    .map(UserDecryptionResponseHex::try_from)
+                    .collect::<anyhow::Result<Vec<_>>>()
+                    .expect("responses serialize to the hex shape"),
+                enc_pk: hex::encode(&request.enc_key),
+                enc_sk: hex::encode(
+                    bc2wrap::serialize(&dec_key.clone().unwrap_ml_kem_512())
+                        .expect("serialize the ephemeral private key"),
+                ),
+                expected: expected
+                    .iter()
+                    .map(|plaintext| StableExpectedPlaintext {
+                        fhe_type: plaintext.fhe_type,
+                        plaintext_hex: hex::encode(&plaintext.bytes),
+                    })
+                    .collect(),
+            }
+        }
+
+        fn write_stable_solana_vector(path: &str, vector: &StableSolanaUserDecryptionTestVector) {
+            if let Some(parent) = std::path::Path::new(path).parent() {
+                std::fs::create_dir_all(parent).expect("create the transcript directory");
+            }
+            std::fs::write(
+                path,
+                serde_json::to_string_pretty(vector).expect("serialize the vector"),
+            )
+            .expect("write the transcript");
+        }
+
+        /// An `n = 4`, `t = 1` threshold response whose shares reconstruct under
+        /// `NoiseFloodSmall` — the decryption mode `new_solana_client` (like `new_client`)
+        /// defaults to, which is why the wasm-facing fixture cannot reuse the `BitDecSmall`
+        /// fixture of the host tests above. Under this mode a server publishes shares of the
+        /// *expanded* blocks — the block value in the top bits below one padding bit, the layout
+        /// `from_expanded_msg` inverts — packed four blocks to a residue polynomial, one
+        /// coefficient each.
+        fn reconstructable_noiseflood_threshold_response(
+            request: &SolanaUserDecryptionRequest,
+            pks: &HashMap<u32, PublicSigKey>,
+            sks: &[PrivateSigKey],
+            enc_key: &UnifiedPublicEncKey,
+            rng: &mut AesRng,
+        ) -> (Vec<UserDecryptionResponse>, TypedPlaintext) {
+            const DEGREE: usize = 1;
+            const PACKING: usize = 4;
+            let num_parties = sks.len();
+            assert_eq!(num_parties, 3 * DEGREE + 1, "the fixture is n = 3t + 1");
+
+            let link = request.expected_link().expect("a canonical request");
+            let receiver_id = SigncryptionReceiver::Solana(PUBKEY).as_bytes().to_vec();
+            let expected = TypedPlaintext::new(0xAB, FheTypes::Uint8);
+
+            let pbs = TEST_PARAM.classic_pbs();
+            let bits_in_block = pbs.message_modulus_log();
+            let total_block_bits = pbs.total_block_bits() as usize;
+            let delta_pad_bits = 128 - (total_block_bits + 1);
+            let num_blocks =
+                fhe_types_to_num_blocks(FheTypes::Uint8, &pbs, 1).expect("block count for Uint8");
+
+            // Least significant block first, in expanded form with zero noise.
+            let mut expanded_blocks = Vec::with_capacity(num_blocks);
+            let mut value = 0xABu128;
+            for _ in 0..num_blocks {
+                let block = value & ((1u128 << bits_in_block) - 1);
+                value >>= bits_in_block;
+                expanded_blocks.push(Wrapping(block << delta_pad_bits));
+            }
+
+            // One Shamir sharing per packed polynomial: party i's payload is its share of every
+            // polynomial, in order — the byte layout `recover_sharings` expects for this mode.
+            let mut per_party_polys = vec![Vec::new(); num_parties];
+            for chunk in expanded_blocks.chunks(PACKING) {
+                let mut coefs = [Wrapping(0u128); PACKING];
+                coefs[..chunk.len()].copy_from_slice(chunk);
+                let sharing = ShamirSharings::share(
+                    rng,
+                    ResiduePolyF4::<Z128>::from_array(coefs),
+                    num_parties,
+                    DEGREE,
+                )
+                .expect("share a packed block");
+                for (party_polys, share) in per_party_polys.iter_mut().zip(&sharing.shares) {
+                    party_polys.push(share.value());
+                }
+            }
+
+            let responses = per_party_polys
+                .iter()
+                .enumerate()
+                .map(|(index, polys)| {
+                    let party_id = index as u32 + 1;
+                    let serialized = bc2wrap::serialize(polys).expect("serialize the share vector");
+                    let signcrypted =
+                        UnifiedSigncryptionKey::new(&sks[index], enc_key, &receiver_id)
+                            .signcrypt_plaintext(
+                                rng,
+                                &DSEP_USER_DECRYPTION,
+                                &serialized,
+                                FheTypes::Uint8,
+                                &link,
+                            )
+                            .expect("signcrypt the share")
+                            .payload;
+                    external_signed_response(
+                        request,
+                        UserDecryptionResponsePayload {
+                            verification_key: bc2wrap::serialize(&pks[&party_id])
+                                .expect("serialize a verification key"),
+                            digest: link.clone(),
+                            signcrypted_ciphertexts: vec![TypedSigncryptedCiphertext {
+                                fhe_type: FheTypes::Uint8 as i32,
+                                signcrypted_ciphertext: signcrypted,
+                                external_handle: handle(0xa1),
+                                packing_factor: 1,
+                            }],
+                            party_id,
+                            degree: DEGREE as u32,
+                        },
+                        &sks[index],
+                    )
+                })
+                .collect();
+            (responses, expected)
+        }
+
+        /// Writes the two Solana vectors — centralized and threshold — after proving on the host
+        /// that each releases its expected plaintext through the very client configuration the JS
+        /// test will build (`new_solana_client` semantics: `"test"` parameters, the default
+        /// decryption mode). A vector that fails here is never written.
+        #[test]
+        fn test_user_decryption_solana_and_write_transcript() {
+            // Centralized: one node, one externally signed share, real signcryption.
+            let mut rng = AesRng::seed_from_u64(7);
+            let (pks, sks) = node_keys(1);
+            let request = canonical_request();
+            let link = request.expected_link().expect("a canonical request");
+            let (dec_key, enc_key, enc_key_bytes) = transport_key(0);
+            assert_eq!(request.enc_key, enc_key_bytes, "the request binds this key");
+
+            let expected = TypedPlaintext::new(42, FheTypes::Uint64);
+            let receiver_id = SigncryptionReceiver::Solana(PUBKEY).as_bytes().to_vec();
+            let signcrypted = UnifiedSigncryptionKey::new(&sks[0], &enc_key, &receiver_id)
+                .signcrypt_plaintext(
+                    &mut rng,
+                    &DSEP_USER_DECRYPTION,
+                    &expected.bytes,
+                    FheTypes::Uint64,
+                    &link,
+                )
+                .expect("signcrypt the share")
+                .payload;
+            let agg_resp = vec![external_signed_response(
+                &request,
+                payload(1, &pks[&1], link, 0, signcrypted),
+                &sks[0],
+            )];
+
+            let client = Client::new_solana(trusted(&pks), TEST_PARAM, None);
+            let released = client
+                .process_user_decryption_resp_solana(&request, &enc_key, &dec_key, &agg_resp)
+                .expect("the centralized fixture releases");
+            assert_eq!(released, vec![expected]);
+
+            write_stable_solana_vector(
+                crate::consts::TEST_SOLANA_CENTRAL_WASM_TRANSCRIPT_PATH,
+                &stable_solana_vector(&request, &pks, &agg_resp, &dec_key, &released),
+            );
+
+            // Threshold: four nodes, externally signed shares that reconstruct under the default
+            // decryption mode.
+            let mut rng = AesRng::seed_from_u64(9);
+            let (pks, sks) = node_keys(4);
+            let request = canonical_request();
+            let (dec_key, enc_key, _) = transport_key(0);
+            let (agg_resp, expected) = reconstructable_noiseflood_threshold_response(
+                &request, &pks, &sks, &enc_key, &mut rng,
+            );
+
+            let client = Client::new_solana(trusted(&pks), TEST_PARAM, None);
+            let released = client
+                .process_user_decryption_resp_solana(&request, &enc_key, &dec_key, &agg_resp)
+                .expect("the threshold fixture reconstructs");
+            assert_eq!(released, vec![expected]);
+
+            write_stable_solana_vector(
+                crate::consts::TEST_SOLANA_THRESHOLD_WASM_TRANSCRIPT_PATH,
+                &stable_solana_vector(&request, &pks, &agg_resp, &dec_key, &released),
+            );
+        }
+    }
+}
