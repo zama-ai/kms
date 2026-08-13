@@ -155,7 +155,7 @@ pub static SIGNING_KEY_ID: LazyLock<RequestId> =
 /// material for `scheme` is stored, within the `VerfKey`/`VerfAddress` data-type
 /// folders.
 #[cfg(feature = "non-wasm")]
-pub fn signing_material_id(scheme: crate::cryptography::signing::SigningSchemeType) -> RequestId {
+pub fn signing_material_id(scheme: SigningSchemeType) -> RequestId {
     match scheme {
         // Note that for compatibility and legacy reasons we keep the ECDSA/secp256k1 scheme's signing material at the historical [`SIGNING_KEY_ID`].
         SigningSchemeType::Ecdsa256k1 => *SIGNING_KEY_ID,

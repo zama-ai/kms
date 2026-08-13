@@ -31,28 +31,40 @@ subject is read from `threshold.tls_subject` when present; otherwise it is
 derived from the matching `[[threshold.peers]]` entry, preferring `mpc_identity`
 and falling back to `address`.
 
+### `[keygen]` options
+
+All three flags default to `false` and are mutually exclusive in practice —
+pick at most one per run:
+
+- `overwrite`: delete any existing signing material at the fixed signing-key
+  handle (private key, and every scheme's verification material in public
+  storage) before generating a fresh key. Required to rotate a key; without it,
+  generation fails if storage already holds material for that handle.
+- `show_existing`: print the existing signing-material handles instead of
+  generating or deleting anything.
+- `repopulate`: derive and store every scheme's verification material
+  (ECDSA's included) from the ECDSA signing key already present in private
+  storage, then exit without touching the signing key itself. Requires that
+  key to already exist, and validates any verification material already in
+  public storage against it. Use this to restore verification material after
+  a partial purge — for example, public storage was restored from a snapshot
+  that predates a signing scheme, or a per-scheme object was deleted by hand —
+  without regenerating the signing key.
+
 ### What is written to public storage
 
 A node signs with a single persisted ECDSA signing key, and the verification keys
 of the other supported signature schemes are derived from it. Every scheme's public
 material — including ECDSA's — is written to the two `Scheme*` folders below, each
-under its own scheme-specific handle:
+under its own scheme-specific handle, so that a folder holds exactly one kind of
+object and can be read whole:
 
 | Folder | Contents |
 | --- | --- |
-| `SchemeVerfKey` | One verification key per scheme, ECDSA's included, each in that scheme's own key encoding (see below). |
+| `SchemeVerfKey` | One verification key per scheme, ECDSA's included, as a scheme-tagged `UnifiedPublicSigKey`. |
 | `SchemeVerfAddress` | The digest identifying each of those keys, as `0x`-prefixed hex text. For ECDSA it is the node's Ethereum address. |
 | `VerfKey` | **Deprecated.** The node's ECDSA verification key as a bare `PublicSigKey`, under the fixed `SIGNING_KEY_ID` handle. Unchanged from earlier releases. |
 | `VerfAddress` | **Deprecated.** The matching Ethereum address (checksummed, `0x`-prefixed), under the same handle. Unchanged from earlier releases. |
-
-Each object in `SchemeVerfKey` is stored in the scheme's own key type, not in a
-scheme-tagged wrapper: a bare `PublicSigKey` for ECDSA, the raw 32-byte public key
-for ed25519 (which is also its Solana address), and the FIPS-204 `pkEncode` byte
-string for ML-DSA. A consumer that understands a single scheme can therefore decode
-that scheme's object without knowing anything about the others, and the ECDSA object
-is byte-for-byte identical to what the deprecated `VerfKey` folder holds. The scheme
-is identified by the handle, not recorded inside the object, so a reader must know
-which scheme it is fetching — the folder cannot be read whole at one type.
 
 The two deprecated folders are still written, so consumers that read the ECDSA key
 or address by handle keep working unchanged. They will be removed in a future

@@ -512,7 +512,7 @@ async fn process_signing_key_cmds<PubS: Storage, PrivS: Storage>(
         overwrite,
     )
     .await;
-    // Only delete something if we `show_existing` is false, since `show_existing` takes presidence.
+    // Only delete something if we `show_existing` is false
     if overwrite && !show_existing {
         delete_scheme_verification_material(pub_storage).await?;
     }
@@ -538,7 +538,7 @@ async fn process_cmd<S: Storage, D: fmt::Display>(
         let data_type = &dt.to_string();
         if show_existing {
             show_key(storage, data_type).await;
-            return;
+            continue;
         }
         if overwrite {
             tracing::info!(

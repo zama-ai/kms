@@ -40,8 +40,8 @@ mod kms_init_binary_test {
 
 #[cfg(test)]
 mod kms_gen_keys_binary_test {
+    use kms_lib::{consts::signing_material_id, cryptography::signatures::SigningSchemeType};
     use std::path::{Path, PathBuf};
-
     use tempfile::tempdir;
 
     use super::*;
@@ -160,6 +160,91 @@ path = "{private_path}"
         assert!(new_output.status.success());
         let new_log = String::from_utf8_lossy(&new_output.stdout);
         assert!(new_log.contains("Signing keys already exist, skipping generation"));
+
+        // A second `overwrite = true` run against the same, now-populated storage
+        // must also succeed: it has to purge the per-scheme material alongside
+        // the legacy VerfKey/VerfAddress/CACert/SigningKey handles before
+        // regenerating, or key generation would fail against its own leftovers.
+        let config_path = write_file_storage_config(
+            &config_dir,
+            temp_dir_priv.path(),
+            temp_dir_pub.path(),
+            "overwrite = true",
+            None,
+        );
+        let overwrite_again_output = kms_gen_keys_command()
+            .arg("--config-file")
+            .arg(config_path)
+            .output()
+            .unwrap();
+        assert!(
+            overwrite_again_output.status.success(),
+            "stderr: {}",
+            String::from_utf8_lossy(&overwrite_again_output.stderr)
+        );
+        let overwrite_again_log = String::from_utf8_lossy(&overwrite_again_output.stdout);
+        assert!(overwrite_again_log.contains("Deleting VerfKey under request ID"));
+        assert!(overwrite_again_log.contains(
+            "Successfully stored public centralized server signing key under the handle"
+        ));
+    }
+
+    /// `repopulate = true` restores a scheme's verification material from the
+    /// existing ECDSA signing key without needing `overwrite`, covering the case
+    /// where storage was partially purged (e.g. public storage restored without
+    /// the corresponding private-storage snapshot).
+    #[test]
+    #[integration_test]
+    fn central_repopulate_after_partial_purge() {
+        let temp_dir_priv = tempdir().unwrap();
+        let temp_dir_pub = tempdir().unwrap();
+        let config_dir = tempdir().unwrap();
+        let config_path = write_file_storage_config(
+            &config_dir,
+            temp_dir_priv.path(),
+            temp_dir_pub.path(),
+            "overwrite = true",
+            None,
+        );
+        let output = kms_gen_keys_command()
+            .arg("--config-file")
+            .arg(&config_path)
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "stderr: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+
+        let ed25519_id = signing_material_id(SigningSchemeType::Ed25519);
+        let scheme_verf_key_path = temp_dir_pub
+            .path()
+            .join("PUB/SchemeVerfKey")
+            .join(ed25519_id.to_string());
+        assert!(scheme_verf_key_path.exists());
+        fs::remove_file(&scheme_verf_key_path).unwrap();
+
+        let config_path = write_file_storage_config(
+            &config_dir,
+            temp_dir_priv.path(),
+            temp_dir_pub.path(),
+            "repopulate = true",
+            None,
+        );
+        let output = kms_gen_keys_command()
+            .arg("--config-file")
+            .arg(config_path)
+            .output()
+            .unwrap();
+        let log = String::from_utf8_lossy(&output.stdout);
+        assert!(
+            output.status.success(),
+            "stderr: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert!(log.contains("Repopulated multi-scheme verification material"));
+        assert!(scheme_verf_key_path.exists());
     }
 
     #[test]
