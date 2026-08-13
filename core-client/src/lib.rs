@@ -3494,11 +3494,7 @@ mod tests {
             key_id.into(),
         )
         .unwrap();
-        let (public_key, _server_key) = compressed_keyset
-            .clone()
-            .decompress()
-            .unwrap()
-            .into_raw_parts();
+        let (public_key, _server_key) = compressed_keyset.clone().decompress().into_raw_parts();
 
         let mut remote_storage = FileStorage::new(
             Some(remote_root.path()),

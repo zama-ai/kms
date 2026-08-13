@@ -374,9 +374,13 @@ fn spawn_public_decrypt_sync(
                 .public_decrypt_sync(tonic::Request::new(req_cloned.clone()))
                 .await;
             let mut ctr = 0_usize;
-            while response.is_err()
-                && response.as_ref().unwrap_err().code() == tonic::Code::Unavailable
-            {
+
+            // `Unavailable`: the result is not ready yet. `ResourceExhausted`: the rate limiter
+            // rejected the submission. Both are recoverable by re-sending the exact same request.
+            while matches!(
+                response.as_ref().map_err(|e| e.code()),
+                Err(tonic::Code::Unavailable | tonic::Code::ResourceExhausted)
+            ) {
                 tokio::time::sleep(Duration::from_millis(SLEEP_TIME_BETWEEN_REQUESTS_MS)).await;
                 if ctr >= max_iter {
                     anyhow::bail!(
@@ -384,8 +388,8 @@ fn spawn_public_decrypt_sync(
                     );
                 }
                 ctr += 1;
-                // Re-sending the same request attaches to the in-flight
-                // decryption instead of starting a new one.
+                // Re-sending the request attaches to the in-flight decryption instead of starting
+                // a new one.
                 response = cur_client
                     .public_decrypt_sync(tonic::Request::new(req_cloned.clone()))
                     .await;
@@ -1093,9 +1097,13 @@ fn spawn_user_decrypt_sync(
                 .user_decrypt_sync(tonic::Request::new(req_cloned.clone()))
                 .await;
             let mut ctr = 0_usize;
-            while response.is_err()
-                && response.as_ref().unwrap_err().code() == tonic::Code::Unavailable
-            {
+
+            // `Unavailable`: the result is not ready yet. `ResourceExhausted`: the rate limiter
+            // rejected the submission. Both are recoverable by re-sending the exact same request.
+            while matches!(
+                response.as_ref().map_err(|e| e.code()),
+                Err(tonic::Code::Unavailable | tonic::Code::ResourceExhausted)
+            ) {
                 tokio::time::sleep(Duration::from_millis(SLEEP_TIME_BETWEEN_REQUESTS_MS)).await;
                 if ctr >= max_iter {
                     anyhow::bail!(
@@ -1103,8 +1111,8 @@ fn spawn_user_decrypt_sync(
                     );
                 }
                 ctr += 1;
-                // Re-sending the same request attaches to the in-flight
-                // decryption instead of starting a new one.
+                // Re-sending the request attaches to the in-flight decryption instead of starting
+                // a new one.
                 response = cur_client
                     .user_decrypt_sync(tonic::Request::new(req_cloned.clone()))
                     .await;

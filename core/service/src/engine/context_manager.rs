@@ -1390,7 +1390,7 @@ mod tests {
             assert_eq!(
                 stored_context.mpc_nodes[0]
                     .scheme_digests
-                    .get(SigningSchemeType::Ecdsa256k1),
+                    .get(&SigningSchemeType::Ecdsa256k1),
                 Some(verification_key.verf_key_id().as_slice())
             );
         }
@@ -1556,7 +1556,7 @@ mod tests {
             assert_eq!(
                 stored_context.mpc_nodes[0]
                     .scheme_digests
-                    .get(SigningSchemeType::Ecdsa256k1),
+                    .get(&SigningSchemeType::Ecdsa256k1),
                 Some(verification_key.verf_key_id().as_slice())
             );
         }

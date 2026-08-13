@@ -348,10 +348,7 @@ pub async fn compute_cipher_from_stored_key(
             storage_prefix,
         )
         .await;
-        compressed_keyset
-            .decompress()
-            .expect("decompress of CompressedXofKeySet is infallible")
-            .into_raw_parts()
+        compressed_keyset.decompress().into_raw_parts()
     } else if probe.data_exists(key_id, &public_key_type).await.unwrap() {
         let pk = load_pk_from_pub_storage(pub_path, key_id, storage_prefix).await;
         let server_key: ServerKey = load_material_from_pub_storage(
