@@ -1799,9 +1799,9 @@ async fn reshare(
 
 /// Build a `CmdConfig` spanning several client config files.
 ///
-/// `execute_cmd` merges them, de-duplicating cores by address, which is how a single command
-/// reaches every party of two overlapping MPC contexts at once. The merged core list is larger
-/// than the `num_parties` of any single config, so `expect_all_responses` is off here.
+/// `execute_cmd` merges them, de-duplicating cores by address against the first config file.
+/// This is how a single command reaches every party of two overlapping MPC contexts at once.
+/// The merged core list may be larger than the `num_parties` of any single config, so `expect_all_responses` is off here.
 #[cfg(feature = "slow_tests")]
 fn cmd_config_multi(config_paths: &[&Path], command: CCCommand, max_iter: usize) -> CmdConfig {
     CmdConfig {
