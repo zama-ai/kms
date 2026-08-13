@@ -3,7 +3,7 @@ use crate::consts::{DEFAULT_EPOCH_ID, DEFAULT_MPC_CONTEXT, SIGNING_KEY_ID};
 use crate::engine::base::derive_request_id;
 use crate::engine::threshold::service::epoch_manager::EpochData;
 use crate::engine::threshold::service::session::PRSSSetupCombined;
-use crate::util::key_setup::{SchemeMaterialMode, ensure_derived_verification_material};
+use crate::util::key_setup::{SchemeMaterialMode, ensure_scheme_verification_material};
 use crate::vault::storage::crypto_material::get_core_signing_key;
 use crate::vault::storage::{
     Storage, StorageExt, StorageReader, read_context_at_id, read_versioned_at_request_id,
@@ -183,7 +183,7 @@ where
         return Ok(());
     }
     let sk = get_core_signing_key(priv_storage).await?;
-    ensure_derived_verification_material(
+    ensure_scheme_verification_material(
         pub_storage,
         &sk,
         &SIGNING_KEY_ID,
@@ -864,7 +864,7 @@ mod tests {
     use crate::cryptography::signing::SigningSchemeType;
     use crate::engine::context::{ContextInfo, NodeInfo, SchemeDigests, SoftwareVersion};
     use crate::util::key_setup::{
-        ensure_central_server_signing_keys_exist, verification_material_types,
+        SCHEME_MATERIAL_TYPES, ensure_central_server_signing_keys_exist,
     };
     use crate::vault::storage::file::FileStorage;
     use crate::vault::storage::ram::{self, RamStorage};
@@ -2966,7 +2966,7 @@ mod tests {
         // Check validation keys exist
         for scheme in SigningSchemeType::iter() {
             let id = signing_material_id(scheme);
-            for data_type in verification_material_types(scheme).map(|t| t.to_string()) {
+            for data_type in SCHEME_MATERIAL_TYPES.map(|t| t.to_string()) {
                 assert!(pub_storage.data_exists(&id, &data_type).await.unwrap());
             }
         }
@@ -3006,7 +3006,7 @@ mod tests {
         // Check validation keys exist
         for scheme in SigningSchemeType::iter() {
             let id = signing_material_id(scheme);
-            for data_type in verification_material_types(scheme).map(|t| t.to_string()) {
+            for data_type in SCHEME_MATERIAL_TYPES.map(|t| t.to_string()) {
                 assert!(pub_storage.data_exists(&id, &data_type).await.unwrap());
             }
         }
@@ -3032,7 +3032,7 @@ mod tests {
         // Check validation keys exist
         for scheme in SigningSchemeType::iter() {
             let id = signing_material_id(scheme);
-            for data_type in verification_material_types(scheme).map(|t| t.to_string()) {
+            for data_type in SCHEME_MATERIAL_TYPES.map(|t| t.to_string()) {
                 assert!(pub_storage.data_exists(&id, &data_type).await.unwrap());
             }
         }
@@ -3063,7 +3063,7 @@ mod tests {
         // Check validation keys exist
         for scheme in SigningSchemeType::iter() {
             let id = signing_material_id(scheme);
-            for data_type in verification_material_types(scheme).map(|t| t.to_string()) {
+            for data_type in SCHEME_MATERIAL_TYPES.map(|t| t.to_string()) {
                 assert!(pub_storage.data_exists(&id, &data_type).await.unwrap());
             }
         }

@@ -12,8 +12,8 @@ use kms_lib::{
     consts::SIGNING_KEY_ID,
     cryptography::attestation::make_security_module,
     util::key_setup::{
-        SchemeMaterialMode, delete_derived_verification_material,
-        ensure_central_server_signing_keys_exist, ensure_derived_verification_material,
+        SchemeMaterialMode, delete_scheme_verification_material,
+        ensure_central_server_signing_keys_exist, ensure_scheme_verification_material,
         ensure_threshold_server_signing_key_exists,
     },
     vault::{
@@ -118,7 +118,7 @@ struct KeygenConfig {
     /// Print existing signing-material handles instead of generating or deleting keys. Defaults to false.
     #[serde(default)]
     show_existing: bool,
-    /// Repopulate the non-ECDSA schemes' verification material from an existing
+    /// Repopulate every scheme's verification material, ECDSA's included, from an existing
     /// ECDSA signing key instead of generating keys. Requires the ECDSA signing
     /// key to already exist; validates any existing ECDSA verification material
     /// against it. Defaults to false.
@@ -372,7 +372,7 @@ async fn main() -> anyhow::Result<()> {
         keychain: private_keychain,
     };
 
-    // Repopulate the derived (non-ECDSA) verification material from an existing
+    // Repopulate every scheme's verification material from an existing
     // ECDSA signing key, then stop.
     if config.keygen.repopulate {
         handle_repopulate_cmd(&mut pub_storage, &priv_vault).await?;
@@ -469,17 +469,18 @@ async fn handle_threshold_cmd<PubS: Storage, PrivS: Storage>(
     Ok(())
 }
 
-/// Repopulate the non-ECDSA schemes' verification material from the existing
+/// Repopulate every scheme's verification material from the existing
 /// ECDSA signing key.
 ///
 /// Requires the ECDSA signing key to already be present in private storage;
-/// derives and stores every other scheme's public verification key and digest.
+/// derives and stores every scheme's public verification key and digest, ECDSA's
+/// included, in their canonical location.
 async fn handle_repopulate_cmd<PubS: Storage, PrivS: Storage>(
     pub_storage: &mut PubS,
     priv_storage: &PrivS,
 ) -> anyhow::Result<()> {
     let sk = get_core_signing_key(priv_storage).await?;
-    ensure_derived_verification_material(
+    ensure_scheme_verification_material(
         pub_storage,
         &sk,
         &SIGNING_KEY_ID,
@@ -513,7 +514,7 @@ async fn process_signing_key_cmds<PubS: Storage, PrivS: Storage>(
     .await;
     // Only delete something if we `show_existing` is false, since `show_existing` takes presidence.
     if overwrite && !show_existing {
-        delete_derived_verification_material(pub_storage).await?;
+        delete_scheme_verification_material(pub_storage).await?;
     }
     process_cmd(
         priv_storage,

@@ -227,8 +227,8 @@ pub enum PubDataType {
     )]
     PublicKeyMetadata,
     CRS,
-    VerfKey,     // DEPRECATED: Type for the servers public ECDSA 256k1 verification keys
-    VerfAddress, // DEPRECATED: The ethereum address of the KMS core, needed for KMS signature verification
+    VerfKey,     // DEPRECATED (superseded by [`PubDataType::SchemeVerfKey`]): Type for the servers public ECDSA 256k1 verification keys
+    VerfAddress, // DEPRECATED (superseded by [`PubDataType::SchemeVerfAddress`]): The ethereum address of the KMS core, needed for KMS signature verification
     DecompressionKey,
     CACert, // Certificate that signs TLS certificates used by MPC nodes // TODO will change in connection with #2491, also see #2723
     RecoveryMaterial, // Recovery material for the backup vault

@@ -34,19 +34,22 @@ and falling back to `address`.
 ### What is written to public storage
 
 A node signs with a single persisted ECDSA signing key, and the verification keys
-of the other supported signature schemes are derived from it. Each scheme's public
-material is written to its own data-type folder, so that every folder holds exactly
-one kind of object:
+of the other supported signature schemes are derived from it. Every scheme's public
+material — including ECDSA's — is written to the two `Scheme*` folders below, each
+under its own scheme-specific handle, so that a folder holds exactly one kind of
+object and can be read whole:
 
 | Folder | Contents |
 | --- | --- |
-| `VerfKey` | The node's ECDSA verification key, under the fixed `SIGNING_KEY_ID` handle. Unchanged from earlier releases. |
-| `VerfAddress` | The matching Ethereum address (checksummed, `0x`-prefixed), under the same handle. Unchanged from earlier releases. |
-| `SchemeVerfKey` | One derived verification key per non-ECDSA scheme, each under its own scheme-specific handle. |
-| `SchemeVerfAddress` | The digest identifying each derived verification key, as hex text. |
+| `SchemeVerfKey` | One verification key per scheme, ECDSA's included, as a scheme-tagged `UnifiedPublicSigKey`. |
+| `SchemeVerfAddress` | The digest identifying each of those keys, as `0x`-prefixed hex text. For ECDSA it is the node's Ethereum address. |
+| `VerfKey` | **Deprecated.** The node's ECDSA verification key as a bare `PublicSigKey`, under the fixed `SIGNING_KEY_ID` handle. Unchanged from earlier releases. |
+| `VerfAddress` | **Deprecated.** The matching Ethereum address (checksummed, `0x`-prefixed), under the same handle. Unchanged from earlier releases. |
 
-Consumers that already read the ECDSA key or address by handle are unaffected: the
-derived schemes never appear in the `VerfKey`/`VerfAddress` folders.
+The two deprecated folders are still written, so consumers that read the ECDSA key
+or address by handle keep working unchanged. They will be removed in a future
+release: new readers should take the ECDSA entry from `SchemeVerfKey` /
+`SchemeVerfAddress` instead.
 
 For local test/dev runs that need pre-baked FHE keys + CRS, use `generate-test-material` instead (see the `generate-test-material-*` targets in the top-level `Makefile`).
 

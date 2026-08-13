@@ -382,6 +382,15 @@ impl UnifiedPublicSigKey {
             UnifiedPublicSigKey::MlDsa87(vk) => MlDsa::digest(SigningSchemeType::MlDsa87, &vk.0),
         }
     }
+
+    /// The text form of [`Self::digest`], as stored under `SchemeVerfAddress`:
+    /// `0x`-prefixed hex.
+    pub fn address_text(&self) -> String {
+        match self {
+            UnifiedPublicSigKey::Ecdsa256k1(vk) => vk.address().to_string(), // Already includes `0x`
+            other => format!("0x{}", hex::encode(other.digest())),
+        }
+    }
 }
 
 impl HasSigningScheme for UnifiedPublicSigKey {
