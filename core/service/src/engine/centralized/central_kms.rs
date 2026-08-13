@@ -25,7 +25,9 @@ use crate::engine::validation::DSEP_USER_DECRYPTION;
 use crate::grpc::metastore_status_service::CustodianMetaStore;
 use crate::util::key_setup::FhePublicKey;
 use crate::util::meta_store::MetaStore;
-use crate::vault::storage::{StorageExt, read_all_data_from_all_epochs_versioned};
+use crate::vault::storage::{
+    StorageExt, read_all_data_from_all_epochs_versioned, select_data_from_max_epoch,
+};
 #[cfg(feature = "non-wasm")]
 use observability::conf::TelemetryConfig;
 use observability::metrics_names::OP_BOOT;
@@ -904,18 +906,18 @@ impl<
             "loaded key_info with key_ids: {:?}",
             key_info.keys().collect::<Vec<_>>()
         );
-        let public_key_info = key_info
-            .iter()
-            .map(|((id, _), info)| (id.to_owned(), info.public_key_info.to_owned()))
-            .collect();
-        let crs_info: HashMap<RequestId, CrsGenMetadata> = read_all_data_from_all_epochs_versioned(
-            &private_storage,
-            &PrivDataType::CrsInfo.to_string(),
-        )
-        .await?
-        .into_iter()
-        .map(|((req, _epoch), v)| (req, v))
-        .collect();
+        let public_key_info = select_data_from_max_epoch(
+            key_info
+                .iter()
+                .map(|((id, epoch_id), info)| ((*id, *epoch_id), info.public_key_info.clone())),
+        );
+        let crs_info: HashMap<RequestId, CrsGenMetadata> = select_data_from_max_epoch(
+            read_all_data_from_all_epochs_versioned(
+                &private_storage,
+                &PrivDataType::CrsInfo.to_string(),
+            )
+            .await?,
+        );
 
         sanity_check_crs_materials(&public_storage, &crs_info).await?;
 

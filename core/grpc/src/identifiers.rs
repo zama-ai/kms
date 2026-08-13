@@ -54,6 +54,9 @@ pub struct KeyId([u8; ID_LENGTH]);
 pub struct RequestId([u8; ID_LENGTH]);
 
 /// EpochId represents a unique identifier for an epoch/PRSS.
+///
+/// Epoch IDs are ordered chronologically by comparing their raw bytes as a
+/// big-endian integer.
 #[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize, Copy)]
 pub struct EpochId([u8; ID_LENGTH]);
 
@@ -80,6 +83,18 @@ impl PartialOrd for RequestId {
 }
 
 impl Ord for RequestId {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        self.0.cmp(&other.0)
+    }
+}
+
+impl PartialOrd for EpochId {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for EpochId {
     fn cmp(&self, other: &Self) -> std::cmp::Ordering {
         self.0.cmp(&other.0)
     }
@@ -759,5 +774,18 @@ mod tests {
         assert!(base < base_larger_2);
         assert!(base > base_smaller_1);
         assert!(base > base_smaller_2);
+    }
+
+    #[test]
+    fn epoch_id_ordering_treats_bytes_as_big_endian_integer() {
+        let lower_suffix = EpochId::try_from(1_u128).unwrap();
+        let higher_suffix = EpochId::try_from(2_u128).unwrap();
+        let higher_prefix = EpochId::from_bytes([
+            1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+            0, 0, 0,
+        ]);
+
+        assert!(lower_suffix < higher_suffix);
+        assert!(higher_suffix < higher_prefix);
     }
 }
