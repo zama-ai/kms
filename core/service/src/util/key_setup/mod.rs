@@ -38,9 +38,11 @@ use crate::consts::signing_material_id;
 use crate::cryptography::signatures::{
     PrivateSigKey, PublicSigKey, SigningSchemeType, gen_sig_keys,
 };
-use crate::cryptography::signing::UnifiedPublicSigKey;
 use crate::engine::base::compute_handle;
-use crate::vault::storage::crypto_material::{get_rng, log_data_exists, log_storage_success};
+use crate::vault::storage::crypto_material::{
+    get_rng, log_data_exists, log_storage_success, read_scheme_verification_key,
+    store_scheme_verification_key,
+};
 use crate::vault::storage::{
     Storage, StorageReader, StorageType, delete_at_request_id, file::FileStorage,
     read_all_data_versioned, read_text_at_request_id, store_text_at_request_id,
@@ -436,7 +438,6 @@ where
 
     let [verf_key_type, addr_type] = SCHEME_MATERIAL_TYPES.map(|t| t.to_string());
     for (scheme, req_id) in scheme_material_handles() {
-        // TODO I am not sure this makes sense, we are basically storing the same verfkey for every signing key type? What we actually want to store is the raw, inner verfKey for each signing schem
         let verf_key = sk.unified_verifying_key(scheme).map_err(|e| {
             anyhow_error_and_log(format!("could not derive {scheme} verification key: {e}"))
         })?;
@@ -444,7 +445,7 @@ where
         if scheme_object_should_be_written(pub_storage, &req_id, &verf_key_type, mode, scheme)
             .await?
         {
-            store_versioned_at_request_id(pub_storage, &req_id, &verf_key, &verf_key_type).await?;
+            store_scheme_verification_key(pub_storage, &req_id, &verf_key).await?;
             tracing::info!("Stored {scheme} verification key under handle {req_id}");
         }
 
@@ -498,8 +499,7 @@ async fn validate_existing_scheme_material<PubS: Storage>(
         })?;
 
         if pub_storage.data_exists(&req_id, &verf_key_type).await? {
-            let stored: UnifiedPublicSigKey =
-                pub_storage.read_data(&req_id, &verf_key_type).await?;
+            let stored = read_scheme_verification_key(pub_storage, &req_id, scheme).await?;
             if stored != expected {
                 return Err(anyhow_error_and_log(format!(
                     "stored {scheme} {verf_key_type} under the handle {req_id} does not match the \
@@ -1657,18 +1657,20 @@ mod scheme_material_tests {
     };
     use crate::consts::{SIGNING_KEY_ID, signing_material_id};
     use crate::cryptography::signatures::{PublicSigKey, gen_sig_keys};
-    use crate::cryptography::signing::{SigningSchemeType, UnifiedPublicSigKey};
-    use crate::vault::storage::crypto_material::get_core_signing_key;
+    use crate::cryptography::signing::SigningSchemeType;
+    use crate::vault::storage::crypto_material::{
+        get_core_signing_key, read_scheme_verification_key, store_scheme_verification_key,
+    };
     use crate::vault::storage::ram::RamStorage;
     use crate::vault::storage::{
-        StorageReader, read_all_data_versioned, read_text_at_request_id, store_text_at_request_id,
+        StorageReader, read_text_at_request_id, store_text_at_request_id,
         store_versioned_at_request_id,
     };
     use aes_prng::AesRng;
     use kms_grpc::RequestId;
     use kms_grpc::rpc_types::PubDataType;
     use rand::SeedableRng;
-    use std::collections::{HashMap, HashSet};
+    use std::collections::HashSet;
     use strum::IntoEnumIterator;
 
     /// `Generate` writes every scheme's verification key and digest, ECDSA's
@@ -1693,8 +1695,9 @@ mod scheme_material_tests {
             let id = signing_material_id(scheme);
             let expected = sk.unified_verifying_key(scheme).unwrap();
 
-            let stored_vk: UnifiedPublicSigKey =
-                pub_storage.read_data(&id, &verf_key_type).await.unwrap();
+            let stored_vk = read_scheme_verification_key(&pub_storage, &id, scheme)
+                .await
+                .unwrap();
             assert_eq!(stored_vk, expected, "{scheme:?} verf key mismatch");
 
             let stored_addr = read_text_at_request_id(&pub_storage, &id, &addr_type)
@@ -1714,11 +1717,11 @@ mod scheme_material_tests {
         // ECDSA's entry is the scheme-tagged key, and its text is the very same
         // Ethereum address the deprecated location holds.
         let ecdsa_id = signing_material_id(SigningSchemeType::Ecdsa256k1);
-        let stored_ecdsa: UnifiedPublicSigKey = pub_storage
+        let stored_ecdsa: PublicSigKey = pub_storage
             .read_data(&ecdsa_id, &verf_key_type)
             .await
             .unwrap();
-        assert!(matches!(stored_ecdsa, UnifiedPublicSigKey::Ecdsa256k1(_)));
+        assert_eq!(stored_ecdsa, sk.verf_key());
         assert_eq!(
             read_text_at_request_id(&pub_storage, &ecdsa_id, &addr_type)
                 .await
@@ -1800,11 +1803,10 @@ mod scheme_material_tests {
         .await
         .unwrap();
         for scheme in SigningSchemeType::iter() {
-            let [verf_key_type, _] = SCHEME_MATERIAL_TYPES.map(|t| t.to_string());
-            let stored_vk: UnifiedPublicSigKey = pub_storage
-                .read_data(&signing_material_id(scheme), &verf_key_type)
-                .await
-                .unwrap();
+            let stored_vk =
+                read_scheme_verification_key(&pub_storage, &signing_material_id(scheme), scheme)
+                    .await
+                    .unwrap();
             assert_eq!(stored_vk, sk_new.unified_verifying_key(scheme).unwrap());
         }
     }
@@ -1852,9 +1854,10 @@ mod scheme_material_tests {
         }
     }
 
-    /// Each data-type folder holds exactly one kind of object
+    /// The canonical folders hold exactly one handle per scheme, and each object is
+    /// that scheme's own native verification key type.
     #[tokio::test]
-    async fn material_folders_hold_a_single_object_type() {
+    async fn scheme_folders_hold_one_native_object_per_scheme() {
         let mut pub_storage = RamStorage::new();
         let mut priv_storage = RamStorage::new();
 
@@ -1885,45 +1888,48 @@ mod scheme_material_tests {
             .await
             .unwrap();
 
-        // The canonical folders hold one object per scheme, all of the same type, so
-        // reading the whole folder at that type succeeds.
-        let stored: HashMap<RequestId, UnifiedPublicSigKey> =
-            read_all_data_versioned(&pub_storage, &PubDataType::SchemeVerfKey.to_string())
-                .await
-                .unwrap();
+        // Both canonical folders hold exactly one handle per scheme.
+        let [verf_key_type, addr_type] = SCHEME_MATERIAL_TYPES.map(|t| t.to_string());
+        let expected_ids = SigningSchemeType::iter()
+            .map(signing_material_id)
+            .collect::<HashSet<RequestId>>();
         assert_eq!(
-            stored.keys().copied().collect::<HashSet<RequestId>>(),
-            SigningSchemeType::iter()
-                .map(signing_material_id)
-                .collect::<HashSet<RequestId>>(),
+            pub_storage.all_data_ids(&verf_key_type).await.unwrap(),
+            expected_ids,
             "the verification keys are not exactly one per scheme"
         );
         assert_eq!(
-            stored
-                .values()
-                .filter(|vk| matches!(vk, UnifiedPublicSigKey::Ecdsa256k1(_)))
-                .count(),
-            1,
-            "the ECDSA identity is missing from its canonical location"
+            pub_storage.all_data_ids(&addr_type).await.unwrap(),
+            expected_ids,
+            "the digests are not exactly one per scheme"
         );
 
-        let addresses = pub_storage
-            .all_data_ids(&PubDataType::SchemeVerfAddress.to_string())
+        // Each object is stored in its scheme's own key type, so it only decodes when
+        // read as that scheme — the handle, not the object, carries the scheme.
+        let sk = get_core_signing_key(&priv_storage).await.unwrap();
+        for scheme in SigningSchemeType::iter() {
+            let stored =
+                read_scheme_verification_key(&pub_storage, &signing_material_id(scheme), scheme)
+                    .await
+                    .unwrap();
+            assert_eq!(
+                stored,
+                sk.unified_verifying_key(scheme).unwrap(),
+                "{scheme} key is not stored in its own native type"
+            );
+        }
+
+        // Both locations describe the same ECDSA identity, and the canonical one holds
+        // the bare `PublicSigKey` the deprecated one holds — not a tagged wrapper.
+        assert_eq!(legacy_ecdsa_vk, sk.verf_key());
+        let canonical_ecdsa: PublicSigKey = pub_storage
+            .read_data(
+                &signing_material_id(SigningSchemeType::Ecdsa256k1),
+                &verf_key_type,
+            )
             .await
             .unwrap();
-        assert_eq!(
-            addresses,
-            stored.keys().copied().collect::<HashSet<RequestId>>()
-        );
-
-        // Both locations describe the same identity.
-        let sk = get_core_signing_key(&priv_storage).await.unwrap();
-        assert_eq!(legacy_ecdsa_vk, sk.verf_key());
-        assert_eq!(
-            stored[&signing_material_id(SigningSchemeType::Ecdsa256k1)],
-            sk.unified_verifying_key(SigningSchemeType::Ecdsa256k1)
-                .unwrap()
-        );
+        assert_eq!(canonical_ecdsa, legacy_ecdsa_vk);
     }
 
     /// `Populate` fails loudly if the stored ECDSA verification key does not
@@ -1961,8 +1967,6 @@ mod scheme_material_tests {
     /// left behind by a previous signing key is never silently kept, wherever it sits.
     #[tokio::test]
     async fn populate_rejects_mismatched_verf_key_of_any_scheme() {
-        let [verf_key_type, _] = SCHEME_MATERIAL_TYPES.map(|t| t.to_string());
-
         for scheme in SigningSchemeType::iter() {
             let mut rng = AesRng::seed_from_u64(12);
             let (_pk_a, sk_a) = gen_sig_keys(&mut rng);
@@ -1970,11 +1974,10 @@ mod scheme_material_tests {
             let mut pub_storage = RamStorage::new();
 
             // Publish this scheme's key as derived from a *different* signing key.
-            store_versioned_at_request_id(
+            store_scheme_verification_key(
                 &mut pub_storage,
                 &signing_material_id(scheme),
                 &sk_b.unified_verifying_key(scheme).unwrap(),
-                &verf_key_type,
             )
             .await
             .unwrap();

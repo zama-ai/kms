@@ -524,10 +524,11 @@ fn test_public_sig_key(
     }
 }
 
-/// Every signature scheme's persisted [`UnifiedPublicSigKey`] (the `VerfKey`
-/// form) still deserializes and matches the key derived from the same seeded
-/// signing key. The primary file carries the ECDSA variant; one auxiliary file
-/// per non-ECDSA scheme carries that scheme's variant.
+/// Every signature scheme's [`UnifiedPublicSigKey`] still deserializes and matches
+/// the key derived from the same seeded signing key. The primary file carries the
+/// ECDSA variant; one auxiliary file per non-ECDSA scheme carries that scheme's
+/// variant. Note that public storage persists each scheme's *own* key type, not this
+/// wrapper, so this pins the versioning of the enum rather than a storage format.
 fn test_unified_public_sig_key(
     dir: &Path,
     test: &UnifiedPublicSigKeyTest,

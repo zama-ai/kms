@@ -36,15 +36,23 @@ and falling back to `address`.
 A node signs with a single persisted ECDSA signing key, and the verification keys
 of the other supported signature schemes are derived from it. Every scheme's public
 material — including ECDSA's — is written to the two `Scheme*` folders below, each
-under its own scheme-specific handle, so that a folder holds exactly one kind of
-object and can be read whole:
+under its own scheme-specific handle:
 
 | Folder | Contents |
 | --- | --- |
-| `SchemeVerfKey` | One verification key per scheme, ECDSA's included, as a scheme-tagged `UnifiedPublicSigKey`. |
+| `SchemeVerfKey` | One verification key per scheme, ECDSA's included, each in that scheme's own key encoding (see below). |
 | `SchemeVerfAddress` | The digest identifying each of those keys, as `0x`-prefixed hex text. For ECDSA it is the node's Ethereum address. |
 | `VerfKey` | **Deprecated.** The node's ECDSA verification key as a bare `PublicSigKey`, under the fixed `SIGNING_KEY_ID` handle. Unchanged from earlier releases. |
 | `VerfAddress` | **Deprecated.** The matching Ethereum address (checksummed, `0x`-prefixed), under the same handle. Unchanged from earlier releases. |
+
+Each object in `SchemeVerfKey` is stored in the scheme's own key type, not in a
+scheme-tagged wrapper: a bare `PublicSigKey` for ECDSA, the raw 32-byte public key
+for ed25519 (which is also its Solana address), and the FIPS-204 `pkEncode` byte
+string for ML-DSA. A consumer that understands a single scheme can therefore decode
+that scheme's object without knowing anything about the others, and the ECDSA object
+is byte-for-byte identical to what the deprecated `VerfKey` folder holds. The scheme
+is identified by the handle, not recorded inside the object, so a reader must know
+which scheme it is fetching — the folder cannot be read whole at one type.
 
 The two deprecated folders are still written, so consumers that read the ECDSA key
 or address by handle keep working unchanged. They will be removed in a future

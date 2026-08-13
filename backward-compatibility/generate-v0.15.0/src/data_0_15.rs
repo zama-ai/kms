@@ -651,7 +651,7 @@ impl KmsV0_15_0 {
         let mut rng = AesRng::seed_from_u64(UNIFIED_PUBLIC_SIG_KEY_TEST.state);
         let (_public_sig_key, sig_key) = gen_sig_keys(&mut rng);
 
-        // Primary file: the ECDSA variant of the persisted `VerfKey`.
+        // Primary file: the ECDSA variant.
         let ecdsa_vk: UnifiedPublicSigKey = sig_key
             .unified_verifying_key(SigningSchemeType::Ecdsa256k1)
             .unwrap();

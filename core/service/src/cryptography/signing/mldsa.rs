@@ -73,8 +73,10 @@ impl<P: MlDsaParams> MlDsa<P> {
 /// parameter set `P`.
 ///
 /// Serializes as the fixed-size FIPS-204 `pkEncode` byte string (the same
-/// encoding [`MlDsa::digest`] hashes). Exists so [`super::UnifiedPublicSigKey`]
-/// can be versioned and stored in an externally compatible manner.
+/// encoding [`MlDsa::digest`] hashes). This is the object persisted for the ML-DSA
+/// schemes, so a consumer needs only the FIPS-204 encoding — not the
+/// [`super::UnifiedPublicSigKey`] tagged union — to read a node's published ML-DSA
+/// identity.
 pub struct MlDsaVerfKey<P: MlDsaParams>(pub(crate) MlDsaVerifyingKey<P>);
 
 impl<P: MlDsaParams> Clone for MlDsaVerfKey<P> {

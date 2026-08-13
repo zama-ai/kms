@@ -118,8 +118,9 @@ impl TestType for PublicSigKeyTest {
 
 // KMS test
 /// Backward-compatibility metadata for the scheme-tagged verification key
-/// [`UnifiedPublicSigKey`] (the persisted `VerfKey` form for every signature
-/// scheme).
+/// [`UnifiedPublicSigKey`], the in-memory form a verification key of any signature
+/// scheme takes. Public storage holds each scheme's own key type rather than this
+/// wrapper, so this covers the versioning of the enum itself.
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct UnifiedPublicSigKeyTest {
     pub test_filename: Cow<'static, str>,

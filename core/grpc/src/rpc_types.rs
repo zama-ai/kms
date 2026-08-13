@@ -233,10 +233,9 @@ pub enum PubDataType {
     CACert, // Certificate that signs TLS certificates used by MPC nodes // TODO will change in connection with #2491, also see #2723
     RecoveryMaterial, // Recovery material for the backup vault
     CompressedXofKeySet, // Compressed xof keyset
-    /// The public verification keys of a signature scheme.
+    /// A signature scheme's public verification key, holding one object per scheme.
     SchemeVerfKey,
     /// The digest identifying a [`PubDataType::SchemeVerfKey`], stored as text.
-    /// For ECDSA this is exactly the Ethereum address.
     SchemeVerfAddress,
 }
 
