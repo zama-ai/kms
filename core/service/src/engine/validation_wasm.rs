@@ -1054,43 +1054,44 @@ mod tests {
         // signature check: `degree`, `digest`, `fhe_type`, etc. are all part of the signed payload, so
         // mutating them *after* signing would silently reject the response at authentication rather
         // than where the test intends.
-        let make_signed_resp = |party_id: u32, tweak: &dyn Fn(&mut UserDecryptionResponsePayload)| {
-            let sk = match party_id {
-                1 => &sk1,
-                2 => &sk2,
-                3 => &sk3,
-                4 => &sk4,
-                _ => panic!("unsupported party_id {party_id} in make_signed_resp"),
+        let make_signed_resp =
+            |party_id: u32, tweak: &dyn Fn(&mut UserDecryptionResponsePayload)| {
+                let sk = match party_id {
+                    1 => &sk1,
+                    2 => &sk2,
+                    3 => &sk3,
+                    4 => &sk4,
+                    _ => panic!("unsupported party_id {party_id} in make_signed_resp"),
+                };
+                let mut payload = UserDecryptionResponsePayload {
+                    verification_key: bc2wrap::serialize(&pks[&party_id]).unwrap(),
+                    digest: digest.clone(),
+                    signcrypted_ciphertexts: vec![TypedSigncryptedCiphertext {
+                        fhe_type: tfhe::FheTypes::Uint4 as i32,
+                        signcrypted_ciphertext: vec![1, 2, 3, 4],
+                        external_handle: ciphertext_handle.clone(),
+                        packing_factor: 1,
+                    }],
+                    party_id,
+                    degree: 1,
+                };
+                tweak(&mut payload);
+                let external_signature = compute_external_user_decrypt_signature(
+                    sk,
+                    &payload,
+                    &dummy_domain,
+                    client_request.enc_key(),
+                    &[],
+                )
+                .unwrap();
+                UserDecryptionResponse {
+                    signature: vec![],
+                    signatures: vec![],
+                    external_signature,
+                    payload: Some(payload),
+                    extra_data: vec![],
+                }
             };
-            let mut payload = UserDecryptionResponsePayload {
-                verification_key: bc2wrap::serialize(&pks[&party_id]).unwrap(),
-                digest: digest.clone(),
-                signcrypted_ciphertexts: vec![TypedSigncryptedCiphertext {
-                    fhe_type: tfhe::FheTypes::Uint4 as i32,
-                    signcrypted_ciphertext: vec![1, 2, 3, 4],
-                    external_handle: ciphertext_handle.clone(),
-                    packing_factor: 1,
-                }],
-                party_id,
-                degree: 1,
-            };
-            tweak(&mut payload);
-            let external_signature = compute_external_user_decrypt_signature(
-                sk,
-                &payload,
-                &dummy_domain,
-                client_request.enc_key(),
-                &[],
-            )
-            .unwrap();
-            UserDecryptionResponse {
-                signature: vec![],
-                signatures: vec![],
-                external_signature,
-                payload: Some(payload),
-                extra_data: vec![],
-            }
-        };
 
         let resp1 = make_signed_resp(1, &|_| {});
 
