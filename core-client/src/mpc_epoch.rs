@@ -163,7 +163,7 @@ pub(crate) async fn do_new_epoch(
     if cmd_conf.expect_all_responses {
         // One response per core we talked to. This is normally `num_parties`, but a resharing
         // that moves a key to a *different* party set is driven from a config spanning both
-        // contexts, so the core list is then larger than either context's party count.
+        // contexts, so the core list may be then larger than either context's party count.
         let expected_responses = core_endpoints.len();
         anyhow::ensure!(
             results.len() == expected_responses,
