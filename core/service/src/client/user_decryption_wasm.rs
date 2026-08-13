@@ -356,7 +356,7 @@ impl Client {
         let res = match self.decryption_mode {
             DecryptionMode::BitDecSmall => {
                 // Note: We will create way too many shares here, if we use BitDec kind of decryption we can actually fit 4*64 bits of actual data in a single share.
-                //TODO: For now we don't use intra share packing for BitDecSmall
+                //For now we don't use intra share packing for BitDecSmall
                 let partitioned =
                     self.partition_user_decrypt_responses::<Z64>(&ctx, agg_resp, enc_key, dec_key)?;
                 let per_slot = match partitioned.reconstruct_all_slots(&pbs_params, 1)? {
