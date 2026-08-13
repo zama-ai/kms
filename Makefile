@@ -75,6 +75,10 @@ backward-snapshot-check:
 backward-snapshot-report:
 	./ci/scripts/backward_snapshot.sh report --base-ref "$(BASE_REF)" --output "$(OUTPUT_FILE)"
 
+# Rewrite the committed Solana linker vector set and its digest from the canonical binding.
+generate-solana-linker-vectors:
+	ZAMA_UPDATE_SOLANA_LINKER_VECTORS=1 cargo test -p kms-grpc --test solana_linker_vectors
+
 # Test material generation targets
 generate-test-material-all:
 	cargo run -p generate-test-material -- --output ./test-material --verbose --profile insecure --parties 4
