@@ -86,6 +86,8 @@ pub(crate) enum UserDecRejectReason {
     /// disagreement with the consensus, ...); the fine-grained reason is logged as the response is
     /// dropped.
     FailedValidation,
+    /// Two responses from the same role were accepted; the first one is kept, the subsequent ones are dropped.
+    DuplicateRole,
     /// Authenticated, but a signcryption could not be un-signcrypted or its inner bytes could not be
     /// decoded during recovery — so it is not a fully-verified accepted response.
     Unrecoverable,
@@ -296,106 +298,34 @@ where
         .map(|(key, _)| key)
 }
 
-fn find_most_common_invariants_udec(
-    min_occurence: usize,
-    agg_resp: &[UserDecryptionResponse],
-) -> Option<UserDecryptionInvariants> {
-    let iter = agg_resp.iter().map(|resp| resp.payload.as_ref());
-    select_most_common::<_, UserDecryptionInvariants>(min_occurence, iter)
-}
-
-/// Classify a single (untrusted) user-decryption response against the consensus `invariants`.
+/// Validate the aggregated (untrusted) user-decryption responses and partition them into
+/// authenticated / rejected against the consensus invariants.
 ///
-/// Mirrors `classify_public_decrypt_response` on the public side: it is **infallible w.r.t. the
-/// response content** — every failure mode is a
-/// typed [`UserDecRejectReason`], never a propagated error, so no single response can abort the
-/// batch.
+/// The flow is deliberately **authenticate → agree → match**, so that consensus can never be
+/// skewed by duplicate or unauthenticated responses:
+/// 1. Authenticate every response (identity + signature) and keep at most one payload per role.
+/// 2. Establish the consensus invariants by majority vote over those authenticated, de-duplicated
+///    payloads only — a Byzantine party gets exactly one vote, not one per copy it sends, and
+///    unauthenticated payloads never get to vote at all.
+/// 3. Discard every authenticated payload that does not match the consensus invariants.
 ///
-/// On success it returns the authenticated response — the (cloned) payload together with its
-/// verification key deserialized once — ready to be un-signcrypted by the client.
-fn classify_user_decrypt_response(
-    trusted_ctx: &UserDecTrustedValidationContext,
-    invariants: &UserDecryptionInvariants,
-    cur_resp: &UserDecryptionResponse,
-) -> Result<AuthenticatedUserDecResponse, UserDecRejectReason> {
-    let Some(cur_payload) = &cur_resp.payload else {
-        tracing::warn!("No payload in current response from server!");
-        return Err(UserDecRejectReason::MissingPayload);
-    };
-
-    // Does this response carry exactly the agreed-upon invariants? This single equality subsumes the
-    // per-slot fhe_type, packing factor, slot count, digest/link and degree checks — they are all
-    // just the fields of `UserDecryptionInvariants`.
-    match UserDecryptionInvariants::try_from(cur_payload.clone()) {
-        Ok(resp_invariants) if &resp_invariants == invariants => {}
-        Ok(_) => {
-            tracing::warn!(
-                "Response from party {} does not match the consensus invariants",
-                cur_payload.party_id
-            );
-            return Err(UserDecRejectReason::FailedValidation);
-        }
-        Err(e) => {
-            tracing::warn!(
-                "Could not build invariants for party {}: {e}",
-                cur_payload.party_id
-            );
-            return Err(UserDecRejectReason::FailedValidation);
-        }
-    }
-
-    // Authenticate the response (identity + signature). The verified role and verification key
-    // is returned so we can carry it to the client without re-parsing.
-    let eip712_params = Eip712VerificationParams {
-        response_external_signature: &cur_resp.external_signature,
-        response_extra_data: &cur_resp.extra_data,
-        trusted_eip712_domain: trusted_ctx.eip712_domain,
-    };
-    // The deprecated scalar `signature` field carries the raw internal ECDSA
-    // signature over the serialized payload.
-    // TODO(0.16) verify `signatures` and drop the two deprecated fields.
-    let (verification_key, role) = match authenticate_user_decrypt_and_check_meta_data(
-        trusted_ctx,
-        cur_payload,
-        &cur_resp.signature,
-        &eip712_params,
-    ) {
-        Ok(key) => key,
-        Err(e) => {
-            tracing::warn!(
-                "User decryption validation failed for party {} with error: {e:?}",
-                cur_payload.party_id
-            );
-            return Err(UserDecRejectReason::FailedValidation);
-        }
-    };
-
-    Ok(AuthenticatedUserDecResponse {
-        verification_key,
-        role,
-        signcrypted_ciphertexts: cur_payload
-            .signcrypted_ciphertexts
-            .iter()
-            .map(|ct| ct.signcrypted_ciphertext.clone())
-            .collect(),
-    })
-}
-
-/// Validates individual user decryption responses against the consensus invariants,
-/// checking metadata consistency, signatures, and degree constraints.
+/// It is **infallible w.r.t. any individual response's content**: every per-response failure is a
+/// typed [`UserDecRejectReason`] pushed to `rejected`, never a propagated error, so no single
+/// response can abort the batch.
 ///
 /// # Arguments
 /// * `trusted_ctx` — Trusted client-side configuration and request.
 /// * `agg_resp` — Untrusted aggregated server responses received over the network.
 ///
 /// # Returns
-/// * `Ok(verified)` — More than `degree` responses passed validation; `verified` carries the
-///   consensus invariants, the payloads that passed,
-///   and the typed rejections for those that were dropped, so the caller never has to recompute
-///   which responses failed.
-/// * `Err(_)` — An unrecoverable error occurred during validation
+/// * `Ok(verified)` — More than `degree` responses passed; `verified` carries the consensus
+///   invariants, the authenticated responses, and the typed rejections for everything that was
+///   dropped, so the caller never has to recompute which responses failed.
+/// * `Err(_)` — A batch-level error (no responses, no configured servers, no pivot, failed sanity
+///   check, or fewer than `degree + 1` authenticated responses).
 ///
-/// __NOTE__: Order of responses in `agg_resp` is not preserved in the returned `verified.authenticated` or `verified.rejected` vectors. The caller should not rely on any ordering.
+/// __NOTE__: the caller should not rely on the ordering of `verified.authenticated` /
+/// `verified.rejected`.
 pub(crate) fn validate_user_decrypt_responses(
     trusted_ctx: &UserDecTrustedValidationContext,
     agg_resp: &[UserDecryptionResponse],
@@ -407,40 +337,110 @@ pub(crate) fn validate_user_decrypt_responses(
         anyhow::bail!("No servers configured in trusted user decryption context");
     }
 
-    // Pick a pivot response
+    // We need t+1 authenticated responses at least to find the pivot.
     let min_occurence = trusted_ctx
         .threshold
         .checked_add(1)
-        .ok_or_else(|| anyhow::anyhow!("Invalid user decryption threshold: overflow"))?; // We need t+1 responses at least to find the pivot response.
+        .ok_or_else(|| anyhow::anyhow!("Invalid user decryption threshold: overflow"))?;
 
-    // Select the pivot: `find_most_common_invariants_udec` returns the consensus invariants directly (the
-    // vote key *is* the invariants), so there is no separate "establish from the pivot payload" step.
-    let invariants = match find_most_common_invariants_udec(min_occurence, agg_resp) {
+    let mut rejected = Vec::new();
+
+    // (1) Authenticate every response (identity + signature) and keep at most one payload per role.
+    //     Doing this *before* consensus means the pivot vote in (2) is taken over distinct,
+    //     authenticated parties only: a Byzantine party cannot skew the consensus by sending many
+    //     copies of a bogus payload (copies collapse to a single role here), and unauthenticated
+    //     payloads never get to vote at all.
+    let mut seen_roles = HashSet::new();
+    let mut authenticated_payloads: Vec<(PublicSigKey, Role, &UserDecryptionResponsePayload)> =
+        Vec::with_capacity(agg_resp.len());
+    for cur_resp in agg_resp {
+        let Some(payload) = cur_resp.payload.as_ref() else {
+            tracing::warn!("No payload in current response from server!");
+            rejected.push(RejectedUserDecResponse {
+                role: None,
+                reason: UserDecRejectReason::MissingPayload,
+            });
+            continue;
+        };
+        let eip712_params = Eip712VerificationParams {
+            response_external_signature: &cur_resp.external_signature,
+            response_extra_data: &cur_resp.extra_data,
+            trusted_eip712_domain: trusted_ctx.eip712_domain,
+        };
+        // The deprecated scalar `signature` field carries the raw internal ECDSA signature over the
+        // serialized payload.
+        // TODO(0.16) verify `signatures` and drop the two deprecated fields.
+        let (verification_key, role) = match authenticate_user_decrypt_and_check_meta_data(
+            trusted_ctx,
+            payload,
+            &cur_resp.signature,
+            &eip712_params,
+        ) {
+            Ok(key) => key,
+            Err(e) => {
+                tracing::warn!(
+                    "User decryption authentication failed for party {} with error: {e:?}",
+                    payload.party_id
+                );
+                rejected.push(RejectedUserDecResponse {
+                    role: None,
+                    reason: UserDecRejectReason::FailedValidation,
+                });
+                continue;
+            }
+        };
+        if !seen_roles.insert(role) {
+            tracing::warn!(
+                "Duplicate response from role {role:?} in user decryption, keeping the first one we saw"
+            );
+            rejected.push(RejectedUserDecResponse {
+                role: Some(role),
+                reason: UserDecRejectReason::DuplicateRole,
+            });
+            continue;
+        }
+        authenticated_payloads.push((verification_key, role, payload));
+    }
+
+    // (2) Establish the consensus invariants by majority vote over the authenticated, de-duplicated
+    //     payloads only (the vote key *is* the invariants). A payload whose invariants cannot even
+    //     be built is skipped from the tally and then rejected in (3).
+    let invariants = match select_most_common::<_, UserDecryptionInvariants>(
+        min_occurence,
+        authenticated_payloads
+            .iter()
+            .map(|(_, _, payload)| Some(*payload)),
+    ) {
         Some(inner) => inner,
         None => anyhow::bail!("Cannot find user decryption pivot"),
     };
     invariants.sanity_check(trusted_ctx)?;
 
-    let mut authenticated = HashMap::with_capacity(agg_resp.len());
-    let mut rejected = Vec::new();
-
-    // Sanity check: ensure that no two responses from the same role are accepted.
-    for cur_resp in agg_resp {
-        match classify_user_decrypt_response(trusted_ctx, &invariants, cur_resp) {
-            Ok(authenticated_resp) => {
-                if let std::collections::hash_map::Entry::Vacant(e) =
-                    authenticated.entry(authenticated_resp.role)
-                {
-                    e.insert(authenticated_resp);
-                } else {
-                    tracing::warn!(
-                        "Duplicate response from role {:?} in user decryption, keeping the first one we saw",
-                        authenticated_resp.role
-                    );
-                }
+    // (3) Keep only the authenticated responses whose payload matches the consensus invariants. This
+    //     single equality subsumes the per-slot fhe_type, packing factor, slot count, digest/link
+    //     and degree checks — they are all just the fields of `UserDecryptionInvariants`.
+    let mut authenticated = Vec::with_capacity(authenticated_payloads.len());
+    for (verification_key, role, payload) in authenticated_payloads {
+        match UserDecryptionInvariants::try_from(payload.clone()) {
+            Ok(resp_invariants) if resp_invariants == invariants => {
+                authenticated.push(AuthenticatedUserDecResponse {
+                    verification_key,
+                    role,
+                    signcrypted_ciphertexts: payload
+                        .signcrypted_ciphertexts
+                        .iter()
+                        .map(|ct| ct.signcrypted_ciphertext.clone())
+                        .collect(),
+                });
             }
-            Err(reason) => {
-                rejected.push(RejectedUserDecResponse { role: None, reason });
+            _ => {
+                tracing::warn!(
+                    "Response from role {role:?} does not match the consensus invariants"
+                );
+                rejected.push(RejectedUserDecResponse {
+                    role: Some(role),
+                    reason: UserDecRejectReason::FailedValidation,
+                });
             }
         }
     }
@@ -450,7 +450,7 @@ pub(crate) fn validate_user_decrypt_responses(
     }
     Ok(AuthenticatedUserDecResponses {
         invariants,
-        authenticated: authenticated.into_values().collect(),
+        authenticated,
         rejected,
     })
 }
@@ -583,20 +583,19 @@ mod tests {
         dummy_domain,
         engine::{
             base::sign_user_decryption_result,
-            validation::ERR_VALIDATE_USER_DECRYPTION_MISMATCH_EXTRA_DATA,
+            validation::{ERR_VALIDATE_USER_DECRYPTION_MISMATCH_EXTRA_DATA, select_most_common},
             validation_wasm::{
                 ERR_EXT_USER_DECRYPTION_SIG_VERIFICATION_FAILURE,
                 ERR_VALIDATE_USER_DECRYPTION_ID_NOT_FOUND, ERR_VALIDATE_USER_DECRYPTION_NO_RESP,
                 ERR_VALIDATE_USER_DECRYPTION_WRONG_ADDRESS,
-                authenticate_user_decrypt_and_check_meta_data, find_most_common_invariants_udec,
+                authenticate_user_decrypt_and_check_meta_data,
             },
         },
     };
 
     use super::{
         DSEP_USER_DECRYPTION, ERR_VALIDATE_USER_DECRYPTION_MISSING_SIGNATURE,
-        ERR_VALIDATE_USER_DECRYPTION_NOT_ENOUGH_RESP, Eip712VerificationParams,
-        UserDecTrustedValidationContext, UserDecryptionInvariants,
+        Eip712VerificationParams, UserDecTrustedValidationContext, UserDecryptionInvariants,
         check_ext_user_decryption_signature, validate_user_decrypt_responses,
     };
 
@@ -1372,9 +1371,9 @@ mod tests {
             run_with_customized_resp2(3, digest.clone(), &vk, 1);
         }
 
-        // not enough correct responses: exactly `degree` valid ones should error
-        // resp1 is valid but bad_resp2 fails signature check due to wrong extra_data,
-        // leaving only 1 valid response which equals degree (1), triggering the bail
+        // not enough correct responses: bad_resp2 fails the signature check (wrong extra_data), so
+        // it is never authenticated and therefore does not count toward the consensus quorum. That
+        // leaves only resp1 as an authenticated voter — fewer than the t+1 = 2 needed for a pivot.
         {
             let mut bad_resp2 = resp2.clone();
             bad_resp2.extra_data = vec![0];
@@ -1384,15 +1383,14 @@ mod tests {
                 validate_user_decrypt_responses(&trusted_ctx, &agg_resp)
                     .unwrap_err()
                     .to_string()
-                    .contains(ERR_VALIDATE_USER_DECRYPTION_NOT_ENOUGH_RESP)
+                    .contains("Cannot find user decryption pivot")
             );
         }
 
-        // Duplicate party IDs: resp1 and bad_resp2 have the same party ID, so only 1 valid response is counted
+        // Duplicate party IDs: resp1 and bad_resp2 are duplicates, so only 1 valid response is counted
         // resp2 is valid, so we should have 2 valid responses in total, which is enough for degree=1
         {
-            let mut bad_resp2 = resp2.clone();
-            bad_resp2.payload.as_mut().unwrap().party_id = 1; // same as resp1
+            let mut bad_resp2 = resp1.clone();
             let agg_resp = vec![resp1.clone(), bad_resp2, resp2.clone()];
 
             assert_eq!(
@@ -1564,6 +1562,14 @@ mod tests {
                 2
             );
         }
+    }
+
+    fn find_most_common_invariants_udec(
+        min_occurence: usize,
+        agg_resp: &[UserDecryptionResponse],
+    ) -> Option<UserDecryptionInvariants> {
+        let iter = agg_resp.iter().map(|resp| resp.payload.as_ref());
+        select_most_common::<_, UserDecryptionInvariants>(min_occurence, iter)
     }
 
     #[test]
