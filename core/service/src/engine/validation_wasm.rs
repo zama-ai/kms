@@ -1390,7 +1390,7 @@ mod tests {
         // Duplicate party IDs: resp1 and bad_resp2 are duplicates, so only 1 valid response is counted
         // resp2 is valid, so we should have 2 valid responses in total, which is enough for degree=1
         {
-            let mut bad_resp2 = resp1.clone();
+            let bad_resp2 = resp1.clone();
             let agg_resp = vec![resp1.clone(), bad_resp2, resp2.clone()];
 
             assert_eq!(
@@ -1829,6 +1829,115 @@ mod tests {
                     .unwrap_err()
                     .to_string()
                     .contains("Cannot find user decryption pivot")
+            );
+        }
+    }
+
+    /// Negative tests for [`UserDecTrustedValidationContext::new`]: every rejection branch (empty
+    /// server set, excessive threshold, party id 0, duplicate addresses) must keep failing, plus a
+    /// positive control anchoring the happy path.
+    #[test]
+    fn test_user_dec_trusted_context_new_validation() {
+        let mut rng = AesRng::seed_from_u64(0);
+
+        // Four distinct server addresses (for party ids 1..=4), shared across the sub-cases.
+        let addrs: Vec<alloy_primitives::Address> =
+            (0..4).map(|_| gen_sig_keys(&mut rng).0.address()).collect();
+
+        // A valid client request + domain to hand to the constructor. They are irrelevant to the
+        // branches under test, which only inspect `server_addresses` and `threshold`.
+        let dummy_domain = dummy_domain();
+        let mut encryption = Encryption::new(PkeSchemeType::MlKem512, &mut rng);
+        let (_eph_client_sk, eph_client_pk) = encryption.keygen().unwrap();
+        let mut enc_key_buf = Vec::new();
+        tfhe::safe_serialization::safe_serialize(
+            &eph_client_pk,
+            &mut enc_key_buf,
+            crate::consts::SAFE_SER_SIZE_LIMIT,
+        )
+        .unwrap();
+        let (client_vk, _client_sk) = gen_sig_keys(&mut rng);
+        let client_request = ParsedUserDecryptionRequest::new(
+            None,
+            client_vk.address(),
+            enc_key_buf,
+            vec![CiphertextHandle::new(vec![5, 6, 7, 8])],
+            dummy_domain.verifying_contract.unwrap(),
+            vec![],
+        );
+
+        // Positive control: 4 distinct servers, default threshold => Ok, threshold defaults to 1.
+        {
+            let servers: HashMap<u32, alloy_primitives::Address> =
+                (1u32..=4).map(|i| (i, addrs[i as usize - 1])).collect();
+            let ctx = UserDecTrustedValidationContext::new(
+                &servers,
+                &client_request,
+                &dummy_domain,
+                None,
+            )
+            .expect("a well-formed context should be accepted");
+            assert_eq!(ctx.num_parties(), 4);
+            assert_eq!(ctx.threshold, 1);
+        }
+
+        // (1) Empty server set is rejected.
+        {
+            let servers: HashMap<u32, alloy_primitives::Address> = HashMap::new();
+            assert!(
+                UserDecTrustedValidationContext::new(
+                    &servers,
+                    &client_request,
+                    &dummy_domain,
+                    None,
+                )
+                .is_err()
+            );
+        }
+
+        // (2) Threshold too high: with 4 servers the max is (4-1)/3 = 1, so 2 must be rejected.
+        {
+            let servers: HashMap<u32, alloy_primitives::Address> =
+                (1u32..=4).map(|i| (i, addrs[i as usize - 1])).collect();
+            assert!(
+                UserDecTrustedValidationContext::new(
+                    &servers,
+                    &client_request,
+                    &dummy_domain,
+                    Some(2),
+                )
+                .is_err()
+            );
+        }
+
+        // (3) Party id 0 present (roles are 1-indexed, so 0 is never legitimate).
+        {
+            let servers: HashMap<u32, alloy_primitives::Address> =
+                (0u32..4).map(|i| (i, addrs[i as usize])).collect();
+            assert!(
+                UserDecTrustedValidationContext::new(
+                    &servers,
+                    &client_request,
+                    &dummy_domain,
+                    None,
+                )
+                .is_err()
+            );
+        }
+
+        // (4) Two parties sharing the same address is rejected.
+        {
+            let mut servers: HashMap<u32, alloy_primitives::Address> =
+                (1u32..=4).map(|i| (i, addrs[i as usize - 1])).collect();
+            servers.insert(4, addrs[0]); // party 4 reuses party 1's address
+            assert!(
+                UserDecTrustedValidationContext::new(
+                    &servers,
+                    &client_request,
+                    &dummy_domain,
+                    None,
+                )
+                .is_err()
             );
         }
     }
