@@ -432,23 +432,34 @@ impl<
     /// Creates the sessions needed by parties in set 1 for lifting keys to Z128 resharing
     async fn create_set1_sessions(
         session_maker_immutable: ImmutableSessionMaker,
-        epoch_id: EpochId,
-        context_id: ContextId,
+        new_epoch_id: EpochId,
+        old_epoch_id: EpochId,
+        old_context_id: ContextId,
     ) -> anyhow::Result<(
         SmallSession<ResiduePolyF4Z128>,
         SmallSession<ResiduePolyF4Z64>,
     )> {
         let session_z128 =
-            async { epoch_id.derive_session_id_with_counter(LIFT_Z128_SESSION_COUNTER) }
+            // Note that we need to use the new epoch ID when deriving the session ID, otherwise we would not be able to create multiple new epochs from the same previous epoch, in case an epoch creation failed
+            // as the session ID would be the same and the session maker would return an error.
+            async { new_epoch_id.derive_session_id_with_counter(LIFT_Z128_SESSION_COUNTER) }
                 .and_then(|id| {
-                    session_maker_immutable.make_small_sync_session_z128(id, context_id, epoch_id)
+                    session_maker_immutable.make_small_sync_session_z128(
+                        id,
+                        old_context_id,
+                        old_epoch_id,
+                    )
                 })
                 .await?;
 
         let session_z64 =
-            async { epoch_id.derive_session_id_with_counter(LIFT_Z64_SESSION_COUNTER) }
+            async { new_epoch_id.derive_session_id_with_counter(LIFT_Z64_SESSION_COUNTER) }
                 .and_then(|id| {
-                    session_maker_immutable.make_small_sync_session_z64(id, context_id, epoch_id)
+                    session_maker_immutable.make_small_sync_session_z64(
+                        id,
+                        old_context_id,
+                        old_epoch_id,
+                    )
                 })
                 .await?;
 
@@ -480,6 +491,7 @@ impl<
             let mut keys_metadata = Vec::new();
             let (mut session_z128, mut session_z64) = Self::create_set1_sessions(
                 immutable_session_maker,
+                new_epoch_id,
                 verified_previous_epoch.epoch_id,
                 verified_previous_epoch.context_id,
             )
@@ -950,6 +962,7 @@ impl<
         let task = async move {
             let (mut session_z128_set_1, mut session_z64_set_1) = Self::create_set1_sessions(
                 immutable_session_maker.clone(),
+                new_epoch_id,
                 verified_previous_epoch.epoch_id,
                 verified_previous_epoch.context_id,
             )
@@ -1527,6 +1540,7 @@ pub(crate) mod tests {
             PUBLIC_STORAGE_PREFIX_THRESHOLD_ALL, SIGNING_KEY_ID, default_extra_data,
         },
         cryptography::signatures::gen_sig_keys,
+        dummy_domain,
         engine::{
             base::{BaseKmsStruct, derive_request_id},
             threshold::service::session::PRSSSetupCombined,
@@ -1550,7 +1564,7 @@ pub(crate) mod tests {
     use kms_grpc::{
         RequestId,
         kms::v1::{CrsInfo, FheParameter, KeyInfo, NewMpcEpochRequest},
-        rpc_types::{KMSType, PrivDataType},
+        rpc_types::{KMSType, PrivDataType, alloy_to_protobuf_domain},
     };
     use rand::SeedableRng;
     use threshold_execution::{
@@ -1793,6 +1807,84 @@ pub(crate) mod tests {
             .unwrap();
         let _result = crate::testing::utils::poll_result_until_ready(|| {
             epoch_manager.get_epoch_result(tonic::Request::new(epoch_id.into()))
+        })
+        .await
+        .unwrap()
+        .into_inner();
+    }
+
+    #[tokio::test]
+    async fn multiple_reshares_from_same_epoch() {
+        let mut rng = AesRng::seed_from_u64(42);
+        let epoch_manager = make_epoch_manager::<EmptyPrss>(&mut rng).await;
+        let prev_epoch_id = EpochId::new_random(&mut rng);
+        let prev_context_id = *DEFAULT_MPC_CONTEXT;
+        let context_id = ContextId::new_random(&mut rng);
+        // The reshare targets a context different from the previous one, so it must be known
+        // to the session maker (only `DEFAULT_MPC_CONTEXT` is registered by default).
+        epoch_manager
+            .session_maker
+            .add_four_party_dummy_context(context_id)
+            .await;
+        // The epoch we reshare *from* must exist as well.
+        epoch_manager
+            .session_maker
+            .add_epoch(
+                prev_epoch_id,
+                PRSSSetupCombined {
+                    prss_setup_z128: PRSSSetup::<ResiduePolyF4Z128>::new_testing_prss(
+                        vec![],
+                        vec![],
+                    ),
+                    prss_setup_z64: PRSSSetup::<ResiduePolyF4Z64>::new_testing_prss(vec![], vec![]),
+                    num_parties: 4,
+                    threshold: 1,
+                },
+            )
+            .await;
+        let epoch_id = EpochId::new_random(&mut rng);
+        epoch_manager
+            .new_mpc_epoch(tonic::Request::new(NewMpcEpochRequest {
+                epoch_id: Some(epoch_id.into()),
+                context_id: Some(context_id.into()),
+                previous_epoch: Some(PreviousEpochInfo {
+                    context_id: Some(prev_context_id.into()),
+                    epoch_id: Some(prev_epoch_id.into()),
+                    keys_info: vec![],
+                    crs_info: vec![],
+                }),
+                domain: Some(alloy_to_protobuf_domain(&dummy_domain()).unwrap()),
+                extra_data: make_extra_data(2, Some(&context_id), Some(&epoch_id)).unwrap(),
+            }))
+            .await
+            .unwrap();
+        // We have an OK response so we are happy
+        let _result = crate::testing::utils::poll_result_until_ready(|| {
+            epoch_manager.get_epoch_result(tonic::Request::new(epoch_id.into()))
+        })
+        .await
+        .unwrap()
+        .into_inner();
+        // Now try to do this again with the same previous epoch
+        let epoch_id_2 = EpochId::new_random(&mut rng);
+        epoch_manager
+            .new_mpc_epoch(tonic::Request::new(NewMpcEpochRequest {
+                epoch_id: Some(epoch_id_2.into()),
+                context_id: Some(context_id.into()),
+                previous_epoch: Some(PreviousEpochInfo {
+                    context_id: Some(prev_context_id.into()),
+                    epoch_id: Some(prev_epoch_id.into()),
+                    keys_info: vec![],
+                    crs_info: vec![],
+                }),
+                domain: Some(alloy_to_protobuf_domain(&dummy_domain()).unwrap()),
+                extra_data: make_extra_data(2, Some(&context_id), Some(&epoch_id_2)).unwrap(),
+            }))
+            .await
+            .unwrap();
+        // We have an OK response so we are happy
+        let _result = crate::testing::utils::poll_result_until_ready(|| {
+            epoch_manager.get_epoch_result(tonic::Request::new(epoch_id_2.into()))
         })
         .await
         .unwrap()

@@ -105,7 +105,6 @@ pub(crate) async fn do_new_epoch(
     cc_conf: &CoreClientConfig,
     destination_prefix: &Path,
     kms_addrs: &[alloy_primitives::Address],
-    num_parties: usize,
     fhe_params: FheParameter,
     new_epoch_params: NewEpochParameters,
 ) -> anyhow::Result<EpochId> {
@@ -162,10 +161,14 @@ pub(crate) async fn do_new_epoch(
     }
 
     if cmd_conf.expect_all_responses {
+        // One response per core we talked to. This is normally `num_parties`, but a resharing
+        // that moves a key to a *different* party set is driven from a config spanning both
+        // contexts, so the core list may be larger than either context's party count.
+        let expected_responses = core_endpoints.len();
         anyhow::ensure!(
-            results.len() == num_parties,
+            results.len() == expected_responses,
             "Expected {} epoch responses but got {}",
-            num_parties,
+            expected_responses,
             results.len()
         );
     }
@@ -287,16 +290,19 @@ pub(crate) async fn do_new_epoch(
             };
 
             anyhow::ensure!(
-                party_confs_successful.len() == num_parties,
+                party_confs_successful.len() == cc_conf.cores.len(),
                 "Did not fetch keys from all parties after resharing! Got {}, expected {}",
                 party_confs_successful.len(),
-                num_parties
+                cc_conf.cores.len()
             );
 
-            // We just checked that we have num_parties of fetched configurations
-            let first_party_id = party_confs_successful.first()
-                .expect("unexpected error because we have previously checked that the array has length of num_parties").party_id;
-            let pub_storage_prefix = Some(cc_conf.cores[first_party_id - 1].object_folder.as_str());
+            // Read the material back from a core we actually fetched it from. Indexing
+            // `cc_conf.cores` by party ID would be wrong here: when the config spans two
+            // contexts the same party ID appears once per context.
+            let fetched_from = party_confs_successful
+                .first()
+                .expect("non-empty: the count was just checked against the core list");
+            let pub_storage_prefix = Some(fetched_from.object_folder.as_str());
 
             let preproc_id: RequestId = preproc_id.try_into().map_err(|e| {
                 anyhow::anyhow!("Failed to convert grpc RequestId to internal RequestId: {e}")
@@ -333,6 +339,18 @@ pub(crate) async fn do_new_epoch(
                 (None, None)
             };
 
+            // A party that is only in the *previous* context does not re-sign the keyset: its
+            // `reshare_as_set_1` path returns the metadata of the epoch we reshare from, whose
+            // signature covers that epoch's `extra_data`. Everyone in the new context re-signs
+            // with the new epoch's `extra_data`. Both are legitimate, so accept either.
+            let accepted_extra_data = [
+                request.extra_data.clone(),
+                crate::extra_data_from_context_epoch(
+                    Some(previous_epoch.context_id),
+                    Some(previous_epoch.epoch_id),
+                )?,
+            ];
+
             let key_id_proto: Option<kms_grpc::kms::v1::RequestId> = Some(key_id.into());
             let preproc_id_proto: Option<kms_grpc::kms::v1::RequestId> = Some(preproc_id.into());
             for (_, response) in response_vec.iter() {
@@ -352,36 +370,47 @@ pub(crate) async fn do_new_epoch(
                     .external_signature
                     .clone();
 
-                if let Some(keyset) = keyset.as_ref() {
-                    let pk = compressed_public_key
-                        .as_ref()
-                        .expect("compressed reshared key must have compact public key material");
-                    crate::keygen::check_compressed_keyset_ext_signature(
-                        keyset,
-                        pk,
-                        &preproc_id,
-                        &key_id,
-                        &signature,
-                        &default_domain,
-                        request.extra_data.clone(),
-                        kms_addrs,
-                    )?;
-                } else {
-                    check_uncompressed_keyset_ext_signature(
-                        public_key
-                            .as_ref()
-                            .expect("legacy reshared key must have public key material"),
-                        server_key
-                            .as_ref()
-                            .expect("legacy reshared key must have server key material"),
-                        &preproc_id,
-                        &key_id,
-                        &signature,
-                        &default_domain,
-                        request.extra_data.clone(),
-                        kms_addrs,
-                    )?;
-                }
+                let verified = accepted_extra_data.iter().any(|extra_data| {
+                    if let Some(keyset) = keyset.as_ref() {
+                        let pk = compressed_public_key.as_ref().expect(
+                            "compressed reshared key must have compact public key material",
+                        );
+                        crate::keygen::check_compressed_keyset_ext_signature(
+                            keyset,
+                            pk,
+                            &preproc_id,
+                            &key_id,
+                            &signature,
+                            &default_domain,
+                            extra_data.clone(),
+                            kms_addrs,
+                        )
+                        .is_ok()
+                    } else {
+                        check_uncompressed_keyset_ext_signature(
+                            public_key
+                                .as_ref()
+                                .expect("legacy reshared key must have public key material"),
+                            server_key
+                                .as_ref()
+                                .expect("legacy reshared key must have server key material"),
+                            &preproc_id,
+                            &key_id,
+                            &signature,
+                            &default_domain,
+                            extra_data.clone(),
+                            kms_addrs,
+                        )
+                        .is_ok()
+                    }
+                });
+
+                anyhow::ensure!(
+                    verified,
+                    "External signature verification failed for the reshared key {key_id} \
+                     (preproc {preproc_id}) under neither the new nor the previous epoch's \
+                     extra data"
+                );
             }
         }
     } else {
