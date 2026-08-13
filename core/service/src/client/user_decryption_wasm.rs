@@ -81,7 +81,15 @@ where
     ) -> anyhow::Result<Option<Vec<(FheTypes, u32, Vec<ResiduePolyF4<Z>>)>>> {
         let n = self.num_parties;
         let degree = self.invariants.degree;
-        let num_bots = n.saturating_sub(self.accepted.len());
+
+        let num_bots = if let Some(num_bots) = n.checked_sub(self.accepted.len()) {
+            num_bots
+        } else {
+            anyhow::bail!(
+                "More accepted responses than parties: n ({n}) < accepted.len() ({})",
+                self.accepted.len()
+            );
+        };
 
         let mut out = Vec::with_capacity(self.invariants.slots.len());
         for (slot_idx, slot) in self.invariants.slots.iter().enumerate() {
