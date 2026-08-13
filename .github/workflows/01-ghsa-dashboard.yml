@@ -1,12 +1,16 @@
 # 01-ghsa-dashboard — GHSA dashboard + cross-reference validation caller.
 #
-# NOTE FOR kms MAINTAINERS: this file lives in the PUBLIC zama-ai/kms repo only so it
-# survives the one-way `git push -f` sync (sync-on-push.yml) into the private mirror
-# zama-ai/kms-internal. It is intentionally INERT here: the single job is gated with
-#   if: github.repository == 'zama-ai/kms-internal'
-# so it does nothing in public kms and only runs after being synced into kms-internal,
-# where it uses that repo's own GITHUB_TOKEN to update the private `ghsa-index` issue.
-# No advisory content is ever written in the public repo. Owned by the Security Team.
+# NOTE FOR kms MAINTAINERS: this file exists in public kms ONLY so it survives the
+# one-way `git push -f` sync (sync-on-push.yml) into the private internal repository
+# It is intentionally INERT here: the single job is gated with `if: github.repository 
+# != 'zama-ai/kms'`, so it does nothing in public kms and runs only inside the private
+# mirror, where it uses that repo's own GITHUB_TOKEN to update a private tracking 
+# issue. The gate names only the public repo (already referenced as public_repo below);
+# it reveals nothing about the mirror.
+#
+# No sensitive values are hard-coded: the target internal repo is resolved at runtime
+# via ${{ github.repository }} (never named here), matching how the sync itself keeps
+# the destination in a secret. Owned by the Security Team.
 
 name: 01-ghsa-dashboard
 
@@ -21,7 +25,7 @@ on:
         type: boolean
         default: false
       job_validate_since:
-        description: 'GHSA Validate since YYYY-MM-DD (blank=all)'
+        description: 'GHSA Validate since YYYY-MM-DD (blank = all)'
         required: false
         type: string
 
@@ -35,12 +39,13 @@ concurrency:
 
 jobs:
   ghsa-dashboard:
-    # Gate: run only inside the private mirror, never in public kms.
-    if: ${{ github.repository == 'zama-ai/kms-internal' }}
+    # Run everywhere except public kms (i.e. only inside the private mirror).
+    # References only the public repo — reveals nothing about the mirror's name.
+    if: ${{ github.repository != 'zama-ai/kms' }}
     uses: zama-ai/ai-security/.github/workflows/ghsa-dashboard-reusable.yml@main
     with:
       public_repo: zama-ai/kms
-      internal_repo: zama-ai/kms-internal
+      internal_repo: ${{ github.repository }}
       index_label: ghsa-index
       validate_dryrun: ${{ inputs.job_validate_dryrun || false }}
       validate_since: ${{ inputs.job_validate_since || '' }}
