@@ -51,7 +51,7 @@ impl<'a> UserDecTrustedValidationContext<'a> {
         }
 
         let max_threshold = (server_addresses.len() - 1) / 3; // Note that this is floored division.
-        let threshold = threshold.unwrap_or(max_threshold); // Note that this is floored division.
+        let threshold = threshold.unwrap_or(max_threshold);
 
         if threshold > max_threshold {
             anyhow::bail!("Threshold is too high for the number of servers");

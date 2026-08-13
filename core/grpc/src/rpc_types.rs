@@ -1,5 +1,4 @@
 pub use crate::identifiers::{ID_LENGTH, KeyId, RequestId};
-use crate::kms::v1::UserDecryptionResponsePayload;
 use crate::kms::v1::{
     Eip712DomainMsg, TypedCiphertext, TypedPlaintext, TypedSigncryptedCiphertext,
 };
@@ -1115,10 +1114,6 @@ impl From<bool> for TypedPlaintext {
     }
 }
 
-pub trait FheTypeResponse {
-    fn fhe_types(&self) -> anyhow::Result<Vec<FheTypes>>;
-}
-
 impl TypedSigncryptedCiphertext {
     pub fn fhe_type(&self) -> anyhow::Result<FheTypes> {
         self.fhe_type
@@ -1148,15 +1143,6 @@ impl TypedCiphertext {
         } else {
             UNSUPPORTED_FHE_TYPE_STR.to_string()
         }
-    }
-}
-
-impl FheTypeResponse for UserDecryptionResponsePayload {
-    fn fhe_types(&self) -> anyhow::Result<Vec<FheTypes>> {
-        self.signcrypted_ciphertexts
-            .iter()
-            .map(|x| x.fhe_type())
-            .collect::<Result<Vec<_>, _>>()
     }
 }
 

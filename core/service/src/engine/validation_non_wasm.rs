@@ -666,7 +666,7 @@ pub(crate) struct PartitionedPublicResponses {
     pub rejected: Vec<RejectedPublicResponse>,
 }
 
-pub(crate) fn find_most_common_invariants_pubdec(
+fn find_most_common_invariants_pubdec(
     min_occurence: usize,
     agg_resp: &[PublicDecryptionResponse],
 ) -> Option<PublicDecryptionInvariants> {
@@ -797,7 +797,7 @@ fn classify_public_decrypt_response(
 /// # Arguments
 /// * `trusted_ctx` — Trusted client-side configuration and request.
 /// * `agg_resp` — Untrusted aggregated server responses received over the network.
-pub(crate) fn partition_public_decrypt_responses(
+fn partition_public_decrypt_responses(
     trusted_ctx: &PublicDecTrustedValidationContext,
     agg_resp: &[PublicDecryptionResponse],
 ) -> anyhow::Result<PartitionedPublicResponses> {
@@ -2548,6 +2548,22 @@ mod tests {
                 Some(resp1.payload.as_ref().unwrap().clone().try_into().unwrap())
             );
         }
+    }
+
+    #[test]
+    fn test_public_decrypt_trusted_validation_context() {
+        let mut rng = AesRng::seed_from_u64(0);
+        let (vk0, _sk0) = gen_sig_keys(&mut rng);
+        let (vk1, _sk1) = gen_sig_keys(&mut rng);
+        let server_pks = HashMap::from([(1, vk0.clone()), (2, vk1.clone())]);
+
+        PublicDecTrustedValidationContext::new(&server_pks, None, &[], None, None).unwrap();
+
+        // Error if the server_pks has duplicate keys
+        let server_pks = HashMap::from([(1, vk1.clone()), (2, vk1)]);
+        assert!(
+            PublicDecTrustedValidationContext::new(&server_pks, None, &[], None, None).is_err()
+        );
     }
 
     #[test]
