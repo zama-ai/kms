@@ -1,0 +1,48 @@
+# 01-ghsa-dashboard — GHSA dashboard + cross-reference validation caller.
+#
+# NOTE FOR kms MAINTAINERS: this file lives in the PUBLIC zama-ai/kms repo only so it
+# survives the one-way `git push -f` sync (sync-on-push.yml) into the private mirror
+# zama-ai/kms-internal. It is intentionally INERT here: the single job is gated with
+#   if: github.repository == 'zama-ai/kms-internal'
+# so it does nothing in public kms and only runs after being synced into kms-internal,
+# where it uses that repo's own GITHUB_TOKEN to update the private `ghsa-index` issue.
+# No advisory content is ever written in the public repo. Owned by the Security Team.
+
+name: 01-ghsa-dashboard
+
+on:
+  schedule:
+    - cron: '0 */6 * * *'
+  workflow_dispatch:
+    inputs:
+      job_validate_dryrun:
+        description: 'GHSA Validate dry-run (no writes)'
+        required: false
+        type: boolean
+        default: false
+      job_validate_since:
+        description: 'GHSA Validate since YYYY-MM-DD (blank=all)'
+        required: false
+        type: string
+
+permissions:
+  contents: read
+  issues: write
+
+concurrency:
+  group: ghsa-dashboard
+  cancel-in-progress: true
+
+jobs:
+  ghsa-dashboard:
+    # Gate: run only inside the private mirror, never in public kms.
+    if: ${{ github.repository == 'zama-ai/kms-internal' }}
+    uses: zama-ai/ai-security/.github/workflows/ghsa-dashboard-reusable.yml@main
+    with:
+      public_repo: zama-ai/kms
+      internal_repo: zama-ai/kms-internal
+      index_label: ghsa-index
+      validate_dryrun: ${{ inputs.job_validate_dryrun || false }}
+      validate_since: ${{ inputs.job_validate_since || '' }}
+    secrets:
+      GHSA_DASHBOARD_TOKEN: ${{ secrets.GHSA_DASHBOARD_TOKEN }}
