@@ -118,7 +118,7 @@ pub(crate) fn enc<C: KemCore, R: Rng + CryptoRng>(
 pub(crate) fn dec<C: KemCore>(
     ct: HybridKemCt,
     dec_k: &C::DecapsulationKey,
-) -> Result<Vec<u8>, CryptographyError> {
+) -> Result<Zeroizing<Vec<u8>>, CryptographyError> {
     let ct: InnerHybridKemCt<C> = ct.try_into()?;
     let InnerHybridKemCt {
         nonce,
@@ -142,7 +142,8 @@ pub(crate) fn dec<C: KemCore>(
 
     let cipher = Aes256Gcm::new(aead_key);
     let out = cipher.decrypt(&nonce.into(), &*payload_ct)?;
-    Ok(out)
+    // Decrypted plaintext can contain private key material, so wipe it when it leaves scope.
+    Ok(Zeroizing::new(out))
 }
 
 #[cfg(test)]
@@ -197,7 +198,7 @@ mod tests {
         let msg = b"four legs good, two legs better";
         let ct = enc::<ml_kem::MlKem512, _>(&mut rng, msg, &pk2.0).unwrap();
         let pt = dec::<ml_kem::MlKem512>(ct, &sk2.0).unwrap();
-        assert_eq!(msg.to_vec(), pt);
+        assert_eq!(msg.as_slice(), pt.as_slice());
     }
 
     proptest! {
@@ -222,7 +223,7 @@ mod tests {
             .unwrap();
 
             let pt = dec::<ml_kem::MlKem512>(ct_new, &sk).unwrap();
-            assert_eq!(msg, pt);
+            assert_eq!(msg.as_slice(), pt.as_slice());
         }
 
         #[test]

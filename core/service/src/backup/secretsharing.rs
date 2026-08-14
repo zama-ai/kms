@@ -4,6 +4,7 @@ use algebra::{
     structure_traits::Ring,
 };
 use rand::{CryptoRng, Rng};
+use zeroize::{Zeroize, Zeroizing};
 
 use super::error::BackupError;
 
@@ -125,24 +126,45 @@ where
     Ok(out)
 }
 
+/// Reconstruct the shared secret from `shares`.
+///
+/// Everything this touches is secret. The intermediates — the incoming shares, every opened
+/// block, and the concatenated buffer they are assembled into — are wiped before this function
+/// returns, on the error paths as well as the happy one. The reconstructed secret is returned
+/// inside a [`Zeroizing`] guard instead, so it stays alive for the caller and is wiped when the
+/// caller drops it.
+///
+/// NOTE: the guarantee stops at the `threshold-algebra` boundary. `ShamirSharings::reconstruct`
+/// interpolates over the share values in temporaries of its own, and `to_byte_vec` allocates a
+/// small buffer per coefficient; neither is wiped.
 pub(crate) fn reconstruct(
-    shares: Vec<ShamirSharings<ResiduePolyF4Z64>>,
+    mut shares: Vec<ShamirSharings<ResiduePolyF4Z64>>,
     t: usize,
-) -> Result<Vec<u8>, BackupError> {
-    let mut combined = vec![];
-    for current_block in shares {
-        let opened = current_block
-            .reconstruct(t)
-            .map_err(|e| BackupError::ReconstructError(e.to_string()))?;
-        let mut buf = opened.to_byte_vec();
-        combined.append(&mut buf);
-    }
-
+) -> Result<Zeroizing<Vec<u8>>, BackupError> {
     let block_len = ResiduePolyF4Z64::BIT_LENGTH / 8;
     debug_assert_eq!(block_len, 32);
-    let res = pkcs7::remove_padding(block_len, &mut combined)?;
 
-    Ok(res.to_vec())
+    // Every block contributes exactly `block_len` bytes, so pre-sizing means `combined` never
+    // reallocates and hence never leaves an unwiped copy of the secret behind.
+    let mut combined = Zeroizing::new(Vec::with_capacity(shares.len() * block_len));
+    let reconstructed = (|| {
+        for current_block in shares.iter() {
+            let mut opened = current_block
+                .reconstruct(t)
+                .map_err(|e| BackupError::ReconstructError(e.to_string()))?;
+            let buf = Zeroizing::new(opened.to_byte_vec());
+            combined.extend_from_slice(buf.as_slice());
+            opened.zeroize();
+        }
+        let res = pkcs7::remove_padding(block_len, &mut combined)?;
+        Ok(Zeroizing::new(res.to_vec()))
+    })();
+
+    // `reconstruct` only borrows the shares, so wipe our copies of them before returning.
+    for block in shares.iter_mut() {
+        block.shares.zeroize();
+    }
+    reconstructed
 }
 
 #[cfg(test)]
@@ -174,7 +196,7 @@ mod tests {
                 let shares = share(&mut rng, &secret, n, t).unwrap();
                 let result = reconstruct(shares, t).unwrap();
 
-                assert_eq!(result, secret);
+                assert_eq!(result.as_slice(), secret.as_slice());
             }
         }
 
@@ -202,7 +224,7 @@ mod tests {
 
                 // finally try to reconstruct
                 let result = reconstruct(shares, t).unwrap();
-                assert_eq!(result, secret);
+                assert_eq!(result.as_slice(), secret.as_slice());
             }
         }
 
@@ -225,7 +247,7 @@ mod tests {
 
                 let result = reconstruct(shares, t).unwrap();
 
-                assert_eq!(result, secret);
+                assert_eq!(result.as_slice(), secret.as_slice());
             }
         }
 

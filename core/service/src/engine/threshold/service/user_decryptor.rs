@@ -46,6 +46,7 @@ use tokio::sync::{OwnedRwLockReadGuard, RwLock};
 use tokio_util::task::TaskTracker;
 use tonic::{Code, Request, Response};
 use tracing::Instrument;
+use zeroize::Zeroizing;
 
 // === Internal Crate ===
 use crate::{
@@ -85,6 +86,12 @@ use crate::{
 
 // === Current Module Imports ===
 use super::ThresholdFheKeys;
+
+/// A serialized partial decryption, along with its packing factor and how long it took to produce.
+///
+/// The bytes are a share of the user's plaintext, so they are kept behind a zeroizing guard and
+/// wiped once signcryption is done reading them.
+type PartialDecryption = (Zeroizing<Vec<u8>>, u32, std::time::Duration);
 
 #[tonic::async_trait]
 pub trait NoiseFloodPartialDecryptor: Send + Sync {
@@ -232,7 +239,7 @@ impl<
             let low_level_ct =
                 deserialize_to_low_level(fhe_type, ct_format, &ct, decomp_key.as_deref())?;
 
-            let pdec: Result<(Vec<u8>, u32, std::time::Duration), anyhow::Error> = match dec_mode {
+            let pdec: Result<PartialDecryption, anyhow::Error> = match dec_mode {
                 DecryptionMode::NoiseFloodSmall => {
                     let session = session_maker
                         .make_small_async_session_z128(session_id, context_id, epoch_id)
@@ -260,8 +267,10 @@ impl<
                             let pdec_serialized = match partial_dec_map.get(&session_id.to_string())
                             {
                                 Some(partial_dec) => {
+                                    // A serialized partial decryption is a share of the user's
+                                    // plaintext, so wipe it once signcryption is done with it.
                                     let partial_dec = pack_residue_poly(partial_dec);
-                                    bc2wrap::serialize(&partial_dec)?
+                                    Zeroizing::new(bc2wrap::serialize(&partial_dec)?)
                                 }
                                 None => {
                                     return Err(anyhow!(
@@ -302,7 +311,9 @@ impl<
                             {
                                 Some(partial_dec) => {
                                     // let partial_dec = pack_residue_poly(partial_dec); // TODO use more compact packing for bitdec?
-                                    bc2wrap::serialize(&partial_dec)?
+                                    // A serialized partial decryption is a share of the user's
+                                    // plaintext, so wipe it once signcryption is done with it.
+                                    Zeroizing::new(bc2wrap::serialize(&partial_dec)?)
                                 }
                                 None => {
                                     return Err(anyhow!(
@@ -335,7 +346,7 @@ impl<
                         signcryption_key.signcrypt_plaintext(
                             rng.deref_mut(),
                             &DSEP_USER_DECRYPTION,
-                            &pdec_serialized,
+                            pdec_serialized.as_slice(),
                             fhe_type,
                             &link,
                         )

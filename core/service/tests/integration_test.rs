@@ -689,8 +689,10 @@ mod kms_custodian_binary_tests {
             .iter()
             .map(|cur| base64_deserialize(cur).unwrap())
             .collect();
+        // The guard is dropped here: the test only compares against a known plaintext.
         operator
             .verify_and_recover(&outputs, recovery_material, ephem_dec_key, ephem_enc_key)
             .unwrap()
+            .to_vec()
     }
 }

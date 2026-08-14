@@ -40,6 +40,7 @@ use threshold_execution::tfhe_internals::parameters::AugmentedCiphertextParamete
 use threshold_types::role::Role;
 use wasm_bindgen::prelude::wasm_bindgen;
 use wasm_bindgen::{JsError, JsValue};
+use zeroize::{Zeroize, Zeroizing};
 
 impl Client {
     /// Processes the aggregated user decryption responses to attempt to decrypt
@@ -217,16 +218,27 @@ impl Client {
         let unsign_key =
             UnifiedUnsigncryptionKey::new(dec_key, enc_key, &cur_verf_key, &receiver_id);
 
-        payload
-            .signcrypted_ciphertexts
-            .into_iter()
-            .map(|ct| {
-                unsign_key
-                    .unsigncrypt_plaintext(&DSEP_USER_DECRYPTION, &ct.signcrypted_ciphertext, &link)
-                    .map(|res| res.plaintext)
-                    .map_err(|e| anyhow::anyhow!("unsigncrypt_plaintext failed: {}", e))
-            })
-            .collect()
+        // Collected by hand rather than with `collect()` into a `Result`: that short-circuits on
+        // the first error and drops the plaintexts recovered so far without wiping them. A server
+        // returning a batch whose later entries fail to unsigncrypt would leave every earlier
+        // plaintext in freed memory. The returned vector is the user-facing result and is the
+        // caller's to wipe.
+        let mut plaintexts: Vec<TypedPlaintext> =
+            Vec::with_capacity(payload.signcrypted_ciphertexts.len());
+        for ct in payload.signcrypted_ciphertexts {
+            match unsign_key.unsigncrypt_plaintext(
+                &DSEP_USER_DECRYPTION,
+                &ct.signcrypted_ciphertext,
+                &link,
+            ) {
+                Ok(res) => plaintexts.push(res.plaintext),
+                Err(e) => {
+                    plaintexts.zeroize();
+                    return Err(anyhow::anyhow!("unsigncrypt_plaintext failed: {}", e));
+                }
+            }
+        }
+        Ok(plaintexts)
     }
 
     /// Decrypt the user decryption response from the centralized KMS.
@@ -309,21 +321,23 @@ impl Client {
                             "Too many errors in share recovery / signcryption: {recovery_errors} (threshold {degree})"
                         )));
                     }
-                    let mut decrypted_blocks = Vec::new();
+                    // Iterated by reference so `sharings` stays owned by its guard and is wiped
+                    // on every exit from this scope, including the error returns below.
+                    let mut decrypted_blocks = Zeroizing::new(Vec::new());
                     let pivot = if let Some(pivot) = sharings.first() {
                         pivot
                     } else {
                         return Ok(Vec::new());
                     };
                     let hints = ReconstructionHints::new(pivot, degree)?;
-                    for cur_block_shares in sharings {
+                    for cur_block_shares in sharings.iter() {
                         // NOTE: this performs optimistic reconstruction
                         match reconstruct_w_errors_sync(
                             num_parties,
                             degree,
                             degree,
                             num_parties - amount_shares,
-                            &cur_block_shares,
+                            cur_block_shares,
                             &hints,
                         ) {
                             Ok(Some(r)) => decrypted_blocks.push(r),
@@ -342,8 +356,8 @@ impl Client {
                         }
                     }
                     // extract plaintexts from decrypted blocks
-                    let mut ptxts64 = Vec::new();
-                    for block in decrypted_blocks {
+                    let mut ptxts64 = Zeroizing::new(Vec::new());
+                    for block in decrypted_blocks.iter() {
                         let scalar = block.to_scalar()?;
                         ptxts64.push(scalar);
                     }
@@ -352,10 +366,12 @@ impl Client {
                     out.push((
                         fhe_type,
                         packing_factor,
-                        ptxts64
-                            .iter()
-                            .map(|ptxt| Wrapping(ptxt.0 as u128))
-                            .collect_vec(),
+                        Zeroizing::new(
+                            ptxts64
+                                .iter()
+                                .map(|ptxt| Wrapping(ptxt.0 as u128))
+                                .collect_vec(),
+                        ),
                     ));
                 }
                 out
@@ -379,15 +395,17 @@ impl Client {
                     };
                     let hints = ReconstructionHints::new(pivot, degree)?;
 
-                    let mut decrypted_blocks = Vec::new();
-                    for cur_block_shares in sharings {
+                    // Iterated by reference so `sharings` stays owned by its guard and is wiped
+                    // on every exit from this scope, including the error returns below.
+                    let mut decrypted_blocks = Zeroizing::new(Vec::new());
+                    for cur_block_shares in sharings.iter() {
                         // NOTE: this performs optimistic reconstruction
                         match reconstruct_w_errors_sync(
                             num_parties,
                             degree,
                             degree,
                             num_parties - amount_shares,
-                            &cur_block_shares,
+                            cur_block_shares,
                             &hints,
                         ) {
                             Ok(Some(r)) => decrypted_blocks.push(r),
@@ -409,15 +427,15 @@ impl Client {
                     out.push((
                         fhe_type,
                         packing_factor,
-                        reconstruct_packed_message(
-                            Some(decrypted_blocks),
+                        Zeroizing::new(reconstruct_packed_message(
+                            Some(decrypted_blocks.as_slice()),
                             &pbs_params,
                             fhe_types_to_num_blocks(
                                 fhe_type,
                                 &self.params.classic_pbs(),
                                 packing_factor,
                             )?,
-                        )?,
+                        )?),
                     ));
                 }
                 out
@@ -429,13 +447,16 @@ impl Client {
             }
         };
 
-        let mut final_result = vec![];
-        for (fhe_type, packing_factor, res) in res {
+        // `res` holds the reconstructed plaintext blocks behind zeroizing guards; borrow from them
+        // so they stay guarded until this function returns. The returned plaintexts are the
+        // user-facing result and are the caller's to wipe.
+        let mut final_result = Vec::with_capacity(res.len());
+        for (fhe_type, packing_factor, blocks) in res.iter() {
             final_result.push(decrypted_blocks_to_plaintext(
                 &pbs_params,
-                fhe_type,
-                packing_factor,
-                res,
+                *fhe_type,
+                *packing_factor,
+                blocks.as_slice(),
             )?);
         }
         Ok(final_result)
@@ -460,10 +481,10 @@ impl Client {
     }
 
     #[expect(clippy::type_complexity)]
-    fn insecure_threshold_user_decryption_resp_to_blocks<Z: BaseRing>(
+    fn insecure_threshold_user_decryption_resp_to_blocks<Z: BaseRing + Zeroize>(
         agg_resp: &[UserDecryptionResponse],
         dec_key: &UnifiedPrivateEncKey,
-    ) -> anyhow::Result<Vec<(FheTypes, u32, Vec<ResiduePolyF4<Z>>)>>
+    ) -> anyhow::Result<Vec<(FheTypes, u32, Zeroizing<Vec<ResiduePolyF4<Z>>>)>>
     where
         ResiduePolyF4<Z>: ErrorCorrect + MemoizedExceptionals,
     {
@@ -512,22 +533,23 @@ impl Client {
                     cur_resp.payload.clone(),
                     "Payload does not exist".to_owned(),
                 )?;
-                let shares = insecure_decrypt_ignoring_signature(
+                // The decrypted shares are secret, so keep them behind a zeroizing guard.
+                let shares = Zeroizing::new(insecure_decrypt_ignoring_signature(
                     &payload.signcrypted_ciphertexts[batch_i].signcrypted_ciphertext,
                     dec_key,
-                )?;
+                )?);
 
-                let cipher_blocks_share: Vec<ResiduePolyF4<Z>> =
-                    bc2wrap::deserialize_slice(&shares.bytes)?;
-                let mut cur_blocks = Vec::with_capacity(cipher_blocks_share.len());
-                for cur_block_share in cipher_blocks_share {
-                    cur_blocks.push(cur_block_share);
-                }
+                // Passed straight to `fill_indexed_shares`; copying it into a second vector first
+                // would only leave another unwiped copy of the shares behind.
+                let cur_blocks: Vec<ResiduePolyF4<Z>> = bc2wrap::deserialize_slice(&shares.bytes)?;
                 if opt_sharings.is_none() {
-                    opt_sharings = Some(Vec::new());
+                    let mut sharings = Vec::with_capacity(cur_blocks.len());
                     for _i in 0..cur_blocks.len() {
-                        (opt_sharings.as_mut()).unwrap().push(ShamirSharings::new());
+                        // Reserved up front: `add_share` would otherwise reallocate and release
+                        // the shares added so far without wiping them.
+                        sharings.push(ShamirSharings::with_capacity(agg_resp.len()));
                     }
+                    opt_sharings = Some(sharings);
                 }
                 fill_indexed_shares(
                     opt_sharings.as_mut().unwrap(),
@@ -577,7 +599,7 @@ impl Client {
                     }
                 }
             }
-            out.push((fhe_type, packing_factor, decrypted_blocks))
+            out.push((fhe_type, packing_factor, Zeroizing::new(decrypted_blocks)))
         }
         Ok(out)
     }
@@ -592,20 +614,21 @@ impl Client {
 
         let mut out = vec![];
 
-        for (fhe_type, packing_factor, decrypted_blocks) in all_decrypted_blocks {
+        for (fhe_type, packing_factor, decrypted_blocks) in all_decrypted_blocks.iter() {
             let pbs_params = self.params.classic_pbs();
 
-            let recon_blocks = reconstruct_packed_message(
-                Some(decrypted_blocks),
+            // Reconstructed plaintext blocks, so keep them guarded until the plaintext is built.
+            let recon_blocks = Zeroizing::new(reconstruct_packed_message(
+                Some(decrypted_blocks.as_slice()),
                 &pbs_params,
-                fhe_types_to_num_blocks(fhe_type, &self.params.classic_pbs(), packing_factor)?,
-            )?;
+                fhe_types_to_num_blocks(*fhe_type, &self.params.classic_pbs(), *packing_factor)?,
+            )?);
 
             out.push(decrypted_blocks_to_plaintext(
                 &pbs_params,
-                fhe_type,
-                packing_factor,
-                recon_blocks,
+                *fhe_type,
+                *packing_factor,
+                recon_blocks.as_slice(),
             )?);
         }
         Ok(out)
@@ -623,26 +646,29 @@ impl Client {
             Self::insecure_threshold_user_decryption_resp_to_blocks::<Z64>(agg_resp, dec_key)?;
 
         let mut out = vec![];
-        for (fhe_type, packing_factor, decrypted_blocks) in all_decrypted_blocks {
+        for (fhe_type, packing_factor, decrypted_blocks) in all_decrypted_blocks.iter() {
             let pbs_params = self.params.classic_pbs();
 
-            let mut ptxts64 = Vec::new();
+            // Both of these hold the plaintext, so keep them guarded until it is built.
+            let mut ptxts64 = Zeroizing::new(Vec::new());
 
-            for opened in decrypted_blocks {
+            for opened in decrypted_blocks.iter() {
                 let v_scalar = opened.to_scalar()?;
                 ptxts64.push(v_scalar);
             }
 
-            let ptxts128: Vec<_> = ptxts64
-                .iter()
-                .map(|ptxt| Wrapping(ptxt.0 as u128))
-                .collect();
+            let ptxts128: Zeroizing<Vec<_>> = Zeroizing::new(
+                ptxts64
+                    .iter()
+                    .map(|ptxt| Wrapping(ptxt.0 as u128))
+                    .collect(),
+            );
 
             out.push(decrypted_blocks_to_plaintext(
                 &pbs_params,
-                fhe_type,
-                packing_factor,
-                ptxts128,
+                *fhe_type,
+                *packing_factor,
+                ptxts128.as_slice(),
             )?);
         }
         Ok(out)
@@ -650,13 +676,25 @@ impl Client {
 
     /// Decrypts the user decryption responses and decodes the responses onto the Shamir shares
     /// that the servers should have encrypted.
+    ///
+    /// The recovered sharings are shares of the user's plaintext, so each batch's sharings are
+    /// returned inside a [`Zeroizing`] guard: reserving capacity stops `add_share` from leaving
+    /// copies behind while a sharing is built, but the finished buffers still have to be wiped,
+    /// and the caller has several early-error exits between here and reconstruction.
     #[expect(clippy::type_complexity)]
-    fn recover_sharings<Z: BaseRing>(
+    fn recover_sharings<Z: BaseRing + Zeroize>(
         &self,
         agg_resp: &[UserDecryptionResponsePayload],
         enc_key: &UnifiedPublicEncKey,
         dec_key: &UnifiedPrivateEncKey,
-    ) -> anyhow::Result<Vec<(FheTypes, u32, Vec<ShamirSharings<ResiduePolyF4<Z>>>, usize)>> {
+    ) -> anyhow::Result<
+        Vec<(
+            FheTypes,
+            u32,
+            Zeroizing<Vec<ShamirSharings<ResiduePolyF4<Z>>>>,
+            usize,
+        )>,
+    > {
         let batch_count = agg_resp
             .first()
             .ok_or_else(|| anyhow::anyhow!("response payloads is empty"))?
@@ -682,9 +720,12 @@ impl Client {
             let num_shares =
                 fhe_types_to_num_blocks(fhe_type, &self.params.classic_pbs(), packing_factor)?
                     .div_ceil(intra_share_packing);
-            let mut sharings = Vec::new();
+            let mut sharings = Vec::with_capacity(num_shares);
             for _i in 0..num_shares {
-                sharings.push(ShamirSharings::new());
+                // Reserved up front: `add_share` would otherwise reallocate and release the
+                // shares added so far without wiping them. At most one share per response is
+                // added below, so no sharing ever has to grow.
+                sharings.push(ShamirSharings::with_capacity(agg_resp.len()));
             }
             // the number of recovery errors in this block (e.g. due to failed signcryption)
             let mut recovery_errors = 0;
@@ -705,12 +746,13 @@ impl Client {
                     &cur_resp.digest,
                 ) {
                     Ok(decryption_share) => {
-                        let cipher_blocks_share: Vec<ResiduePolyF4<Z>> =
+                        // The payload holds this party's share of the user's plaintext, so wipe
+                        // it once it has been deserialized.
+                        let decryption_share = Zeroizing::new(decryption_share);
+                        // Passed straight to `fill_indexed_shares`; copying it into a second
+                        // vector first would only leave another unwiped copy of the shares behind.
+                        let cur_blocks: Vec<ResiduePolyF4<Z>> =
                             bc2wrap::deserialize_slice(&decryption_share.plaintext.bytes)?;
-                        let mut cur_blocks = Vec::with_capacity(cipher_blocks_share.len());
-                        for cur_block_share in cipher_blocks_share {
-                            cur_blocks.push(cur_block_share);
-                        }
                         fill_indexed_shares(
                             &mut sharings,
                             cur_blocks,
@@ -727,7 +769,12 @@ impl Client {
                     }
                 };
             }
-            out.push((fhe_type, packing_factor, sharings, recovery_errors));
+            out.push((
+                fhe_type,
+                packing_factor,
+                Zeroizing::new(sharings),
+                recovery_errors,
+            ));
         }
         Ok(out)
     }
@@ -1168,11 +1215,14 @@ pub fn compute_link(
 }
 
 /// Helper method for combining reconstructed messages after decryption.
+///
+/// Takes `recon_blocks` by reference rather than by value: they are the reconstructed plaintext,
+/// so the caller keeps ownership and can wipe them once the plaintext has been assembled.
 fn decrypted_blocks_to_plaintext(
     params: &ClassicPBSParameters,
     fhe_type: FheTypes,
     packing_factor: u32,
-    recon_blocks: Vec<Z128>,
+    recon_blocks: &[Z128],
 ) -> anyhow::Result<TypedPlaintext> {
     let bits_in_block = params.message_modulus_log() * packing_factor;
     let res_pt = match fhe_type {

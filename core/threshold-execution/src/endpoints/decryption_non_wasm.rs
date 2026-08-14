@@ -62,6 +62,7 @@ use threshold_types::role::Role;
 use tokio::task::JoinSet;
 use tokio::time::{Duration, Instant};
 use tracing::instrument;
+use zeroize::{Zeroize, ZeroizeOnDrop, Zeroizing};
 
 #[cfg(any(test, feature = "testing"))]
 use super::decryption::DecryptionMode;
@@ -657,6 +658,24 @@ pub struct BlocksPartialDecrypt {
     pub bits_in_block: u32,
     pub partial_decryptions: Vec<Z128>,
 }
+
+/// `partial_decryptions` are opened plaintext blocks. Every consumer of this type takes it by
+/// value — [`combine_plaintext_blocks`] among them — so without a `Drop` impl the blocks would be
+/// released to the heap intact once the caller was done with them.
+impl Zeroize for BlocksPartialDecrypt {
+    fn zeroize(&mut self) {
+        // Only the blocks are secret, `bits_in_block` is a public parameter.
+        self.partial_decryptions.zeroize();
+    }
+}
+
+impl Drop for BlocksPartialDecrypt {
+    fn drop(&mut self) {
+        self.zeroize();
+    }
+}
+
+impl ZeroizeOnDrop for BlocksPartialDecrypt {}
 /// Takes as input plaintexts blocks m1, ..., mN revealed to all parties
 /// which we call partial decryptions each of B bits
 /// and uses tfhe block recomposer to get back the u64 plaintext.
@@ -669,7 +688,7 @@ where
 {
     let res = match combine_decryptions::<T>(
         shared_partial_decrypt.bits_in_block,
-        shared_partial_decrypt.partial_decryptions,
+        &shared_partial_decrypt.partial_decryptions,
     ) {
         Ok(res) => res,
         Err(error) => {
@@ -1128,7 +1147,9 @@ where
     let ptxt_sums: Vec<_> = ptxt_sums.iter().map(|ptxt_sum| ptxt_sum.value()).collect();
 
     // output results
-    let ptxts64 = open_bit_composed_ptxts(session, ptxt_sums).await?;
+    // Opened plaintext blocks. `ptxts128` is moved into the `BlocksPartialDecrypt` below and
+    // wiped with it; `ptxts64` stays here, so it needs its own guard.
+    let ptxts64 = Zeroizing::new(open_bit_composed_ptxts(session, ptxt_sums).await?);
     let ptxts128: Vec<_> = ptxts64
         .iter()
         .map(|ptxt| Wrapping(ptxt.0 as u128))
