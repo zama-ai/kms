@@ -1,12 +1,12 @@
 # 01-ghsa-dashboard — GHSA dashboard + cross-reference validation caller.
 #
 # NOTE FOR kms MAINTAINERS: this file exists in public kms ONLY so it survives the
-# one-way `git push -f` sync (sync-on-push.yml) into the private internal repository
-# It is intentionally INERT here: the single job is gated with `if: github.repository 
-# != 'zama-ai/kms'`, so it does nothing in public kms and runs only inside the private
-# mirror, where it uses that repo's own GITHUB_TOKEN to update a private tracking 
-# issue. The gate names only the public repo (already referenced as public_repo below);
-# it reveals nothing about the mirror.
+# one-way `git push -f` sync (sync-on-push.yml) into the private mirror
+# (destination = secrets.SYNC_DEST_REPO). It is intentionally INERT here: the single
+# job is gated with `if: github.repository != 'zama-ai/kms'`, so it does nothing in
+# public kms and runs only inside the private mirror, where it uses that repo's own
+# GITHUB_TOKEN to update a private tracking issue. The gate names only the public repo
+# (already referenced as public_repo below); it reveals nothing about the mirror.
 #
 # No sensitive values are hard-coded: the target internal repo is resolved at runtime
 # via ${{ github.repository }} (never named here), matching how the sync itself keeps
@@ -42,7 +42,7 @@ jobs:
     # Run everywhere except public kms (i.e. only inside the private mirror).
     # References only the public repo — reveals nothing about the mirror's name.
     if: ${{ github.repository != 'zama-ai/kms' }}
-    uses: zama-ai/ai-security/.github/workflows/ghsa-dashboard-reusable.yml@main
+    uses: zama-ai/ai-security/.github/workflows/ghsa-dashboard-reusable.yml@70e6ad735177bd2588cdd299853d825fde1dc709 # v1.0.0
     with:
       public_repo: zama-ai/kms
       internal_repo: ${{ github.repository }}
