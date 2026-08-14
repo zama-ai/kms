@@ -29,9 +29,8 @@ on:
         required: false
         type: string
 
-permissions:
-  contents: read
-  issues: write
+# No workflow-level permissions; the single job below grants only what it needs.
+permissions: {}
 
 concurrency:
   group: ghsa-dashboard
@@ -42,6 +41,10 @@ jobs:
     # Run everywhere except public kms (i.e. only inside the private mirror).
     # References only the public repo — reveals nothing about the mirror's name.
     if: ${{ github.repository != 'zama-ai/kms' }}
+    # Least-privilege, scoped to this job (not workflow-wide):
+    permissions:
+      contents: read   # read the repo to resolve the reusable-workflow reference
+      issues: write    # dashboard upserts the ghsa-index issue + ghsa-validate comments (in the mirror)
     uses: zama-ai/ai-security/.github/workflows/ghsa-dashboard-reusable.yml@70e6ad735177bd2588cdd299853d825fde1dc709 # v1.0.0
     with:
       public_repo: zama-ai/kms

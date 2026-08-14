@@ -76,4 +76,4 @@ jobs:
           persona: pedantic
           # Provision ZIZMOR_RO_TOKEN_AISEC (can read private zama-ai/ai-security) so
           # zizmor's impostor-commit can verify the SHA pin in 01-ghsa-dashboard.yml.
-          token: ${{ secrets.ZIZMOR_RO_TOKEN_AISEC }}
+          token: ${{ secrets.ZIZMOR_RO_TOKEN_AISEC }} # zizmor: ignore[secrets-outside-env]
