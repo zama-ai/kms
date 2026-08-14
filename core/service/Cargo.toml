@@ -67,6 +67,7 @@ enum_dispatch.workspace = true
 futures-util.workspace = true
 hashing.workspace = true
 hex.workspace = true
+hybrid-array.workspace = true
 iam-rs = { workspace = true, optional = true }
 itertools.workspace = true
 k256.workspace = true
