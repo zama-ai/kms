@@ -42,7 +42,9 @@ jobs:
     # Run everywhere except public kms (i.e. only inside the private mirror).
     # References only the public repo — reveals nothing about the mirror's name.
     if: ${{ github.repository != 'zama-ai/kms' }}
-    uses: zama-ai/ai-security/.github/workflows/ghsa-dashboard-reusable.yml@70e6ad735177bd2588cdd299853d825fde1dc709 # v1.0.0
+    # impostor-commit can't verify the SHA because ai-security is a private org repo
+    # the public CI token can't read; the ref is SHA-pinned to a trusted same-org repo.
+    uses: zama-ai/ai-security/.github/workflows/ghsa-dashboard-reusable.yml@70e6ad735177bd2588cdd299853d825fde1dc709 # zizmor: ignore[impostor-commit] pinned ai-security@v1.0.0
     with:
       public_repo: zama-ai/kms
       internal_repo: ${{ github.repository }}
