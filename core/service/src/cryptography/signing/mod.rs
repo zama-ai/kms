@@ -559,10 +559,12 @@ pub fn unified_verify(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::consts::SAFE_SER_SIZE_LIMIT;
     use crate::cryptography::signatures::gen_sig_keys;
     use aes_prng::AesRng;
     use rand::{RngCore, SeedableRng};
     use strum::IntoEnumIterator;
+    use tfhe::safe_serialization::{safe_deserialize, safe_serialize};
 
     const DSEP: &DomainSep = b"SCHMTEST";
 
@@ -672,9 +674,6 @@ mod tests {
     /// impls for the ed25519 and ML-DSA wrappers.
     #[test]
     fn unified_public_sig_key_safe_serialization_round_trip() {
-        use crate::consts::SAFE_SER_SIZE_LIMIT;
-        use tfhe::safe_serialization::{safe_deserialize, safe_serialize};
-
         let mut rng = AesRng::seed_from_u64(4242);
         let (_pk, sk) = gen_sig_keys(&mut rng);
 

@@ -1834,8 +1834,8 @@ mod scheme_material_tests {
         }
     }
 
-    /// The same for the digest text, which is what a consumer identifies an operator
-    /// by — a stale or wrongly encoded one is rejected rather than left in place.
+    /// Fails loudly for *every* scheme, not just ECDSA: a verification address left
+    /// behind by a previous signing key is never silently kept, wherever it sits.
     #[tokio::test]
     async fn rejects_mismatched_digest_of_any_scheme() {
         let addr_type = PubDataType::SchemeVerfAddress.to_string();
