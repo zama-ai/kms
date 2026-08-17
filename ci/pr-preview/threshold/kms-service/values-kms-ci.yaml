@@ -12,10 +12,14 @@ kmsCore:
     enabled: false
   resources:
     requests:
-      memory: 12Gi
-      cpu: 4
+      # Compute runs in-container here (not in an enclave VM), so reserve a
+      # large slice to force scheduling onto a big, ~exclusive node.
+      memory: 32Gi
+      cpu: 48
     limits:
-      memory: 24Gi
+      # Match the enclave VM's 96Gi ceiling (nitroEnclave.memoryGiB). NOTE: the
+      # chart does not render a cpu limit, so CPU is bounded by node size only.
+      memory: 96Gi
       ephemeralStorage: 10Gi
       grpcTimeout: 360
       grpcMaxMessageSize: 104857600
@@ -29,11 +33,26 @@ kmsCore:
       prefix:
   storage:
     storageClassName: gp3
-    capacity: 5Gi
+    capacity: 15Gi
   serviceMonitor:
     enabled: false
   nodeSelector:
     karpenter.sh/nodepool: kms-bench-spot-64
+    # To bound CPU to the enclave's 52 cores on the same c7a family, pin a
+    # ~52-vCPU on-demand node instead. Uncomment (and ensure a nodepool can
+    # actually provision it — the spot-64 pool above may not):
+    # node.kubernetes.io/instance-type: c7a.13xlarge
+  affinity:
+    # One party per host, matching the enclave's podAntiAffinity.
+    podAntiAffinity:
+      requiredDuringSchedulingIgnoredDuringExecution:
+        - labelSelector:
+            matchExpressions:
+              - key: app
+                operator: In
+                values:
+                  - kms-core
+          topologyKey: kubernetes.io/hostname
   tolerations:
     - key: karpenter.sh/nodepool
       effect: NoSchedule
