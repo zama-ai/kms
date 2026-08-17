@@ -21,6 +21,7 @@ dependencies = [
  "cfg-if",
  "cipher 0.4.4",
  "cpufeatures 0.2.17",
+ "zeroize",
 ]
 
 [[package]]
@@ -46,6 +47,7 @@ dependencies = [
  "ctr",
  "ghash",
  "subtle",
+ "zeroize",
 ]
 
 [[package]]
@@ -4015,6 +4017,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f2d35805454dc9f8662a98d6d61886ffe26bd465f5960e0e55345c70d5c0d2a9"
 dependencies = [
  "typenum",
+ "zeroize",
 ]
 
 [[package]]
@@ -4571,6 +4574,7 @@ dependencies = [
  "enum_dispatch",
  "futures-util",
  "hex",
+ "hybrid-array 0.2.3",
  "iam-rs",
  "itertools 0.14.0",
  "k256",
