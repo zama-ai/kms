@@ -383,7 +383,7 @@ pub(crate) async fn get_keygen_responses(
 
         resp_tasks.spawn(async move {
             tokio::time::sleep(tokio::time::Duration::from_millis(
-                SLEEP_TIME_BETWEEN_REQUESTS_MS,
+                *SLEEP_TIME_BETWEEN_REQUESTS_MS,
             ))
             .await;
 
@@ -411,7 +411,7 @@ pub(crate) async fn get_keygen_responses(
                 && response.as_ref().unwrap_err().code() == tonic::Code::Unavailable
             {
                 tokio::time::sleep(tokio::time::Duration::from_millis(
-                    SLEEP_TIME_BETWEEN_REQUESTS_MS,
+                    *SLEEP_TIME_BETWEEN_REQUESTS_MS,
                 ))
                 .await;
                 if ctr >= max_iter {
@@ -499,7 +499,7 @@ pub(crate) async fn do_abort_key_gen(
 
         resp_tasks.spawn(async move {
             tokio::time::sleep(tokio::time::Duration::from_millis(
-                SLEEP_TIME_BETWEEN_REQUESTS_MS,
+                *SLEEP_TIME_BETWEEN_REQUESTS_MS,
             ))
             .await;
 
@@ -511,7 +511,7 @@ pub(crate) async fn do_abort_key_gen(
                 && response.as_ref().unwrap_err().code() == tonic::Code::Unavailable
             {
                 tokio::time::sleep(tokio::time::Duration::from_millis(
-                    SLEEP_TIME_BETWEEN_REQUESTS_MS,
+                    *SLEEP_TIME_BETWEEN_REQUESTS_MS,
                 ))
                 .await;
                 // do at most max_iter retries
@@ -848,7 +848,7 @@ pub(crate) async fn get_preproc_keygen_responses(
         resp_tasks.spawn(async move {
             // Sleep to give the server some time to complete preprocessing
             tokio::time::sleep(tokio::time::Duration::from_millis(
-                SLEEP_TIME_BETWEEN_REQUESTS_MS,
+                *SLEEP_TIME_BETWEEN_REQUESTS_MS,
             ))
             .await;
 
@@ -862,7 +862,7 @@ pub(crate) async fn get_preproc_keygen_responses(
                 && response.as_ref().unwrap_err().code() == tonic::Code::Unavailable
             {
                 tokio::time::sleep(tokio::time::Duration::from_millis(
-                    SLEEP_TIME_BETWEEN_REQUESTS_MS,
+                    *SLEEP_TIME_BETWEEN_REQUESTS_MS,
                 ))
                 .await;
                 // do at most max_iter retries
