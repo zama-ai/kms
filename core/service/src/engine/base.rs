@@ -1629,6 +1629,7 @@ pub(crate) mod tests {
     use super::{TypedPlaintext, deserialize_to_low_level};
     use crate::cryptography::signatures::compute_eip712_signature;
     use crate::cryptography::signatures::internal_sign;
+    use crate::cryptography::signing::seed::RootSigningSeed;
     use crate::cryptography::signing::{Signature, SigningSchemeType, unified_verify};
     use crate::{
         consts::{SAFE_SER_SIZE_LIMIT, TEST_PARAM},
@@ -1684,6 +1685,7 @@ pub(crate) mod tests {
 
         let mut rng = AesRng::seed_from_u64(0xABCD);
         let (pk, sk) = gen_sig_keys(&mut rng);
+        let sk = sk.with_root_seed(RootSigningSeed::random(&mut rng));
         let domain = dummy_domain();
         let handles = vec![vec![0xAAu8; 32]];
         let extra_data = b"extra";
@@ -1773,6 +1775,7 @@ pub(crate) mod tests {
 
         let mut rng = AesRng::seed_from_u64(0x9E11);
         let (_pk, sk) = gen_sig_keys(&mut rng);
+        let sk = sk.with_root_seed(RootSigningSeed::random(&mut rng));
         let dsep = b"PERSCHEM";
 
         let ed_msg = b"serialization chosen for ed25519".to_vec();
@@ -1818,6 +1821,7 @@ pub(crate) mod tests {
     fn crs_result_signatures_multi_scheme() {
         let mut rng = AesRng::seed_from_u64(0x5C15);
         let (_pk, sk) = gen_sig_keys(&mut rng);
+        let sk = sk.with_root_seed(RootSigningSeed::random(&mut rng));
         let domain = dummy_domain();
 
         let crs_id = RequestId::new_random(&mut rng);
@@ -1911,6 +1915,7 @@ pub(crate) mod tests {
     fn keygen_result_signatures_sign_the_payload() {
         let mut rng = AesRng::seed_from_u64(0x4E67);
         let (_pk, sk) = gen_sig_keys(&mut rng);
+        let sk = sk.with_root_seed(RootSigningSeed::random(&mut rng));
         let domain = dummy_domain();
 
         let prep_id = RequestId::new_random(&mut rng);

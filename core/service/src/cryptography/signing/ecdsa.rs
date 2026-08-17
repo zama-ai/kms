@@ -1,10 +1,7 @@
 //! ECDSA over secp256k1 signing backend.
 
-use super::cache::DerivedKeyCache;
-use super::{
-    HasSigningScheme, Signature, SigningError, SigningScheme, SigningSchemeType,
-    UnifiedPrivateSigKey,
-};
+use super::seed::RootSigningSeed;
+use super::{HasSigningScheme, Signature, SigningError, SigningScheme, SigningSchemeType};
 use crate::anyhow_tracked;
 use crate::cryptography::error::CryptographyError;
 use crate::cryptography::internal_crypto_types::LegacySerialization;
@@ -16,7 +13,7 @@ use alloy_sol_types::{Eip712Domain, SolStruct};
 use hashing::DomainSep;
 use k256::ecdsa::{SigningKey, VerifyingKey};
 use serde::{Deserialize, Serialize, de::Visitor};
-use std::sync::{Arc, OnceLock};
+use std::sync::Arc;
 use tfhe::named::Named;
 use tfhe_versionable::{Versionize, VersionsDispatch};
 use wasm_bindgen::prelude::wasm_bindgen;
@@ -189,12 +186,13 @@ pub enum PrivateSigKeyVersions {
 #[versionize(PrivateSigKeyVersions)]
 pub struct PrivateSigKey {
     sk: WrappedSigningKey,
-    /// Memoized per-scheme signing keys derived from `sk`.
-    /// Skipped from (de)serialization and versioning, so the persisted format is unchanged and old
-    /// data deserializes with an empty (cold) cache.
+    /// The seed every non-ECDSA key of this identity is derived from.
+    ///
+    /// Skipped from (de)serialization and versioning to ensure backward compatibility: 
+    /// The seed is persisted as its own object.
     #[serde(skip)]
     #[versionize(skip)]
-    cache: DerivedKeyCache,
+    seed: Option<RootSigningSeed>,
 }
 
 impl Named for PrivateSigKey {
@@ -202,18 +200,34 @@ impl Named for PrivateSigKey {
 }
 
 impl PrivateSigKey {
+    /// A bare ECDSA signing key, with no root seed attached.
     pub fn new(sk: k256::ecdsa::SigningKey) -> Self {
         Self {
             sk: WrappedSigningKey(sk),
-            cache: DerivedKeyCache::default(),
+            seed: None,
         }
     }
 
-    pub(super) fn derived_key_slot(
+    /// Attach `seed` as the root of this identity's non-ECDSA keys.
+    pub fn with_root_seed(mut self, seed: RootSigningSeed) -> Self {
+        self.seed = Some(seed);
+        self
+    }
+
+    /// Whether a root seed is attached, i.e. whether this identity can produce
+    /// non-ECDSA keys at all.
+    pub fn has_root_seed(&self) -> bool {
+        self.seed.is_some()
+    }
+
+    /// The attached root seed, or an error naming what is missing and why.
+    pub(super) fn require_root_seed(
         &self,
         scheme: SigningSchemeType,
-    ) -> &OnceLock<UnifiedPrivateSigKey> {
-        self.cache.slot(scheme)
+    ) -> Result<&RootSigningSeed, SigningError> {
+        self.seed
+            .as_ref()
+            .ok_or(SigningError::MissingRootSeed(scheme))
     }
 
     /// TODO(#2781) DEPRECATED: code should be refactored to not use this outside on this class
@@ -258,10 +272,13 @@ impl HasSigningScheme for PrivateSigKey {
     }
 }
 
-// Marker only: the `sk: WrappedSigningKey` field is `ZeroizeOnDrop`, so dropping
-// a `PrivateSigKey` wipes its key material. Not derived because that would
-// generate a `Drop` impl, which conflicts with the other macros on this type
-// (this is why the zeroizing `Drop` lives on the `WrappedSigningKey` newtype).
+// Marker only: both secret-bearing fields wipe themselves when dropped — `sk:
+// WrappedSigningKey` through its derived `ZeroizeOnDrop`, and the attached
+// `RootSigningSeed` through its own (see its `ZeroizeOnDrop` impl) — so dropping
+// a `PrivateSigKey` wipes all of its key material. Not derived because that
+// would generate a `Drop` impl, which conflicts with the other macros on this
+// type (this is why the zeroizing `Drop` lives on the `WrappedSigningKey`
+// newtype).
 impl ZeroizeOnDrop for PrivateSigKey {}
 
 #[derive(Clone, PartialEq, Eq, Debug, ZeroizeOnDrop)]

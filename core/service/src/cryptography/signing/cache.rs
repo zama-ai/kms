@@ -5,16 +5,11 @@ use std::sync::{Arc, OnceLock};
 use strum::EnumCount;
 use zeroize::Zeroize;
 
-/// Per-scheme cache of signing keys derived from a root secret.
+/// Per-scheme cache of the signing keys a [`super::RootSigningSeed`] derives.
 ///
 /// Deriving a key runs a KDF plus a (for ML-DSA, non-trivial) key expansion, so
-/// each scheme's key is derived once and memoized here.
-///
-/// Which slots are ever filled depends on what the cache hangs off:
-/// - a [`super::RootSigningSeed`] is the root of the whole key hierarchy and can
-///   derive every scheme, so every slot may be filled;
-/// - a [`super::ecdsa::PrivateSigKey`] signs ECDSA with itself, so its
-///   [`SigningSchemeType::Ecdsa256k1`] slot always stays empty.
+/// each scheme's key is derived once and memoized here. Every slot may be
+/// filled: the seed is the root of the whole key hierarchy, ECDSA included.
 pub(super) struct DerivedKeyCache {
     /// One slot per [`SigningSchemeType`], indexed by `scheme as usize`.
     slots: Arc<[OnceLock<UnifiedPrivateSigKey>; SigningSchemeType::COUNT]>,

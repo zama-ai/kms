@@ -87,17 +87,19 @@ impl RootSigningSeed {
     ///
     /// # ECDSA is derived here, but is not the node's identity
     ///
-    /// Unlike [`PrivateSigKey::derive_signing_key`], this covers *every* scheme,
-    /// ECDSA included — the seed is the root of the whole key hierarchy. The
-    /// ECDSA arm exists for two callers: generating the key of a *fresh* node,
-    /// and, later, rotating an existing node onto its seed-derived key.
+    /// This covers *every* scheme, ECDSA included — the seed is the root of the
+    /// whole key hierarchy. The ECDSA arm exists for two callers: generating the
+    /// key of a *fresh* node, and, later, rotating an existing node onto its
+    /// seed-derived key.
     ///
     /// It is **not** the current ECDSA identity of an upgraded node, whose
-    /// identity is the separately persisted [`PrivateSigKey`]. Signing with,
-    /// publishing, or validating against the ECDSA key derived here would use
-    /// the wrong identity for such a node. Use [`Self::derive_ecdsa_signing_key`]
-    /// at the two call sites that legitimately want it, so the intent is
-    /// explicit and auditable.
+    /// identity is the separately persisted [`PrivateSigKey`] — which is why
+    /// [`PrivateSigKey::unified_verifying_key`] answers ECDSA from itself and
+    /// only delegates the other schemes here. Signing with, publishing, or
+    /// validating against the ECDSA key derived here would use the wrong
+    /// identity for such a node. Use [`Self::derive_ecdsa_signing_key`] at the
+    /// two call sites that legitimately want it, so the intent is explicit and
+    /// auditable.
     pub(crate) fn derive_signing_key(
         &self,
         scheme: SigningSchemeType,
