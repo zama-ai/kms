@@ -259,6 +259,7 @@ impl<
                         Ok((server_key, ck))
                     })?;
 
+                    // TODO we'll need to change the `partial_decrypt` return type to make sure pdec can be zeroized.
                     let pdec =
                         Dec::partial_decrypt(&mut noiseflood_session, ct, &keys.private_keys).await;
 

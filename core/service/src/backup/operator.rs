@@ -417,9 +417,11 @@ impl Named for BackupMaterial {
 /// `BackupMaterial` is what unsigncryption yields on the custodian and operator recovery paths,
 /// so it holds plaintext shares of the operator's private keys.
 ///
-/// NOTE: we cannot give this type a `Drop` impl (and hence no `ZeroizeOnDrop`) because the
-/// `Versionize` derive moves out of its fields. Instead, every place that unsigncrypts one keeps
-/// it inside a [`Zeroizing`] so it is wiped on all exit paths.
+/// NOTE: we cannot give this type an automatic zeroizing `Drop` impl because the `Versionize`
+/// derive moves out of its fields for the owned version conversion. Implementing
+/// `ZeroizeOnDrop` manually would only add its marker trait; it would not perform the wipe.
+/// Instead, every place that unsigncrypts one keeps it inside a [`Zeroizing`] so it is wiped on
+/// all exit paths.
 impl Zeroize for BackupMaterial {
     fn zeroize(&mut self) {
         // Only the shares are secret, the remaining fields are public routing metadata.
