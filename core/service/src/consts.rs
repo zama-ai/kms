@@ -152,7 +152,7 @@ pub static SIGNING_KEY_ID: LazyLock<RequestId> =
     LazyLock::new(|| derive_request_id("SIGNING_KEY_ID").unwrap());
 
 /// The storage `RequestId` (filename) under which a KMS party's verification
-/// material for `scheme` is stored, within the `SchemeVerfKey`/`SchemeVerfAddress`
+/// material for `scheme` is stored, within the `TypedVerfKey`/`TypedVerfAddress`
 /// data-type folders.
 #[cfg(feature = "non-wasm")]
 pub fn signing_material_id(scheme: SigningSchemeType) -> RequestId {

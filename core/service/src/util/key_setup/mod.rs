@@ -393,7 +393,7 @@ fn scheme_material_handles() -> impl Iterator<Item = (SigningSchemeType, Request
 
 /// The public data types holding a scheme's verification material.
 pub const SCHEME_MATERIAL_TYPES: [PubDataType; 2] =
-    [PubDataType::SchemeVerfKey, PubDataType::SchemeVerfAddress];
+    [PubDataType::TypedVerfKey, PubDataType::TypedVerfAddress];
 
 /// The deprecated ECDSA-only location of a node's published identity: a bare
 /// [`PublicSigKey`] and a checksummed Ethereum address.
@@ -453,8 +453,8 @@ where
 {
     validate_existing_scheme_material(pub_storage, sk).await?;
 
-    let verf_key_type = PubDataType::SchemeVerfKey.to_string();
-    let addr_type = PubDataType::SchemeVerfAddress.to_string();
+    let verf_key_type = PubDataType::TypedVerfKey.to_string();
+    let addr_type = PubDataType::TypedVerfAddress.to_string();
     for (scheme, req_id) in scheme_material_handles() {
         let verf_key = sk.unified_verifying_key(scheme).map_err(|e| {
             anyhow_error_and_log(format!("could not derive {scheme} verification key: {e}"))
@@ -484,8 +484,8 @@ async fn validate_existing_scheme_material<PubS: Storage>(
 ) -> anyhow::Result<()> {
     validate_legacy_ecdsa_material(pub_storage, sk).await?;
 
-    let verf_key_type = PubDataType::SchemeVerfKey.to_string();
-    let addr_type = PubDataType::SchemeVerfAddress.to_string();
+    let verf_key_type = PubDataType::TypedVerfKey.to_string();
+    let addr_type = PubDataType::TypedVerfAddress.to_string();
     for (scheme, req_id) in scheme_material_handles() {
         let expected = sk.unified_verifying_key(scheme).map_err(|e| {
             anyhow_error_and_log(format!("could not derive {scheme} verification key: {e}"))
@@ -1602,7 +1602,7 @@ mod scheme_material_tests {
         pub_storage: &PubS,
         sk: &PrivateSigKey,
     ) {
-        let addr_type = PubDataType::SchemeVerfAddress.to_string();
+        let addr_type = PubDataType::TypedVerfAddress.to_string();
         for scheme in SigningSchemeType::iter() {
             let id = signing_material_id(scheme);
             let expected = sk.unified_verifying_key(scheme).unwrap();
@@ -1645,7 +1645,7 @@ mod scheme_material_tests {
         // Ethereum address the deprecated location holds.
         let ecdsa_id = signing_material_id(SigningSchemeType::Ecdsa256k1);
         let stored_ecdsa: PublicSigKey = pub_storage
-            .read_data(&ecdsa_id, &PubDataType::SchemeVerfKey.to_string())
+            .read_data(&ecdsa_id, &PubDataType::TypedVerfKey.to_string())
             .await
             .unwrap();
         assert_eq!(stored_ecdsa, sk.verf_key());
@@ -1653,7 +1653,7 @@ mod scheme_material_tests {
             read_text_at_request_id(
                 &pub_storage,
                 &ecdsa_id,
-                &PubDataType::SchemeVerfAddress.to_string()
+                &PubDataType::TypedVerfAddress.to_string()
             )
             .await
             .unwrap(),
@@ -1749,8 +1749,8 @@ mod scheme_material_tests {
             .unwrap();
 
         // Both canonical folders hold exactly one handle per scheme.
-        let verf_key_type = PubDataType::SchemeVerfKey.to_string();
-        let addr_type = PubDataType::SchemeVerfAddress.to_string();
+        let verf_key_type = PubDataType::TypedVerfKey.to_string();
+        let addr_type = PubDataType::TypedVerfAddress.to_string();
         let expected_ids = SigningSchemeType::iter()
             .map(signing_material_id)
             .collect::<HashSet<RequestId>>();
@@ -1838,7 +1838,7 @@ mod scheme_material_tests {
     /// behind by a previous signing key is never silently kept, wherever it sits.
     #[tokio::test]
     async fn rejects_mismatched_digest_of_any_scheme() {
-        let addr_type = PubDataType::SchemeVerfAddress.to_string();
+        let addr_type = PubDataType::TypedVerfAddress.to_string();
         let mut rng = AesRng::seed_from_u64(13);
         for scheme in SigningSchemeType::iter() {
             let (_pk, sk) = gen_sig_keys(&mut rng);

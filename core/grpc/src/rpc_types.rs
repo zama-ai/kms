@@ -227,16 +227,16 @@ pub enum PubDataType {
     )]
     PublicKeyMetadata,
     CRS,
-    VerfKey, // DEPRECATED (superseded by [`PubDataType::SchemeVerfKey`]): Type for the servers public ECDSA 256k1 verification keys
-    VerfAddress, // DEPRECATED (superseded by [`PubDataType::SchemeVerfAddress`]): The ethereum address of the KMS core, needed for KMS signature verification
+    VerfKey, // DEPRECATED (superseded by [`PubDataType::TypedVerfKey`]): Type for the servers public ECDSA 256k1 verification keys
+    VerfAddress, // DEPRECATED (superseded by [`PubDataType::TypedVerfAddress`]): The ethereum address of the KMS core, needed for KMS signature verification
     DecompressionKey,
     CACert, // Certificate that signs TLS certificates used by MPC nodes // TODO will change in connection with #2491, also see #2723
     RecoveryMaterial, // Recovery material for the backup vault
     CompressedXofKeySet, // Compressed xof keyset
     /// A signature scheme's public verification key, holding one object per scheme.
-    SchemeVerfKey,
-    /// The digest identifying a [`PubDataType::SchemeVerfKey`], stored as text.
-    SchemeVerfAddress,
+    TypedVerfKey,
+    /// The digest identifying a [`PubDataType::TypedVerfKey`], stored as text.
+    TypedVerfAddress,
 }
 
 impl std::str::FromStr for PubDataType {
@@ -268,8 +268,8 @@ impl fmt::Display for PubDataType {
             PubDataType::CACert => write!(f, "CACert"),
             PubDataType::RecoveryMaterial => write!(f, "RecoveryMaterial"),
             PubDataType::CompressedXofKeySet => write!(f, "CompressedXofKeySet"),
-            PubDataType::SchemeVerfKey => write!(f, "SchemeVerfKey"),
-            PubDataType::SchemeVerfAddress => write!(f, "SchemeVerfAddress"),
+            PubDataType::TypedVerfKey => write!(f, "TypedVerfKey"),
+            PubDataType::TypedVerfAddress => write!(f, "TypedVerfAddress"),
         }
     }
 }

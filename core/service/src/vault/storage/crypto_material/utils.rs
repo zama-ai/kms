@@ -391,14 +391,14 @@ pub async fn get_client_verification_key<S: Storage>(storage: &S) -> anyhow::Res
     get_unique::<S, PublicSigKey, ClientDataType>(storage, ClientDataType::VerfKey).await
 }
 
-/// Persist `verf_key` in the [`PubDataType::SchemeVerfKey`] folder, under the
+/// Persist `verf_key` in the [`PubDataType::TypedVerfKey`] folder, under the
 /// handle [`signing_material_id`] gives for its scheme.
 pub async fn store_scheme_verification_key<S: Storage>(
     storage: &mut S,
     verf_key: &UnifiedPublicSigKey,
 ) -> anyhow::Result<()> {
     let req_id = signing_material_id(verf_key.signing_scheme_type());
-    let data_type = PubDataType::SchemeVerfKey.to_string();
+    let data_type = PubDataType::TypedVerfKey.to_string();
     match verf_key {
         UnifiedPublicSigKey::Ecdsa256k1(vk) => {
             store_versioned_at_request_id(storage, &req_id, vk, &data_type).await
@@ -425,7 +425,7 @@ pub async fn read_scheme_verification_key<S: StorageReader>(
     scheme: SigningSchemeType,
 ) -> anyhow::Result<UnifiedPublicSigKey> {
     let req_id = signing_material_id(scheme);
-    let data_type = PubDataType::SchemeVerfKey.to_string();
+    let data_type = PubDataType::TypedVerfKey.to_string();
     Ok(match scheme {
         SigningSchemeType::Ecdsa256k1 => {
             let vk: PublicSigKey = storage.read_data(&req_id, &data_type).await?;

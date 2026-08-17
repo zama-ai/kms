@@ -200,7 +200,7 @@ path = "{private_path}"
         let ed25519_id = signing_material_id(SigningSchemeType::Ed25519);
         let scheme_verf_key_path = temp_dir_pub
             .path()
-            .join("PUB/SchemeVerfKey")
+            .join("PUB/TypedVerfKey")
             .join(ed25519_id.to_string());
         assert!(scheme_verf_key_path.exists());
         fs::remove_file(&scheme_verf_key_path).unwrap();
@@ -249,7 +249,7 @@ path = "{private_path}"
 
         assert!(!output.status.success());
         assert!(
-            !temp_dir_pub.path().join("PUB/SchemeVerfKey").exists(),
+            !temp_dir_pub.path().join("PUB/TypedVerfKey").exists(),
             "verification material was written without a signing key to derive it from"
         );
     }

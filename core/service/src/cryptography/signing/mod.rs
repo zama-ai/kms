@@ -385,7 +385,7 @@ impl UnifiedPublicSigKey {
         }
     }
 
-    /// The text form of [`Self::digest`], as stored under `SchemeVerfAddress`:
+    /// The text form of [`Self::digest`], as stored under `TypedVerfAddress`:
     /// `0x`-prefixed hex.
     pub fn address_text(&self) -> String {
         match self {
