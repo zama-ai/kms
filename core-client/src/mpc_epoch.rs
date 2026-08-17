@@ -184,7 +184,7 @@ pub(crate) async fn do_new_epoch(
             let response_request: tonic::Request<kms_grpc::kms::v1::RequestId> =
                 tonic::Request::new(new_epoch_id.into());
             tokio::time::sleep(tokio::time::Duration::from_millis(
-                SLEEP_TIME_BETWEEN_REQUESTS_MS,
+                *SLEEP_TIME_BETWEEN_REQUESTS_MS,
             ))
             .await;
             let mut response = cur_client.get_epoch_result(response_request).await;
@@ -194,7 +194,7 @@ pub(crate) async fn do_new_epoch(
                 && response.as_ref().unwrap_err().code() == tonic::Code::Unavailable
             {
                 tokio::time::sleep(tokio::time::Duration::from_millis(
-                    SLEEP_TIME_BETWEEN_REQUESTS_MS,
+                    *SLEEP_TIME_BETWEEN_REQUESTS_MS,
                 ))
                 .await;
                 let response_request: tonic::Request<kms_grpc::kms::v1::RequestId> =

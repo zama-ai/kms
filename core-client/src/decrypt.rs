@@ -381,7 +381,7 @@ fn spawn_public_decrypt_sync(
                 response.as_ref().map_err(|e| e.code()),
                 Err(tonic::Code::Unavailable | tonic::Code::ResourceExhausted)
             ) {
-                tokio::time::sleep(Duration::from_millis(SLEEP_TIME_BETWEEN_REQUESTS_MS)).await;
+                tokio::time::sleep(Duration::from_millis(*SLEEP_TIME_BETWEEN_REQUESTS_MS)).await;
                 if ctr >= max_iter {
                     anyhow::bail!(
                         "timeout while waiting for sync public decryption after {max_iter} retries."
@@ -457,7 +457,7 @@ fn spawn_get_public_decrypt_result(
             while response.is_err()
                 && response.as_ref().unwrap_err().code() == tonic::Code::Unavailable
             {
-                tokio::time::sleep(Duration::from_millis(SLEEP_TIME_BETWEEN_REQUESTS_MS)).await;
+                tokio::time::sleep(Duration::from_millis(*SLEEP_TIME_BETWEEN_REQUESTS_MS)).await;
                 if ctr >= max_iter {
                     anyhow::bail!(
                         "timeout while waiting for public decryption after {max_iter} retries."
@@ -1104,7 +1104,7 @@ fn spawn_user_decrypt_sync(
                 response.as_ref().map_err(|e| e.code()),
                 Err(tonic::Code::Unavailable | tonic::Code::ResourceExhausted)
             ) {
-                tokio::time::sleep(Duration::from_millis(SLEEP_TIME_BETWEEN_REQUESTS_MS)).await;
+                tokio::time::sleep(Duration::from_millis(*SLEEP_TIME_BETWEEN_REQUESTS_MS)).await;
                 if ctr >= max_iter {
                     anyhow::bail!(
                         "timeout while waiting for sync user decryption after {max_iter} retries."
@@ -1186,7 +1186,7 @@ fn spawn_get_user_decrypt_result(
             while response.is_err()
                 && response.as_ref().unwrap_err().code() == tonic::Code::Unavailable
             {
-                tokio::time::sleep(Duration::from_millis(SLEEP_TIME_BETWEEN_REQUESTS_MS)).await;
+                tokio::time::sleep(Duration::from_millis(*SLEEP_TIME_BETWEEN_REQUESTS_MS)).await;
                 if ctr >= max_iter {
                     anyhow::bail!(
                         "timeout while waiting for user decryption after {max_iter} retries."
@@ -1651,7 +1651,7 @@ pub(crate) async fn get_public_decrypt_responses(
                 && response.as_ref().unwrap_err().code() == tonic::Code::Unavailable
             {
                 tokio::time::sleep(Duration::from_millis(
-                    SLEEP_TIME_BETWEEN_REQUESTS_MS,
+                    *SLEEP_TIME_BETWEEN_REQUESTS_MS,
                 ))
                 .await;
                 // do at most max_iter retries
