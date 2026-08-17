@@ -327,12 +327,6 @@ where
 
 /// Store a caller-supplied server signing key together with the public verification key and
 /// Ethereum address it implies.
-///
-/// This is the test-side counterpart of [`ensure_central_server_signing_keys_exist`], which
-/// generates its own key: both leave storage in the same shape that `kms-gen-keys` produces in
-/// production, so a KMS booted on top of it passes the public-material verification in
-/// [`crate::engine::public_material_verification`]. Writing only the private key would leave
-/// public storage without the `VerfKey` / `VerfAddress` a real deployment always publishes.
 #[cfg(any(test, feature = "testing"))]
 pub async fn store_server_signing_keys<PubS, PrivS>(
     pub_storage: &mut PubS,

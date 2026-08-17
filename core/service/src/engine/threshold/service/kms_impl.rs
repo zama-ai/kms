@@ -580,13 +580,6 @@ where
     // Verify that public storage holds exactly what private storage says it should, and that
     // it is intact. Private storage is the reference; extra material in public storage is
     // ignored.
-    //
-    // `sig_key()` fails only when this `BaseKmsStruct` was built by `new_no_signing_key`,
-    // which `kms-server` does when the private signing key cannot be read — the state it logs
-    // as "ENTERING RECOVERY MODE" (see `bin/kms-server.rs`). There is no separate flag for it.
-    // In that state the verification key itself was read out of public storage, so the
-    // signature and verification-key checks are skipped rather than compared against
-    // themselves; see `verify_public_material`.
     let signing_key = base_kms.sig_key().ok();
     verify_public_material(&public_storage, &entries, &crs_info, signing_key.as_deref()).await?;
 

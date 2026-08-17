@@ -120,7 +120,7 @@ async fn load_public_bytes<S: StorageReader + Sync>(
 
 /// Load raw bytes from storage and verify their digests against the expected values
 /// in `key_digest_map`. Returns an error if any digest does not match.
-async fn verify_digests<S: StorageReader + Sync>(
+async fn verify_fhe_key_digests<S: StorageReader + Sync>(
     storage: &S,
     id: &RequestId,
     key_digest_map: &BTreeMap<PubDataType, Vec<u8>>,
@@ -129,10 +129,8 @@ async fn verify_digests<S: StorageReader + Sync>(
     let expected_public_key_digest = key_digest_map
         .get(&PubDataType::PublicKey)
         .ok_or_else(|| anyhow::anyhow!("missing digest for public key, id={id}"))?;
-    {
-        let public_key_bytes = load_public_bytes(storage, id, PubDataType::PublicKey).await?;
-        verify_public_key_digest_from_bytes(&public_key_bytes, expected_public_key_digest)?;
-    }
+    let public_key_bytes = load_public_bytes(storage, id, PubDataType::PublicKey).await?;
+    verify_public_key_digest_from_bytes(&public_key_bytes, expected_public_key_digest)?;
 
     match layout {
         CurrentPublicMaterialLayout::Standard => {
@@ -189,7 +187,7 @@ where
     for (id, metadata) in entries {
         match metadata {
             KeyGenMetadata::Current(inner) => {
-                verify_digests(public_storage, id, &inner.key_digest_map).await?;
+                verify_fhe_key_digests(public_storage, id, &inner.key_digest_map).await?;
             }
             KeyGenMetadata::LegacyV0(hash_map) => {
                 tracing::info!(
