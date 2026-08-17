@@ -33,7 +33,7 @@ and falling back to `address`.
 
 ### `[keygen]` options
 
-All three flags default to `false` and are mutually exclusive in practice —
+All three flags default to `false` and are mutually exclusive —
 pick at most one per run:
 
 - `overwrite`: delete any existing signing material at the fixed signing-key
@@ -42,14 +42,12 @@ pick at most one per run:
   generation fails if storage already holds material for that handle.
 - `show_existing`: print the existing signing-material handles and exit, without
   generating or deleting anything.
-- `repopulate`: derive and store every scheme's verification material
-  (ECDSA's included) from the ECDSA signing key already present in private
-  storage, then exit without touching the signing key itself. Requires that
-  key to already exist, and validates any verification material already in
-  public storage against it. Use this to restore verification material after
-  a partial purge — for example, public storage was restored from a snapshot
-  that predates a signing scheme, or a per-scheme object was deleted by hand —
-  without regenerating the signing key.
+- `repopulate`: derive and store every piece of missing verification material
+  — each scheme's key and digest, ECDSA's included, plus the two deprecated
+  ECDSA-only objects — from the ECDSA signing key already present in private
+  storage, then exit without touching the signing key itself. Material that is
+  already published is validated against that key rather than overwritten. Use
+  this to restore verification material after a partial purge.
 
 ### What is written to public storage
 

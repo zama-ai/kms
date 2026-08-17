@@ -11,8 +11,8 @@ use kms_lib::{
     consts::SIGNING_KEY_ID,
     cryptography::attestation::make_security_module,
     util::key_setup::{
-        delete_scheme_verification_material, ensure_central_server_signing_keys_exist,
-        ensure_scheme_verification_material, ensure_threshold_server_signing_key_exists,
+        backfill_verification_material, delete_scheme_verification_material,
+        ensure_central_server_signing_keys_exist, ensure_threshold_server_signing_key_exists,
     },
     vault::{
         Vault,
@@ -172,7 +172,28 @@ fn resolve_args(args: &Args) -> anyhow::Result<KmsGenKeysConfig> {
     config
         .validate()
         .context("invalid kms-gen-keys config file")?;
+    ensure_keygen_modes_are_exclusive(&config.keygen)?;
     Ok(config)
+}
+
+/// Reject a `[keygen]` section that selects more than one mode.
+fn ensure_keygen_modes_are_exclusive(keygen: &KeygenConfig) -> anyhow::Result<()> {
+    let selected: Vec<&str> = [
+        ("show_existing", keygen.show_existing),
+        ("repopulate", keygen.repopulate),
+        ("overwrite", keygen.overwrite),
+    ]
+    .into_iter()
+    .filter_map(|(name, is_set)| is_set.then_some(name))
+    .collect();
+
+    ensure!(
+        selected.len() <= 1,
+        "invalid kms-gen-keys config file: [keygen] {} are mutually exclusive, \
+         set at most one of them per run",
+        selected.join(" and ")
+    );
+    Ok(())
 }
 
 fn resolve_keygen_config_mode(
@@ -457,21 +478,16 @@ async fn handle_threshold_cmd<PubS: Storage, PrivS: Storage>(
     Ok(())
 }
 
-/// Repopulate every scheme's verification material from the existing
+/// Repopulate every piece of public verification material from the existing
 /// ECDSA signing key.
-///
-/// Requires the ECDSA signing key to already be present in private storage;
-/// derives and stores every scheme's public verification key and digest, ECDSA's
-/// included, in their canonical location.
+/// Requires the ECDSA signing key to already be present in private storage.
 async fn handle_repopulate_cmd<PubS: Storage, PrivS: Storage>(
     pub_storage: &mut PubS,
     priv_storage: &PrivS,
 ) -> anyhow::Result<()> {
     let sk = get_core_signing_key(priv_storage).await?;
-    ensure_scheme_verification_material(pub_storage, &sk).await?;
-    tracing::info!(
-        "Repopulated multi-scheme verification material from the existing ECDSA signing key"
-    );
+    backfill_verification_material(pub_storage, &sk).await?;
+    tracing::info!("Repopulated verification material from the existing ECDSA signing key");
     Ok(())
 }
 
@@ -571,6 +587,37 @@ mod tests {
             enclave_bootstrap: None,
             #[cfg(feature = "insecure")]
             mock_enclave: false,
+        }
+    }
+
+    /// Combining modes is rejected up front rather than resolved by precedence —
+    /// otherwise asking to list keys could silently rotate them instead.
+    #[test]
+    fn combined_keygen_modes_are_rejected() {
+        for (show_existing, repopulate, overwrite, expected) in [
+            (true, true, false, "show_existing and repopulate"),
+            (true, false, true, "show_existing and overwrite"),
+            (false, true, true, "repopulate and overwrite"),
+            (
+                true,
+                true,
+                true,
+                "show_existing and repopulate and overwrite",
+            ),
+        ] {
+            let err = ensure_keygen_modes_are_exclusive(&KeygenConfig {
+                #[cfg(any(test, feature = "testing", feature = "insecure"))]
+                deterministic: false,
+                overwrite,
+                show_existing,
+                repopulate,
+            })
+            .unwrap_err()
+            .to_string();
+            assert!(
+                err.contains(expected) && err.contains("mutually exclusive"),
+                "expected {expected} to be reported, got: {err}"
+            );
         }
     }
 

@@ -314,7 +314,7 @@ where
 /// any ECDSA material already in storage against `sk` and backfills the missing
 /// verification material of the other signing schemes. Nothing is ever
 /// overwritten.
-async fn backfill_verification_material<PubS>(
+pub async fn backfill_verification_material<PubS>(
     pub_storage: &mut PubS,
     sk: &PrivateSigKey,
 ) -> anyhow::Result<()>
