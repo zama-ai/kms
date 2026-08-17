@@ -856,7 +856,7 @@ mod tests {
     use super::*;
     use crate::conf::ContextEpochAssociation;
     use crate::consts::signing_material_id;
-    use crate::cryptography::signatures::{PrivateSigKey, gen_sig_keys};
+    use crate::cryptography::signatures::PrivateSigKey;
     use crate::cryptography::signing::SigningSchemeType;
     use crate::engine::context::{ContextInfo, NodeInfo, SchemeDigests, SoftwareVersion};
     use crate::util::key_setup::{
@@ -864,7 +864,7 @@ mod tests {
         ensure_central_server_signing_keys_exist,
     };
     use crate::vault::storage::crypto_material::{
-        get_core_signing_key, read_scheme_verification_key, store_scheme_verification_key,
+        get_core_signing_key, read_scheme_verification_key,
     };
     use crate::vault::storage::file::FileStorage;
     use crate::vault::storage::ram::{self, RamStorage};
@@ -872,10 +872,8 @@ mod tests {
         Storage, StorageExt, StorageReader, StorageReaderExt, StorageType, read_text_at_request_id,
         store_context_at_id, store_versioned_at_request_id,
     };
-    use aes_prng::AesRng;
     use kms_grpc::RequestId;
     use kms_grpc::rpc_types::PubDataType;
-    use rand::SeedableRng;
     use std::collections::HashMap;
     use std::str::FromStr;
     use strum::IntoEnumIterator;

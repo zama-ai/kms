@@ -40,7 +40,7 @@ pick at most one per run:
   handle (private key, and every scheme's verification material in public
   storage) before generating a fresh key. Required to rotate a key; without it,
   generation fails if storage already holds material for that handle.
-- `show_existing`: print the existing signing-material handles instead of
+- `show_existing`: print the existing signing-material handles and exit, without
   generating or deleting anything.
 - `repopulate`: derive and store every scheme's verification material
   (ECDSA's included) from the ECDSA signing key already present in private

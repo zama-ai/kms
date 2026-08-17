@@ -61,6 +61,11 @@ pub type FhePublicKey = tfhe::CompactPublicKey;
 /// Client key for FHE operations (contains private parameters)
 pub type FhePrivateKey = tfhe::ClientKey;
 
+/// The deprecated ECDSA-only location of a node's published identity: a bare
+/// [`PublicSigKey`] and a checksummed Ethereum address.
+pub const LEGACY_ECDSA_MATERIAL_TYPES: [PubDataType; 2] =
+    [PubDataType::VerfKey, PubDataType::VerfAddress];
+
 /// Generates and stores client signing and verification keys if they don't exist.
 ///
 /// This function handles the complete key setup workflow for clients:
@@ -394,12 +399,6 @@ fn scheme_material_handles() -> impl Iterator<Item = (SigningSchemeType, Request
 /// The public data types holding a scheme's verification material.
 pub const SCHEME_MATERIAL_TYPES: [PubDataType; 2] =
     [PubDataType::TypedVerfKey, PubDataType::TypedVerfAddress];
-
-/// The deprecated ECDSA-only location of a node's published identity: a bare
-/// [`PublicSigKey`] and a checksummed Ethereum address.
-pub const LEGACY_ECDSA_MATERIAL_TYPES: [PubDataType; 2] =
-    [PubDataType::VerfKey, PubDataType::VerfAddress];
-
 fn scheme_material_slots() -> impl Iterator<Item = (SigningSchemeType, RequestId, String)> {
     scheme_material_handles().flat_map(|(scheme, req_id)| {
         SCHEME_MATERIAL_TYPES.map(move |t| (scheme, req_id, t.to_string()))
@@ -475,9 +474,7 @@ where
 }
 
 /// Verify that every piece of verification material already in storage matches the
-/// signing key `sk`: each scheme's canonical [`SCHEME_MATERIAL_TYPES`] objects under
-/// its own [`signing_material_id`] handle, plus the deprecated
-/// [`LEGACY_ECDSA_MATERIAL_TYPES`] objects under [`SIGNING_KEY_ID`].
+/// signing key `sk`.
 async fn validate_existing_scheme_material<PubS: Storage>(
     pub_storage: &PubS,
     sk: &PrivateSigKey,
@@ -1537,15 +1534,32 @@ pub fn max_threshold(amount_parties: usize) -> usize {
 
 #[cfg(test)]
 mod tests {
+    use super::{
+        delete_scheme_verification_material, ensure_central_server_signing_keys_exist,
+        ensure_no_scheme_verification_material, ensure_scheme_verification_material,
+    };
+    use crate::consts::{SIGNING_KEY_ID, signing_material_id};
+    use crate::cryptography::signatures::{PrivateSigKey, PublicSigKey, gen_sig_keys};
+    use crate::cryptography::signing::SigningSchemeType;
+    use crate::util::key_setup::LEGACY_ECDSA_MATERIAL_TYPES;
+    use crate::vault::storage::crypto_material::{
+        get_core_signing_key, read_scheme_verification_key, store_scheme_verification_key,
+    };
+    use crate::vault::storage::ram::RamStorage;
+    use crate::vault::storage::{
+        StorageReader, read_text_at_request_id, store_text_at_request_id,
+        store_versioned_at_request_id,
+    };
+    use crate::{
+        consts::DEFAULT_PARAM, dummy_domain, engine::centralized::central_kms::gen_centralized_crs,
+    };
     use aes_prng::AesRng;
     use kms_grpc::RequestId;
+    use kms_grpc::rpc_types::PubDataType;
     use rand::SeedableRng;
+    use std::collections::HashSet;
+    use strum::IntoEnumIterator;
     use threshold_execution::zk::ceremony::max_num_bits_from_crs;
-
-    use crate::{
-        consts::DEFAULT_PARAM, cryptography::signatures::gen_sig_keys, dummy_domain,
-        engine::centralized::central_kms::gen_centralized_crs,
-    };
 
     #[test]
     fn test_max_num_bits() {
@@ -1569,32 +1583,6 @@ mod tests {
             assert_eq!(max_num_bits as usize, max_num_bits_from_crs(&crs));
         }
     }
-}
-
-#[cfg(test)]
-mod scheme_material_tests {
-    use super::{
-        LEGACY_ECDSA_MATERIAL_TYPES, delete_scheme_verification_material,
-        ensure_central_server_signing_keys_exist, ensure_no_scheme_verification_material,
-        ensure_scheme_verification_material,
-    };
-    use crate::consts::{SIGNING_KEY_ID, signing_material_id};
-    use crate::cryptography::signatures::{PrivateSigKey, PublicSigKey, gen_sig_keys};
-    use crate::cryptography::signing::SigningSchemeType;
-    use crate::vault::storage::crypto_material::{
-        get_core_signing_key, read_scheme_verification_key, store_scheme_verification_key,
-    };
-    use crate::vault::storage::ram::RamStorage;
-    use crate::vault::storage::{
-        StorageReader, read_text_at_request_id, store_text_at_request_id,
-        store_versioned_at_request_id,
-    };
-    use aes_prng::AesRng;
-    use kms_grpc::RequestId;
-    use kms_grpc::rpc_types::PubDataType;
-    use rand::SeedableRng;
-    use std::collections::HashSet;
-    use strum::IntoEnumIterator;
 
     /// Asserts every scheme's canonical verification key and address, ECDSA's
     /// included, match `sk`.
