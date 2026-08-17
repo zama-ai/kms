@@ -1,5 +1,6 @@
 //! ECDSA over secp256k1 signing backend.
 
+use super::cache::DerivedKeyCache;
 use super::{
     HasSigningScheme, Signature, SigningError, SigningScheme, SigningSchemeType,
     UnifiedPrivateSigKey,
@@ -16,7 +17,6 @@ use hashing::DomainSep;
 use k256::ecdsa::{SigningKey, VerifyingKey};
 use serde::{Deserialize, Serialize, de::Visitor};
 use std::sync::{Arc, OnceLock};
-use strum::EnumCount;
 use tfhe::named::Named;
 use tfhe_versionable::{Versionize, VersionsDispatch};
 use wasm_bindgen::prelude::wasm_bindgen;
@@ -267,68 +267,6 @@ impl ZeroizeOnDrop for PrivateSigKey {}
 #[derive(Clone, PartialEq, Eq, Debug, ZeroizeOnDrop)]
 struct WrappedSigningKey(k256::ecdsa::SigningKey);
 impl_generic_versionize!(WrappedSigningKey);
-
-/// Per-scheme cache of signing keys derived from a [`PrivateSigKey`].
-///
-/// Deriving a non-ECDSA key runs a KDF plus a (for ML-DSA, non-trivial) key
-/// expansion, so each scheme's key is derived once and memoized here.
-struct DerivedKeyCache {
-    /// One slot per [`SigningSchemeType`], indexed by `scheme as usize`. The
-    /// [`SigningSchemeType::Ecdsa256k1`] slot always stays empty: that scheme
-    /// signs with the [`PrivateSigKey`] itself, so there is nothing to derive.
-    slots: Arc<[OnceLock<UnifiedPrivateSigKey>; SigningSchemeType::COUNT]>,
-}
-
-impl DerivedKeyCache {
-    fn slot(&self, scheme: SigningSchemeType) -> &OnceLock<UnifiedPrivateSigKey> {
-        &self.slots[scheme as usize]
-    }
-}
-
-impl Default for DerivedKeyCache {
-    fn default() -> Self {
-        Self {
-            slots: Arc::new(std::array::from_fn(|_| OnceLock::new())),
-        }
-    }
-}
-
-// Warm clone: sharing the `Arc` is deliberate, so clones of a signing key share
-// one warmed cache rather than each re-deriving.
-impl Clone for DerivedKeyCache {
-    fn clone(&self) -> Self {
-        Self {
-            slots: Arc::clone(&self.slots),
-        }
-    }
-}
-
-// Ignore the key cache when doing equality comparision.
-// Instead we only care about the underlying `sk` in `PrivateSigKey` when comparing.
-impl PartialEq for DerivedKeyCache {
-    fn eq(&self, _other: &Self) -> bool {
-        true
-    }
-}
-impl Eq for DerivedKeyCache {}
-
-// Never render cached secret-key material.
-impl std::fmt::Debug for DerivedKeyCache {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str("DerivedKeyCache(..)")
-    }
-}
-
-impl Zeroize for DerivedKeyCache {
-    fn zeroize(&mut self) {
-        // Drop this handle to the shared cache. If it is the last one, the slots
-        // drop and each cached key wipes itself in place
-        // (`UnifiedPrivateSigKey: ZeroizeOnDrop`); if other clones still share
-        // the cache, the derived keys are wiped once the final clone drops. The
-        // root secret in `PrivateSigKey::sk` is wiped in place regardless.
-        *self = Self::default();
-    }
-}
 
 impl Zeroize for WrappedSigningKey {
     fn zeroize(&mut self) {

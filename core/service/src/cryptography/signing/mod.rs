@@ -8,9 +8,11 @@
 // TODO(#3078): remove this once the unified signing API is used by the KMS and other consumers.
 #![allow(dead_code)]
 
+mod cache;
 pub mod ecdsa;
 mod eddsa;
 mod mldsa;
+pub mod seed;
 
 use alloy_primitives::Address;
 use ecdsa::Ecdsa256k1;
