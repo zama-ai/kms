@@ -130,7 +130,7 @@ kmsCore:
     # Enclave bootstrap support sockets.
     webIdentityTokenPort: 4100
     # Enclave CPU count, must be a multiple of 2 since whole cores (not hyperthreads) are sliced off and dedicated to the enclave
-    cpuCount: 48
+    cpuCount: 52
     # Enclave Memory in GiB
     memoryGiB: 96
     networkTunnel:
