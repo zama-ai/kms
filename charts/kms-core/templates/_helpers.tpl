@@ -211,6 +211,11 @@ args:
       exit 1
     fi
 
+    # Jumbo MTU to match the enclave-side TUN (init_enclave.sh TUN_MTU): fewer,
+    # larger packets => fewer userspace relay hops per MPC message. Non-fatal.
+    ifconfig "$TUN_IF" mtu {{ .networkTunnel.mtu | default 8500 }} \
+      || echo "enclave-network-tunnel: warning: could not set MTU on $TUN_IF" >&2
+
     {{- if gt (len .ingressPorts) 0 }}
     add_ingress_dnat() {
       port="$1"

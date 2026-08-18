@@ -600,6 +600,15 @@ where
         .new_server(TlsExtensionGetter::SslConnectInfo);
     let router = Server::builder()
         .http2_adaptive_window(Some(true))
+        // Match the client side: large HTTP/2 windows so the receive side does
+        // not throttle each MPC stream to 64KiB/RTT over the vsock tunnel, plus
+        // keepalive and generous stream concurrency for the ~90 DKG sessions
+        // that all multiplex over one connection per peer.
+        .initial_stream_window_size(Some(4u32 * 1024 * 1024))
+        .initial_connection_window_size(Some(32u32 * 1024 * 1024))
+        .http2_keepalive_interval(Some(std::time::Duration::from_secs(20)))
+        .http2_keepalive_timeout(Some(std::time::Duration::from_secs(10)))
+        .max_concurrent_streams(Some(1000u32))
         .add_service(networking_server)
         .add_service(threshold_health_service);
 

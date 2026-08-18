@@ -135,13 +135,17 @@ kmsCore:
     memoryGiB: 96
     networkTunnel:
       enabled: true
-      # If unset, queueCount defaults to a heuristic based on the threshold
-      # party topology: 8 queues minimum, or the next power of two above the
-      # hot peer-flow count (2 * (party_count - 1)) in threshold mode.
-      queueCount:
-      # If unset, tokioWorkerThreads defaults to a smaller scheduler pool than
-      # queueCount: 4 workers for up to 16 queues, otherwise 8 workers.
-      tokioWorkerThreads:
+      # Set explicitly (vs the party-topology heuristic, which can fall to the
+      # floor of 8) so the ~24 hot peer flows of a 13-party committee don't
+      # head-of-line block on too few relay queues.
+      queueCount: 32
+      # More relay scheduler threads to keep up with the DKG packet storm; the
+      # heuristic default is only 4-8.
+      tokioWorkerThreads: 8
+      # Jumbo MTU for the parent-side TUN; MUST match the enclave-side
+      # init_enclave.sh TUN_MTU. Reduces fragmentation of large MPC messages.
+      # Keep <= 9001 (AWS VPC jumbo ceiling) so the parent eth0 hop doesn't drop.
+      mtu: 8500
       # interfaceName is local to the parent-side network namespace, so it does
       # not need to match the enclave-side TUN_IF constant. The address values
       # are served to the enclave by the parent-side vsocktun bootstrap over the
