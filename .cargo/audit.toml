@@ -3,7 +3,17 @@
 
 [advisories]
 # RUSTSEC-2023-0071 is not applicable in our use-case.
-ignore = ["RUSTSEC-2023-0071"]
+# RUSTSEC-2026-0258 (h2 unbounded empty DATA frames): the h2 0.4 line is patched
+# by the 0.4.16 bump in Cargo.lock. It also matches h2 0.3.27, which has no
+# patched release, but that one is test-only -- it enters solely through our
+# `testing` feature: aws-sdk-s3/test-util -> aws-smithy-runtime/test-util ->
+# legacy-test-util -> connector-hyper-0-14-x -> aws-smithy-http-client/hyper-014
+# -> dep:h2-0-3. Production builds never compile it (`cargo build -p kms --lib`
+# builds only h2 0.4.16), and dropping it would mean giving up aws-smithy-mocks'
+# `mock_client!`.
+# TODO: Drop this entry once aws-sdk-s3's test-util stops pulling the hyper-0.14.
+# See issue: https://github.com/zama-ai/kms-internal/issues/3173
+ignore = ["RUSTSEC-2023-0071", "RUSTSEC-2026-0258"]
 informational_warnings = ["unmaintained"]
 severity_threshold = "medium"
 
