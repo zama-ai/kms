@@ -405,6 +405,12 @@ pub(crate) fn validate_user_decrypt_responses(
         authenticated_payloads.push((verification_key, role, payload));
     }
 
+    // We need 2t+1 (where threshold == degree) authenticated responses to guarantee that at least t+1 of them are honest,
+    // so we can ascertain the reconstruction is correct.
+    if authenticated_payloads.len() < 2 * trusted_ctx.threshold + 1 {
+        anyhow::bail!(ERR_VALIDATE_USER_DECRYPTION_NOT_ENOUGH_RESP);
+    }
+
     // (2) Establish the consensus invariants by majority vote over the authenticated, de-duplicated
     //     payloads only (the vote key *is* the invariants). A payload whose invariants cannot even
     //     be built is skipped from the tally and then rejected in (3).
@@ -448,9 +454,6 @@ pub(crate) fn validate_user_decrypt_responses(
         }
     }
 
-    if authenticated.len() <= invariants.degree {
-        anyhow::bail!(ERR_VALIDATE_USER_DECRYPTION_NOT_ENOUGH_RESP);
-    }
     Ok(AuthenticatedUserDecResponses {
         invariants,
         authenticated,
