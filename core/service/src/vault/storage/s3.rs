@@ -158,8 +158,8 @@ impl S3Storage {
         );
         // A multipart upload gets its own client so it never contends with this storage's
         // other S3 operations, but it is built only if the payload actually spills: the
-        // single-PUT path is every write in normal operation, and building a client there
-        // would burn a TLS connector (~55 µs measured) on every one of them. Cloning the
+        // single-PUT path is the overwhelming majority of writes by count, and building
+        // a client there would burn a TLS connector (~55 µs measured) on every one. Cloning the
         // client to carry into the closure is just an `Arc` bump.
         let base_client = self.s3_client.clone();
         let size = s3_put_versioned(
@@ -417,14 +417,10 @@ impl Storage for S3Storage {
         Ok(StoreWriteOutcome::Created)
     }
 
-    // Not routed through the multipart writer, because the caller hands in an
-    // already-serialized blob: there is nothing left to stream, so the peak is set
-    // by the caller's buffer either way. Note this is NOT a small-object path — the
-    // startup epoch migrations copy `FheKeyInfo` / `FhePrivateKey` through
-    // `load_bytes` + `store_bytes*` (see `engine::migration`), i.e. GiB-scale FHE key
-    // material. The `to_vec` below therefore duplicates that blob for the SDK body;
-    // removing it needs the trait to take an owned `Vec<u8>`, which is a separate
-    // change. The single PUT itself is fine up to S3's 5 GiB object limit.
+    // Single PUT: the caller already holds the serialized blob, so only the `to_vec`
+    // is avoidable — chunking it through the part writer would take the peak from 2N
+    // to N + O(part size). Left for a change that can take an owned body. Not a
+    // small-object path; see `store_bytes_at_epoch`.
     async fn store_bytes(
         &mut self,
         bytes: &[u8],
@@ -479,8 +475,9 @@ impl StorageExt for S3Storage {
         Ok(StoreWriteOutcome::Created)
     }
 
-    // Single PUT for the same reason as `store_bytes`; see the note there, including
-    // the GiB-scale migration callers.
+    // As `store_bytes`, and this is the overload with the large callers: the startup
+    // epoch migrations copy GiB-scale `FheKeyInfo` / `FhePrivateKey` through it
+    // (`engine::migration::migrate_fhe_keys_*`), paying that 2N.
     async fn store_bytes_at_epoch(
         &mut self,
         bytes: &[u8],

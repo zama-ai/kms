@@ -35,10 +35,10 @@ const _: () = assert!(S3_MULTIPART_PART_SIZE >= S3_MULTIPART_MIN_PART_SIZE);
 // object has been uploaded.
 const _: () = assert!(SAFE_SER_SIZE_LIMIT.div_ceil(S3_MULTIPART_PART_SIZE as u64) <= 10_000);
 
-/// Queue depth between the serializing task and the uploader thread; peak
-/// in-flight memory is roughly `(3 + capacity) * part_size`: the buffer being
-/// filled, the one held by a blocking send, the queued one, and the one the
-/// uploader is currently shipping.
+/// Queue depth between the serializing task and the uploader thread. Bounds
+/// in-flight memory at `(3 + capacity) * part_size` — 64 MiB today — for the
+/// buffer being filled, the one in a blocking send, the queued one, and the one
+/// being shipped. Fewer coexist unless the upload is the bottleneck.
 const PART_CHANNEL_CAPACITY: usize = 1;
 
 /// Upload id (if the multipart upload was created) plus the uploaded parts or
@@ -61,10 +61,8 @@ enum PartWriterOutcome {
 /// Builds the S3 client that serves one multipart upload, called at most once and
 /// only when the payload actually outgrows the first part buffer.
 ///
-/// Production hands in a closure over [`build_multipart_upload_client`], so the
-/// single-PUT path — every write in normal operation — never pays for a client it
-/// does not use. Tests hand in a closure returning a mock client directly, which
-/// must not go through `build_multipart_upload_client`: deriving a client from a
+/// Deferred so the single-PUT path — most writes by count — never builds a client
+/// it does not use. Tests pass a mock client straight through: deriving one from a
 /// config strips the mock transport.
 pub(super) type UploaderClientFactory = Box<dyn FnOnce() -> S3Client + Send>;
 
@@ -120,22 +118,15 @@ impl S3PartWriter {
         if self.pipeline.is_none() {
             let (part_tx, part_rx) = mpsc::sync_channel(PART_CHANNEL_CAPACITY);
             let (result_tx, result_rx) = oneshot::channel();
-            // The factory is consumed exactly here, and only this branch runs more
-            // than never: `pipeline` is `Some` from now on.
-            let make_client = self
-                .make_client
-                .take()
-                .expect("the uploader client factory is taken only when the pipeline is installed");
+            // Consumed here, so a failed spawn below must not leave a panicking retry.
+            let make_client = self.make_client.take().ok_or_else(|| {
+                std::io::Error::other("the S3 uploader thread already failed to spawn")
+            })?;
             let (client, bucket, key) = (make_client(), self.bucket.clone(), self.key.clone());
-            // Carry the request span across the spawn boundary so the uploader's log
-            // lines land inside the request that triggered the store. Same intent as
-            // the `.instrument(Span::current())` on this repo's async spawns, but not
-            // the same mechanics: this holds the span entered for the whole thread,
-            // not just during poll windows, which is what we want since the thread
-            // does nothing but serve this one request. Parenting relies on a global
-            // default subscriber (what every init site here installs) — a
-            // scoped-subscriber test would not see it.
-            let span = tracing::Span::current();
+            // A child span, not the request span: `tracing-opentelemetry` counts
+            // busy time per span, so entering the request span here would bill it
+            // the whole upload and defer its export until this thread exits.
+            let span = tracing::info_span!("s3_multipart_upload", key = %self.key);
             std::thread::Builder::new()
                 .name("s3-multipart-upload".to_string())
                 .spawn(move || {
@@ -179,14 +170,9 @@ impl S3PartWriter {
 
 impl std::io::Write for S3PartWriter {
     fn write(&mut self, data: &[u8]) -> std::io::Result<usize> {
-        // Ship only when more bytes arrive after the buffer filled, so a
-        // payload of exactly one part stays on the single-PUT fast path.
-        // The `min` below is the only growth site, so `buf.len() <= part_size`
-        // holds by induction and `>=` is equality today. The assert keeps a
-        // broken invariant loud in tests; `>=` keeps it survivable in release,
-        // where `==` would instead skip the spill and let the buffer grow
-        // without bound — silently defeating the memory bound this type exists
-        // to enforce.
+        // Spill only once bytes arrive *past* a full buffer, so a payload of exactly
+        // one part stays on the single-PUT path. The `min` below caps growth, making
+        // `>=` equality today; it stays correct if that ever changes.
         debug_assert!(
             self.buf.len() <= self.part_size,
             "write must never grow buf past part_size"
@@ -212,7 +198,10 @@ impl std::io::Write for S3PartWriter {
 /// The uploader runs on its own thread and runtime (see
 /// [`run_multipart_uploader`]), so it must not share transport or cached
 /// credentials with `base_config`'s client: those are driven by the caller's
-/// runtime, which sits blocked in the serializer while the upload runs.
+/// runtime, which on the current-thread flavor is frozen inside the serializer
+/// for the whole upload, and on any flavor would otherwise serve this upload's
+/// parts through the pool and single-flighting identity cache every other
+/// storage operation is contending for.
 ///
 /// Endpoint, region and the credentials *provider* are inherited — the caller's
 /// config is the only source of those. Note the provider is the one piece of the
@@ -244,7 +233,7 @@ pub(super) fn build_multipart_upload_client(base_config: &aws_sdk_s3::Config) ->
     );
     // Bound each attempt so a black-holed connection cannot pin the uploader
     // — and the serializer blocked in `send` — forever. 600 s still clears a
-    // 16 MiB part at ~28 KiB/s.
+    // 16 MiB part at ~27 KiB/s.
     config.set_timeout_config(Some(
         aws_sdk_s3::config::timeout::TimeoutConfig::builder()
             .connect_timeout(std::time::Duration::from_secs(10))
@@ -263,30 +252,15 @@ pub(super) fn build_multipart_upload_client(base_config: &aws_sdk_s3::Config) ->
 /// Uploads parts received over `part_rx` to a new multipart upload of
 /// `bucket`/`key`, reporting the outcome over `result_tx`.
 ///
-/// Runs on a dedicated OS thread with its own single-threaded runtime, driving
-/// the `client` it was given, so uploads progress while the caller's runtime
-/// thread is blocked inside the serializer (see [`S3PartWriter`]). Dropping
+/// Runs on a dedicated OS thread with its own current-thread runtime. Dropping
 /// `part_rx` on error unblocks the serializing side with a send error.
 ///
-/// The dedicated thread is load-bearing, not stylistic. The serializer blocks
-/// synchronously on the bounded part channel, so "the uploader is already
-/// running" is the invariant that keeps the pipeline deadlock-free, and a
-/// `std::thread` is the only spawn that starts unconditionally:
-///
-/// - `tokio::spawn` cannot work at all here: the spawned task needs a runtime
-///   worker to poll it, and the serializer is occupying one (`block_in_place`)
-///   or the only one (on a current-thread runtime, which is what the default
-///   `#[tokio::test]` flavor gives most of the tests here).
-/// - `tokio::task::spawn_blocking` *would* run — its pool is separate from the
-///   runtime workers — but it queues once that pool is saturated, and a queued
-///   uploader deadlocks the serializer that is blocked waiting for it. Making
-///   deadlock-freedom depend on a process-wide pool having a spare thread is
-///   the tradeoff being declined; it also buys nothing, since the uploader
-///   drives its own runtime rather than the caller's either way.
-///
-/// Cost-wise this sits outside the tokio/rayon thread budget the way rayon
-/// does: one extra OS thread and a current-thread runtime with no workers of
-/// its own, alive only while a >1-part (keygen-scale) store is in flight.
+/// The thread must start unconditionally, because the serializer blocks on the
+/// bounded part channel and would stall until the uploader drains it.
+/// `tokio::spawn` never runs on a current-thread runtime (the serializer holds
+/// the only thread), and `spawn_blocking` queues while its pool is saturated —
+/// as does `block_in_place`'s own core handoff. The cost is one OS thread
+/// outside the tokio/rayon split, live only during a >1-part store.
 fn run_multipart_uploader(
     client: S3Client,
     bucket: String,
@@ -549,7 +523,8 @@ pub(super) async fn s3_finish_put(
 }
 
 /// Unit tests for [`S3PartWriter`]'s buffering. Unlike the storage-level suite in
-/// `s3.rs`, these need no S3 client at all: they assert on the writer's local state
+/// `s3.rs`, these need no S3 service at all — no mock, no MinIO, no credentials:
+/// they assert on the writer's local state
 /// only, so they also run without the `testing` feature that gates the mock. The
 /// single-PUT paths never spill, and the one spilling test points the (spawned,
 /// retry-disabled) uploader at a refused local port and never awaits it.
