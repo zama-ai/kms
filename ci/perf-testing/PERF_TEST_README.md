@@ -23,40 +23,49 @@ file is the source of truth for both public- and user-decrypt rate ladders.
 
 ```toml
 [defaults]              # applied to every rate unless the rate overrides it
-duration = 60           # measurement window, seconds
-pause = 10              # cooldown after each completed measurement
+duration = 30           # measurement window, seconds
+pause = 10              # cooldown after each rate and between its samples
 maxfail = 0             # max failed requests, % of offered
 maxshed = 0             # max shed (rate-limited) requests, % of offered
 pct = 98                # min achieved/target rate, %
+maxp50 = 0              # max median p50, ms (0 = do not check latency)
+maxp99 = 0              # max median p99, ms (0 = do not check latency)
 allowfail = false       # false → a breach fails the run; true → warns only
 
 [scenarios.pdec]
 key = "udec-key-gen"    # task providing the decryption key
 after = ["crs-gen"]     # dependencies for the first rate
 rates = [
-  { rate = 1100 },
-  { rate = 1300, maxfail = 1, maxshed = 1, pct = 90 },
+  { rate = 1300, maxshed = 1, pct = 95, maxp50 = 25, maxp99 = 150 },     # gate
   { rate = 1500, maxfail = 10, maxshed = 25, pct = 70, allowfail = true },
+  { rate = 1700, maxfail = 10, maxshed = 25, pct = 70, allowfail = true },
 ]
 
 [scenarios.udec]
 key = "udec-key-gen"
 after = ["pdec"]
 rates = [
-  { rate = 2400 },                                              # uses the defaults
-  { rate = 2700, maxfail = 1, maxshed = 1, pct = 95 },          # override some limits
-  { rate = 2750, maxfail = 10, maxshed = 25, pct = 70, allowfail = true },
+  { rate = 2300, maxshed = 1, pct = 95, maxp50 = 75, maxp99 = 1500 },    # gate
+  { rate = 2500, maxfail = 10, maxshed = 25, pct = 70, allowfail = true },
+  { rate = 2700, maxfail = 10, maxshed = 25, pct = 70, allowfail = true },
+  { rate = 2900, maxfail = 10, maxshed = 25, pct = 70, allowfail = true },
 ]
 ```
 
-Rules:
+Rules, all enforced by the generator before submit:
 
-- every `rates` entry is an inline table with a `rate` key;
-- anything unspecified falls back to `[defaults]`;
-- `key` names the task that supplies the key ID; `after` is an optional list of
-  dependencies that must run before the first rate of a ladder. The list can be either an Argo DAG task, e.g. `crs-gen`, or an entry from the `scenarios` table, e.g. `pdec`.
+- every `rates` entry is an inline table with a `rate` key.
+- anything unspecified falls back to `[defaults]`.
+- `key` names the task that supplies the key ID.
+- `after` is an optional list of dependencies that must run before the first rate of a ladder.
+  An entry is either an Argo DAG task, such as `crs-gen`, or a name from the `scenarios` table, such as `pdec`.
+  A scenario name resolves to the last rate of that ladder.
+- `maxp50` and `maxp99` come as a pair.
+  Setting one alone is a half-configured gate and the generator rejects it.
+- a rate cannot carry a latency limit while `allowfail = true`.
+  A probe never fails, so the limit could not be enforced.
 
-`keygen`/`crs` are one-shot setup and not configured here.
+`keygen` and `crs` are one-shot setup and not configured here.
 
 To preview the fully-expanded workflow locally:
 
@@ -90,39 +99,135 @@ they produce are real regardless of this setting.
 
 ## Reading the results
 
-The public- and user-decrypt rates, their durations, and their budgets
-are defined in [`perf-scenarios.toml`](perf-scenarios.toml). The Slack report
-labels each result by its target rate, for example `✅ 2400/s`.
+Each rate is a **rung**.
+The rates, their windows and their limits live in [`perf-scenarios.toml`](perf-scenarios.toml).
+The Slack report labels each result by its target rate, for example `✅ 2300/s`.
 
-The budget percentages (`maxfail`, `maxshed`) are shares of *offered* requests,
-not raw counts — `maxshed=25` means "no more than 25% of offered requests were
-shed." The rate percentage (`pct`) is the minimum acceptable ratio of achieved
-rate to target rate.
+The lowest rate of each kind is the **gate**.
+A gate is the highest rate whose latency repeats, so a failure there comes from the code and not from the load the cluster carries.
+Every rate above a gate is a **probe**.
+A probe runs at or past the point where latency collapses, so it reports and warns but never fails the run.
+A probe is the rate that carries `allowfail = true`.
 
-Each scenario lands on one of these outcomes:
+The budget percentages (`maxfail`, `maxshed`) are shares of *offered* requests, not raw counts.
+`maxshed=25` means "no more than 25% of offered requests were shed".
+The rate percentage (`pct`) is the minimum acceptable ratio of achieved rate to target rate.
 
-- **✅ pass** — stayed inside its budget with zero failed, shed, or saturated
-  traffic.
-- **⚠️ warn** — either stayed inside budget but saw *some* failed/shed/saturated
-  traffic, or has `allowfail = true` and exceeded its budget.
-- **❌ fail** — a scenario without `allowfail = true` went outside its budget.
-- **⏭️ skipped** — an earlier scenario failed, so this one didn't run (scenarios
-  run in ascending order and stop climbing once one falls over).
+Every rung so far met its offered rate to within 0.2%, up to 2,800 req/s.
+The budgets catch a collapse.
+Latency degrades first, so the latency limits below are the real check.
+
+### Latency limits
+
+A gate must also hold its median latencies inside `maxp50` and `maxp99`, or the run fails.
+A probe leaves both at 0, which turns the check off.
+Without these limits, a build that meets the offered rate but takes much longer per request counts as a pass.
+
+Each limit is about twice the worst median measured on any run so far.
+A gate therefore fires on a gross regression rather than on how busy the cluster is.
+That margin is deliberate and was bought the hard way.
+The first limits were 2.5x the medians of a single quiet run.
+Both gates then failed run 31800216785, a midday run whose medians were 1.5x to 7x that baseline at identical rate, payload and `max_in_flight`.
+Nothing in the code explained the difference.
+Treat a gate failure as a signal to compare against recent runs at the same time of day before you look for a regression.
+
+The Slack line for a gate shows its limits as `gate=p50=...,p99=...`.
+
+### When the suite stops
+
+Each rung decides whether the next rung runs.
+Any rung stops the suite when it misses its budget.
+A gate also stops the suite when its median p99 passes **3000 ms**.
+A gate that slow means the rates above it measure a system that already collapsed.
+This limit stays above every gate `maxp99`, so a gate reports which limit it broke instead of silently stopping the run.
+The suite reports every rung above a stopped rung as `⏭️ skipped`.
+
+A probe never stops the suite on latency, however slow it gets.
+Above a gate the rungs are not ordered by latency.
+On 2026-08-10 udec 2700 measured a median p99 of 2302 ms.
+Then udec 2750 ran clean at a p50 of 13.87 ms.
+On 2026-08-13 the order was reversed.
+A slow probe therefore says nothing about the rung above it, and a stop there would hide a rate that works.
+
+The gate latency limits are not part of this decision either.
+A gate that breaks its `maxp50` fails the run and still lets the higher rungs measure.
+A red run therefore still shows where the ceiling was.
+
+### Samples
+
+The suite measures each rung three times in the same pod.
+It reports the **median** achieved rate, p50 and p99 over those samples.
+The budget check, the latency limits and the stop decision all run on those medians rather than on one draw.
+One unlucky window no longer decides the run.
+Samples settle for the same `pause` that separates rates.
+
+Slack marks a line that carries medians with `n=3`.
+The per-sample values live in the `samples` block of the rung JSON artifact.
+The request counters on a line (`failed`, `shed`, `saturated`, `completed`, `offered`) belong to the sample that gave the median rate.
+`samples.median_sample` names that sample.
+
+Each median rounds against the rung, never in its favor.
+The two directions are opposite:
+
+- **Achieved rate** uses every sample and takes the *lower* median.
+  An invalid sample counts as 0/s, the worst possible rate, so it can only make the rung look slower.
+- **Latency** uses only the valid samples and takes the *upper* median.
+  An invalid sample records 0 ms, the fastest possible value.
+  It would pull the median down and let a rung pass its latency limit on a measurement that never ran.
+  `samples.valid_samples` gives the count.
+
+For p99 samples of 250 ms, invalid and 900 ms, the gate reads 900 ms and fails.
+It does not read 250 ms and pass.
+When all three samples are valid, both conventions return the middle value.
+Slack marks a rung that has an invalid sample with `bad_samples=N`.
+
+The first sample encrypts the ciphertext and writes it to disk.
+Later samples read that file, which skips the key-set download and the switch-and-squash precompute.
+A repeat costs about the measurement window, not a full setup.
+
+To change the count, pass `-p samples=N` when you submit the Argo workflow by hand.
+`samples=1` gives the old single-measurement behavior.
+The GitHub Actions form does not offer this parameter.
+
+### Outcomes
+
+- **✅ pass** — inside budget, with no failed, shed or saturated traffic.
+- **⚠️ warn** — inside budget but with some failed, shed or saturated traffic, or a probe outside budget.
+  A probe never fails the run.
+- **❌ fail** — a gate that misses its budget, breaks its latency limits, or reports a median p99 above 3000 ms.
+  Such a rung also carries `stopped_climb=p99>3000ms`.
+- **⏭️ skipped** — an earlier rung stopped the suite.
 
 ### Metric glossary
 
 The Slack report and JSON artifacts use these fields.
 
-**Outcome:**
+The rung artifact holds two durations.
+`total_duration_secs` at the top level is the wall time of every sample together.
+`duration` inside `performance_metrics` is the measurement window of one sample.
+
+**Outcome:** `offered`, `completed`, `failed`, `shed` and `saturated` come from the sample that gave the median rate.
+The three percentiles are medians across samples.
+A line can therefore pair `failed=0` with a p99 measured in a different window.
 
 | Metric | Meaning |
 | --- | --- |
 | `offered` | Requests the rate generator scheduled. |
 | `completed` | Requests that collected enough KMS responses. |
-| `failed` | Requests that were sent but didn't collect enough responses in time. |
+| `failed` | Requests the client sent that did not collect enough responses in time. |
 | `shed` | Requests dropped before sending because `max_in_flight` was already reached. |
 | `saturated` | `true` if anything was shed, or the post-run drain timed out with requests still in flight. |
 | `achieved_rate` | `completed / collection_elapsed_seconds`. |
+| `samples.count` | Measurements taken for this rung. |
+| `samples.median_sample` | The sample (1-based) that supplied the reported counters. |
+| `samples.achieved_rate` | Per-sample achieved rates, in submission order. |
+| `samples.p50_ms` / `samples.p95_ms` / `samples.p99_ms` | Per-sample request latency percentiles. |
+| `samples.valid` | Per-sample flag: did that measurement produce a metrics record. |
+| `samples.exit_code` | Per-sample `kms-core-client` exit code. |
+| `samples.valid_samples` | How many of `samples.count` were valid. This is the divisor for the latency medians. |
+| `samples.median_achieved_rate` | Lower median of `samples.achieved_rate` over **all** samples. The budget check uses this value. |
+| `samples.median_p50_ms` / `samples.median_p95_ms` / `samples.median_p99_ms` | Upper medians over the **valid** samples only. The report and the gate use these values. |
+| `samples.records` | The full metrics record of every sample, in submission order. Each record holds its own `network` block, payload throughput and percentiles, plus `sample_number`, `start_epoch` and `end_epoch`. Use these to diagnose one bad sample, or to line a sample up against the `core-cpu-samples.log` artifact. |
 
 **Payload throughput** (protobuf-encoded body only — excludes gRPC/TLS/header
 overhead):
