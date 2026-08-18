@@ -21,7 +21,7 @@
 # Per-rate baseline, applied unless a rate overrides it.
 [defaults]
 duration = 30      # measurement window, seconds
-pause = 10         # post-measurement cooldown, seconds (skipped rates don't wait)
+pause = 10         # cooldown seconds, after each rate and between its samples
 maxfail = 0        # max failed requests, % of offered
 maxshed = 0        # max shed (rate-limited) requests, % of offered
 pct = 98           # min achieved/target rate, %
