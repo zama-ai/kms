@@ -583,6 +583,9 @@ fn status_scan_contention(c: &mut Criterion) {
     group.throughput(Throughput::Elements(DEC_CAPACITY as u64));
     group.bench_function("writers", |b| {
         b.to_async(&runtime).iter(|| {
+            // We use two sets of request IDs and alternate between them because otherwise subsequent iterations would see
+            // the same request IDs and error (`AlreadyExists`). By alternating sets, we ensure that each iteration evicts
+            // the IDs from the previous set and `admit`s unseen IDs.
             let request_ids = Arc::clone(if writers_use_first {
                 &first_ids
             } else {
