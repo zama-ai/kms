@@ -328,13 +328,17 @@ the **raw stored bytes**, never over a serialization of a decoded value: a tfhe 
 since the material was generated would alter the bytes and report intact material as corrupt.
 Legacy metadata has no digest, so its public objects receive a raw presence check only.
 
-Two limits are worth knowing. `external_signature`, and the ECDSA entry of `signatures`, sign
-an EIP-712 hash whose `Eip712Domain` arrives on the originating gRPC request and is never
-persisted, so those signatures cannot be reconstructed at boot and are skipped — and since
-`signatures` defaults to empty, the signature check is a no-op for material generated without
-an explicitly requested post-quantum or Ed25519 scheme. And `PubDataType::DecompressionKey`
-has no private-storage counterpart at all (`write_decompression_key` persists no private
-data), so a published decompression key cannot be verified.
+`external_signature` and the ECDSA entry of `signatures` sign an EIP-712 hash built from an
+`Eip712Domain` that arrives from a gRPC request. Current key and CRS metadata therefore persists
+the domain so the signatures can be re-checked later; nothing reads it back yet, which is part of
+[issue 3178](https://github.com/zama-ai/kms-internal/issues/3178). Older metadata versions upgrade
+with no domain and stay unverifiable. The signed Solidity schema is inferred from the metadata
+kind: CRS metadata uses `CrsgenVerification`, decompression-key metadata uses
+`FheDecompressionUpgradeKey`, and other key metadata uses `KeygenVerification`.
+
+`PubDataType::DecompressionKey` has no private-storage counterpart at all
+(`write_decompression_key` persists no private data), so a published decompression key cannot be
+verified at startup.
 
 ## Backward compatibility
 

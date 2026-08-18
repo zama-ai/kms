@@ -1025,6 +1025,8 @@ mod tests {
         }
 
         #[derive(Clone, Serialize, Deserialize, VersionsDispatch)]
+        // Boxing a version variant would change the serialized test fixture.
+        #[allow(clippy::large_enum_variant)]
         pub enum ThresholdFheKeysVersions {
             V0(PlaceholderV0),
             V1(PlaceholderV1),
@@ -1092,6 +1094,7 @@ mod tests {
                     RequestId::zeros(),
                     RequestId::zeros(),
                     BTreeMap::new(),
+                    &crate::dummy_domain(),
                     vec![],
                     vec![],
                     vec![],
@@ -1141,6 +1144,7 @@ mod tests {
                 RequestId::zeros(),
                 RequestId::zeros(),
                 BTreeMap::new(),
+                &crate::dummy_domain(),
                 vec![],
                 vec![],
                 vec![],
@@ -1216,6 +1220,7 @@ mod tests {
                 RequestId::zeros(),
                 RequestId::zeros(),
                 BTreeMap::new(),
+                &crate::dummy_domain(),
                 vec![],
                 vec![],
                 vec![],

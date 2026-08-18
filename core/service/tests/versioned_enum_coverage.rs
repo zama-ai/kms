@@ -78,6 +78,9 @@ const ALLOW_UNCOVERED: &[&str] = &[
     // Variant payload of CrsGenMetadata::Current.
     // Covered via CrsGenMetadataTest.
     "CrsGenMetadataInner",
+    // Field of KeyGenMetadataInner.eip712_domain.
+    // Covered via KeyGenMetadataTest and current-format metadata roundtrip tests.
+    "StoredEip712Domain",
     // Field of Share.
     // Covered via ShareTest.
     "Role",

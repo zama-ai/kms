@@ -2494,6 +2494,7 @@ pub(crate) mod tests {
                 *key_id,
                 *preproc_id,
                 std::collections::BTreeMap::new(),
+                &crate::dummy_domain(),
                 vec![],
                 vec![],
                 vec![],
