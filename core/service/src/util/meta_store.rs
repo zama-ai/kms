@@ -892,6 +892,7 @@ impl<T> MetaStore<T> {
     }
 
     /// Iterate over successfully completed request IDs in completion order.
+    /// Excludes request IDs that have been deleted, are pending, or have failed.
     pub(crate) fn get_successful_completed_request_ids(
         &self,
     ) -> impl Iterator<Item = RequestId> + '_ {
