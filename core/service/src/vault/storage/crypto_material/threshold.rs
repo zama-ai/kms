@@ -395,6 +395,7 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: StorageExt + Send + Sync + 's
                     *old_key_id,
                     migrated_inner.preprocessing_id,
                     migrated_inner.key_digest_map.clone(),
+                    eip712_domain,
                     new_signature,
                     Vec::new(),
                     extra_data,

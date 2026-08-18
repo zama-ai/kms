@@ -459,6 +459,7 @@ mod tests {
                 key_id: self.key_id,
                 preprocessing_id: self.preproc_id,
                 key_digest_map: self.key_digest_map.clone(),
+                eip712_domain: None,
                 external_signature: vec![],
                 extra_data: None,
             })
@@ -483,6 +484,7 @@ mod tests {
                 key_id: self.key_id,
                 preprocessing_id: self.preproc_id,
                 key_digest_map,
+                eip712_domain: None,
                 external_signature: vec![],
                 extra_data: None,
             })
@@ -1092,6 +1094,7 @@ mod tests {
             crs_digest,
             max_num_bits: 64,
             extra_data: None,
+            eip712_domain: None,
             external_signature: vec![],
             signatures: vec![],
         })
