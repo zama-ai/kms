@@ -1,25 +1,20 @@
 # KMS Performance Testing
 
-This is a guide to the **Performance testing** GitHub Actions workflow
-(`.github/workflows/performance-testing.yml`), which you trigger manually from
-the Actions tab ("Run workflow").
+This is a guide to the **Performance testing** GitHub Actions workflow (`.github/workflows/performance-testing.yml`), which you trigger manually from the Actions tab ("Run workflow").
 
-The workflow spins up a real KMS deployment in Kubernetes, runs a suite of perf
-tests against it (keygen, CRS generation, public decrypt, and user decrypt),
-and posts a summary to Slack. This document focuses on user/public decryption rate tests,
-which are the part most people come here to run.
+The workflow spins up a real KMS deployment in Kubernetes, runs a suite of perf tests against it (keygen, CRS generation, public decrypt, and user decrypt), and posts a summary to Slack.
+This document focuses on user/public decryption rate tests, which are the part most people come here to run.
 
 ## Decryption rate tests
 
-The public- and user-decrypt tests offer a fixed number of requests per second
-for a fixed duration, then report whether the KMS kept up. The current CI suite
-uses this to measure how many decryptions per second the deployment can handle.
+The public- and user-decrypt tests offer a fixed number of requests per second for a fixed duration, then report whether the KMS kept up.
+The current CI suite uses this to measure how many decryptions per second the deployment can handle.
 
 ## Managing rate scenarios
 
-The rates to test and their pass/fail limits live in [`perf-scenarios.toml`](perf-scenarios.toml). At submit time
-`generate-perf-workflow.py` expands it into the Argo workflow (filling the `# <<GENERATED:…>>` markers). That TOML
-file is the source of truth for both public- and user-decrypt rate ladders.
+The rates to test and their pass/fail limits live in [`perf-scenarios.toml`](perf-scenarios.toml).
+At submit time `generate-perf-workflow.py` expands it into the Argo workflow (filling the `# <<GENERATED:…>>` markers).
+That TOML file is the source of truth for both public- and user-decrypt rate ladders.
 
 ```toml
 [defaults]              # applied to every rate unless the rate overrides it
@@ -93,9 +88,8 @@ To iterate on the decrypt tests, trigger the workflow with these values:
 | KMS Core image tag | Leave empty (build fills it in) |
 | KMS Core client image tag | Leave empty (build fills it in) |
 
-Note that `FHE parameters` only affects preprocessing and keygen. The decrypt
-scenarios always run with production-size `Default` parameters, so the numbers
-they produce are real regardless of this setting.
+Note that `FHE parameters` only affects preprocessing and keygen.
+The decrypt scenarios always run with production-size `Default` parameters, so the numbers they produce are real regardless of this setting.
 
 ## Reading the results
 
@@ -229,8 +223,7 @@ A line can therefore pair `failed=0` with a p99 measured in a different window.
 | `samples.median_p50_ms` / `samples.median_p95_ms` / `samples.median_p99_ms` | Upper medians over the **valid** samples only. The report and the gate use these values. |
 | `samples.records` | The full metrics record of every sample, in submission order. Each record holds its own `network` block, payload throughput and percentiles, plus `sample_number`, `start_epoch` and `end_epoch`. Use these to diagnose one bad sample, or to line a sample up against the `core-cpu-samples.log` artifact. |
 
-**Payload throughput** (protobuf-encoded body only — excludes gRPC/TLS/header
-overhead):
+**Payload throughput** (protobuf-encoded body only — excludes gRPC/TLS/header overhead):
 
 | Metric | Meaning |
 | --- | --- |
@@ -241,22 +234,17 @@ overhead):
 | `response_payload_mib_per_sec` | Response bytes per second, in MiB/s. |
 | `response_payload_avg_bytes` | Average encoded size of one accepted response. |
 
-The `request_payload_messages` / `response_payload_messages` counters record how
-many payloads went into the corresponding `_bytes` totals.
+The `request_payload_messages` / `response_payload_messages` counters record how many payloads went into the corresponding `_bytes` totals.
 
 ## Reusing Docker image tags
 
-Building images is the slow part of a run. If you just want to re-run the tests
-against images you already built, you can skip the rebuild.
+Building images is the slow part of a run.
+If you just want to re-run the tests against images you already built, you can skip the rebuild.
 
-**Find the tags from a previous run** — a run with `Build new Docker images`
-checked prints them in three places:
+**Find the tags from a previous run** — a run with `Build new Docker images` checked prints them in three places:
 
-- A `KMS PERF IMAGE TAGS` block in the `performance-testing` job log, plus a
-  matching section in the GitHub job summary.
-- Earliest of all, a `KMS DOCKER IMAGE TAG` block from the `docker-build` job's
-  first step, `KMS Docker image tag` — readable while the build is still
-  running.
+- A `KMS PERF IMAGE TAGS` block in the `performance-testing` job log, plus a matching section in the GitHub job summary.
+- Earliest of all, a `KMS DOCKER IMAGE TAG` block from the `docker-build` job's first step, `KMS Docker image tag` — readable while the build is still running.
 - The `Determine image tags` step logs.
 
 Or pull them with `gh` once the run finishes:
@@ -266,8 +254,7 @@ gh run view <run-id> --repo zama-ai/kms --log \
   | rg "KMS DOCKER IMAGE TAG|KMS PERF IMAGE TAGS|KMS Core image tag|KMS Core client image tag"
 ```
 
-If the logs aren't up yet, the tag is usually the first seven characters of the
-run's head commit SHA — but prefer the logged value when you can get it.
+If the logs aren't up yet, the tag is usually the first seven characters of the run's head commit SHA — but prefer the logged value when you can get it.
 
 **Then re-run without building:**
 
@@ -279,16 +266,12 @@ run's head commit SHA — but prefer the logged value when you can get it.
 
 ## Common pitfalls
 
-- **TLS + `threshold` fails fast.** Non-enclave threshold TLS times out during
-  deploy, so the workflow rejects it up front. Use `tls=false`, or switch to
-  `thresholdWithEnclave`.
-- **`kms_chart_version=repository` pulls the chart from a branch.** It uses
-  `KMS chart source ref`, falling back to the "Use workflow from" ref when that's
-  empty.
-- **`build=true` ignores the image-tag fields.** Only fill those in when build is
-  unchecked *and* you know the tags already exist in the registry.
-- **Leave FHE params at `Test`** unless you specifically want production-size
-  preproc/keygen. It doesn't touch the decrypt scenarios either way.
+- **TLS + `threshold` fails fast.** Non-enclave threshold TLS times out during deploy, so the workflow rejects it up front.
+  Use `tls=false`, or switch to `thresholdWithEnclave`.
+- **`kms_chart_version=repository` pulls the chart from a branch.** It uses `KMS chart source ref`, falling back to the "Use workflow from" ref when that's empty.
+- **`build=true` ignores the image-tag fields.** Only fill those in when build is unchecked *and* you know the tags already exist in the registry.
+- **Leave FHE params at `Test`** unless you specifically want production-size preproc/keygen.
+  It doesn't touch the decrypt scenarios either way.
 
 ## Run flow
 
@@ -300,30 +283,23 @@ What the workflow does, end to end:
 4. Verify the required image tags exist in the registry.
 5. Deploy KMS to the `kms-ci` namespace via `ci/scripts/deploy.sh`.
 6. Print a terse `before-perf` placement and network-counter snapshot.
-7. Submit the Argo workflow
-   (`ci/perf-testing/argo-workflow/kms-perf-workflow-kms-ci.yaml`).
+7. Submit the Argo workflow (`ci/perf-testing/argo-workflow/kms-perf-workflow-kms-ci.yaml`).
 8. Stream the Argo logs and send the Slack report.
 9. Print terse `after-perf` KMS core pod network-counter deltas in the CI logs.
 
 ## Network diagnostics
 
-Network diagnostics are printed directly in the GitHub Actions log. The output
-is intentionally terse: node placement, KMS core pod placement, and after-run
-`eth0` rx/tx deltas for each running KMS core pod plus a total.
+Network diagnostics are printed directly in the GitHub Actions log.
+The output is intentionally terse: node placement, KMS core pod placement, and after-run `eth0` rx/tx deltas for each running KMS core pod plus a total.
 
-Each decrypt scenario also captures its own `eth0` rx/tx counters *inside* the
-Argo test pod, reported as `net_rx`/`net_tx` in Slack — the outer before/after
-diagnostics only include KMS core pods that are still running when the snapshot
-is taken.
+Each decrypt scenario also captures its own `eth0` rx/tx counters *inside* the Argo test pod, reported as `net_rx`/`net_tx` in Slack — the outer before/after diagnostics only include KMS core pods that are still running when the snapshot is taken.
 
-Pod-level `ethtool` can't see AWS ENA allowance counters; those need a
-privileged node-level probe.
+Pod-level `ethtool` can't see AWS ENA allowance counters; those need a privileged node-level probe.
 
 ## Reference: workflow form fields
 
-The full mapping from each form field to its internal effect. Most runs only
-need the [Quick start](#quick-start) values above; this table is for when you
-need to understand or override something specific.
+The full mapping from each form field to its internal effect.
+Most runs only need the [Quick start](#quick-start) values above; this table is for when you need to understand or override something specific.
 
 | Field | Effect |
 | --- | --- |
