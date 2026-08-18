@@ -5,7 +5,6 @@ use crate::{
 use ml_kem::EncodedSizeUser;
 use ml_kem::KemCore;
 use ml_kem::MlKem512;
-use nom::AsBytes;
 use rand::{CryptoRng, RngCore};
 use serde::{Deserialize, Deserializer, Serialize, de::Visitor};
 use strum_macros::Display;
@@ -87,7 +86,7 @@ pub struct PublicEncKey<C: KemCore>(pub(crate) C::EncapsulationKey);
 impl<C: KemCore> Eq for PublicEncKey<C> {}
 impl<C: KemCore> PartialEq for PublicEncKey<C> {
     fn eq(&self, other: &Self) -> bool {
-        self.0.as_bytes().as_bytes() == other.0.as_bytes().as_bytes()
+        self.0.as_bytes().as_slice() == other.0.as_bytes().as_slice()
     }
 }
 

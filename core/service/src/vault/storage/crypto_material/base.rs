@@ -2,6 +2,7 @@
 //!
 //! This module provides the foundational storage implementation used by
 //! both centralized and threshold KMS variants.
+use crate::engine::threshold::service::epoch_manager::EpochData;
 use crate::engine::threshold::service::session::PRSSSetupCombined;
 use crate::util::meta_store::{
     MetaStorePermit, update_err_req_in_meta_store, update_ok_req_in_meta_store,
@@ -26,14 +27,15 @@ use crate::{
             crypto_material::{
                 log_storage_success_optional_variant, traits::PrivateCryptoMaterialReader,
             },
-            delete_all_at_request_id, delete_at_request_and_epoch_id, delete_at_request_id,
-            read_all_data_versioned, read_context_at_id, store_versioned_at_request_id,
+            delete_at_request_and_epoch_id, delete_at_request_id, read_all_data_versioned,
+            read_context_at_id, store_versioned_at_request_id,
         },
     },
 };
+use kms_grpc::EpochId;
 use kms_grpc::{
     RequestId,
-    identifiers::{ContextId, EpochId},
+    identifiers::ContextId,
     rpc_types::{PrivDataType, PubDataType},
 };
 use observability::metrics::METRICS;
@@ -59,14 +61,23 @@ pub enum StorageError {
     Reading,
     #[error("Purging error")]
     Purging,
-    #[error("Backup vault purging error")]
-    BackupVaultPurging,
     #[error("MetaStore error: {0}")]
     MetaStore(String),
     #[error("Error when backing up material")]
     Backup,
     #[error("Other error: {0}")]
     Other(String),
+}
+
+/// How a caller of [`update_meta_store`] wants a failed backup to be recorded.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(in crate::vault::storage::crypto_material) enum BackupPolicy {
+    /// The primary material is the deliverable and is already persisted, so a failed
+    /// backup is recorded as a success and can be redone later.
+    BackupIsBestEffort,
+    /// The backup itself is the deliverable (see `write_backup_keys`), so a failed
+    /// backup must be recorded as a failed request.
+    BackupIsRequired,
 }
 
 /// Marker trait for private FHE materials.
@@ -318,7 +329,15 @@ where
         let res = self
             .write_all(req_id, epoch_id, pub_data, priv_data, true, op_metric_tag)
             .await;
-        update_meta_store(res, meta_data, &meta_store, permit, op_metric_tag).await
+        update_meta_store(
+            res,
+            meta_data,
+            &meta_store,
+            permit,
+            BackupPolicy::BackupIsBestEffort,
+            op_metric_tag,
+        )
+        .await
     }
 
     /// General method for handling the storage of both public and private material along with the backup.
@@ -464,11 +483,12 @@ where
                     }
                     // For other private data, we can delete at request level
                     // Observe we make the types explicit to ensure a compile error when a new type is added
-                    #[allow(deprecated)]
+                    #[expect(deprecated)]
                     PrivDataType::SigningKey
                     | PrivDataType::PrssSetup
                     | PrivDataType::PrssSetupCombined
-                    | PrivDataType::ContextInfo => {
+                    | PrivDataType::ContextInfo
+                    | PrivDataType::EpochData => {
                         let del_res = delete_at_request_id(
                             &mut (*priv_storage),
                             req_id,
@@ -604,11 +624,12 @@ where
             }
             // For other private data, we can delete at request level
             // Observe we make the types explicit to ensure a compile error when a new type is added
-            #[allow(deprecated)]
+            #[expect(deprecated)]
             PrivDataType::SigningKey
             | PrivDataType::PrssSetup
             | PrivDataType::PrssSetupCombined
-            | PrivDataType::ContextInfo => {
+            | PrivDataType::ContextInfo
+            | PrivDataType::EpochData => {
                 if let Err(e) = store_versioned_at_request_id(
                     &mut *priv_storage,
                     req_id,
@@ -772,7 +793,15 @@ where
                 OP_DECOMPRESSION_KEYGEN,
             )
             .await;
-        update_meta_store(res, meta_data, &meta_store, permit, OP_DECOMPRESSION_KEYGEN).await
+        update_meta_store(
+            res,
+            meta_data,
+            &meta_store,
+            permit,
+            BackupPolicy::BackupIsBestEffort,
+            OP_DECOMPRESSION_KEYGEN,
+        )
+        .await
     }
 
     /// Write the backup keys to the storage and update the meta store.
@@ -785,7 +814,11 @@ where
     /// The private key for decrypting backups is written to the private storage.
     ///
     /// NOTE: Unlike most other storage methods, this one WILL fail if there is no backup vault or if backup fails,
-    /// since the goal of this method is exactly to setup a backup.
+    /// since the goal of this method is exactly to setup a backup. On failure the material of the
+    /// failed setup — both the backup-vault entries and the public recovery material — is purged,
+    /// except on a duplicate, where nothing was written and what is stored under `req_id`
+    /// pre-existed this call. Callers that also need the keychain rolled back must do that
+    /// themselves; see `rollback_failed_custodian_setup`.
     ///
     /// Precondition: when the backup vault is configured with a `SecretSharing`
     /// keychain, the caller is expected to have set the backup encryption key
@@ -809,7 +842,7 @@ where
                 return Err(StorageError::Backup);
             }
         };
-        let mut res = self
+        let res = self
             .write_all::<RecoveryValidationMaterial, RecoveryValidationMaterial>(
                 &req_id,
                 None,
@@ -819,23 +852,45 @@ where
                 OP_NEW_CUSTODIAN_CONTEXT,
             )
             .await;
-        if res.is_err() {
-            // Note that we also care about a BackupError here, since we are actually setting up the initial backup
-            // Something went wrong so we will also purge the backup
-            res = delete_all_at_request_id(&mut *vault.lock().await, &req_id)
-                .await
-                .map_err(|e| {
-                    tracing::error!(
-                        "Failed to purge backup vault after failed backup setup for request {req_id}: {e}"
-                    );
-                    StorageError::BackupVaultPurging
-                });
+        if let Err(write_err) = &res {
+            // Note that we also care about a BackupError here, since we are actually setting up the initial backup.
+            // Purge what this setup wrote to the backup vault — the caller re-encrypts the current
+            // material into the vault under `req_id` before this method, so on failure those entries
+            // must be rolled back. The one exception is a duplicate: then this call wrote nothing and
+            // the material under `req_id` pre-existed (possibly a live backup), so it must be kept.
+            // The write error is kept in all cases: neither a successful purge nor a purge failure
+            // (which is only logged) may mask the root cause recorded in the meta store.
+            if !matches!(write_err, StorageError::Duplicate)
+                && let Err(e) = vault.lock().await.purge_backup(&req_id).await
+            {
+                tracing::error!(
+                    "Failed to purge backup vault after failed backup setup for request {req_id}: {e}"
+                );
+            }
+            // These are the two outcomes that can leave the recovery material in public storage:
+            // `Backup` means the write itself succeeded, and `Purging` means `write_all`'s own
+            // compensating purge failed. On a plain `Writing` error that purge succeeded, on a
+            // duplicate the material pre-existed and must be kept, and on the remaining variants
+            // nothing was written at all. A leftover would be picked as the active custodian
+            // context on restart (the latest RecoveryMaterial id wins) and would block retrying
+            // the same context id via the duplicate check, so purge it here. Like the vault purge
+            // above, a failure is only logged and never masks the write error.
+            if matches!(write_err, StorageError::Backup | StorageError::Purging)
+                && !self
+                    .purge_material(&req_id, None, &[PubDataType::RecoveryMaterial], &[])
+                    .await
+            {
+                tracing::error!(
+                    "Failed to purge recovery material for {req_id} after failed backup setup"
+                );
+            }
         }
         update_meta_store(
             res,
             recovery_material,
             &meta_store,
             permit,
+            BackupPolicy::BackupIsRequired,
             OP_NEW_CUSTODIAN_CONTEXT,
         )
         .await
@@ -1005,6 +1060,7 @@ where
                             .await?;
                         }
                         // Non epoched types
+                        #[expect(deprecated)]
                         PrivDataType::PrssSetupCombined => {
                             crate::engine::backup_operator::update_specific_backup_vault::<
                                 PrivS,
@@ -1051,6 +1107,15 @@ where
                             )
                             .await?;
                         }
+                        PrivDataType::EpochData => {
+                            crate::engine::backup_operator::update_specific_backup_vault::<
+                                PrivS,
+                                EpochData,
+                            >(
+                                &private_storage, &mut backup_vault, cur_type, overwrite
+                            )
+                            .await?;
+                        }
                     }
                 }
                 Ok(())
@@ -1061,17 +1126,25 @@ where
 }
 
 /// Update the meta store based on the result of a storage operation, and log and update the metrics in case of an error.
-/// If the meta store is updated successfully, then the orginal storage result is returned.
+/// If the meta store is updated successfully, then the original storage result is returned.
 /// If the meta store update fails, then a MetaStoreError is returned, which includes the original StorageError.
+///
+/// `backup_policy` decides how an `Err(StorageError::Backup)` outcome is recorded; the error is
+/// returned to the caller either way. See [`BackupPolicy`].
 pub(in crate::vault::storage::crypto_material) async fn update_meta_store<MetaT: Clone>(
     storage_res: Result<(), StorageError>,
     meta_data: MetaT,
     meta_store: &RwLock<MetaStore<MetaT>>,
     permit: MetaStorePermit<MetaT>,
+    backup_policy: BackupPolicy,
     op_metric_tag: &'static str,
 ) -> Result<(), StorageError> {
     let req_id = *permit.req_id();
-    let is_storage_err = matches!(&storage_res, Err(e) if e != &StorageError::Backup);
+    let is_storage_err = match &storage_res {
+        Ok(()) => false,
+        Err(StorageError::Backup) => backup_policy == BackupPolicy::BackupIsRequired,
+        Err(_) => true,
+    };
     let meta_store_ok = if is_storage_err {
         update_err_req_in_meta_store(
             meta_store,

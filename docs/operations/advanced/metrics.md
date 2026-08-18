@@ -59,6 +59,12 @@ KMS exposes metrics via Prometheus format on the configured metrics endpoint (de
 - `public_decrypt_result` - Public decryption result retrievals
 - `public_decrypt_inner` - Individual public decryption operations *(duration only)*
 
+The synchronous decryption endpoints (`UserDecryptSync` / `PublicDecryptSync`) have no
+operations of their own: a sync call counts as one `*_decrypt_request` operation plus one
+`*_decrypt_result` operation (its internal wait for the result), exactly like an async client
+that sends the request and then polls `Get*DecryptionResult`. Dashboards and alerts built on
+these operations therefore work unchanged whether clients use the async or the sync endpoints.
+
 *CRS Operations*:
 - `crs_gen_request` - CRS generation requests
 - `crs_gen_result` - CRS generation result retrievals

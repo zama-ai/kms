@@ -89,9 +89,6 @@ max_waiting_time_for_message_queue = 60
 max_opened_inactive_sessions_per_party = 2000
 
 
-# [threshold.preproc_redis]
-# host = "redis://127.0.0.1"
-#
 
 [telemetry]
 tracing_service_name = "kms-threshold-1"

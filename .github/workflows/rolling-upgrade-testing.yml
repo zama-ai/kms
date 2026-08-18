@@ -50,8 +50,11 @@
 #                            Target KMS Core image tag after upgrades (ignored if
 #                            build=true; then docker-build output is used).
 #   core_client_image_tag  (string, optional, default = new_image_tag)
-#                            Core-client (test harness) image tag, decoupled from
-#                            the core versions under test. Same across all stages.
+#                            Core-client (test harness) image tag for the mixed-
+#                            state runs, decoupled from the core versions under
+#                            test. The baseline run instead pins the core-client
+#                            to old_image_tag so the harness matches the all-old
+#                            cluster.
 #   client_logs            (boolean, default false)
 #                            Enable core-client tracing logs.
 #   build                  (boolean, default false)
@@ -247,7 +250,8 @@ jobs:
             echo "NEW_IMAGE_TAG=${NEW_TAG}"
             echo "KMS_CORE_IMAGE_TAG=${OLD_TAG}"
             # Test-harness image, independent of the core versions under test
-            # (see core_client_image_tag input); consistent across all stages.
+            # (see core_client_image_tag input); used for the mixed-state runs.
+            # The baseline run pins the core-client to OLD_IMAGE_TAG instead.
             echo "KMS_CORE_CLIENT_IMAGE_TAG=${CLIENT_TAG}"
           } >> "$GITHUB_ENV"
 
@@ -415,9 +419,11 @@ jobs:
           # The generated key-id is reused by the mixed-state decrypt runs below.
           cp ./ci/perf-testing/argo-workflow/"${DEPLOYMENT_TYPE}"-test-suite-workflow-"${PATH_SUFFIX}".yaml \
              /tmp/baseline-workflow.yaml
-          # <client-version> = the test harness image (modern/NEW); <version> is the
-          # displayed server version, which is OLD while the whole cluster is old.
-          sed -i "s/<client-version>/${KMS_CORE_CLIENT_IMAGE_TAG}/g" /tmp/baseline-workflow.yaml
+          # Baseline pins the core-client (<client-version>) to OLD too, so the
+          # test harness matches the all-old cluster; <version> is the displayed
+          # server version, also OLD while the whole cluster is old. (The mixed-
+          # state runs below instead use KMS_CORE_CLIENT_IMAGE_TAG.)
+          sed -i "s/<client-version>/${OLD_IMAGE_TAG}/g" /tmp/baseline-workflow.yaml
           sed -i "s/<version>/${OLD_IMAGE_TAG}/g" /tmp/baseline-workflow.yaml
 
           RUN_URL="${SERVER_URL}/${REPOSITORY}/actions/runs/${RUN_ID}"

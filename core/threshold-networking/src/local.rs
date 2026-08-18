@@ -191,7 +191,9 @@ impl<R: RoleTrait> Networking<R> for LocalNetworking<R> {
 
     async fn increase_round_counter(&self) {
         if let Some(duration) = self.delayed_party {
-            std::thread::sleep(duration);
+            // Async sleep: a blocking `std::thread::sleep` here would stall the
+            // tokio worker thread (and any other tasks scheduled on it).
+            tokio::time::sleep(duration).await;
         }
         //Locking all mutexes in same place
         //Update max_elapsed_time
@@ -324,8 +326,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_networking_two_sets() {
-        let role_1_set_1 = TwoSetsRole::Set1(Role::indexed_from_one(1));
-        let role_1_set_2 = TwoSetsRole::Set2(Role::indexed_from_one(1));
+        let role_1_set_1 = TwoSetsRole::OnlySet1(Role::indexed_from_one(1));
+        let role_1_set_2 = TwoSetsRole::OnlySet2(Role::indexed_from_one(1));
 
         let roles = HashSet::from([role_1_set_1, role_1_set_2]);
         let net_producer = LocalNetworkingProducer::from_roles(&roles);

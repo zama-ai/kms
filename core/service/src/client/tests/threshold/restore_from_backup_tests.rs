@@ -339,6 +339,7 @@ async fn test_insecure_threshold_crs_backup() -> Result<()> {
     for client in clients.values() {
         let mut cur_client = client.clone();
         let req = CrsGenRequest {
+            signing_schemes: vec![kms_grpc::kms::v1::SigningSchemeType::Ecdsa256k1 as i32],
             request_id: Some(req_id.into()),
             params: FheParameter::Test as i32,
             max_num_bits: Some(16),

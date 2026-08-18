@@ -128,7 +128,7 @@ impl TestKeyGenResult {
                 (client_key, public_key.clone(), server_key.clone())
             }
             TestKeyGenResult::Compressed((client_key, keyset, public_key)) => {
-                let (_derived_pk, server_key) = keyset.decompress().unwrap().into_raw_parts();
+                let (_derived_pk, server_key) = keyset.decompress().into_raw_parts();
                 (client_key, public_key.clone(), server_key)
             }
         };
@@ -615,7 +615,7 @@ pub(crate) async fn preproc_and_keygen(
     fn validate_keyset(keyset: TestKeyGenResult, key_id: &RequestId, compressed: bool) {
         let (client_key, public_key, server_key) = if compressed {
             let (client_key, keyset, public_key) = keyset.get_compressed();
-            let (_derived_pk, server_key) = keyset.decompress().unwrap().into_raw_parts();
+            let (_derived_pk, server_key) = keyset.decompress().into_raw_parts();
             (client_key, public_key, server_key)
         } else {
             keyset.get_uncompressed()
@@ -1536,6 +1536,7 @@ async fn secure_threshold_keygen_crash_online() -> anyhow::Result<()> {
     for client in env.all_clients() {
         let mut cur_client = client.clone();
         let preproc_req = kms_grpc::kms::v1::KeyGenPreprocRequest {
+            signing_schemes: vec![kms_grpc::kms::v1::SigningSchemeType::Ecdsa256k1 as i32],
             request_id: Some(preproc_id.into()),
             params: FheParameter::Test as i32,
             domain: Some(domain_to_msg(&dummy_domain())),
@@ -1577,6 +1578,7 @@ async fn secure_threshold_keygen_crash_online() -> anyhow::Result<()> {
     for client in env.all_clients_except(crashed_party) {
         let mut cur_client = client.clone();
         let keygen_req = kms_grpc::kms::v1::KeyGenRequest {
+            signing_schemes: vec![kms_grpc::kms::v1::SigningSchemeType::Ecdsa256k1 as i32],
             request_id: Some(keygen_id.into()),
             params: Some(FheParameter::Test as i32),
             preproc_id: Some(preproc_id.into()),
@@ -1644,6 +1646,7 @@ async fn secure_threshold_keygen_crash_preprocessing() -> anyhow::Result<()> {
     for client in env.all_clients_except(crashed_party) {
         let mut cur_client = client.clone();
         let preproc_req = kms_grpc::kms::v1::KeyGenPreprocRequest {
+            signing_schemes: vec![kms_grpc::kms::v1::SigningSchemeType::Ecdsa256k1 as i32],
             request_id: Some(preproc_id.into()),
             params: FheParameter::Test as i32,
             domain: Some(domain_to_msg(&dummy_domain())),
@@ -1682,6 +1685,7 @@ async fn secure_threshold_keygen_crash_preprocessing() -> anyhow::Result<()> {
     for client in env.all_clients_except(crashed_party) {
         let mut cur_client = client.clone();
         let keygen_req = kms_grpc::kms::v1::KeyGenRequest {
+            signing_schemes: vec![kms_grpc::kms::v1::SigningSchemeType::Ecdsa256k1 as i32],
             request_id: Some(keygen_id.into()),
             params: Some(FheParameter::Test as i32),
             preproc_id: Some(preproc_id.into()),
@@ -1917,7 +1921,7 @@ async fn run_threshold_compressed_keygen_from_existing(
             let compressed_keyset: tfhe::xof_key_set::CompressedXofKeySet =
                 CryptoMaterialReader::read_from_storage(storage, &keygen_id_2).await?;
 
-            let (pk, server_key) = compressed_keyset.decompress().unwrap().into_raw_parts();
+            let (pk, server_key) = compressed_keyset.decompress().into_raw_parts();
             let (_, _, _, _, _, _, _, oprf_key, _) = server_key.clone().into_raw_parts();
             assert!(
                 oprf_key.is_some(),
@@ -2184,6 +2188,7 @@ async fn remove_oprf_from_existing_keyset(
         };
         let metadata = compute_info_uncompressed_keygen(
             &signing_key,
+            &[crate::cryptography::signing::SigningSchemeType::Ecdsa256k1],
             &DSEP_PUBDATA_KEY,
             preproc_id,
             key_id,
@@ -2276,10 +2281,7 @@ async fn test_insecure_threshold_decompression_keygen() -> anyhow::Result<()> {
     .await
     .expect("keygen 1 verification failed");
     let (client_key_1, compressed_keyset_1, _public_key_1) = keys_1.get_compressed();
-    let (_, server_key_1) = compressed_keyset_1
-        .decompress()
-        .expect("decompress keyset 1")
-        .into_raw_parts();
+    let (_, server_key_1) = compressed_keyset_1.decompress().into_raw_parts();
 
     // Step 2: Generate second keyset (insecure mode), reconstruct ClientKey
     let key_id_2 = derive_request_id("decom_dkg_key_2")?;
@@ -2310,6 +2312,7 @@ async fn test_insecure_threshold_decompression_keygen() -> anyhow::Result<()> {
     for client in env.all_clients() {
         let mut cur_client = client.clone();
         let preproc_req = kms_grpc::kms::v1::KeyGenPreprocRequest {
+            signing_schemes: vec![kms_grpc::kms::v1::SigningSchemeType::Ecdsa256k1 as i32],
             request_id: Some(preproc_id_3.into()),
             params: FheParameter::Test as i32,
             domain: Some(domain_to_msg(&dummy_domain())),
@@ -2351,6 +2354,7 @@ async fn test_insecure_threshold_decompression_keygen() -> anyhow::Result<()> {
     for client in env.all_clients() {
         let mut cur_client = client.clone();
         let keygen_req = kms_grpc::kms::v1::KeyGenRequest {
+            signing_schemes: vec![kms_grpc::kms::v1::SigningSchemeType::Ecdsa256k1 as i32],
             request_id: Some(key_id_3.into()),
             params: Some(FheParameter::Test as i32),
             preproc_id: Some(preproc_id_3.into()),

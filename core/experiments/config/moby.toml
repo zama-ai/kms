@@ -28,10 +28,6 @@ service_name = "moby"
 # Address of the otel exporter.
 endpoint = "http://localhost:4317"
 
-# Address of the redis server the party uses for storing preprocessing data
-[redis]
-host = "redis://127.0.0.1"
-
 # Configuration regarding TLS configuration.
 # TLS is not used if this section is empty.
 # For testing, these certificates and keys can be generated using the kms-gen-tls-keys binary.
@@ -46,7 +42,7 @@ key = "test_certs/key_p1.pem"
 # Path to all the parties' TLS certificates.
 calist = "test_certs/cert_p1.pem,test_certs/cert_p2.pem,test_certs/cert_p3.pem,test_certs/cert_p4.pem,test_certs/cert_p5.pem"
 
-# This section 
+# This section
 [net_conf]
 
 # The message limit in the internal channels.

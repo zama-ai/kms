@@ -7,6 +7,7 @@ use crate::consts::TEST_CENTRAL_KEY_ID;
 use crate::consts::TEST_PARAM;
 use crate::dummy_domain;
 use crate::engine::base::derive_request_id;
+use crate::engine::validation::ERR_VALIDATE_USER_DECRYPTION_MISMATCH_EXTRA_DATA;
 use crate::testing::material::{MaterialType, TestMaterialSpec};
 use crate::testing::setup::CentralizedTestEnv;
 use crate::util::key_setup::test_tools::{
@@ -366,6 +367,25 @@ pub(crate) async fn user_decryption_centralized(
         let eip712_domain = protobuf_to_alloy_domain(req.domain.as_ref().unwrap()).unwrap();
         let client_request = ParsedUserDecryptionRequest::try_from(req).unwrap();
         let plaintexts = if secure {
+            // The response must echo the request's extra data. The raw ECDSA signature
+            // the centralized server returns does not cover it, so the client has to
+            // check it explicitly.
+            let mut bad_extra_data_resp = inner_response.clone();
+            bad_extra_data_resp.extra_data = vec![42];
+            assert!(
+                internal_client
+                    .process_user_decryption_resp(
+                        &client_request,
+                        &eip712_domain,
+                        enc_pk,
+                        enc_sk,
+                        None,
+                        &[bad_extra_data_resp],
+                    )
+                    .unwrap_err()
+                    .to_string()
+                    .contains(ERR_VALIDATE_USER_DECRYPTION_MISMATCH_EXTRA_DATA)
+            );
             internal_client
                 .process_user_decryption_resp(
                     &client_request,

@@ -87,7 +87,7 @@ prefix = "PRIV-p1"
 path = "./backup_vault"
 prefix = "BACKUP-p1"
 
-# If backup is to be actively used in a secure manner, either the AWS KMS or custodian 
+# If backup is to be actively used in a secure manner, either the AWS KMS or custodian
 # backup approach must be selected. Note that at most ONE of these can be selected:
 # --- 1. Custodian backup ---
 # The following variable MUST be enabled.
@@ -232,10 +232,6 @@ discard_inactive_sessions_interval = 10800 # 3 hours (must exceed max preprocess
 max_waiting_time_for_message_queue = 60
 # The maximum number of "Inactive" sessions a party can open at a given time
 max_opened_inactive_sessions_per_party = 2000
-
-# Redis instance for preprocessed material (unset by default).
-# [threshold.preproc_redis]
-# host = "redis://127.0.0.1"
 
 [telemetry]
 tracing_service_name = "kms-threshold-1"
