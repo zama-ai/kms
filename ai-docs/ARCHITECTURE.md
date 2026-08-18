@@ -147,10 +147,11 @@ The primary service is `CoreServiceEndpoint`. Its RPCs group into:
   and persists a fresh OPRF share for such legacy material before regenerating
   public keys.
 - **Decryption** — `PublicDecrypt` (returns plaintext) and `UserDecrypt`
-  (user-initiated, EIP-712 authenticated). `UserDecryptSync` starts a user
-  decryption and waits for its result in the same call, so the caller does not
-  need `GetUserDecryptionResult`; a known `request_id` attaches to the running or
-  succeeded attempt, and redoes a failed one, just like `UserDecrypt`.
+  (user-initiated, EIP-712 authenticated). `PublicDecryptSync` / `UserDecryptSync`
+  start a decryption and wait for its result in the same call, so the caller does
+  not need the `Get*DecryptionResult` round trip; a known `request_id` attaches to
+  the running or succeeded attempt, and redoes a failed one, just like the async
+  variants.
 - **CRS** — `CrsGen` for ZK-proof common reference strings.
 - **Resharing** — `NewMpcEpoch` with `previous_epoch` set rotates parties /
   refreshes secret shares as part of epoch creation; the outcome is fetched
@@ -187,6 +188,10 @@ Mode is selected in the server TOML config — a party runs in threshold mode
 when the optional `[threshold]` section is present; see the sample
 files in `core/service/config/` (`default_centralized.toml`,
 `default_1.toml`..`default_4.toml`, and the compose-specific variants).
+
+In both modes, when the same key or CRS ID has metadata under multiple epochs,
+startup loads the metadata from the greatest epoch ID into the result meta
+store. Epoch IDs are compared as big-endian integers.
 
 ### Centralized
 
@@ -289,7 +294,7 @@ The [Cargo.toml](../Cargo.toml) should be considered the ground truth.
 
 - **Unit tests** live alongside the source (`#[cfg(test)]`).
 - **Integration tests** live in each crate's `tests/` directory, notably
-  `core/service/tests/` and `core/experiments/tests/integration_redis.rs`.
+  `core/service/tests/`.
 - **Backward-compatibility tests** live under
   [backward-compatibility/](backward-compatibility/); per-version generator
   crates produce frozen test vectors that current-version loaders must
@@ -299,7 +304,7 @@ The [Cargo.toml](../Cargo.toml) should be considered the ground truth.
   the compose files at the repo root
   (`docker-compose-core-base.yml`, `docker-compose-core-threshold.yml`,
   `docker-compose-core-centralized.yml`) for a local multi-party network
-  plus S3-mock, Redis, and telemetry sidecars.
+  plus S3-mock, and telemetry sidecars.
 - **Cargo feature flags** — `testing` enables test-only APIs; `slow_tests`
   enables the long-running suite.
 

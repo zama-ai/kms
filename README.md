@@ -71,7 +71,7 @@ Typical testing can be done using
 cargo test -F testing
 ```
 
-Some integration tests may require the use of additional tools. In particular some tests require Redis to be running on the local system.
+Some integration tests may require the use of additional tools.
 To avoid them and only run unit tests, run the following command instead:
 ```bash
 cargo test -F testing --lib

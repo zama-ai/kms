@@ -91,8 +91,8 @@ mod test {
     use tfhe::prelude::{CiphertextList, FheDecrypt, FheEncrypt};
     use tfhe::set_server_key;
     use tfhe::shortint::parameters::{
-        COMP_PARAM_MESSAGE_2_CARRY_2_KS_PBS_TUNIFORM_2M64,
-        PARAM_MESSAGE_2_CARRY_2_KS_PBS_TUNIFORM_2M64,
+        COMP_PARAM_MESSAGE_2_CARRY_2_KS_PBS_TUNIFORM_2M128,
+        PARAM_MESSAGE_2_CARRY_2_KS_PBS_TUNIFORM_2M128,
     };
     use tfhe::{ClientKey, HlCompressible, generate_keys};
     use tfhe::{
@@ -109,9 +109,9 @@ mod test {
     #[test]
     fn test_bad_ciphertext() {
         let config = tfhe::ConfigBuilder::with_custom_parameters(
-            PARAM_MESSAGE_2_CARRY_2_KS_PBS_TUNIFORM_2M64,
+            PARAM_MESSAGE_2_CARRY_2_KS_PBS_TUNIFORM_2M128,
         )
-        .enable_compression(COMP_PARAM_MESSAGE_2_CARRY_2_KS_PBS_TUNIFORM_2M64)
+        .enable_compression(COMP_PARAM_MESSAGE_2_CARRY_2_KS_PBS_TUNIFORM_2M128)
         .build();
         let (client_key, server_key) = generate_keys(config);
         set_server_key(server_key);
@@ -132,9 +132,9 @@ mod test {
     #[test]
     fn test_bad_fhe_type() {
         let config = tfhe::ConfigBuilder::with_custom_parameters(
-            PARAM_MESSAGE_2_CARRY_2_KS_PBS_TUNIFORM_2M64,
+            PARAM_MESSAGE_2_CARRY_2_KS_PBS_TUNIFORM_2M128,
         )
-        .enable_compression(COMP_PARAM_MESSAGE_2_CARRY_2_KS_PBS_TUNIFORM_2M64)
+        .enable_compression(COMP_PARAM_MESSAGE_2_CARRY_2_KS_PBS_TUNIFORM_2M128)
         .build();
         let (client_key, server_key) = generate_keys(config);
         let decompression_key = server_key.clone().into_raw_parts().3.unwrap();
@@ -242,9 +242,9 @@ mod test {
         clear_value: StaticUnsignedBigInt<N>,
     ) {
         let config = tfhe::ConfigBuilder::with_custom_parameters(
-            PARAM_MESSAGE_2_CARRY_2_KS_PBS_TUNIFORM_2M64,
+            PARAM_MESSAGE_2_CARRY_2_KS_PBS_TUNIFORM_2M128,
         )
-        .enable_compression(COMP_PARAM_MESSAGE_2_CARRY_2_KS_PBS_TUNIFORM_2M64)
+        .enable_compression(COMP_PARAM_MESSAGE_2_CARRY_2_KS_PBS_TUNIFORM_2M128)
         .build();
         let (client_key, server_key) = generate_keys(config);
         let (_, _, compression_key, decompression_key, _, _, _, _, _) =
@@ -270,9 +270,9 @@ mod test {
     fn test_bool() {
         let clear_value = true;
         let config = tfhe::ConfigBuilder::with_custom_parameters(
-            PARAM_MESSAGE_2_CARRY_2_KS_PBS_TUNIFORM_2M64,
+            PARAM_MESSAGE_2_CARRY_2_KS_PBS_TUNIFORM_2M128,
         )
-        .enable_compression(COMP_PARAM_MESSAGE_2_CARRY_2_KS_PBS_TUNIFORM_2M64)
+        .enable_compression(COMP_PARAM_MESSAGE_2_CARRY_2_KS_PBS_TUNIFORM_2M128)
         .build();
         let (client_key, server_key) = generate_keys(config);
         let compression_key = server_key.clone().into_raw_parts().2;
@@ -302,8 +302,8 @@ mod test {
     #[test]
     fn test_full_chain_client_copro_kms_uint8(#[case] default_config: bool) {
         let config = if default_config {
-            ConfigBuilder::with_custom_parameters(PARAM_MESSAGE_2_CARRY_2_KS_PBS_TUNIFORM_2M64)
-                .enable_compression(COMP_PARAM_MESSAGE_2_CARRY_2_KS_PBS_TUNIFORM_2M64)
+            ConfigBuilder::with_custom_parameters(PARAM_MESSAGE_2_CARRY_2_KS_PBS_TUNIFORM_2M128)
+                .enable_compression(COMP_PARAM_MESSAGE_2_CARRY_2_KS_PBS_TUNIFORM_2M128)
                 .build()
         } else {
             let params = PARAMS_TEST_BK_SNS;

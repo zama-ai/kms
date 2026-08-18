@@ -27,7 +27,8 @@ where
     let mut output_reader = hasher.finalize_xof();
     let mut digest = vec![0u8; bytes];
     output_reader.read(&mut digest);
-    digest.to_vec()
+    // Observe that hasher implements ZeroizeOnDrop, so the internal state is wiped when it goes out of scope.
+    digest
 }
 
 /// Hash an element using SHAKE-256 with a chosen domain separator and an output size of DIGEST_BYTES.
@@ -58,7 +59,8 @@ where
     let mut output_reader = hasher.finalize_xof();
     let mut digest = vec![0u8; bytes];
     output_reader.read(&mut digest);
-    digest.to_vec()
+    // Observe that hasher implements ZeroizeOnDrop, so the internal state is wiped when it goes out of scope.
+    digest
 }
 
 /// Compute a digest of length DIGEST_BYTES using SHAKE-256 of a list of elements where all except AT MOST one MUST be of constant length.

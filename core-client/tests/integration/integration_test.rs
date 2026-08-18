@@ -23,6 +23,7 @@ use std::string::String;
 use tempfile::TempDir;
 use test_utils::test_logging::init_test_logging as init_logging;
 use tfhe::{xof_key_set::CompressedXofKeySet, zk::CompactPkeCrs};
+use threshold_networking::grpc::CoreToCoreNetworkConfig;
 use tracing::info;
 use validator::Validate;
 
@@ -149,10 +150,9 @@ fn build_test_core_config(
             my_id: Some(my_id),
             dec_capacity: 100,
             min_dec_cache: 10,
-            preproc_redis: None,
             num_sessions_preproc: Some(2),
             peers: Some(peers),
-            core_to_core_net: None,
+            core_to_core_net: CoreToCoreNetworkConfig::default(),
             decryption_mode: DecryptionMode::NoiseFloodSmall,
         }),
         internal_config: None,
@@ -1186,6 +1186,11 @@ async fn integration_test_commands(
             sync: true,
             ..ucp("0x1", FheType::Ebool, 1, false, true)
         })),
+        // Same public decryption through the synchronous endpoint (single round trip)
+        CCCommand::PublicDecrypt(DecryptArguments::FromArgs(DecryptParameters {
+            sync: true,
+            ..pdp("0x1", FheType::Ebool, 1, false, true)
+        })),
         CCCommand::PublicDecrypt(DecryptArguments::FromArgs(pdp(
             "0x6F",
             FheType::Euint8,
@@ -1760,6 +1765,127 @@ async fn reshare(
     info!("Resharing done");
 
     Ok(resharing_result)
+}
+
+/// Build a `CmdConfig` spanning several client config files.
+///
+/// `execute_cmd` merges them, de-duplicating cores by address, which is how a single command
+/// reaches every party of two overlapping MPC contexts at once. The merged core list is larger
+/// than the `num_parties` of any single config, so `expect_all_responses` is off here.
+#[cfg(feature = "slow_tests")]
+fn cmd_config_multi(config_paths: &[&Path], command: CCCommand, max_iter: usize) -> CmdConfig {
+    CmdConfig {
+        file_conf: Some(
+            config_paths
+                .iter()
+                .map(|p| p.to_str().unwrap().to_string())
+                .collect(),
+        ),
+        command,
+        logs: true,
+        max_iter,
+        expect_all_responses: false,
+        download_all: false,
+    }
+}
+
+/// Create an MPC context on every party of several configs.
+///
+/// A party outside the context still needs to know about it: two-set resharing has each side
+/// build a joint session over the union of the old and the new context, so both sets must hold
+/// both contexts.
+#[cfg(feature = "slow_tests")]
+async fn new_mpc_context_all_sets(
+    config_paths: &[&Path],
+    context_path: &Path,
+    test_path: &Path,
+) -> Result<()> {
+    let config = cmd_config_multi(
+        config_paths,
+        CCCommand::NewMpcContext(NewMpcContextParameters::SerializedContextPath(
+            ContextPath {
+                input_path: context_path.to_path_buf(),
+            },
+        )),
+        200,
+    );
+    run_cmd_no_id(&config, test_path, "new MPC context (all sets)").await
+}
+
+/// Reshare into a new context held by a *different* set of parties.
+///
+/// Unlike [`reshare`], which keeps `new_context_id` equal to the source context, this creates
+/// `new_epoch_id` under `new_context_id` while the key material comes from
+/// `from_context_id`/`from_epoch_id`. The request therefore has to reach the union of both party
+/// sets, hence the list of config files.
+#[cfg(feature = "slow_tests")]
+#[expect(clippy::too_many_arguments)]
+async fn reshare_two_sets(
+    config_paths: &[&Path],
+    test_path: &Path,
+    from_context_id: ContextId,
+    from_epoch_id: EpochId,
+    new_context_id: ContextId,
+    new_epoch_id: EpochId,
+    previous_key_infos: Vec<PreviousKeyInfo>,
+    previous_crs_infos: Vec<PreviousCrsInfo>,
+) -> Result<Vec<(Option<RequestId>, String)>> {
+    let config = cmd_config_multi(
+        config_paths,
+        CCCommand::NewEpoch(NewEpochParameters {
+            new_epoch_id,
+            new_context_id,
+            previous_epoch_params: Some(PreviousEpochParameters {
+                context_id: from_context_id,
+                epoch_id: from_epoch_id,
+                previous_keys: previous_key_infos,
+                previous_crs: previous_crs_infos,
+            }),
+        }),
+        200,
+    );
+
+    info!("Doing two-set resharing");
+    let resharing_result = execute_cmd(&config, test_path)
+        .await
+        .map_err(|e| anyhow::anyhow!("Failed to do two-set resharing: {}", e))?;
+    info!("Two-set resharing done");
+
+    Ok(resharing_result)
+}
+
+/// Copy one public artifact from a party's public storage into other parties' public storage.
+///
+/// A node joining a context holds no local copy of the previous epoch's public material, so
+/// `get_verified_fhe_public_materials` / `get_verified_crs_material` fall back to downloading it
+/// from a peer's S3 bucket. This harness has no S3 server — servers store to plain files, and the
+/// server-side fetcher (`RealReadOnlyS3StorageGetter`) only speaks S3 — so that download is
+/// simulated here by putting the bytes where the joining node looks first.
+///
+/// This does not weaken the test: the material is public, the KMS still verifies its digest
+/// against what the resharing request claims, and the secret shares — the only thing resharing
+/// actually transfers — are untouched. The one path left uncovered is the peer S3 fetch itself,
+/// which needs the docker-compose harness (`dev-s3-mock`) to exercise.
+#[cfg(feature = "slow_tests")]
+fn seed_public_material(
+    material_path: &Path,
+    from_prefix: &str,
+    to_prefixes: &[&str],
+    data_type: PubDataType,
+    data_id: &RequestId,
+) -> Result<()> {
+    // FileStorage lays items out as <root>/<prefix>/<data_type>/<request_id>.
+    let relative = Path::new(&data_type.to_string()).join(data_id.to_string());
+    let source = material_path.join(from_prefix).join(&relative);
+    for to_prefix in to_prefixes {
+        let destination = material_path.join(to_prefix).join(&relative);
+        if let Some(parent) = destination.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        std::fs::copy(&source, &destination)
+            .with_context(|| format!("seeding {source:?} into {destination:?}"))?;
+    }
+    Ok(())
 }
 
 // ============================================================================
@@ -2449,6 +2575,10 @@ async fn test_threshold_default_preproc_keygen() -> Result<()> {
 /// 1. Insecure keygen produces a key
 /// 2. The context can be switched to a new context ID
 /// 3. A public-decrypt request succeeds in the new context
+///
+/// NOTE: This test is actually only validating a weird artifact of the current KMS design we do not expect in production.
+/// More specifically it validates that there is a segregation between epochs and contexts s.t. an epoch that is NOT
+/// associated with a given context can still be used together. However, this is not supported at the smart contract level.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn test_threshold_mpc_context_switch() -> Result<()> {
     init_logging();
@@ -2745,27 +2875,32 @@ async fn test_threshold_mpc_context_init() -> Result<()> {
     Ok(())
 }
 
-/// Test 6-party MPC context switching with party resharing (ISOLATED, NO TLS)
+/// Test 6-party MPC context switching with real party resharing (ISOLATED, NO TLS)
 ///
 /// **NOTE:** This is the isolated test version WITHOUT TLS for fast execution.
 /// For TLS-enabled threshold coverage, use Kind tests in
 /// `tests/kind-testing/kubernetes_test_threshold.rs`.
 ///
-/// This test validates party resharing/remapping across MPC contexts:
-/// - First context: Physical servers 1,2,3,4 act as MPC parties 1,2,3,4
-/// - Second context: Physical servers 5,6,4,3 act as MPC parties 1,2,3,4
+/// This test validates that key material really moves between two *different* party sets:
+/// - Context 1: Physical servers 1,2,3,4 act as MPC parties 1,2,3,4 — generates the key and CRS
+/// - Context 2: Physical servers 5,6,4,3 act as MPC parties 1,2,3,4
 /// - Servers 3 and 4 participate in BOTH contexts with SWAPPED roles (continuity + role change)
 /// - Servers 5 and 6 REPLACE servers 1 and 2 in the second context
 ///
-/// This test replicates party resharing scenario, which is critical for:
-/// - Disaster recovery (replacing failed servers)
-/// - Key rotation (changing physical server composition)
-/// - Dynamic party management in production
+/// The epoch of context 2 is created *by resharing* from context 1's epoch, not by a fresh DKG,
+/// so context 2 ends up holding shares of the very same key. The test then decrypts a ciphertext
+/// under that key in the new context/epoch: that decryption is what proves the resharing worked,
+/// since servers 5 and 6 never took part in the key generation. Finally it decrypts again in the
+/// old context to show the previous epoch survives the transition.
 ///
 /// **Architecture:**
 /// - 6 physical servers total, each MPC context uses 4 parties (threshold=1)
 /// - Servers 1-4 configured with peers [1,2,3,4]
 /// - Servers 5,6,4,3 configured with peers [5,6,4,3] where 5→party1, 6→party2, 4→party3, 3→party4
+///
+/// Both contexts are pushed to all six servers: a party that is only in the old context still
+/// needs to know the new one (and vice versa), because resharing builds a joint session over the
+/// union of the two contexts.
 ///
 /// **TLS Status:** Disabled (isolated test, localhost only)
 /// **For TLS testing:** use `tests/kind-testing/kubernetes_test_threshold.rs`.
@@ -2779,6 +2914,7 @@ async fn test_threshold_mpc_context_switch_6() -> Result<()> {
         setup_party_resharing_servers("threshold_context_switch_6").await?;
 
     let test_path = material_dir.path();
+    let all_configs = [config_path_1234.as_path(), config_path_5634.as_path()];
 
     // === CONTEXT 1: Servers 1,2,3,4 as parties 1,2,3,4 ===
     info!("========== CONTEXT 1 ==========");
@@ -2789,21 +2925,68 @@ async fn test_threshold_mpc_context_switch_6() -> Result<()> {
     let context_1_path = material_dir.path().join("mpc_context_1.bin");
 
     store_mpc_context_in_file(&context_1_path, &config_path_1234, context_1_id).await?;
-    new_mpc_context(&config_path_1234, &context_1_path, test_path).await?;
+    new_mpc_context_all_sets(&all_configs, &context_1_path, test_path).await?;
     new_prss(&config_path_1234, context_1_id, epoch_1_id, test_path).await?;
 
-    // Generate key in context 1
-    let (key_1_id, _) = real_preproc_and_keygen_with_context(
+    // Generate the key and CRS that context 2 will take over.
+    let (key_id_str, preproc_id_str) = real_preproc_and_keygen_with_context(
         &config_path_1234,
         test_path,
         Some(context_1_id),
         Some(epoch_1_id),
     )
     .await?;
-    info!(
-        "✅ Context 1 (servers 1,2,3,4): Key generated: {}",
-        key_1_id
-    );
+    let crs_id_str = crs_gen_with_params(
+        &config_path_1234,
+        test_path,
+        true,
+        2048,
+        SLOW_OP_MAX_ITER,
+        epoch_1_id,
+        context_1_id,
+    )
+    .await?;
+    info!("✅ Context 1 (servers 1,2,3,4): key {key_id_str}, CRS {crs_id_str}");
+
+    // === Digests of the material context 2 has to reconstruct ===
+    // Resharing is only accepted against the digests of what the previous epoch published, so
+    // read the key and CRS back and hash them the same way the KMS does.
+    let cc_conf: CoreClientConfig = observability::conf::Settings::builder()
+        .path(config_path_1234.to_str().unwrap())
+        .env_prefix("CORE_CLIENT")
+        .build()
+        .init_conf()?;
+
+    let key_id = RequestId::from_str(&key_id_str)?;
+    let key_cores = fetch_public_elements(
+        &key_id_str,
+        &[PubDataType::CompressedXofKeySet, PubDataType::PublicKey],
+        &cc_conf,
+        test_path,
+        false,
+    )
+    .await?;
+    let compressed_keyset: CompressedXofKeySet = load_material_from_pub_storage(
+        Some(test_path),
+        &key_id,
+        PubDataType::CompressedXofKeySet,
+        Some(&key_cores[0].object_folder),
+    )
+    .await;
+    let compressed_keyset_digest =
+        hex::encode(hash_versioned(&DSEP_PUBDATA_KEY, &compressed_keyset)?);
+
+    let crs_id = RequestId::from_str(&crs_id_str)?;
+    let crs_cores =
+        fetch_public_elements(&crs_id_str, &[PubDataType::CRS], &cc_conf, test_path, false).await?;
+    let crs: CompactPkeCrs = load_material_from_pub_storage(
+        Some(test_path),
+        &crs_id,
+        PubDataType::CRS,
+        Some(&crs_cores[0].object_folder),
+    )
+    .await;
+    let crs_digest = hex::encode(hash_versioned(&DSEP_PUBDATA_CRS, &crs)?);
 
     // === CONTEXT 2: Servers 5,6,4,3 as parties 1,2,3,4 (party resharing + role swap) ===
     info!("========== CONTEXT 2 (PARTY RESHARING) ==========");
@@ -2815,58 +2998,114 @@ async fn test_threshold_mpc_context_switch_6() -> Result<()> {
     let context_2_path = material_dir.path().join("mpc_context_2.bin");
 
     store_mpc_context_in_file(&context_2_path, &config_path_5634, context_2_id).await?;
-    new_mpc_context(&config_path_5634, &context_2_path, test_path).await?;
-    new_prss(&config_path_5634, context_2_id, epoch_2_id, test_path).await?;
+    new_mpc_context_all_sets(&all_configs, &context_2_path, test_path).await?;
 
-    // Generate key in context 2 (with reshared parties)
-    let (key_2_id, _) = real_preproc_and_keygen_with_context(
-        &config_path_5634,
+    // Servers 5 and 6 are joining, so they hold none of context 1's public material. In
+    // production they download it from a peer's S3 bucket; this harness has no S3 server, so
+    // hand it to them directly — see `seed_public_material`.
+    for (data_type, data_id) in [
+        (PubDataType::CompressedXofKeySet, &key_id),
+        (PubDataType::PublicKey, &key_id),
+        (PubDataType::CRS, &crs_id),
+    ] {
+        seed_public_material(
+            test_path,
+            "PUB-p1",
+            &["PUB-p5", "PUB-p6"],
+            data_type,
+            data_id,
+        )?;
+    }
+
+    // The first epoch of context 2 is created by resharing context 1's key and CRS into it.
+    let resharing_result = reshare_two_sets(
+        &all_configs,
         test_path,
-        Some(context_2_id),
-        Some(epoch_2_id),
+        context_1_id,
+        epoch_1_id,
+        context_2_id,
+        epoch_2_id,
+        vec![PreviousKeyInfo {
+            key_id: key_id.into(),
+            preproc_id: RequestId::from_str(&preproc_id_str)?,
+            key_digest: DigestKeySet::CompressedKeySet(compressed_keyset_digest),
+        }],
+        vec![PreviousCrsInfo {
+            crs_id,
+            digest: crs_digest,
+        }],
     )
     .await?;
-    info!(
-        "✅ Context 2 (servers 5,6,4,3): Key generated: {}",
-        key_2_id
+    assert_eq!(
+        resharing_result.len(),
+        2,
+        "expected the new and the previous epoch ID back"
     );
+    // The second element is the previous epoch_id used for reshare
+    assert_eq!(resharing_result[1].0.unwrap(), epoch_1_id.into());
+    info!("✅ Context 2 (servers 5,6,4,3): epoch {epoch_2_id} created by resharing");
 
-    // === SWITCH BACK TO CONTEXT 1 ===
-    info!("========== SWITCH BACK TO CONTEXT 1 ==========");
-    info!("Switching back to context 1 (servers 1,2,3,4)");
-
-    let (key_1b_id, _) = real_preproc_and_keygen_with_context(
-        &config_path_1234,
-        test_path,
-        Some(context_1_id),
-        Some(epoch_1_id),
-    )
-    .await?;
-    info!("✅ Context 1 (switched back): Key generated: {}", key_1b_id);
-
-    // === VALIDATION ===
+    // === VALIDATION: the new party set can use the key it never generated ===
     info!("========== VALIDATION ==========");
     assert_ne!(context_1_id, context_2_id, "Context IDs must be different");
-    assert_ne!(
-        key_1_id, key_2_id,
-        "Keys from different contexts must be different"
+    assert_ne!(epoch_1_id, epoch_2_id, "Epoch IDs must be different");
+
+    // Servers 5 and 6 took no part in the DKG, so a successful decryption here is only possible
+    // if resharing really handed them shares of `key_id`.
+    let key_id_arg = KeyId::from_str(&key_id.to_string())?;
+    let decrypt_new = cmd_config(
+        &config_path_5634,
+        CCCommand::PublicDecrypt(DecryptArguments::FromArgs(DecryptParameters {
+            context_id: Some(context_2_id),
+            epoch_id: Some(epoch_2_id),
+            ..public_decrypt_params(
+                "0x123456",
+                FheType::Euint64,
+                key_id_arg,
+                1,
+                false,
+                false,
+                None,
+            )
+        })),
+        200,
     );
-    assert_ne!(
-        key_1_id, key_1b_id,
-        "Different keys in same context must be different"
+    let decrypt_new_result = execute_cmd(&decrypt_new, test_path)
+        .await
+        .map_err(|e| anyhow::anyhow!("Decrypt by the new party set failed: {e}"))?;
+    info!("✅ Decrypt in the reshared epoch succeeded: {decrypt_new_result:?}");
+
+    // === SWITCH BACK TO CONTEXT 1: the old epoch is untouched by the transition ===
+    info!("========== SWITCH BACK TO CONTEXT 1 ==========");
+    let decrypt_old = cmd_config(
+        &config_path_1234,
+        CCCommand::PublicDecrypt(DecryptArguments::FromArgs(DecryptParameters {
+            context_id: Some(context_1_id),
+            epoch_id: Some(epoch_1_id),
+            ..public_decrypt_params(
+                "0x654321",
+                FheType::Euint64,
+                key_id_arg,
+                1,
+                false,
+                false,
+                None,
+            )
+        })),
+        200,
     );
-    assert_ne!(
-        key_2_id, key_1b_id,
-        "Keys from different contexts must be different"
-    );
+    let decrypt_old_result = execute_cmd(&decrypt_old, test_path)
+        .await
+        .map_err(|e| anyhow::anyhow!("Decrypt in the original context failed: {e}"))?;
+    info!("✅ Decrypt in the original epoch still succeeds: {decrypt_old_result:?}");
 
     info!("✅ Party resharing validated:");
-    info!("   - Context 1: servers 1,2,3,4 as parties 1,2,3,4");
+    info!("   - Context 1: servers 1,2,3,4 as parties 1,2,3,4 generated key {key_id}");
     info!(
         "   - Context 2: servers 5,6,4,3 as parties 1,2,3,4 (5,6 replaced 1,2; 3↔4 swapped roles)"
     );
     info!("   - Servers 3,4 participated in BOTH contexts with DIFFERENT party roles");
-    info!("   - All 3 keys are unique and isolated");
+    info!("   - The same key decrypts in both epochs, so the shares really moved");
     info!("✅ 6-party MPC context switch with party resharing test completed successfully");
 
     // Cleanup: drop servers explicitly

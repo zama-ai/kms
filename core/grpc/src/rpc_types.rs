@@ -527,6 +527,16 @@ pub fn abi_encode_plaintexts(ptxts: &[TypedPlaintext]) -> anyhow::Result<Bytes> 
     Ok(Bytes::from(data))
 }
 
+/// Wrap raw ECDSA signature bytes as a single-element scheme-signature list.
+///
+/// Convenience for the common single-ECDSA (legacy) case
+pub fn ecdsa_signatures(signature: Vec<u8>) -> Vec<crate::kms::v1::TypedSignature> {
+    vec![crate::kms::v1::TypedSignature {
+        scheme: crate::kms::v1::SigningSchemeType::Ecdsa256k1 as i32,
+        signature,
+    }]
+}
+
 #[cfg(feature = "non-wasm")]
 impl crate::kms::v1::UserDecryptionRequest {
     /// The only information we can use is userAddress, the handles and public key
@@ -1361,6 +1371,7 @@ mod tests {
         // empty domain
         {
             let req = v1::UserDecryptionRequest {
+                signing_schemes: vec![],
                 request_id: Some(request_id.into()),
                 typed_ciphertexts: ciphertexts.clone(),
                 key_id: Some(key_id.into()),
@@ -1382,6 +1393,7 @@ mod tests {
         // empty ciphertexts
         {
             let req = v1::UserDecryptionRequest {
+                signing_schemes: vec![],
                 request_id: Some(request_id.into()),
                 typed_ciphertexts: vec![],
                 key_id: Some(key_id.into()),
@@ -1406,6 +1418,7 @@ mod tests {
             bad_domain.verifying_contract = client_address.to_checksum(None);
 
             let req = v1::UserDecryptionRequest {
+                signing_schemes: vec![],
                 request_id: Some(request_id.into()),
                 typed_ciphertexts: ciphertexts.clone(),
                 key_id: Some(key_id.into()),
@@ -1428,6 +1441,7 @@ mod tests {
         // everything is ok
         {
             let req = v1::UserDecryptionRequest {
+                signing_schemes: vec![],
                 request_id: Some(request_id.into()),
                 typed_ciphertexts: ciphertexts.clone(),
                 key_id: Some(key_id.into()),

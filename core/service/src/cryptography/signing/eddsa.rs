@@ -13,16 +13,11 @@ pub const SIG_SIZE: usize = 64;
 /// The number of seed bytes consumed to build an ed25519 signing key.
 pub const SEED_LEN: usize = 32;
 
-/// Build an ed25519 signing key deterministically from a 32-byte seed.
-pub fn keygen_from_seed(seed: &[u8; SEED_LEN]) -> Ed25519SigningKey {
-    Ed25519SigningKey::from_bytes(seed)
-}
-
 /// Marker type for the EdDSA/ed25519 signature scheme.
 pub struct Ed25519;
 
 impl SigningScheme for Ed25519 {
-    type SigningKey = Ed25519SigningKey;
+    type SigningKey = Ed25519SigningKey; // TODO(#3078) Should this be a wrapped type? Consider in the last subissue.
     type VerificationKey = Ed25519VerifyingKey;
 
     fn sign(dsep: &DomainSep, msg: &[u8], sk: &Ed25519SigningKey) -> Result<Vec<u8>, SigningError> {
@@ -60,6 +55,18 @@ impl SigningScheme for Ed25519 {
     }
 }
 
+impl Ed25519 {
+    /// Deterministically derive the signing key from a 32-byte seed.
+    pub fn keygen_from_seed(seed: &[u8; SEED_LEN]) -> Ed25519SigningKey {
+        Ed25519SigningKey::from_bytes(seed)
+    }
+
+    /// The identifier of `vk`: the raw public key, which is also its Solana address.
+    pub fn digest(vk: &Ed25519VerifyingKey) -> Vec<u8> {
+        vk.as_bytes().to_vec()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -77,7 +84,7 @@ mod tests {
     #[test]
     fn round_trip() {
         let mut rng = AesRng::seed_from_u64(1);
-        let sk = keygen_from_seed(&seed(&mut rng));
+        let sk = Ed25519::keygen_from_seed(&seed(&mut rng));
         let vk = Ed25519::verifying_key(&sk).unwrap();
         let sig = Ed25519::sign(DSEP, b"hello", &sk).unwrap();
         assert_eq!(sig.len(), SIG_SIZE);
@@ -88,7 +95,7 @@ mod tests {
     #[test]
     fn rejects_wrong_length_signature() {
         let mut rng = AesRng::seed_from_u64(2);
-        let sk = keygen_from_seed(&seed(&mut rng));
+        let sk = Ed25519::keygen_from_seed(&seed(&mut rng));
         let vk = Ed25519::verifying_key(&sk).unwrap();
 
         let err = Ed25519::verify(DSEP, b"hello", &[0u8; SIG_SIZE - 1], &vk).unwrap_err();
@@ -103,7 +110,7 @@ mod tests {
     #[test]
     fn rejects_tampering() {
         let mut rng = AesRng::seed_from_u64(3);
-        let sk = keygen_from_seed(&seed(&mut rng));
+        let sk = Ed25519::keygen_from_seed(&seed(&mut rng));
         let vk = Ed25519::verifying_key(&sk).unwrap();
         let sig = Ed25519::sign(DSEP, b"hello", &sk).unwrap();
 

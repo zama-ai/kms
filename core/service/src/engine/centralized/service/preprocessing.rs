@@ -1,6 +1,6 @@
 use crate::{
     engine::{
-        base::compute_external_signature_preprocessing,
+        base::compute_preprocessing_signatures,
         centralized::central_kms::{CentralizedKms, CentralizedPreprocBucket},
         traits::{BackupOperator, ContextManager},
         utils::MetricedError,
@@ -56,8 +56,16 @@ pub async fn preprocessing_impl<
         .start();
     let inner = request.into_inner();
 
-    let (req_id, _context_id, _epoch_id, dkg_param, _key_set_config, eip712_domain, extra_data) =
-        validate_preproc_request(inner)?;
+    let (
+        req_id,
+        _context_id,
+        _epoch_id,
+        dkg_param,
+        _key_set_config,
+        eip712_domain,
+        extra_data,
+        signing_schemes,
+    ) = validate_preproc_request(inner)?;
 
     let sk = service.base_kms.sig_key().map_err(|e| {
         MetricedError::new(
@@ -73,14 +81,22 @@ pub async fn preprocessing_impl<
         OP_KEYGEN_PREPROC_REQUEST,
     )
     .await?;
-    let external_signature =
-        compute_external_signature_preprocessing(&sk, &req_id, &eip712_domain, extra_data)
-            .map_err(|e| e.to_string());
+    let sigs = compute_preprocessing_signatures(
+        &sk,
+        &signing_schemes,
+        &req_id,
+        &eip712_domain,
+        extra_data,
+    )
+    .map_err(|e| e.to_string());
 
-    let preproc_bucket = external_signature.map(|external_signature| CentralizedPreprocBucket {
-        external_signature,
-        dkg_param,
-    });
+    let preproc_bucket = sigs.map(
+        |(external_signature, signatures)| CentralizedPreprocBucket {
+            external_signature,
+            signatures,
+            dkg_param,
+        },
+    );
 
     let _ = update_req_in_meta_store(
         &service.preprocessing_meta_store,
@@ -148,6 +164,9 @@ pub async fn get_preprocessing_res_impl<
     Ok(Response::new(KeyGenPreprocResult {
         preprocessing_id: Some(request_id.into()),
         external_signature: preproc_data.external_signature.clone(),
+        signatures: crate::engine::base::stored_scheme_signatures_to_proto(
+            &preproc_data.signatures,
+        ),
     }))
 }
 #[cfg(test)]
@@ -173,6 +192,7 @@ mod tests {
         let preproc_req_id = derive_request_id("test_preprocessing_sunshine").unwrap();
         let domain = dummy_domain();
         let preproc_req = KeyGenPreprocRequest {
+            signing_schemes: vec![kms_grpc::kms::v1::SigningSchemeType::Ecdsa256k1 as i32],
             params: FheParameter::Test.into(),
             keyset_config: None,
             request_id: Some((preproc_req_id).into()),
@@ -207,6 +227,7 @@ mod tests {
         let preproc_req_id = derive_request_id("test_preprocessing_sunshine").unwrap();
         let domain = dummy_domain();
         let preproc_req = KeyGenPreprocRequest {
+            signing_schemes: vec![kms_grpc::kms::v1::SigningSchemeType::Ecdsa256k1 as i32],
             params: FheParameter::Test.into(),
             keyset_config: None,
             request_id: Some((preproc_req_id).into()),
@@ -228,6 +249,7 @@ mod tests {
         let preproc_req_id = derive_request_id("test_preprocessing_impl_already_exists").unwrap();
         let domain = alloy_to_protobuf_domain(&dummy_domain()).unwrap();
         let preproc_req = KeyGenPreprocRequest {
+            signing_schemes: vec![kms_grpc::kms::v1::SigningSchemeType::Ecdsa256k1 as i32],
             params: FheParameter::Test.into(),
             keyset_config: None,
             request_id: Some((preproc_req_id).into()),
@@ -257,6 +279,7 @@ mod tests {
         // Missing domain should lead to InvalidArgument
         {
             let preproc_req = KeyGenPreprocRequest {
+                signing_schemes: vec![kms_grpc::kms::v1::SigningSchemeType::Ecdsa256k1 as i32],
                 params: FheParameter::Test.into(),
                 keyset_config: None,
                 request_id: Some((preproc_req_id).into()),
@@ -275,6 +298,7 @@ mod tests {
         // missing request_id should lead to InvalidArgument
         {
             let preproc_req = KeyGenPreprocRequest {
+                signing_schemes: vec![kms_grpc::kms::v1::SigningSchemeType::Ecdsa256k1 as i32],
                 params: FheParameter::Test.into(),
                 keyset_config: None,
                 request_id: None,
@@ -293,6 +317,7 @@ mod tests {
         // wrong request_id should lead to InvalidArgument
         {
             let preproc_req = KeyGenPreprocRequest {
+                signing_schemes: vec![kms_grpc::kms::v1::SigningSchemeType::Ecdsa256k1 as i32],
                 params: FheParameter::Test.into(),
                 keyset_config: None,
                 request_id: Some(kms_grpc::kms::v1::RequestId {
@@ -316,6 +341,7 @@ mod tests {
                 request_id: "xyz".to_string(),
             };
             let preproc_req = KeyGenPreprocRequest {
+                signing_schemes: vec![kms_grpc::kms::v1::SigningSchemeType::Ecdsa256k1 as i32],
                 params: FheParameter::Test.into(),
                 keyset_config: None,
                 request_id: Some(preproc_req_id.into()),

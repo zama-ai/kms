@@ -28,6 +28,10 @@ pub trait PublicDecryptor {
         &self,
         request: Request<RequestId>,
     ) -> Result<Response<PublicDecryptionResponse>, MetricedError>;
+    async fn public_decrypt_sync(
+        &self,
+        request: Request<PublicDecryptionRequest>,
+    ) -> Result<Response<PublicDecryptionResponse>, MetricedError>;
 }
 
 #[tonic::async_trait]

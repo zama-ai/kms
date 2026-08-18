@@ -27,11 +27,12 @@ use kms_grpc::{
 use observability::{
     metrics,
     metrics_names::{
-        OP_USER_DECRYPT_INNER, OP_USER_DECRYPT_REQUEST, OP_USER_DECRYPT_RESULT,
-        OP_USER_DECRYPT_SYNC, TAG_PARTY_ID, TAG_TFHE_TYPE, TAG_USER_DECRYPTION_KIND,
+        OP_USER_DECRYPT_INNER, OP_USER_DECRYPT_REQUEST, OP_USER_DECRYPT_RESULT, TAG_PARTY_ID,
+        TAG_TFHE_TYPE, TAG_USER_DECRYPTION_KIND,
     },
 };
 use rand::{CryptoRng, RngCore};
+use thread_handles::spawn_compute_bound;
 use threshold_execution::{
     endpoints::decryption::{
         DecryptionMode, LowLevelCiphertextAndKeys, OfflineNoiseFloodSession,
@@ -43,7 +44,7 @@ use threshold_execution::{
 };
 use tokio::sync::{OwnedRwLockReadGuard, RwLock};
 use tokio_util::task::TaskTracker;
-use tonic::{Request, Response};
+use tonic::{Code, Request, Response};
 use tracing::Instrument;
 
 // === Internal Crate ===
@@ -51,19 +52,21 @@ use crate::{
     anyhow_error_and_log,
     consts::DURATION_WAITING_ON_RESULT_SECONDS,
     cryptography::{
-        compute_external_user_decrypt_signature,
         encryption::UnifiedPublicEncKey,
         error::CryptographyError,
         internal_crypto_types::LegacySerialization,
         signcryption::{SigncryptFHEPlaintext, UnifiedSigncryptionKeyOwned},
+        signing::SigningSchemeType,
     },
     engine::{
-        base::{BaseKmsStruct, UserDecryptCallValues, deserialize_to_low_level},
+        base::{
+            BaseKmsStruct, UserDecryptCallValues, deserialize_to_low_level,
+            sign_user_decryption_result,
+        },
         threshold::{
             service::session::{ImmutableSessionMaker, validate_context_and_epoch},
             traits::UserDecryptor,
         },
-        traits::BaseKms,
         utils::MetricedError,
         validation::{
             DSEP_USER_DECRYPTION, RequestIdParsingErr, parse_grpc_request_id,
@@ -72,8 +75,8 @@ use crate::{
     },
     util::{
         meta_store::{
-            EntryState, MetaStore, add_or_redo_failed_in_meta_store,
-            retrieve_from_meta_store_with_timeout, update_req_in_meta_store,
+            MetaStore, add_or_redo_failed_in_meta_store, retrieve_from_meta_store_with_timeout,
+            update_req_in_meta_store,
         },
         rate_limiter::RateLimiter,
     },
@@ -159,7 +162,6 @@ impl<
     /// flooding or bit-decomposition.
     ///
     /// This function does not perform user decryption in a background thread.
-    /// The return type should be [UserDecryptCallValues] except the final item in the tuple
     ///
     /// Note that the argument `client_enc_key_bytes` must be the original
     /// bytes that was provided by the user, it should not go through any re-serialization.
@@ -184,8 +186,9 @@ impl<
         dec_mode: DecryptionMode,
         domain: &alloy_sol_types::Eip712Domain,
         extra_data: Vec<u8>,
+        signing_schemes: Vec<SigningSchemeType>,
         metric_tags: Vec<(&'static str, String)>,
-    ) -> anyhow::Result<(UserDecryptionResponsePayload, Vec<u8>, Vec<u8>)> {
+    ) -> anyhow::Result<UserDecryptCallValues> {
         let keys = fhe_keys;
 
         let mut all_signcrypted_cts = vec![];
@@ -378,14 +381,20 @@ impl<
             degree: threshold as u32,
         };
 
-        let external_signature = compute_external_user_decrypt_signature(
-            &signcryption_key.signing_key,
-            &payload,
-            domain,
-            &client_enc_key_bytes_orig,
-            &extra_data,
-        )?;
-        Ok((payload, external_signature, extra_data))
+        let domain = domain.clone();
+        let signed = spawn_compute_bound(move || {
+            sign_user_decryption_result(
+                &signcryption_key.signing_key,
+                &signing_schemes,
+                payload,
+                &client_enc_key_bytes_orig,
+                extra_data,
+                &domain,
+            )
+        })
+        .await
+        .map_err(|e| anyhow!("Failed to run signing task for user decryption {req_id}: {e}"))?;
+        signed.map_err(|e| anyhow!("Failed to sign user decryption {req_id}: {e}"))
     }
 
     #[cfg(test)]
@@ -439,11 +448,13 @@ impl<
         &self,
         request: Request<UserDecryptionRequest>,
     ) -> Result<Response<Empty>, MetricedError> {
+        metrics::METRICS.increment_request_counter(OP_USER_DECRYPT_REQUEST);
+
         // Check for resource exhaustion once all the other checks are ok
         // because resource exhaustion can be recovered by sending the exact same request
         // but the errors above cannot be tried again.
         let permit = self.rate_limiter.start_user_decrypt().await?;
-        // Start timing and counting before any operations
+        // Start timing before any operations
         let mut timer = metrics::METRICS
             .time_operation(OP_USER_DECRYPT_REQUEST)
             .start();
@@ -462,6 +473,7 @@ impl<
             epoch_id,
             domain,
             extra_data,
+            signing_schemes,
         ) = validate_user_decrypt_req(inner.as_ref())?;
         let my_role = validate_context_and_epoch(
             OP_USER_DECRYPT_REQUEST,
@@ -551,6 +563,7 @@ impl<
                 dec_mode,
                 &domain,
                 extra_data,
+                signing_schemes,
                 metric_tags,
             )
             .await;
@@ -570,43 +583,32 @@ impl<
         &self,
         request: Request<UserDecryptionRequest>,
     ) -> Result<Response<UserDecryptionResponse>, MetricedError> {
-        let _timer = metrics::METRICS
-            .time_operation(OP_USER_DECRYPT_SYNC)
-            .start();
+        // `user_decrypt` consumes the request, so keep the raw id for fetching the result below.
+        let raw_request_id = request.get_ref().request_id.clone();
 
-        let req_id = parse_optional_grpc_request_id(
-            &request.get_ref().request_id,
-            RequestIdParsingErr::UserDecRequest,
-        )
-        .map_err(|e| {
-            MetricedError::new(OP_USER_DECRYPT_SYNC, None, e, tonic::Code::InvalidArgument)
-        })?;
-
-        let should_start = match self.user_decrypt_meta_store.read().await.retrieve(&req_id) {
-            None => true,                           // fresh request ID
-            Some(EntryState::Done(Err(_))) => true, // previously failed, redo it under the same ID
-            Some(EntryState::Done(Ok(_))) => false, // already succeeded, return the stored result
-            Some(EntryState::Pending) => false,     // in flight, attach to it
-            Some(EntryState::Deleted) => false,     // tombstoned, let the wait report `NotFound`
-        };
-        if should_start {
-            match self.user_decrypt(request).await {
-                Ok(_empty) => (),
-                // Another call won the race to start or redo this request: attach to that attempt
-                Err(e) if e.code() == tonic::Code::AlreadyExists => e.defuse(),
-                Err(e) => return Err(e.retag(OP_USER_DECRYPT_SYNC)),
-            }
+        match self.user_decrypt(request).await {
+            Ok(_empty) => (),
+            // Already succeeded, in flight, or tombstoned: attach to the existing entry
+            Err(e) if e.code() == tonic::Code::AlreadyExists => e.defuse(),
+            Err(e) => return Err(e),
         }
 
-        self.get_result(Request::new(req_id.into()))
-            .await
-            .map_err(|e| e.retag(OP_USER_DECRYPT_SYNC))
+        // `user_decrypt` accepted the request, so its id must parse.
+        let req_id: RequestId =
+            parse_optional_grpc_request_id(&raw_request_id, RequestIdParsingErr::UserDecRequest)
+                .map_err(|e| {
+                    MetricedError::new(OP_USER_DECRYPT_REQUEST, None, e, Code::InvalidArgument)
+                })?;
+
+        self.get_result(Request::new(req_id.into())).await
     }
 
     async fn get_result(
         &self,
         request: Request<v1::RequestId>,
     ) -> Result<Response<UserDecryptionResponse>, MetricedError> {
+        metrics::METRICS.increment_request_counter(OP_USER_DECRYPT_RESULT);
+
         let request_id =
             parse_grpc_request_id(&request.into_inner(), RequestIdParsingErr::UserDecResponse)
                 .map_err(|e| {
@@ -626,30 +628,17 @@ impl<
             DURATION_WAITING_ON_RESULT_SECONDS,
         )
         .await?;
-        let (payload, external_signature, extra_data) = (*arc).clone();
+        let UserDecryptCallValues {
+            payload,
+            signature,
+            external_signature,
+            extra_data,
+            signatures,
+        } = (*arc).clone();
 
-        let sig_payload_vec = bc2wrap::serialize(&payload).map_err(|e| {
-            MetricedError::new(
-                OP_USER_DECRYPT_RESULT,
-                Some(request_id),
-                anyhow!("Could not convert payload to bytes {payload:?}: {e:?}"),
-                tonic::Code::Internal,
-            )
-        })?;
-
-        let sig = self
-            .base_kms
-            .sign(&DSEP_USER_DECRYPTION, &sig_payload_vec)
-            .map_err(|e| {
-                MetricedError::new(
-                    OP_USER_DECRYPT_RESULT,
-                    Some(request_id),
-                    anyhow!("Could not sign payload {payload:?}: {e:?}"),
-                    tonic::Code::Internal,
-                )
-            })?;
         Ok(Response::new(UserDecryptionResponse {
-            signature: sig.to_bytes(),
+            signature,
+            signatures,
             external_signature,
             payload: Some(payload),
             extra_data,
@@ -676,7 +665,7 @@ fn format_user_request(request: &UserDecryptionRequest) -> String {
 mod tests {
     use aes_prng::AesRng;
     use kms_grpc::{
-        kms::v1::CiphertextFormat,
+        kms::v1::{CiphertextFormat, SigningSchemeType},
         rpc_types::{KMSType, alloy_to_protobuf_domain},
     };
     use rand::SeedableRng;
@@ -694,6 +683,7 @@ mod tests {
         },
         dummy_domain,
         engine::threshold::service::session::SessionMaker,
+        util::meta_store::EntryState,
         vault::storage::{crypto_material::PublicKeySet, ram},
     };
 
@@ -757,6 +747,7 @@ mod tests {
     ) -> UserDecryptionRequest {
         let client_address = alloy_primitives::address!("d8da6bf26964af9d7eed9e03e53415d37aa96045");
         UserDecryptionRequest {
+            signing_schemes: vec![SigningSchemeType::Ecdsa256k1 as i32],
             enc_key: make_dummy_enc_pk(rng),
             typed_ciphertexts: vec![TypedCiphertext {
                 ciphertext: ct_buf,
@@ -1134,6 +1125,24 @@ mod tests {
             recorded_errors_before,
             "attaching to an already-known request ID must not report a failure"
         );
+    }
+
+    #[tokio::test]
+    async fn sync_call_shares_request_and_result_counters() {
+        let mut rng = AesRng::seed_from_u64(42);
+        let (key_id, epoch_id, ct_buf, user_decryptor) = setup_user_decryptor(&mut rng).await;
+        let req_id = RequestId::new_random(&mut rng);
+        let request = make_valid_request(&mut rng, req_id, key_id, epoch_id, ct_buf);
+
+        let requests_before = metrics::METRICS.request_counter_value(OP_USER_DECRYPT_REQUEST);
+        let results_before = metrics::METRICS.request_counter_value(OP_USER_DECRYPT_RESULT);
+        user_decryptor
+            .user_decrypt_sync(Request::new(request))
+            .await
+            .unwrap();
+        // Check global growth: the counters are shared at the process level.
+        assert!(metrics::METRICS.request_counter_value(OP_USER_DECRYPT_REQUEST) > requests_before);
+        assert!(metrics::METRICS.request_counter_value(OP_USER_DECRYPT_RESULT) > results_before);
     }
 
     #[tokio::test]

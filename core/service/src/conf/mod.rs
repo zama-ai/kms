@@ -380,7 +380,6 @@ mod tests {
             assert_eq!(peers[i].tls_cert, cert, "peer[{i}] TLS cert mismatch");
         }
 
-        assert!(threshold_config.preproc_redis.is_none());
         let tls_config = threshold_config
             .tls
             .as_ref()
@@ -417,17 +416,18 @@ mod tests {
         );
 
         let core_to_core_net = threshold_config.core_to_core_net;
-        assert!(core_to_core_net.is_some());
-        let core_to_core_net = core_to_core_net.unwrap();
-        assert_eq!(core_to_core_net.message_limit, 70);
-        assert_eq!(core_to_core_net.multiplier, 2.0);
-        assert_eq!(core_to_core_net.max_interval, 60);
+        assert_eq!(core_to_core_net.message_limit, Some(70));
+        assert_eq!(core_to_core_net.multiplier, Some(2.0));
+        assert_eq!(core_to_core_net.max_interval, Some(60));
         assert_eq!(core_to_core_net.initial_interval_ms, Some(100));
         assert_eq!(core_to_core_net.max_elapsed_time, Some(300));
-        assert_eq!(core_to_core_net.network_timeout, 20);
-        assert_eq!(core_to_core_net.network_timeout_bk, 300);
-        assert_eq!(core_to_core_net.network_timeout_bk_sns, 1200);
-        assert_eq!(core_to_core_net.max_en_decode_message_size, 2147483648);
+        assert_eq!(core_to_core_net.network_timeout, Some(20));
+        assert_eq!(core_to_core_net.network_timeout_bk, Some(300));
+        assert_eq!(core_to_core_net.network_timeout_bk_sns, Some(1200));
+        assert_eq!(
+            core_to_core_net.max_en_decode_message_size,
+            Some(2147483648)
+        );
         assert_eq!(core_to_core_net.session_update_interval_secs, Some(60));
         assert_eq!(core_to_core_net.session_cleanup_interval_secs, Some(86400));
         assert_eq!(

@@ -27,7 +27,6 @@ num-integer.workspace = true
 num-traits.workspace = true
 rand.workspace = true
 rayon.workspace = true
-redis = { workspace = true, optional = true }
 serde = { workspace = true, features = ["derive", "rc"] }
 sha3 = { workspace = true, optional = true }
 statrs.workspace = true
@@ -73,7 +72,6 @@ default = ["non-wasm"]
 non-wasm = [
     "dep:threshold-networking",
     "dep:tfhe-zk-pok",
-    "dep:redis",
     "dep:thread-handles",
     "dep:tokio",
     "dep:tonic",

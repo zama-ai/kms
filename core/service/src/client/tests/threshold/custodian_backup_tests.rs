@@ -23,7 +23,7 @@ use crate::cryptography::signatures::PrivateSigKey;
 use crate::cryptography::signatures::PublicSigKey;
 use crate::engine::base::derive_request_id;
 use crate::engine::base::{CrsGenMetadata, DSEP_PUBDATA_KEY};
-use crate::engine::context::{ContextInfo, SignerAddress};
+use crate::engine::context::{ContextInfo, SchemeDigests};
 use crate::testing::setup::ThresholdTestEnv;
 use crate::util::key_setup::test_tools::EncryptionConfig;
 use crate::util::key_setup::test_tools::TestingPlaintext;
@@ -859,7 +859,7 @@ async fn test_mpc_context_backup_threshold() {
             )
             .await
             .unwrap();
-            node.signer_address = Some(SignerAddress(pk.address()));
+            node.scheme_digests = SchemeDigests::from_ecdsa_verification_key(&pk);
             node.external_url = format!("http://example.com:8080/party{}", node.party_id);
         }
         ctx
@@ -1028,12 +1028,13 @@ async fn test_backup_after_reshare_threshold() {
     // Poll until reshare completes
     let new_epoch_req_id: RequestId = new_epoch_id.into();
     for client in env.kms_clients().values() {
-        // Poll every 500ms for up to 50 tries before giving up.
+        // Sleep initially to give the server time to complete resharing, then
+        // poll.
         if let Err(e) = retrying_poll(
             client.clone(),
             new_epoch_req_id.into(),
             "reshare epoch result",
-            PollConfig::default(),
+            PollConfig::long_poll_config(),
             |client, request| Box::pin(async move { client.get_epoch_result(request).await }),
         )
         .await

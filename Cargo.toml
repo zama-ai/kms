@@ -97,8 +97,8 @@ thread-handles = { path = "./core/thread-handles" }
 
 # External dependencies (alphabetically sorted)
 aes = "=0.9.1"  # AES block cipher for direct hot-path use - LOW RISK: RustCrypto org, very popular, actively maintained
-aes08 = { package = "aes", version = "=0.8.4" }  # AES 0.8 compatibility for cipher 0.4 CBC users - LOW RISK: same trusted RustCrypto crate, retained only where required
-aes-gcm = { version = "=0.10.3", features = ["std"] }  # AES-GCM authenticated encryption - LOW RISK: RustCrypto org, 62M+ downloads
+aes08 = { package = "aes", version = "=0.8.4", features = ["zeroize"] }  # AES 0.8 compatibility for cipher 0.4 CBC users - LOW RISK: same trusted RustCrypto crate, retained only where required
+aes-gcm = { version = "=0.10.3", features = ["std", "zeroize"] }  # AES-GCM authenticated encryption - LOW RISK: RustCrypto org, 62M+ downloads
 aes-gcm-siv = "=0.11.1"  # AES-GCM-SIV authenticated encryption - LOW RISK: RustCrypto org, nonce misuse resistant, 9M+ downloads
 aes-prng = "=0.2.1"  # AES-based PRNG for deterministic randomness - LOW RISK: Maintained by @mortendahl (Zama) and Dragos (ex Zama)
 alloy-dyn-abi = "=1.6.0"  # Ethereum ABI encoding - LOW RISK: Alloy/Paradigm team, reputable, growing ecosystem
@@ -151,6 +151,7 @@ futures-util = "=0.3.32"  # Futures utilities - LOW RISK: rust-lang team
 g2p = "=1.2.2"  # Galois field arithmetic (GF(2^p)) - LOW RISK: Essential for threshold cryptography, finite field operations
 hex = "=0.4.3"  # Hex encoding/decoding - HIGH RISK: Individual maintainer (KokaKiwi), despite 284M downloads
 http = "=1.3.1"  # HTTP types - LOW RISK: hyperium team, 100M+ downloads
+hybrid-array = { version = "=0.2.3", features = ["zeroize"] }  # Transitive dependency of ml-kem for zeroizing shared secrets - MEDIUM RISK: follows ml-kem risk profile
 hyper-rustls-ring = { package = "hyper-rustls", version = "=0.27.7", default-features = false, features = ["http2", "ring"] }  # TLS for hyper (newer version) - LOW RISK: rustls team, uses ring backend
 iam-rs = { version = "=0.0.23" } # AWS IAM policy parser/generator - HIGH RISK: individual maintainer, 10K downloads
 itertools = "=0.14.0"  # Iterator utilities - LOW RISK: bluss/rust-itertools, 100M+ downloads
@@ -182,7 +183,6 @@ rasn = "=0.28.13"  # ASN.1 encoding/decoding - HIGH RISK: Individual maintainer 
 rasn-cms = "=0.28.13"  # CMS (Cryptographic Message Syntax) - HIGH RISK: Individual maintainer (XAMPPRocky), security-critical
 rayon = "=1.12.0"  # Data parallelism - LOW RISK: rayon-rs team
 rcgen = { version = "=0.14.7", default-features = false, features = ["aws_lc_rs", "crypto", "pem", "x509-parser"] }  # X.509 certificate generation - MEDIUM RISK: Using custom fork (see patch section), needs verification
-redis = { version = "=0.29.5" }  # Redis client - LOW RISK: redis-rs team
 reqwest = { version = "=0.13.4", default-features = false, features = ["json", "rustls"] }  # HTTP client - MEDIUM RISK: Reputable individual maintainer (seanmonstar, member of tokio org), 571M+ downloads; since 0.13 the rustls feature validates against the OS trust store (rustls-platform-verifier) with aws-lc-rs — irrelevant for our self-signed/plain-HTTP endpoints
 rsa = { version = "=0.9.10", features = ["sha2", "serde"] }  # RSA public key cryptography - LOW RISK: RustCrypto org
 rstest = "=0.26.1"  # Test framework - HIGH RISK: Individual maintainer (la10736), test-only dependency
@@ -192,7 +192,7 @@ serde-wasm-bindgen = { version = "=0.6.5" }  # Serde integration for wasm-bindge
 serde_json = "=1.0.150"  # JSON serialization - MEDIUM RISK: Reputable individual maintainer (dtolnay), 563M downloads
 sha2 = "=0.11.0"  # SHA-2 hash functions - LOW RISK: RustCrypto org, 100M+ downloads
 sha3 = "=0.12.0"  # SHA-3 hash functions - LOW RISK: RustCrypto org, 10M+ downloads
-shake = "=0.1.0"  # SHAKE XOF functions - LOW RISK: RustCrypto org, 10M+ downloads
+shake = { version = "=0.1.0", features = ["zeroize"] }  # SHAKE XOF functions - LOW RISK: RustCrypto org, 10M+ downloads. `zeroize` wipes the sponge state of both the hasher and the XOF reader on drop; secrets are hashed (see `threshold-hashing`).
 signature = "=2.2.0"  # Digital signature traits - LOW RISK: RustCrypto org, 50M+ downloads
 statrs = "=0.18.0"  # Statistical functions - LOW RISK: starts-dev team
 strum = "=0.27.2"  # Enum utilities - MEDIUM RISK: Reputable individual maintainer (Peternator7), 251M+ downloads
@@ -202,11 +202,11 @@ sysinfo = "0.38.4"  # System information gathering - MEDIUM RISK: Reputable indi
 tempfile = "=3.20.0"  # Temporary file handling - MEDIUM RISK: Individual maintainers (Stebalien, KodrAus), 345M+ downloads, test-only dependency
 test-context = "=0.4.1"  # Test context utilities - MEDIUM RISK: Individual maintainers (markhildreth, JasperV), test-only dependency
 # NOTE: when changing the tfhe dependency, consider also updating the pinned version of dylint lints from tfhe (see dylint.toml)
-tfhe = "=1.6.2"  # Fully Homomorphic Encryption library - LOW RISK: Zama
-tfhe-csprng = "=0.9.1"  # Cryptographically secure PRNG for TFHE - LOW RISK: Zama
+tfhe = "=1.7.0"  # Fully Homomorphic Encryption library - LOW RISK: Zama
+tfhe-csprng = "=0.9.2"  # Cryptographically secure PRNG for TFHE - LOW RISK: Zama
 tfhe-safe-serialize = "=0.1.1" # TFHE safe serialization - LOW RISK: Zama
 tfhe-versionable = "=0.8.0"  # TFHE versioning support - LOW RISK: Zama
-tfhe-zk-pok = "=0.8.2"  # Zero-knowledge proofs for TFHE - LOW RISK: Zama
+tfhe-zk-pok = "=0.8.3"  # Zero-knowledge proofs for TFHE - LOW RISK: Zama
 thiserror = "=2.0.18"  # Error derive macro - MEDIUM RISK: Reputable individual maintainer (dtolnay), 545M downloads
 tokio = { version = "=1.52.3", features = ["full"] }  # Async runtime - LOW RISK: tokio team, industry standard
 tokio-rustls = { version = "=0.26.4", default-features = false, features = ["aws_lc_rs"] }  # Async TLS - LOW RISK: rustls team, memory-safe TLS implementation

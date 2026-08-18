@@ -1,5 +1,9 @@
 use crate::cryptography::signatures::PrivateSigKey;
-use crate::engine::base::{DSEP_PUBDATA_KEY, KeyGenMetadata, compute_info_decompression_keygen};
+use crate::cryptography::signing::SigningSchemeType;
+use crate::engine::base::{
+    DSEP_PUBDATA_KEY, KeyGenMetadata, compute_info_decompression_keygen,
+    stored_scheme_signatures_to_proto,
+};
 use crate::engine::centralized::central_kms::{
     CentralizedKeyGenResult, CentralizedKms, async_generate_decompression_keys,
     async_generate_fhe_keys,
@@ -74,6 +78,7 @@ pub async fn key_gen_impl<
         internal_keyset_config,
         eip712_domain,
         extra_data,
+        signing_schemes,
     ) = validate_key_gen_request(inner, op_tag)?;
 
     tracing::info!("centralized key-gen with request id: {:?}", req_id);
@@ -246,6 +251,7 @@ pub async fn key_gen_impl<
                 meta_store,
                 crypto_storage,
                 sk,
+                signing_schemes,
                 params,
                 internal_keyset_config,
                 eip712_domain,
@@ -315,6 +321,7 @@ pub async fn get_key_gen_result_impl<
                 preprocessing_id: Some(res.preprocessing_id.into()),
                 key_digests,
                 external_signature: res.external_signature.clone(),
+                signatures: stored_scheme_signatures_to_proto(&res.signatures),
             }))
         }
         KeyGenMetadata::LegacyV0(_res) => {
@@ -333,6 +340,8 @@ pub async fn get_key_gen_result_impl<
                 // since no domain separation is used
                 key_digests: Vec::new(),
                 external_signature: vec![],
+                // TODO(#3078): populate multi-scheme signatures (replication step).
+                signatures: vec![],
             }))
         }
     }
@@ -385,6 +394,7 @@ pub(crate) async fn key_gen_background<
     meta_store: Arc<RwLock<MetaStore<KeyGenMetadata>>>,
     crypto_storage: CentralizedCryptoMaterialStorage<PubS, PrivS>,
     sk: Arc<PrivateSigKey>,
+    schemes: Vec<SigningSchemeType>,
     params: DKGParams,
     internal_keyset_config: InternalKeySetConfig,
     eip712_domain: Eip712Domain,
@@ -399,6 +409,7 @@ pub(crate) async fn key_gen_background<
                 () = cancel_token.cancelled() => Err("Key generation was aborted".to_string()),
                 res = async_generate_fhe_keys(
                     &sk,
+                    &schemes,
                     params,
                     standard_key_set_config.to_owned(),
                     req_id,
@@ -482,6 +493,7 @@ pub(crate) async fn key_gen_background<
             };
             let info = match compute_info_decompression_keygen(
                 &sk,
+                &schemes,
                 &DSEP_PUBDATA_KEY,
                 preproc_id,
                 req_id,
@@ -551,6 +563,7 @@ pub(crate) mod tests {
 
         // insert a preproc ID
         let preproc_req = KeyGenPreprocRequest {
+            signing_schemes: vec![kms_grpc::kms::v1::SigningSchemeType::Ecdsa256k1 as i32],
             params: FheParameter::Test.into(),
             keyset_config: None,
             request_id: Some((*preproc_id).into()),
@@ -576,6 +589,7 @@ pub(crate) mod tests {
         insecure: bool,
     ) {
         let request = KeyGenRequest {
+            signing_schemes: vec![kms_grpc::kms::v1::SigningSchemeType::Ecdsa256k1 as i32],
             params: Some(FheParameter::Test.into()),
             keyset_config: None,
             keyset_added_info: None,
@@ -628,6 +642,7 @@ pub(crate) mod tests {
         let request_id = derive_request_id("test_insecure_keygen_missing_preproc_key").unwrap();
 
         let request = KeyGenRequest {
+            signing_schemes: vec![kms_grpc::kms::v1::SigningSchemeType::Ecdsa256k1 as i32],
             params: Some(FheParameter::Test.into()),
             keyset_config: None,
             keyset_added_info: None,
@@ -652,6 +667,7 @@ pub(crate) mod tests {
         let (kms, _) = setup_central_test_kms(&mut rng).await;
         let request_id = derive_request_id("test_insecure_keygen_missing_preproc_id").unwrap();
         let request = KeyGenRequest {
+            signing_schemes: vec![kms_grpc::kms::v1::SigningSchemeType::Ecdsa256k1 as i32],
             params: Some(FheParameter::Test.into()),
             keyset_config: None,
             keyset_added_info: None,
@@ -677,6 +693,7 @@ pub(crate) mod tests {
         let request_id = derive_request_id("test_keygen_missing_preproc_id").unwrap();
 
         let request = KeyGenRequest {
+            signing_schemes: vec![kms_grpc::kms::v1::SigningSchemeType::Ecdsa256k1 as i32],
             params: Some(FheParameter::Test.into()),
             keyset_config: None,
             keyset_added_info: None,
@@ -702,6 +719,7 @@ pub(crate) mod tests {
 
         let request_id = derive_request_id("test_keygen_sunshine").unwrap();
         let request = KeyGenRequest {
+            signing_schemes: vec![kms_grpc::kms::v1::SigningSchemeType::Ecdsa256k1 as i32],
             params: Some(FheParameter::Test.into()),
             keyset_config: None,
             keyset_added_info: None,
@@ -735,6 +753,7 @@ pub(crate) mod tests {
         // wrong params
         {
             let request = KeyGenRequest {
+                signing_schemes: vec![kms_grpc::kms::v1::SigningSchemeType::Ecdsa256k1 as i32],
                 params: Some(12), // wrong param
                 keyset_config: None,
                 keyset_added_info: None,
@@ -760,6 +779,7 @@ pub(crate) mod tests {
         // missing request ID
         {
             let request = KeyGenRequest {
+                signing_schemes: vec![kms_grpc::kms::v1::SigningSchemeType::Ecdsa256k1 as i32],
                 params: Some(FheParameter::Test.into()),
                 keyset_config: None,
                 keyset_added_info: None,
@@ -784,6 +804,7 @@ pub(crate) mod tests {
         // invalid request ID
         {
             let request = KeyGenRequest {
+                signing_schemes: vec![kms_grpc::kms::v1::SigningSchemeType::Ecdsa256k1 as i32],
                 params: Some(FheParameter::Test.into()),
                 keyset_config: None,
                 keyset_added_info: None,
@@ -810,6 +831,7 @@ pub(crate) mod tests {
         // invalid preprocessing ID
         {
             let request = KeyGenRequest {
+                signing_schemes: vec![kms_grpc::kms::v1::SigningSchemeType::Ecdsa256k1 as i32],
                 params: Some(FheParameter::Test.into()),
                 keyset_config: None,
                 keyset_added_info: None,
@@ -836,6 +858,7 @@ pub(crate) mod tests {
         // missing domain
         {
             let request = KeyGenRequest {
+                signing_schemes: vec![kms_grpc::kms::v1::SigningSchemeType::Ecdsa256k1 as i32],
                 params: Some(FheParameter::Test.into()),
                 keyset_config: None,
                 keyset_added_info: None,
@@ -860,6 +883,7 @@ pub(crate) mod tests {
         // invalid context ID
         {
             let request = KeyGenRequest {
+                signing_schemes: vec![kms_grpc::kms::v1::SigningSchemeType::Ecdsa256k1 as i32],
                 params: Some(FheParameter::Test.into()),
                 keyset_config: None,
                 keyset_added_info: None,
@@ -886,6 +910,7 @@ pub(crate) mod tests {
         // invalid epoch ID should fail
         {
             let request = KeyGenRequest {
+                signing_schemes: vec![kms_grpc::kms::v1::SigningSchemeType::Ecdsa256k1 as i32],
                 params: Some(FheParameter::Test.into()),
                 keyset_config: None,
                 keyset_added_info: None,
@@ -921,6 +946,7 @@ pub(crate) mod tests {
         // we try to generate the same key twice
         // it should fail the second time
         let request = KeyGenRequest {
+            signing_schemes: vec![kms_grpc::kms::v1::SigningSchemeType::Ecdsa256k1 as i32],
             params: Some(FheParameter::Test.into()),
             keyset_config: None,
             keyset_added_info: None,
@@ -952,6 +978,7 @@ pub(crate) mod tests {
         // preprocessing.
         let preproc_id_2 = derive_request_id("test_keygen_already_exists_preproc_id_2").unwrap();
         let preproc_req = KeyGenPreprocRequest {
+            signing_schemes: vec![kms_grpc::kms::v1::SigningSchemeType::Ecdsa256k1 as i32],
             params: FheParameter::Test.into(),
             keyset_config: None,
             request_id: Some(preproc_id_2.into()),
@@ -993,6 +1020,7 @@ pub(crate) mod tests {
 
             let new_request_id = derive_request_id("test_keygen_already_exists_key_id_2").unwrap();
             let request = KeyGenRequest {
+                signing_schemes: vec![kms_grpc::kms::v1::SigningSchemeType::Ecdsa256k1 as i32],
                 params: Some(FheParameter::Test.into()),
                 keyset_config: None,
                 keyset_added_info: None,

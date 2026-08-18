@@ -85,9 +85,6 @@ mtls:
   enabled: false
 environment: dev
 runMode: dev
-redis:
-  enabled: false
-  host: "redis://redis-master.common.svc.cluster.local"
 tracing:
   enabled: false
   endpoint: "http://observability-zws-dev-observability-alloy.observability.svc.cluster.local:4317"

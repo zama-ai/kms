@@ -546,12 +546,6 @@ impl MetricedError {
         self.error_code
     }
 
-    /// Re-attribute this error to another operation metric.
-    pub(crate) fn retag(mut self, op_metric: &'static str) -> Self {
-        self.op_metric = op_metric;
-        self
-    }
-
     /// Consume an error that the caller expected and has already accounted for, without recording
     /// it.
     pub(crate) fn defuse(mut self) {
@@ -804,6 +798,7 @@ mod tests {
     impl TestStoredMaterial {
         fn current_metadata(&self) -> KeyGenMetadata {
             KeyGenMetadata::Current(KeyGenMetadataInner {
+                signatures: vec![],
                 key_id: self.key_id,
                 preprocessing_id: self.preproc_id,
                 key_digest_map: self.key_digest_map.clone(),
@@ -836,6 +831,7 @@ mod tests {
                 })
                 .collect();
             KeyGenMetadata::Current(KeyGenMetadataInner {
+                signatures: vec![],
                 key_id: self.key_id,
                 preprocessing_id: self.preproc_id,
                 key_digest_map,
@@ -1050,6 +1046,7 @@ mod tests {
             max_num_bits: 64,
             extra_data: None,
             external_signature: vec![],
+            signatures: vec![],
         });
 
         let entries = HashMap::from_iter([(crs_id, metadata)]);
@@ -1074,6 +1071,7 @@ mod tests {
             max_num_bits: 64,
             extra_data: None,
             external_signature: vec![],
+            signatures: vec![],
         });
 
         let entries = HashMap::from_iter([(crs_id, metadata)]);
@@ -1385,12 +1383,7 @@ mod tests {
             tag,
         )
         .unwrap();
-        let compact_public_key = compressed_keyset
-            .clone()
-            .decompress()
-            .unwrap()
-            .into_raw_parts()
-            .0;
+        let compact_public_key = compressed_keyset.clone().decompress().into_raw_parts().0;
 
         let compressed_keyset_digest =
             hash_versioned(&crate::engine::base::DSEP_PUBDATA_KEY, &compressed_keyset).unwrap();
@@ -1443,6 +1436,7 @@ mod tests {
 
         let (crs, metadata) = gen_centralized_crs(
             &sk,
+            &[crate::cryptography::signing::SigningSchemeType::Ecdsa256k1],
             &params,
             Some(max_num_bits),
             &domain,
