@@ -154,6 +154,7 @@ mod tests {
 
         let processing_permit = store.admit(&processing_id).await.unwrap();
         assert_eq!(store.scan_len(MetaStoreScan::Processing).await, 1);
+        // successful_id, failed_id and processing_id
         assert_eq!(store.scan_len(MetaStoreScan::All).await, 3);
         let cloned_store = store.clone();
         assert_eq!(cloned_store.scan_len(MetaStoreScan::All).await, 3);
