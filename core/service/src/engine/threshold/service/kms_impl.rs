@@ -32,7 +32,7 @@ use threshold_execution::endpoints::reshare_sk::SecureReshareSecretKeys;
 use threshold_execution::{
     endpoints::keygen::SecureOnlineDistributedKeyGen128,
     online::preprocessing::{
-        DKGPreprocessing, create_memory_factory, create_redis_factory,
+        DKGPreprocessing, create_memory_factory,
         orchestration::producer_traits::SecureSmallProducerFactory,
     },
     small_execution::prss::RobustSecurePrssInit,
@@ -91,6 +91,7 @@ use crate::{
         storage::{
             Storage, StorageExt, crypto_material::ThresholdCryptoMaterialStorage,
             read_all_data_from_all_epochs_versioned, read_all_data_versioned,
+            select_data_from_max_epoch,
         },
     },
 };
@@ -339,10 +340,7 @@ impl ThresholdFheKeys {
                 decompression_key: decompression_key.clone(),
             },
             PublicKeyMaterial::Compressed { keyset } => {
-                let (_pk, sk) = keyset
-                    .decompress()
-                    .expect("Call is infallible")
-                    .into_raw_parts();
+                let (_pk, sk) = keyset.decompress().into_raw_parts();
                 let (isk, _, _, decompk, snsk, _, _, _, _) = sk.into_raw_parts();
                 UncompressedKeys {
                     integer_server_key: Arc::new(isk),
@@ -421,6 +419,7 @@ impl std::fmt::Debug for ThresholdFheKeys {
 pub struct BucketMetaStore {
     pub(crate) preprocessing_id: RequestId,
     pub(crate) external_signature: Vec<u8>,
+    pub(crate) signatures: Vec<crate::engine::base::StoredTypedSignature>,
     pub(crate) preprocessing_store: PreprocMaterial,
     pub(crate) dkg_param: DKGParams,
 }
@@ -444,13 +443,15 @@ pub enum PreprocMaterial {
 #[cfg(feature = "insecure")]
 pub(crate) fn new_insecure_preproc_bucket(
     sk: &crate::cryptography::signatures::PrivateSigKey,
+    schemes: &[crate::cryptography::signing::SigningSchemeType],
     preprocessing_id: RequestId,
     dkg_param: DKGParams,
     domain: &alloy_sol_types::Eip712Domain,
     extra_data: Vec<u8>,
 ) -> anyhow::Result<BucketMetaStore> {
-    let external_signature = crate::engine::base::compute_external_signature_preprocessing(
+    let (external_signature, signatures) = crate::engine::base::compute_preprocessing_signatures(
         sk,
+        schemes,
         &preprocessing_id,
         domain,
         extra_data,
@@ -458,6 +459,7 @@ pub(crate) fn new_insecure_preproc_bucket(
     Ok(BucketMetaStore {
         preprocessing_id,
         external_signature,
+        signatures,
         preprocessing_store: PreprocMaterial::Insecure,
         dkg_param,
     })
@@ -539,7 +541,6 @@ where
         )
         .await?;
 
-    let mut public_key_info = HashMap::new();
     let validation_material: HashMap<RequestId, RecoveryValidationMaterial> =
         read_all_data_versioned(&public_storage, &PubDataType::RecoveryMaterial.to_string())
             .await?;
@@ -553,10 +554,14 @@ where
         }
     }
 
-    // Build public_key_info map
-    for ((id, _), info) in &key_info_versioned {
-        public_key_info.insert(*id, info.meta_data.clone());
-    }
+    // Build public_key_info map using the chronologically latest epoch for each key ID.
+    // Epoch IDs are ordered chronologically by comparing their raw bytes as a
+    // big-endian integer.
+    let public_key_info = select_data_from_max_epoch(
+        key_info_versioned
+            .iter()
+            .map(|((id, epoch_id), info)| ((*id, *epoch_id), info.meta_data.clone())),
+    );
 
     // sanity check the public materials
     let entries: Vec<_> = key_info_versioned
@@ -566,14 +571,13 @@ where
     sanity_check_public_materials(&public_storage, &entries).await?;
 
     // load crs_info (roughly hashes of CRS) from storage
-    let crs_info: HashMap<RequestId, CrsGenMetadata> = read_all_data_from_all_epochs_versioned(
-        &private_storage,
-        &PrivDataType::CrsInfo.to_string(),
-    )
-    .await?
-    .into_iter()
-    .map(|((req, _epoch), v)| (req, v))
-    .collect();
+    let crs_info: HashMap<RequestId, CrsGenMetadata> = select_data_from_max_epoch(
+        read_all_data_from_all_epochs_versioned(
+            &private_storage,
+            &PrivDataType::CrsInfo.to_string(),
+        )
+        .await?,
+    );
 
     sanity_check_crs_materials(&public_storage, &crs_info).await?;
 
@@ -662,13 +666,9 @@ where
         Ok(())
     });
 
-    // If no RedisConf is provided, we just use in-memory storage for storing preprocessing materials
-    let preproc_factory = match &threshold_config.preproc_redis {
-        None => create_memory_factory(),
-        Some(conf) => {
-            create_redis_factory(format!("REDIS_{}", base_kms.verf_key().address()), conf)
-        }
-    };
+    // Create a factory for producing preprocessing material,
+    // the only backend available in production is the in-memory one.
+    let preproc_factory = create_memory_factory();
 
     let num_sessions_preproc = threshold_config
         .num_sessions_preproc
@@ -778,7 +778,7 @@ where
                 private_storage_info
             );
             epoch_manager
-                .init_prss(&default_context_id, &epoch_id_prss)
+                .init_epoch(&default_context_id, &epoch_id_prss)
                 .await?;
         }
     }
@@ -1085,6 +1085,7 @@ mod tests {
                     BTreeMap::new(),
                     vec![],
                     vec![],
+                    vec![],
                 ),
                 key_cache: OnceLock::new(),
             };
@@ -1131,6 +1132,7 @@ mod tests {
                 RequestId::zeros(),
                 RequestId::zeros(),
                 BTreeMap::new(),
+                vec![],
                 vec![],
                 vec![],
             ),
@@ -1205,6 +1207,7 @@ mod tests {
                 RequestId::zeros(),
                 RequestId::zeros(),
                 BTreeMap::new(),
+                vec![],
                 vec![],
                 vec![],
             ),

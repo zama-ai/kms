@@ -2,13 +2,11 @@ use crate::conf::party::PartyConf;
 use algebra::{
     base_ring::{Z64, Z128},
     galois_rings::common::ResiduePoly,
-    structure_traits::{Derive, ErrorCorrect, Invert, Solve, Syndrome},
+    structure_traits::{Derive, ErrorCorrect, Invert, Solve},
 };
 use observability::telemetry::make_span;
 use std::sync::Arc;
-use threshold_execution::online::preprocessing::{
-    PreprocessorFactory, create_memory_factory, create_redis_factory,
-};
+use threshold_execution::online::preprocessing::{PreprocessorFactory, create_memory_factory};
 use threshold_networking::constants::NETWORK_TIMEOUT_LONG;
 use threshold_networking::grpc::{GrpcNetworkingManager, GrpcServer, TlsExtensionGetter};
 use threshold_types::role::Role;
@@ -30,8 +28,8 @@ pub async fn run<const EXTENSION_DEGREE: usize>(
     routing_helper: impl ChoreoRoutingHelper<EXTENSION_DEGREE>,
 ) -> Result<(), Box<dyn std::error::Error>>
 where
-    ResiduePoly<Z64, EXTENSION_DEGREE>: Syndrome + ErrorCorrect + Invert + Solve + Derive,
-    ResiduePoly<Z128, EXTENSION_DEGREE>: Syndrome + ErrorCorrect + Invert + Solve + Derive,
+    ResiduePoly<Z64, EXTENSION_DEGREE>: ErrorCorrect + Invert + Solve + Derive,
+    ResiduePoly<Z128, EXTENSION_DEGREE>: ErrorCorrect + Invert + Solve + Derive,
 {
     let my_role: Role = settings.protocol().host().into();
 
@@ -42,13 +40,13 @@ where
         .transpose()?;
 
     // the networking manager is shared between the two services
-    let networking = Arc::new(GrpcNetworkingManager::new(tls_conf, settings.net_conf)?);
+    let networking = Arc::new(GrpcNetworkingManager::new(
+        tls_conf,
+        settings.net_conf.unwrap_or_default(),
+    )?);
     let networking_server = networking.new_server(TlsExtensionGetter::TlsConnectInfo);
 
-    let factory = match &settings.redis {
-        None => create_memory_factory::<EXTENSION_DEGREE>(),
-        Some(conf) => create_redis_factory::<EXTENSION_DEGREE>(format!("{my_role}"), conf),
-    };
+    let factory = create_memory_factory::<EXTENSION_DEGREE>();
 
     // create a server that uses TLS
     // if [try_use_tls] is true and settings.certpaths is not None

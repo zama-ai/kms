@@ -93,7 +93,13 @@ The service crate is the main surface area. Key subdirectories under
   [Backup and recovery](#backup-and-recovery) below.
 - [cryptography/](core/service/src/cryptography/) — AES-GCM-SIV, signcryption,
   hybrid ML-KEM (post-quantum), and attestation (Nitro NSM + certificate
-  chain verification).
+  chain verification). Signing lives under
+  [cryptography/signing/](core/service/src/cryptography/signing/): a
+  scheme-tagged `Signature` plus one backend per scheme — ECDSA/secp256k1
+  (`ecdsa`, the legacy default and EIP-712 home), EdDSA/ed25519 (`eddsa`), and
+  ML-DSA/FIPS-204 (`mldsa`) — behind the `SigningScheme` trait and the
+  `unified_sign`/`unified_verify` entry points. The historic
+  `cryptography::signatures` path is now a re-export facade.
 - [client/](core/service/src/client/) and
   [testing/](core/service/src/testing/) — client-side helpers and
   test-only wiring.
@@ -141,17 +147,35 @@ The primary service is `CoreServiceEndpoint`. Its RPCs group into:
   and persists a fresh OPRF share for such legacy material before regenerating
   public keys.
 - **Decryption** — `PublicDecrypt` (returns plaintext) and `UserDecrypt`
-  (user-initiated, EIP-712 authenticated).
+  (user-initiated, EIP-712 authenticated). `PublicDecryptSync` / `UserDecryptSync`
+  start a decryption and wait for its result in the same call, so the caller does
+  not need the `Get*DecryptionResult` round trip; a known `request_id` attaches to
+  the running or succeeded attempt, and redoes a failed one, just like the async
+  variants.
 - **CRS** — `CrsGen` for ZK-proof common reference strings.
 - **Resharing** — `NewMpcEpoch` with `previous_epoch` set rotates parties /
   refreshes secret shares as part of epoch creation; the outcome is fetched
-  via `GetEpochResult`. When resharing legacy key material that has no
-  dedicated OPRF secret-key share, the OPRF sub-protocol is skipped and the
-  reshared private keyset keeps that field absent. `DestroyMpcContext` carries
+  via `GetEpochResult`. The `preproc_id` supplied per key in `previous_epoch` is
+  caller-controlled but ends up in the EIP-712 struct signed for the new epoch,
+  so before any resharing protocol runs each party checks it against the
+  preprocessing ID stored in that key's `KeyGenMetadata` and rejects a mismatch.
+  What a missing keyset means depends on the party's `TwoSetsRole`: set 1 and
+  both sets must hold the key material, so failing to read it rejects the
+  request, whereas a pure set 2 party (a node joining the new context) never held
+  the key and logs a warning instead. When resharing legacy key material that
+  has no dedicated OPRF secret-key share, the OPRF sub-protocol is skipped and
+  the reshared private keyset keeps that field absent. `DestroyMpcContext` carries
   the context's epoch IDs and erases their secret shares (cascading to the
   existing per-epoch deletion) before forgetting the context, so retiring a
   party set leaves no usable key shares behind; the kms-connector is the source
-  of truth for which epochs belong to a context.
+  of truth for which epochs belong to a context. In-memory lifecycle leases
+  serialize creation against destruction: `NewMpcEpoch` holds shared leases for
+  its target context and epoch through all PRSS, resharing and persistence work,
+  while `DestroyMpcEpoch` and `DestroyMpcContext` require exclusive leases before
+  taking snapshots or deleting data. A conflicting destruction is refused with
+  `FailedPrecondition`, including while PRSS is still running and the new epoch
+  has not yet been registered in the session maker; callers retry once creation
+  has settled.
 - **Session management** — creation, result retrieval, and cleanup for
   long-running threshold sessions.
 
@@ -164,6 +188,10 @@ Mode is selected in the server TOML config — a party runs in threshold mode
 when the optional `[threshold]` section is present; see the sample
 files in `core/service/config/` (`default_centralized.toml`,
 `default_1.toml`..`default_4.toml`, and the compose-specific variants).
+
+In both modes, when the same key or CRS ID has metadata under multiple epochs,
+startup loads the metadata from the greatest epoch ID into the result meta
+store. Epoch IDs are compared as big-endian integers.
 
 ### Centralized
 
@@ -207,6 +235,16 @@ Custodian workflows are driven through the
 / `CustodianBackupRecovery` RPCs defined in
 [kms-service.v1.proto](core/grpc/proto/kms-service.v1.proto).
 A separate `RestoreFromBackup` RPC completes restoration on the node for the non-custodian AWS-KMS path.
+
+`NewCustodianContext` points the keychain at the new context and re-encrypts the whole
+vault under it *before* persisting the recovery material, so it is rolled back if any later
+step fails: the keychain is restored to its pre-setup `(context_id, backup_enc_key)` and the
+vault entries written under the failed id are purged
+(`rollback_failed_custodian_setup` in
+[context_manager.rs](core/service/src/engine/context_manager.rs) and
+`Vault::purge_backup`). Without that, the node would keep encrypting backups under a key
+whose recovery material was never written, making them unrecoverable. Setups are serialized
+against each other for the same reason.
 
 Implementation code lives in [core/service/src/backup/](core/service/src/backup/);
 end-to-end tests live at
@@ -256,7 +294,7 @@ The [Cargo.toml](../Cargo.toml) should be considered the ground truth.
 
 - **Unit tests** live alongside the source (`#[cfg(test)]`).
 - **Integration tests** live in each crate's `tests/` directory, notably
-  `core/service/tests/` and `core/experiments/tests/integration_redis.rs`.
+  `core/service/tests/`.
 - **Backward-compatibility tests** live under
   [backward-compatibility/](backward-compatibility/); per-version generator
   crates produce frozen test vectors that current-version loaders must
@@ -266,7 +304,7 @@ The [Cargo.toml](../Cargo.toml) should be considered the ground truth.
   the compose files at the repo root
   (`docker-compose-core-base.yml`, `docker-compose-core-threshold.yml`,
   `docker-compose-core-centralized.yml`) for a local multi-party network
-  plus S3-mock, Redis, and telemetry sidecars.
+  plus S3-mock, and telemetry sidecars.
 - **Cargo feature flags** — `testing` enables test-only APIs; `slow_tests`
   enables the long-running suite.
 
@@ -275,7 +313,7 @@ exact commands.
 
 ## Build and deployment
 
-- **Toolchain** — Rust pinned via [rust-toolchain.toml](rust-toolchain.toml) (currently `1.97.0`) along with Protobuf (`protoc`). Docker is also required for the test harness for some integration tests.
+- **Toolchain** — Rust pinned via [rust-toolchain.toml](rust-toolchain.toml) along with Protobuf (`protoc`). Docker is also required for the test harness for some integration tests.
 - **Makefile** — [Makefile](Makefile) provides compose orchestration,
   backward-compat vector generation, test-material generation, and lint
   targets.

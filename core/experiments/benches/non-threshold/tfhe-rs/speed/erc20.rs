@@ -76,10 +76,7 @@ fn main() {
         }
         let (client_key, compressed_server_key) = generate_tfhe_keys(&params);
 
-        let (public_key, server_key) = compressed_server_key
-            .decompress()
-            .expect("Decompression failed")
-            .into_raw_parts();
+        let (public_key, server_key) = compressed_server_key.decompress().into_raw_parts();
 
         let mut rng = AesRng::from_entropy();
         let from_amount = FheUint64::encrypt(rng.r#gen::<u64>(), &client_key);

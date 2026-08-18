@@ -9,6 +9,7 @@ use crate::{
         signatures::{
             PublicSigKey, Signature, internal_verify_sig, recover_address_from_ext_signature,
         },
+        signing::SigningSchemeType,
     },
     engine::base::compute_public_decryption_message,
     engine::validation::Eip712VerificationParams,
@@ -33,6 +34,7 @@ use observability::metrics_names::{
     OP_KEYGEN_PREPROC_REQUEST, OP_NEW_EPOCH, OP_PUBLIC_DECRYPT_REQUEST, OP_USER_DECRYPT_REQUEST,
 };
 use std::collections::{HashMap, HashSet};
+use strum::EnumCount;
 use threshold_execution::keyset_config::KeySetConfig;
 use threshold_execution::tfhe_internals::parameters::DKGParams;
 use threshold_execution::zk::ceremony::compute_witness_dim;
@@ -182,6 +184,25 @@ pub(crate) fn parse_grpc_request_id<'a, O: TryFrom<&'a kms_grpc::kms::v1::Reques
     })
 }
 
+/// Resolve the per-scheme `signatures` a request asks the response to be signed
+/// under, validating and de-duplicating the requested schemes.
+///
+/// An empty list resolves to `[]`: the response still carries the always-present
+/// ECDSA/EIP-712 `external_signature`.
+pub(crate) fn resolve_signing_schemes(
+    requested: &[i32],
+) -> Result<Vec<SigningSchemeType>, Box<dyn std::error::Error + Send + Sync>> {
+    let mut resolved = Vec::with_capacity(SigningSchemeType::COUNT);
+    for &raw in requested {
+        let scheme = SigningSchemeType::try_from(raw)
+            .map_err(|e| anyhow::anyhow!("unsupported signing scheme requested: {e}"))?;
+        if !resolved.contains(&scheme) {
+            resolved.push(scheme);
+        }
+    }
+    Ok(resolved)
+}
+
 /// Validates and unpacks a user decryption request and returns ciphertext, FheType, request digest, client
 /// encryption key, client verification key, key_id and request_id if valid.
 ///
@@ -202,6 +223,7 @@ pub(crate) fn validate_user_decrypt_req(
         EpochId,
         alloy_sol_types::Eip712Domain,
         Vec<u8>,
+        Vec<SigningSchemeType>,
     ),
     MetricedError,
 > {
@@ -230,6 +252,7 @@ fn unpack_user_decrypt_req(
         EpochId,
         alloy_sol_types::Eip712Domain,
         Vec<u8>,
+        Vec<SigningSchemeType>,
     ),
     Box<dyn std::error::Error + Send + Sync>,
 > {
@@ -289,6 +312,7 @@ fn unpack_user_decrypt_req(
         epoch_id,
         domain,
         req.extra_data.clone(),
+        resolve_signing_schemes(&req.signing_schemes)?,
     ))
 }
 
@@ -308,6 +332,7 @@ pub(crate) fn validate_public_decrypt_req(
         EpochId,
         Eip712Domain,
         Vec<u8>,
+        Vec<SigningSchemeType>,
     ),
     MetricedError,
 > {
@@ -333,6 +358,7 @@ fn unpack_public_decrypt_req(
         EpochId,
         Eip712Domain,
         Vec<u8>,
+        Vec<SigningSchemeType>,
     ),
     Box<dyn std::error::Error + Send + Sync>,
 > {
@@ -372,6 +398,7 @@ fn unpack_public_decrypt_req(
         epoch_id,
         eip712_domain,
         req.extra_data.clone(),
+        resolve_signing_schemes(&req.signing_schemes)?,
     ))
 }
 
@@ -415,9 +442,7 @@ fn validate_public_decrypt_meta_data(
         return Ok(false);
     }
 
-    let sig = Signature {
-        sig: k256::ecdsa::Signature::from_slice(signature)?,
-    };
+    let sig = Signature::from_ecdsa(k256::ecdsa::Signature::from_slice(signature)?);
 
     // TODO: Need to update this to a safer deserialization (which checks versions) with #2781 ?
     let cur_verf_key: PublicSigKey = bc2wrap::deserialize_slice(&other_resp.verification_key)?;
@@ -597,6 +622,13 @@ fn validate_public_decrypt_responses(
                 response_extra_data: &cur_resp.extra_data,
                 trusted_eip712_domain: domain,
             });
+        // The deprecated scalar `signature` field carries the raw internal ECDSA
+        // signature over the serialized payload.
+        // TODO(0.16) verify `signatures` and drop the two deprecated fields.
+        if cur_resp.signature.is_empty() {
+            tracing::warn!("Response carries no ECDSA signature to verify!");
+            continue;
+        }
         if !validate_public_decrypt_meta_data(
             trusted_ctx.ext_handles_bytes,
             &pivot_payload,
@@ -705,6 +737,7 @@ pub(crate) fn validate_preproc_request(
         KeySetConfig,
         Eip712Domain,
         Vec<u8>,
+        Vec<SigningSchemeType>,
     ),
     MetricedError,
 > {
@@ -729,6 +762,7 @@ fn unpack_preproc_request(
     KeySetConfig,
     Eip712Domain,
     Vec<u8>,
+    Vec<SigningSchemeType>,
 )> {
     let req_id =
         parse_optional_grpc_request_id(&req.request_id, RequestIdParsingErr::KeyGenRequest)?;
@@ -764,6 +798,7 @@ fn unpack_preproc_request(
         keyset_config,
         eip712_domain,
         req.extra_data,
+        resolve_signing_schemes(&req.signing_schemes).map_err(|e| anyhow::anyhow!("{e}"))?,
     ))
 }
 
@@ -781,6 +816,7 @@ pub(crate) fn validate_key_gen_request(
         InternalKeySetConfig,
         Eip712Domain,
         Vec<u8>,
+        Vec<SigningSchemeType>,
     ),
     MetricedError,
 > {
@@ -806,6 +842,7 @@ fn unpack_key_gen_request(
     InternalKeySetConfig,
     Eip712Domain,
     Vec<u8>,
+    Vec<SigningSchemeType>,
 )> {
     let req_id =
         parse_optional_grpc_request_id(&req.request_id, RequestIdParsingErr::KeyGenRequest)?;
@@ -853,6 +890,7 @@ fn unpack_key_gen_request(
         internal_keyset_config,
         eip712_domain,
         req.extra_data,
+        resolve_signing_schemes(&req.signing_schemes).map_err(|e| anyhow::anyhow!("{e}"))?,
     ))
 }
 
@@ -864,6 +902,7 @@ pub(crate) struct VerifiedCrsGenRequest {
     pub params: DKGParams,
     pub eip712_domain: Eip712Domain,
     pub extra_data: Vec<u8>,
+    pub signing_schemes: Vec<SigningSchemeType>,
 }
 
 pub(crate) fn validate_crs_gen_request(
@@ -923,6 +962,8 @@ fn unpack_crs_gen_request(req: CrsGenRequest) -> anyhow::Result<VerifiedCrsGenRe
         params,
         eip712_domain,
         extra_data: req.extra_data,
+        signing_schemes: resolve_signing_schemes(&req.signing_schemes)
+            .map_err(|e| anyhow::anyhow!("{e}"))?,
     })
 }
 
@@ -951,6 +992,7 @@ pub(crate) struct VerifiedNewMpcEpochRequest {
     pub epoch_id: EpochId,
     pub extra_data: Vec<u8>,
     pub resharing: Option<ResharingParams>,
+    pub signing_schemes: Vec<SigningSchemeType>,
 }
 
 pub(crate) fn validate_new_mpc_epoch_request(
@@ -990,14 +1032,16 @@ fn unpack_new_mpc_epoch_req(req: NewMpcEpochRequest) -> anyhow::Result<VerifiedN
         epoch_id,
         resharing,
         extra_data: req.extra_data,
+        signing_schemes: resolve_signing_schemes(&req.signing_schemes)
+            .map_err(|e| anyhow::anyhow!("{e}"))?,
     })
 }
 
 #[cfg(test)]
 mod tests {
-    use std::collections::HashMap;
-
+    use super::resolve_signing_schemes;
     use aes_prng::AesRng;
+    use alloy_dyn_abi::Eip712Domain;
     use kms_grpc::{
         RequestId,
         kms::v1::{
@@ -1007,17 +1051,18 @@ mod tests {
         },
         rpc_types::{ID_LENGTH, alloy_to_protobuf_domain},
     };
-
     use rand::SeedableRng;
+    use std::collections::HashMap;
 
     use crate::{
         cryptography::{
             encryption::{Encryption, PkeScheme, PkeSchemeType, UnifiedPublicEncKey},
-            signatures::{PublicSigKey, gen_sig_keys, internal_sign},
+            signatures::{PrivateSigKey, PublicSigKey, gen_sig_keys, internal_sign},
+            signing::SigningSchemeType,
         },
         dummy_domain,
         engine::{
-            base::{compute_external_pt_signature, derive_request_id},
+            base::{PubDecCallValues, derive_request_id, sign_public_decryption_result},
             validation::{
                 RequestIdParsingErr, parse_grpc_request_id, validate_new_mpc_epoch_request,
             },
@@ -1038,6 +1083,76 @@ mod tests {
         verify_user_decrypt_eip712,
     };
 
+    /// Sign a public decryption result the way the server does, under ECDSA only.
+    fn sign_ecdsa_public_decrypt_result(
+        server_sk: &PrivateSigKey,
+        payload: PublicDecryptionResponsePayload,
+        ext_handles_bytes: &[Vec<u8>],
+        extra_data: Vec<u8>,
+        eip712_domain: &Eip712Domain,
+    ) -> PubDecCallValues {
+        sign_public_decryption_result(
+            server_sk,
+            &[SigningSchemeType::Ecdsa256k1],
+            payload,
+            ext_handles_bytes,
+            extra_data,
+            eip712_domain,
+        )
+        .unwrap()
+    }
+
+    /// Build a public decryption response exactly as the server produces one: the
+    /// deprecated scalar `signature` over the serialized payload, the EIP-712
+    /// `external_signature`, and the per-scheme `signatures` list.
+    fn signed_public_decrypt_response(
+        server_sk: &PrivateSigKey,
+        payload: PublicDecryptionResponsePayload,
+        ext_handles_bytes: &[Vec<u8>],
+        extra_data: Vec<u8>,
+        eip712_domain: &Eip712Domain,
+    ) -> PublicDecryptionResponse {
+        let signed = sign_ecdsa_public_decrypt_result(
+            server_sk,
+            payload,
+            ext_handles_bytes,
+            extra_data,
+            eip712_domain,
+        );
+        PublicDecryptionResponse {
+            signature: signed.signature,
+            signatures: signed.signatures,
+            payload: Some(signed.payload),
+            external_signature: signed.external_signature,
+            extra_data: signed.extra_data,
+        }
+    }
+
+    /// Empty signing schemes resolves to an empty list (opt-in), known schemes map through
+    #[test]
+    fn test_resolve_signing_schemes() {
+        // Empty ⇒ empty: `signatures` is opt-in, the ECDSA/EIP-712 signature is
+        // carried by `external_signature` independently.
+        assert_eq!(resolve_signing_schemes(&[]).unwrap(), vec![]);
+
+        // Known schemes map through, preserving order.
+        let ecdsa = kms_grpc::kms::v1::SigningSchemeType::Ecdsa256k1 as i32;
+        let mldsa65 = kms_grpc::kms::v1::SigningSchemeType::Mldsa65 as i32;
+        assert_eq!(
+            resolve_signing_schemes(&[ecdsa, mldsa65]).unwrap(),
+            vec![SigningSchemeType::Ecdsa256k1, SigningSchemeType::MlDsa65]
+        );
+
+        // Duplicates are removed while preserving first-seen order.
+        assert_eq!(
+            resolve_signing_schemes(&[mldsa65, ecdsa, mldsa65]).unwrap(),
+            vec![SigningSchemeType::MlDsa65, SigningSchemeType::Ecdsa256k1]
+        );
+
+        // An unknown scheme is an error.
+        assert!(resolve_signing_schemes(&[9999]).is_err());
+    }
+
     #[test]
     fn test_validate_public_decrypt_req() {
         // setup data we're going to use in this test
@@ -1057,6 +1172,7 @@ mod tests {
         // empty key ID
         {
             let req = PublicDecryptionRequest {
+                signing_schemes: vec![SigningSchemeType::Ecdsa256k1 as i32],
                 request_id: Some(request_id.into()),
                 ciphertexts: ciphertexts.clone(),
                 key_id: None,
@@ -1076,6 +1192,7 @@ mod tests {
         // empty request ID
         {
             let req = PublicDecryptionRequest {
+                signing_schemes: vec![SigningSchemeType::Ecdsa256k1 as i32],
                 request_id: None,
                 ciphertexts: ciphertexts.clone(),
                 key_id: Some(key_id.into()),
@@ -1098,6 +1215,7 @@ mod tests {
                 request_id: ['x'; ID_LENGTH].iter().collect(),
             };
             let req = PublicDecryptionRequest {
+                signing_schemes: vec![SigningSchemeType::Ecdsa256k1 as i32],
                 request_id: Some(bad_req_id),
                 ciphertexts: vec![],
                 key_id: Some(key_id.into()),
@@ -1117,6 +1235,7 @@ mod tests {
         // empty ciphertext
         {
             let req = PublicDecryptionRequest {
+                signing_schemes: vec![SigningSchemeType::Ecdsa256k1 as i32],
                 request_id: Some(request_id.into()),
                 ciphertexts: vec![],
                 key_id: Some(key_id.into()),
@@ -1136,6 +1255,7 @@ mod tests {
         // finally everything is ok
         {
             let req = PublicDecryptionRequest {
+                signing_schemes: vec![], // empty signing schemes defaults to ECDSA
                 request_id: Some(request_id.into()),
                 ciphertexts: ciphertexts.clone(),
                 key_id: Some(key_id.into()),
@@ -1144,7 +1264,7 @@ mod tests {
                 context_id: None,
                 epoch_id: None,
             };
-            let (_, _, _, _, _, _domain, _) = unpack_public_decrypt_req(&req).unwrap();
+            let (_, _, _, _, _, _domain, _, _) = unpack_public_decrypt_req(&req).unwrap();
         }
     }
 
@@ -1179,6 +1299,7 @@ mod tests {
         // empty key ID
         {
             let req = UserDecryptionRequest {
+                signing_schemes: vec![SigningSchemeType::Ecdsa256k1 as i32],
                 request_id: Some(request_id.into()),
                 typed_ciphertexts: ciphertexts.clone(),
                 key_id: None,
@@ -1200,6 +1321,7 @@ mod tests {
         // empty request ID
         {
             let req = UserDecryptionRequest {
+                signing_schemes: vec![SigningSchemeType::Ecdsa256k1 as i32],
                 request_id: None,
                 typed_ciphertexts: ciphertexts.clone(),
                 key_id: Some(key_id.into()),
@@ -1224,6 +1346,7 @@ mod tests {
                 request_id: ['x'; ID_LENGTH].iter().collect(),
             };
             let req = UserDecryptionRequest {
+                signing_schemes: vec![SigningSchemeType::Ecdsa256k1 as i32],
                 request_id: Some(bad_req_id),
                 typed_ciphertexts: vec![],
                 key_id: Some(key_id.into()),
@@ -1245,6 +1368,7 @@ mod tests {
         // empty ciphertext
         {
             let req = UserDecryptionRequest {
+                signing_schemes: vec![SigningSchemeType::Ecdsa256k1 as i32],
                 request_id: Some(request_id.into()),
                 typed_ciphertexts: vec![],
                 key_id: Some(key_id.into()),
@@ -1266,6 +1390,7 @@ mod tests {
         // bad client address
         {
             let req = UserDecryptionRequest {
+                signing_schemes: vec![SigningSchemeType::Ecdsa256k1 as i32],
                 request_id: Some(request_id.into()),
                 typed_ciphertexts: ciphertexts.clone(),
                 key_id: Some(key_id.into()),
@@ -1292,6 +1417,7 @@ mod tests {
             };
             let bad_enc_pk_buf = bc2wrap::serialize(&inner_key).unwrap();
             let req = UserDecryptionRequest {
+                signing_schemes: vec![SigningSchemeType::Ecdsa256k1 as i32],
                 request_id: Some(request_id.into()),
                 typed_ciphertexts: ciphertexts.clone(),
                 key_id: Some(key_id.into()),
@@ -1313,6 +1439,7 @@ mod tests {
         // finally everything is ok
         {
             let req = UserDecryptionRequest {
+                signing_schemes: vec![], // empty signing schemes defaults to ECDSA
                 request_id: Some(request_id.into()),
                 typed_ciphertexts: ciphertexts.clone(),
                 key_id: Some(key_id.into()),
@@ -1377,6 +1504,7 @@ mod tests {
             _ => panic!("expected MlKem512 key"),
         };
         let req = UserDecryptionRequest {
+            signing_schemes: vec![SigningSchemeType::Ecdsa256k1 as i32],
             request_id: Some(v1::RequestId {
                 request_id: "dummy request ID".to_owned(),
             }),
@@ -1455,7 +1583,7 @@ mod tests {
         // use a bad signature (signed with wrong private key)
         {
             let signature = &internal_sign(&DSEP_PUBLIC_DECRYPTION, &pivot_buf, &sk1).unwrap();
-            let signature_buf = signature.sig.to_vec();
+            let signature_buf = signature.to_bytes();
 
             assert!(
                 !validate_public_decrypt_meta_data(&[], &pivot, &pivot, &signature_buf, None,)
@@ -1466,7 +1594,7 @@ mod tests {
         // use a bad signature (malformed signature)
         {
             let signature = &internal_sign(&DSEP_PUBLIC_DECRYPTION, &pivot_buf, &sk0).unwrap();
-            // The signature is malformed because it's using bincode to serialize instead of `signature.sig.to_vec()`.
+            // The signature is malformed because it's using bincode to serialize instead of `signature.to_bytes()`.
             let signature_buf = bc2wrap::serialize(&signature).unwrap();
 
             assert!(
@@ -1494,7 +1622,7 @@ mod tests {
 
             let bad_signature =
                 &internal_sign(&DSEP_PUBLIC_DECRYPTION, &bad_value_buf, &sk0).unwrap();
-            let bad_signature_buf = bad_signature.sig.to_vec();
+            let bad_signature_buf = bad_signature.to_bytes();
 
             assert!(
                 !validate_public_decrypt_meta_data(&[], &pivot, &pivot, &bad_signature_buf, None,)
@@ -1520,7 +1648,7 @@ mod tests {
             let bad_value_buf = bc2wrap::serialize(&bad_value).unwrap();
 
             let signature = &internal_sign(&DSEP_PUBLIC_DECRYPTION, &bad_value_buf, &sk0).unwrap();
-            let signature_buf = signature.sig.to_vec();
+            let signature_buf = signature.to_bytes();
 
             assert!(
                 !validate_public_decrypt_meta_data(&[], &pivot, &bad_value, &signature_buf, None,)
@@ -1542,7 +1670,7 @@ mod tests {
             let bad_value_buf = bc2wrap::serialize(&bad_value).unwrap();
 
             let signature = &internal_sign(&DSEP_PUBLIC_DECRYPTION, &bad_value_buf, &sk0).unwrap();
-            let signature_buf = signature.sig.to_vec();
+            let signature_buf = signature.to_bytes();
 
             assert!(
                 !validate_public_decrypt_meta_data(&[], &pivot, &bad_value, &signature_buf, None,)
@@ -1564,7 +1692,7 @@ mod tests {
             let bad_value_buf = bc2wrap::serialize(&bad_value).unwrap();
 
             let signature = &internal_sign(&DSEP_PUBLIC_DECRYPTION, &bad_value_buf, &sk0).unwrap();
-            let signature_buf = signature.sig.to_vec();
+            let signature_buf = signature.to_bytes();
 
             assert!(
                 !validate_public_decrypt_meta_data(&[], &pivot, &bad_value, &signature_buf, None,)
@@ -1575,7 +1703,7 @@ mod tests {
         // happy path
         {
             let signature = &internal_sign(&DSEP_PUBLIC_DECRYPTION, &pivot_buf, &sk0).unwrap();
-            let signature_buf = signature.sig.to_vec(); // NOTE: signatures are not serialized with bincode
+            let signature_buf = signature.to_bytes(); // NOTE: signatures are not serialized with bincode
 
             assert!(
                 validate_public_decrypt_meta_data(&[], &pivot, &pivot, &signature_buf, None,)
@@ -1622,58 +1750,28 @@ mod tests {
         };
 
         // NOTE: the pks map uses 1-based index while the others use 0-based index like sk0
-        let resp0 = {
-            let payload = PublicDecryptionResponsePayload {
+        let resp0 = signed_public_decrypt_response(
+            &sk0,
+            PublicDecryptionResponsePayload {
                 verification_key: bc2wrap::serialize(&pks[&1]).unwrap(),
                 plaintexts: plaintexts.clone(),
                 request_id: request_id.clone(),
-            };
-            let payload_buf = bc2wrap::serialize(&payload).unwrap();
-            let signature = &internal_sign(&DSEP_PUBLIC_DECRYPTION, &payload_buf, &sk0).unwrap();
-            let signature_buf = signature.sig.to_vec();
-
-            let external_signature = compute_external_pt_signature(
-                &sk0,
-                &ext_handles_bytes,
-                &plaintexts,
-                &extra_data_0,
-                &alloy_domain,
-            )
-            .unwrap();
-
-            PublicDecryptionResponse {
-                signature: signature_buf,
-                payload: Some(payload),
-                external_signature,
-                extra_data: extra_data_0.clone(),
-            }
-        };
-        let resp1 = {
-            let payload = PublicDecryptionResponsePayload {
+            },
+            &ext_handles_bytes,
+            extra_data_0.clone(),
+            &alloy_domain,
+        );
+        let resp1 = signed_public_decrypt_response(
+            &sk1,
+            PublicDecryptionResponsePayload {
                 verification_key: bc2wrap::serialize(&pks[&2]).unwrap(),
                 plaintexts: plaintexts.clone(),
                 request_id: request_id.clone(),
-            };
-            let payload_buf = bc2wrap::serialize(&payload).unwrap();
-            let signature = &internal_sign(&DSEP_PUBLIC_DECRYPTION, &payload_buf, &sk1).unwrap();
-            let signature_buf = signature.sig.to_vec();
-
-            let external_signature = compute_external_pt_signature(
-                &sk1,
-                &ext_handles_bytes,
-                &plaintexts,
-                &extra_data_1,
-                &alloy_domain,
-            )
-            .unwrap();
-
-            PublicDecryptionResponse {
-                signature: signature_buf,
-                payload: Some(payload),
-                external_signature,
-                extra_data: extra_data_1.clone(),
-            }
-        };
+            },
+            &ext_handles_bytes,
+            extra_data_1.clone(),
+            &alloy_domain,
+        );
 
         // in this test we just want to test that we can catch a duplicate validation key
         // the other validation such as signatures are performed in `validate_public_decrypt_meta_data`
@@ -1731,10 +1829,11 @@ mod tests {
                 let payload_buf = bc2wrap::serialize(&payload).unwrap();
                 let signature =
                     &internal_sign(&DSEP_PUBLIC_DECRYPTION, &payload_buf, &sk1).unwrap();
-                let signature_buf = signature.sig.to_vec();
+                let signature_buf = signature.to_bytes();
 
                 PublicDecryptionResponse {
                     signature: signature_buf,
+                    signatures: vec![],
                     payload: Some(payload),
                     external_signature: vec![],
                     extra_data: vec![],
@@ -1816,6 +1915,7 @@ mod tests {
         let alloy_domain = dummy_domain();
         let domain = Some(alloy_to_protobuf_domain(&alloy_domain).unwrap());
         let request = PublicDecryptionRequest {
+            signing_schemes: vec![SigningSchemeType::Ecdsa256k1 as i32],
             request_id: request_id.clone(),
             ciphertexts,
             key_id: Some(
@@ -1829,66 +1929,32 @@ mod tests {
             epoch_id: None,
         };
 
-        let resp0 = {
-            let plaintexts = vec![TypedPlaintext {
-                bytes: vec![1],
-                fhe_type: tfhe::FheTypes::Uint8 as i32,
-            }];
-            let payload = PublicDecryptionResponsePayload {
+        let plaintexts = vec![TypedPlaintext {
+            bytes: vec![1],
+            fhe_type: tfhe::FheTypes::Uint8 as i32,
+        }];
+        let resp0 = signed_public_decrypt_response(
+            &sk0,
+            PublicDecryptionResponsePayload {
                 verification_key: bc2wrap::serialize(&pks[&1]).unwrap(),
                 plaintexts: plaintexts.clone(),
                 request_id: request_id.clone(),
-            };
-            let payload_buf = bc2wrap::serialize(&payload).unwrap();
-            let signature = &internal_sign(&DSEP_PUBLIC_DECRYPTION, &payload_buf, &sk0).unwrap();
-            let signature_buf = signature.sig.to_vec();
-
-            let external_signature = compute_external_pt_signature(
-                &sk0,
-                &ext_handles_bytes,
-                &plaintexts,
-                &extra_data,
-                &alloy_domain,
-            )
-            .unwrap();
-
-            PublicDecryptionResponse {
-                signature: signature_buf,
-                payload: Some(payload),
-                external_signature,
-                extra_data: extra_data.clone(),
-            }
-        };
-        let resp1 = {
-            let plaintexts = vec![TypedPlaintext {
-                bytes: vec![1],
-                fhe_type: tfhe::FheTypes::Uint8 as i32,
-            }];
-            let payload = PublicDecryptionResponsePayload {
+            },
+            &ext_handles_bytes,
+            extra_data.clone(),
+            &alloy_domain,
+        );
+        let resp1 = signed_public_decrypt_response(
+            &sk1,
+            PublicDecryptionResponsePayload {
                 verification_key: bc2wrap::serialize(&pks[&2]).unwrap(),
-                plaintexts: plaintexts.clone(),
+                plaintexts,
                 request_id: request_id.clone(),
-            };
-            let payload_buf = bc2wrap::serialize(&payload).unwrap();
-            let signature = &internal_sign(&DSEP_PUBLIC_DECRYPTION, &payload_buf, &sk1).unwrap();
-            let signature_buf = signature.sig.to_vec();
-
-            let external_signature = compute_external_pt_signature(
-                &sk1,
-                &ext_handles_bytes,
-                &plaintexts,
-                &extra_data,
-                &alloy_domain,
-            )
-            .unwrap();
-
-            PublicDecryptionResponse {
-                signature: signature_buf,
-                payload: Some(payload),
-                external_signature,
-                extra_data: extra_data.clone(),
-            }
-        };
+            },
+            &ext_handles_bytes,
+            extra_data.clone(),
+            &alloy_domain,
+        );
 
         let trusted_ctx = PublicDecTrustedValidationContext {
             server_pks: &pks,
@@ -1924,6 +1990,7 @@ mod tests {
         {
             let agg_resp = vec![resp0.clone(), resp1.clone()];
             let bad_request = PublicDecryptionRequest {
+                signing_schemes: vec![],
                 request_id: Some(derive_request_id("PublicDecryptionRequest").unwrap().into()),
                 ciphertexts: vec![TypedCiphertext {
                     ciphertext: vec![1, 2, 3, 4],
@@ -1968,6 +2035,7 @@ mod tests {
         {
             let agg_resp = vec![resp0.clone(), resp1.clone()];
             let bad_request = PublicDecryptionRequest {
+                signing_schemes: vec![],
                 // wrong request ID
                 request_id: Some(
                     derive_request_id("bad PublicDecryptionRequest")
@@ -2057,19 +2125,16 @@ mod tests {
         let ext_handles_bytes = vec![vec![1, 2, 3, 4]];
         let extra_data = vec![1, 2, 3, 4];
 
-        let pivot_buf = bc2wrap::serialize(&pivot).unwrap();
-
-        let signature = &internal_sign(&DSEP_PUBLIC_DECRYPTION, &pivot_buf, &sk0).unwrap();
-        let signature_buf = signature.sig.to_vec(); // NOTE: signatures are not serialized with bincode
-
-        let external_signature = compute_external_pt_signature(
+        let signed = sign_ecdsa_public_decrypt_result(
             &sk0,
+            pivot.clone(),
             &ext_handles_bytes,
-            &pivot.plaintexts,
-            &extra_data,
+            extra_data.clone(),
             &alloy_domain,
-        )
-        .unwrap();
+        );
+        // NOTE: signatures are not serialized with bincode
+        let signature_buf = signed.signature;
+        let external_signature = signed.external_signature;
 
         let mut bad_external_signature = external_signature.clone();
         bad_external_signature[0] ^= 1;
@@ -2129,6 +2194,7 @@ mod tests {
         // should fail, and validate_new_mpc_epoch_request should surface InvalidArgument.
         {
             let req = NewMpcEpochRequest {
+                signing_schemes: vec![kms_grpc::kms::v1::SigningSchemeType::Ecdsa256k1 as i32],
                 previous_epoch: Some(PreviousEpochInfo::default()),
                 domain: None,
                 ..Default::default()
@@ -2140,12 +2206,46 @@ mod tests {
         // Happy path
         {
             let req = NewMpcEpochRequest {
+                signing_schemes: vec![kms_grpc::kms::v1::SigningSchemeType::Ecdsa256k1 as i32],
                 previous_epoch: Some(PreviousEpochInfo::default()),
                 domain: Some(alloy_to_protobuf_domain(&dummy_domain()).unwrap()),
                 ..Default::default()
             };
             let err = validate_new_mpc_epoch_request(req)
                 .expect_err("request without domain must be rejected");
+            assert_eq!(err.code(), tonic::Code::InvalidArgument);
+        }
+    }
+
+    #[test]
+    fn test_new_mpc_epoch_request_signing_schemes() {
+        let epoch_id = derive_request_id("new_mpc_epoch_signing_schemes").unwrap();
+        // Duplicates are removed and the requested order is kept.
+        {
+            let req = NewMpcEpochRequest {
+                signing_schemes: vec![
+                    kms_grpc::kms::v1::SigningSchemeType::Mldsa65 as i32,
+                    kms_grpc::kms::v1::SigningSchemeType::Ecdsa256k1 as i32,
+                    kms_grpc::kms::v1::SigningSchemeType::Mldsa65 as i32,
+                ],
+                epoch_id: Some(epoch_id.into()),
+                ..Default::default()
+            };
+            let verified = validate_new_mpc_epoch_request(req).unwrap();
+            assert_eq!(
+                verified.signing_schemes,
+                vec![SigningSchemeType::MlDsa65, SigningSchemeType::Ecdsa256k1]
+            );
+        }
+        // An unknown scheme is rejected before any epoch work starts.
+        {
+            let req = NewMpcEpochRequest {
+                signing_schemes: vec![9999],
+                epoch_id: Some(epoch_id.into()),
+                ..Default::default()
+            };
+            let err = validate_new_mpc_epoch_request(req)
+                .expect_err("unknown signing scheme must be rejected");
             assert_eq!(err.code(), tonic::Code::InvalidArgument);
         }
     }
@@ -2169,6 +2269,7 @@ mod tests {
             };
             PublicDecryptionResponse {
                 signature: vec![],
+                signatures: vec![],
                 payload: Some(payload),
                 external_signature: vec![],
                 extra_data: vec![],
@@ -2226,6 +2327,7 @@ mod tests {
             };
             PublicDecryptionResponse {
                 signature: vec![],
+                signatures: vec![],
                 payload: Some(payload),
                 external_signature: vec![],
                 extra_data: vec![],
@@ -2241,7 +2343,7 @@ mod tests {
         // second response has a modified field unrelated to the hashmap key
         {
             let mut resp1 = resp1.clone();
-            resp1.signature = vec![2, 2, 2, 2];
+            resp1.signatures = kms_grpc::rpc_types::ecdsa_signatures(vec![2, 2, 2, 2]);
             let agg_resp = vec![resp0.clone(), resp1.clone(), resp2.clone()];
             assert_eq!(
                 select_most_common_public_dec(2, &agg_resp),

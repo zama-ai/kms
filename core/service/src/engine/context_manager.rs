@@ -3,9 +3,11 @@ use crate::backup::custodian::InternalCustodianContext;
 use crate::backup::operator::{Operator, RecoveryValidationMaterial};
 use crate::conf::threshold::{ThresholdPartyConf, TlsConf};
 use crate::consts::{DEFAULT_MPC_CONTEXT, SAFE_SER_SIZE_LIMIT};
-use crate::cryptography::encryption::{Encryption, PkeScheme, PkeSchemeType, UnifiedPrivateEncKey};
+use crate::cryptography::encryption::{
+    Encryption, PkeScheme, PkeSchemeType, UnifiedPrivateEncKey, UnifiedPublicEncKey,
+};
 use crate::cryptography::signatures::{PrivateSigKey, PublicSigKey};
-use crate::engine::context::{ContextInfo, NodeInfo, SignerAddress, SoftwareVersion};
+use crate::engine::context::{ContextInfo, NodeInfo, SchemeDigests, SoftwareVersion};
 use crate::engine::threshold::service::session::SessionMaker;
 use crate::engine::traits::ContextManager;
 use crate::engine::utils::MetricedError;
@@ -27,6 +29,7 @@ use crate::{
 };
 use aes_prng::AesRng;
 use itertools::Itertools;
+use kms_grpc::RequestId;
 use kms_grpc::identifiers::ContextId;
 use kms_grpc::kms::v1::Empty;
 use kms_grpc::kms::v1::{
@@ -42,7 +45,7 @@ use std::collections::HashSet;
 use std::sync::Arc;
 use tfhe::safe_serialization::safe_serialize;
 use threshold_types::role::Role;
-use tokio::sync::RwLock;
+use tokio::sync::{Mutex, RwLock};
 use tonic::Response;
 
 const CENTRALIZED_MPC_IDENTITY: &str = "centralized-zama-kms";
@@ -57,6 +60,8 @@ struct SharedContextManager<
     base_kms: BaseKmsStruct,
     crypto_storage: CryptoMaterialStorage<PubS, PrivS>,
     custodian_meta_store: Arc<RwLock<CustodianMetaStore>>,
+    /// Serializes whole custodian-context setups; see `inner_new_custodian_context`.
+    custodian_setup_lock: Mutex<()>,
 }
 
 impl<PubS, PrivS> SharedContextManager<PubS, PrivS>
@@ -263,8 +268,11 @@ where
             })?;
         let mut guarded_backup_storage = guarded_backup_storage_ref.lock().await;
 
-        // There is nothing we can do if deletion fails here.
-        // Note that it cannot fail if the context does not exist.
+        // `delete_custodian_context_at_id` only removes the recovery material
+        // once every backed-up object for the context has been confirmed erased. If it
+        // returns an error we propagate it and, crucially, do NOT drop the context from the
+        // meta store below, so the operator retains a retryable degraded state instead of a
+        // context that reports successful destruction while backups linger in storage.
         delete_custodian_context_at_id(
             &mut *guarded_pub_storage,
             &mut guarded_backup_storage,
@@ -299,6 +307,13 @@ where
             Some(ref backup_vault) => backup_vault,
             None => return Err(anyhow::anyhow!("Backup vault is not configured")),
         };
+        // Serialize whole setups against each other. The meta-store permit below is keyed by
+        // context id, so two setups for *different* ids would otherwise interleave: the second
+        // one's pre-setup snapshot could capture the first one's half-applied keychain state and
+        // its rollback would then restore that over the first one's result. Held across
+        // `update_backup_vault`, which is the expensive part, but only custodian setups contend
+        // for it and they must not run concurrently anyway.
+        let _setup_guard = self.custodian_setup_lock.lock().await;
         let mut rng = self.base_kms.new_rng().await;
         // Generate asymmetric keys for the operator to use to encrypt the backup
         let mut enc = Encryption::new(PkeSchemeType::MlKem512, &mut rng);
@@ -326,6 +341,20 @@ where
                 inner_context.context_id
             )
         })?;
+
+        // Snapshot the keychain's current backup state before we mutate it, so a setup
+        // that fails before its recovery material is persisted can be rolled back
+        // (see `rollback_failed_custodian_setup`).
+        let previous_backup_state: Option<(RequestId, UnifiedPublicEncKey)> = {
+            let guarded_backup_vault = backup_vault.lock().await;
+            match guarded_backup_vault.keychain.as_ref() {
+                Some(KeychainProxy::SecretSharing(secret_share_keychain)) => secret_share_keychain
+                    .get_current_backup_id()
+                    .ok()
+                    .zip(secret_share_keychain.get_backup_enc_key().ok()),
+                _ => None,
+            }
+        };
 
         // Reencrypt everything
         // Basically we want to ensure the recovery request contains the decryption key and everything else is encrypted using the public encryption key
@@ -373,6 +402,12 @@ where
         }
         .await;
         if let Err(e) = prep {
+            self.rollback_failed_custodian_setup(
+                inner_context.context_id,
+                previous_backup_state,
+                RollbackScope::VaultAndKeychain,
+            )
+            .await;
             update_err_req_in_meta_store(
                 &self.custodian_meta_store,
                 meta_permit,
@@ -383,13 +418,27 @@ where
             return Err(e);
         }
         // Then store the results (consumes the permit, recording success or error).
-        self.crypto_storage
+        // `write_backup_keys` records the failure in the meta store and applies its own purge
+        // rule to the vault entries, so only the keychain is left to restore here — otherwise a
+        // failed setup would leave the vault encrypted under a context whose recovery material
+        // was never persisted.
+        if let Err(e) = self
+            .crypto_storage
             .write_backup_keys(
                 recovery_validation,
                 Arc::clone(&self.custodian_meta_store),
                 meta_permit,
             )
-            .await?;
+            .await
+        {
+            self.rollback_failed_custodian_setup(
+                inner_context.context_id,
+                previous_backup_state,
+                RollbackScope::KeychainOnly,
+            )
+            .await;
+            return Err(e.into());
+        }
         tracing::info!(
             "New custodian context created with context_id={}, threshold={} from {} custodians",
             inner_context.context_id,
@@ -398,6 +447,73 @@ where
         );
         Ok(())
     }
+
+    /// Roll back a custodian-context setup that failed before its recovery material was
+    /// persisted, so the vault is not left in an unrecoverable state.
+    ///
+    /// `failed_context_id` is the id of the context whose setup failed.
+    /// `previous_backup_state` is the keychain's `(context_id, backup_enc_key)` snapshot taken
+    /// before the setup began; the keychain is restored to it (or reset to uninitialized when
+    /// `None`) so later backups are encrypted under a key whose recovery material still exists.
+    /// The previous context's backup material lives under its own id and is left untouched.
+    /// `scope` says whether the vault entries still need purging too; see [`RollbackScope`].
+    ///
+    /// This is a no-op when the vault has no secret-sharing keychain, or when the previous
+    /// context id already equals `failed_context_id` — the latter means the setup was rejected
+    /// before mutating any state (e.g. a duplicate context id), so the keychain needs no restore
+    /// and purging would destroy the live backup.
+    async fn rollback_failed_custodian_setup(
+        &self,
+        failed_context_id: RequestId,
+        previous_backup_state: Option<(RequestId, UnifiedPublicEncKey)>,
+        scope: RollbackScope,
+    ) {
+        let Some(backup_vault) = self.crypto_storage.backup_vault.as_ref() else {
+            return;
+        };
+        let mut guarded_backup_vault = backup_vault.lock().await;
+        // Only secret-sharing (custodian) vaults carry the state a custodian setup mutates.
+        if !matches!(
+            guarded_backup_vault.keychain.as_ref(),
+            Some(KeychainProxy::SecretSharing(_))
+        ) {
+            return;
+        }
+        // A setup rejected before any mutation leaves the current context id as the previous one;
+        // purging it would destroy the live backup, so there is nothing to roll back.
+        if previous_backup_state
+            .as_ref()
+            .is_some_and(|(prev_id, _)| *prev_id == failed_context_id)
+        {
+            return;
+        }
+        // Purge the backup material the failed setup re-encrypted under the new context id.
+        if scope == RollbackScope::VaultAndKeychain
+            && let Err(e) = guarded_backup_vault.purge_backup(&failed_context_id).await
+        {
+            tracing::error!(
+                "Failed to purge backup vault while rolling back custodian context {failed_context_id}: {e}"
+            );
+        }
+        // Restore the keychain to the pre-setup state.
+        if let Some(KeychainProxy::SecretSharing(secret_share_keychain)) =
+            guarded_backup_vault.keychain.as_mut()
+        {
+            secret_share_keychain.restore_backup_enc_key(previous_backup_state);
+        }
+    }
+}
+
+/// What a failed custodian setup still has to undo, i.e. which side of the
+/// `update_backup_vault` / `write_backup_keys` split has not cleaned up after itself.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum RollbackScope {
+    /// The setup failed before `write_backup_keys` ran, so the entries the overwriting
+    /// `update_backup_vault` pass wrote under the new context id are still there.
+    VaultAndKeychain,
+    /// `write_backup_keys` failed and already applied its own purge rule to the vault —
+    /// notably keeping what is stored under a duplicate id — so only the keychain is left.
+    KeychainOnly,
 }
 
 pub async fn create_default_centralized_context_in_storage<
@@ -412,12 +528,12 @@ pub async fn create_default_centralized_context_in_storage<
         mpc_nodes: vec![NodeInfo {
             mpc_identity: CENTRALIZED_MPC_IDENTITY.to_string(), // identity is not used in centralized KMS
             party_id: CENTRALIZED_PARTY_ID,                     // always 1
-            signer_address: Some(SignerAddress(verification_key.address())),
             external_url: CENTRALIZED_EXTERNAL_URL.to_string(), // no external URL since there are no peers
             ca_cert: None, // there's no peer network, so no certificate is needed
             public_storage_url: "".to_string(),
             public_storage_prefix: None, // None will default to "PUB"
             extra_signer_addresses: vec![],
+            scheme_digests: SchemeDigests::from_ecdsa_verification_key(&verification_key),
         }],
         context_id: *DEFAULT_MPC_CONTEXT,
         software_version: SoftwareVersion::current()?,
@@ -474,22 +590,20 @@ pub async fn ensure_default_threshold_context_in_storage<
                 .transpose()
             {
                 Ok(pem_string) => {
-                    let signer_address = if let Some(my_id) = threshold_config.my_id {
-                        if peer.party_id == my_id {
-                            Some(SignerAddress(verf_key.address()))
-                        } else {
-                            None
-                        }
+                    let scheme_digests = if threshold_config
+                        .my_id
+                        .is_some_and(|my_id| peer.party_id == my_id)
+                    {
+                        SchemeDigests::from_ecdsa_verification_key(verf_key)
                     } else {
                         // If the MPC parties are started for the first time, they do not know about any context.
                         // Consequently, if we must use a default context, the default context cannot hold the
                         // verification key of other parties since they don't know about it at start up.
-                        None
+                        SchemeDigests::new()
                     };
                     Ok(NodeInfo {
                         mpc_identity: identity.mpc_identity().to_string(),
                         party_id: role.one_based() as u32,
-                        signer_address,
                         external_url: format!(
                             "{}://{}:{}",
                             scheme,
@@ -502,6 +616,7 @@ pub async fn ensure_default_threshold_context_in_storage<
                         public_storage_url: "".to_string(),
                         public_storage_prefix: None,
                         extra_signer_addresses: vec![],
+                        scheme_digests,
                     })
                 }
                 Err(e) => Err(e),
@@ -562,6 +677,7 @@ where
                 base_kms,
                 crypto_storage,
                 custodian_meta_store,
+                custodian_setup_lock: Mutex::new(()),
             },
             cache: Arc::new(RwLock::new(HashSet::new())),
         }
@@ -661,7 +777,7 @@ where
     async fn destroy_mpc_context(
         &self,
         request: tonic::Request<DestroyMpcContextRequest>,
-    ) -> Result<Response<Empty>, MetricedError> {
+    ) -> Result<(), MetricedError> {
         let context_id = self
             .inner
             .parse_mpc_context_for_destruction(request)
@@ -677,6 +793,47 @@ where
 
         let storage_ref = self.inner.crypto_storage.private_storage.clone();
         let mut guarded_priv_storage = storage_ref.lock().await;
+        let context_exists = guarded_priv_storage
+            .data_exists(&context_id.into(), &PrivDataType::ContextInfo.to_string())
+            .await
+            .map_err(|e| {
+                MetricedError::new(
+                    OP_DESTROY_MPC_CONTEXT,
+                    Some(context_id.into()),
+                    anyhow::anyhow!("Failed to check if context exists in storage: {e}"),
+                    tonic::Code::Internal,
+                )
+            })?;
+        if !context_exists {
+            return Err(MetricedError::new(
+                OP_DESTROY_MPC_CONTEXT,
+                Some(context_id.into()),
+                anyhow::anyhow!("Context with id {context_id} does not exist in storage"),
+                tonic::Code::NotFound,
+            ));
+        }
+
+        let context_info_ids = guarded_priv_storage
+            .all_data_ids(&PrivDataType::ContextInfo.to_string())
+            .await
+            .map_err(|e| {
+                MetricedError::new(
+                    OP_DESTROY_MPC_CONTEXT,
+                    Some(context_id.into()),
+                    anyhow::anyhow!("Failed to list contexts from storage: {e}"),
+                    tonic::Code::Internal,
+                )
+            })?;
+        if context_info_ids.len() < 2 {
+            return Err(MetricedError::new(
+                OP_DESTROY_MPC_CONTEXT,
+                Some(context_id.into()),
+                anyhow::anyhow!(
+                    "Cannot destroy MPC context with id {context_id} since it is the only one left in storage"
+                ),
+                tonic::Code::FailedPrecondition,
+            ));
+        }
 
         delete_context_at_id(&mut *guarded_priv_storage, &context_id)
             .await
@@ -700,7 +857,7 @@ where
             }
         }
 
-        Ok(Response::new(Empty {}))
+        Ok(())
     }
 
     async fn new_custodian_context(
@@ -765,6 +922,7 @@ where
                 base_kms,
                 crypto_storage,
                 custodian_meta_store,
+                custodian_setup_lock: Mutex::new(()),
             },
             session_maker,
         }
@@ -913,7 +1071,7 @@ where
     async fn destroy_mpc_context(
         &self,
         request: tonic::Request<DestroyMpcContextRequest>,
-    ) -> Result<tonic::Response<Empty>, MetricedError> {
+    ) -> Result<(), MetricedError> {
         let context_id = self
             .inner
             .parse_mpc_context_for_destruction(request)
@@ -926,6 +1084,25 @@ where
                     tonic::Code::InvalidArgument,
                 )
             })?;
+        if !self.session_maker.context_exists(&context_id).await {
+            return Err(MetricedError::new(
+                OP_DESTROY_MPC_CONTEXT,
+                Some(context_id.into()),
+                anyhow::anyhow!("Context with id {context_id} does not exist in session maker"),
+                tonic::Code::NotFound,
+            ));
+        }
+
+        if self.session_maker.context_count().await < 2 {
+            return Err(MetricedError::new(
+                OP_DESTROY_MPC_CONTEXT,
+                Some(context_id.into()),
+                anyhow::anyhow!(
+                    "Cannot destroy MPC context with id {context_id} since it is the only one left"
+                ),
+                tonic::Code::FailedPrecondition,
+            ));
+        }
 
         let storage_ref = self.inner.crypto_storage.private_storage.clone();
         let mut guarded_priv_storage = storage_ref.lock().await;
@@ -943,7 +1120,7 @@ where
                     tonic::Code::Internal,
                 )
             })?;
-        Ok(Response::new(Empty {}))
+        Ok(())
     }
 
     async fn new_custodian_context(
@@ -1041,8 +1218,9 @@ mod tests {
             encryption::{Encryption, PkeScheme, PkeSchemeType},
             signatures::{PublicSigKey, gen_sig_keys},
             signcryption::{UnifiedUnsigncryptionKey, Unsigncrypt},
+            signing::SigningSchemeType,
         },
-        engine::context::{NodeInfo, SignerAddress, SoftwareVersion},
+        engine::context::{NodeInfo, SchemeDigests, SoftwareVersion},
         util::meta_store::MetaStore,
         vault::{
             Vault,
@@ -1125,12 +1303,12 @@ mod tests {
                     mpc_nodes: vec![NodeInfo {
                         mpc_identity: "Node1".to_string(),
                         party_id: 1,
-                        signer_address: Some(SignerAddress(pk.address())),
                         external_url: "http://localhost:12345".to_string(),
                         ca_cert: None,
                         public_storage_url: "http://storage".to_string(),
                         public_storage_prefix: None,
                         extra_signer_addresses: vec![],
+                        scheme_digests: SchemeDigests::from_ecdsa_verification_key(&pk),
                     }],
                     context_id: *DEFAULT_MPC_CONTEXT,
                     software_version: SoftwareVersion {
@@ -1165,12 +1343,12 @@ mod tests {
             mpc_nodes: vec![NodeInfo {
                 mpc_identity: "Node1".to_string(),
                 party_id: 1,
-                signer_address: Some(SignerAddress(verification_key.address())),
                 external_url: "http://localhost:12345".to_string(),
                 ca_cert: None,
                 public_storage_url: "http://storage".to_string(),
                 public_storage_prefix: None,
                 extra_signer_addresses: vec![],
+                scheme_digests: SchemeDigests::from_ecdsa_verification_key(&verification_key),
             }],
             context_id,
             software_version: SoftwareVersion {
@@ -1210,8 +1388,10 @@ mod tests {
             assert_eq!(stored_context.mpc_nodes.len(), 1);
             assert_eq!(stored_context.mpc_nodes[0].party_id, 1);
             assert_eq!(
-                stored_context.mpc_nodes[0].signer_address,
-                Some(SignerAddress(verification_key.address()))
+                stored_context.mpc_nodes[0]
+                    .scheme_digests
+                    .get(&SigningSchemeType::Ecdsa256k1),
+                Some(verification_key.verf_key_id().as_slice())
             );
         }
         // Try to make a context with the same context ID (should fail)
@@ -1244,14 +1424,47 @@ mod tests {
             .unwrap();
         }
 
-        // now we try to delete the stored context, passing the (unrelated) epoch ID in `epoch_ids`
+        // Create a second "keeper" context: `destroy_mpc_context` refuses to destroy the last
+        // remaining context, so the target must not be the only one left.
+        let keeper_context_id = ContextId::from_bytes([8u8; 32]);
+        let keeper_context = ContextInfo {
+            mpc_nodes: vec![NodeInfo {
+                mpc_identity: "Node2".to_string(),
+                party_id: 1,
+                external_url: "http://localhost:12345".to_string(),
+                ca_cert: None,
+                public_storage_url: "http://storage".to_string(),
+                public_storage_prefix: None,
+                extra_signer_addresses: vec![],
+                scheme_digests: SchemeDigests::from_ecdsa_verification_key(&verification_key),
+            }],
+            context_id: keeper_context_id,
+            software_version: SoftwareVersion {
+                major: 0,
+                minor: 1,
+                patch: 0,
+                tag: None,
+            },
+            threshold: 0,
+            pcr_values: vec![],
+        };
+        let request = Request::new(NewMpcContextRequest {
+            new_context: Some(keeper_context.try_into().unwrap()),
+        });
+        context_manager.new_mpc_context(request).await.unwrap();
+        assert_eq!(2, context_manager.session_maker.context_count().await);
+
+        // now we try to delete the stored context; the epoch data seeded above is unrelated and
+        // must survive, since the context manager never touches epoch-keyed data.
         let request = Request::new(DestroyMpcContextRequest {
             context_id: Some(context_id.into()),
-            epoch_ids: vec![epoch_id.into()],
         });
 
         let response = context_manager.destroy_mpc_context(request).await;
         response.unwrap();
+
+        // The keeper context is untouched.
+        assert_eq!(1, context_manager.session_maker.context_count().await);
 
         {
             let storage_ref = Arc::clone(&crypto_storage.private_storage);
@@ -1261,6 +1474,13 @@ mod tests {
             let _ = read_context_at_id(&*guarded_priv_storage, &context_id)
                 .await
                 .unwrap_err();
+
+            // ...but the keeper context remains readable.
+            let loaded_keeper_context =
+                read_context_at_id(&*guarded_priv_storage, &keeper_context_id)
+                    .await
+                    .unwrap();
+            assert_eq!(*loaded_keeper_context.context_id(), keeper_context_id);
 
             // ...but the epoch data is untouched: the context manager ignores `epoch_ids`.
             let ids = guarded_priv_storage
@@ -1283,12 +1503,12 @@ mod tests {
             mpc_nodes: vec![NodeInfo {
                 mpc_identity: "Node1".to_string(),
                 party_id: 1,
-                signer_address: Some(SignerAddress(verification_key.address())),
                 external_url: "http://localhost:12345".to_string(),
                 ca_cert: None,
                 public_storage_url: "http://storage".to_string(),
                 public_storage_prefix: None,
                 extra_signer_addresses: vec![],
+                scheme_digests: SchemeDigests::from_ecdsa_verification_key(&verification_key),
             }],
             context_id,
             software_version: SoftwareVersion {
@@ -1334,8 +1554,10 @@ mod tests {
             assert_eq!(stored_context.mpc_nodes.len(), 1);
             assert_eq!(stored_context.mpc_nodes[0].party_id, 1);
             assert_eq!(
-                stored_context.mpc_nodes[0].signer_address,
-                Some(SignerAddress(verification_key.address()))
+                stored_context.mpc_nodes[0]
+                    .scheme_digests
+                    .get(&SigningSchemeType::Ecdsa256k1),
+                Some(verification_key.verf_key_id().as_slice())
             );
         }
 
@@ -1388,12 +1610,14 @@ mod tests {
                     mpc_nodes: vec![NodeInfo {
                         mpc_identity: "Node1".to_string(),
                         party_id: 1,
-                        signer_address: Some(SignerAddress(verification_key.address())),
                         external_url: "http://localhost:12345".to_string(),
                         ca_cert: None,
                         public_storage_url: "http://storage".to_string(),
                         public_storage_prefix: None,
                         extra_signer_addresses: vec![],
+                        scheme_digests: SchemeDigests::from_ecdsa_verification_key(
+                            &verification_key,
+                        ),
                     }],
                     context_id: *context_id,
                     software_version: SoftwareVersion {
@@ -1471,12 +1695,14 @@ mod tests {
                     mpc_nodes: vec![NodeInfo {
                         mpc_identity: "Node1".to_string(),
                         party_id: 1,
-                        signer_address: Some(SignerAddress(verification_key.address())),
                         external_url: "http://localhost:12345".to_string(),
                         ca_cert: None,
                         public_storage_url: "http://storage".to_string(),
                         public_storage_prefix: None,
                         extra_signer_addresses: vec![],
+                        scheme_digests: SchemeDigests::from_ecdsa_verification_key(
+                            &verification_key,
+                        ),
                     }],
                     context_id: *context_id,
                     software_version: SoftwareVersion {
@@ -1511,12 +1737,12 @@ mod tests {
                 mpc_nodes: vec![NodeInfo {
                     mpc_identity: "Node1".to_string(),
                     party_id: 1,
-                    signer_address: Some(SignerAddress(verification_key.address())),
                     external_url: "http://localhost:12345".to_string(),
                     ca_cert: None,
                     public_storage_url: "http://storage".to_string(),
                     public_storage_prefix: None,
                     extra_signer_addresses: vec![],
+                    scheme_digests: SchemeDigests::from_ecdsa_verification_key(&verification_key),
                 }],
                 software_version: SoftwareVersion {
                     major: 0,
@@ -1580,12 +1806,12 @@ mod tests {
             mpc_nodes: vec![NodeInfo {
                 mpc_identity: "Node1".to_string(),
                 party_id: 1,
-                signer_address: Some(SignerAddress(verification_key.address())),
                 external_url: "http://localhost:12345".to_string(),
                 ca_cert: None,
                 public_storage_url: "http://storage".to_string(),
                 public_storage_prefix: None,
                 extra_signer_addresses: vec![],
+                scheme_digests: SchemeDigests::from_ecdsa_verification_key(&verification_key),
             }],
             context_id,
             software_version: SoftwareVersion {
@@ -1974,6 +2200,8 @@ mod tests {
         });
         let session_maker =
             SessionMaker::four_party_dummy_session(None, None, &epoch_id, base_kms.new_rng().await);
+        // Keep a handle on the backup vault so we can inspect the rollback after the failure.
+        let backup_vault = crypto_storage.get_backup_vault().unwrap();
         let context_manager = ThresholdContextManager::new(
             base_kms,
             crypto_storage,
@@ -1987,6 +2215,146 @@ mod tests {
             response.is_err(),
             "Expected custodian context creation to fail when backup update fails"
         );
+
+        // The failed setup must be rolled back: the in-memory keychain must not be left
+        // pointing at the failed context (it started uninitialized here), and no backup
+        // material may be left re-encrypted under the failed context id — otherwise later
+        // backups would be encrypted under a key whose recovery material never persisted.
+        {
+            use crate::vault::VaultDataType;
+            use crate::vault::storage::StorageReader;
+            use strum::IntoEnumIterator;
+
+            let guarded_backup_vault = backup_vault.lock().await;
+            match guarded_backup_vault.keychain.as_ref() {
+                Some(KeychainProxy::SecretSharing(secret_share_keychain)) => {
+                    assert!(
+                        secret_share_keychain.get_current_backup_id().is_err(),
+                        "keychain backup id must be reset after a failed setup"
+                    );
+                    assert!(
+                        secret_share_keychain.get_backup_enc_key().is_err(),
+                        "keychain backup enc key must be reset after a failed setup"
+                    );
+                }
+                _ => panic!("expected a secret-sharing keychain in the backup vault"),
+            }
+            for cur_type in PrivDataType::iter() {
+                let vault_data_type =
+                    VaultDataType::CustodianBackupData(context_id, cur_type).to_string();
+                assert!(
+                    guarded_backup_vault
+                        .storage
+                        .all_data_ids(&vault_data_type)
+                        .await
+                        .unwrap()
+                        .is_empty(),
+                    "no leaked backup data may remain under the failed context id for {cur_type}"
+                );
+            }
+        }
+    }
+
+    /// The other rollback call site: `update_backup_vault` succeeds but `write_backup_keys`
+    /// fails. Triggered with a pre-existing `RecoveryMaterial` object under the context id, so
+    /// the write is rejected as a duplicate. `write_backup_keys` owns the vault cleanup and
+    /// deliberately keeps what is stored under a duplicate id, so the caller must restore the
+    /// keychain *without* purging — purging here would destroy backup material whose recovery
+    /// material is still on disk.
+    #[tokio::test]
+    async fn test_custodian_context_rollback_keeps_duplicate_backup() {
+        use crate::vault::VaultDataType;
+        use crate::vault::storage::{Storage, StorageReader};
+
+        let (_verification_key, sig_key, crypto_storage) = setup_crypto_storage(true).await;
+        let base_kms = BaseKmsStruct::new(KMSType::Threshold, sig_key).unwrap();
+        let context_id = RequestId::from_bytes([7u8; 32]);
+
+        // Make `write_all` inside `write_backup_keys` report a duplicate.
+        {
+            let mut pub_storage = crypto_storage.public_storage.lock().await;
+            pub_storage
+                .store_bytes(
+                    b"pre-existing recovery material",
+                    &context_id,
+                    &PubDataType::RecoveryMaterial.to_string(),
+                )
+                .await
+                .unwrap();
+        }
+
+        let threshold = 1;
+        let amount_custodians = 2 * threshold + 1;
+        let mut setup_msgs = Vec::new();
+        let mut rng = AesRng::seed_from_u64(77);
+        let epoch_id = *DEFAULT_EPOCH_ID;
+        for custodian_index in 1..=amount_custodians {
+            let mut enc = Encryption::new(PkeSchemeType::MlKem512, &mut rng);
+            let (_sk_dec_key, pk_enc_key) = enc.keygen().unwrap();
+            let (verf_key, _sig_key) = gen_sig_keys(&mut rng);
+            setup_msgs.push(
+                InternalCustodianSetupMessage {
+                    header: HEADER.to_string(),
+                    custodian_role: Role::indexed_from_one(custodian_index),
+                    name: format!("Custodian-{custodian_index}"),
+                    random_value: [3u8; 32],
+                    timestamp: SystemTime::now(),
+                    public_enc_key: pk_enc_key,
+                    public_verf_key: verf_key,
+                }
+                .try_into()
+                .unwrap(),
+            );
+        }
+        let request = Request::new(NewCustodianContextRequest {
+            new_custodian_context: Some(CustodianContext {
+                custodian_nodes: setup_msgs,
+                custodian_context_id: Some(context_id.into()),
+                threshold: threshold as u32,
+            }),
+            mpc_context_id: Some((*DEFAULT_MPC_CONTEXT).into()),
+        });
+        let session_maker =
+            SessionMaker::four_party_dummy_session(None, None, &epoch_id, base_kms.new_rng().await);
+        let backup_vault = crypto_storage.get_backup_vault().unwrap();
+        let context_manager = ThresholdContextManager::new(
+            base_kms,
+            crypto_storage,
+            MetaStore::new(100, 10),
+            session_maker,
+        );
+
+        assert!(
+            context_manager
+                .new_custodian_context(request)
+                .await
+                .is_err(),
+            "a duplicate recovery material must fail the setup"
+        );
+
+        let guarded_backup_vault = backup_vault.lock().await;
+        match guarded_backup_vault.keychain.as_ref() {
+            Some(KeychainProxy::SecretSharing(secret_share_keychain)) => {
+                assert!(
+                    secret_share_keychain.get_current_backup_id().is_err(),
+                    "keychain backup id must be restored to the pre-setup state"
+                );
+            }
+            _ => panic!("expected a secret-sharing keychain in the backup vault"),
+        }
+        // `update_backup_vault` re-encrypted the signing key under the new context id before
+        // the failure; the duplicate rule says it stays.
+        let vault_data_type =
+            VaultDataType::CustodianBackupData(context_id, PrivDataType::SigningKey).to_string();
+        assert!(
+            !guarded_backup_vault
+                .storage
+                .all_data_ids(&vault_data_type)
+                .await
+                .unwrap()
+                .is_empty(),
+            "backup material under a duplicate context id must be kept, not purged"
+        );
     }
 
     #[tokio::test]
@@ -1998,12 +2366,12 @@ mod tests {
             mpc_nodes: vec![NodeInfo {
                 mpc_identity: "Node1".to_string(),
                 party_id: 1,
-                signer_address: Some(SignerAddress(verification_key.address())),
                 external_url: "http://localhost:12345".to_string(),
                 ca_cert: None,
                 public_storage_url: "http://storage".to_string(),
                 public_storage_prefix: None,
                 extra_signer_addresses: vec![],
+                scheme_digests: SchemeDigests::from_ecdsa_verification_key(&verification_key),
             }],
             context_id,
             software_version: SoftwareVersion {
@@ -2060,13 +2428,48 @@ mod tests {
         let response = context_manager.new_mpc_context(request).await;
         assert!(response.is_err());
 
+        // Create a second "keeper" context: `destroy_mpc_context` refuses to destroy the last
+        // remaining context, so the target must not be the only one in storage.
+        let keeper_context_id = ContextId::from_bytes([55u8; 32]);
+        let keeper_context = ContextInfo {
+            mpc_nodes: vec![NodeInfo {
+                mpc_identity: "Node1".to_string(),
+                party_id: 1,
+                external_url: "http://localhost:12345".to_string(),
+                ca_cert: None,
+                public_storage_url: "http://storage".to_string(),
+                public_storage_prefix: None,
+                extra_signer_addresses: vec![],
+                scheme_digests: SchemeDigests::from_ecdsa_verification_key(&verification_key),
+            }],
+            context_id: keeper_context_id,
+            software_version: SoftwareVersion {
+                major: 0,
+                minor: 1,
+                patch: 0,
+                tag: None,
+            },
+            threshold: 0,
+            pcr_values: vec![],
+        };
+        let request = Request::new(NewMpcContextRequest {
+            new_context: Some(keeper_context.try_into().unwrap()),
+        });
+        context_manager.new_mpc_context(request).await.unwrap();
+
         // Destroy the context
         let request = Request::new(DestroyMpcContextRequest {
             context_id: Some(context_id.into()),
-            epoch_ids: vec![],
         });
         let response = context_manager.destroy_mpc_context(request).await;
         response.unwrap();
+
+        // The keeper context is untouched.
+        assert!(
+            context_manager
+                .mpc_context_exists_in_cache(&keeper_context_id)
+                .await
+        );
 
         // Cache should no longer have the context
         assert!(
@@ -2093,12 +2496,12 @@ mod tests {
             mpc_nodes: vec![NodeInfo {
                 mpc_identity: "Node1".to_string(),
                 party_id: 1,
-                signer_address: Some(SignerAddress(verification_key.address())),
                 external_url: "http://localhost:12345".to_string(),
                 ca_cert: None,
                 public_storage_url: "http://storage".to_string(),
                 public_storage_prefix: None,
                 extra_signer_addresses: vec![],
+                scheme_digests: SchemeDigests::from_ecdsa_verification_key(&verification_key),
             }],
             context_id,
             software_version: SoftwareVersion {
@@ -2138,12 +2541,48 @@ mod tests {
         assert!(result.is_ok());
         assert!(result.unwrap());
 
+        // Create a second "keeper" context: `destroy_mpc_context` refuses to destroy the last
+        // remaining context, so the target must not be the only one in storage.
+        let keeper_context_id = ContextId::from_bytes([56u8; 32]);
+        let keeper_context = ContextInfo {
+            mpc_nodes: vec![NodeInfo {
+                mpc_identity: "Node1".to_string(),
+                party_id: 1,
+                external_url: "http://localhost:12345".to_string(),
+                ca_cert: None,
+                public_storage_url: "http://storage".to_string(),
+                public_storage_prefix: None,
+                extra_signer_addresses: vec![],
+                scheme_digests: SchemeDigests::from_ecdsa_verification_key(&verification_key),
+            }],
+            context_id: keeper_context_id,
+            software_version: SoftwareVersion {
+                major: 0,
+                minor: 1,
+                patch: 0,
+                tag: None,
+            },
+            threshold: 0,
+            pcr_values: vec![],
+        };
+        let request = Request::new(NewMpcContextRequest {
+            new_context: Some(keeper_context.try_into().unwrap()),
+        });
+        context_manager.new_mpc_context(request).await.unwrap();
+
         // Destroy the context
         let request = Request::new(DestroyMpcContextRequest {
             context_id: Some(context_id.into()),
-            epoch_ids: vec![],
         });
         context_manager.destroy_mpc_context(request).await.unwrap();
+
+        // The keeper context remains consistent after the target is destroyed.
+        assert!(
+            context_manager
+                .mpc_context_exists_and_consistent(&keeper_context_id)
+                .await
+                .unwrap()
+        );
 
         // After destruction, context should not exist
         let result = context_manager
@@ -2174,12 +2613,12 @@ mod tests {
                 mpc_nodes: vec![NodeInfo {
                     mpc_identity: "Node1".to_string(),
                     party_id: 1,
-                    signer_address: Some(SignerAddress(verification_key.address())),
                     external_url: "http://localhost:12345".to_string(),
                     ca_cert: None,
                     public_storage_url: "http://storage".to_string(),
                     public_storage_prefix: None,
                     extra_signer_addresses: vec![],
+                    scheme_digests: SchemeDigests::from_ecdsa_verification_key(&verification_key),
                 }],
                 context_id: *context_id,
                 software_version: SoftwareVersion {
@@ -2216,7 +2655,6 @@ mod tests {
         // Destroy the middle context
         let request = Request::new(DestroyMpcContextRequest {
             context_id: Some(context_ids[1].into()),
-            epoch_ids: vec![],
         });
         context_manager.destroy_mpc_context(request).await.unwrap();
 

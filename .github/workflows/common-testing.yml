@@ -19,14 +19,6 @@ on:
         type: string
         required: false
         default: ''
-      run-minio:
-        type: boolean
-        required: false
-        default: false
-      run-redis:
-        type: boolean
-        required: false
-        default: false
       crate-names:
         # A list of packages forwarded to cargo, e.g. `-p abc -p def -p ghi`.
         # Injected verbatim into cargo invocations that need explicit package
@@ -152,47 +144,6 @@ jobs:
           # warm cache; forks can't write to the cache anyway.
           save-if: ${{ github.ref == 'refs/heads/main' || github.event.pull_request.head.repo.fork == false }}
 
-      # If redis ever flakes here, add `until redis-cli ping; do sleep 0.5; done`.
-      - name: Setup Redis
-        if: ${{ inputs.run-redis }}
-        run: |
-          docker run -d -p 6379:6379 --name redis \
-            redis/redis-stack:7.4.0-v8@sha256:5d5154123426693540ea6c1d9e638eae2bf2024879c839db6fcfdd7717e817c7
-
-      - name: Setup minio
-        if: ${{ inputs.run-minio }}
-        env:
-          MINIO_ACCESS_KEY: minioadmin
-          MINIO_SECRET_KEY: minioadmin
-        run: |
-          docker run -d -p 9000:9000 --name minio \
-                     -e "MINIO_ACCESS_KEY=${MINIO_ACCESS_KEY}" \
-                     -e "MINIO_SECRET_KEY=${MINIO_SECRET_KEY}" \
-                     -v /tmp/data:/data \
-                     -v /tmp/config:/root/.minio \
-                     minio/minio server /data
-
-      - name: Setup Minio bucket
-        if: ${{ inputs.run-minio }}
-        env:
-          MINIO_ALIAS: testminio
-          MINIO_BUCKET: ci-kms-key-test
-          MINIO_ACCESS_KEY: minioadmin
-          MINIO_SECRET_KEY: minioadmin
-          MINIO_REGION: eu-north-1
-        run: |
-          curl -fL --retry 3 --retry-delay 2 https://dl.min.io/client/mc/release/linux-amd64/mc \
-            --create-dirs \
-            -o "${HOME}/minio-binaries/mc"
-
-          chmod +x "${HOME}/minio-binaries/mc"
-          export PATH="${PATH}:${HOME}/minio-binaries/"
-          mc --version
-
-          mc alias set "${MINIO_ALIAS}" http://127.0.0.1:9000 "${MINIO_ACCESS_KEY}" "${MINIO_SECRET_KEY}"
-          mc mb "${MINIO_ALIAS}/${MINIO_BUCKET}"
-          mc anonymous set public "${MINIO_ALIAS}/${MINIO_BUCKET}"
-
       # Fallback when no EFS path is supplied (e.g. the nightly caller in
       # main.yml): the job still needs fixtures, so generate the full
       # insecure+secure set for parties 4,13 locally into ./test-material
@@ -228,10 +179,6 @@ jobs:
       - name: Run Tests
         id: tests
         env:
-          AWS_ACCESS_KEY_ID: 'minioadmin'
-          AWS_SECRET_ACCESS_KEY: 'minioadmin'
-          AWS_DEFAULT_REGION: 'eu-north-1'
-          AWS_ENDPOINT: 'http://127.0.0.1:9000'
           CRATE_NAMES: ${{ inputs.crate-names }}
           ARGS_TESTS: ${{inputs.args-tests}}
           NEXTEST_PROFILE: ${{ inputs.nextest-profile }}

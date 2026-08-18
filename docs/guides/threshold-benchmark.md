@@ -67,13 +67,11 @@ In order to bypass this limitation we have automated this `gRPC` benchmarks usin
 ### Prerequisites for running benchmarks
 
 - [Rust](https://www.rust-lang.org/), the workspace pins the toolchain in
-  `rust-toolchain.toml` (currently `1.97.0`); the docker build uses the
+  `rust-toolchain.toml`; the docker build uses the
   version baked into `docker/nist_testing.dockerfile`.
 - [cargo-make](https://github.com/sagiegurari/cargo-make?tab=readme-ov-file#installation), using `cargo`.
 - [docker](https://www.docker.com/), install it using your preferred method, from a package manager or using Docker Desktop.
 - [protoc](https://protobuf.dev/installation/), install it using your preferred method, e.g., from a package manager.
-- [redis](https://redis.io/docs/latest/get-started/): this is optional, only required for running the redis integration tests.
-  Benchmarks that use redis inside a docker container do not require a local redis installation.
 
 ### Binaries: parties and choreographers
 
@@ -397,8 +395,3 @@ cargo flamegraph --root --bench prep --features="testing extension_degree_8" -- 
 ```
 
 This writes a `flamegraph.svg` to the current directory; open it with your favorite browser.
-
-## Testing
-
-Integration tests are located in the `tests` folder and require a `redis` server to be running locally.
-Make sure to install `redis`and run `redis-server` in a separate terminal before running these tests.

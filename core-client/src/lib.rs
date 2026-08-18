@@ -31,11 +31,11 @@ use crate::mpc_epoch::{do_destroy_mpc_epoch, do_new_epoch};
 use aes_prng::AesRng;
 use clap::{Args, Parser, Subcommand};
 use core::str;
-use kms_grpc::identifiers::EpochId;
+use kms_grpc::identifiers::RequestId;
 use kms_grpc::kms::v1::{CiphertextFormat, FheParameter, TypedCiphertext, TypedPlaintext};
 use kms_grpc::kms_service::v1::core_service_endpoint_client::CoreServiceEndpointClient;
 use kms_grpc::rpc_types::PubDataType;
-use kms_grpc::{ContextId, KeyId, RequestId};
+use kms_grpc::{ContextId, EpochId, KeyId};
 use kms_lib::backup::custodian::InternalCustodianSetupMessage;
 use kms_lib::client::client_wasm::Client;
 use kms_lib::consts::{
@@ -337,6 +337,7 @@ trait DecryptRateArgs {
     fn get_rate(&self) -> Option<u64>;
     fn get_duration(&self) -> Option<u64>;
     fn get_max_in_flight(&self) -> Option<usize>;
+    fn get_sync(&self) -> bool;
 }
 
 fn validate_decrypt_rate_args(cf: &impl DecryptRateArgs) -> anyhow::Result<()> {
@@ -632,6 +633,13 @@ impl DecryptRateArgs for DecryptArguments {
             }
         }
     }
+
+    fn get_sync(&self) -> bool {
+        match self {
+            DecryptArguments::FromFile(cipher_file) => cipher_file.sync,
+            DecryptArguments::FromArgs(cipher_parameters) => cipher_parameters.sync,
+        }
+    }
 }
 
 impl DecryptArguments {
@@ -649,6 +657,10 @@ impl DecryptArguments {
 
     pub fn get_max_in_flight(&self) -> Option<usize> {
         DecryptRateArgs::get_max_in_flight(self)
+    }
+
+    pub fn get_sync(&self) -> bool {
+        DecryptRateArgs::get_sync(self)
     }
 }
 
@@ -729,6 +741,9 @@ pub struct DecryptParameters {
     /// Optionally dump the ciphertext to a file.
     #[clap(long)]
     pub ciphertext_output_path: Option<PathBuf>,
+    /// Whether to use the synchronous endpoint (request and result in a single call).
+    #[clap(long, default_value_t = false)]
+    pub sync: bool,
     #[clap(flatten)]
     pub rate_options: DecryptRateOptions,
 }
@@ -770,6 +785,9 @@ pub struct DecryptFile {
     /// Number of copies of the ciphertext to process in a single request.
     #[clap(long, short = 'b', default_value_t = 1)]
     pub batch_size: usize,
+    /// Whether to use the synchronous endpoint (request and result in a single call).
+    #[clap(long, default_value_t = false)]
+    pub sync: bool,
     #[clap(flatten)]
     pub rate_options: DecryptRateOptions,
 }
@@ -881,13 +899,6 @@ pub struct DestroyMpcContextParameters {
     /// The context ID to use for the MPC context to destroy.
     #[clap(long)]
     pub context_id: ContextId,
-
-    /// Comma-separated epoch IDs associated with the context, to be destroyed alongside it
-    /// (e.g. `--epoch-ids=<a>,<b>,<c>`). Operators must obtain the full set out of band: the KMS
-    /// destroys exactly the epochs listed here, and any epoch left out keeps its secret shares on
-    /// disk (hazmat).
-    #[clap(long, value_delimiter = ',')]
-    pub epoch_ids: Vec<EpochId>,
 }
 
 #[derive(Debug, Parser, Clone)]
@@ -2054,6 +2065,7 @@ pub async fn execute_cmd(
                         max_iter,
                         num_expected_responses,
                         cc_conf.default_domain()?,
+                        cipher_args.get_sync(),
                     )
                     .await?
                 }
@@ -2073,6 +2085,7 @@ pub async fn execute_cmd(
                         max_iter,
                         num_expected_responses,
                         cc_conf.default_domain()?,
+                        cipher_args.get_sync(),
                     )
                     .await?
                 }
@@ -2160,6 +2173,7 @@ pub async fn execute_cmd(
                         max_iter,
                         num_expected_responses,
                         cc_conf.default_domain()?,
+                        cipher_args.get_sync(),
                     )
                     .await?
                 }
@@ -2178,6 +2192,7 @@ pub async fn execute_cmd(
                         max_iter,
                         num_expected_responses,
                         cc_conf.default_domain()?,
+                        cipher_args.get_sync(),
                     )
                     .await?
                 }
@@ -2718,7 +2733,6 @@ pub async fn execute_cmd(
                 &cc_conf,
                 destination_prefix,
                 &kms_addrs,
-                num_parties,
                 fhe_params,
                 new_epoch_params.clone(),
             )
@@ -2778,11 +2792,8 @@ pub async fn execute_cmd(
                 ),
             )]
         }
-        CCCommand::DestroyMpcContext(DestroyMpcContextParameters {
-            context_id,
-            epoch_ids,
-        }) => {
-            do_destroy_mpc_context(&core_endpoints_req, context_id, epoch_ids).await?;
+        CCCommand::DestroyMpcContext(DestroyMpcContextParameters { context_id }) => {
+            do_destroy_mpc_context(&core_endpoints_req, context_id).await?;
             vec![(
                 Some((*context_id).into()),
                 "context destruction done".to_string(),
@@ -2986,6 +2997,84 @@ mod tests {
         assert_eq!(err.kind(), clap::error::ErrorKind::ArgumentConflict);
     }
 
+    #[test]
+    fn test_user_decrypt_sync_flag() {
+        // `--sync` is off by default and enabled by the flag
+        let conf = CmdConfig::try_parse_from([
+            "core-client",
+            "user-decrypt",
+            "from-args",
+            "--to-encrypt",
+            "0x1",
+            "--data-type",
+            "ebool",
+            "--key-id",
+            "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+        ])
+        .unwrap();
+        let CCCommand::UserDecrypt(args) = conf.command else {
+            panic!("expected a user-decrypt command");
+        };
+        assert!(!args.get_sync());
+
+        let conf = CmdConfig::try_parse_from([
+            "core-client",
+            "user-decrypt",
+            "from-args",
+            "--to-encrypt",
+            "0x1",
+            "--data-type",
+            "ebool",
+            "--key-id",
+            "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+            "--sync",
+        ])
+        .unwrap();
+        let CCCommand::UserDecrypt(args) = conf.command else {
+            panic!("expected a user-decrypt command");
+        };
+        assert!(args.get_sync());
+    }
+
+    #[test]
+    fn test_public_decrypt_sync_flag() {
+        // `--sync` is off by default and enabled by the flag
+        let conf = CmdConfig::try_parse_from([
+            "core-client",
+            "public-decrypt",
+            "from-args",
+            "--to-encrypt",
+            "0x1",
+            "--data-type",
+            "ebool",
+            "--key-id",
+            "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+        ])
+        .unwrap();
+        let CCCommand::PublicDecrypt(args) = conf.command else {
+            panic!("expected a public-decrypt command");
+        };
+        assert!(!args.get_sync());
+
+        let conf = CmdConfig::try_parse_from([
+            "core-client",
+            "public-decrypt",
+            "from-args",
+            "--to-encrypt",
+            "0x1",
+            "--data-type",
+            "ebool",
+            "--key-id",
+            "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+            "--sync",
+        ])
+        .unwrap();
+        let CCCommand::PublicDecrypt(args) = conf.command else {
+            panic!("expected a public-decrypt command");
+        };
+        assert!(args.get_sync());
+    }
+
     fn test_decrypt_parameters() -> DecryptParameters {
         DecryptParameters {
             to_encrypt: "0x1".to_string(),
@@ -2997,6 +3086,7 @@ mod tests {
             epoch_id: None,
             batch_size: 1,
             ciphertext_output_path: None,
+            sync: false,
             rate_options: DecryptRateOptions {
                 rate: Some(10),
                 duration: Some(10),
@@ -3404,11 +3494,7 @@ mod tests {
             key_id.into(),
         )
         .unwrap();
-        let (public_key, _server_key) = compressed_keyset
-            .clone()
-            .decompress()
-            .unwrap()
-            .into_raw_parts();
+        let (public_key, _server_key) = compressed_keyset.clone().decompress().into_raw_parts();
 
         let mut remote_storage = FileStorage::new(
             Some(remote_root.path()),

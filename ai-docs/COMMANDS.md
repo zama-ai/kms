@@ -2,7 +2,7 @@
 
 Commands that come up during ordinary work in this repo. All commands are expected to be run from the repository root unless noted otherwise.
 
-Toolchain is pinned to Rust `1.97.0` via [`rust-toolchain.toml`](../rust-toolchain.toml). System prerequisites: `protoc`, `pkgconfig`, `openssl`, Docker.
+Toolchain is pinned via [`rust-toolchain.toml`](../rust-toolchain.toml). System prerequisites: `protoc`, `pkgconfig`, `openssl`, Docker.
 
 ## Build and lint
 
@@ -42,13 +42,13 @@ make lint-dylint
 
 ## Testing
 
-Typical test run — uses the `testing` feature, includes unit and integration tests (some integration tests need Redis running locally):
+Typical test run — uses the `testing` feature, includes unit and integration tests:
 
 ```
 cargo test -F testing
 ```
 
-Skip the integration tests that need Redis (unit tests only):
+Skip the integration tests (unit tests only):
 
 ```
 cargo test -F testing --lib
@@ -66,7 +66,7 @@ Narrow to a single test by name pattern, scoped to a crate:
 cargo test -F testing -p <crate> <pattern>
 ```
 
-Unit tests live alongside source in `#[cfg(test)]` blocks. Integration tests live in each crate's `tests/` directory, notably `core/service/tests/` and `core/threshold/tests/integration_redis.rs`.
+Unit tests live alongside source in `#[cfg(test)]` blocks. Integration tests live in each crate's `tests/` directory, notably `core/service/tests/`.
 
 ## Backward compatibility
 
@@ -98,7 +98,7 @@ cargo test --test 'backward_compatibility_*' -- --include-ignored
 Regenerate vectors. Versions are split into two lists in the `Makefile`:
 
 - `FROZEN_BWC_VERSIONS` — currently `0.11.0`, `0.11.1`, `0.13.0`, `0.13.10`, `0.13.20`. Generators were non-deterministic across runs, so the committed `.bcode` files and `.ron` entries are the source of truth and must not be regenerated as part of normal workflow.
-- `DETERMINISTIC_BWC_VERSIONS` — `0.14.0` and future versions. Re-running produces byte-identical output.
+- `DETERMINISTIC_BWC_VERSIONS` — `0.14.0` and `0.15.0` and future versions. Re-running produces byte-identical output.
 
 Regenerate all deterministic versions (cleans only deterministic data dirs first, then runs their generators; frozen versions are left untouched):
 
@@ -109,7 +109,7 @@ make generate-backward-compatibility-all
 Regenerate for a single deterministic version:
 
 ```
-make generate-backward-compatibility-v0.14.0
+make generate-backward-compatibility-v0.15.0
 ```
 
 Per-version targets also exist for the frozen versions `v0.13.0`, `v0.13.10`, and `v0.13.20` (no targets for `v0.11.0` / `v0.11.1` — their generator crates are kept only for historical inspection). These frozen-version targets are for exceptional investigation only; running them can produce non-deterministic bytes and append duplicate metadata to the shared `.ron` files, so their output must not be committed.

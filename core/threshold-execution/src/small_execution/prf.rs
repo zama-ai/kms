@@ -10,14 +10,17 @@ use serde::{Deserialize, Serialize};
 use tfhe_versionable::{Versionize, VersionsDispatch};
 use threshold_types::commitment::KEY_BYTE_LEN;
 use threshold_types::session_id::SessionId;
+use zeroize::{Zeroize, ZeroizeOnDrop};
 
 #[derive(Clone, Serialize, Deserialize, VersionsDispatch)]
 pub enum PrfKeyVersions {
     V0(PrfKey),
 }
 
-/// key for the PRF
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Hash, Eq, Versionize)]
+/// key for the PRF.
+#[derive(
+    Debug, Clone, Serialize, Deserialize, PartialEq, Hash, Eq, Versionize, Zeroize, ZeroizeOnDrop,
+)]
 #[versionize(PrfKeyVersions)]
 pub struct PrfKey(pub [u8; 16]);
 

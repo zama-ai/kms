@@ -60,6 +60,15 @@ pub type TrustRootValue = (
 
 type UserDataVerifier = dyn Fn(ReleasePCRValues, Vec<u8>) -> anyhow::Result<bool> + Send + Sync;
 
+/// The rustls client + server verifiers plus the trusted PCR set selected for a
+/// particular peer certificate, returned by
+/// [`AttestedVerifier::get_verifiers_and_pcrs_for_x509_cert`].
+struct Verifiers {
+    client: Arc<dyn ClientCertVerifier>,
+    server: Arc<dyn ServerCertVerifier>,
+    pcrs: HashSet<ReleasePCRValues>,
+}
+
 /// Our custom verifier for our custom mTLS certificates extended with AWS Nitro
 /// attestation documents. It doesn't reimplement normal X.509 certificate
 /// verification and wraps around the well-tested
@@ -213,18 +222,10 @@ Crypto provider should exist at this point"
         Ok(())
     }
 
-    #[expect(clippy::type_complexity)]
     fn get_verifiers_and_pcrs_for_x509_cert(
         &self,
         cert: &X509Certificate<'_>,
-    ) -> Result<
-        (
-            Arc<dyn ClientCertVerifier>,
-            Arc<dyn ServerCertVerifier>,
-            HashSet<ReleasePCRValues>,
-        ),
-        Error,
-    > {
+    ) -> Result<Verifiers, Error> {
         let subject = extract_subject_from_cert(cert).map_err(|e| Error::General(e.to_string()))?;
         tracing::debug!("Getting context and verifiers for {subject}");
 
@@ -251,21 +252,17 @@ Crypto provider should exist at this point"
             .cloned()
             .collect::<HashSet<_>>();
 
-        Ok((client_verifier, server_verifier, pcrs_for_mpc_identity))
+        Ok(Verifiers {
+            client: client_verifier,
+            server: server_verifier,
+            pcrs: pcrs_for_mpc_identity,
+        })
     }
 
-    #[expect(clippy::type_complexity)]
     fn get_verifiers_and_pcrs_for_cert_der(
         &self,
         cert: &CertificateDer<'_>,
-    ) -> Result<
-        (
-            Arc<dyn ClientCertVerifier>,
-            Arc<dyn ServerCertVerifier>,
-            HashSet<ReleasePCRValues>,
-        ),
-        Error,
-    > {
+    ) -> Result<Verifiers, Error> {
         let (_, x509_cert) =
             parse_x509_certificate(cert.as_ref()).map_err(|e| Error::General(e.to_string()))?;
         self.get_verifiers_and_pcrs_for_x509_cert(&x509_cert)
@@ -285,8 +282,11 @@ impl ServerCertVerifier for AttestedVerifier {
     ) -> Result<ServerCertVerified, Error> {
         let (_, cert) = parse_x509_certificate(end_entity.as_ref())
             .map_err(|e| Error::General(e.to_string()))?;
-        let (_, server_verifier, release_pcrs) =
-            self.get_verifiers_and_pcrs_for_x509_cert(&cert)?;
+        let Verifiers {
+            server: server_verifier,
+            pcrs: release_pcrs,
+            ..
+        } = self.get_verifiers_and_pcrs_for_x509_cert(&cert)?;
         let subject =
             extract_subject_from_cert(&cert).map_err(|e| Error::General(e.to_string()))?;
         // check the enclave-generated certificate used for the TLS session as
@@ -334,7 +334,7 @@ impl ServerCertVerifier for AttestedVerifier {
         dss: &DigitallySignedStruct,
     ) -> Result<HandshakeSignatureValid, Error> {
         self.get_verifiers_and_pcrs_for_cert_der(cert)?
-            .1
+            .server
             .verify_tls12_signature(message, cert, dss)
     }
 
@@ -345,7 +345,7 @@ impl ServerCertVerifier for AttestedVerifier {
         dss: &DigitallySignedStruct,
     ) -> Result<HandshakeSignatureValid, Error> {
         self.get_verifiers_and_pcrs_for_cert_der(cert)?
-            .1
+            .server
             .verify_tls13_signature(message, cert, dss)
     }
 
@@ -384,8 +384,11 @@ impl ClientCertVerifier for AttestedVerifier {
             .map_err(|e| Error::General(e.to_string()))?;
         // if none of the trust roots has a subject name matching the client
         // subject name, verification will fail
-        let (client_verifier, _, release_pcrs) =
-            self.get_verifiers_and_pcrs_for_x509_cert(&cert)?;
+        let Verifiers {
+            client: client_verifier,
+            pcrs: release_pcrs,
+            ..
+        } = self.get_verifiers_and_pcrs_for_x509_cert(&cert)?;
         let subject =
             extract_subject_from_cert(&cert).map_err(|e| Error::General(e.to_string()))?;
         // check the enclave-generated certificate used for the TLS session as
@@ -440,7 +443,7 @@ impl ClientCertVerifier for AttestedVerifier {
         dss: &DigitallySignedStruct,
     ) -> Result<HandshakeSignatureValid, Error> {
         self.get_verifiers_and_pcrs_for_cert_der(cert)?
-            .0
+            .client
             .verify_tls12_signature(message, cert, dss)
     }
 
@@ -451,7 +454,7 @@ impl ClientCertVerifier for AttestedVerifier {
         dss: &DigitallySignedStruct,
     ) -> Result<HandshakeSignatureValid, Error> {
         self.get_verifiers_and_pcrs_for_cert_der(cert)?
-            .0
+            .client
             .verify_tls13_signature(message, cert, dss)
     }
 
@@ -463,11 +466,6 @@ impl ClientCertVerifier for AttestedVerifier {
 pub enum CertVerifier<'a> {
     Client(Arc<dyn ClientCertVerifier>),
     Server(Arc<dyn ServerCertVerifier>, &'a ServerName<'a>, &'a [u8]),
-}
-
-pub enum CertVerified {
-    Client(ClientCertVerified),
-    Server(ServerCertVerified),
 }
 
 fn validate_wrapped_cert(
@@ -542,21 +540,24 @@ fn validate_wrapped_cert(
         else {
             bail!("Bad certificate: original party certificate not present")
         };
-        // check party certificate validity
+        // check party certificate validity (the verification result is only used
+        // for its `?`-propagated error; there is nothing to bind on success)
         match verifier {
-            CertVerifier::Client(v) => CertVerified::Client(v.verify_client_cert(
-                &CertificateDer::from_slice(party_cert_bytes.value),
-                intermediates,
-                now,
-            )?),
+            CertVerifier::Client(v) => {
+                v.verify_client_cert(
+                    &CertificateDer::from_slice(party_cert_bytes.value),
+                    intermediates,
+                    now,
+                )?;
+            }
             CertVerifier::Server(v, server_name, ocsp_response) => {
-                CertVerified::Server(v.verify_server_cert(
+                v.verify_server_cert(
                     &CertificateDer::from_slice(party_cert_bytes.value),
                     intermediates,
                     server_name,
                     ocsp_response,
                     now,
-                )?)
+                )?;
             }
         };
         // Check party certificate hash against the attested value. Note that the

@@ -11,7 +11,7 @@ use crate::{
 use algebra::{
     galois_rings::common::ResiduePoly,
     sharing::share::Share,
-    structure_traits::{BaseRing, ErrorCorrect, Invert, Syndrome},
+    structure_traits::{BaseRing, ErrorCorrect, Invert, QuotientMaximalIdeal},
 };
 use threshold_types::protocol::ProtocolDescription;
 use threshold_types::role::TwoSetsRole;
@@ -48,7 +48,7 @@ impl Reshare for DropReshareAsSet1 {
         _expected_input_len: usize,
     ) -> anyhow::Result<Option<Vec<Share<ResiduePoly<Z, EXTENSION_DEGREE>>>>>
     where
-        ResiduePoly<Z, EXTENSION_DEGREE>: ErrorCorrect + Invert + Syndrome,
+        ResiduePoly<Z, EXTENSION_DEGREE>: ErrorCorrect + Invert + QuotientMaximalIdeal,
     {
         Ok(None)
     }
@@ -85,7 +85,7 @@ impl Reshare for DropReshareAsSet2 {
         _expected_input_len: usize,
     ) -> anyhow::Result<Option<Vec<Share<ResiduePoly<Z, EXTENSION_DEGREE>>>>>
     where
-        ResiduePoly<Z, EXTENSION_DEGREE>: ErrorCorrect + Invert + Syndrome,
+        ResiduePoly<Z, EXTENSION_DEGREE>: ErrorCorrect + Invert + QuotientMaximalIdeal,
     {
         Ok(None)
     }
@@ -122,7 +122,7 @@ impl Reshare for DropReshareAsBothSets {
         _expected_input_len: usize,
     ) -> anyhow::Result<Option<Vec<Share<ResiduePoly<Z, EXTENSION_DEGREE>>>>>
     where
-        ResiduePoly<Z, EXTENSION_DEGREE>: ErrorCorrect + Invert + Syndrome,
+        ResiduePoly<Z, EXTENSION_DEGREE>: ErrorCorrect + Invert + QuotientMaximalIdeal,
     {
         Ok(None)
     }

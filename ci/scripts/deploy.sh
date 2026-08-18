@@ -47,7 +47,8 @@ PATH_SUFFIX="${PATH_SUFFIX:-kms-ci}"
 TLS="${TLS:-false}"
 
 # Build defaults (for local image building)
-RUST_IMAGE_VERSION="${RUST_IMAGE_VERSION:-1.97}"
+# Default to the toolchain version pinned in rust-toolchain.toml.
+RUST_IMAGE_VERSION="${RUST_IMAGE_VERSION:-$(grep 'channel' "${REPO_ROOT}/rust-toolchain.toml" | awk -F' = ' '{print $2}' | tr -d '"')}"
 
 # AWS/Tailscale Defaults
 TAILSCALE_HOSTNAME="tailscale-operator-zws-dev.diplodocus-boa.ts.net"

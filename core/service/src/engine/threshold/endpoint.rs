@@ -7,16 +7,13 @@ use crate::engine::threshold::traits::{
 use crate::engine::threshold::traits::{InsecureCrsGenerator, InsecureKeyGenerator};
 use crate::engine::traits::{BackupOperator, ContextManager, EpochManager};
 use crate::engine::validation::{RequestIdParsingErr, parse_grpc_request_id};
+use kms_grpc::ContextId;
 use kms_grpc::kms::v1::*;
 use kms_grpc::kms_service::v1::core_service_endpoint_server::CoreServiceEndpoint;
-use kms_grpc::{ContextId, EpochId};
 use observability::{metrics::METRICS, metrics_names::*};
 use threshold_networking::health_check::HealthCheckStatus;
 
 use tonic::{Request, Response, Status};
-
-/// Upper bound on the number of epochs a single `DestroyMpcContext` request may carry.
-const MAX_DESTROY_MPC_EPOCHS: usize = 1024;
 
 macro_rules! impl_endpoint {
     { impl CoreServiceEndpoint $implementations:tt } => {
@@ -129,12 +126,16 @@ impl_endpoint! {
             self.keygen_preprocessor.abort_key_gen_preproc(preproc_id, key_gen_abort_res).await.map_err(|e| e.into())
         }
 
+        // NOTE: unlike other endpoints, the decryption counters are incremented inside the
+        // shared implementation, not here: one place instead of two (sync/async), and the
+        // sync path calls `get_result` directly, bypassing this dispatch, so incrementing
+        // here would skip that counter bump entirely.
+
         #[tracing::instrument(skip(self, request))]
         async fn user_decrypt(
             &self,
             request: Request<UserDecryptionRequest>,
         ) -> Result<Response<Empty>, Status> {
-            METRICS.increment_request_counter(OP_USER_DECRYPT_REQUEST);
             self.user_decryptor.user_decrypt(request).await.map_err(|e| e.into())
         }
 
@@ -143,8 +144,15 @@ impl_endpoint! {
             &self,
             request: Request<RequestId>,
         ) -> Result<Response<UserDecryptionResponse>, Status> {
-            METRICS.increment_request_counter(OP_USER_DECRYPT_RESULT);
             self.user_decryptor.get_result(request).await.map_err(|e| e.into())
+        }
+
+        #[tracing::instrument(skip(self, request))]
+        async fn user_decrypt_sync(
+            &self,
+            request: Request<UserDecryptionRequest>,
+        ) -> Result<Response<UserDecryptionResponse>, Status> {
+            self.user_decryptor.user_decrypt_sync(request).await.map_err(|e| e.into())
         }
 
         #[tracing::instrument(skip(self, request))]
@@ -152,7 +160,6 @@ impl_endpoint! {
             &self,
             request: Request<PublicDecryptionRequest>,
         ) -> Result<Response<Empty>, Status> {
-            METRICS.increment_request_counter(OP_PUBLIC_DECRYPT_REQUEST);
             self.decryptor.public_decrypt(request).await.map_err(|e| e.into())
         }
 
@@ -161,9 +168,16 @@ impl_endpoint! {
             &self,
             request: Request<RequestId>,
         ) -> Result<Response<PublicDecryptionResponse>, Status> {
-            METRICS.increment_request_counter(OP_PUBLIC_DECRYPT_RESULT);
             self.decryptor.get_result(request).await.map_err(|e| e.into())
        }
+
+        #[tracing::instrument(skip(self, request))]
+        async fn public_decrypt_sync(
+            &self,
+            request: Request<PublicDecryptionRequest>,
+        ) -> Result<Response<PublicDecryptionResponse>, Status> {
+            self.decryptor.public_decrypt_sync(request).await.map_err(|e| e.into())
+        }
 
         #[tracing::instrument(skip(self, request))]
         async fn crs_gen(&self, request: Request<CrsGenRequest>) -> Result<Response<Empty>, Status> {
@@ -234,7 +248,7 @@ impl_endpoint! {
         async fn destroy_mpc_context(
             &self,
             request: Request<DestroyMpcContextRequest>,
-        ) -> Result<Response<Empty>, Status> {
+        ) -> Result<Response<DestroyMpcContextResponse>, Status> {
             METRICS.increment_request_counter(OP_DESTROY_MPC_CONTEXT);
             let inner = request.into_inner();
 
@@ -247,23 +261,20 @@ impl_endpoint! {
                 .context_id
                 .as_ref()
                 .ok_or_else(|| Status::invalid_argument("context_id is required"))?;
-            parse_grpc_request_id::<ContextId>(proto_context_id, RequestIdParsingErr::Context)?;
+            let context_id = parse_grpc_request_id::<ContextId>(proto_context_id, RequestIdParsingErr::Context)?;
 
-            // Bound the epoch list so a malformed or hostile request cannot trigger unbounded
-            // deletion work.
-            if inner.epoch_ids.len() > MAX_DESTROY_MPC_EPOCHS {
-                return Err(Status::invalid_argument(format!(
-                    "DestroyMpcContext lists {} epochs, exceeding the maximum of {MAX_DESTROY_MPC_EPOCHS}",
-                    inner.epoch_ids.len()
-                )));
-            }
-
-            // Parse every epoch ID up front so a malformed ID is rejected before any deletion.
-            let epoch_ids = inner
-                .epoch_ids
-                .iter()
-                .map(|id| parse_grpc_request_id::<EpochId>(id, RequestIdParsingErr::Epoch))
-                .collect::<Result<Vec<EpochId>, _>>()?;
+            // Hold the exclusive context lease across both phases. This makes the epoch snapshot
+            // stable with respect to `NewMpcEpoch`, including creations that are still running PRSS
+            // and therefore have not registered their epoch in the session maker yet.
+            let _destruction_lease = self
+                .session_maker
+                .try_start_context_destruction(&context_id)
+                .await
+                .map_err(|e| {
+                    Status::failed_precondition(format!(
+                        "Cannot destroy MPC context {context_id}: {e}. Retry once epoch creation has settled."
+                    ))
+                })?;
 
             // Destroy the associated epochs first: their secret key shares and PRSS randomness are security-sensitive
             // material. Erase them before touching anything else so that if there is a problem, the worst transient
@@ -271,16 +282,16 @@ impl_endpoint! {
             //
             // If any epoch fails to delete we return here and leave the context intact. The caller is expected to retry
             // the whole `DestroyMpcContext` until both epochs and context are destroyed successfully.
-            self.epoch_manager
-                .destroy_mpc_epochs(&epoch_ids)
-                .await
-                .map_err(Status::from)?;
+            let epochs_destroyed = self.epoch_manager.destroy_epochs_for_context(&context_id).await.map_err(Status::from)?;
 
             // Every epoch is now gone, so it is safe to remove the context.
             self.context_manager
                 .destroy_mpc_context(Request::new(inner))
                 .await
-                .map_err(Status::from)
+                .map_err(Status::from)?;
+            Ok(Response::new(DestroyMpcContextResponse {
+                epoch_ids: epochs_destroyed.into_iter().map(|id| id.into()).collect(),
+            }))
         }
 
         #[tracing::instrument(skip_all)]

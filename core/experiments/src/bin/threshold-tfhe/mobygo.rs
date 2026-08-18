@@ -626,9 +626,7 @@ async fn encrypt_command(params: EncryptArgs) -> Result<(), Box<dyn std::error::
         bc2wrap::deserialize_from(File::open(params.pub_key_file)?)?;
 
     let (compact_key, server_key) = match pk {
-        KeySetMaybeCompressed::Compressed(comp_pk) => {
-            comp_pk.decompress().unwrap().into_raw_parts()
-        }
+        KeySetMaybeCompressed::Compressed(comp_pk) => comp_pk.decompress().into_raw_parts(),
         KeySetMaybeCompressed::Uncompressed(uncomp_pk) => {
             (uncomp_pk.public_key, uncomp_pk.server_key)
         }
@@ -698,9 +696,7 @@ async fn threshold_decrypt_command(
         bc2wrap::deserialize_from(File::open(params.pub_key_file)?)?;
 
     let (compact_key, server_key) = match pk {
-        KeySetMaybeCompressed::Compressed(comp_pk) => {
-            comp_pk.decompress().unwrap().into_raw_parts()
-        }
+        KeySetMaybeCompressed::Compressed(comp_pk) => comp_pk.decompress().into_raw_parts(),
         KeySetMaybeCompressed::Uncompressed(uncomp_pk) => {
             (uncomp_pk.public_key, uncomp_pk.server_key)
         }

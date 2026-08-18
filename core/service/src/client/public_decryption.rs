@@ -6,8 +6,8 @@ use crate::engine::validation::validate_public_decrypt_responses_against_request
 use crate::{anyhow_error_and_log, some_or_err};
 use alloy_sol_types::Eip712Domain;
 use kms_grpc::identifiers::ContextId;
-use kms_grpc::kms::v1::TypedPlaintext;
 use kms_grpc::kms::v1::{PublicDecryptionRequest, PublicDecryptionResponse, TypedCiphertext};
+use kms_grpc::kms::v1::{SigningSchemeType, TypedPlaintext};
 use kms_grpc::rpc_types::{alloy_to_protobuf_domain, optional_protobuf_to_alloy_domain};
 use kms_grpc::{EpochId, RequestId};
 
@@ -43,6 +43,7 @@ impl Client {
             extra_data: extra_data.to_vec(),
             context_id: context_id.map(|c| (*c).into()),
             epoch_id: epoch_id.map(|e| (*e).into()),
+            signing_schemes: vec![SigningSchemeType::Ecdsa256k1 as i32],
         };
         Ok(req)
     }
@@ -109,9 +110,19 @@ impl Client {
                 cur_resp.payload.to_owned(),
                 "No payload in current response!".to_string(),
             )?;
-            let sig = Signature {
-                sig: k256::ecdsa::Signature::from_slice(&cur_resp.signature)?,
-            };
+            // The deprecated scalar `signature` field carries the raw internal
+            // ECDSA signature over the serialized payload.
+            // TODO(0.16) verify `signatures` and drop the two deprecated fields.
+            if cur_resp.signature.is_empty() {
+                // [validate_public_decrypt_responses_against_request] above has already
+                // ensured that at least `min_agree_count` validly signed responses agree
+                // with the pivot selected below, so a response that carries no signature
+                // can simply be skipped here.
+                tracing::warn!("Response carries no ECDSA signature to verify!");
+                continue;
+            }
+            let sig =
+                Signature::from_ecdsa(k256::ecdsa::Signature::from_slice(&cur_resp.signature)?);
 
             // Observe that it has already been verified in [self.validate_meta_data] that server
             // verification key is in the set of permissible keys
