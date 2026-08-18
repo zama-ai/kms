@@ -587,9 +587,14 @@ impl<T> MetaStore<T> {
         self.update_arc(update.map(Arc::new), permit)
     }
 
-    /// Like [`update`](Self::update), but takes the value already wrapped in an
-    /// `Arc`. This lets the caller allocate *before* acquiring the store lock,
-    /// keeping the allocation out of the globally-serialized critical section.
+    /// Sets the value of an existing element that is wrapped in an `Arc`. Consumes the permit.
+    ///
+    /// Enforces the state transitions:
+    /// - Pending -> Done(Ok)
+    /// - Pending -> Done(Err)
+    ///
+    /// Compared to `update`, this method lets the caller allocate *before* acquiring the store lock, keeping the
+    /// allocation out of the globally-serialized critical section.
     fn update_arc(
         &mut self,
         update: Result<Arc<T>, String>,
