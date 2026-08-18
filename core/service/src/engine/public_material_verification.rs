@@ -291,8 +291,8 @@ where
              message cannot be reconstructed at boot."
         );
     }
-    verify_signing_key_material(public_storage, signing_key).await?;
 
+    verify_signing_key_material(public_storage, signing_key).await?;
     verify_recovery_material(recovery_material, signing_key)?;
     verify_keysets(public_storage, key_entries).await?;
     verify_crses(public_storage, crs_entries).await?;

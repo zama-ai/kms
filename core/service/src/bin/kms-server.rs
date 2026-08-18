@@ -2,7 +2,7 @@ use algebra::{
     galois_fields::lagrange::init_lagrange_stores, galois_rings::degree_4::ResiduePolyF4Z128,
     structure_traits::Ring,
 };
-use anyhow::{Context, ensure};
+use anyhow::Context;
 use clap::Parser;
 use futures_util::future::OptionFuture;
 use kms_grpc::rpc_types::{KMSType, PubDataType};
@@ -15,6 +15,7 @@ use kms_lib::{
     cryptography::{
         attestation::{
             AutoRefreshCertResolver, CertResolver, SecurityModuleProxy, make_security_module,
+            validate_ca_cert,
         },
         signatures::PrivateSigKey,
     },
@@ -239,25 +240,9 @@ async fn build_tls_config(
                         &PubDataType::CACert.to_string(),
                     )
                     .await?;
-                    let ca_cert = x509_parser::pem::parse_x509_pem(ca_cert_bytes.as_bytes())?.1;
-
-                    // check if the CA certificate matches the KMS signing key
-                    let ca_cert_x509 = ca_cert.parse_x509()?;
-                    if let x509_parser::public_key::PublicKey::EC(pk_sec1) =
-                        ca_cert_x509.public_key().parsed()?
-                    {
-                        let ca_pk = Box::new(pk_sec1.data());
-                        #[allow(deprecated)]
-                        let sk_vk = sk.sk().verifying_key().to_encoded_point(false).to_bytes();
-                        ensure!(
-                            **ca_pk == *sk_vk,
-                            "CA certificate public key {:?} doesn't correspond to the KMS verifying key {:?}",
-                            hex::encode(*ca_pk),
-                            hex::encode(sk_vk)
-                        );
-                    } else {
-                        panic!("CA certificate public key isn't ECDSA");
-                    };
+                    // CACert is only required for this onboard-CA TLS path. TLS-less threshold
+                    // nodes and TLS configurations with an external certificate do not load it.
+                    let ca_cert = validate_ca_cert(ca_cert_bytes.as_bytes(), sk.as_ref())?;
                     (Some(sk), ca_cert)
                 }
             };

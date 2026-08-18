@@ -984,20 +984,20 @@ async fn ensure_ca_cert_exists<PubS: Storage>(
         )?;
 
     // Store self-signed CA certificate
-    if let Err(store_err) = store_text_at_request_id(
+    store_text_at_request_id(
         pub_storage,
         req_id,
         &ca_cert.pem(),
         &PubDataType::CACert.to_string(),
     )
     .await
-    {
-        tracing::error!(
+    .map_err(|store_err| {
+        anyhow::anyhow!(
             "Failed to store CA certificate for party {}: {}",
             subject,
             store_err
-        );
-    }
+        )
+    })?;
     tracing::info!(
         "Successfully stored CA certificate {} under the handle {} in storage \"{}\"",
         ca_cert_ki,
