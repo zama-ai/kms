@@ -681,15 +681,6 @@ impl Client {
             };
         let num_parties = trusted_ctx.num_parties();
 
-        // If we don't have at least 2t+1 authenticated responses
-        if authenticated.len() < 2 * trusted_ctx.threshold() {
-            anyhow::bail!(
-                "Not enough authenticated responses to reconstruct: {} < {}",
-                authenticated.len(),
-                invariants.degree + 1
-            );
-        }
-
         let client_id = self.client_address.to_vec();
 
         let mut accepted = Vec::with_capacity(authenticated.len());

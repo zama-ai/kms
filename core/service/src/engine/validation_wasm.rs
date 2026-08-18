@@ -405,9 +405,8 @@ pub(crate) fn validate_user_decrypt_responses(
         authenticated_payloads.push((verification_key, role, payload));
     }
 
-    // We need 2t+1 (where threshold == degree) authenticated responses to guarantee that at least t+1 of them are honest,
-    // so we can ascertain the reconstruction is correct.
-    if authenticated_payloads.len() < 2 * trusted_ctx.threshold + 1 {
+    // We need 2t+1 (where threshold == degree) authenticated responses to guarantee that at least t+1 of them are honest.
+    if authenticated_payloads.len() < 2 * trusted_ctx.threshold() + 1 {
         anyhow::bail!(ERR_VALIDATE_USER_DECRYPTION_NOT_ENOUGH_RESP);
     }
 
@@ -601,7 +600,8 @@ mod tests {
 
     use super::{
         DSEP_USER_DECRYPTION, ERR_VALIDATE_USER_DECRYPTION_MISSING_SIGNATURE,
-        Eip712VerificationParams, UserDecTrustedValidationContext, UserDecryptionInvariants,
+        ERR_VALIDATE_USER_DECRYPTION_NOT_ENOUGH_RESP, Eip712VerificationParams,
+        UserDecTrustedValidationContext, UserDecryptionInvariants,
         check_ext_user_decryption_signature, validate_user_decrypt_responses,
     };
 
@@ -1146,9 +1146,9 @@ mod tests {
         {
             // we need at least 2 valid responses because our degree is 1,
             // otherwise None will be returned since there are not enough responses
-            let mut bad_resp2 = resp3.clone();
-            bad_resp2.payload = None;
-            let agg_resp = vec![resp1.clone(), resp2.clone(), bad_resp2];
+            let mut bad_resp3 = resp3.clone();
+            bad_resp3.payload = None;
+            let agg_resp = vec![resp1.clone(), resp2.clone(), resp3.clone(), bad_resp3];
 
             // We will have 2 accepted responses because
             // the third one does not have a payload
@@ -1157,17 +1157,14 @@ mod tests {
                     .unwrap()
                     .as_slice()
                     .len(),
-                2
+                3
             );
         }
 
-        // not enough correct payloads: bad_resp3 authenticates fine but carries a *different* (yet
-        // properly signed) digest, so it forms its own singleton group; bad_resp2 has no payload at
-        // all. That leaves resp1 and bad_resp3 in two distinct groups of one each — neither reaches
-        // the t+1 = 2 quorum, so no pivot can be formed.
+        // not enough correct payloads:
+        // both bad responses are signed, but they disagree with the majority, so the pivot cannot be formed and we return an error
         {
-            let mut bad_resp2 = resp2.clone();
-            bad_resp2.payload = None; // no payload here, cannot be used for pivot
+            let bad_resp2 = make_signed_resp(2, &|p| p.signcrypted_ciphertexts = vec![]); // signed, but differnt digest
             let bad_resp3 = make_signed_resp(3, &|p| p.digest[0] ^= 1); // signed, but different digest
 
             let agg_resp = vec![resp1.clone(), bad_resp2, bad_resp3];
@@ -1219,7 +1216,7 @@ mod tests {
         {
             let bad_resp2 = make_signed_resp(2, &|p| p.degree = 0);
             let bad_resp3 = make_signed_resp(3, &|p| p.degree = 0);
-            let agg_resp = vec![bad_resp2, bad_resp3];
+            let agg_resp = vec![resp1.clone(), bad_resp2, bad_resp3];
 
             assert!(validate_user_decrypt_responses(&trusted_ctx, &agg_resp)
                 .unwrap_err()
@@ -1228,7 +1225,7 @@ mod tests {
         }
 
         let run_with_customized_resp2 = |party_id, digest, pk, packing_factor| {
-            // the correct parameters should be party_id = 3, digest = vec![1,2,3,4], pk = &pks[2], packing_factor = 1
+            // the correct parameters should be party_id = 3, digest = compute_link(..), pk = &pks[3], packing_factor = 1
             let bad_resp2 = {
                 let payload = UserDecryptionResponsePayload {
                     verification_key: bc2wrap::serialize(pk).unwrap(),
@@ -1258,14 +1255,18 @@ mod tests {
                     extra_data: vec![],
                 }
             };
-            let agg_resp = vec![resp1.clone(), resp2.clone(), bad_resp2];
+            // Three well-formed responses (parties 1, 2, 4) accompany `bad_resp2`, so that even when
+            // `bad_resp2` is dropped there are still 2t+1 = 3 authenticated, agreeing responses. With
+            // only resp1 + resp2 the batch would be rejected for too few responses (2 < 3) before
+            // `bad_resp2` is ever evaluated, which is not what these cases mean to exercise.
+            let agg_resp = vec![resp1.clone(), resp2.clone(), resp4.clone(), bad_resp2];
 
             assert_eq!(
                 validate_user_decrypt_responses(&trusted_ctx, &agg_resp)
                     .unwrap()
                     .as_slice()
                     .len(),
-                2
+                3
             );
         };
 
@@ -1311,33 +1312,34 @@ mod tests {
         }
 
         // not enough correct responses: bad_resp2 fails the signature check (wrong extra_data), so
-        // it is never authenticated and therefore does not count toward the consensus quorum. That
-        // leaves only resp1 as an authenticated voter — fewer than the t+1 = 2 needed for a pivot.
+        // it is never authenticated. That leaves only resp1 and resp3 authenticated — fewer than the required
+        // 2t+1 = 3, so the batch is rejected before a pivot is even sought.
         {
             let mut bad_resp2 = resp2.clone();
             bad_resp2.extra_data = vec![0];
-            let agg_resp = vec![resp1.clone(), bad_resp2];
+            let agg_resp = vec![resp1.clone(), bad_resp2, resp3.clone()];
 
             assert!(
                 validate_user_decrypt_responses(&trusted_ctx, &agg_resp)
                     .unwrap_err()
                     .to_string()
-                    .contains("Cannot find user decryption pivot")
+                    .contains(ERR_VALIDATE_USER_DECRYPTION_NOT_ENOUGH_RESP)
             );
         }
 
-        // Duplicate party IDs: resp1 and bad_resp2 are duplicates, so only 1 valid response is counted
-        // resp2 is valid, so we should have 2 valid responses in total, which is enough for degree=1
+        // Duplicate party IDs: resp1 appears twice, so the duplicate is dropped and party 1 is
+        // counted once. resp2 and resp3 are also present, leaving 2t+1 = 3 distinct authenticated
+        // responses — enough to reconstruct for degree = 1.
         {
-            let bad_resp2 = resp1.clone();
-            let agg_resp = vec![resp1.clone(), bad_resp2, resp2.clone()];
+            let dup_resp1 = resp1.clone();
+            let agg_resp = vec![resp1.clone(), dup_resp1, resp2.clone(), resp3.clone()];
 
             assert_eq!(
                 validate_user_decrypt_responses(&trusted_ctx, &agg_resp)
                     .unwrap()
                     .as_slice()
                     .len(),
-                2
+                3
             );
         }
 
@@ -1359,7 +1361,7 @@ mod tests {
         let mut rng = AesRng::seed_from_u64(0);
         let (vk1, sk1) = gen_sig_keys(&mut rng);
         let (vk2, sk2) = gen_sig_keys(&mut rng);
-        let (vk3, _sk3) = gen_sig_keys(&mut rng);
+        let (vk3, sk3) = gen_sig_keys(&mut rng);
         let (vk4, _sk4) = gen_sig_keys(&mut rng);
         let pks: HashMap<u32, PublicSigKey> = HashMap::from_iter(
             [vk1, vk2, vk3, vk4]
@@ -1457,12 +1459,42 @@ mod tests {
             }
         };
 
+        let resp2 = {
+            let payload = UserDecryptionResponsePayload {
+                verification_key: bc2wrap::serialize(&pks[&3]).unwrap(),
+                digest: digest.clone(),
+                signcrypted_ciphertexts: vec![TypedSigncryptedCiphertext {
+                    fhe_type: tfhe::FheTypes::Uint4 as i32,
+                    signcrypted_ciphertext: vec![1, 2, 3, 4],
+                    external_handle: ciphertext_handle.clone(),
+                    packing_factor: 1,
+                }],
+                party_id: 3,
+                degree: 1,
+            };
+            let external_signature = compute_external_user_decrypt_signature(
+                &sk3,
+                &payload,
+                &dummy_domain,
+                client_request.enc_key(),
+                &[],
+            )
+            .unwrap();
+            UserDecryptionResponse {
+                signature: vec![],
+                signatures: vec![],
+                external_signature,
+                payload: Some(payload),
+                extra_data: vec![],
+            }
+        };
+
         // wrong link
         // Note that we cannot change the domain or other parts of the response to cause the failure
         // because that would lead to other failures in [validate_user_decrypt_responses], which are already tested.
         // So we change the client request to cause the failure.
         {
-            let agg_resp = vec![resp0.clone(), resp1.clone()];
+            let agg_resp = vec![resp0.clone(), resp1.clone(), resp2.clone()];
 
             let (bad_client_vk, _bad_client_sk) = gen_sig_keys(&mut rng);
             let bad_client_request = ParsedUserDecryptionRequest::new(
@@ -1485,7 +1517,7 @@ mod tests {
 
         // happy path
         {
-            let agg_resp = vec![resp0.clone(), resp1.clone()];
+            let agg_resp = vec![resp0.clone(), resp1.clone(), resp2.clone()];
             let trusted_ctx = UserDecTrustedValidationContext::new(
                 &server_addresses,
                 &client_request,
@@ -1498,7 +1530,7 @@ mod tests {
                     .unwrap()
                     .as_slice()
                     .len(),
-                2
+                3
             );
         }
     }
