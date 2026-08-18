@@ -30,7 +30,7 @@ This documentation is designed for:
 ## Critical Requirements
 
 ### **Production Requirements**
-- **AWS Instance**: `c7a.16xlarge` with AMI `1.32.3-20250620` (Nitro Enclaves)
+- **AWS Instance**: `c7a.16xlarge` with AMI `1.34.9-20260810` (Nitro Enclaves)
 - **Memory**: 32Gi minimum for production operations (96Gi allocated to Nitro Enclaves)
 - **Network**: PrivateLink connections to other 12 parties required
 - **Ports**: <GRPC_PORT> (gRPC, default: 50100), <P2P_PORT> (P2P - varies by party ID, default: 50001), <METRICS_PORT> (metrics, default: 9646)
@@ -40,7 +40,7 @@ This documentation is designed for:
 ## Getting Help
 
 1. **Emergency** - Use [Emergency Procedures](emergency-procedures.md) for immediate fixes
-2. **Diagnosis** - Follow the [Monitoring Guide](monitoring.md) health check procedures  
+2. **Diagnosis** - Follow the [Monitoring Guide](monitoring.md) health check procedures
 3. **Detailed Help** - Check [Advanced Documentation](advanced/) for comprehensive guides
 4. **Escalation** - Contact MPC development team for cryptographic issues
 
