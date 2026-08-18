@@ -10,7 +10,7 @@
 #
 # No sensitive values are hard-coded: the target internal repo is resolved at runtime
 # via ${{ github.repository }} (never named here), matching how the sync itself keeps
-# the destination in a secret. Owned by the Security Team.
+# the destination in a secret. Owned by the DevOps/Security group (see CODEOWNERS).
 
 name: 01-ghsa-dashboard
 

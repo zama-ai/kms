@@ -74,10 +74,10 @@ jobs:
         uses: zizmorcore/zizmor-action@71321a20a9ded102f6e9ce5718a2fcec2c4f70d8 # v0.5.2
         with:
           persona: pedantic
-          # zizmor's online audits (impostor-commit) must read the private zama-ai/ai-security
-          # repo to verify the SHA-pinned reusable-workflow ref in 01-ghsa-dashboard.yml, which
-          # needs ZIZMOR_RO_TOKEN_AISEC. Fork and Dependabot PRs get no Actions secrets, so run
-          # OFFLINE (static audits only) for them and run the authenticated online audit only on
-          # trusted events — keeping untrusted-PR lint green without exposing the token.
+          # Online audits (impostor-commit) must read the private zama-ai/ai-security repo to verify
+          # the SHA-pinned ref in 01-ghsa-dashboard.yml. Fork/Dependabot PRs get no secrets, so:
+          # (a) fall back to github.token so the token is never empty (zizmor rejects a blank token
+          # at startup), and (b) run offline for them (github.token can't read the private repo) —
+          # the authenticated online audit runs only on trusted events.
           online-audits: ${{ github.event_name != 'pull_request' || (github.event.pull_request.head.repo.fork == false && github.actor != 'dependabot[bot]') }}
-          token: ${{ secrets.ZIZMOR_RO_TOKEN_AISEC }} # zizmor: ignore[secrets-outside-env]
+          token: ${{ secrets.ZIZMOR_RO_TOKEN_AISEC || github.token }} # zizmor: ignore[secrets-outside-env]
