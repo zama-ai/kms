@@ -625,14 +625,23 @@ async fn main_exec() -> anyhow::Result<()> {
         }
     };
 
-    // Validate keychain recovery material now that we have the verification key
-    if let Some(ref keychain) = private_vault.keychain {
-        keychain.validate_recovery_material(&base_kms.verf_key())?;
-    }
-    if let Some(ref vault) = backup_vault
-        && let Some(ref keychain) = vault.keychain
-    {
-        keychain.validate_recovery_material(&base_kms.verf_key())?;
+    // Validate keychain recovery material at startup only when the private signing key is
+    // available. In recovery mode the verification key came from public storage; the recovery
+    // operation validates its selected material when it is used instead.
+    if let Ok(signing_key) = base_kms.sig_key() {
+        let verf_key = signing_key.verf_key();
+        if let Some(ref keychain) = private_vault.keychain {
+            keychain.validate_recovery_material(&verf_key)?;
+        }
+        if let Some(ref vault) = backup_vault
+            && let Some(ref keychain) = vault.keychain
+        {
+            keychain.validate_recovery_material(&verf_key)?;
+        }
+    } else {
+        tracing::info!(
+            "Recovery mode: deferring keychain recovery-material validation until recovery is initiated"
+        );
     }
 
     // compute corresponding public key and derive address from private sig key

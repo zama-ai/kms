@@ -73,7 +73,7 @@ use crate::{
         },
         context_manager::{ThresholdContextManager, ensure_default_threshold_context_in_storage},
         prepare_shutdown_signals,
-        public_material_verification::verify_public_material,
+        public_material_verification::verify_public_storage_material,
         threshold::{
             service::{
                 public_decryptor::SecureNoiseFloodDecryptor,
@@ -545,15 +545,6 @@ where
         read_all_data_versioned(&public_storage, &PubDataType::RecoveryMaterial.to_string())
             .await?;
 
-    // Validate the recovery material against the provided verification key
-    for (cur_req_id, cur_rec_material) in &validation_material {
-        if !cur_rec_material.validate(&base_kms.verf_key()) {
-            anyhow::bail!(
-                "Validation material for context {cur_req_id} failed to validate against the verification key"
-            );
-        }
-    }
-
     // Build public_key_info map using the chronologically latest epoch for each key ID.
     // Epoch IDs are ordered chronologically by comparing their raw bytes as a
     // big-endian integer.
@@ -577,18 +568,24 @@ where
         .await?,
     );
 
-    // Verify that public storage holds exactly what private storage says it should, and that
-    // it is intact when the signing key is available. Recovery mode only supports backup
-    // recovery operations, so it skips this verification. Private storage is the reference;
-    // extra material in public storage is ignored.
+    // Verify public material and recovery validation material when the signing key is available.
+    // Recovery mode only supports backup recovery operations, so it skips both startup checks.
+    // Private storage is the reference; extra material in public storage is ignored.
     match base_kms.sig_key() {
         Ok(signing_key) => {
-            verify_public_material(&public_storage, &entries, &crs_info, signing_key.as_ref())
-                .await?;
+            verify_public_storage_material(
+                &public_storage,
+                &entries,
+                &crs_info,
+                &validation_material,
+                signing_key.as_ref(),
+            )
+            .await?;
         }
         Err(_) => {
             tracing::warn!(
-                "No signing key available (recovery mode): skipping public material verification"
+                "No signing key available (recovery mode): skipping public material and recovery \
+                 validation material verification"
             );
         }
     }

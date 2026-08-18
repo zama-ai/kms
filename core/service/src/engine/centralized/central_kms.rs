@@ -20,7 +20,7 @@ use crate::engine::base::{BaseKmsStruct, KmsFheKeyHandles};
 use crate::engine::base::{KeyGenMetadata, PubDecCallValues, UserDecryptCallValues};
 use crate::engine::context_manager::CentralizedContextManager;
 #[cfg(feature = "non-wasm")]
-use crate::engine::public_material_verification::verify_public_material;
+use crate::engine::public_material_verification::verify_public_storage_material;
 use crate::engine::traits::{BackupOperator, ContextManager};
 use crate::engine::traits::{BaseKms, Kms};
 use crate::engine::validation::DSEP_USER_DECRYPTION;
@@ -948,21 +948,21 @@ impl<
             )
             .await?,
         );
+        let validation_material: HashMap<RequestId, RecoveryValidationMaterial> =
+            read_all_data_versioned(&public_storage, &PubDataType::RecoveryMaterial.to_string())
+                .await?;
 
         // Verify that public storage holds exactly what private storage says it should, and
         // that it is intact. Private storage is the reference; extra material in public
         // storage is ignored.
-        verify_public_material(&public_storage, &entries, &crs_info, &sk).await?;
-
-        let validation_material: HashMap<RequestId, RecoveryValidationMaterial> =
-            read_all_data_versioned(&public_storage, &PubDataType::RecoveryMaterial.to_string())
-                .await?;
-        let verf_key = PublicSigKey::from_sk(&sk);
-        for (cur_req_id, rec_material) in validation_material.iter() {
-            if !rec_material.validate(&verf_key) {
-                anyhow::bail!("Invalid recovery validation material for key id {cur_req_id}");
-            }
-        }
+        verify_public_storage_material(
+            &public_storage,
+            &entries,
+            &crs_info,
+            &validation_material,
+            &sk,
+        )
+        .await?;
         let custodian_meta_store = MetaStore::new_from_map(validation_material);
         let tracker = Arc::new(TaskTracker::new());
 

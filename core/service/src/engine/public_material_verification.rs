@@ -23,6 +23,7 @@
 //! CRSes: current material is checked by hashing those bytes, while legacy material (which has
 //! no digest) is checked for presence only.
 
+use crate::backup::operator::RecoveryValidationMaterial;
 use crate::consts::SIGNING_KEY_ID;
 use crate::cryptography::signing::ecdsa::{PrivateSigKey, PublicSigKey};
 use crate::cryptography::signing::{Signature, SigningSchemeType, unified_verify};
@@ -225,6 +226,84 @@ where
             }
         }
     }
+    Ok(())
+}
+
+/// Verify all recovery validation material loaded from public storage against the node's private
+/// signing key. Recovery mode deliberately does not call this helper: its verification key came
+/// from public storage and would not provide an independent trust root.
+fn verify_recovery_material(
+    validation_material: &HashMap<RequestId, RecoveryValidationMaterial>,
+    signing_key: &PrivateSigKey,
+) -> anyhow::Result<()> {
+    let verf_key = PublicSigKey::from_sk(signing_key);
+    for (context_id, material) in validation_material {
+        if !material.validate(&verf_key) {
+            anyhow::bail!("Invalid recovery validation material for context ID {context_id}");
+        }
+    }
+    Ok(())
+}
+
+/// Verify public storage material against private storage and verify recovery validation material.
+///
+/// Note that the private signing key is required, so this can only be called in
+/// normal mode. Recovery mode intentionally skips the entire public-storage
+/// verification flow because only backup recovery operations are allowed there.
+pub async fn verify_public_storage_material<S>(
+    public_storage: &S,
+    key_entries: &[(RequestId, KeyGenMetadata)],
+    crs_entries: &HashMap<RequestId, CrsGenMetadata>,
+    recovery_material: &HashMap<RequestId, RecoveryValidationMaterial>,
+    signing_key: &PrivateSigKey,
+) -> anyhow::Result<()>
+where
+    S: StorageReader + Sync,
+{
+    // Every metadata entry must declare the ID it is stored under before anything else uses it.
+    // Otherwise metadata filed under the wrong ID could pass whenever the bytes published under
+    // that ID happen to match its digests.
+    for (key_id, metadata) in key_entries {
+        ensure_keygen_metadata_id_matches(key_id, metadata)?;
+    }
+    for (crs_id, metadata) in crs_entries {
+        ensure_crs_metadata_id_matches(crs_id, metadata)?;
+    }
+
+    // Validate the private metadata before treating its digests as the reference, so that a
+    // corrupted digest is attributed to the side that is actually damaged. The signature covers
+    // the digest map, so a digest damaged in private storage fails here; were the digest checks
+    // to run first they would merely report a mismatch against intact published bytes and blame
+    // public storage. The verification key is checked next for the same reason: when a node is
+    // pointed at the wrong bucket, "this is not your verification key" localises the fault far
+    // better than a digest mismatch on every keyset.
+    let mut skipped = 0;
+    for (key_id, metadata) in key_entries {
+        skipped += verify_keygen_metadata_signatures(signing_key, key_id, metadata)?;
+    }
+    for (crs_id, metadata) in crs_entries {
+        skipped += verify_crs_metadata_signatures(signing_key, crs_id, metadata)?;
+    }
+    if skipped > 0 {
+        tracing::info!(
+            "Skipped {skipped} ECDSA/EIP-712 signature(s) while verifying public material: \
+             the EIP-712 domain they were signed under is not persisted, so the signed \
+             message cannot be reconstructed at boot."
+        );
+    }
+    verify_signing_key_material(public_storage, signing_key).await?;
+
+    verify_recovery_material(recovery_material, signing_key)?;
+    verify_keysets(public_storage, key_entries).await?;
+    verify_crses(public_storage, crs_entries).await?;
+
+    tracing::info!(
+        "Verified public storage material in storage \"{}\": {} keyset(s), {} CRS(es), {} recovery validation material item(s)",
+        public_storage.info(),
+        key_entries.len(),
+        crs_entries.len(),
+        recovery_material.len()
+    );
     Ok(())
 }
 
@@ -439,80 +518,13 @@ where
     Ok(())
 }
 
-/// Verify everything private storage says public storage should contain.
-///
-/// Runs once during service construction, before the node serves. Fails the boot when
-/// published material is missing, when its digest does not match the private reference, when
-/// a persisted signature does not verify, or when the published verification key disagrees
-/// with the private signing key. Extra material in public storage is ignored.
-///
-/// The checks run in order of what they can attribute a fault to: each metadata entry must
-/// declare the ID it is stored under, then the metadata is validated against its own signatures,
-/// then the published verification key, and only then are the metadata digests used as the
-/// reference for the published keysets and CRSes. That ordering matters for diagnosis rather
-/// than for whether the boot fails — every one of these is fatal — but checking digests first
-/// would report corruption of a signed digest as a mismatch against intact published bytes.
-///
-/// This verifier requires the private signing key and is only called in normal mode. Recovery
-/// mode intentionally skips the entire public-material verification flow because only backup
-/// recovery operations are allowed there.
-pub async fn verify_public_material<S>(
-    public_storage: &S,
-    key_entries: &[(RequestId, KeyGenMetadata)],
-    crs_entries: &HashMap<RequestId, CrsGenMetadata>,
-    signing_key: &PrivateSigKey,
-) -> anyhow::Result<()>
-where
-    S: StorageReader + Sync,
-{
-    // Every metadata entry must declare the ID it is stored under before anything else uses it.
-    // Otherwise metadata filed under the wrong ID could pass whenever the bytes published under
-    // that ID happen to match its digests.
-    for (key_id, metadata) in key_entries {
-        ensure_keygen_metadata_id_matches(key_id, metadata)?;
-    }
-    for (crs_id, metadata) in crs_entries {
-        ensure_crs_metadata_id_matches(crs_id, metadata)?;
-    }
-
-    // Validate the private metadata before treating its digests as the reference, so that a
-    // corrupted digest is attributed to the side that is actually damaged. The signature covers
-    // the digest map, so a digest damaged in private storage fails here; were the digest checks
-    // to run first they would merely report a mismatch against intact published bytes and blame
-    // public storage. The verification key is checked next for the same reason: when a node is
-    // pointed at the wrong bucket, "this is not your verification key" localises the fault far
-    // better than a digest mismatch on every keyset.
-    let mut skipped = 0;
-    for (key_id, metadata) in key_entries {
-        skipped += verify_keygen_metadata_signatures(signing_key, key_id, metadata)?;
-    }
-    for (crs_id, metadata) in crs_entries {
-        skipped += verify_crs_metadata_signatures(signing_key, crs_id, metadata)?;
-    }
-    if skipped > 0 {
-        tracing::info!(
-            "Skipped {skipped} ECDSA/EIP-712 signature(s) while verifying public material: \
-             the EIP-712 domain they were signed under is not persisted, so the signed \
-             message cannot be reconstructed at boot."
-        );
-    }
-    verify_signing_key_material(public_storage, signing_key).await?;
-
-    verify_keysets(public_storage, key_entries).await?;
-    verify_crses(public_storage, crs_entries).await?;
-
-    tracing::info!(
-        "Verified public material in storage \"{}\": {} keyset(s), {} CRS(es)",
-        public_storage.info(),
-        key_entries.len(),
-        crs_entries.len()
-    );
-    Ok(())
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::backup::custodian::InternalCustodianContext;
+    use crate::backup::operator::RecoveryValidationMaterial;
+    use crate::consts::DEFAULT_MPC_CONTEXT;
+    use crate::cryptography::encryption::{Encryption, PkeScheme, PkeSchemeType};
     use crate::cryptography::signatures::gen_sig_keys;
     use crate::engine::base::KeyGenMetadataInner;
     use crate::engine::material_integrity::{
@@ -953,9 +965,15 @@ mod tests {
             .await
             .expect("the digests match, so the digest checks alone cannot catch this");
 
-        let err = verify_public_material(&storage, &entries, &HashMap::new(), &sk)
-            .await
-            .unwrap_err();
+        let err = verify_public_storage_material(
+            &storage,
+            &entries,
+            &HashMap::new(),
+            &HashMap::new(),
+            &sk,
+        )
+        .await
+        .unwrap_err();
         assert!(
             err.to_string().contains(ERR_METADATA_ID_MISMATCH),
             "expected an ID mismatch before signature verification, got: {err}"
@@ -1046,7 +1064,7 @@ mod tests {
             crs_metadata_with_signatures(&crs_id, digest, &[SigningSchemeType::MlDsa65]);
 
         let entries = HashMap::from([(other_id, metadata)]);
-        let err = verify_public_material(&storage, &[], &entries, &sk)
+        let err = verify_public_storage_material(&storage, &[], &entries, &HashMap::new(), &sk)
             .await
             .unwrap_err();
         assert!(
@@ -1214,15 +1232,43 @@ mod tests {
         let orphan_crs_id = RequestId::new_random(&mut rng);
         let _orphan_crs = setup_crs(&mut storage, &orphan_crs_id).await;
 
-        verify_public_material(&storage, &[], &HashMap::new(), &sk)
+        verify_public_storage_material(&storage, &[], &HashMap::new(), &HashMap::new(), &sk)
             .await
             .expect("material with no private counterpart must be ignored");
+    }
+
+    #[test]
+    fn recovery_material_signature_verifies_with_private_signing_key() {
+        let (_verf_key, signing_key) = gen_sig_keys(&mut AesRng::seed_from_u64(170));
+        let material = test_recovery_material(&signing_key);
+        let context_id = material.custodian_context().context_id;
+        let materials = HashMap::from([(context_id, material)]);
+
+        verify_recovery_material(&materials, &signing_key)
+            .expect("recovery material signed by the node must verify");
+    }
+
+    #[test]
+    fn recovery_material_signature_rejects_wrong_private_signing_key() {
+        let (_verf_key, signing_key) = gen_sig_keys(&mut AesRng::seed_from_u64(171));
+        let (_wrong_verf_key, wrong_signing_key) = gen_sig_keys(&mut AesRng::seed_from_u64(172));
+        let material = test_recovery_material(&signing_key);
+        let context_id = material.custodian_context().context_id;
+        let materials = HashMap::from([(context_id, material)]);
+
+        let err = verify_recovery_material(&materials, &wrong_signing_key)
+            .expect_err("recovery material signed by another node must be rejected");
+        assert!(
+            err.to_string()
+                .contains("Invalid recovery validation material"),
+            "expected an invalid recovery material error, got: {err}"
+        );
     }
 
     // === End to end ===
 
     #[tokio::test]
-    async fn verify_public_material_accepts_consistent_storage() {
+    async fn verify_public_storage_material_accepts_consistent_storage() {
         let mut storage = RamStorage::new();
         let mut rng = AesRng::seed_from_u64(160);
         let material = setup_standard_keys(&mut storage, 161).await;
@@ -1240,12 +1286,38 @@ mod tests {
 
         let entries = vec![(material.key_id, metadata)];
         let crs_entries = HashMap::from_iter([(crs_id, crs_metadata)]);
-        verify_public_material(&storage, &entries, &crs_entries, &sk)
+        let recovery_material = test_recovery_material(&sk);
+        let context_id = recovery_material.custodian_context().context_id;
+        let recovery_material = HashMap::from([(context_id, recovery_material)]);
+        verify_public_storage_material(&storage, &entries, &crs_entries, &recovery_material, &sk)
             .await
             .expect("consistent public storage must verify");
     }
 
     // === Helpers ===
+
+    fn test_recovery_material(signing_key: &PrivateSigKey) -> RecoveryValidationMaterial {
+        let mut rng = AesRng::seed_from_u64(173);
+        let mut encryption = Encryption::new(PkeSchemeType::MlKem512, &mut rng);
+        let (_decryption_key, backup_enc_key) = encryption
+            .keygen()
+            .expect("test encryption key generation must succeed");
+        let context = InternalCustodianContext {
+            threshold: 0,
+            context_id: RequestId::new_random(&mut rng),
+            custodian_nodes: BTreeMap::new(),
+            backup_enc_key,
+        };
+
+        RecoveryValidationMaterial::new(
+            BTreeMap::new(),
+            BTreeMap::new(),
+            context,
+            signing_key,
+            *DEFAULT_MPC_CONTEXT,
+        )
+        .expect("test recovery material construction must succeed")
+    }
 
     /// Write the `VerfKey` and `VerfAddress` a node publishes for its signing key.
     /// `address_override` lets a test store an address that does not match `sk`.
