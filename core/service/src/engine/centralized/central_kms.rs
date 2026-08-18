@@ -952,7 +952,7 @@ impl<
         // Verify that public storage holds exactly what private storage says it should, and
         // that it is intact. Private storage is the reference; extra material in public
         // storage is ignored.
-        verify_public_material(&public_storage, &entries, &crs_info, Some(&sk)).await?;
+        verify_public_material(&public_storage, &entries, &crs_info, &sk).await?;
 
         let validation_material: HashMap<RequestId, RecoveryValidationMaterial> =
             read_all_data_versioned(&public_storage, &PubDataType::RecoveryMaterial.to_string())

@@ -453,28 +453,21 @@ where
 /// than for whether the boot fails — every one of these is fatal — but checking digests first
 /// would report corruption of a signed digest as a mismatch against intact published bytes.
 ///
-/// Pass `signing_key` as `None` only when the node has no private signing key, i.e. when
-/// [`crate::engine::base::BaseKmsStruct::sig_key`] returns an error because the struct was
-/// built by `new_no_signing_key`. `kms-server` does that when the private signing key cannot
-/// be read, logging "ENTERING RECOVERY MODE"; there is no separate flag for that state. The
-/// node's verification key then came out of public storage itself, so checking it back against
-/// public storage would be circular — so only the cryptographic checks are skipped there: the
-/// signature verification and the signing-key comparison. The declared-ID and digest checks
-/// need no key and still run, though a digest that is itself corrupt cannot then be
-/// distinguished from corrupt published material.
+/// This verifier requires the private signing key and is only called in normal mode. Recovery
+/// mode intentionally skips the entire public-material verification flow because only backup
+/// recovery operations are allowed there.
 pub async fn verify_public_material<S>(
     public_storage: &S,
     key_entries: &[(RequestId, KeyGenMetadata)],
     crs_entries: &HashMap<RequestId, CrsGenMetadata>,
-    signing_key: Option<&PrivateSigKey>,
+    signing_key: &PrivateSigKey,
 ) -> anyhow::Result<()>
 where
     S: StorageReader + Sync,
 {
     // Every metadata entry must declare the ID it is stored under before anything else uses it.
-    // This needs no signing key, so it runs in recovery mode too: otherwise metadata filed under
-    // the wrong ID could pass whenever the bytes published under that ID happen to match its
-    // digests.
+    // Otherwise metadata filed under the wrong ID could pass whenever the bytes published under
+    // that ID happen to match its digests.
     for (key_id, metadata) in key_entries {
         ensure_keygen_metadata_id_matches(key_id, metadata)?;
     }
@@ -489,31 +482,21 @@ where
     // public storage. The verification key is checked next for the same reason: when a node is
     // pointed at the wrong bucket, "this is not your verification key" localises the fault far
     // better than a digest mismatch on every keyset.
-    match signing_key {
-        Some(sk) => {
-            let mut skipped = 0;
-            for (key_id, metadata) in key_entries {
-                skipped += verify_keygen_metadata_signatures(sk, key_id, metadata)?;
-            }
-            for (crs_id, metadata) in crs_entries {
-                skipped += verify_crs_metadata_signatures(sk, crs_id, metadata)?;
-            }
-            if skipped > 0 {
-                tracing::info!(
-                    "Skipped {skipped} ECDSA/EIP-712 signature(s) while verifying public material: \
-                     the EIP-712 domain they were signed under is not persisted, so the signed \
-                     message cannot be reconstructed at boot."
-                );
-            }
-            verify_signing_key_material(public_storage, sk).await?;
-        }
-        None => tracing::warn!(
-            "No signing key available (recovery mode): skipping signature verification of result \
-             metadata and the verification-key check against public storage. Digest verification \
-             of the published material still runs, but a digest that is itself corrupt cannot be \
-             told apart from corrupt published material."
-        ),
+    let mut skipped = 0;
+    for (key_id, metadata) in key_entries {
+        skipped += verify_keygen_metadata_signatures(signing_key, key_id, metadata)?;
     }
+    for (crs_id, metadata) in crs_entries {
+        skipped += verify_crs_metadata_signatures(signing_key, crs_id, metadata)?;
+    }
+    if skipped > 0 {
+        tracing::info!(
+            "Skipped {skipped} ECDSA/EIP-712 signature(s) while verifying public material: \
+             the EIP-712 domain they were signed under is not persisted, so the signed \
+             message cannot be reconstructed at boot."
+        );
+    }
+    verify_signing_key_material(public_storage, signing_key).await?;
 
     verify_keysets(public_storage, key_entries).await?;
     verify_crses(public_storage, crs_entries).await?;
@@ -952,7 +935,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn keygen_metadata_id_is_checked_without_a_signing_key() {
+    async fn keygen_metadata_id_is_checked_before_signature_verification() {
         let mut storage = RamStorage::new();
         // Two keysets whose published bytes are identical, so their digests are too. Filing one
         // keyset's metadata under the other's ID therefore satisfies every digest check, and only
@@ -962,7 +945,7 @@ mod tests {
         assert_ne!(other.key_id, material.key_id);
         assert_eq!(other.key_digest_map, material.key_digest_map);
 
-        let (metadata, _sk) = material.signed_metadata(&[SigningSchemeType::MlDsa65]);
+        let (metadata, sk) = material.signed_metadata(&[SigningSchemeType::MlDsa65]);
         let entries = vec![(other.key_id, metadata)];
 
         // Nothing but the ID check stands between this and a clean boot: the digests match.
@@ -970,13 +953,12 @@ mod tests {
             .await
             .expect("the digests match, so the digest checks alone cannot catch this");
 
-        // Recovery mode skips the cryptographic checks, but the declared ID needs no key.
-        let err = verify_public_material(&storage, &entries, &HashMap::new(), None)
+        let err = verify_public_material(&storage, &entries, &HashMap::new(), &sk)
             .await
             .unwrap_err();
         assert!(
             err.to_string().contains(ERR_METADATA_ID_MISMATCH),
-            "expected an ID mismatch without a signing key, got: {err}"
+            "expected an ID mismatch before signature verification, got: {err}"
         );
     }
 
@@ -1054,22 +1036,22 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn crs_metadata_id_is_checked_without_a_signing_key() {
+    async fn crs_metadata_id_is_checked_before_signature_verification() {
         let mut rng = AesRng::seed_from_u64(124);
         let crs_id = RequestId::new_random(&mut rng);
         let other_id = RequestId::new_random(&mut rng);
         let mut storage = RamStorage::new();
         let digest = setup_crs(&mut storage, &crs_id).await;
-        let (metadata, _sk) =
+        let (metadata, sk) =
             crs_metadata_with_signatures(&crs_id, digest, &[SigningSchemeType::MlDsa65]);
 
         let entries = HashMap::from([(other_id, metadata)]);
-        let err = verify_public_material(&storage, &[], &entries, None)
+        let err = verify_public_material(&storage, &[], &entries, &sk)
             .await
             .unwrap_err();
         assert!(
             err.to_string().contains(ERR_METADATA_ID_MISMATCH),
-            "expected an ID mismatch without a signing key, got: {err}"
+            "expected an ID mismatch before signature verification, got: {err}"
         );
     }
 
@@ -1232,41 +1214,9 @@ mod tests {
         let orphan_crs_id = RequestId::new_random(&mut rng);
         let _orphan_crs = setup_crs(&mut storage, &orphan_crs_id).await;
 
-        verify_public_material(&storage, &[], &HashMap::new(), Some(&sk))
+        verify_public_material(&storage, &[], &HashMap::new(), &sk)
             .await
             .expect("material with no private counterpart must be ignored");
-    }
-
-    // === Recovery mode ===
-
-    #[tokio::test]
-    async fn without_signing_key_digests_still_run_and_key_checks_are_skipped() {
-        let mut storage = RamStorage::new();
-        let material = setup_standard_keys(&mut storage, 150).await;
-        let entries = vec![(material.key_id, material.current_metadata())];
-
-        // No VerfKey/VerfAddress stored at all, so this only passes because C is skipped.
-        verify_public_material(&storage, &entries, &HashMap::new(), None)
-            .await
-            .expect("recovery mode skips the signing-key dependent checks");
-    }
-
-    #[tokio::test]
-    async fn without_signing_key_digest_mismatch_is_still_fatal() {
-        let mut storage = RamStorage::new();
-        let mut material = setup_standard_keys(&mut storage, 151).await;
-        if let Some(digest) = material.key_digest_map.get_mut(&PubDataType::ServerKey) {
-            digest[0] ^= 0xFF;
-        }
-        let entries = vec![(material.key_id, material.current_metadata())];
-
-        let err = verify_public_material(&storage, &entries, &HashMap::new(), None)
-            .await
-            .unwrap_err();
-        assert!(
-            err.to_string().contains(ERR_SERVER_KEY_DIGEST_MISMATCH),
-            "digest verification must run even without a signing key, got: {err}"
-        );
     }
 
     // === End to end ===
@@ -1290,7 +1240,7 @@ mod tests {
 
         let entries = vec![(material.key_id, metadata)];
         let crs_entries = HashMap::from_iter([(crs_id, crs_metadata)]);
-        verify_public_material(&storage, &entries, &crs_entries, Some(&sk))
+        verify_public_material(&storage, &entries, &crs_entries, &sk)
             .await
             .expect("consistent public storage must verify");
     }

@@ -578,10 +578,20 @@ where
     );
 
     // Verify that public storage holds exactly what private storage says it should, and that
-    // it is intact. Private storage is the reference; extra material in public storage is
-    // ignored.
-    let signing_key = base_kms.sig_key().ok();
-    verify_public_material(&public_storage, &entries, &crs_info, signing_key.as_deref()).await?;
+    // it is intact when the signing key is available. Recovery mode only supports backup
+    // recovery operations, so it skips this verification. Private storage is the reference;
+    // extra material in public storage is ignored.
+    match base_kms.sig_key() {
+        Ok(signing_key) => {
+            verify_public_material(&public_storage, &entries, &crs_info, signing_key.as_ref())
+                .await?;
+        }
+        Err(_) => {
+            tracing::warn!(
+                "No signing key available (recovery mode): skipping public material verification"
+            );
+        }
+    }
 
     let networking_manager = Arc::new(RwLock::new(GrpcNetworkingManager::new(
         tls_config
