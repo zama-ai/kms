@@ -367,6 +367,8 @@ spec:
         - name: maxfail
         - name: maxshed
         - name: pct
+        - name: maxp50
+        - name: maxp99
         - name: allowfail
       outputs:
         parameters:
@@ -502,6 +504,17 @@ spec:
             done
           }
 
+          # Prints a latency_ms percentile of a metrics JSON object, 0 when absent. The
+          # latency_ms prefix keeps this off the other percentile blocks in the same object,
+          # such as verification_ms.
+          latency_number() {
+            if [[ "$1" =~ \"latency_ms\":\{[^}]*\"$2\":([-+0-9.eE]+) ]]; then
+              echo "${BASH_REMATCH[1]}"
+            else
+              echo "0"
+            fi
+          }
+
           network_metrics_suffix() {
             local sample_secs="$1"
             awk -F '\t' -v sample_secs="$sample_secs" '
@@ -629,6 +642,8 @@ spec:
             echo "ERROR: no valid $metrics_marker JSON with failed/shed/saturated found"
           fi
           network_metrics="$(network_metrics_suffix "$duration")"
+          metrics_p50="$(latency_number "$decrypt_metrics" p50)"
+          metrics_p99="$(latency_number "$decrypt_metrics" p99)"
           maxfail="{{inputs.parameters.maxfail}}"
           maxshed="{{inputs.parameters.maxshed}}"
           pct="{{inputs.parameters.pct}}"
@@ -662,8 +677,71 @@ spec:
                   print "false"
                 }
               }')
+          # A rung can meet its offered rate and still be slow per request, which the rate
+          # check misses. Only a gating rate sets these bounds. A probe leaves them at 0,
+          # which turns the check off. See perf-scenarios.toml for how they were chosen.
+          max_p50="{{inputs.parameters.maxp50}}"
+          max_p99="{{inputs.parameters.maxp99}}"
+          latency_limits=""
+          within_latency_limits=true
+          if [ "$max_p50" -gt 0 ] && [ "$max_p99" -gt 0 ]; then
+            latency_limits="p50=${max_p50},p99=${max_p99}"
+            # A rung with no valid measurement reports 0 ms, which must not read as fast.
+            within_latency_limits=$(awk \
+              -v p50="$metrics_p50" \
+              -v p99="$metrics_p99" \
+              -v max_p50="$max_p50" \
+              -v max_p99="$max_p99" '
+                BEGIN {
+                  if (p50 <= 0 || p99 <= 0) {
+                    print "false"
+                  } else if (p50 <= max_p50 && p99 <= max_p99) {
+                    print "true"
+                  } else {
+                    print "false"
+                  }
+                }')
+            echo "latency gate: p50=${metrics_p50}ms (limit ${max_p50}ms), p99=${metrics_p99}ms (limit ${max_p99}ms), within=${within_latency_limits}"
+          fi
+
+          # Every rung meets its offered rate, so the rate budget alone would let the
+          # ladder climb forever. Stop a gating rung once its p99 crosses this limit. This
+          # does not replace the gate limit above, which fails the run and still lets the
+          # higher rungs measure. Keep this value above every gate p99 limit. A lower value
+          # fires first, and the run then stops without naming the limit it broke.
+          #
+          # A probe rung never stops the climb on latency. Above a gate the ladder is not
+          # ordered by latency. On 2026-08-10 udec 2700 measured p99 2302ms, and udec 2750
+          # then ran clean at p50 13.87ms. A probe still stops the climb when it misses its
+          # own budget, which is what a real collapse looks like.
+          climb_max_p99_ms=3000
+          within_climb_limit=true
+          if [ "$allowed_failure" != "true" ]; then
+            within_climb_limit=$(awk \
+              -v p99="$metrics_p99" \
+              -v max_p99="$climb_max_p99_ms" '
+                BEGIN {
+                  if (p99 <= 0 || p99 > max_p99) {
+                    print "false"
+                  } else {
+                    print "true"
+                  }
+                }')
+            echo "climb check: p99=${metrics_p99}ms (stop above ${climb_max_p99_ms}ms), continue=${within_climb_limit}"
+          else
+            echo "climb check: skipped, ${test_name} is a probe rung and never stops the climb on latency"
+          fi
+
           # Escape the brace; ${var%}} does not trim the final JSON object brace in bash.
           limit_metrics=",\"parameter_set\":\"${parameter_set}\",\"within_parameter_set\":${within_parameter_set},\"allowed_failure\":${allowed_failure}"
+          # Only a rung the limit applies to records it. The summary reads a missing
+          # `within_climb_limit` as true, so a probe rung never reports `stopped_climb`.
+          if [ "$allowed_failure" != "true" ]; then
+            limit_metrics="${limit_metrics},\"climb_max_p99_ms\":${climb_max_p99_ms},\"within_climb_limit\":${within_climb_limit}"
+          fi
+          if [ -n "$latency_limits" ]; then
+            limit_metrics="${limit_metrics},\"latency_limits\":\"${latency_limits}\",\"within_latency_limits\":${within_latency_limits}"
+          fi
           decrypt_metrics="${decrypt_metrics%\}}${network_metrics}${limit_metrics}}"
 
           # Task success means "measurement exists"; capacity-ok gates the next rung.
@@ -672,10 +750,13 @@ spec:
           else
             status="failed"
           fi
-          if [ "$status" = "passed" ] && [ "$within_parameter_set" = "true" ]; then
+          if [ "$status" = "passed" ] && [ "$within_parameter_set" = "true" ] && [ "$within_climb_limit" = "true" ]; then
             capacity_ok="true"
           else
             capacity_ok="false"
+          fi
+          if [ "$capacity_ok" != "true" ]; then
+            echo "Not climbing past ${test_name}: status=${status} within_parameter_set=${within_parameter_set} within_climb_limit=${within_climb_limit}"
           fi
 
           printf '{\n  "test_name": "%s",\n  "test_command": "%s",\n  "status": "%s",\n  "exit_code": %s,\n  "duration": %s,\n  "timestamp": "%s",\n  "fhe_params": "Default",\n  "performance_metrics": {\n    "%s": %s\n  }\n}\n' \
@@ -894,6 +975,12 @@ spec:
               parameter_set=$(jq -r --arg k "$metrics_key" '.performance_metrics[$k].parameter_set // empty' "$result")
               within_parameter_set=$(jq -r --arg k "$metrics_key" '.performance_metrics[$k].within_parameter_set // false' "$result")
               allowed_failure=$(jq -r --arg k "$metrics_key" '.performance_metrics[$k].allowed_failure // false' "$result")
+              climb_max_p99=$(jq -r --arg k "$metrics_key" '.performance_metrics[$k].climb_max_p99_ms // empty' "$result")
+              # `// true` would read a stored false as true, so test for the key instead.
+              within_climb_limit=$(jq -r --arg k "$metrics_key" '.performance_metrics[$k] | if has("within_climb_limit") then .within_climb_limit else true end' "$result")
+              latency_limits=$(jq -r --arg k "$metrics_key" '.performance_metrics[$k].latency_limits // empty' "$result")
+              # `// true` would read a stored false as true, so test for the key instead.
+              within_latency_limits=$(jq -r --arg k "$metrics_key" '.performance_metrics[$k] | if has("within_latency_limits") then .within_latency_limits else true end' "$result")
               extra_failed=$(jq -r --arg k "$metrics_key" --arg f "$extra_failed_key" '.performance_metrics[$k][$f] // 0' "$result")
               p50=$(jq -r --arg k "$metrics_key" '.performance_metrics[$k].latency_ms.p50 // empty' "$result")
               p95=$(jq -r --arg k "$metrics_key" '.performance_metrics[$k].latency_ms.p95 // empty' "$result")
@@ -916,8 +1003,8 @@ spec:
               network_rx_short="$(fmt_1 "$network_rx_gbps")"
               network_tx_short="$(fmt_1 "$network_tx_gbps")"
 
-              # WARN is accepted-but-degraded. The top rate for each decrypt type
-              # is an exploratory probe and can exceed its parameter set.
+              # WARN means accepted but degraded. The probe rungs above each gate are
+              # exploratory and may exceed their parameter set.
               if [ "$status" = "skipped" ]; then
                 outcome=skipped
                 inc_decrypt_counter "$kind" skipped
@@ -931,6 +1018,26 @@ spec:
                   inc_decrypt_counter "$kind" failed
                 fi
                 line="$(status_label "$outcome") ${target_rate}/s measurement failed"
+              elif [ "$within_parameter_set" = "true" ] && [ "$within_latency_limits" != "true" ]; then
+                # Met its offered rate but was too slow per request.
+                if [ "$allowed_failure" = "true" ]; then
+                  outcome=warned
+                  inc_decrypt_counter "$kind" warned
+                else
+                  outcome=failed
+                  inc_decrypt_counter "$kind" failed
+                fi
+                line="$(status_label "$outcome") ${target_rate}/s over latency limits (${latency_limits}) p50=${p50_short} p99=${p99_short}"
+              elif [ "$within_parameter_set" = "true" ] && [ "$within_climb_limit" != "true" ]; then
+                # Inside its budget but slow enough to end the ladder, so not a clean pass.
+                if [ "$allowed_failure" = "true" ]; then
+                  outcome=warned
+                  inc_decrypt_counter "$kind" warned
+                else
+                  outcome=failed
+                  inc_decrypt_counter "$kind" failed
+                fi
+                line="$(status_label "$outcome") ${target_rate}/s p50=${p50_short} p99=${p99_short}"
               elif [ "$within_parameter_set" = "true" ]; then
                 if [ "$failed_requests" != "0" ] || [ "$shed" != "0" ] || [ "$saturated" = "true" ]; then
                   outcome=warned
@@ -951,6 +1058,13 @@ spec:
                 line="$(status_label "$outcome") ${target_rate}/s outside params achieved=${achieved_short}/s p50=${p50_short} p99=${p99_short}"
               fi
 
+              # Say which rung ended the ladder, so a run of skips has a stated cause.
+              if [ "$within_climb_limit" != "true" ] && [ "$status" != "skipped" ]; then
+                line="${line} stopped_climb=p99>${climb_max_p99}ms"
+              fi
+              if [ -n "$latency_limits" ]; then
+                line="${line} gate=${latency_limits}"
+              fi
               if [ -n "$network_rx_gbps" ] && [ "$network_rx_gbps" != "null" ]; then
                 line="${line} net_rx=${network_rx_short}Gbps net_tx=${network_tx_short}Gbps"
               fi
