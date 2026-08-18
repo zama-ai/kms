@@ -206,7 +206,6 @@ async fn internal_receive_from_parties<'a, Z: Ring, B: BaseSessionHandles + 'a>(
 /// Send to all parties and automatically increase round counter
 pub async fn send_to_all<T, Z: Ring, B: BaseSessionHandles>(
     session: &B,
-    sender: &Role,
     msg: T,
 ) -> anyhow::Result<()>
 where
@@ -217,7 +216,7 @@ where
     session.network().increase_round_counter().await;
     for other_role in session.roles() {
         let networking = Arc::clone(session.network());
-        if *sender != *other_role {
+        if session.my_role() != *other_role {
             networking
                 .send(Arc::clone(&serialized_message), other_role)
                 .await?;
@@ -235,7 +234,6 @@ where
 /// from the inside enum.
 ///
 /// **NOTE: We do not try to receive any value from the non_answering_parties set.**
-#[expect(clippy::too_many_arguments)]
 pub(crate) async fn generic_receive_from_all_senders_with_role_transform<
     E,
     V,
@@ -246,7 +244,6 @@ pub(crate) async fn generic_receive_from_all_senders_with_role_transform<
 >(
     jobs: &mut JoinSet<Result<(S, anyhow::Result<V>), Elapsed>>,
     session: &B,
-    receiver: &R,
     senders: &HashSet<R>,
     non_answering_parties: Option<&HashSet<R>>,
     match_network_value_fn: fn(network_value: NetworkValue<Z>, id: &R) -> anyhow::Result<V>,
@@ -260,11 +257,11 @@ pub(crate) async fn generic_receive_from_all_senders_with_role_transform<
     let deserialization_runtime = session.get_deserialization_runtime();
     let binding = HashSet::new();
     let non_answering_parties = non_answering_parties.unwrap_or(&binding);
+    let my_role = session.my_role();
     for sender in senders {
-        if !non_answering_parties.contains(sender) && *receiver != *sender {
+        if !non_answering_parties.contains(sender) && my_role != *sender {
             let sender = *sender;
             let networking = Arc::clone(session.network());
-            let my_role = session.my_role();
             let timeout = session.network().get_timeout_current_round().await.into();
             let task = async move {
                 let stripped_message = timeout_at(timeout, networking.receive(&sender)).await;
@@ -309,7 +306,6 @@ pub async fn generic_receive_from_all_senders<
 >(
     jobs: &mut JoinSet<Result<(R, anyhow::Result<V>), Elapsed>>,
     session: &B,
-    receiver: &R,
     senders: &HashSet<R>,
     non_answering_parties: Option<&HashSet<R>>,
     match_network_value_fn: fn(network_value: NetworkValue<Z>, id: &R) -> anyhow::Result<V>,
@@ -319,7 +315,6 @@ pub async fn generic_receive_from_all_senders<
     generic_receive_from_all_senders_with_role_transform::<(), _, _, _, _, _>(
         jobs,
         session,
-        receiver,
         senders,
         non_answering_parties,
         match_network_value_fn,
@@ -333,7 +328,6 @@ pub async fn generic_receive_from_all_senders<
 pub async fn generic_receive_from_all<V, Z: Ring, B: BaseSessionHandles>(
     jobs: &mut JoinSet<Result<(Role, anyhow::Result<V>), Elapsed>>,
     session: &B,
-    receiver: &Role,
     non_answering_parties: Option<&HashSet<Role>>,
     match_network_value_fn: fn(network_value: NetworkValue<Z>, id: &Role) -> anyhow::Result<V>,
 ) where
@@ -342,7 +336,6 @@ pub async fn generic_receive_from_all<V, Z: Ring, B: BaseSessionHandles>(
     generic_receive_from_all_senders(
         jobs,
         session,
-        receiver,
         session.roles(),
         non_answering_parties,
         match_network_value_fn,
