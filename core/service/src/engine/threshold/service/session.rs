@@ -29,6 +29,9 @@ use threshold_execution::{
 use threshold_networking::{
     grpc::GrpcNetworkingManager, health_check::HealthCheckSession, tls::AttestedVerifier,
 };
+// Only used by the `#[cfg(test)]` dummy-session constructors below.
+#[cfg(test)]
+use threshold_networking::grpc::CoreToCoreNetworkConfig;
 use threshold_types::role::{DualRole, Role, TwoSetsRole, TwoSetsThreshold};
 
 use rand::{RngCore, SeedableRng};
@@ -316,8 +319,9 @@ impl SessionMaker {
 
     #[cfg(test)]
     pub(crate) fn empty_dummy_session(rng: AesRng) -> Self {
-        let networking_manager =
-            Arc::new(RwLock::new(GrpcNetworkingManager::new(None, None).unwrap()));
+        let networking_manager = Arc::new(RwLock::new(
+            GrpcNetworkingManager::new(None, CoreToCoreNetworkConfig::default()).unwrap(),
+        ));
         Self {
             networking_manager,
             context_map: Arc::new(RwLock::new(HashMap::new())),
@@ -350,8 +354,9 @@ impl SessionMaker {
         rng: AesRng,
     ) -> Self {
         let role_assignment = four_party_dummy_role_assignment();
-        let networking_manager =
-            Arc::new(RwLock::new(GrpcNetworkingManager::new(None, None).unwrap()));
+        let networking_manager = Arc::new(RwLock::new(
+            GrpcNetworkingManager::new(None, CoreToCoreNetworkConfig::default()).unwrap(),
+        ));
 
         let default_context_id = *crate::consts::DEFAULT_MPC_CONTEXT;
         let default_context = Context {
