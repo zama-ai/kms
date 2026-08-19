@@ -4,6 +4,7 @@ use crate::backup::operator::BackupMaterial;
 use crate::consts::DEFAULT_EPOCH_ID;
 use crate::cryptography::internal_crypto_types::LegacySerialization;
 use crate::cryptography::signcryption::UnifiedSigncryption;
+use crate::cryptography::signing::seed::RootSigningSeed;
 use crate::engine::base::{CrsGenMetadata, KmsFheKeyHandles, derive_request_id};
 use crate::engine::context::ContextInfo;
 use crate::engine::threshold::service::epoch_manager::EpochData;
@@ -776,6 +777,10 @@ where
             PrivDataType::SigningKey => {
                 // TODO(#2862) will eventually be epoched
                 restore_data_type::<PrivS, PrivateSigKey>(priv_storage, backup_vault, cur_type)
+                    .await?;
+            }
+            PrivDataType::SigningSeed => {
+                restore_data_type::<PrivS, RootSigningSeed>(priv_storage, backup_vault, cur_type)
                     .await?;
             }
             PrivDataType::CrsInfo => {

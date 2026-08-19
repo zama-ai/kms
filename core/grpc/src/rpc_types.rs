@@ -302,7 +302,8 @@ pub enum PrivDataTypeVersions {
 #[derive(Clone, Copy, Debug, Hash, PartialEq, Eq, Serialize, Deserialize, EnumIter, Versionize)]
 #[versionize(PrivDataTypeVersions)]
 pub enum PrivDataType {
-    SigningKey,
+    // WARNING: Do not reorder or remove variants; only append.
+    SigningKey, // LEGACY ECDSA signing key
     FheKeyInfo, // Only for the threshold case
     CrsInfo,
     FhePrivateKey, // Only used for the centralized case
@@ -316,6 +317,8 @@ pub enum PrivDataType {
     PrssSetupCombined,
     ContextInfo,
     EpochData,
+    /// The root secret every non-ECDSA signing key of a KMS node is derived from.
+    SigningSeed,
 }
 
 #[derive(Clone, Copy, Debug, Hash, PartialEq, Eq, Serialize, Deserialize, EnumIter, Version)]
@@ -385,6 +388,7 @@ impl fmt::Display for PrivDataType {
             PrivDataType::PrssSetupCombined => write!(f, "PrssSetupCombined"),
             PrivDataType::ContextInfo => write!(f, "Context"),
             PrivDataType::EpochData => write!(f, "EpochData"),
+            PrivDataType::SigningSeed => write!(f, "SigningSeed"),
         }
     }
 }
@@ -1192,6 +1196,20 @@ mod tests {
     use crate::kms::v1;
     use std::str::FromStr;
     use strum::IntoEnumIterator;
+
+    /// Every `PrivDataType` round-trips through its `Display` form. That form is
+    /// the name of the type's storage folder.
+    #[test]
+    fn priv_data_type_round_trips_through_its_storage_name() {
+        for cur_type in PrivDataType::iter() {
+            let rendered = cur_type.to_string();
+            assert_eq!(
+                PrivDataType::try_from(rendered.as_str()).unwrap(),
+                cur_type,
+                "{cur_type:?} did not round-trip through \"{rendered}\""
+            );
+        }
+    }
 
     #[test]
     fn idempotent_plaintext() {
