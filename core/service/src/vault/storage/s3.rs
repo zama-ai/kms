@@ -11,7 +11,7 @@ use std::{collections::HashSet, str::FromStr};
 use tfhe::{
     Unversionize, Versionize,
     named::Named,
-    safe_serialization::{safe_deserialize, safe_serialize},
+    safe_serialization::{safe_deserialize, safe_serialize, safe_serialized_size},
 };
 use tokio::io::AsyncReadExt;
 use url::Url;
@@ -144,7 +144,20 @@ impl S3Storage {
             &self.bucket,
             key
         );
-        let mut buf = Vec::new();
+        // Size the buffer up front so it is allocated once. `Vec::new()` grows by
+        // doubling, and the final growth holds the old and new buffers at the same
+        // time -- up to ~3x the serialized size, for a GiB-scale keyset.
+        let mut buf = match safe_serialized_size(data) {
+            Ok(size) if size <= SAFE_SER_SIZE_LIMIT => Vec::with_capacity(size as usize),
+            Ok(_) => Vec::new(),
+            Err(e) => {
+                tracing::warn!(
+                    "Could not size {} for key {key}, using a growing buffer: {e}",
+                    T::NAME
+                );
+                Vec::new()
+            }
+        };
         safe_serialize(data, &mut buf, SAFE_SER_SIZE_LIMIT)?;
 
         let size = buf.len() as f64;
@@ -621,7 +634,11 @@ pub(crate) async fn s3_get_blob(
         .key(path)
         .send()
         .await?;
-    let mut blob_bytes: Vec<u8> = Vec::with_capacity(PREALLOCATED_BLOB_SIZE);
+    let reserve = match blob_response.content_length() {
+        Some(len) if (0..=SAFE_SER_SIZE_LIMIT as i64).contains(&len) => len as usize,
+        _ => PREALLOCATED_BLOB_SIZE,
+    };
+    let mut blob_bytes: Vec<u8> = Vec::with_capacity(reserve);
     let mut blob_bytestream = blob_response.body.into_async_read();
     blob_bytestream.read_to_end(&mut blob_bytes).await?;
     Ok(blob_bytes)
