@@ -351,7 +351,7 @@ pub async fn run_key_gen_centralized(
         assert_eq!(&tag, public_key.tag());
         assert_eq!(&tag, server_key.tag());
 
-        let (_, _, _, _, _, _, _, oprf_key, _) = server_key.clone().into_raw_parts();
+        let (_, _, _, _, _, _, _, oprf_key, _, _) = server_key.clone().into_raw_parts();
         assert!(
             oprf_key.is_some(),
             "centralized full keygen must embed a dedicated OPRF server key"
