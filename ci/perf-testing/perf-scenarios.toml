@@ -32,7 +32,7 @@ rates = [
 
 [scenarios.udec]
 key = "udec-key-gen"                          # task whose request-id becomes each rate's key_id
-after = ["pdec-rate-1500"]                    # extra deps for the first rate (run after pdec)
+after = ["pdec"]                              # extra deps for the first rate (run after pdec)
 rates = [
   { rate = 2400 },
   { rate = 2700, maxfail = 1, maxshed = 1, pct = 95 },

@@ -41,7 +41,7 @@ rates = [
 
 [scenarios.udec]
 key = "udec-key-gen"
-after = ["pdec-rate-1500"]
+after = ["pdec"]
 rates = [
   { rate = 2400 },                                              # uses the defaults
   { rate = 2700, maxfail = 1, maxshed = 1, pct = 95 },          # override some limits
@@ -53,8 +53,8 @@ Rules:
 
 - every `rates` entry is an inline table with a `rate` key;
 - anything unspecified falls back to `[defaults]`;
-- `key` names the task that supplies the key ID; `after` is optional extra
-  dependency for the first rate of a ladder.
+- `key` names the task that supplies the key ID; `after` is an optional list of
+  dependencies that must run before the first rate of a ladder. The list can be either an Argo DAG task, e.g. `crs-gen`, or an entry from the `scenarios` table, e.g. `pdec`.
 
 `keygen`/`crs` are one-shot setup and not configured here.
 

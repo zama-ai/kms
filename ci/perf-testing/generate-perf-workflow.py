@@ -21,7 +21,10 @@ Markers (indentation is taken from the marker line, so blocks land correctly):
 """
 import argparse
 import sys
+import tempfile
+import textwrap
 import tomllib
+import unittest
 
 RATE_KEYS = {"rate", "duration", "pause", "maxfail", "maxshed", "pct", "allowfail"}
 DEFAULT_KEYS = {"duration", "pause", "maxfail", "maxshed", "pct", "allowfail"}
@@ -92,6 +95,14 @@ def load_scenarios(path):
 
             rates.append(merged)
         resolved[kind] = {"key": scen["key"], "after": after, "rates": rates}
+
+    # A scenario dependency means "after its entire rate ladder", so point it
+    # at the ladder's terminal task. Other names refer to concrete DAG tasks.
+    for scen in resolved.values():
+        scen["after"] = [
+            f"{dep}-rate-{resolved[dep]['rates'][-1]['rate']}" if dep in resolved else dep
+            for dep in scen["after"]
+        ]
     return resolved
 
 
@@ -197,12 +208,70 @@ def render(template_text, scenarios):
     return "\n".join(out)
 
 
+class LoadScenariosTest(unittest.TestCase):
+    def load(self, scenarios):
+        contents = textwrap.dedent(
+            f"""
+            [defaults]
+            duration = 60
+            pause = 10
+            maxfail = 0
+            maxshed = 0
+            pct = 98
+            allowfail = false
+
+            {scenarios}
+            """
+        )
+        with tempfile.NamedTemporaryFile("w", suffix=".toml") as config:
+            config.write(contents)
+            config.flush()
+            return load_scenarios(config.name)
+
+    def test_scenario_dependency_resolves_to_its_terminal_rate(self):
+        scenarios = self.load(
+            """
+            [scenarios.udec]
+            key = "udec-key-gen"
+            after = ["pdec"]
+            rates = [{ rate = 2400 }]
+
+            [scenarios.pdec]
+            key = "udec-key-gen"
+            after = ["crs-gen"]
+            rates = [{ rate = 1100 }, { rate = 1500 }]
+            """
+        )
+
+        self.assertEqual(scenarios["udec"]["after"], ["pdec-rate-1500"])
+
+    def test_concrete_task_dependency_is_unchanged(self):
+        scenarios = self.load(
+            """
+            [scenarios.pdec]
+            key = "udec-key-gen"
+            after = ["crs-gen"]
+            rates = [{ rate = 1100 }]
+            """
+        )
+
+        self.assertEqual(scenarios["pdec"]["after"], ["crs-gen"])
+
+
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--scenarios", required=True)
-    ap.add_argument("--template", required=True)
+    ap.add_argument("--self-test", action="store_true")
+    ap.add_argument("--scenarios")
+    ap.add_argument("--template")
     ap.add_argument("-o", "--out", default="-")
     args = ap.parse_args()
+
+    if args.self_test:
+        suite = unittest.defaultTestLoader.loadTestsFromTestCase(LoadScenariosTest)
+        result = unittest.TextTestRunner().run(suite)
+        return 0 if result.wasSuccessful() else 1
+    if not args.scenarios or not args.template:
+        ap.error("--scenarios and --template are required unless --self-test is used")
 
     scenarios = load_scenarios(args.scenarios)
     with open(args.template) as f:
@@ -218,4 +287,4 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())
