@@ -182,6 +182,8 @@ spec:
         image: hub.zama.org/ghcr/zama-ai/kms/core-client:<client-version>
         command: ["/bin/bash", "-c"]
         source: |
+          set -e
+
           cat <<EOF > config.toml
             kms_type = "threshold"
             num_majority=${NUM_MAJORITY}
@@ -265,8 +267,10 @@ spec:
           fi
 
           start_time=$(date +%s)
+          set +e
           ./bin/kms-core-client ${client_logs_arg} --max-iter 2880 -f config.toml {{inputs.parameters.test-command}} 2>&1 | tee /tmp/test_logs.txt
           test_exit=${PIPESTATUS[0]}
+          set -e
           end_time=$(date +%s)
           duration=$((end_time - start_time))
 
@@ -383,6 +387,8 @@ spec:
         image: hub.zama.org/ghcr/zama-ai/kms/core-client:<client-version>
         command: ["/bin/bash", "-c"]
         source: |
+          set -e
+
           cat <<EOF > config.toml
             kms_type = "threshold"
             num_majority=${NUM_MAJORITY}
@@ -578,6 +584,7 @@ spec:
           rate_timeout=$(({{inputs.parameters.duration}} + 300))
           capture_net_snapshot /tmp/net-before.tsv
           start_time=$(date +%s)
+          set +e
           if command -v timeout >/dev/null 2>&1; then
             timeout "${rate_timeout}s" ./bin/kms-core-client ${client_logs_arg} --max-iter 2880 -f config.toml $test_command 2>&1 | tee /tmp/test_logs.txt
           else
@@ -585,6 +592,7 @@ spec:
             ./bin/kms-core-client ${client_logs_arg} --max-iter 2880 -f config.toml $test_command 2>&1 | tee /tmp/test_logs.txt
           fi
           test_exit=${PIPESTATUS[0]}
+          set -e
           end_time=$(date +%s)
           duration=$((end_time - start_time))
           capture_net_snapshot /tmp/net-after.tsv
@@ -727,6 +735,8 @@ spec:
         - name: slack-webhook-volume
           mountPath: /etc/slack
         source: |
+          set -e
+
           apk add --no-cache jq curl
           mkdir -p /mnt/results
           echo '{{inputs.parameters.test-result-preproc-key-gen}}' > /mnt/results/preproc-key-gen.json
