@@ -161,10 +161,12 @@ where
 /// Backfill the multi-scheme verification material for existing deployments.
 ///
 /// Derives every non-ECDSA signature scheme's public verification key and digest
-/// from the node's already-persisted ECDSA signing key and stores them in public
-/// storage, leaving the ECDSA material at its historic location untouched. This
-/// lets a node that predates multi-scheme support gain the new public material on
-/// restart, without re-running key generation.
+/// from the node's root signing seed and stores them in public storage, leaving
+/// the ECDSA material at its historic location untouched. This lets a node that
+/// predates multi-scheme support gain the new public material on restart, without
+/// re-running key generation.
+///
+/// Note: A node with no seed is skipped with a warning rather than backfilled.
 async fn migrate_public_verification_material<PrivS, PubS>(
     priv_storage: &PrivS,
     pub_storage: &mut PubS,
@@ -183,6 +185,14 @@ where
         return Ok(());
     }
     let sk = get_core_signing_key(priv_storage).await?;
+    if !sk.has_root_seed() {
+        tracing::warn!(
+            "No root signing seed present; skipping the multi-scheme verification-material \
+             backfill. This node can only sign under ECDSA until kms-gen-keys has generated \
+             a seed for it."
+        );
+        return Ok(());
+    }
     ensure_scheme_verification_material(pub_storage, &sk).await
 }
 

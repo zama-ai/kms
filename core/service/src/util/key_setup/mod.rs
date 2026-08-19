@@ -38,10 +38,11 @@ use crate::consts::{SIGNING_KEY_ID, signing_material_id};
 use crate::cryptography::signatures::{
     PrivateSigKey, PublicSigKey, SigningSchemeType, gen_sig_keys,
 };
+use crate::cryptography::signing::seed::RootSigningSeed;
 use crate::engine::base::compute_handle;
 use crate::vault::storage::crypto_material::{
-    get_rng, log_data_exists, log_storage_success, read_scheme_verification_key,
-    store_scheme_verification_key,
+    get_core_root_signing_seed, get_rng, log_data_exists, log_storage_success,
+    read_scheme_verification_key, store_scheme_verification_key,
 };
 use crate::vault::storage::{
     Storage, StorageReader, StorageType, delete_at_request_id, file::FileStorage,
@@ -184,6 +185,11 @@ where
             .await
             .map_err(|e| anyhow::anyhow!("Failed to read existing server signing keys: {e}"))?;
 
+    #[cfg(any(test, feature = "testing", feature = "insecure"))]
+    let mut rng = get_rng(deterministic, Some(0));
+    #[cfg(not(any(test, feature = "testing", feature = "insecure")))]
+    let mut rng = get_rng(false, Some(0));
+
     if let Some(sk) = signing_keys_map.get(&*SIGNING_KEY_ID) {
         // If a signing key already exists under this request ID, then only the
         // public verification material may still need to be written
@@ -193,7 +199,9 @@ where
             *SIGNING_KEY_ID,
             "Server signing keys",
         );
-        backfill_verification_material(pub_storage, sk).await?;
+        let seed = ensure_root_signing_seed(priv_storage, &mut rng).await?;
+        let sk = sk.clone().with_root_seed(seed);
+        backfill_verification_material(pub_storage, &sk).await?;
 
         return Ok(false);
     }
@@ -209,11 +217,7 @@ where
     // key. We already checked no signing key exists so if verification material
     // exist it means inconsistent storage.
     ensure_no_scheme_verification_material(pub_storage).await?;
-
-    #[cfg(any(test, feature = "testing", feature = "insecure"))]
-    let mut rng = get_rng(deterministic, Some(0));
-    #[cfg(not(any(test, feature = "testing", feature = "insecure")))]
-    let mut rng = get_rng(false, Some(0));
+    ensure_no_root_signing_seed(priv_storage).await?;
 
     let sk =
         generate_and_store_signing_key_material(pub_storage, priv_storage, &mut rng, false).await?;
@@ -227,13 +231,14 @@ where
     Ok(true)
 }
 
-/// Generates a fresh ECDSA signing key pair and persists it at [`SIGNING_KEY_ID`]
-/// together with its ECDSA verification material (public key, Ethereum address,
-/// private key).
+/// Generates a fresh signing identity and persists it at [`SIGNING_KEY_ID`]: the
+/// root seed, and the ECDSA key derived from it together with its verification
+/// material (public key, Ethereum address, private key).
 ///
-/// Callers must first confirm no signing key already exists and that public
-/// storage holds no leftover verification material (via
-/// [`ensure_no_scheme_verification_material`]).
+/// Callers must first confirm no signing key already exists, that public storage
+/// holds no leftover verification material (via
+/// [`ensure_no_scheme_verification_material`]) and that no seed is left behind
+/// (via [`ensure_no_root_signing_seed`]).
 async fn generate_and_store_signing_key_material<PubS, PrivS, R>(
     pub_storage: &mut PubS,
     priv_storage: &mut PrivS,
@@ -245,7 +250,11 @@ where
     PrivS: Storage,
     R: rand::CryptoRng + rand::Rng,
 {
-    let (pk, sk) = gen_sig_keys(rng);
+    let seed = RootSigningSeed::random(rng);
+    let sk = seed.derive_ecdsa_signing_key().map_err(|e| {
+        anyhow::anyhow!("Failed to derive the ECDSA signing key from the seed: {e}")
+    })?;
+    let pk = sk.verf_key();
 
     // Store public verification key
     store_versioned_at_request_id(
@@ -299,7 +308,94 @@ where
         is_threshold,
     );
 
-    Ok(sk)
+    // Store the root seed last; see the note on the write order above.
+    store_versioned_at_request_id(
+        priv_storage,
+        &SIGNING_KEY_ID,
+        &seed,
+        &PrivDataType::SigningSeed.to_string(),
+    )
+    .await
+    .map_err(|e| anyhow::anyhow!("Failed to store the root signing seed: {e}"))?;
+    log_storage_success(
+        *SIGNING_KEY_ID,
+        priv_storage.info(),
+        "root signing seed",
+        false,
+        is_threshold,
+    );
+
+    Ok(sk.with_root_seed(seed))
+}
+
+/// The node's root signing seed, generating and persisting one if it has none.
+///
+/// This is the **only** place a seed is ever created. It is an explicit,
+/// operator-driven step — running `kms-gen-keys` — and never something a restart
+/// does on its own: the boot migration warns and skips instead, so a node's
+/// post-quantum identity is never minted by an unattended process.
+///
+/// A newly created seed is not yet in the backup vault. The boot pass that copies
+/// it there runs on the next start, so nothing derived from it should be
+/// published to peers until that has happened.
+async fn ensure_root_signing_seed<PrivS, R>(
+    priv_storage: &mut PrivS,
+    rng: &mut R,
+) -> anyhow::Result<RootSigningSeed>
+where
+    PrivS: Storage,
+    R: rand::CryptoRng + rand::Rng,
+{
+    if let Some(seed) = get_core_root_signing_seed(priv_storage).await? {
+        return Ok(seed);
+    }
+
+    let seed = RootSigningSeed::random(rng);
+    store_versioned_at_request_id(
+        priv_storage,
+        &SIGNING_KEY_ID,
+        &seed,
+        &PrivDataType::SigningSeed.to_string(),
+    )
+    .await
+    .map_err(|e| anyhow::anyhow!("Failed to store the root signing seed: {e}"))?;
+    tracing::info!(
+        "Generated a root signing seed under the handle {} in storage \"{}\". \
+         Every non-ECDSA identity of this node derives from it and it is stored \
+         nowhere else, so it must reach the backup vault before anything derived \
+         from it is published.",
+        *SIGNING_KEY_ID,
+        priv_storage.info()
+    );
+    Ok(seed)
+}
+
+/// Reject a storage that holds a root signing seed but no signing key.
+///
+/// The two are generated together, so a seed on its own means an interrupted or
+/// partial wipe. Generating a fresh identity next to it would leave the persisted
+/// seed paired with an ECDSA key it did not produce, and deriving the new key
+/// *from* it would silently resurrect an identity the operator may have meant to
+/// destroy — so neither is done automatically.
+///
+/// Note that `kms-gen-keys --overwrite` does not yet delete the seed, so this is
+/// the state it leaves behind; removing the `SigningSeed` object alongside the
+/// `SigningKey` is the fix.
+async fn ensure_no_root_signing_seed<PrivS: StorageReader>(
+    priv_storage: &PrivS,
+) -> anyhow::Result<()> {
+    if priv_storage
+        .data_exists(&SIGNING_KEY_ID, &PrivDataType::SigningSeed.to_string())
+        .await?
+    {
+        return Err(anyhow_error_and_log(format!(
+            "a root signing seed already exists under the handle {} but the signing key it \
+             belongs to does not; delete the {} object as well before regenerating",
+            *SIGNING_KEY_ID,
+            PrivDataType::SigningSeed
+        )));
+    }
+    Ok(())
 }
 
 /// Completes the public verification material of the already-persisted ECDSA
@@ -1008,8 +1104,15 @@ where
             "Threshold server signing keys",
         );
 
+        // An upgraded node keeps the ECDSA key it is registered under; all it
+        // may still be missing is the root the *other* schemes derive from.
+        let seed = ensure_root_signing_seed(priv_storage, &mut rng)
+            .await
+            .map_err(|e| anyhow::anyhow!("Party {party_id}: {e}"))?;
+        let sk = sk.clone().with_root_seed(seed);
+
         // Even if the signing key exists, its verification material might not
-        backfill_verification_material(pub_storage, sk)
+        backfill_verification_material(pub_storage, &sk)
             .await
             .map_err(|e| anyhow::anyhow!("Party {party_id}: {e}"))?;
 
@@ -1018,7 +1121,7 @@ where
             .data_exists(&SIGNING_KEY_ID, &PubDataType::CACert.to_string())
             .await?
         {
-            ensure_ca_cert_exists(pub_storage, sk, &SIGNING_KEY_ID, subject, tls_wildcard).await?;
+            ensure_ca_cert_exists(pub_storage, &sk, &SIGNING_KEY_ID, subject, tls_wildcard).await?;
         }
 
         return Ok(false);
@@ -1036,6 +1139,9 @@ where
     // key. We already checked no signing key exists so if verification material
     // exist it means inconsistent storage.
     ensure_no_scheme_verification_material(pub_storage)
+        .await
+        .map_err(|e| anyhow::anyhow!("Party {party_id}: {e}"))?;
+    ensure_no_root_signing_seed(priv_storage)
         .await
         .map_err(|e| anyhow::anyhow!("Party {party_id}: {e}"))?;
 

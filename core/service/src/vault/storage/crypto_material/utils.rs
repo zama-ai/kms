@@ -4,8 +4,9 @@
 //! storage management, and common operations needed by the cryptographic material
 //! storage system.
 
-use crate::consts::signing_material_id;
+use crate::consts::{SIGNING_KEY_ID, signing_material_id};
 use crate::cryptography::signatures::{PrivateSigKey, PublicSigKey};
+use crate::cryptography::signing::seed::RootSigningSeed;
 use crate::cryptography::signing::{
     Ed25519VerfKey, HasSigningScheme, MlDsaVerfKey, SigningSchemeType, UnifiedPublicSigKey,
 };
@@ -379,8 +380,43 @@ async fn get_unique<
     Ok(value)
 }
 
+/// The node's signing identity: its ECDSA key with the root seed attached.
+///
+/// A node that has not yet had `kms-gen-keys` generate a seed simply has none
+/// attached: that is ECDSA-only operation, not a failure, and must not stop the
+/// server from booting.
 pub async fn get_core_signing_key<S: StorageReader>(storage: &S) -> anyhow::Result<PrivateSigKey> {
-    get_unique::<S, PrivateSigKey, PrivDataType>(storage, PrivDataType::SigningKey).await
+    let sk = get_unique::<S, PrivateSigKey, PrivDataType>(storage, PrivDataType::SigningKey).await?;
+    match get_core_root_signing_seed(storage).await? {
+        Some(seed) => Ok(sk.with_root_seed(seed)),
+        None => {
+            tracing::warn!(
+                "No root signing seed found in storage \"{}\"; this node can only sign under \
+                 ECDSA. Run kms-gen-keys to generate one.",
+                storage.info()
+            );
+            Ok(sk)
+        }
+    }
+}
+
+/// The node's root signing seed, if it has one.
+///
+/// Absence is a normal state — a node that predates the seed, or one that has not
+/// yet run `kms-gen-keys` — so this returns `None` rather than failing.
+pub async fn get_core_root_signing_seed<S: StorageReader>(
+    storage: &S,
+) -> anyhow::Result<Option<RootSigningSeed>> {
+    let mut seeds: HashMap<RequestId, RootSigningSeed> =
+        read_all_data_versioned(storage, &PrivDataType::SigningSeed.to_string())
+            .await
+            .map_err(|e| {
+                anyhow_error_and_warn_log(format!(
+                    "Failed to read the root signing seed from \"{}\": {e}",
+                    storage.info()
+                ))
+            })?;
+    Ok(seeds.remove(&SIGNING_KEY_ID))
 }
 
 pub async fn get_client_signing_key<S: Storage>(storage: &S) -> anyhow::Result<PrivateSigKey> {
