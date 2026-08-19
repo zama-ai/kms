@@ -22,7 +22,7 @@ use kms_0_15_0::consts::SAFE_SER_SIZE_LIMIT;
 use kms_0_15_0::cryptography::{
     encryption::{Encryption, PkeScheme, PkeSchemeType, UnifiedCipher},
     hybrid_ml_kem::HybridKemCt,
-    signatures::{compute_eip712_signature, gen_sig_keys, SigningSchemeType},
+    signatures::{compute_eip712_signature, gen_sig_keys, SigningSchemeType, UnifiedPublicSigKey},
     signcryption::{
         Signcrypt, UnifiedSigncryption, UnifiedSigncryptionKeyOwned, UnifiedUnsigncryptionKeyOwned,
     },
@@ -52,13 +52,14 @@ use rand::{RngCore, SeedableRng};
 use std::collections::BTreeMap;
 use std::num::Wrapping;
 use std::{borrow::Cow, collections::HashMap, fs::create_dir_all, path::PathBuf};
-use tfhe_1_6_2::safe_serialization::safe_serialize;
-use tfhe_1_6_2::shortint::parameters::{
+use strum::IntoEnumIterator;
+use tfhe_1_7_0::safe_serialization::safe_serialize;
+use tfhe_1_7_0::shortint::parameters::{
     AtomicPatternParameters, Backend, LweCiphertextCount, MetaNoiseSquashingParameters,
     MetaParameters, NoiseSquashingClassicParameters, NoiseSquashingCompressionParameters,
     PBSParameters,
 };
-use tfhe_1_6_2::{
+use tfhe_1_7_0::{
     core_crypto::commons::{
         ciphertext_modulus::CiphertextModulus,
         generators::DeterministicSeeder,
@@ -105,9 +106,9 @@ use backward_compatibility::{
     PublicSigKeyTest, RecoveryValidationMaterialTest, ReleasePCRValuesTest, SchemeDigestsTest,
     ShareTest, SigncryptionPayloadTest, SignedPubDataHandleInternalTest, SoftwareVersionTest,
     StoredTypedSignatureTest, TestMetadataDD, TestMetadataKMS, TestMetadataKmsGrpc,
-    ThresholdFheKeysTest, TypedPlaintextTest, UnifiedCipherTest, UnifiedSigncryptionKeyTest,
-    UnifiedSigncryptionTest, UnifiedUnsigncryptionKeyTest, DISTRIBUTED_DECRYPTION_MODULE_NAME,
-    KMS_GRPC_MODULE_NAME, KMS_MODULE_NAME,
+    ThresholdFheKeysTest, TypedPlaintextTest, UnifiedCipherTest, UnifiedPublicSigKeyTest,
+    UnifiedSigncryptionKeyTest, UnifiedSigncryptionTest, UnifiedUnsigncryptionKeyTest,
+    DISTRIBUTED_DECRYPTION_MODULE_NAME, KMS_GRPC_MODULE_NAME, KMS_MODULE_NAME,
 };
 use hashing_0_15_0::hash_versioned;
 use kms_0_15_0::cryptography::signcryption::SigncryptionPayload;
@@ -189,7 +190,7 @@ fn convert_classic_pbs_parameters(value: ClassicPBSParametersTest) -> ClassicPBS
         },
         // no need to test this as it's from tfhe-rs
         modulus_switch_noise_reduction_params:
-            tfhe_1_6_2::shortint::prelude::ModulusSwitchType::Standard,
+            tfhe_1_7_0::shortint::prelude::ModulusSwitchType::Standard,
     }
 }
 
@@ -202,7 +203,7 @@ fn convert_sns_parameters(value: SwitchAndSquashParametersTest) -> NoiseSquashin
         decomp_level_count: DecompositionLevelCount(value.pbs_level),
         ciphertext_modulus: CiphertextModulus::<u128>::new_native(),
         modulus_switch_noise_reduction_params:
-            tfhe_1_6_2::shortint::prelude::ModulusSwitchType::Standard,
+            tfhe_1_7_0::shortint::prelude::ModulusSwitchType::Standard,
         message_modulus: MessageModulus(value.message_modulus),
         carry_modulus: CarryModulus(value.carry_modulus),
     })
@@ -319,6 +320,12 @@ const PRIV_DATA_TYPE: PrivDataTypeTest = PrivDataTypeTest {
 // KMS test
 const PUBLIC_SIG_KEY_TEST: PublicSigKeyTest = PublicSigKeyTest {
     test_filename: Cow::Borrowed("public_sig_key"),
+    state: 100,
+};
+
+// KMS test
+const UNIFIED_PUBLIC_SIG_KEY_TEST: UnifiedPublicSigKeyTest = UnifiedPublicSigKeyTest {
+    test_filename: Cow::Borrowed("unified_public_sig_key"),
     state: 100,
 };
 
@@ -657,6 +664,31 @@ impl KmsV0_15_0 {
         store_versioned_test!(&public_sig_key, dir, &PUBLIC_SIG_KEY_TEST.test_filename);
 
         TestMetadataKMS::PublicSigKey(PUBLIC_SIG_KEY_TEST)
+    }
+
+    fn gen_unified_public_sig_key(dir: &PathBuf) -> TestMetadataKMS {
+        let mut rng = AesRng::seed_from_u64(UNIFIED_PUBLIC_SIG_KEY_TEST.state);
+        let (_public_sig_key, sig_key) = gen_sig_keys(&mut rng);
+
+        // Primary file: the ECDSA variant.
+        let ecdsa_vk: UnifiedPublicSigKey = sig_key
+            .unified_verifying_key(SigningSchemeType::Ecdsa256k1)
+            .unwrap();
+        store_versioned_test!(&ecdsa_vk, dir, &UNIFIED_PUBLIC_SIG_KEY_TEST.test_filename);
+
+        // Auxiliary files: one per non-ECDSA scheme.
+        for scheme in SigningSchemeType::iter().filter(|s| *s != SigningSchemeType::Ecdsa256k1) {
+            let vk: UnifiedPublicSigKey = sig_key.unified_verifying_key(scheme).unwrap();
+            let aux_filename = format!("{}_{scheme}", UNIFIED_PUBLIC_SIG_KEY_TEST.test_filename);
+            store_versioned_auxiliary!(
+                &vk,
+                dir,
+                &UNIFIED_PUBLIC_SIG_KEY_TEST.test_filename,
+                &aux_filename
+            );
+        }
+
+        TestMetadataKMS::UnifiedPublicSigKey(UNIFIED_PUBLIC_SIG_KEY_TEST)
     }
 
     fn gen_typed_plaintext(dir: &PathBuf) -> TestMetadataKMS {
@@ -1913,6 +1945,7 @@ impl KMSCoreVersion for V0_15_0 {
         vec![
             KmsV0_15_0::gen_private_sig_key(&dir),
             KmsV0_15_0::gen_public_sig_key(&dir),
+            KmsV0_15_0::gen_unified_public_sig_key(&dir),
             KmsV0_15_0::gen_app_key_blob(&dir),
             KmsV0_15_0::gen_key_gen_metadata(&dir),
             KmsV0_15_0::gen_crs_metadata(&dir),
