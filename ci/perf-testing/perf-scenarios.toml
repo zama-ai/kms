@@ -10,12 +10,11 @@
 #   - everything unspecified is filled from [defaults].
 #
 # Not covered here: keygen/crs (one-shot setup tasks, parametrised by workflow inputs).
-# udec-direct is experiment-only and not on this branch.
 
 # Per-rate baseline, applied unless a rate overrides it.
 [defaults]
 duration = 60      # measurement window, seconds
-pause = 10         # inter-rate settle, seconds (run-path only; skipped rates don't wait)
+pause = 10         # post-measurement cooldown, seconds (skipped rates don't wait)
 maxfail = 0        # max failed requests, % of offered
 maxshed = 0        # max shed (rate-limited) requests, % of offered
 pct = 98           # min achieved/target rate, %

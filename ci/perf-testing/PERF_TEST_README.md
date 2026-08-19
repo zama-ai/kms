@@ -24,7 +24,7 @@ file is the source of truth for both public- and user-decrypt rate ladders.
 ```toml
 [defaults]              # applied to every rate unless the rate overrides it
 duration = 60           # measurement window, seconds
-pause = 10              # pause between rate scenarios
+pause = 10              # cooldown after each completed measurement
 maxfail = 0             # max failed requests, % of offered
 maxshed = 0             # max shed (rate-limited) requests, % of offered
 pct = 98                # min achieved/target rate, %

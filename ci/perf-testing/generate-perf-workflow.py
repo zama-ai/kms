@@ -125,7 +125,7 @@ def dag_tasks(kind, scen):
     key, after, rates = scen["key"], scen["after"], scen["rates"]
     out = []
     prev = None
-    for i, r in enumerate(rates):
+    for r in rates:
         name = f"{kind}-rate-{r['rate']}"
         if prev is None:
             deps = [key] + after
@@ -135,7 +135,7 @@ def dag_tasks(kind, scen):
             prevok = f"{{{{tasks.{prev}.outputs.parameters.capacity-ok}}}}"
         deps_str = ", ".join(f'"{d}"' for d in deps)
         allowfail = "true" if r["allowfail"] else "false"
-        pause = r["pause"] if i < len(rates) - 1 else 0
+        pause = r["pause"]
         out += [
             f"- name: {name}",
             f"  dependencies: [{deps_str}]",
