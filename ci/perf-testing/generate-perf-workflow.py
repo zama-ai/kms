@@ -20,6 +20,7 @@ Markers (indentation is taken from the marker line, so blocks land correctly):
   summary-calls   per-kind calls to the decrypt-rate summary function
 """
 import argparse
+import re
 import shlex
 import sys
 import tempfile
@@ -57,6 +58,11 @@ def load_scenarios(path):
 
     resolved = {}
     for kind, scen in scenarios.items():
+        if re.fullmatch(r"[a-z][a-z0-9_-]*", kind) is None:
+            die(
+                f"scenario name {kind!r} must start with a lowercase letter and contain only "
+                "lowercase letters, digits, hyphens, or underscores"
+            )
         if not isinstance(scen, dict):
             die(f"scenario '{kind}' must be a table")
         unknown_scen = set(scen) - {"key", "after", "rates"}
@@ -257,6 +263,33 @@ class LoadScenariosTest(unittest.TestCase):
         )
 
         self.assertEqual(scenarios["pdec"]["after"], ["crs-gen"])
+
+    def test_scenario_names_allow_hyphens_and_underscores(self):
+        scenarios = self.load(
+            """
+            [scenarios.my-perf]
+            key = "udec-key-gen"
+            rates = [{ rate = 1100 }]
+
+            [scenarios.my_perf]
+            key = "udec-key-gen"
+            rates = [{ rate = 1200 }]
+            """
+        )
+
+        self.assertEqual(set(scenarios), {"my-perf", "my_perf"})
+
+    def test_scenario_name_rejects_shell_syntax(self):
+        with self.assertRaises(SystemExit) as error:
+            self.load(
+                """
+                [scenarios."bad; touch injected"]
+                key = "udec-key-gen"
+                rates = [{ rate = 1100 }]
+                """
+            )
+
+        self.assertIn("must start with a lowercase letter", str(error.exception))
 
 
 def main():
