@@ -17,9 +17,10 @@ Markers (indentation is taken from the marker line, so blocks land correctly):
   summary-args    the summary task's test-result arguments
   summary-inputs  the summary template's test-result input params
   summary-echo    the summary's "write each result JSON" lines
-  rate-vars       `<kind>_rates="…"` shell vars for the per-kind summary loops
+  summary-calls   per-kind calls to the decrypt-rate summary function
 """
 import argparse
+import shlex
 import sys
 import tempfile
 import textwrap
@@ -170,9 +171,9 @@ def summary_echo(kind, scen):
     return out
 
 
-def rate_vars(kind, scen):
+def summary_calls(kind, scen):
     rates = " ".join(str(r["rate"]) for r in scen["rates"])
-    return [f'{kind}_rates="{rates}"']
+    return [f"summarize_decrypt_rates {shlex.quote(kind)} {rates}"]
 
 
 BUILDERS = {
@@ -181,7 +182,7 @@ BUILDERS = {
     "summary-args": summary_args,
     "summary-inputs": summary_inputs,
     "summary-echo": summary_echo,
-    "rate-vars": rate_vars,
+    "summary-calls": summary_calls,
 }
 
 

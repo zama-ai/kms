@@ -746,8 +746,6 @@ spec:
           echo '{{inputs.parameters.test-result-crs-gen}}' > /mnt/results/crs-gen.json
           # <<GENERATED:summary-echo>>
 
-          # <<GENERATED:rate-vars>>
-
           echo "=========================================="
           echo "KMS PERFORMANCE SUMMARY"
           echo "=========================================="
@@ -841,17 +839,19 @@ spec:
 
           summarize_decrypt_rates() {
             kind="$1"
-            display="$2"
-            metrics_key="$3"
-            shift 3
+            shift
 
             case "$kind" in
               pdec)
+                display="Public decrypt"
+                metrics_key="public_decrypt"
                 extra_failed_key="verification_failed"
                 timing_key="verification_ms"
                 timing_label="verify"
                 ;;
               udec)
+                display="User decrypt"
+                metrics_key="user_decrypt"
                 extra_failed_key="reconstruction_failed"
                 timing_key="reconstruction_ms"
                 timing_label="recon"
@@ -1031,8 +1031,7 @@ spec:
           done
 
           echo ""
-          summarize_decrypt_rates pdec "Public decrypt" public_decrypt $pdec_rates
-          summarize_decrypt_rates udec "User decrypt" user_decrypt $udec_rates
+          # <<GENERATED:summary-calls>>
 
           finite_total=$((keygen_total + crs_total))
           finite_passed=$((keygen_passed + crs_passed))
