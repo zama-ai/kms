@@ -30,10 +30,19 @@ import unittest
 
 RATE_KEYS = {"rate", "duration", "pause", "maxfail", "maxshed", "pct", "allowfail"}
 DEFAULT_KEYS = {"duration", "pause", "maxfail", "maxshed", "pct", "allowfail"}
+NAME_PATTERN = r"[a-z][a-z0-9_-]*"
 
 
 def die(msg):
     sys.exit(f"generate-perf-workflow: {msg}")
+
+
+def validate_name(name, field):
+    if re.fullmatch(NAME_PATTERN, name) is None:
+        die(
+            f"{field} {name!r} must start with a lowercase letter and contain only "
+            "lowercase letters, digits, hyphens, or underscores"
+        )
 
 
 def load_scenarios(path):
@@ -58,11 +67,7 @@ def load_scenarios(path):
 
     resolved = {}
     for kind, scen in scenarios.items():
-        if re.fullmatch(r"[a-z][a-z0-9_-]*", kind) is None:
-            die(
-                f"scenario name {kind!r} must start with a lowercase letter and contain only "
-                "lowercase letters, digits, hyphens, or underscores"
-            )
+        validate_name(kind, "scenario name")
         if not isinstance(scen, dict):
             die(f"scenario '{kind}' must be a table")
         unknown_scen = set(scen) - {"key", "after", "rates"}
@@ -72,10 +77,13 @@ def load_scenarios(path):
             die(f"scenario '{kind}' needs 'key' and 'rates'")
         if not isinstance(scen["key"], str) or not scen["key"]:
             die(f"scenario '{kind}'.key must be a non-empty string")
+        validate_name(scen["key"], f"scenario '{kind}'.key")
 
         after = scen.get("after", [])
         if not isinstance(after, list) or not all(isinstance(x, str) for x in after):
             die(f"scenario '{kind}'.after must be a list of strings")
+        for i, dependency in enumerate(after):
+            validate_name(dependency, f"scenario '{kind}'.after[{i}]")
 
         if not isinstance(scen["rates"], list) or not scen["rates"]:
             die(f"scenario '{kind}'.rates must be a non-empty array of inline tables")
