@@ -17,7 +17,8 @@ use backward_compatibility::{
     PrssSetupCombinedTest, PublicSigKeyTest, RecoveryValidationMaterialTest, SchemeDigestsTest,
     SigncryptionPayloadTest, SoftwareVersionTest, StoredTypedSignatureTest, TestMetadataKMS,
     TestType, Testcase, ThresholdFheKeysTest, TypedPlaintextTest, UnifiedCipherTest,
-    UnifiedSigncryptionKeyTest, UnifiedSigncryptionTest, UnifiedUnsigncryptionKeyTest, data_dir,
+    UnifiedPublicSigKeyTest, UnifiedSigncryptionKeyTest, UnifiedSigncryptionTest,
+    UnifiedUnsigncryptionKeyTest, data_dir,
     load::{DataFormat, TestFailure, TestResult, TestSuccess},
     tests::{TestedModule, run_all_tests},
 };
@@ -47,7 +48,8 @@ use kms_lib::{
         encryption::{Encryption, PkeScheme, PkeSchemeType, UnifiedCipher, UnifiedPublicEncKey},
         hybrid_ml_kem::HybridKemCt,
         signatures::{
-            PrivateSigKey, PublicSigKey, SigningSchemeType, compute_eip712_signature, gen_sig_keys,
+            PrivateSigKey, PublicSigKey, SigningSchemeType, UnifiedPublicSigKey,
+            compute_eip712_signature, gen_sig_keys,
         },
         signcryption::{
             Signcrypt, SigncryptionPayload, UnifiedSigncryption, UnifiedSigncryptionKeyOwned,
@@ -75,6 +77,7 @@ use std::{
     path::Path,
     sync::Arc,
 };
+use strum::IntoEnumIterator;
 use tfhe::integer::compression_keys::DecompressionKey;
 use threshold_execution::{
     small_execution::prss::PRSSSetup, tfhe_internals::public_keysets::FhePubKeySet,
@@ -519,6 +522,62 @@ fn test_public_sig_key(
     } else {
         Ok(test.success(format))
     }
+}
+
+/// Every signature scheme's [`UnifiedPublicSigKey`] still deserializes and matches
+/// the key derived from the same seeded signing key. The primary file carries the
+/// ECDSA variant; one auxiliary file per non-ECDSA scheme carries that scheme's
+/// variant. Note that public storage persists each scheme's *own* key type, not this
+/// wrapper, so this pins the versioning of the enum rather than a storage format.
+fn test_unified_public_sig_key(
+    dir: &Path,
+    test: &UnifiedPublicSigKeyTest,
+    format: DataFormat,
+) -> Result<TestSuccess, TestFailure> {
+    let mut rng = AesRng::seed_from_u64(test.state);
+    let (_pk, sk) = gen_sig_keys(&mut rng);
+
+    // Primary file: the ECDSA variant.
+    let original: UnifiedPublicSigKey = load_and_unversionize(dir, test, format)?;
+    let expected_ecdsa = sk
+        .unified_verifying_key(SigningSchemeType::Ecdsa256k1)
+        .map_err(|e| {
+            test.failure(
+                format!("could not derive ECDSA verification key: {e}"),
+                format,
+            )
+        })?;
+    if original != expected_ecdsa {
+        return Err(test.failure(
+            format!(
+                "Invalid ECDSA UnifiedPublicSigKey:\n Expected :\n{expected_ecdsa:?}\nGot:\n{original:?}"
+            ),
+            format,
+        ));
+    }
+
+    // Auxiliary files: one per non-ECDSA scheme, keyed by the scheme's name.
+    for scheme in SigningSchemeType::iter().filter(|s| *s != SigningSchemeType::Ecdsa256k1) {
+        let aux_filename = format!("{}_{scheme}", test.test_filename());
+        let stored: UnifiedPublicSigKey =
+            load_and_unversionize_auxiliary(dir, test, &aux_filename, format)?;
+        let expected = sk.unified_verifying_key(scheme).map_err(|e| {
+            test.failure(
+                format!("could not derive {scheme} verification key: {e}"),
+                format,
+            )
+        })?;
+        if stored != expected {
+            return Err(test.failure(
+                format!(
+                    "Invalid {scheme} UnifiedPublicSigKey:\n Expected :\n{expected:?}\nGot:\n{stored:?}"
+                ),
+                format,
+            ));
+        }
+    }
+
+    Ok(test.success(format))
 }
 
 fn test_signcryption_keys(
@@ -1446,6 +1505,9 @@ impl TestedModule for KMS {
         match &testcase.metadata {
             Self::Metadata::PublicSigKey(test) => {
                 test_public_sig_key(test_dir.as_ref(), test, format).into()
+            }
+            Self::Metadata::UnifiedPublicSigKey(test) => {
+                test_unified_public_sig_key(test_dir.as_ref(), test, format).into()
             }
             Self::Metadata::PrivateSigKey(test) => {
                 test_private_sig_key(test_dir.as_ref(), test, format).into()

@@ -99,7 +99,19 @@ The service crate is the main surface area. Key subdirectories under
   (`ecdsa`, the legacy default and EIP-712 home), EdDSA/ed25519 (`eddsa`), and
   ML-DSA/FIPS-204 (`mldsa`) — behind the `SigningScheme` trait and the
   `unified_sign`/`unified_verify` entry points. The historic
-  `cryptography::signatures` path is now a re-export facade.
+  `cryptography::signatures` path is now a re-export facade. A node still
+  persists a single ECDSA signing key; the other schemes' keys are derived from
+  it on demand. Every scheme's public verification material — ECDSA's included —
+  is stored under the handle `consts::signing_material_id(scheme)` gives, in the
+  data types `key_setup::SCHEME_MATERIAL_TYPES` names:
+  `PubDataType::TypedVerfKey` holds the scheme's *own* verification key type
+  (`PublicSigKey`, `Ed25519VerfKey`, `MlDsaVerfKey<P>`), and `TypedVerfAddress` its
+  `address_text()` (`0x`-prefixed hex; for ECDSA the EIP-55 address). 
+  ECDSA's material is *additionally* written to the deprecated `key_setup::LEGACY_ECDSA_MATERIAL_TYPES`
+  (`PubDataType::VerfKey`/`VerfAddress`, a bare `PublicSigKey` and the same
+  address text) for existing external consumers; those two are scheduled for
+  removal and nothing new should read them. Both copies are validated against the
+  signing key when backfilling.
 - [client/](core/service/src/client/) and
   [testing/](core/service/src/testing/) — client-side helpers and
   test-only wiring.
@@ -114,9 +126,16 @@ All under [core/service/src/bin/](core/service/src/bin/):
   initialization.
 - [kms-gen-keys.rs](core/service/src/bin/kms-gen-keys.rs) — generate the server
   signing keys (and, in threshold mode, per-party self-signed CA certificates
-  for mTLS). Reads a keygen TOML with `--config-file`; supports
-  `mock_enclave` in config for local dev when compiled with the `insecure`
-  feature.
+  for mTLS). Also derives and persists every non-ECDSA scheme's public
+  verification material from the ECDSA key. Reads a keygen TOML with
+  `--config-file`; `[keygen] repopulate = true` backfills the per-scheme
+  verification material from an existing ECDSA signing key instead of
+  generating keys (the same backfill runs automatically on server start via
+  `migration::migrate_public_verification_material`), and `[keygen] overwrite =
+  true` deletes the signing key together with the verification material derived
+  from it, since generating a key alongside another key's derived material is
+  rejected. Supports `mock_enclave` in config for local dev when compiled with
+  the `insecure` feature.
 - [kms-custodian.rs](core/service/src/bin/kms-custodian.rs) — custodian-side
   tool for producing and recovering backup shares.
 - [kms-gen-tls-certs.rs](core/service/src/bin/kms-gen-tls-certs.rs) — TLS
