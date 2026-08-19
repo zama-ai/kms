@@ -624,31 +624,31 @@ dependencies = [
 
 [[package]]
 name = "ark-bls12-381"
-version = "0.5.0"
+version = "0.6.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3df4dcc01ff89867cd86b0da835f23c3f02738353aaee7dde7495af71363b8d5"
+checksum = "be2ede2c0c96fa37d5d3484e8a59fec566c4a52b8c84bf993eaa6c67d7225a4c"
 dependencies = [
  "ark-ec",
- "ark-ff 0.5.0",
- "ark-serialize 0.5.0",
- "ark-std 0.5.0",
+ "ark-ff 0.6.0",
+ "ark-serialize 0.6.0",
+ "ark-std 0.6.0",
 ]
 
 [[package]]
 name = "ark-ec"
-version = "0.5.0"
+version = "0.6.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "43d68f2d516162846c1238e755a7c4d131b892b70cc70c471a8e3ca3ed818fce"
+checksum = "8352a2b2aedf6ba2cc38f7520fc51191d518dde96175c729af19f2d059f191c4"
 dependencies = [
  "ahash",
- "ark-ff 0.5.0",
+ "ark-ff 0.6.0",
  "ark-poly",
- "ark-serialize 0.5.0",
- "ark-std 0.5.0",
+ "ark-serialize 0.6.0",
+ "ark-std 0.6.0",
  "educe",
  "fnv",
- "hashbrown 0.15.5",
- "itertools 0.13.0",
+ "hashbrown 0.17.1",
+ "itertools 0.14.0",
  "num-bigint",
  "num-integer",
  "num-traits",
@@ -711,7 +711,6 @@ dependencies = [
  "num-bigint",
  "num-traits",
  "paste",
- "rayon",
  "zeroize",
 ]
 
@@ -729,6 +728,7 @@ dependencies = [
  "educe",
  "num-bigint",
  "num-traits",
+ "rayon",
  "zeroize",
 ]
 
@@ -825,17 +825,17 @@ dependencies = [
 
 [[package]]
 name = "ark-poly"
-version = "0.5.0"
+version = "0.6.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "579305839da207f02b89cd1679e50e67b4331e2f9294a57693e5051b7703fe27"
+checksum = "75f55af10b672002b8d953e230282c51206842e20e5791a94432219b4201de5c"
 dependencies = [
  "ahash",
- "ark-ff 0.5.0",
- "ark-serialize 0.5.0",
- "ark-std 0.5.0",
+ "ark-ff 0.6.0",
+ "ark-serialize 0.6.0",
+ "ark-std 0.6.0",
  "educe",
  "fnv",
- "hashbrown 0.15.5",
+ "hashbrown 0.17.1",
  "rayon",
 ]
 
@@ -866,12 +866,10 @@ version = "0.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3f4d068aaf107ebcd7dfb52bc748f8030e0fc930ac8e360146ca54c1203088f7"
 dependencies = [
- "ark-serialize-derive 0.5.0",
  "ark-std 0.5.0",
  "arrayvec",
  "digest 0.10.7",
  "num-bigint",
- "rayon",
 ]
 
 [[package]]
@@ -880,22 +878,12 @@ version = "0.6.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a74dd304fd536fb95d0a328e72be759209cc496a9da094c5bc56e5fea4f9e86b"
 dependencies = [
- "ark-serialize-derive 0.6.0",
+ "ark-serialize-derive",
  "ark-std 0.6.0",
  "digest 0.10.7",
  "num-bigint",
+ "rayon",
  "serde_with",
-]
-
-[[package]]
-name = "ark-serialize-derive"
-version = "0.5.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "213888f660fddcca0d257e88e54ac05bca01885f258ccdf695bafd77031bb69d"
-dependencies = [
- "proc-macro2",
- "quote",
- "syn 2.0.118",
 ]
 
 [[package]]
@@ -937,7 +925,6 @@ checksum = "246a225cc6131e9ee4f24619af0f19d67761fff15d7ccc22e42b80846e69449a"
 dependencies = [
  "num-traits",
  "rand 0.8.6",
- "rayon",
 ]
 
 [[package]]
@@ -948,6 +935,7 @@ checksum = "367c9c827ed431bff6868b7aa926e05b16eb46603cc8b6e768e4a5553fa1d155"
 dependencies = [
  "num-traits",
  "rand 0.8.6",
+ "rayon",
 ]
 
 [[package]]
@@ -3841,7 +3829,6 @@ version = "0.15.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9229cfe53dfd69f0609a49f65461bd93001ea1ef889cd5529dd176593f5338a1"
 dependencies = [
- "allocator-api2",
  "foldhash 0.1.5",
 ]
 
@@ -3862,6 +3849,7 @@ version = "0.17.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ed5909b6e89a2db4456e54cd5f673791d7eca6732202bbf2a9cc504fe2f9b84a"
 dependencies = [
+ "allocator-api2",
  "foldhash 0.2.0",
  "serde",
  "serde_core",
@@ -7694,8 +7682,7 @@ dependencies = [
 [[package]]
 name = "tfhe"
 version = "1.7.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f341a7a6fe90bf813ecb2b098f04c0e5bca82436ddd1b256e6f1ec68be58da52"
+source = "git+https://github.com/zama-ai/tfhe-rs.git?branch=ns%2Fchore%2Fadd_transciphering_keys#642352e1ac41d8e493b55f0f403808c4dfd0e813"
 dependencies = [
  "aligned-vec",
  "bincode 1.3.3",
@@ -7720,11 +7707,10 @@ dependencies = [
 
 [[package]]
 name = "tfhe-csprng"
-version = "0.9.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a9c677a5732dd133544c5e76e448da8d8bc26c4131e30c50920165472a9d6a3c"
+version = "0.10.0"
+source = "git+https://github.com/zama-ai/tfhe-rs.git?branch=ns%2Fchore%2Fadd_transciphering_keys#642352e1ac41d8e493b55f0f403808c4dfd0e813"
 dependencies = [
- "aes 0.8.4",
+ "aes 0.9.1",
  "getrandom 0.2.17",
  "libc",
  "rayon",
@@ -7735,8 +7721,7 @@ dependencies = [
 [[package]]
 name = "tfhe-fft"
 version = "0.10.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "960a6a2ef1869320837e3d45ab60bbc031c045005eb2578b20fe074a982c2e56"
+source = "git+https://github.com/zama-ai/tfhe-rs.git?branch=ns%2Fchore%2Fadd_transciphering_keys#642352e1ac41d8e493b55f0f403808c4dfd0e813"
 dependencies = [
  "aligned-vec",
  "bytemuck",
@@ -7750,8 +7735,7 @@ dependencies = [
 [[package]]
 name = "tfhe-ntt"
 version = "0.7.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "10650c743ade46b166c698c8349902ed5986784a7db418c51f810bea25f09e3d"
+source = "git+https://github.com/zama-ai/tfhe-rs.git?branch=ns%2Fchore%2Fadd_transciphering_keys#642352e1ac41d8e493b55f0f403808c4dfd0e813"
 dependencies = [
  "aligned-vec",
  "bytemuck",
@@ -7761,8 +7745,7 @@ dependencies = [
 [[package]]
 name = "tfhe-safe-serialize"
 version = "0.1.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "09fc6480b20057adbb99ec2cd510561f181863e57303a32bc2eca5c3ea163097"
+source = "git+https://github.com/zama-ai/tfhe-rs.git?branch=ns%2Fchore%2Fadd_transciphering_keys#642352e1ac41d8e493b55f0f403808c4dfd0e813"
 dependencies = [
  "bincode 1.3.3",
  "serde",
@@ -7772,8 +7755,7 @@ dependencies = [
 [[package]]
 name = "tfhe-versionable"
 version = "0.8.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "41fb1f1e4dd17a046df5be453e82459305e391d66ab2f9067ef3d5f7a04875c9"
+source = "git+https://github.com/zama-ai/tfhe-rs.git?branch=ns%2Fchore%2Fadd_transciphering_keys#642352e1ac41d8e493b55f0f403808c4dfd0e813"
 dependencies = [
  "aligned-vec",
  "num-complex",
@@ -7784,8 +7766,7 @@ dependencies = [
 [[package]]
 name = "tfhe-versionable-derive"
 version = "0.8.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f1a35478dc88bf6978e21c9849cde5fd72bc63331e80732bbb64df2d94bfc688"
+source = "git+https://github.com/zama-ai/tfhe-rs.git?branch=ns%2Fchore%2Fadd_transciphering_keys#642352e1ac41d8e493b55f0f403808c4dfd0e813"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -7794,13 +7775,12 @@ dependencies = [
 
 [[package]]
 name = "tfhe-zk-pok"
-version = "0.8.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "89cc1188ff876ceb0e2611f2d7ed3f46fc007448f68a29e879520efc55f2475e"
+version = "0.9.0"
+source = "git+https://github.com/zama-ai/tfhe-rs.git?branch=ns%2Fchore%2Fadd_transciphering_keys#642352e1ac41d8e493b55f0f403808c4dfd0e813"
 dependencies = [
  "ark-bls12-381",
  "ark-ec",
- "ark-ff 0.5.0",
+ "ark-ff 0.6.0",
  "ark-poly",
  "getrandom 0.2.17",
  "itertools 0.14.0",
