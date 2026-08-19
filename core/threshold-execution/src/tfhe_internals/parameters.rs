@@ -19,7 +19,8 @@ use tfhe::shortint::parameters::{
     ModulusSwitchType, NoiseEstimationMeasureBound, NoiseSquashingClassicParameters,
     NoiseSquashingCompressionParameters, NoiseSquashingParameters, PBSOrder, PBSParameters,
     PolynomialSize, RSigmaFactor, ReRandomizationConfiguration, ReRandomizationParameters,
-    ShortintKeySwitchingParameters, SupportedCompactPkeZkScheme, Variance,
+    ShortintKeySwitchingParameters, SupportedCompactPkeZkScheme, TranscipheringParameters,
+    Variance,
 };
 use tfhe::shortint::{CarryModulus, MaxNoiseLevel, MessageModulus};
 
@@ -252,6 +253,17 @@ impl DKGParams {
     /// [`Self::compression_decompression_params`].
     pub fn compression(&self) -> Option<CompressionParameters> {
         self.meta.compression_parameters
+    }
+
+    /// The parameters of the transciphering key material, or `None` when this
+    /// parameter set does not enable transciphering.
+    ///
+    /// [`TranscipheringParameters::SameAsCompute`] means the transciphering key is a
+    /// bootstrap key built with the compute parameters ([`Self::bk_params`]) from a
+    /// dedicated LWE secret key of dimension [`Self::lwe_dimension`] — the same shape
+    /// as the general-purpose OPRF key, but sampled independently of it.
+    pub fn transciphering_params(&self) -> Option<TranscipheringParameters> {
+        self.meta.transciphering_parameters
     }
 
     pub fn lwe_dimension(&self) -> LweDimension {
@@ -778,6 +790,13 @@ impl DKGParams {
             None => config,
         };
         let config = config.use_dedicated_oprf_key(true);
+        // TODO: the centralized and insecure engines get their transciphering key material for
+        // free from tfhe-rs through this config, but neither is covered by a test that asserts
+        // the key is present and usable.
+        let config = match self.transciphering_params() {
+            Some(transciphering_params) => config.enable_transciphering(transciphering_params),
+            None => config,
+        };
         config.build()
     }
 }
@@ -871,6 +890,20 @@ impl DKGParams {
         }
     }
 
+    /// Noise needed for the dedicated transciphering bootstrap key.
+    ///
+    /// The key is a compute-parameter BK ([`Self::num_needed_noise_bk`]), so the amount is the
+    /// same — but zero when the parameter set does not enable transciphering.
+    pub fn num_needed_noise_transciphering_bk(&self) -> NoiseInfo {
+        match self.transciphering_params() {
+            Some(_) => self.num_needed_noise_bk(),
+            None => NoiseInfo {
+                amount: 0,
+                bound: NoiseBounds::GlweNoise(self.glwe_tuniform_bound()),
+            },
+        }
+    }
+
     pub fn num_needed_noise_msnrk(&self) -> NoiseInfo {
         let amount = match self.classic_pbs().modulus_switch_noise_reduction_params {
             ModulusSwitchType::DriftTechniqueNoiseReduction(p) => p.modulus_switch_zeros_count.0,
@@ -938,6 +971,19 @@ impl DKGParams {
         }
     }
 
+    /// Raw bits needed to sample the dedicated transciphering LWE secret key, or `0` when the
+    /// parameter set does not enable transciphering.
+    ///
+    /// The key has the compute LWE dimension, so this is [`Self::lwe_sk_num_bits_to_sample`]
+    /// gated on the parameter.
+    pub fn transciphering_lwe_sk_num_bits_to_sample(&self) -> usize {
+        if self.transciphering_params().is_some() {
+            self.lwe_sk_num_bits_to_sample()
+        } else {
+            0
+        }
+    }
+
     pub fn lwe_hat_sk_num_bits_to_sample(&self) -> usize {
         if self.has_dedicated_compact_pk_params() {
             let key_size = self.lwe_hat_dimension().0;
@@ -1002,10 +1048,18 @@ impl DKGParams {
                     self.lwe_sk_num_bits_to_sample()
                         + self.lwe_hat_sk_num_bits_to_sample()
                         + self.lwe_sk_num_bits_to_sample() // second sk is for oprf
+                        + self.transciphering_lwe_sk_num_bits_to_sample()
                         + self.glwe_sk_num_bits_to_sample()
                         + self.compression_sk_num_bits_to_sample()
                 }
-                KeyGenSecretKeyConfig::UseExisting => self.lwe_sk_num_bits_to_sample(),
+                // `UseExisting` may have to back-fill the dedicated shares that legacy keysets
+                // lack, so budget for sampling them (see `ensure_oprf_secret_key_share_z128` and
+                // `ensure_transciphering_secret_key_share_z128`). This is a worst case: nothing is
+                // sampled when the shares are already present.
+                KeyGenSecretKeyConfig::UseExisting => {
+                    self.lwe_sk_num_bits_to_sample()
+                        + self.transciphering_lwe_sk_num_bits_to_sample()
+                }
             },
             KeySetConfig::DecompressionOnly => 0,
         }
@@ -1049,6 +1103,7 @@ impl DKGParams {
                 n += self.num_needed_noise_ksk().num_bits_needed();
                 n += self.num_needed_noise_bk().num_bits_needed();
                 n += self.num_needed_noise_bk().num_bits_needed(); // dedicated OPRF bk
+                n += self.num_needed_noise_transciphering_bk().num_bits_needed();
                 n += self.num_needed_noise_pksk().num_bits_needed();
                 n += self.num_needed_noise_compression_key().num_bits_needed();
                 n += self.num_needed_noise_msnrk().num_bits_needed();
@@ -1086,15 +1141,22 @@ impl DKGParams {
                 * (c.packing_ks_glwe_dimension().0 * c.packing_ks_polynomial_size().0)
         });
 
+        // The transciphering BK, when present, bootstraps into the same compute GLWE key as the
+        // regular and OPRF BKs, so it costs exactly one more of them.
+        let num_compute_bks = if self.transciphering_params().is_some() {
+            3
+        } else {
+            2
+        };
         let mut triples = match keyset_config {
             KeySetConfig::Standard(_) => match self.sns() {
-                // regular BK + OPRF BK + SnS BK
+                // regular BK + OPRF BK (+ transciphering BK) + SnS BK
                 Some(sns) => {
                     self.lwe_dimension().0
-                        * (2 * self.glwe_sk_num_bits() + sns.glwe_sk_num_bits_sns())
+                        * (num_compute_bks * self.glwe_sk_num_bits() + sns.glwe_sk_num_bits_sns())
                 }
-                // regular BK + OPRF BK
-                None => 2 * self.lwe_dimension().0 * self.glwe_sk_num_bits(),
+                // regular BK + OPRF BK (+ transciphering BK)
+                None => num_compute_bks * self.lwe_dimension().0 * self.glwe_sk_num_bits(),
             },
             KeySetConfig::DecompressionOnly => 0,
         };
@@ -1153,6 +1215,7 @@ impl DKGParams {
                 &[
                     self.num_needed_noise_bk(), // regular bk
                     self.num_needed_noise_bk(), // oprf bk
+                    self.num_needed_noise_transciphering_bk(),
                     self.num_needed_noise_pksk(),
                     self.num_needed_noise_decompression_key(),
                     self.num_needed_noise_rerand_ksk(),
@@ -1583,6 +1646,7 @@ pub const BC_PARAMS_NIGEL_SNS: DKGParams = DKGParams {
         rerand_configuration: Some(
             tfhe::shortint::parameters::ReRandomizationConfiguration::LegacyDedicatedCompactPublicKeyWithKeySwitch,
         ),
+        transciphering_parameters: None,
     },
     secret_key_deviations: None,
 };
@@ -1685,6 +1749,9 @@ pub const PARAMS_TEST_BK_SNS: DKGParams = DKGParams {
         rerand_configuration: Some(
             tfhe::shortint::parameters::ReRandomizationConfiguration::DerivedCompactPublicKeyWithoutKeySwitch,
         ),
+        // Transciphering is exercised only by the test parameter sets for now; the
+        // production sets above deliberately leave it off.
+        transciphering_parameters: Some(TranscipheringParameters::SameAsCompute),
     },
     secret_key_deviations: None,
 };
@@ -1806,6 +1873,9 @@ pub const PARAMS_TEST_RESHARE: DKGParams = DKGParams {
         rerand_configuration: Some(
             tfhe::shortint::parameters::ReRandomizationConfiguration::DerivedCompactPublicKeyWithoutKeySwitch,
         ),
+        // Transciphering is exercised only by the test parameter sets for now; the
+        // production sets above deliberately leave it off.
+        transciphering_parameters: Some(TranscipheringParameters::SameAsCompute),
     },
     secret_key_deviations: None,
 };
@@ -1832,6 +1902,7 @@ pub const NIST_PARAMS_P8_SNS_LWE: DKGParams = DKGParams {
             compression_parameters: None,
         }),
         rerand_configuration: None,
+        transciphering_parameters: None,
     },
     secret_key_deviations: Some(SecretKeyDeviations {
         log2_failure_proba: -80,
@@ -1861,6 +1932,7 @@ pub const NIST_PARAMS_P32_SNS_LWE: DKGParams = DKGParams {
             compression_parameters: None,
         }),
         rerand_configuration: None,
+        transciphering_parameters: None,
     },
     secret_key_deviations: Some(SecretKeyDeviations {
         log2_failure_proba: -80,
@@ -1894,6 +1966,7 @@ pub const NIST_PARAMS_P8_SNS_FGLWE: DKGParams = DKGParams {
         rerand_configuration: Some(
             tfhe::shortint::parameters::ReRandomizationConfiguration::LegacyDedicatedCompactPublicKeyWithKeySwitch,
         ),
+        transciphering_parameters: None,
     },
     secret_key_deviations: Some(SecretKeyDeviations {
         log2_failure_proba: -80,
@@ -1927,6 +2000,7 @@ pub const NIST_PARAMS_P32_SNS_FGLWE: DKGParams = DKGParams {
         rerand_configuration: Some(
             tfhe::shortint::parameters::ReRandomizationConfiguration::LegacyDedicatedCompactPublicKeyWithKeySwitch,
         ),
+        transciphering_parameters: None,
     },
     secret_key_deviations: Some(SecretKeyDeviations {
         log2_failure_proba: -80,
@@ -2007,6 +2081,7 @@ mod tests {
                     + p.num_needed_noise_ksk().num_bits_needed()
                     + p.num_needed_noise_bk().num_bits_needed()
                     + p.num_needed_noise_bk().num_bits_needed() // dedicated OPRF bk
+                    + p.num_needed_noise_transciphering_bk().num_bits_needed()
                     + p.num_needed_noise_pksk().num_bits_needed()
                     + p.num_needed_noise_compression_key().num_bits_needed()
                     + p.num_needed_noise_msnrk().num_bits_needed()
