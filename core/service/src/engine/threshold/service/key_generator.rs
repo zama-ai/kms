@@ -31,7 +31,7 @@ use tfhe::xof_key_set::CompressedXofKeySet;
 use threshold_execution::{
     endpoints::keygen::{
         OnlineDistributedKeyGen, distributed_decompression_keygen_z128,
-        ensure_oprf_secret_key_share_z128,
+        ensure_oprf_secret_key_share_z128, ensure_transciphering_secret_key_share_z128,
     },
     keyset_config as ddec_keyset_config,
     online::preprocessing::DKGPreprocessing,
@@ -1036,7 +1036,7 @@ impl<
                     )
                 });
 
-                let (client_key, _, _, _, _, _, _, _) = to_hl_client_key(
+                let (client_key, _, _, _, _, _, _, _, _) = to_hl_client_key(
                     &params,
                     req_id.into(),
                     dummy_lwe_secret_key,
@@ -1044,6 +1044,7 @@ impl<
                     None,
                     None,
                     dummy_sns_secret_key,
+                    None,
                     None,
                     None,
                 )?
@@ -1259,6 +1260,13 @@ impl<
             &mut dkg_sessions.session_z128,
         )
         .await?;
+        ensure_transciphering_secret_key_share_z128(
+            &mut existing_private_keys,
+            params,
+            preprocessing,
+            &mut dkg_sessions.session_z128,
+        )
+        .await?;
 
         let compressed_keyset = KG::compressed_keygen_from_existing_private_keyset(
             &mut dkg_sessions.session_z128,
@@ -1303,6 +1311,13 @@ impl<
             )
             .await?;
         ensure_oprf_secret_key_share_z128(
+            &mut existing_private_keys,
+            params,
+            preprocessing,
+            &mut dkg_sessions.session_z128,
+        )
+        .await?;
+        ensure_transciphering_secret_key_share_z128(
             &mut existing_private_keys,
             params,
             preprocessing,
@@ -1596,6 +1611,7 @@ impl<
                         _raw_noise_squashing_compression_key,
                         _raw_rerandomization_key,
                         _raw_oprf_key,
+                        _raw_transciphering_key,
                         _raw_tag,
                     ) = pub_key_set.server_key.clone().into_raw_parts();
                     (

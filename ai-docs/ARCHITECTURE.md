@@ -146,6 +146,14 @@ The primary service is `CoreServiceEndpoint`. Its RPCs group into:
   field are upgraded with the OPRF share absent; `UseExisting` keygen generates
   and persists a fresh OPRF share for such legacy material before regenerating
   public keys.
+  When the parameter set carries transciphering parameters, keygen additionally
+  persists a *second*, independently sampled LWE secret-key share and includes the
+  matching transciphering server key. It is deliberately not derived from the OPRF
+  key, because transciphering key material is handed out to clients. Its public key
+  is generated last, after the OPRF key, to match the generation order tfhe-rs uses
+  for the XOF-seeded keyset. Parameter sets without transciphering parameters
+  generate neither part; legacy keysets upgrade with the share absent and
+  `UseExisting` keygen back-fills it the same way it does the OPRF share.
 - **Decryption** — `PublicDecrypt` (returns plaintext) and `UserDecrypt`
   (user-initiated, EIP-712 authenticated). `PublicDecryptSync` / `UserDecryptSync`
   start a decryption and wait for its result in the same call, so the caller does
@@ -164,7 +172,11 @@ The primary service is `CoreServiceEndpoint`. Its RPCs group into:
   request, whereas a pure set 2 party (a node joining the new context) never held
   the key and logs a warning instead. When resharing legacy key material that
   has no dedicated OPRF secret-key share, the OPRF sub-protocol is skipped and
-  the reshared private keyset keeps that field absent. `DestroyMpcContext` carries
+  the reshared private keyset keeps that field absent; the transciphering share is
+  skipped on the same basis. Which of these optional shares to reshare is decided
+  from the input keyset, and every party must agree: set 1 and both-sets parties
+  read it off their local private keyset, while a pure set 2 party derives it from
+  the verified public server key instead. `DestroyMpcContext` carries
   the context's epoch IDs and erases their secret shares (cascading to the
   existing per-epoch deletion) before forgetting the context, so retiring a
   party set leaves no usable key shares behind; the kms-connector is the source

@@ -53,7 +53,7 @@ use threshold_execution::endpoints::keygen::{
     OnlineDistributedKeyGen, SecureOnlineDistributedKeyGen,
 };
 use threshold_execution::endpoints::reshare_sk::{
-    ResharePreprocRequired, ReshareSecretKeys, SecureReshareSecretKeys,
+    DedicatedKeysPresent, ResharePreprocRequired, ReshareSecretKeys, SecureReshareSecretKeys,
 };
 use threshold_execution::keyset_config::KeySetConfig;
 use threshold_execution::large_execution::offline::SecureLargePreprocessing;
@@ -2615,11 +2615,11 @@ where
             let public_key_set_decompressed = key_ref.pub_keyset_decompressed.clone();
             let old_private_key_set = key_ref.priv_keyset.as_ref().clone();
             let params = key_ref.as_ref().params;
-            let oprf_key_present = old_private_key_set.oprf_secret_key_share.is_some();
+            let dedicated_keys = DedicatedKeysPresent::from_private_keyset(&old_private_key_set);
 
             //Perform preprocessing
             let num_needed_preproc =
-                ResharePreprocRequired::new(num_parties, params, oprf_key_present);
+                ResharePreprocRequired::new(num_parties, params, dedicated_keys);
 
             let span = tracing::info_span!(
                 "RESHARE-PREPROC",
@@ -2737,7 +2737,7 @@ where
                     &mut preprocessing_64,
                     &mut Some(old_private_key_set),
                     params,
-                    oprf_key_present,
+                    dedicated_keys,
                 )
                 .await
                 .unwrap();

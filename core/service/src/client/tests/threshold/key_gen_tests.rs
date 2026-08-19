@@ -1043,6 +1043,7 @@ fn try_reconstruct_shares(
     tfhe::core_crypto::prelude::GlweSecretKeyOwned<u128>,
     Option<NoiseSquashingCompressionPrivateKey>,
     Option<tfhe::core_crypto::prelude::LweSecretKeyOwned<u64>>,
+    Option<tfhe::core_crypto::prelude::LweSecretKeyOwned<u64>>,
 ) {
     use tfhe::core_crypto::prelude::GlweSecretKeyOwned;
     use threshold_execution::tfhe_internals::{
@@ -1178,12 +1179,35 @@ fn try_reconstruct_shares(
         None
     };
 
+    let transciphering_lwe_shares = all_threshold_fhe_keys
+        .iter()
+        .filter_map(|(k, v)| {
+            v.private_keys
+                .transciphering_secret_key_share
+                .clone()
+                .map(|share| (*k, share.convert_to_z64().data))
+        })
+        .collect::<HashMap<_, _>>();
+    let transciphering_lwe_secret_key =
+        if transciphering_lwe_shares.len() == all_threshold_fhe_keys.len() {
+            Some(
+                tfhe::core_crypto::prelude::LweSecretKeyOwned::from_container(reconstruct_bit_vec(
+                    transciphering_lwe_shares,
+                    param.lwe_dimension().0,
+                    threshold,
+                )),
+            )
+        } else {
+            None
+        };
+
     (
         lwe_secret_key,
         glwe_sk,
         sns_glwe_sk,
         sns_compression_private_key,
         oprf_lwe_secret_key,
+        transciphering_lwe_secret_key,
     )
 }
 
@@ -1303,11 +1327,12 @@ pub(crate) async fn verify_keygen_responses(
     }
 
     let threshold = total_num_parties.div_ceil(3) - 1;
-    let (lwe_sk, glwe_sk, sns_glwe_sk, sns_compression_sk, oprf_lwe_sk) = try_reconstruct_shares(
-        internal_client.params,
-        threshold,
-        all_threshold_fhe_keys.clone(),
-    );
+    let (lwe_sk, glwe_sk, sns_glwe_sk, sns_compression_sk, oprf_lwe_sk, transciphering_lwe_sk) =
+        try_reconstruct_shares(
+            internal_client.params,
+            threshold,
+            all_threshold_fhe_keys.clone(),
+        );
 
     let client_key = to_hl_client_key(
         &internal_client.params,
@@ -1319,6 +1344,7 @@ pub(crate) async fn verify_keygen_responses(
         Some(sns_glwe_sk),
         sns_compression_sk,
         oprf_lwe_sk,
+        transciphering_lwe_sk,
     )
     .unwrap();
 
@@ -1922,7 +1948,7 @@ async fn run_threshold_compressed_keygen_from_existing(
                 CryptoMaterialReader::read_from_storage(storage, &keygen_id_2).await?;
 
             let (pk, server_key) = compressed_keyset.decompress().into_raw_parts();
-            let (_, _, _, _, _, _, _, oprf_key, _) = server_key.clone().into_raw_parts();
+            let (_, _, _, _, _, _, _, oprf_key, _, _) = server_key.clone().into_raw_parts();
             assert!(
                 oprf_key.is_some(),
                 "Party {party_id}: compressed UseExisting keygen must embed a dedicated OPRF key"
@@ -2151,6 +2177,7 @@ async fn remove_oprf_from_existing_keyset(
             noise_squashing_compression_key,
             cpk_re_randomization_key,
             oprf_key,
+            transciphering_key,
             tag,
         ) = server_key.into_raw_parts();
         assert!(
@@ -2166,6 +2193,7 @@ async fn remove_oprf_from_existing_keyset(
             noise_squashing_compression_key,
             cpk_re_randomization_key,
             None,
+            transciphering_key,
             tag,
         );
 
