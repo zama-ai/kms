@@ -238,7 +238,7 @@ class LoadScenariosTest(unittest.TestCase):
             {scenarios}
             """
         )
-        with tempfile.NamedTemporaryFile("w", suffix=".toml") as config:
+        with tempfile.NamedTemporaryFile("w", suffix=".toml", encoding="utf-8") as config:
             config.write(contents)
             config.flush()
             return load_scenarios(config.name)
@@ -316,13 +316,13 @@ def main():
         ap.error("--scenarios and --template are required unless --self-test is used")
 
     scenarios = load_scenarios(args.scenarios)
-    with open(args.template) as f:
+    with open(args.template, encoding="utf-8") as f:
         rendered = render(f.read(), scenarios)
 
     if args.out == "-":
         sys.stdout.write(rendered)
     else:
-        with open(args.out, "w") as f:
+        with open(args.out, "w", encoding="utf-8") as f:
             f.write(rendered)
     n = sum(len(s["rates"]) for s in scenarios.values())
     sys.stderr.write(f"generate-perf-workflow: expanded {n} rates across {len(scenarios)} scenario(s)\n")
