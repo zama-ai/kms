@@ -1,0 +1,90 @@
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: ena-probe
+  namespace: kms-ci
+spec:
+  selector:
+    matchLabels:
+      app: ena-probe
+  template:
+    metadata:
+      labels:
+        app: ena-probe
+    spec:
+      hostNetwork: true
+      dnsPolicy: ClusterFirstWithHostNet
+      terminationGracePeriodSeconds: 1
+
+      nodeSelector:
+        karpenter.sh/nodepool: kms-pool
+
+      tolerations:
+        - key: karpenter.sh/nodepool
+          operator: Equal
+          value: kms-pool
+          effect: NoSchedule
+
+      containers:
+        - name: collector
+          image: public.ecr.aws/amazonlinux/amazonlinux:2023
+          securityContext:
+            allowPrivilegeEscalation: false
+          env:
+            - name: NODE_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: spec.nodeName
+          command: ["/bin/bash", "-lc"]
+          args:
+            - |
+              set -euo pipefail
+              dnf -q -y install ethtool
+
+              counter() {
+                ethtool -S "$1" 2>/dev/null |
+                  awk -v key="$2:" '
+                    $1 == key { print $2; found = 1 }
+                    END { if (!found) print 0 }
+                  '
+              }
+
+              while true; do
+                timestamp="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+                found_ena=false
+
+                for path in /sys/class/net/*; do
+                  iface="${path##*/}"
+
+                  if ethtool -i "$iface" 2>/dev/null |
+                       awk '$1 == "driver:" && $2 == "ena" { found = 1 }
+                            END { exit !found }'; then
+                    found_ena=true
+
+                    printf '%s node=%s iface=%s rx_bytes=%s tx_bytes=%s bw_in=%s bw_out=%s pps=%s conntrack=%s linklocal=%s\n' \
+                      "$timestamp" \
+                      "$NODE_NAME" \
+                      "$iface" \
+                      "$(cat "/sys/class/net/$iface/statistics/rx_bytes")" \
+                      "$(cat "/sys/class/net/$iface/statistics/tx_bytes")" \
+                      "$(counter "$iface" bw_in_allowance_exceeded)" \
+                      "$(counter "$iface" bw_out_allowance_exceeded)" \
+                      "$(counter "$iface" pps_allowance_exceeded)" \
+                      "$(counter "$iface" conntrack_allowance_exceeded)" \
+                      "$(counter "$iface" linklocal_allowance_exceeded)"
+                  fi
+                done
+
+                if [[ "$found_ena" == false ]]; then
+                  echo "$timestamp node=$NODE_NAME no-ena-interface-found"
+                fi
+
+                sleep 5
+              done
+          resources:
+            requests:
+              cpu: 10m
+              memory: 64Mi
+            limits:
+              cpu: 100m
+              memory: 2Gi
