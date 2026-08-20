@@ -423,6 +423,45 @@ jobs:
             --kms-chart-version "${KMS_CHART_VERSION}" \
             --tkms-infra-version "${TKMS_INFRA_CHART_VERSION}"
 
+      - name: Start ENA network probes
+        run: |
+          kubectl apply -f ci/perf-testing/ena-probe.yml
+          kubectl rollout status daemonset/ena-probe \
+            -n "${NAMESPACE}" \
+            --timeout=5m
+
+          # A running container may still be installing ethtool. Require an
+          # actual counter sample from every probe before starting the test.
+          for attempt in {1..36}; do
+            mapfile -t probe_pods < <(
+              kubectl get pods -n "${NAMESPACE}" -l app=ena-probe \
+                -o jsonpath='{range .items[*]}{.metadata.name}{"\n"}{end}'
+            )
+            desired="$(
+              kubectl get daemonset ena-probe -n "${NAMESPACE}" \
+                -o jsonpath='{.status.desiredNumberScheduled}'
+            )"
+            sampled=0
+            for pod in "${probe_pods[@]}"; do
+              if kubectl logs -n "${NAMESPACE}" "${pod}" --tail=1 2>/dev/null \
+                | grep -q 'node='; then
+                sampled=$((sampled + 1))
+              fi
+            done
+            if [[ "${desired}" -gt 0 && "${#probe_pods[@]}" -eq "${desired}" && "${sampled}" -eq "${desired}" ]]; then
+              echo "ENA probes are sampling on all ${desired} selected nodes"
+              kubectl get pods -n "${NAMESPACE}" -l app=ena-probe -o wide
+              break
+            fi
+            if [[ "${attempt}" -eq 36 ]]; then
+              echo "ERROR: only ${sampled}/${desired} ENA probes produced a sample"
+              kubectl get pods -n "${NAMESPACE}" -l app=ena-probe -o wide
+              kubectl logs -n "${NAMESPACE}" -l app=ena-probe --prefix --tail=20 || true
+              exit 1
+            fi
+            sleep 5
+          done
+
       - name: Capture network diagnostics before perf
         if: always()
         run: |
@@ -648,6 +687,44 @@ jobs:
           retention-days: 30 # Keep logs for 30 days
           if-no-files-found: warn # Only warn if no log files are found
 
+      - name: Collect ENA network probe data
+        if: always()
+        run: |
+          mkdir -p ena-probe-results
+          kubectl get daemonset ena-probe -n "${NAMESPACE}" -o yaml \
+            > ena-probe-results/daemonset.yaml 2>&1 || true
+          kubectl get pods -n "${NAMESPACE}" -l app=ena-probe -o wide \
+            > ena-probe-results/pods.txt 2>&1 || true
+          kubectl get pods -n "${NAMESPACE}" -l app=ena-probe -o json \
+            > ena-probe-results/pods.json 2>&1 || true
+          kubectl get pods -n "${NAMESPACE}" -o wide \
+            > ena-probe-results/workload-pods.txt 2>&1 || true
+          kubectl get pods -n "${NAMESPACE}" -o json \
+            > ena-probe-results/workload-pods.json 2>&1 || true
+          kubectl get nodes \
+            -L node.kubernetes.io/instance-type,karpenter.sh/nodepool \
+            > ena-probe-results/nodes.txt 2>&1 || true
+
+          mapfile -t probe_pods < <(
+            kubectl get pods -n "${NAMESPACE}" -l app=ena-probe \
+              -o jsonpath='{range .items[*]}{.metadata.name}{"\n"}{end}' 2>/dev/null
+          )
+          for pod in "${probe_pods[@]}"; do
+            kubectl logs -n "${NAMESPACE}" "${pod}" \
+              > "ena-probe-results/${pod}.log" 2>&1 || true
+            kubectl describe pod -n "${NAMESPACE}" "${pod}" \
+              > "ena-probe-results/${pod}-describe.txt" 2>&1 || true
+          done
+
+      - name: Upload ENA network probe data
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: ena-probe-results
+          path: ena-probe-results/
+          retention-days: 30
+          if-no-files-found: warn
+
       # ======================================================================
       # CLEANUP
       # ======================================================================
@@ -658,6 +735,10 @@ jobs:
           # Clean up all resources to avoid unnecessary costs
           ###################################################################
           echo "Starting cleanup of KMS resources..."
+
+          # Remove the host-network probe before releasing the KMS nodes.
+          kubectl delete daemonset ena-probe -n "${NAMESPACE}" \
+            --ignore-not-found=true || true
 
           # Uninstall all Helm releases in the namespace
           echo "Uninstalling all Helm releases in namespace ${NAMESPACE}..."
