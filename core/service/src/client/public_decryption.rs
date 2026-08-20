@@ -1,7 +1,7 @@
 use crate::anyhow_error_and_log;
 use crate::client::client_wasm::Client;
 use crate::engine::validation::PublicDecTrustedValidationContext;
-use crate::engine::validation::validate_public_decrypt_responses_against_request;
+use crate::engine::validation::validate_public_decrypt_responses;
 use alloy_sol_types::Eip712Domain;
 use kms_grpc::identifiers::ContextId;
 use kms_grpc::kms::v1::{PublicDecryptionRequest, PublicDecryptionResponse, TypedCiphertext};
@@ -101,11 +101,8 @@ impl Client {
         // abort the whole decryption.
         // The plaintext result is a consensus value read from the established
         // invariants, never from one contribution.
-        let partitioned = validate_public_decrypt_responses_against_request(
-            &trusted_ctx,
-            min_agree_count,
-            agg_resp,
-        )?;
+        let partitioned =
+            validate_public_decrypt_responses(&trusted_ctx, min_agree_count, agg_resp)?;
 
         Ok(partitioned.invariants.plaintexts)
     }

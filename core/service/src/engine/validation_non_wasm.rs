@@ -78,8 +78,6 @@ impl<'a> PublicDecTrustedValidationContext<'a> {
 
 const ERR_VALIDATE_PUBLIC_DECRYPTION_EMPTY_CTS: &str =
     "No ciphertexts in public decryption request";
-const ERR_VALIDATE_PUBLIC_DECRYPTION_NOT_ENOUGH_RESP: &str =
-    "Not enough correct public decryption responses to decrypt the data!";
 const ERR_VALIDATE_PUBLIC_DECRYPTION_NO_RESP: &str =
     "No responses to validate in public decryption!";
 const ERR_VALIDATE_PUBLIC_DECRYPTION_BAD_CT_COUNT: &str =
@@ -433,9 +431,8 @@ pub(crate) fn verify_user_decrypt_eip712(
     Ok(domain)
 }
 
-/// Check that a single (untrusted) public-decryption `response` agrees with the established
-/// consensus [`PublicDecryptionInvariants`] on the static parts of the payload (request id and
-/// plaintexts) and carries a valid signature from one of the trusted `server_pks`.
+/// Check that a single (untrusted) public-decryption `response` carries a valid signature from the
+/// supplied server `verification_key` — its **authenticity** only.
 ///
 /// Note that `eip712_params` needs to be optional because for some tests, e.g.,
 /// when the core-client just tried to query for a decryption result without knowing the
@@ -449,44 +446,14 @@ pub(crate) fn verify_user_decrypt_eip712(
 /// responses without a single one being able to abort the whole validation.
 ///
 /// `verification_key` is the response's key, already deserialized by the caller
-/// ([`classify_public_decrypt_response`]) so it is not parsed twice.
-fn validate_public_decrypt_meta_data(
+/// ([`authenticate_public_decrypt_response`]) so it is not parsed twice.
+fn verify_public_decrypt_signature(
     ext_handles_bytes: &[Vec<u8>],
-    invariants: &PublicDecryptionInvariants,
     response: &PublicDecryptionResponsePayload,
     verification_key: &PublicSigKey,
     signature: &[u8],
     eip712_params: Option<&Eip712VerificationParams>,
 ) -> bool {
-    // The response must be bound to the same request as the consensus. `invariants.request_id` is
-    // the parsed link established from the pivot; parse the (untrusted) response's id the same way,
-    // treating an unparseable id as a mismatch.
-    let response_request_id: Option<RequestId> = match &response.request_id {
-        Some(id) => match id.try_into() {
-            Ok(parsed) => Some(parsed),
-            Err(e) => {
-                tracing::warn!("Could not parse request ID in public decryption response: {e}");
-                return false;
-            }
-        },
-        None => None,
-    };
-    if invariants.request_id != response_request_id {
-        tracing::warn!(
-            "Response from server with verification key {:?} gave request ID {:?}, whereas the consensus request ID is {:?}",
-            response.verification_key,
-            response_request_id,
-            invariants.request_id,
-        );
-        return false;
-    }
-
-    // the plaintexts should match
-    if invariants.plaintexts != response.plaintexts {
-        tracing::warn!("Plaintext does not match the consensus.");
-        return false;
-    }
-
     let sig = match k256::ecdsa::Signature::from_slice(signature) {
         Ok(sig) => Signature::from_ecdsa(sig),
         Err(e) => {
@@ -647,8 +614,12 @@ pub(crate) enum PublicRejectReason {
     ExtraDataMismatch,
     MalformedVerificationKey,
     UnknownOrDuplicateVerificationKey,
-    MetadataOrSignatureMismatch,
-    SlotCountMismatch,
+    /// Failed the authenticity check: the internal ECDSA or external EIP-712 signature did not
+    /// verify under the (known, unique) server key. Produced during the authentication pass.
+    SignatureMismatch,
+    /// Authenticated, but the payload disagreed with the consensus invariants (request id or
+    /// plaintexts). Produced during the match pass, once the pivot has been established.
+    InvariantMismatch,
 }
 
 #[derive(Debug)]
@@ -666,6 +637,7 @@ pub(crate) struct PartitionedPublicResponses {
     pub rejected: Vec<RejectedPublicResponse>,
 }
 
+#[cfg(test)]
 fn find_most_common_invariants_pubdec(
     min_occurence: usize,
     agg_resp: &[PublicDecryptionResponse],
@@ -679,25 +651,24 @@ fn find_most_common_invariants_pubdec(
     )
 }
 
-/// Classify a single (untrusted) public-decryption response against the majority pivot.
+/// Authenticate a single (untrusted) public-decryption response: check its extra data, match its
+/// verification key against a **unique** trusted server key, and verify its signature — so on
+/// success the party identity is *verified*, not merely claimed. Agreement with the consensus
+/// (request id, plaintexts) is **not** checked here; that is a single invariants equality in the
+/// match pass of [`partition_public_decrypt_responses`], performed only once the pivot has been
+/// established over the authenticated payloads.
+///
+/// On success the deserialized `verification_key` is inserted into `verification_keys`, so the caller
+/// keeps at most one payload per server (a duplicate from the same server is rejected).
 ///
 /// This is **infallible w.r.t. the response content**: every failure mode is a typed
-/// [`PublicRejectReason`], never a propagated error.
-/// A malformed verification key (previously `deserialize_slice(..)?`) and any signature /
-/// metadata problem yield a rejection and do not abort the whole batch.
-fn classify_public_decrypt_response(
+/// [`PublicRejectReason`], never a propagated error, so no single response can abort the batch.
+fn authenticate_public_decrypt_response(
     trusted_ctx: &PublicDecTrustedValidationContext,
-    invariants: &PublicDecryptionInvariants,
     cur_resp: &PublicDecryptionResponse,
-    verification_keys: &mut HashSet<PublicSigKey>,
-) -> Result<AcceptedPublicResponse, PublicRejectReason> {
-    let cur_payload = match &cur_resp.payload {
-        Some(cur_payload) => cur_payload,
-        None => {
-            tracing::warn!("No payload in current public decryption response from server!");
-            return Err(PublicRejectReason::MissingPayload);
-        }
-    };
+    cur_payload: &PublicDecryptionResponsePayload,
+    verification_keys_seen: &mut HashSet<PublicSigKey>,
+) -> Result<(), PublicRejectReason> {
     if cur_payload.request_id.is_none() {
         tracing::warn!("A request ID must be present!");
         return Err(PublicRejectReason::MissingRequestId);
@@ -723,10 +694,11 @@ fn classify_public_decrypt_response(
         }
     };
     let mut found_new_verf_key = false;
-    // Validate the verf key
+    // Validate the verf key: it must match a trusted server key and must not have been seen before
+    // (keeping at most one authenticated payload per server).
     for (cur_id, key_to_check_against) in trusted_ctx.server_pks {
         if key_to_check_against == &cur_verf_key {
-            if verification_keys.contains(&cur_verf_key) {
+            if verification_keys_seen.contains(&cur_verf_key) {
                 tracing::warn!(
                     "Verification key {} for server {} has already been found. This means at least two servers are using the same verification key, which should not happen!",
                     hex::encode(&cur_payload.verification_key),
@@ -747,8 +719,8 @@ fn classify_public_decrypt_response(
         return Err(PublicRejectReason::UnknownOrDuplicateVerificationKey);
     }
 
-    // Validate that all the responses agree with the pivot on the static parts of the
-    // response
+    // Verify the signature(s) carried by the response. This is pure authenticity and does not
+    // depend on the (not-yet-established) consensus.
     let eip712_params = trusted_ctx
         .eip712_domain
         .map(|domain| Eip712VerificationParams {
@@ -762,30 +734,34 @@ fn classify_public_decrypt_response(
     if cur_resp.signature.is_empty() {
         tracing::warn!("Response carries no ECDSA signature to verify!");
     }
-    if !validate_public_decrypt_meta_data(
+    if !verify_public_decrypt_signature(
         trusted_ctx.ext_handles_bytes,
-        invariants,
         cur_payload,
         &cur_verf_key,
         &cur_resp.signature,
         eip712_params.as_ref(),
     ) {
-        tracing::warn!("Some server did not provide the proper response!");
-        return Err(PublicRejectReason::MetadataOrSignatureMismatch);
+        tracing::warn!("Some server did not provide a properly signed response!");
+        return Err(PublicRejectReason::SignatureMismatch);
     }
 
-    if invariants.plaintexts.len() != cur_payload.plaintexts.len() {
-        tracing::warn!("Plaintext count mismatch!");
-        return Err(PublicRejectReason::SlotCountMismatch);
-    }
-
-    // add the verified response
-    verification_keys.insert(cur_verf_key);
-    Ok(AcceptedPublicResponse)
+    // Record the authenticated key so a duplicate from the same server is dropped.
+    verification_keys_seen.insert(cur_verf_key);
+    Ok(())
 }
 
-/// Partition untrusted public-decryption responses into (accepted, rejected) against invariants
-/// established from the majority pivot.
+/// Partition untrusted public-decryption responses into (accepted, rejected).
+///
+/// The flow mirrors user decryption: **authenticate → agree → match**, so that consensus can never
+/// be skewed by duplicate or unauthenticated responses:
+/// 1. Authenticate every response (identity + signature) and keep at most one payload per server.
+/// 2. Establish the consensus invariants by majority vote over those authenticated, de-duplicated
+///    payloads only — a Byzantine party gets exactly one vote, and unauthenticated payloads never
+///    get to vote at all.
+/// 3. Discard every authenticated payload that does not match the consensus invariants.
+///
+/// In addition, if the original request is provided (via `trusted_ctx.request`)
+/// the response matches the original request
 ///
 /// Infallible w.r.t. adversarial per-response content: any malformed/inconsistent response is
 /// placed in `rejected`, never propagated. Returns `Err` ONLY when the honest invariant set cannot
@@ -796,9 +772,11 @@ fn classify_public_decrypt_response(
 ///
 /// # Arguments
 /// * `trusted_ctx` — Trusted client-side configuration and request.
+/// * `min_agree_count` — Trusted minimum number of agreeing responses required.
 /// * `agg_resp` — Untrusted aggregated server responses received over the network.
-fn partition_public_decrypt_responses(
+pub(crate) fn validate_public_decrypt_responses(
     trusted_ctx: &PublicDecTrustedValidationContext,
+    min_agree_count: u32,
     agg_resp: &[PublicDecryptionResponse],
 ) -> anyhow::Result<PartitionedPublicResponses> {
     if agg_resp.is_empty() {
@@ -808,29 +786,71 @@ fn partition_public_decrypt_responses(
         anyhow::bail!("No servers configured in trusted public decryption context");
     }
 
-    // Select the pivot from the majority (≥ t+1 identical invariants). The selector returns the
-    // consensus invariants directly — the vote key *is* the result.
+    let mut rejected = Vec::new();
+
+    // Authenticate every response (identity + signature) and keep at most one payload per
+    // server.
+    let mut verification_keys_seen = HashSet::new();
+    let mut authenticated_payloads: Vec<&PublicDecryptionResponsePayload> =
+        Vec::with_capacity(agg_resp.len());
+    for cur_resp in agg_resp {
+        let Some(cur_payload) = cur_resp.payload.as_ref() else {
+            tracing::warn!("No payload in current public decryption response from server!");
+            rejected.push(RejectedPublicResponse {
+                reason: PublicRejectReason::MissingPayload,
+            });
+            continue;
+        };
+        match authenticate_public_decrypt_response(
+            trusted_ctx,
+            cur_resp,
+            cur_payload,
+            &mut verification_keys_seen,
+        ) {
+            Ok(()) => authenticated_payloads.push(cur_payload),
+            Err(reason) => rejected.push(RejectedPublicResponse { reason }),
+        }
+    }
+
+    if authenticated_payloads.len() < min_agree_count as usize {
+        anyhow::bail!(
+            "Not enough authenticated public decryption responses: {} < {}",
+            authenticated_payloads.len(),
+            min_agree_count
+        );
+    }
+
+    //  Establish the consensus invariants by majority vote over the authenticated, de-duplicated
+    //  payloads only (the vote key *is* the invariants). The selector returns the winning
+    //  invariants directly — there is nothing to re-derive from a payload.
     let min_occurence = (trusted_ctx.server_pks.len() - 1) / 3 + 1; // note that this is floored division
-    let invariants = match find_most_common_invariants_pubdec(min_occurence, agg_resp) {
-        Some(inner) => inner,
-        None => anyhow::bail!("Cannot find public decryption pivot"),
-    };
+    let invariants =
+        match crate::engine::validation::select_most_common::<_, PublicDecryptionInvariants>(
+            min_occurence,
+            authenticated_payloads.iter().map(|payload| Some(*payload)),
+        ) {
+            Some(inner) => inner,
+            None => anyhow::bail!("Cannot find public decryption pivot"),
+        };
     invariants.sanity_check(trusted_ctx)?;
 
-    // Classify every response against the invariants.
-    // No single response can abort.
-    let mut accepted = Vec::with_capacity(agg_resp.len());
-    let mut rejected = Vec::new();
-    let mut verification_keys = HashSet::new();
-    for cur_resp in agg_resp {
-        match classify_public_decrypt_response(
-            trusted_ctx,
-            &invariants,
-            cur_resp,
-            &mut verification_keys,
-        ) {
-            Ok(accepted_resp) => accepted.push(accepted_resp),
-            Err(reason) => rejected.push(RejectedPublicResponse { reason }),
+    //  Keep only the authenticated responses whose payload matches the consensus invariants. This
+    //  single equality subsumes the request-id and plaintexts checks — they are all just the
+    //  fields of `PublicDecryptionInvariants`.
+    let mut accepted = Vec::with_capacity(authenticated_payloads.len());
+    for cur_payload in authenticated_payloads {
+        match PublicDecryptionInvariants::try_from(cur_payload.clone()) {
+            Ok(resp_invariants) if resp_invariants == invariants => {
+                accepted.push(AcceptedPublicResponse);
+            }
+            _ => {
+                tracing::warn!(
+                    "A public decryption response does not match the consensus invariants"
+                );
+                rejected.push(RejectedPublicResponse {
+                    reason: PublicRejectReason::InvariantMismatch,
+                });
+            }
         }
     }
 
@@ -851,36 +871,15 @@ fn partition_public_decrypt_responses(
                 .collect::<Vec<_>>(),
         );
     }
-    Ok(partitioned)
-}
 
-/// Validates the aggregated decryption response by checking:
-/// - The responses agree on metadata like shares needed
-/// - Signatures on responses are valid
-/// - That at least [min_agree_count] agree on the same payload
-///
-/// In addition, if the original request is provided (via `trusted_ctx.request`):
-/// - The response matches the original request
-///
-/// This is a thin wrapper over [`partition_public_decrypt_responses`] that additionally enforces
-/// the `min_agree_count` majority threshold and returns the resulting partition (whose
-/// `invariants.plaintexts` is the agreed decryption result).
-///
-/// # Arguments
-/// * `trusted_ctx` — Trusted client-side configuration and request.
-/// * `min_agree_count` — Trusted minimum number of agreeing responses required.
-/// * `agg_resp` — Untrusted aggregated server responses received over the network.
-pub(crate) fn validate_public_decrypt_responses_against_request(
-    trusted_ctx: &PublicDecTrustedValidationContext,
-    min_agree_count: u32,
-    agg_resp: &[PublicDecryptionResponse],
-) -> anyhow::Result<PartitionedPublicResponses> {
-    let partitioned = partition_public_decrypt_responses(trusted_ctx, agg_resp)?;
     if partitioned.accepted.len() < min_agree_count as usize {
-        return Err(anyhow_error_and_log(
-            ERR_VALIDATE_PUBLIC_DECRYPTION_NOT_ENOUGH_RESP,
-        ));
+        anyhow::bail!(
+            "Not enough agreeing public decryption responses: {} < {}",
+            partitioned.accepted.len(),
+            min_agree_count
+        );
     }
+
     Ok(partitioned)
 }
 
@@ -1227,7 +1226,7 @@ mod tests {
             },
             validation_non_wasm::{
                 ERR_VALIDATE_PUBLIC_DECRYPTION_NO_RESP, find_most_common_invariants_pubdec,
-                partition_public_decrypt_responses,
+                validate_public_decrypt_responses,
             },
         },
     };
@@ -1235,11 +1234,9 @@ mod tests {
     use super::{
         DSEP_PUBLIC_DECRYPTION, ERR_VALIDATE_PUBLIC_DECRYPTION_BAD_FHE_TYPE,
         ERR_VALIDATE_PUBLIC_DECRYPTION_BAD_LINK, ERR_VALIDATE_PUBLIC_DECRYPTION_EMPTY_CTS,
-        ERR_VALIDATE_PUBLIC_DECRYPTION_NOT_ENOUGH_RESP, ERR_VALIDATE_USER_DECRYPTION_EMPTY_CTS,
-        Eip712VerificationParams, PublicDecTrustedValidationContext, unpack_public_decrypt_req,
-        unpack_user_decrypt_req, validate_public_decrypt_meta_data,
-        validate_public_decrypt_responses_against_request, verify_max_num_bits,
-        verify_user_decrypt_eip712,
+        ERR_VALIDATE_USER_DECRYPTION_EMPTY_CTS, Eip712VerificationParams,
+        PublicDecTrustedValidationContext, unpack_public_decrypt_req, unpack_user_decrypt_req,
+        verify_max_num_bits, verify_public_decrypt_signature, verify_user_decrypt_eip712,
     };
 
     /// Sign a public decryption result the way the server does, under ECDSA only.
@@ -1312,8 +1309,8 @@ mod tests {
         assert!(resolve_signing_schemes(&[9999]).is_err());
     }
 
-    /// The verification key a response carries, deserialized — as `classify_public_decrypt_response`
-    /// does before calling `validate_public_decrypt_meta_data`.
+    /// The verification key a response carries, deserialized — as `authenticate_public_decrypt_response`
+    /// does before calling `verify_public_decrypt_signature`.
     fn vk_of(payload: &PublicDecryptionResponsePayload) -> PublicSigKey {
         bc2wrap::deserialize_slice(&payload.verification_key).unwrap()
     }
@@ -1744,16 +1741,19 @@ mod tests {
         };
 
         let pivot_buf = bc2wrap::serialize(&pivot).unwrap();
-        let pivot_inv = pivot.clone().try_into().unwrap();
+
+        // `verify_public_decrypt_signature` checks *authenticity* only (the internal ECDSA / external
+        // EIP-712 signature); agreement with the consensus invariants is checked separately in the
+        // match pass of `partition_public_decrypt_responses` (exercised by
+        // `test_validate_public_decrypt_responses`).
 
         // use a bad signature (signed with wrong private key)
         {
             let signature = &internal_sign(&DSEP_PUBLIC_DECRYPTION, &pivot_buf, &sk1).unwrap();
             let signature_buf = signature.to_bytes();
 
-            assert!(!validate_public_decrypt_meta_data(
+            assert!(!verify_public_decrypt_signature(
                 &[],
-                &pivot_inv,
                 &pivot,
                 &vk_of(&pivot),
                 &signature_buf,
@@ -1767,9 +1767,8 @@ mod tests {
             // The signature is malformed because it's using bincode to serialize instead of `signature.to_bytes()`.
             let signature_buf = bc2wrap::serialize(&signature).unwrap();
 
-            assert!(!validate_public_decrypt_meta_data(
+            assert!(!verify_public_decrypt_signature(
                 &[],
-                &pivot_inv,
                 &pivot,
                 &vk_of(&pivot),
                 &signature_buf,
@@ -1777,7 +1776,8 @@ mod tests {
             ));
         }
 
-        // use a bad signature (signing the wrong value)
+        // use a bad signature (signing the wrong value): the signature is over `bad_value` but we
+        // verify it against `pivot`, so the internal signature does not match.
         {
             let bad_request_id = Some(
                 derive_request_id("bad_test_validate_public_decrypt_meta_response")
@@ -1798,9 +1798,8 @@ mod tests {
                 &internal_sign(&DSEP_PUBLIC_DECRYPTION, &bad_value_buf, &sk0).unwrap();
             let bad_signature_buf = bad_signature.to_bytes();
 
-            assert!(!validate_public_decrypt_meta_data(
+            assert!(!verify_public_decrypt_signature(
                 &[],
-                &pivot_inv,
                 &pivot,
                 &vk_of(&pivot),
                 &bad_signature_buf,
@@ -1808,69 +1807,14 @@ mod tests {
             ));
         }
 
-        // use a bad response (digest mismatch)
-        {
-            let bad_request_id = Some(
-                derive_request_id("bad_test_validate_public_decrypt_meta_response")
-                    .unwrap()
-                    .into(),
-            );
-            let bad_value = PublicDecryptionResponsePayload {
-                verification_key: bc2wrap::serialize(&pks[&1]).unwrap(),
-                plaintexts: vec![TypedPlaintext {
-                    bytes: vec![1],
-                    fhe_type: tfhe::FheTypes::Uint4 as i32,
-                }],
-                request_id: bad_request_id,
-            };
-            let bad_value_buf = bc2wrap::serialize(&bad_value).unwrap();
-
-            let signature = &internal_sign(&DSEP_PUBLIC_DECRYPTION, &bad_value_buf, &sk0).unwrap();
-            let signature_buf = signature.to_bytes();
-
-            assert!(!validate_public_decrypt_meta_data(
-                &[],
-                &pivot_inv,
-                &bad_value,
-                &vk_of(&bad_value),
-                &signature_buf,
-                None,
-            ));
-        }
-
-        // use a bad response (bad validation key)
+        // use a bad response whose key did not actually sign it: the payload carries a fresh key
+        // `vk` but the signature is by `sk0`, so it does not verify under `vk`.
         {
             let (vk, _sk0) = gen_sig_keys(&mut rng);
             let bad_value = PublicDecryptionResponsePayload {
                 verification_key: bc2wrap::serialize(&vk).unwrap(),
                 plaintexts: vec![TypedPlaintext {
                     bytes: vec![1],
-                    fhe_type: tfhe::FheTypes::Uint4 as i32,
-                }],
-                request_id: request_id.clone(),
-            };
-            let bad_value_buf = bc2wrap::serialize(&bad_value).unwrap();
-
-            let signature = &internal_sign(&DSEP_PUBLIC_DECRYPTION, &bad_value_buf, &sk0).unwrap();
-            let signature_buf = signature.to_bytes();
-
-            assert!(!validate_public_decrypt_meta_data(
-                &[],
-                &pivot_inv,
-                &bad_value,
-                &vk_of(&bad_value),
-                &signature_buf,
-                None,
-            ));
-        }
-
-        // use a bad response (mismatch plaintext)
-        {
-            let (vk, _sk0) = gen_sig_keys(&mut rng);
-            let bad_value = PublicDecryptionResponsePayload {
-                verification_key: bc2wrap::serialize(&vk).unwrap(),
-                plaintexts: vec![TypedPlaintext {
-                    bytes: vec![0], // normally this is vec![1]
                     fhe_type: tfhe::FheTypes::Uint4 as i32,
                 }],
                 request_id,
@@ -1880,9 +1824,8 @@ mod tests {
             let signature = &internal_sign(&DSEP_PUBLIC_DECRYPTION, &bad_value_buf, &sk0).unwrap();
             let signature_buf = signature.to_bytes();
 
-            assert!(!validate_public_decrypt_meta_data(
+            assert!(!verify_public_decrypt_signature(
                 &[],
-                &pivot_inv,
                 &bad_value,
                 &vk_of(&bad_value),
                 &signature_buf,
@@ -1895,9 +1838,8 @@ mod tests {
             let signature = &internal_sign(&DSEP_PUBLIC_DECRYPTION, &pivot_buf, &sk0).unwrap();
             let signature_buf = signature.to_bytes(); // NOTE: signatures are not serialized with bincode
 
-            assert!(validate_public_decrypt_meta_data(
+            assert!(verify_public_decrypt_signature(
                 &[],
-                &pivot_inv,
                 &pivot,
                 &vk_of(&pivot),
                 &signature_buf,
@@ -1968,7 +1910,7 @@ mod tests {
         );
 
         // in this test we just want to test that we can catch a duplicate validation key
-        // the other validation such as signatures are performed in `validate_public_decrypt_meta_data`
+        // the signature authentication itself is tested in `test_validate_public_decrypt_meta_response`
 
         // using an empty payload, we should only get 1 valid response
         {
@@ -1976,7 +1918,7 @@ mod tests {
             empty_resp.payload = None;
             let mut bad_agg_resp = vec![resp0.clone(), empty_resp];
             assert_eq!(
-                partition_public_decrypt_responses(&trusted_ctx, &bad_agg_resp,)
+                validate_public_decrypt_responses(&trusted_ctx, 1, &bad_agg_resp)
                     .unwrap()
                     .accepted
                     .len(),
@@ -1986,7 +1928,7 @@ mod tests {
             // reverse the aggregate response so the empty one is the first
             bad_agg_resp.reverse();
             assert_eq!(
-                partition_public_decrypt_responses(&trusted_ctx, &bad_agg_resp,)
+                validate_public_decrypt_responses(&trusted_ctx, 1, &bad_agg_resp)
                     .unwrap()
                     .accepted
                     .len(),
@@ -1998,7 +1940,7 @@ mod tests {
         {
             let bad_agg_resp = vec![resp0.clone(), resp0.clone()];
             assert_eq!(
-                partition_public_decrypt_responses(&trusted_ctx, &bad_agg_resp,)
+                validate_public_decrypt_responses(&trusted_ctx, 1, &bad_agg_resp)
                     .unwrap()
                     .accepted
                     .len(),
@@ -2038,7 +1980,7 @@ mod tests {
             };
             let agg_resp = vec![resp0.clone(), bad_resp];
             assert_eq!(
-                partition_public_decrypt_responses(&trusted_ctx, &agg_resp,)
+                validate_public_decrypt_responses(&trusted_ctx, 1, &agg_resp,)
                     .unwrap()
                     .accepted
                     .len(),
@@ -2052,7 +1994,7 @@ mod tests {
             bad_resp.extra_data = vec![0];
             let agg_resp = vec![resp0.clone(), bad_resp];
             assert_eq!(
-                partition_public_decrypt_responses(&trusted_ctx, &agg_resp,)
+                validate_public_decrypt_responses(&trusted_ctx, 1, &agg_resp,)
                     .unwrap()
                     .accepted
                     .len(),
@@ -2066,7 +2008,7 @@ mod tests {
             bad_resp.payload.as_mut().unwrap().request_id = None;
             let agg_resp = vec![resp0.clone(), bad_resp];
             assert_eq!(
-                partition_public_decrypt_responses(&trusted_ctx, &agg_resp,)
+                validate_public_decrypt_responses(&trusted_ctx, 1, &agg_resp,)
                     .unwrap()
                     .accepted
                     .len(),
@@ -2078,7 +2020,7 @@ mod tests {
         {
             let agg_resp = vec![resp0.clone(), resp1.clone()];
             assert_eq!(
-                partition_public_decrypt_responses(&trusted_ctx, &agg_resp,)
+                validate_public_decrypt_responses(&trusted_ctx, 1, &agg_resp,)
                     .unwrap()
                     .accepted
                     .len(),
@@ -2169,7 +2111,7 @@ mod tests {
         {
             let agg_resp = vec![];
             assert!(
-                validate_public_decrypt_responses_against_request(&trusted_ctx, 1, &agg_resp)
+                validate_public_decrypt_responses(&trusted_ctx, 1, &agg_resp)
                     .unwrap_err()
                     .to_string()
                     .contains(ERR_VALIDATE_PUBLIC_DECRYPTION_NO_RESP)
@@ -2180,10 +2122,10 @@ mod tests {
         {
             let agg_resp = vec![resp0.clone(), resp1.clone()];
             assert!(
-                validate_public_decrypt_responses_against_request(&trusted_ctx, 3, &agg_resp)
+                validate_public_decrypt_responses(&trusted_ctx, 3, &agg_resp)
                     .unwrap_err()
                     .to_string()
-                    .contains(ERR_VALIDATE_PUBLIC_DECRYPTION_NOT_ENOUGH_RESP)
+                    .contains("Not enough authenticated public decryption responses")
             );
         }
 
@@ -2217,7 +2159,7 @@ mod tests {
                 request: Some(&bad_request),
             };
             assert!(
-                validate_public_decrypt_responses_against_request(&bad_ctx, 2, &agg_resp)
+                validate_public_decrypt_responses(&bad_ctx, 2, &agg_resp)
                     .unwrap_err()
                     .to_string()
                     .contains(ERR_VALIDATE_PUBLIC_DECRYPTION_BAD_FHE_TYPE)
@@ -2229,7 +2171,7 @@ mod tests {
             let mut bad_resp = resp1.clone();
             bad_resp.external_signature[0] ^= 1;
             let agg_resp = vec![resp0.clone(), bad_resp];
-            validate_public_decrypt_responses_against_request(&trusted_ctx, 1, &agg_resp).unwrap();
+            validate_public_decrypt_responses(&trusted_ctx, 1, &agg_resp).unwrap();
         }
 
         // request ID
@@ -2267,7 +2209,7 @@ mod tests {
                 request: Some(&bad_request),
             };
             assert!(
-                validate_public_decrypt_responses_against_request(&bad_ctx, 2, &agg_resp)
+                validate_public_decrypt_responses(&bad_ctx, 2, &agg_resp)
                     .unwrap_err()
                     .to_string()
                     .contains(ERR_VALIDATE_PUBLIC_DECRYPTION_BAD_LINK)
@@ -2284,13 +2226,13 @@ mod tests {
                 extra_data: None,
                 request: None,
             };
-            validate_public_decrypt_responses_against_request(&none_ctx, 2, &agg_resp).unwrap();
+            validate_public_decrypt_responses(&none_ctx, 2, &agg_resp).unwrap();
         }
 
         // happy path
         {
             let agg_resp = vec![resp0.clone(), resp1.clone()];
-            validate_public_decrypt_responses_against_request(&trusted_ctx, 2, &agg_resp).unwrap();
+            validate_public_decrypt_responses(&trusted_ctx, 2, &agg_resp).unwrap();
         }
     }
 
@@ -2326,8 +2268,6 @@ mod tests {
         let ext_handles_bytes = vec![vec![1, 2, 3, 4]];
         let extra_data = vec![1, 2, 3, 4];
 
-        let pivot_inv = pivot.clone().try_into().unwrap();
-
         let signed = sign_ecdsa_public_decrypt_result(
             &sk0,
             pivot.clone(),
@@ -2344,9 +2284,8 @@ mod tests {
         bad_external_signature[0] ^= 1;
 
         // return false for empty external signature
-        assert!(!validate_public_decrypt_meta_data(
+        assert!(!verify_public_decrypt_signature(
             &ext_handles_bytes,
-            &pivot_inv,
             &pivot,
             &vk_of(&pivot),
             &signature_buf,
@@ -2358,9 +2297,8 @@ mod tests {
         ));
 
         // return false for bad external signature
-        assert!(!validate_public_decrypt_meta_data(
+        assert!(!verify_public_decrypt_signature(
             &ext_handles_bytes,
-            &pivot_inv,
             &pivot,
             &vk_of(&pivot),
             &signature_buf,
@@ -2372,9 +2310,8 @@ mod tests {
         ));
 
         // happy path
-        assert!(validate_public_decrypt_meta_data(
+        assert!(verify_public_decrypt_signature(
             &ext_handles_bytes,
-            &pivot_inv,
             &pivot,
             &vk_of(&pivot),
             &signature_buf,
