@@ -14,10 +14,11 @@ use backward_compatibility::{
     InternalCustodianSetupMessageTest, InternalRecoveryRequestTest, KeyGenMetadataTest,
     KeyGenMetadataWithExtraDataTest, KeygenSignedPayloadTest, KmsFheKeyHandlesTest, NodeInfoTest,
     OperatorBackupOutputTest, PrepKeygenSignedPayloadTest, PrivateSigKeyTest,
-    PrssSetupCombinedTest, PublicSigKeyTest, RecoveryValidationMaterialTest,
+    PrssSetupCombinedTest, PublicSigKeyTest, RecoveryValidationMaterialTest, SchemeDigestsTest,
     SigncryptionPayloadTest, SoftwareVersionTest, StoredTypedSignatureTest, TestMetadataKMS,
     TestType, Testcase, ThresholdFheKeysTest, TypedPlaintextTest, UnifiedCipherTest,
-    UnifiedSigncryptionKeyTest, UnifiedSigncryptionTest, UnifiedUnsigncryptionKeyTest, data_dir,
+    UnifiedPublicSigKeyTest, UnifiedSigncryptionKeyTest, UnifiedSigncryptionTest,
+    UnifiedUnsigncryptionKeyTest, data_dir,
     load::{DataFormat, TestFailure, TestResult, TestSuccess},
     tests::{TestedModule, run_all_tests},
 };
@@ -47,7 +48,8 @@ use kms_lib::{
         encryption::{Encryption, PkeScheme, PkeSchemeType, UnifiedCipher, UnifiedPublicEncKey},
         hybrid_ml_kem::HybridKemCt,
         signatures::{
-            PrivateSigKey, PublicSigKey, SigningSchemeType, compute_eip712_signature, gen_sig_keys,
+            PrivateSigKey, PublicSigKey, SigningSchemeType, UnifiedPublicSigKey,
+            compute_eip712_signature, gen_sig_keys,
         },
         signcryption::{
             Signcrypt, SigncryptionPayload, UnifiedSigncryption, UnifiedSigncryptionKeyOwned,
@@ -59,7 +61,7 @@ use kms_lib::{
             CrsGenMetadata, CrsSignedPayload, KeyGenMetadata, KeyGenMetadataInner,
             KeygenSignedPayload, KmsFheKeyHandles, PrepKeygenSignedPayload, StoredTypedSignature,
         },
-        context::{ContextInfo, NodeInfo, SignerAddress, SoftwareVersion},
+        context::{ContextInfo, NodeInfo, SchemeDigests, SignerAddress, SoftwareVersion},
         threshold::service::{
             EpochData, PublicKeyMaterial, ThresholdFheKeys, session::PRSSSetupCombined,
         },
@@ -75,6 +77,7 @@ use std::{
     path::Path,
     sync::Arc,
 };
+use strum::IntoEnumIterator;
 use tfhe::integer::compression_keys::DecompressionKey;
 use threshold_execution::{
     small_execution::prss::PRSSSetup, tfhe_internals::public_keysets::FhePubKeySet,
@@ -521,6 +524,62 @@ fn test_public_sig_key(
     }
 }
 
+/// Every signature scheme's [`UnifiedPublicSigKey`] still deserializes and matches
+/// the key derived from the same seeded signing key. The primary file carries the
+/// ECDSA variant; one auxiliary file per non-ECDSA scheme carries that scheme's
+/// variant. Note that public storage persists each scheme's *own* key type, not this
+/// wrapper, so this pins the versioning of the enum rather than a storage format.
+fn test_unified_public_sig_key(
+    dir: &Path,
+    test: &UnifiedPublicSigKeyTest,
+    format: DataFormat,
+) -> Result<TestSuccess, TestFailure> {
+    let mut rng = AesRng::seed_from_u64(test.state);
+    let (_pk, sk) = gen_sig_keys(&mut rng);
+
+    // Primary file: the ECDSA variant.
+    let original: UnifiedPublicSigKey = load_and_unversionize(dir, test, format)?;
+    let expected_ecdsa = sk
+        .unified_verifying_key(SigningSchemeType::Ecdsa256k1)
+        .map_err(|e| {
+            test.failure(
+                format!("could not derive ECDSA verification key: {e}"),
+                format,
+            )
+        })?;
+    if original != expected_ecdsa {
+        return Err(test.failure(
+            format!(
+                "Invalid ECDSA UnifiedPublicSigKey:\n Expected :\n{expected_ecdsa:?}\nGot:\n{original:?}"
+            ),
+            format,
+        ));
+    }
+
+    // Auxiliary files: one per non-ECDSA scheme, keyed by the scheme's name.
+    for scheme in SigningSchemeType::iter().filter(|s| *s != SigningSchemeType::Ecdsa256k1) {
+        let aux_filename = format!("{}_{scheme}", test.test_filename());
+        let stored: UnifiedPublicSigKey =
+            load_and_unversionize_auxiliary(dir, test, &aux_filename, format)?;
+        let expected = sk.unified_verifying_key(scheme).map_err(|e| {
+            test.failure(
+                format!("could not derive {scheme} verification key: {e}"),
+                format,
+            )
+        })?;
+        if stored != expected {
+            return Err(test.failure(
+                format!(
+                    "Invalid {scheme} UnifiedPublicSigKey:\n Expected :\n{expected:?}\nGot:\n{stored:?}"
+                ),
+                format,
+            ));
+        }
+    }
+
+    Ok(test.success(format))
+}
+
 fn test_signcryption_keys(
     dir: &Path,
     test: &UnifiedSigncryptionKeyTest,
@@ -762,12 +821,12 @@ fn test_context_info(
     let node_info = NodeInfo {
         mpc_identity: "Staoshi Nakamoto".to_string(),
         party_id: 42,
-        signer_address: None,
         external_url: "https://node42.example.com".to_string(),
         ca_cert: None,
         public_storage_url: "https://storage.example.com/node42".to_string(),
         public_storage_prefix: Some("PUB".to_string()),
         extra_signer_addresses: vec![],
+        scheme_digests: SchemeDigests::new(),
     };
     let software_version = SoftwareVersion {
         major: 2,
@@ -813,18 +872,51 @@ fn test_node_info(
     let new_versionized = NodeInfo {
         mpc_identity: test.mpc_identity.to_string(),
         party_id: test.party_id,
-        signer_address: Some(SignerAddress(verf_key.address())),
         external_url: test.external_url.to_string(),
         ca_cert: test.ca_cert.clone(), // We currently don't have simple code for generating certificates
         public_storage_url: test.public_storage_url.to_string(),
         public_storage_prefix: Some(test.public_storage_prefix.to_string()),
         extra_signer_addresses: vec![SignerAddress(verf_key2.address())],
+        scheme_digests: SchemeDigests::from_ecdsa_verification_key(&verf_key),
     };
 
     if original_versionized != new_versionized {
         Err(test.failure(
             format!(
                 "Invalid NodeInfo:\n Expected :\n{original_versionized:?}\nGot:\n{new_versionized:?}"
+            ),
+            format,
+        ))
+    } else {
+        Ok(test.success(format))
+    }
+}
+
+fn test_scheme_digests(
+    dir: &Path,
+    test: &SchemeDigestsTest,
+    format: DataFormat,
+) -> Result<TestSuccess, TestFailure> {
+    let original_versionized: SchemeDigests = load_and_unversionize(dir, test, format)?;
+
+    let mut new_versionized = SchemeDigests::new();
+    for (scheme_name, digest) in test.digests.iter() {
+        // A pinned digest that no longer has the length its scheme expects is a compatibility
+        // break in itself, so it is reported as a test failure rather than a panic.
+        new_versionized
+            .insert(scheme_from_name(scheme_name), digest.to_vec())
+            .map_err(|e| {
+                test.failure(
+                    format!("Invalid {scheme_name} digest in SchemeDigests: {e}"),
+                    format,
+                )
+            })?;
+    }
+
+    if original_versionized != new_versionized {
+        Err(test.failure(
+            format!(
+                "Invalid SchemeDigests:\n Expected :\n{original_versionized:?}\nGot:\n{new_versionized:?}"
             ),
             format,
         ))
@@ -1414,6 +1506,9 @@ impl TestedModule for KMS {
             Self::Metadata::PublicSigKey(test) => {
                 test_public_sig_key(test_dir.as_ref(), test, format).into()
             }
+            Self::Metadata::UnifiedPublicSigKey(test) => {
+                test_unified_public_sig_key(test_dir.as_ref(), test, format).into()
+            }
             Self::Metadata::PrivateSigKey(test) => {
                 test_private_sig_key(test_dir.as_ref(), test, format).into()
             }
@@ -1473,6 +1568,9 @@ impl TestedModule for KMS {
             }
             Self::Metadata::NodeInfo(test) => {
                 test_node_info(test_dir.as_ref(), test, format).into()
+            }
+            Self::Metadata::SchemeDigests(test) => {
+                test_scheme_digests(test_dir.as_ref(), test, format).into()
             }
             Self::Metadata::SoftwareVersion(test) => {
                 test_software_version(test_dir.as_ref(), test, format).into()

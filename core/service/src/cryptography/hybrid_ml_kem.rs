@@ -1,14 +1,15 @@
 use super::error::CryptographyError;
 use aes_gcm::{AeadCore, Aes256Gcm, Key, KeyInit, KeySizeUser, aead::Aead};
+use hybrid_array::{Array, typenum::Unsigned};
 use ml_kem::{
     KemCore,
-    array::{Array, typenum::Unsigned},
     kem::{Decapsulate, Encapsulate},
 };
 use rand::{CryptoRng, Rng};
 use serde::{Deserialize, Serialize};
 use tfhe::{Versionize, named::Named};
 use tfhe_versionable::VersionsDispatch;
+use zeroize::Zeroizing;
 
 #[cfg(test)]
 pub(crate) const ML_KEM_512_CT_LENGTH: usize = 768; // ciphertext size for MlKem512Params
@@ -95,6 +96,9 @@ pub(crate) fn enc<C: KemCore, R: Rng + CryptoRng>(
     let (kem_ct, kem_shared_secret) = enc_k
         .encapsulate(rng)
         .map_err(|_| CryptographyError::MlKemError)?;
+    // kem_shared_secret (Array type) has no ZeroizeOnDrop,
+    // using Zeroizing wipes it on every exit path.
+    let kem_shared_secret = Zeroizing::new(kem_shared_secret);
 
     let key_size = <Aes256Gcm as KeySizeUser>::key_size();
     #[allow(deprecated)]
@@ -128,12 +132,15 @@ pub(crate) fn dec<C: KemCore>(
     let kem_shared_secret = dec_k
         .decapsulate(&kem_ct)
         .map_err(|_| CryptographyError::MlKemError)?;
+    // kem_shared_secret (Array type) has no ZeroizeOnDrop,
+    // using Zeroizing wipes it on every exit path.
+    let kem_shared_secret = Zeroizing::new(kem_shared_secret);
 
     let key_size = <Aes256Gcm as KeySizeUser>::key_size();
     #[allow(deprecated)]
-    let aead_key = Key::<aes_gcm::Aes256Gcm>::clone_from_slice(&kem_shared_secret[0..key_size]);
+    let aead_key = Key::<Aes256Gcm>::from_slice(&kem_shared_secret[0..key_size]);
 
-    let cipher = aes_gcm::Aes256Gcm::new(&aead_key);
+    let cipher = Aes256Gcm::new(aead_key);
     let out = cipher.decrypt(&nonce.into(), &*payload_ct)?;
     Ok(out)
 }

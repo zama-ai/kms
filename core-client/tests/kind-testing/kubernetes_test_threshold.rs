@@ -18,7 +18,7 @@
 //! | `k8s_test_keygen_and_crs` | Basic keygen + CRS generation |
 //! | `k8s_test_keygen_uniqueness` | Multiple keygens produce unique keys |
 //! | `k8s_test_crs_uniqueness` | Multiple CRS generations produce unique IDs |
-//! | `k8s_test_insecure_keygen_encrypt_and_public_decrypt` | End-to-end: insecure keygen → encrypt → public decrypt |
+//! | `k8s_test_insecure_keygen_encrypt_and_public_decrypt` | End-to-end: insecure keygen → encrypt → public decrypt, through both the async and the sync endpoint |
 //! | `k8s_test_insecure_keygen_encrypt_multiple_types` | One key, multiple FHE types: encrypt + decrypt `Ebool` and `Euint8` |
 //!
 //! ## Architecture
@@ -233,10 +233,14 @@ impl K8sTestContext {
     /// parties, and internally calls `check_external_decryption_signature` which compares
     /// every party's decrypted bytes against the original plaintext stored in the file —
     /// panics on any mismatch. A successful return means decryption is correct.
-    async fn public_decrypt_from_file(&self, enc: &EncryptionResult) {
+    ///
+    /// With `sync == true` the request goes to the synchronous `public_decrypt_sync` endpoint,
+    /// which returns the result in the same call; otherwise the asynchronous endpoint is used
+    /// and the result is polled from `get_public_decryption_result`.
+    async fn public_decrypt_from_file(&self, enc: &EncryptionResult, sync: bool) {
         info!(
-            "[K8S-THRESHOLD] Decrypting {:?} via threshold MPC",
-            enc.cipher_path
+            "[K8S-THRESHOLD] Decrypting {:?} via threshold MPC (sync={})",
+            enc.cipher_path, sync
         );
         let start = std::time::Instant::now();
 
@@ -245,7 +249,7 @@ impl K8sTestContext {
                 DecryptFile {
                     input_path: enc.cipher_path.clone(),
                     batch_size: 1,
-                    sync: false,
+                    sync,
                     rate_options: DecryptRateOptions::default(),
                 },
             )))
@@ -365,6 +369,7 @@ async fn k8s_test_keygen_uniqueness() {
 /// 1. Cluster wiring: all 4 parties reachable, gRPC + mTLS functional
 /// 2. Key material round-trip: keygen → S3 → encrypt → decrypt
 /// 3. MPC decryption correctness: `check_external_decryption_signature` passes
+/// 4. Both decryption endpoints: the async request/poll pair and the sync `public_decrypt_sync`
 #[tokio::test]
 async fn k8s_test_insecure_keygen_encrypt_and_public_decrypt() {
     let ctx = K8sTestContext::new("k8s_test_insecure_keygen_encrypt_and_public_decrypt");
@@ -388,7 +393,12 @@ async fn k8s_test_insecure_keygen_encrypt_and_public_decrypt() {
     // Step 4: send ciphertext to all 4 threshold parties for decryption.
     // Internally verifies decrypted result == original `plaintext` bytes;
     // panics on any mismatch → test fails.
-    ctx.public_decrypt_from_file(&enc).await;
+    ctx.public_decrypt_from_file(&enc, false).await;
+
+    // Step 5: decrypt the same ciphertext through the synchronous endpoint, which returns the
+    // result in the same call instead of being polled. Uses a fresh request ID, so it exercises
+    // the sync endpoint end-to-end rather than re-reading the step 4 result.
+    ctx.public_decrypt_from_file(&enc, true).await;
 
     ctx.pass();
 }
@@ -416,7 +426,7 @@ async fn k8s_test_insecure_keygen_encrypt_multiple_types() {
         FheType::Ebool,
         "EncryptionResult must carry the correct FHE type"
     );
-    ctx.public_decrypt_from_file(&enc_bool).await;
+    ctx.public_decrypt_from_file(&enc_bool, false).await;
 
     // Step 3: encrypt an 8-bit unsigned integer and decrypt it with the same key
     let enc_uint = ctx.encrypt(&key_id, "0x2a", FheType::Euint8).await;
@@ -425,7 +435,7 @@ async fn k8s_test_insecure_keygen_encrypt_multiple_types() {
         FheType::Euint8,
         "EncryptionResult must carry the correct FHE type"
     );
-    ctx.public_decrypt_from_file(&enc_uint).await;
+    ctx.public_decrypt_from_file(&enc_uint, false).await;
 
     ctx.pass();
 }

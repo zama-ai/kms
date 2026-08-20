@@ -10,6 +10,7 @@ use algebra::{
 use anyhow::anyhow;
 use itertools::Itertools;
 use kms_grpc::{
+    RequestId,
     identifiers::{ContextId, EpochId},
     kms::v1::{
         self, CiphertextFormat, Empty, PublicDecryptionRequest, PublicDecryptionResponse,
@@ -19,8 +20,8 @@ use kms_grpc::{
 use observability::{
     metrics::{self},
     metrics_names::{
-        OP_PUBLIC_DECRYPT_INNER, OP_PUBLIC_DECRYPT_REQUEST, OP_PUBLIC_DECRYPT_RESULT,
-        OP_PUBLIC_DECRYPT_SYNC, TAG_PARTY_ID, TAG_PUBLIC_DECRYPTION_KIND, TAG_TFHE_TYPE,
+        OP_PUBLIC_DECRYPT_INNER, OP_PUBLIC_DECRYPT_REQUEST, OP_PUBLIC_DECRYPT_RESULT, TAG_PARTY_ID,
+        TAG_PUBLIC_DECRYPTION_KIND, TAG_TFHE_TYPE,
     },
 };
 use tfhe::FheTypes;
@@ -62,9 +63,8 @@ use crate::{
     },
     util::{
         meta_store::{
-            EntryState, MetaStore, add_or_redo_failed_in_meta_store,
-            retrieve_from_meta_store_with_timeout, update_err_req_in_meta_store,
-            update_req_in_meta_store,
+            MetaStore, add_or_redo_failed_in_meta_store, retrieve_from_meta_store_with_timeout,
+            update_err_req_in_meta_store, update_req_in_meta_store,
         },
         rate_limiter::RateLimiter,
     },
@@ -274,6 +274,8 @@ impl<
         &self,
         request: Request<PublicDecryptionRequest>,
     ) -> Result<Response<Empty>, MetricedError> {
+        metrics::METRICS.increment_request_counter(OP_PUBLIC_DECRYPT_REQUEST);
+
         // Check for resource exhaustion once all the other checks are ok
         // because resource exhaustion can be recovered by sending the exact same request
         // but the errors above cannot be tried again.
@@ -640,41 +642,32 @@ impl<
         &self,
         request: Request<PublicDecryptionRequest>,
     ) -> Result<Response<PublicDecryptionResponse>, MetricedError> {
-        let _timer = metrics::METRICS
-            .time_operation(OP_PUBLIC_DECRYPT_SYNC)
-            .start();
+        // `public_decrypt` consumes the request, so keep the raw id for fetching the result below.
+        let raw_request_id = request.get_ref().request_id.clone();
 
-        let req_id = parse_optional_grpc_request_id(
-            &request.get_ref().request_id,
-            RequestIdParsingErr::PublicDecRequest,
-        )
-        .map_err(|e| MetricedError::new(OP_PUBLIC_DECRYPT_SYNC, None, e, Code::InvalidArgument))?;
-
-        let should_start = match self.pub_dec_meta_store.read().await.retrieve(&req_id) {
-            None => true,                           // fresh request ID
-            Some(EntryState::Done(Err(_))) => true, // previously failed, redo it under the same ID
-            Some(EntryState::Done(Ok(_))) => false, // already succeeded, return the stored result
-            Some(EntryState::Pending) => false,     // in flight, attach to it
-            Some(EntryState::Deleted) => false,     // tombstoned, let the wait report `NotFound`
-        };
-        if should_start {
-            match self.public_decrypt(request).await {
-                Ok(_empty) => (),
-                // Another call won the race to start or redo this request: attach to that attempt
-                Err(e) if e.code() == tonic::Code::AlreadyExists => e.defuse(),
-                Err(e) => return Err(e.retag(OP_PUBLIC_DECRYPT_SYNC)),
-            }
+        match self.public_decrypt(request).await {
+            Ok(_empty) => (),
+            // Already succeeded, in flight, or tombstoned: attach to the existing entry
+            Err(e) if e.code() == tonic::Code::AlreadyExists => e.defuse(),
+            Err(e) => return Err(e),
         }
 
-        self.get_result(Request::new(req_id.into()))
-            .await
-            .map_err(|e| e.retag(OP_PUBLIC_DECRYPT_SYNC))
+        // `public_decrypt` accepted the request, so its id must parse.
+        let req_id: RequestId =
+            parse_optional_grpc_request_id(&raw_request_id, RequestIdParsingErr::PublicDecRequest)
+                .map_err(|e| {
+                    MetricedError::new(OP_PUBLIC_DECRYPT_REQUEST, None, e, Code::InvalidArgument)
+                })?;
+
+        self.get_result(Request::new(req_id.into())).await
     }
 
     async fn get_result(
         &self,
         request: Request<v1::RequestId>,
     ) -> Result<Response<PublicDecryptionResponse>, MetricedError> {
+        metrics::METRICS.increment_request_counter(OP_PUBLIC_DECRYPT_RESULT);
+
         let request_id = parse_grpc_request_id(
             &request.into_inner(),
             RequestIdParsingErr::PublicDecResponse,
@@ -736,6 +729,7 @@ fn format_public_request(request: &PublicDecryptionRequest) -> String {
         request.ciphertexts.len()
     )
 }
+
 #[cfg(test)]
 mod tests {
     use crate::{
@@ -743,6 +737,7 @@ mod tests {
         cryptography::signatures::gen_sig_keys,
         dummy_domain,
         engine::threshold::service::session::SessionMaker,
+        util::meta_store::EntryState,
         vault::storage::{crypto_material::PublicKeySet, ram},
     };
     use aes_prng::AesRng;
@@ -1236,6 +1231,26 @@ mod tests {
             recorded_errors_before,
             "attaching to an already-known request ID must not report a failure"
         );
+    }
+
+    #[tokio::test]
+    async fn sync_call_shares_request_and_result_counters() {
+        let mut rng = AesRng::seed_from_u64(42);
+        let (key_id, epoch_id, ct_buf, public_decryptor) = setup_public_decryptor(&mut rng).await;
+        let req_id = RequestId::new_random(&mut rng);
+        let request = make_valid_request(req_id, key_id, epoch_id, ct_buf);
+
+        let requests_before = metrics::METRICS.request_counter_value(OP_PUBLIC_DECRYPT_REQUEST);
+        let results_before = metrics::METRICS.request_counter_value(OP_PUBLIC_DECRYPT_RESULT);
+        public_decryptor
+            .public_decrypt_sync(Request::new(request))
+            .await
+            .unwrap();
+        // Check global growth: the counters are shared at the process level.
+        assert!(
+            metrics::METRICS.request_counter_value(OP_PUBLIC_DECRYPT_REQUEST) > requests_before
+        );
+        assert!(metrics::METRICS.request_counter_value(OP_PUBLIC_DECRYPT_RESULT) > results_before);
     }
 
     #[tokio::test]

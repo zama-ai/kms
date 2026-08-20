@@ -1,10 +1,13 @@
 use crate::conf::MigrationConfig;
-use crate::consts::{DEFAULT_EPOCH_ID, DEFAULT_MPC_CONTEXT};
+use crate::consts::{DEFAULT_EPOCH_ID, DEFAULT_MPC_CONTEXT, SIGNING_KEY_ID};
 use crate::engine::base::derive_request_id;
 use crate::engine::threshold::service::epoch_manager::EpochData;
 use crate::engine::threshold::service::session::PRSSSetupCombined;
+use crate::util::key_setup::ensure_scheme_verification_material;
+use crate::vault::storage::crypto_material::get_core_signing_key;
 use crate::vault::storage::{
-    StorageExt, read_context_at_id, read_versioned_at_request_id, store_versioned_at_request_id,
+    Storage, StorageExt, StorageReader, read_context_at_id, read_versioned_at_request_id,
+    store_versioned_at_request_id,
 };
 use algebra::galois_rings::degree_4::{ResiduePolyF4Z64, ResiduePolyF4Z128};
 use kms_grpc::ContextId;
@@ -125,17 +128,21 @@ where
     Ok(())
 }
 
-pub async fn migrate_to_0_15_x<PrivS>(
+pub async fn migrate_to_0_15_x<PubS, PrivS>(
+    pub_storage: &mut PubS,
     priv_storage: &mut PrivS,
     kms_type: KMSType,
     migration_config: Option<&MigrationConfig>,
 ) -> anyhow::Result<()>
 where
+    PubS: StorageExt + Sync + Send,
     PrivS: StorageExt + Sync + Send,
 {
     // No migration to 0.14 done, but previous version did use migrate_to_0_13_20 so we keep it for completeness
     migrate_to_0_13_20(priv_storage, kms_type).await?;
-    migrate_prss_to_epoch(priv_storage, kms_type, migration_config).await
+    // Migration for 0.15
+    migrate_prss_to_epoch(priv_storage, kms_type, migration_config).await?;
+    migrate_public_verification_material(priv_storage, pub_storage).await
 }
 
 /// TODO Placeholder method to ensure we remember to clean up upgraded material at the next version (0.16.0)
@@ -149,6 +156,34 @@ where
 {
     remove_old_prss_data(priv_storage, kms_type).await?;
     Ok(())
+}
+
+/// Backfill the multi-scheme verification material for existing deployments.
+///
+/// Derives every non-ECDSA signature scheme's public verification key and digest
+/// from the node's already-persisted ECDSA signing key and stores them in public
+/// storage, leaving the ECDSA material at its historic location untouched. This
+/// lets a node that predates multi-scheme support gain the new public material on
+/// restart, without re-running key generation.
+async fn migrate_public_verification_material<PrivS, PubS>(
+    priv_storage: &PrivS,
+    pub_storage: &mut PubS,
+) -> anyhow::Result<()>
+where
+    PrivS: StorageReader + Sync + Send,
+    PubS: Storage + Sync + Send,
+{
+    if !priv_storage
+        .data_exists(&SIGNING_KEY_ID, &PrivDataType::SigningKey.to_string())
+        .await?
+    {
+        tracing::info!(
+            "No ECDSA signing key present; skipping multi-scheme verification-material backfill"
+        );
+        return Ok(());
+    }
+    let sk = get_core_signing_key(priv_storage).await?;
+    ensure_scheme_verification_material(pub_storage, &sk).await
 }
 
 async fn migrate_prss_to_epoch<PrivS>(
@@ -817,17 +852,31 @@ where
 
 #[cfg(test)]
 mod tests {
+    use super::migrate_public_verification_material;
     use super::*;
     use crate::conf::ContextEpochAssociation;
-    use crate::engine::context::{ContextInfo, NodeInfo, SoftwareVersion};
+    use crate::consts::signing_material_id;
+    use crate::cryptography::signatures::PrivateSigKey;
+    use crate::cryptography::signing::SigningSchemeType;
+    use crate::engine::context::{ContextInfo, NodeInfo, SchemeDigests, SoftwareVersion};
+    use crate::util::key_setup::{
+        LEGACY_ECDSA_MATERIAL_TYPES, SCHEME_MATERIAL_TYPES, delete_scheme_verification_material,
+        ensure_central_server_signing_keys_exist,
+    };
+    use crate::vault::storage::crypto_material::{
+        get_core_signing_key, read_scheme_verification_key,
+    };
     use crate::vault::storage::file::FileStorage;
     use crate::vault::storage::ram::{self, RamStorage};
     use crate::vault::storage::{
-        Storage, StorageExt, StorageReader, StorageReaderExt, StorageType, store_context_at_id,
-        store_versioned_at_request_id,
+        Storage, StorageExt, StorageReader, StorageReaderExt, StorageType, read_text_at_request_id,
+        store_context_at_id, store_versioned_at_request_id,
     };
     use kms_grpc::RequestId;
+    use kms_grpc::rpc_types::PubDataType;
+    use std::collections::HashMap;
     use std::str::FromStr;
+    use strum::IntoEnumIterator;
 
     /// Test migration of threshold FHE keys (FheKeyInfo)
     pub async fn test_migrate_legacy_fhe_keys_threshold<S: StorageExt + Sync + Send>(
@@ -1169,12 +1218,12 @@ mod tests {
             mpc_nodes.push(NodeInfo {
                 mpc_identity: format!("testnode{}", i),
                 party_id: (i + 1) as u32,
-                signer_address: None,
                 external_url: "https://doesnotexist.zama.ai".to_string(),
                 ca_cert: None,
                 public_storage_url: "".to_string(),
                 public_storage_prefix: None,
                 extra_signer_addresses: vec![],
+                scheme_digests: SchemeDigests::new(),
             });
         }
         let context_info = ContextInfo {
@@ -2873,27 +2922,50 @@ mod tests {
 
     // ── Tests for migrate_to_0_15_x (orchestrator) ──
 
+    /// Asserts every scheme's verification material is (or is not) present in public
+    /// storage.
+    async fn assert_scheme_material_present<S: StorageReader>(pub_storage: &S, expected: bool) {
+        for scheme in SigningSchemeType::iter() {
+            let id = signing_material_id(scheme);
+            for data_type in SCHEME_MATERIAL_TYPES.map(|t| t.to_string()) {
+                assert_eq!(
+                    pub_storage.data_exists(&id, &data_type).await.unwrap(),
+                    expected,
+                    "{scheme} {data_type} presence did not match"
+                );
+            }
+        }
+    }
+
     #[tokio::test]
     async fn test_migrate_to_0_15_x_threshold_sunshine() {
-        let mut storage = RamStorage::new();
+        let mut pub_storage = RamStorage::new();
+        let mut priv_storage = RamStorage::new();
         let num_parties = 4u8;
         let threshold = 1u8;
 
-        // Simulate a post-0.13.20 state: combined PRSS already sits at the default epoch.
+        // Simulate a post-0.13.20 state: combined PRSS already sits at the default epoch and signing key.
         // The earlier migration steps are no-ops here (no legacy keys/context), so this data
         // survives and migrate_prss_to_epoch converts it into EpochData.
-        store_combined_prss_at_epoch(&mut storage, &DEFAULT_EPOCH_ID, num_parties, threshold).await;
+        store_combined_prss_at_epoch(&mut priv_storage, &DEFAULT_EPOCH_ID, num_parties, threshold)
+            .await;
+        // Derive signing key and use central for convenience since we test with a single server
+        ensure_central_server_signing_keys_exist(&mut pub_storage, &mut priv_storage, true)
+            .await
+            .unwrap();
 
         migrate_to_0_15_x(
-            &mut storage,
+            &mut pub_storage,
+            &mut priv_storage,
             KMSType::Threshold,
             Some(&default_migration_config()),
         )
         .await
         .unwrap();
 
+        // Check epoch data
         let epoch: EpochData = read_versioned_at_request_id(
-            &storage,
+            &priv_storage,
             &(*DEFAULT_EPOCH_ID).into(),
             &PrivDataType::EpochData.to_string(),
         )
@@ -2902,36 +2974,80 @@ mod tests {
         assert_eq!(epoch.context_id, *DEFAULT_MPC_CONTEXT);
         assert_eq!(epoch.prss.num_parties, num_parties);
         assert_eq!(epoch.prss.threshold, threshold);
+
+        assert_scheme_material_present(&pub_storage, true).await;
     }
 
     #[tokio::test]
     async fn test_migrate_to_0_15_x_threshold_idempotent() {
-        let mut storage = RamStorage::new();
-        store_combined_prss_at_epoch(&mut storage, &DEFAULT_EPOCH_ID, 4, 1).await;
+        let mut pub_storage = RamStorage::new();
+        let mut priv_storage = RamStorage::new();
+        store_combined_prss_at_epoch(&mut priv_storage, &DEFAULT_EPOCH_ID, 4, 1).await;
+        // Derive signing key and use central for convenience since we test with a single server
+        ensure_central_server_signing_keys_exist(&mut pub_storage, &mut priv_storage, true)
+            .await
+            .unwrap();
+
         let config = default_migration_config();
 
-        migrate_to_0_15_x(&mut storage, KMSType::Threshold, Some(&config))
-            .await
-            .unwrap();
         // Second run: EpochData already exists, so PRSS migration short-circuits without error.
-        migrate_to_0_15_x(&mut storage, KMSType::Threshold, Some(&config))
+        // Furthermore, validation keys should already have been made and hence key migration
+        // also short-circuits without error.
+        for _ in 0..2 {
+            migrate_to_0_15_x(
+                &mut pub_storage,
+                &mut priv_storage,
+                KMSType::Threshold,
+                Some(&config),
+            )
             .await
             .unwrap();
 
-        let ids = storage
-            .all_data_ids(&PrivDataType::EpochData.to_string())
+            // Check epoch ids
+            let ids = priv_storage
+                .all_data_ids(&PrivDataType::EpochData.to_string())
+                .await
+                .unwrap();
+            assert_eq!(ids.len(), 1);
+            assert_scheme_material_present(&pub_storage, true).await;
+        }
+    }
+
+    #[tokio::test]
+    async fn test_migrate_to_0_15_x_centralized_with_signing_key() {
+        let mut pub_storage = RamStorage::new();
+        let mut priv_storage = RamStorage::new();
+        // Derive signing key
+        ensure_central_server_signing_keys_exist(&mut pub_storage, &mut priv_storage, true)
             .await
             .unwrap();
-        assert_eq!(ids.len(), 1);
+
+        migrate_to_0_15_x(
+            &mut pub_storage,
+            &mut priv_storage,
+            KMSType::Centralized,
+            None,
+        )
+        .await
+        .unwrap();
+        assert_scheme_material_present(&pub_storage, true).await;
     }
 
     #[tokio::test]
     async fn test_migrate_to_0_15_x_centralized_empty() {
-        let mut storage = RamStorage::new();
-        // Centralized on empty storage: no config needed, nothing to migrate.
-        migrate_to_0_15_x(&mut storage, KMSType::Centralized, None)
-            .await
-            .unwrap();
+        let mut pub_storage = RamStorage::new();
+        let mut priv_storage = RamStorage::new();
+
+        migrate_to_0_15_x(
+            &mut pub_storage,
+            &mut priv_storage,
+            KMSType::Centralized,
+            None,
+        )
+        .await
+        .unwrap();
+
+        assert_scheme_material_present(&pub_storage, false).await;
     }
 
     // ── Tests for migrate_to_0_16_x (orchestrator) ──
@@ -2959,6 +3075,128 @@ mod tests {
         migrate_to_0_16_x(&mut storage, KMSType::Centralized)
             .await
             .unwrap();
+    }
+
+    /// Helper method:
+    /// A node from before multi-scheme support: an ECDSA signing key in private
+    /// storage, and in public storage only the deprecated ECDSA material.
+    async fn pre_multi_scheme_node() -> (RamStorage, RamStorage) {
+        let mut pub_storage = RamStorage::new();
+        let mut priv_storage = RamStorage::new();
+        ensure_central_server_signing_keys_exist(&mut pub_storage, &mut priv_storage, true)
+            .await
+            .unwrap();
+        delete_scheme_verification_material(&mut pub_storage)
+            .await
+            .unwrap();
+        (pub_storage, priv_storage)
+    }
+
+    /// Every object stored under `data_types`, keyed by data type and handle, so
+    /// that two points in time can be compared byte for byte.
+    async fn snapshot<S: StorageReader>(
+        storage: &S,
+        data_types: &[PubDataType],
+    ) -> HashMap<(String, String), Vec<u8>> {
+        let mut out = HashMap::new();
+        for data_type in data_types {
+            let data_type = data_type.to_string();
+            for id in storage.all_data_ids(&data_type).await.unwrap() {
+                let bytes = storage.load_bytes(&id, &data_type).await.unwrap();
+                out.insert((data_type.clone(), id.to_string()), bytes);
+            }
+        }
+        out
+    }
+
+    /// Validates that the published key and digest are the ones `sk` derives.
+    async fn assert_material_matches<S: StorageReader>(pub_storage: &S, sk: &PrivateSigKey) {
+        let addr_type = PubDataType::TypedVerfAddress.to_string();
+        for scheme in SigningSchemeType::iter() {
+            let expected = sk.unified_verifying_key(scheme).unwrap();
+            assert_eq!(
+                read_scheme_verification_key(pub_storage, scheme)
+                    .await
+                    .unwrap(),
+                expected,
+                "{scheme} verification key does not match the signing key"
+            );
+            assert_eq!(
+                read_text_at_request_id(pub_storage, &signing_material_id(scheme), &addr_type)
+                    .await
+                    .unwrap(),
+                expected.address_text(),
+                "{scheme} digest does not match the signing key"
+            );
+        }
+    }
+
+    /// The case the migration exists for: a node that predates multi-scheme support
+    /// gains every scheme's material on restart, derived from the key it already
+    /// has, and its historic ECDSA material is left byte-for-byte alone.
+    #[tokio::test]
+    async fn backfills_material_for_a_pre_multi_scheme_node() {
+        let (mut pub_storage, priv_storage) = pre_multi_scheme_node().await;
+        let legacy_before = snapshot(&pub_storage, &LEGACY_ECDSA_MATERIAL_TYPES).await;
+        assert!(
+            snapshot(&pub_storage, &SCHEME_MATERIAL_TYPES)
+                .await
+                .is_empty(),
+            "the fixture is not a pre-multi-scheme node"
+        );
+
+        migrate_public_verification_material(&priv_storage, &mut pub_storage)
+            .await
+            .unwrap();
+
+        let sk = get_core_signing_key(&priv_storage).await.unwrap();
+        assert_material_matches(&pub_storage, &sk).await;
+        assert_eq!(
+            snapshot(&pub_storage, &LEGACY_ECDSA_MATERIAL_TYPES).await,
+            legacy_before,
+            "the deprecated ECDSA material was modified"
+        );
+    }
+
+    /// A node with no signing key — storage prepared before key generation — must
+    /// migrate cleanly rather than fail the boot, and must not invent material it
+    /// has nothing to derive from.
+    #[tokio::test]
+    async fn skips_when_no_signing_key_exists() {
+        let mut pub_storage = RamStorage::new();
+        let priv_storage = RamStorage::new();
+
+        migrate_public_verification_material(&priv_storage, &mut pub_storage)
+            .await
+            .unwrap();
+
+        assert!(
+            snapshot(&pub_storage, &SCHEME_MATERIAL_TYPES)
+                .await
+                .is_empty(),
+            "material was written without a signing key to derive it from"
+        );
+    }
+
+    /// The migration runs on every start, so the second and later runs must be
+    /// inert — not merely non-failing, but not rewriting the published objects
+    /// either.
+    #[tokio::test]
+    async fn rerunning_changes_nothing() {
+        let (mut pub_storage, priv_storage) = pre_multi_scheme_node().await;
+        migrate_public_verification_material(&priv_storage, &mut pub_storage)
+            .await
+            .unwrap();
+        let after_first_run = snapshot(&pub_storage, &SCHEME_MATERIAL_TYPES).await;
+
+        migrate_public_verification_material(&priv_storage, &mut pub_storage)
+            .await
+            .unwrap();
+
+        assert_eq!(
+            snapshot(&pub_storage, &SCHEME_MATERIAL_TYPES).await,
+            after_first_run
+        );
     }
 
     // S3 storage tests, run against an in-process mock S3 (no MinIO) via `create_s3_storage`.

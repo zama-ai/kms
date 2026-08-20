@@ -603,8 +603,8 @@ mod tests {
     use std::collections::HashMap;
 
     use crate::engine::context::ContextInfo;
-    use crate::engine::context::NodeInfo;
     use crate::engine::context::SoftwareVersion;
+    use crate::engine::context::{NodeInfo, SchemeDigests};
     use crate::engine::threshold::service::reshare_utils::ERR_FAILED_TO_FETCH_PUBLIC_MATERIALS;
     use crate::engine::threshold::service::reshare_utils::fetch_public_fhe_materials_from_peers;
     use crate::engine::threshold::service::reshare_utils::get_verified_fhe_public_materials;
@@ -731,7 +731,6 @@ mod tests {
                 vec![NodeInfo {
                     mpc_identity: "Node1".to_string(),
                     party_id: 1,
-                    signer_address: None,
                     external_url: "http://localhost:12345".to_string(),
                     ca_cert: None,
                     // the storage url does not matter as we're using the mock
@@ -739,12 +738,12 @@ mod tests {
                         "https://zama-zws-dev-tkms-b6q87.s3.eu-west-1.amazonaws.com/".to_string(),
                     public_storage_prefix: None,
                     extra_signer_addresses: vec![],
+                    scheme_digests: SchemeDigests::new(),
                 }],
                 if two_nodes {
                     vec![NodeInfo {
                         mpc_identity: "Node2".to_string(),
                         party_id: 2,
-                        signer_address: None,
                         external_url: "http://localhost:12345".to_string(),
                         ca_cert: None,
                         // the storage url does not matter as we're using the mock
@@ -753,6 +752,7 @@ mod tests {
                                 .to_string(),
                         public_storage_prefix: None,
                         extra_signer_addresses: vec![],
+                        scheme_digests: SchemeDigests::new(),
                     }]
                 } else {
                     vec![]
@@ -1059,7 +1059,6 @@ mod tests {
                 vec![NodeInfo {
                     mpc_identity: "Node1".to_string(),
                     party_id: 1,
-                    signer_address: None,
                     external_url: "http://localhost:12345".to_string(),
                     ca_cert: None,
                     // the storage url does not matter as we're using the mock
@@ -1067,12 +1066,12 @@ mod tests {
                         "https://zama-zws-dev-tkms-b6q87.s3.eu-west-1.amazonaws.com/".to_string(),
                     public_storage_prefix: None,
                     extra_signer_addresses: vec![],
+                    scheme_digests: SchemeDigests::new(),
                 }],
                 if two_nodes {
                     vec![NodeInfo {
                         mpc_identity: "Node2".to_string(),
                         party_id: 2,
-                        signer_address: None,
                         external_url: "http://localhost:12345".to_string(),
                         ca_cert: None,
                         // the storage url does not matter as we're using the mock
@@ -1081,6 +1080,7 @@ mod tests {
                                 .to_string(),
                         public_storage_prefix: None,
                         extra_signer_addresses: vec![],
+                        scheme_digests: SchemeDigests::new(),
                     }]
                 } else {
                     vec![]

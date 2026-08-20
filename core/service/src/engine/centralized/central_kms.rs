@@ -27,10 +27,13 @@ use crate::engine::validation::DSEP_USER_DECRYPTION;
 use crate::grpc::metastore_status_service::CustodianMetaStore;
 use crate::util::key_setup::FhePublicKey;
 use crate::util::meta_store::MetaStore;
-use crate::vault::storage::{StorageExt, read_all_data_from_all_epochs_versioned};
+use crate::vault::storage::{
+    StorageExt, read_all_data_from_all_epochs_versioned, select_data_from_max_epoch,
+};
 #[cfg(feature = "non-wasm")]
 use observability::conf::TelemetryConfig;
 use observability::metrics_names::OP_BOOT;
+use thread_handles::spawn_compute_bound;
 use threshold_execution::keyset_config::KeyGenSecretKeyConfig;
 use tokio_util::sync::CancellationToken;
 
@@ -285,7 +288,7 @@ pub(crate) fn generate_fhe_keys(
         tag,
     )?;
 
-    let (public_key, server_key) = compressed_keyset.decompress()?.into_raw_parts();
+    let (public_key, server_key) = compressed_keyset.decompress().into_raw_parts();
     let (_, _, _, decompression_key, _, _, _, _, _) = server_key.into_raw_parts();
 
     let handles = KmsFheKeyHandles::new_compressed(
@@ -582,14 +585,27 @@ pub async fn async_user_decrypt<
         degree: 0,   // In the centralized KMS, the degree is always 0 since result is a constant
     };
 
-    sign_user_decryption_result(
-        sig_key,
-        signing_schemes,
-        payload,
-        client_enc_key_bytes,
-        extra_data,
-        domain,
-    )
+    let sig_key = sig_key.clone();
+    let signing_schemes = signing_schemes.to_vec();
+    let client_enc_key_bytes = client_enc_key_bytes.to_vec();
+    let domain = domain.clone();
+    let signed = spawn_compute_bound(move || {
+        sign_user_decryption_result(
+            &sig_key,
+            &signing_schemes,
+            payload,
+            &client_enc_key_bytes,
+            extra_data,
+            &domain,
+        )
+    })
+    .await
+    .map_err(|e| {
+        anyhow_error_and_log(format!(
+            "Failed to run signing task for user decryption: {e}"
+        ))
+    })?;
+    signed.map_err(|e| anyhow_error_and_log(format!("Failed to sign user decryption result: {e}")))
 }
 
 // impl fmt::Debug for CentralizedKms, we don't want to include the decryption key in the debug output
@@ -922,18 +938,18 @@ impl<
             "loaded key_info with key_ids: {:?}",
             key_info.keys().collect::<Vec<_>>()
         );
-        let public_key_info = key_info
-            .iter()
-            .map(|((id, _), info)| (id.to_owned(), info.public_key_info.to_owned()))
-            .collect();
-        let crs_info: HashMap<RequestId, CrsGenMetadata> = read_all_data_from_all_epochs_versioned(
-            &private_storage,
-            &PrivDataType::CrsInfo.to_string(),
-        )
-        .await?
-        .into_iter()
-        .map(|((req, _epoch), v)| (req, v))
-        .collect();
+        let public_key_info = select_data_from_max_epoch(
+            key_info
+                .iter()
+                .map(|((id, epoch_id), info)| ((*id, *epoch_id), info.public_key_info.clone())),
+        );
+        let crs_info: HashMap<RequestId, CrsGenMetadata> = select_data_from_max_epoch(
+            read_all_data_from_all_epochs_versioned(
+                &private_storage,
+                &PrivDataType::CrsInfo.to_string(),
+            )
+            .await?,
+        );
 
         sanity_check_crs_materials(&public_storage, &crs_info).await?;
 
@@ -1270,7 +1286,9 @@ pub(crate) mod tests {
                     | PubDataType::DecompressionKey
                     | PubDataType::CACert
                     | PubDataType::RecoveryMaterial
-                    | PubDataType::CompressedXofKeySet => {
+                    | PubDataType::CompressedXofKeySet
+                    | PubDataType::TypedVerfKey
+                    | PubDataType::TypedVerfAddress => {
                         // Skip
                     }
                 }
@@ -1426,14 +1444,9 @@ pub(crate) mod tests {
             _ => panic!("Expected Current variant of KeyGenMetadata"),
         }
 
-        // Verify the compressed keyset can be decompressed
-        let decompressed = compressed_keyset.decompress();
-        assert!(
-            decompressed.is_ok(),
-            "Compressed keyset should be decompressible"
-        );
-
-        let (_pk, server_key) = decompressed.unwrap().into_raw_parts();
+        // Verify the compressed keyset can be decompressed. `decompress` is infallible since
+        // tfhe 1.7.0, so this only asserts it does not panic.
+        let (_pk, server_key) = compressed_keyset.decompress().into_raw_parts();
         let (_, _, _, _, _, _, _, oprf_key, _) = server_key.into_raw_parts();
         assert!(
             oprf_key.is_some(),

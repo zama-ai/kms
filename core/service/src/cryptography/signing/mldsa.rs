@@ -1,12 +1,16 @@
 //! ML-DSA (FIPS 204) signing backend, generic over the parameter set.
 
-use super::{SigningError, SigningScheme};
+use super::{DSEP_SIGKEY_DIGEST, SigningError, SigningScheme, SigningSchemeType};
+use crate::impl_generic_versionize;
 use core::marker::PhantomData;
-use hashing::DomainSep;
+use hashing::{DIGEST_BYTES, DomainSep, unsafe_hash_list_w_size};
 use ml_dsa::{
-    B32, Keypair, MlDsaParams, Signature as MlDsaSignature, SignatureEncoding, Signer,
-    SigningKey as MlDsaSigningKey, Verifier, VerifyingKey as MlDsaVerifyingKey,
+    B32, EncodedVerifyingKey, KeyExport, Keypair, MlDsaParams, Signature as MlDsaSignature,
+    SignatureEncoding, Signer, SigningKey as MlDsaSigningKey, Verifier,
+    VerifyingKey as MlDsaVerifyingKey,
 };
+use serde::{Deserialize, Serialize, de::Visitor};
+use tfhe::named::Named;
 
 /// The number of seed bytes consumed to build an ML-DSA signing key.
 pub const SEED_LEN: usize = 32;
@@ -53,7 +57,108 @@ impl<P: MlDsaParams> MlDsa<P> {
     pub fn keygen_from_seed(seed: &[u8; SEED_LEN]) -> MlDsaSigningKey<P> {
         MlDsaSigningKey::<P>::from_seed(&B32::from(*seed))
     }
+
+    /// The identifier of `vk`; a [`DIGEST_BYTES`] digest of the scheme's tag, concatenated with the key's bytes.
+    pub fn digest(scheme: SigningSchemeType, vk: &MlDsaVerifyingKey<P>) -> Vec<u8> {
+        let bytes = vk.to_bytes();
+        unsafe_hash_list_w_size(
+            &DSEP_SIGKEY_DIGEST,
+            &[&scheme.tag()[..], bytes.as_ref()],
+            DIGEST_BYTES,
+        )
+    }
 }
+
+/// Persistable wrapper around an ML-DSA verifying key, generic over the
+/// parameter set `P`.
+///
+/// Serializes as the fixed-size FIPS-204 `pkEncode` byte string (the same
+/// encoding [`MlDsa::digest`] hashes). This is the object persisted for the ML-DSA
+/// schemes, so a consumer needs only the FIPS-204 encoding — not the
+/// [`super::UnifiedPublicSigKey`] tagged union — to read a node's published ML-DSA
+/// identity.
+pub struct MlDsaVerfKey<P: MlDsaParams>(pub(crate) MlDsaVerifyingKey<P>);
+
+impl<P: MlDsaParams> Clone for MlDsaVerfKey<P> {
+    fn clone(&self) -> Self {
+        MlDsaVerfKey(self.0.clone())
+    }
+}
+
+impl<P: MlDsaParams> std::fmt::Debug for MlDsaVerfKey<P> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_tuple("MlDsaVerfKey")
+            .field(&self.0.encode())
+            .finish()
+    }
+}
+
+impl<P: MlDsaParams> PartialEq for MlDsaVerfKey<P> {
+    fn eq(&self, other: &Self) -> bool {
+        self.0 == other.0
+    }
+}
+
+/// The FIPS-204 parameter set's own name.
+pub trait MlDsaParamSet {
+    const PARAM_SET_NAME: &'static str;
+}
+
+impl MlDsaParamSet for ml_dsa::MlDsa44 {
+    const PARAM_SET_NAME: &'static str = "MlDsa44VerfKey";
+}
+
+impl MlDsaParamSet for ml_dsa::MlDsa65 {
+    const PARAM_SET_NAME: &'static str = "MlDsa65VerfKey";
+}
+
+impl MlDsaParamSet for ml_dsa::MlDsa87 {
+    const PARAM_SET_NAME: &'static str = "MlDsa87VerfKey";
+}
+
+impl<P: MlDsaParams + MlDsaParamSet> Named for MlDsaVerfKey<P> {
+    const NAME: &'static str = P::PARAM_SET_NAME;
+}
+
+impl<P: MlDsaParams> Serialize for MlDsaVerfKey<P> {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        serializer.serialize_bytes(self.0.encode().as_ref())
+    }
+}
+
+impl<'de, P: MlDsaParams> Deserialize<'de> for MlDsaVerfKey<P> {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        deserializer.deserialize_bytes(MlDsaVerfKeyVisitor(PhantomData))
+    }
+}
+
+struct MlDsaVerfKeyVisitor<P: MlDsaParams>(PhantomData<P>);
+impl<P: MlDsaParams> Visitor<'_> for MlDsaVerfKeyVisitor<P> {
+    type Value = MlDsaVerfKey<P>;
+
+    fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
+        write!(formatter, "an ML-DSA verifying key (pkEncode byte string)")
+    }
+
+    fn visit_bytes<E>(self, v: &[u8]) -> Result<Self::Value, E>
+    where
+        E: serde::de::Error,
+    {
+        // `try_from` enforces the exact `pkEncode` length; `decode` is then
+        // infallible for a correctly sized encoding (FIPS-204 Algorithm 23).
+        let enc =
+            EncodedVerifyingKey::<P>::try_from(v).map_err(|_| E::invalid_length(v.len(), &self))?;
+        Ok(MlDsaVerfKey(MlDsaVerifyingKey::<P>::decode(&enc)))
+    }
+}
+
+impl_generic_versionize!(<P: MlDsaParams> MlDsaVerfKey<P>);
 
 #[cfg(test)]
 mod tests {
