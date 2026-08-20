@@ -450,7 +450,37 @@ jobs:
           # (incl. the exit-1 path). Failures are non-fatal — it must never break the run.
           bash ci/scripts/sample_core_cpu.sh "${NAMESPACE}" > core-cpu-samples.log 2>&1 &
           CPU_SAMPLER_PID=$!
-          trap 'kill "${CPU_SAMPLER_PID}" 2>/dev/null || true' EXIT
+
+          bash ci/scripts/sample_core_metrics.sh "${NAMESPACE}" > core-metrics-samples.log 2>&1 &
+          METRICS_SAMPLER_PID=$!
+
+          # Stream warnings while the test is running. Fetching logs only after the
+          # run loses the beginning under kubelet log rotation at perf-test volume.
+          mkdir -p kms-core-live-warnings
+          CORE_LOG_PIDS=()
+          if [[ "${DEPLOYMENT_TYPE}" == "thresholdWithEnclave" ]]; then
+            CORE_LOG_CONTAINER="kms-core-enclave-logger"
+          else
+            CORE_LOG_CONTAINER="kms-core"
+          fi
+          for i in {1..13}; do
+            POD_NAME="${HELM_RELEASE_PREFIX:-kms-core}-${i}-core-${i}"
+            LOG_FILE="kms-core-live-warnings/kms-core-${i}-warnings.txt"
+            kubectl logs "${POD_NAME}" -c "${CORE_LOG_CONTAINER}" -n "${NAMESPACE}" \
+              --follow --since=1m 2>&1 \
+              | grep --line-buffered -E \
+                  'WARN|ERROR|Too many inactive sessions|ResourceExhausted|Network retry|Queue has been full' \
+                > "${LOG_FILE}" &
+            CORE_LOG_PIDS+=("$!")
+          done
+
+          stop_samplers() {
+            kill "${CPU_SAMPLER_PID}" "${METRICS_SAMPLER_PID}" "${CORE_LOG_PIDS[@]}" \
+              2>/dev/null || true
+            wait "${CPU_SAMPLER_PID}" "${METRICS_SAMPLER_PID}" "${CORE_LOG_PIDS[@]}" \
+              2>/dev/null || true
+          }
+          trap stop_samplers EXIT
 
           # Convert TLS boolean to enabled/disabled string
           if [[ "${TLS}" == "true" ]]; then
@@ -551,6 +581,23 @@ jobs:
           name: core-cpu-samples.log
           path: core-cpu-samples.log
           retention-days: 30
+
+      - name: Upload core metric samples
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: core-metrics-samples.log
+          path: core-metrics-samples.log
+          retention-days: 30
+
+      - name: Upload live kms-core warnings
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: kms-core-live-warnings
+          path: kms-core-live-warnings/
+          retention-days: 30
+          if-no-files-found: warn
 
       # ======================================================================
       # LOG COLLECTION
