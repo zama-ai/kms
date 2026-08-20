@@ -16,7 +16,6 @@ use tfhe::{FheTypes, Versionize};
 use tfhe_versionable::{
     Unversionize, UnversionizeError, Upgrade, Version, VersionizeOwned, VersionsDispatch,
 };
-use zeroize::Zeroize;
 
 cfg_if::cfg_if! {
     if #[cfg(feature = "non-wasm")] {
@@ -650,13 +649,6 @@ pub enum TypedPlaintextVersionsDispatch {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub enum TypedPlaintextVersionsDispatchOwned {
     V0(TypedPlaintext),
-}
-
-impl Zeroize for TypedPlaintext {
-    fn zeroize(&mut self) {
-        // `fhe_type` is public metadata, no need to zeroize.
-        self.bytes.zeroize();
-    }
 }
 
 /// Little endian encoding for easy serialization by allowing most significant bytes to be 0

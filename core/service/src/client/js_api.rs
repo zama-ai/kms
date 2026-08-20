@@ -425,15 +425,11 @@ pub fn process_user_decryption_resp_from_js(
     );
     // Need to convert to BE for JS, everything is internally represented as LE.
     // Reverse in place to avoid unwiped plaintext copies.
-    match le_res {
-        Ok(mut res) => {
-            for plaintext in res.iter_mut() {
-                plaintext.bytes.reverse();
-            }
-            Ok(res)
-        }
-        Err(e) => Err(e),
-    }
+    le_res.map(|mut res| {
+        res.iter_mut()
+            .for_each(|plaintext| plaintext.bytes.reverse());
+        res
+    })
 }
 
 /// Process the user_decryption response from Rust objects.

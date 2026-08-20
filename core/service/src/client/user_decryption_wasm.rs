@@ -218,23 +218,16 @@ impl Client {
         let unsign_key =
             UnifiedUnsigncryptionKey::new(dec_key, enc_key, &cur_verf_key, &receiver_id);
 
-        // Build manually so earlier plaintexts are wiped if a later entry fails.
-        let mut plaintexts: Vec<TypedPlaintext> =
-            Vec::with_capacity(payload.signcrypted_ciphertexts.len());
-        for ct in payload.signcrypted_ciphertexts {
-            match unsign_key.unsigncrypt_plaintext(
-                &DSEP_USER_DECRYPTION,
-                &ct.signcrypted_ciphertext,
-                &link,
-            ) {
-                Ok(res) => plaintexts.push(res.plaintext),
-                Err(e) => {
-                    plaintexts.zeroize();
-                    return Err(anyhow::anyhow!("unsigncrypt_plaintext failed: {}", e));
-                }
-            }
-        }
-        Ok(plaintexts)
+        payload
+            .signcrypted_ciphertexts
+            .into_iter()
+            .map(|ct| {
+                unsign_key
+                    .unsigncrypt_plaintext(&DSEP_USER_DECRYPTION, &ct.signcrypted_ciphertext, &link)
+                    .map(|res| res.plaintext)
+                    .map_err(|e| anyhow::anyhow!("unsigncrypt_plaintext failed: {}", e))
+            })
+            .collect()
     }
 
     /// Decrypt the user decryption response from the centralized KMS.
@@ -440,18 +433,16 @@ impl Client {
             }
         };
 
-        // Allocate the final_result at the start so that no allocation happens
-        // when it gets filled since TypedPlaintext may need to be zeroized later.
-        let mut final_result = Vec::with_capacity(res.len());
-        for (fhe_type, packing_factor, blocks) in res.iter() {
-            final_result.push(decrypted_blocks_to_plaintext(
-                &pbs_params,
-                *fhe_type,
-                *packing_factor,
-                blocks.as_slice(),
-            )?);
-        }
-        Ok(final_result)
+        res.into_iter()
+            .map(|(fhe_type, packing_factor, blocks)| {
+                decrypted_blocks_to_plaintext(
+                    &pbs_params,
+                    fhe_type,
+                    packing_factor,
+                    blocks.as_slice(),
+                )
+            })
+            .collect()
     }
 
     fn insecure_threshold_user_decryption_resp(
@@ -525,10 +516,10 @@ impl Client {
                     cur_resp.payload.clone(),
                     "Payload does not exist".to_owned(),
                 )?;
-                let shares = Zeroizing::new(insecure_decrypt_ignoring_signature(
+                let shares = insecure_decrypt_ignoring_signature(
                     &payload.signcrypted_ciphertexts[batch_i].signcrypted_ciphertext,
                     dec_key,
-                )?);
+                )?;
 
                 // Deserialize directly into the indexed shares to avoid another copy.
                 let cur_blocks: Vec<ResiduePolyF4<Z>> = bc2wrap::deserialize_slice(&shares.bytes)?;
@@ -730,8 +721,6 @@ impl Client {
                     &cur_resp.digest,
                 ) {
                     Ok(decryption_share) => {
-                        // Wipe the deserialized share after filling the indexed sharing.
-                        let decryption_share = Zeroizing::new(decryption_share);
                         // Deserialize directly into the indexed shares to avoid another copy.
                         let cur_blocks: Vec<ResiduePolyF4<Z>> =
                             bc2wrap::deserialize_slice(&decryption_share.plaintext.bytes)?;
