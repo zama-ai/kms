@@ -179,7 +179,7 @@ mod tests {
 
             for (n, t) in NTS {
                 let shares = share(&mut rng, &secret, n, t).unwrap();
-                let result = reconstruct(shares, t).unwrap();
+                let result = reconstruct(&shares, t).unwrap();
 
                 assert_eq!(result.as_slice(), secret.as_slice());
             }
@@ -208,7 +208,7 @@ mod tests {
                 }
 
                 // finally try to reconstruct
-                let result = reconstruct(shares, t).unwrap();
+                let result = reconstruct(&shares, t).unwrap();
                 assert_eq!(result.as_slice(), secret.as_slice());
             }
         }
@@ -230,7 +230,7 @@ mod tests {
                     assert_eq!(block.shares.len(), t + 1);
                 }
 
-                let result = reconstruct(shares, t).unwrap();
+                let result = reconstruct(&shares, t).unwrap();
 
                 assert_eq!(result.as_slice(), secret.as_slice());
             }
@@ -252,7 +252,7 @@ mod tests {
                 }
 
                 // our scheme does not support error correction
-                let err = reconstruct(shares, t).unwrap_err();
+                let err = reconstruct(&shares, t).unwrap_err();
                 assert!(matches!(err, BackupError::ReconstructError(..)));
             }
         }
@@ -269,7 +269,7 @@ mod tests {
                     let _ = block.shares.split_off(t);
                 }
 
-                let err = reconstruct(shares, t).unwrap_err();
+                let err = reconstruct(&shares, t).unwrap_err();
                 assert!(matches!(err, BackupError::ReconstructError(..)));
             }
         }

@@ -46,7 +46,6 @@ use tokio::sync::{OwnedRwLockReadGuard, RwLock};
 use tokio_util::task::TaskTracker;
 use tonic::{Code, Request, Response};
 use tracing::Instrument;
-use zeroize::Zeroizing;
 
 // === Internal Crate ===
 use crate::{
@@ -58,6 +57,7 @@ use crate::{
         internal_crypto_types::LegacySerialization,
         signcryption::{SigncryptFHEPlaintext, UnifiedSigncryptionKeyOwned},
         signing::SigningSchemeType,
+        zeroizing_writer::ZeroizingWriter,
     },
     engine::{
         base::{
@@ -88,7 +88,7 @@ use crate::{
 use super::ThresholdFheKeys;
 
 /// A serialized partial plaintext share kept behind a zeroizing guard.
-type PartialDecryption = (Zeroizing<Vec<u8>>, u32, std::time::Duration);
+type PartialDecryption = (ZeroizingWriter, u32, std::time::Duration);
 
 #[tonic::async_trait]
 pub trait NoiseFloodPartialDecryptor: Send + Sync {
@@ -267,7 +267,9 @@ impl<
                                 Some(partial_dec) => {
                                     // Wipe the serialized partial plaintext after signcryption.
                                     let partial_dec = pack_residue_poly(partial_dec);
-                                    Zeroizing::new(bc2wrap::serialize(&partial_dec)?)
+                                    let mut serialized = ZeroizingWriter::new();
+                                    bc2wrap::serialize_into(&partial_dec, &mut serialized)?;
+                                    serialized
                                 }
                                 None => {
                                     return Err(anyhow!(
@@ -309,7 +311,9 @@ impl<
                                 Some(partial_dec) => {
                                     // let partial_dec = pack_residue_poly(partial_dec); // TODO use more compact packing for bitdec?
                                     // Wipe the serialized partial plaintext after signcryption.
-                                    Zeroizing::new(bc2wrap::serialize(&partial_dec)?)
+                                    let mut serialized = ZeroizingWriter::new();
+                                    bc2wrap::serialize_into(partial_dec, &mut serialized)?;
+                                    serialized
                                 }
                                 None => {
                                     return Err(anyhow!(

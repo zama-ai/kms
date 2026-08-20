@@ -56,6 +56,7 @@ pub enum PrivateKeySetVersions<const EXTENSION_DEGREE: usize> {
 ///
 /// We do not impl `Zeroize` because these key shares stay in memory while the
 /// kms is running as they're needed for decryption.
+pub struct PrivateKeySet<const EXTENSION_DEGREE: usize> {
     //The two Lwe keys are the same if there's no dedicated pk parameters
     pub lwe_encryption_secret_key_share: LweSecretKeyShareEnum<EXTENSION_DEGREE>,
     pub lwe_compute_secret_key_share: LweSecretKeyShareEnum<EXTENSION_DEGREE>,
