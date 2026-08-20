@@ -541,7 +541,7 @@ where
         )
         .await?;
 
-    let validation_material: HashMap<RequestId, RecoveryValidationMaterial> =
+    let recovery_validation_material: HashMap<RequestId, RecoveryValidationMaterial> =
         read_all_data_versioned(&public_storage, &PubDataType::RecoveryMaterial.to_string())
             .await?;
 
@@ -554,7 +554,7 @@ where
             .map(|((id, epoch_id), info)| ((*id, *epoch_id), info.meta_data.clone())),
     );
 
-    let entries: Vec<_> = key_info_versioned
+    let key_info: Vec<_> = key_info_versioned
         .iter()
         .map(|((id, _), info)| (*id, info.meta_data.clone()))
         .collect();
@@ -575,9 +575,9 @@ where
         Ok(signing_key) => {
             verify_public_storage_material(
                 &public_storage,
-                &entries,
+                &key_info,
                 &crs_info,
-                &validation_material,
+                &recovery_validation_material,
                 signing_key.as_ref(),
             )
             .await?;
@@ -697,7 +697,7 @@ where
         threshold_config.dec_capacity,
         threshold_config.min_dec_cache,
     );
-    let custodian_meta_store = MetaStore::new_from_map(validation_material);
+    let custodian_meta_store = MetaStore::new_from_map(recovery_validation_material);
 
     // TODO(zama-ai/kms-internal/issues/2758)
     // If we're still using peer config, we need to manually write the default context into storage.

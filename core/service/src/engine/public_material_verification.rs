@@ -41,6 +41,7 @@ use kms_grpc::RequestId;
 use kms_grpc::rpc_types::PubDataType;
 use std::collections::{BTreeMap, HashMap};
 use std::str::FromStr;
+use strum::IntoEnumIterator;
 
 const ERR_INVALID_CURRENT_PUBLIC_KEY_SHAPE: &str = "Invalid current public key metadata shape";
 const ERR_INVALID_LEGACY_PUBLIC_KEY_SHAPE: &str = "Invalid legacy public key metadata shape";
@@ -246,10 +247,6 @@ fn verify_recovery_material(
 }
 
 /// Verify public storage material against private storage and verify recovery validation material.
-///
-/// Note that the private signing key is required, so this can only be called in
-/// normal mode. Recovery mode intentionally skips the entire public-storage
-/// verification flow because only backup recovery operations are allowed there.
 pub async fn verify_public_storage_material<S>(
     public_storage: &S,
     key_entries: &[(RequestId, KeyGenMetadata)],
@@ -292,10 +289,39 @@ where
         );
     }
 
-    verify_signing_key_material(public_storage, signing_key).await?;
-    verify_recovery_material(recovery_material, signing_key)?;
-    verify_keysets(public_storage, key_entries).await?;
-    verify_crses(public_storage, crs_entries).await?;
+    for data_type in PubDataType::iter() {
+        match data_type {
+            PubDataType::PublicKey => {
+                // Verifies PublicKey, ServerKey, and CompressedXofKeySet together.
+                verify_keysets(public_storage, key_entries).await?;
+            }
+            PubDataType::CRS => {
+                verify_crses(public_storage, crs_entries).await?;
+            }
+            #[allow(deprecated)]
+            PubDataType::VerfKey => {
+                // Verifies both the legacy verification key and address together.
+                verify_signing_key_material(public_storage, signing_key).await?;
+            }
+            PubDataType::RecoveryMaterial => {
+                verify_recovery_material(recovery_material, signing_key)?;
+            }
+            PubDataType::ServerKey
+            | PubDataType::DecompressionKey
+            | PubDataType::CACert
+            | PubDataType::CompressedXofKeySet
+            | PubDataType::TypedVerfKey
+            | PubDataType::TypedVerfAddress => {
+                // ServerKey and CompressedXofKeySet are checked by verify_keysets above. The
+                // remaining types are not part of this startup verification flow.
+            }
+            #[allow(deprecated)]
+            PubDataType::VerfAddress | PubDataType::PublicKeyMetadata => {
+                // VerfAddress is checked by verify_signing_key_material above. PublicKeyMetadata
+                // is deprecated and no longer stored.
+            }
+        }
+    }
 
     tracing::info!(
         "Verified public storage material in storage \"{}\": {} keyset(s), {} CRS(es), {} recovery validation material item(s)",
