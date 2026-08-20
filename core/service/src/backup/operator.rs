@@ -414,17 +414,9 @@ impl Named for BackupMaterial {
     const NAME: &'static str = "backup::BackupShares";
 }
 
-/// `BackupMaterial` is what unsigncryption yields on the custodian and operator recovery paths,
-/// so it holds plaintext shares of the operator's private keys.
-///
-/// NOTE: we cannot give this type an automatic zeroizing `Drop` impl because the `Versionize`
-/// derive moves out of its fields for the owned version conversion. Implementing
-/// `ZeroizeOnDrop` manually would only add its marker trait; it would not perform the wipe.
-/// Instead, every place that unsigncrypts one keeps it inside a [`Zeroizing`] so it is wiped on
-/// all exit paths.
 impl Zeroize for BackupMaterial {
     fn zeroize(&mut self) {
-        // Only the shares are secret, the remaining fields are public routing metadata.
+        // The remaining fields are public routing metadata.
         self.shares.zeroize();
     }
 }
@@ -619,8 +611,7 @@ impl Operator {
     /// equality inside the decrypted payload, and the commitment match. Returns the precise
     /// `RecoverySkipReason` on the first failure.
     ///
-    /// The decrypted material holds plaintext key shares, so it is returned inside a [`Zeroizing`]
-    /// guard and wiped as soon as the caller drops it.
+    /// Returns decrypted key shares in a [`Zeroizing`] guard.
     pub(crate) fn validate_one_recovery_output(
         &self,
         output: &InternalCustodianRecoveryOutput,
@@ -776,8 +767,7 @@ impl Operator {
 
     /// Reconstruct the operator's secret from already-validated per-role `BackupMaterial`s.
     ///
-    /// The reconstructed secret is the operator's backup decryption key, so it is returned inside
-    /// a [`Zeroizing`] guard and wiped as soon as the caller drops it.
+    /// Returns the reconstructed backup decryption key in a [`Zeroizing`] guard.
     pub fn recover_from_validated(
         &self,
         validated: &HashMap<Role, Zeroizing<BackupMaterial>>,
@@ -791,15 +781,8 @@ impl Operator {
             return Err(BackupError::NoBlocksError);
         };
 
-        // `Share` is `Copy`, so building the per-block sharings copies the shares out from behind
-        // the `Zeroizing<BackupMaterial>` guards. `secretsharing::reconstruct` takes ownership of
-        // these copies and wipes them before it returns.
-        //
-        // Reserve each sharing up front: `add_share` grows by reallocating, and a reallocation
-        // would release the shares added so far without wiping them. Reserving is what makes the
-        // wipe in `reconstruct` complete rather than best-effort. `decrypted_buf.len()` is exactly
-        // the number of shares added below, so no sharing ever has to grow.
-        let mut all_sharings = Vec::with_capacity(num_blocks);
+        // `Share` is `Copy`; reserve capacity so copied shares do not leave unwiped reallocations.
+        let mut all_sharings = Zeroizing::new(Vec::with_capacity(num_blocks));
         for b in 0..num_blocks {
             let mut shamir_sharing = ShamirSharings::with_capacity(decrypted_buf.len());
             for blocks in decrypted_buf.iter() {
@@ -807,7 +790,7 @@ impl Operator {
             }
             all_sharings.push(shamir_sharing);
         }
-        let out = secretsharing::reconstruct(all_sharings, self.threshold)?;
+        let out = secretsharing::reconstruct(all_sharings.as_slice(), self.threshold)?;
         Ok(out)
     }
 }

@@ -889,8 +889,7 @@ impl<
         let signcryption_key = UnifiedSigncryptionKey::new(sig_key, client_enc_key, client_id);
         // Observe that we encrypt the plaintext itself, this is different from the threshold case
         // where it is first mapped to a Vec<ResiduePolyF4Z128> element
-        // This is the user's value in the clear, so keep it behind a zeroizing guard: it is wiped
-        // when this function returns, on the error paths as well as the happy one.
+        // Keep the cleartext behind a zeroizing guard during signcryption.
         let plaintext = Zeroizing::new(Self::public_decrypt(keys, ct, fhe_type, ct_format)?);
         let enc_res = signcryption_key.signcrypt_plaintext(
             rng,

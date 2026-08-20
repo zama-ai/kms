@@ -87,10 +87,7 @@ use crate::{
 // === Current Module Imports ===
 use super::ThresholdFheKeys;
 
-/// A serialized partial decryption, along with its packing factor and how long it took to produce.
-///
-/// The bytes are a share of the user's plaintext, so they are kept behind a zeroizing guard and
-/// wiped once signcryption is done reading them.
+/// A serialized partial plaintext share kept behind a zeroizing guard.
 type PartialDecryption = (Zeroizing<Vec<u8>>, u32, std::time::Duration);
 
 #[tonic::async_trait]
@@ -259,7 +256,7 @@ impl<
                         Ok((server_key, ck))
                     })?;
 
-                    // TODO we'll need to change the `partial_decrypt` return type to make sure pdec can be zeroized.
+                    // TODO: make `partial_decrypt` return a zeroizing value.
                     let pdec =
                         Dec::partial_decrypt(&mut noiseflood_session, ct, &keys.private_keys).await;
 
@@ -268,8 +265,7 @@ impl<
                             let pdec_serialized = match partial_dec_map.get(&session_id.to_string())
                             {
                                 Some(partial_dec) => {
-                                    // A serialized partial decryption is a share of the user's
-                                    // plaintext, so wipe it once signcryption is done with it.
+                                    // Wipe the serialized partial plaintext after signcryption.
                                     let partial_dec = pack_residue_poly(partial_dec);
                                     Zeroizing::new(bc2wrap::serialize(&partial_dec)?)
                                 }
@@ -312,8 +308,7 @@ impl<
                             {
                                 Some(partial_dec) => {
                                     // let partial_dec = pack_residue_poly(partial_dec); // TODO use more compact packing for bitdec?
-                                    // A serialized partial decryption is a share of the user's
-                                    // plaintext, so wipe it once signcryption is done with it.
+                                    // Wipe the serialized partial plaintext after signcryption.
                                     Zeroizing::new(bc2wrap::serialize(&partial_dec)?)
                                 }
                                 None => {

@@ -424,8 +424,7 @@ pub fn process_user_decryption_resp_from_js(
         verify,
     );
     // Need to convert to BE for JS, everything is internally represented as LE.
-    // Reversed in place rather than collected into fresh buffers: building new vectors would
-    // release the original plaintexts to the heap without wiping them.
+    // Reverse in place to avoid unwiped plaintext copies.
     match le_res {
         Ok(mut res) => {
             for plaintext in res.iter_mut() {

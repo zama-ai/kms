@@ -652,13 +652,9 @@ pub enum TypedPlaintextVersionsDispatchOwned {
     V0(TypedPlaintext),
 }
 
-/// `TypedPlaintext` carries decrypted FHE values, so its bytes are secret whenever it holds the
-/// result of a decryption. It cannot be `ZeroizeOnDrop` (callers move the value around freely and
-/// `prost` owns the type definition), so holders that keep one alive should wrap it in a
-/// `Zeroizing` guard or call [`Zeroize::zeroize`] once done with it.
 impl Zeroize for TypedPlaintext {
     fn zeroize(&mut self) {
-        // Only `bytes` is secret, `fhe_type` is public metadata describing how to interpret it.
+        // `fhe_type` is public metadata, no need to zeroize.
         self.bytes.zeroize();
     }
 }

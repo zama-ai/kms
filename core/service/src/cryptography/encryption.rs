@@ -207,8 +207,7 @@ impl Encrypt for UnifiedPublicEncKey {
         rng: &mut (impl CryptoRng + RngCore),
         msg: &T,
     ) -> Result<UnifiedCipher, CryptographyError> {
-        // Serialized messages can contain private material, so serialize into a sink that wipes
-        // the buffer on every exit path, intermediate allocations included.
+        // Serialize into a sink that wipes intermediate buffers.
         let mut serialized_msg = ZeroizingWriter::new();
         tfhe::safe_serialization::safe_serialize(msg, &mut serialized_msg, SAFE_SER_SIZE_LIMIT)
             .map_err(|e| CryptographyError::DeserializationError(e.to_string()))?;
@@ -469,7 +468,7 @@ impl Decrypt for UnifiedPrivateEncKey {
                 return Err(CryptographyError::MlKem1024Unsupported);
             }
         };
-        // Keep the zeroizing plaintext alive until deserialization has finished reading it.
+        // Keep plaintext guarded through deserialization.
         let mut res_buf = std::io::Cursor::new(raw_plaintext.as_slice());
         safe_deserialize(&mut res_buf, SAFE_SER_SIZE_LIMIT)
             .map_err(CryptographyError::DeserializationError)

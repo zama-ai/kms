@@ -1,18 +1,11 @@
-//! A [`std::io::Write`] sink whose contents live in a zeroizing buffer.
+//! A [`std::io::Write`] sink that wipes its buffer, including old allocations on growth.
 //!
-//! Serializing into a plain `Vec<u8>` and wrapping the result in [`Zeroizing`] only wipes the
-//! *final* allocation. Every time the vector grows it copies into a fresh allocation and releases
-//! the old one with the plaintext still in it, so an N-byte secret ends up scattered over roughly
-//! log2(N) freed allocations. `zeroize` documents this limitation on its own `Vec` impl: "Cannot
-//! ensure that previous reallocations did not leave values on the heap."
-//!
-//! [`ZeroizingWriter`] closes that gap by performing the growth itself and wiping each
-//! intermediate buffer before it is released.
+//! Unlike wrapping a finished `Vec<u8>` in [`Zeroizing`], it wipes each allocation before release.
 
 use std::io::Write;
 use zeroize::Zeroizing;
 
-/// Capacity of the first allocation, so that short messages never reallocate at all.
+/// Initial capacity for short messages.
 const MIN_CAPACITY: usize = 128;
 
 pub(crate) struct ZeroizingWriter {
@@ -31,10 +24,7 @@ impl ZeroizingWriter {
         self.buf.as_slice()
     }
 
-    /// Make room for `additional` more bytes, wiping the outgoing allocation if we have to grow.
-    ///
-    /// `Vec::reserve` would copy the contents into the new allocation and release the old one
-    /// as-is, so we do the move by hand and let `Zeroizing` wipe what we leave behind.
+    /// Grow without releasing an unwiped allocation.
     fn grow_for(&mut self, additional: usize) {
         let required = self.buf.len() + additional;
         if required <= self.buf.capacity() {
@@ -43,7 +33,7 @@ impl ZeroizingWriter {
         let new_capacity = required.max(self.buf.capacity() * 2).max(MIN_CAPACITY);
         let mut grown = Zeroizing::new(Vec::with_capacity(new_capacity));
         grown.extend_from_slice(self.buf.as_slice());
-        // Dropping the previous buffer here wipes it before its allocation is released.
+        // Replacing `buf` drops and wipes the old buffer.
         self.buf = grown;
     }
 }
@@ -74,8 +64,7 @@ mod tests {
 
     #[test]
     fn growth_preserves_contents_across_many_reallocations() {
-        // Write well past MIN_CAPACITY one byte at a time so that `grow_for` has to move the
-        // buffer repeatedly, and check nothing is lost or reordered on the way.
+        // Force repeated growth and verify contents are preserved.
         let expected: Vec<u8> = (0..4096).map(|i| (i % 251) as u8).collect();
         let mut writer = ZeroizingWriter::new();
         for byte in &expected {

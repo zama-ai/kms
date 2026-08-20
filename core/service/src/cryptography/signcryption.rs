@@ -86,9 +86,8 @@ pub trait UnsigncryptFHEPlaintext: Unsigncrypt {
     /// The link parameter is used to verify that the signcryption corresponds to the expected context or session.
     /// The method is exclusively used to decrypt partially decrypted FHE ciphertexts for user decryption.
     ///
-    /// WARNING: the returned [`SigncryptionPayload`] holds the recovered plaintext in the clear.
-    /// It implements [`Zeroize`] but deliberately not [`ZeroizeOnDrop`], since callers need to move
-    /// the `plaintext` field out of it. Callers must therefore wipe whatever they keep once done.
+    /// The returned payload contains cleartext and implements [`Zeroize`], but not
+    /// [`ZeroizeOnDrop`], because callers may move out `plaintext`.
     fn unsigncrypt_plaintext(
         &self,
         dsep: &DomainSep,
@@ -363,10 +362,7 @@ pub struct SigncryptionPayload {
 
 impl Zeroize for SigncryptionPayload {
     fn zeroize(&mut self) {
-        // `TypedPlaintext::zeroize` wipes the plaintext bytes and deliberately leaves `fhe_type`,
-        // which is public metadata rather than secret material. The link is derived from the
-        // request and is not secret either, but we wipe it so that no part of a decrypted payload
-        // outlives this call.
+        // `fhe_type` is public metadata; wipe the plaintext and link.
         self.plaintext.zeroize();
         self.link.zeroize();
     }
@@ -393,8 +389,7 @@ impl<'a> Signcrypt for UnifiedSigncryptionKey<'a> {
     where
         T: Serialize + tfhe::Versionize + tfhe::named::Named,
     {
-        // Serialized messages can contain private material, so serialize into a sink that wipes
-        // the buffer on every exit path, intermediate allocations included.
+        // Serialize into a sink that wipes intermediate buffers.
         let mut serialized_msg = ZeroizingWriter::new();
         safe_serialize(msg, &mut serialized_msg, SAFE_SER_SIZE_LIMIT).map_err(|e| {
             CryptographyError::SerializationError(format!(
@@ -432,14 +427,13 @@ impl<'a> SigncryptFHEPlaintext for UnifiedSigncryptionKey<'a> {
         fhe_type: FheTypes,
         link: &[u8],
     ) -> Result<UnifiedSigncryption, CryptographyError> {
-        // The payload contains private plaintext, so wipe it after serialization.
+        // Wipe the cleartext payload after serialization.
         let signcryption_msg = Zeroizing::new(SigncryptionPayload {
             plaintext: TypedPlaintext::from_bytes(plaintext.to_owned(), fhe_type),
             link: link.to_owned(),
         });
         // LEGACY Code: should be using safe_serialization
-        // The serialized payload can contain private material, so serialize into a sink that wipes
-        // the buffer on every exit path, intermediate allocations included.
+        // Serialize into a sink that wipes intermediate buffers.
         let mut serialized_msg = ZeroizingWriter::new();
         bc2wrap::serialize_into(&*signcryption_msg, &mut serialized_msg)
             .map_err(|e| CryptographyError::BincodeError(e.to_string()))?;
@@ -481,7 +475,7 @@ fn inner_signcryption(
             return Err(CryptographyError::MlKem1024Unsupported);
         }
     };
-    // The signed message contains the plaintext, so wipe this temporary after signing.
+    // Wipe the temporary signed message after signing.
     let to_sign = Zeroizing::new([msg, signcrypt_key.receiver_id, &serialized_enc_key].concat());
     let sig = internal_sign(dsep, to_sign.as_slice(), signcrypt_key.signing_key)
         .map_err(|e| CryptographyError::SigningError(e.to_string()))?;
@@ -497,7 +491,7 @@ fn inner_signcryption(
         &PublicSigKey::from_sk(signcrypt_key.signing_key),
     )
     .map_err(|e| CryptographyError::DeserializationError(e.to_string()))?;
-    // The encrypted message contains the plaintext, so wipe this temporary after encryption.
+    // Wipe the temporary encrypted message after encryption.
     let to_encrypt =
         Zeroizing::new([msg, sig.to_bytes().as_ref(), verf_key_hash.as_ref()].concat());
 
@@ -586,7 +580,7 @@ impl<'a> UnsigncryptFHEPlaintext for UnifiedUnsigncryptionKey<'a> {
             bc2wrap::deserialize_slice(decrypted_signcryption.as_slice())
                 .map_err(|e| CryptographyError::BincodeError(e.to_string()))?;
         if link != signcrypted_msg.link {
-            // The payload already holds the recovered plaintext, so wipe it before bailing out.
+            // Wipe the payload before returning on a link mismatch.
             signcrypted_msg.zeroize();
             return Err(CryptographyError::VerificationError(
                 "signcryption link does not match!".to_string(),
@@ -669,7 +663,7 @@ fn parse_msg(
     }
     let sig = k256::ecdsa::Signature::from_slice(sig_bytes)
         .map_err(|e| CryptographyError::SerializationError(e.to_string()))?;
-    // The extracted message remains sensitive, so wipe its owned copy on drop.
+    // Wipe the extracted message on drop.
     Ok((Zeroizing::new(msg.to_vec()), Signature::from_ecdsa(sig)))
 }
 
@@ -691,9 +685,7 @@ fn check_format_and_signature(
             return Err(CryptographyError::MlKem1024Unsupported);
         }
     };
-    // The signature input contains the plaintext, so wipe this temporary after verification.
-    // Concatenate from slices (like `inner_signcryption` does) so no intermediate, unwiped copy
-    // of the plaintext is allocated and freed on the way in.
+    // Wipe the signature input and avoid an intermediate plaintext copy.
     let msg_signed = Zeroizing::new(
         [
             &dsep[..],
@@ -951,7 +943,7 @@ mod tests {
         let mut rng = AesRng::seed_from_u64(42);
         let (server_verf_key, _server_sig_key) = gen_sig_keys(&mut rng);
         let to_encrypt = [0_u8; 1 + DIGEST_BYTES + SIG_SIZE];
-        // Keep the test input under the same zeroizing ownership contract as decrypted plaintext.
+        // Keep test input under the zeroizing ownership contract.
         let res = parse_msg(Zeroizing::new(to_encrypt.to_vec()), &server_verf_key);
         // unwrapping fails
         assert!(res.is_err());

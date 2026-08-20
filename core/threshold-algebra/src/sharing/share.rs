@@ -14,6 +14,11 @@ pub enum ShareVersions<Z: Clone> {
 }
 
 /// Generic structure for shares with non-interactive methods possible to carry out on shares.
+///
+/// Noet that `Share` is [`Copy`], so the derived [`Zeroize`] wipes *only* the
+/// location the caller holds a `&mut` to. It is not a guarantee that the share
+/// value is gone from memory. So the zeroization feature is only useful for
+/// short-lived buffers, e.g., in backups.
 #[derive(Clone, Debug, Hash, PartialEq, Eq, Copy, Serialize, Deserialize, Zeroize, Versionize)]
 #[versionize(ShareVersions)]
 pub struct Share<Z: Clone> {

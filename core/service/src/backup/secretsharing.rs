@@ -127,25 +127,14 @@ where
 }
 
 /// Reconstruct the shared secret from `shares`.
-///
-/// Everything this touches is secret. The intermediates — the incoming shares, every opened
-/// block, and the concatenated buffer they are assembled into — are wiped before this function
-/// returns, on the error paths as well as the happy one. The reconstructed secret is returned
-/// inside a [`Zeroizing`] guard instead, so it stays alive for the caller and is wiped when the
-/// caller drops it.
-///
-/// NOTE: the guarantee stops at the `threshold-algebra` boundary. `ShamirSharings::reconstruct`
-/// interpolates over the share values in temporaries of its own, and `to_byte_vec` allocates a
-/// small buffer per coefficient; neither is wiped.
 pub(crate) fn reconstruct(
-    mut shares: Vec<ShamirSharings<ResiduePolyF4Z64>>,
+    shares: &[ShamirSharings<ResiduePolyF4Z64>],
     t: usize,
 ) -> Result<Zeroizing<Vec<u8>>, BackupError> {
     let block_len = ResiduePolyF4Z64::BIT_LENGTH / 8;
     debug_assert_eq!(block_len, 32);
 
-    // Every block contributes exactly `block_len` bytes, so pre-sizing means `combined` never
-    // reallocates and hence never leaves an unwiped copy of the secret behind.
+    // Pre-size so `combined` never reallocates an unwiped copy.
     let mut combined = Zeroizing::new(Vec::with_capacity(shares.len() * block_len));
     let reconstructed = (|| {
         for current_block in shares.iter() {
@@ -160,10 +149,6 @@ pub(crate) fn reconstruct(
         Ok(Zeroizing::new(res.to_vec()))
     })();
 
-    // `reconstruct` only borrows the shares, so wipe our copies of them before returning.
-    for block in shares.iter_mut() {
-        block.shares.zeroize();
-    }
     reconstructed
 }
 

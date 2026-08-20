@@ -329,8 +329,9 @@ impl Custodian {
             operator_verification_key,
             &custodian_id,
         );
-        // The decrypted material holds plaintext key shares, so keep it behind a zeroizing guard
-        // for the rest of the function.
+
+        // BackupMaterial contains secret shares which should be zeroized when dropped
+        // so we put it behind a Zeroizing.
         let backup_material: Zeroizing<BackupMaterial> = Zeroizing::new(
             unsigncrypt_key
                 .unsigncrypt(&DSEP_BACKUP_CUSTODIAN, &backup.signcryption)

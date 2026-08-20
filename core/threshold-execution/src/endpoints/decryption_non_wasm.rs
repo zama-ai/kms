@@ -659,12 +659,10 @@ pub struct BlocksPartialDecrypt {
     pub partial_decryptions: Vec<Z128>,
 }
 
-/// `partial_decryptions` are opened plaintext blocks. Every consumer of this type takes it by
-/// value — [`combine_plaintext_blocks`] among them — so without a `Drop` impl the blocks would be
-/// released to the heap intact once the caller was done with them.
+/// Wipes the opened plaintext blocks.
 impl Zeroize for BlocksPartialDecrypt {
     fn zeroize(&mut self) {
-        // Only the blocks are secret, `bits_in_block` is a public parameter.
+        // `bits_in_block` is public metadata.
         self.partial_decryptions.zeroize();
     }
 }
@@ -1147,8 +1145,7 @@ where
     let ptxt_sums: Vec<_> = ptxt_sums.iter().map(|ptxt_sum| ptxt_sum.value()).collect();
 
     // output results
-    // Opened plaintext blocks. `ptxts128` is moved into the `BlocksPartialDecrypt` below and
-    // wiped with it; `ptxts64` stays here, so it needs its own guard.
+    // Keep opened plaintext blocks guarded until they are moved or dropped.
     let ptxts64 = Zeroizing::new(open_bit_composed_ptxts(session, ptxt_sums).await?);
     let ptxts128: Vec<_> = ptxts64
         .iter()

@@ -23,14 +23,8 @@ pub struct ShamirSharings<Z: Ring> {
     pub shares: Vec<Share<Z>>,
 }
 
-/// A `ShamirSharings` normally holds shares of a secret, and reserving capacity only stops
-/// `add_share` from *leaking copies* while the sharing is being built — the finished buffer still
-/// has to be wiped. Callers holding secret shares should therefore keep the sharing inside a
-/// [`zeroize::Zeroizing`] guard, which wipes it on every exit path.
-///
-/// NOTE: this type deliberately has no `ZeroizeOnDrop`. [`ShamirSharings::add`] and
-/// [`reconstruct_w_errors_sync`] move out of the public `shares` field, which a `Drop` impl
-/// would forbid.
+/// Wipes contained shares. It cannot implement `ZeroizeOnDrop` because callers move out of the
+/// public `shares` field.
 impl<Z: Ring + Zeroize> Zeroize for ShamirSharings<Z> {
     fn zeroize(&mut self) {
         self.shares.zeroize();
@@ -44,14 +38,9 @@ impl<Z: Ring> ShamirSharings<Z> {
         ShamirSharings { shares: Vec::new() }
     }
 
-    /// Create an empty sharing with room for `n` shares.
+    /// Create an empty sharing with capacity for `n` shares.
     ///
-    /// Prefer this over [`ShamirSharings::new`] whenever the number of shares is known up front.
-    /// [`ShamirSharings::add_share`] grows the inner vector by reallocating, which copies the
-    /// shares added so far into a fresh allocation and releases the old one *without* wiping it —
-    /// so a caller holding secret shares leaves recoverable copies behind on the heap. Reserving
-    /// the capacity up front means the vector never moves and a single `zeroize` of the finished
-    /// sharing covers every copy.
+    /// Reserving capacity prevents `add_share` from reallocating unwiped shares.
     pub fn with_capacity(n: usize) -> Self {
         ShamirSharings {
             shares: Vec::with_capacity(n),
@@ -446,11 +435,7 @@ mod tests {
     use rand::SeedableRng;
     use std::num::Wrapping;
 
-    /// `with_capacity` exists so that callers holding secret shares can guarantee `add_share`
-    /// never reallocates: a reallocation copies the shares added so far into a new buffer and
-    /// releases the old one unwiped, leaving recoverable secret material on the heap. Lock that
-    /// property, including at sizes where a vector grown from empty would have reallocated
-    /// (`Share` is 40 bytes, so growth from `Vec::new()` runs 4 -> 8 -> 16).
+    /// Ensures reserved capacity prevents reallocation while adding shares.
     #[test]
     fn add_share_does_not_reallocate_when_capacity_is_reserved() {
         for n in [1usize, 4, 5, 10, 13] {

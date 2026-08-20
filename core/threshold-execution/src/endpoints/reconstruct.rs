@@ -37,8 +37,7 @@ pub fn reconstruct_message<const EXTENSION_DEGREE: usize>(
 /// Unlike the function [reconstruct_message], every term in `openeds`
 /// is used for the reconstruction and at most `num_blocks` terms will
 /// be used.
-/// Takes `openeds` by reference rather than by value: the opened blocks are reconstructed
-/// plaintext, so the caller needs to keep ownership in order to wipe them afterwards.
+/// Borrows opened plaintext blocks so the caller can wipe them afterward.
 pub fn reconstruct_packed_message<const EXTENSION_DEGREE: usize>(
     openeds: Option<&[ResiduePoly<Z128, EXTENSION_DEGREE>]>,
     params: &ClassicPBSParameters,
@@ -73,8 +72,7 @@ pub fn reconstruct_packed_message<const EXTENSION_DEGREE: usize>(
 /// Helper function that takes a vector of decrypted plaintexts (each of [bits_in_block] plaintext bits)
 /// and combine them into the integer message of many bits.
 ///
-/// Takes `decryptions` by reference rather than by value: they are plaintext blocks, so the caller
-/// needs to keep ownership in order to wipe them afterwards.
+/// Borrows plaintext blocks so the caller can wipe them afterward.
 pub fn combine_decryptions<T>(bits_in_block: u32, decryptions: &[Z128]) -> anyhow::Result<T>
 where
     T: tfhe::integer::block_decomposition::Recomposable

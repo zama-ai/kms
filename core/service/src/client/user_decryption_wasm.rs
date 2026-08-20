@@ -218,11 +218,7 @@ impl Client {
         let unsign_key =
             UnifiedUnsigncryptionKey::new(dec_key, enc_key, &cur_verf_key, &receiver_id);
 
-        // Collected by hand rather than with `collect()` into a `Result`: that short-circuits on
-        // the first error and drops the plaintexts recovered so far without wiping them. A server
-        // returning a batch whose later entries fail to unsigncrypt would leave every earlier
-        // plaintext in freed memory. The returned vector is the user-facing result and is the
-        // caller's to wipe.
+        // Build manually so earlier plaintexts are wiped if a later entry fails.
         let mut plaintexts: Vec<TypedPlaintext> =
             Vec::with_capacity(payload.signcrypted_ciphertexts.len());
         for ct in payload.signcrypted_ciphertexts {
@@ -321,9 +317,8 @@ impl Client {
                             "Too many errors in share recovery / signcryption: {recovery_errors} (threshold {degree})"
                         )));
                     }
-                    // Iterated by reference so `sharings` stays owned by its guard and is wiped
-                    // on every exit from this scope, including the error returns below.
-                    let mut decrypted_blocks = Zeroizing::new(Vec::new());
+
+                    let mut decrypted_blocks = Zeroizing::new(Vec::with_capacity(sharings.len()));
                     let pivot = if let Some(pivot) = sharings.first() {
                         pivot
                     } else {
@@ -395,9 +390,7 @@ impl Client {
                     };
                     let hints = ReconstructionHints::new(pivot, degree)?;
 
-                    // Iterated by reference so `sharings` stays owned by its guard and is wiped
-                    // on every exit from this scope, including the error returns below.
-                    let mut decrypted_blocks = Zeroizing::new(Vec::new());
+                    let mut decrypted_blocks = Zeroizing::new(Vec::with_capacity(sharings.len()));
                     for cur_block_shares in sharings.iter() {
                         // NOTE: this performs optimistic reconstruction
                         match reconstruct_w_errors_sync(
@@ -447,9 +440,8 @@ impl Client {
             }
         };
 
-        // `res` holds the reconstructed plaintext blocks behind zeroizing guards; borrow from them
-        // so they stay guarded until this function returns. The returned plaintexts are the
-        // user-facing result and are the caller's to wipe.
+        // Allocate the final_result at the start so that no allocation happens
+        // when it gets filled since TypedPlaintext may need to be zeroized later.
         let mut final_result = Vec::with_capacity(res.len());
         for (fhe_type, packing_factor, blocks) in res.iter() {
             final_result.push(decrypted_blocks_to_plaintext(
@@ -533,20 +525,17 @@ impl Client {
                     cur_resp.payload.clone(),
                     "Payload does not exist".to_owned(),
                 )?;
-                // The decrypted shares are secret, so keep them behind a zeroizing guard.
                 let shares = Zeroizing::new(insecure_decrypt_ignoring_signature(
                     &payload.signcrypted_ciphertexts[batch_i].signcrypted_ciphertext,
                     dec_key,
                 )?);
 
-                // Passed straight to `fill_indexed_shares`; copying it into a second vector first
-                // would only leave another unwiped copy of the shares behind.
+                // Deserialize directly into the indexed shares to avoid another copy.
                 let cur_blocks: Vec<ResiduePolyF4<Z>> = bc2wrap::deserialize_slice(&shares.bytes)?;
                 if opt_sharings.is_none() {
                     let mut sharings = Vec::with_capacity(cur_blocks.len());
                     for _i in 0..cur_blocks.len() {
-                        // Reserved up front: `add_share` would otherwise reallocate and release
-                        // the shares added so far without wiping them.
+                        // Reserve to prevent `add_share` from reallocating unwiped shares.
                         sharings.push(ShamirSharings::with_capacity(agg_resp.len()));
                     }
                     opt_sharings = Some(sharings);
@@ -617,7 +606,7 @@ impl Client {
         for (fhe_type, packing_factor, decrypted_blocks) in all_decrypted_blocks.iter() {
             let pbs_params = self.params.classic_pbs();
 
-            // Reconstructed plaintext blocks, so keep them guarded until the plaintext is built.
+            // Keep reconstructed plaintext blocks guarded until the plaintext is built.
             let recon_blocks = Zeroizing::new(reconstruct_packed_message(
                 Some(decrypted_blocks.as_slice()),
                 &pbs_params,
@@ -649,7 +638,7 @@ impl Client {
         for (fhe_type, packing_factor, decrypted_blocks) in all_decrypted_blocks.iter() {
             let pbs_params = self.params.classic_pbs();
 
-            // Both of these hold the plaintext, so keep them guarded until it is built.
+            // Guard both plaintext buffers until the final value is built.
             let mut ptxts64 = Zeroizing::new(Vec::new());
 
             for opened in decrypted_blocks.iter() {
@@ -677,10 +666,7 @@ impl Client {
     /// Decrypts the user decryption responses and decodes the responses onto the Shamir shares
     /// that the servers should have encrypted.
     ///
-    /// The recovered sharings are shares of the user's plaintext, so each batch's sharings are
-    /// returned inside a [`Zeroizing`] guard: reserving capacity stops `add_share` from leaving
-    /// copies behind while a sharing is built, but the finished buffers still have to be wiped,
-    /// and the caller has several early-error exits between here and reconstruction.
+    /// Keeps recovered plaintext shares in [`Zeroizing`] guards until reconstruction.
     #[expect(clippy::type_complexity)]
     fn recover_sharings<Z: BaseRing + Zeroize>(
         &self,
@@ -722,9 +708,7 @@ impl Client {
                     .div_ceil(intra_share_packing);
             let mut sharings = Vec::with_capacity(num_shares);
             for _i in 0..num_shares {
-                // Reserved up front: `add_share` would otherwise reallocate and release the
-                // shares added so far without wiping them. At most one share per response is
-                // added below, so no sharing ever has to grow.
+                // Reserve to prevent `add_share` from reallocating unwiped shares.
                 sharings.push(ShamirSharings::with_capacity(agg_resp.len()));
             }
             // the number of recovery errors in this block (e.g. due to failed signcryption)
@@ -746,11 +730,9 @@ impl Client {
                     &cur_resp.digest,
                 ) {
                     Ok(decryption_share) => {
-                        // The payload holds this party's share of the user's plaintext, so wipe
-                        // it once it has been deserialized.
+                        // Wipe the deserialized share after filling the indexed sharing.
                         let decryption_share = Zeroizing::new(decryption_share);
-                        // Passed straight to `fill_indexed_shares`; copying it into a second
-                        // vector first would only leave another unwiped copy of the shares behind.
+                        // Deserialize directly into the indexed shares to avoid another copy.
                         let cur_blocks: Vec<ResiduePolyF4<Z>> =
                             bc2wrap::deserialize_slice(&decryption_share.plaintext.bytes)?;
                         fill_indexed_shares(
@@ -1215,9 +1197,6 @@ pub fn compute_link(
 }
 
 /// Helper method for combining reconstructed messages after decryption.
-///
-/// Takes `recon_blocks` by reference rather than by value: they are the reconstructed plaintext,
-/// so the caller keeps ownership and can wipe them once the plaintext has been assembled.
 fn decrypted_blocks_to_plaintext(
     params: &ClassicPBSParameters,
     fhe_type: FheTypes,
