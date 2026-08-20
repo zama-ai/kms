@@ -16,11 +16,17 @@ pub type SecureSingleSharing<Z> = RealSingleSharing<Z, SecureLocalSingleShare>;
 
 #[async_trait]
 pub trait SingleSharing<Z: Ring>: ProtocolDescription + Send + Sync + Clone {
+    /// Initialise the single sharing protocol, producing a batch of `l` degree-t local single shares for each party.
+    /// The caller can then call `next()` to extract randomness from the produced local single shares.
+    ///
+    /// NOTE: This function may not be called if the caller has already called `load_local_single_shares()` to load externally produced local single shares (e.g. produced by [`DoubleSharing::init_joint_with_single`])
     async fn init<L: LargeSessionHandles>(
         &mut self,
         session: &mut L,
         l: usize,
     ) -> anyhow::Result<()>;
+
+    /// Extract the next random value from the local single shares produced by [`init`](Self::init) or loaded by [`load_local_single_shares`](Self::load_local_single_shares).
     async fn next<L: LargeSessionHandles>(&mut self, session: &mut L) -> anyhow::Result<Z>;
 
     /// Load an externally produced set of degree-t local single shares (e.g. coming from a joint

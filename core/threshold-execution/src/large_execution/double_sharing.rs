@@ -31,12 +31,15 @@ pub struct DoubleShare<Z> {
 
 #[async_trait]
 pub trait DoubleSharing<Z: Ring>: ProtocolDescription + Send + Sync + Clone {
+    /// Initialise the double sharing protocol, producing a batch of `l` degree-t and degree-2t local double shares for each party.
     async fn init<L: LargeSessionHandles>(
         &mut self,
         session: &mut L,
         l: usize,
     ) -> anyhow::Result<()>;
 
+    /// Extract the next random value from the local double shares produced by [`init`](Self::init).
+    /// (The same value is produced with both degree-t and degree-2t shares)
     async fn next<L: LargeSessionHandles>(
         &mut self,
         session: &mut L,
