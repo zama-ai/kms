@@ -4570,6 +4570,7 @@ dependencies = [
  "ciborium",
  "clap",
  "console_error_panic_hook",
+ "criterion",
  "ed25519-dalek",
  "enum_dispatch",
  "futures-util",

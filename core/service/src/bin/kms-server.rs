@@ -470,7 +470,7 @@ async fn main_exec() -> anyhow::Result<()> {
     let public_storage_conf = core_config.public_vault.as_ref().map(|v| v.storage.clone());
     let public_storage = make_storage(public_storage_conf, StorageType::PUB, s3_client.clone())
         .inspect_err(|e| tracing::warn!("Could not initialize public storage: {e}"))?;
-    let public_vault = Vault {
+    let mut public_vault = Vault {
         storage: public_storage.clone(),
         keychain: None,
     };
@@ -530,9 +530,14 @@ async fn main_exec() -> anyhow::Result<()> {
         Some(_) => KMSType::Threshold,
         None => KMSType::Centralized,
     };
-    migrate_to_0_15_x(&mut private_vault, kms_type, core_config.migration.as_ref())
-        .await
-        .inspect_err(|e| tracing::error!("Could not complete migration: {e}"))?;
+    migrate_to_0_15_x(
+        &mut public_vault,
+        &mut private_vault,
+        kms_type,
+        core_config.migration.as_ref(),
+    )
+    .await
+    .inspect_err(|e| tracing::error!("Could not complete migration: {e}"))?;
 
     // backup vault (unlike for private/public storage, there cannot be a
     // default location for backup storage, so there has to be

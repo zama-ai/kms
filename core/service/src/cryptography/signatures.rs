@@ -16,6 +16,7 @@ pub use crate::cryptography::signing::ecdsa::{
 };
 pub use crate::cryptography::signing::{
     HasSigningScheme, Signature, SigningError, SigningSchemeType, SigningSchemeTypeVersions,
+    UnifiedPublicSigKey, UnifiedPublicSigKeyVersions,
 };
 
 pub(crate) use crate::cryptography::signing::ecdsa::{

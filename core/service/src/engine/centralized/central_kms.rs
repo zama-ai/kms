@@ -1308,7 +1308,9 @@ pub(crate) mod tests {
                     | PubDataType::DecompressionKey
                     | PubDataType::CACert
                     | PubDataType::RecoveryMaterial
-                    | PubDataType::CompressedXofKeySet => {
+                    | PubDataType::CompressedXofKeySet
+                    | PubDataType::TypedVerfKey
+                    | PubDataType::TypedVerfAddress => {
                         // Skip
                     }
                 }

@@ -675,19 +675,18 @@ async fn setup_party_resharing_servers(
 
     // Ensure signing keys exist for all 6 servers
     // The test material only has keys for 4 parties, so we need to generate for servers 5-6
-    use kms_lib::consts::SIGNING_KEY_ID;
     use kms_lib::util::key_setup::{
         ThresholdSigningKeyConfig, ensure_threshold_server_signing_keys_exist,
     };
-    let _ = ensure_threshold_server_signing_keys_exist(
+    ensure_threshold_server_signing_keys_exist(
         &mut pub_storages,
         &mut priv_storages,
-        &SIGNING_KEY_ID,
         true, // deterministic
         ThresholdSigningKeyConfig::AllParties((1..=6).map(|i| format!("party-{i}")).collect()),
         false, // don't skip if exists
     )
-    .await;
+    .await
+    .unwrap();
 
     // Create peer configurations for party resharing:
     // - Servers 1-4: peers [1,2,3,4] (standard 4-party setup)
@@ -1769,9 +1768,10 @@ async fn reshare(
 
 /// Build a `CmdConfig` spanning several client config files.
 ///
-/// `execute_cmd` merges them, de-duplicating cores by address, which is how a single command
-/// reaches every party of two overlapping MPC contexts at once. The merged core list is larger
-/// than the `num_parties` of any single config, so `expect_all_responses` is off here.
+/// `execute_cmd` merges them, de-duplicating cores by address against the first config file.
+/// This is how a single command reaches every party of two overlapping MPC contexts at once.
+/// The merged core list may be larger than the `num_parties` of any single config, so
+/// `expect_all_responses` is off here.
 #[cfg(feature = "slow_tests")]
 fn cmd_config_multi(config_paths: &[&Path], command: CCCommand, max_iter: usize) -> CmdConfig {
     CmdConfig {
