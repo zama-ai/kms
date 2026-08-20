@@ -220,8 +220,8 @@ pub(crate) async fn receive_contribution_from_all_senders<Z: Ring, B: BaseSessio
 /// - a mutable set to count the number of echos
 ///
 /// Output is:
-///  - a Map from (Role, Hash(contribution)) to (contribution, 1) with an entry __IFF__ there was enough echo for this particular contribution
-/// - a Map from (Role, Hash(contribution)) to contribution for all the contributions we received
+///  - a Map from (SenderRole, Hash(contribution)) to a HashSet of the roles of the parties that have sent an echo for this contribution
+/// - a Map from (SenderRole, Hash(contribution)) to contribution for all the contributions we received
 pub(crate) async fn receive_echos_from_all_batched<Z: Ring, B: BaseSessionHandles>(
     session: &B,
     non_answering_parties: &mut HashSet<Role>,
@@ -389,7 +389,7 @@ pub(crate) async fn cast_new_votes<Z: Ring, B: BaseSessionHandles>(
                 }
             } else {
                 // Note: we init the casted map with all senders, so this only happens in case of a malicious party voting for a non-sender.
-                tracing::warn!("{role} does not exists as a sender in my local casted map.");
+                tracing::warn!("{role} does not exist as a sender in my local casted map.");
             }
         }
     }
