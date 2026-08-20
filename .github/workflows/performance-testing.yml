@@ -443,6 +443,17 @@ jobs:
           ###################################################################
           echo "Starting performance testing workflow..."
 
+          # Prove that all core metrics endpoints are reachable before starting a
+          # costly perf run. This prevents a broken sampler from silently producing
+          # another empty artifact.
+          if ! bash ci/scripts/sample_core_metrics.sh "${NAMESPACE}" 5 9646 --once \
+            > core-metrics-samples.log 2>&1; then
+            echo "ERROR: KMS core metrics preflight failed"
+            cat core-metrics-samples.log
+            exit 1
+          fi
+          cat core-metrics-samples.log
+
           # Sample per-core (kms-core pod) CPU throughout the run so we can correlate
           # core CPU% against the rate rungs by timestamp (pairs with the eth0
           # diagnostics to distinguish CPU-bound vs network-bound at the top rungs).
@@ -451,7 +462,7 @@ jobs:
           bash ci/scripts/sample_core_cpu.sh "${NAMESPACE}" > core-cpu-samples.log 2>&1 &
           CPU_SAMPLER_PID=$!
 
-          bash ci/scripts/sample_core_metrics.sh "${NAMESPACE}" > core-metrics-samples.log 2>&1 &
+          bash ci/scripts/sample_core_metrics.sh "${NAMESPACE}" >> core-metrics-samples.log 2>&1 &
           METRICS_SAMPLER_PID=$!
 
           # Stream warnings while the test is running. Fetching logs only after the

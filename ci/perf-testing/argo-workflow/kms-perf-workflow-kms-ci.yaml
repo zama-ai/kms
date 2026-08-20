@@ -166,7 +166,9 @@ spec:
               - name: previous-ok
                 value: "{{tasks.pdec-rate-1300.outputs.parameters.capacity-ok}}"
 
-          - name: udec-rate-2400
+          # Keep this first 2400/s result out of the summary so the following
+          # same-rate measurement can show whether position affects UDEC.
+          - name: udec-rate-2400-probe
             dependencies: ["udec-key-gen", "pdec-rate-1500"]
             template: run-decrypt-rate
             arguments:
@@ -179,6 +181,21 @@ spec:
                 value: "{{tasks.udec-key-gen.outputs.parameters.request-id}}"
               - name: previous-ok
                 value: "true"
+
+          - name: udec-rate-2400
+            dependencies: ["udec-rate-2400-probe"]
+            template: run-decrypt-rate
+            arguments:
+              parameters:
+              - name: kind
+                value: "udec"
+              - name: rate
+                value: "2400"
+              - name: key_id
+                value: "{{tasks.udec-key-gen.outputs.parameters.request-id}}"
+              - name: previous-ok
+                value: "true"
+
           - name: udec-rate-2700
             dependencies: ["udec-rate-2400"]
             template: run-decrypt-rate
