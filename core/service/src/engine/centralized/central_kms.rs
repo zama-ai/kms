@@ -289,7 +289,7 @@ pub(crate) fn generate_fhe_keys(
     )?;
 
     let (public_key, server_key) = compressed_keyset.decompress().into_raw_parts();
-    let (_, _, _, decompression_key, _, _, _, _, _) = server_key.into_raw_parts();
+    let (_, _, _, decompression_key, _, _, _, _, _, _) = server_key.into_raw_parts();
 
     let handles = KmsFheKeyHandles::new_compressed(
         sk,
@@ -341,6 +341,7 @@ pub fn generate_uncompressed_fhe_keys(
             server_key.6,
             server_key.7,
             server_key.8,
+            server_key.9,
         );
         let public_key = FhePublicKey::new(&client_key);
         let pks = FhePubKeySet {
@@ -1447,7 +1448,7 @@ pub(crate) mod tests {
         // Verify the compressed keyset can be decompressed. `decompress` is infallible since
         // tfhe 1.7.0, so this only asserts it does not panic.
         let (_pk, server_key) = compressed_keyset.decompress().into_raw_parts();
-        let (_, _, _, _, _, _, _, oprf_key, _) = server_key.into_raw_parts();
+        let (_, _, _, _, _, _, _, oprf_key, _, _) = server_key.into_raw_parts();
         assert!(
             oprf_key.is_some(),
             "centralized full keygen must embed a dedicated OPRF server key"
