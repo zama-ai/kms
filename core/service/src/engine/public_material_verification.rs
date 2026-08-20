@@ -802,7 +802,7 @@ mod tests {
             .expect("legacy raw CRS object only needs to be present");
     }
 
-    // === A2 / B1: explicit presence errors ===
+    // === Explicit presence errors ===
 
     #[tokio::test]
     async fn missing_server_key_error_names_the_type() {
@@ -840,7 +840,7 @@ mod tests {
         );
     }
 
-    // === A5: keygen metadata signatures ===
+    // === Keygen metadata signatures ===
 
     #[tokio::test]
     async fn keygen_signatures_verify_under_non_ecdsa_scheme() {
@@ -980,7 +980,7 @@ mod tests {
         );
     }
 
-    // === B4: CRS metadata signatures ===
+    // === CRS metadata signatures ===
 
     #[tokio::test]
     async fn crs_signatures_verify_under_non_ecdsa_scheme() {
@@ -1073,7 +1073,7 @@ mod tests {
         );
     }
 
-    // === C1 / C2: signing key material ===
+    // === Signing key material ===
 
     #[tokio::test]
     async fn signing_key_material_accepts_matching_key_and_address() {
