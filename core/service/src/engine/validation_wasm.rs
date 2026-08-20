@@ -308,7 +308,7 @@ where
 /// skewed by duplicate or unauthenticated responses:
 /// 1. Authenticate every response (identity + signature) and keep at most one payload per role.
 /// 2. Establish the consensus invariants by majority vote over those authenticated, de-duplicated
-///    payloads only — a Byzantine party gets exactly one vote, not one per copy it sends, and
+///    payloads only — a Byzantine party gets exactly one vote, and
 ///    unauthenticated payloads never get to vote at all.
 /// 3. Discard every authenticated payload that does not match the consensus invariants.
 ///
@@ -1144,7 +1144,7 @@ mod tests {
 
         // empty payload
         {
-            // we need at least 2 valid responses because our degree is 1,
+            // we need at least 3 valid responses because our degree is 1,
             // otherwise None will be returned since there are not enough responses
             let mut bad_resp3 = resp3.clone();
             bad_resp3.payload = None;

@@ -481,6 +481,9 @@ pub fn fhe_types_to_num_blocks(
     packing_factor: u32,
 ) -> anyhow::Result<usize> {
     let num_bits = fhe_type_to_num_bits(fhe_type)?;
+    if packing_factor == 0 {
+        anyhow::bail!("Packing factor must be greater than 0");
+    }
     let msg_modulus = (params.message_modulus.0.ilog2() * packing_factor) as usize;
     Ok(num_bits.div_ceil(msg_modulus))
 }
