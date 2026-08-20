@@ -906,7 +906,7 @@ mod tests {
     /// `n = 7, t = 2` that is `t * (t + 1) = 6 >= n - t = 5` votes.
     /// Honest parties correctly count only one vote per malicious party, thus the phantom value is ignored and Bot is output for malicious contributors.
     #[tokio::test]
-    async fn test_broadcast_double_vote_evades_detection() {
+    async fn test_broadcast_double_vote_detection() {
         let strategy = MaliciousBroadcastDoubleVote {
             targets: HashSet::from([Role::indexed_from_one(6), Role::indexed_from_one(7)]),
         };
