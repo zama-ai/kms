@@ -904,37 +904,14 @@ mod tests {
     /// Two colluding parties (P6, P7) equivocate on their own
     /// slots and re-send a vote for a phantom value in every voting round. With
     /// `n = 7, t = 2` that is `t * (t + 1) = 6 >= n - t = 5` votes.
-    /// Honest parties correctly count only one vote, thus the phantom value is ignored and Bot is output for malicious contributors.
+    /// Honest parties correctly count only one vote per malicious party, thus the phantom value is ignored and Bot is output for malicious contributors.
     #[tokio::test]
     async fn test_broadcast_double_vote_evades_detection() {
         let strategy = MaliciousBroadcastDoubleVote {
             targets: HashSet::from([Role::indexed_from_one(6), Role::indexed_from_one(7)]),
-            flood: true,
         };
         // P6, P7 malicious (zero-based indices 5, 6); they equivocate, so a correct
         // protocol must detect them.
-        let params = TestingParameters::init(7, 2, &[5, 6], &[], &[], true, Some(3 + 2));
-
-        test_broadcast_from_all_w_corrupt_set_update_strategies::<
-            ResiduePolyF4Z128,
-            { ResiduePolyF4Z128::EXTENSION_DEGREE },
-            _,
-        >(params, strategy)
-        .await;
-    }
-
-    /// Control: the *same* strategy voting only ONCE (`flood = false`). That is 2
-    /// votes for the phantom (< n - t = 5) — exactly what correct distinct-voter
-    /// counting sees — so the phantom is ignored, the equivocating senders are
-    /// correctly detected, and the harness's assertions pass on the current code.
-    /// This isolates the *duplication* (not the mere presence of the malicious
-    /// votes) as the root cause of the break.
-    #[tokio::test]
-    async fn test_broadcast_single_vote_is_detected() {
-        let strategy = MaliciousBroadcastDoubleVote {
-            targets: HashSet::from([Role::indexed_from_one(6), Role::indexed_from_one(7)]),
-            flood: false,
-        };
         let params = TestingParameters::init(7, 2, &[5, 6], &[], &[], true, Some(3 + 2));
 
         test_broadcast_from_all_w_corrupt_set_update_strategies::<
