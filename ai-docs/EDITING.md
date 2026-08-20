@@ -26,6 +26,7 @@ Rules for changing code, config, or docs in this repo. Tight by design — read 
 
 - Preserve existing comments unless wrong. Update comments adjacent to changed code if they'd become inaccurate.
 - Every `pub` item needs a rustdoc comment.
+- Ensure that [PROSE.md](./PROSE.md) is followed.
 
 ## Removing features
 
