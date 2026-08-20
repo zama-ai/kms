@@ -913,7 +913,7 @@ mod tests {
         };
         // P6, P7 malicious (zero-based indices 5, 6); they equivocate, so a correct
         // protocol must detect them.
-        let params = TestingParameters::init(7, 2, &[5, 6], &[], &[], true, None);
+        let params = TestingParameters::init(7, 2, &[5, 6], &[], &[], true, Some(3 + 2));
 
         test_broadcast_from_all_w_corrupt_set_update_strategies::<
             ResiduePolyF4Z128,
@@ -935,7 +935,7 @@ mod tests {
             targets: HashSet::from([Role::indexed_from_one(6), Role::indexed_from_one(7)]),
             flood: false,
         };
-        let params = TestingParameters::init(7, 2, &[5, 6], &[], &[], true, None);
+        let params = TestingParameters::init(7, 2, &[5, 6], &[], &[], true, Some(3 + 2));
 
         test_broadcast_from_all_w_corrupt_set_update_strategies::<
             ResiduePolyF4Z128,
