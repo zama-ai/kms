@@ -211,12 +211,13 @@ pub async fn send_to_all<T, Z: Ring, B: BaseSessionHandles>(
 where
     T: AsRef<NetworkValue<Z>>,
 {
+    let my_role = session.my_role();
     let serialized_message = Arc::new(msg.as_ref().to_network());
 
     session.network().increase_round_counter().await;
     for other_role in session.roles() {
         let networking = Arc::clone(session.network());
-        if session.my_role() != *other_role {
+        if my_role != *other_role {
             networking
                 .send(Arc::clone(&serialized_message), other_role)
                 .await?;

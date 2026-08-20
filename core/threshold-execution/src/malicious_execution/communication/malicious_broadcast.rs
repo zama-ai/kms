@@ -7,7 +7,7 @@ use tonic::async_trait;
 use crate::{
     communication::{
         broadcast::{
-            Broadcast, RoleValueMap, SyncReliableBroadcast, cast_threshold_vote, gather_votes,
+            Broadcast, RoleValueMap, SyncReliableBroadcast, cast_new_votes, gather_votes,
             receive_contribution_from_all_senders, receive_echos_from_all_batched,
         },
         p2p::send_to_all,
@@ -141,20 +141,7 @@ impl Broadcast for MaliciousBroadcastSender {
         let mut casted_vote: HashMap<Role, bool> =
             senders.iter().map(|role| (*role, false)).collect();
 
-        cast_threshold_vote::<Z, B>(session, &registered_votes, 1).await?;
-
-        //Keep track of which instances of bcast we already voted for so we don't vote twice
-        for (role, _) in registered_votes.keys() {
-            let casted_vote_role = casted_vote.get_mut(role).ok_or_else(|| {
-                anyhow_error_and_log(format!("Can't retrieve whether I ({role}) casted a vote"))
-            })?;
-            if *casted_vote_role {
-                return Err(anyhow_error_and_log(
-                    "Trying to cast two votes for the same sender!".to_string(),
-                ));
-            }
-            *casted_vote_role = true;
-        }
+        cast_new_votes::<Z, B>(session, &mut registered_votes, &mut casted_vote, 1).await?;
 
         // receive votes from the other parties, if we have at least T for a message m associated to a party Pi
         // then we know for sure that Pi has broadcasted message m

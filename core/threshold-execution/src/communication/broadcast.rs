@@ -250,7 +250,7 @@ pub(crate) async fn receive_echos_from_all_batched<Z: Ring, B: BaseSessionHandle
 
     //Process all the messages we just received, looking for values we can vote for
     process_echos(
-        session.my_role(),
+        session,
         &mut jobs,
         echoed_data,
         session.num_parties(),
@@ -289,8 +289,8 @@ async fn receive_from_all_votes<Z: Ring, B: BaseSessionHandles>(
 }
 
 ///Update the vote counts for each (sender, value) by processing the echos or votes from all the other parties
-async fn internal_process_echos_or_votes<T>(
-    my_role: &Role,
+async fn internal_process_echos_or_votes<T, B>(
+    session: &B,
     rcv_tasks: &mut GenericEchoVoteJob<T>,
     map_data: &mut HashMap<(Role, T), HashSet<Role>>,
     num_parties: usize,
@@ -298,7 +298,9 @@ async fn internal_process_echos_or_votes<T>(
 ) -> anyhow::Result<()>
 where
     T: std::fmt::Debug + Eq + std::hash::Hash + Clone + 'static,
+    B: BaseSessionHandles,
 {
+    let my_role = session.my_role();
     // Receiving Echo or Vote messages one by one
     let mut answering_parties = HashSet::<Role>::new();
     while let Some(v) = rcv_tasks.join_next().await {
@@ -324,12 +326,10 @@ where
         }
     }
     //Log timeouts
-    for party_id in 1..=num_parties {
-        if !answering_parties.contains(&Role::indexed_from_one(party_id))
-            && party_id != my_role.one_based()
-        {
-            non_answering_parties.insert(Role::indexed_from_one(party_id));
-            tracing::warn!("(Process echos) I am {my_role} haven't heard from {party_id}");
+    for role in session.roles() {
+        if !answering_parties.contains(role) && role != &my_role {
+            non_answering_parties.insert(*role);
+            tracing::warn!("(Process echos) I am {my_role} haven't heard from {role}");
         }
     }
     Ok(())
@@ -337,8 +337,8 @@ where
 
 /// Process Echo messages one by one, starting with the own echoed_data
 /// If enough echoes >=(N-T) then party can cast a vote
-async fn process_echos<Z: Ring>(
-    my_role: Role,
+async fn process_echos<Z: Ring, B: BaseSessionHandles>(
+    session: &B,
     echo_recv_tasks: &mut JoinSet<Result<SendEchoJobType<Z>, Elapsed>>,
     mut echoed_data: HashMap<(Role, BroadcastValue<Z>), HashSet<Role>>,
     num_parties: usize,
@@ -348,8 +348,9 @@ async fn process_echos<Z: Ring>(
     HashMap<(Role, BcastHash), HashSet<Role>>,
     HashMap<(Role, BcastHash), BroadcastValue<Z>>,
 )> {
+    let my_role = session.my_role();
     internal_process_echos_or_votes(
-        &my_role,
+        session,
         echo_recv_tasks,
         &mut echoed_data,
         num_parties,
@@ -377,26 +378,35 @@ async fn process_echos<Z: Ring>(
 }
 
 /// Sender casts a vote only for messages m in registered_votes for which numbers of votes >= threshold
+/// and the sender hasn't voted yet for this message.
+/// The function also updates the set of parties we have voted for.
 ///
 /// __NOTE__:  We vote using the Hash of the broadcast value
-pub(crate) async fn cast_threshold_vote<Z: Ring, B: BaseSessionHandles>(
+pub(crate) async fn cast_new_votes<Z: Ring, B: BaseSessionHandles>(
     session: &B,
-    registered_votes: &HashMap<(Role, BcastHash), HashSet<Role>>,
+    registered_votes: &mut HashMap<(Role, BcastHash), HashSet<Role>>,
+    casted: &mut HashMap<Role, bool>,
     threshold: usize,
 ) -> anyhow::Result<()> {
-    let vote_data: HashMap<Role, BcastHash> = registered_votes
-        .iter()
-        .filter_map(|(k, f)| {
-            if f.len() >= threshold {
-                Some((k.0, k.1))
-            } else {
-                None
+    let my_role = session.my_role();
+    let mut vote_data: HashMap<Role, BcastHash> = HashMap::new();
+    for ((role, m), from_parties) in registered_votes.iter_mut() {
+        if let Some(casted_already) = casted.get_mut(role) {
+            if from_parties.len() >= threshold && !(*casted_already) {
+                vote_data.insert(*role, *m);
+                *casted_already = true;
+                // I have now casted a vote for this party, so we add it to the set of parties we have voted for
+                from_parties.insert(my_role);
             }
-        })
-        .collect();
+        } else {
+            // Note: we init the casted map with all senders, so this only happens in case of a malicious party voting for a non-sender.
+            tracing::warn!("{role} does not exists as a sender in my local casted map.");
+        }
+    }
+
     //Send empty msg to avoid waiting on timeouts on rcver side
     if vote_data.is_empty() {
-        tracing::debug!("I am {}, sending an empty message", session.my_role());
+        tracing::debug!("I am {}, sending an empty message", my_role);
         send_to_all(session, NetworkValue::<Z>::Empty).await?;
     } else {
         send_to_all(session, NetworkValue::<Z>::VoteBatch(vote_data)).await?;
@@ -415,7 +425,6 @@ pub(crate) async fn gather_votes<Z: Ring, B: BaseSessionHandles>(
 ) -> anyhow::Result<()> {
     let num_parties = session.num_parties();
     let threshold = session.threshold() as usize;
-    let my_role = session.my_role();
 
     // wait for other parties' incoming vote
     for round in 1..=threshold + 1 {
@@ -424,7 +433,7 @@ pub(crate) async fn gather_votes<Z: Ring, B: BaseSessionHandles>(
         // The error we propagate here is if sender IDs and roles cannot be tied together.
         receive_from_all_votes::<Z, B>(&mut vote_recv_tasks, session, non_answering_parties).await;
         internal_process_echos_or_votes(
-            &my_role,
+            session,
             &mut vote_recv_tasks,
             registered_votes,
             num_parties,
@@ -437,25 +446,7 @@ pub(crate) async fn gather_votes<Z: Ring, B: BaseSessionHandles>(
             return Ok(());
         }
 
-        //Here propagate error if my own casted hashmap does not contain the expected party's id
-        let mut round_registered_votes = HashMap::new();
-        for ((role, m), from_parties) in registered_votes.iter_mut() {
-            if from_parties.len() >= (threshold + round)
-                && !*(casted.get(role).ok_or_else(|| {
-                    anyhow_error_and_log("Cant retrieve whether I casted a vote".to_string())
-                })?)
-            {
-                round_registered_votes.insert((*role, *m), from_parties.clone());
-                //Remember I casted a vote
-                let casted_vote_role = casted.get_mut(role).ok_or_else(|| {
-                    anyhow_error_and_log("Can't retrieve whether I casted a vote".to_string())
-                })?;
-                *casted_vote_role = true;
-                //Also add a vote in my own data struct
-                from_parties.insert(my_role);
-            }
-        }
-        cast_threshold_vote::<Z, B>(session, &round_registered_votes, threshold + round).await?;
+        cast_new_votes::<Z, B>(session, registered_votes, casted, threshold + round).await?;
     }
     Ok(())
 }
@@ -558,20 +549,7 @@ impl Broadcast for SyncReliableBroadcast {
         let mut casted_vote: HashMap<Role, bool> =
             senders.iter().map(|role| (*role, false)).collect();
 
-        cast_threshold_vote::<Z, B>(session, &registered_votes, 1).await?;
-
-        //Keep track of which instances of bcast we already voted for so we don't vote twice
-        for (role, _) in registered_votes.keys() {
-            let casted_vote_role = casted_vote.get_mut(role).ok_or_else(|| {
-                anyhow_error_and_log(format!("Can't retrieve whether I ({role}) casted a vote"))
-            })?;
-            if *casted_vote_role {
-                return Err(anyhow_error_and_log(
-                    "Trying to cast two votes for the same sender!".to_string(),
-                ));
-            }
-            *casted_vote_role = true;
-        }
+        cast_new_votes::<Z, B>(session, &mut registered_votes, &mut casted_vote, 1).await?;
 
         // receive votes from the other parties, if we have at least T for a message m associated to a party Pi
         // then we know for sure that Pi has broadcasted message m
