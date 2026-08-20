@@ -191,7 +191,7 @@ spec:
               - name: key_id
                 value: "{{tasks.udec-key-gen.outputs.parameters.request-id}}"
               - name: previous-ok
-                value: "{{tasks.udec-rate-2400.outputs.parameters.capacity-ok}}"
+                value: "true"
           - name: udec-rate-2750
             dependencies: ["udec-rate-2700"]
             template: run-decrypt-rate
@@ -204,7 +204,7 @@ spec:
               - name: key_id
                 value: "{{tasks.udec-key-gen.outputs.parameters.request-id}}"
               - name: previous-ok
-                value: "{{tasks.udec-rate-2700.outputs.parameters.capacity-ok}}"
+                value: "true"
 
           - name: summary
             dependencies:
