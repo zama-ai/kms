@@ -352,7 +352,9 @@ pub enum SigncryptionPayloadVersions {
 /// - Unit test: `test_signcryption_payload_v0_serialization_locked` locks the binary format
 /// - BC tests: Verify v0.11.x data can be deserialized by current version
 /// - Both tests MUST pass before any changes to this type
-
+//
+// TODO(zama-ai/tfhe-rs-internal/issues/1535)
+// we should also have ZeroizeOnDrop but this requires some changes on tfhe-rs
 #[derive(Clone, Serialize, Deserialize, Hash, PartialEq, Eq, Debug, Versionize)]
 #[versionize(SigncryptionPayloadVersions)]
 pub struct SigncryptionPayload {

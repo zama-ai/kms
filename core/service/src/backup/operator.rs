@@ -414,6 +414,8 @@ impl Named for BackupMaterial {
     const NAME: &'static str = "backup::BackupShares";
 }
 
+// TODO(zama-ai/tfhe-rs-internal/issues/1535)
+// we should also have ZeroizeOnDrop but this requires some changes on tfhe-rs
 impl Zeroize for BackupMaterial {
     fn zeroize(&mut self) {
         // The remaining fields are public routing metadata.
