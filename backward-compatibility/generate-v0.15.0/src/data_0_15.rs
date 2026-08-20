@@ -22,7 +22,7 @@ use kms_0_15_0::consts::SAFE_SER_SIZE_LIMIT;
 use kms_0_15_0::cryptography::{
     encryption::{Encryption, PkeScheme, PkeSchemeType, UnifiedCipher},
     hybrid_ml_kem::HybridKemCt,
-    signatures::{compute_eip712_signature, gen_sig_keys, SigningSchemeType},
+    signatures::{compute_eip712_signature, gen_sig_keys, SigningSchemeType, UnifiedPublicSigKey},
     signcryption::{
         Signcrypt, UnifiedSigncryption, UnifiedSigncryptionKeyOwned, UnifiedUnsigncryptionKeyOwned,
     },
@@ -32,7 +32,9 @@ use kms_0_15_0::engine::base::{
     PrepKeygenSignedPayload, StoredTypedSignature,
 };
 use kms_0_15_0::engine::centralized::central_kms::generate_client_fhe_key;
-use kms_0_15_0::engine::context::{ContextInfo, NodeInfo, SignerAddress, SoftwareVersion};
+use kms_0_15_0::engine::context::{
+    ContextInfo, NodeInfo, SchemeDigests, SignerAddress, SoftwareVersion,
+};
 use kms_0_15_0::engine::threshold::service::session::PRSSSetupCombined;
 use kms_0_15_0::engine::threshold::service::EpochData;
 use kms_0_15_0::engine::threshold::service::{PublicKeyMaterial, ThresholdFheKeys};
@@ -50,13 +52,14 @@ use rand::{RngCore, SeedableRng};
 use std::collections::BTreeMap;
 use std::num::Wrapping;
 use std::{borrow::Cow, collections::HashMap, fs::create_dir_all, path::PathBuf};
-use tfhe_1_6_2::safe_serialization::safe_serialize;
-use tfhe_1_6_2::shortint::parameters::{
+use strum::IntoEnumIterator;
+use tfhe_1_7_0::safe_serialization::safe_serialize;
+use tfhe_1_7_0::shortint::parameters::{
     AtomicPatternParameters, Backend, LweCiphertextCount, MetaNoiseSquashingParameters,
     MetaParameters, NoiseSquashingClassicParameters, NoiseSquashingCompressionParameters,
     PBSParameters,
 };
-use tfhe_1_6_2::{
+use tfhe_1_7_0::{
     core_crypto::commons::{
         ciphertext_modulus::CiphertextModulus,
         generators::DeterministicSeeder,
@@ -94,18 +97,18 @@ use backward_compatibility::parameters::{
 };
 use backward_compatibility::{
     AppKeyBlobTest, BackupCiphertextTest, ContextInfoTest, CrsGenMetadataTest,
-    CrsGenMetadataWithExtraDataTest, EpochDataTest, HybridKemCtTest, InternalCustodianContextTest,
-    InternalCustodianRecoveryOutputTest, InternalCustodianSetupMessageTest,
-    InternalRecoveryRequestTest, KeyGenMetadataTest, KeyGenMetadataWithExtraDataTest,
-    CrsSignedPayloadTest, KeygenSignedPayloadTest, KmsFheKeyHandlesTest, NodeInfoTest,
+    CrsGenMetadataWithExtraDataTest, CrsSignedPayloadTest, EpochDataTest, HybridKemCtTest,
+    InternalCustodianContextTest, InternalCustodianRecoveryOutputTest,
+    InternalCustodianSetupMessageTest, InternalRecoveryRequestTest, KeyGenMetadataTest,
+    KeyGenMetadataWithExtraDataTest, KeygenSignedPayloadTest, KmsFheKeyHandlesTest, NodeInfoTest,
     OperatorBackupOutputTest, PRSSSetupTest, PrepKeygenSignedPayloadTest, PrfKeyTest,
     PrivDataTypeTest, PrivateSigKeyTest, PrssSetTest, PrssSetupCombinedTest, PubDataTypeTest,
-    PublicSigKeyTest, RecoveryValidationMaterialTest, ReleasePCRValuesTest, ShareTest,
-    SigncryptionPayloadTest, SignedPubDataHandleInternalTest, SoftwareVersionTest,
+    PublicSigKeyTest, RecoveryValidationMaterialTest, ReleasePCRValuesTest, SchemeDigestsTest,
+    ShareTest, SigncryptionPayloadTest, SignedPubDataHandleInternalTest, SoftwareVersionTest,
     StoredTypedSignatureTest, TestMetadataDD, TestMetadataKMS, TestMetadataKmsGrpc,
-    ThresholdFheKeysTest, TypedPlaintextTest, UnifiedCipherTest, UnifiedSigncryptionKeyTest,
-    UnifiedSigncryptionTest, UnifiedUnsigncryptionKeyTest, DISTRIBUTED_DECRYPTION_MODULE_NAME,
-    KMS_GRPC_MODULE_NAME, KMS_MODULE_NAME,
+    ThresholdFheKeysTest, TypedPlaintextTest, UnifiedCipherTest, UnifiedPublicSigKeyTest,
+    UnifiedSigncryptionKeyTest, UnifiedSigncryptionTest, UnifiedUnsigncryptionKeyTest,
+    DISTRIBUTED_DECRYPTION_MODULE_NAME, KMS_GRPC_MODULE_NAME, KMS_MODULE_NAME,
 };
 use hashing_0_15_0::hash_versioned;
 use kms_0_15_0::cryptography::signcryption::SigncryptionPayload;
@@ -187,7 +190,7 @@ fn convert_classic_pbs_parameters(value: ClassicPBSParametersTest) -> ClassicPBS
         },
         // no need to test this as it's from tfhe-rs
         modulus_switch_noise_reduction_params:
-            tfhe_1_6_2::shortint::prelude::ModulusSwitchType::Standard,
+            tfhe_1_7_0::shortint::prelude::ModulusSwitchType::Standard,
     }
 }
 
@@ -200,7 +203,7 @@ fn convert_sns_parameters(value: SwitchAndSquashParametersTest) -> NoiseSquashin
         decomp_level_count: DecompositionLevelCount(value.pbs_level),
         ciphertext_modulus: CiphertextModulus::<u128>::new_native(),
         modulus_switch_noise_reduction_params:
-            tfhe_1_6_2::shortint::prelude::ModulusSwitchType::Standard,
+            tfhe_1_7_0::shortint::prelude::ModulusSwitchType::Standard,
         message_modulus: MessageModulus(value.message_modulus),
         carry_modulus: CarryModulus(value.carry_modulus),
     })
@@ -317,6 +320,12 @@ const PRIV_DATA_TYPE: PrivDataTypeTest = PrivDataTypeTest {
 // KMS test
 const PUBLIC_SIG_KEY_TEST: PublicSigKeyTest = PublicSigKeyTest {
     test_filename: Cow::Borrowed("public_sig_key"),
+    state: 100,
+};
+
+// KMS test
+const UNIFIED_PUBLIC_SIG_KEY_TEST: UnifiedPublicSigKeyTest = UnifiedPublicSigKeyTest {
+    test_filename: Cow::Borrowed("unified_public_sig_key"),
     state: 100,
 };
 
@@ -497,6 +506,23 @@ fn node_info_test() -> NodeInfoTest {
     }
 }
 
+// KMS test — one digest per `SigningSchemeType` variant, each with the length that scheme
+// requires, so a reordered or removed scheme variant and a changed digest length both break the
+// test.
+const SCHEME_DIGESTS_TEST: SchemeDigestsTest = SchemeDigestsTest {
+    test_filename: Cow::Borrowed("scheme_digests"),
+    digests: Cow::Borrowed(&[
+        // An Ethereum address, hence 20 bytes.
+        (Cow::Borrowed("Ecdsa256k1"), Cow::Borrowed(&[0x11; 20])),
+        // The full ed25519 public key, hence 32 bytes.
+        (Cow::Borrowed("Ed25519"), Cow::Borrowed(&[0x22; 32])),
+        // A Shake256 digest of the public key, hence 32 bytes.
+        (Cow::Borrowed("MlDsa44"), Cow::Borrowed(&[0x33; 32])),
+        (Cow::Borrowed("MlDsa65"), Cow::Borrowed(&[0x44; 32])),
+        (Cow::Borrowed("MlDsa87"), Cow::Borrowed(&[0x55; 32])),
+    ]),
+};
+
 // KMS test
 const SOFTWARE_VERSION_TEST: SoftwareVersionTest = SoftwareVersionTest {
     test_filename: Cow::Borrowed("software_version"),
@@ -595,8 +621,8 @@ const CRS_SIGNED_PAYLOAD_TEST: CrsSignedPayloadTest = CrsSignedPayloadTest {
     extra_data: Cow::Borrowed(&[0x09, 0x0A, 0x0B, 0x0C]),
 };
 
-/// Maps the scheme names pinned in [`STORED_SCHEME_SIGNATURE_TEST`] onto
-/// `SigningSchemeType` variants. The test side has the same mapping.
+/// Maps the scheme names pinned in [`STORED_SCHEME_SIGNATURE_TEST`] and
+/// [`SCHEME_DIGESTS_TEST`] onto `SigningSchemeType` variants. The test side has the same mapping.
 fn scheme_from_name(name: &str) -> SigningSchemeType {
     match name {
         "Ecdsa256k1" => SigningSchemeType::Ecdsa256k1,
@@ -638,6 +664,31 @@ impl KmsV0_15_0 {
         store_versioned_test!(&public_sig_key, dir, &PUBLIC_SIG_KEY_TEST.test_filename);
 
         TestMetadataKMS::PublicSigKey(PUBLIC_SIG_KEY_TEST)
+    }
+
+    fn gen_unified_public_sig_key(dir: &PathBuf) -> TestMetadataKMS {
+        let mut rng = AesRng::seed_from_u64(UNIFIED_PUBLIC_SIG_KEY_TEST.state);
+        let (_public_sig_key, sig_key) = gen_sig_keys(&mut rng);
+
+        // Primary file: the ECDSA variant.
+        let ecdsa_vk: UnifiedPublicSigKey = sig_key
+            .unified_verifying_key(SigningSchemeType::Ecdsa256k1)
+            .unwrap();
+        store_versioned_test!(&ecdsa_vk, dir, &UNIFIED_PUBLIC_SIG_KEY_TEST.test_filename);
+
+        // Auxiliary files: one per non-ECDSA scheme.
+        for scheme in SigningSchemeType::iter().filter(|s| *s != SigningSchemeType::Ecdsa256k1) {
+            let vk: UnifiedPublicSigKey = sig_key.unified_verifying_key(scheme).unwrap();
+            let aux_filename = format!("{}_{scheme}", UNIFIED_PUBLIC_SIG_KEY_TEST.test_filename);
+            store_versioned_auxiliary!(
+                &vk,
+                dir,
+                &UNIFIED_PUBLIC_SIG_KEY_TEST.test_filename,
+                &aux_filename
+            );
+        }
+
+        TestMetadataKMS::UnifiedPublicSigKey(UNIFIED_PUBLIC_SIG_KEY_TEST)
     }
 
     fn gen_typed_plaintext(dir: &PathBuf) -> TestMetadataKMS {
@@ -1074,12 +1125,12 @@ impl KmsV0_15_0 {
         let node_info = NodeInfo {
             mpc_identity: "Staoshi Nakamoto".to_string(),
             party_id: 42,
-            signer_address: None,
             external_url: "https://node42.example.com".to_string(),
             ca_cert: None,
             public_storage_url: "https://storage.example.com/node42".to_string(),
             public_storage_prefix: Some("PUB".to_string()),
             extra_signer_addresses: vec![],
+            scheme_digests: SchemeDigests::new(),
         };
         let software_version = SoftwareVersion {
             major: 2,
@@ -1110,20 +1161,40 @@ impl KmsV0_15_0 {
         let mut rng = AesRng::seed_from_u64(node_info_test.state);
         let (verf_key, _sig_key) = gen_sig_keys(&mut rng);
         let (verf_key2, _sig_key) = gen_sig_keys(&mut rng);
+        let mut scheme_digests = SchemeDigests::new();
+        scheme_digests
+            .insert(SigningSchemeType::Ecdsa256k1, verf_key.address().to_vec())
+            .expect("Invalid digest");
         let node_info = NodeInfo {
             mpc_identity: node_info_test.mpc_identity.to_string(),
             party_id: node_info_test.party_id,
-            signer_address: Some(SignerAddress(verf_key.address())),
+            // signer_address: Some(SignerAddress(verf_key.address())),
             external_url: node_info_test.external_url.to_string(),
             ca_cert: node_info_test.ca_cert.clone(), // We currently don't have simple code for generating certificates
             public_storage_url: node_info_test.public_storage_url.to_string(),
             public_storage_prefix: Some(node_info_test.public_storage_prefix.to_string()),
             extra_signer_addresses: vec![SignerAddress(verf_key2.address())],
+            scheme_digests,
         };
 
         store_versioned_test!(&node_info, dir, &node_info_test.test_filename);
 
         TestMetadataKMS::NodeInfo(node_info_test)
+    }
+
+    fn gen_scheme_digests(dir: &PathBuf) -> TestMetadataKMS {
+        let mut scheme_digests = SchemeDigests::new();
+        for (scheme_name, digest) in SCHEME_DIGESTS_TEST.digests.iter() {
+            // Cannot fail: every digest pinned in `SCHEME_DIGESTS_TEST` has the length its scheme
+            // expects.
+            scheme_digests
+                .insert(scheme_from_name(scheme_name), digest.to_vec())
+                .expect("Invalid digest length in SCHEME_DIGESTS_TEST");
+        }
+
+        store_versioned_test!(&scheme_digests, dir, &SCHEME_DIGESTS_TEST.test_filename);
+
+        TestMetadataKMS::SchemeDigests(SCHEME_DIGESTS_TEST)
     }
 
     fn gen_software_version(dir: &PathBuf) -> TestMetadataKMS {
@@ -1874,6 +1945,7 @@ impl KMSCoreVersion for V0_15_0 {
         vec![
             KmsV0_15_0::gen_private_sig_key(&dir),
             KmsV0_15_0::gen_public_sig_key(&dir),
+            KmsV0_15_0::gen_unified_public_sig_key(&dir),
             KmsV0_15_0::gen_app_key_blob(&dir),
             KmsV0_15_0::gen_key_gen_metadata(&dir),
             KmsV0_15_0::gen_crs_metadata(&dir),
@@ -1891,6 +1963,7 @@ impl KMSCoreVersion for V0_15_0 {
             KmsV0_15_0::gen_epoch_data(&dir),
             KmsV0_15_0::gen_context_info(&dir),
             KmsV0_15_0::gen_node_info(&dir),
+            KmsV0_15_0::gen_scheme_digests(&dir),
             KmsV0_15_0::gen_software_version(&dir),
             KmsV0_15_0::gen_recovery_material(&dir),
             KmsV0_15_0::gen_internal_recovery_request(&dir),

@@ -116,6 +116,27 @@ impl TestType for PublicSigKeyTest {
     }
 }
 
+// KMS test
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct UnifiedPublicSigKeyTest {
+    pub test_filename: Cow<'static, str>,
+    pub state: u64,
+}
+
+impl TestType for UnifiedPublicSigKeyTest {
+    fn module(&self) -> String {
+        KMS_MODULE_NAME.to_string()
+    }
+
+    fn target_type(&self) -> String {
+        "UnifiedPublicSigKey".to_string()
+    }
+
+    fn test_filename(&self) -> String {
+        self.test_filename.to_string()
+    }
+}
+
 /// Test metadata for TypedPlaintext backward compatibility.
 ///
 /// TypedPlaintext is serialized with bc2wrap and embedded in user decryption responses.
@@ -817,6 +838,32 @@ impl TestType for NodeInfoTest {
 
 // KMS test
 #[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct SchemeDigestsTest {
+    pub test_filename: Cow<'static, str>,
+    /// One `(signing-scheme name, verification-key digest)` pair per digest held by the stored
+    /// `SchemeDigests`, in insertion order. The generator and the test both map these names onto
+    /// `SigningSchemeType` variants, so pinning them here is what makes the test catch a reordered
+    /// or removed scheme variant. Each digest has the length its scheme requires, so a changed
+    /// digest length is caught as well.
+    pub digests: Cow<'static, [(Cow<'static, str>, Cow<'static, [u8]>)]>,
+}
+
+impl TestType for SchemeDigestsTest {
+    fn module(&self) -> String {
+        KMS_MODULE_NAME.to_string()
+    }
+
+    fn target_type(&self) -> String {
+        "SchemeDigests".to_string()
+    }
+
+    fn test_filename(&self) -> String {
+        self.test_filename.to_string()
+    }
+}
+
+// KMS test
+#[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct SoftwareVersionTest {
     pub test_filename: Cow<'static, str>,
     pub major: u32,
@@ -1063,6 +1110,7 @@ impl TestType for CrsSignedPayloadTest {
 pub enum TestMetadataKMS {
     PrivateSigKey(PrivateSigKeyTest),
     PublicSigKey(PublicSigKeyTest),
+    UnifiedPublicSigKey(UnifiedPublicSigKeyTest),
     TypedPlaintext(TypedPlaintextTest),
     KmsFheKeyHandles(KmsFheKeyHandlesTest),
     ThresholdFheKeys(ThresholdFheKeysTest),
@@ -1082,6 +1130,7 @@ pub enum TestMetadataKMS {
     HybridKemCt(HybridKemCtTest),
     ContextInfo(ContextInfoTest),
     NodeInfo(NodeInfoTest),
+    SchemeDigests(SchemeDigestsTest),
     SoftwareVersion(SoftwareVersionTest),
     RecoveryValidationMaterial(RecoveryValidationMaterialTest),
     InternalRecoveryRequest(InternalRecoveryRequestTest),

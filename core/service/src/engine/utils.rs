@@ -1383,12 +1383,7 @@ mod tests {
             tag,
         )
         .unwrap();
-        let compact_public_key = compressed_keyset
-            .clone()
-            .decompress()
-            .unwrap()
-            .into_raw_parts()
-            .0;
+        let compact_public_key = compressed_keyset.clone().decompress().into_raw_parts().0;
 
         let compressed_keyset_digest =
             hash_versioned(&crate::engine::base::DSEP_PUBDATA_KEY, &compressed_keyset).unwrap();

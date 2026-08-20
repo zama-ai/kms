@@ -348,10 +348,7 @@ pub async fn compute_cipher_from_stored_key(
             storage_prefix,
         )
         .await;
-        compressed_keyset
-            .decompress()
-            .expect("decompress of CompressedXofKeySet is infallible")
-            .into_raw_parts()
+        compressed_keyset.decompress().into_raw_parts()
     } else if probe.data_exists(key_id, &public_key_type).await.unwrap() {
         let pk = load_pk_from_pub_storage(pub_path, key_id, storage_prefix).await;
         let server_key: ServerKey = load_material_from_pub_storage(
@@ -564,10 +561,10 @@ pub mod setup {
         ensure_central_server_signing_keys_exist(
             &mut central_pub_storage,
             &mut central_priv_storage,
-            &SIGNING_KEY_ID,
             true,
         )
-        .await;
+        .await
+        .unwrap();
         ensure_central_keys_exist(
             &mut central_pub_storage,
             &mut central_priv_storage,
@@ -615,17 +612,17 @@ pub mod setup {
             );
         }
 
-        let _ = ensure_threshold_server_signing_keys_exist(
+        ensure_threshold_server_signing_keys_exist(
             &mut threshold_pub_storages,
             &mut threshold_priv_storages,
-            &SIGNING_KEY_ID,
             true,
             ThresholdSigningKeyConfig::AllParties(
                 (1..=amount_parties).map(|i| format!("party-{i}")).collect(),
             ),
             false,
         )
-        .await;
+        .await
+        .unwrap();
         ensure_threshold_keys_exist(
             &mut threshold_pub_storages,
             &mut threshold_priv_storages,
@@ -695,8 +692,11 @@ where
 // because we don't want it to have the "testing" feature
 #[tokio::test]
 async fn test_purge() {
-    use crate::consts::SIGNING_KEY_ID;
+    use crate::consts::signing_material_id;
+    use crate::cryptography::signatures::SigningSchemeType;
+    use crate::util::key_setup::SCHEME_MATERIAL_TYPES;
     use kms_grpc::rpc_types::PrivDataType;
+    use strum::IntoEnumIterator;
 
     let temp_dir = tempfile::tempdir().unwrap();
     let test_prefix = Some(temp_dir.path());
@@ -723,38 +723,51 @@ async fn test_purge() {
         crate::util::key_setup::ensure_central_server_signing_keys_exist(
             &mut central_pub_storage,
             &mut central_priv_storage,
-            &SIGNING_KEY_ID,
             true,
         )
         .await
+        .unwrap()
     );
     // Validate the keys were made
-    let pub_ids = central_pub_storage
-        .all_data_ids(&PubDataType::VerfKey.to_string())
-        .await
-        .unwrap();
-    assert_eq!(pub_ids.len(), 1);
+    for scheme in SigningSchemeType::iter() {
+        let id = signing_material_id(scheme);
+        for data_type in SCHEME_MATERIAL_TYPES.map(|t| t.to_string()) {
+            assert!(
+                central_pub_storage
+                    .all_data_ids(&data_type)
+                    .await
+                    .unwrap()
+                    .contains(&id),
+                "{scheme} material missing from {data_type}"
+            );
+        }
+    }
     let priv_ids = central_priv_storage
         .all_data_ids(&PrivDataType::SigningKey.to_string())
         .await
         .unwrap();
     assert_eq!(priv_ids.len(), 1);
-    crate::util::key_setup::test_tools::purge(
-        test_prefix,
-        test_prefix,
-        &pub_ids.into_iter().next().unwrap(),
-        &[None],
-        &[None],
-    )
-    .await;
+    for scheme in SigningSchemeType::iter() {
+        crate::util::key_setup::test_tools::purge(
+            test_prefix,
+            test_prefix,
+            &signing_material_id(scheme),
+            &[None],
+            &[None],
+        )
+        .await;
+    }
     // Check the keys were deleted
-    assert!(
-        central_pub_storage
-            .all_data_ids(&PubDataType::VerfKey.to_string())
-            .await
-            .unwrap()
-            .is_empty()
-    );
+    for data_type in SCHEME_MATERIAL_TYPES.map(|t| t.to_string()) {
+        assert!(
+            central_pub_storage
+                .all_data_ids(&data_type)
+                .await
+                .unwrap()
+                .is_empty(),
+            "{data_type} still holds material after purging"
+        );
+    }
     assert!(
         central_priv_storage
             .all_data_ids(&PrivDataType::SigningKey.to_string())

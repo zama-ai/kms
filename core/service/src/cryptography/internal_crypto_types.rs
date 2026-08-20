@@ -5,6 +5,37 @@ use threshold_execution::tfhe_internals::parameters::DKGParams;
 
 #[macro_export]
 macro_rules! impl_generic_versionize {
+    // Generic form, e.g. `impl_generic_versionize!(<P: MlDsaParams> MlDsaVerfKey<P>);`.
+    // Listed first so the leading `<` is not swallowed by the `$t:ty` arm below.
+    (<$($gen:ident : $bound:path),+ $(,)?> $t:ty) => {
+        impl<$($gen: $bound),+> tfhe_versionable::Versionize for $t {
+            type Versioned<'vers>
+                = &'vers $t
+            where
+                $($gen: 'vers),+;
+
+            fn versionize(&self) -> Self::Versioned<'_> {
+                self
+            }
+        }
+
+        impl<$($gen: $bound),+> tfhe_versionable::VersionizeOwned for $t {
+            type VersionedOwned = $t;
+            fn versionize_owned(self) -> Self::VersionedOwned {
+                self
+            }
+        }
+
+        impl<$($gen: $bound),+> tfhe_versionable::Unversionize for $t {
+            fn unversionize(
+                versioned: Self::VersionedOwned,
+            ) -> Result<Self, tfhe_versionable::UnversionizeError> {
+                Ok(versioned)
+            }
+        }
+
+        impl<$($gen: $bound),+> tfhe_versionable::NotVersioned for $t {}
+    };
     ($t:ty) => {
         impl tfhe_versionable::Versionize for $t {
             type Versioned<'vers> = &'vers $t;

@@ -506,8 +506,7 @@ async fn run_new_epoch(
             .expect("Failed to verify reshare responses");
 
             let (client_key, compressed_keyset, pk) = out.0.clone().get_compressed();
-            let (decompressed_pk, server_key) =
-                compressed_keyset.decompress().unwrap().into_raw_parts();
+            let (decompressed_pk, server_key) = compressed_keyset.decompress().into_raw_parts();
             crate::client::key_gen::tests::check_conformance(server_key, client_key);
 
             // The reshared compressed keyset is freshly generated from the existing

@@ -12,18 +12,20 @@ pub mod ecdsa;
 mod eddsa;
 mod mldsa;
 
+use alloy_primitives::Address;
 use ecdsa::Ecdsa256k1;
 use ecdsa::{PrivateSigKey, PublicSigKey};
-use ed25519_dalek::{SigningKey as Ed25519SigningKey, VerifyingKey as Ed25519VerifyingKey};
+use ed25519_dalek::{PUBLIC_KEY_LENGTH, SigningKey as Ed25519SigningKey};
 use eddsa::Ed25519;
+pub use eddsa::Ed25519VerfKey;
 use hashing::{DIGEST_BYTES, DomainSep, hash_element};
-use ml_dsa::{
-    MlDsa44, MlDsa65, MlDsa87, SigningKey as MlDsaSigningKey, VerifyingKey as MlDsaVerifyingKey,
-};
+use ml_dsa::{MlDsa44, MlDsa65, MlDsa87, SigningKey as MlDsaSigningKey};
 use mldsa::MlDsa;
+pub use mldsa::MlDsaVerfKey;
 use serde::{Deserialize, Serialize};
 use strum::{EnumCount, EnumIter};
 use strum_macros::Display;
+use tfhe::named::Named;
 use tfhe_versionable::{Versionize, VersionsDispatch};
 use thiserror::Error;
 use zeroize::{Zeroize, ZeroizeOnDrop, Zeroizing};
@@ -31,6 +33,9 @@ use zeroize::{Zeroize, ZeroizeOnDrop, Zeroizing};
 /// Domain separator for deriving per-scheme signing keys from the persisted
 /// ECDSA [`PrivateSigKey`].
 const DSEP_SIGKEY_DERIVE: DomainSep = *b"SIGKDERV";
+
+/// Domain separator for the digests that identify a verification key.
+const DSEP_SIGKEY_DIGEST: DomainSep = *b"SIGKDGST";
 
 /// Version of the per-scheme key-derivation scheme.
 const SIGKEY_DERIVATION_VERSION: u8 = 1;
@@ -90,6 +95,8 @@ pub enum SigningSchemeTypeVersions {
     Copy,
     PartialEq,
     Eq,
+    Ord,
+    PartialOrd,
     Hash,
     Serialize,
     Deserialize,
@@ -106,6 +113,28 @@ pub enum SigningSchemeType {
     MlDsa44, // NIST level 2
     MlDsa65, // NIST level 3
     MlDsa87, // NIST level 5
+}
+
+impl SigningSchemeType {
+    /// The expected length of the digest for this scheme.
+    pub fn expected_digest_len(self) -> usize {
+        match self {
+            // The Ethereum address of the key.
+            SigningSchemeType::Ecdsa256k1 => Address::len_bytes(),
+            // The full public key.
+            SigningSchemeType::Ed25519 => PUBLIC_KEY_LENGTH,
+            // A Shake256 digest of the public key, since an ML-DSA public key is far too large
+            // to serve as an identifier itself.
+            SigningSchemeType::MlDsa44
+            | SigningSchemeType::MlDsa65
+            | SigningSchemeType::MlDsa87 => DIGEST_BYTES,
+        }
+    }
+
+    /// The scheme's stable 4-byte tag, for binding a scheme into a hash input.
+    fn tag(self) -> [u8; 4] {
+        (kms_grpc::kms::v1::SigningSchemeType::from(self) as i32).to_le_bytes()
+    }
 }
 
 impl From<kms_grpc::kms::v1::SigningSchemeType> for SigningSchemeType {
@@ -240,17 +269,17 @@ impl UnifiedPrivateSigKey {
                 UnifiedPublicSigKey::Ecdsa256k1(Ecdsa256k1::verifying_key(sk)?)
             }
             UnifiedPrivateSigKey::Ed25519(sk) => {
-                UnifiedPublicSigKey::Ed25519(Ed25519::verifying_key(sk)?)
+                UnifiedPublicSigKey::Ed25519(Ed25519VerfKey(Ed25519::verifying_key(sk)?))
             }
-            UnifiedPrivateSigKey::MlDsa44(sk) => {
-                UnifiedPublicSigKey::MlDsa44(Box::new(MlDsa::<MlDsa44>::verifying_key(sk)?))
-            }
-            UnifiedPrivateSigKey::MlDsa65(sk) => {
-                UnifiedPublicSigKey::MlDsa65(Box::new(MlDsa::<MlDsa65>::verifying_key(sk)?))
-            }
-            UnifiedPrivateSigKey::MlDsa87(sk) => {
-                UnifiedPublicSigKey::MlDsa87(Box::new(MlDsa::<MlDsa87>::verifying_key(sk)?))
-            }
+            UnifiedPrivateSigKey::MlDsa44(sk) => UnifiedPublicSigKey::MlDsa44(Box::new(
+                MlDsaVerfKey(MlDsa::<MlDsa44>::verifying_key(sk)?),
+            )),
+            UnifiedPrivateSigKey::MlDsa65(sk) => UnifiedPublicSigKey::MlDsa65(Box::new(
+                MlDsaVerfKey(MlDsa::<MlDsa65>::verifying_key(sk)?),
+            )),
+            UnifiedPrivateSigKey::MlDsa87(sk) => UnifiedPublicSigKey::MlDsa87(Box::new(
+                MlDsaVerfKey(MlDsa::<MlDsa87>::verifying_key(sk)?),
+            )),
         })
     }
 }
@@ -321,14 +350,49 @@ const _: () = {
     assert_zeroize_on_drop::<MlDsaSigningKey<MlDsa87>>();
 };
 
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, VersionsDispatch)]
+pub enum UnifiedPublicSigKeyVersions {
+    V0(UnifiedPublicSigKey),
+}
+
 /// A verification key tagged with the scheme it belongs to.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, Versionize)]
+#[versionize(UnifiedPublicSigKeyVersions)]
 #[allow(clippy::large_enum_variant)]
 pub enum UnifiedPublicSigKey {
     Ecdsa256k1(PublicSigKey),
-    Ed25519(Ed25519VerifyingKey),
-    MlDsa44(Box<MlDsaVerifyingKey<MlDsa44>>),
-    MlDsa65(Box<MlDsaVerifyingKey<MlDsa65>>),
-    MlDsa87(Box<MlDsaVerifyingKey<MlDsa87>>),
+    Ed25519(Ed25519VerfKey),
+    MlDsa44(Box<MlDsaVerfKey<MlDsa44>>),
+    MlDsa65(Box<MlDsaVerfKey<MlDsa65>>),
+    MlDsa87(Box<MlDsaVerfKey<MlDsa87>>),
+}
+
+impl Named for UnifiedPublicSigKey {
+    const NAME: &'static str = "UnifiedPublicSigKey";
+}
+
+impl UnifiedPublicSigKey {
+    /// The identifier of this verification key, used to identify its operator in an MPC context.
+    /// The encoding is scheme specific; see [`SigningSchemeType::expected_digest_len`] for the
+    /// length each one has.
+    pub fn digest(&self) -> Vec<u8> {
+        match self {
+            UnifiedPublicSigKey::Ecdsa256k1(vk) => vk.verf_key_id(),
+            UnifiedPublicSigKey::Ed25519(vk) => Ed25519::digest(&vk.0),
+            UnifiedPublicSigKey::MlDsa44(vk) => MlDsa::digest(SigningSchemeType::MlDsa44, &vk.0),
+            UnifiedPublicSigKey::MlDsa65(vk) => MlDsa::digest(SigningSchemeType::MlDsa65, &vk.0),
+            UnifiedPublicSigKey::MlDsa87(vk) => MlDsa::digest(SigningSchemeType::MlDsa87, &vk.0),
+        }
+    }
+
+    /// The text form of [`Self::digest`], as stored under `TypedVerfAddress`:
+    /// `0x`-prefixed hex.
+    pub fn address_text(&self) -> String {
+        match self {
+            UnifiedPublicSigKey::Ecdsa256k1(vk) => vk.address().to_string(), // Already includes `0x`
+            other => format!("0x{}", hex::encode(other.digest())),
+        }
+    }
 }
 
 impl HasSigningScheme for UnifiedPublicSigKey {
@@ -361,7 +425,7 @@ impl PrivateSigKey {
 
     /// The verification key that [`Self::unified_sign_with`] signatures under
     /// `scheme` verify against.
-    pub(crate) fn unified_verifying_key(
+    pub fn unified_verifying_key(
         &self,
         scheme: SigningSchemeType,
     ) -> Result<UnifiedPublicSigKey, SigningError> {
@@ -426,15 +490,12 @@ impl PrivateSigKey {
     ///
     /// The seed is
     /// `SHAKE256(DSEP_SIGKEY_DERIVE ‖ scheme_tag ‖ version ‖ sk_bytes)`, where `scheme_tag`
-    /// is the 4-byte little-endian gRPC discriminant of the scheme and `version` is
-    /// [`SIGKEY_DERIVATION_VERSION`].
+    /// is [`SigningSchemeType::tag`] and `version` is [`SIGKEY_DERIVATION_VERSION`].
     fn derived_seed(&self, scheme: SigningSchemeType) -> Zeroizing<[u8; DIGEST_BYTES]> {
         let mut sk_bytes = self.raw_signing_key().to_bytes();
         // Use Zeroizing to ensure that the `msg` gets wiped at dropping
         let mut msg = Zeroizing::new(Vec::with_capacity(4 + 1 + sk_bytes.len()));
-        msg.extend_from_slice(
-            &(<kms_grpc::kms::v1::SigningSchemeType>::from(scheme) as i32).to_le_bytes(),
-        );
+        msg.extend_from_slice(&scheme.tag());
         msg.push(SIGKEY_DERIVATION_VERSION);
         // Notice this is the only variable length value, hence the concatenation is unambiguous.
         msg.extend_from_slice(&sk_bytes);
@@ -488,20 +549,22 @@ pub fn unified_verify(
     let bytes = sig.as_bytes();
     match vk {
         UnifiedPublicSigKey::Ecdsa256k1(vk) => Ecdsa256k1::verify(dsep, msg, bytes, vk),
-        UnifiedPublicSigKey::Ed25519(vk) => Ed25519::verify(dsep, msg, bytes, vk),
-        UnifiedPublicSigKey::MlDsa44(vk) => MlDsa::<MlDsa44>::verify(dsep, msg, bytes, vk),
-        UnifiedPublicSigKey::MlDsa65(vk) => MlDsa::<MlDsa65>::verify(dsep, msg, bytes, vk),
-        UnifiedPublicSigKey::MlDsa87(vk) => MlDsa::<MlDsa87>::verify(dsep, msg, bytes, vk),
+        UnifiedPublicSigKey::Ed25519(vk) => Ed25519::verify(dsep, msg, bytes, &vk.0),
+        UnifiedPublicSigKey::MlDsa44(vk) => MlDsa::<MlDsa44>::verify(dsep, msg, bytes, &vk.0),
+        UnifiedPublicSigKey::MlDsa65(vk) => MlDsa::<MlDsa65>::verify(dsep, msg, bytes, &vk.0),
+        UnifiedPublicSigKey::MlDsa87(vk) => MlDsa::<MlDsa87>::verify(dsep, msg, bytes, &vk.0),
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::consts::SAFE_SER_SIZE_LIMIT;
     use crate::cryptography::signatures::gen_sig_keys;
     use aes_prng::AesRng;
     use rand::{RngCore, SeedableRng};
     use strum::IntoEnumIterator;
+    use tfhe::safe_serialization::{safe_deserialize, safe_serialize};
 
     const DSEP: &DomainSep = b"SCHMTEST";
 
@@ -602,6 +665,29 @@ mod tests {
             unified_verify(DSEP, msg, &sig, &derived_vk)
                 .unwrap_or_else(|e| panic!("{scheme:?} derived key should verify: {e}"));
             assert!(unified_verify(DSEP, b"tampered", &sig, &derived_vk).is_err());
+        }
+    }
+
+    /// Every scheme's unified verification key survives a safe-serialization
+    /// round-trip (the persisted form used for `VerfKey`), keeping equality,
+    /// scheme tag and digest — exercising the hand-written `Versionize`/serde
+    /// impls for the ed25519 and ML-DSA wrappers.
+    #[test]
+    fn unified_public_sig_key_safe_serialization_round_trip() {
+        let mut rng = AesRng::seed_from_u64(4242);
+        let (_pk, sk) = gen_sig_keys(&mut rng);
+
+        for scheme in SigningSchemeType::iter() {
+            let vk = sk.unified_verifying_key(scheme).unwrap();
+
+            let mut buf = Vec::new();
+            safe_serialize(&vk, &mut buf, SAFE_SER_SIZE_LIMIT).unwrap();
+            let back: UnifiedPublicSigKey =
+                safe_deserialize(std::io::Cursor::new(&buf), SAFE_SER_SIZE_LIMIT).unwrap();
+
+            assert_eq!(vk, back, "{scheme:?} verf key did not survive round-trip");
+            assert_eq!(back.signing_scheme_type(), scheme);
+            assert_eq!(vk.digest(), back.digest(), "{scheme:?} digest changed");
         }
     }
 
@@ -783,5 +869,24 @@ mod tests {
             kms_grpc::kms::v1::SigningSchemeType::try_from(past_last).is_err(),
             "kms_grpc has a scheme with discriminant {past_last} that SigningSchemeType lacks"
         );
+    }
+
+    #[test]
+    fn unified_verf_digest() {
+        let mut rng = AesRng::seed_from_u64(505);
+        let keys = all_private_keys(&mut rng);
+
+        for sk in &keys {
+            let vk = sk.verifying_key().unwrap();
+            let digest = vk.digest();
+            let expected_len = vk.signing_scheme_type().expected_digest_len();
+            assert_eq!(
+                digest.len(),
+                expected_len,
+                "{} should have a {} byte digest",
+                vk.signing_scheme_type(),
+                expected_len
+            );
+        }
     }
 }

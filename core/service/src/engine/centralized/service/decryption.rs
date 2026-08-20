@@ -520,7 +520,7 @@ pub(crate) mod tests {
                 .await
                 .unwrap()
         };
-        let (pk, key) = compressed_keyset.decompress().unwrap().into_raw_parts();
+        let (pk, key) = compressed_keyset.decompress().into_raw_parts();
         tfhe::set_server_key(key);
 
         (kms, pk, verf_key)

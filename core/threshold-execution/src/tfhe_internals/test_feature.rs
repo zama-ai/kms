@@ -126,14 +126,14 @@ impl<'a> ClientKeyView<'a> {
         }
     }
 
-    pub fn raw_compression_client_key(&self) -> Option<GlweSecretKey<Vec<u64>>> {
+    pub fn raw_compression_client_key_and_params(
+        &self,
+    ) -> Option<(GlweSecretKey<Vec<u64>>, CompressionParameters)> {
         let (_, _, compression_sk, _, _, _, _, _) = self.ck.clone().into_raw_parts();
-        if let Some(inner) = compression_sk {
+        compression_sk.map(|inner| {
             let raw_parts = inner.into_raw_parts();
-            Some(raw_parts.post_packing_ks_key)
-        } else {
-            None
-        }
+            (raw_parts.post_packing_ks_key, raw_parts.params)
+        })
     }
 
     pub fn raw_glwe_client_key(&self) -> GlweSecretKey<Vec<u64>> {
@@ -189,22 +189,65 @@ impl KeySet {
     }
 }
 
-/// Derives the seed used by tfhe-rs 1.6.1 to create the modulus-switched
+/// Derives the seed used by tfhe-rs 1.7.0 to create the modulus-switched
 /// PRF input. This mirrors `create_random_from_seed_modulus_switched` in
 /// tfhe-rs so the expected plaintext is computed independently from the
 /// encrypted OPRF path.
+///
+/// Only the single-block layout is mirrored, i.e. one chunk of
+/// `random_bits_count` bits requested with a per-block budget of
+/// `random_bits_count`, which is what [`oprf_single_block`] asks for. The
+/// run-length encoding hashed in for that layout is
+/// `bits_per_block || random_bits_count || 1 block || 1 full block ||
+/// random_bits_count`, where `bits_per_block` is the total usable width of a
+/// block (message + carry + padding bit).
 pub fn oprf_modulus_switched_seed(
     seed: tfhe_csprng::seeders::Seed,
     random_bits_count: u64,
+    bits_per_block: u64,
 ) -> Vec<u8> {
     use sha3::{Digest, Sha3_256};
 
     let mut hasher = Sha3_256::default();
     hasher.update(b"TFHE_PRF");
     hasher.update(seed.0.to_le_bytes());
+    hasher.update(bits_per_block.to_le_bytes());
+    hasher.update(random_bits_count.to_le_bytes());
+    // A single chunk that exactly fills one block: 1 block in total, 1 of them
+    // full, carrying `random_bits_count` bits. No trailing partial block.
+    hasher.update(1u64.to_le_bytes());
     hasher.update(1u64.to_le_bytes());
     hasher.update(random_bits_count.to_le_bytes());
     hasher.finalize().to_vec()
+}
+
+/// Generates a single OPRF block for `seed`, standing in for the
+/// `generate_oblivious_pseudo_random` helper that tfhe-rs removed in 1.7.0.
+///
+/// `random_bits_count` must equal the target server key's message-modulus bit
+/// width, since that is the per-block bit budget the chunked API uses. The
+/// request therefore yields exactly one chunk holding exactly one block.
+pub fn oprf_single_block(
+    oprf_server_key: &tfhe::shortint::oprf::OprfServerKey,
+    seed: tfhe_csprng::seeders::Seed,
+    random_bits_count: u64,
+    target_sks: &tfhe::shortint::ServerKey,
+) -> tfhe::shortint::Ciphertext {
+    assert_eq!(
+        random_bits_count,
+        target_sks.message_modulus.0.ilog2() as u64,
+        "oprf_single_block requires random_bits_count to match the message modulus bit width"
+    );
+    let mut chunks = oprf_server_key.generate_oblivious_pseudo_random_bits_chunks(
+        seed,
+        &[random_bits_count],
+        target_sks,
+    );
+    // One chunk was requested, and `random_bits_count` fills exactly one block.
+    assert_eq!(chunks.len(), 1, "expected exactly one chunk");
+    let mut blocks = chunks.remove(0);
+    assert_eq!(blocks.len(), 1, "expected exactly one block");
+    blocks.remove(0)
 }
 
 /// Plaintext reference for the shortint OPRF — mirrors
@@ -230,7 +273,10 @@ pub fn oprf_expected_plaintext(
     let log_input_p = input_p.ilog2() as usize;
     let log_modulus = polynomial_size.to_blind_rotation_input_modulus_log().0;
 
-    let seed = oprf_modulus_switched_seed(seed, random_bits_count);
+    // Total usable width of a block: message bits + carry bits + the padding bit.
+    let bits_per_block =
+        1 + params.message_modulus().0.ilog2() as u64 + params.carry_modulus().0.ilog2() as u64;
+    let seed = oprf_modulus_switched_seed(seed, random_bits_count, bits_per_block);
     let mut xof = RandomGenerator::<DefaultRandomGenerator>::new(XofSeed::new(seed, *b"PRF_INIT"));
     let mask = (0..lwe_size.to_lwe_dimension().0)
         .map(|_| {
@@ -253,7 +299,7 @@ pub fn oprf_expected_plaintext(
     let plain_prf_input = pt.wrapping_add(1u64 << (u64::BITS as usize - log_input_p - 1))
         >> (u64::BITS as usize - log_input_p);
 
-    tfhe::shortint::oprf::test_utils::cleatext_prf(
+    tfhe::shortint::oprf::test_utils::cleartext_prf(
         plain_prf_input,
         random_bits_count,
         2 * params.carry_modulus().0 * params.message_modulus().0,
@@ -275,7 +321,8 @@ pub fn assert_oprf_matches_plaintext(
 
     for s in 0u128..num_seeds {
         let seed = tfhe_csprng::seeders::Seed(s);
-        let img = oprf_server_key.generate_oblivious_pseudo_random(
+        let img = oprf_single_block(
+            oprf_server_key,
             seed,
             random_bits_count,
             target_shortint_server_key,
@@ -344,7 +391,7 @@ where
         CompressedXofKeySet::generate(config, seed_bytes, security_bits, max_norm_hwt, tag)?;
 
     // Decompress once to get the public keys needed for KeySet / share generation.
-    let (public_key, server_key) = compressed_keyset.decompress()?.into_raw_parts();
+    let (public_key, server_key) = compressed_keyset.decompress().into_raw_parts();
 
     let keyset = KeySet {
         client_key,
@@ -405,7 +452,7 @@ fn extract_key_containers(
 
     // Check compression key consistency
     if let Some(ck) = &client_key
-        && ck.raw_compression_client_key().is_none()
+        && ck.raw_compression_client_key_and_params().is_none()
         && params.compression_decompression_params().is_some()
     {
         anyhow::bail!("Compression client key is missing when parameter is available")
@@ -416,7 +463,8 @@ fn extract_key_containers(
             if params.compression_decompression_params().is_none() {
                 None
             } else {
-                ck.raw_compression_client_key().map(|x| x.into_container())
+                ck.raw_compression_client_key_and_params()
+                    .map(|x| x.0.into_container())
             }
         }
         None => {
@@ -1332,7 +1380,7 @@ pub fn to_hl_client_key(
         compression_key,
         noise_squashing_key,
         sns_compression_key,
-        params.rerand_params().map(Into::into),
+        params.meta.rerandomization_parameters(),
         oprf_private_key,
         tag,
     ))
@@ -1372,10 +1420,6 @@ where
 }
 
 /// Keygen that generates secret key shares for many parties.
-///
-/// __NOTE__: Some secret keys are actually dummy or None, what we really need here are the key
-/// passed as input.
-// TODO(dp): is this slow?
 pub fn keygen_all_party_shares_from_client_key<R, const EXTENSION_DEGREE: usize>(
     client_key: &tfhe::ClientKey,
     parameters: ClassicPBSParameters,
@@ -1393,6 +1437,7 @@ where
 
     let lwe_encryption_secret_key = client_key.raw_lwe_encryption_client_key();
     let glwe_secret_key = client_key.raw_glwe_client_key();
+    let compression_secret_key = client_key.raw_compression_client_key_and_params();
     let glwe_secret_key_sns_as_lwe = client_key.raw_glwe_client_sns_key_as_lwe().unwrap();
     let glwe_secret_key_sns_compression_as_lwe = client_key.raw_sns_compression_client_key_as_lwe();
     let oprf_secret_key = client_key.raw_oprf_client_key();
@@ -1400,6 +1445,7 @@ where
         lwe_secret_key,
         lwe_encryption_secret_key,
         glwe_secret_key,
+        compression_secret_key,
         glwe_secret_key_sns_as_lwe,
         glwe_secret_key_sns_compression_as_lwe,
         oprf_secret_key,
@@ -1415,6 +1461,7 @@ fn keygen_all_party_shares<R: Rng + CryptoRng, const EXTENSION_DEGREE: usize>(
     lwe_secret_key: LweSecretKey<Vec<u64>>,
     lwe_encryption_secret_key: LweSecretKey<Vec<u64>>,
     glwe_secret_key: GlweSecretKey<Vec<u64>>,
+    compression_secret_key: Option<(GlweSecretKey<Vec<u64>>, CompressionParameters)>,
     glwe_secret_key_sns_as_lwe: LweSecretKey<Vec<u128>>,
     glwe_secreet_key_sns_compression_as_lwe: Option<LweSecretKey<Vec<u128>>>,
     oprf_secret_key: Option<LweSecretKey<Vec<u64>>>,
@@ -1481,6 +1528,19 @@ where
         None => None,
     };
 
+    // optionally share the regular compression secret key (when the parameters
+    // carry compression), keeping the polynomial size and parameters needed to
+    // rebuild `CompressionPrivateKeyShares`.
+    let all_glwe_compression_key = match compression_secret_key {
+        Some((key, compression_params)) => {
+            let polynomial_size = key.polynomial_size();
+            let shares: Vec<Vec<Share<ResiduePoly<Z128, EXTENSION_DEGREE>>>> =
+                secret_share_key_shares(key.into_container(), num_parties, threshold, rng)?;
+            Some((shares, polynomial_size, compression_params))
+        }
+        None => None,
+    };
+
     // put the individual parties shares into SecretKeyShare structs
     let shared_sks: Vec<_> = (0..num_parties)
         .map(|p| PrivateKeySet {
@@ -1501,8 +1561,17 @@ where
                 data: vv128[p].clone(),
             }),
             parameters,
-            // the below is not really used for any computation
-            glwe_secret_key_share_compression: None,
+            glwe_secret_key_share_compression: all_glwe_compression_key.as_ref().map(
+                |(shares, polynomial_size, compression_params)| {
+                    CompressionPrivateKeySharesEnum::Z128(CompressionPrivateKeyShares {
+                        post_packing_ks_key: GlweSecretKeyShare {
+                            data: shares[p].clone(),
+                            polynomial_size: *polynomial_size,
+                        },
+                        params: *compression_params,
+                    })
+                },
+            ),
             glwe_sns_compression_key_as_lwe: all_glwe_sns_compression_key_as_lwe
                 .as_ref()
                 .map(|x| LweSecretKeyShare { data: x[p].clone() }),
@@ -1763,13 +1832,16 @@ mod tests {
                     .await
                     .unwrap();
             // Regenerate a compressed keyset from the existing secret key.
-            let (compressed_b, sk_b) = insecure_initialize_compressed_key_material_from_existing::<
-                _,
-                EXT,
-            >(&mut session, params, tag, &sk_a)
-            .await
-            .unwrap();
-            (session.my_role(), compressed_b, sk_a, sk_b)
+            let (_compressed_b, sk_b) =
+                insecure_initialize_compressed_key_material_from_existing::<_, EXT>(
+                    &mut session,
+                    params,
+                    tag,
+                    &sk_a,
+                )
+                .await
+                .unwrap();
+            (session.my_role(), sk_a, sk_b)
         };
 
         let mut tasks = JoinSet::new();
@@ -1790,13 +1862,6 @@ mod tests {
         }
         assert_eq!(results.len(), num_parties);
 
-        // Every party must end up with a valid, decompressable compressed keyset.
-        for (role, compressed_b, _, _) in &results {
-            compressed_b.decompress().unwrap_or_else(|e| {
-                panic!("party {role} produced an invalid compressed keyset: {e:?}")
-            });
-        }
-
         // Reconstruct the GLWE secret key (Z128) from the original shares and from the re-shared
         // shares and assert they match: the migration must preserve the secret key.
         let mut glwe_a: HashMap<Role, Vec<Share<ResiduePoly<Z128, EXT>>>> = HashMap::new();
@@ -1813,7 +1878,7 @@ mod tests {
             LweSecretKeyShareEnum::Z128(_) => panic!("expected lwe compute shares to be z64"),
         };
 
-        for (role, _, sk_a, sk_b) in &results {
+        for (role, sk_a, sk_b) in &results {
             glwe_a.insert(*role, extract_glwe(sk_a));
             glwe_b.insert(*role, extract_glwe(sk_b));
             lwe_a.insert(*role, extract_lwe(sk_a));
