@@ -26,17 +26,12 @@
 use crate::backup::operator::RecoveryValidationMaterial;
 use crate::consts::SIGNING_KEY_ID;
 use crate::cryptography::signing::ecdsa::{PrivateSigKey, PublicSigKey};
-use crate::cryptography::signing::{Signature, SigningSchemeType, unified_verify};
-use crate::engine::base::{
-    CrsGenMetadata, DSEP_PUBDATA_CRS, DSEP_PUBDATA_KEY, KeyGenMetadata, StoredTypedSignature,
-    crs_payload_bytes, keygen_payload_bytes,
-};
+use crate::engine::base::{CrsGenMetadata, DSEP_PUBDATA_KEY, KeyGenMetadata};
 use crate::engine::material_integrity::{
     verify_compressed_key_digest_from_bytes, verify_crs_digest_from_bytes,
     verify_public_key_digest_from_bytes, verify_server_key_digest_from_bytes,
 };
 use crate::vault::storage::{StorageReader, read_text_at_request_id};
-use hashing::DomainSep;
 use kms_grpc::RequestId;
 use kms_grpc::rpc_types::PubDataType;
 use std::collections::{BTreeMap, HashMap};
@@ -45,7 +40,6 @@ use strum::IntoEnumIterator;
 
 const ERR_INVALID_CURRENT_PUBLIC_KEY_SHAPE: &str = "Invalid current public key metadata shape";
 const ERR_INVALID_LEGACY_PUBLIC_KEY_SHAPE: &str = "Invalid legacy public key metadata shape";
-pub(crate) const ERR_METADATA_SIGNATURE_INVALID: &str = "Result metadata signature invalid";
 pub(crate) const ERR_METADATA_ID_MISMATCH: &str =
     "Result metadata is stored under a different ID than it declares";
 pub(crate) const ERR_VERF_KEY_MISMATCH: &str =
@@ -267,27 +261,7 @@ where
         ensure_crs_metadata_id_matches(crs_id, metadata)?;
     }
 
-    // Validate the private metadata before treating its digests as the reference, so that a
-    // corrupted digest is attributed to the side that is actually damaged. The signature covers
-    // the digest map, so a digest damaged in private storage fails here; were the digest checks
-    // to run first they would merely report a mismatch against intact published bytes and blame
-    // public storage. The verification key is checked next for the same reason: when a node is
-    // pointed at the wrong bucket, "this is not your verification key" localises the fault far
-    // better than a digest mismatch on every keyset.
-    let mut skipped = 0;
-    for (key_id, metadata) in key_entries {
-        skipped += verify_keygen_metadata_signatures(signing_key, key_id, metadata)?;
-    }
-    for (crs_id, metadata) in crs_entries {
-        skipped += verify_crs_metadata_signatures(signing_key, crs_id, metadata)?;
-    }
-    if skipped > 0 {
-        tracing::info!(
-            "Skipped {skipped} ECDSA/EIP-712 signature(s) while verifying public material: \
-             the EIP-712 domain they were signed under is not persisted, so the signed \
-             message cannot be reconstructed at boot."
-        );
-    }
+    // TODO private storage validation will come later
 
     for data_type in PubDataType::iter() {
         match data_type {
@@ -333,48 +307,6 @@ where
     Ok(())
 }
 
-/// Verify the per-scheme signatures a result was persisted with, against this node's own
-/// verification keys, and return how many were skipped.
-///
-/// `Ecdsa256k1` entries are skipped and counted. They sign an EIP-712 hash, and the
-/// `Eip712Domain` that hash is built from (chain ID plus verifying contract) arrives on the
-/// originating gRPC request and is never persisted, so the message cannot be reconstructed
-/// here. Every other scheme signs `payload_bytes` directly and is fully checkable.
-///
-/// Private storage remains the reference — its digests define what is expected. This check
-/// covers the reference itself: a truncated write, a partially applied migration, or bit-rot
-/// in the metadata blob would otherwise turn a damaged digest into a false accusation against
-/// intact published material.
-fn verify_stored_signatures(
-    sk: &PrivateSigKey,
-    dsep: &DomainSep,
-    payload_bytes: &[u8],
-    signatures: &[StoredTypedSignature],
-    subject: &str,
-) -> anyhow::Result<usize> {
-    let mut skipped = 0;
-    for stored in signatures {
-        if stored.scheme == SigningSchemeType::Ecdsa256k1 {
-            skipped += 1;
-            continue;
-        }
-        let verification_key = sk.unified_verifying_key(stored.scheme).map_err(|e| {
-            anyhow::anyhow!(
-                "cannot derive the {} verification key needed to check {subject}: {e}",
-                stored.scheme
-            )
-        })?;
-        let signature = Signature::new(stored.scheme, stored.signature.clone());
-        unified_verify(dsep, payload_bytes, &signature, &verification_key).map_err(|e| {
-            anyhow::anyhow!(
-                "{ERR_METADATA_SIGNATURE_INVALID}: {} signature over {subject} did not verify: {e}",
-                stored.scheme
-            )
-        })?;
-    }
-    Ok(skipped)
-}
-
 /// Check that keyset metadata declares the same key ID it is stored under.
 ///
 /// The published bytes are loaded under the storage ID, while the digests and signatures cover
@@ -416,70 +348,6 @@ fn ensure_crs_metadata_id_matches(
         );
     }
     Ok(())
-}
-
-/// Verify the signatures persisted alongside a keygen result's digests.
-///
-/// Returns the number of signatures skipped because they are ECDSA/EIP-712; see
-/// [`verify_stored_signatures`]. `LegacyV0` metadata carries no per-scheme signatures, so
-/// there is nothing to check for it. Assumes the declared ID has already been checked by
-/// [`ensure_keygen_metadata_id_matches`].
-fn verify_keygen_metadata_signatures(
-    sk: &PrivateSigKey,
-    key_id: &RequestId,
-    metadata: &KeyGenMetadata,
-) -> anyhow::Result<usize> {
-    let KeyGenMetadata::Current(inner) = metadata else {
-        return Ok(0);
-    };
-    if inner.signatures.is_empty() {
-        return Ok(0);
-    }
-    let payload_bytes = keygen_payload_bytes(
-        &inner.preprocessing_id,
-        &inner.key_id,
-        &inner.key_digest_map,
-        // `extra_data` is stored as `None` when it was empty at signing time, so map it back.
-        inner.extra_data.as_deref().unwrap_or_default(),
-    )?;
-    verify_stored_signatures(
-        sk,
-        &DSEP_PUBDATA_KEY,
-        &payload_bytes,
-        &inner.signatures,
-        &format!("keygen metadata for key_id={key_id}"),
-    )
-}
-
-/// Verify the signatures persisted alongside a CRS result's digest.
-///
-/// Returns the number of signatures skipped because they are ECDSA/EIP-712; see
-/// [`verify_stored_signatures`]. Assumes the declared ID has already been checked by
-/// [`ensure_crs_metadata_id_matches`].
-fn verify_crs_metadata_signatures(
-    sk: &PrivateSigKey,
-    crs_id: &RequestId,
-    metadata: &CrsGenMetadata,
-) -> anyhow::Result<usize> {
-    let CrsGenMetadata::Current(inner) = metadata else {
-        return Ok(0);
-    };
-    if inner.signatures.is_empty() {
-        return Ok(0);
-    }
-    let payload_bytes = crs_payload_bytes(
-        &inner.crs_id,
-        inner.max_num_bits,
-        &inner.crs_digest,
-        inner.extra_data.as_deref().unwrap_or_default(),
-    )?;
-    verify_stored_signatures(
-        sk,
-        &DSEP_PUBDATA_CRS,
-        &payload_bytes,
-        &inner.signatures,
-        &format!("CRS metadata for crs_id={crs_id}"),
-    )
 }
 
 /// Check that the verification key and Ethereum address published in public storage are the
@@ -552,6 +420,7 @@ mod tests {
     use crate::consts::DEFAULT_MPC_CONTEXT;
     use crate::cryptography::encryption::{Encryption, PkeScheme, PkeSchemeType};
     use crate::cryptography::signatures::gen_sig_keys;
+    use crate::engine::base::DSEP_PUBDATA_CRS;
     use crate::engine::base::KeyGenMetadataInner;
     use crate::engine::material_integrity::{
         ERR_COMPRESSED_KEYSET_DIGEST_MISMATCH, ERR_CRS_DIGEST_MISMATCH,
@@ -561,7 +430,7 @@ mod tests {
     use crate::vault::storage::{Storage, delete_at_request_id, store_versioned_at_request_id};
 
     use aes_prng::AesRng;
-    use hashing::hash_element;
+    use hashing::{DomainSep, hash_element};
     use kms_grpc::rpc_types::SignedPubDataHandleInternal;
     use rand::SeedableRng;
 
@@ -593,33 +462,6 @@ mod tests {
 
         fn legacy_standard_metadata(&self) -> KeyGenMetadata {
             legacy_keyset_metadata(&[PubDataType::PublicKey, PubDataType::ServerKey])
-        }
-
-        /// Metadata produced the way `key_gen` produces it, so the per-scheme signatures
-        /// cover exactly the bytes production signs. Returns the signing key alongside it.
-        fn signed_metadata(
-            &self,
-            schemes: &[SigningSchemeType],
-        ) -> (KeyGenMetadata, PrivateSigKey) {
-            let (_pk, sk) = gen_sig_keys(&mut AesRng::seed_from_u64(0x516E));
-            let metadata = crate::engine::base::compute_info_standard_keygen_from_digests(
-                &sk,
-                schemes,
-                &self.preproc_id,
-                &self.key_id,
-                self.key_digest_map
-                    .get(&PubDataType::ServerKey)
-                    .expect("standard material always has a server key digest")
-                    .clone(),
-                self.key_digest_map
-                    .get(&PubDataType::PublicKey)
-                    .expect("standard material always has a public key digest")
-                    .clone(),
-                &crate::dummy_domain(),
-                vec![],
-            )
-            .unwrap();
-            (metadata, sk)
         }
 
         fn current_metadata_with_types(&self, pub_data_types: &[PubDataType]) -> KeyGenMetadata {
@@ -866,99 +708,11 @@ mod tests {
         );
     }
 
-    // === Keygen metadata signatures ===
-
-    #[tokio::test]
-    async fn keygen_signatures_verify_under_non_ecdsa_scheme() {
-        let mut storage = RamStorage::new();
-        let material = setup_standard_keys(&mut storage, 110).await;
-        let (metadata, sk) = material.signed_metadata(&[SigningSchemeType::MlDsa65]);
-
-        let skipped = verify_keygen_metadata_signatures(&sk, &material.key_id, &metadata)
-            .expect("a freshly produced ML-DSA signature must verify");
-        assert_eq!(skipped, 0, "no ECDSA signature was requested");
-    }
-
-    #[tokio::test]
-    async fn keygen_signatures_reject_corrupted_signature() {
-        let mut storage = RamStorage::new();
-        let material = setup_standard_keys(&mut storage, 111).await;
-        let (mut metadata, sk) = material.signed_metadata(&[SigningSchemeType::MlDsa65]);
-        if let KeyGenMetadata::Current(inner) = &mut metadata {
-            inner.signatures[0].signature[0] ^= 0xFF;
-        }
-
-        let err = verify_keygen_metadata_signatures(&sk, &material.key_id, &metadata).unwrap_err();
-        assert!(
-            err.to_string().contains(ERR_METADATA_SIGNATURE_INVALID),
-            "expected a signature failure, got: {err}"
-        );
-    }
-
-    #[tokio::test]
-    async fn keygen_signatures_reject_corrupted_digest_map() {
-        let mut storage = RamStorage::new();
-        let material = setup_standard_keys(&mut storage, 112).await;
-        let (mut metadata, sk) = material.signed_metadata(&[SigningSchemeType::MlDsa65]);
-        // The digest map is inside the signed payload, so corrupting it must be caught even
-        // though the signature bytes are untouched.
-        if let KeyGenMetadata::Current(inner) = &mut metadata
-            && let Some(digest) = inner.key_digest_map.get_mut(&PubDataType::ServerKey)
-        {
-            digest[0] ^= 0xFF;
-        }
-
-        let err = verify_keygen_metadata_signatures(&sk, &material.key_id, &metadata).unwrap_err();
-        assert!(
-            err.to_string().contains(ERR_METADATA_SIGNATURE_INVALID),
-            "expected a signature failure, got: {err}"
-        );
-    }
-
-    #[tokio::test]
-    async fn keygen_signatures_skip_ecdsa_and_report_the_count() {
-        let mut storage = RamStorage::new();
-        let material = setup_standard_keys(&mut storage, 113).await;
-        let (metadata, sk) = material.signed_metadata(&[SigningSchemeType::Ecdsa256k1]);
-
-        let skipped = verify_keygen_metadata_signatures(&sk, &material.key_id, &metadata)
-            .expect("an ECDSA-only signature list must be skipped, not rejected");
-        assert_eq!(skipped, 1, "the ECDSA signature should be reported skipped");
-    }
-
-    #[tokio::test]
-    async fn keygen_signatures_accept_empty_signature_list() {
-        let mut storage = RamStorage::new();
-        let material = setup_standard_keys(&mut storage, 114).await;
-        // `signatures` defaults to empty, which is what most existing material looks like.
-        let metadata = material.current_metadata();
-        let (_pk, sk) = gen_sig_keys(&mut AesRng::seed_from_u64(114));
-
-        let skipped = verify_keygen_metadata_signatures(&sk, &material.key_id, &metadata)
-            .expect("no signatures means nothing to verify");
-        assert_eq!(skipped, 0);
-    }
-
-    #[tokio::test]
-    async fn keygen_signatures_skipped_for_legacy_metadata() {
-        let mut storage = RamStorage::new();
-        let material = setup_standard_keys(&mut storage, 115).await;
-        let (_pk, sk) = gen_sig_keys(&mut AesRng::seed_from_u64(115));
-
-        let skipped = verify_keygen_metadata_signatures(
-            &sk,
-            &material.key_id,
-            &material.legacy_standard_metadata(),
-        )
-        .expect("legacy metadata carries no per-scheme signatures");
-        assert_eq!(skipped, 0);
-    }
-
     #[tokio::test]
     async fn keygen_metadata_stored_under_a_different_id_is_rejected() {
         let mut storage = RamStorage::new();
         let material = setup_standard_keys(&mut storage, 116).await;
-        let (metadata, _sk) = material.signed_metadata(&[SigningSchemeType::MlDsa65]);
+        let metadata = material.current_metadata();
         // A different seed than `setup_standard_keys` used, so this really is another ID.
         let other_id = RequestId::new_random(&mut AesRng::seed_from_u64(0xA116));
         assert_ne!(other_id, material.key_id);
@@ -973,7 +727,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn keygen_metadata_id_is_checked_before_signature_verification() {
+    async fn keygen_metadata_id_is_checked_before_public_storage_verification() {
         let mut storage = RamStorage::new();
         // Two keysets whose published bytes are identical, so their digests are too. Filing one
         // keyset's metadata under the other's ID therefore satisfies every digest check, and only
@@ -983,7 +737,8 @@ mod tests {
         assert_ne!(other.key_id, material.key_id);
         assert_eq!(other.key_digest_map, material.key_digest_map);
 
-        let (metadata, sk) = material.signed_metadata(&[SigningSchemeType::MlDsa65]);
+        let metadata = material.current_metadata();
+        let (_pk, sk) = gen_sig_keys(&mut AesRng::seed_from_u64(117));
         let entries = vec![(other.key_id, metadata)];
 
         // Nothing but the ID check stands between this and a clean boot: the digests match.
@@ -1002,61 +757,7 @@ mod tests {
         .unwrap_err();
         assert!(
             err.to_string().contains(ERR_METADATA_ID_MISMATCH),
-            "expected an ID mismatch before signature verification, got: {err}"
-        );
-    }
-
-    // === CRS metadata signatures ===
-
-    #[tokio::test]
-    async fn crs_signatures_verify_under_non_ecdsa_scheme() {
-        let mut rng = AesRng::seed_from_u64(120);
-        let crs_id = RequestId::new_random(&mut rng);
-        let mut storage = RamStorage::new();
-        let digest = setup_crs(&mut storage, &crs_id).await;
-        let (metadata, sk) =
-            crs_metadata_with_signatures(&crs_id, digest, &[SigningSchemeType::MlDsa65]);
-
-        let skipped = verify_crs_metadata_signatures(&sk, &crs_id, &metadata)
-            .expect("a freshly produced ML-DSA signature must verify");
-        assert_eq!(skipped, 0);
-    }
-
-    #[tokio::test]
-    async fn crs_signatures_reject_corrupted_signature() {
-        let mut rng = AesRng::seed_from_u64(121);
-        let crs_id = RequestId::new_random(&mut rng);
-        let mut storage = RamStorage::new();
-        let digest = setup_crs(&mut storage, &crs_id).await;
-        let (mut metadata, sk) =
-            crs_metadata_with_signatures(&crs_id, digest, &[SigningSchemeType::MlDsa65]);
-        if let CrsGenMetadata::Current(inner) = &mut metadata {
-            inner.signatures[0].signature[0] ^= 0xFF;
-        }
-
-        let err = verify_crs_metadata_signatures(&sk, &crs_id, &metadata).unwrap_err();
-        assert!(
-            err.to_string().contains(ERR_METADATA_SIGNATURE_INVALID),
-            "expected a signature failure, got: {err}"
-        );
-    }
-
-    #[tokio::test]
-    async fn crs_signatures_reject_corrupted_digest() {
-        let mut rng = AesRng::seed_from_u64(122);
-        let crs_id = RequestId::new_random(&mut rng);
-        let mut storage = RamStorage::new();
-        let digest = setup_crs(&mut storage, &crs_id).await;
-        let (mut metadata, sk) =
-            crs_metadata_with_signatures(&crs_id, digest, &[SigningSchemeType::MlDsa65]);
-        if let CrsGenMetadata::Current(inner) = &mut metadata {
-            inner.crs_digest[0] ^= 0xFF;
-        }
-
-        let err = verify_crs_metadata_signatures(&sk, &crs_id, &metadata).unwrap_err();
-        assert!(
-            err.to_string().contains(ERR_METADATA_SIGNATURE_INVALID),
-            "expected a signature failure, got: {err}"
+            "expected an ID mismatch before public storage verification, got: {err}"
         );
     }
 
@@ -1067,8 +768,7 @@ mod tests {
         let other_id = RequestId::new_random(&mut rng);
         let mut storage = RamStorage::new();
         let digest = setup_crs(&mut storage, &crs_id).await;
-        let (metadata, _sk) =
-            crs_metadata_with_signatures(&crs_id, digest, &[SigningSchemeType::MlDsa65]);
+        let metadata = current_crs_metadata(crs_id, digest);
 
         let err = ensure_crs_metadata_id_matches(&other_id, &metadata).unwrap_err();
         assert!(
@@ -1080,14 +780,14 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn crs_metadata_id_is_checked_before_signature_verification() {
+    async fn crs_metadata_id_is_checked_before_public_storage_verification() {
         let mut rng = AesRng::seed_from_u64(124);
         let crs_id = RequestId::new_random(&mut rng);
         let other_id = RequestId::new_random(&mut rng);
         let mut storage = RamStorage::new();
         let digest = setup_crs(&mut storage, &crs_id).await;
-        let (metadata, sk) =
-            crs_metadata_with_signatures(&crs_id, digest, &[SigningSchemeType::MlDsa65]);
+        let metadata = current_crs_metadata(crs_id, digest);
+        let (_pk, sk) = gen_sig_keys(&mut AesRng::seed_from_u64(124));
 
         let entries = HashMap::from([(other_id, metadata)]);
         let err = verify_public_storage_material(&storage, &[], &entries, &HashMap::new(), &sk)
@@ -1095,7 +795,7 @@ mod tests {
             .unwrap_err();
         assert!(
             err.to_string().contains(ERR_METADATA_ID_MISMATCH),
-            "expected an ID mismatch before signature verification, got: {err}"
+            "expected an ID mismatch before public storage verification, got: {err}"
         );
     }
 
@@ -1298,17 +998,13 @@ mod tests {
         let mut storage = RamStorage::new();
         let mut rng = AesRng::seed_from_u64(160);
         let material = setup_standard_keys(&mut storage, 161).await;
-        let (metadata, sk) = material.signed_metadata(&[SigningSchemeType::MlDsa65]);
+        let metadata = material.current_metadata();
+        let (_pk, sk) = gen_sig_keys(&mut AesRng::seed_from_u64(161));
         store_signing_key_material(&mut storage, &sk, None).await;
 
         let crs_id = RequestId::new_random(&mut rng);
         let crs_digest = setup_crs(&mut storage, &crs_id).await;
-        let crs_metadata = crs_metadata_with_signatures_using(
-            &sk,
-            &crs_id,
-            crs_digest,
-            &[SigningSchemeType::MlDsa65],
-        );
+        let crs_metadata = current_crs_metadata(crs_id, crs_digest);
 
         let entries = vec![(material.key_id, metadata)];
         let crs_entries = HashMap::from_iter([(crs_id, crs_metadata)]);
@@ -1370,36 +1066,6 @@ mod tests {
         )
         .await
         .unwrap();
-    }
-
-    /// Build CRS metadata signed under a fresh key, the way `crs_gen` would.
-    fn crs_metadata_with_signatures(
-        crs_id: &RequestId,
-        crs_digest: Vec<u8>,
-        schemes: &[SigningSchemeType],
-    ) -> (CrsGenMetadata, PrivateSigKey) {
-        let (_pk, sk) = gen_sig_keys(&mut AesRng::seed_from_u64(0xC5));
-        let metadata = crs_metadata_with_signatures_using(&sk, crs_id, crs_digest, schemes);
-        (metadata, sk)
-    }
-
-    /// Build CRS metadata signed under a caller-supplied key.
-    fn crs_metadata_with_signatures_using(
-        sk: &PrivateSigKey,
-        crs_id: &RequestId,
-        crs_digest: Vec<u8>,
-        schemes: &[SigningSchemeType],
-    ) -> CrsGenMetadata {
-        crate::engine::base::compute_info_crs_from_digest(
-            sk,
-            schemes,
-            crs_id,
-            crs_digest,
-            64,
-            &crate::dummy_domain(),
-            vec![],
-        )
-        .unwrap()
     }
 
     fn legacy_keyset_metadata(data_types: &[PubDataType]) -> KeyGenMetadata {

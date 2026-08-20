@@ -314,7 +314,6 @@ What it verifies, and how failures are treated:
 | Check | On failure |
 |---|---|
 | Published keysets and CRSes are present, and their raw stored bytes hash to the digests in `KeyGenMetadata` / `CrsGenMetadata` | boot fails |
-| Per-scheme `signatures` on that metadata verify against the node's own verification key — a corruption check on the reference itself | boot fails |
 | `VerfKey` and `VerfAddress` at `SIGNING_KEY_ID` match the key derived from the private `SigningKey` | boot fails |
 
 Custodian backup readiness is deliberately *not* part of this. It is a property of the vault's

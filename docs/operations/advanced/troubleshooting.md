@@ -155,7 +155,6 @@ served:
 |---|---|
 | `missing or unreadable public material <type> for id=<id>` | Private storage expects a published object that public storage does not have, or it cannot be read. |
 | `Server key digest mismatch` / `Public key digest mismatch` / `Compressed xof keyset digest mismatch` / `CRS digest mismatch` | The published bytes do not hash to the digest recorded in private storage. |
-| `Result metadata signature invalid` | The digest recorded in *private* storage does not match its own signature, i.e. the private metadata itself is corrupt. |
 | `Verification key/address in public storage does not match the private signing key`  | The published `VerfKey` / `VerfAddress` is not the one derived from this node's signing key. |
 
 **Common Fixes:**
