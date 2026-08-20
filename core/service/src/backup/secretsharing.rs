@@ -136,20 +136,16 @@ pub(crate) fn reconstruct(
 
     // Pre-size so `combined` never reallocates an unwiped copy.
     let mut combined = Zeroizing::new(Vec::with_capacity(shares.len() * block_len));
-    let reconstructed = (|| {
-        for current_block in shares.iter() {
-            let mut opened = current_block
-                .reconstruct(t)
-                .map_err(|e| BackupError::ReconstructError(e.to_string()))?;
-            let buf = Zeroizing::new(opened.to_byte_vec());
-            combined.extend_from_slice(buf.as_slice());
-            opened.zeroize();
-        }
-        let res = pkcs7::remove_padding(block_len, &mut combined)?;
-        Ok(Zeroizing::new(res.to_vec()))
-    })();
-
-    reconstructed
+    for current_block in shares.iter() {
+        let mut opened = current_block
+            .reconstruct(t)
+            .map_err(|e| BackupError::ReconstructError(e.to_string()))?;
+        let buf = Zeroizing::new(opened.to_byte_vec());
+        combined.extend_from_slice(buf.as_slice());
+        opened.zeroize();
+    }
+    let res = pkcs7::remove_padding(block_len, &mut combined)?;
+    Ok(Zeroizing::new(res.to_vec()))
 }
 
 #[cfg(test)]
