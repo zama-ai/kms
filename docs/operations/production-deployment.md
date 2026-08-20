@@ -7,7 +7,7 @@
 This guide covers production deployment of **your party's KMS node** in a **13-party threshold network**:
 
 - **Infrastructure**: [Terraform MPC modules](https://github.com/zama-ai/terraform-mpc-modules) for your AWS EKS, S3, IAM, Nitro Enclaves
-- **Application**: Official KMS Helm charts (`charts/kms-core/`) for your StatefulSet deployment  
+- **Application**: Official KMS Helm charts (`charts/kms-core/`) for your StatefulSet deployment
 - **Security**: AWS Nitro Enclaves, IRSA, PrivateLink networking to other parties
 - **Architecture**: Your independent node in a decentralized 13-party threshold network
 
@@ -26,7 +26,7 @@ This guide covers production deployment of **your party's KMS node** in a **13-p
 │  YOUR    │  Other   │  Other   │  Other   │  Other   │  Other   │  Other   │
 │  PARTY   │  Party   │  Party   │  Party   │  Party   │  Party   │  Party   │
 └──────────┴──────────┴──────────┴──────────┴──────────┴──────────┴──────────┘
-     ▲                                                                    
+     ▲
      │◄──────────── PrivateLink Connections ──────────────────────────────┤
      └─────────────── To All Other 12 Parties ──────────────────────────┘
 ```
@@ -53,7 +53,7 @@ You deploy and manage:
 
 ### Critical Requirements
 - **AWS Instance Type**: `c7a.16xlarge` (required for Nitro Enclaves)
-- **AMI Version**: `1.32.3-20250620` (specific version required)
+- **AMI Version**: `1.34.9-20260810` (specific version required)
 - **Memory**: Minimum 32Gi RAM per party (96Gi allocated to Nitro Enclaves)
 - **CPU**: Minimum 8 cores (16 cores recommended for production)
 - **Storage**: 100Gi+ for key material and logs
@@ -99,7 +99,7 @@ nodegroup_desired_size                   = 1
 nodegroup_disk_size                      = 100
 nodegroup_capacity_type                  = "ON_DEMAND"
 nodegroup_ami_type                       = "AL2023_x86_64_STANDARD"
-nodegroup_ami_release_version           = "1.32.3-20250620"
+nodegroup_ami_release_version           = "1.34.9-20260810"
 nodegroup_enable_nitro_enclaves         = true
 nodegroup_enable_ssm_managed_instance   = true
 
@@ -377,22 +377,22 @@ echo "Validating KMS threshold cluster..."
 for i in "${!PARTIES[@]}"; do
   party="${PARTIES[$i]}"
   namespace="${NAMESPACES[$i]}"
-  
+
   echo "Checking $party..."
-  
+
   # Check StatefulSet status
   if ! kubectl get statefulset kms-core -n "$namespace" | grep -q "1/1"; then
     echo "ERROR: $party StatefulSet not ready"
     exit 1
   fi
-  
+
   # Check pod health
   if ! kubectl exec -n "$namespace" kms-core-1 -- \
        kms-health-check live --endpoint localhost:<GRPC_PORT> | grep -q "Optimal\|Healthy"; then
     echo "ERROR: $party health check failed"
     exit 1
   fi
-  
+
   echo "SUCCESS: $party - OK"
 done
 
@@ -449,7 +449,7 @@ kubectl exec -n kms-threshold kms-core-1 -- \
 
 # This will show:
 # - FHE key IDs and counts
-# - CRS key availability  
+# - CRS key availability
 # - Preprocessing material status
 # - Storage backend information
 ```
@@ -550,7 +550,7 @@ kubectl exec -n kms-threshold kms-core-1 -- \
 
 **Success Criteria**: A fully operational, production-ready KMS threshold cluster deployed across 4 AWS accounts using official Terraform modules and Helm charts, with Nitro Enclaves security, comprehensive monitoring, and validated cryptographic operations.
 
-**Need Help?** 
+**Need Help?**
 - [Emergency Procedures](emergency-procedures.md) for emergency procedures
 - [Terraform MPC Modules](https://github.com/zama-ai/terraform-mpc-modules) for infrastructure
 - KMS Helm Charts (`charts/kms-core/`) for application deployment

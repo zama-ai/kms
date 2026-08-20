@@ -33,7 +33,7 @@ async fn test_user_decryption_centralized(#[values(true, false)] secure: bool) -
         TestingPlaintext::U8(48),
         EncryptionConfig {
             compression: true,
-            precompute_sns: false,
+            precompute_sns: true,
         },
         4,
         secure,
@@ -121,7 +121,7 @@ async fn default_user_decryption_centralized(#[values(true, false)] secure: bool
         msg,
         EncryptionConfig {
             compression: true,
-            precompute_sns: false,
+            precompute_sns: true,
         },
         parallelism,
         secure,
