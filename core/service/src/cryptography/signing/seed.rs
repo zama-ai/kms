@@ -5,7 +5,22 @@
 //! the post-quantum keys exist to outlive secp256k1, so recovering the ECDSA
 //! scalar must not reveal them.
 //!
-//! Long term the ECDSA key will enventually be derived from the seed too.
+//! Long term the ECDSA key will eventually be derived from the seed too.
+//!
+//! # Invariants
+//!
+//! Three properties hold across this module and the key-generation paths that use
+//! it. Each is enforced structurally *and* pinned by a test, because each fails
+//! silently rather than loudly if a later change breaks it.
+//!
+//! 1. **The persisted ECDSA key is the authoritative identity.** Tested by
+//!    `ecdsa_identity_is_never_the_seed_derived_key` and
+//!    `upgraded_node_keeps_its_ecdsa_key_and_gains_a_seed`.
+//! 2. **A seed is generated exactly once, by `kms-gen-keys`, and never
+//!    regenerated behind published material.** Tested by
+//!    `seed_is_not_reminted_behind_published_material`.
+//! 3. **All keys are generated from the seed if no ECDSA key is present**
+//! 4. **Only non-ECDSA keys are derived from the seed an ECDSA key is present**.
 
 use super::cache::DerivedKeyCache;
 use super::ecdsa::PrivateSigKey;

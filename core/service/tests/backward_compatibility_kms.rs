@@ -14,11 +14,11 @@ use backward_compatibility::{
     InternalCustodianSetupMessageTest, InternalRecoveryRequestTest, KeyGenMetadataTest,
     KeyGenMetadataWithExtraDataTest, KeygenSignedPayloadTest, KmsFheKeyHandlesTest, NodeInfoTest,
     OperatorBackupOutputTest, PrepKeygenSignedPayloadTest, PrivateSigKeyTest,
-    PrssSetupCombinedTest, PublicSigKeyTest, RecoveryValidationMaterialTest, SchemeDigestsTest,
-    SigncryptionPayloadTest, SoftwareVersionTest, StoredTypedSignatureTest, TestMetadataKMS,
-    TestType, Testcase, ThresholdFheKeysTest, TypedPlaintextTest, UnifiedCipherTest,
-    UnifiedPublicSigKeyTest, UnifiedSigncryptionKeyTest, UnifiedSigncryptionTest,
-    UnifiedUnsigncryptionKeyTest, data_dir,
+    PrssSetupCombinedTest, PublicSigKeyTest, RecoveryValidationMaterialTest, RootSigningSeedTest,
+    SchemeDigestsTest, SigncryptionPayloadTest, SoftwareVersionTest, StoredTypedSignatureTest,
+    TestMetadataKMS, TestType, Testcase, ThresholdFheKeysTest, TypedPlaintextTest,
+    UnifiedCipherTest, UnifiedPublicSigKeyTest, UnifiedSigncryptionKeyTest,
+    UnifiedSigncryptionTest, UnifiedUnsigncryptionKeyTest, data_dir,
     load::{DataFormat, TestFailure, TestResult, TestSuccess},
     tests::{TestedModule, run_all_tests},
 };
@@ -115,6 +115,49 @@ fn test_private_sig_key(
     } else {
         Ok(test.success(format))
     }
+}
+
+/// The root signing seed's stored format must never drift: it is the only copy of
+/// every non-ECDSA identity a node holds, so a node that cannot read back the seed
+/// it wrote has permanently lost those identities.
+fn test_root_signing_seed(
+    dir: &Path,
+    test: &RootSigningSeedTest,
+    format: DataFormat,
+) -> Result<TestSuccess, TestFailure> {
+    let original: RootSigningSeed = load_and_unversionize(dir, test, format)?;
+
+    let mut rng = AesRng::seed_from_u64(test.state);
+    let expected = RootSigningSeed::random(&mut rng);
+
+    if original != expected {
+        return Err(test.failure(
+            "the stored root signing seed does not match the one the current code derives",
+            format,
+        ));
+    }
+
+    // The seed is only ever a means to the per-scheme keys, so a format that
+    // round-trips but no longer derives the same keys is just as broken.
+    for scheme in SigningSchemeType::iter() {
+        let stored_key = original.unified_verifying_key(scheme).map_err(|e| {
+            test.failure(
+                format!("could not derive {scheme} key from the stored seed: {e}"),
+                format,
+            )
+        })?;
+        let expected_key = expected
+            .unified_verifying_key(scheme)
+            .map_err(|e| test.failure(format!("could not derive {scheme} key: {e}"), format))?;
+        if stored_key != expected_key {
+            return Err(test.failure(
+                format!("the stored root signing seed derives a different {scheme} key"),
+                format,
+            ));
+        }
+    }
+
+    Ok(test.success(format))
 }
 
 fn test_typed_plaintext(
@@ -1512,6 +1555,9 @@ impl TestedModule for KMS {
             }
             Self::Metadata::PrivateSigKey(test) => {
                 test_private_sig_key(test_dir.as_ref(), test, format).into()
+            }
+            Self::Metadata::RootSigningSeed(test) => {
+                test_root_signing_seed(test_dir.as_ref(), test, format).into()
             }
             Self::Metadata::TypedPlaintext(test) => {
                 test_typed_plaintext(test_dir.as_ref(), test, format).into()

@@ -677,18 +677,18 @@ async fn validate_legacy_ecdsa_material<PubS: Storage>(
 }
 
 /// Store a caller-supplied server signing key together with the public verification key and
-/// Ethereum address it implies.
+/// Ethereum address it implies, all at the fixed [`SIGNING_KEY_ID`] handle.
 #[cfg(any(test, feature = "testing"))]
 pub async fn store_server_signing_keys<PubS, PrivS>(
     pub_storage: &mut PubS,
     priv_storage: &mut PrivS,
-    req_id: &RequestId,
     sk: &PrivateSigKey,
 ) -> anyhow::Result<()>
 where
     PubS: Storage,
     PrivS: Storage,
 {
+    let req_id = &*SIGNING_KEY_ID;
     let pk = sk.verf_key();
     store_versioned_at_request_id(pub_storage, req_id, &pk, &PubDataType::VerfKey.to_string())
         .await?;
@@ -2164,6 +2164,53 @@ mod tests {
             get_core_root_signing_seed(&priv_storage).await.unwrap(),
             Some(seed)
         );
+    }
+
+    /// A per-scheme object lost from public storage — a partial purge, or a
+    /// snapshot restored from before a scheme existed — is rewritten on the next
+    /// run, identical to what it was, without touching any private key.
+    #[tokio::test]
+    async fn a_deleted_per_scheme_object_is_backfilled_on_rerun() {
+        let mut pub_storage = RamStorage::new();
+        let mut priv_storage = RamStorage::new();
+
+        ensure_central_server_signing_keys_exist(&mut pub_storage, &mut priv_storage, true)
+            .await
+            .unwrap();
+        let key_before = persisted_signing_key_bytes(&priv_storage).await;
+
+        // Each scheme in turn, and both of its objects: whichever one is missing
+        // has to come back.
+        for scheme in SigningSchemeType::iter() {
+            for data_type in SCHEME_MATERIAL_TYPES.map(|t| t.to_string()) {
+                let req_id = signing_material_id(scheme);
+                let expected = pub_storage.load_bytes(&req_id, &data_type).await.unwrap();
+                delete_at_request_id(&mut pub_storage, &req_id, &data_type)
+                    .await
+                    .unwrap();
+                assert!(!pub_storage.data_exists(&req_id, &data_type).await.unwrap());
+
+                assert!(
+                    !ensure_central_server_signing_keys_exist(
+                        &mut pub_storage,
+                        &mut priv_storage,
+                        true
+                    )
+                    .await
+                    .unwrap(),
+                    "backfilling must not count as generating a new identity"
+                );
+
+                assert_eq!(
+                    pub_storage.load_bytes(&req_id, &data_type).await.unwrap(),
+                    expected,
+                    "{scheme} {data_type} was not restored byte-for-byte"
+                );
+            }
+        }
+
+        // Nothing private moved while all that was going on.
+        assert_eq!(persisted_signing_key_bytes(&priv_storage).await, key_before);
     }
 
     /// An upgraded node keeps its on-chain ECDSA identity byte-for-byte and only

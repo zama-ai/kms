@@ -1880,6 +1880,76 @@ async fn inner_update_backup_vault_paths() {
     assert_eq!(restored, sk);
 }
 
+/// The upgrade case: a node whose signing key is *already* in the vault later
+/// gains a root signing seed, and the ordinary boot pass — which runs with
+/// `overwrite = false` — must still mirror the seed.
+#[tokio::test]
+async fn inner_update_backup_vault_mirrors_a_seed_added_after_the_signing_key() {
+    use crate::consts::SIGNING_KEY_ID;
+    use crate::cryptography::signatures::RootSigningSeed;
+    use strum::IntoEnumIterator;
+
+    let storage = CryptoMaterialStorage::from(
+        RamStorage::new(),
+        RamStorage::new(),
+        Some(make_unencrypted_backup_vault()),
+    );
+    let mut rng = AesRng::seed_from_u64(8);
+    let (_pk, sk) = gen_sig_keys(&mut rng);
+
+    // A node from before the seed existed: signing key only, already backed up.
+    {
+        let mut priv_s = storage.private_storage.lock().await;
+        store_versioned_at_request_id(
+            &mut *priv_s,
+            &SIGNING_KEY_ID,
+            &sk,
+            &PrivDataType::SigningKey.to_string(),
+        )
+        .await
+        .unwrap();
+    }
+    storage.inner_update_backup_vault(false).await.unwrap();
+
+    // `kms-gen-keys` then adds the seed beside the untouched signing key.
+    let seed = RootSigningSeed::random(&mut rng);
+    {
+        let mut priv_s = storage.private_storage.lock().await;
+        store_versioned_at_request_id(
+            &mut *priv_s,
+            &SIGNING_KEY_ID,
+            &seed,
+            &PrivDataType::SigningSeed.to_string(),
+        )
+        .await
+        .unwrap();
+    }
+
+    // The next boot pass, still non-overwriting, has to pick it up.
+    storage.inner_update_backup_vault(false).await.unwrap();
+
+    let vault = storage.get_backup_vault().unwrap();
+    let vault_g = vault.lock().await;
+    let backed_up: RootSigningSeed = vault_g
+        .read_data(&SIGNING_KEY_ID, &PrivDataType::SigningSeed.to_string())
+        .await
+        .expect("the root signing seed never reached the backup vault");
+    assert_eq!(backed_up, seed);
+    for scheme in SigningSchemeType::iter() {
+        assert_eq!(
+            backed_up.unified_verifying_key(scheme).unwrap(),
+            seed.unified_verifying_key(scheme).unwrap(),
+            "the backed-up seed derives a different {scheme} key"
+        );
+    }
+    // The pre-existing signing key is still there and untouched.
+    let signing_key: PrivateSigKey = vault_g
+        .read_data(&SIGNING_KEY_ID, &PrivDataType::SigningKey.to_string())
+        .await
+        .unwrap();
+    assert_eq!(signing_key, sk);
+}
+
 #[tokio::test]
 async fn refresh_fhe_private_material_paths() {
     // Cover all three branches:
