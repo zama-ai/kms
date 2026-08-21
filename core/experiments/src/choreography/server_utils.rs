@@ -5,7 +5,7 @@ use std::time::Duration;
 use crate::allocator::MEM_ALLOCATOR;
 use aes_prng::AesRng;
 use algebra::structure_traits::{ErrorCorrect, Invert};
-use futures_util::future::join_all;
+use futures_util::future::{join_all, try_join_all};
 use itertools::Itertools;
 use rand::RngCore;
 use threshold_execution::malicious_execution::runtime::malicious_session::GenericSmallSessionStruct;
@@ -19,6 +19,7 @@ use threshold_types::session_id::SessionId;
 /// - total number of sessions
 /// - max number of rounds across all sessions
 /// - total number of bytes sent across all sessions
+/// - total number of bytes received across all sessions
 /// - peak memory usage in bytes as given by the custom allocator
 pub async fn fill_network_memory_info_multiple_sessions<B: BaseSessionHandles>(
     sessions: Vec<B>,
@@ -54,7 +55,18 @@ pub async fn fill_network_memory_info_multiple_sessions<B: BaseSessionHandles>(
     .iter()
     .sum::<usize>();
 
+    let total_num_byte_received = try_join_all(
+        num_rounds_per_session
+            .iter()
+            .map(|(session, _)| session.network().get_num_byte_received()),
+    )
+    .await
+    .unwrap()
+    .iter()
+    .sum::<usize>();
+
     span.record("network_sent", total_num_byte_sent);
+    span.record("network_received", total_num_byte_received);
 
     #[cfg(feature = "measure_memory")]
     span.record("peak_mem", MEM_ALLOCATOR.get().unwrap().peak_usage());
@@ -64,7 +76,7 @@ pub async fn fill_network_memory_info_multiple_sessions<B: BaseSessionHandles>(
     let role = sessions[0].my_role();
     let file_name = format!("session_stats/session_stats_{role}.txt");
     let stats_line = format!(
-        "\nname={},role={},num_sessions={},num_rounds={},network_sent(B)={},time_active(ms)={}",
+        "\nname={},role={},num_sessions={},num_rounds={},network_sent(B)={},network_received(B)={},time_active(ms)={}",
         span.metadata()
             .map(|m| m.name())
             .unwrap_or("unknown_span_name"),
@@ -72,6 +84,7 @@ pub async fn fill_network_memory_info_multiple_sessions<B: BaseSessionHandles>(
         sessions.len(),
         num_rounds,
         total_num_byte_sent,
+        total_num_byte_received,
         duration.map(|d| d.as_millis()).unwrap_or(0),
     );
     #[cfg(feature = "measure_memory")]
