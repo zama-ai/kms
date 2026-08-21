@@ -4,6 +4,13 @@
 # time (see the "Run performance testing" step). Adding/removing a rate = editing a
 # list here; no DAG or summary surgery.
 #
+# Only a gate sets maxp50/maxp99. A probe leaves them at 0, which turns the latency
+# check off. Each limit is about twice the worst median measured on any run so far, so
+# a gate fires on a gross regression and not on how busy the cluster is. Run 30925605278
+# set the first values at 2.5x the medians of one quiet run. Both gates then failed run
+# 31800216785, a midday run 1.5x to 7x slower at the same rate and payload. Read both
+# runs before you tighten these.
+#
 # Rules (enforced by the generator, which fails before submit on any breach):
 #   - every `rates` entry MUST be an inline table with a `rate` key (a bare int is rejected);
 #   - unknown keys are rejected (typo protection);
@@ -13,27 +20,35 @@
 
 # Per-rate baseline, applied unless a rate overrides it.
 [defaults]
-duration = 60      # measurement window, seconds
-pause = 10         # post-measurement cooldown, seconds (skipped rates don't wait)
+duration = 30      # measurement window, seconds
+pause = 10         # cooldown seconds, after each rate and between its samples
 maxfail = 0        # max failed requests, % of offered
 maxshed = 0        # max shed (rate-limited) requests, % of offered
 pct = 98           # min achieved/target rate, %
+maxp50 = 0         # max median p50, ms (0 = do not check latency)
+maxp99 = 0         # max median p99, ms (0 = do not check latency)
 allowfail = false  # false → a limit breach fails the run; true → warns only
+
+# The lowest rate of each kind is the gate. It is the highest rate whose latency
+# repeats, so a failure there comes from the code and not from the load the cluster
+# carries. Every rate above a gate is a probe: it runs at or past the point where
+# latency collapses, so it reports and warns but never fails the run.
 
 [scenarios.pdec]
 key = "udec-key-gen"
 after = ["crs-gen"]
 rates = [
-  { rate = 1100 },
-  { rate = 1300, maxfail = 1, maxshed = 1, pct = 90 },
+  { rate = 1300, maxshed = 1, pct = 95, maxp50 = 25, maxp99 = 150 },     # gate
   { rate = 1500, maxfail = 10, maxshed = 25, pct = 70, allowfail = true },
+  { rate = 1700, maxfail = 10, maxshed = 25, pct = 70, allowfail = true },
 ]
 
 [scenarios.udec]
 key = "udec-key-gen"                          # task whose request-id becomes each rate's key_id
-after = ["pdec"]                              # extra deps for the first rate (run after pdec)
+after = ["pdec"]                              # extra deps: the whole pdec ladder
 rates = [
-  { rate = 2400 },
-  { rate = 2700, maxfail = 1, maxshed = 1, pct = 95 },
-  { rate = 2750, maxfail = 10, maxshed = 25, pct = 70, allowfail = true },
+  { rate = 2300, maxshed = 1, pct = 95, maxp50 = 75, maxp99 = 1500 },    # gate
+  { rate = 2500, maxfail = 10, maxshed = 25, pct = 70, allowfail = true },
+  { rate = 2700, maxfail = 10, maxshed = 25, pct = 70, allowfail = true },
+  { rate = 2900, maxfail = 10, maxshed = 25, pct = 70, allowfail = true },
 ]

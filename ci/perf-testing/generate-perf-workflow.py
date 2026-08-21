@@ -28,8 +28,8 @@ import textwrap
 import tomllib
 import unittest
 
-RATE_KEYS = {"rate", "duration", "pause", "maxfail", "maxshed", "pct", "allowfail"}
-DEFAULT_KEYS = {"duration", "pause", "maxfail", "maxshed", "pct", "allowfail"}
+RATE_KEYS = {"rate", "duration", "pause", "maxfail", "maxshed", "pct", "maxp50", "maxp99", "allowfail"}
+DEFAULT_KEYS = {"duration", "pause", "maxfail", "maxshed", "pct", "maxp50", "maxp99", "allowfail"}
 NAME_PATTERN = r"[a-z][a-z0-9_-]*"
 
 
@@ -101,12 +101,18 @@ def load_scenarios(path):
             merged = {**defaults, **entry}
             if not isinstance(merged["rate"], int):
                 die(f"{kind}.rates[{i}].rate must be an int, got {merged['rate']!r}")
-            for k in ("duration", "pause", "maxfail", "maxshed", "pct"):
+            for k in ("duration", "pause", "maxfail", "maxshed", "pct", "maxp50", "maxp99"):
                 v = merged[k]
                 if not isinstance(v, int) or v < 0:
                     die(f"{kind}.rates[{i}].{k} must be a non-negative int, got {v!r}")
             if not isinstance(merged["allowfail"], bool):
                 die(f"{kind}.rates[{i}].allowfail must be a bool, got {merged['allowfail']!r}")
+            # A latency check needs both bounds. One alone is a half-configured gate.
+            if bool(merged["maxp50"]) != bool(merged["maxp99"]):
+                die(f"{kind}.rates[{i}] (rate {merged['rate']}) sets only one of maxp50/maxp99; set both or neither")
+            # A probe never fails, so a latency limit on one could not be enforced.
+            if merged["allowfail"] and (merged["maxp50"] or merged["maxp99"]):
+                die(f"{kind}.rates[{i}] (rate {merged['rate']}) is allowfail with a latency limit; limits only apply to gating rates")
 
             rates.append(merged)
         resolved[kind] = {"key": scen["key"], "after": after, "rates": rates}
@@ -151,6 +157,8 @@ def dag_tasks(kind, scen):
             f'    - {{name: maxfail, value: "{r["maxfail"]}"}}',
             f'    - {{name: maxshed, value: "{r["maxshed"]}"}}',
             f'    - {{name: pct, value: "{r["pct"]}"}}',
+            f'    - {{name: maxp50, value: "{r["maxp50"]}"}}',
+            f'    - {{name: maxp99, value: "{r["maxp99"]}"}}',
             f'    - {{name: allowfail, value: "{allowfail}"}}',
             "",
         ]
@@ -233,6 +241,8 @@ class LoadScenariosTest(unittest.TestCase):
             maxfail = 0
             maxshed = 0
             pct = 98
+            maxp50 = 0
+            maxp99 = 0
             allowfail = false
 
             {scenarios}
@@ -242,6 +252,45 @@ class LoadScenariosTest(unittest.TestCase):
             config.write(contents)
             config.flush()
             return load_scenarios(config.name)
+
+    def test_latency_limits_default_to_off(self):
+        scenarios = self.load(
+            """
+            [scenarios.pdec]
+            key = "udec-key-gen"
+            after = ["crs-gen"]
+            rates = [{ rate = 1100 }]
+            """
+        )
+
+        self.assertEqual(scenarios["pdec"]["rates"][0]["maxp50"], 0)
+        self.assertEqual(scenarios["pdec"]["rates"][0]["maxp99"], 0)
+
+    def test_latency_limit_needs_both_bounds(self):
+        with self.assertRaises(SystemExit) as error:
+            self.load(
+                """
+                [scenarios.pdec]
+                key = "udec-key-gen"
+                after = ["crs-gen"]
+                rates = [{ rate = 1100, maxp50 = 25 }]
+                """
+            )
+
+        self.assertIn("sets only one of maxp50/maxp99", str(error.exception))
+
+    def test_latency_limit_rejected_on_an_allowfail_rate(self):
+        with self.assertRaises(SystemExit) as error:
+            self.load(
+                """
+                [scenarios.pdec]
+                key = "udec-key-gen"
+                after = ["crs-gen"]
+                rates = [{ rate = 1100, maxp50 = 25, maxp99 = 150, allowfail = true }]
+                """
+            )
+
+        self.assertIn("allowfail with a latency limit", str(error.exception))
 
     def test_scenario_dependency_resolves_to_its_terminal_rate(self):
         scenarios = self.load(
