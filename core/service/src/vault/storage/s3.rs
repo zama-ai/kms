@@ -1,6 +1,9 @@
+use super::s3_multipart::{
+    S3_MULTIPART_PART_SIZE, build_multipart_upload_client, s3_put_versioned,
+};
 use super::{Storage, StorageReader, StorageType, StoreWriteOutcome};
 use crate::vault::storage::{StorageExt, StorageReaderExt, all_data_ids_from_all_epochs_impl};
-use crate::{consts::SAFE_SER_SIZE_LIMIT, vault::storage_prefix_safety};
+use crate::{anyhow_error_and_log, consts::SAFE_SER_SIZE_LIMIT, vault::storage_prefix_safety};
 use aws_config::{self, Region, SdkConfig};
 use aws_sdk_s3::{Client as S3Client, error::ProvideErrorMetadata, primitives::ByteStream};
 use kms_grpc::{RequestId, identifiers::EpochId};
@@ -8,11 +11,7 @@ use serde::{Serialize, de::DeserializeOwned};
 #[cfg(test)]
 use std::cell::RefCell;
 use std::{collections::HashSet, str::FromStr};
-use tfhe::{
-    Unversionize, Versionize,
-    named::Named,
-    safe_serialization::{safe_deserialize, safe_serialize},
-};
+use tfhe::{Unversionize, Versionize, named::Named, safe_serialization::safe_deserialize};
 use tokio::io::AsyncReadExt;
 use url::Url;
 
@@ -103,6 +102,12 @@ impl S3Storage {
         format!("{}/{}/{}/{}", self.prefix, data_type, epoch_id, data_id)
     }
 
+    /// Checks whether an object exists at the given key. Only a genuine 404
+    /// maps to `Ok(false)`; any other failure (e.g. access denied) is returned
+    /// as an error, so exists-guarded callers (overwrite checks, purge and
+    /// destroy-epoch flows) never mistake a failed check for absent data.
+    /// Note S3 answers `HeadObject` on a missing key with 403 instead of 404
+    /// when the caller lacks `s3:ListBucket`, so that permission is required.
     async fn data_exists_at_key(&self, key: &str) -> anyhow::Result<bool> {
         tracing::info!(
             "Checking if object exists in bucket {} under key {}",
@@ -128,12 +133,19 @@ impl S3Storage {
                 {
                     Ok(false)
                 } else {
-                    Err(sdk_error.into())
+                    Err(anyhow_error_and_log(format!(
+                        "Could not check existence of object in bucket {} under key {}: {:?}",
+                        self.bucket, key, sdk_error
+                    )))
                 }
             }
         }
     }
 
+    /// Stores the versioned serialization of `data` under `key`. Payloads that
+    /// fit in one part buffer go out as a single PUT; larger ones are streamed
+    /// as a multipart upload so the full blob never sits in memory (see
+    /// [`s3_put_versioned`]).
     async fn store_data_at_key<T: Serialize + Versionize + Named + Send + Sync>(
         &mut self,
         key: &str,
@@ -144,14 +156,25 @@ impl S3Storage {
             &self.bucket,
             key
         );
-        let mut buf = Vec::new();
-        safe_serialize(data, &mut buf, SAFE_SER_SIZE_LIMIT)?;
-
-        let size = buf.len() as f64;
-        s3_put_blob(&self.s3_client, &self.bucket, key, buf).await?;
+        // A multipart upload gets its own client so it never contends with this storage's
+        // other S3 operations, but it is built only if the payload actually spills: the
+        // single-PUT path is the overwhelming majority of writes by count, and building
+        // a client there would burn a TLS connector (~55 µs measured) on every one. Cloning the
+        // client to carry into the closure is just an `Arc` bump.
+        let base_client = self.s3_client.clone();
+        let size = s3_put_versioned(
+            &self.s3_client,
+            Box::new(move || build_multipart_upload_client(base_client.config())),
+            &self.bucket,
+            key,
+            data,
+            S3_MULTIPART_PART_SIZE,
+            SAFE_SER_SIZE_LIMIT,
+        )
+        .await?;
 
         // Record the persisted payload size, keyed by the element's type name (see `observe_size`).
-        observability::metrics::METRICS.observe_size(<T as Named>::NAME, size);
+        observability::metrics::METRICS.observe_size(<T as Named>::NAME, size as f64);
 
         Ok(())
     }
@@ -159,7 +182,9 @@ impl S3Storage {
     /// Deletes the object at the given key.
     ///
     /// This operation is idempotent on S3, so this succeeds when the object
-    /// does not exist.
+    /// does not exist. Genuine deletion failures are returned, so callers never
+    /// mistake a failed delete for a successful one (e.g. the destroy-epoch and
+    /// purge flows must be able to retry).
     async fn delete_data_at_key(&mut self, key: &str) -> anyhow::Result<()> {
         tracing::info!(
             "Deleting object from bucket {} under key {}",
@@ -173,7 +198,12 @@ impl S3Storage {
             .key(key)
             .send()
             .await
-            .map_err(|e| anyhow::anyhow!("S3 delete failed for key {key}: {e}"))?;
+            .map_err(|e| {
+                anyhow_error_and_log(format!(
+                    "Could not delete object in bucket {} under key {}: {:?}",
+                    self.bucket, key, e
+                ))
+            })?;
 
         Ok(())
     }
@@ -387,6 +417,10 @@ impl Storage for S3Storage {
         Ok(StoreWriteOutcome::Created)
     }
 
+    // Single PUT: the caller already holds the serialized blob, so only the `to_vec`
+    // is avoidable — chunking it through the part writer would take the peak from 2N
+    // to N + O(part size). Left for a change that can take an owned body. Not a
+    // small-object path; see `store_bytes_at_epoch`.
     async fn store_bytes(
         &mut self,
         bytes: &[u8],
@@ -441,6 +475,9 @@ impl StorageExt for S3Storage {
         Ok(StoreWriteOutcome::Created)
     }
 
+    // As `store_bytes`, and this is the overload with the large callers: the startup
+    // epoch migrations copy GiB-scale `FheKeyInfo` / `FhePrivateKey` through it
+    // (`engine::migration::migrate_fhe_keys_*`), paying that 2N.
     async fn store_bytes_at_epoch(
         &mut self,
         bytes: &[u8],
@@ -707,31 +744,51 @@ pub async fn create_s3_storage(storage_type: StorageType, prefix: &str) -> S3Sto
 /// In-memory mock of the S3 operations used by [`S3Storage`], built on `aws-smithy-mocks`.
 ///
 /// A bucket is modelled as a shared `key -> bytes` map. One `mock!` rule per operation
-/// (`put`/`get`/`head`/`delete`/`list_objects_v2`) reads and writes that map, so stored data can
-/// be read back exactly like a real bucket. `list_objects_v2` reproduces S3's `delimiter="/"`
-/// behaviour (direct objects in `contents`, sub-"directories" in `common_prefixes`) because the
-/// epoch-enumeration helpers ([`StorageReaderExt::all_epoch_ids_for_data`] etc.) depend on it.
+/// (`put`/`get`/`head`/`delete`/`list_objects_v2`, plus the five multipart operations) reads and
+/// writes that map, so stored data can be read back exactly like a real bucket.
+/// `list_objects_v2` reproduces S3's `delimiter="/"` behaviour (direct objects in `contents`,
+/// sub-"directories" in `common_prefixes`) because the epoch-enumeration helpers
+/// ([`StorageReaderExt::all_epoch_ids_for_data`] etc.) depend on it.
+///
+/// The multipart rules model an upload as `upload id -> (key, part number -> bytes)`. Parts are
+/// concatenated in part-number order on `CompleteMultipartUpload`, which is also when the object
+/// becomes visible — matching S3's all-or-nothing visibility, which [`s3_put_versioned`] relies
+/// on. Completed objects get a multipart-style ETag (`"<key hash>-<part count>"`), so tests can
+/// tell a multipart upload from a single PUT exactly as they would against real S3.
 #[cfg(all(test, feature = "non-wasm", feature = "testing"))]
 pub(crate) mod mock_s3 {
     use super::*;
     use aws_sdk_s3::operation::{
+        abort_multipart_upload::AbortMultipartUploadOutput,
+        complete_multipart_upload::CompleteMultipartUploadOutput,
+        create_multipart_upload::CreateMultipartUploadOutput,
         delete_object::DeleteObjectOutput,
         get_object::{GetObjectError, GetObjectOutput},
         head_object::{HeadObjectError, HeadObjectOutput},
+        list_multipart_uploads::ListMultipartUploadsOutput,
         list_objects_v2::ListObjectsV2Output,
         put_object::PutObjectOutput,
+        upload_part::UploadPartOutput,
     };
     use aws_sdk_s3::types::{
-        CommonPrefix, Object,
+        CommonPrefix, MultipartUpload, Object,
         error::{NoSuchKey, NotFound},
     };
     use aws_smithy_mocks::{MockResponse, RuleMode, mock, mock_client};
     use std::collections::{BTreeMap, BTreeSet};
+    use std::sync::atomic::{AtomicU64, Ordering};
     use std::sync::{Arc, Mutex};
 
     /// In-memory object store shared by every rule of a single mock client, keyed by full object
     /// key. Tests use a single logical bucket, so the mock ignores the request's bucket name.
     pub(crate) type SharedStore = Arc<Mutex<BTreeMap<String, Vec<u8>>>>;
+
+    /// ETag per stored object. Only objects written through the multipart path get one, so an
+    /// absent entry means the object was stored with a single PUT.
+    type SharedEtags = Arc<Mutex<BTreeMap<String, String>>>;
+
+    /// In-flight multipart uploads: upload id -> (object key, part number -> part bytes).
+    type SharedUploads = Arc<Mutex<BTreeMap<String, (String, BTreeMap<i32, Vec<u8>>)>>>;
 
     /// Create a fresh, empty [`SharedStore`].
     pub(crate) fn new_store() -> SharedStore {
@@ -740,7 +797,14 @@ pub(crate) mod mock_s3 {
 
     /// Build a mocked [`S3Client`] whose operations are served from `store`.
     pub(crate) fn build_mock_s3_client(store: SharedStore) -> S3Client {
+        // Multipart bookkeeping is per client: an upload only ever spans one client, and tests
+        // observe it through `list_multipart_uploads` / `head_object` rather than directly.
+        let uploads: SharedUploads = Arc::new(Mutex::new(BTreeMap::new()));
+        let etags: SharedEtags = Arc::new(Mutex::new(BTreeMap::new()));
+        let next_upload_id = Arc::new(AtomicU64::new(1));
+
         let put_store = Arc::clone(&store);
+        let put_etags = Arc::clone(&etags);
         let put = mock!(aws_sdk_s3::Client::put_object).then_compute_output(move |input| {
             let key = input.key().expect("put_object requires a key").to_string();
             // `s3_put_blob` builds the body from an in-memory `Vec`, so `bytes()` is always `Some`.
@@ -749,8 +813,12 @@ pub(crate) mod mock_s3 {
                 .bytes()
                 .expect("mock put_object expects an in-memory body")
                 .to_vec();
-            put_store.lock().unwrap().insert(key, bytes);
-            PutObjectOutput::builder().build()
+            // A single-PUT ETag carries no "-<part count>" suffix, so tests can tell it apart
+            // from a multipart one. Writing over a multipart object replaces its ETag too.
+            let etag = format!("\"{:x}\"", bytes.len());
+            put_store.lock().unwrap().insert(key.clone(), bytes);
+            put_etags.lock().unwrap().insert(key, etag.clone());
+            PutObjectOutput::builder().e_tag(etag).build()
         });
 
         let get_store = Arc::clone(&store);
@@ -769,10 +837,15 @@ pub(crate) mod mock_s3 {
         });
 
         let head_store = Arc::clone(&store);
+        let head_etags = Arc::clone(&etags);
         let head = mock!(aws_sdk_s3::Client::head_object).then_compute_response(move |input| {
             let key = input.key().expect("head_object requires a key");
             if head_store.lock().unwrap().contains_key(key) {
-                MockResponse::Output(HeadObjectOutput::builder().build())
+                MockResponse::Output(
+                    HeadObjectOutput::builder()
+                        .set_e_tag(head_etags.lock().unwrap().get(key).cloned())
+                        .build(),
+                )
             } else {
                 MockResponse::Error(HeadObjectError::NotFound(NotFound::builder().build()))
             }
@@ -819,11 +892,134 @@ pub(crate) mod mock_s3 {
                 .build()
         });
 
+        let create_uploads = Arc::clone(&uploads);
+        let create =
+            mock!(aws_sdk_s3::Client::create_multipart_upload).then_compute_output(move |input| {
+                let key = input
+                    .key()
+                    .expect("create_multipart_upload requires a key")
+                    .to_string();
+                // Sequential rather than random: workflow scripts and tests must stay
+                // reproducible, and ids only have to be unique within one client.
+                let upload_id = format!(
+                    "mock-upload-{}",
+                    next_upload_id.fetch_add(1, Ordering::Relaxed)
+                );
+                create_uploads
+                    .lock()
+                    .unwrap()
+                    .insert(upload_id.clone(), (key, BTreeMap::new()));
+                CreateMultipartUploadOutput::builder()
+                    .upload_id(upload_id)
+                    .build()
+            });
+
+        let upload_part_uploads = Arc::clone(&uploads);
+        let upload_part =
+            mock!(aws_sdk_s3::Client::upload_part).then_compute_output(move |input| {
+                let upload_id = input
+                    .upload_id()
+                    .expect("upload_part requires an upload id")
+                    .to_string();
+                let part_number = input.part_number().expect("upload_part requires a number");
+                // The uploader thread always sends an in-memory `Vec`, so `bytes()` is `Some`.
+                let bytes = input
+                    .body()
+                    .bytes()
+                    .expect("mock upload_part expects an in-memory body")
+                    .to_vec();
+                let mut guard = upload_part_uploads.lock().unwrap();
+                let (_, parts) = guard
+                    .get_mut(&upload_id)
+                    .expect("upload_part for an unknown upload id");
+                parts.insert(part_number, bytes);
+                UploadPartOutput::builder()
+                    .e_tag(format!("\"mock-part-{part_number}\""))
+                    .build()
+            });
+
+        let complete_uploads = Arc::clone(&uploads);
+        let complete_store = Arc::clone(&store);
+        let complete_etags = Arc::clone(&etags);
+        let complete = mock!(aws_sdk_s3::Client::complete_multipart_upload).then_compute_output(
+            move |input| {
+                let upload_id = input
+                    .upload_id()
+                    .expect("complete_multipart_upload requires an upload id");
+                let (key, parts) = complete_uploads
+                    .lock()
+                    .unwrap()
+                    .remove(upload_id)
+                    .expect("complete_multipart_upload for an unknown upload id");
+                // `BTreeMap` iterates by part number, which is the order S3 assembles in.
+                let part_count = parts.len();
+                let object: Vec<u8> = parts.into_values().flatten().collect();
+                // The object only becomes visible here: all-or-nothing, like real S3.
+                complete_store
+                    .lock()
+                    .unwrap()
+                    .insert(key.clone(), object.clone());
+                // Real S3 ends a multipart ETag with "-<part count>"; tests use that suffix to
+                // prove the multipart path ran instead of the single-PUT fast path.
+                let etag = format!("\"{:x}-{part_count}\"", object.len());
+                complete_etags.lock().unwrap().insert(key, etag.clone());
+                CompleteMultipartUploadOutput::builder().e_tag(etag).build()
+            },
+        );
+
+        let abort_uploads = Arc::clone(&uploads);
+        let abort =
+            mock!(aws_sdk_s3::Client::abort_multipart_upload).then_compute_output(move |input| {
+                let upload_id = input
+                    .upload_id()
+                    .expect("abort_multipart_upload requires an upload id");
+                // Aborting discards every buffered part and never publishes the object.
+                abort_uploads.lock().unwrap().remove(upload_id);
+                AbortMultipartUploadOutput::builder().build()
+            });
+
+        let list_uploads = Arc::clone(&uploads);
+        let list_multipart =
+            mock!(aws_sdk_s3::Client::list_multipart_uploads).then_compute_output(move |input| {
+                let prefix = input.prefix().unwrap_or("");
+                let guard = list_uploads.lock().unwrap();
+                let pending: Vec<_> = guard
+                    .iter()
+                    .filter(|(_, (key, _))| key.starts_with(prefix))
+                    .map(|(upload_id, (key, _))| {
+                        MultipartUpload::builder()
+                            .upload_id(upload_id)
+                            .key(key)
+                            .build()
+                    })
+                    .collect();
+                ListMultipartUploadsOutput::builder()
+                    .is_truncated(false)
+                    .set_uploads((!pending.is_empty()).then_some(pending))
+                    .build()
+            });
+
         mock_client!(
             aws_sdk_s3,
             RuleMode::MatchAny,
-            [&put, &get, &head, &delete, &list],
-            |c| c.force_path_style(true)
+            [
+                &put,
+                &get,
+                &head,
+                &delete,
+                &list,
+                &create,
+                &upload_part,
+                &complete,
+                &abort,
+                &list_multipart
+            ],
+            // The endpoint is inert for mock-served calls (the mock transport never
+            // dials), but any client *derived* from this config has the mock transport
+            // stripped — `build_multipart_upload_client` does exactly that. Pointing at
+            // a dead local port makes such a client fail instantly instead of reaching
+            // the real `s3.us-east-1.amazonaws.com` that `with_test_defaults_v2` implies.
+            |c| c.force_path_style(true).endpoint_url("http://127.0.0.1:1")
         )
     }
 }
@@ -836,6 +1032,7 @@ mod tests {
     use super::*;
     use aws_sdk_s3::error::ErrorMetadata;
     use aws_sdk_s3::operation::{
+        delete_object::DeleteObjectError,
         head_object::{HeadObjectError, HeadObjectOutput},
         list_objects_v2::ListObjectsV2Output,
     };
@@ -1039,6 +1236,406 @@ mod tests {
         assert_eq!(ids.len(), 2);
         assert!(ids.contains(&id_a));
         assert!(ids.contains(&id_b));
+    }
+
+    /// Deleting a key that was never stored must succeed: S3 `DeleteObject` is
+    /// idempotent, so deletes of absent objects stay non-fatal.
+    #[tokio::test]
+    async fn test_delete_missing_key_is_ok_s3() {
+        let prefix = std::stringify!(test_delete_missing_key_is_ok_s3);
+        let mut storage = create_s3_storage(StorageType::PUB, prefix).await;
+        storage
+            .delete_data(&RequestId::default(), "PublicKey")
+            .await
+            .unwrap();
+    }
+
+    /// A delete that genuinely fails must surface an error, so purge/destroy flows never
+    /// mistake a failed delete for a successful one — and the message must name the bucket
+    /// and key, which is the only context an operator gets from the log line.
+    #[tokio::test]
+    async fn test_delete_failure_propagates_s3() {
+        let prefix = std::stringify!(test_delete_failure_propagates_s3);
+        let denied = mock!(aws_sdk_s3::Client::delete_object).then_error(|| {
+            DeleteObjectError::generic(ErrorMetadata::builder().code("AccessDenied").build())
+        });
+        let client = mock_client!(aws_sdk_s3, RuleMode::MatchAny, [&denied], |c| c
+            .force_path_style(true));
+        let mut storage = S3Storage::new(
+            client,
+            MOCK_BUCKET.to_string(),
+            StorageType::PUB,
+            Some(prefix),
+        )
+        .unwrap();
+        let err = storage
+            .delete_data(&RequestId::default(), "PublicKey")
+            .await
+            .expect_err("a rejected delete must fail");
+        assert!(
+            err.to_string().contains(MOCK_BUCKET),
+            "error must carry the bucket context, got: {err}"
+        );
+    }
+
+    /// An existence check that fails with a non-404 service error must surface an error
+    /// rather than "data absent", so exists-guarded flows (overwrite checks, purge and
+    /// destroy-epoch) never skip work because of e.g. broken credentials. The mapping itself
+    /// is covered by [`data_exists_at_key_maps_head_errors`]; this pins the error context.
+    #[tokio::test]
+    async fn test_exists_failure_propagates_s3() {
+        let prefix = std::stringify!(test_exists_failure_propagates_s3);
+        let denied = mock!(aws_sdk_s3::Client::head_object).then_error(|| {
+            HeadObjectError::generic(ErrorMetadata::builder().code("AccessDenied").build())
+        });
+        let client = mock_client!(aws_sdk_s3, RuleMode::MatchAny, [&denied], |c| c
+            .force_path_style(true));
+        let storage = S3Storage::new(
+            client,
+            MOCK_BUCKET.to_string(),
+            StorageType::PUB,
+            Some(prefix),
+        )
+        .unwrap();
+        let err = storage
+            .data_exists(&RequestId::default(), "PublicKey")
+            .await
+            .expect_err("a rejected existence check must fail");
+        assert!(
+            err.to_string().contains(MOCK_BUCKET),
+            "error must carry the bucket context, got: {err}"
+        );
+    }
+
+    mod multipart {
+        use super::*;
+        use crate::engine::base::derive_request_id;
+        use crate::vault::storage::s3_multipart::{
+            S3_MULTIPART_MIN_PART_SIZE, S3PartWriter, UploaderClientFactory, s3_finish_put,
+        };
+        use aws_sdk_s3::operation::create_multipart_upload::CreateMultipartUploadError;
+        use serde::Deserialize;
+        use tfhe::safe_serialization::safe_serialize;
+        use tfhe_versionable::VersionsDispatch;
+
+        #[derive(Serialize, Deserialize, PartialEq, Debug, VersionsDispatch)]
+        pub enum TestBigTypeVersions {
+            V0(TestBigType),
+        }
+
+        impl Named for TestBigType {
+            const NAME: &'static str = "TestBigType";
+        }
+
+        /// Payload large enough to span several multipart parts.
+        #[derive(Serialize, Deserialize, PartialEq, Debug, Versionize)]
+        #[versionize(TestBigTypeVersions)]
+        pub struct TestBigType {
+            pub data: Vec<u8>,
+        }
+
+        fn big_payload(len: usize) -> TestBigType {
+            TestBigType {
+                data: (0..len).map(|i| (i % 251) as u8).collect(),
+            }
+        }
+
+        /// Hand the mock client to the uploader thread as-is. It must not go through
+        /// `build_multipart_upload_client`: a client derived from a config loses the
+        /// mock transport and would dial the (dead) endpoint instead.
+        fn mock_uploader(client: &S3Client) -> UploaderClientFactory {
+            let client = client.clone();
+            Box::new(move || client)
+        }
+
+        #[tokio::test]
+        async fn s3_multipart_store_and_read() {
+            let prefix = std::stringify!(s3_multipart_store_and_read);
+            let mut storage = create_s3_storage(StorageType::PUB, prefix).await;
+            // Three parts at the minimal part size: 5 + 5 + ~1 MiB.
+            let data = big_payload(11 * 1024 * 1024);
+            let req_id = derive_request_id(prefix).unwrap();
+            let key = storage.item_key(&req_id, TestBigType::NAME);
+
+            let size = s3_put_versioned(
+                &storage.s3_client,
+                mock_uploader(&storage.s3_client),
+                MOCK_BUCKET,
+                &key,
+                &data,
+                S3_MULTIPART_MIN_PART_SIZE,
+                SAFE_SER_SIZE_LIMIT,
+            )
+            .await
+            .unwrap();
+
+            let stored = storage
+                .load_bytes(&req_id, TestBigType::NAME)
+                .await
+                .unwrap();
+            assert_eq!(stored.len() as u64, size);
+            // A multipart ETag ends in "-<part count>"; this proves the
+            // pipeline actually engaged instead of falling back to one PUT.
+            let head = storage
+                .s3_client
+                .head_object()
+                .bucket(MOCK_BUCKET)
+                .key(&key)
+                .send()
+                .await
+                .unwrap();
+            let etag = head.e_tag.unwrap();
+            assert!(
+                etag.trim_matches('"').ends_with("-3"),
+                "expected a 3-part multipart ETag, got {etag}"
+            );
+            let read_back: TestBigType =
+                storage.read_data(&req_id, TestBigType::NAME).await.unwrap();
+            assert_eq!(read_back, data);
+            storage
+                .delete_data(&req_id, TestBigType::NAME)
+                .await
+                .unwrap();
+        }
+
+        /// A payload whose serialized size is exactly one part must stay on
+        /// the single-PUT fast path (a multipart ETag would end in "-<parts>").
+        #[tokio::test]
+        async fn s3_exact_part_size_stays_single_put() {
+            let prefix = std::stringify!(s3_exact_part_size_stays_single_put);
+            let mut storage = create_s3_storage(StorageType::PUB, prefix).await;
+            // Serialization overhead (header + vec length) is constant, so an
+            // empty payload measures it exactly.
+            let mut empty = Vec::new();
+            safe_serialize(&big_payload(0), &mut empty, SAFE_SER_SIZE_LIMIT).unwrap();
+            let data = big_payload(S3_MULTIPART_MIN_PART_SIZE - empty.len());
+            let req_id = derive_request_id(prefix).unwrap();
+            let key = storage.item_key(&req_id, TestBigType::NAME);
+
+            let size = s3_put_versioned(
+                &storage.s3_client,
+                mock_uploader(&storage.s3_client),
+                MOCK_BUCKET,
+                &key,
+                &data,
+                S3_MULTIPART_MIN_PART_SIZE,
+                SAFE_SER_SIZE_LIMIT,
+            )
+            .await
+            .unwrap();
+            assert_eq!(size as usize, S3_MULTIPART_MIN_PART_SIZE);
+
+            let head = storage
+                .s3_client
+                .head_object()
+                .bucket(MOCK_BUCKET)
+                .key(&key)
+                .send()
+                .await
+                .unwrap();
+            let etag = head.e_tag.unwrap();
+            assert!(
+                !etag.trim_matches('"').contains('-'),
+                "expected a single-PUT ETag, got multipart {etag}"
+            );
+            let read_back: TestBigType =
+                storage.read_data(&req_id, TestBigType::NAME).await.unwrap();
+            assert_eq!(read_back, data);
+            storage
+                .delete_data(&req_id, TestBigType::NAME)
+                .await
+                .unwrap();
+        }
+
+        // Coverage note: the serialization-error abort arm is exercised below,
+        // and the create-failure arm by `s3_multipart_uploader_failure_propagates`.
+        // The remaining two abort arms in `s3_finish_put` — a mid-stream
+        // `upload_part` failure and a `CompleteMultipartUpload` failure — cannot
+        // be triggered against a real MinIO without a fault-injection seam: the
+        // writer only ever emits valid, adequately sized parts, so neither an
+        // undersized-part reject nor a mid-stream part error occurs on the happy
+        // path. Both arms are correct by construction (abort iff an `upload_id`
+        // was obtained) and share the abort helper the tested arms use.
+        #[tokio::test]
+        async fn s3_multipart_abort_on_error() {
+            use std::io::Write;
+
+            let prefix = std::stringify!(s3_multipart_abort_on_error);
+            let storage = create_s3_storage(StorageType::PUB, prefix).await;
+            let req_id = derive_request_id(prefix).unwrap();
+            let key = storage.item_key(&req_id, TestBigType::NAME);
+
+            // Drive the writer past one part so the pipeline engages (the
+            // multipart upload is created and part 1 ships), then finish with
+            // an injected serialization failure to exercise the abort path.
+            // The writer takes the upload's client factory, so the mock serves the
+            // uploader thread directly instead of a client derived from it.
+            let mut writer = S3PartWriter::new(
+                mock_uploader(&storage.s3_client),
+                MOCK_BUCKET,
+                &key,
+                S3_MULTIPART_MIN_PART_SIZE,
+            );
+            writer
+                .write_all(&vec![7u8; S3_MULTIPART_MIN_PART_SIZE + 1024 * 1024])
+                .unwrap();
+            let res = s3_finish_put(
+                &storage.s3_client,
+                MOCK_BUCKET,
+                &key,
+                writer,
+                Err(anyhow::anyhow!("injected serialization failure")),
+            )
+            .await;
+            let err = res.expect_err("injected failure must propagate");
+            assert!(err.to_string().contains("injected serialization failure"));
+
+            // All-or-nothing: no object and no lingering multipart upload.
+            assert!(
+                !storage
+                    .data_exists(&req_id, TestBigType::NAME)
+                    .await
+                    .unwrap()
+            );
+            let pending = storage
+                .s3_client
+                .list_multipart_uploads()
+                .bucket(MOCK_BUCKET)
+                .prefix(&key)
+                .send()
+                .await
+                .unwrap();
+            assert!(
+                pending.uploads().is_empty(),
+                "multipart upload was not aborted: {:?}",
+                pending.uploads()
+            );
+        }
+
+        #[tokio::test]
+        async fn s3_oversized_payload_stores_nothing() {
+            let prefix = std::stringify!(s3_oversized_payload_stores_nothing);
+            let storage = create_s3_storage(StorageType::PUB, prefix).await;
+            let data = big_payload(11 * 1024 * 1024);
+            let req_id = derive_request_id(prefix).unwrap();
+            let key = storage.item_key(&req_id, TestBigType::NAME);
+
+            // Only the small header reaches the writer before bincode's
+            // size-limit pre-pass rejects the body, so no part ever spills and
+            // the failed serialization keeps the single PUT from happening.
+            let res = s3_put_versioned(
+                &storage.s3_client,
+                mock_uploader(&storage.s3_client),
+                MOCK_BUCKET,
+                &key,
+                &data,
+                S3_MULTIPART_MIN_PART_SIZE,
+                6 * 1024 * 1024,
+            )
+            .await;
+            assert!(res.is_err(), "serialization over the size limit must fail");
+            assert!(
+                !storage
+                    .data_exists(&req_id, TestBigType::NAME)
+                    .await
+                    .unwrap()
+            );
+            let pending = storage
+                .s3_client
+                .list_multipart_uploads()
+                .bucket(MOCK_BUCKET)
+                .prefix(&key)
+                .send()
+                .await
+                .unwrap();
+            assert!(
+                pending.uploads().is_empty(),
+                "no multipart upload should ever be created: {:?}",
+                pending.uploads()
+            );
+        }
+
+        // Multi-thread flavor so the store exercises the `block_in_place` serialization
+        // branch that production (multi-thread) runtimes take, at the production part size.
+        //
+        // This drives `s3_put_versioned` rather than `store_data`: the latter builds the
+        // upload's client itself, which by design drops the mock transport, so the uploader
+        // thread would talk to a real endpoint. The payload-size metric that `store_data`
+        // records around this call is covered by `test_store_data_records_payload_size`.
+        #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+        async fn s3_multipart_block_in_place_branch() {
+            let prefix = std::stringify!(s3_multipart_block_in_place_branch);
+            let mut storage = create_s3_storage(StorageType::PUB, prefix).await;
+            // 1 MiB more than a production part, so the pipeline engages.
+            let data = big_payload(S3_MULTIPART_PART_SIZE + 1024 * 1024);
+            let req_id = derive_request_id(prefix).unwrap();
+            let key = storage.item_key(&req_id, TestBigType::NAME);
+
+            let size = s3_put_versioned(
+                &storage.s3_client,
+                mock_uploader(&storage.s3_client),
+                MOCK_BUCKET,
+                &key,
+                &data,
+                S3_MULTIPART_PART_SIZE,
+                SAFE_SER_SIZE_LIMIT,
+            )
+            .await
+            .unwrap();
+
+            let read_back: TestBigType =
+                storage.read_data(&req_id, TestBigType::NAME).await.unwrap();
+            assert_eq!(read_back, data);
+            let stored = storage
+                .load_bytes(&req_id, TestBigType::NAME)
+                .await
+                .unwrap();
+            assert_eq!(stored.len() as u64, size);
+            storage
+                .delete_data(&req_id, TestBigType::NAME)
+                .await
+                .unwrap();
+        }
+
+        /// An uploader-side S3 failure (here: `CreateMultipartUpload` is rejected on the
+        /// uploader thread) must close the part channel, unwind the serializing side, and
+        /// surface the uploader error as the root cause.
+        #[tokio::test]
+        async fn s3_multipart_uploader_failure_propagates() {
+            use std::io::Write;
+
+            let prefix = std::stringify!(s3_multipart_uploader_failure_propagates);
+            let req_id = derive_request_id(prefix).unwrap();
+            let key = format!("PUB/{}/{req_id}", TestBigType::NAME);
+
+            let rejected = mock!(aws_sdk_s3::Client::create_multipart_upload).then_error(|| {
+                CreateMultipartUploadError::generic(
+                    ErrorMetadata::builder().code("AccessDenied").build(),
+                )
+            });
+            let client = mock_client!(aws_sdk_s3, RuleMode::MatchAny, [&rejected], |c| c
+                .force_path_style(true));
+
+            let mut writer = S3PartWriter::new(
+                mock_uploader(&client),
+                MOCK_BUCKET,
+                &key,
+                S3_MULTIPART_MIN_PART_SIZE,
+            );
+            // Two spills, so a send blocks on the capacity-1 channel and
+            // observes the uploader dropping its receiver on failure. Whether
+            // the write itself errors depends on how fast the uploader dies;
+            // the uploader error must win either way.
+            let write_res =
+                writer.write_all(&vec![7u8; 2 * S3_MULTIPART_MIN_PART_SIZE + 1024 * 1024]);
+            let ser_result = write_res.map_err(|e| anyhow::anyhow!(e));
+            let res = s3_finish_put(&client, MOCK_BUCKET, &key, writer, ser_result).await;
+            let err = res.expect_err("uploader failure must propagate");
+            assert!(
+                err.to_string().contains("creating multipart upload"),
+                "expected the uploader's create error as root cause, got: {err}"
+            );
+        }
     }
 }
 

@@ -500,7 +500,8 @@ kubectl exec -n kms-threshold kms-core-1 -- \
 
 ### Access Control
 - **IRSA**: Service accounts use IAM roles for AWS access
-- **S3 Policies**: Least privilege access to buckets
+- **S3 Policies**: Least privilege access to buckets; keep `s3:ListBucket` so missing-object `HeadObject` checks return 404 (without it S3 answers 403, which the KMS treats as an error, not as absent data)
+- **S3 Lifecycle**: Configure an `AbortIncompleteMultipartUpload` rule on KMS buckets — large key writes stream as multipart uploads, and a crash mid-upload leaves incomplete parts that are billed but invisible to object listings until reaped
 - **KMS Permissions**: Minimal AWS KMS permissions for key operations
 
 ---
