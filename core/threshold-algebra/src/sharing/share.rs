@@ -14,6 +14,9 @@ pub enum ShareVersions<Z: Clone> {
 }
 
 /// Generic structure for shares with non-interactive methods possible to carry out on shares.
+///
+/// Note that `Share` is [`Copy`], so the derived [`Zeroize`] will not wipe any copies.
+// TODO(github.com/zama-ai/tfhe-rs-internal/issues/1535) will let us derive ZeroizeOnDrop for versioned types.
 #[derive(Clone, Debug, Hash, PartialEq, Eq, Copy, Serialize, Deserialize, Zeroize, Versionize)]
 #[versionize(ShareVersions)]
 pub struct Share<Z: Clone> {

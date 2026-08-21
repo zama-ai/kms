@@ -22,6 +22,7 @@ use tfhe::safe_serialization::safe_serialize;
 use tfhe::{Versionize, named::Named, safe_serialization::safe_deserialize};
 use tfhe_versionable::VersionsDispatch;
 use threshold_types::role::Role;
+use zeroize::Zeroizing;
 
 use super::{
     error::BackupError,
@@ -328,15 +329,20 @@ impl Custodian {
             operator_verification_key,
             &custodian_id,
         );
-        let backup_material: BackupMaterial = unsigncrypt_key
-            .unsigncrypt(&DSEP_BACKUP_CUSTODIAN, &backup.signcryption)
-            .map_err(|e| {
-                tracing::warn!(
-                    "Unsigncryption failed for operator {}: {e}",
-                    operator_verification_key.address(),
-                );
-                BackupError::CustodianRecoveryError
-            })?;
+
+        // BackupMaterial contains secret shares which should be zeroized when dropped
+        // so we put it behind a Zeroizing.
+        let backup_material: Zeroizing<BackupMaterial> = Zeroizing::new(
+            unsigncrypt_key
+                .unsigncrypt(&DSEP_BACKUP_CUSTODIAN, &backup.signcryption)
+                .map_err(|e| {
+                    tracing::warn!(
+                        "Unsigncryption failed for operator {}: {e}",
+                        operator_verification_key.address(),
+                    );
+                    BackupError::CustodianRecoveryError
+                })?,
+        );
         tracing::debug!(
             "Decrypted ciphertext for operator: {}",
             operator_verification_key.address()
@@ -377,7 +383,8 @@ impl Custodian {
             operator_ephem_enc_key,
             &operator_verf_id,
         );
-        let signcryption = signcrypt_key.signcrypt(rng, &DSEP_BACKUP_RECOVERY, &backup_material)?;
+        let signcryption =
+            signcrypt_key.signcrypt(rng, &DSEP_BACKUP_RECOVERY, &*backup_material)?;
         tracing::debug!(
             "Signed re-encrypted share for operator: {}",
             operator_verification_key.address()

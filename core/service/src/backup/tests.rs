@@ -757,7 +757,8 @@ fn operator_recover(
                 cur_emphemeral_dec,
                 cur_ephemeral_enc,
             ) {
-                Ok(plaintext) => res.insert(cur_op_addr.clone(), plaintext),
+                // The guard is dropped here: the test only compares against a known plaintext.
+                Ok(plaintext) => res.insert(cur_op_addr.clone(), plaintext.to_vec()),
                 Err(_) => continue, // Skip if recovery fails
             };
         }
