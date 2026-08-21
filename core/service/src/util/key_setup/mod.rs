@@ -68,7 +68,7 @@ pub type FhePrivateKey = tfhe::ClientKey;
 /// 1. Initializes client storage
 /// 2. Checks for existing keys
 /// 3. Generates new keys if needed
-/// 4. Stores private and public keys
+/// 4. Stores private and public keys at the fixed [`SIGNING_KEY_ID`] handle
 ///
 /// # Returns
 /// - `true` if new keys were generated
@@ -81,11 +81,8 @@ pub type FhePrivateKey = tfhe::ClientKey;
 /// - If storage initiation fails
 /// - If key generation or storage operations fail
 /// - If handle computation fails
-pub async fn ensure_client_keys_exist(
-    optional_path: Option<&Path>,
-    req_id: &RequestId,
-    deterministic: bool,
-) -> bool {
+pub async fn ensure_client_keys_exist(optional_path: Option<&Path>, deterministic: bool) -> bool {
+    let req_id = &*SIGNING_KEY_ID;
     // Initialize client storage with error handling
     let mut client_storage = match FileStorage::new(optional_path, StorageType::CLIENT, None) {
         Ok(storage) => storage,
@@ -1184,7 +1181,7 @@ where
             .data_exists(&SIGNING_KEY_ID, &PubDataType::CACert.to_string())
             .await?
         {
-            ensure_ca_cert_exists(pub_storage, &sk, &SIGNING_KEY_ID, subject, tls_wildcard).await?;
+            ensure_ca_cert_exists(pub_storage, &sk, subject, tls_wildcard).await?;
         }
 
         return Ok(false);
@@ -1213,7 +1210,7 @@ where
         .map_err(|e| anyhow::anyhow!("Party {party_id}: {e}"))?;
 
     // Generate CA certificate
-    ensure_ca_cert_exists(pub_storage, &sk, &SIGNING_KEY_ID, subject, tls_wildcard).await?;
+    ensure_ca_cert_exists(pub_storage, &sk, subject, tls_wildcard).await?;
     ensure_scheme_verification_material(pub_storage, &sk)
         .await
         .map_err(|e| {
@@ -1226,13 +1223,16 @@ where
 
 /// Generates stores CA certificates that are used to issue ephemeral mTLS
 /// certificates in the enclave.
+///
+/// The certificate is stored at the fixed [`SIGNING_KEY_ID`] handle, beside the
+/// signing key that signs it.
 async fn ensure_ca_cert_exists<PubS: Storage>(
     pub_storage: &mut PubS,
     sk: &PrivateSigKey,
-    req_id: &RequestId,
     subject: String,
     tls_wildcard: bool,
 ) -> anyhow::Result<()> {
+    let req_id = &*SIGNING_KEY_ID;
     // self-sign a CA certificate with the private signing key
     let sk_der = {
         // Will be fixed as part of [#2781](https://github.com/zama-ai/kms-internal/issues/2781).

@@ -416,7 +416,23 @@ pub async fn get_core_root_signing_seed<S: StorageReader>(
                     storage.info()
                 ))
             })?;
-    Ok(seeds.remove(&SIGNING_KEY_ID))
+    let seed = seeds.remove(&SIGNING_KEY_ID);
+    if !seeds.is_empty() {
+        tracing::warn!(
+            "Ignoring {} root signing seed(s) under handles other than {} in storage \"{}\": {}. \
+             Only the seed under {} is ever used.",
+            seeds.len(),
+            *SIGNING_KEY_ID,
+            storage.info(),
+            seeds
+                .keys()
+                .map(|id| id.to_string())
+                .collect::<Vec<_>>()
+                .join(", "),
+            *SIGNING_KEY_ID
+        );
+    }
+    Ok(seed)
 }
 
 pub async fn get_client_signing_key<S: Storage>(storage: &S) -> anyhow::Result<PrivateSigKey> {

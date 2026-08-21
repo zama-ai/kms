@@ -434,7 +434,7 @@ pub mod setup {
     use crate::{
         consts::{
             DEFAULT_CENTRAL_CRS_ID, DEFAULT_CENTRAL_KEY_ID, DEFAULT_PARAM, KEY_PATH_PREFIX,
-            OTHER_CENTRAL_DEFAULT_ID, OTHER_CENTRAL_TEST_ID, SIGNING_KEY_ID, TEST_CENTRAL_CRS_ID,
+            OTHER_CENTRAL_DEFAULT_ID, OTHER_CENTRAL_TEST_ID, TEST_CENTRAL_CRS_ID,
             TEST_CENTRAL_KEY_ID, TEST_PARAM, TMP_PATH_PREFIX,
         },
         util::key_setup::ensure_central_server_signing_keys_exist,
@@ -477,7 +477,7 @@ pub mod setup {
     ) -> Result<()> {
         let epoch_id = *DEFAULT_EPOCH_ID;
         ensure_dir_exist(path).await;
-        ensure_client_keys_exist(path, &SIGNING_KEY_ID, true).await;
+        ensure_client_keys_exist(path, true).await;
         match material_type {
             MaterialType::Testing => {
                 central_material(

@@ -110,17 +110,18 @@ struct KeygenConfig {
     /// Generate deterministic test keys instead of fresh random keys. Defaults to false.
     #[serde(default)]
     deterministic: bool,
-    /// Delete existing signing material at the fixed signing-key request ID before generation. Defaults to false.
+    /// Delete the existing signing identity — signing key, root signing seed, and
+    /// every scheme's verification material — before generation. Defaults to false.
     #[serde(default)]
     overwrite: bool,
     /// Print the existing signing-material handles and exit without generating or
     /// deleting anything. Defaults to false.
     #[serde(default)]
     show_existing: bool,
-    /// Repopulate every scheme's verification material, ECDSA's included, from an existing
-    /// ECDSA signing key instead of generating keys. Requires the ECDSA signing
-    /// key to already exist; validates any existing ECDSA verification material
-    /// against it. Defaults to false.
+    /// Repopulate every scheme's verification material, ECDSA's included, from the
+    /// existing signing identity instead of generating keys. Requires both the
+    /// ECDSA signing key and the root signing seed to already exist; validates any
+    /// verification material already published against them. Defaults to false.
     #[serde(default)]
     repopulate: bool,
 }
@@ -441,7 +442,7 @@ async fn handle_central_cmd<PubS: Storage, PrivS: Storage>(
     args: &mut CentralCmdArgs<'_, PubS, PrivS>,
 ) -> anyhow::Result<()> {
     if args.overwrite {
-        delete_signing_key_material(args.pub_storage, args.priv_storage, &SIGNING_KEY_ID).await?;
+        delete_signing_key_material(args.pub_storage, args.priv_storage).await?;
     }
     if !ensure_central_server_signing_keys_exist(
         args.pub_storage,
@@ -460,7 +461,7 @@ async fn handle_threshold_cmd<PubS: Storage, PrivS: Storage>(
     args: &mut ThresholdCmdArgs<'_, PubS, PrivS>,
 ) -> anyhow::Result<()> {
     if args.overwrite {
-        delete_signing_key_material(args.pub_storage, args.priv_storage, &SIGNING_KEY_ID).await?;
+        delete_signing_key_material(args.pub_storage, args.priv_storage).await?;
     }
     if !ensure_threshold_server_signing_key_exists(
         args.pub_storage,
@@ -529,12 +530,12 @@ async fn show_signing_key_material<PubS: Storage, PrivS: Storage>(
 }
 
 /// Delete the signing key together with everything derived from it, so that a
-/// fresh key can be generated in its place.
+/// fresh identity can be generated in its place.
 async fn delete_signing_key_material<PubS: Storage, PrivS: Storage>(
     pub_storage: &mut PubS,
     priv_storage: &mut PrivS,
-    req_id: &RequestId,
 ) -> anyhow::Result<()> {
+    let req_id = &*SIGNING_KEY_ID;
     // Delete every element having the same `req_id` as the signing key, including the deprecated ECDSA-only material.
     for data_type in [
         PubDataType::VerfKey,
