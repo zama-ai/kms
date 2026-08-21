@@ -506,7 +506,6 @@ where
         shared_masked_ptxts.push(res);
     }
 
-    tracing::info!("Noiseflood result in session {sid} is ready, got {len} blocks");
     results.insert(format!("{sid}"), shared_masked_ptxts);
 
     let execution_stop_timer = Instant::now();
