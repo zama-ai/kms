@@ -3,7 +3,7 @@ use crate::consts::{DEFAULT_EPOCH_ID, DEFAULT_MPC_CONTEXT, SIGNING_KEY_ID};
 use crate::engine::base::derive_request_id;
 use crate::engine::threshold::service::epoch_manager::EpochData;
 use crate::engine::threshold::service::session::PRSSSetupCombined;
-use crate::util::key_setup::ensure_scheme_verification_material;
+use crate::util::key_setup::ensure_published_verification_material;
 use crate::vault::storage::crypto_material::get_core_signing_key;
 use crate::vault::storage::{
     Storage, StorageExt, StorageReader, read_context_at_id, read_versioned_at_request_id,
@@ -193,7 +193,7 @@ where
         );
         return Ok(());
     }
-    ensure_scheme_verification_material(pub_storage, &sk).await
+    ensure_published_verification_material(pub_storage, &sk).await
 }
 
 async fn migrate_prss_to_epoch<PrivS>(

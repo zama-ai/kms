@@ -3,11 +3,6 @@
 //! Every backend signs `dsep ‖ msg` and applies its own normalization/encoding
 //! internally.
 
-// The module is `pub(crate)` and its callers have not landed yet, so every
-// scheme's API currently looks dead to the crate.
-// TODO(#3078): remove this once the unified signing API is used by the KMS and other consumers.
-#![allow(dead_code)]
-
 mod cache;
 pub mod ecdsa;
 mod eddsa;
@@ -477,6 +472,14 @@ pub fn unified_sign(
 ///
 /// Errors if the signature's scheme does not match the verification key, if the
 /// bytes are malformed for that scheme, or if verification fails.
+///
+/// Not yet reached from non-test code: responses already carry a per-scheme
+/// signature list, but the client-side validation still checks only the legacy
+/// ECDSA/EIP-712 signature. Wiring it up — and retiring the two deprecated
+/// signature fields — is the `TODO(0.16)` in `validation_non_wasm::…`. This is the
+/// counterpart of [`unified_sign`], which *is* live, so it stays here rather than
+/// being deleted and rewritten.
+#[allow(dead_code)]
 pub fn unified_verify(
     dsep: &DomainSep,
     msg: &[u8],

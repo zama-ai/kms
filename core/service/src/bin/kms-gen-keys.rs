@@ -11,8 +11,8 @@ use kms_lib::{
     consts::SIGNING_KEY_ID,
     cryptography::attestation::make_security_module,
     util::key_setup::{
-        backfill_verification_material, delete_scheme_verification_material,
-        ensure_central_server_signing_keys_exist, ensure_threshold_server_signing_key_exists,
+        delete_scheme_verification_material, ensure_central_server_signing_keys_exist,
+        ensure_published_verification_material, ensure_threshold_server_signing_key_exists,
     },
     vault::{
         Vault,
@@ -498,7 +498,7 @@ async fn handle_repopulate_cmd<PubS: Storage, PrivS: Storage>(
             *SIGNING_KEY_ID
         );
     }
-    backfill_verification_material(pub_storage, &sk).await?;
+    ensure_published_verification_material(pub_storage, &sk).await?;
     tracing::info!("Repopulated verification material from the existing signing identity");
     Ok(())
 }
