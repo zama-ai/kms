@@ -7,7 +7,6 @@ use std::sync::{Arc, OnceLock};
 use std::time::{Duration, Instant};
 
 use super::{ArcSendValueRequest, AtomicDuration, now_activity_millis};
-use crate::grpc::NETWORK_RECEIVED_MEASUREMENT;
 use crate::grpc::{CoreToCoreNetworkConfig, MessageQueueStore, NetworkRoundValue, Tag};
 use dashmap::DashSet;
 use error_utils::anyhow_error_and_log;
@@ -322,17 +321,6 @@ impl<R: RoleTrait> Networking<R> for NetworkSession {
 
     async fn get_num_byte_sent(&self) -> usize {
         self.num_byte_sent.load(Ordering::Relaxed)
-    }
-
-    async fn get_num_byte_received(&self) -> anyhow::Result<usize> {
-        if let Some(num_byte_received) = NETWORK_RECEIVED_MEASUREMENT.get(&self.session_id) {
-            Ok(*num_byte_received)
-        } else {
-            Err(anyhow_error_and_log(format!(
-                "Couldn't find session {} in the NETWORK_RECEIVED_MEASUREMENT",
-                self.session_id
-            )))
-        }
     }
 }
 
@@ -670,10 +658,7 @@ mod tests {
 
         let channel_size_limit = 1000;
 
-        // we manually initialize the message store instead of calling
-        // [MessageQueueStore::new_initialized] because we want set the uninitialized channel
-        // to test the session tracker
-        let dummy_session_tracker = Arc::new(DashMap::new());
+        // Manually initialize the message store so the test can retain the sender channel.
         let message_store = {
             let channel_maps = DashMap::new();
             let (tx, rx) = channel::<NetworkRoundValue>(channel_size_limit);
@@ -689,23 +674,9 @@ mod tests {
 
             let mut others = role_assignment.clone();
             others.remove(&role_1);
-            out.init(
-                channel_size_limit,
-                &others,
-                Arc::clone(&dummy_session_tracker),
-            );
+            out.init(channel_size_limit, &others);
             out
         };
-
-        // session tracker should have one entry for party 2 since it was in the uninitialized variant
-        assert_eq!(1, dummy_session_tracker.len());
-        assert_eq!(
-            0,
-            *dummy_session_tracker
-                .get(&id_2.mpc_identity())
-                .unwrap()
-                .value(),
-        );
 
         let tx_2 = message_store.get_tx(&id_2.mpc_identity()).unwrap().unwrap();
 
@@ -832,7 +803,6 @@ mod tests {
             role_assignment
         };
 
-        let dummy_session_tracker = Arc::new(DashMap::new());
         let message_store = {
             let channel_maps = DashMap::new();
             let (tx, rx) = channel::<NetworkRoundValue>(channel_size_limit);
@@ -847,11 +817,7 @@ mod tests {
             let mut out = MessageQueueStore::new_uninitialized(channel_maps);
             let mut others = role_assignment.clone();
             others.remove(&role_1);
-            out.init(
-                channel_size_limit,
-                &others,
-                Arc::clone(&dummy_session_tracker),
-            );
+            out.init(channel_size_limit, &others);
             out
         };
 
@@ -1281,7 +1247,6 @@ mod tests {
         };
 
         let channel_size_limit = 1000;
-        let dummy_session_tracker = Arc::new(DashMap::new());
         let message_store = {
             let channel_maps = DashMap::new();
             let (tx, rx) = channel::<NetworkRoundValue>(channel_size_limit);
@@ -1297,11 +1262,7 @@ mod tests {
 
             let mut others = role_assignment.clone();
             others.remove(&role_1);
-            out.init(
-                channel_size_limit,
-                &others,
-                Arc::clone(&dummy_session_tracker),
-            );
+            out.init(channel_size_limit, &others);
             out
         };
 

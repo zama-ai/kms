@@ -267,10 +267,6 @@ impl<R: RoleTrait> Networking<R> for LocalNetworking<R> {
     async fn get_num_byte_sent(&self) -> usize {
         0
     }
-
-    async fn get_num_byte_received(&self) -> anyhow::Result<usize> {
-        Ok(0)
-    }
 }
 
 #[derive(Debug, Clone)]

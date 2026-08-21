@@ -15,9 +15,6 @@ EXPECTED_METRIC_NAMES=(
   kms_active_sessions
   kms_inactive_sessions
   kms_completed_sessions
-  kms_inactive_peer_channels
-  kms_max_inactive_peer_channels
-  kms_network_measurement_sessions
   kms_rate_limiter_usage
   kms_fhe_key_cache_size
   kms_meta_storage_user_decryptions
@@ -49,7 +46,7 @@ extract_required_metrics() {
   local ts="$1"
   local pod="$2"
   awk -v ts="${ts}" -v pod="${pod}" '
-    /^kms_(active_sessions|inactive_sessions|completed_sessions|inactive_peer_channels|max_inactive_peer_channels|network_measurement_sessions|rate_limiter_usage|fhe_key_cache_size|meta_storage_user_decryptions|meta_storage_pub_decryptions|meta_storage_user_decryptions_in_store|meta_storage_pub_decryptions_in_store|network_rx_bytes_total|network_tx_bytes_total|tasks)([[:space:]]|\{|$)/ {
+    /^kms_(active_sessions|inactive_sessions|completed_sessions|rate_limiter_usage|fhe_key_cache_size|meta_storage_user_decryptions|meta_storage_pub_decryptions|meta_storage_user_decryptions_in_store|meta_storage_pub_decryptions_in_store|network_rx_bytes_total|network_tx_bytes_total|tasks)([[:space:]]|\{|$)/ {
       print ts, pod, $1, $2
     }
   '

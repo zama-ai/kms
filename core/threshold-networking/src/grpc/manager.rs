@@ -3,20 +3,19 @@
 
 use crate::ggen::gnetworking_server::GnetworkingServer;
 use crate::grpc::{
-    CoreToCoreNetworkConfig, MessageQueueStore, NETWORK_RECEIVED_MEASUREMENT, NetworkingImpl,
-    SessionStatus, SessionStore, TlsExtensionGetter,
+    CoreToCoreNetworkConfig, MessageQueueStore, NetworkingImpl, SessionStatus, SessionStore,
+    TlsExtensionGetter,
 };
 use crate::health_check::HealthCheckSession;
 use crate::sending_service::{
     GrpcSendingService, NetworkSession, SendingService, now_activity_millis,
 };
-use dashmap::DashMap;
 use observability::metrics::{self, NetworkDebugEvent};
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use threshold_types::network::{NetworkMode, Networking};
-use threshold_types::party::{MpcIdentity, RoleAssignment};
+use threshold_types::party::RoleAssignment;
 use threshold_types::role::RoleTrait;
 use threshold_types::session_id::SessionId;
 use tokio::time::{Duration, Instant};
@@ -30,9 +29,6 @@ pub struct GrpcNetworkingManager {
     pub(crate) session_store: Arc<SessionStore>,
     inactive_session_count: Arc<AtomicU64>,
     active_session_count: Arc<AtomicU64>,
-    // Keeps tracks of how many sessions were opened by each party
-    // NOTE: Always lock session_store before opened_sessions_tracker to prevent deadlocks
-    pub opened_sessions_tracker: Arc<DashMap<MpcIdentity, u64>>,
     conf: CoreToCoreNetworkConfig,
     pub sending_service: GrpcSendingService,
     #[cfg(feature = "testing")]
@@ -50,9 +46,7 @@ impl GrpcNetworkingManager {
     ) -> GnetworkingServer<NetworkingImpl> {
         GnetworkingServer::new(NetworkingImpl::new(
             Arc::clone(&self.session_store),
-            Arc::clone(&self.opened_sessions_tracker),
             self.conf.get_message_limit(),
-            self.conf.get_max_opened_inactive_sessions_per_party(),
             self.conf.get_max_waiting_time_for_message_queue(),
             tls_extension,
             #[cfg(feature = "testing")]
@@ -73,7 +67,6 @@ impl GrpcNetworkingManager {
     /// Finally it also updates the counts of inactive and active sessions.
     fn start_background_cleaning_task(
         session_store: Arc<SessionStore>,
-        opened_sessions_tracker: Arc<DashMap<MpcIdentity, u64>>,
         inactive_session_count: Arc<AtomicU64>,
         active_session_count: Arc<AtomicU64>,
         update_interval: Duration,
@@ -147,20 +140,7 @@ impl GrpcNetworkingManager {
                 }
                 inactive_session_count.store(internal_inactive_sessions_count, Ordering::Relaxed);
                 active_session_count.store(internal_active_sessions_count, Ordering::Relaxed);
-                let (inactive_peer_channels, max_inactive_peer_channels) = opened_sessions_tracker
-                    .iter()
-                    .fold((0_u64, 0_u64), |(total, max), entry| {
-                        (
-                            total.saturating_add(*entry.value()),
-                            max.max(*entry.value()),
-                        )
-                    });
-                metrics::METRICS.record_network_debug_state(
-                    internal_completed_sessions_count,
-                    inactive_peer_channels,
-                    max_inactive_peer_channels,
-                    u64::try_from(NETWORK_RECEIVED_MEASUREMENT.len()).unwrap_or(u64::MAX),
-                );
+                metrics::METRICS.record_completed_sessions(internal_completed_sessions_count);
             }
         });
     }
@@ -197,10 +177,8 @@ impl GrpcNetworkingManager {
         let discard_inactive_interval = conf.get_discard_inactive_sessions_interval();
         let inactive_session_count = Arc::new(AtomicU64::new(0));
         let active_session_count = Arc::new(AtomicU64::new(0));
-        let opened_sessions_tracker = Arc::new(DashMap::new());
         Self::start_background_cleaning_task(
             cleanup_session_store,
-            Arc::clone(&opened_sessions_tracker),
             Arc::clone(&inactive_session_count),
             Arc::clone(&active_session_count),
             update_interval,
@@ -212,7 +190,6 @@ impl GrpcNetworkingManager {
             session_store,
             inactive_session_count,
             active_session_count,
-            opened_sessions_tracker,
             conf,
             sending_service: GrpcSendingService::new(tls_conf, conf)?,
             #[cfg(feature = "testing")]
@@ -295,11 +272,7 @@ impl GrpcNetworkingManager {
 
                 let message_store = if let SessionStatus::Inactive(message_store) = mutable_status {
                     // Upgrade the message store from the uninitialized state to the initialized state
-                    message_store.0.init(
-                        self.conf.get_message_limit(),
-                        &others,
-                        Arc::clone(&self.opened_sessions_tracker),
-                    );
+                    message_store.0.init(self.conf.get_message_limit(), &others);
                     message_store.clone()
                 } else {
                     return Err(anyhow::anyhow!(
@@ -325,11 +298,8 @@ impl GrpcNetworkingManager {
                 session
             }
             dashmap::Entry::Vacant(vacant) => {
-                let message_queue = MessageQueueStore::new_initialized(
-                    self.conf.get_message_limit(),
-                    &others,
-                    Arc::clone(&self.opened_sessions_tracker),
-                );
+                let message_queue =
+                    MessageQueueStore::new_initialized(self.conf.get_message_limit(), &others);
 
                 let session = Arc::new(NetworkSession::new(
                     owner.clone(),

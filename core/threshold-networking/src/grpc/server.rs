@@ -13,7 +13,7 @@ use async_trait::async_trait;
 use dashmap::DashMap;
 use observability::metrics::{self, NetworkDebugEvent};
 use serde::{Deserialize, Serialize};
-use std::sync::{Arc, LazyLock};
+use std::sync::Arc;
 use threshold_types::party::MpcIdentity;
 use threshold_types::session_id::SessionId;
 use tokio::sync::{
@@ -37,10 +37,7 @@ pub enum TlsExtensionGetter {
 #[derive(Default)]
 pub struct NetworkingImpl {
     session_store: Arc<SessionStore>,
-    // key is the MPC identity
-    opened_sessions_tracker: Arc<DashMap<MpcIdentity, u64>>,
     channel_size_limit: usize,
-    max_opened_inactive_sessions: u64,
     max_waiting_time_for_message_queue: Duration,
     tls_extension: TlsExtensionGetter,
     // We gate this behind the testing feature because in non-testing environments
@@ -52,18 +49,14 @@ pub struct NetworkingImpl {
 impl NetworkingImpl {
     pub(crate) fn new(
         session_store: Arc<SessionStore>,
-        opened_sessions_tracker: Arc<DashMap<MpcIdentity, u64>>,
         channel_size_limit: usize,
-        max_opened_inactive_sessions: u64,
         max_waiting_time_for_message_queue: Duration,
         tls_extension: TlsExtensionGetter,
         #[cfg(feature = "testing")] force_tls: bool,
     ) -> Self {
         Self {
             session_store: session_store.clone(),
-            opened_sessions_tracker: opened_sessions_tracker.clone(),
             channel_size_limit,
-            max_opened_inactive_sessions,
             max_waiting_time_for_message_queue,
             tls_extension,
             #[cfg(feature = "testing")]
@@ -139,23 +132,6 @@ impl NetworkingImpl {
                         Ok(Some(occupied_entry.get().tx.clone()))
                     }
                     dashmap::Entry::Vacant(vacant_entry_tx) => {
-                        let mut opened_session_tracker_entry = self
-                            .opened_sessions_tracker
-                            .entry(tag.sender.clone())
-                            .or_insert(0);
-                        if *opened_session_tracker_entry >= self.max_opened_inactive_sessions {
-                            metrics::METRICS
-                                .increment_network_debug_event(NetworkDebugEvent::InactiveLimit);
-                            return Err(tonic::Status::new(
-                                tonic::Code::ResourceExhausted,
-                                format!(
-                                    "Too many inactive sessions opened by {:?}. Have {}, Max allowed: {}",
-                                    tag.sender,
-                                    *opened_session_tracker_entry,
-                                    self.max_opened_inactive_sessions
-                                ),
-                            ));
-                        }
                         // Create a new channel for the sender
                         let (tx, rx) = channel::<NetworkRoundValue>(self.channel_size_limit);
                         let tx = Arc::new(tx);
@@ -163,9 +139,6 @@ impl NetworkingImpl {
                             tx: Arc::clone(&tx),
                             rx: Arc::new(Mutex::new(ReceiverState::new(rx))),
                         });
-
-                        // Update the opened sessions tracker
-                        *opened_session_tracker_entry += 1;
                         Ok(Some(tx))
                     }
                 }
@@ -217,12 +190,6 @@ impl NetworkingImpl {
         }
     }
 }
-
-// We do the measurement of received bytes here because
-// some messages may never reach the application level
-// (i.e. in the Networking trait)
-pub static NETWORK_RECEIVED_MEASUREMENT: LazyLock<DashMap<SessionId, usize>> =
-    LazyLock::new(DashMap::new);
 
 fn parse_identity_from_cert(
     certs: Arc<Vec<CertificateDer<'static>>>,
@@ -358,16 +325,6 @@ impl Gnetworking for NetworkingImpl {
             tag.round_counter
         );
 
-        match NETWORK_RECEIVED_MEASUREMENT.entry(tag.session_id) {
-            dashmap::Entry::Occupied(mut occupied_entry) => {
-                let entry = occupied_entry.get_mut();
-                *entry += request.tag.len() + request.value.len()
-            }
-            dashmap::Entry::Vacant(vacant_entry) => {
-                vacant_entry.insert(request.tag.len() + request.value.len());
-            }
-        };
-
         // First try with only read lock to avoid blocking
         let tx = if let Some(session_status) = self.session_store.get(&tag.session_id) {
             let status = session_status.value();
@@ -397,23 +354,6 @@ impl Gnetworking for NetworkingImpl {
                         "Session {:?} not found in session_store, creating a new inactive one.",
                         tag.session_id
                     );
-                    let mut opened_session_tracker_entry = self
-                        .opened_sessions_tracker
-                        .entry(tag.sender.clone())
-                        .or_insert(0);
-                    if *opened_session_tracker_entry >= self.max_opened_inactive_sessions {
-                        metrics::METRICS
-                            .increment_network_debug_event(NetworkDebugEvent::InactiveLimit);
-                        return Err(tonic::Status::new(
-                            tonic::Code::ResourceExhausted,
-                            format!(
-                                "Too many inactive sessions opened by {:?}. Got {}, Max allowed: {}",
-                                tag.sender,
-                                *opened_session_tracker_entry,
-                                self.max_opened_inactive_sessions
-                            ),
-                        ));
-                    }
                     // Create a new session with an inactive status
                     let channel_maps = DashMap::new();
                     let (tx, rx) = channel::<NetworkRoundValue>(self.channel_size_limit);
@@ -431,7 +371,6 @@ impl Gnetworking for NetworkingImpl {
                         MessageQueueStore::new_uninitialized(channel_maps),
                         Instant::now(),
                     )));
-                    *opened_session_tracker_entry += 1;
                     metrics::METRICS
                         .increment_network_debug_event(NetworkDebugEvent::SessionInactiveCreated);
                     tx
@@ -499,7 +438,6 @@ mod tests {
     #[test]
     fn test_fetch_tx_channel_completed_session() {
         let session_store: Arc<SessionStore> = Arc::new(DashMap::new());
-        let opened_sessions_tracker: Arc<DashMap<MpcIdentity, u64>> = Arc::new(DashMap::new());
         let session_id = SessionId::from(1u128);
 
         // Insert a completed session
@@ -507,9 +445,7 @@ mod tests {
 
         let networking_impl = NetworkingImpl::new(
             session_store.clone(),
-            opened_sessions_tracker,
             100,
-            50,
             Duration::from_secs(60),
             TlsExtensionGetter::default(),
             #[cfg(feature = "testing")]
@@ -533,7 +469,6 @@ mod tests {
     #[test]
     fn test_inactive_session_creates_new_channel() {
         let session_store: Arc<SessionStore> = Arc::new(DashMap::new());
-        let opened_sessions_tracker: Arc<DashMap<MpcIdentity, u64>> = Arc::new(DashMap::new());
         let session_id = SessionId::from(2u128);
 
         // Insert an inactive session with empty message queue
@@ -548,9 +483,7 @@ mod tests {
 
         let networking_impl = NetworkingImpl::new(
             session_store.clone(),
-            opened_sessions_tracker.clone(),
             100,
-            50,
             Duration::from_secs(60),
             TlsExtensionGetter::default(),
             #[cfg(feature = "testing")]
@@ -569,18 +502,11 @@ mod tests {
         // Should return Ok(Some(tx)) for inactive sessions with new sender
         assert!(result.is_ok());
         assert!(result.unwrap().is_some());
-
-        // Check that opened_sessions_tracker was updated
-        assert_eq!(
-            *opened_sessions_tracker.get(&tag.sender).unwrap().value(),
-            1
-        );
     }
 
     #[test]
     fn test_inactive_session_existing_sender() {
         let session_store: Arc<SessionStore> = Arc::new(DashMap::new());
-        let opened_sessions_tracker: Arc<DashMap<MpcIdentity, u64>> = Arc::new(DashMap::new());
         let session_id = SessionId::from(3u128);
         let sender = MpcIdentity("party1".to_string());
 
@@ -605,9 +531,7 @@ mod tests {
 
         let networking_impl = NetworkingImpl::new(
             session_store.clone(),
-            opened_sessions_tracker.clone(),
             100,
-            50,
             Duration::from_secs(60),
             TlsExtensionGetter::default(),
             #[cfg(feature = "testing")]
@@ -626,61 +550,11 @@ mod tests {
         // Should return Ok(Some(tx)) for inactive sessions with existing sender
         assert!(result.is_ok());
         assert!(result.unwrap().is_some());
-
-        // opened_sessions_tracker should NOT be updated since sender already existed
-        assert!(opened_sessions_tracker.get(&tag.sender).is_none());
-    }
-
-    #[test]
-    fn test_too_many_inactive_sessions() {
-        let session_store: Arc<SessionStore> = Arc::new(DashMap::new());
-        let opened_sessions_tracker: Arc<DashMap<MpcIdentity, u64>> = Arc::new(DashMap::new());
-        let session_id = SessionId::from(4u128);
-        let sender = MpcIdentity("party1".to_string());
-
-        // Pre-fill the tracker to hit the limit
-        opened_sessions_tracker.insert(sender.clone(), 50);
-
-        // Insert an inactive session with empty message queue
-        let channel_maps = DashMap::new();
-        session_store.insert(
-            session_id,
-            SessionStatus::Inactive((
-                MessageQueueStore::new_uninitialized(channel_maps),
-                Instant::now(),
-            )),
-        );
-
-        let networking_impl = NetworkingImpl::new(
-            session_store.clone(),
-            opened_sessions_tracker.clone(),
-            100,
-            50, // max_opened_inactive_sessions
-            Duration::from_secs(60),
-            TlsExtensionGetter::default(),
-            #[cfg(feature = "testing")]
-            false,
-        );
-
-        let tag = Tag {
-            session_id,
-            sender: MpcIdentity("party1".to_string()),
-            round_counter: 0,
-        };
-        let session_status = session_store.get(&session_id).unwrap();
-
-        let result = networking_impl.fetch_tx_channel(session_status.value(), &tag);
-
-        // Should return Err with ResourceExhausted
-        assert!(result.is_err());
-        let err = result.unwrap_err();
-        assert_eq!(err.code(), tonic::Code::ResourceExhausted);
     }
 
     #[test]
     fn test_active_session_weak_reference_dead() {
         let session_store: Arc<SessionStore> = Arc::new(DashMap::new());
-        let opened_sessions_tracker: Arc<DashMap<MpcIdentity, u64>> = Arc::new(DashMap::new());
         let session_id = SessionId::from(5u128);
 
         // Create a weak reference that's already dead (no strong reference)
@@ -689,9 +563,7 @@ mod tests {
 
         let networking_impl = NetworkingImpl::new(
             session_store.clone(),
-            opened_sessions_tracker,
             100,
-            50,
             Duration::from_secs(60),
             TlsExtensionGetter::default(),
             #[cfg(feature = "testing")]
@@ -742,8 +614,7 @@ mod tests {
         let mut role_assignment: RoleAssignment<Role> = RoleAssignment::default();
         role_assignment.insert(role_1, id_1.clone());
 
-        let store =
-            MessageQueueStore::new_initialized(100, &role_assignment, Arc::new(DashMap::new()));
+        let store = MessageQueueStore::new_initialized(100, &role_assignment);
 
         // Should get Some(tx) for existing identity
         let result = store.get_tx(&id_1.mpc_identity());

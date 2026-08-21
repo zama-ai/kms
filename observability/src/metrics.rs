@@ -74,9 +74,6 @@ pub struct CoreMetrics {
     active_session_gauge: IntGauge, // Number of active sessions
     inactive_session_gauge: IntGauge, // Number of inactive sessions
     completed_session_gauge: IntGauge,
-    inactive_peer_channel_gauge: IntGauge,
-    max_inactive_peer_channel_gauge: IntGauge,
-    network_measurement_session_gauge: IntGauge,
     meta_storage_pub_dec_gauge: IntGauge, // Number of ongoing public decryptions in meta storage
     meta_storage_user_dec_gauge: IntGauge, // Number of ongoing user decryptions in meta storage
     meta_storage_pub_dec_total_gauge: IntGauge, // Total number of public decryptions in meta storage
@@ -113,7 +110,6 @@ pub enum NetworkDebugEvent {
     MessageToInactive,
     MessageToCompleted,
     MessageToDroppedActive,
-    InactiveLimit,
     QueueFull,
     SendActive,
     SendInactive,
@@ -126,7 +122,7 @@ pub enum NetworkDebugEvent {
 }
 
 impl NetworkDebugEvent {
-    const COUNT: usize = 21;
+    const COUNT: usize = 20;
     const LABELS: [&'static str; Self::COUNT] = [
         "session_inactive_created",
         "session_activated",
@@ -139,7 +135,6 @@ impl NetworkDebugEvent {
         "message_to_inactive",
         "message_to_completed",
         "message_to_dropped_active",
-        "inactive_limit",
         "queue_full",
         "send_active",
         "send_inactive",
@@ -376,33 +371,6 @@ impl CoreMetrics {
             .register(Box::new(completed_session_gauge.clone()))
             .expect("failed to register completed session gauge");
 
-        let inactive_peer_channel_gauge = IntGauge::with_opts(opts(
-            format!("{prefix}_inactive_peer_channels"),
-            "Sum of peer channels held by inactive MPC sessions",
-        ))
-        .expect("failed to create inactive peer channel gauge");
-        registry
-            .register(Box::new(inactive_peer_channel_gauge.clone()))
-            .expect("failed to register inactive peer channel gauge");
-
-        let max_inactive_peer_channel_gauge = IntGauge::with_opts(opts(
-            format!("{prefix}_max_inactive_peer_channels"),
-            "Largest inactive MPC session channel count attributed to one peer",
-        ))
-        .expect("failed to create max inactive peer channel gauge");
-        registry
-            .register(Box::new(max_inactive_peer_channel_gauge.clone()))
-            .expect("failed to register max inactive peer channel gauge");
-
-        let network_measurement_session_gauge = IntGauge::with_opts(opts(
-            format!("{prefix}_network_measurement_sessions"),
-            "Session IDs retained in the threshold networking byte-accounting map",
-        ))
-        .expect("failed to create network measurement session gauge");
-        registry
-            .register(Box::new(network_measurement_session_gauge.clone()))
-            .expect("failed to register network measurement session gauge");
-
         let meta_storage_user_dec_gauge = IntGauge::with_opts(opts(
             format!("{prefix}_meta_storage_user_decryptions"),
             "Number of ONGOING user decryptions in meta storage",
@@ -514,9 +482,6 @@ impl CoreMetrics {
             active_session_gauge,
             inactive_session_gauge,
             completed_session_gauge,
-            inactive_peer_channel_gauge,
-            max_inactive_peer_channel_gauge,
-            network_measurement_session_gauge,
             meta_storage_pub_dec_gauge,
             meta_storage_user_dec_gauge,
             meta_storage_pub_dec_total_gauge,
@@ -705,21 +670,9 @@ impl CoreMetrics {
         self.inactive_session_gauge.set(count as i64);
     }
 
-    /// Record gauges that expose retained and not-yet-active MPC networking state.
-    pub fn record_network_debug_state(
-        &self,
-        completed_sessions: u64,
-        inactive_peer_channels: u64,
-        max_inactive_peer_channels: u64,
-        measurement_sessions: u64,
-    ) {
+    /// Record the number of completed MPC sessions retained for late messages.
+    pub fn record_completed_sessions(&self, completed_sessions: u64) {
         self.completed_session_gauge.set(completed_sessions as i64);
-        self.inactive_peer_channel_gauge
-            .set(inactive_peer_channels as i64);
-        self.max_inactive_peer_channel_gauge
-            .set(max_inactive_peer_channels as i64);
-        self.network_measurement_session_gauge
-            .set(measurement_sessions as i64);
     }
 
     /// Record the current number of ongoing public decryptions into the gauge
@@ -1027,16 +980,13 @@ mod tests {
             "kms_cpu_load",
             "kms_fhe_key_cache_size",
             "kms_file_descriptors",
-            "kms_inactive_peer_channels",
             "kms_inactive_sessions",
-            "kms_max_inactive_peer_channels",
             "kms_memory_usage",
             "kms_meta_storage_pub_decryptions",
             "kms_meta_storage_pub_decryptions_in_store",
             "kms_meta_storage_user_decryptions",
             "kms_meta_storage_user_decryptions_in_store",
             "kms_network_debug_events_total",
-            "kms_network_measurement_sessions",
             "kms_network_rx_bytes_total",
             "kms_network_tx_bytes_total",
             "kms_operation_duration_ms",

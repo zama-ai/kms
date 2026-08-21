@@ -112,10 +112,9 @@ impl MessageQueueStore {
     pub(crate) fn new_initialized<R: RoleTrait>(
         channel_size_limit: usize,
         others: &RoleAssignment<R>,
-        opened_sessions_tracker: Arc<DashMap<MpcIdentity, u64>>,
     ) -> Self {
         let mut out = Self::new_uninitialized(DashMap::new());
-        out.init(channel_size_limit, others, opened_sessions_tracker);
+        out.init(channel_size_limit, others);
         out
     }
 
@@ -123,7 +122,6 @@ impl MessageQueueStore {
         &mut self,
         channel_size_limit: usize,
         others: &RoleAssignment<R>,
-        opened_sessions_tracker: Arc<DashMap<MpcIdentity, u64>>,
     ) {
         if let MessageQueueStore::Uninitialized(channel_maps) = &self {
             let tx_map = DashMap::with_capacity(channel_maps.len());
@@ -136,12 +134,6 @@ impl MessageQueueStore {
             for (role, identity) in others.iter() {
                 let mpc_id = identity.mpc_identity();
                 if let Some(entry) = channel_maps.get(&mpc_id) {
-                    opened_sessions_tracker
-                        .entry(mpc_id.clone())
-                        .and_modify(|count| {
-                            *count = count.saturating_sub(1);
-                        })
-                        .or_insert(0);
                     let pair = entry.value();
                     tx_map.insert(entry.key().clone(), pair.tx.clone());
                     rx_map.insert(role.get_role_kind(), pair.rx.clone());
