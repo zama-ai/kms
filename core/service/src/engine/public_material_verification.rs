@@ -261,7 +261,7 @@ where
         ensure_crs_metadata_id_matches(crs_id, metadata)?;
     }
 
-    // TODO private storage validation will come later
+    // TODO(github.com/zama-ai/kms-internal/issues/3178) private storage validation will come later
 
     for data_type in PubDataType::iter() {
         match data_type {
@@ -286,8 +286,12 @@ where
             | PubDataType::CompressedXofKeySet
             | PubDataType::TypedVerfKey
             | PubDataType::TypedVerfAddress => {
-                // ServerKey and CompressedXofKeySet are checked by verify_keysets above. The
-                // remaining types are not part of this startup verification flow.
+                // ServerKey and CompressedXofKeySet are checked by verify_keysets above.
+                // CACert is done during certificate loading.
+                // DecompressionKey is not used in production at the moment and it does not have a private component.
+                //
+                // TODO(https://github.com/zama-ai/kms-internal/issues/3078)
+                // The remaining types (TypedVerfKey, TypedVerfAddress) will be done later
             }
             #[allow(deprecated)]
             PubDataType::VerfAddress | PubDataType::PublicKeyMetadata => {
