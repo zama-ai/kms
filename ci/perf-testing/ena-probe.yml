@@ -16,18 +16,40 @@ spec:
       dnsPolicy: ClusterFirstWithHostNet
       terminationGracePeriodSeconds: 1
 
-      nodeSelector:
-        karpenter.sh/nodepool: kms-pool
+      affinity:
+        nodeAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            nodeSelectorTerms:
+              - matchExpressions:
+                  - key: karpenter.sh/nodepool
+                    operator: In
+                    values:
+                      - kms-pool
+              - matchExpressions:
+                  - key: aws-nitro-enclaves-k8s-dp
+                    operator: In
+                    values:
+                      - enabled
 
       tolerations:
         - key: karpenter.sh/nodepool
           operator: Equal
           value: kms-pool
           effect: NoSchedule
+        - key: app
+          operator: Equal
+          value: kms-enclave-ci
+          effect: NoSchedule
+        - key: aws.ec2.nitro/nitro_enclaves
+          operator: Exists
+          effect: NoSchedule
+        - key: aws.ec2.nitro/nitro_enclaves_cpus
+          operator: Exists
+          effect: NoSchedule
 
       containers:
         - name: collector
-          image: public.ecr.aws/amazonlinux/amazonlinux:2023
+          image: public.ecr.aws/docker/library/alpine:3.23
           securityContext:
             allowPrivilegeEscalation: false
           env:
@@ -35,11 +57,11 @@ spec:
               valueFrom:
                 fieldRef:
                   fieldPath: spec.nodeName
-          command: ["/bin/bash", "-lc"]
+          command: ["/bin/sh", "-c"]
           args:
             - |
-              set -euo pipefail
-              dnf -q -y install ethtool
+              set -eu
+              apk add --no-cache ethtool
 
               counter() {
                 ethtool -S "$1" 2>/dev/null |
@@ -49,7 +71,7 @@ spec:
                   '
               }
 
-              while true; do
+              sample() {
                 timestamp="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
                 found_ena=false
 
@@ -75,16 +97,33 @@ spec:
                   fi
                 done
 
-                if [[ "$found_ena" == false ]]; then
+                if [ "$found_ena" = false ]; then
                   echo "$timestamp node=$NODE_NAME no-ena-interface-found"
+                  return 1
                 fi
 
+                return 0
+              }
+
+              while true; do
+                if sample; then
+                  touch /tmp/ena-probe-ready
+                fi
                 sleep 5
               done
+          readinessProbe:
+            exec:
+              command:
+                - /bin/sh
+                - -c
+                - test -f /tmp/ena-probe-ready
+            periodSeconds: 2
+            timeoutSeconds: 1
+            failureThreshold: 150
           resources:
             requests:
               cpu: 10m
               memory: 64Mi
             limits:
-              cpu: 100m
+              cpu: 500m
               memory: 2Gi
