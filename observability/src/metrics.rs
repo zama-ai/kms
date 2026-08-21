@@ -74,6 +74,7 @@ pub struct CoreMetrics {
     active_session_gauge: IntGauge, // Number of active sessions
     inactive_session_gauge: IntGauge, // Number of inactive sessions
     completed_session_gauge: IntGauge,
+    network_measurement_session_gauge: IntGauge,
     meta_storage_pub_dec_gauge: IntGauge, // Number of ongoing public decryptions in meta storage
     meta_storage_user_dec_gauge: IntGauge, // Number of ongoing user decryptions in meta storage
     meta_storage_pub_dec_total_gauge: IntGauge, // Total number of public decryptions in meta storage
@@ -371,6 +372,15 @@ impl CoreMetrics {
             .register(Box::new(completed_session_gauge.clone()))
             .expect("failed to register completed session gauge");
 
+        let network_measurement_session_gauge = IntGauge::with_opts(opts(
+            format!("{prefix}_network_measurement_sessions"),
+            "Session IDs retained in the threshold networking byte-accounting map",
+        ))
+        .expect("failed to create network measurement session gauge");
+        registry
+            .register(Box::new(network_measurement_session_gauge.clone()))
+            .expect("failed to register network measurement session gauge");
+
         let meta_storage_user_dec_gauge = IntGauge::with_opts(opts(
             format!("{prefix}_meta_storage_user_decryptions"),
             "Number of ONGOING user decryptions in meta storage",
@@ -482,6 +492,7 @@ impl CoreMetrics {
             active_session_gauge,
             inactive_session_gauge,
             completed_session_gauge,
+            network_measurement_session_gauge,
             meta_storage_pub_dec_gauge,
             meta_storage_user_dec_gauge,
             meta_storage_pub_dec_total_gauge,
@@ -673,6 +684,11 @@ impl CoreMetrics {
     /// Record the number of completed MPC sessions retained for late messages.
     pub fn record_completed_sessions(&self, completed_sessions: u64) {
         self.completed_session_gauge.set(completed_sessions as i64);
+    }
+
+    /// Record the number of session IDs retained for received-byte accounting.
+    pub fn record_network_measurement_sessions(&self, sessions: u64) {
+        self.network_measurement_session_gauge.set(sessions as i64);
     }
 
     /// Record the current number of ongoing public decryptions into the gauge
@@ -987,6 +1003,7 @@ mod tests {
             "kms_meta_storage_user_decryptions",
             "kms_meta_storage_user_decryptions_in_store",
             "kms_network_debug_events_total",
+            "kms_network_measurement_sessions",
             "kms_network_rx_bytes_total",
             "kms_network_tx_bytes_total",
             "kms_operation_duration_ms",
