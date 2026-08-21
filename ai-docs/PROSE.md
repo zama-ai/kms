@@ -8,7 +8,7 @@ Rules for every kind of prose you write in this repo: code comments and rustdoc,
 - Terse, list-style rule files (this file, the other files in `ai-docs/`, and the templates in `.github/`) are exempt from the STE sentence-completeness rule. Match the style already in the file you edit.
 - A rule in [EDITING.md](./EDITING.md) or [GIT.md](./GIT.md) wins over a rule here. Those files say *what* to write; this file says *how* to write it.
 
-## Code comments
+## Code comments and inline docs
 
 - Comment the code that a competent reader cannot follow from the code alone. Examples: nested closures with filters, a non-obvious order of operations, a bound that comes from the protocol, a workaround for an upstream bug. Leave trivial code uncommented.
 - Describe the code as it is now. Do not describe your change, and do not compare against the old code. Avoid comments such as "function A no longer does X, so we call function Y first", and avoid "new", "now", "currently", "for now", PR numbers and dates. Report your change to your human instead.
