@@ -29,6 +29,8 @@ pub trait Networking<R: RoleTrait> {
 
     async fn get_num_byte_sent(&self) -> usize;
 
+    async fn get_num_byte_received(&self) -> anyhow::Result<usize>;
+
     /// Method to set a different timeout than the one set at construction, effective for the next round.
     ///
     /// __NOTE__: If the network mode is Async, this has no effect
