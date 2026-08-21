@@ -329,14 +329,21 @@ impl SendingService for GrpcSendingService {
             ..Default::default()
         };
 
-        // 4. Spawns the sender in its own task and discard the handle
-        tokio::spawn(Self::run_network_task(
-            receiver,
-            network_channel,
-            exponential_backoff,
-            other_role_kind,
-            aborted,
-        ));
+        // 4. Spawn the sender in its own task and discard the handle. Track its lifetime because
+        // every MPC session creates one of these tasks per peer, even when the protocol sends no
+        // messages; a backlog here can otherwise be invisible as Tokio scheduler pressure.
+        metrics::METRICS.start_network_sender_task();
+        tokio::spawn(async move {
+            Self::run_network_task(
+                receiver,
+                network_channel,
+                exponential_backoff,
+                other_role_kind,
+                aborted,
+            )
+            .await;
+            metrics::METRICS.finish_network_sender_task();
+        });
 
         Ok(sender)
     }

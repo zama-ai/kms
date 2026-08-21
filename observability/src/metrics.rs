@@ -57,6 +57,10 @@ pub struct CoreMetrics {
     network_rx_counter: IntCounter, // Note: Because we use counter we need to increment from last seen value.
     network_tx_counter: IntCounter, // Note: Because we use counter we need to increment from last seen value.
     network_debug_event_counters: [IntCounter; NetworkDebugEvent::COUNT],
+    user_decrypt_stage_duration_counters: [IntCounter; UserDecryptStage::COUNT],
+    user_decrypt_stage_observation_counters: [IntCounter; UserDecryptStage::COUNT],
+    network_sender_tasks_spawned_counter: IntCounter,
+    network_sender_tasks_completed_counter: IntCounter,
 
     // Histograms
     duration_histogram: HistogramVec,
@@ -67,6 +71,10 @@ pub struct CoreMetrics {
     socat_file_descriptor_gauge: IntGauge, // Number of socat file descriptors
     socat_task_gauge: IntGauge,      // Number of socat tasks
     task_gauge: IntGauge,            // Numbers active child processes of the KMS
+    tokio_alive_tasks_gauge: IntGauge,
+    tokio_global_queue_depth_gauge: IntGauge,
+    user_decrypt_background_tasks_gauge: IntGauge,
+    network_sender_tasks_gauge: IntGauge,
 
     // Internal system gauges
     // TODO rate limiter, session gauge and meta store should actually be counters but we need to add decorators to ensure it is always updated
@@ -145,6 +153,34 @@ impl NetworkDebugEvent {
         "send_skipped_after_completed",
         "receive_wait_timeout",
         "future_message_dropped",
+    ];
+}
+
+/// Fixed-cardinality stages within threshold user decryption.
+#[derive(Clone, Copy)]
+#[repr(usize)]
+pub enum UserDecryptStage {
+    Admission,
+    ScheduleDelay,
+    Deserialize,
+    SessionCreate,
+    PartialDecrypt,
+    Signcrypt,
+    ResultSign,
+    MetaStoreUpdate,
+}
+
+impl UserDecryptStage {
+    const COUNT: usize = 8;
+    const LABELS: [&'static str; Self::COUNT] = [
+        "admission",
+        "schedule_delay",
+        "deserialize",
+        "session_create",
+        "partial_decrypt",
+        "signcrypt",
+        "result_sign",
+        "meta_store_update",
     ];
 }
 
@@ -263,6 +299,56 @@ impl CoreMetrics {
             network_debug_event_counter.with_label_values(&[NetworkDebugEvent::LABELS[index]])
         });
 
+        let user_decrypt_stage_duration_counter = IntCounterVec::new(
+            opts(
+                format!("{prefix}_user_decrypt_stage_duration_microseconds_total"),
+                "Cumulative wall-clock time spent in threshold user-decryption stages",
+            ),
+            &["stage"],
+        )
+        .expect("failed to create user decrypt stage duration counter");
+        registry
+            .register(Box::new(user_decrypt_stage_duration_counter.clone()))
+            .expect("failed to register user decrypt stage duration counter");
+        let user_decrypt_stage_duration_counters = std::array::from_fn(|index| {
+            user_decrypt_stage_duration_counter
+                .with_label_values(&[UserDecryptStage::LABELS[index]])
+        });
+
+        let user_decrypt_stage_observation_counter = IntCounterVec::new(
+            opts(
+                format!("{prefix}_user_decrypt_stage_observations_total"),
+                "Number of observed threshold user-decryption stage executions",
+            ),
+            &["stage"],
+        )
+        .expect("failed to create user decrypt stage observation counter");
+        registry
+            .register(Box::new(user_decrypt_stage_observation_counter.clone()))
+            .expect("failed to register user decrypt stage observation counter");
+        let user_decrypt_stage_observation_counters = std::array::from_fn(|index| {
+            user_decrypt_stage_observation_counter
+                .with_label_values(&[UserDecryptStage::LABELS[index]])
+        });
+
+        let network_sender_tasks_spawned_counter = IntCounter::with_opts(opts(
+            format!("{prefix}_network_sender_tasks_spawned_total"),
+            "Threshold-network sender tasks spawned",
+        ))
+        .expect("failed to create network sender tasks spawned counter");
+        registry
+            .register(Box::new(network_sender_tasks_spawned_counter.clone()))
+            .expect("failed to register network sender tasks spawned counter");
+
+        let network_sender_tasks_completed_counter = IntCounter::with_opts(opts(
+            format!("{prefix}_network_sender_tasks_completed_total"),
+            "Threshold-network sender tasks completed",
+        ))
+        .expect("failed to create network sender tasks completed counter");
+        registry
+            .register(Box::new(network_sender_tasks_completed_counter.clone()))
+            .expect("failed to register network sender tasks completed counter");
+
         // Histograms
         let duration_histogram = HistogramVec::new(
             hist_opts(
@@ -326,6 +412,42 @@ impl CoreMetrics {
         registry
             .register(Box::new(task_gauge.clone()))
             .expect("failed to register task gauge");
+
+        let tokio_alive_tasks_gauge = IntGauge::with_opts(opts(
+            format!("{prefix}_tokio_alive_tasks"),
+            "Number of currently alive Tokio tasks",
+        ))
+        .expect("failed to create Tokio alive tasks gauge");
+        registry
+            .register(Box::new(tokio_alive_tasks_gauge.clone()))
+            .expect("failed to register Tokio alive tasks gauge");
+
+        let tokio_global_queue_depth_gauge = IntGauge::with_opts(opts(
+            format!("{prefix}_tokio_global_queue_depth"),
+            "Number of Tokio tasks currently queued in the runtime global queue",
+        ))
+        .expect("failed to create Tokio global queue depth gauge");
+        registry
+            .register(Box::new(tokio_global_queue_depth_gauge.clone()))
+            .expect("failed to register Tokio global queue depth gauge");
+
+        let user_decrypt_background_tasks_gauge = IntGauge::with_opts(opts(
+            format!("{prefix}_user_decrypt_background_tasks"),
+            "Number of active threshold user-decryption background tasks",
+        ))
+        .expect("failed to create user decrypt background tasks gauge");
+        registry
+            .register(Box::new(user_decrypt_background_tasks_gauge.clone()))
+            .expect("failed to register user decrypt background tasks gauge");
+
+        let network_sender_tasks_gauge = IntGauge::with_opts(opts(
+            format!("{prefix}_network_sender_tasks"),
+            "Number of active threshold-network sender tasks",
+        ))
+        .expect("failed to create network sender tasks gauge");
+        registry
+            .register(Box::new(network_sender_tasks_gauge.clone()))
+            .expect("failed to register network sender tasks gauge");
 
         let rate_limiter_gauge = IntGauge::with_opts(opts(
             format!("{prefix}_rate_limiter_usage"),
@@ -479,6 +601,10 @@ impl CoreMetrics {
             network_rx_counter,
             network_tx_counter,
             network_debug_event_counters,
+            user_decrypt_stage_duration_counters,
+            user_decrypt_stage_observation_counters,
+            network_sender_tasks_spawned_counter,
+            network_sender_tasks_completed_counter,
             duration_histogram,
             size_histogram,
             cpu_load_gauge,
@@ -487,6 +613,10 @@ impl CoreMetrics {
             socat_file_descriptor_gauge,
             socat_task_gauge,
             task_gauge,
+            tokio_alive_tasks_gauge,
+            tokio_global_queue_depth_gauge,
+            user_decrypt_background_tasks_gauge,
+            network_sender_tasks_gauge,
             rate_limiter_gauge,
             fhe_key_cache_size_gauge,
             active_session_gauge,
@@ -560,6 +690,35 @@ impl CoreMetrics {
     /// Increment a fixed-cardinality diagnostic event in the threshold MPC transport.
     pub fn increment_network_debug_event(&self, event: NetworkDebugEvent) {
         self.network_debug_event_counters[event as usize].inc();
+    }
+
+    /// Add one wall-clock observation for a threshold user-decryption stage.
+    pub fn observe_user_decrypt_stage(&self, stage: UserDecryptStage, duration: Duration) {
+        let duration_micros = u64::try_from(duration.as_micros()).unwrap_or(u64::MAX);
+        self.user_decrypt_stage_duration_counters[stage as usize].inc_by(duration_micros);
+        self.user_decrypt_stage_observation_counters[stage as usize].inc();
+    }
+
+    /// Record that a threshold-network sender task has been spawned.
+    pub fn start_network_sender_task(&self) {
+        self.network_sender_tasks_spawned_counter.inc();
+        self.network_sender_tasks_gauge.inc();
+    }
+
+    /// Record that a threshold-network sender task has completed.
+    pub fn finish_network_sender_task(&self) {
+        self.network_sender_tasks_completed_counter.inc();
+        self.network_sender_tasks_gauge.dec();
+    }
+
+    /// Increment the number of active threshold user-decryption background tasks.
+    pub fn start_user_decrypt_background_task(&self) {
+        self.user_decrypt_background_tasks_gauge.inc();
+    }
+
+    /// Decrement the number of active threshold user-decryption background tasks.
+    pub fn finish_user_decrypt_background_task(&self) {
+        self.user_decrypt_background_tasks_gauge.dec();
     }
 
     // Histogram methods
@@ -639,6 +798,18 @@ impl CoreMetrics {
             return;
         }
         self.task_gauge.set(count as i64);
+    }
+
+    /// Record the number of currently alive tasks in the Tokio runtime.
+    pub fn record_tokio_alive_tasks(&self, count: usize) {
+        self.tokio_alive_tasks_gauge
+            .set(i64::try_from(count).unwrap_or(i64::MAX));
+    }
+
+    /// Record the current depth of the Tokio runtime's global task queue.
+    pub fn record_tokio_global_queue_depth(&self, count: usize) {
+        self.tokio_global_queue_depth_gauge
+            .set(i64::try_from(count).unwrap_or(i64::MAX));
     }
 
     /// Record the current number of open file descriptors into the gauge
@@ -1005,6 +1176,9 @@ mod tests {
             "kms_network_debug_events_total",
             "kms_network_measurement_sessions",
             "kms_network_rx_bytes_total",
+            "kms_network_sender_tasks",
+            "kms_network_sender_tasks_completed_total",
+            "kms_network_sender_tasks_spawned_total",
             "kms_network_tx_bytes_total",
             "kms_operation_duration_ms",
             "kms_operation_errors_total",
@@ -1016,8 +1190,13 @@ mod tests {
             "kms_socat_file_descriptors",
             "kms_socat_tasks",
             "kms_tasks",
+            "kms_tokio_alive_tasks",
+            "kms_tokio_global_queue_depth",
             "kms_total_cpus",
             "kms_total_memory",
+            "kms_user_decrypt_background_tasks",
+            "kms_user_decrypt_stage_duration_microseconds_total",
+            "kms_user_decrypt_stage_observations_total",
             "kms_version",
         ];
         // process_* metrics come from the prometheus crate's `process` feature (linux only),
@@ -1048,6 +1227,68 @@ mod tests {
 
         METRICS.record_fhe_key_cache_size(0);
         assert_eq!(METRICS.fhe_key_cache_size_gauge.get(), 0);
+    }
+
+    #[test]
+    fn diagnostic_task_metrics_track_runtime_and_task_lifetimes() {
+        METRICS.record_tokio_alive_tasks(123);
+        METRICS.record_tokio_global_queue_depth(17);
+        assert_eq!(METRICS.tokio_alive_tasks_gauge.get(), 123);
+        assert_eq!(METRICS.tokio_global_queue_depth_gauge.get(), 17);
+
+        let sender_spawned_before = METRICS.network_sender_tasks_spawned_counter.get();
+        let sender_completed_before = METRICS.network_sender_tasks_completed_counter.get();
+        let sender_active_before = METRICS.network_sender_tasks_gauge.get();
+        METRICS.start_network_sender_task();
+        assert_eq!(
+            METRICS.network_sender_tasks_gauge.get(),
+            sender_active_before + 1
+        );
+        METRICS.finish_network_sender_task();
+        assert_eq!(
+            METRICS.network_sender_tasks_gauge.get(),
+            sender_active_before
+        );
+        assert_eq!(
+            METRICS.network_sender_tasks_spawned_counter.get(),
+            sender_spawned_before + 1
+        );
+        assert_eq!(
+            METRICS.network_sender_tasks_completed_counter.get(),
+            sender_completed_before + 1
+        );
+
+        let user_decrypt_before = METRICS.user_decrypt_background_tasks_gauge.get();
+        METRICS.start_user_decrypt_background_task();
+        assert_eq!(
+            METRICS.user_decrypt_background_tasks_gauge.get(),
+            user_decrypt_before + 1
+        );
+        METRICS.finish_user_decrypt_background_task();
+        assert_eq!(
+            METRICS.user_decrypt_background_tasks_gauge.get(),
+            user_decrypt_before
+        );
+
+        let stage_duration_before = METRICS.user_decrypt_stage_duration_counters
+            [UserDecryptStage::SessionCreate as usize]
+            .get();
+        let stage_observations_before = METRICS.user_decrypt_stage_observation_counters
+            [UserDecryptStage::SessionCreate as usize]
+            .get();
+        METRICS
+            .observe_user_decrypt_stage(UserDecryptStage::SessionCreate, Duration::from_micros(42));
+        assert_eq!(
+            METRICS.user_decrypt_stage_duration_counters[UserDecryptStage::SessionCreate as usize]
+                .get(),
+            stage_duration_before + 42
+        );
+        assert_eq!(
+            METRICS.user_decrypt_stage_observation_counters
+                [UserDecryptStage::SessionCreate as usize]
+                .get(),
+            stage_observations_before + 1
+        );
     }
 
     #[test]

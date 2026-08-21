@@ -3,6 +3,7 @@ use std::{
     collections::HashMap,
     ops::DerefMut,
     sync::{Arc, Mutex},
+    time::Instant,
 };
 
 // === External Crates ===
@@ -25,7 +26,7 @@ use kms_grpc::{
     },
 };
 use observability::{
-    metrics,
+    metrics::{self, UserDecryptStage},
     metrics_names::{
         OP_USER_DECRYPT_INNER, OP_USER_DECRYPT_REQUEST, OP_USER_DECRYPT_RESULT, TAG_PARTY_ID,
         TAG_TFHE_TYPE, TAG_USER_DECRYPTION_KIND,
@@ -229,11 +230,17 @@ impl<
                 CiphertextFormat::SmallCompressed => keys.decompression_key(),
                 _ => None,
             };
+            let deserialize_started = Instant::now();
             let low_level_ct =
                 deserialize_to_low_level(fhe_type, ct_format, &ct, decomp_key.as_deref())?;
+            metrics::METRICS.observe_user_decrypt_stage(
+                UserDecryptStage::Deserialize,
+                deserialize_started.elapsed(),
+            );
 
             let pdec: Result<(Vec<u8>, u32, std::time::Duration), anyhow::Error> = match dec_mode {
                 DecryptionMode::NoiseFloodSmall => {
+                    let session_started = Instant::now();
                     let session = session_maker
                         .make_small_async_session_z128(session_id, context_id, epoch_id)
                         .await
@@ -242,6 +249,10 @@ impl<
                                 "Could not prepare ddec data for noiseflood decryption: {e}",
                             )
                         })?;
+                    metrics::METRICS.observe_user_decrypt_stage(
+                        UserDecryptStage::SessionCreate,
+                        session_started.elapsed(),
+                    );
                     let mut noiseflood_session = Dec::Prep::new(session);
 
                     // Only `Small` ciphertexts need switch&squash; the closure (and hence the
@@ -252,8 +263,13 @@ impl<
                         Ok((server_key, ck))
                     })?;
 
+                    let partial_decrypt_started = Instant::now();
                     let pdec =
                         Dec::partial_decrypt(&mut noiseflood_session, ct, &keys.private_keys).await;
+                    metrics::METRICS.observe_user_decrypt_stage(
+                        UserDecryptStage::PartialDecrypt,
+                        partial_decrypt_started.elapsed(),
+                    );
 
                     let res = match pdec {
                         Ok((partial_dec_map, packing_factor, time)) => {
@@ -279,6 +295,7 @@ impl<
                     Ok(res)
                 }
                 DecryptionMode::BitDecSmall => {
+                    let session_started = Instant::now();
                     let mut session = session_maker
                         .make_small_async_session_z64(session_id, context_id, epoch_id)
                         .await
@@ -287,7 +304,12 @@ impl<
                                 "Could not prepare ddec data for bitdec decryption: {e}",
                             )
                         })?;
+                    metrics::METRICS.observe_user_decrypt_stage(
+                        UserDecryptStage::SessionCreate,
+                        session_started.elapsed(),
+                    );
 
+                    let partial_decrypt_started = Instant::now();
                     let pdec = secure_partial_decrypt_using_bitdec(
                         &mut session,
                         &low_level_ct.try_get_small_ct()?,
@@ -295,6 +317,10 @@ impl<
                         &keys.key_switching_key()?,
                     )
                     .await;
+                    metrics::METRICS.observe_user_decrypt_stage(
+                        UserDecryptStage::PartialDecrypt,
+                        partial_decrypt_started.elapsed(),
+                    );
 
                     let res = match pdec {
                         Ok((partial_dec_map, time)) => {
@@ -328,6 +354,7 @@ impl<
 
             let (partial_signcryption, packing_factor) = match pdec {
                 Ok((pdec_serialized, packing_factor, time)) => {
+                    let signcrypt_started = Instant::now();
                     let enc_res = {
                         let mut rng = rng.lock().map_err(|_| {
                             CryptographyError::Other("Poisoned mutex guard".to_string())
@@ -340,6 +367,10 @@ impl<
                             &link,
                         )
                     }?;
+                    metrics::METRICS.observe_user_decrypt_stage(
+                        UserDecryptStage::Signcrypt,
+                        signcrypt_started.elapsed(),
+                    );
 
                     tracing::debug!(
                         "User decryption {req_id} in session {session_id} completed for type {:?}. Partial decrypt took {:?} ms",
@@ -382,6 +413,7 @@ impl<
         };
 
         let domain = domain.clone();
+        let result_sign_started = Instant::now();
         let signed = spawn_compute_bound(move || {
             sign_user_decryption_result(
                 &signcryption_key.signing_key,
@@ -394,6 +426,10 @@ impl<
         })
         .await
         .map_err(|e| anyhow!("Failed to run signing task for user decryption {req_id}: {e}"))?;
+        metrics::METRICS.observe_user_decrypt_stage(
+            UserDecryptStage::ResultSign,
+            result_sign_started.elapsed(),
+        );
         signed.map_err(|e| anyhow!("Failed to sign user decryption {req_id}: {e}"))
     }
 
@@ -448,6 +484,7 @@ impl<
         &self,
         request: Request<UserDecryptionRequest>,
     ) -> Result<Response<Empty>, MetricedError> {
+        let admission_started = Instant::now();
         metrics::METRICS.increment_request_counter(OP_USER_DECRYPT_REQUEST);
 
         // Check for resource exhaustion once all the other checks are ok
@@ -543,7 +580,14 @@ impl<
         // store's reaper fails the entry rather than leaving it Pending forever.
         let meta_permit =
             add_or_redo_failed_in_meta_store(&meta_store, &req_id, OP_USER_DECRYPT_REQUEST).await?;
+        metrics::METRICS
+            .observe_user_decrypt_stage(UserDecryptStage::Admission, admission_started.elapsed());
+        let scheduled_at = Instant::now();
         let inner_dec_future = move |_permit| async move {
+            metrics::METRICS.observe_user_decrypt_stage(
+                UserDecryptStage::ScheduleDelay,
+                scheduled_at.elapsed(),
+            );
             // Capture the timer, it is stopped when it's dropped
             let _timer = timer;
             let meta_permit = meta_permit;
@@ -563,17 +607,24 @@ impl<
                 &domain,
                 extra_data,
                 signing_schemes,
-                metric_tags,
+                metric_tags.clone(),
             )
             .await;
+            let meta_store_update_started = Instant::now();
             update_req_in_meta_store(&meta_store, meta_permit, result, OP_USER_DECRYPT_REQUEST)
                 .await;
+            metrics::METRICS.observe_user_decrypt_stage(
+                UserDecryptStage::MetaStoreUpdate,
+                meta_store_update_started.elapsed(),
+            );
         };
+        metrics::METRICS.start_user_decrypt_background_task();
         self.tracker.spawn(async move {
             // Ignore the result since this is a background thread.
             let _ = inner_dec_future(permit)
                 .instrument(tracing::Span::current())
                 .await;
+            metrics::METRICS.finish_user_decrypt_background_task();
         });
         Ok(Response::new(Empty {}))
     }
