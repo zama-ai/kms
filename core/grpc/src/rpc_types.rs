@@ -1,5 +1,4 @@
 pub use crate::identifiers::{ID_LENGTH, KeyId, RequestId};
-use crate::kms::v1::UserDecryptionResponsePayload;
 use crate::kms::v1::{
     Eip712DomainMsg, TypedCiphertext, TypedPlaintext, TypedSigncryptedCiphertext,
 };
@@ -482,6 +481,9 @@ pub fn fhe_types_to_num_blocks(
     packing_factor: u32,
 ) -> anyhow::Result<usize> {
     let num_bits = fhe_type_to_num_bits(fhe_type)?;
+    if packing_factor == 0 {
+        anyhow::bail!("Packing factor must be greater than 0");
+    }
     let msg_modulus = (params.message_modulus.0.ilog2() * packing_factor) as usize;
     Ok(num_bits.div_ceil(msg_modulus))
 }
@@ -1121,10 +1123,6 @@ impl From<bool> for TypedPlaintext {
     }
 }
 
-pub trait FheTypeResponse {
-    fn fhe_types(&self) -> anyhow::Result<Vec<FheTypes>>;
-}
-
 impl TypedSigncryptedCiphertext {
     pub fn fhe_type(&self) -> anyhow::Result<FheTypes> {
         self.fhe_type
@@ -1154,15 +1152,6 @@ impl TypedCiphertext {
         } else {
             UNSUPPORTED_FHE_TYPE_STR.to_string()
         }
-    }
-}
-
-impl FheTypeResponse for UserDecryptionResponsePayload {
-    fn fhe_types(&self) -> anyhow::Result<Vec<FheTypes>> {
-        self.signcrypted_ciphertexts
-            .iter()
-            .map(|x| x.fhe_type())
-            .collect::<Result<Vec<_>, _>>()
     }
 }
 

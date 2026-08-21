@@ -9,8 +9,8 @@ use crate::cryptography::{
 };
 use crate::engine::validation::{
     DSEP_USER_DECRYPTION, ERR_VALIDATE_USER_DECRYPTION_MISMATCH_EXTRA_DATA,
-    UserDecTrustedValidationContext, check_ext_user_decryption_signature,
-    validate_user_decrypt_responses_against_request,
+    RejectedUserDecResponse, UserDecRejectReason, UserDecTrustedValidationContext,
+    UserDecryptionInvariants, check_ext_user_decryption_signature, validate_user_decrypt_responses,
 };
 use crate::{anyhow_error_and_log, some_or_err};
 use algebra::error_correction::ReconstructionHints;
@@ -24,9 +24,7 @@ use algebra::{
 use alloy_sol_types::Eip712Domain;
 use alloy_sol_types::SolStruct;
 use itertools::Itertools;
-use kms_grpc::kms::v1::{
-    TypedPlaintext, UserDecryptionRequest, UserDecryptionResponse, UserDecryptionResponsePayload,
-};
+use kms_grpc::kms::v1::{TypedPlaintext, UserDecryptionRequest, UserDecryptionResponse};
 use kms_grpc::rpc_types::fhe_types_to_num_blocks;
 use kms_grpc::solidity_types::UserDecryptionLinker;
 use std::num::Wrapping;
@@ -41,6 +39,88 @@ use threshold_types::role::Role;
 use wasm_bindgen::prelude::wasm_bindgen;
 use wasm_bindgen::{JsError, JsValue};
 use zeroize::{Zeroize, Zeroizing};
+
+/// A fully-verified user-decryption response: it passed metadata + signature validation **and**
+/// every one of its signcryptions was un-signcrypted and its inner share decoded. Its decoded
+/// shares are ready to be placed into the Shamir sharings, so nothing downstream can fail on this
+/// response's content.
+struct AcceptedUserDecResponse<Z: BaseRing + Zeroize> {
+    role: Role,
+    /// Decoded shares, one guarded inner `Vec` (blocks) per signcrypted-ciphertext slot, aligned
+    /// 1:1 with [`UserDecryptionInvariants::slots`].
+    shares_per_slot: Vec<Zeroizing<Vec<ResiduePolyF4<Z>>>>,
+}
+
+/// The result of partitioning user-decryption responses into fully-verified `accepted` and typed
+/// `rejected`, mirroring `PartitionedPublicResponses` on the public-decryption side. A response is
+/// `accepted` only once it has been authenticated (secret-free validation) **and** un-signcrypted +
+/// decoded, so the fault count is simply `num_parties - accepted.len()`.
+struct PartitionedUserDecResponses<Z: BaseRing + Zeroize> {
+    invariants: UserDecryptionInvariants,
+    accepted: Vec<AcceptedUserDecResponse<Z>>,
+    rejected: Vec<RejectedUserDecResponse>,
+    /// Total number of known parties (from the trusted context), used to compute the fault count for reconstruction.
+    num_parties: usize,
+}
+
+impl<Z: BaseRing + Zeroize> PartitionedUserDecResponses<Z>
+where
+    ResiduePolyF4<Z>: ErrorCorrect,
+{
+    /// Reconstruct every slot's decrypted blocks from the fully-verified accepted responses.
+    ///
+    /// `num_bots = num_parties - accepted.len()` is the single source of truth for the fault count
+    /// (missing, rejected, and unrecoverable responses all collapse into it), so it is the same for
+    /// every slot and `reconstruct_w_errors_sync` can never underflow.
+    ///
+    /// Returns `Ok(None)` if there are no shares at all (empty slot set)
+    #[expect(clippy::type_complexity)]
+    fn reconstruct_all_slots(
+        &self,
+        pbs_params: &ClassicPBSParameters,
+        intra_share_packing: usize,
+    ) -> anyhow::Result<Option<Vec<(FheTypes, u32, Zeroizing<Vec<ResiduePolyF4<Z>>>)>>> {
+        let n = self.num_parties;
+        let degree = self.invariants.degree;
+
+        let num_bots = if let Some(num_bots) = n.checked_sub(self.accepted.len()) {
+            num_bots
+        } else {
+            anyhow::bail!(
+                "More accepted responses than parties: n ({n}) < accepted.len() ({})",
+                self.accepted.len()
+            );
+        };
+
+        let mut out = Vec::with_capacity(self.invariants.slots.len());
+        for (slot_idx, slot) in self.invariants.slots.iter().enumerate() {
+            let num_shares =
+                fhe_types_to_num_blocks(slot.fhe_type, pbs_params, slot.packing_factor)?
+                    .div_ceil(intra_share_packing);
+            let mut sharings = Zeroizing::new(
+                (0..num_shares)
+                    .map(|_| ShamirSharings::with_capacity(self.accepted.len()))
+                    .collect::<Vec<_>>(),
+            );
+            for acc in &self.accepted {
+                // Slot-aligned by construction: a response is accepted only if ALL its slots
+                // decoded, so `shares_per_slot[slot_idx]` exists. Stay defensive against adversarial
+                // input by never indexing directly.
+                let blocks = acc
+                    .shares_per_slot
+                    .get(slot_idx)
+                    .map(|blocks| blocks.to_vec())
+                    .unwrap_or_default();
+                fill_indexed_shares(&mut sharings, blocks, acc.role);
+            }
+            match Client::reconstruct_blocks(n, degree, num_bots, &sharings)? {
+                Some(blocks) => out.push((slot.fhe_type, slot.packing_factor, blocks)),
+                None => anyhow::bail!("No shares to reconstruct for slot {slot_idx}"),
+            }
+        }
+        Ok(Some(out))
+    }
+}
 
 impl Client {
     /// Processes the aggregated user decryption responses to attempt to decrypt
@@ -263,86 +343,40 @@ impl Client {
         threshold: Option<usize>,
         agg_resp: &[UserDecryptionResponse],
     ) -> anyhow::Result<Vec<TypedPlaintext>> {
-        let ctx = UserDecTrustedValidationContext {
-            server_addresses: &self.get_server_addrs(),
+        // If there is an error in construction the trusted context,
+        // there's not much we can do.
+        let server_addresses = self.get_server_addrs();
+        let ctx = UserDecTrustedValidationContext::new(
+            &server_addresses,
             client_request,
             eip712_domain,
             threshold,
-        };
-        let validated_resps = some_or_err(
-            validate_user_decrypt_responses_against_request(&ctx, agg_resp)?,
-            "Could not validate request".to_owned(),
-        )?
-        .into_inner();
-        let degree = some_or_err(
-            validated_resps.first(),
-            "No valid responses parsed".to_string(),
-        )?
-        .degree as usize;
-
-        let amount_shares = validated_resps.len();
-        // TODO: in general this is not true, degree isn't a perfect proxy for num_parties
-        let num_parties = 3 * degree + 1;
-        if amount_shares > num_parties {
-            return Err(anyhow_error_and_log(format!(
-                "Received more shares than expected for number of parties. n={num_parties}, #shares={amount_shares}"
-            )));
-        }
-
+        )?;
         let pbs_params = self.params.classic_pbs();
 
         tracing::debug!(
-            "User decryption response reconstruction with mode: {:?}. deg={degree}, #shares={amount_shares}",
-            self.decryption_mode
+            "User decryption response reconstruction with mode: {:?}",
+            self.decryption_mode,
         );
 
+        // Single classify-and-recover pass per response: `partition_user_decrypt_responses`
+        // authenticates (secret-free) *and* un-signcrypts + decodes, so a response is either fully
+        // `accepted` or `rejected` — there is no partially-verified in-between state. All consensus
+        // values used below (degree, link, per-slot fhe_type / packing factor / slot count) come
+        // from `partitioned.invariants`, never from an individual contribution.
         let res = match self.decryption_mode {
             DecryptionMode::BitDecSmall => {
                 // Note: We will create way too many shares here, if we use BitDec kind of decryption we can actually fit 4*64 bits of actual data in a single share.
-                let all_sharings =
-                    self.recover_sharings::<Z64>(&validated_resps, enc_key, dec_key)?;
+                //For now we don't use intra share packing for BitDecSmall
+                let partitioned =
+                    self.partition_user_decrypt_responses::<Z64>(&ctx, agg_resp, enc_key, dec_key)?;
+                let per_slot = match partitioned.reconstruct_all_slots(&pbs_params, 1)? {
+                    Some(per_slot) => per_slot,
+                    None => return Ok(Vec::new()),
+                };
 
                 let mut out = vec![];
-                for (fhe_type, packing_factor, sharings, recovery_errors) in all_sharings {
-                    // we can tolerate at most t=degree errors in the recovered shares
-                    if recovery_errors > degree {
-                        return Err(anyhow_error_and_log(format!(
-                            "Too many errors in share recovery / signcryption: {recovery_errors} (threshold {degree})"
-                        )));
-                    }
-
-                    let mut decrypted_blocks = Zeroizing::new(Vec::with_capacity(sharings.len()));
-                    let pivot = if let Some(pivot) = sharings.first() {
-                        pivot
-                    } else {
-                        return Ok(Vec::new());
-                    };
-                    let hints = ReconstructionHints::new(pivot, degree)?;
-                    for cur_block_shares in sharings.iter() {
-                        // NOTE: this performs optimistic reconstruction
-                        match reconstruct_w_errors_sync(
-                            num_parties,
-                            degree,
-                            degree,
-                            num_parties - amount_shares,
-                            cur_block_shares,
-                            &hints,
-                        ) {
-                            Ok(Some(r)) => decrypted_blocks.push(r),
-                            Ok(None) => {
-                                return Err(anyhow_error_and_log(format!(
-                                    "Not enough shares to reconstruct. n={num_parties}, deg={degree}, #shares={amount_shares}, block_shares={}, recovery_errors={recovery_errors}",
-                                    cur_block_shares.shares.len()
-                                )));
-                            }
-                            Err(e) => {
-                                return Err(anyhow_error_and_log(format!(
-                                    "Error reconstructing all blocks: {e}. n={num_parties}, deg={degree}, #shares={amount_shares}, block_shares={}, recovery_errors={recovery_errors}",
-                                    cur_block_shares.shares.len()
-                                )));
-                            }
-                        }
-                    }
+                for (fhe_type, packing_factor, decrypted_blocks) in per_slot {
                     // extract plaintexts from decrypted blocks
                     let mut ptxts64 = Zeroizing::new(Vec::new());
                     for block in decrypted_blocks.iter() {
@@ -365,51 +399,17 @@ impl Client {
                 out
             }
             DecryptionMode::NoiseFloodSmall => {
-                let all_sharings =
-                    self.recover_sharings::<Z128>(&validated_resps, enc_key, dec_key)?;
+                let intra_share_packing = ResiduePolyF4::<Z128>::EXTENSION_DEGREE;
+                let partitioned = self
+                    .partition_user_decrypt_responses::<Z128>(&ctx, agg_resp, enc_key, dec_key)?;
+                let per_slot =
+                    match partitioned.reconstruct_all_slots(&pbs_params, intra_share_packing)? {
+                        Some(per_slot) => per_slot,
+                        None => return Ok(Vec::new()),
+                    };
 
                 let mut out = vec![];
-                for (fhe_type, packing_factor, sharings, recovery_errors) in all_sharings {
-                    // we can tolerate at most t=degree errors in the recovered shares
-                    if recovery_errors > degree {
-                        return Err(anyhow_error_and_log(format!(
-                            "Too many errors in share recovery / signcryption: {recovery_errors} (threshold {degree})"
-                        )));
-                    }
-                    let pivot = if let Some(pivot) = sharings.first() {
-                        pivot
-                    } else {
-                        return Ok(Vec::new());
-                    };
-                    let hints = ReconstructionHints::new(pivot, degree)?;
-
-                    let mut decrypted_blocks = Zeroizing::new(Vec::with_capacity(sharings.len()));
-                    for cur_block_shares in sharings.iter() {
-                        // NOTE: this performs optimistic reconstruction
-                        match reconstruct_w_errors_sync(
-                            num_parties,
-                            degree,
-                            degree,
-                            num_parties - amount_shares,
-                            cur_block_shares,
-                            &hints,
-                        ) {
-                            Ok(Some(r)) => decrypted_blocks.push(r),
-                            Ok(None) => {
-                                return Err(anyhow_error_and_log(format!(
-                                    "Not enough shares to reconstruct. n={num_parties}, deg={degree}, #shares={amount_shares}, block_shares={}, recovery_errors={recovery_errors}",
-                                    cur_block_shares.shares.len()
-                                )));
-                            }
-                            Err(e) => {
-                                return Err(anyhow_error_and_log(format!(
-                                    "Error reconstructing all blocks: {e}. n={num_parties}, deg={degree}, #shares={amount_shares}, block_shares={}, recovery_errors={recovery_errors}",
-                                    cur_block_shares.shares.len()
-                                )));
-                            }
-                        }
-                    }
-
+                for (fhe_type, packing_factor, decrypted_blocks) in per_slot {
                     out.push((
                         fhe_type,
                         packing_factor,
@@ -649,100 +649,175 @@ impl Client {
         Ok(out)
     }
 
-    /// Decrypts the user decryption responses and decodes the responses onto the Shamir shares
-    /// that the servers should have encrypted.
+    /// Partition untrusted user-decryption responses into fully-verified `accepted` and typed
+    /// `rejected`, mirroring `partition_public_decrypt_responses` on the public-decryption side.
     ///
-    /// Keeps recovered plaintext shares in [`Zeroizing`] guards until reconstruction.
-    #[expect(clippy::type_complexity)]
-    fn recover_sharings<Z: BaseRing + Zeroize>(
+    /// Authenticity and consensus are established by the **secret-free**
+    /// [`validate_user_decrypt_responses`] (which needs no client key and can be
+    /// called independently by e.g. a relayer); this method then un-signcrypts and decodes every
+    /// authenticated response with the client's key. A response is `accepted` only if every one of
+    /// its signcryptions un-signcrypts *and* its inner bytes decode into a share vector. Any
+    /// failure — an authenticity mismatch, a bad signcryption, **or** a malformed inner share —
+    /// moves the whole response to `rejected` as one tolerated fault; it never aborts on a single
+    /// (untrusted) response and never half-accepts one.
+    ///
+    /// Because acceptance subsumes recovery, `num_bots = n - accepted.len()` is a single fault count
+    /// for the whole partition (see [`PartitionedUserDecResponses::reconstruct_all_slots`]).
+    fn partition_user_decrypt_responses<Z: BaseRing + Zeroize>(
         &self,
-        agg_resp: &[UserDecryptionResponsePayload],
+        trusted_ctx: &UserDecTrustedValidationContext,
+        agg_resp: &[UserDecryptionResponse],
         enc_key: &UnifiedPublicEncKey,
         dec_key: &UnifiedPrivateEncKey,
-    ) -> anyhow::Result<
-        Vec<(
-            FheTypes,
-            u32,
-            Zeroizing<Vec<ShamirSharings<ResiduePolyF4<Z>>>>,
-            usize,
-        )>,
-    > {
-        let batch_count = agg_resp
-            .first()
-            .ok_or_else(|| anyhow::anyhow!("response payloads is empty"))?
-            .signcrypted_ciphertexts
-            .len();
+    ) -> anyhow::Result<PartitionedUserDecResponses<Z>> {
+        // Secret-free authenticity + consensus validation: establishes the invariants (once, from
+        // the pivot) and returns the authenticated responses, each already carrying its parsed
+        // verification key. No client key is used here.
+        // The validator already reports the authenticity failures it dropped, so we start the
+        // rejected bucket from those and only append recovery failures below
+        let (invariants, authenticated, mut rejected) =
+            match validate_user_decrypt_responses(trusted_ctx, agg_resp) {
+                Ok(v) => v.into_parts(),
+                Err(e) => {
+                    anyhow::bail!("User decryption responses unrecoverably invalid: {e}.",)
+                }
+            };
+        let num_parties = trusted_ctx.num_parties();
 
-        let intra_share_packing = match self.decryption_mode {
-            DecryptionMode::BitDecSmall => 1, //TODO: For now we don't use intra share packing for BitDecSmall
-            DecryptionMode::NoiseFloodSmall => ResiduePolyF4::<Z>::EXTENSION_DEGREE,
-            _ => {
-                return Err(anyhow_error_and_log(format!(
-                    "Unsupported decryption mode: {}",
-                    self.decryption_mode
-                )));
-            }
-        };
-        let mut out = vec![];
-        for batch_i in 0..batch_count {
-            // It is ok to use the first packing factor because this is checked by [self.validate_user_decrypt_responses_against_request]
-            let packing_factor = agg_resp[0].signcrypted_ciphertexts[batch_i].packing_factor;
-            // taking agg_resp[0] is safe since batch_count before exists
-            let fhe_type = agg_resp[0].signcrypted_ciphertexts[batch_i].fhe_type()?;
-            let num_shares =
-                fhe_types_to_num_blocks(fhe_type, &self.params.classic_pbs(), packing_factor)?
-                    .div_ceil(intra_share_packing);
-            let mut sharings = Vec::with_capacity(num_shares);
-            for _i in 0..num_shares {
-                // Reserve to prevent `add_share` from reallocating unwiped shares.
-                sharings.push(ShamirSharings::with_capacity(agg_resp.len()));
-            }
-            // the number of recovery errors in this block (e.g. due to failed signcryption)
-            let mut recovery_errors = 0;
-            for cur_resp in agg_resp {
-                // Observe that it has already been verified in [validate_meta_data] that server
-                // verification key is in the set of permissible keys
-                //
-                // Also it's ok to use [cur_resp.digest] as the link since we already checked
-                // that it matches with the original request
-                let cur_verf_key: PublicSigKey =
-                    bc2wrap::deserialize_slice(&cur_resp.verification_key)?; // TODO(#2781)
-                let client_id = self.client_address.to_vec();
-                let unsign_key =
-                    UnifiedUnsigncryptionKey::new(dec_key, enc_key, &cur_verf_key, &client_id);
-                match unsign_key.unsigncrypt_plaintext(
-                    &DSEP_USER_DECRYPTION,
-                    &cur_resp.signcrypted_ciphertexts[batch_i].signcrypted_ciphertext,
-                    &cur_resp.digest,
-                ) {
+        let client_id = self.client_address.to_vec();
+
+        let mut accepted = Vec::with_capacity(authenticated.len());
+
+        // Recover (un-signcrypt + decode) each authenticated response, reusing the verification key
+        // that was already deserialized during authentication.
+        for authenticated_resp in &authenticated {
+            let signcrypted_ciphertexts = &authenticated_resp.signcrypted_ciphertexts;
+            let role = authenticated_resp.role;
+            let unsign_key = UnifiedUnsigncryptionKey::new(
+                dec_key,
+                enc_key,
+                &authenticated_resp.verification_key,
+                &client_id,
+            );
+            let mut shares_per_slot = Vec::with_capacity(signcrypted_ciphertexts.len());
+            let mut recovered_ok = true;
+            for ct in signcrypted_ciphertexts {
+                match unsign_key.unsigncrypt_plaintext(&DSEP_USER_DECRYPTION, ct, &invariants.link)
+                {
                     Ok(decryption_share) => {
-                        // Deserialize directly into the indexed shares to avoid another copy.
-                        let cur_blocks: Vec<ResiduePolyF4<Z>> =
-                            bc2wrap::deserialize_slice(&decryption_share.plaintext.bytes)?;
-                        fill_indexed_shares(
-                            &mut sharings,
-                            cur_blocks,
-                            Role::indexed_from_one(cur_resp.party_id as usize),
-                        );
+                        match bc2wrap::deserialize_slice::<Vec<ResiduePolyF4<Z>>>(
+                            &decryption_share.plaintext.bytes,
+                        ) {
+                            Ok(cipher_blocks_share) => {
+                                shares_per_slot.push(Zeroizing::new(cipher_blocks_share));
+                            }
+                            Err(e) => {
+                                tracing::warn!("Malformed inner share from party {role}: {e}");
+                                recovered_ok = false;
+                                break;
+                            }
+                        }
                     }
                     Err(e) => {
                         tracing::warn!(
-                            "Could not decrypt or validate signcrypted response from party {}: {}",
-                            cur_resp.party_id,
-                            e
+                            "Could not decrypt or validate signcrypted response from party {role}: {e}"
                         );
-                        recovery_errors += 1;
+                        recovered_ok = false;
+                        break;
                     }
-                };
+                }
             }
-            out.push((
-                fhe_type,
-                packing_factor,
-                Zeroizing::new(sharings),
-                recovery_errors,
-            ));
+            if recovered_ok {
+                accepted.push(AcceptedUserDecResponse {
+                    role,
+                    shares_per_slot,
+                });
+            } else {
+                rejected.push(RejectedUserDecResponse {
+                    role: Some(role),
+                    reason: UserDecRejectReason::Unrecoverable,
+                });
+            }
         }
-        Ok(out)
+
+        let partitioned = PartitionedUserDecResponses {
+            invariants,
+            accepted,
+            rejected,
+            num_parties,
+        };
+        if !partitioned.rejected.is_empty() {
+            tracing::warn!(
+                "User decryption accepted {} responses out of {} authenticated. \
+                Rejected {} out of {} total response(s): {:?}",
+                partitioned.accepted.len(),
+                authenticated.len(),
+                partitioned.rejected.len(),
+                agg_resp.len(),
+                partitioned
+                    .rejected
+                    .iter()
+                    .map(|r| (r.role, &r.reason))
+                    .collect::<Vec<_>>(),
+            );
+        }
+        Ok(partitioned)
+    }
+
+    /// Reconstruct every block of one slot from its Shamir sharings
+    /// Expects all sharings to have the same degree and the same number of parties, and that `num_bots`
+    /// is the number of missing/rejected/unrecoverable responses.
+    ///
+    /// We can correct up to threshold.saturated_sub(num_bots) errors, so
+    /// the numbers of corrupted shares + num_bots must be <= threshold,
+    /// otherwise reconstruction fails (hence the NOTE about optimism in the code).
+    /// Returns `Ok(None)` when there are no shares at all (empty slot).
+    fn reconstruct_blocks<Z: BaseRing + Zeroize>(
+        num_parties: usize,
+        degree: usize,
+        num_bots: usize,
+        sharings: &[ShamirSharings<ResiduePolyF4<Z>>],
+    ) -> anyhow::Result<Option<Zeroizing<Vec<ResiduePolyF4<Z>>>>>
+    where
+        ResiduePolyF4<Z>: ErrorCorrect,
+    {
+        if num_bots > degree {
+            return Err(anyhow_error_and_log(format!(
+                "Too many faulty user decryption responses: {num_bots} > t={degree} (n={num_parties})"
+            )));
+        }
+        let pivot = match sharings.first() {
+            Some(pivot) => pivot,
+            None => return Ok(None),
+        };
+        let hints = ReconstructionHints::new(pivot, degree)?;
+        let mut decrypted_blocks = Zeroizing::new(Vec::with_capacity(sharings.len()));
+        for cur_block_shares in sharings {
+            // NOTE: this performs optimistic reconstruction
+            match reconstruct_w_errors_sync(
+                num_parties,
+                degree,
+                degree,
+                num_bots,
+                cur_block_shares,
+                &hints,
+            ) {
+                Ok(Some(r)) => decrypted_blocks.push(r),
+                Ok(None) => {
+                    return Err(anyhow_error_and_log(format!(
+                        "Not enough shares to reconstruct. n={num_parties}, deg={degree}, num_bots={num_bots}, block_shares={}",
+                        cur_block_shares.shares.len()
+                    )));
+                }
+                Err(e) => {
+                    return Err(anyhow_error_and_log(format!(
+                        "Error reconstructing all blocks: {e}. n={num_parties}, deg={degree}, num_bots={num_bots}, block_shares={}",
+                        cur_block_shares.shares.len()
+                    )));
+                }
+            }
+        }
+        Ok(Some(decrypted_blocks))
     }
 }
 
