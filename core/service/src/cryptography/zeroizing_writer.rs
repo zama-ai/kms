@@ -21,7 +21,7 @@ impl ZeroizingWriter {
 
     /// Borrow the bytes written so far.
     pub(crate) fn as_slice(&self) -> &[u8] {
-        self.buf.as_slice()
+        &self.buf
     }
 
     /// Grow without releasing an unwiped allocation.
@@ -32,7 +32,7 @@ impl ZeroizingWriter {
         }
         let new_capacity = required.max(self.buf.capacity() * 2).max(MIN_CAPACITY);
         let mut grown = Zeroizing::new(Vec::with_capacity(new_capacity));
-        grown.extend_from_slice(self.buf.as_slice());
+        grown.extend_from_slice(&self.buf);
         // Replacing `buf` drops and wipes the old buffer.
         self.buf = grown;
     }
@@ -70,7 +70,7 @@ mod tests {
         for byte in &expected {
             writer.write_all(&[*byte]).unwrap();
         }
-        assert_eq!(writer.as_slice(), expected.as_slice());
+        assert_eq!(writer.as_slice(), &expected);
     }
 
     #[test]

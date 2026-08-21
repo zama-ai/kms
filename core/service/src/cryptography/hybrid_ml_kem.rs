@@ -198,7 +198,7 @@ mod tests {
         let msg = b"four legs good, two legs better";
         let ct = enc::<ml_kem::MlKem512, _>(&mut rng, msg, &pk2.0).unwrap();
         let pt = dec::<ml_kem::MlKem512>(ct, &sk2.0).unwrap();
-        assert_eq!(msg.as_slice(), pt.as_slice());
+        assert_eq!(&msg[..], &pt[..]);
     }
 
     proptest! {
@@ -223,7 +223,7 @@ mod tests {
             .unwrap();
 
             let pt = dec::<ml_kem::MlKem512>(ct_new, &sk).unwrap();
-            assert_eq!(msg.as_slice(), pt.as_slice());
+            assert_eq!(&msg[..], &pt[..]);
         }
 
         #[test]

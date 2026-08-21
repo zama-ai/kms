@@ -141,7 +141,7 @@ pub(crate) fn reconstruct(
             .reconstruct(t)
             .map_err(|e| BackupError::ReconstructError(e.to_string()))?;
         let buf = Zeroizing::new(opened.to_byte_vec());
-        combined.extend_from_slice(buf.as_slice());
+        combined.extend_from_slice(&buf);
         opened.zeroize();
     }
     let res = pkcs7::remove_padding(block_len, &mut combined)?;
@@ -177,7 +177,7 @@ mod tests {
                 let shares = share(&mut rng, &secret, n, t).unwrap();
                 let result = reconstruct(&shares, t).unwrap();
 
-                assert_eq!(result.as_slice(), secret.as_slice());
+                assert_eq!(&result[..], &secret[..]);
             }
         }
 
@@ -205,7 +205,7 @@ mod tests {
 
                 // finally try to reconstruct
                 let result = reconstruct(&shares, t).unwrap();
-                assert_eq!(result.as_slice(), secret.as_slice());
+                assert_eq!(&result[..], &secret[..]);
             }
         }
 
@@ -228,7 +228,7 @@ mod tests {
 
                 let result = reconstruct(&shares, t).unwrap();
 
-                assert_eq!(result.as_slice(), secret.as_slice());
+                assert_eq!(&result[..], &secret[..]);
             }
         }
 

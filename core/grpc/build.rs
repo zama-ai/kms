@@ -3,7 +3,6 @@ use tonic_prost_build::Builder;
 const DERIVES: &str = "#[derive(serde::Deserialize, serde::Serialize)]";
 const EXTENDED_DERIVES: &str = "#[derive(serde::Deserialize, serde::Serialize, Ord, PartialOrd)]";
 const ZEROIZE_DERIVES: &str = "#[derive(zeroize::Zeroize, zeroize::ZeroizeOnDrop)]";
-const ZEROIZE_SKIP: &str = "#[zeroize(skip)]";
 
 fn default_builder() -> Builder {
     tonic_prost_build::configure()
@@ -30,7 +29,6 @@ fn default_builder() -> Builder {
         .type_attribute("VerifyProvenCtResponsePayload", DERIVES)
         .type_attribute("TypedPlaintext", EXTENDED_DERIVES)
         .type_attribute("TypedPlaintext", ZEROIZE_DERIVES)
-        .field_attribute("kms.v1.TypedPlaintext.fhe_type", ZEROIZE_SKIP)
         .type_attribute("KeySetConfig", DERIVES)
         .type_attribute("KeySetType", DERIVES)
         .type_attribute("FheParameter", DERIVES)

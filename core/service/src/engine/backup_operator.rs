@@ -394,7 +394,7 @@ where
                                 )
                             })?;
                         let backup_dec_key: UnifiedPrivateEncKey = safe_deserialize(
-                            std::io::Cursor::new(serialized_dec_key.as_slice()),
+                            std::io::Cursor::new(&*serialized_dec_key),
                             SAFE_SER_SIZE_LIMIT,
                         )
                         .map_err(|e| {

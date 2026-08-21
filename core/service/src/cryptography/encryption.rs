@@ -469,7 +469,7 @@ impl Decrypt for UnifiedPrivateEncKey {
             }
         };
         // Keep plaintext guarded through deserialization.
-        let mut res_buf = std::io::Cursor::new(raw_plaintext.as_slice());
+        let mut res_buf = std::io::Cursor::new(&*raw_plaintext);
         safe_deserialize(&mut res_buf, SAFE_SER_SIZE_LIMIT)
             .map_err(CryptographyError::DeserializationError)
     }

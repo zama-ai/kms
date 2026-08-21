@@ -792,7 +792,7 @@ impl Operator {
             }
             all_sharings.push(shamir_sharing);
         }
-        let out = secretsharing::reconstruct(all_sharings.as_slice(), self.threshold)?;
+        let out = secretsharing::reconstruct(&all_sharings, self.threshold)?;
         Ok(out)
     }
 }

@@ -479,7 +479,7 @@ fn inner_signcryption(
     };
     // Wipe the temporary signed message after signing.
     let to_sign = Zeroizing::new([msg, signcrypt_key.receiver_id, &serialized_enc_key].concat());
-    let sig = internal_sign(dsep, to_sign.as_slice(), signcrypt_key.signing_key)
+    let sig = internal_sign(dsep, &to_sign, signcrypt_key.signing_key)
         .map_err(|e| CryptographyError::SigningError(e.to_string()))?;
 
     // Encrypt msg || sig || H(server_verification_key) || H(server_enc_pub_key)
@@ -499,7 +499,7 @@ fn inner_signcryption(
 
     let ciphertext = match &signcrypt_key.receiver_enc_key {
         UnifiedPublicEncKey::MlKem512(public_enc_key) => {
-            hybrid_ml_kem::enc::<ml_kem::MlKem512, _>(rng, to_encrypt.as_slice(), &public_enc_key.0)
+            hybrid_ml_kem::enc::<ml_kem::MlKem512, _>(rng, &to_encrypt, &public_enc_key.0)
         }
         UnifiedPublicEncKey::MlKem1024(_) => {
             return Err(CryptographyError::MlKem1024Unsupported);
@@ -521,11 +521,8 @@ impl<'a> Unsigncrypt for UnifiedUnsigncryptionKey<'a> {
         cipher: &UnifiedSigncryption,
     ) -> Result<T, CryptographyError> {
         let msg_vec = inner_unsigncrypt(self, dsep, cipher)?;
-        safe_deserialize(
-            std::io::Cursor::new(msg_vec.as_slice()),
-            SAFE_SER_SIZE_LIMIT,
-        )
-        .map_err(CryptographyError::SerializationError)
+        safe_deserialize(std::io::Cursor::new(&*msg_vec), SAFE_SER_SIZE_LIMIT)
+            .map_err(CryptographyError::SerializationError)
     }
 
     fn validate_signcryption(
@@ -579,7 +576,7 @@ impl<'a> UnsigncryptFHEPlaintext for UnifiedUnsigncryptionKey<'a> {
         let decrypted_signcryption = inner_unsigncrypt(self, dsep, &parsed_signcryption)?;
         // LEGACY should be using safe_deserialization from tfhe-rs
         let mut signcrypted_msg: SigncryptionPayload =
-            bc2wrap::deserialize_slice(decrypted_signcryption.as_slice())
+            bc2wrap::deserialize_slice(&decrypted_signcryption)
                 .map_err(|e| CryptographyError::BincodeError(e.to_string()))?;
         if link != signcrypted_msg.link {
             // Wipe the payload before returning on a link mismatch.
@@ -627,7 +624,7 @@ fn inner_unsigncrypt(
         }
     }?;
     let (msg, sig) = parse_msg(decrypted_plaintext, unsign_key.sender_verf_key)?;
-    check_format_and_signature(dsep, msg.as_slice(), &sig, unsign_key)?;
+    check_format_and_signature(dsep, &msg, &sig, unsign_key)?;
     Ok(msg)
 }
 
@@ -704,7 +701,7 @@ fn check_format_and_signature(
         .sender_verf_key
         .pk()
         .verify(
-            msg_signed.as_slice(),
+            &msg_signed,
             &sig.ecdsa_sig()
                 .map_err(|e| CryptographyError::VerificationError(e.to_string()))?,
         )

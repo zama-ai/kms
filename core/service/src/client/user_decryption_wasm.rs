@@ -414,7 +414,7 @@ impl Client {
                         fhe_type,
                         packing_factor,
                         Zeroizing::new(reconstruct_packed_message(
-                            Some(decrypted_blocks.as_slice()),
+                            Some(&decrypted_blocks),
                             &pbs_params,
                             fhe_types_to_num_blocks(
                                 fhe_type,
@@ -435,12 +435,7 @@ impl Client {
 
         res.into_iter()
             .map(|(fhe_type, packing_factor, blocks)| {
-                decrypted_blocks_to_plaintext(
-                    &pbs_params,
-                    fhe_type,
-                    packing_factor,
-                    blocks.as_slice(),
-                )
+                decrypted_blocks_to_plaintext(&pbs_params, fhe_type, packing_factor, &blocks)
             })
             .collect()
     }
@@ -599,7 +594,7 @@ impl Client {
 
             // Keep reconstructed plaintext blocks guarded until the plaintext is built.
             let recon_blocks = Zeroizing::new(reconstruct_packed_message(
-                Some(decrypted_blocks.as_slice()),
+                Some(decrypted_blocks),
                 &pbs_params,
                 fhe_types_to_num_blocks(*fhe_type, &self.params.classic_pbs(), *packing_factor)?,
             )?);
@@ -608,7 +603,7 @@ impl Client {
                 &pbs_params,
                 *fhe_type,
                 *packing_factor,
-                recon_blocks.as_slice(),
+                &recon_blocks,
             )?);
         }
         Ok(out)
@@ -648,7 +643,7 @@ impl Client {
                 &pbs_params,
                 *fhe_type,
                 *packing_factor,
-                ptxts128.as_slice(),
+                &ptxts128,
             )?);
         }
         Ok(out)
