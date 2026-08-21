@@ -256,7 +256,7 @@ impl<
                         Ok((server_key, ck))
                     })?;
 
-                    // TODO: make `partial_decrypt` return a zeroizing value.
+                    // TODO(github.com/zama-ai/kms-internal/issues/3159): make `partial_decrypt` return a zeroizing value.
                     let pdec =
                         Dec::partial_decrypt(&mut noiseflood_session, ct, &keys.private_keys).await;
 
