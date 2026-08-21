@@ -38,23 +38,24 @@ use threshold_execution::tfhe_internals::parameters::AugmentedCiphertextParamete
 use threshold_types::role::Role;
 use wasm_bindgen::prelude::wasm_bindgen;
 use wasm_bindgen::{JsError, JsValue};
+use zeroize::{Zeroize, Zeroizing};
 
 /// A fully-verified user-decryption response: it passed metadata + signature validation **and**
 /// every one of its signcryptions was un-signcrypted and its inner share decoded. Its decoded
 /// shares are ready to be placed into the Shamir sharings, so nothing downstream can fail on this
 /// response's content.
-struct AcceptedUserDecResponse<Z: BaseRing> {
+struct AcceptedUserDecResponse<Z: BaseRing + Zeroize> {
     role: Role,
-    /// Decoded shares, one inner `Vec` (blocks) per signcrypted-ciphertext slot, aligned 1:1 with
-    /// [`UserDecryptionInvariants::slots`].
-    shares_per_slot: Vec<Vec<ResiduePolyF4<Z>>>,
+    /// Decoded shares, one guarded inner `Vec` (blocks) per signcrypted-ciphertext slot, aligned
+    /// 1:1 with [`UserDecryptionInvariants::slots`].
+    shares_per_slot: Vec<Zeroizing<Vec<ResiduePolyF4<Z>>>>,
 }
 
 /// The result of partitioning user-decryption responses into fully-verified `accepted` and typed
 /// `rejected`, mirroring `PartitionedPublicResponses` on the public-decryption side. A response is
 /// `accepted` only once it has been authenticated (secret-free validation) **and** un-signcrypted +
 /// decoded, so the fault count is simply `num_parties - accepted.len()`.
-struct PartitionedUserDecResponses<Z: BaseRing> {
+struct PartitionedUserDecResponses<Z: BaseRing + Zeroize> {
     invariants: UserDecryptionInvariants,
     accepted: Vec<AcceptedUserDecResponse<Z>>,
     rejected: Vec<RejectedUserDecResponse>,
@@ -62,7 +63,7 @@ struct PartitionedUserDecResponses<Z: BaseRing> {
     num_parties: usize,
 }
 
-impl<Z: BaseRing> PartitionedUserDecResponses<Z>
+impl<Z: BaseRing + Zeroize> PartitionedUserDecResponses<Z>
 where
     ResiduePolyF4<Z>: ErrorCorrect,
 {
@@ -78,7 +79,7 @@ where
         &self,
         pbs_params: &ClassicPBSParameters,
         intra_share_packing: usize,
-    ) -> anyhow::Result<Option<Vec<(FheTypes, u32, Vec<ResiduePolyF4<Z>>)>>> {
+    ) -> anyhow::Result<Option<Vec<(FheTypes, u32, Zeroizing<Vec<ResiduePolyF4<Z>>>)>>> {
         let n = self.num_parties;
         let degree = self.invariants.degree;
 
@@ -96,8 +97,11 @@ where
             let num_shares =
                 fhe_types_to_num_blocks(slot.fhe_type, pbs_params, slot.packing_factor)?
                     .div_ceil(intra_share_packing);
-            let mut sharings: Vec<ShamirSharings<ResiduePolyF4<Z>>> =
-                (0..num_shares).map(|_| ShamirSharings::new()).collect();
+            let mut sharings = Zeroizing::new(
+                (0..num_shares)
+                    .map(|_| ShamirSharings::with_capacity(self.accepted.len()))
+                    .collect::<Vec<_>>(),
+            );
             for acc in &self.accepted {
                 // Slot-aligned by construction: a response is accepted only if ALL its slots
                 // decoded, so `shares_per_slot[slot_idx]` exists. Stay defensive against adversarial
@@ -105,7 +109,7 @@ where
                 let blocks = acc
                     .shares_per_slot
                     .get(slot_idx)
-                    .cloned()
+                    .map(|blocks| blocks.to_vec())
                     .unwrap_or_default();
                 fill_indexed_shares(&mut sharings, blocks, acc.role);
             }
@@ -374,8 +378,8 @@ impl Client {
                 let mut out = vec![];
                 for (fhe_type, packing_factor, decrypted_blocks) in per_slot {
                     // extract plaintexts from decrypted blocks
-                    let mut ptxts64 = Vec::new();
-                    for block in decrypted_blocks {
+                    let mut ptxts64 = Zeroizing::new(Vec::new());
+                    for block in decrypted_blocks.iter() {
                         let scalar = block.to_scalar()?;
                         ptxts64.push(scalar);
                     }
@@ -384,10 +388,12 @@ impl Client {
                     out.push((
                         fhe_type,
                         packing_factor,
-                        ptxts64
-                            .iter()
-                            .map(|ptxt| Wrapping(ptxt.0 as u128))
-                            .collect_vec(),
+                        Zeroizing::new(
+                            ptxts64
+                                .iter()
+                                .map(|ptxt| Wrapping(ptxt.0 as u128))
+                                .collect_vec(),
+                        ),
                     ));
                 }
                 out
@@ -407,15 +413,15 @@ impl Client {
                     out.push((
                         fhe_type,
                         packing_factor,
-                        reconstruct_packed_message(
-                            Some(decrypted_blocks),
+                        Zeroizing::new(reconstruct_packed_message(
+                            Some(&decrypted_blocks),
                             &pbs_params,
                             fhe_types_to_num_blocks(
                                 fhe_type,
                                 &self.params.classic_pbs(),
                                 packing_factor,
                             )?,
-                        )?,
+                        )?),
                     ));
                 }
                 out
@@ -427,16 +433,11 @@ impl Client {
             }
         };
 
-        let mut final_result = vec![];
-        for (fhe_type, packing_factor, res) in res {
-            final_result.push(decrypted_blocks_to_plaintext(
-                &pbs_params,
-                fhe_type,
-                packing_factor,
-                res,
-            )?);
-        }
-        Ok(final_result)
+        res.into_iter()
+            .map(|(fhe_type, packing_factor, blocks)| {
+                decrypted_blocks_to_plaintext(&pbs_params, fhe_type, packing_factor, &blocks)
+            })
+            .collect()
     }
 
     fn insecure_threshold_user_decryption_resp(
@@ -458,6 +459,7 @@ impl Client {
     }
 
     #[expect(clippy::type_complexity)]
+    // We do not attempt to zeroize when using these insecure functions.
     fn insecure_threshold_user_decryption_resp_to_blocks<Z: BaseRing>(
         agg_resp: &[UserDecryptionResponse],
         dec_key: &UnifiedPrivateEncKey,
@@ -522,10 +524,11 @@ impl Client {
                     cur_blocks.push(cur_block_share);
                 }
                 if opt_sharings.is_none() {
-                    opt_sharings = Some(Vec::new());
+                    let mut sharings = Vec::new();
                     for _i in 0..cur_blocks.len() {
-                        (opt_sharings.as_mut()).unwrap().push(ShamirSharings::new());
+                        sharings.push(ShamirSharings::new());
                     }
+                    opt_sharings = Some(sharings);
                 }
                 fill_indexed_shares(
                     opt_sharings.as_mut().unwrap(),
@@ -580,6 +583,7 @@ impl Client {
         Ok(out)
     }
 
+    // We do not attempt to zeroize when using these insecure functions.
     fn insecure_threshold_user_decryption_resp_z128(
         &self,
         agg_resp: &[UserDecryptionResponse],
@@ -594,7 +598,7 @@ impl Client {
             let pbs_params = self.params.classic_pbs();
 
             let recon_blocks = reconstruct_packed_message(
-                Some(decrypted_blocks),
+                Some(&decrypted_blocks),
                 &pbs_params,
                 fhe_types_to_num_blocks(fhe_type, &self.params.classic_pbs(), packing_factor)?,
             )?;
@@ -603,7 +607,7 @@ impl Client {
                 &pbs_params,
                 fhe_type,
                 packing_factor,
-                recon_blocks,
+                &recon_blocks,
             )?);
         }
         Ok(out)
@@ -612,6 +616,7 @@ impl Client {
     /// Decrypt the user decryption response from the threshold KMS.
     /// This function does *not* do any verification and is thus insecure and should be used only for testing.
     /// TODO hide behind flag for insecure function?
+    // We do not attempt to zeroize when using these insecure functions.
     fn insecure_threshold_user_decryption_resp_z64(
         &self,
         agg_resp: &[UserDecryptionResponse],
@@ -640,7 +645,7 @@ impl Client {
                 &pbs_params,
                 fhe_type,
                 packing_factor,
-                ptxts128,
+                &ptxts128,
             )?);
         }
         Ok(out)
@@ -660,7 +665,7 @@ impl Client {
     ///
     /// Because acceptance subsumes recovery, `num_bots = n - accepted.len()` is a single fault count
     /// for the whole partition (see [`PartitionedUserDecResponses::reconstruct_all_slots`]).
-    fn partition_user_decrypt_responses<Z: BaseRing>(
+    fn partition_user_decrypt_responses<Z: BaseRing + Zeroize>(
         &self,
         trusted_ctx: &UserDecTrustedValidationContext,
         agg_resp: &[UserDecryptionResponse],
@@ -705,7 +710,9 @@ impl Client {
                         match bc2wrap::deserialize_slice::<Vec<ResiduePolyF4<Z>>>(
                             &decryption_share.plaintext.bytes,
                         ) {
-                            Ok(cipher_blocks_share) => shares_per_slot.push(cipher_blocks_share),
+                            Ok(cipher_blocks_share) => {
+                                shares_per_slot.push(Zeroizing::new(cipher_blocks_share));
+                            }
                             Err(e) => {
                                 tracing::warn!("Malformed inner share from party {role}: {e}");
                                 recovered_ok = false;
@@ -767,12 +774,12 @@ impl Client {
     /// the numbers of corrupted shares + num_bots must be <= threshold,
     /// otherwise reconstruction fails (hence the NOTE about optimism in the code).
     /// Returns `Ok(None)` when there are no shares at all (empty slot).
-    fn reconstruct_blocks<Z: BaseRing>(
+    fn reconstruct_blocks<Z: BaseRing + Zeroize>(
         num_parties: usize,
         degree: usize,
         num_bots: usize,
         sharings: &[ShamirSharings<ResiduePolyF4<Z>>],
-    ) -> anyhow::Result<Option<Vec<ResiduePolyF4<Z>>>>
+    ) -> anyhow::Result<Option<Zeroizing<Vec<ResiduePolyF4<Z>>>>>
     where
         ResiduePolyF4<Z>: ErrorCorrect,
     {
@@ -786,7 +793,7 @@ impl Client {
             None => return Ok(None),
         };
         let hints = ReconstructionHints::new(pivot, degree)?;
-        let mut decrypted_blocks = Vec::with_capacity(sharings.len());
+        let mut decrypted_blocks = Zeroizing::new(Vec::with_capacity(sharings.len()));
         for cur_block_shares in sharings {
             // NOTE: this performs optimistic reconstruction
             match reconstruct_w_errors_sync(
@@ -1255,7 +1262,7 @@ fn decrypted_blocks_to_plaintext(
     params: &ClassicPBSParameters,
     fhe_type: FheTypes,
     packing_factor: u32,
-    recon_blocks: Vec<Z128>,
+    recon_blocks: &[Z128],
 ) -> anyhow::Result<TypedPlaintext> {
     let bits_in_block = params.message_modulus_log() * packing_factor;
     let res_pt = match fhe_type {

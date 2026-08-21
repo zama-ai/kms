@@ -286,7 +286,10 @@ pub fn ml_kem_pke_encrypt(msg: &[u8], their_pk: &PublicEncKeyMlKem512) -> Vec<u8
 #[wasm_bindgen]
 pub fn ml_kem_pke_decrypt(ct: &[u8], my_sk: &PrivateEncKeyMlKem512) -> Vec<u8> {
     let ct: hybrid_ml_kem::HybridKemCt = deserialize_slice(ct).unwrap();
-    hybrid_ml_kem::dec::<ml_kem::MlKem512>(ct, &my_sk.0.0).unwrap()
+    // This public WASM boundary requires an unwrapped Vec; the internal guard is dropped after copying.
+    hybrid_ml_kem::dec::<ml_kem::MlKem512>(ct, &my_sk.0.0)
+        .unwrap()
+        .to_vec()
 }
 
 // Note: normally the result type should be a JsError
@@ -420,17 +423,13 @@ pub fn process_user_decryption_resp_from_js(
         threshold,
         verify,
     );
-    // Need to convert to BE for JS, everything is internally represented as LE
-    match le_res {
-        Ok(le_res) => Ok(le_res
-            .into_iter()
-            .map(|x| TypedPlaintext {
-                bytes: x.bytes.into_iter().rev().collect(),
-                fhe_type: x.fhe_type,
-            })
-            .collect()),
-        Err(e) => Err(e),
-    }
+    // Need to convert to BE for JS, everything is internally represented as LE.
+    // Reverse in place to avoid unwiped plaintext copies.
+    le_res.map(|mut res| {
+        res.iter_mut()
+            .for_each(|plaintext| plaintext.bytes.reverse());
+        res
+    })
 }
 
 /// Process the user_decryption response from Rust objects.

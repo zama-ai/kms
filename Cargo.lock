@@ -4709,6 +4709,7 @@ dependencies = [
  "tonic-prost-build",
  "tracing",
  "wasm-bindgen",
+ "zeroize",
 ]
 
 [[package]]

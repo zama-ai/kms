@@ -64,6 +64,7 @@ use threshold_execution::small_execution::prss::PRSSSetup;
 use threshold_types::role::Role;
 use tokio::sync::{Mutex, MutexGuard};
 use tonic::{Request, Response};
+use zeroize::Zeroizing;
 
 pub struct RealBackupOperator<
     PubS: Storage + Sync + Send + 'static,
@@ -149,7 +150,7 @@ where
         ephemeral_dec_key: &UnifiedPrivateEncKey,
         ephemeral_enc_key: &UnifiedPublicEncKey,
         req: CustodianRecoveryRequest,
-    ) -> anyhow::Result<(HashMap<Role, BackupMaterial>, Operator)> {
+    ) -> anyhow::Result<(HashMap<Role, Zeroizing<BackupMaterial>>, Operator)> {
         let custodian_context_id = parse_optional_grpc_request_id(
             &req.custodian_context_id,
             RequestIdParsingErr::BackupRecovery,
@@ -393,7 +394,7 @@ where
                                 )
                             })?;
                         let backup_dec_key: UnifiedPrivateEncKey = safe_deserialize(
-                            std::io::Cursor::new(&serialized_dec_key),
+                            std::io::Cursor::new(&*serialized_dec_key),
                             SAFE_SER_SIZE_LIMIT,
                         )
                         .map_err(|e| {
@@ -537,10 +538,10 @@ async fn filter_custodian_data(
     recovery_material: &RecoveryValidationMaterial,
     ephemeral_dec_key: &UnifiedPrivateEncKey,
     ephemeral_enc_key: &UnifiedPublicEncKey,
-) -> anyhow::Result<HashMap<Role, BackupMaterial>> {
+) -> anyhow::Result<HashMap<Role, Zeroizing<BackupMaterial>>> {
     // Use the number of custodian nodes that was part of the context, not the amount we have received from
     let outputs_len = recovery_material.custodian_context().custodian_nodes.len();
-    let mut parsed_custodian_rec: HashMap<Role, BackupMaterial> = HashMap::new();
+    let mut parsed_custodian_rec: HashMap<Role, Zeroizing<BackupMaterial>> = HashMap::new();
     let mut skip_reasons: Vec<RecoverySkipReason> = Vec::new();
 
     for cur_recovery_output in &custodian_recovery_outputs {

@@ -81,6 +81,7 @@ use tokio::task::JoinHandle;
 use tokio_util::task::TaskTracker;
 use tonic_health::pb::health_server::{Health, HealthServer};
 use tonic_health::server::HealthReporter;
+use zeroize::Zeroizing;
 
 /// Result enum for centralized keygen supporting both compressed and uncompressed keys.
 #[expect(clippy::large_enum_variant)]
@@ -888,7 +889,8 @@ impl<
         let signcryption_key = UnifiedSigncryptionKey::new(sig_key, client_enc_key, client_id);
         // Observe that we encrypt the plaintext itself, this is different from the threshold case
         // where it is first mapped to a Vec<ResiduePolyF4Z128> element
-        let plaintext = Self::public_decrypt(keys, ct, fhe_type, ct_format)?;
+        // Keep the cleartext behind a zeroizing guard during signcryption.
+        let plaintext = Zeroizing::new(Self::public_decrypt(keys, ct, fhe_type, ct_format)?);
         let enc_res = signcryption_key.signcrypt_plaintext(
             rng,
             &DSEP_USER_DECRYPTION,

@@ -4,6 +4,7 @@ use algebra::{
     structure_traits::Ring,
 };
 use rand::{CryptoRng, Rng};
+use zeroize::{Zeroize, Zeroizing};
 
 use super::error::BackupError;
 
@@ -125,24 +126,26 @@ where
     Ok(out)
 }
 
+/// Reconstruct the shared secret from `shares`.
 pub(crate) fn reconstruct(
-    shares: Vec<ShamirSharings<ResiduePolyF4Z64>>,
+    shares: &[ShamirSharings<ResiduePolyF4Z64>],
     t: usize,
-) -> Result<Vec<u8>, BackupError> {
-    let mut combined = vec![];
-    for current_block in shares {
-        let opened = current_block
-            .reconstruct(t)
-            .map_err(|e| BackupError::ReconstructError(e.to_string()))?;
-        let mut buf = opened.to_byte_vec();
-        combined.append(&mut buf);
-    }
-
+) -> Result<Zeroizing<Vec<u8>>, BackupError> {
     let block_len = ResiduePolyF4Z64::BIT_LENGTH / 8;
     debug_assert_eq!(block_len, 32);
-    let res = pkcs7::remove_padding(block_len, &mut combined)?;
 
-    Ok(res.to_vec())
+    // Pre-size so `combined` never reallocates an unwiped copy.
+    let mut combined = Zeroizing::new(Vec::with_capacity(shares.len() * block_len));
+    for current_block in shares.iter() {
+        let mut opened = current_block
+            .reconstruct(t)
+            .map_err(|e| BackupError::ReconstructError(e.to_string()))?;
+        let buf = Zeroizing::new(opened.to_byte_vec());
+        combined.extend_from_slice(&buf);
+        opened.zeroize();
+    }
+    let res = pkcs7::remove_padding(block_len, &mut combined)?;
+    Ok(Zeroizing::new(res.to_vec()))
 }
 
 #[cfg(test)]
@@ -172,9 +175,9 @@ mod tests {
 
             for (n, t) in NTS {
                 let shares = share(&mut rng, &secret, n, t).unwrap();
-                let result = reconstruct(shares, t).unwrap();
+                let result = reconstruct(&shares, t).unwrap();
 
-                assert_eq!(result, secret);
+                assert_eq!(&result[..], &secret[..]);
             }
         }
 
@@ -201,8 +204,8 @@ mod tests {
                 }
 
                 // finally try to reconstruct
-                let result = reconstruct(shares, t).unwrap();
-                assert_eq!(result, secret);
+                let result = reconstruct(&shares, t).unwrap();
+                assert_eq!(&result[..], &secret[..]);
             }
         }
 
@@ -223,9 +226,9 @@ mod tests {
                     assert_eq!(block.shares.len(), t + 1);
                 }
 
-                let result = reconstruct(shares, t).unwrap();
+                let result = reconstruct(&shares, t).unwrap();
 
-                assert_eq!(result, secret);
+                assert_eq!(&result[..], &secret[..]);
             }
         }
 
@@ -245,7 +248,7 @@ mod tests {
                 }
 
                 // our scheme does not support error correction
-                let err = reconstruct(shares, t).unwrap_err();
+                let err = reconstruct(&shares, t).unwrap_err();
                 assert!(matches!(err, BackupError::ReconstructError(..)));
             }
         }
@@ -262,7 +265,7 @@ mod tests {
                     let _ = block.shares.split_off(t);
                 }
 
-                let err = reconstruct(shares, t).unwrap_err();
+                let err = reconstruct(&shares, t).unwrap_err();
                 assert!(matches!(err, BackupError::ReconstructError(..)));
             }
         }

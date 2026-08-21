@@ -33,7 +33,7 @@ use algebra::{
     base_ring::{Z64, Z128},
     galois_rings::common::ResiduePoly,
     sharing::share::Share,
-    structure_traits::{Derive, ErrorCorrect, Invert, Ring, Solve, Zero},
+    structure_traits::{Derive, ErrorCorrect, FromU128, Invert, Ring, Solve, Zero},
 };
 use anyhow::Context;
 use async_trait::async_trait;
@@ -62,6 +62,7 @@ use threshold_types::role::Role;
 use tokio::task::JoinSet;
 use tokio::time::{Duration, Instant};
 use tracing::instrument;
+use zeroize::{Zeroize, ZeroizeOnDrop};
 
 #[cfg(any(test, feature = "testing"))]
 use super::decryption::DecryptionMode;
@@ -657,6 +658,22 @@ pub struct BlocksPartialDecrypt {
     pub bits_in_block: u32,
     pub partial_decryptions: Vec<Z128>,
 }
+
+/// Wipes the opened plaintext blocks.
+impl Zeroize for BlocksPartialDecrypt {
+    fn zeroize(&mut self) {
+        // `bits_in_block` is public metadata.
+        self.partial_decryptions.zeroize();
+    }
+}
+
+impl Drop for BlocksPartialDecrypt {
+    fn drop(&mut self) {
+        self.zeroize();
+    }
+}
+
+impl ZeroizeOnDrop for BlocksPartialDecrypt {}
 /// Takes as input plaintexts blocks m1, ..., mN revealed to all parties
 /// which we call partial decryptions each of B bits
 /// and uses tfhe block recomposer to get back the u64 plaintext.
@@ -669,7 +686,7 @@ where
 {
     let res = match combine_decryptions::<T>(
         shared_partial_decrypt.bits_in_block,
-        shared_partial_decrypt.partial_decryptions,
+        &shared_partial_decrypt.partial_decryptions,
     ) {
         Ok(res) => res,
         Err(error) => {
@@ -1020,11 +1037,12 @@ where
     reconstruct_message(opened, &keyshares.parameters)
 }
 
-async fn open_bit_composed_ptxts<const EXTENSION_DEGREE: usize, S: BaseSessionHandles>(
+async fn open_bit_composed_ptxts<Z, const EXTENSION_DEGREE: usize, S: BaseSessionHandles>(
     session: &S,
     res: Vec<ResiduePoly<Z64, EXTENSION_DEGREE>>,
-) -> anyhow::Result<Vec<Z64>>
+) -> anyhow::Result<Vec<Z>>
 where
+    Z: FromU128,
     ResiduePoly<Z64, EXTENSION_DEGREE>: ErrorCorrect,
 {
     let mut out = Vec::with_capacity(res.len());
@@ -1036,7 +1054,7 @@ where
         Some(openeds) => {
             for open in openeds {
                 let v_scalar = open.to_scalar()?;
-                out.push(v_scalar);
+                out.push(Z::from_u128(v_scalar.0 as u128));
             }
         }
         _ => {
@@ -1128,11 +1146,7 @@ where
     let ptxt_sums: Vec<_> = ptxt_sums.iter().map(|ptxt_sum| ptxt_sum.value()).collect();
 
     // output results
-    let ptxts64 = open_bit_composed_ptxts(session, ptxt_sums).await?;
-    let ptxts128: Vec<_> = ptxts64
-        .iter()
-        .map(|ptxt| Wrapping(ptxt.0 as u128))
-        .collect();
+    let ptxts128 = open_bit_composed_ptxts::<Z128, _, _>(session, ptxt_sums).await?;
 
     let usable_message_bits = keyshares.parameters.message_modulus_log() as usize;
 
@@ -1216,11 +1230,7 @@ where
         let ptxt_sums: Vec<_> = ptxt_sums.iter().map(|ptxt_sum| ptxt_sum.value()).collect();
 
         // output result
-        let ptxts64 = open_bit_composed_ptxts(session, ptxt_sums).await?;
-        let ptxts128: Vec<_> = ptxts64
-            .iter()
-            .map(|ptxt| Wrapping(ptxt.0 as u128))
-            .collect();
+        let ptxts128 = open_bit_composed_ptxts::<Z128, _, _>(session, ptxt_sums).await?;
         let usable_message_bits = keyshares.parameters.message_modulus_log() as usize;
 
         //We collect the only result in our batch of size 1

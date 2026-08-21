@@ -6,6 +6,7 @@ pub mod hybrid_ml_kem;
 pub mod internal_crypto_types;
 pub mod signatures;
 pub(crate) mod signing;
+pub(crate) mod zeroizing_writer;
 // Allow our deprecated modules for now as we need to be backwards compatible
 #[allow(deprecated)]
 pub mod encryption;

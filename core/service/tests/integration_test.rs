@@ -791,5 +791,6 @@ mod kms_custodian_binary_tests {
         operator
             .verify_and_recover(&outputs, recovery_material, ephem_dec_key, ephem_enc_key)
             .unwrap()
+            .to_vec()
     }
 }

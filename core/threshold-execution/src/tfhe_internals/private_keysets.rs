@@ -51,6 +51,11 @@ pub enum PrivateKeySetVersions<const EXTENSION_DEGREE: usize> {
 /// The only reason why type might differ is if the [`PrivateKeySet`] has just
 /// been upgraded from a [`PrivateKeySetV1`] where the keys were still Z64.
 /// In this case, one __must__ call `PrivateKeySet::lift` to make the [`PrivateKeySet`] conformant.
+///
+/// # Why this type deliberately does not implement `Zeroize`
+///
+/// We do not impl `Zeroize` because these key shares stay in memory while the
+/// kms is running as they're needed for decryption.
 pub struct PrivateKeySet<const EXTENSION_DEGREE: usize> {
     //The two Lwe keys are the same if there's no dedicated pk parameters
     pub lwe_encryption_secret_key_share: LweSecretKeyShareEnum<EXTENSION_DEGREE>,
