@@ -459,10 +459,11 @@ impl Client {
     }
 
     #[expect(clippy::type_complexity)]
-    fn insecure_threshold_user_decryption_resp_to_blocks<Z: BaseRing + Zeroize>(
+    // We do not attempt to zeroize when using these insecure functions.
+    fn insecure_threshold_user_decryption_resp_to_blocks<Z: BaseRing>(
         agg_resp: &[UserDecryptionResponse],
         dec_key: &UnifiedPrivateEncKey,
-    ) -> anyhow::Result<Vec<(FheTypes, u32, Zeroizing<Vec<ResiduePolyF4<Z>>>)>>
+    ) -> anyhow::Result<Vec<(FheTypes, u32, Vec<ResiduePolyF4<Z>>)>>
     where
         ResiduePolyF4<Z>: ErrorCorrect + MemoizedExceptionals,
     {
@@ -516,13 +517,16 @@ impl Client {
                     dec_key,
                 )?;
 
-                // Deserialize directly into the indexed shares to avoid another copy.
-                let cur_blocks: Vec<ResiduePolyF4<Z>> = bc2wrap::deserialize_slice(&shares.bytes)?;
+                let cipher_blocks_share: Vec<ResiduePolyF4<Z>> =
+                    bc2wrap::deserialize_slice(&shares.bytes)?;
+                let mut cur_blocks = Vec::with_capacity(cipher_blocks_share.len());
+                for cur_block_share in cipher_blocks_share {
+                    cur_blocks.push(cur_block_share);
+                }
                 if opt_sharings.is_none() {
-                    let mut sharings = Vec::with_capacity(cur_blocks.len());
+                    let mut sharings = Vec::new();
                     for _i in 0..cur_blocks.len() {
-                        // Reserve to prevent `add_share` from reallocating unwiped shares.
-                        sharings.push(ShamirSharings::with_capacity(agg_resp.len()));
+                        sharings.push(ShamirSharings::new());
                     }
                     opt_sharings = Some(sharings);
                 }
@@ -574,11 +578,12 @@ impl Client {
                     }
                 }
             }
-            out.push((fhe_type, packing_factor, Zeroizing::new(decrypted_blocks)))
+            out.push((fhe_type, packing_factor, decrypted_blocks))
         }
         Ok(out)
     }
 
+    // We do not attempt to zeroize when using these insecure functions.
     fn insecure_threshold_user_decryption_resp_z128(
         &self,
         agg_resp: &[UserDecryptionResponse],
@@ -589,20 +594,19 @@ impl Client {
 
         let mut out = vec![];
 
-        for (fhe_type, packing_factor, decrypted_blocks) in all_decrypted_blocks.iter() {
+        for (fhe_type, packing_factor, decrypted_blocks) in all_decrypted_blocks {
             let pbs_params = self.params.classic_pbs();
 
-            // Keep reconstructed plaintext blocks guarded until the plaintext is built.
-            let recon_blocks = Zeroizing::new(reconstruct_packed_message(
-                Some(decrypted_blocks),
+            let recon_blocks = reconstruct_packed_message(
+                Some(&decrypted_blocks),
                 &pbs_params,
-                fhe_types_to_num_blocks(*fhe_type, &self.params.classic_pbs(), *packing_factor)?,
-            )?);
+                fhe_types_to_num_blocks(fhe_type, &self.params.classic_pbs(), packing_factor)?,
+            )?;
 
             out.push(decrypted_blocks_to_plaintext(
                 &pbs_params,
-                *fhe_type,
-                *packing_factor,
+                fhe_type,
+                packing_factor,
                 &recon_blocks,
             )?);
         }
@@ -612,6 +616,7 @@ impl Client {
     /// Decrypt the user decryption response from the threshold KMS.
     /// This function does *not* do any verification and is thus insecure and should be used only for testing.
     /// TODO hide behind flag for insecure function?
+    // We do not attempt to zeroize when using these insecure functions.
     fn insecure_threshold_user_decryption_resp_z64(
         &self,
         agg_resp: &[UserDecryptionResponse],
@@ -621,28 +626,25 @@ impl Client {
             Self::insecure_threshold_user_decryption_resp_to_blocks::<Z64>(agg_resp, dec_key)?;
 
         let mut out = vec![];
-        for (fhe_type, packing_factor, decrypted_blocks) in all_decrypted_blocks.iter() {
+        for (fhe_type, packing_factor, decrypted_blocks) in all_decrypted_blocks {
             let pbs_params = self.params.classic_pbs();
 
-            // Guard both plaintext buffers until the final value is built.
-            let mut ptxts64 = Zeroizing::new(Vec::new());
+            let mut ptxts64 = Vec::new();
 
-            for opened in decrypted_blocks.iter() {
+            for opened in decrypted_blocks {
                 let v_scalar = opened.to_scalar()?;
                 ptxts64.push(v_scalar);
             }
 
-            let ptxts128: Zeroizing<Vec<_>> = Zeroizing::new(
-                ptxts64
-                    .iter()
-                    .map(|ptxt| Wrapping(ptxt.0 as u128))
-                    .collect(),
-            );
+            let ptxts128: Vec<_> = ptxts64
+                .iter()
+                .map(|ptxt| Wrapping(ptxt.0 as u128))
+                .collect();
 
             out.push(decrypted_blocks_to_plaintext(
                 &pbs_params,
-                *fhe_type,
-                *packing_factor,
+                fhe_type,
+                packing_factor,
                 &ptxts128,
             )?);
         }
