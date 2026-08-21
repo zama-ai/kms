@@ -1042,7 +1042,7 @@ spec:
             udec_block="$(printf '*User decrypt {{workflow.parameters.data-type}}*\n%b' "${udec_lines:-No user decrypt tests\n}")"
           fi
           status_line="Keygen: ${keygen_passed}/${keygen_total} | CRS: ${crs_passed}/${crs_total} | Public decrypt: ${pdec_passed}/${pdec_total} | User decrypt: ${udec_passed}/${udec_total}"
-          # NOTE: core/core-client instance types and tokioWorkerThreads/rayonNumThreads below are
+          # NOTE: core/core-client instance types and the core tokio/rayon thread counts below are
           # hardcoded mirrors of the deployed config (kms-service values-kms-ci.yaml + the karpenter
           # nodepools). They do NOT auto-update — keep them in sync here, and in the sibling
           # *-test-suite report workflows that duplicate them, whenever that config changes.
@@ -1050,7 +1050,7 @@ spec:
           # Two physical lines: the '\n' renders as a line break in the Slack context element.
           config_line=$(printf '%s\n%s' \
             "payload={{workflow.parameters.batch-size}} x {{workflow.parameters.data-type}}, preproc/keygen params={{workflow.parameters.fhe-params}}, decrypt params=Default, max-in-flight={{inputs.parameters.max-in-flight}}, TLS={{inputs.parameters.tls}}" \
-            "core=c7a.16xlarge, core-client=c6in.32xlarge, tokioWorkerThreads=10, rayonNumThreads=40, core-img=<version>, client-img=<client-version>")
+            "core=c7a.16xlarge, core-client=c6in.32xlarge, core tokioWorkerThreads=10, rayonNumThreads=40, core-client Tokio workers=available CPUs, core-img=<version>, client-img=<client-version>")
           if echo "{{inputs.parameters.job_url}}" | grep -q '^http'; then
             run_line="<{{inputs.parameters.job_url}}|{{inputs.parameters.job_label}}>"
           else
