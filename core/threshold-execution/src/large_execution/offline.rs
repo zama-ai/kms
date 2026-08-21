@@ -86,6 +86,13 @@ impl<
     RO: RobustOpen,
 > Preprocessing<Z, Ses> for RealLargePreprocessing<Z, S, D, RO>
 {
+    /// __NOTE__: To save on rounds, we initialize the single and double sharing protocols
+    /// together in a single local-share protocol, then split the shares back into single
+    /// and double shares.
+    ///
+    /// As such we never call [`SingleSharing::init()`] or [`DoubleSharing::init()`] directly,
+    /// but instead call [`DoubleSharing::init_joint_with_single()`], which produces both single
+    /// and double shares together and then load the single shares via [`SingleSharing::load_local_single_shares()`].
     async fn execute(
         &mut self,
         large_session: &mut Ses,
