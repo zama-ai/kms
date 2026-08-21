@@ -30,11 +30,20 @@ spec:
                     operator: In
                     values:
                       - enabled
+              - matchExpressions:
+                  - key: karpenter.sh/nodepool
+                    operator: In
+                    values:
+                      - kms-bench-spot-64
 
       tolerations:
         - key: karpenter.sh/nodepool
           operator: Equal
           value: kms-pool
+          effect: NoSchedule
+        - key: karpenter.sh/nodepool
+          operator: Equal
+          value: kms-bench-spot-64
           effect: NoSchedule
         - key: app
           operator: Equal
