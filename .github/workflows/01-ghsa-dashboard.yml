@@ -1,0 +1,58 @@
+# 01-ghsa-dashboard — GHSA dashboard + cross-reference validation caller.
+#
+# NOTE FOR kms MAINTAINERS: this file exists in public kms ONLY so it survives the
+# one-way `git push -f` sync (sync-on-push.yml) into the private mirror
+# (destination = secrets.SYNC_DEST_REPO). It is intentionally INERT here: the single
+# job is gated with `if: vars.GHSA_DASHBOARD_MIRROR == 'true'` — a repository variable
+# set to 'true' only in the mirror's own settings — so it does nothing in public kms or
+# in any fork/copy, and runs only inside the private mirror, where it uses that repo's own
+# GITHUB_TOKEN to update a private tracking issue. Neither the gate nor this file names the mirror.
+#
+# No sensitive values are hard-coded: the target internal repo is resolved at runtime
+# via ${{ github.repository }} (never named here), matching how the sync itself keeps
+# the destination in a secret. Owned by the DevOps/Security group (see CODEOWNERS).
+
+name: 01-ghsa-dashboard
+
+on:
+  schedule:
+    - cron: '0 */6 * * *'
+  workflow_dispatch:
+    inputs:
+      job_validate_dryrun:
+        description: 'GHSA Validate dry-run (no writes)'
+        required: false
+        type: boolean
+        default: false
+      job_validate_since:
+        description: 'GHSA Validate since YYYY-MM-DD (blank = all)'
+        required: false
+        type: string
+
+# No workflow-level permissions; the single job below grants only what it needs.
+permissions: {}
+
+concurrency:
+  group: ghsa-dashboard
+  cancel-in-progress: true
+
+jobs:
+  ghsa-dashboard:
+    # Run ONLY in the private mirror, and only when explicitly enabled there via the
+    # GHSA_DASHBOARD_MIRROR repository variable (set to 'true' in the mirror's settings).
+    # Inert in public kms and any fork/copy (the variable is unset there); the mirror is
+    # never named here.
+    if: ${{ vars.GHSA_DASHBOARD_MIRROR == 'true' }}
+    # Least-privilege, scoped to this job (not workflow-wide):
+    permissions:
+      contents: read   # read the repo to resolve the reusable-workflow reference
+      issues: write    # dashboard upserts the ghsa-index issue + ghsa-validate comments (in the mirror)
+    uses: zama-ai/ai-security/.github/workflows/ghsa-dashboard-reusable.yml@70e6ad735177bd2588cdd299853d825fde1dc709 # v1.0.0
+    with:
+      public_repo: zama-ai/kms
+      internal_repo: ${{ github.repository }}
+      index_label: ghsa-index
+      validate_dryrun: ${{ inputs.job_validate_dryrun || false }}
+      validate_since: ${{ inputs.job_validate_since || '' }}
+    secrets:
+      GHSA_DASHBOARD_TOKEN: ${{ secrets.GHSA_DASHBOARD_TOKEN }}
