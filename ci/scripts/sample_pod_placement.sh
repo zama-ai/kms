@@ -1,31 +1,25 @@
 #!/usr/bin/env bash
-# Record each KMS core and perf-workflow pod's node placement once. The workflow
-# runs this continuously because rate-test pods may be gone before post-run collection.
+# Wait for the first rate-test core-client, then record one AZ placement snapshot
+# containing it, the setup client pods, and all KMS cores.
 # A headless Service over the ENA probes exposes node names and zones through a
 # namespaced EndpointSlice, avoiding cluster-scoped Node API permissions.
 set -uo pipefail
 
 NS="${1:-kms-ci}"
 INTERVAL="${2:-5}"
-MODE="${3:-}"
 KUBECTL_BIN="${KUBECTL_BIN:-kubectl}"
 JQ_BIN="${JQ_BIN:-jq}"
 
-if [[ -n "${MODE}" && "${MODE}" != "--once" ]]; then
-  echo "usage: $0 [namespace] [interval-seconds] [--once]" >&2
-  exit 2
-fi
-
 tmp_root="$(mktemp -d)"
+# shellcheck disable=SC2329 # Invoked indirectly by the EXIT trap.
 cleanup() {
   rm -rf "${tmp_root}"
 }
 trap cleanup EXIT
 
-seen_file="${tmp_root}/seen.tsv"
 current_file="${tmp_root}/current.tsv"
+pods_file="${tmp_root}/pods.json"
 sample_ts=""
-touch "${seen_file}"
 touch "${current_file}"
 
 printf '# sampler_start=%s namespace=%s interval=%ss\n' \
@@ -37,9 +31,8 @@ single_line() {
 }
 
 sample_once() {
-  local pods_file slices_file pods_error slices_error
+  local slices_file pods_error slices_error
   sample_ts="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-  pods_file="${tmp_root}/pods.json"
   slices_file="${tmp_root}/endpoint-slices.json"
   pods_error="${tmp_root}/pods-error"
   slices_error="${tmp_root}/endpoint-slices-error"
@@ -94,9 +87,8 @@ sample_once() {
 emit_current() {
   local row
   while IFS= read -r row; do
-    if [[ -n "${row}" ]] && ! grep -Fqx -- "${row}" "${seen_file}"; then
+    if [[ -n "${row}" ]]; then
       printf '%s\t%s\n' "${sample_ts}" "${row}"
-      printf '%s\n' "${row}" >> "${seen_file}"
     fi
   done < "${current_file}"
 }
@@ -106,24 +98,25 @@ zones_ready() {
     && ! cut -f 4 "${current_file}" | grep -Fqx -- "-"
 }
 
-if [[ "${MODE}" == "--once" ]]; then
-  for attempt in {1..30}; do
-    if sample_once && zones_ready; then
-      emit_current
-      exit 0
-    fi
-    if [[ "${attempt}" -lt 30 ]]; then
-      sleep "${INTERVAL}"
-    fi
-  done
-  emit_current
-  printf '# sampler_error zones_not_ready_after_30_attempts\n'
-  exit 1
-fi
+topology_ready() {
+  "${JQ_BIN}" -e '
+    ([.items[] | select((.metadata.labels.app // "") == "kms-core")] | length) >= 13
+    and any(
+      .items[];
+      ((.metadata.labels.test // "") | contains("-rate-"))
+    )
+  ' "${pods_file}" >/dev/null
+}
 
-while true; do
-  if sample_once; then
+for attempt in {1..180}; do
+  if sample_once && zones_ready && topology_ready; then
     emit_current
+    exit 0
   fi
-  sleep "${INTERVAL}"
+  if [[ "${attempt}" -lt 180 ]]; then
+    sleep "${INTERVAL}"
+  fi
 done
+
+printf '# sampler_error complete_topology_not_ready_after_180_attempts\n'
+exit 1

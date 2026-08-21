@@ -437,13 +437,6 @@ jobs:
           kubectl get pods -n "${NAMESPACE}" -l app=ena-probe -o wide || true
           kubectl logs -n "${NAMESPACE}" -l app=ena-probe --prefix --tail=20 || true
 
-      - name: Report KMS core placement before perf
-        run: |
-          echo "KMS core node and AZ placement before submitting the performance workflow:"
-          if ! bash ci/scripts/sample_pod_placement.sh "${NAMESPACE}" 2 --once; then
-            echo "::warning::Could not capture pre-performance KMS core placement"
-          fi
-
       - name: Capture network diagnostics before perf
         if: always()
         run: |
@@ -482,9 +475,8 @@ jobs:
           bash ci/scripts/sample_core_metrics.sh "${NAMESPACE}" >> core-metrics-samples.log 2>&1 &
           METRICS_SAMPLER_PID=$!
 
-          # Record the node and AZ of KMS cores and short-lived Argo perf pods.
-          # Instance type and nodepool are included when exposed by the endpoint
-          # metadata or declared by the pod. Identical placements are emitted once.
+          # Wait for the first rate-test core-client, then capture one AZ placement
+          # snapshot containing it and all 13 KMS cores.
           bash ci/scripts/sample_pod_placement.sh "${NAMESPACE}" \
             > pod-placement-samples.tsv 2>&1 &
           PLACEMENT_SAMPLER_PID=$!
@@ -606,11 +598,12 @@ jobs:
       - name: Report pod placement
         if: always()
         run: |
-          if [ ! -s pod-placement-samples.tsv ]; then
-            echo "::warning::No KMS/perf pod placement samples were captured"
+          if ! grep -Eq '^[0-9]{4}-' pod-placement-samples.tsv 2>/dev/null; then
+            echo "::warning::No complete KMS/core-client placement snapshot was captured"
+            cat pod-placement-samples.tsv 2>/dev/null || true
             exit 0
           fi
-          echo "KMS core and perf-workflow pod placement (each distinct placement reported once):"
+          echo "KMS core and core-client placement snapshot:"
           cat pod-placement-samples.tsv
 
       - name: Capture network diagnostics after perf
