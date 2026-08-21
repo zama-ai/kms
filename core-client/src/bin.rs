@@ -8,6 +8,12 @@ use validator::Validate;
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error + 'static>> {
     println!("Starting KMS Core Client v{}", SoftwareVersion::current()?);
+    println!(
+        "CORE_CLIENT_THREADING phase=startup available_parallelism={} tokio_workers={} process_threads={}",
+        std::thread::available_parallelism().map_or(0, std::num::NonZeroUsize::get),
+        tokio::runtime::Handle::current().metrics().num_workers(),
+        std::fs::read_dir("/proc/self/task").map_or(0, |tasks| tasks.count()),
+    );
 
     // Parse command line arguments and configuration file
     // TODO: handle different deployment modes in the configuration

@@ -18,7 +18,14 @@ use kms_lib::{
 };
 use prost::Message as _;
 use rand::{CryptoRng, Rng};
-use std::{collections::HashMap, future::Future, sync::Arc};
+use std::{
+    collections::{BTreeMap, HashMap},
+    future::Future,
+    sync::{
+        Arc,
+        atomic::{AtomicU64, Ordering},
+    },
+};
 use tokio::{
     sync::RwLock,
     task::JoinSet,
@@ -28,6 +35,145 @@ use tonic::transport::Channel;
 
 type CoreEndpointClient = CoreServiceEndpointClient<Channel>;
 type CoreEndpointClients = Arc<[CoreEndpointClient]>;
+
+const GRPC_CODE_LABELS: [&str; 17] = [
+    "ok",
+    "cancelled",
+    "unknown",
+    "invalid_argument",
+    "deadline_exceeded",
+    "not_found",
+    "already_exists",
+    "permission_denied",
+    "resource_exhausted",
+    "failed_precondition",
+    "aborted",
+    "out_of_range",
+    "unimplemented",
+    "internal",
+    "unavailable",
+    "data_loss",
+    "unauthenticated",
+];
+
+#[derive(Clone, Copy)]
+enum RpcPhase {
+    Submit,
+    Result,
+}
+
+#[derive(Default)]
+struct RpcDiagnostics {
+    submit_status: [AtomicU64; GRPC_CODE_LABELS.len()],
+    result_status: [AtomicU64; GRPC_CODE_LABELS.len()],
+    submit_in_flight: AtomicU64,
+    submit_peak_in_flight: AtomicU64,
+    result_in_flight: AtomicU64,
+    result_peak_in_flight: AtomicU64,
+    result_retries: AtomicU64,
+    post_quorum_tasks: AtomicU64,
+    post_quorum_tasks_drained: AtomicU64,
+}
+
+struct RpcInFlightGuard {
+    diagnostics: Arc<RpcDiagnostics>,
+    phase: RpcPhase,
+}
+
+impl Drop for RpcInFlightGuard {
+    fn drop(&mut self) {
+        self.diagnostics
+            .current(self.phase)
+            .fetch_sub(1, Ordering::Relaxed);
+    }
+}
+
+#[derive(serde::Serialize)]
+struct RpcDiagnosticsJson {
+    submit_status: BTreeMap<&'static str, u64>,
+    result_status: BTreeMap<&'static str, u64>,
+    submit_current_in_flight: u64,
+    submit_peak_in_flight: u64,
+    result_current_in_flight: u64,
+    result_peak_in_flight: u64,
+    result_retries: u64,
+    post_quorum_tasks: u64,
+    post_quorum_tasks_drained: u64,
+}
+
+impl RpcDiagnostics {
+    fn current(&self, phase: RpcPhase) -> &AtomicU64 {
+        match phase {
+            RpcPhase::Submit => &self.submit_in_flight,
+            RpcPhase::Result => &self.result_in_flight,
+        }
+    }
+
+    fn peak(&self, phase: RpcPhase) -> &AtomicU64 {
+        match phase {
+            RpcPhase::Submit => &self.submit_peak_in_flight,
+            RpcPhase::Result => &self.result_peak_in_flight,
+        }
+    }
+
+    fn start(self: &Arc<Self>, phase: RpcPhase) -> RpcInFlightGuard {
+        let current = self.current(phase).fetch_add(1, Ordering::Relaxed) + 1;
+        self.peak(phase).fetch_max(current, Ordering::Relaxed);
+        RpcInFlightGuard {
+            diagnostics: Arc::clone(self),
+            phase,
+        }
+    }
+
+    fn record<T>(&self, phase: RpcPhase, result: &Result<T, tonic::Status>) {
+        let code = result
+            .as_ref()
+            .map(|_| tonic::Code::Ok)
+            .unwrap_or_else(|e| e.code());
+        let counters = match phase {
+            RpcPhase::Submit => &self.submit_status,
+            RpcPhase::Result => &self.result_status,
+        };
+        counters[code as usize].fetch_add(1, Ordering::Relaxed);
+    }
+
+    fn record_post_quorum_tasks(&self, count: usize) {
+        self.post_quorum_tasks
+            .fetch_add(count as u64, Ordering::Relaxed);
+    }
+
+    fn record_post_quorum_task_drained(&self) {
+        self.post_quorum_tasks_drained
+            .fetch_add(1, Ordering::Relaxed);
+    }
+
+    fn status_snapshot(
+        counters: &[AtomicU64; GRPC_CODE_LABELS.len()],
+    ) -> BTreeMap<&'static str, u64> {
+        GRPC_CODE_LABELS
+            .iter()
+            .zip(counters)
+            .filter_map(|(label, counter)| {
+                let count = counter.load(Ordering::Relaxed);
+                (count > 0).then_some((*label, count))
+            })
+            .collect()
+    }
+
+    fn snapshot(&self) -> RpcDiagnosticsJson {
+        RpcDiagnosticsJson {
+            submit_status: Self::status_snapshot(&self.submit_status),
+            result_status: Self::status_snapshot(&self.result_status),
+            submit_current_in_flight: self.submit_in_flight.load(Ordering::Relaxed),
+            submit_peak_in_flight: self.submit_peak_in_flight.load(Ordering::Relaxed),
+            result_current_in_flight: self.result_in_flight.load(Ordering::Relaxed),
+            result_peak_in_flight: self.result_peak_in_flight.load(Ordering::Relaxed),
+            result_retries: self.result_retries.load(Ordering::Relaxed),
+            post_quorum_tasks: self.post_quorum_tasks.load(Ordering::Relaxed),
+            post_quorum_tasks_drained: self.post_quorum_tasks_drained.load(Ordering::Relaxed),
+        }
+    }
+}
 
 /// check that the external signature on the decryption result(s) is valid, i.e. was made by one of the supplied addresses
 fn check_ext_pt_signature(
@@ -142,7 +288,10 @@ impl CollectedDecryptRateResult for CollectedPublicDecrypt {
 struct DecryptRateCollection<T> {
     collected: Vec<T>,
     completed: u64,
+    completed_in_window: u64,
     durations_to_get_responses: Vec<Duration>,
+    measurement_elapsed: Duration,
+    drain_elapsed: Duration,
     collect_elapsed: Duration,
     offered: u64,
     failed: u64,
@@ -161,6 +310,10 @@ struct DecryptRateMetrics {
     max_in_flight: usize,
     offered: u64,
     completed: u64,
+    completed_in_window: u64,
+    completed_during_drain: u64,
+    measurement_elapsed: Duration,
+    drain_elapsed: Duration,
     failed: u64,
     shed: u64,
     achieved_rate: f64,
@@ -177,6 +330,7 @@ struct DecryptRateMetrics {
     latency_stat: crate::DurationStat,
     post_process_stat: crate::DurationStat,
     post_process_wall: Duration,
+    rpc_diagnostics: Option<RpcDiagnosticsJson>,
 }
 
 /// JSON-serializable view of [`DecryptRateMetrics`] consumed by the CI parser.
@@ -188,6 +342,10 @@ struct DecryptRateMetricsJson {
     max_in_flight: usize,
     offered: u64,
     completed: u64,
+    completed_in_window: u64,
+    completed_during_drain: u64,
+    measurement_elapsed_seconds: f64,
+    drain_elapsed_seconds: f64,
     failed: u64,
     shed: u64,
     achieved_rate: f64,
@@ -238,6 +396,10 @@ impl From<&DecryptRateMetrics> for DecryptRateMetricsJson {
             max_in_flight: m.max_in_flight,
             offered: m.offered,
             completed: m.completed,
+            completed_in_window: m.completed_in_window,
+            completed_during_drain: m.completed_during_drain,
+            measurement_elapsed_seconds: m.measurement_elapsed.as_secs_f64(),
+            drain_elapsed_seconds: m.drain_elapsed.as_secs_f64(),
             failed: m.failed,
             shed: m.shed,
             achieved_rate: m.achieved_rate,
@@ -273,6 +435,12 @@ impl DecryptRateMetrics {
                 self.post_process_wall,
             ))?,
         );
+        if let Some(rpc_diagnostics) = &self.rpc_diagnostics {
+            object.insert(
+                "rpc_diagnostics".to_owned(),
+                serde_json::to_value(rpc_diagnostics)?,
+            );
+        }
         serde_json::to_string(&value)
     }
 
@@ -305,6 +473,7 @@ async fn collect_decrypt_responses<Resp: Send + 'static>(
     mut resp_tasks: JoinSet<anyhow::Result<Resp>>,
     num_parties: usize,
     num_expected_responses: usize,
+    rpc_diagnostics: Option<Arc<RpcDiagnostics>>,
 ) -> anyhow::Result<(Vec<Resp>, Duration)> {
     let mut resp_response_vec = Vec::with_capacity(num_expected_responses);
     let mut collect_duration = None;
@@ -330,6 +499,9 @@ async fn collect_decrypt_responses<Resp: Send + 'static>(
 
     let pending_response_tasks = resp_tasks.len();
     if pending_response_tasks > 0 {
+        if let Some(diagnostics) = &rpc_diagnostics {
+            diagnostics.record_post_quorum_tasks(pending_response_tasks);
+        }
         tokio::spawn(async move {
             while let Some(resp) = resp_tasks.join_next().await {
                 match resp {
@@ -338,6 +510,9 @@ async fn collect_decrypt_responses<Resp: Send + 'static>(
                     Err(e) => {
                         tracing::debug!("Outstanding {label} response task panicked: {e}")
                     }
+                }
+                if let Some(diagnostics) = &rpc_diagnostics {
+                    diagnostics.record_post_quorum_task_drained();
                 }
             }
             tracing::debug!(
@@ -512,6 +687,7 @@ async fn send_and_collect_public_decrypt(
         resp_tasks,
         num_parties,
         num_expected_responses,
+        None,
     )
     .await?;
 
@@ -761,6 +937,7 @@ pub(crate) async fn do_public_decrypt<R: Rng + CryptoRng>(
         verification_failed,
         &verification_durations,
         verify_elapsed,
+        None,
     );
     metrics.log_json(
         "PUBLIC_DECRYPT_METRICS",
@@ -839,18 +1016,23 @@ fn duration_stat_ms(stat: &crate::DurationStat) -> DurationStatMsJson {
 
 fn drain_finished_decrypts<T: CollectedDecryptRateResult + 'static>(
     label: &'static str,
-    join_set: &mut JoinSet<Result<T, anyhow::Error>>,
+    join_set: &mut JoinSet<(Instant, Result<T, anyhow::Error>)>,
     collected: &mut Vec<T>,
     durations: &mut Vec<Duration>,
     failed: &mut u64,
+    deadline: Instant,
+    completed_in_window: &mut u64,
 ) {
     while let Some(result) = join_set.try_join_next() {
         match result {
-            Ok(Ok(collected_result)) => {
+            Ok((completed_at, Ok(collected_result))) => {
+                if completed_at <= deadline {
+                    *completed_in_window += 1;
+                }
                 durations.push(collected_result.collect_duration());
                 collected.push(collected_result);
             }
-            Ok(Err(e)) => {
+            Ok((_completed_at, Err(e))) => {
                 *failed += 1;
                 tracing::debug!("{label} request failed: {e}");
             }
@@ -860,6 +1042,13 @@ fn drain_finished_decrypts<T: CollectedDecryptRateResult + 'static>(
             }
         }
     }
+}
+
+fn log_process_thread_count(label: &str, phase: &str) {
+    let process_threads = std::fs::read_dir("/proc/self/task").map_or(0, |tasks| tasks.count());
+    println!(
+        "CORE_CLIENT_THREADING label={label:?} phase={phase} process_threads={process_threads}"
+    );
 }
 
 #[expect(clippy::too_many_arguments)]
@@ -882,17 +1071,19 @@ where
     Spawn: FnMut(Req) -> Fut,
     PayloadBytes: FnMut(&Req) -> u64,
 {
-    let mut join_set: JoinSet<Result<T, anyhow::Error>> = JoinSet::new();
+    let mut join_set: JoinSet<(Instant, Result<T, anyhow::Error>)> = JoinSet::new();
     let mut collected = Vec::with_capacity(total_requests);
     let mut durations_to_get_responses = Vec::with_capacity(total_requests);
     let mut offered = 0_u64;
     let mut failed = 0_u64;
+    let mut completed_in_window = 0_u64;
     let mut shed = 0_u64;
     let mut saturated = false;
     let mut request_payload_bytes_total = 0_u64;
     let mut request_payload_messages = 0_u64;
 
     // PHASE 2: launch requests at the configured rate and collect completed work.
+    log_process_thread_count(label, "measurement_start");
     let run_start = Instant::now();
     let deadline = run_start + Duration::from_secs(duration_secs);
     let tick_period = Duration::from_millis(5);
@@ -918,6 +1109,9 @@ where
     while Instant::now() < deadline {
         ticker.tick().await;
         let tick_now = Instant::now();
+        if tick_now >= deadline {
+            break;
+        }
         // We consider a tick that fires 2 x tick period (10ms) as being "late".
         if tick_now.duration_since(last_tick) > tick_period * 2 {
             late_ticks += 1;
@@ -929,6 +1123,8 @@ where
             &mut collected,
             &mut durations_to_get_responses,
             &mut failed,
+            deadline,
+            &mut completed_in_window,
         );
 
         // Add this tick's `rate` tokens, launch one request per whole `ticks_per_sec` accumulated, and carry the
@@ -951,9 +1147,25 @@ where
             request_payload_bytes_total +=
                 request_payload_bytes(&request) * payload_targets_per_request as u64;
             request_payload_messages += payload_targets_per_request as u64;
-            join_set.spawn(spawn_request(request));
+            let request_future = spawn_request(request);
+            join_set.spawn(async move {
+                let result = request_future.await;
+                (Instant::now(), result)
+            });
         }
     }
+
+    // Capture tasks that reached logical completion before the measurement
+    // deadline but had not yet been observed by the pacing loop.
+    drain_finished_decrypts(
+        label,
+        &mut join_set,
+        &mut collected,
+        &mut durations_to_get_responses,
+        &mut failed,
+        deadline,
+        &mut completed_in_window,
+    );
 
     if late_ticks > 0 {
         tracing::warn!(
@@ -972,11 +1184,14 @@ where
             tokio::time::timeout_at(drain_deadline, join_set.join_next()).await
         {
             match result {
-                Ok(Ok(collected_result)) => {
+                Ok((completed_at, Ok(collected_result))) => {
+                    if completed_at <= deadline {
+                        completed_in_window += 1;
+                    }
                     durations_to_get_responses.push(collected_result.collect_duration());
                     collected.push(collected_result);
                 }
-                Ok(Err(e)) => {
+                Ok((_completed_at, Err(e))) => {
                     failed += 1;
                     tracing::debug!("{label} request failed: {e}");
                 }
@@ -998,6 +1213,8 @@ where
     }
 
     let collect_elapsed = run_start.elapsed();
+    let measurement_elapsed = Duration::from_secs(duration_secs);
+    let drain_elapsed = collect_elapsed.saturating_sub(measurement_elapsed);
     let response_payload_bytes = collected
         .iter()
         .map(CollectedDecryptRateResult::response_payload_bytes)
@@ -1008,10 +1225,14 @@ where
         .sum();
 
     let completed = collected.len() as u64;
+    log_process_thread_count(label, "measurement_and_drain_end");
     DecryptRateCollection {
         collected,
         completed,
+        completed_in_window,
         durations_to_get_responses,
+        measurement_elapsed,
+        drain_elapsed,
         collect_elapsed,
         offered,
         failed,
@@ -1032,6 +1253,7 @@ fn decrypt_rate_metrics<T>(
     post_process_failed: u64,
     post_process_durations: &[Duration],
     post_process_wall: Duration,
+    rpc_diagnostics: Option<RpcDiagnosticsJson>,
 ) -> DecryptRateMetrics {
     let request_payload_mib_per_sec = if collection.collect_elapsed.is_zero() {
         0.0
@@ -1062,10 +1284,19 @@ fn decrypt_rate_metrics<T>(
         max_in_flight,
         offered: collection.offered,
         completed: collection.completed,
+        completed_in_window: collection.completed_in_window,
+        completed_during_drain: collection
+            .completed
+            .saturating_sub(collection.completed_in_window),
+        measurement_elapsed: collection.measurement_elapsed,
+        drain_elapsed: collection.drain_elapsed,
         failed: collection.failed,
         shed: collection.shed,
-        // TODO: consider also reporting completed / duration_secs; this includes drain time.
-        achieved_rate: collection.completed as f64 / collection.collect_elapsed.as_secs_f64(),
+        achieved_rate: if collection.measurement_elapsed.is_zero() {
+            0.0
+        } else {
+            collection.completed_in_window as f64 / collection.measurement_elapsed.as_secs_f64()
+        },
         saturated: collection.saturated,
         request_payload_bytes: collection.request_payload_bytes,
         request_payload_messages: collection.request_payload_messages,
@@ -1079,6 +1310,7 @@ fn decrypt_rate_metrics<T>(
         latency_stat: crate::compute_stat_on_durations(&collection.durations_to_get_responses),
         post_process_stat: crate::compute_stat_on_durations(post_process_durations),
         post_process_wall,
+        rpc_diagnostics,
     }
 }
 
@@ -1130,15 +1362,20 @@ async fn send_user_decrypt_requests(
     core_endpoints: &CoreEndpointClients,
     num_parties: usize,
     num_expected_responses: usize,
+    rpc_diagnostics: Arc<RpcDiagnostics>,
 ) -> anyhow::Result<()> {
     let mut req_tasks = JoinSet::new();
     for ce in core_endpoints.iter() {
         let req_cloned = user_decrypt_req.clone();
         let mut cur_client = ce.clone();
+        let rpc_diagnostics = Arc::clone(&rpc_diagnostics);
         req_tasks.spawn(async move {
-            cur_client
+            let _in_flight = rpc_diagnostics.start(RpcPhase::Submit);
+            let response = cur_client
                 .user_decrypt(tonic::Request::new(req_cloned))
-                .await
+                .await;
+            rpc_diagnostics.record(RpcPhase::Submit, &response);
+            response
         });
     }
 
@@ -1167,6 +1404,7 @@ fn spawn_get_user_decrypt_result(
     user_decrypt_req: &UserDecryptionRequest,
     core_endpoints: &CoreEndpointClients,
     max_iter: usize,
+    rpc_diagnostics: Arc<RpcDiagnostics>,
 ) -> anyhow::Result<JoinSet<anyhow::Result<UserDecryptionResponse>>> {
     let req_id = user_decrypt_req
         .request_id
@@ -1177,11 +1415,17 @@ fn spawn_get_user_decrypt_result(
     for ce in core_endpoints.iter() {
         let mut cur_client = ce.clone();
         let req_id_clone = req_id.clone();
+        let rpc_diagnostics = Arc::clone(&rpc_diagnostics);
 
         resp_tasks.spawn(async move {
-            let mut response = cur_client
-                .get_user_decryption_result(tonic::Request::new(req_id_clone.clone()))
-                .await;
+            let mut response = {
+                let _in_flight = rpc_diagnostics.start(RpcPhase::Result);
+                let response = cur_client
+                    .get_user_decryption_result(tonic::Request::new(req_id_clone.clone()))
+                    .await;
+                rpc_diagnostics.record(RpcPhase::Result, &response);
+                response
+            };
             let mut ctr = 0_usize;
             while response.is_err()
                 && response.as_ref().unwrap_err().code() == tonic::Code::Unavailable
@@ -1193,9 +1437,17 @@ fn spawn_get_user_decrypt_result(
                     );
                 }
                 ctr += 1;
-                response = cur_client
-                    .get_user_decryption_result(tonic::Request::new(req_id_clone.clone()))
-                    .await;
+                rpc_diagnostics
+                    .result_retries
+                    .fetch_add(1, Ordering::Relaxed);
+                response = {
+                    let _in_flight = rpc_diagnostics.start(RpcPhase::Result);
+                    let response = cur_client
+                        .get_user_decryption_result(tonic::Request::new(req_id_clone.clone()))
+                        .await;
+                    rpc_diagnostics.record(RpcPhase::Result, &response);
+                    response
+                };
             }
             let resp =
                 response.map_err(|e| anyhow::anyhow!("user decryption response failed: {e}"))?;
@@ -1218,6 +1470,7 @@ async fn send_and_collect_user_decrypt(
     max_iter: usize,
     num_expected_responses: usize,
     use_sync_endpoint: bool,
+    rpc_diagnostics: Arc<RpcDiagnostics>,
 ) -> anyhow::Result<CollectedUserDecrypt> {
     let request_start = Instant::now();
 
@@ -1230,10 +1483,15 @@ async fn send_and_collect_user_decrypt(
             &core_endpoints_req,
             num_parties,
             num_expected_responses,
+            Arc::clone(&rpc_diagnostics),
         )
         .await?;
-        let tasks =
-            spawn_get_user_decrypt_result(&user_decrypt_req, &core_endpoints_resp, max_iter)?;
+        let tasks = spawn_get_user_decrypt_result(
+            &user_decrypt_req,
+            &core_endpoints_resp,
+            max_iter,
+            Arc::clone(&rpc_diagnostics),
+        )?;
         ("user decrypt", tasks)
     };
 
@@ -1244,6 +1502,7 @@ async fn send_and_collect_user_decrypt(
         resp_tasks,
         num_parties,
         num_expected_responses,
+        Some(Arc::clone(&rpc_diagnostics)),
     )
     .await?;
 
@@ -1358,6 +1617,7 @@ pub(crate) async fn do_user_decrypt_once<R: Rng + CryptoRng>(
         max_iter,
         num_expected_responses,
         use_sync_endpoint,
+        Arc::new(RpcDiagnostics::default()),
     )
     .await?;
     let collect_duration = collected.collect_duration;
@@ -1404,6 +1664,7 @@ pub(crate) async fn do_user_decrypt<R: Rng + CryptoRng>(
     let expected = TestingPlaintext::try_from(ptxt)?;
     let core_endpoints_req = endpoint_clients(core_endpoints_req);
     let core_endpoints_resp = endpoint_clients(core_endpoints_resp);
+    let rpc_diagnostics = Arc::new(RpcDiagnostics::default());
 
     // PHASE 1: build the request batch before the timed launch window.
     tracing::info!(
@@ -1438,6 +1699,7 @@ pub(crate) async fn do_user_decrypt<R: Rng + CryptoRng>(
         |(req_id, user_decrypt_req, enc_pk, enc_sk)| {
             let core_endpoints_req = Arc::clone(&core_endpoints_req);
             let core_endpoints_resp = Arc::clone(&core_endpoints_resp);
+            let rpc_diagnostics = Arc::clone(&rpc_diagnostics);
             send_and_collect_user_decrypt(
                 rate,
                 req_id,
@@ -1450,6 +1712,7 @@ pub(crate) async fn do_user_decrypt<R: Rng + CryptoRng>(
                 max_iter,
                 num_expected_responses,
                 use_sync_endpoint,
+                rpc_diagnostics,
             )
         },
     )
@@ -1458,6 +1721,7 @@ pub(crate) async fn do_user_decrypt<R: Rng + CryptoRng>(
     let collected = std::mem::take(&mut collection.collected);
 
     // PHASE 4: reconstruct collected responses and emit metrics.
+    log_process_thread_count("user decrypt", "reconstruction_start");
     let reconstruct_start = Instant::now();
     let mut recon_tasks: JoinSet<Result<Duration, anyhow::Error>> = JoinSet::new();
     for collected_result in collected {
@@ -1488,6 +1752,7 @@ pub(crate) async fn do_user_decrypt<R: Rng + CryptoRng>(
         }
     }
     let reconstruct_elapsed = reconstruct_start.elapsed();
+    log_process_thread_count("user decrypt", "reconstruction_end");
 
     let metrics = decrypt_rate_metrics(
         rate,
@@ -1497,6 +1762,7 @@ pub(crate) async fn do_user_decrypt<R: Rng + CryptoRng>(
         reconstruction_failed,
         &reconstruction_durations,
         reconstruct_elapsed,
+        Some(rpc_diagnostics.snapshot()),
     );
     metrics.log_json(
         "USER_DECRYPT_METRICS",
@@ -1757,6 +2023,10 @@ mod tests {
             max_in_flight: 10_000,
             offered,
             completed: offered - 100,
+            completed_in_window: offered - 120,
+            completed_during_drain: 20,
+            measurement_elapsed: Duration::from_secs(60),
+            drain_elapsed: Duration::from_millis(250),
             failed: 10,
             shed: 0,
             achieved_rate: target_rate as f64 - 0.2,
@@ -1773,6 +2043,7 @@ mod tests {
             latency_stat: crate::compute_stat_on_durations(&sample),
             post_process_stat: crate::compute_stat_on_durations(&sample),
             post_process_wall: Duration::from_millis(5),
+            rpc_diagnostics: None,
         }
     }
 
@@ -1789,6 +2060,10 @@ mod tests {
         assert_eq!(v["duration"], 60);
         assert_eq!(v["max_in_flight"], 10_000);
         assert_eq!(v["offered"], 30_000);
+        assert_eq!(v["completed_in_window"], 29_880);
+        assert_eq!(v["completed_during_drain"], 20);
+        assert_eq!(v["measurement_elapsed_seconds"], 60.0);
+        assert_eq!(v["drain_elapsed_seconds"], 0.25);
         assert!(v["achieved_rate"].is_number());
         assert!(v["latency_ms"]["p50"].is_number());
         assert!(v["latency_ms"]["p99"].is_number());
@@ -1804,12 +2079,51 @@ mod tests {
         assert_eq!(v_failed["verification_failed"], 3);
     }
 
+    #[test]
+    fn achieved_rate_uses_measurement_window_completions() {
+        let collection = DecryptRateCollection::<()> {
+            collected: Vec::new(),
+            completed: 100,
+            completed_in_window: 80,
+            durations_to_get_responses: Vec::new(),
+            measurement_elapsed: Duration::from_secs(10),
+            drain_elapsed: Duration::from_secs(10),
+            collect_elapsed: Duration::from_secs(20),
+            offered: 100,
+            failed: 0,
+            shed: 0,
+            saturated: false,
+            request_payload_bytes: 0,
+            request_payload_messages: 0,
+            response_payload_bytes: 0,
+            response_payload_messages: 0,
+        };
+
+        let metrics =
+            decrypt_rate_metrics(10, 10, 1_000, &collection, 0, &[], Duration::ZERO, None);
+
+        assert_eq!(metrics.achieved_rate, 8.0);
+        assert_eq!(metrics.completed_during_drain, 20);
+    }
+
     // The `USER_DECRYPT_METRICS` JSON is parsed by
     // ci/perf-testing/argo-workflow/kms-perf-workflow-kms-ci.yaml. This locks
     // the field names/nesting so the serde refactor can't silently drift from that parser.
     #[test]
     fn user_decrypt_metrics_json_matches_ci_parser_contract() {
-        let json = sample_metrics(2400, 144_000, 0)
+        let rpc_diagnostics = Arc::new(RpcDiagnostics::default());
+        let submit_guard = rpc_diagnostics.start(RpcPhase::Submit);
+        let submit_ok: Result<(), tonic::Status> = Ok(());
+        rpc_diagnostics.record(RpcPhase::Submit, &submit_ok);
+        drop(submit_guard);
+        let result_guard = rpc_diagnostics.start(RpcPhase::Result);
+        let result_err: Result<(), tonic::Status> = Err(tonic::Status::unavailable("retry"));
+        rpc_diagnostics.record(RpcPhase::Result, &result_err);
+        drop(result_guard);
+
+        let mut metrics = sample_metrics(2400, 144_000, 0);
+        metrics.rpc_diagnostics = Some(rpc_diagnostics.snapshot());
+        let json = metrics
             .to_json("reconstruction_failed", "reconstruction_ms")
             .unwrap();
         let v: serde_json::Value = serde_json::from_str(&json).unwrap();
@@ -1822,6 +2136,10 @@ mod tests {
         assert!(v["latency_ms"]["p99"].is_number());
         assert!(v["reconstruction_ms"]["wall"].is_number());
         assert_eq!(v["reconstruction_failed"], 0);
+        assert_eq!(v["rpc_diagnostics"]["submit_status"]["ok"], 1);
+        assert_eq!(v["rpc_diagnostics"]["result_status"]["unavailable"], 1);
+        assert_eq!(v["rpc_diagnostics"]["submit_peak_in_flight"], 1);
+        assert_eq!(v["rpc_diagnostics"]["result_current_in_flight"], 0);
 
         let v_failed: serde_json::Value = serde_json::from_str(
             &sample_metrics(2400, 144_000, 3)
