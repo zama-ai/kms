@@ -391,7 +391,6 @@ impl<'a> Signcrypt for UnifiedSigncryptionKey<'a> {
     where
         T: Serialize + tfhe::Versionize + tfhe::named::Named,
     {
-        // Serialize into a sink that wipes intermediate buffers.
         let mut serialized_msg = ZeroizingWriter::new();
         safe_serialize(msg, &mut serialized_msg, SAFE_SER_SIZE_LIMIT).map_err(|e| {
             CryptographyError::SerializationError(format!(
@@ -684,7 +683,7 @@ fn check_format_and_signature(
             return Err(CryptographyError::MlKem1024Unsupported);
         }
     };
-    // Wipe the signature input and avoid an intermediate plaintext copy.
+
     let msg_signed = Zeroizing::new(
         [
             &dsep[..],
@@ -694,9 +693,9 @@ fn check_format_and_signature(
         ]
         .concat(),
     );
-    // Check that the signature is normalized
+
     check_normalized(sig)?;
-    // Verify signature
+
     unsigncryption_key
         .sender_verf_key
         .pk()
