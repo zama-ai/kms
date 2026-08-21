@@ -100,9 +100,6 @@ impl<C: Coinflip, S: ShareDispute, BCast: Broadcast> LocalDoubleShare
             ));
         }
 
-        // NOTE TO REVIEWER: For some reason it seems we want to explicitly bound this loop
-        // although theory tells us it's bound to finish. But the bound we had was very optimistic.
-        //
         // Each iteration adds at least one dispute pair
         // After a party is in dispute with (strictly) more than threshold
         // parties, it is declared corrupt, and we can have at most t corrupt parties
