@@ -437,6 +437,13 @@ jobs:
           kubectl get pods -n "${NAMESPACE}" -l app=ena-probe -o wide || true
           kubectl logs -n "${NAMESPACE}" -l app=ena-probe --prefix --tail=20 || true
 
+      - name: Report KMS core placement before perf
+        run: |
+          echo "KMS core node and AZ placement before submitting the performance workflow:"
+          if ! bash ci/scripts/sample_pod_placement.sh "${NAMESPACE}" 2 --once; then
+            echo "::warning::Could not capture pre-performance KMS core placement"
+          fi
+
       - name: Capture network diagnostics before perf
         if: always()
         run: |
@@ -475,8 +482,9 @@ jobs:
           bash ci/scripts/sample_core_metrics.sh "${NAMESPACE}" >> core-metrics-samples.log 2>&1 &
           METRICS_SAMPLER_PID=$!
 
-          # Record the node, AZ, and instance type of KMS cores and short-lived
-          # Argo perf pods. Identical placements are emitted only once.
+          # Record the node and AZ of KMS cores and short-lived Argo perf pods.
+          # Instance type and nodepool are included when exposed by the endpoint
+          # metadata or declared by the pod. Identical placements are emitted once.
           bash ci/scripts/sample_pod_placement.sh "${NAMESPACE}" \
             > pod-placement-samples.tsv 2>&1 &
           PLACEMENT_SAMPLER_PID=$!
@@ -707,9 +715,9 @@ jobs:
             > ena-probe-results/workload-pods.txt 2>&1 || true
           kubectl get pods -n "${NAMESPACE}" -o json \
             > ena-probe-results/workload-pods.json 2>&1 || true
-          kubectl get nodes \
-            -L node.kubernetes.io/instance-type,karpenter.sh/nodepool \
-            > ena-probe-results/nodes.txt 2>&1 || true
+          kubectl get endpointslices.discovery.k8s.io -n "${NAMESPACE}" \
+            -l kubernetes.io/service-name=ena-probe-placement -o yaml \
+            > ena-probe-results/endpoint-slices.yaml 2>&1 || true
 
           mapfile -t probe_pods < <(
             kubectl get pods -n "${NAMESPACE}" -l app=ena-probe \
@@ -742,8 +750,11 @@ jobs:
           ###################################################################
           echo "Starting cleanup of KMS resources..."
 
-          # Remove the host-network probe before releasing the KMS nodes.
+          # Remove the host-network probe and its placement-discovery Service
+          # before releasing the KMS nodes.
           kubectl delete daemonset ena-probe -n "${NAMESPACE}" \
+            --ignore-not-found=true || true
+          kubectl delete service ena-probe-placement -n "${NAMESPACE}" \
             --ignore-not-found=true || true
 
           # Uninstall all Helm releases in the namespace

@@ -1,3 +1,18 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: ena-probe-placement
+  namespace: kms-ci
+spec:
+  clusterIP: None
+  publishNotReadyAddresses: true
+  selector:
+    app: ena-probe
+  ports:
+    - name: placement
+      port: 1
+      targetPort: 1
+---
 apiVersion: apps/v1
 kind: DaemonSet
 metadata:
