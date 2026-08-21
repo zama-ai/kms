@@ -15,6 +15,7 @@ use serde::Serialize;
 use serde::de::DeserializeOwned;
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::fmt::Display;
+use std::sync::atomic::{AtomicU64, Ordering};
 use tfhe::safe_serialization::{safe_deserialize, safe_serialize};
 use tonic::Status;
 
@@ -25,6 +26,16 @@ pub(crate) const ERR_COMPRESSED_KEYSET_DIGEST_MISMATCH: &str =
 pub(crate) const ERR_CRS_DIGEST_MISMATCH: &str = "CRS digest mismatch";
 const ERR_INVALID_CURRENT_PUBLIC_KEY_SHAPE: &str = "Invalid current public key metadata shape";
 const ERR_INVALID_LEGACY_PUBLIC_KEY_SHAPE: &str = "Invalid legacy public key metadata shape";
+const MAX_ERROR_LOG_SAMPLES: u64 = 20;
+const ERROR_LOG_SAMPLE_INTERVAL: u64 = 10_000;
+static ASYNC_ERROR_COUNT: AtomicU64 = AtomicU64::new(0);
+static GRPC_ERROR_COUNT: AtomicU64 = AtomicU64::new(0);
+
+fn should_sample_error(counter: &AtomicU64) -> Option<u64> {
+    let occurrence = counter.fetch_add(1, Ordering::Relaxed) + 1;
+    (occurrence <= MAX_ERROR_LOG_SAMPLES || occurrence % ERROR_LOG_SAMPLE_INTERVAL == 0)
+        .then_some(occurrence)
+}
 
 #[derive(Clone, Copy)]
 enum CurrentPublicMaterialLayout {
@@ -572,14 +583,15 @@ impl MetricedError {
         internal_error: E,
     ) {
         let error = internal_error.into(); // converts anyhow::Error or any other error
-        let error_string = format!(
-            "Failure on requestID {} with metric {}. Error: {}",
-            request_id.unwrap_or_default(),
-            op_metric,
-            error
-        );
-
-        tracing::error!(error_string);
+        if let Some(occurrence) = should_sample_error(&ASYNC_ERROR_COUNT) {
+            tracing::error!(
+                request_id = %request_id.unwrap_or_default(),
+                operation = op_metric,
+                occurrence,
+                error = %error,
+                "asynchronous request failed"
+            );
+        }
 
         // Increment the method specific metric
         METRICS.increment_error_counter(op_metric, ERR_ASYNC);
@@ -596,15 +608,23 @@ impl MetricedError {
                 self.op_metric,
                 map_tonic_code_to_metric_err_tag(self.error_code),
             );
-            let error_string = format!(
-                "Grpc failure on requestID {} with metric {} and error code {}. Error message: {}",
-                self.request_id.unwrap_or_default(),
-                self.op_metric,
+            if !matches!(
                 self.error_code,
-                self.internal_error
-            );
-
-            tracing::error!(error_string);
+                tonic::Code::AlreadyExists
+                    | tonic::Code::NotFound
+                    | tonic::Code::ResourceExhausted
+                    | tonic::Code::Unavailable
+            ) && let Some(occurrence) = should_sample_error(&GRPC_ERROR_COUNT)
+            {
+                tracing::error!(
+                    request_id = %self.request_id.unwrap_or_default(),
+                    operation = self.op_metric,
+                    code = %self.error_code,
+                    occurrence,
+                    error = %self.internal_error,
+                    "gRPC request failed"
+                );
+            }
         }
     }
 }

@@ -460,7 +460,6 @@ impl<
             .start();
 
         let inner = Arc::new(request.into_inner());
-        tracing::info!("{}", format_user_request(&inner));
 
         let (
             typed_ciphertexts,
@@ -644,21 +643,6 @@ impl<
             extra_data,
         }))
     }
-}
-
-// We want most of the metadata but not the actual ciphertexts
-fn format_user_request(request: &UserDecryptionRequest) -> String {
-    format!(
-        "UserDecryptionRequest {{ request_id: {:?}, key_id: {:?}, context_id: {:?}, epoch_id: {:?}, client_address: {:?}, enc_key: {:?}, domain: {:?}, typed_ciphertexts_count: {} }}",
-        request.request_id,
-        request.key_id,
-        request.context_id,
-        request.epoch_id,
-        request.client_address,
-        hex::encode(&request.enc_key),
-        request.domain,
-        request.typed_ciphertexts.len(),
-    )
 }
 
 #[cfg(test)]

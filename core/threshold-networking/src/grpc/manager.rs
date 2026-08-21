@@ -3,14 +3,15 @@
 
 use crate::ggen::gnetworking_server::GnetworkingServer;
 use crate::grpc::{
-    CoreToCoreNetworkConfig, MessageQueueStore, NetworkingImpl, SessionStatus, SessionStore,
-    TlsExtensionGetter,
+    CoreToCoreNetworkConfig, MessageQueueStore, NETWORK_RECEIVED_MEASUREMENT, NetworkingImpl,
+    SessionStatus, SessionStore, TlsExtensionGetter,
 };
 use crate::health_check::HealthCheckSession;
 use crate::sending_service::{
     GrpcSendingService, NetworkSession, SendingService, now_activity_millis,
 };
 use dashmap::DashMap;
+use observability::metrics::{self, NetworkDebugEvent};
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -72,6 +73,7 @@ impl GrpcNetworkingManager {
     /// Finally it also updates the counts of inactive and active sessions.
     fn start_background_cleaning_task(
         session_store: Arc<SessionStore>,
+        opened_sessions_tracker: Arc<DashMap<MpcIdentity, u64>>,
         inactive_session_count: Arc<AtomicU64>,
         active_session_count: Arc<AtomicU64>,
         update_interval: Duration,
@@ -84,6 +86,7 @@ impl GrpcNetworkingManager {
                 interval.tick().await;
                 let mut internal_inactive_sessions_count = 0;
                 let mut internal_active_sessions_count = 0;
+                let mut internal_completed_sessions_count = 0;
                 let mut to_remove = Vec::new();
                 for mut cur in session_store.iter_mut() {
                     let (session_id, status) = cur.pair_mut();
@@ -91,16 +94,19 @@ impl GrpcNetworkingManager {
                         SessionStatus::Completed(started) => {
                             // Remove completed sessions that have been completed for a very long time
                             if started.elapsed() > cleanup_interval {
+                                metrics::METRICS.increment_network_debug_event(
+                                    NetworkDebugEvent::SessionCompletedRemoved,
+                                );
                                 to_remove.push(*session_id);
+                            } else {
+                                internal_completed_sessions_count += 1;
                             }
                         }
                         SessionStatus::Inactive((_, started)) => {
                             // Remove inactive sessions that have been inactive for awhile
                             if started.elapsed() > discard_inactive_interval {
-                                tracing::warn!(
-                                    "Discarding Inactive session {:?} after {:?} seconds. We never heard about such session.",
-                                    session_id,
-                                    started.elapsed().as_secs()
+                                metrics::METRICS.increment_network_debug_event(
+                                    NetworkDebugEvent::SessionInactiveDiscarded,
                                 );
                                 to_remove.push(*session_id);
                                 continue;
@@ -118,10 +124,8 @@ impl GrpcNetworkingManager {
                                     ),
                                 );
                                 if time_since_last_rec > discard_inactive_interval {
-                                    tracing::warn!(
-                                        "Discarding Active session {:?} after {:?} seconds.",
-                                        session_id,
-                                        time_since_last_rec.as_secs()
+                                    metrics::METRICS.increment_network_debug_event(
+                                        NetworkDebugEvent::SessionActiveDiscarded,
                                     );
                                     to_remove.push(*session_id);
                                     continue;
@@ -130,6 +134,10 @@ impl GrpcNetworkingManager {
                             }
                             None => {
                                 *status = SessionStatus::Completed(Instant::now());
+                                internal_completed_sessions_count += 1;
+                                metrics::METRICS.increment_network_debug_event(
+                                    NetworkDebugEvent::SessionCompleted,
+                                );
                             }
                         },
                     };
@@ -139,6 +147,20 @@ impl GrpcNetworkingManager {
                 }
                 inactive_session_count.store(internal_inactive_sessions_count, Ordering::Relaxed);
                 active_session_count.store(internal_active_sessions_count, Ordering::Relaxed);
+                let (inactive_peer_channels, max_inactive_peer_channels) = opened_sessions_tracker
+                    .iter()
+                    .fold((0_u64, 0_u64), |(total, max), entry| {
+                        (
+                            total.saturating_add(*entry.value()),
+                            max.max(*entry.value()),
+                        )
+                    });
+                metrics::METRICS.record_network_debug_state(
+                    internal_completed_sessions_count,
+                    inactive_peer_channels,
+                    max_inactive_peer_channels,
+                    u64::try_from(NETWORK_RECEIVED_MEASUREMENT.len()).unwrap_or(u64::MAX),
+                );
             }
         });
     }
@@ -175,8 +197,10 @@ impl GrpcNetworkingManager {
         let discard_inactive_interval = conf.get_discard_inactive_sessions_interval();
         let inactive_session_count = Arc::new(AtomicU64::new(0));
         let active_session_count = Arc::new(AtomicU64::new(0));
+        let opened_sessions_tracker = Arc::new(DashMap::new());
         Self::start_background_cleaning_task(
             cleanup_session_store,
+            Arc::clone(&opened_sessions_tracker),
             Arc::clone(&inactive_session_count),
             Arc::clone(&active_session_count),
             update_interval,
@@ -188,7 +212,7 @@ impl GrpcNetworkingManager {
             session_store,
             inactive_session_count,
             active_session_count,
-            opened_sessions_tracker: Arc::new(DashMap::new()),
+            opened_sessions_tracker,
             conf,
             sending_service: GrpcSendingService::new(tls_conf, conf)?,
             #[cfg(feature = "testing")]
@@ -245,7 +269,6 @@ impl GrpcNetworkingManager {
         my_role: R,
         network_mode: NetworkMode,
     ) -> anyhow::Result<Arc<impl Networking<R> + use<R>>> {
-        let party_count = role_assignment.len();
         let mut others = role_assignment.clone();
 
         // Removing self from the role_assignment map
@@ -297,6 +320,7 @@ impl GrpcNetworkingManager {
                 ));
 
                 *mutable_status = SessionStatus::Active(Arc::downgrade(&session));
+                metrics::METRICS.increment_network_debug_event(NetworkDebugEvent::SessionActivated);
 
                 session
             }
@@ -318,17 +342,12 @@ impl GrpcNetworkingManager {
                 ));
 
                 vacant.insert(SessionStatus::Active(Arc::downgrade(&session)));
+                metrics::METRICS
+                    .increment_network_debug_event(NetworkDebugEvent::SessionActiveCreated);
 
                 session
             }
         };
-
-        tracing::info!(
-            "[SESSION_CREATION] Starting session {:?} with {} parties. (Owner: {:?})",
-            session_id,
-            party_count,
-            owner,
-        );
 
         Ok(session)
     }

@@ -56,6 +56,7 @@ pub struct CoreMetrics {
     backup_error_counter: IntCounterVec, // Keeps track of errors when making a backup. These MUST be handled as it means some party may not have everything backed up properly
     network_rx_counter: IntCounter, // Note: Because we use counter we need to increment from last seen value.
     network_tx_counter: IntCounter, // Note: Because we use counter we need to increment from last seen value.
+    network_debug_event_counters: [IntCounter; NetworkDebugEvent::COUNT],
 
     // Histograms
     duration_histogram: HistogramVec,
@@ -72,6 +73,10 @@ pub struct CoreMetrics {
     rate_limiter_gauge: IntGauge, // Number tokens used in the rate limiter
     active_session_gauge: IntGauge, // Number of active sessions
     inactive_session_gauge: IntGauge, // Number of inactive sessions
+    completed_session_gauge: IntGauge,
+    inactive_peer_channel_gauge: IntGauge,
+    max_inactive_peer_channel_gauge: IntGauge,
+    network_measurement_session_gauge: IntGauge,
     meta_storage_pub_dec_gauge: IntGauge, // Number of ongoing public decryptions in meta storage
     meta_storage_user_dec_gauge: IntGauge, // Number of ongoing user decryptions in meta storage
     meta_storage_pub_dec_total_gauge: IntGauge, // Total number of public decryptions in meta storage
@@ -92,6 +97,59 @@ pub struct CoreMetrics {
 
     // Trace guard for file-based logging
     trace_guard: Arc<Mutex<Option<Box<dyn std::any::Any + Send + Sync>>>>,
+}
+
+#[derive(Clone, Copy)]
+#[repr(usize)]
+pub enum NetworkDebugEvent {
+    SessionInactiveCreated,
+    SessionActivated,
+    SessionActiveCreated,
+    SessionCompleted,
+    SessionInactiveDiscarded,
+    SessionActiveDiscarded,
+    SessionCompletedRemoved,
+    MessageEnqueued,
+    MessageToInactive,
+    MessageToCompleted,
+    MessageToDroppedActive,
+    InactiveLimit,
+    QueueFull,
+    SendActive,
+    SendInactive,
+    SendCompleted,
+    SendRetry,
+    SendFailed,
+    SendSkippedAfterCompleted,
+    ReceiveWaitTimeout,
+    FutureMessageDropped,
+}
+
+impl NetworkDebugEvent {
+    const COUNT: usize = 21;
+    const LABELS: [&'static str; Self::COUNT] = [
+        "session_inactive_created",
+        "session_activated",
+        "session_active_created",
+        "session_completed",
+        "session_inactive_discarded",
+        "session_active_discarded",
+        "session_completed_removed",
+        "message_enqueued",
+        "message_to_inactive",
+        "message_to_completed",
+        "message_to_dropped_active",
+        "inactive_limit",
+        "queue_full",
+        "send_active",
+        "send_inactive",
+        "send_completed",
+        "send_retry",
+        "send_failed",
+        "send_skipped_after_completed",
+        "receive_wait_timeout",
+        "future_message_dropped",
+    ];
 }
 
 impl Default for CoreMetrics {
@@ -194,6 +252,21 @@ impl CoreMetrics {
             .register(Box::new(network_tx_counter.clone()))
             .expect("failed to register network tx counter");
 
+        let network_debug_event_counter = IntCounterVec::new(
+            opts(
+                format!("{prefix}_network_debug_events_total"),
+                "Diagnostic events in the threshold MPC transport",
+            ),
+            &["event"],
+        )
+        .expect("failed to create network debug event counter");
+        registry
+            .register(Box::new(network_debug_event_counter.clone()))
+            .expect("failed to register network debug event counter");
+        let network_debug_event_counters = std::array::from_fn(|index| {
+            network_debug_event_counter.with_label_values(&[NetworkDebugEvent::LABELS[index]])
+        });
+
         // Histograms
         let duration_histogram = HistogramVec::new(
             hist_opts(
@@ -294,6 +367,42 @@ impl CoreMetrics {
             .register(Box::new(inactive_session_gauge.clone()))
             .expect("failed to register inactive session gauge");
 
+        let completed_session_gauge = IntGauge::with_opts(opts(
+            format!("{prefix}_completed_sessions"),
+            "Number of completed MPC sessions retained for late messages",
+        ))
+        .expect("failed to create completed session gauge");
+        registry
+            .register(Box::new(completed_session_gauge.clone()))
+            .expect("failed to register completed session gauge");
+
+        let inactive_peer_channel_gauge = IntGauge::with_opts(opts(
+            format!("{prefix}_inactive_peer_channels"),
+            "Sum of peer channels held by inactive MPC sessions",
+        ))
+        .expect("failed to create inactive peer channel gauge");
+        registry
+            .register(Box::new(inactive_peer_channel_gauge.clone()))
+            .expect("failed to register inactive peer channel gauge");
+
+        let max_inactive_peer_channel_gauge = IntGauge::with_opts(opts(
+            format!("{prefix}_max_inactive_peer_channels"),
+            "Largest inactive MPC session channel count attributed to one peer",
+        ))
+        .expect("failed to create max inactive peer channel gauge");
+        registry
+            .register(Box::new(max_inactive_peer_channel_gauge.clone()))
+            .expect("failed to register max inactive peer channel gauge");
+
+        let network_measurement_session_gauge = IntGauge::with_opts(opts(
+            format!("{prefix}_network_measurement_sessions"),
+            "Session IDs retained in the threshold networking byte-accounting map",
+        ))
+        .expect("failed to create network measurement session gauge");
+        registry
+            .register(Box::new(network_measurement_session_gauge.clone()))
+            .expect("failed to register network measurement session gauge");
+
         let meta_storage_user_dec_gauge = IntGauge::with_opts(opts(
             format!("{prefix}_meta_storage_user_decryptions"),
             "Number of ONGOING user decryptions in meta storage",
@@ -391,6 +500,7 @@ impl CoreMetrics {
             backup_error_counter,
             network_rx_counter,
             network_tx_counter,
+            network_debug_event_counters,
             duration_histogram,
             size_histogram,
             cpu_load_gauge,
@@ -403,6 +513,10 @@ impl CoreMetrics {
             fhe_key_cache_size_gauge,
             active_session_gauge,
             inactive_session_gauge,
+            completed_session_gauge,
+            inactive_peer_channel_gauge,
+            max_inactive_peer_channel_gauge,
+            network_measurement_session_gauge,
             meta_storage_pub_dec_gauge,
             meta_storage_user_dec_gauge,
             meta_storage_pub_dec_total_gauge,
@@ -465,6 +579,11 @@ impl CoreMetrics {
 
     pub fn increment_network_tx_counter(&self, bytes: u64) {
         self.network_tx_counter.inc_by(bytes);
+    }
+
+    /// Increment a fixed-cardinality diagnostic event in the threshold MPC transport.
+    pub fn increment_network_debug_event(&self, event: NetworkDebugEvent) {
+        self.network_debug_event_counters[event as usize].inc();
     }
 
     // Histogram methods
@@ -584,6 +703,23 @@ impl CoreMetrics {
     /// Record the sum of inactive sessions done with other parties into the gauge
     pub fn record_inactive_sessions(&self, count: u64) {
         self.inactive_session_gauge.set(count as i64);
+    }
+
+    /// Record gauges that expose retained and not-yet-active MPC networking state.
+    pub fn record_network_debug_state(
+        &self,
+        completed_sessions: u64,
+        inactive_peer_channels: u64,
+        max_inactive_peer_channels: u64,
+        measurement_sessions: u64,
+    ) {
+        self.completed_session_gauge.set(completed_sessions as i64);
+        self.inactive_peer_channel_gauge
+            .set(inactive_peer_channels as i64);
+        self.max_inactive_peer_channel_gauge
+            .set(max_inactive_peer_channels as i64);
+        self.network_measurement_session_gauge
+            .set(measurement_sessions as i64);
     }
 
     /// Record the current number of ongoing public decryptions into the gauge
@@ -857,7 +993,7 @@ fn is_valid_label_name(name: &str) -> bool {
 /// configured const-label colliding with any of these would make Prometheus reject the metric at
 /// registration (panicking the `.expect`), so it is skipped instead.
 fn is_reserved_label_name(name: &str) -> bool {
-    const EXTRA_RESERVED: &[&str] = &["operation", "error", "version", "le"];
+    const EXTRA_RESERVED: &[&str] = &["operation", "error", "event", "version", "le"];
     DURATION_LABEL_KEYS.contains(&name) || EXTRA_RESERVED.contains(&name)
 }
 
@@ -887,15 +1023,20 @@ mod tests {
         let mut expected_metrics = vec![
             "kms_active_sessions",
             "kms_backup_errors_total",
+            "kms_completed_sessions",
             "kms_cpu_load",
             "kms_fhe_key_cache_size",
             "kms_file_descriptors",
+            "kms_inactive_peer_channels",
             "kms_inactive_sessions",
+            "kms_max_inactive_peer_channels",
             "kms_memory_usage",
             "kms_meta_storage_pub_decryptions",
             "kms_meta_storage_pub_decryptions_in_store",
             "kms_meta_storage_user_decryptions",
             "kms_meta_storage_user_decryptions_in_store",
+            "kms_network_debug_events_total",
+            "kms_network_measurement_sessions",
             "kms_network_rx_bytes_total",
             "kms_network_tx_bytes_total",
             "kms_operation_duration_ms",
