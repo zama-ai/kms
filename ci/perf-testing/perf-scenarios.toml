@@ -31,4 +31,7 @@ rates = [
   { rate = 2800, maxfail = 10, maxshed = 25, pct = 70, allowfail = true },
   { rate = 2900, maxfail = 10, maxshed = 25, pct = 70, allowfail = true },
   { rate = 3000, maxfail = 10, maxshed = 25, pct = 70, allowfail = true },
+  { rate = 3200, maxfail = 10, maxshed = 25, pct = 70, allowfail = true },
+  { rate = 3400, maxfail = 10, maxshed = 25, pct = 70, allowfail = true },
+  { rate = 3600, maxfail = 10, maxshed = 25, pct = 70, allowfail = true },
 ]
