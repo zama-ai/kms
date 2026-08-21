@@ -197,13 +197,32 @@ path = "{private_path}"
             (tempdir().unwrap(), tempdir().unwrap(), tempdir().unwrap());
         run_centralized_overwrite(&config_dir, &temp_dir_priv, &temp_dir_pub);
 
-        let ed25519_id = signing_material_id(SigningSchemeType::Ed25519);
-        let typed_verf_key_path = temp_dir_pub
-            .path()
-            .join("PUB/TypedVerfKey")
-            .join(ed25519_id.to_string());
-        assert!(typed_verf_key_path.exists());
-        fs::remove_file(&typed_verf_key_path).unwrap();
+        let signing_key_id = signing_material_id(SigningSchemeType::Ecdsa256k1);
+        let purged: Vec<PathBuf> = [
+            // A per-scheme object, keyed by the scheme's own handle.
+            temp_dir_pub
+                .path()
+                .join("PUB/TypedVerfKey")
+                .join(signing_material_id(SigningSchemeType::Ed25519).to_string()),
+            temp_dir_pub
+                .path()
+                .join("PUB/TypedVerfAddress")
+                .join(signing_material_id(SigningSchemeType::MlDsa65).to_string()),
+            // The deprecated ECDSA-only pair, keyed by the signing-key handle.
+            temp_dir_pub
+                .path()
+                .join("PUB/VerfKey")
+                .join(signing_key_id.to_string()),
+            temp_dir_pub
+                .path()
+                .join("PUB/VerfAddress")
+                .join(signing_key_id.to_string()),
+        ]
+        .into();
+        for path in &purged {
+            assert!(path.exists(), "{} was never written", path.display());
+            fs::remove_file(path).unwrap();
+        }
 
         let config_path = write_file_storage_config(
             &config_dir,
@@ -223,8 +242,14 @@ path = "{private_path}"
             "stderr: {}",
             String::from_utf8_lossy(&output.stderr)
         );
-        assert!(log.contains("Repopulated multi-scheme verification material"));
-        assert!(typed_verf_key_path.exists());
+        assert!(log.contains("Repopulated verification material"));
+        for path in &purged {
+            assert!(
+                path.exists(),
+                "{} was not restored by repopulate",
+                path.display()
+            );
+        }
     }
 
     /// `repopulate = true` has nothing to derive from without the ECDSA signing key,

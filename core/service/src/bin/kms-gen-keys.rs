@@ -12,8 +12,7 @@ use kms_lib::{
     cryptography::attestation::make_security_module,
     util::key_setup::{
         backfill_verification_material, delete_scheme_verification_material,
-        ensure_central_server_signing_keys_exist, ensure_scheme_verification_material,
-        ensure_threshold_server_signing_key_exists,
+        ensure_central_server_signing_keys_exist, ensure_threshold_server_signing_key_exists,
     },
     vault::{
         Vault,
@@ -391,8 +390,13 @@ async fn main() -> anyhow::Result<()> {
         keychain: private_keychain,
     };
 
+    if config.keygen.show_existing {
+        show_signing_key_material(&pub_storage, &priv_vault).await?;
+        return Ok(());
+    }
+
     // Repopulate every scheme's verification material from an existing
-    // ECDSA signing key, then stop.
+    // signing identity, then stop.
     if config.keygen.repopulate {
         handle_repopulate_cmd(&mut pub_storage, &priv_vault).await?;
         tracing::info!("Repopulation finished successfully.");
@@ -436,14 +440,9 @@ async fn main() -> anyhow::Result<()> {
 async fn handle_central_cmd<PubS: Storage, PrivS: Storage>(
     args: &mut CentralCmdArgs<'_, PubS, PrivS>,
 ) -> anyhow::Result<()> {
-    process_signing_key_cmds(
-        args.pub_storage,
-        args.priv_storage,
-        &SIGNING_KEY_ID,
-        args.show_existing,
-        args.overwrite,
-    )
-    .await?;
+    if args.overwrite {
+        delete_signing_key_material(args.pub_storage, args.priv_storage, &SIGNING_KEY_ID).await?;
+    }
     if !ensure_central_server_signing_keys_exist(
         args.pub_storage,
         args.priv_storage,
@@ -460,14 +459,9 @@ async fn handle_central_cmd<PubS: Storage, PrivS: Storage>(
 async fn handle_threshold_cmd<PubS: Storage, PrivS: Storage>(
     args: &mut ThresholdCmdArgs<'_, PubS, PrivS>,
 ) -> anyhow::Result<()> {
-    process_signing_key_cmds(
-        args.pub_storage,
-        args.priv_storage,
-        &SIGNING_KEY_ID,
-        args.show_existing,
-        args.overwrite,
-    )
-    .await?;
+    if args.overwrite {
+        delete_signing_key_material(args.pub_storage, args.priv_storage, &SIGNING_KEY_ID).await?;
+    }
     if !ensure_threshold_server_signing_key_exists(
         args.pub_storage,
         args.priv_storage,
@@ -484,20 +478,18 @@ async fn handle_threshold_cmd<PubS: Storage, PrivS: Storage>(
     Ok(())
 }
 
-/// Repopulate every scheme's verification material from the node's existing
-/// signing identity.
+/// Repopulate every piece of public verification material from the node's
+/// existing signing identity.
 ///
 /// Requires both halves of that identity to already be present in private
 /// storage: the ECDSA signing key, which ECDSA's material comes from, and the
-/// root signing seed, which every other scheme's comes from. Derives and stores
-/// every scheme's public verification key and digest, ECDSA's included, in their
-/// canonical location.
+/// root signing seed, which every other scheme's comes from.
 async fn handle_repopulate_cmd<PubS: Storage, PrivS: Storage>(
     pub_storage: &mut PubS,
     priv_storage: &PrivS,
 ) -> anyhow::Result<()> {
     let sk = get_core_signing_key(priv_storage).await?;
-    // Checked up front rather than left to the first non-ECDSA derivation
+    // Checked up front rather than left to the first non-ECDSA derivation.
     if !sk.has_root_seed() {
         anyhow::bail!(
             "No {} object found under the handle {}.",
@@ -505,21 +497,8 @@ async fn handle_repopulate_cmd<PubS: Storage, PrivS: Storage>(
             *SIGNING_KEY_ID
         );
     }
-    ensure_scheme_verification_material(pub_storage, &sk).await?;
-    tracing::info!("Repopulated multi-scheme verification material from the signing identity");
-    Ok(())
-}
-
-/// Repopulate every piece of public verification material from the existing
-/// ECDSA signing key.
-/// Requires the ECDSA signing key to already be present in private storage.
-async fn handle_repopulate_cmd<PubS: Storage, PrivS: Storage>(
-    pub_storage: &mut PubS,
-    priv_storage: &PrivS,
-) -> anyhow::Result<()> {
-    let sk = get_core_signing_key(priv_storage).await?;
     backfill_verification_material(pub_storage, &sk).await?;
-    tracing::info!("Repopulated verification material from the existing ECDSA signing key");
+    tracing::info!("Repopulated verification material from the existing signing identity");
     Ok(())
 }
 
@@ -543,7 +522,10 @@ async fn show_signing_key_material<PubS: Storage, PrivS: Storage>(
         )
         .await?;
     }
-    show_key(priv_storage, &PrivDataType::SigningKey.to_string(), false).await
+    for data_type in [PrivDataType::SigningKey, PrivDataType::SigningSeed] {
+        show_key(priv_storage, &data_type.to_string(), false).await?;
+    }
+    Ok(())
 }
 
 /// Delete the signing key together with everything derived from it, so that a
@@ -552,66 +534,28 @@ async fn delete_signing_key_material<PubS: Storage, PrivS: Storage>(
     pub_storage: &mut PubS,
     priv_storage: &mut PrivS,
     req_id: &RequestId,
-    show_existing: bool,
-    overwrite: bool,
 ) -> anyhow::Result<()> {
-    process_cmd(
-        pub_storage,
-        vec![
-            &PubDataType::VerfKey,
-            &PubDataType::VerfAddress,
-            &PubDataType::CACert,
-        ],
-        req_id,
-        show_existing,
-        overwrite,
-    )
-    .await;
-    // Only delete something if we `show_existing` is false
-    if overwrite && !show_existing {
-        delete_scheme_verification_material(pub_storage).await?;
-    }
-    process_cmd(
-        priv_storage,
-        vec![&PrivDataType::SigningKey, &PrivDataType::SigningSeed],
-        req_id,
-        show_existing,
-        overwrite,
-    )
-    .await;
-    Ok(())
-}
-
-async fn process_cmd<S: Storage, D: fmt::Display>(
-    storage: &mut S,
-    data_types: Vec<D>,
-    req_id: &RequestId,
-    show_existing: bool,
-    overwrite: bool,
-) {
-    for dt in data_types {
-        let data_type = &dt.to_string();
-        if show_existing {
-            show_key(storage, data_type).await;
-            continue;
-        }
-        if overwrite {
-            tracing::info!(
-                "Deleting {} under request ID {:} from storage \"{}\"...",
-                data_type,
-                &req_id.to_string(),
-                storage.info()
-            );
-            // Ignore an error as it is likely because the data does not exist
-            let _ = delete_at_request_id(storage, req_id, data_type).await;
-        }
+    // Delete every element having the same `req_id` as the signing key, including the deprecated ECDSA-only material.
+    for data_type in [
+        PubDataType::VerfKey,
+        PubDataType::VerfAddress,
+        PubDataType::CACert,
+    ] {
+        tracing::info!("Deleting {data_type:?} under request ID {req_id:?} from public storage...");
+        // Ignore an error as it is likely because the data does not exist
+        let _ = delete_at_request_id(pub_storage, req_id, &data_type.to_string()).await;
     }
     // The typed material is keyed per scheme rather than by `req_id`, so deleting
     // it at `req_id` would only reach the ECDSA entry.
     delete_scheme_verification_material(pub_storage).await?;
-    tracing::info!("Deleting SigningKey under request ID {req_id:?} from private storage...");
-    // Ignore an error as it is likely because the data does not exist
-    let _ = delete_at_request_id(priv_storage, req_id, &PrivDataType::SigningKey.to_string()).await;
+    // The root seed goes with the signing key.
+    for data_type in [PrivDataType::SigningKey, PrivDataType::SigningSeed] {
+        tracing::info!(
+            "Deleting {data_type:?} under request ID {req_id:?} from private storage..."
+        );
+        // Ignore an error as it is likely because the data does not exist
+        let _ = delete_at_request_id(priv_storage, req_id, &data_type.to_string()).await;
+    }
     Ok(())
 }
 

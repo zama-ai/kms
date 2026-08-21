@@ -116,16 +116,9 @@ The service crate is the main surface area. Key subdirectories under
   is stored under the handle `consts::signing_material_id(scheme)` gives, in the
   data types `key_setup::SCHEME_MATERIAL_TYPES` names:
   `PubDataType::TypedVerfKey` holds the scheme's *own* verification key type
-  (`PublicSigKey`, `Ed25519VerfKey`, `MlDsaVerfKey<P>`) rather than the
-  scheme-tagged `UnifiedPublicSigKey` wrapper, and `TypedVerfAddress` its
-  `address_text()` (`0x`-prefixed hex; for ECDSA the EIP-55 address). A consumer
-  that understands one scheme can decode that scheme's object without knowing the
-  others, and ECDSA's object is byte-for-byte the deprecated `VerfKey` one. The
-  scheme is carried by the handle rather than by the object, so read/write go
-  through `crypto_material::{read,store}_scheme_verification_key`, which dispatch
-  on the scheme; a whole-folder read at a single type is not possible. ECDSA's
-  material is *additionally* written to the
-  deprecated `key_setup::LEGACY_ECDSA_MATERIAL_TYPES`
+  (`PublicSigKey`, `Ed25519VerfKey`, `MlDsaVerfKey<P>`), and `TypedVerfAddress` its
+  `address_text()` (`0x`-prefixed hex; for ECDSA the EIP-55 address).
+  ECDSA's material is *additionally* written to the deprecated `key_setup::LEGACY_ECDSA_MATERIAL_TYPES`
   (`PubDataType::VerfKey`/`VerfAddress`, a bare `PublicSigKey` and the same
   address text) for existing external consumers; those two are scheduled for
   removal and nothing new should read them. Both copies are validated against the

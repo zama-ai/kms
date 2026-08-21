@@ -417,7 +417,7 @@ async fn ensure_no_root_signing_seed<PrivS: StorageReader>(
 /// any ECDSA material already in storage against `sk` and backfills the missing
 /// verification material of the other signing schemes. Nothing is ever
 /// overwritten.
-async fn backfill_verification_material<PubS>(
+pub async fn backfill_verification_material<PubS>(
     pub_storage: &mut PubS,
     sk: &PrivateSigKey,
 ) -> anyhow::Result<()>
@@ -2336,6 +2336,3 @@ mod tests {
         assert_ne!(seeds[0], seeds[1], "two parties share a root seed");
     }
 }
-
-#[cfg(test)]
-mod root_seed_tests {}

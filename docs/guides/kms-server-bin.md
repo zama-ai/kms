@@ -33,7 +33,7 @@ and falling back to `address`.
 
 ### `[keygen]` options
 
-All three flags default to `false` and are mutually exclusive in practice —
+All three flags default to `false` and are mutually exclusive —
 pick at most one per run:
 
 - `overwrite`: delete any existing signing material at the fixed signing-key
@@ -42,16 +42,15 @@ pick at most one per run:
   Required to rotate a key; without it, generation fails if storage already holds
   material for that handle. **This destroys every post-quantum identity of the
   node**, since they are derived from the seed and stored nowhere else.
-- `show_existing`: print the existing signing-material handles instead of
+- `show_existing`: print the existing signing-material handles and exit, without
   generating or deleting anything.
-- `repopulate`: derive and store every scheme's verification material
-  (ECDSA's included) from the signing identity already present in private
+- `repopulate`: derive and store every piece of missing verification material
+  — each scheme's key and digest, ECDSA's included, plus the two deprecated
+  ECDSA-only objects — from the signing identity already present in private
   storage, then exit without touching that identity. Requires both the ECDSA
-  signing key and the root signing seed to already exist, and validates any
-  verification material already in public storage against them. Use this to
-  restore verification material after a partial purge — for example, public
-  storage was restored from a snapshot that predates a signing scheme, or a
-  per-scheme object was deleted by hand — without regenerating any private key.
+  signing key and the root signing seed to already exist. Material that is
+  already published is validated against that identity rather than overwritten.
+  Use this to restore verification material after a partial purge.
 
 ### What is written to private storage
 
@@ -90,7 +89,7 @@ boot:
 
 A node signs ECDSA with its persisted ECDSA signing key; the verification keys of
 the other supported signature schemes are derived from its root signing seed. Every
-scheme's public material — including ECDSA's — is written to the two `Scheme*`
+scheme's public material — including ECDSA's — is written to the two `Typed*`
 folders below, each under its own scheme-specific handle, so that a folder holds
 exactly one kind of object and can be read whole:
 
