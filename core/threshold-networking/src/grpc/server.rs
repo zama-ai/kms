@@ -13,7 +13,7 @@ use async_trait::async_trait;
 use dashmap::DashMap;
 use observability::metrics::{self, NetworkDebugEvent};
 use serde::{Deserialize, Serialize};
-use std::sync::Arc;
+use std::sync::{Arc, LazyLock};
 use threshold_types::party::MpcIdentity;
 use threshold_types::session_id::SessionId;
 use tokio::sync::{
@@ -191,6 +191,11 @@ impl NetworkingImpl {
     }
 }
 
+// Measure at the gRPC boundary because some received messages never reach the
+// application-level Networking implementation.
+pub static NETWORK_RECEIVED_MEASUREMENT: LazyLock<DashMap<SessionId, usize>> =
+    LazyLock::new(DashMap::new);
+
 fn parse_identity_from_cert(
     certs: Arc<Vec<CertificateDer<'static>>>,
 ) -> Result<String, Box<tonic::Status>> {
@@ -324,6 +329,14 @@ impl Gnetworking for NetworkingImpl {
             tag.sender,
             tag.round_counter
         );
+
+        let received_bytes = request.tag.len().saturating_add(request.value.len());
+        NETWORK_RECEIVED_MEASUREMENT
+            .entry(tag.session_id)
+            .and_modify(|bytes| {
+                *bytes = bytes.saturating_add(received_bytes);
+            })
+            .or_insert(received_bytes);
 
         // First try with only read lock to avoid blocking
         let tx = if let Some(session_status) = self.session_store.get(&tag.session_id) {

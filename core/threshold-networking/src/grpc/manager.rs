@@ -3,8 +3,8 @@
 
 use crate::ggen::gnetworking_server::GnetworkingServer;
 use crate::grpc::{
-    CoreToCoreNetworkConfig, MessageQueueStore, NetworkingImpl, SessionStatus, SessionStore,
-    TlsExtensionGetter,
+    CoreToCoreNetworkConfig, MessageQueueStore, NETWORK_RECEIVED_MEASUREMENT, NetworkingImpl,
+    SessionStatus, SessionStore, TlsExtensionGetter,
 };
 use crate::health_check::HealthCheckSession;
 use crate::sending_service::{
@@ -141,6 +141,9 @@ impl GrpcNetworkingManager {
                 inactive_session_count.store(internal_inactive_sessions_count, Ordering::Relaxed);
                 active_session_count.store(internal_active_sessions_count, Ordering::Relaxed);
                 metrics::METRICS.record_completed_sessions(internal_completed_sessions_count);
+                metrics::METRICS.record_network_measurement_sessions(
+                    u64::try_from(NETWORK_RECEIVED_MEASUREMENT.len()).unwrap_or(u64::MAX),
+                );
             }
         });
     }

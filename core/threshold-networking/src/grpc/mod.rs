@@ -19,7 +19,9 @@ mod session_store;
 pub use config::CoreToCoreNetworkConfig;
 pub use manager::{GrpcNetworkingManager, GrpcServer};
 pub use message_queue::NetworkRoundValue;
-pub use server::{HealthTag, NetworkingImpl, Tag, TlsExtensionGetter};
+pub use server::{
+    HealthTag, NETWORK_RECEIVED_MEASUREMENT, NetworkingImpl, Tag, TlsExtensionGetter,
+};
 
 // Crate-internal types shared across submodules and with `sending_service`.
 pub(crate) use message_queue::{ChannelPair, MessageQueueStore, ReceiverState};
