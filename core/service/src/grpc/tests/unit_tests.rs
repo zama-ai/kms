@@ -86,20 +86,28 @@ async fn test_list_requests_invalid_store_type() {
 
 #[tokio::test]
 async fn test_list_requests_pagination() {
-    let service = create_test_service();
+    let service = populated_key_gen_service(10).await;
 
     let request = tonic::Request::new(ListRequestsRequest {
         meta_store_type: MetaStoreType::KeyGeneration as i32,
         max_results: Some(5),
-        page_token: Some(String::new()),
+        page_token: None,
         status_filter: None,
     });
 
-    let response = service.list_requests(request).await;
-    assert!(response.is_ok());
+    let first_page = service.list_requests(request).await.unwrap().into_inner();
+    assert_eq!(first_page.requests.len(), 5);
+    assert_eq!(first_page.next_page_token.as_deref(), Some("5"));
 
-    let response = response.unwrap().into_inner();
-    assert!(response.requests.len() <= 5); // Respects page size
+    let request = tonic::Request::new(ListRequestsRequest {
+        meta_store_type: MetaStoreType::KeyGeneration as i32,
+        max_results: Some(5),
+        page_token: first_page.next_page_token,
+        status_filter: None,
+    });
+    let second_page = service.list_requests(request).await.unwrap().into_inner();
+    assert_eq!(second_page.requests.len(), 5);
+    assert!(second_page.next_page_token.is_none());
 }
 
 #[tokio::test]

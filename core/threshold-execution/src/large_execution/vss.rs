@@ -185,7 +185,7 @@ impl Vss for DummyVss {
         send_to_parties(&values_to_send, session).await?;
         let mut jobs: JoinSet<Result<(Role, Result<Vec<Z>, anyhow::Error>), Elapsed>> =
             JoinSet::new();
-        generic_receive_from_all(&mut jobs, session, &own_role, None, |msg, _id| match msg {
+        generic_receive_from_all(&mut jobs, session, None, |msg, _id| match msg {
             NetworkValue::VecRingValue(v) => Ok(v),
             _ => Err(anyhow_error_and_log(
                 "Received something else, not a galois ring element".to_string(),
@@ -350,7 +350,7 @@ pub(crate) async fn round_1<Z: Ring, S: BaseSessionHandles>(
 
     let mut jobs = JoinSet::<ResultRound1<Z>>::new();
     // Receive data
-    vss_receive_round_1(session, &mut jobs, my_role).await;
+    vss_receive_round_1(session, &mut jobs).await;
 
     // Parse the result, making sure we receive the expected amount of data
     // if there is any inconsistency we default to 0
@@ -737,12 +737,10 @@ pub(crate) async fn round_4<
 async fn vss_receive_round_1<Z: Ring, S: BaseSessionHandles>(
     session: &S,
     jobs: &mut JoinSet<ResultRound1<Z>>,
-    my_role: Role,
 ) {
     generic_receive_from_all(
         jobs,
         session,
-        &my_role,
         Some(session.corrupt_roles()),
         |msg, _id| match msg {
             NetworkValue::Round1VSS(v) => Ok(v),

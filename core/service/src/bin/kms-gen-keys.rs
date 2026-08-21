@@ -1,6 +1,5 @@
 use anyhow::{Context, ensure};
 use clap::Parser;
-use core::fmt;
 use futures_util::future::OptionFuture;
 use kms_grpc::RequestId;
 use kms_grpc::rpc_types::{PrivDataType, PubDataType};
@@ -14,6 +13,7 @@ use kms_lib::{
     util::key_setup::{
         delete_scheme_verification_material, ensure_central_server_signing_keys_exist,
         ensure_scheme_verification_material, ensure_threshold_server_signing_key_exists,
+        backfill_verification_material, 
     },
     vault::{
         Vault,
@@ -21,7 +21,8 @@ use kms_lib::{
         keychain::{awskms::build_aws_kms_client, make_keychain_proxy},
         storage::{
             Storage, StorageType, crypto_material::get_core_signing_key, delete_at_request_id,
-            make_storage, s3::build_s3_client,
+            s3::build_s3_client,
+            make_storage, read_text_at_request_id, s3::build_s3_client,
         },
     },
 };
@@ -114,7 +115,8 @@ struct KeygenConfig {
     /// Delete existing signing material at the fixed signing-key request ID before generation. Defaults to false.
     #[serde(default)]
     overwrite: bool,
-    /// Print existing signing-material handles instead of generating or deleting keys. Defaults to false.
+    /// Print the existing signing-material handles and exit without generating or
+    /// deleting anything. Defaults to false.
     #[serde(default)]
     show_existing: bool,
     /// Repopulate every scheme's verification material, ECDSA's included, from an existing
@@ -149,7 +151,6 @@ struct CentralCmdArgs<'a, PubS: Storage, PrivS: Storage> {
     #[cfg(any(test, feature = "testing", feature = "insecure"))]
     deterministic: bool,
     overwrite: bool,
-    show_existing: bool,
 }
 
 struct ThresholdCmdArgs<'a, PubS: Storage, PrivS: Storage> {
@@ -158,7 +159,6 @@ struct ThresholdCmdArgs<'a, PubS: Storage, PrivS: Storage> {
     #[cfg(any(test, feature = "testing", feature = "insecure"))]
     deterministic: bool,
     overwrite: bool,
-    show_existing: bool,
     signing_key_party_id: NonZeroUsize,
     tls_subject: String,
     tls_wildcard: bool,
@@ -174,7 +174,28 @@ fn resolve_args(args: &Args) -> anyhow::Result<KmsGenKeysConfig> {
     config
         .validate()
         .context("invalid kms-gen-keys config file")?;
+    ensure_keygen_modes_are_exclusive(&config.keygen)?;
     Ok(config)
+}
+
+/// Reject a `[keygen]` section that selects more than one mode.
+fn ensure_keygen_modes_are_exclusive(keygen: &KeygenConfig) -> anyhow::Result<()> {
+    let selected: Vec<&str> = [
+        ("show_existing", keygen.show_existing),
+        ("repopulate", keygen.repopulate),
+        ("overwrite", keygen.overwrite),
+    ]
+    .into_iter()
+    .filter_map(|(name, is_set)| is_set.then_some(name))
+    .collect();
+
+    ensure!(
+        selected.len() <= 1,
+        "invalid kms-gen-keys config file: [keygen] {} are mutually exclusive, \
+         set at most one of them per run",
+        selected.join(" and ")
+    );
+    Ok(())
 }
 
 fn resolve_keygen_config_mode(
@@ -388,7 +409,6 @@ async fn main() -> anyhow::Result<()> {
                 #[cfg(any(test, feature = "testing", feature = "insecure"))]
                 deterministic: config.keygen.deterministic,
                 overwrite: config.keygen.overwrite,
-                show_existing: config.keygen.show_existing,
             };
             handle_central_cmd(&mut cmdargs).await?;
         }
@@ -403,7 +423,6 @@ async fn main() -> anyhow::Result<()> {
                 #[cfg(any(test, feature = "testing", feature = "insecure"))]
                 deterministic: config.keygen.deterministic,
                 overwrite: config.keygen.overwrite,
-                show_existing: config.keygen.show_existing,
                 signing_key_party_id,
                 tls_subject,
                 tls_wildcard,
@@ -492,7 +511,45 @@ async fn handle_repopulate_cmd<PubS: Storage, PrivS: Storage>(
     Ok(())
 }
 
-async fn process_signing_key_cmds<PubS: Storage, PrivS: Storage>(
+/// Repopulate every piece of public verification material from the existing
+/// ECDSA signing key.
+/// Requires the ECDSA signing key to already be present in private storage.
+async fn handle_repopulate_cmd<PubS: Storage, PrivS: Storage>(
+    pub_storage: &mut PubS,
+    priv_storage: &PrivS,
+) -> anyhow::Result<()> {
+    let sk = get_core_signing_key(priv_storage).await?;
+    backfill_verification_material(pub_storage, &sk).await?;
+    tracing::info!("Repopulated verification material from the existing ECDSA signing key");
+    Ok(())
+}
+
+/// Print every signing-material handle the node holds, spelling out the ECDSA
+/// address and each scheme's digest.
+async fn show_signing_key_material<PubS: Storage, PrivS: Storage>(
+    pub_storage: &PubS,
+    priv_storage: &PrivS,
+) -> anyhow::Result<()> {
+    for data_type in [
+        PubDataType::TypedVerfKey,
+        PubDataType::TypedVerfAddress,
+        PubDataType::VerfKey,
+        PubDataType::VerfAddress,
+        PubDataType::CACert,
+    ] {
+        show_key(
+            pub_storage,
+            &data_type.to_string(),
+            data_type == PubDataType::VerfAddress || data_type == PubDataType::TypedVerfAddress,
+        )
+        .await?;
+    }
+    show_key(priv_storage, &PrivDataType::SigningKey.to_string(), false).await
+}
+
+/// Delete the signing key together with everything derived from it, so that a
+/// fresh key can be generated in its place.
+async fn delete_signing_key_material<PubS: Storage, PrivS: Storage>(
     pub_storage: &mut PubS,
     priv_storage: &mut PrivS,
     req_id: &RequestId,
@@ -550,15 +607,33 @@ async fn process_cmd<S: Storage, D: fmt::Display>(
             let _ = delete_at_request_id(storage, req_id, data_type).await;
         }
     }
+    // The typed material is keyed per scheme rather than by `req_id`, so deleting
+    // it at `req_id` would only reach the ECDSA entry.
+    delete_scheme_verification_material(pub_storage).await?;
+    tracing::info!("Deleting SigningKey under request ID {req_id:?} from private storage...");
+    // Ignore an error as it is likely because the data does not exist
+    let _ = delete_at_request_id(priv_storage, req_id, &PrivDataType::SigningKey.to_string()).await;
+    Ok(())
 }
 
-async fn show_key<S: Storage>(storage: &S, data_type: &str) {
-    let ids = storage.all_data_ids(data_type).await.unwrap();
+/// Print one line per handle stored under `data_type`, appending the stored text
+/// when `print_value` is set.
+async fn show_key<S: Storage>(
+    storage: &S,
+    data_type: &str,
+    print_value: bool,
+) -> anyhow::Result<()> {
+    let mut ids: Vec<RequestId> = storage.all_data_ids(data_type).await?.into_iter().collect();
+    ids.sort_by_key(|id| id.to_string());
     for id in ids {
-        // TODO read the key material and print extra info
-        let exists = storage.data_exists(&id, data_type).await.unwrap();
-        println!("{data_type}, {id}, exists={exists}");
+        if print_value {
+            let value = read_text_at_request_id(storage, &id, data_type).await?;
+            println!("{data_type}, {id}, {value}");
+        } else {
+            println!("{data_type}, {id}");
+        }
     }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -588,6 +663,37 @@ mod tests {
             enclave_bootstrap: None,
             #[cfg(feature = "insecure")]
             mock_enclave: false,
+        }
+    }
+
+    /// Combining modes is rejected up front rather than resolved by precedence —
+    /// otherwise asking to list keys could silently rotate them instead.
+    #[test]
+    fn combined_keygen_modes_are_rejected() {
+        for (show_existing, repopulate, overwrite, expected) in [
+            (true, true, false, "show_existing and repopulate"),
+            (true, false, true, "show_existing and overwrite"),
+            (false, true, true, "repopulate and overwrite"),
+            (
+                true,
+                true,
+                true,
+                "show_existing and repopulate and overwrite",
+            ),
+        ] {
+            let err = ensure_keygen_modes_are_exclusive(&KeygenConfig {
+                #[cfg(any(test, feature = "testing", feature = "insecure"))]
+                deterministic: false,
+                overwrite,
+                show_existing,
+                repopulate,
+            })
+            .unwrap_err()
+            .to_string();
+            assert!(
+                err.contains(expected) && err.contains("mutually exclusive"),
+                "expected {expected} to be reported, got: {err}"
+            );
         }
     }
 

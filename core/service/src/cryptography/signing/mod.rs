@@ -20,7 +20,7 @@ use ecdsa::{PrivateSigKey, PublicSigKey};
 use ed25519_dalek::{PUBLIC_KEY_LENGTH, SigningKey as Ed25519SigningKey};
 use eddsa::Ed25519;
 pub use eddsa::Ed25519VerfKey;
-use hashing::{DIGEST_BYTES, DomainSep};
+use hashing::{DIGEST_BYTES, DomainSep, hash_element};
 use ml_dsa::{MlDsa44, MlDsa65, MlDsa87, SigningKey as MlDsaSigningKey};
 use mldsa::MlDsa;
 pub use mldsa::MlDsaVerfKey;
@@ -390,7 +390,7 @@ impl UnifiedPublicSigKey {
         }
     }
 
-    /// The text form of [`Self::digest`], as stored under `SchemeVerfAddress`:
+    /// The text form of [`Self::digest`], as stored under `TypedVerfAddress`:
     /// `0x`-prefixed hex.
     pub fn address_text(&self) -> String {
         match self {

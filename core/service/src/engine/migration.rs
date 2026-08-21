@@ -862,6 +862,7 @@ where
 
 #[cfg(test)]
 mod tests {
+    use super::migrate_public_verification_material;
     use super::*;
     use crate::conf::ContextEpochAssociation;
     use crate::consts::signing_material_id;
@@ -869,15 +870,27 @@ mod tests {
     use crate::cryptography::signing::SigningSchemeType;
     use crate::engine::context::{ContextInfo, NodeInfo, SchemeDigests, SoftwareVersion};
     use crate::util::key_setup::{SCHEME_MATERIAL_TYPES, ensure_central_server_signing_keys_exist};
+    use crate::cryptography::signatures::PrivateSigKey;
+    use crate::cryptography::signing::SigningSchemeType;
+    use crate::engine::context::{ContextInfo, NodeInfo, SchemeDigests, SoftwareVersion};
+    use crate::util::key_setup::{
+        LEGACY_ECDSA_MATERIAL_TYPES, SCHEME_MATERIAL_TYPES, delete_scheme_verification_material,
+        ensure_central_server_signing_keys_exist,
+    };
+    use crate::vault::storage::crypto_material::{
+        get_core_signing_key, read_scheme_verification_key,
+    };
     use crate::vault::storage::file::FileStorage;
     use crate::vault::storage::ram::{self, RamStorage};
     use crate::vault::storage::{
-        Storage, StorageExt, StorageReader, StorageReaderExt, StorageType, store_context_at_id,
-        store_versioned_at_request_id,
+        Storage, StorageExt, StorageReader, StorageReaderExt, StorageType, read_text_at_request_id,
+        store_context_at_id, store_versioned_at_request_id,
     };
     use aes_prng::AesRng;
     use kms_grpc::RequestId;
     use rand::SeedableRng;
+    use kms_grpc::rpc_types::PubDataType;
+    use std::collections::HashMap;
     use std::str::FromStr;
     use strum::IntoEnumIterator;
 
@@ -3116,6 +3129,128 @@ mod tests {
         migrate_to_0_16_x(&mut storage, KMSType::Centralized)
             .await
             .unwrap();
+    }
+
+    /// Helper method:
+    /// A node from before multi-scheme support: an ECDSA signing key in private
+    /// storage, and in public storage only the deprecated ECDSA material.
+    async fn pre_multi_scheme_node() -> (RamStorage, RamStorage) {
+        let mut pub_storage = RamStorage::new();
+        let mut priv_storage = RamStorage::new();
+        ensure_central_server_signing_keys_exist(&mut pub_storage, &mut priv_storage, true)
+            .await
+            .unwrap();
+        delete_scheme_verification_material(&mut pub_storage)
+            .await
+            .unwrap();
+        (pub_storage, priv_storage)
+    }
+
+    /// Every object stored under `data_types`, keyed by data type and handle, so
+    /// that two points in time can be compared byte for byte.
+    async fn snapshot<S: StorageReader>(
+        storage: &S,
+        data_types: &[PubDataType],
+    ) -> HashMap<(String, String), Vec<u8>> {
+        let mut out = HashMap::new();
+        for data_type in data_types {
+            let data_type = data_type.to_string();
+            for id in storage.all_data_ids(&data_type).await.unwrap() {
+                let bytes = storage.load_bytes(&id, &data_type).await.unwrap();
+                out.insert((data_type.clone(), id.to_string()), bytes);
+            }
+        }
+        out
+    }
+
+    /// Validates that the published key and digest are the ones `sk` derives.
+    async fn assert_material_matches<S: StorageReader>(pub_storage: &S, sk: &PrivateSigKey) {
+        let addr_type = PubDataType::TypedVerfAddress.to_string();
+        for scheme in SigningSchemeType::iter() {
+            let expected = sk.unified_verifying_key(scheme).unwrap();
+            assert_eq!(
+                read_scheme_verification_key(pub_storage, scheme)
+                    .await
+                    .unwrap(),
+                expected,
+                "{scheme} verification key does not match the signing key"
+            );
+            assert_eq!(
+                read_text_at_request_id(pub_storage, &signing_material_id(scheme), &addr_type)
+                    .await
+                    .unwrap(),
+                expected.address_text(),
+                "{scheme} digest does not match the signing key"
+            );
+        }
+    }
+
+    /// The case the migration exists for: a node that predates multi-scheme support
+    /// gains every scheme's material on restart, derived from the key it already
+    /// has, and its historic ECDSA material is left byte-for-byte alone.
+    #[tokio::test]
+    async fn backfills_material_for_a_pre_multi_scheme_node() {
+        let (mut pub_storage, priv_storage) = pre_multi_scheme_node().await;
+        let legacy_before = snapshot(&pub_storage, &LEGACY_ECDSA_MATERIAL_TYPES).await;
+        assert!(
+            snapshot(&pub_storage, &SCHEME_MATERIAL_TYPES)
+                .await
+                .is_empty(),
+            "the fixture is not a pre-multi-scheme node"
+        );
+
+        migrate_public_verification_material(&priv_storage, &mut pub_storage)
+            .await
+            .unwrap();
+
+        let sk = get_core_signing_key(&priv_storage).await.unwrap();
+        assert_material_matches(&pub_storage, &sk).await;
+        assert_eq!(
+            snapshot(&pub_storage, &LEGACY_ECDSA_MATERIAL_TYPES).await,
+            legacy_before,
+            "the deprecated ECDSA material was modified"
+        );
+    }
+
+    /// A node with no signing key — storage prepared before key generation — must
+    /// migrate cleanly rather than fail the boot, and must not invent material it
+    /// has nothing to derive from.
+    #[tokio::test]
+    async fn skips_when_no_signing_key_exists() {
+        let mut pub_storage = RamStorage::new();
+        let priv_storage = RamStorage::new();
+
+        migrate_public_verification_material(&priv_storage, &mut pub_storage)
+            .await
+            .unwrap();
+
+        assert!(
+            snapshot(&pub_storage, &SCHEME_MATERIAL_TYPES)
+                .await
+                .is_empty(),
+            "material was written without a signing key to derive it from"
+        );
+    }
+
+    /// The migration runs on every start, so the second and later runs must be
+    /// inert — not merely non-failing, but not rewriting the published objects
+    /// either.
+    #[tokio::test]
+    async fn rerunning_changes_nothing() {
+        let (mut pub_storage, priv_storage) = pre_multi_scheme_node().await;
+        migrate_public_verification_material(&priv_storage, &mut pub_storage)
+            .await
+            .unwrap();
+        let after_first_run = snapshot(&pub_storage, &SCHEME_MATERIAL_TYPES).await;
+
+        migrate_public_verification_material(&priv_storage, &mut pub_storage)
+            .await
+            .unwrap();
+
+        assert_eq!(
+            snapshot(&pub_storage, &SCHEME_MATERIAL_TYPES).await,
+            after_first_run
+        );
     }
 
     // S3 storage tests, run against an in-process mock S3 (no MinIO) via `create_s3_storage`.

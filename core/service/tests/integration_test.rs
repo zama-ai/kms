@@ -186,10 +186,10 @@ path = "{private_path}"
         ));
     }
 
-    /// `repopulate = true` restores a scheme's verification material from the
-    /// existing ECDSA signing key without needing `overwrite`, covering the case
-    /// where storage was partially purged (e.g. public storage restored without
-    /// the corresponding private-storage snapshot).
+    /// `repopulate = true` restores verification material from the existing ECDSA
+    /// signing key without needing `overwrite`, covering the case where storage was
+    /// partially purged (e.g. public storage restored without the corresponding
+    /// private-storage snapshot).
     #[test]
     #[integration_test]
     fn central_repopulate_after_partial_purge() {
@@ -249,7 +249,7 @@ path = "{private_path}"
 
         assert!(!output.status.success());
         assert!(
-            !temp_dir_pub.path().join("PUB/SchemeVerfKey").exists(),
+            !temp_dir_pub.path().join("PUB/TypedVerfKey").exists(),
             "verification material was written without a signing key to derive it from"
         );
     }

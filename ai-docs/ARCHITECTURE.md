@@ -115,7 +115,7 @@ The service crate is the main surface area. Key subdirectories under
   never published. Every scheme's public verification material — ECDSA's included —
   is stored under the handle `consts::signing_material_id(scheme)` gives, in the
   data types `key_setup::SCHEME_MATERIAL_TYPES` names:
-  `PubDataType::SchemeVerfKey` holds the scheme's *own* verification key type
+  `PubDataType::TypedVerfKey` holds the scheme's *own* verification key type
   (`PublicSigKey`, `Ed25519VerfKey`, `MlDsaVerfKey<P>`) rather than the
   scheme-tagged `UnifiedPublicSigKey` wrapper, and `SchemeVerfAddress` its
   `address_text()` (`0x`-prefixed hex; for ECDSA the EIP-55 address). A consumer

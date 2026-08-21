@@ -96,15 +96,15 @@ exactly one kind of object and can be read whole:
 
 | Folder | Contents |
 | --- | --- |
-| `SchemeVerfKey` | One verification key per scheme, ECDSA's included; natively encoded. |
-| `SchemeVerfAddress` | The digest identifying each of those keys, as `0x`-prefixed hex text. For ECDSA it is the node's Ethereum address. |
+| `TypedVerfKey` | One verification key per scheme, ECDSA's included; natively encoded. |
+| `TypedVerfAddress` | The digest identifying each of those keys, as `0x`-prefixed hex text. For ECDSA it is the node's Ethereum address. |
 | `VerfKey` | **Deprecated.** The node's ECDSA verification key as a bare `PublicSigKey`, under the fixed `SIGNING_KEY_ID` handle. Unchanged from earlier releases. |
 | `VerfAddress` | **Deprecated.** The matching Ethereum address (checksummed, `0x`-prefixed), under the same handle. Unchanged from earlier releases. |
 
 The two deprecated folders are still written, so consumers that read the ECDSA key
 or address by handle keep working unchanged. They will be removed in a future
-release: new readers should take the ECDSA entry from `SchemeVerfKey` /
-`SchemeVerfAddress` instead.
+release: new readers should take the ECDSA entry from `TypedVerfKey` /
+`TypedVerfAddress` instead.
 
 For local test/dev runs that need pre-baked FHE keys + CRS, use `generate-test-material` instead (see the `generate-test-material-*` targets in the top-level `Makefile`).
 
