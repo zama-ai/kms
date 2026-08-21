@@ -52,3 +52,4 @@ Rules for every kind of prose you write in this repo: code comments and rustdoc,
 - Write short sentences. Use no more than 20 words in an instruction, and no more than 25 words in descriptive text.
 - Write complete sentences. Do not remove the verb, the subject or the article to make the text shorter.
 - Write one instruction per sentence.
+- Describe the WHAT not the HOW unless instructed otherwise. 
