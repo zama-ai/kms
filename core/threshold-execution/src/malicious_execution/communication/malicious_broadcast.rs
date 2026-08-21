@@ -374,44 +374,54 @@ impl Broadcast for MaliciousBroadcastRandomizer {
                     })
                     .collect(),
             ),
-            BroadcastValue::LocalSingleShare(maps_shares_challenges) => {
-                let MapsSharesChallenges {
-                    checks_for_all,
-                    checks_for_mine,
-                } = maps_shares_challenges;
-                let new_checks_for_all = checks_for_all
-                    .into_keys()
-                    .map(|role| (role, Z::sample(rng)))
-                    .collect();
-                let new_checks_for_mine = checks_for_mine
-                    .into_keys()
-                    .map(|role| (role, Z::sample(rng)))
-                    .collect();
-                BroadcastValue::LocalSingleShare(MapsSharesChallenges {
-                    checks_for_all: new_checks_for_all,
-                    checks_for_mine: new_checks_for_mine,
-                })
-            }
-            BroadcastValue::LocalDoubleShare((map_1, map_2, map_3, map_4)) => {
-                BroadcastValue::LocalDoubleShare((
-                    map_1
-                        .into_keys()
-                        .map(|role| (role, Z::sample(rng)))
-                        .collect(),
-                    map_2
-                        .into_keys()
-                        .map(|role| (role, Z::sample(rng)))
-                        .collect(),
-                    map_3
-                        .into_keys()
-                        .map(|role| (role, Z::sample(rng)))
-                        .collect(),
-                    map_4
-                        .into_keys()
-                        .map(|role| (role, Z::sample(rng)))
-                        .collect(),
-                ))
-            }
+            BroadcastValue::LocalSingleShare(batch) => BroadcastValue::LocalSingleShare(
+                batch
+                    .into_iter()
+                    .map(|maps_shares_challenges| {
+                        let MapsSharesChallenges {
+                            checks_for_all,
+                            checks_for_mine,
+                        } = maps_shares_challenges;
+                        let new_checks_for_all = checks_for_all
+                            .into_keys()
+                            .map(|role| (role, Z::sample(rng)))
+                            .collect();
+                        let new_checks_for_mine = checks_for_mine
+                            .into_keys()
+                            .map(|role| (role, Z::sample(rng)))
+                            .collect();
+                        MapsSharesChallenges {
+                            checks_for_all: new_checks_for_all,
+                            checks_for_mine: new_checks_for_mine,
+                        }
+                    })
+                    .collect(),
+            ),
+            BroadcastValue::LocalDoubleShare(batch) => BroadcastValue::LocalDoubleShare(
+                batch
+                    .into_iter()
+                    .map(|(map_1, map_2, map_3, map_4)| {
+                        (
+                            map_1
+                                .into_keys()
+                                .map(|role| (role, Z::sample(rng)))
+                                .collect(),
+                            map_2
+                                .into_keys()
+                                .map(|role| (role, Z::sample(rng)))
+                                .collect(),
+                            map_3
+                                .into_keys()
+                                .map(|role| (role, Z::sample(rng)))
+                                .collect(),
+                            map_4
+                                .into_keys()
+                                .map(|role| (role, Z::sample(rng)))
+                                .collect(),
+                        )
+                    })
+                    .collect(),
+            ),
             BroadcastValue::PartialProof(_partial_proof) => {
                 todo!("Non trivial to randomize")
             }
