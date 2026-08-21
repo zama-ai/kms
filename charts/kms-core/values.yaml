@@ -44,7 +44,7 @@ kmsCore:
         backupVaultKeychainAWSKMSRootKeySpec: KMS_CORE__BACKUP_VAULT__KEYCHAIN__AWS_KMS__ROOT_KEY_SPEC
         backupVaultKeychainAWSKMSRootKeyID: KMS_CORE__BACKUP_VAULT__KEYCHAIN__AWS_KMS__ROOT_KEY_ID
   rateLimiter:
-    bucketSize: 50000
+    bucketSize: 100000
   # One-time migration input associating existing epochs with the context they belong to.
   # Consumed once by the epoch-data migration on startup; idempotent, so it can be left in place.
   # Each epoch belongs to exactly one context, so a given epoch ID must appear under a single entry.
@@ -113,14 +113,14 @@ kmsCore:
     enableSysMetrics: true
     refreshIntervalMs: 5000
     tokioWorkerThreads: 10
-    rayonNumThreads: 40
+    rayonNumThreads: 60
     # Threshold value is the number of corruptions that the protocol handles.
     # 1 for 4 parties, 4 for 13 parties
     thresholdValue: 4
     decCapacity: 10000
     minDecCache: 6000
     # Number of sessions to pre-process should be equal to number of vCPUs
-    numSessionsPreproc: 100
+    numSessionsPreproc: 90
     decryptionMode: "NoiseFloodSmall"
   # Add the following to enable nitro enclave:
   # Nitro enclave needs specific instance types
@@ -130,18 +130,22 @@ kmsCore:
     # Enclave bootstrap support sockets.
     webIdentityTokenPort: 4100
     # Enclave CPU count, must be a multiple of 2 since whole cores (not hyperthreads) are sliced off and dedicated to the enclave
-    cpuCount: 48
+    cpuCount: 52
     # Enclave Memory in GiB
     memoryGiB: 96
     networkTunnel:
       enabled: true
-      # If unset, queueCount defaults to a heuristic based on the threshold
-      # party topology: 8 queues minimum, or the next power of two above the
-      # hot peer-flow count (2 * (party_count - 1)) in threshold mode.
-      queueCount:
-      # If unset, tokioWorkerThreads defaults to a smaller scheduler pool than
-      # queueCount: 4 workers for up to 16 queues, otherwise 8 workers.
-      tokioWorkerThreads:
+      # Set explicitly (vs the party-topology heuristic, which can fall to the
+      # floor of 8) so the ~24 hot peer flows of a 13-party committee don't
+      # head-of-line block on too few relay queues.
+      queueCount: 32
+      # More relay scheduler threads to keep up with the DKG packet storm; the
+      # heuristic default is only 4-8.
+      tokioWorkerThreads: 8
+      # Jumbo MTU for the parent-side TUN; MUST match the enclave-side
+      # init_enclave.sh TUN_MTU. Reduces fragmentation of large MPC messages.
+      # Keep <= 9001 (AWS VPC jumbo ceiling) so the parent eth0 hop doesn't drop.
+      mtu: 8500
       # interfaceName is local to the parent-side network namespace, so it does
       # not need to match the enclave-side TUN_IF constant. The address values
       # are served to the enclave by the parent-side vsocktun bootstrap over the

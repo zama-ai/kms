@@ -237,7 +237,7 @@ pub(crate) async fn get_crsgen_responses(
 
         resp_tasks.spawn(async move {
             // Sleep to give the server some time to complete crs generation
-            tokio::time::sleep(tokio::time::Duration::from_millis(SLEEP_TIME_BETWEEN_REQUESTS_MS)).await;
+            tokio::time::sleep(tokio::time::Duration::from_millis(*SLEEP_TIME_BETWEEN_REQUESTS_MS)).await;
 
             let mut response = if insecure {
                 cur_client
@@ -253,7 +253,7 @@ pub(crate) async fn get_crsgen_responses(
             while response.is_err()
                 && response.as_ref().unwrap_err().code() == tonic::Code::Unavailable
             {
-                tokio::time::sleep(tokio::time::Duration::from_millis(SLEEP_TIME_BETWEEN_REQUESTS_MS)).await;
+                tokio::time::sleep(tokio::time::Duration::from_millis(*SLEEP_TIME_BETWEEN_REQUESTS_MS)).await;
                 // do at most max_iter retries
                 if ctr >= max_iter {
                     anyhow::bail!(
@@ -360,7 +360,7 @@ pub(crate) async fn do_abort_crs_gen(
         resp_tasks.spawn(async move {
             // Sleep to give the server some time to complete CRS generation
             tokio::time::sleep(tokio::time::Duration::from_millis(
-                SLEEP_TIME_BETWEEN_REQUESTS_MS,
+                *SLEEP_TIME_BETWEEN_REQUESTS_MS,
             ))
             .await;
 
@@ -372,7 +372,7 @@ pub(crate) async fn do_abort_crs_gen(
                 && response.as_ref().unwrap_err().code() == tonic::Code::Unavailable
             {
                 tokio::time::sleep(tokio::time::Duration::from_millis(
-                    SLEEP_TIME_BETWEEN_REQUESTS_MS,
+                    *SLEEP_TIME_BETWEEN_REQUESTS_MS,
                 ))
                 .await;
                 // do at most max_iter retries
