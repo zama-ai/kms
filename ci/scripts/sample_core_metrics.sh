@@ -15,6 +15,7 @@ EXPECTED_METRIC_NAMES=(
   kms_active_sessions
   kms_inactive_sessions
   kms_completed_sessions
+  kms_network_measurement_sessions
   kms_rate_limiter_usage
   kms_fhe_key_cache_size
   kms_meta_storage_user_decryptions
@@ -46,7 +47,7 @@ extract_required_metrics() {
   local ts="$1"
   local pod="$2"
   awk -v ts="${ts}" -v pod="${pod}" '
-    /^kms_(active_sessions|inactive_sessions|completed_sessions|rate_limiter_usage|fhe_key_cache_size|meta_storage_user_decryptions|meta_storage_pub_decryptions|meta_storage_user_decryptions_in_store|meta_storage_pub_decryptions_in_store|network_rx_bytes_total|network_tx_bytes_total|tasks)([[:space:]]|\{|$)/ {
+    /^kms_(active_sessions|inactive_sessions|completed_sessions|network_measurement_sessions|rate_limiter_usage|fhe_key_cache_size|meta_storage_user_decryptions|meta_storage_pub_decryptions|meta_storage_user_decryptions_in_store|meta_storage_pub_decryptions_in_store|network_rx_bytes_total|network_tx_bytes_total|tasks)([[:space:]]|\{|$)/ {
       print ts, pod, $1, $2
     }
   '
@@ -57,6 +58,7 @@ extract_diagnostic_metrics() {
   local pod="$2"
   awk -v ts="${ts}" -v pod="${pod}" '
     /^kms_network_debug_events_total([[:space:]]|\{|$)/ ||
+    (/^kms_operation_duration_ms_(bucket|sum|count)\{/ && /operation_type="user_decrypt_(request|result|inner)"/) ||
     (/^kms_operations_total\{/ && /operation="user_decrypt_(request|result)"/) ||
     (/^kms_operation_errors_total\{/ && /operation="user_decrypt_(request|result)"/) {
       print ts, pod, $1, $2
@@ -127,7 +129,7 @@ scrape_pod() {
     fi
   done
 
-  if [[ "${metric_count}" -ne "${EXPECTED_METRICS}" || "${#missing_metrics[@]}" -ne 0 ]]; then
+  if [[ "${#missing_metrics[@]}" -ne 0 ]]; then
     local missing_csv
     missing_csv="$(IFS=,; echo "${missing_metrics[*]}")"
     printf '%s %s scrape_error method=%s expected_metrics=%d found_metrics=%d missing_metrics=%s\n' \
@@ -202,7 +204,7 @@ scrape_once() {
       "${ts}" "${failed}" "${EXPECTED_PODS}"
     return 1
   fi
-  printf '%s sampler_ok pods=%d metrics_per_pod=%d\n' \
+  printf '%s sampler_ok pods=%d required_metric_families_per_pod=%d\n' \
     "${ts}" "${#pods[@]}" "${EXPECTED_METRICS}"
 }
 
