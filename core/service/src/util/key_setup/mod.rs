@@ -679,6 +679,39 @@ async fn validate_legacy_ecdsa_material<PubS: Storage>(
     Ok(())
 }
 
+/// Store a caller-supplied server signing key together with the public verification key and
+/// Ethereum address it implies.
+#[cfg(any(test, feature = "testing"))]
+pub async fn store_server_signing_keys<PubS, PrivS>(
+    pub_storage: &mut PubS,
+    priv_storage: &mut PrivS,
+    req_id: &RequestId,
+    sk: &PrivateSigKey,
+) -> anyhow::Result<()>
+where
+    PubS: Storage,
+    PrivS: Storage,
+{
+    let pk = sk.verf_key();
+    store_versioned_at_request_id(pub_storage, req_id, &pk, &PubDataType::VerfKey.to_string())
+        .await?;
+    store_text_at_request_id(
+        pub_storage,
+        req_id,
+        &pk.address().to_string(),
+        &PubDataType::VerfAddress.to_string(),
+    )
+    .await?;
+    store_versioned_at_request_id(
+        priv_storage,
+        req_id,
+        sk,
+        &PrivDataType::SigningKey.to_string(),
+    )
+    .await?;
+    Ok(())
+}
+
 /// Generates and stores a Common Reference String (CRS) if it doesn't exist.
 ///
 /// Handles the complete CRS lifecycle:

@@ -1,6 +1,9 @@
 use crate::{
     consts::SAFE_SER_SIZE_LIMIT,
-    cryptography::{error::CryptographyError, hybrid_ml_kem, hybrid_ml_kem::HybridKemCt},
+    cryptography::{
+        error::CryptographyError, hybrid_ml_kem, hybrid_ml_kem::HybridKemCt,
+        zeroizing_writer::ZeroizingWriter,
+    },
 };
 use ml_kem::EncodedSizeUser;
 use ml_kem::KemCore;
@@ -204,12 +207,17 @@ impl Encrypt for UnifiedPublicEncKey {
         rng: &mut (impl CryptoRng + RngCore),
         msg: &T,
     ) -> Result<UnifiedCipher, CryptographyError> {
-        let mut serialized_msg = Vec::new();
+        // Serialize into a sink that wipes intermediate buffers.
+        let mut serialized_msg = ZeroizingWriter::new();
         tfhe::safe_serialization::safe_serialize(msg, &mut serialized_msg, SAFE_SER_SIZE_LIMIT)
             .map_err(|e| CryptographyError::DeserializationError(e.to_string()))?;
         let (inner_ct, scheme) = match self {
             UnifiedPublicEncKey::MlKem512(public_enc_key) => (
-                hybrid_ml_kem::enc::<MlKem512, _>(rng, &serialized_msg, &public_enc_key.0)?,
+                hybrid_ml_kem::enc::<MlKem512, _>(
+                    rng,
+                    serialized_msg.as_slice(),
+                    &public_enc_key.0,
+                )?,
                 PkeSchemeType::MlKem512,
             ),
             UnifiedPublicEncKey::MlKem1024(_) => {
@@ -460,7 +468,8 @@ impl Decrypt for UnifiedPrivateEncKey {
                 return Err(CryptographyError::MlKem1024Unsupported);
             }
         };
-        let mut res_buf = std::io::Cursor::new(raw_plaintext);
+        // Keep plaintext guarded through deserialization.
+        let mut res_buf = std::io::Cursor::new(&*raw_plaintext);
         safe_deserialize(&mut res_buf, SAFE_SER_SIZE_LIMIT)
             .map_err(CryptographyError::DeserializationError)
     }

@@ -80,6 +80,12 @@ The service crate is the main surface area. Key subdirectories under
   [context.rs](core/service/src/engine/context.rs),
   [backup_operator.rs](core/service/src/engine/backup_operator.rs),
   [keyset_configuration.rs](core/service/src/engine/keyset_configuration.rs),
+  [material_integrity.rs](core/service/src/engine/material_integrity.rs) (digest
+  primitives over raw stored bytes, depended on by both the storage layer and the
+  startup checks) and
+  [public_material_verification.rs](core/service/src/engine/public_material_verification.rs)
+  (the startup orchestration built on top of them — see
+  [Boot-time storage verification](#boot-time-storage-verification)),
   [validation_non_wasm.rs](core/service/src/engine/validation_non_wasm.rs) and
   [validation_wasm.rs](core/service/src/engine/validation_wasm.rs) (the
   validation logic is compiled for both native and WASM so that clients can
@@ -281,6 +287,65 @@ end-to-end tests live at
 [core/service/src/client/tests/centralized/custodian_backup_tests.rs](core/service/src/client/tests/centralized/custodian_backup_tests.rs)
 and
 [core/service/src/client/tests/threshold/custodian_backup_tests.rs](core/service/src/client/tests/threshold/custodian_backup_tests.rs).
+
+## Boot-time storage verification
+
+Every node checks its storage during service construction, before it serves any request.
+Two independent things happen.
+
+**The backup vault is repaired.** `update_backup_vault(false, OP_BOOT)` copies anything
+present in private storage but missing from the backup vault, so a vault that moved or lost
+entries is brought back up to date. Existing entries are not re-read or re-verified.
+
+**Public storage is verified but never touched.** Public storage can drift out of a
+consistent state: a misconfigured bucket or prefix can point a node at the wrong material, and
+writes are not atomic, so a crash mid-operation can leave an entry missing, truncated, or
+stale. Private storage holds the digests and signatures describing what should be published,
+so it is the reference.
+
+The code is split by level. [material_integrity.rs](core/service/src/engine/material_integrity.rs)
+holds the digest primitives — pure functions over raw stored bytes, with no storage or
+orchestration — so the vault layer can reuse them without depending on startup logic.
+[public_material_verification.rs](core/service/src/engine/public_material_verification.rs)
+sits above it and owns the startup orchestration, entered through `verify_public_material`.
+The checks follow three rules:
+
+1. **Private storage is the reference.** Iteration is always "for each entry in private
+   storage, look up its counterpart in public storage" — never the reverse.
+2. **Extra material in public storage is ignored,** with no error and no warning. Much of it
+   is deliberate: a node may periodically replicate other parties' public material into its
+   own public storage, so entries it never generated and holds no private counterpart for are
+   expected. Retired keysets and leftovers from a previous deployment sharing the bucket land
+   there too. This is why the verification key is read at `SIGNING_KEY_ID` specifically rather
+   than by enumerating the folder.
+3. **Read-only.** Nothing is written, repaired, or fetched from peers.
+
+What it verifies, and how failures are treated:
+
+| Check | On failure |
+|---|---|
+| Published keysets and CRSes are present, and their raw stored bytes hash to the digests in `KeyGenMetadata` / `CrsGenMetadata` | boot fails |
+| `VerfKey` and `VerfAddress` at `SIGNING_KEY_ID` match the key derived from the private `SigningKey` | boot fails |
+
+Custodian backup readiness is deliberately *not* part of this. It is a property of the vault's
+keychain rather than of the published material, and the backup path already reports it:
+`keychain_initialized` ([backup_operator.rs](core/service/src/engine/backup_operator.rs)) asks
+the keychain directly whether a backup encryption key is set, and `inner_update_backup_vault`
+warns and skips the update when it is not — during the same boot, from
+`update_backup_vault(false, OP_BOOT)`.
+
+Startup verification never deserializes stored keys or CRSes. Digests are always computed over
+the **raw stored bytes**, never over a serialization of a decoded value: a tfhe format change
+since the material was generated would alter the bytes and report intact material as corrupt.
+Legacy metadata has no digest, so its public objects receive a raw presence check only.
+
+Two limits are worth knowing. `external_signature`, and the ECDSA entry of `signatures`, sign
+an EIP-712 hash whose `Eip712Domain` arrives on the originating gRPC request and is never
+persisted, so those signatures cannot be reconstructed at boot and are skipped — and since
+`signatures` defaults to empty, the signature check is a no-op for material generated without
+an explicitly requested post-quantum or Ed25519 scheme. And `PubDataType::DecompressionKey`
+has no private-storage counterpart at all (`write_decompression_key` persists no private
+data), so a published decompression key cannot be verified.
 
 ## Backward compatibility
 

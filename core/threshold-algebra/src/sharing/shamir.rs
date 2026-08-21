@@ -11,6 +11,7 @@ use itertools::EitherOrBoth::{Both, Left, Right};
 use itertools::Itertools;
 use rand::{CryptoRng, Rng};
 use std::ops::{Add, Mul, Sub};
+use zeroize::Zeroize;
 
 pub trait HenselLiftInverse: Sized {
     fn invert(self) -> anyhow::Result<Self>;
@@ -22,11 +23,28 @@ pub struct ShamirSharings<Z: Ring> {
     pub shares: Vec<Share<Z>>,
 }
 
+/// Wipes contained shares. It cannot implement `ZeroizeOnDrop` because callers move out of the
+/// public `shares` field.
+impl<Z: Ring + Zeroize> Zeroize for ShamirSharings<Z> {
+    fn zeroize(&mut self) {
+        self.shares.zeroize();
+    }
+}
+
 pub type ShamirFieldPoly<F> = Poly<F>;
 
 impl<Z: Ring> ShamirSharings<Z> {
     pub fn new() -> Self {
         ShamirSharings { shares: Vec::new() }
+    }
+
+    /// Create an empty sharing with capacity for `n` shares.
+    ///
+    /// Reserving capacity prevents `add_share` from reallocating unwiped shares.
+    pub fn with_capacity(n: usize) -> Self {
+        ShamirSharings {
+            shares: Vec::with_capacity(n),
+        }
     }
 
     //Create from shares
@@ -416,6 +434,36 @@ mod tests {
     use proptest::prelude::*;
     use rand::SeedableRng;
     use std::num::Wrapping;
+
+    /// Ensures reserved capacity prevents reallocation while adding shares.
+    #[test]
+    fn add_share_does_not_reallocate_when_capacity_is_reserved() {
+        for n in [1usize, 4, 5, 10, 13] {
+            let mut sharing = ShamirSharings::<ResiduePolyF4<Z64>>::with_capacity(n);
+            let reserved = sharing.shares.capacity();
+            assert!(reserved >= n);
+            let ptr = sharing.shares.as_ptr();
+
+            for i in 0..n {
+                sharing.add_share(Share::new(
+                    Role::indexed_from_one(i + 1),
+                    ResiduePolyF4::<Z64>::from_scalar(Wrapping(i as u64)),
+                ));
+            }
+
+            assert_eq!(sharing.shares.len(), n);
+            assert_eq!(
+                sharing.shares.capacity(),
+                reserved,
+                "add_share grew the vector for n={n}, so unwiped share copies were left on the heap"
+            );
+            assert_eq!(
+                sharing.shares.as_ptr(),
+                ptr,
+                "add_share moved the vector for n={n}, so unwiped share copies were left on the heap"
+            );
+        }
+    }
 
     macro_rules! tests_poly_shamir {
         ($z:ty, $u:ty) => {
