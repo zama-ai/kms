@@ -25,15 +25,22 @@
 
 use crate::backup::operator::RecoveryValidationMaterial;
 use crate::consts::SIGNING_KEY_ID;
+use crate::cryptography::signatures::recover_address_from_ext_signature;
 use crate::cryptography::signing::ecdsa::{PrivateSigKey, PublicSigKey};
-use crate::engine::base::{CrsGenMetadata, DSEP_PUBDATA_KEY, KeyGenMetadata};
+use crate::engine::base::{
+    CrsGenMetadata, CrsGenMetadataInner, DSEP_PUBDATA_KEY, KeyGenMetadata, KeyGenMetadataInner,
+    StoredEip712Domain,
+};
 use crate::engine::material_integrity::{
     verify_compressed_key_digest_from_bytes, verify_crs_digest_from_bytes,
     verify_public_key_digest_from_bytes, verify_server_key_digest_from_bytes,
 };
 use crate::vault::storage::{StorageReader, read_text_at_request_id};
+use alloy_primitives::Address;
+use alloy_sol_types::{Eip712Domain, SolStruct};
 use kms_grpc::RequestId;
 use kms_grpc::rpc_types::PubDataType;
+use kms_grpc::solidity_types::{CrsgenVerification, KeygenVerification};
 use std::collections::{BTreeMap, HashMap};
 use std::str::FromStr;
 use strum::IntoEnumIterator;
@@ -261,7 +268,8 @@ where
         ensure_crs_metadata_id_matches(crs_id, metadata)?;
     }
 
-    // TODO(github.com/zama-ai/kms-internal/issues/3178) private storage validation will come later
+    let expected_address = PublicSigKey::from_sk(signing_key).address();
+    verify_private_metadata(key_entries, crs_entries, expected_address)?;
 
     for data_type in PubDataType::iter() {
         match data_type {
@@ -311,12 +319,185 @@ where
     Ok(())
 }
 
-/// Check that keyset metadata declares the same key ID it is stored under.
+/// Verify the signatures that authenticate current metadata in private storage.
 ///
-/// The published bytes are loaded under the storage ID, while the digests and signatures cover
-/// `inner.key_id`. If those disagree, every other check is describing a different key and none
-/// of their results mean anything — so this runs before them, and needs no signing key.
-/// `LegacyV0` metadata declares no ID, so there is nothing to compare.
+/// Metadata from before the EIP-712 domain was persisted upgrades with no domain and cannot be
+/// authenticated at boot. Those entries remain usable for backward compatibility, while all
+/// newly written current metadata must carry a domain and a valid signature from this node.
+///
+/// Assumes every entry has already been checked against the ID it is stored under; see
+/// [`verify_keygen_metadata_signature`] for why that ordering matters.
+fn verify_private_metadata(
+    key_entries: &[(RequestId, KeyGenMetadata)],
+    crs_entries: &HashMap<RequestId, CrsGenMetadata>,
+    expected_address: Address,
+) -> anyhow::Result<()> {
+    for (key_id, metadata) in key_entries {
+        match metadata {
+            KeyGenMetadata::Current(inner) => {
+                verify_keygen_metadata_signature(key_id, inner, expected_address)?;
+            }
+            KeyGenMetadata::LegacyV0(_) => {
+                tracing::info!(
+                    "Legacy keygen metadata for id={key_id} has no stored EIP-712 domain; skipping signature verification"
+                );
+            }
+        }
+    }
+
+    for (crs_id, metadata) in crs_entries {
+        match metadata {
+            CrsGenMetadata::Current(inner) => {
+                verify_crs_metadata_signature(crs_id, inner, expected_address)?;
+            }
+            CrsGenMetadata::LegacyV0(_) => {
+                tracing::info!(
+                    "Legacy CRS metadata for id={crs_id} has no stored EIP-712 domain; skipping signature verification"
+                );
+            }
+        }
+    }
+
+    Ok(())
+}
+
+/// Verify the EIP-712 `external_signature` on one current keygen metadata record.
+///
+/// Callers must run [`ensure_keygen_metadata_id_matches`] first. Without it,
+/// metadata stored under the wrong ID would verify happily against the ID it
+/// declares and the mismatch would go unnoticed here.
+fn verify_keygen_metadata_signature(
+    key_id: &RequestId,
+    metadata: &KeyGenMetadataInner,
+    expected_address: Address,
+) -> anyhow::Result<()> {
+    let Some(stored_domain) = metadata.eip712_domain.as_ref() else {
+        tracing::info!(
+            "Current keygen metadata for id={key_id} has no stored EIP-712 domain; skipping signature verification"
+        );
+        return Ok(());
+    };
+
+    let extra_data = metadata.extra_data.clone().unwrap_or_default();
+
+    match classify_current_public_material(&metadata.key_digest_map)? {
+        CurrentPublicMaterialLayout::Standard => {
+            let server_key_digest = metadata
+                .key_digest_map
+                .get(&PubDataType::ServerKey)
+                .ok_or_else(|| anyhow::anyhow!("Missing server-key digest for id={key_id}"))?;
+            let public_key_digest = metadata
+                .key_digest_map
+                .get(&PubDataType::PublicKey)
+                .ok_or_else(|| anyhow::anyhow!("Missing public-key digest for id={key_id}"))?;
+            let sol_type = KeygenVerification::new_uncompressed(
+                &metadata.preprocessing_id,
+                &metadata.key_id,
+                server_key_digest.clone(),
+                public_key_digest.clone(),
+                extra_data,
+            );
+            verify_eip712_metadata_signature(
+                "keygen",
+                key_id,
+                &sol_type,
+                stored_domain,
+                &metadata.external_signature,
+                expected_address,
+            )?;
+        }
+        CurrentPublicMaterialLayout::Compressed => {
+            let compressed_keyset_digest = metadata
+                .key_digest_map
+                .get(&PubDataType::CompressedXofKeySet)
+                .ok_or_else(|| {
+                    anyhow::anyhow!("Missing compressed-keyset digest for id={key_id}")
+                })?;
+            let public_key_digest = metadata
+                .key_digest_map
+                .get(&PubDataType::PublicKey)
+                .ok_or_else(|| anyhow::anyhow!("Missing public-key digest for id={key_id}"))?;
+            let sol_type = KeygenVerification::new_compressed(
+                &metadata.preprocessing_id,
+                &metadata.key_id,
+                compressed_keyset_digest.clone(),
+                public_key_digest.clone(),
+                extra_data,
+            );
+            verify_eip712_metadata_signature(
+                "compressed keygen",
+                key_id,
+                &sol_type,
+                stored_domain,
+                &metadata.external_signature,
+                expected_address,
+            )?;
+        }
+    }
+
+    Ok(())
+}
+
+/// Verify the EIP-712 `external_signature` on one current CRS metadata record.
+///
+/// Carries the same precondition as [`verify_keygen_metadata_signature`]: the signed message is
+/// rebuilt from the metadata's own `crs_id`, so [`ensure_crs_metadata_id_matches`] must have run
+/// over this entry first.
+fn verify_crs_metadata_signature(
+    crs_id: &RequestId,
+    metadata: &CrsGenMetadataInner,
+    expected_address: Address,
+) -> anyhow::Result<()> {
+    let Some(stored_domain) = metadata.eip712_domain.as_ref() else {
+        tracing::info!(
+            "Current CRS metadata for id={crs_id} has no stored EIP-712 domain; skipping signature verification"
+        );
+        return Ok(());
+    };
+
+    let sol_type = CrsgenVerification::new(
+        &metadata.crs_id,
+        metadata.max_num_bits as usize,
+        metadata.crs_digest.clone(),
+        metadata.extra_data.clone().unwrap_or_default(),
+    );
+    verify_eip712_metadata_signature(
+        "CRS",
+        crs_id,
+        &sol_type,
+        stored_domain,
+        &metadata.external_signature,
+        expected_address,
+    )
+}
+
+fn verify_eip712_metadata_signature<T: SolStruct>(
+    metadata_kind: &str,
+    metadata_id: &RequestId,
+    sol_type: &T,
+    stored_domain: &StoredEip712Domain,
+    external_signature: &[u8],
+    expected_address: Address,
+) -> anyhow::Result<()> {
+    let domain = Eip712Domain::from(stored_domain);
+    let recovered_address = recover_address_from_ext_signature(sol_type, &domain, external_signature)
+        .map_err(|e| {
+            anyhow::anyhow!(
+                "Invalid EIP-712 signature in private {metadata_kind} metadata for id={metadata_id}: {e}"
+            )
+        })?;
+    if recovered_address != expected_address {
+        anyhow::bail!(
+            "Invalid EIP-712 signature in private {metadata_kind} metadata for id={metadata_id}: recovered signer {recovered_address}, expected {expected_address}"
+        );
+    }
+
+    // TODO(https://github.com/zama-ai/kms-internal/issues/3078): verify the optional
+    // per-scheme signatures stored in the metadata, including PQ signatures.
+    Ok(())
+}
+
+/// Check that keyset metadata declares the same key ID it is stored under.
 fn ensure_keygen_metadata_id_matches(
     key_id: &RequestId,
     metadata: &KeyGenMetadata,
@@ -459,6 +640,7 @@ mod tests {
                 key_id: self.key_id,
                 preprocessing_id: self.preproc_id,
                 key_digest_map: self.key_digest_map.clone(),
+                eip712_domain: None,
                 external_signature: vec![],
                 extra_data: None,
             })
@@ -483,6 +665,7 @@ mod tests {
                 key_id: self.key_id,
                 preprocessing_id: self.preproc_id,
                 key_digest_map,
+                eip712_domain: None,
                 external_signature: vec![],
                 extra_data: None,
             })
@@ -995,6 +1178,82 @@ mod tests {
         );
     }
 
+    #[test]
+    fn private_compressed_keygen_metadata_signature_verifies_with_stored_domain() {
+        let mut rng = AesRng::seed_from_u64(174);
+        let (_verf_key, signing_key) = gen_sig_keys(&mut rng);
+        let domain = crate::dummy_domain();
+        let prep_id = RequestId::new_random(&mut rng);
+        let key_id = RequestId::new_random(&mut rng);
+        let metadata = crate::engine::base::compute_info_compressed_keygen_from_digests(
+            &signing_key,
+            &[],
+            &prep_id,
+            &key_id,
+            vec![0x11; 32],
+            vec![0x22; 32],
+            &domain,
+            vec![0x03],
+        )
+        .expect("compressed keygen metadata construction must succeed");
+
+        let KeyGenMetadata::Current(inner) = &metadata else {
+            panic!("metadata construction must produce current metadata");
+        };
+        verify_keygen_metadata_signature(
+            &key_id,
+            inner,
+            PublicSigKey::from_sk(&signing_key).address(),
+        )
+        .expect("the stored domain must verify the compressed keygen signature");
+
+        let wrong_domain = alloy_sol_types::eip712_domain!(
+            name: "wrong domain",
+            version: "1",
+            chain_id: 8006,
+            verifying_contract: alloy_primitives::address!("66f9664f97F2b50F62D13eA064982f936dE76657"),
+        );
+        let mut tampered_inner = inner.clone();
+        tampered_inner.eip712_domain = Some((&wrong_domain).into());
+        let err = verify_keygen_metadata_signature(
+            &key_id,
+            &tampered_inner,
+            PublicSigKey::from_sk(&signing_key).address(),
+        )
+        .expect_err("a changed stored domain must invalidate the signature");
+        assert!(
+            err.to_string().contains("Invalid EIP-712 signature"),
+            "expected a signature verification error, got: {err}"
+        );
+    }
+
+    #[test]
+    fn private_crs_metadata_signature_verifies_with_stored_domain() {
+        let mut rng = AesRng::seed_from_u64(175);
+        let (_verf_key, signing_key) = gen_sig_keys(&mut rng);
+        let crs_id = RequestId::new_random(&mut rng);
+        let metadata = crate::engine::base::compute_info_crs_from_digest(
+            &signing_key,
+            &[],
+            &crs_id,
+            vec![0x33; 32],
+            64,
+            &crate::dummy_domain(),
+            vec![0x04],
+        )
+        .expect("CRS metadata construction must succeed");
+
+        let CrsGenMetadata::Current(inner) = &metadata else {
+            panic!("metadata construction must produce current metadata");
+        };
+        verify_crs_metadata_signature(
+            &crs_id,
+            inner,
+            PublicSigKey::from_sk(&signing_key).address(),
+        )
+        .expect("the stored domain must verify the CRS signature");
+    }
+
     // === End to end ===
 
     #[tokio::test]
@@ -1002,13 +1261,41 @@ mod tests {
         let mut storage = RamStorage::new();
         let mut rng = AesRng::seed_from_u64(160);
         let material = setup_standard_keys(&mut storage, 161).await;
-        let metadata = material.current_metadata();
         let (_pk, sk) = gen_sig_keys(&mut AesRng::seed_from_u64(161));
         store_signing_key_material(&mut storage, &sk, None).await;
+        let domain = crate::dummy_domain();
+        let metadata = crate::engine::base::compute_info_standard_keygen_from_digests(
+            &sk,
+            &[],
+            &material.preproc_id,
+            &material.key_id,
+            material
+                .key_digest_map
+                .get(&PubDataType::ServerKey)
+                .cloned()
+                .expect("test material must contain a server-key digest"),
+            material
+                .key_digest_map
+                .get(&PubDataType::PublicKey)
+                .cloned()
+                .expect("test material must contain a public-key digest"),
+            &domain,
+            vec![],
+        )
+        .expect("signed keygen metadata construction must succeed");
 
         let crs_id = RequestId::new_random(&mut rng);
         let crs_digest = setup_crs(&mut storage, &crs_id).await;
-        let crs_metadata = current_crs_metadata(crs_id, crs_digest);
+        let crs_metadata = crate::engine::base::compute_info_crs_from_digest(
+            &sk,
+            &[],
+            &crs_id,
+            crs_digest,
+            64,
+            &domain,
+            vec![],
+        )
+        .expect("signed CRS metadata construction must succeed");
 
         let entries = vec![(material.key_id, metadata)];
         let crs_entries = HashMap::from_iter([(crs_id, crs_metadata)]);
@@ -1092,6 +1379,7 @@ mod tests {
             crs_digest,
             max_num_bits: 64,
             extra_data: None,
+            eip712_domain: None,
             external_signature: vec![],
             signatures: vec![],
         })

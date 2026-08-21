@@ -11,7 +11,7 @@ use crate::util::key_setup::FhePrivateKey;
 use aes_prng::AesRng;
 use alloy_dyn_abi::DynSolValue;
 use alloy_primitives::U256;
-use alloy_primitives::{Bytes, FixedBytes, Uint};
+use alloy_primitives::{Address, B256, Bytes, FixedBytes, Uint};
 use alloy_sol_types::Eip712Domain;
 use alloy_sol_types::SolStruct;
 use hashing::{DomainSep, hash_element, hash_versioned, serialize_hash_element};
@@ -76,6 +76,8 @@ pub static INSECURE_PREPROCESSING_ID: LazyLock<RequestId> =
     LazyLock::new(|| crate::engine::base::derive_request_id("INSECURE_PREPROCESSING_ID").unwrap());
 
 #[derive(Clone, Serialize, Deserialize, VersionsDispatch)]
+// Boxing a version variant would change the persisted representation.
+#[allow(clippy::large_enum_variant)]
 pub enum KmsFheKeyHandlesVersions {
     V0(KmsFheKeyHandlesV0),
     V1(KmsFheKeyHandles),
@@ -531,6 +533,7 @@ pub(crate) fn compute_info_crs_from_digest(
         *crs_id,
         crs_digest,
         max_num_bits as u32,
+        domain,
         external_signature,
         signatures,
         extra_data,
@@ -640,6 +643,7 @@ pub(crate) fn compute_info_standard_keygen_from_digests(
         *key_id,
         *prep_id,
         key_digests,
+        domain,
         external_signature,
         signatures,
         extra_data,
@@ -678,6 +682,7 @@ pub(crate) fn compute_info_decompression_keygen(
         *key_id,
         *prep_id,
         key_digests,
+        domain,
         external_signature,
         signatures,
         extra_data,
@@ -755,6 +760,7 @@ pub(crate) fn compute_info_compressed_keygen_from_digests(
         *key_id,
         *prep_id,
         key_digests,
+        domain,
         external_signature,
         signatures,
         extra_data,
@@ -1314,17 +1320,77 @@ pub(crate) fn retrieve_parameters(fhe_parameter: Option<i32>) -> Result<DKGParam
     Ok(params)
 }
 
+/// Version dispatch for [`StoredEip712Domain`].
+#[derive(Clone, Serialize, Deserialize, VersionsDispatch)]
+pub enum StoredEip712DomainVersions {
+    /// Initial canonical domain representation.
+    V0(StoredEip712Domain),
+}
+
+/// Canonical persisted representation of an EIP-712 domain.
+///
+/// Alloy and protobuf domain types are kept out of persisted metadata so dependency or wire
+/// representation changes cannot silently alter the on-disk format.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, Versionize)]
+#[versionize(StoredEip712DomainVersions)]
+pub struct StoredEip712Domain {
+    name: Option<String>,
+    version: Option<String>,
+    chain_id: Option<[u8; 32]>,
+    verifying_contract: Option<[u8; 20]>,
+    salt: Option<[u8; 32]>,
+}
+
+impl From<&Eip712Domain> for StoredEip712Domain {
+    fn from(domain: &Eip712Domain) -> Self {
+        Self {
+            name: domain.name.as_ref().map(ToString::to_string),
+            version: domain.version.as_ref().map(ToString::to_string),
+            chain_id: domain.chain_id.map(|chain_id| chain_id.to_be_bytes()),
+            verifying_contract: domain
+                .verifying_contract
+                .map(alloy_primitives::Address::into_array),
+            salt: domain.salt.map(|salt| salt.0),
+        }
+    }
+}
+
+impl From<&StoredEip712Domain> for Eip712Domain {
+    fn from(domain: &StoredEip712Domain) -> Self {
+        Eip712Domain::new(
+            domain.name.clone().map(Into::into),
+            domain.version.clone().map(Into::into),
+            domain.chain_id.map(U256::from_be_bytes),
+            domain.verifying_contract.map(Address::from),
+            domain.salt.map(B256::from),
+        )
+    }
+}
+
 #[derive(Clone, Serialize, Deserialize, VersionsDispatch)]
 pub enum KeyGenMetadataInnerVersions {
     V0(KeyGenMetadataInnerV0),
     V1(KeyGenMetadataInnerV1),
     V2(KeyGenMetadataInnerV2),
-    V3(KeyGenMetadataInner),
+    V3(KeyGenMetadataInnerV3),
+    V4(KeyGenMetadataInner),
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, Versionize)]
 #[versionize(KeyGenMetadataInnerVersions)]
 pub struct KeyGenMetadataInner {
+    pub key_id: RequestId,
+    pub preprocessing_id: RequestId,
+    pub key_digest_map: BTreeMap<PubDataType, Vec<u8>>,
+    pub extra_data: Option<Vec<u8>>,
+    pub eip712_domain: Option<StoredEip712Domain>,
+    pub external_signature: Vec<u8>,
+    pub signatures: Vec<StoredTypedSignature>,
+}
+
+#[derive(Clone, Serialize, Deserialize, Version)]
+/// Previous current key metadata layout, before retaining the EIP-712 domain.
+pub struct KeyGenMetadataInnerV3 {
     pub key_id: RequestId,
     pub preprocessing_id: RequestId,
     pub key_digest_map: BTreeMap<PubDataType, Vec<u8>>,
@@ -1379,11 +1445,11 @@ impl Upgrade<KeyGenMetadataInnerV2> for KeyGenMetadataInnerV1 {
     }
 }
 
-impl Upgrade<KeyGenMetadataInner> for KeyGenMetadataInnerV2 {
+impl Upgrade<KeyGenMetadataInnerV3> for KeyGenMetadataInnerV2 {
     type Error = std::convert::Infallible;
 
-    fn upgrade(self) -> Result<KeyGenMetadataInner, Self::Error> {
-        Ok(KeyGenMetadataInner {
+    fn upgrade(self) -> Result<KeyGenMetadataInnerV3, Self::Error> {
+        Ok(KeyGenMetadataInnerV3 {
             key_id: self.key_id,
             preprocessing_id: self.preprocessing_id,
             key_digest_map: self.key_digest_map,
@@ -1392,6 +1458,22 @@ impl Upgrade<KeyGenMetadataInner> for KeyGenMetadataInnerV2 {
             // `signatures` is an opt-in per-scheme, so stays empty here.
             external_signature: self.external_signature,
             signatures: Vec::new(),
+        })
+    }
+}
+
+impl Upgrade<KeyGenMetadataInner> for KeyGenMetadataInnerV3 {
+    type Error = std::convert::Infallible;
+
+    fn upgrade(self) -> Result<KeyGenMetadataInner, Self::Error> {
+        Ok(KeyGenMetadataInner {
+            key_id: self.key_id,
+            preprocessing_id: self.preprocessing_id,
+            key_digest_map: self.key_digest_map,
+            extra_data: self.extra_data,
+            eip712_domain: None,
+            external_signature: self.external_signature,
+            signatures: self.signatures,
         })
     }
 }
@@ -1413,6 +1495,8 @@ pub enum KeyGenMetadataVersions {
 // Values that need to be stored temporarily as part of an async key generation call.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, Versionize)]
 #[versionize(KeyGenMetadataVersions)]
+// Boxing a variant would change the persisted representation.
+#[allow(clippy::large_enum_variant)]
 pub enum KeyGenMetadata {
     Current(KeyGenMetadataInner),
     LegacyV0(HashMap<PubDataType, SignedPubDataHandleInternal>),
@@ -1424,11 +1508,12 @@ impl Named for KeyGenMetadata {
 }
 
 impl KeyGenMetadata {
-    /// Create a new KeyGenMetadata instance with the provided parameters.
+    /// Create a new KeyGenMetadata instance with the provided parameters and EIP-712 domain.
     pub fn new(
         key_id: RequestId,
         preprocessing_id: RequestId,
         key_digest_map: BTreeMap<PubDataType, Vec<u8>>,
+        eip712_domain: &Eip712Domain,
         external_signature: Vec<u8>,
         signatures: Vec<StoredTypedSignature>,
         extra_data: Vec<u8>,
@@ -1442,6 +1527,7 @@ impl KeyGenMetadata {
             key_id,
             preprocessing_id,
             key_digest_map,
+            eip712_domain: Some(eip712_domain.into()),
             external_signature,
             signatures,
             extra_data: parsed_extra_data,
@@ -1486,7 +1572,8 @@ impl KeyGenMetadata {
 pub enum CrsGenMetadataInnerVersions {
     V0(CrsGenMetadataInnerV0),
     V1(CrsGenMetadataInnerV1),
-    V2(CrsGenMetadataInner),
+    V2(CrsGenMetadataInnerV2),
+    V3(CrsGenMetadataInner),
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, Versionize)]
@@ -1496,8 +1583,20 @@ pub struct CrsGenMetadataInner {
     pub(crate) crs_digest: Vec<u8>,
     pub(crate) max_num_bits: u32,
     pub(crate) extra_data: Option<Vec<u8>>,
+    pub(crate) eip712_domain: Option<StoredEip712Domain>,
     pub(crate) external_signature: Vec<u8>,
     pub(crate) signatures: Vec<StoredTypedSignature>,
+}
+
+#[derive(Clone, Serialize, Deserialize, Version)]
+/// Previous current CRS metadata layout, before retaining the EIP-712 domain.
+pub struct CrsGenMetadataInnerV2 {
+    pub crs_id: RequestId,
+    pub crs_digest: Vec<u8>,
+    pub max_num_bits: u32,
+    pub extra_data: Option<Vec<u8>>,
+    pub external_signature: Vec<u8>,
+    pub signatures: Vec<StoredTypedSignature>,
 }
 
 #[derive(Clone, Serialize, Deserialize, Version)]
@@ -1523,11 +1622,11 @@ impl Upgrade<CrsGenMetadataInnerV1> for CrsGenMetadataInnerV0 {
     }
 }
 
-impl Upgrade<CrsGenMetadataInner> for CrsGenMetadataInnerV1 {
+impl Upgrade<CrsGenMetadataInnerV2> for CrsGenMetadataInnerV1 {
     type Error = std::convert::Infallible;
 
-    fn upgrade(self) -> Result<CrsGenMetadataInner, Self::Error> {
-        Ok(CrsGenMetadataInner {
+    fn upgrade(self) -> Result<CrsGenMetadataInnerV2, Self::Error> {
+        Ok(CrsGenMetadataInnerV2 {
             crs_id: self.crs_id,
             crs_digest: self.crs_digest,
             max_num_bits: self.max_num_bits,
@@ -1541,6 +1640,22 @@ impl Upgrade<CrsGenMetadataInner> for CrsGenMetadataInnerV1 {
     }
 }
 
+impl Upgrade<CrsGenMetadataInner> for CrsGenMetadataInnerV2 {
+    type Error = std::convert::Infallible;
+
+    fn upgrade(self) -> Result<CrsGenMetadataInner, Self::Error> {
+        Ok(CrsGenMetadataInner {
+            crs_id: self.crs_id,
+            crs_digest: self.crs_digest,
+            max_num_bits: self.max_num_bits,
+            extra_data: self.extra_data,
+            eip712_domain: None,
+            external_signature: self.external_signature,
+            signatures: self.signatures,
+        })
+    }
+}
+
 #[derive(Clone, Serialize, Deserialize, Version)]
 pub struct CrsGenMetadataInnerV0 {
     pub crs_id: RequestId,
@@ -1550,6 +1665,8 @@ pub struct CrsGenMetadataInnerV0 {
 }
 
 #[derive(Clone, Serialize, Deserialize, VersionsDispatch)]
+// Boxing a version variant would change the persisted representation.
+#[allow(clippy::large_enum_variant)]
 pub enum CrsGenMetadataVersions {
     V0(CrsGenMetadataV0),
     V1(CrsGenMetadata),
@@ -1557,6 +1674,8 @@ pub enum CrsGenMetadataVersions {
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, Versionize)]
 #[versionize(CrsGenMetadataVersions)]
+// Boxing a variant would change the persisted representation.
+#[allow(clippy::large_enum_variant)]
 pub enum CrsGenMetadata {
     Current(CrsGenMetadataInner),
     LegacyV0(SignedPubDataHandleInternal),
@@ -1570,10 +1689,12 @@ impl Upgrade<CrsGenMetadata> for CrsGenMetadataV0 {
 }
 
 impl CrsGenMetadata {
+    /// Create a new CRS metadata value with the provided EIP-712 domain.
     pub fn new(
         crs_id: RequestId,
         crs_digest: Vec<u8>,
         max_num_bits: u32,
+        eip712_domain: &Eip712Domain,
         external_signature: Vec<u8>,
         signatures: Vec<StoredTypedSignature>,
         extra_data: Vec<u8>,
@@ -1588,6 +1709,7 @@ impl CrsGenMetadata {
             crs_digest,
             max_num_bits,
             extra_data: parsed_extra_data,
+            eip712_domain: Some(eip712_domain.into()),
             external_signature,
             signatures,
         })
@@ -1642,8 +1764,8 @@ pub type UserDecryptCallValues = DecryptionCallValues<UserDecryptionResponsePayl
 #[cfg(test)]
 pub(crate) mod tests {
     use super::{
-        CrsGenMetadataInner, CrsGenMetadataInnerV0, KeyGenMetadata, KeyGenMetadataInner,
-        KeyGenMetadataInnerV0, KeyGenMetadataInnerV1,
+        CrsGenMetadata, CrsGenMetadataInner, CrsGenMetadataInnerV0, KeyGenMetadata,
+        KeyGenMetadataInner, KeyGenMetadataInnerV0, KeyGenMetadataInnerV1, StoredEip712Domain,
     };
     use super::{TypedPlaintext, deserialize_to_low_level};
     use crate::cryptography::signatures::compute_eip712_signature;
@@ -1680,11 +1802,33 @@ pub(crate) mod tests {
     use tfhe::{
         FheTypes, FheUint32, Seed, prelude::SquashNoise, safe_serialization::safe_serialize,
     };
-    use tfhe_versionable::Upgrade;
+    use tfhe_versionable::{Unversionize, Upgrade, VersionizeOwned};
     use threshold_execution::{
         keyset_config::StandardKeySetConfig,
         tfhe_internals::{public_keysets::FhePubKeySet, utils::expanded_encrypt},
     };
+
+    #[test]
+    fn stored_eip712_domain_roundtrip_preserves_all_fields() {
+        let domain = alloy_sol_types::Eip712Domain::new(
+            Some("KMS domain".to_owned().into()),
+            Some("42".to_owned().into()),
+            Some(alloy_primitives::U256::from(8006)),
+            Some(alloy_primitives::address!(
+                "66f9664f97F2b50F62D13eA064982f936dE76657"
+            )),
+            Some(alloy_primitives::B256::from([0xA5; 32])),
+        );
+        let stored = StoredEip712Domain::from(&domain);
+        let versioned = stored.clone().versionize_owned();
+        let bytes = bc2wrap::serialize(&versioned).unwrap();
+        let decoded_versioned: <StoredEip712Domain as VersionizeOwned>::VersionedOwned =
+            bc2wrap::deserialize_slice(&bytes).unwrap();
+        let decoded = StoredEip712Domain::unversionize(decoded_versioned).unwrap();
+
+        assert_eq!(decoded, stored);
+        assert_eq!(alloy_sol_types::Eip712Domain::from(&decoded), domain);
+    }
 
     /// Round-trip test for every signature on a decryption response, as the
     /// async decryption job produces them:
@@ -2914,22 +3058,30 @@ pub(crate) mod tests {
             q126.external_signature
         );
 
-        // V1 -> V2 -> V3: the HashMap is converted to a BTreeMap (V2) and the
-        // per-scheme `signatures` list is added (V3) and upgrades to empty.
+        // V1 -> V2 -> V3 -> V4: the HashMap is converted to a BTreeMap (V2), the
+        // per-scheme `signatures` list is added (V3), and the optional EIP-712 domain is
+        // added (V4).
         // Field-by-field structural equality remains, modulo container type.
-        let upgraded_v3: KeyGenMetadataInner = upgraded.upgrade().unwrap().upgrade().unwrap();
-        assert_eq!(upgraded_v3.extra_data, None);
-        assert_eq!(upgraded_v3.key_id, q126.key_id);
-        assert_eq!(upgraded_v3.preprocessing_id, q126.preprocessing_id);
+        let upgraded_v4: KeyGenMetadataInner = upgraded
+            .upgrade()
+            .unwrap()
+            .upgrade()
+            .unwrap()
+            .upgrade()
+            .unwrap();
+        assert_eq!(upgraded_v4.extra_data, None);
+        assert_eq!(upgraded_v4.key_id, q126.key_id);
+        assert_eq!(upgraded_v4.preprocessing_id, q126.preprocessing_id);
         assert_eq!(
-            upgraded_v3.key_digest_map,
+            upgraded_v4.key_digest_map,
             q126.key_digest_map
                 .iter()
                 .map(|(k, v)| (*k, v.clone()))
                 .collect::<BTreeMap<_, _>>(),
         );
-        assert_eq!(upgraded_v3.external_signature, q126.external_signature);
-        assert!(upgraded_v3.signatures.is_empty());
+        assert_eq!(upgraded_v4.external_signature, q126.external_signature);
+        assert!(upgraded_v4.signatures.is_empty());
+        assert_eq!(upgraded_v4.eip712_domain, None);
     }
 
     #[test]
@@ -2937,16 +3089,29 @@ pub(crate) mod tests {
         let mut rng = AesRng::seed_from_u64(890);
         let key_id = RequestId::new_random(&mut rng);
         let preprocessing_id = RequestId::new_random(&mut rng);
+        let domain = dummy_domain();
+        let expected_domain = StoredEip712Domain::from(&domain);
 
         let current = KeyGenMetadata::new(
             key_id,
             preprocessing_id,
             BTreeMap::new(),
+            &domain,
             vec![],
             vec![],
             vec![],
         );
         assert_eq!(current.preprocessing_id(), Some(&preprocessing_id));
+        let KeyGenMetadata::Current(current_inner) = &current else {
+            panic!("KeyGenMetadata::new must produce current metadata");
+        };
+        assert_eq!(current_inner.eip712_domain.as_ref(), Some(&expected_domain));
+
+        let crs = CrsGenMetadata::new(key_id, vec![], 64, &domain, vec![], vec![], vec![]);
+        let CrsGenMetadata::Current(crs_inner) = &crs else {
+            panic!("CrsGenMetadata::new must produce current metadata");
+        };
+        assert_eq!(crs_inner.eip712_domain.as_ref(), Some(&expected_domain));
 
         // Legacy metadata predates the field, so there is nothing to report.
         let legacy = KeyGenMetadata::LegacyV0(HashMap::new());
@@ -2974,12 +3139,19 @@ pub(crate) mod tests {
             external_signature: external_signature.clone(),
         };
 
-        // Verify upgrade (V0 -> V1 -> V2) sets extra_data as None; `signatures`
-        // is opt-in, so it upgrades to empty (the ECDSA/EIP-712 signature stays
-        // in `external_signature`).
-        let upgraded: CrsGenMetadataInner = q126.clone().upgrade().unwrap().upgrade().unwrap();
+        // Verify upgrade (V0 -> V1 -> V2 -> V3) sets extra_data as None; `signatures`
+        // is opt-in, so it upgrades to empty, and the EIP-712 domain is unavailable.
+        let upgraded: CrsGenMetadataInner = q126
+            .clone()
+            .upgrade()
+            .unwrap()
+            .upgrade()
+            .unwrap()
+            .upgrade()
+            .unwrap();
         assert_eq!(upgraded.extra_data, None);
         assert!(upgraded.signatures.is_empty());
+        assert_eq!(upgraded.eip712_domain, None);
         // Upgraded serialization
         let upgraded_bytes = bc2wrap::serialize(&upgraded).unwrap();
 
