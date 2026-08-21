@@ -35,9 +35,22 @@ fi
 
 tmp_root="$(mktemp -d)"
 cleanup() {
+  trap - EXIT INT TERM
+  local pid
+  while read -r pid; do
+    if [[ -n "${pid}" ]]; then
+      kill "${pid}" 2>/dev/null || true
+    fi
+  done < <(jobs -pr)
+  wait 2>/dev/null || true
   rm -rf "${tmp_root}"
 }
+terminate() {
+  cleanup
+  exit 0
+}
 trap cleanup EXIT
+trap terminate INT TERM
 
 single_line() {
   tr '\n' ' ' < "$1" | sed -E 's/[[:space:]]+/ /g; s/^ //; s/ $//'
@@ -58,7 +71,9 @@ extract_diagnostic_metrics() {
   local pod="$2"
   awk -v ts="${ts}" -v pod="${pod}" '
     /^kms_network_debug_events_total([[:space:]]|\{|$)/ ||
-    (/^kms_operation_duration_ms_(bucket|sum|count)\{/ && /operation_type="user_decrypt_(request|result|inner)"/) ||
+    /^kms_(cpu_load|process_cpu_usage|process_memory_usage|total_cpus|tokio_alive_tasks|tokio_global_queue_depth|user_decrypt_background_tasks|user_decrypt_stage_duration_microseconds_total|user_decrypt_stage_observations_total|network_sender_tasks|network_sender_tasks_spawned_total|network_sender_tasks_completed_total)([[:space:]]|\{|$)/ ||
+    /^process_(cpu_seconds_total|threads)([[:space:]]|\{|$)/ ||
+    (/^kms_operation_duration_ms_(bucket|sum|count)\{/ && /operation_type="user_decrypt_/) ||
     (/^kms_operations_total\{/ && /operation="user_decrypt_(request|result)"/) ||
     (/^kms_operation_errors_total\{/ && /operation="user_decrypt_(request|result)"/) {
       print ts, pod, $1, $2
