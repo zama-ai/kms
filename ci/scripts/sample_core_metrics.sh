@@ -14,12 +14,18 @@ CURL_BIN="${CURL_BIN:-curl}"
 EXPECTED_METRIC_NAMES=(
   kms_active_sessions
   kms_inactive_sessions
+  kms_completed_sessions
+  kms_inactive_peer_channels
+  kms_max_inactive_peer_channels
+  kms_network_measurement_sessions
   kms_rate_limiter_usage
   kms_fhe_key_cache_size
   kms_meta_storage_user_decryptions
   kms_meta_storage_pub_decryptions
   kms_meta_storage_user_decryptions_in_store
   kms_meta_storage_pub_decryptions_in_store
+  kms_network_rx_bytes_total
+  kms_network_tx_bytes_total
   kms_tasks
 )
 EXPECTED_METRICS="${#EXPECTED_METRIC_NAMES[@]}"
@@ -39,11 +45,23 @@ single_line() {
   tr '\n' ' ' < "$1" | sed -E 's/[[:space:]]+/ /g; s/^ //; s/ $//'
 }
 
-extract_metrics() {
+extract_required_metrics() {
   local ts="$1"
   local pod="$2"
   awk -v ts="${ts}" -v pod="${pod}" '
-    /^kms_(active_sessions|inactive_sessions|rate_limiter_usage|fhe_key_cache_size|meta_storage_user_decryptions|meta_storage_pub_decryptions|meta_storage_user_decryptions_in_store|meta_storage_pub_decryptions_in_store|tasks)([[:space:]]|\{|$)/ {
+    /^kms_(active_sessions|inactive_sessions|completed_sessions|inactive_peer_channels|max_inactive_peer_channels|network_measurement_sessions|rate_limiter_usage|fhe_key_cache_size|meta_storage_user_decryptions|meta_storage_pub_decryptions|meta_storage_user_decryptions_in_store|meta_storage_pub_decryptions_in_store|network_rx_bytes_total|network_tx_bytes_total|tasks)([[:space:]]|\{|$)/ {
+      print ts, pod, $1, $2
+    }
+  '
+}
+
+extract_diagnostic_metrics() {
+  local ts="$1"
+  local pod="$2"
+  awk -v ts="${ts}" -v pod="${pod}" '
+    /^kms_network_debug_events_total([[:space:]]|\{|$)/ ||
+    (/^kms_operations_total\{/ && /operation="user_decrypt_(request|result)"/) ||
+    (/^kms_operation_errors_total\{/ && /operation="user_decrypt_(request|result)"/) {
       print ts, pod, $1, $2
     }
   '
@@ -93,15 +111,17 @@ scrape_pod() {
     return 1
   fi
 
-  local selected
-  selected="$(extract_metrics "${ts}" "${pod}" <<< "${metrics}")"
+  local selected_required
+  selected_required="$(extract_required_metrics "${ts}" "${pod}" <<< "${metrics}")"
+  local selected_diagnostic
+  selected_diagnostic="$(extract_diagnostic_metrics "${ts}" "${pod}" <<< "${metrics}")"
   local metric_count=0
-  if [[ -n "${selected}" ]]; then
-    metric_count="$(wc -l <<< "${selected}" | tr -d ' ')"
+  if [[ -n "${selected_required}" ]]; then
+    metric_count="$(wc -l <<< "${selected_required}" | tr -d ' ')"
   fi
 
   local found_names
-  found_names="$(awk '{ name=$3; sub(/\{.*/, "", name); print name }' <<< "${selected}")"
+  found_names="$(awk '{ name=$3; sub(/\{.*/, "", name); print name }' <<< "${selected_required}")"
   local -a missing_metrics=()
   local expected_metric
   for expected_metric in "${EXPECTED_METRIC_NAMES[@]}"; do
@@ -122,7 +142,10 @@ scrape_pod() {
   {
     printf '%s %s scrape_ok method=%s metrics=%d\n' \
       "${ts}" "${pod}" "${method}" "${metric_count}"
-    printf '%s\n' "${selected}"
+    printf '%s\n' "${selected_required}"
+    if [[ -n "${selected_diagnostic}" ]]; then
+      printf '%s\n' "${selected_diagnostic}"
+    fi
   } > "${output}"
 }
 
