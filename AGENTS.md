@@ -10,7 +10,7 @@ Rules and expectations for AI coding agents working in this repository. This fil
 
 - [ARCHITECTURE.md](./ai-docs/ARCHITECTURE.md) — system architecture, workspace layout, gRPC surface, backup, backward-compatibility subsystem. Read before any change that touches service structure, persisted types, or protocol flows.
 - [EDITING.md](./ai-docs/EDITING.md) — rules for making changes: scope, comments, error handling, backward compatibility, gRPC/API changes, build verification, and general process (when to explain, ask, alert, update docs).
-- [PROSE.md](./ai-docs/PROSE.md) - rules for writing prose, such as GitHub issues, code comments, markdown files and communication with the prompter.
+- [PROSE.md](./ai-docs/PROSE.md) — how to write prose: code comments and rustdoc, markdown files, GitHub issues and PR text, and chat replies to your human. Read before you write any of them.
 - [COMMANDS.md](./ai-docs/COMMANDS.md) — build, test, lint, backward-compatibility, docker-compose, and client commands in one place.
 - [TESTING.md](./ai-docs/TESTING.md) — test requirements and conventions.
 - [GIT.md](./ai-docs/GIT.md) — branch naming, commit messages, branch-sync and force-push rules.
