@@ -37,25 +37,61 @@ All three flags default to `false` and are mutually exclusive —
 pick at most one per run:
 
 - `overwrite`: delete any existing signing material at the fixed signing-key
-  handle (private key, and every scheme's verification material in public
-  storage) before generating a fresh key. Required to rotate a key; without it,
-  generation fails if storage already holds material for that handle.
+  handle (the private signing key, the root signing seed, and every scheme's
+  verification material in public storage) before generating a fresh identity.
+  Required to rotate a key; without it, generation fails if storage already holds
+  material for that handle. **This destroys every post-quantum identity of the
+  node**, since they are derived from the seed and stored nowhere else.
 - `show_existing`: print the existing signing-material handles and exit, without
   generating or deleting anything.
 - `repopulate`: derive and store every piece of missing verification material
   — each scheme's key and digest, ECDSA's included, plus the two deprecated
-  ECDSA-only objects — from the ECDSA signing key already present in private
-  storage, then exit without touching the signing key itself. Material that is
-  already published is validated against that key rather than overwritten. Use
-  this to restore verification material after a partial purge.
+  ECDSA-only objects — from the signing identity already present in private
+  storage, then exit without touching that identity. Requires both the ECDSA
+  signing key and the root signing seed to already exist. Material that is
+  already published is validated against that identity rather than overwritten.
+  Use this to restore verification material after a partial purge.
+
+### What is written to private storage
+
+A node's signing identity is two objects, both under the fixed `SIGNING_KEY_ID`
+handle:
+
+| Folder | Contents |
+| --- | --- |
+| `SigningKey` | The ECDSA/secp256k1 signing key. This is the node's authoritative identity: it is the one registered on-chain, and it is what the node signs ECDSA with. Unchanged from earlier releases. |
+| `SigningSeed` | A 32-byte root secret drawn from the CSPRNG, which every **non-ECDSA** signing key of the node is derived from. |
+
+The seed is generated independently of the ECDSA key, so recovering the secp256k1
+scalar does not reveal any post-quantum key. **Losing the seed loses every
+non-ECDSA identity of the node** — they exist nowhere else — so it is part of the
+backup set, handled exactly like `SigningKey`.
+
+A seed is only ever created by an explicit `kms-gen-keys` run, never silently at
+boot:
+
+- On a **fresh** node (no `SigningKey`), the seed is generated first and the ECDSA
+  key is derived from it, so the whole identity descends from the seed.
+- On an **upgraded** node (a `SigningKey` from an earlier release, no seed), the
+  ECDSA key is left byte-for-byte untouched — operator identities are registered
+  on-chain and cannot be rotated by a software upgrade — and a seed is generated
+  beside it, then the non-ECDSA verification material is backfilled.
+- A node started with no seed logs a warning and runs **ECDSA-only**: it boots and
+  serves normally, but a request asking for a non-ECDSA scheme fails with a signing
+  error until `kms-gen-keys` has been run. The boot-time migration deliberately does
+  not mint a seed of its own.
+- If public storage already holds non-ECDSA verification material and the seed is
+  missing, `kms-gen-keys` fails instead of generating a replacement: a new seed
+  would rotate every published post-quantum identity. Restore the seed from the
+  backup vault, or use `overwrite` to regenerate the whole identity.
 
 ### What is written to public storage
 
-A node signs with a single persisted ECDSA signing key, and the verification keys
-of the other supported signature schemes are derived from it. Every scheme's public
-material — including ECDSA's — is written to the two `Scheme*` folders below, each
-under its own scheme-specific handle, so that a folder holds exactly one kind of
-object and can be read whole:
+A node signs ECDSA with its persisted ECDSA signing key; the verification keys of
+the other supported signature schemes are derived from its root signing seed. Every
+scheme's public material — including ECDSA's — is written to the two `Typed*`
+folders below, each under its own scheme-specific handle, so that a folder holds
+exactly one kind of object and can be read whole:
 
 | Folder | Contents |
 | --- | --- |

@@ -22,7 +22,10 @@ use kms_0_15_0::consts::SAFE_SER_SIZE_LIMIT;
 use kms_0_15_0::cryptography::{
     encryption::{Encryption, PkeScheme, PkeSchemeType, UnifiedCipher},
     hybrid_ml_kem::HybridKemCt,
-    signatures::{compute_eip712_signature, gen_sig_keys, SigningSchemeType, UnifiedPublicSigKey},
+    signatures::{
+        compute_eip712_signature, gen_sig_keys, RootSigningSeed, SigningSchemeType,
+        UnifiedPublicSigKey,
+    },
     signcryption::{
         Signcrypt, UnifiedSigncryption, UnifiedSigncryptionKeyOwned, UnifiedUnsigncryptionKeyOwned,
     },
@@ -103,7 +106,8 @@ use backward_compatibility::{
     KeyGenMetadataWithExtraDataTest, KeygenSignedPayloadTest, KmsFheKeyHandlesTest, NodeInfoTest,
     OperatorBackupOutputTest, PRSSSetupTest, PrepKeygenSignedPayloadTest, PrfKeyTest,
     PrivDataTypeTest, PrivateSigKeyTest, PrssSetTest, PrssSetupCombinedTest, PubDataTypeTest,
-    PublicSigKeyTest, RecoveryValidationMaterialTest, ReleasePCRValuesTest, SchemeDigestsTest,
+    PublicSigKeyTest, RecoveryValidationMaterialTest, ReleasePCRValuesTest,
+    RootSigningSeedTest, SchemeDigestsTest,
     ShareTest, SigncryptionPayloadTest, SignedPubDataHandleInternalTest, SoftwareVersionTest,
     StoredTypedSignatureTest, TestMetadataDD, TestMetadataKMS, TestMetadataKmsGrpc,
     ThresholdFheKeysTest, TypedPlaintextTest, UnifiedCipherTest, UnifiedPublicSigKeyTest,
@@ -296,6 +300,12 @@ const RELEASE_PCR_VALUES_TEST: ReleasePCRValuesTest = ReleasePCRValuesTest {
 // KMS test
 const PRIVATE_SIG_KEY_TEST: PrivateSigKeyTest = PrivateSigKeyTest {
     test_filename: Cow::Borrowed("private_sig_key"),
+    state: 100,
+};
+
+// KMS test
+const ROOT_SIGNING_SEED_TEST: RootSigningSeedTest = RootSigningSeedTest {
+    test_filename: Cow::Borrowed("root_signing_seed"),
     state: 100,
 };
 
@@ -657,6 +667,19 @@ impl KmsV0_15_0 {
         TestMetadataKMS::PrivateSigKey(PRIVATE_SIG_KEY_TEST)
     }
 
+    fn gen_root_signing_seed(dir: &PathBuf) -> TestMetadataKMS {
+        let mut rng = AesRng::seed_from_u64(ROOT_SIGNING_SEED_TEST.state);
+        let root_signing_seed = RootSigningSeed::random(&mut rng);
+
+        store_versioned_test!(
+            &root_signing_seed,
+            dir,
+            &ROOT_SIGNING_SEED_TEST.test_filename
+        );
+
+        TestMetadataKMS::RootSigningSeed(ROOT_SIGNING_SEED_TEST)
+    }
+
     fn gen_public_sig_key(dir: &PathBuf) -> TestMetadataKMS {
         let mut rng = AesRng::seed_from_u64(PUBLIC_SIG_KEY_TEST.state);
         let (public_sig_key, _) = gen_sig_keys(&mut rng);
@@ -669,6 +692,7 @@ impl KmsV0_15_0 {
     fn gen_unified_public_sig_key(dir: &PathBuf) -> TestMetadataKMS {
         let mut rng = AesRng::seed_from_u64(UNIFIED_PUBLIC_SIG_KEY_TEST.state);
         let (_public_sig_key, sig_key) = gen_sig_keys(&mut rng);
+        let sig_key = sig_key.with_root_seed(RootSigningSeed::random(&mut rng));
 
         // Primary file: the ECDSA variant.
         let ecdsa_vk: UnifiedPublicSigKey = sig_key
@@ -1944,6 +1968,7 @@ impl KMSCoreVersion for V0_15_0 {
 
         vec![
             KmsV0_15_0::gen_private_sig_key(&dir),
+            KmsV0_15_0::gen_root_signing_seed(&dir),
             KmsV0_15_0::gen_public_sig_key(&dir),
             KmsV0_15_0::gen_unified_public_sig_key(&dir),
             KmsV0_15_0::gen_app_key_blob(&dir),

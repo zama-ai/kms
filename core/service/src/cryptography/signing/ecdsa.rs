@@ -1,9 +1,7 @@
 //! ECDSA over secp256k1 signing backend.
 
-use super::{
-    HasSigningScheme, Signature, SigningError, SigningScheme, SigningSchemeType,
-    UnifiedPrivateSigKey,
-};
+use super::seed::RootSigningSeed;
+use super::{HasSigningScheme, Signature, SigningError, SigningScheme, SigningSchemeType};
 use crate::anyhow_tracked;
 use crate::cryptography::error::CryptographyError;
 use crate::cryptography::internal_crypto_types::LegacySerialization;
@@ -15,8 +13,7 @@ use alloy_sol_types::{Eip712Domain, SolStruct};
 use hashing::DomainSep;
 use k256::ecdsa::{SigningKey, VerifyingKey};
 use serde::{Deserialize, Serialize, de::Visitor};
-use std::sync::{Arc, OnceLock};
-use strum::EnumCount;
+use std::sync::Arc;
 use tfhe::named::Named;
 use tfhe_versionable::{Versionize, VersionsDispatch};
 use wasm_bindgen::prelude::wasm_bindgen;
@@ -189,12 +186,14 @@ pub enum PrivateSigKeyVersions {
 #[versionize(PrivateSigKeyVersions)]
 pub struct PrivateSigKey {
     sk: WrappedSigningKey,
-    /// Memoized per-scheme signing keys derived from `sk`.
-    /// Skipped from (de)serialization and versioning, so the persisted format is unchanged and old
-    /// data deserializes with an empty (cold) cache.
+    /// The seed every non-ECDSA key of this identity is derived from.
+    ///
+    /// Skipped from (de)serialization and versioning to ensure backward
+    /// compatibility: the seed is persisted as its own object
+    /// (`PrivDataType::SigningSeed`) instead.
     #[serde(skip)]
     #[versionize(skip)]
-    cache: DerivedKeyCache,
+    seed: Option<RootSigningSeed>,
 }
 
 impl Named for PrivateSigKey {
@@ -202,18 +201,34 @@ impl Named for PrivateSigKey {
 }
 
 impl PrivateSigKey {
+    /// A bare ECDSA signing key, with no root seed attached.
     pub fn new(sk: k256::ecdsa::SigningKey) -> Self {
         Self {
             sk: WrappedSigningKey(sk),
-            cache: DerivedKeyCache::default(),
+            seed: None,
         }
     }
 
-    pub(super) fn derived_key_slot(
+    /// Attach `seed` as the root of this identity's non-ECDSA keys.
+    pub fn with_root_seed(mut self, seed: RootSigningSeed) -> Self {
+        self.seed = Some(seed);
+        self
+    }
+
+    /// Whether a root seed is attached, i.e. whether this identity can produce
+    /// non-ECDSA keys at all.
+    pub fn has_root_seed(&self) -> bool {
+        self.seed.is_some()
+    }
+
+    /// The attached root seed, or an error naming what is missing and why.
+    pub(super) fn require_root_seed(
         &self,
         scheme: SigningSchemeType,
-    ) -> &OnceLock<UnifiedPrivateSigKey> {
-        self.cache.slot(scheme)
+    ) -> Result<&RootSigningSeed, SigningError> {
+        self.seed
+            .as_ref()
+            .ok_or(SigningError::MissingRootSeed(scheme))
     }
 
     /// TODO(#2781) DEPRECATED: code should be refactored to not use this outside on this class
@@ -258,77 +273,18 @@ impl HasSigningScheme for PrivateSigKey {
     }
 }
 
-// Marker only: the `sk: WrappedSigningKey` field is `ZeroizeOnDrop`, so dropping
-// a `PrivateSigKey` wipes its key material. Not derived because that would
-// generate a `Drop` impl, which conflicts with the other macros on this type
-// (this is why the zeroizing `Drop` lives on the `WrappedSigningKey` newtype).
+// Marker only: both secret-bearing fields wipe themselves when dropped — `sk:
+// WrappedSigningKey` through its derived `ZeroizeOnDrop`, and the attached
+// `RootSigningSeed` through its own (see its `ZeroizeOnDrop` impl) — so dropping
+// a `PrivateSigKey` wipes all of its key material. Not derived because that
+// would generate a `Drop` impl, which conflicts with the other macros on this
+// type (this is why the zeroizing `Drop` lives on the `WrappedSigningKey`
+// newtype).
 impl ZeroizeOnDrop for PrivateSigKey {}
 
 #[derive(Clone, PartialEq, Eq, Debug, ZeroizeOnDrop)]
 struct WrappedSigningKey(k256::ecdsa::SigningKey);
 impl_generic_versionize!(WrappedSigningKey);
-
-/// Per-scheme cache of signing keys derived from a [`PrivateSigKey`].
-///
-/// Deriving a non-ECDSA key runs a KDF plus a (for ML-DSA, non-trivial) key
-/// expansion, so each scheme's key is derived once and memoized here.
-struct DerivedKeyCache {
-    /// One slot per [`SigningSchemeType`], indexed by `scheme as usize`. The
-    /// [`SigningSchemeType::Ecdsa256k1`] slot always stays empty: that scheme
-    /// signs with the [`PrivateSigKey`] itself, so there is nothing to derive.
-    slots: Arc<[OnceLock<UnifiedPrivateSigKey>; SigningSchemeType::COUNT]>,
-}
-
-impl DerivedKeyCache {
-    fn slot(&self, scheme: SigningSchemeType) -> &OnceLock<UnifiedPrivateSigKey> {
-        &self.slots[scheme as usize]
-    }
-}
-
-impl Default for DerivedKeyCache {
-    fn default() -> Self {
-        Self {
-            slots: Arc::new(std::array::from_fn(|_| OnceLock::new())),
-        }
-    }
-}
-
-// Warm clone: sharing the `Arc` is deliberate, so clones of a signing key share
-// one warmed cache rather than each re-deriving.
-impl Clone for DerivedKeyCache {
-    fn clone(&self) -> Self {
-        Self {
-            slots: Arc::clone(&self.slots),
-        }
-    }
-}
-
-// Ignore the key cache when doing equality comparision.
-// Instead we only care about the underlying `sk` in `PrivateSigKey` when comparing.
-impl PartialEq for DerivedKeyCache {
-    fn eq(&self, _other: &Self) -> bool {
-        true
-    }
-}
-impl Eq for DerivedKeyCache {}
-
-// Never render cached secret-key material.
-impl std::fmt::Debug for DerivedKeyCache {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str("DerivedKeyCache(..)")
-    }
-}
-
-impl Zeroize for DerivedKeyCache {
-    fn zeroize(&mut self) {
-        // Drop this handle to the shared cache. If it is the last one, the slots
-        // drop and each cached key wipes itself in place
-        // (`UnifiedPrivateSigKey: ZeroizeOnDrop`); if other clones still share
-        // the cache, the derived keys are wiped once the final clone drops. The
-        // root secret in `PrivateSigKey::sk` is wiped in place regardless.
-        *self = Self::default();
-    }
-}
 
 impl Zeroize for WrappedSigningKey {
     fn zeroize(&mut self) {

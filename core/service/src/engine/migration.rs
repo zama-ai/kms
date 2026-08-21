@@ -3,7 +3,7 @@ use crate::consts::{DEFAULT_EPOCH_ID, DEFAULT_MPC_CONTEXT, SIGNING_KEY_ID};
 use crate::engine::base::derive_request_id;
 use crate::engine::threshold::service::epoch_manager::EpochData;
 use crate::engine::threshold::service::session::PRSSSetupCombined;
-use crate::util::key_setup::ensure_scheme_verification_material;
+use crate::util::key_setup::ensure_published_verification_material;
 use crate::vault::storage::crypto_material::get_core_signing_key;
 use crate::vault::storage::{
     Storage, StorageExt, StorageReader, read_context_at_id, read_versioned_at_request_id,
@@ -161,10 +161,12 @@ where
 /// Backfill the multi-scheme verification material for existing deployments.
 ///
 /// Derives every non-ECDSA signature scheme's public verification key and digest
-/// from the node's already-persisted ECDSA signing key and stores them in public
-/// storage, leaving the ECDSA material at its historic location untouched. This
-/// lets a node that predates multi-scheme support gain the new public material on
-/// restart, without re-running key generation.
+/// from the node's root signing seed — and ECDSA's from the persisted signing key —
+/// and stores them in public storage, leaving the ECDSA material at its historic
+/// location untouched. This lets a node that predates multi-scheme support gain the
+/// new public material on restart, without re-running key generation.
+///
+/// A node with no root seed is skipped with a warning rather than backfilled.
 async fn migrate_public_verification_material<PrivS, PubS>(
     priv_storage: &PrivS,
     pub_storage: &mut PubS,
@@ -183,7 +185,15 @@ where
         return Ok(());
     }
     let sk = get_core_signing_key(priv_storage).await?;
-    ensure_scheme_verification_material(pub_storage, &sk).await
+    if !sk.has_root_seed() {
+        tracing::warn!(
+            "No root signing seed present; skipping the multi-scheme verification-material \
+             backfill. This node can only sign under ECDSA until kms-gen-keys has generated \
+             a seed for it."
+        );
+        return Ok(());
+    }
+    ensure_published_verification_material(pub_storage, &sk).await
 }
 
 async fn migrate_prss_to_epoch<PrivS>(
@@ -856,7 +866,7 @@ mod tests {
     use super::*;
     use crate::conf::ContextEpochAssociation;
     use crate::consts::signing_material_id;
-    use crate::cryptography::signatures::PrivateSigKey;
+    use crate::cryptography::signatures::{PrivateSigKey, gen_sig_keys};
     use crate::cryptography::signing::SigningSchemeType;
     use crate::engine::context::{ContextInfo, NodeInfo, SchemeDigests, SoftwareVersion};
     use crate::util::key_setup::{
@@ -872,8 +882,10 @@ mod tests {
         Storage, StorageExt, StorageReader, StorageReaderExt, StorageType, read_text_at_request_id,
         store_context_at_id, store_versioned_at_request_id,
     };
+    use aes_prng::AesRng;
     use kms_grpc::RequestId;
     use kms_grpc::rpc_types::PubDataType;
+    use rand::SeedableRng;
     use std::collections::HashMap;
     use std::str::FromStr;
     use strum::IntoEnumIterator;
@@ -3031,6 +3043,44 @@ mod tests {
         .await
         .unwrap();
         assert_scheme_material_present(&pub_storage, true).await;
+    }
+
+    /// A node upgraded from a release that predates the root signing seed keeps its
+    /// ECDSA key and publishes *nothing*.
+    #[tokio::test]
+    async fn test_migrate_to_0_15_x_skips_backfill_without_a_seed() {
+        let mut rng = AesRng::seed_from_u64(31);
+        let (_pk, sk) = gen_sig_keys(&mut rng);
+        let mut pub_storage = RamStorage::new();
+        let mut priv_storage = RamStorage::new();
+
+        // Pre-multi-scheme private storage: an ECDSA signing key and no seed.
+        store_versioned_at_request_id(
+            &mut priv_storage,
+            &SIGNING_KEY_ID,
+            &sk,
+            &PrivDataType::SigningKey.to_string(),
+        )
+        .await
+        .unwrap();
+
+        migrate_to_0_15_x(
+            &mut pub_storage,
+            &mut priv_storage,
+            KMSType::Centralized,
+            None,
+        )
+        .await
+        .unwrap();
+
+        assert_scheme_material_present(&pub_storage, false).await;
+        assert!(
+            !priv_storage
+                .data_exists(&SIGNING_KEY_ID, &PrivDataType::SigningSeed.to_string())
+                .await
+                .unwrap(),
+            "the boot migration minted a root signing seed"
+        );
     }
 
     #[tokio::test]

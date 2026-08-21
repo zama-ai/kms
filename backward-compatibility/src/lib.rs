@@ -97,6 +97,27 @@ impl TestType for PrivateSigKeyTest {
 
 // KMS test
 #[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct RootSigningSeedTest {
+    pub test_filename: Cow<'static, str>,
+    pub state: u64,
+}
+
+impl TestType for RootSigningSeedTest {
+    fn module(&self) -> String {
+        KMS_MODULE_NAME.to_string()
+    }
+
+    fn target_type(&self) -> String {
+        "RootSigningSeed".to_string()
+    }
+
+    fn test_filename(&self) -> String {
+        self.test_filename.to_string()
+    }
+}
+
+// KMS test
+#[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct PublicSigKeyTest {
     pub test_filename: Cow<'static, str>,
     pub state: u64,
@@ -1109,6 +1130,7 @@ impl TestType for CrsSignedPayloadTest {
 #[derive(Serialize, Deserialize, Clone, Debug, Display)]
 pub enum TestMetadataKMS {
     PrivateSigKey(PrivateSigKeyTest),
+    RootSigningSeed(RootSigningSeedTest),
     PublicSigKey(PublicSigKeyTest),
     UnifiedPublicSigKey(UnifiedPublicSigKeyTest),
     TypedPlaintext(TypedPlaintextTest),
