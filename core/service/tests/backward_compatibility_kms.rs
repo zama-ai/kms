@@ -48,7 +48,7 @@ use kms_lib::{
         encryption::{Encryption, PkeScheme, PkeSchemeType, UnifiedCipher, UnifiedPublicEncKey},
         hybrid_ml_kem::HybridKemCt,
         signatures::{
-            PrivateSigKey, PublicSigKey, SigningSchemeType, UnifiedPublicSigKey,
+            PrivateSigKey, PublicSigKey, RootSigningSeed, SigningSchemeType, UnifiedPublicSigKey,
             compute_eip712_signature, gen_sig_keys,
         },
         signcryption::{
@@ -536,6 +536,7 @@ fn test_unified_public_sig_key(
 ) -> Result<TestSuccess, TestFailure> {
     let mut rng = AesRng::seed_from_u64(test.state);
     let (_pk, sk) = gen_sig_keys(&mut rng);
+    let sk = sk.with_root_seed(RootSigningSeed::random(&mut rng));
 
     // Primary file: the ECDSA variant.
     let original: UnifiedPublicSigKey = load_and_unversionize(dir, test, format)?;

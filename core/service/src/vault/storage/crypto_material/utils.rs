@@ -386,7 +386,8 @@ async fn get_unique<
 /// attached: that is ECDSA-only operation, not a failure, and must not stop the
 /// server from booting.
 pub async fn get_core_signing_key<S: StorageReader>(storage: &S) -> anyhow::Result<PrivateSigKey> {
-    let sk = get_unique::<S, PrivateSigKey, PrivDataType>(storage, PrivDataType::SigningKey).await?;
+    let sk =
+        get_unique::<S, PrivateSigKey, PrivDataType>(storage, PrivDataType::SigningKey).await?;
     match get_core_root_signing_seed(storage).await? {
         Some(seed) => Ok(sk.with_root_seed(seed)),
         None => {

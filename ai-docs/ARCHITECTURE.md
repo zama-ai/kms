@@ -99,9 +99,20 @@ The service crate is the main surface area. Key subdirectories under
   (`ecdsa`, the legacy default and EIP-712 home), EdDSA/ed25519 (`eddsa`), and
   ML-DSA/FIPS-204 (`mldsa`) — behind the `SigningScheme` trait and the
   `unified_sign`/`unified_verify` entry points. The historic
-  `cryptography::signatures` path is now a re-export facade. A node still
-  persists a single ECDSA signing key; the other schemes' keys are derived from
-  it on demand. Every scheme's public verification material — ECDSA's included —
+  `cryptography::signatures` path is now a re-export facade. A node persists two
+  private objects: its ECDSA signing key (`PrivDataType::SigningKey`, the
+  authoritative on-chain identity) and an independent, CSPRNG-generated
+  `RootSigningSeed` (`PrivDataType::SigningSeed`), both under `SIGNING_KEY_ID`.
+  Every non-ECDSA key is derived on demand from the *seed*, never from the ECDSA
+  scalar, so compromising the ECDSA key does not compromise the post-quantum ones.
+  The seed is carried in memory on `PrivateSigKey` (a `#[serde(skip)]` field, so
+  the persisted format is unchanged) and attached by `get_core_signing_key`; a key
+  without it — a client wallet key, or a node that has not yet run `kms-gen-keys` —
+  can only do ECDSA and errors with `SigningError::MissingRootSeed` for anything
+  else. The seed derives an ECDSA key too, used to *generate* a fresh node's
+  identity and, later (#3078 sub-issue 7), to rotate an existing one; until that
+  rotation the persisted key stays authoritative and the seed-derived ECDSA key is
+  never published. Every scheme's public verification material — ECDSA's included —
   is stored under the handle `consts::signing_material_id(scheme)` gives, in the
   data types `key_setup::SCHEME_MATERIAL_TYPES` names:
   `PubDataType::SchemeVerfKey` holds the scheme's *own* verification key type

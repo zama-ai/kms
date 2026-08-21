@@ -221,7 +221,9 @@ impl<R: Rng + CryptoRng> Keychain for SecretShareKeychain<R> {
                 unwrapped_dec_key
                     .decrypt(&backup_ct.ciphertext)
                     .map_err(|e| {
-                        anyhow::anyhow!("Could not decrypt backed up secret shared signing seed {e}")
+                        anyhow::anyhow!(
+                            "Could not decrypt backed up secret shared signing seed {e}"
+                        )
                     })
             }
             PrivDataType::FheKeyInfo => {

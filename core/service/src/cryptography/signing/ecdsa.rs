@@ -188,8 +188,9 @@ pub struct PrivateSigKey {
     sk: WrappedSigningKey,
     /// The seed every non-ECDSA key of this identity is derived from.
     ///
-    /// Skipped from (de)serialization and versioning to ensure backward compatibility: 
-    /// The seed is persisted as its own object.
+    /// Skipped from (de)serialization and versioning to ensure backward
+    /// compatibility: the seed is persisted as its own object
+    /// (`PrivDataType::SigningSeed`) instead.
     #[serde(skip)]
     #[versionize(skip)]
     seed: Option<RootSigningSeed>,

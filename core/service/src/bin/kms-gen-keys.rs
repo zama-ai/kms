@@ -466,21 +466,29 @@ async fn handle_threshold_cmd<PubS: Storage, PrivS: Storage>(
     Ok(())
 }
 
-/// Repopulate every scheme's verification material from the existing
-/// ECDSA signing key.
+/// Repopulate every scheme's verification material from the node's existing
+/// signing identity.
 ///
-/// Requires the ECDSA signing key to already be present in private storage;
-/// derives and stores every scheme's public verification key and digest, ECDSA's
-/// included, in their canonical location.
+/// Requires both halves of that identity to already be present in private
+/// storage: the ECDSA signing key, which ECDSA's material comes from, and the
+/// root signing seed, which every other scheme's comes from. Derives and stores
+/// every scheme's public verification key and digest, ECDSA's included, in their
+/// canonical location.
 async fn handle_repopulate_cmd<PubS: Storage, PrivS: Storage>(
     pub_storage: &mut PubS,
     priv_storage: &PrivS,
 ) -> anyhow::Result<()> {
     let sk = get_core_signing_key(priv_storage).await?;
+    // Checked up front rather than left to the first non-ECDSA derivation
+    if !sk.has_root_seed() {
+        anyhow::bail!(
+            "No {} object found under the handle {}.",
+            PrivDataType::SigningSeed,
+            *SIGNING_KEY_ID
+        );
+    }
     ensure_scheme_verification_material(pub_storage, &sk).await?;
-    tracing::info!(
-        "Repopulated multi-scheme verification material from the existing ECDSA signing key"
-    );
+    tracing::info!("Repopulated multi-scheme verification material from the signing identity");
     Ok(())
 }
 
@@ -509,7 +517,7 @@ async fn process_signing_key_cmds<PubS: Storage, PrivS: Storage>(
     }
     process_cmd(
         priv_storage,
-        vec![&PrivDataType::SigningKey],
+        vec![&PrivDataType::SigningKey, &PrivDataType::SigningSeed],
         req_id,
         show_existing,
         overwrite,
