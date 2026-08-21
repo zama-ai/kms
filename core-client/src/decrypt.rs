@@ -1,5 +1,6 @@
 use crate::{CoreConf, SLEEP_TIME_BETWEEN_REQUESTS_MS, print_phased_timings};
 use alloy_sol_types::Eip712Domain;
+use anyhow::Context as _;
 use kms_grpc::{
     ContextId, EpochId, KeyId, RequestId,
     kms::v1::{
@@ -23,7 +24,7 @@ use std::{
     future::Future,
     sync::{
         Arc,
-        atomic::{AtomicU64, Ordering},
+        atomic::{AtomicU64, AtomicUsize, Ordering},
     },
 };
 use tokio::{
@@ -37,11 +38,21 @@ type CoreEndpointClient = CoreServiceEndpointClient<Channel>;
 type CoreEndpointClients = Arc<[CoreEndpointClient]>;
 
 struct CoreEndpointClientPair {
-    submit: CoreEndpointClient,
+    submit: Arc<[CoreEndpointClient]>,
     result: CoreEndpointClient,
 }
 
+impl CoreEndpointClientPair {
+    fn submit(&self, index: usize) -> CoreEndpointClient {
+        let index = index % self.submit.len();
+        self.submit[index].clone()
+    }
+}
+
 type CoreEndpointClientPairs = Arc<[CoreEndpointClientPair]>;
+
+const USER_DECRYPT_RATE_SUBMIT_CONNECTIONS_PER_CORE: usize = 4;
+static NEXT_USER_DECRYPT_SUBMIT_CONNECTION: AtomicUsize = AtomicUsize::new(0);
 
 const GRPC_CODE_LABELS: [&str; 17] = [
     "ok",
@@ -493,12 +504,68 @@ fn endpoint_client_pairs(
                 )
             })?;
             Ok(CoreEndpointClientPair {
-                submit: submit.clone(),
+                submit: Arc::from([submit.clone()]),
                 result: result.clone(),
             })
         })
         .collect::<anyhow::Result<Vec<_>>>()?;
 
+    Ok(Arc::from(pairs))
+}
+
+async fn rate_endpoint_client_pairs(
+    submit_endpoints: &HashMap<CoreConf, CoreEndpointClient>,
+    result_endpoints: &HashMap<CoreConf, CoreEndpointClient>,
+) -> anyhow::Result<CoreEndpointClientPairs> {
+    if submit_endpoints.len() != result_endpoints.len() {
+        anyhow::bail!(
+            "user decrypt submit/result endpoint counts differ: {} submit, {} result",
+            submit_endpoints.len(),
+            result_endpoints.len()
+        );
+    }
+
+    let mut pairs = Vec::with_capacity(submit_endpoints.len());
+    for (core, submit) in submit_endpoints {
+        let result = result_endpoints.get(core).ok_or_else(|| {
+            anyhow::anyhow!(
+                "missing user decrypt result endpoint for party {} at {}",
+                core.party_id,
+                core.address
+            )
+        })?;
+        let url = if core.address.starts_with("http://") {
+            core.address.clone()
+        } else {
+            format!("http://{}", core.address)
+        };
+        let mut submit_connections =
+            Vec::with_capacity(USER_DECRYPT_RATE_SUBMIT_CONNECTIONS_PER_CORE);
+        submit_connections.push(submit.clone());
+        for connection_index in 1..USER_DECRYPT_RATE_SUBMIT_CONNECTIONS_PER_CORE {
+            let connection = CoreEndpointClient::connect(url.clone())
+                .await
+                .with_context(|| {
+                    format!(
+                        "failed to create user decrypt submit connection {} for party {} at {}",
+                        connection_index + 1,
+                        core.party_id,
+                        core.address
+                    )
+                })?;
+            submit_connections.push(connection);
+        }
+        pairs.push(CoreEndpointClientPair {
+            submit: Arc::from(submit_connections),
+            result: result.clone(),
+        });
+    }
+
+    tracing::info!(
+        parties = pairs.len(),
+        submit_connections_per_party = USER_DECRYPT_RATE_SUBMIT_CONNECTIONS_PER_CORE,
+        "created user decrypt rate-test submit connection pools"
+    );
     Ok(Arc::from(pairs))
 }
 
@@ -1360,9 +1427,10 @@ fn spawn_user_decrypt_sync(
     max_iter: usize,
 ) -> JoinSet<anyhow::Result<UserDecryptionResponse>> {
     let mut resp_tasks = JoinSet::new();
+    let submit_index = NEXT_USER_DECRYPT_SUBMIT_CONNECTION.fetch_add(1, Ordering::Relaxed);
     for ce in core_endpoints.iter() {
         let req_cloned = user_decrypt_req.clone();
-        let mut cur_client = ce.submit.clone();
+        let mut cur_client = ce.submit(submit_index);
         resp_tasks.spawn(async move {
             let mut response = cur_client
                 .user_decrypt_sync(tonic::Request::new(req_cloned.clone()))
@@ -1409,9 +1477,10 @@ fn spawn_user_decrypt(
         .ok_or_else(|| anyhow::anyhow!("request_id not set in user decrypt request"))?;
 
     let mut resp_tasks = JoinSet::new();
+    let submit_index = NEXT_USER_DECRYPT_SUBMIT_CONNECTION.fetch_add(1, Ordering::Relaxed);
     for ce in core_endpoints.iter() {
         let req_cloned = user_decrypt_req.clone();
-        let mut submit_client = ce.submit.clone();
+        let mut submit_client = ce.submit(submit_index);
         let mut result_client = ce.result.clone();
         let req_id_clone = req_id.clone();
         let rpc_diagnostics = Arc::clone(&rpc_diagnostics);
@@ -1660,7 +1729,8 @@ pub(crate) async fn do_user_decrypt<R: Rng + CryptoRng>(
     let total_requests = (rate * duration_secs) as usize;
     let extra_data = crate::extra_data_from_context_epoch(context_id, epoch_id)?;
     let expected = TestingPlaintext::try_from(ptxt)?;
-    let core_endpoints = endpoint_client_pairs(core_endpoints_req, core_endpoints_resp)?;
+    let core_endpoints =
+        rate_endpoint_client_pairs(core_endpoints_req, core_endpoints_resp).await?;
     let rpc_diagnostics = Arc::new(RpcDiagnostics::default());
 
     // PHASE 1: build the request batch before the timed launch window.
