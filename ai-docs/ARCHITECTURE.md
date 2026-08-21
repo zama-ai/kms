@@ -314,6 +314,7 @@ What it verifies, and how failures are treated:
 | Check | On failure |
 |---|---|
 | Published keysets and CRSes are present, and their raw stored bytes hash to the digests in `KeyGenMetadata` / `CrsGenMetadata` | boot fails |
+| Current private keygen and CRS metadata with a stored domain reconstruct a valid EIP-712 signature from the node's signing key | boot fails |
 | `VerfKey` and `VerfAddress` at `SIGNING_KEY_ID` match the key derived from the private `SigningKey` | boot fails |
 
 Custodian backup readiness is deliberately *not* part of this. It is a property of the vault's
@@ -329,12 +330,9 @@ since the material was generated would alter the bytes and report intact materia
 Legacy metadata has no digest, so its public objects receive a raw presence check only.
 
 `external_signature` and the ECDSA entry of `signatures` sign an EIP-712 hash built from an
-`Eip712Domain` that arrives from a gRPC request. Current key and CRS metadata therefore persists
-the domain so the signatures can be re-checked later; nothing reads it back yet, which is part of
-[issue 3178](https://github.com/zama-ai/kms-internal/issues/3178). Older metadata versions upgrade
-with no domain and stay unverifiable. The signed Solidity schema is inferred from the metadata
-kind: CRS metadata uses `CrsgenVerification`, decompression-key metadata uses
-`FheDecompressionUpgradeKey`, and other key metadata uses `KeygenVerification`.
+`Eip712Domain` that arrives from a gRPC request. At boot, current private keygen and CRS metadata
+with a stored domain reconstruct their signed Solidity payload and must recover the node's
+signing address. Older metadata versions upgrade with no domain and stay unverifiable.
 
 `PubDataType::DecompressionKey` has no private-storage counterpart at all
 (`write_decompression_key` persists no private data), so a published decompression key cannot be

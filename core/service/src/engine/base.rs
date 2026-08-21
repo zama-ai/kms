@@ -76,8 +76,7 @@ pub static INSECURE_PREPROCESSING_ID: LazyLock<RequestId> =
     LazyLock::new(|| crate::engine::base::derive_request_id("INSECURE_PREPROCESSING_ID").unwrap());
 
 #[derive(Clone, Serialize, Deserialize, VersionsDispatch)]
-// Boxing a version variant would change the persisted representation.
-#[allow(clippy::large_enum_variant)]
+#[expect(clippy::large_enum_variant)]
 pub enum KmsFheKeyHandlesVersions {
     V0(KmsFheKeyHandlesV0),
     V1(KmsFheKeyHandles),
@@ -1389,7 +1388,6 @@ pub struct KeyGenMetadataInner {
 }
 
 #[derive(Clone, Serialize, Deserialize, Version)]
-/// Previous current key metadata layout, before retaining the EIP-712 domain.
 pub struct KeyGenMetadataInnerV3 {
     pub key_id: RequestId,
     pub preprocessing_id: RequestId,
@@ -1495,8 +1493,7 @@ pub enum KeyGenMetadataVersions {
 // Values that need to be stored temporarily as part of an async key generation call.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, Versionize)]
 #[versionize(KeyGenMetadataVersions)]
-// Boxing a variant would change the persisted representation.
-#[allow(clippy::large_enum_variant)]
+#[expect(clippy::large_enum_variant)]
 pub enum KeyGenMetadata {
     Current(KeyGenMetadataInner),
     LegacyV0(HashMap<PubDataType, SignedPubDataHandleInternal>),
@@ -1665,8 +1662,7 @@ pub struct CrsGenMetadataInnerV0 {
 }
 
 #[derive(Clone, Serialize, Deserialize, VersionsDispatch)]
-// Boxing a version variant would change the persisted representation.
-#[allow(clippy::large_enum_variant)]
+#[expect(clippy::large_enum_variant)]
 pub enum CrsGenMetadataVersions {
     V0(CrsGenMetadataV0),
     V1(CrsGenMetadata),
@@ -1674,8 +1670,7 @@ pub enum CrsGenMetadataVersions {
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, Versionize)]
 #[versionize(CrsGenMetadataVersions)]
-// Boxing a variant would change the persisted representation.
-#[allow(clippy::large_enum_variant)]
+#[expect(clippy::large_enum_variant)]
 pub enum CrsGenMetadata {
     Current(CrsGenMetadataInner),
     LegacyV0(SignedPubDataHandleInternal),
