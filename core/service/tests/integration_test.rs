@@ -198,12 +198,12 @@ path = "{private_path}"
         run_centralized_overwrite(&config_dir, &temp_dir_priv, &temp_dir_pub);
 
         let ed25519_id = signing_material_id(SigningSchemeType::Ed25519);
-        let scheme_verf_key_path = temp_dir_pub
+        let typed_verf_key_path = temp_dir_pub
             .path()
-            .join("PUB/SchemeVerfKey")
+            .join("PUB/TypedVerfKey")
             .join(ed25519_id.to_string());
-        assert!(scheme_verf_key_path.exists());
-        fs::remove_file(&scheme_verf_key_path).unwrap();
+        assert!(typed_verf_key_path.exists());
+        fs::remove_file(&typed_verf_key_path).unwrap();
 
         let config_path = write_file_storage_config(
             &config_dir,
@@ -224,7 +224,7 @@ path = "{private_path}"
             String::from_utf8_lossy(&output.stderr)
         );
         assert!(log.contains("Repopulated multi-scheme verification material"));
-        assert!(scheme_verf_key_path.exists());
+        assert!(typed_verf_key_path.exists());
     }
 
     /// `repopulate = true` has nothing to derive from without the ECDSA signing key,

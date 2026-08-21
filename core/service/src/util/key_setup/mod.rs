@@ -62,11 +62,6 @@ pub type FhePublicKey = tfhe::CompactPublicKey;
 /// Client key for FHE operations (contains private parameters)
 pub type FhePrivateKey = tfhe::ClientKey;
 
-/// The deprecated ECDSA-only location of a node's published identity: a bare
-/// [`PublicSigKey`] and a checksummed Ethereum address.
-pub const LEGACY_ECDSA_MATERIAL_TYPES: [PubDataType; 2] =
-    [PubDataType::VerfKey, PubDataType::VerfAddress];
-
 /// Generates and stores client signing and verification keys if they don't exist.
 ///
 /// This function handles the complete key setup workflow for clients:

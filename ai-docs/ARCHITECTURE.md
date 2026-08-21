@@ -117,7 +117,7 @@ The service crate is the main surface area. Key subdirectories under
   data types `key_setup::SCHEME_MATERIAL_TYPES` names:
   `PubDataType::TypedVerfKey` holds the scheme's *own* verification key type
   (`PublicSigKey`, `Ed25519VerfKey`, `MlDsaVerfKey<P>`) rather than the
-  scheme-tagged `UnifiedPublicSigKey` wrapper, and `SchemeVerfAddress` its
+  scheme-tagged `UnifiedPublicSigKey` wrapper, and `TypedVerfAddress` its
   `address_text()` (`0x`-prefixed hex; for ECDSA the EIP-55 address). A consumer
   that understands one scheme can decode that scheme's object without knowing the
   others, and ECDSA's object is byte-for-byte the deprecated `VerfKey` one. The

@@ -866,17 +866,17 @@ mod tests {
     use super::*;
     use crate::conf::ContextEpochAssociation;
     use crate::consts::signing_material_id;
+    use crate::cryptography::signatures::PrivateSigKey;
     use crate::cryptography::signatures::gen_sig_keys;
     use crate::cryptography::signing::SigningSchemeType;
-    use crate::engine::context::{ContextInfo, NodeInfo, SchemeDigests, SoftwareVersion};
-    use crate::util::key_setup::{SCHEME_MATERIAL_TYPES, ensure_central_server_signing_keys_exist};
-    use crate::cryptography::signatures::PrivateSigKey;
     use crate::cryptography::signing::SigningSchemeType;
+    use crate::engine::context::{ContextInfo, NodeInfo, SchemeDigests, SoftwareVersion};
     use crate::engine::context::{ContextInfo, NodeInfo, SchemeDigests, SoftwareVersion};
     use crate::util::key_setup::{
         LEGACY_ECDSA_MATERIAL_TYPES, SCHEME_MATERIAL_TYPES, delete_scheme_verification_material,
         ensure_central_server_signing_keys_exist,
     };
+    use crate::util::key_setup::{SCHEME_MATERIAL_TYPES, ensure_central_server_signing_keys_exist};
     use crate::vault::storage::crypto_material::{
         get_core_signing_key, read_scheme_verification_key,
     };
@@ -888,8 +888,8 @@ mod tests {
     };
     use aes_prng::AesRng;
     use kms_grpc::RequestId;
-    use rand::SeedableRng;
     use kms_grpc::rpc_types::PubDataType;
+    use rand::SeedableRng;
     use std::collections::HashMap;
     use std::str::FromStr;
     use strum::IntoEnumIterator;

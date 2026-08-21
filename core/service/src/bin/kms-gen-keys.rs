@@ -11,9 +11,9 @@ use kms_lib::{
     consts::SIGNING_KEY_ID,
     cryptography::attestation::make_security_module,
     util::key_setup::{
-        delete_scheme_verification_material, ensure_central_server_signing_keys_exist,
-        ensure_scheme_verification_material, ensure_threshold_server_signing_key_exists,
-        backfill_verification_material, 
+        backfill_verification_material, delete_scheme_verification_material,
+        ensure_central_server_signing_keys_exist, ensure_scheme_verification_material,
+        ensure_threshold_server_signing_key_exists,
     },
     vault::{
         Vault,
@@ -21,7 +21,6 @@ use kms_lib::{
         keychain::{awskms::build_aws_kms_client, make_keychain_proxy},
         storage::{
             Storage, StorageType, crypto_material::get_core_signing_key, delete_at_request_id,
-            s3::build_s3_client,
             make_storage, read_text_at_request_id, s3::build_s3_client,
         },
     },

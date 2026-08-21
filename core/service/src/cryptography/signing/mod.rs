@@ -20,7 +20,7 @@ use ecdsa::{PrivateSigKey, PublicSigKey};
 use ed25519_dalek::{PUBLIC_KEY_LENGTH, SigningKey as Ed25519SigningKey};
 use eddsa::Ed25519;
 pub use eddsa::Ed25519VerfKey;
-use hashing::{DIGEST_BYTES, DomainSep, hash_element};
+use hashing::{DIGEST_BYTES, DomainSep};
 use ml_dsa::{MlDsa44, MlDsa65, MlDsa87, SigningKey as MlDsaSigningKey};
 use mldsa::MlDsa;
 pub use mldsa::MlDsaVerfKey;

@@ -4,8 +4,8 @@
 //! storage management, and common operations needed by the cryptographic material
 //! storage system.
 
-use crate::consts::signing_material_id;
-use crate::cryptography::signatures::{PrivateSigKey, PublicSigKey};
+use crate::consts::{SIGNING_KEY_ID, signing_material_id};
+use crate::cryptography::signatures::{PrivateSigKey, PublicSigKey, RootSigningSeed};
 use crate::cryptography::signing::{
     Ed25519VerfKey, HasSigningScheme, MlDsaVerfKey, SigningSchemeType, UnifiedPublicSigKey,
 };
