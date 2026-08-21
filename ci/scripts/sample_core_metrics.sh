@@ -11,7 +11,18 @@ EXPECTED_PODS="${EXPECTED_PODS:-13}"
 SCRAPE_TIMEOUT="${SCRAPE_TIMEOUT:-4}"
 KUBECTL_BIN="${KUBECTL_BIN:-kubectl}"
 CURL_BIN="${CURL_BIN:-curl}"
-EXPECTED_METRICS=9
+EXPECTED_METRIC_NAMES=(
+  kms_active_sessions
+  kms_inactive_sessions
+  kms_rate_limiter_usage
+  kms_fhe_key_cache_size
+  kms_meta_storage_user_decryptions
+  kms_meta_storage_pub_decryptions
+  kms_meta_storage_user_decryptions_in_store
+  kms_meta_storage_pub_decryptions_in_store
+  kms_tasks
+)
+EXPECTED_METRICS="${#EXPECTED_METRIC_NAMES[@]}"
 
 if [[ "${MODE}" != "continuous" && "${MODE}" != "--once" ]]; then
   echo "usage: $0 [namespace] [interval] [metrics-port] [--once]" >&2
@@ -32,7 +43,7 @@ extract_metrics() {
   local ts="$1"
   local pod="$2"
   awk -v ts="${ts}" -v pod="${pod}" '
-    /^kms_(active_sessions|inactive_sessions|rate_limiter_usage|fhe_key_cache_size|meta_storage_user_decryptions|meta_storage_public_decryptions|meta_storage_user_decryptions_in_store|meta_storage_public_decryptions_in_store|tasks)([[:space:]]|\{|$)/ {
+    /^kms_(active_sessions|inactive_sessions|rate_limiter_usage|fhe_key_cache_size|meta_storage_user_decryptions|meta_storage_pub_decryptions|meta_storage_user_decryptions_in_store|meta_storage_pub_decryptions_in_store|tasks)([[:space:]]|\{|$)/ {
       print ts, pod, $1, $2
     }
   '
@@ -89,9 +100,21 @@ scrape_pod() {
     metric_count="$(wc -l <<< "${selected}" | tr -d ' ')"
   fi
 
-  if [[ "${metric_count}" -ne "${EXPECTED_METRICS}" ]]; then
-    printf '%s %s scrape_error method=%s expected_metrics=%d found_metrics=%d\n' \
-      "${ts}" "${pod}" "${method}" "${EXPECTED_METRICS}" "${metric_count}" \
+  local found_names
+  found_names="$(awk '{ name=$3; sub(/\{.*/, "", name); print name }' <<< "${selected}")"
+  local -a missing_metrics=()
+  local expected_metric
+  for expected_metric in "${EXPECTED_METRIC_NAMES[@]}"; do
+    if ! grep -Fxq "${expected_metric}" <<< "${found_names}"; then
+      missing_metrics+=("${expected_metric}")
+    fi
+  done
+
+  if [[ "${metric_count}" -ne "${EXPECTED_METRICS}" || "${#missing_metrics[@]}" -ne 0 ]]; then
+    local missing_csv
+    missing_csv="$(IFS=,; echo "${missing_metrics[*]}")"
+    printf '%s %s scrape_error method=%s expected_metrics=%d found_metrics=%d missing_metrics=%s\n' \
+      "${ts}" "${pod}" "${method}" "${EXPECTED_METRICS}" "${metric_count}" "${missing_csv:-none}" \
       > "${output}"
     return 1
   fi
