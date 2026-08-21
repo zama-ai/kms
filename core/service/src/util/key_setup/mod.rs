@@ -1672,10 +1672,10 @@ mod tests {
     use crate::consts::{SIGNING_KEY_ID, signing_material_id};
     use crate::cryptography::signatures::{PrivateSigKey, PublicSigKey, gen_sig_keys};
     use crate::cryptography::signing::seed::RootSigningSeed;
-    use crate::cryptography::signing::{SigningSchemeType, unified_verify};
+    use crate::cryptography::signing::{HasSigningScheme, SigningSchemeType, unified_verify};
+    use crate::util::key_setup::store_verification_key_at;
     use crate::vault::storage::crypto_material::{
         get_core_root_signing_seed, get_core_signing_key, read_scheme_verification_key,
-        store_verification_key_at,
     };
     use crate::vault::storage::ram::RamStorage;
     use crate::vault::storage::{
