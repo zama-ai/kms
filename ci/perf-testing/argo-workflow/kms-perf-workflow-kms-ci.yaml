@@ -37,8 +37,6 @@ spec:
       value: "GitHub Actions"
     - name: fhe-params
       value: "Test"
-    - name: duration
-      value: "30"
     - name: max-in-flight
       value: "10000"
     - name: data-type
@@ -55,35 +53,7 @@ spec:
     - name: kms-perf
       dag:
         tasks:
-          - name: preproc-key-gen
-            template: run-test
-            continueOn:
-              failed: true
-            arguments:
-              parameters:
-              - name: test-name
-                value: "preproc-key-gen"
-              - name: test-command
-                value: "preproc-key-gen"
-              - name: fhe-params
-                value: "{{workflow.parameters.fhe-params}}"
-
-          - name: key-gen
-            dependencies: ["preproc-key-gen"]
-            template: run-test
-            continueOn:
-              failed: true
-            arguments:
-              parameters:
-              - name: test-name
-                value: "key-gen"
-              - name: test-command
-                value: "key-gen -i {{tasks.preproc-key-gen.outputs.parameters.request-id}}"
-              - name: fhe-params
-                value: "{{workflow.parameters.fhe-params}}"
-
           - name: udec-preproc-key-gen
-            dependencies: ["key-gen"]
             template: run-test
             continueOn:
               failed: true
@@ -110,66 +80,10 @@ spec:
               - name: fhe-params
                 value: "Default"
 
-          - name: crs-gen
-            dependencies: ["udec-key-gen"]
-            template: run-test
-            continueOn:
-              failed: true
-            arguments:
-              parameters:
-              - name: test-name
-                value: "crs-gen"
-              - name: test-command
-                value: "crs-gen --max-num-bits 2048"
-              - name: fhe-params
-                value: "Default"
-
-          - name: pdec-rate-1100
-            dependencies: ["crs-gen"]
-            template: run-decrypt-rate
-            arguments:
-              parameters:
-              - name: kind
-                value: "pdec"
-              - name: rate
-                value: "1100"
-              - name: key_id
-                value: "{{tasks.udec-key-gen.outputs.parameters.request-id}}"
-              - name: previous-ok
-                value: "true"
-
-          - name: pdec-rate-1300
-            dependencies: ["pdec-rate-1100"]
-            template: run-decrypt-rate
-            arguments:
-              parameters:
-              - name: kind
-                value: "pdec"
-              - name: rate
-                value: "1300"
-              - name: key_id
-                value: "{{tasks.udec-key-gen.outputs.parameters.request-id}}"
-              - name: previous-ok
-                value: "{{tasks.pdec-rate-1100.outputs.parameters.capacity-ok}}"
-
-          - name: pdec-rate-1500
-            dependencies: ["pdec-rate-1300"]
-            template: run-decrypt-rate
-            arguments:
-              parameters:
-              - name: kind
-                value: "pdec"
-              - name: rate
-                value: "1500"
-              - name: key_id
-                value: "{{tasks.udec-key-gen.outputs.parameters.request-id}}"
-              - name: previous-ok
-                value: "{{tasks.pdec-rate-1300.outputs.parameters.capacity-ok}}"
-
           # Keep this first 2400/s result out of the summary so the following
           # same-rate measurement can show whether position affects UDEC.
           - name: udec-rate-2400-probe
-            dependencies: ["udec-key-gen", "pdec-rate-1500"]
+            dependencies: ["udec-key-gen"]
             template: run-decrypt-rate
             arguments:
               parameters:
@@ -181,86 +95,28 @@ spec:
                 value: "{{tasks.udec-key-gen.outputs.parameters.request-id}}"
               - name: previous-ok
                 value: "true"
+              - {name: duration, value: "60"}
+              - {name: pause, value: "10"}
+              - {name: maxfail, value: "0"}
+              - {name: maxshed, value: "0"}
+              - {name: pct, value: "98"}
+              - {name: allowfail, value: "true"}
 
-          - name: udec-rate-2400
-            dependencies: ["udec-rate-2400-probe"]
-            template: run-decrypt-rate
-            arguments:
-              parameters:
-              - name: kind
-                value: "udec"
-              - name: rate
-                value: "2400"
-              - name: key_id
-                value: "{{tasks.udec-key-gen.outputs.parameters.request-id}}"
-              - name: previous-ok
-                value: "true"
-
-          - name: udec-rate-2700
-            dependencies: ["udec-rate-2400"]
-            template: run-decrypt-rate
-            arguments:
-              parameters:
-              - name: kind
-                value: "udec"
-              - name: rate
-                value: "2700"
-              - name: key_id
-                value: "{{tasks.udec-key-gen.outputs.parameters.request-id}}"
-              - name: previous-ok
-                value: "true"
-          - name: udec-rate-2750
-            dependencies: ["udec-rate-2700"]
-            template: run-decrypt-rate
-            arguments:
-              parameters:
-              - name: kind
-                value: "udec"
-              - name: rate
-                value: "2750"
-              - name: key_id
-                value: "{{tasks.udec-key-gen.outputs.parameters.request-id}}"
-              - name: previous-ok
-                value: "true"
+          # <<GENERATED:dag-tasks>>
 
           - name: summary
             dependencies:
-              - "preproc-key-gen"
-              - "key-gen"
               - "udec-preproc-key-gen"
               - "udec-key-gen"
-              - "crs-gen"
-              - "pdec-rate-1100"
-              - "pdec-rate-1300"
-              - "pdec-rate-1500"
-              - "udec-rate-2400"
-              - "udec-rate-2700"
-              - "udec-rate-2750"
+              # <<GENERATED:summary-deps>>
             template: summary-report
             arguments:
               parameters:
-              - name: test-result-preproc-key-gen
-                value: "{{tasks.preproc-key-gen.outputs.parameters.test-result}}"
-              - name: test-result-key-gen
-                value: "{{tasks.key-gen.outputs.parameters.test-result}}"
               - name: test-result-udec-preproc-key-gen
                 value: "{{tasks.udec-preproc-key-gen.outputs.parameters.test-result}}"
               - name: test-result-udec-key-gen
                 value: "{{tasks.udec-key-gen.outputs.parameters.test-result}}"
-              - name: test-result-crs-gen
-                value: "{{tasks.crs-gen.outputs.parameters.test-result}}"
-              - name: test-result-pdec-1100
-                value: "{{tasks.pdec-rate-1100.outputs.parameters.test-result}}"
-              - name: test-result-pdec-1300
-                value: "{{tasks.pdec-rate-1300.outputs.parameters.test-result}}"
-              - name: test-result-pdec-1500
-                value: "{{tasks.pdec-rate-1500.outputs.parameters.test-result}}"
-              - name: test-result-udec-2400
-                value: "{{tasks.udec-rate-2400.outputs.parameters.test-result}}"
-              - name: test-result-udec-2700
-                value: "{{tasks.udec-rate-2700.outputs.parameters.test-result}}"
-              - name: test-result-udec-2750
-                value: "{{tasks.udec-rate-2750.outputs.parameters.test-result}}"
+              # <<GENERATED:summary-args>>
               - name: tls
                 value: "{{workflow.parameters.tls}}"
               - name: run_url
@@ -269,8 +125,6 @@ spec:
                 value: "{{workflow.parameters.job_url}}"
               - name: job_label
                 value: "{{workflow.parameters.job_label}}"
-              - name: duration
-                value: "{{workflow.parameters.duration}}"
               - name: max-in-flight
                 value: "{{workflow.parameters.max-in-flight}}"
 
@@ -299,6 +153,8 @@ spec:
         image: hub.zama.org/ghcr/zama-ai/kms/core-client:<client-version>
         command: ["/bin/bash", "-c"]
         source: |
+          set -e
+
           cat <<EOF > config.toml
             kms_type = "threshold"
             num_majority=${NUM_MAJORITY}
@@ -382,8 +238,10 @@ spec:
           fi
 
           start_time=$(date +%s)
+          set +e
           ./bin/kms-core-client ${client_logs_arg} --max-iter 2880 -f config.toml {{inputs.parameters.test-command}} 2>&1 | tee /tmp/test_logs.txt
           test_exit=${PIPESTATUS[0]}
+          set -e
           end_time=$(date +%s)
           duration=$((end_time - start_time))
 
@@ -475,6 +333,12 @@ spec:
         - name: rate
         - name: key_id
         - name: previous-ok
+        - name: duration
+        - name: pause
+        - name: maxfail
+        - name: maxshed
+        - name: pct
+        - name: allowfail
       outputs:
         parameters:
         - name: test-result
@@ -494,6 +358,8 @@ spec:
         image: hub.zama.org/ghcr/zama-ai/kms/core-client:<client-version>
         command: ["/bin/bash", "-c"]
         source: |
+          set -e
+
           cat <<EOF > config.toml
             kms_type = "threshold"
             num_majority=${NUM_MAJORITY}
@@ -589,7 +455,7 @@ spec:
 
           test_name="${kind}-rate-{{inputs.parameters.rate}}"
           key_id="{{inputs.parameters.key_id}}"
-          test_command="${command_name} from-args -d {{workflow.parameters.data-type}} -k ${key_id} -e ffffffffffffffff --batch-size {{workflow.parameters.batch-size}} --rate {{inputs.parameters.rate}} --duration {{workflow.parameters.duration}} --max-in-flight {{workflow.parameters.max-in-flight}}"
+          test_command="${command_name} from-args -d {{workflow.parameters.data-type}} -k ${key_id} -e ffffffffffffffff --batch-size {{workflow.parameters.batch-size}} --rate {{inputs.parameters.rate}} --duration {{inputs.parameters.duration}} --max-in-flight {{workflow.parameters.max-in-flight}}"
           mkdir -p /tmp/artifacts
 
           capture_net_snapshot() {
@@ -645,39 +511,10 @@ spec:
             ' /tmp/net-before.tsv /tmp/net-after.tsv
           }
 
-          allowed_failure_for_rate() {
-            case "$1:$2" in
-              pdec:1500|udec:2750) return 0 ;;
-              *) return 1 ;;
-            esac
-          }
-
-          parameter_set_for_rate() {
-            case "$1:$2" in
-              # maxfail/maxshed are percentages of offered requests, not counts.
-              # pct is the minimum achieved_rate/target_rate percentage.
-              pdec:1100) echo "maxfail=0,maxshed=0,pct=98" ;;
-              pdec:1300) echo "maxfail=1,maxshed=1,pct=90" ;;
-              # 1.5k is an exploratory public-decrypt probe and may warn.
-              pdec:1500) echo "maxfail=10,maxshed=25,pct=70" ;;
-              udec:2400) echo "maxfail=0,maxshed=0,pct=98" ;;
-              udec:2700) echo "maxfail=1,maxshed=1,pct=95" ;;
-              # 2.75k probes just above the clean 2.7k run; outside-set results warn.
-              udec:2750) echo "maxfail=10,maxshed=25,pct=70" ;;
-              *) echo "maxfail=0,maxshed=0,pct=100" ;;
-            esac
-          }
-
-          parameter_value() {
-            echo "$1" | tr ',' '\n' | sed -n "s/^$2=//p" | head -n 1
-          }
+          parameter_set="maxfail={{inputs.parameters.maxfail}},maxshed={{inputs.parameters.maxshed}},pct={{inputs.parameters.pct}}"
+          allowed_failure="{{inputs.parameters.allowfail}}"
 
           if [ -z "$key_id" ]; then
-            parameter_set=$(parameter_set_for_rate "$kind" "{{inputs.parameters.rate}}")
-            allowed_failure=false
-            if allowed_failure_for_rate "$kind" "{{inputs.parameters.rate}}"; then
-              allowed_failure=true
-            fi
             printf '{\n  "test_name": "%s",\n  "test_command": "%s",\n  "status": "failed",\n  "exit_code": 1,\n  "duration": 0,\n  "timestamp": "%s",\n  "fhe_params": "Default",\n  "performance_metrics": {\n    "%s": {\n      "target_rate": %s,\n      "failed": 1,\n      "parameter_set": "%s",\n      "within_parameter_set": false,\n      "allowed_failure": %s\n    }\n  }\n}\n' \
               "$test_name" \
               "$test_command" \
@@ -693,11 +530,6 @@ spec:
           fi
 
           if [ "{{inputs.parameters.previous-ok}}" != "true" ]; then
-            parameter_set=$(parameter_set_for_rate "$kind" "{{inputs.parameters.rate}}")
-            allowed_failure=false
-            if allowed_failure_for_rate "$kind" "{{inputs.parameters.rate}}"; then
-              allowed_failure=true
-            fi
             printf '{\n  "test_name": "%s",\n  "test_command": "%s",\n  "status": "skipped",\n  "exit_code": 0,\n  "duration": 0,\n  "timestamp": "%s",\n  "fhe_params": "Default",\n  "performance_metrics": {\n    "%s": {\n      "target_rate": %s,\n      "parameter_set": "%s",\n      "within_parameter_set": false,\n      "allowed_failure": %s\n    }\n  }\n}\n' \
               "$test_name" \
               "$test_command" \
@@ -720,9 +552,10 @@ spec:
           if [ "{{workflow.parameters.client-logs}}" = "enabled" ]; then
             client_logs_arg="--logs"
           fi
-          rate_timeout=$(({{workflow.parameters.duration}} + 300))
+          rate_timeout=$(({{inputs.parameters.duration}} + 300))
           capture_net_snapshot /tmp/net-before.tsv
           start_time=$(date +%s)
+          set +e
           if command -v timeout >/dev/null 2>&1; then
             timeout "${rate_timeout}s" ./bin/kms-core-client ${client_logs_arg} --max-iter 2880 -f config.toml $test_command 2>&1 | tee /tmp/test_logs.txt
           else
@@ -730,6 +563,7 @@ spec:
             ./bin/kms-core-client ${client_logs_arg} --max-iter 2880 -f config.toml $test_command 2>&1 | tee /tmp/test_logs.txt
           fi
           test_exit=${PIPESTATUS[0]}
+          set -e
           end_time=$(date +%s)
           duration=$((end_time - start_time))
           capture_net_snapshot /tmp/net-after.tsv
@@ -766,14 +600,9 @@ spec:
             echo "ERROR: no valid $metrics_marker JSON with failed/shed/saturated found"
           fi
           network_metrics="$(network_metrics_suffix "$duration")"
-          parameter_set=$(parameter_set_for_rate "$kind" "{{inputs.parameters.rate}}")
-          maxfail=$(parameter_value "$parameter_set" maxfail)
-          maxshed=$(parameter_value "$parameter_set" maxshed)
-          pct=$(parameter_value "$parameter_set" pct)
-          allowed_failure=false
-          if allowed_failure_for_rate "$kind" "{{inputs.parameters.rate}}"; then
-            allowed_failure=true
-          fi
+          maxfail="{{inputs.parameters.maxfail}}"
+          maxshed="{{inputs.parameters.maxshed}}"
+          pct="{{inputs.parameters.pct}}"
           if [[ "$decrypt_metrics" =~ \"offered\":([0-9]+) ]]; then
             metrics_offered="${BASH_REMATCH[1]}"
           else
@@ -832,6 +661,8 @@ spec:
             > /tmp/artifacts/${test_name}.json
           echo "$capacity_ok" > /tmp/artifacts/${test_name}.ok
 
+          sleep "{{inputs.parameters.pause}}"
+
           exit 0
         env:
           - name: S3_ENDPOINT
@@ -852,22 +683,13 @@ spec:
     - name: summary-report
       inputs:
         parameters:
-        - name: test-result-preproc-key-gen
-        - name: test-result-key-gen
         - name: test-result-udec-preproc-key-gen
         - name: test-result-udec-key-gen
-        - name: test-result-crs-gen
-        - name: test-result-pdec-1100
-        - name: test-result-pdec-1300
-        - name: test-result-pdec-1500
-        - name: test-result-udec-2400
-        - name: test-result-udec-2700
-        - name: test-result-udec-2750
+        # <<GENERATED:summary-inputs>>
         - name: tls
         - name: run_url
         - name: job_url
         - name: job_label
-        - name: duration
         - name: max-in-flight
       script:
         image: public.ecr.aws/docker/library/alpine:3.23
@@ -881,19 +703,13 @@ spec:
         - name: slack-webhook-volume
           mountPath: /etc/slack
         source: |
+          set -e
+
           apk add --no-cache jq curl
           mkdir -p /mnt/results
-          echo '{{inputs.parameters.test-result-preproc-key-gen}}' > /mnt/results/preproc-key-gen.json
-          echo '{{inputs.parameters.test-result-key-gen}}' > /mnt/results/key-gen.json
           echo '{{inputs.parameters.test-result-udec-preproc-key-gen}}' > /mnt/results/udec-preproc-key-gen.json
           echo '{{inputs.parameters.test-result-udec-key-gen}}' > /mnt/results/udec-key-gen.json
-          echo '{{inputs.parameters.test-result-crs-gen}}' > /mnt/results/crs-gen.json
-          echo '{{inputs.parameters.test-result-pdec-1100}}' > /mnt/results/pdec-rate-1100.json
-          echo '{{inputs.parameters.test-result-pdec-1300}}' > /mnt/results/pdec-rate-1300.json
-          echo '{{inputs.parameters.test-result-pdec-1500}}' > /mnt/results/pdec-rate-1500.json
-          echo '{{inputs.parameters.test-result-udec-2400}}' > /mnt/results/udec-rate-2400.json
-          echo '{{inputs.parameters.test-result-udec-2700}}' > /mnt/results/udec-rate-2700.json
-          echo '{{inputs.parameters.test-result-udec-2750}}' > /mnt/results/udec-rate-2750.json
+          # <<GENERATED:summary-echo>>
 
           echo "=========================================="
           echo "KMS PERFORMANCE SUMMARY"
@@ -902,7 +718,7 @@ spec:
           echo "Payload: {{workflow.parameters.batch-size}} x {{workflow.parameters.data-type}} per request"
           echo "Preproc/keygen FHE params: {{workflow.parameters.fhe-params}}"
           echo "Decrypt FHE params: Default"
-          echo "Duration: {{inputs.parameters.duration}}s, max in-flight: {{inputs.parameters.max-in-flight}}"
+          echo "Rate durations: per scenario, max in-flight: {{inputs.parameters.max-in-flight}}"
           echo ""
 
           keygen_total=0
@@ -988,17 +804,19 @@ spec:
 
           summarize_decrypt_rates() {
             kind="$1"
-            display="$2"
-            metrics_key="$3"
-            shift 3
+            shift
 
             case "$kind" in
               pdec)
+                display="Public decrypt"
+                metrics_key="public_decrypt"
                 extra_failed_key="verification_failed"
                 timing_key="verification_ms"
                 timing_label="verify"
                 ;;
               udec)
+                display="User decrypt"
+                metrics_key="user_decrypt"
                 extra_failed_key="reconstruction_failed"
                 timing_key="reconstruction_ms"
                 timing_label="recon"
@@ -1119,11 +937,8 @@ spec:
 
           echo "Keygen and CRS perf tests:"
           for result in \
-            /mnt/results/preproc-key-gen.json \
-            /mnt/results/key-gen.json \
             /mnt/results/udec-preproc-key-gen.json \
-            /mnt/results/udec-key-gen.json \
-            /mnt/results/crs-gen.json; do
+            /mnt/results/udec-key-gen.json; do
             result_name="$(basename "$result" .json)"
             operation="$(operation_for_test "$result_name")"
             if ! jq empty "$result" 2>/dev/null; then
@@ -1178,8 +993,7 @@ spec:
           done
 
           echo ""
-          summarize_decrypt_rates pdec "Public decrypt" public_decrypt 1100 1300 1500
-          summarize_decrypt_rates udec "User decrypt" user_decrypt 2400 2700 2750
+          # <<GENERATED:summary-calls>>
 
           finite_total=$((keygen_total + crs_total))
           finite_passed=$((keygen_passed + crs_passed))
@@ -1217,15 +1031,15 @@ spec:
           crs_block="$(printf '*CRS*\n%b' "${crs_lines:-No CRS tests\n}")"
           pdec_raw_text="$(printf '%b' "$pdec_raw_lines" | head -c 2200)"
           if [ -n "$pdec_raw_text" ]; then
-            pdec_block="$(printf '*Public decrypt {{workflow.parameters.data-type}}, {{inputs.parameters.duration}}s*\n%b\n```%s\n```' "${pdec_lines:-No public decrypt tests\n}" "$pdec_raw_text")"
+            pdec_block="$(printf '*Public decrypt {{workflow.parameters.data-type}}*\n%b\n```%s\n```' "${pdec_lines:-No public decrypt tests\n}" "$pdec_raw_text")"
           else
-            pdec_block="$(printf '*Public decrypt {{workflow.parameters.data-type}}, {{inputs.parameters.duration}}s*\n%b' "${pdec_lines:-No public decrypt tests\n}")"
+            pdec_block="$(printf '*Public decrypt {{workflow.parameters.data-type}}*\n%b' "${pdec_lines:-No public decrypt tests\n}")"
           fi
           udec_raw_text="$(printf '%b' "$udec_raw_lines" | head -c 2200)"
           if [ -n "$udec_raw_text" ]; then
-            udec_block="$(printf '*User decrypt {{workflow.parameters.data-type}}, {{inputs.parameters.duration}}s*\n%b\n```%s\n```' "${udec_lines:-No user decrypt tests\n}" "$udec_raw_text")"
+            udec_block="$(printf '*User decrypt {{workflow.parameters.data-type}}*\n%b\n```%s\n```' "${udec_lines:-No user decrypt tests\n}" "$udec_raw_text")"
           else
-            udec_block="$(printf '*User decrypt {{workflow.parameters.data-type}}, {{inputs.parameters.duration}}s*\n%b' "${udec_lines:-No user decrypt tests\n}")"
+            udec_block="$(printf '*User decrypt {{workflow.parameters.data-type}}*\n%b' "${udec_lines:-No user decrypt tests\n}")"
           fi
           status_line="Keygen: ${keygen_passed}/${keygen_total} | CRS: ${crs_passed}/${crs_total} | Public decrypt: ${pdec_passed}/${pdec_total} | User decrypt: ${udec_passed}/${udec_total}"
           # NOTE: core/core-client instance types and tokioWorkerThreads/rayonNumThreads below are
@@ -1236,7 +1050,7 @@ spec:
           # Two physical lines: the '\n' renders as a line break in the Slack context element.
           config_line=$(printf '%s\n%s' \
             "payload={{workflow.parameters.batch-size}} x {{workflow.parameters.data-type}}, preproc/keygen params={{workflow.parameters.fhe-params}}, decrypt params=Default, max-in-flight={{inputs.parameters.max-in-flight}}, TLS={{inputs.parameters.tls}}" \
-            "core=c7a.16xlarge, core-client=m5n, tokioWorkerThreads=10, rayonNumThreads=40, core-img=<version>, client-img=<client-version>")
+            "core=c7a.16xlarge, core-client=c6in.32xlarge, tokioWorkerThreads=10, rayonNumThreads=40, core-img=<version>, client-img=<client-version>")
           if echo "{{inputs.parameters.job_url}}" | grep -q '^http'; then
             run_line="<{{inputs.parameters.job_url}}|{{inputs.parameters.job_label}}>"
           else
