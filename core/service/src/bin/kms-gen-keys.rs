@@ -11,7 +11,7 @@ use kms_lib::{
     consts::SIGNING_KEY_ID,
     cryptography::attestation::make_security_module,
     util::key_setup::{
-        delete_scheme_verification_material, ensure_central_server_signing_keys_exist,
+        delete_published_verification_material, ensure_central_server_signing_keys_exist,
         ensure_published_verification_material, ensure_threshold_server_signing_key_exists,
     },
     vault::{
@@ -491,12 +491,15 @@ async fn handle_repopulate_cmd<PubS: Storage, PrivS: Storage>(
 ) -> anyhow::Result<()> {
     let sk = get_core_signing_key(priv_storage).await?;
     // Checked up front rather than left to the first non-ECDSA derivation.
+    ensure_root_seed_attached(&sk)?;
     if !sk.has_root_seed() {
-        anyhow::bail!(
-            "No {} object found under the handle {}.",
+        Err(anyhow_error_and_log(format!(
+            "no {} object is present under the handle {}, so this node can only sign under {}; \
+         run kms-gen-keys to generate one",
             PrivDataType::SigningSeed,
-            *SIGNING_KEY_ID
-        );
+            *SIGNING_KEY_ID,
+            SigningSchemeType::Ecdsa256k1
+        )));
     }
     ensure_published_verification_material(pub_storage, &sk).await?;
     tracing::info!("Repopulated verification material from the existing signing identity");
@@ -536,19 +539,15 @@ async fn delete_signing_key_material<PubS: Storage, PrivS: Storage>(
     priv_storage: &mut PrivS,
 ) -> anyhow::Result<()> {
     let req_id = &*SIGNING_KEY_ID;
-    // Delete every element having the same `req_id` as the signing key, including the deprecated ECDSA-only material.
-    for data_type in [
-        PubDataType::VerfKey,
-        PubDataType::VerfAddress,
-        PubDataType::CACert,
-    ] {
-        tracing::info!("Deleting {data_type:?} under request ID {req_id:?} from public storage...");
-        // Ignore an error as it is likely because the data does not exist
-        let _ = delete_at_request_id(pub_storage, req_id, &data_type.to_string()).await;
-    }
-    // The typed material is keyed per scheme rather than by `req_id`, so deleting
-    // it at `req_id` would only reach the ECDSA entry.
-    delete_scheme_verification_material(pub_storage).await?;
+    tracing::info!("Deleting published verification material from public storage...");
+    delete_published_verification_material(pub_storage).await?;
+    // Not verification material, but signed by the key being deleted.
+    tracing::info!(
+        "Deleting {:?} under request ID {req_id:?} from public storage...",
+        PubDataType::CACert
+    );
+    // Ignore an error as it is likely because the data does not exist
+    let _ = delete_at_request_id(pub_storage, req_id, &PubDataType::CACert.to_string()).await;
     // The root seed goes with the signing key.
     for data_type in [PrivDataType::SigningKey, PrivDataType::SigningSeed] {
         tracing::info!(

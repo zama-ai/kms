@@ -14,7 +14,7 @@ use crate::vault::storage::{StorageExt, StorageReader, StorageReaderExt};
 use crate::{
     anyhow_error_and_warn_log,
     client::client_non_wasm::ClientDataType,
-    vault::storage::{Storage, read_all_data_versioned},
+    vault::storage::{Storage, read_all_data_versioned, store_versioned_at_request_id},
 };
 use aes_prng::AesRng;
 use kms_grpc::RequestId;
@@ -441,6 +441,35 @@ pub async fn get_client_signing_key<S: Storage>(storage: &S) -> anyhow::Result<P
 
 pub async fn get_client_verification_key<S: Storage>(storage: &S) -> anyhow::Result<PublicSigKey> {
     get_unique::<S, PublicSigKey, ClientDataType>(storage, ClientDataType::VerfKey).await
+}
+
+/// Persist `verf_key` under an explicit handle and folder, in whichever concrete
+/// verification-key type its scheme uses.
+pub async fn store_verification_key_at<S: Storage>(
+    storage: &mut S,
+    req_id: &RequestId,
+    folder: PubDataType,
+    verf_key: &UnifiedPublicSigKey,
+) -> anyhow::Result<()> {
+    let req_id = *req_id;
+    let data_type = folder.to_string();
+    match verf_key {
+        UnifiedPublicSigKey::Ecdsa256k1(vk) => {
+            store_versioned_at_request_id(storage, &req_id, vk, &data_type).await
+        }
+        UnifiedPublicSigKey::Ed25519(vk) => {
+            store_versioned_at_request_id(storage, &req_id, vk, &data_type).await
+        }
+        UnifiedPublicSigKey::MlDsa44(vk) => {
+            store_versioned_at_request_id(storage, &req_id, vk.as_ref(), &data_type).await
+        }
+        UnifiedPublicSigKey::MlDsa65(vk) => {
+            store_versioned_at_request_id(storage, &req_id, vk.as_ref(), &data_type).await
+        }
+        UnifiedPublicSigKey::MlDsa87(vk) => {
+            store_versioned_at_request_id(storage, &req_id, vk.as_ref(), &data_type).await
+        }
+    }
 }
 
 /// Read a signing `scheme` verification key from a handle and folder, and tag it

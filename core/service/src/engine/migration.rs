@@ -188,8 +188,7 @@ where
     if !sk.has_root_seed() {
         tracing::warn!(
             "No root signing seed present; skipping the multi-scheme verification-material \
-             backfill. This node can only sign under ECDSA until kms-gen-keys has generated \
-             a seed for it."
+             backfill."
         );
         return Ok(());
     }

@@ -41,7 +41,7 @@ use crate::cryptography::signing::seed::RootSigningSeed;
 use crate::engine::base::compute_handle;
 use crate::vault::storage::crypto_material::{
     get_core_root_signing_seed, get_rng, log_data_exists, log_storage_success,
-    read_verification_key_at,
+    read_verification_key_at, store_verification_key_at,
 };
 use crate::vault::storage::{
     Storage, StorageReader, StorageType, delete_at_request_id, file::FileStorage,
@@ -443,6 +443,58 @@ impl MaterialSlot {
             PubDataType::VerfKey | PubDataType::TypedVerfKey
         )
     }
+
+    /// The storage folder name this slot lives in.
+    fn data_type(self) -> String {
+        self.folder.to_string()
+    }
+
+    /// Whether anything is published in this slot.
+    async fn exists<S: StorageReader>(self, storage: &S) -> anyhow::Result<bool> {
+        storage.data_exists(&self.req_id, &self.data_type()).await
+    }
+
+    /// Whether this slot already holds exactly what `verf_key` implies.
+    async fn matches<S: StorageReader>(
+        self,
+        storage: &S,
+        verf_key: &UnifiedPublicSigKey,
+    ) -> anyhow::Result<bool> {
+        if self.holds_key() {
+            let stored =
+                read_verification_key_at(storage, &self.req_id, self.folder, self.scheme).await?;
+            Ok(&stored == verf_key)
+        } else {
+            let stored = read_text_at_request_id(storage, &self.req_id, &self.data_type()).await?;
+            Ok(stored == verf_key.address_text())
+        }
+    }
+
+    /// Write what `verf_key` implies into this slot.
+    async fn write<S: Storage>(
+        self,
+        storage: &mut S,
+        verf_key: &UnifiedPublicSigKey,
+    ) -> anyhow::Result<()> {
+        if self.holds_key() {
+            store_verification_key_at(storage, &self.req_id, self.folder, verf_key).await
+        } else {
+            store_text_at_request_id(
+                storage,
+                &self.req_id,
+                &verf_key.address_text(),
+                &self.data_type(),
+            )
+            .await
+        }
+    }
+
+    /// Remove whatever is published in this slot. Absent material is not an error.
+    async fn delete<S: Storage>(self, storage: &mut S) -> anyhow::Result<()> {
+        delete_at_request_id(storage, &self.req_id, &self.data_type())
+            .await
+            .map_err(|e| anyhow_error_and_log(format!("Failed to delete {self}: {e}")))
+    }
 }
 
 impl std::fmt::Display for MaterialSlot {
@@ -460,7 +512,7 @@ pub const SCHEME_MATERIAL_TYPES: [PubDataType; 2] =
     [PubDataType::TypedVerfKey, PubDataType::TypedVerfAddress];
 
 /// The deprecated ECDSA-only location of a node's published identity: a bare
-/// [`PublicSigKey`] and a checksummed Ethereum address.
+/// `PublicSigKey` and a checksummed Ethereum address.
 pub const LEGACY_ECDSA_MATERIAL_TYPES: [PubDataType; 2] =
     [PubDataType::VerfKey, PubDataType::VerfAddress];
 
@@ -484,68 +536,18 @@ fn published_material_slots() -> impl Iterator<Item = MaterialSlot> {
     }))
 }
 
-/// Whether `slot` already holds exactly what `verf_key` implies.
-async fn slot_is_up_to_date<PubS: StorageReader>(
-    pub_storage: &PubS,
-    slot: MaterialSlot,
-    verf_key: &UnifiedPublicSigKey,
-) -> anyhow::Result<bool> {
-    if slot.holds_key() {
-        let stored =
-            read_verification_key_at(pub_storage, &slot.req_id, slot.folder, slot.scheme).await?;
-        Ok(&stored == verf_key)
-    } else {
-        let stored =
-            read_text_at_request_id(pub_storage, &slot.req_id, &slot.folder.to_string()).await?;
-        Ok(stored == verf_key.address_text())
-    }
-}
-
-/// Write what `verf_key` implies into `slot`.
-async fn write_slot<PubS: Storage>(
-    pub_storage: &mut PubS,
-    slot: MaterialSlot,
-    verf_key: &UnifiedPublicSigKey,
-) -> anyhow::Result<()> {
-    if slot.holds_key() {
-        store_verification_key_at(pub_storage, &slot.req_id, slot.folder, verf_key).await
-    } else {
-        store_text_at_request_id(
-            pub_storage,
-            &slot.req_id,
-            &verf_key.address_text(),
-            &slot.folder.to_string(),
-        )
-        .await
-    }
-}
-
-/// Persist `verf_key` under an explicit handle and folder.
-async fn store_verification_key_at<S: Storage>(
-    storage: &mut S,
-    req_id: &RequestId,
-    folder: PubDataType,
-    verf_key: &UnifiedPublicSigKey,
-) -> anyhow::Result<()> {
-    let req_id = *req_id;
-    let data_type = folder.to_string();
-    match verf_key {
-        UnifiedPublicSigKey::Ecdsa256k1(vk) => {
-            store_versioned_at_request_id(storage, &req_id, vk, &data_type).await
-        }
-        UnifiedPublicSigKey::Ed25519(vk) => {
-            store_versioned_at_request_id(storage, &req_id, vk, &data_type).await
-        }
-        UnifiedPublicSigKey::MlDsa44(vk) => {
-            store_versioned_at_request_id(storage, &req_id, vk.as_ref(), &data_type).await
-        }
-        UnifiedPublicSigKey::MlDsa65(vk) => {
-            store_versioned_at_request_id(storage, &req_id, vk.as_ref(), &data_type).await
-        }
-        UnifiedPublicSigKey::MlDsa87(vk) => {
-            store_versioned_at_request_id(storage, &req_id, vk.as_ref(), &data_type).await
+/// The first slot of `slots` that already holds something, if any.
+async fn first_existing_slot<S, I>(storage: &S, slots: I) -> anyhow::Result<Option<MaterialSlot>>
+where
+    S: StorageReader,
+    I: Iterator<Item = MaterialSlot>,
+{
+    for slot in slots {
+        if slot.exists(storage).await? {
+            return Ok(Some(slot));
         }
     }
+    Ok(None)
 }
 
 /// Check every verification object *already published* against the signing
@@ -565,10 +567,7 @@ where
     let mut verf_keys: BTreeMap<SigningSchemeType, UnifiedPublicSigKey> = BTreeMap::new();
 
     for slot in published_material_slots() {
-        if !pub_storage
-            .data_exists(&slot.req_id, &slot.folder.to_string())
-            .await?
-        {
+        if !slot.exists(pub_storage).await? {
             continue;
         }
         if !verf_keys.contains_key(&slot.scheme) {
@@ -581,7 +580,7 @@ where
             })?;
             verf_keys.insert(slot.scheme, verf_key);
         }
-        if !slot_is_up_to_date(pub_storage, slot, &verf_keys[&slot.scheme]).await? {
+        if !slot.matches(pub_storage, &verf_keys[&slot.scheme]).await? {
             return Err(anyhow_error_and_log(format!(
                 "the stored {slot} does not match the provided signing key"
             )));
@@ -616,13 +615,10 @@ where
     }
 
     for slot in published_material_slots() {
-        if pub_storage
-            .data_exists(&slot.req_id, &slot.folder.to_string())
-            .await?
-        {
+        if slot.exists(pub_storage).await? {
             continue;
         }
-        write_slot(pub_storage, slot, &verf_keys[&slot.scheme])
+        slot.write(pub_storage, &verf_keys[&slot.scheme])
             .await
             .map_err(|e| anyhow_error_and_log(format!("failed to store the {slot}: {e}")))?;
         tracing::info!("Stored {slot} in storage \"{}\"", pub_storage.info());
@@ -635,17 +631,12 @@ pub async fn ensure_no_scheme_verification_material<PubS>(pub_storage: &PubS) ->
 where
     PubS: StorageReader,
 {
-    for slot in scheme_material_slots() {
-        if pub_storage
-            .data_exists(&slot.req_id, &slot.folder.to_string())
-            .await?
-        {
-            return Err(anyhow_error_and_log(format!(
-                "data already exist for {slot}"
-            )));
-        }
+    match first_existing_slot(pub_storage, scheme_material_slots()).await? {
+        Some(slot) => Err(anyhow_error_and_log(format!(
+            "data already exist for {slot}"
+        ))),
+        None => Ok(()),
     }
-    Ok(())
 }
 
 /// Checks whether public storage holds verification material for any scheme other than
@@ -654,33 +645,35 @@ async fn non_ecdsa_scheme_material_exists<PubS>(pub_storage: &PubS) -> anyhow::R
 where
     PubS: StorageReader,
 {
-    for slot in scheme_material_slots() {
-        if slot.scheme == SigningSchemeType::Ecdsa256k1 {
-            continue;
-        }
-        if pub_storage
-            .data_exists(&slot.req_id, &slot.folder.to_string())
-            .await?
-        {
-            return Ok(true);
-        }
-    }
-    Ok(false)
+    let non_ecdsa =
+        scheme_material_slots().filter(|slot| slot.scheme != SigningSchemeType::Ecdsa256k1);
+    Ok(first_existing_slot(pub_storage, non_ecdsa).await?.is_some())
 }
 
 /// Delete every scheme's canonical verification material, ECDSA's included.
 ///
-/// The deprecated ECDSA-only pair is deliberately *not* touched here: it lives
-/// under the signing key's own handle and is deleted with the signing key, by
-/// `kms-gen-keys`.
+/// The deprecated ECDSA-only pair is deliberately *not* touched here, so a caller
+/// can purge the per-scheme layout alone. Callers wiping the whole identity want
+/// [`delete_published_verification_material`] instead.
 pub async fn delete_scheme_verification_material<PubS>(pub_storage: &mut PubS) -> anyhow::Result<()>
 where
     PubS: Storage,
 {
     for slot in scheme_material_slots() {
-        delete_at_request_id(pub_storage, &slot.req_id, &slot.folder.to_string())
-            .await
-            .map_err(|e| anyhow_error_and_log(format!("Failed to delete {slot}: {e}")))?;
+        slot.delete(pub_storage).await?;
+    }
+    Ok(())
+}
+
+/// Delete every verification object a node publishes, deprecated ECDSA-only pair included.
+pub async fn delete_published_verification_material<PubS>(
+    pub_storage: &mut PubS,
+) -> anyhow::Result<()>
+where
+    PubS: Storage,
+{
+    for slot in published_material_slots() {
+        slot.delete(pub_storage).await?;
     }
     Ok(())
 }
@@ -1724,9 +1717,9 @@ mod tests {
     use crate::cryptography::signatures::{PrivateSigKey, PublicSigKey, gen_sig_keys};
     use crate::cryptography::signing::seed::RootSigningSeed;
     use crate::cryptography::signing::{HasSigningScheme, SigningSchemeType, unified_verify};
-    use crate::util::key_setup::store_verification_key_at;
     use crate::vault::storage::crypto_material::{
         get_core_root_signing_seed, get_core_signing_key, read_verification_key_at,
+        store_verification_key_at,
     };
     use crate::vault::storage::ram::RamStorage;
     use crate::vault::storage::{
@@ -2415,16 +2408,11 @@ mod tests {
             .unwrap()
             .expect("the first run must write a root seed");
 
-        super::delete_scheme_verification_material(&mut pub_storage)
+        super::delete_published_verification_material(&mut pub_storage)
             .await
             .unwrap();
         for data_type in [PrivDataType::SigningKey, PrivDataType::SigningSeed] {
             delete_at_request_id(&mut priv_storage, &SIGNING_KEY_ID, &data_type.to_string())
-                .await
-                .unwrap();
-        }
-        for data_type in super::LEGACY_ECDSA_MATERIAL_TYPES {
-            delete_at_request_id(&mut pub_storage, &SIGNING_KEY_ID, &data_type.to_string())
                 .await
                 .unwrap();
         }
@@ -2624,5 +2612,48 @@ mod tests {
                 .is_err(),
             "published post-quantum material with no seed behind it was accepted"
         );
+    }
+
+    /// Deletion is the exact inverse of writing, deprecated ECDSA pair included.
+    /// When the two disagreed, the leftovers silently blocked the next identity
+    /// from being published.
+    #[tokio::test]
+    async fn deleting_published_material_is_the_inverse_of_writing_it() {
+        let mut rng = AesRng::seed_from_u64(44);
+        let sk = seeded_identity(&mut rng);
+        let mut pub_storage = RamStorage::new();
+
+        ensure_published_verification_material(&mut pub_storage, &sk)
+            .await
+            .unwrap();
+        assert!(
+            non_ecdsa_material_exists(&pub_storage).await,
+            "nothing was written, so the deletion below would prove nothing"
+        );
+
+        super::delete_published_verification_material(&mut pub_storage)
+            .await
+            .unwrap();
+
+        ensure_no_scheme_verification_material(&pub_storage)
+            .await
+            .unwrap();
+        for data_type in LEGACY_ECDSA_MATERIAL_TYPES.map(|t| t.to_string()) {
+            assert!(
+                !pub_storage
+                    .data_exists(&SIGNING_KEY_ID, &data_type)
+                    .await
+                    .unwrap(),
+                "the deprecated {data_type} survived the deletion"
+            );
+        }
+
+        // The point of the mirror: a wiped storage takes a *different* identity
+        // without tripping over anything the previous one left behind.
+        let other = seeded_identity(&mut rng);
+        ensure_published_verification_material(&mut pub_storage, &other)
+            .await
+            .unwrap();
+        assert_scheme_material_matches(&pub_storage, &other).await;
     }
 }
