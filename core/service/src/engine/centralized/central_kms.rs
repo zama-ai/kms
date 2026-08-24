@@ -19,10 +19,10 @@ use crate::engine::base::sign_user_decryption_result;
 use crate::engine::base::{BaseKmsStruct, KmsFheKeyHandles};
 use crate::engine::base::{KeyGenMetadata, PubDecCallValues, UserDecryptCallValues};
 use crate::engine::context_manager::CentralizedContextManager;
+#[cfg(feature = "non-wasm")]
+use crate::engine::public_material_verification::verify_public_storage_material;
 use crate::engine::traits::{BackupOperator, ContextManager};
 use crate::engine::traits::{BaseKms, Kms};
-#[cfg(feature = "non-wasm")]
-use crate::engine::utils::{sanity_check_crs_materials, sanity_check_public_materials};
 use crate::engine::validation::DSEP_USER_DECRYPTION;
 use crate::grpc::metastore_status_service::CustodianMetaStore;
 use crate::util::key_setup::FhePublicKey;
@@ -81,6 +81,7 @@ use tokio::task::JoinHandle;
 use tokio_util::task::TaskTracker;
 use tonic_health::pb::health_server::{Health, HealthServer};
 use tonic_health::server::HealthReporter;
+use zeroize::Zeroizing;
 
 /// Result enum for centralized keygen supporting both compressed and uncompressed keys.
 #[expect(clippy::large_enum_variant)]
@@ -888,7 +889,8 @@ impl<
         let signcryption_key = UnifiedSigncryptionKey::new(sig_key, client_enc_key, client_id);
         // Observe that we encrypt the plaintext itself, this is different from the threshold case
         // where it is first mapped to a Vec<ResiduePolyF4Z128> element
-        let plaintext = Self::public_decrypt(keys, ct, fhe_type, ct_format)?;
+        // Keep the cleartext behind a zeroizing guard during signcryption.
+        let plaintext = Zeroizing::new(Self::public_decrypt(keys, ct, fhe_type, ct_format)?);
         let enc_res = signcryption_key.signcrypt_plaintext(
             rng,
             &DSEP_USER_DECRYPTION,
@@ -928,12 +930,10 @@ impl<
                 &PrivDataType::FhePrivateKey.to_string(),
             )
             .await?;
-        // sanity check the public materials
         let entries: Vec<_> = key_info
             .iter()
             .map(|((id, _), handle)| (*id, handle.public_key_info.clone()))
             .collect();
-        sanity_check_public_materials(&public_storage, &entries).await?;
         tracing::info!(
             "loaded key_info with key_ids: {:?}",
             key_info.keys().collect::<Vec<_>>()
@@ -950,18 +950,21 @@ impl<
             )
             .await?,
         );
-
-        sanity_check_crs_materials(&public_storage, &crs_info).await?;
-
         let validation_material: HashMap<RequestId, RecoveryValidationMaterial> =
             read_all_data_versioned(&public_storage, &PubDataType::RecoveryMaterial.to_string())
                 .await?;
-        let verf_key = PublicSigKey::from_sk(&sk);
-        for (cur_req_id, rec_material) in validation_material.iter() {
-            if !rec_material.validate(&verf_key) {
-                anyhow::bail!("Invalid recovery validation material for key id {cur_req_id}");
-            }
-        }
+
+        // Verify that public storage holds exactly what private storage says it should, and
+        // that it is intact. Private storage is the reference; extra material in public
+        // storage is ignored.
+        verify_public_storage_material(
+            &public_storage,
+            &entries,
+            &crs_info,
+            &validation_material,
+            &sk,
+        )
+        .await?;
         let custodian_meta_store = MetaStore::new_from_map(validation_material);
         let tracker = Arc::new(TaskTracker::new());
 
@@ -1156,12 +1159,14 @@ pub(crate) mod tests {
         generate_uncompressed_fhe_keys,
     };
     use crate::conf::{CoreConfig, init_conf};
+    use crate::consts::SIGNING_KEY_ID;
     #[cfg(feature = "slow_tests")]
     use crate::consts::{DEFAULT_CENTRAL_KEY_ID, OTHER_CENTRAL_DEFAULT_ID};
     use crate::consts::{
         DEFAULT_EPOCH_ID, DEFAULT_PARAM, OTHER_CENTRAL_TEST_ID, TEST_CENTRAL_KEY_ID, TEST_PARAM,
     };
     use crate::cryptography::error::CryptographyError;
+    use crate::cryptography::signatures::PublicSigKey;
     use crate::cryptography::signatures::gen_sig_keys;
     use crate::cryptography::signcryption::{
         UnsigncryptFHEPlaintext, ephemeral_signcryption_key_generation,
@@ -1253,8 +1258,25 @@ pub(crate) mod tests {
 
     pub(crate) async fn new_pub_ram_storage_from_existing_keys(
         keys: &HashMap<RequestId, FhePubKeySet>,
+        sig_pk: &PublicSigKey,
     ) -> anyhow::Result<RamStorage> {
         let mut ram_storage = RamStorage::new();
+        // Publish the verification key and address at `SIGNING_KEY_ID`, as `kms-gen-keys` does
+        // in production, so a KMS booted on this storage passes public-material verification.
+        store_versioned_at_request_id(
+            &mut ram_storage,
+            &SIGNING_KEY_ID,
+            sig_pk,
+            &PubDataType::VerfKey.to_string(),
+        )
+        .await?;
+        crate::vault::storage::store_text_at_request_id(
+            &mut ram_storage,
+            &SIGNING_KEY_ID,
+            &sig_pk.address().to_string(),
+            &PubDataType::VerfAddress.to_string(),
+        )
+        .await?;
         for (cur_req_id, cur_keys) in keys {
             for cur_type in PubDataType::iter() {
                 match cur_type {
@@ -1278,6 +1300,8 @@ pub(crate) mod tests {
                     }
                     // Ensure that the compiler will alert us if we introduce a new public data type that we don't handle here
                     // that way we won't forget to update the code here appropriately
+                    //
+                    // VerfKey / VerfAddress are written once above, outside this per-key loop.
                     #[allow(deprecated)]
                     PubDataType::PublicKeyMetadata
                     | PubDataType::CRS
@@ -1286,7 +1310,9 @@ pub(crate) mod tests {
                     | PubDataType::DecompressionKey
                     | PubDataType::CACert
                     | PubDataType::RecoveryMaterial
-                    | PubDataType::CompressedXofKeySet => {
+                    | PubDataType::CompressedXofKeySet
+                    | PubDataType::TypedVerfKey
+                    | PubDataType::TypedVerfAddress => {
                         // Skip
                     }
                 }
@@ -1549,9 +1575,12 @@ pub(crate) mod tests {
         let kms = {
             let (inner, _health_service) = RealCentralizedKms::new(
                 config,
-                new_pub_ram_storage_from_existing_keys(&keys.pub_fhe_keys)
-                    .await
-                    .unwrap(),
+                new_pub_ram_storage_from_existing_keys(
+                    &keys.pub_fhe_keys,
+                    &keys.centralized_kms_keys.sig_pk,
+                )
+                .await
+                .unwrap(),
                 new_priv_ram_storage_from_existing_keys(&keys.centralized_kms_keys, epoch_id)
                     .await
                     .unwrap(),
@@ -1763,9 +1792,12 @@ pub(crate) mod tests {
             let core_config: CoreConfig = init_conf("config/default_centralized.toml").unwrap();
             let (inner, _health_service) = RealCentralizedKms::<RamStorage, RamStorage>::new(
                 core_config,
-                new_pub_ram_storage_from_existing_keys(&keys.pub_fhe_keys)
-                    .await
-                    .unwrap(),
+                new_pub_ram_storage_from_existing_keys(
+                    &keys.pub_fhe_keys,
+                    &keys.centralized_kms_keys.sig_pk,
+                )
+                .await
+                .unwrap(),
                 new_priv_ram_storage_from_existing_keys(&keys.centralized_kms_keys, epoch_id)
                     .await
                     .unwrap(),

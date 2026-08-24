@@ -31,6 +31,44 @@ subject is read from `threshold.tls_subject` when present; otherwise it is
 derived from the matching `[[threshold.peers]]` entry, preferring `mpc_identity`
 and falling back to `address`.
 
+### `[keygen]` options
+
+All three flags default to `false` and are mutually exclusive —
+pick at most one per run:
+
+- `overwrite`: delete any existing signing material at the fixed signing-key
+  handle (private key, and every scheme's verification material in public
+  storage) before generating a fresh key. Required to rotate a key; without it,
+  generation fails if storage already holds material for that handle.
+- `show_existing`: print the existing signing-material handles and exit, without
+  generating or deleting anything.
+- `repopulate`: derive and store every piece of missing verification material
+  — each scheme's key and digest, ECDSA's included, plus the two deprecated
+  ECDSA-only objects — from the ECDSA signing key already present in private
+  storage, then exit without touching the signing key itself. Material that is
+  already published is validated against that key rather than overwritten. Use
+  this to restore verification material after a partial purge.
+
+### What is written to public storage
+
+A node signs with a single persisted ECDSA signing key, and the verification keys
+of the other supported signature schemes are derived from it. Every scheme's public
+material — including ECDSA's — is written to the two `Scheme*` folders below, each
+under its own scheme-specific handle, so that a folder holds exactly one kind of
+object and can be read whole:
+
+| Folder | Contents |
+| --- | --- |
+| `TypedVerfKey` | One verification key per scheme, ECDSA's included; natively encoded. |
+| `TypedVerfAddress` | The digest identifying each of those keys, as `0x`-prefixed hex text. For ECDSA it is the node's Ethereum address. |
+| `VerfKey` | **Deprecated.** The node's ECDSA verification key as a bare `PublicSigKey`, under the fixed `SIGNING_KEY_ID` handle. Unchanged from earlier releases. |
+| `VerfAddress` | **Deprecated.** The matching Ethereum address (checksummed, `0x`-prefixed), under the same handle. Unchanged from earlier releases. |
+
+The two deprecated folders are still written, so consumers that read the ECDSA key
+or address by handle keep working unchanged. They will be removed in a future
+release: new readers should take the ECDSA entry from `TypedVerfKey` /
+`TypedVerfAddress` instead.
+
 For local test/dev runs that need pre-baked FHE keys + CRS, use `generate-test-material` instead (see the `generate-test-material-*` targets in the top-level `Makefile`).
 
 ## Threshold KMS TLS Certificates

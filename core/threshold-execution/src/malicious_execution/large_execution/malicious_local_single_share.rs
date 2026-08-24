@@ -2,9 +2,7 @@ use crate::{
     communication::broadcast::Broadcast,
     large_execution::{
         coinflip::Coinflip,
-        local_single_share::{
-            LOCAL_SINGLE_MAX_ITER, LocalSingleShare, send_receive_pads, verify_sharing,
-        },
+        local_single_share::{LocalSingleShare, share_secrets_and_pads, verify_sharing},
         share_dispute::ShareDispute,
     },
     runtime::sessions::large_session::LargeSessionHandles,
@@ -66,8 +64,9 @@ impl<C: Coinflip, S: ShareDispute, BCast: Broadcast> LocalSingleShare
         session: &mut L,
         secrets: &[Z],
     ) -> anyhow::Result<HashMap<Role, Vec<Z>>> {
+        let max_iter = session.threshold() * (session.threshold() + 2) + 1;
         //Keeps executing til verification passes
-        for _ in 0..LOCAL_SINGLE_MAX_ITER {
+        for _ in 0..max_iter {
             let mut shared_secrets;
             let mut x;
             let mut shared_pads;
@@ -77,10 +76,10 @@ impl<C: Coinflip, S: ShareDispute, BCast: Broadcast> LocalSingleShare
             // This happens right away on the happy path or worst case after all parties are in there and no new parties can be added.
             loop {
                 let corrupt_start = session.corrupt_roles().clone();
-                //ShareDispute will fill shares from disputed parties with 0s
-                shared_secrets = self.share_dispute.execute(session, secrets).await?;
-
-                shared_pads = send_receive_pads::<Z, L, S>(session, &self.share_dispute).await?;
+                //ShareDispute will fill shares from disputed parties with 0s.
+                //Secrets and pads are shared together in a single ShareDispute round and split apart.
+                (shared_secrets, shared_pads) =
+                    share_secrets_and_pads(session, &self.share_dispute, secrets).await?;
 
                 x = self.coinflip.execute(session).await?;
 
@@ -103,7 +102,7 @@ impl<C: Coinflip, S: ShareDispute, BCast: Broadcast> LocalSingleShare
             if verify_sharing(
                 session,
                 &mut shared_secrets,
-                &shared_pads,
+                shared_pads,
                 &x,
                 secrets.len(),
                 &self.broadcast,
@@ -114,7 +113,7 @@ impl<C: Coinflip, S: ShareDispute, BCast: Broadcast> LocalSingleShare
             }
         }
         Err(anyhow_error_and_log(format!(
-            "Failed to verify sharing after {LOCAL_SINGLE_MAX_ITER} iterations for `MaliciousSenderLocalSingleShare`"
+            "Failed to verify sharing after {max_iter} iterations for `MaliciousSenderLocalSingleShare`"
         )))
     }
 }
@@ -170,7 +169,8 @@ impl<C: Coinflip, S: ShareDispute, BCast: Broadcast> LocalSingleShare
         session: &mut L,
         secrets: &[Z],
     ) -> anyhow::Result<HashMap<Role, Vec<Z>>> {
-        for _ in 0..LOCAL_SINGLE_MAX_ITER {
+        let max_iter = session.threshold() * (session.threshold() + 2) + 1;
+        for _ in 0..max_iter {
             let mut shared_secrets;
             let mut x;
             let mut shared_pads;
@@ -181,10 +181,10 @@ impl<C: Coinflip, S: ShareDispute, BCast: Broadcast> LocalSingleShare
             loop {
                 let corrupt_start = session.corrupt_roles().clone();
 
-                //ShareDispute will fill shares from disputed parties with 0s
-                shared_secrets = self.share_dispute.execute(session, secrets).await?;
-
-                shared_pads = send_receive_pads::<Z, L, S>(session, &self.share_dispute).await?;
+                //ShareDispute will fill shares from disputed parties with 0s.
+                //Secrets and pads are shared together in a single ShareDispute round and split apart.
+                (shared_secrets, shared_pads) =
+                    share_secrets_and_pads(session, &self.share_dispute, secrets).await?;
 
                 x = self.coinflip.execute(session).await?;
 
@@ -205,7 +205,7 @@ impl<C: Coinflip, S: ShareDispute, BCast: Broadcast> LocalSingleShare
             if verify_sharing(
                 session,
                 &mut shared_secrets,
-                &shared_pads,
+                shared_pads,
                 &x,
                 secrets.len(),
                 &self.broadcast,
@@ -216,7 +216,7 @@ impl<C: Coinflip, S: ShareDispute, BCast: Broadcast> LocalSingleShare
             }
         }
         Err(anyhow_error_and_log(format!(
-            "Failed to verify sharing after {LOCAL_SINGLE_MAX_ITER} iterations for `MaliciousReceiverLocalSingleShare`",
+            "Failed to verify sharing after {max_iter} iterations for `MaliciousReceiverLocalSingleShare`",
         )))
     }
 }

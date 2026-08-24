@@ -491,8 +491,9 @@ impl<
         SmallSession<ResiduePolyF4Z64>,
     )> {
         let session_z128 =
-            // Note that we need to use the new epoch ID when deriving the session ID, otherwise we would not be able to create multiple new epochs from the same previous epoch
-            // as the session ID would be the same and the session maker would return an error.
+            // Note that we need to use the new epoch ID when deriving the session ID, otherwise we would not be able to create multiple 
+            // new epochs from the same previous epoch, in case an epoch creation failed, as the session ID would be the same and the 
+            // session maker would return an error.
             async { new_epoch_id.derive_session_id_with_counter(LIFT_Z128_SESSION_COUNTER) }
                 .and_then(|id| {
                     session_maker_immutable.make_small_sync_session_z128(
@@ -1885,10 +1886,9 @@ pub(crate) mod tests {
         // from each private storage and panics if it's missing. Populate the
         // tempdir with signing + client keys (same calls `ThresholdTestEnv`
         // makes internally via `setup_test_material_temp`).
-        let _ = ensure_threshold_server_signing_keys_exist(
+        ensure_threshold_server_signing_keys_exist(
             &mut pub_storage,
             &mut priv_storage,
-            &SIGNING_KEY_ID,
             true, // deterministic
             ThresholdSigningKeyConfig::AllParties(
                 (1..=PRSS_AMOUNT_PARTIES)
@@ -1897,7 +1897,8 @@ pub(crate) mod tests {
             ),
             false,
         )
-        .await;
+        .await
+        .unwrap();
         ensure_client_keys_exist(Some(material_path), &SIGNING_KEY_ID, true).await;
 
         // create parties and run PrssSetup

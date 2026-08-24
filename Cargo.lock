@@ -1327,9 +1327,9 @@ dependencies = [
 
 [[package]]
 name = "aws-lc-rs"
-version = "1.17.1"
+version = "1.18.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4342d8937fc7e5dd9b1c60292261c0670c882a2cd1719cfc11b1af41731e32ad"
+checksum = "ce2b2dcc879c3bae0d371e77c99f2238400ef24ec001394befa67b6e543add9e"
 dependencies = [
  "aws-lc-sys",
  "untrusted 0.7.1",
@@ -1338,9 +1338,9 @@ dependencies = [
 
 [[package]]
 name = "aws-lc-sys"
-version = "0.42.0"
+version = "0.44.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6d9ceb1da931507a12f4fccea479dccd00da1943e1b4ae72d8e502d707361444"
+checksum = "f09fae7be8bb3174e05c6afdb34199e6dc0c7c04ba9fa237b1967adfbde27483"
 dependencies = [
  "cc",
  "cmake",
@@ -4124,7 +4124,7 @@ dependencies = [
  "libc",
  "percent-encoding",
  "pin-project-lite",
- "socket2 0.5.10",
+ "socket2 0.6.4",
  "tokio",
  "tower-service",
  "tracing",
@@ -4570,6 +4570,7 @@ dependencies = [
  "ciborium",
  "clap",
  "console_error_panic_hook",
+ "criterion",
  "ed25519-dalek",
  "enum_dispatch",
  "futures-util",
@@ -4708,6 +4709,7 @@ dependencies = [
  "tonic-prost-build",
  "tracing",
  "wasm-bindgen",
+ "zeroize",
 ]
 
 [[package]]
@@ -6107,7 +6109,7 @@ dependencies = [
  "quinn-udp",
  "rustc-hash",
  "rustls",
- "socket2 0.5.10",
+ "socket2 0.6.4",
  "thiserror 2.0.18",
  "tokio",
  "tracing",
@@ -6146,7 +6148,7 @@ dependencies = [
  "cfg_aliases",
  "libc",
  "once_cell",
- "socket2 0.5.10",
+ "socket2 0.6.4",
  "tracing",
  "windows-sys 0.61.2",
 ]
@@ -6757,8 +6759,8 @@ dependencies = [
 
 [[package]]
 name = "rustls"
-version = "0.23.37"
-source = "git+https://github.com/zama-ai/rustls.git?branch=rel-0.23#49aa4091eae6a73f575bebeae28d370acd74f8b6"
+version = "0.23.43"
+source = "git+https://github.com/zama-ai/rustls.git?branch=rel-0.23#0af4c54c15d5955d268079989afaf031e0008509"
 dependencies = [
  "aws-lc-rs",
  "log",
@@ -6821,8 +6823,8 @@ checksum = "f87165f0995f63a9fbeea62b64d10b4d9d8e78ec6d7d51fb2125fda7bb36788f"
 
 [[package]]
 name = "rustls-webpki"
-version = "0.103.9"
-source = "git+https://github.com/zama-ai/webpki.git?branch=rel-0.103#9558707f39b97060b527966de76943e7ed40a022"
+version = "0.103.14"
+source = "git+https://github.com/zama-ai/webpki.git?branch=rel-0.103#16364610f182aae5764d3106bcdcc61e6a85cda8"
 dependencies = [
  "aws-lc-rs",
  "ring",

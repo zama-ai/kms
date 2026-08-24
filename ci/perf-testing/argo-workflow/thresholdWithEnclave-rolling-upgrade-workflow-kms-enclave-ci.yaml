@@ -192,6 +192,8 @@ spec:
         image: hub.zama.org/ghcr/zama-ai/kms/core-client:<client-version>
         command: ["/bin/bash", "-c"]
         source: |
+          set -e
+
           cat <<EOF >>config.toml
             kms_type = "threshold"
             num_majority=${NUM_MAJORITY}
@@ -275,8 +277,10 @@ spec:
             client_logs_arg="--logs"
           fi
           start_time=$(date +%s)
+          set +e
           ./bin/kms-core-client ${client_logs_arg} --max-iter 3 -f config.toml {{inputs.parameters.test-command}} 2>&1 | tee /tmp/test_logs.txt
           test_exit=${PIPESTATUS[0]}
+          set -e
           end_time=$(date +%s)
           duration=$((end_time - start_time))
 
@@ -414,6 +418,8 @@ spec:
         - name: slack-webhook-volume
           mountPath: /etc/slack
         source: |
+          set -e
+
           apk add --no-cache jq
           # Make a directory for all the results
           mkdir -p /mnt/results
@@ -471,7 +477,7 @@ spec:
               # Check if file is valid JSON before processing
               if ! jq empty "$result" 2>/dev/null; then
                 echo "⚠️  JSON validation failed, showing jq error:"
-                jq empty "$result"
+                jq empty "$result" || true
                 echo "⚠️  Skipping invalid JSON file: $result"
                 continue
               else
