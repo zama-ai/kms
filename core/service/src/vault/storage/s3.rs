@@ -144,9 +144,7 @@ impl S3Storage {
             &self.bucket,
             key
         );
-        // Size the buffer up front so it is allocated once. `Vec::new()` grows by
-        // doubling, and the final growth holds the old and new buffers at the same
-        // time -- up to ~3x the serialized size, for a GiB-scale keyset.
+        // Size up front: `Vec::new()` doubles, so the last growth holds both buffers (~3x).
         let mut buf = match safe_serialized_size(data) {
             Ok(size) if size <= SAFE_SER_SIZE_LIMIT => Vec::with_capacity(size as usize),
             Ok(_) => Vec::new(),
@@ -636,11 +634,22 @@ pub(crate) async fn s3_get_blob(
         .await?;
     let reserve = match blob_response.content_length() {
         Some(len) if (0..=SAFE_SER_SIZE_LIMIT as i64).contains(&len) => len as usize,
+        Some(len) if len > SAFE_SER_SIZE_LIMIT as i64 => anyhow::bail!(
+            "S3 object {path} in bucket {bucket} declares {len} B, over the {SAFE_SER_SIZE_LIMIT} B limit"
+        ),
         _ => PREALLOCATED_BLOB_SIZE,
     };
     let mut blob_bytes: Vec<u8> = Vec::with_capacity(reserve);
-    let mut blob_bytestream = blob_response.body.into_async_read();
+    let mut blob_bytestream = blob_response
+        .body
+        .into_async_read()
+        .take(SAFE_SER_SIZE_LIMIT + 1);
     blob_bytestream.read_to_end(&mut blob_bytes).await?;
+    if blob_bytes.len() as u64 > SAFE_SER_SIZE_LIMIT {
+        anyhow::bail!(
+            "S3 object {path} in bucket {bucket} is over the {SAFE_SER_SIZE_LIMIT} B limit"
+        );
+    }
     Ok(blob_bytes)
 }
 
