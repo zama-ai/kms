@@ -17,10 +17,10 @@ finish() {
   done
   wait 2>/dev/null || true
   kubectl logs --request-timeout=30s -n "${namespace}" -l app=ena-probe \
-    --prefix --all-containers \
+    --prefix --all-containers --tail=-1 \
     > "${output_dir}/ena-samples.log" 2>&1 || true
   kubectl logs --request-timeout=30s -n "${namespace}" -l app=ena-probe \
-    --prefix --all-containers --previous \
+    --prefix --all-containers --previous --tail=-1 \
     > "${output_dir}/ena-previous.log" 2>&1 || true
   {
     echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) final ENA probe descriptions"

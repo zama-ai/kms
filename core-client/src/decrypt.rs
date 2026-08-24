@@ -1757,8 +1757,7 @@ fn spawn_user_decrypt(
             let mut response = observe_rpc(
                 rpc_diagnostics.as_deref(),
                 RpcPhase::Result,
-                result_client
-                    .get_user_decryption_result(tonic::Request::new(req_id_clone.clone())),
+                result_client.get_user_decryption_result(tonic::Request::new(req_id_clone.clone())),
             )
             .await;
             let mut ctr = 0_usize;

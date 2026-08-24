@@ -723,7 +723,6 @@ def analyze_directory(root: Path, run_id: int | None = None) -> dict[str, Any]:
                 "scrape_error",
                 "scrape_partial",
                 "warning:",
-                "no-ena-interface-found",
                 "OOMKilled",
                 "CrashLoopBackOff",
                 "ImagePullBackOff",
@@ -731,6 +730,11 @@ def analyze_directory(root: Path, run_id: int | None = None) -> dict[str, Any]:
             )
         )
     ]
+    degraded_lines.extend(
+        line.strip()
+        for line in ena_text.splitlines()
+        if "no-ena-interface-found" in line
+    )
     return {
         "run": {
             "id": run_id or metadata.get("databaseId") or metadata.get("id"),
