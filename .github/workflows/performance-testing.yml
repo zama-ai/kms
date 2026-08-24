@@ -447,10 +447,17 @@ jobs:
           # core CPU% against the rate rungs by timestamp (pairs with the eth0
           # diagnostics to distinguish CPU-bound vs network-bound at the top rungs).
           # Backgrounded here so it lives for this step's shell; killed on exit
-          # (incl. the exit-1 path). Failures are non-fatal — it must never break the run.
+          # (including the exit-1 path).
           bash ci/scripts/sample_core_cpu.sh "${NAMESPACE}" > core-cpu-samples.log 2>&1 &
           CPU_SAMPLER_PID=$!
-          trap 'kill "${CPU_SAMPLER_PID}" 2>/dev/null || true' EXIT
+          bash ci/scripts/sample_perf_diagnostics.sh "${NAMESPACE}" perf-diagnostics \
+            > perf-diagnostics-controller.log 2>&1 &
+          DIAGNOSTICS_PID=$!
+          stop_samplers() {
+            kill "${CPU_SAMPLER_PID}" "${DIAGNOSTICS_PID}" 2>/dev/null || true
+            wait "${CPU_SAMPLER_PID}" "${DIAGNOSTICS_PID}" 2>/dev/null || true
+          }
+          trap stop_samplers EXIT
 
           # Convert TLS boolean to enabled/disabled string
           if [[ "${TLS}" == "true" ]]; then
@@ -525,7 +532,7 @@ jobs:
 
           echo "Fetching final workflow logs..."
           if ! timeout --signal=TERM 10m \
-            argo logs "${WORKFLOW_NAME}" -n "${NAMESPACE}" \
+            argo logs "${WORKFLOW_NAME}" -n "${NAMESPACE}" --timestamps \
               | tee argo-workflow-logs.txt; then
             echo "::warning::Could not fetch complete logs for ${WORKFLOW_NAME}"
           fi
@@ -564,6 +571,16 @@ jobs:
         run: |
           bash ci/scripts/collect_network_diagnostics.sh after-perf "${NAMESPACE}"
 
+      - name: Report perf diagnostics
+        if: always()
+        run: |
+          echo "Placement snapshot:"
+          cat perf-diagnostics/pod-placement.tsv 2>/dev/null || echo "warning: placement snapshot unavailable"
+          echo "Application-metrics sampler status:"
+          grep -E 'sampler_(start|discovery|error)|scrape_(error|partial)' perf-diagnostics/core-metrics.log 2>/dev/null | tail -n 100 || true
+          echo "ENA probe status:"
+          cat perf-diagnostics/ena-start.log 2>/dev/null || echo "warning: ENA probe status unavailable"
+
       # ======================================================================
       # SAVE ARGO WORKFLOW LOGS
       # ======================================================================
@@ -582,6 +599,17 @@ jobs:
           name: core-cpu-samples.log
           path: core-cpu-samples.log
           retention-days: 30
+
+      - name: Upload perf diagnostics
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: perf-diagnostics
+          path: |
+            perf-diagnostics/
+            perf-diagnostics-controller.log
+          retention-days: 30
+          if-no-files-found: warn
 
       # ======================================================================
       # LOG COLLECTION
@@ -644,6 +672,9 @@ jobs:
           # Clean up StatefulSets
           echo "Cleaning up StatefulSets..."
           kubectl delete sts -l app=kms-core-client -n "${NAMESPACE}" || true
+
+          # Clean up diagnostic probes
+          kubectl delete -f ci/perf-testing/ena-probe.yml --ignore-not-found || true
 
           # Clean up Jobs
           echo "Cleaning up Jobs..."
