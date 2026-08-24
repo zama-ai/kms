@@ -521,7 +521,7 @@ jobs:
             -p job_label="${JOB_LABEL}"
 
           echo "Streaming workflow logs..."
-          argo logs @latest -f -n "${NAMESPACE}" | tee argo-workflow-logs.txt
+          argo logs @latest -f --timestamps -n "${NAMESPACE}" | tee argo-workflow-logs.txt
 
           workflow_phase=$(argo get @latest -n "${NAMESPACE}" -o json | jq -r '.status.phase')
           echo "Argo workflow phase: ${workflow_phase}"

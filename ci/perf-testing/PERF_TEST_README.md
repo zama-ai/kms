@@ -220,6 +220,27 @@ exposes hardware-level throttling and allowance counters that ordinary pod
 network interfaces do not. The workflow runs a host-networked DaemonSet on the
 KMS and benchmark node pools to collect them.
 
+## Analyze a completed run
+
+Download the artifacts for one GitHub Actions run and produce a Markdown report:
+
+```bash
+python3 ci/scripts/analyze_perf_run.py --run-id 123456789 --output perf-report.md
+```
+
+The command stores the downloaded inputs in `perf-run-123456789/`. Re-run the
+analysis offline, or produce machine-readable output, with:
+
+```bash
+python3 ci/scripts/analyze_perf_run.py \
+  --artifacts perf-run-123456789 \
+  --format json \
+  --output perf-report.json
+```
+
+Run-ID mode requires an authenticated `gh` CLI. The analyzer reports missing or
+partial instrumentation while retaining any rate results it can parse.
+
 ## Reference: workflow form fields
 
 The full mapping from each form field to its internal effect. Most runs only
