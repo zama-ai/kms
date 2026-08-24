@@ -78,6 +78,20 @@ impl Default for PollConfig {
     }
 }
 
+// A generous poll budget for genuinely long-running operations (real keygen,
+// preprocessing, CRS gen).
+#[cfg(test)]
+impl PollConfig {
+    /// Poll immediately, then wait 200ms between retries for up to 10,000 attempts (33 min total).
+    pub(crate) fn long_poll_config() -> Self {
+        Self {
+            initial_delay: Duration::ZERO,
+            retry_delay: Duration::from_millis(200),
+            max_retries: 10000,
+        }
+    }
+}
+
 /// Poll a gRPC result endpoint until it returns something other than
 /// `Code::Unavailable`, or until `config.max_retries` is exhausted.
 ///

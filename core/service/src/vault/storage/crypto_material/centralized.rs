@@ -14,14 +14,14 @@ use kms_grpc::{
 
 use crate::{
     engine::base::{KeyGenMetadata, KmsFheKeyHandles},
-    util::meta_store::{MetaStore, ensure_meta_store_request_pending},
+    util::meta_store::{MetaStore, MetaStorePermit},
     vault::{
         Vault,
         storage::{
             Storage, StorageExt,
             crypto_material::{
                 PublicKeySet,
-                base::{StorageError, update_meta_store},
+                base::{BackupPolicy, StorageError, update_meta_store},
             },
         },
     },
@@ -69,6 +69,7 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: StorageExt + Send + Sync + 's
         self.inner.fhe_keys_exists(key_id, epoch_id, false).await
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub(crate) async fn write_fhe_keys(
         &self,
         key_id: &RequestId,
@@ -76,12 +77,9 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: StorageExt + Send + Sync + 's
         central_fhe_keys: KmsFheKeyHandles,
         fhe_key_set: PublicKeySet,
         meta_store: Arc<RwLock<MetaStore<KeyGenMetadata>>>,
+        permit: MetaStorePermit<KeyGenMetadata>,
         op_metric_tag: &'static str,
     ) -> Result<(), StorageError> {
-        // First ensure that the meta store request is pending
-        ensure_meta_store_request_pending(&meta_store, key_id)
-            .await
-            .map_err(|e| StorageError::MetaStore(e.to_string()))?;
         let meta_res = central_fhe_keys.public_key_info.clone();
         let res = self
             .inner
@@ -96,12 +94,12 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: StorageExt + Send + Sync + 's
                 op_metric_tag,
             )
             .await;
-        let mut guarded_meta_store = meta_store.write().await;
         update_meta_store(
             res,
-            key_id,
             meta_res,
-            &mut guarded_meta_store,
+            &meta_store,
+            permit,
+            BackupPolicy::BackupIsBestEffort,
             op_metric_tag,
         )
         .await

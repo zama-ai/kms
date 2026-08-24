@@ -19,6 +19,7 @@ enum RequestProcessingStatus {
   COMPLETED = 1;   // Request has completed successfully
   FAILED = 2;      // Request has failed
   ANY = 3;         // Special value to query any status
+  DELETED = 4;     // Request has been deleted
 }
 
 // Information about the status of a specific request

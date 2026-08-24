@@ -23,7 +23,7 @@ use crate::cryptography::signatures::PrivateSigKey;
 use crate::cryptography::signatures::PublicSigKey;
 use crate::engine::base::derive_request_id;
 use crate::engine::base::{CrsGenMetadata, DSEP_PUBDATA_KEY};
-use crate::engine::context::ContextInfo;
+use crate::engine::context::{ContextInfo, SchemeDigests};
 use crate::testing::setup::ThresholdTestEnv;
 use crate::util::key_setup::test_tools::EncryptionConfig;
 use crate::util::key_setup::test_tools::TestingPlaintext;
@@ -657,30 +657,30 @@ async fn decrypt_after_recovery_negative(amount_custodians: usize, threshold: u3
     .await;
 }
 
-/// Test that PRSS data (PrssSetupCombined) is present in the custodian backup vault
+/// Test that epoch data (EpochData) is present in the custodian backup vault
 /// after server startup with `ensure_default_prss: true`.
 #[tokio::test(flavor = "multi_thread")]
-async fn test_prss_in_custodian_backup_threshold() {
+async fn test_epoch_in_custodian_backup_threshold() {
     let mut env =
-        ThresholdBackupTestEnv::new("test_prss_in_custodian_backup_threshold", 3, 1).await;
+        ThresholdBackupTestEnv::new("test_epoch_in_custodian_backup_threshold", 3, 1).await;
 
-    // PRSS is stored with epoch_id.into() as the request_id (non-epoched layout)
+    // Epoch is stored with epoch_id.into() as the request_id (non-epoched layout)
     let prss_req_id: RequestId = (*DEFAULT_EPOCH_ID).into();
     let backup: Vec<BackupCiphertext> = read_custodian_backup_files(
         env.test_path(),
         &env.req_new_cus,
         &prss_req_id,
-        &PrivDataType::PrssSetupCombined.to_string(),
+        &PrivDataType::EpochData.to_string(),
         env.backup_prefixes(),
     )
     .await;
     assert_eq!(
         backup.len(),
         ThresholdBackupTestEnv::AMOUNT_PARTIES,
-        "Expected one PRSS backup entry per party"
+        "Expected one epoch backup entry per party"
     );
     for entry in &backup {
-        assert_eq!(entry.priv_data_type, PrivDataType::PrssSetupCombined);
+        assert_eq!(entry.priv_data_type, PrivDataType::EpochData);
     }
 
     env.shutdown().await;
@@ -859,7 +859,7 @@ async fn test_mpc_context_backup_threshold() {
             )
             .await
             .unwrap();
-            node.verification_key = Some(pk);
+            node.scheme_digests = SchemeDigests::from_ecdsa_verification_key(&pk);
             node.external_url = format!("http://example.com:8080/party{}", node.party_id);
         }
         ctx
@@ -1028,16 +1028,13 @@ async fn test_backup_after_reshare_threshold() {
     // Poll until reshare completes
     let new_epoch_req_id: RequestId = new_epoch_id.into();
     for client in env.kms_clients().values() {
-        // Poll every 500ms for up to 50 tries before giving up.
+        // Sleep initially to give the server time to complete resharing, then
+        // poll.
         if let Err(e) = retrying_poll(
             client.clone(),
             new_epoch_req_id.into(),
             "reshare epoch result",
-            PollConfig {
-                initial_delay: tokio::time::Duration::from_millis(500),
-                retry_delay: tokio::time::Duration::from_millis(500),
-                max_retries: 50,
-            },
+            PollConfig::long_poll_config(),
             |client, request| Box::pin(async move { client.get_epoch_result(request).await }),
         )
         .await

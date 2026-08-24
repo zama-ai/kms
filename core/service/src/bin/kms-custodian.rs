@@ -1,8 +1,9 @@
 use aes_prng::AesRng;
 use clap::Parser;
 use hashing::{DomainSep, hash_element};
-use kms_lib::backup::SEED_PHRASE_DESC;
+use kms_lib::backup::{RECOVERY_OUTPUT_DESC, SEED_PHRASE_DESC, SETUP_MESSAGE_DESC};
 use kms_lib::engine::context::SoftwareVersion;
+use kms_lib::engine::utils::{base64_deserialize, base64_serialize};
 use kms_lib::{
     backup::{
         custodian::{Custodian, InternalCustodianSetupMessage},
@@ -10,12 +11,9 @@ use kms_lib::{
         seed_phrase::{custodian_from_seed_phrase, seed_phrase_from_rng},
     },
     consts::RND_SIZE,
-    cryptography::signatures::PublicSigKey,
-    util::file_handling::{safe_read_element_versioned, safe_write_element_versioned},
 };
 use observability::{conf::TelemetryConfig, telemetry::init_tracing};
 use rand::{RngCore, SeedableRng};
-use std::path::PathBuf;
 use threshold_types::role::Role;
 
 const DSEP_ENTROPY: DomainSep = *b"ENTROPY_";
@@ -32,20 +30,17 @@ pub struct GenerateParams {
     /// The human readable name of the custodian.
     #[clap(long, short = 'n', required = true)]
     pub custodian_name: String,
-    /// The relative path for storing the generated *public* keys.
-    #[clap(long, short = 'p', required = true)]
-    pub path: PathBuf,
 }
 
 /// The parameters needed to verify existing custodian keys against the stored public keys.
 #[derive(Debug, Parser, Clone)]
 pub struct VerifyParams {
     /// The BIP39 seed phrase needed to recover the custodian keys
-    #[clap(long, short = 's')]
+    #[clap(long, short = 's', required = true)]
     pub seed_phrase: String,
-    /// The relative path for reading the previously generated *public* keys.
-    #[clap(long, short = 'p', required = true)]
-    pub path: PathBuf,
+    /// The base64 encoded `RecoveryRequest`] string of the request of an operator for recovery
+    #[clap(long, short = 'm', required = true)]
+    pub setup_msg: String,
 }
 
 /// The parameters needed for a custodian to decrypt a backup for a given operator.
@@ -60,18 +55,9 @@ pub struct DecryptParams {
     /// The custodian role (1-based index) who is doing the decryption.
     #[clap(long, short = 'c', required = true)]
     pub custodian_role: usize,
-    /// Public verification key of the operator who requested the recovery
-    #[clap(long, short = 'v', required = true)]
-    pub operator_verf_key: PathBuf,
-    /// The MPC context ID for which the recovery is being done.
-    #[clap(long, short = 'm', required = true)]
-    pub mpc_context_id: String,
-    /// The relative path to the [`RecoveryRequest`] file containing the request of an operator for recovery
+    /// The base64 encoded `RecoveryRequest`] string of the request of an operator for recovery
     #[clap(long, short = 'b', required = true)]
-    pub recovery_request_path: PathBuf,
-    /// The relative path for the reencrypted backup which will be given to the operator.
-    #[clap(long, short = 'o', required = true)]
-    pub output_path: PathBuf,
+    pub recovery_request: String,
 }
 
 #[derive(Debug, Clone, Parser)]
@@ -116,11 +102,12 @@ async fn main() -> Result<(), anyhow::Error> {
             let setup_msg = custodian
                 .generate_setup_message(&mut rng, params.custodian_name)
                 .map_err(|e| anyhow::anyhow!("Failed to generate custodian setup message: {e}"))?;
-            safe_write_element_versioned(&params.path, &setup_msg).await?;
-            tracing::info!(
-                "Custodian keys generated successfully in {}! Mnemonic will now be printed:",
-                params.path.to_string_lossy(),
-            );
+            let serialized_setup_msgs = base64_serialize(&setup_msg)?;
+            tracing::info!("Custodian setup message generated successfully!");
+            // Use println to lower the risk of accidental file logging of the setup message
+            println!("{SETUP_MESSAGE_DESC}{serialized_setup_msgs}");
+            tracing::info!("Custodian keys generated successfully! Mnemonic will now be printed:");
+            // Use println to lower the risk of accidental file logging of the mnemonic
             println!("{SEED_PHRASE_DESC}{mnemonic}");
         }
         CustodianCommand::Verify(params) => {
@@ -129,8 +116,7 @@ async fn main() -> Result<(), anyhow::Error> {
                 "Validating custodian keys. Any validation errors will be printed below as warnings."
             );
             let mut validation_ok = true;
-            let setup_msg: InternalCustodianSetupMessage =
-                safe_read_element_versioned(&params.path).await?;
+            let setup_msg: InternalCustodianSetupMessage = base64_deserialize(&params.setup_msg)?;
             let recovered_keys =
                 custodian_from_seed_phrase(&params.seed_phrase, setup_msg.custodian_role)?;
             if setup_msg.public_verf_key != recovered_keys.verification_key() {
@@ -162,10 +148,8 @@ async fn main() -> Result<(), anyhow::Error> {
                 "Decrypting ciphertexts for custodian role: {}",
                 params.custodian_role
             );
-            let operator_verf_key: PublicSigKey =
-                safe_read_element_versioned(&params.operator_verf_key).await?;
             let recovery_request: InternalRecoveryRequest =
-                safe_read_element_versioned(&params.recovery_request_path).await?;
+                base64_deserialize(&params.recovery_request)?;
             // Logic for decrypting payloads
             let custodian = custodian_from_seed_phrase(
                 &params.seed_phrase,
@@ -185,15 +169,18 @@ async fn main() -> Result<(), anyhow::Error> {
             let res = custodian.verify_reencrypt(
                 &mut rng,
                 custodian_backup,
-                &operator_verf_key,
+                recovery_request.operator_verf_key(),
                 recovery_request.backup_enc_key(),
             )?;
-            tracing::info!("Verified reencryption successfully");
-            safe_write_element_versioned(&params.output_path, &res).await?;
-            tracing::info!(
-                "Reencryption successful! Output written to {}",
-                params.output_path.display()
+            let serialized_res = base64_serialize(&res)?;
+            tracing::info!("Verified reencryption successfully.");
+            tracing::warn!(
+                "MANUALLY VALIDATE THE OPERATOR VERIFICATION KEY BEFORE RETURNING DECRYPTION RESULT TO OPERATOR! Operator verification key address: {:?}",
+                recovery_request.operator_verf_key().address()
             );
+            // Use println to lower the risk of accidental file logging of the recovery output
+            println!("{RECOVERY_OUTPUT_DESC}{serialized_res}");
+            tracing::info!("Reencryption successful!");
         }
     }
     Ok(())

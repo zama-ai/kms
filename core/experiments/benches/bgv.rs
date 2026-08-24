@@ -2,8 +2,6 @@ use aes_prng::AesRng;
 use criterion::BenchmarkId;
 use criterion::{Criterion, criterion_group, criterion_main};
 use crypto_bigint::modular::ConstMontyParams;
-use pprof::criterion::Output;
-use pprof::criterion::PProfProfiler;
 use rand::RngCore;
 use rand::SeedableRng;
 use threshold_execution::runtime::test_runtime::generate_fixed_roles;
@@ -138,7 +136,7 @@ fn bench_bfv_to_bgv(c: &mut Criterion) {
 
 criterion_group! {
     name = bgv;
-    config = Criterion::default().with_profiler(PProfProfiler::new(100, Output::Flamegraph(None)));
+    config = Criterion::default();
     targets = bench_modswitch, bench_bgv_ddec, bench_bfv_to_bgv,
 }
 criterion_main!(bgv);

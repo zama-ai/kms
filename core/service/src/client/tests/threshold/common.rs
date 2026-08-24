@@ -41,6 +41,7 @@ pub(crate) async fn run_insecure_preproc(
     for client in clients.values() {
         let mut cur_client = client.clone();
         let preproc_req = KeyGenPreprocRequest {
+            signing_schemes: vec![kms_grpc::kms::v1::SigningSchemeType::Ecdsa256k1 as i32],
             request_id: Some((*preproc_id).into()),
             params: params as i32,
             domain: Some(domain_msg.clone()),
@@ -66,7 +67,7 @@ pub(crate) async fn run_insecure_preproc(
             client.clone(),
             (*preproc_id).into(),
             "insecure preprocessing result",
-            PollConfig::default(),
+            PollConfig::long_poll_config(),
             |client, request| {
                 Box::pin(async move { client.get_insecure_key_gen_preproc_result(request).await })
             },
@@ -118,6 +119,7 @@ pub async fn threshold_insecure_key_gen(
     for client in clients.values() {
         let mut cur_client = client.clone();
         let keygen_req = KeyGenRequest {
+            signing_schemes: vec![kms_grpc::kms::v1::SigningSchemeType::Ecdsa256k1 as i32],
             request_id: Some((*request_id).into()),
             params: Some(params as i32),
             preproc_id: Some(preproc_id.into()),
@@ -146,7 +148,7 @@ pub async fn threshold_insecure_key_gen(
             client.clone(),
             (*request_id).into(),
             "insecure keygen result",
-            PollConfig::default(),
+            PollConfig::long_poll_config(),
             |client, request| {
                 Box::pin(async move { client.get_insecure_key_gen_result(request).await })
             },
@@ -204,6 +206,7 @@ pub async fn threshold_secure_key_gen(
     for client in clients.values() {
         let mut cur_client = client.clone();
         let preproc_req = KeyGenPreprocRequest {
+            signing_schemes: vec![kms_grpc::kms::v1::SigningSchemeType::Ecdsa256k1 as i32],
             request_id: Some((*preproc_id).into()),
             params: params as i32,
             domain: Some(domain_msg.clone()),
@@ -229,7 +232,7 @@ pub async fn threshold_secure_key_gen(
             client.clone(),
             (*preproc_id).into(),
             "preprocessing result",
-            PollConfig::default(),
+            PollConfig::long_poll_config(),
             |client, request| {
                 Box::pin(async move { client.get_key_gen_preproc_result(request).await })
             },
@@ -242,6 +245,7 @@ pub async fn threshold_secure_key_gen(
     for client in clients.values() {
         let mut cur_client = client.clone();
         let keygen_req = KeyGenRequest {
+            signing_schemes: vec![kms_grpc::kms::v1::SigningSchemeType::Ecdsa256k1 as i32],
             request_id: Some((*keygen_id).into()),
             params: Some(params as i32),
             preproc_id: Some((*preproc_id).into()),
@@ -260,14 +264,14 @@ pub async fn threshold_secure_key_gen(
         res??;
     }
 
-    // Wait for key generation to complete and collect responses
+    // Wait for key generation to complete and collect responses.
     let mut responses = Vec::new();
     for (party_id, client) in clients.iter() {
         let result = retrying_poll(
             client.clone(),
             (*keygen_id).into(),
             "keygen result",
-            PollConfig::default(),
+            PollConfig::long_poll_config(),
             |client, request| Box::pin(async move { client.get_key_gen_result(request).await }),
         )
         .await;

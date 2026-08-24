@@ -15,95 +15,38 @@ use crate::online::triple::{open, open_list};
 use crate::runtime::sessions::base_session::BaseSessionHandles;
 use algebra::{
     galois_rings::common::ResiduePoly,
-    poly::Poly,
     sharing::{shamir::RevealOp, shamir::ShamirSharings, share::Share},
     structure_traits::{BaseRing, ErrorCorrect, Ring, Zero},
 };
 use threshold_types::role::Role;
 
-use super::glwe_key::GlweSecretKeyShare;
-
-pub fn slice_semi_reverse_negacyclic_convolution<Z: BaseRing, const EXTENSION_DEGREE: usize>(
-    output: &mut Vec<ResiduePoly<Z, EXTENSION_DEGREE>>,
+/// Negacyclic multiply-accumulate over slices, all of length `n = acc.len()`: computes `acc += lhs * rhs mod (X^n + 1)`
+/// in place, allocating nothing.
+pub(crate) fn negacyclic_mul_reduce_acc<Z: BaseRing, const EXTENSION_DEGREE: usize>(
+    acc: &mut [ResiduePoly<Z, EXTENSION_DEGREE>],
     lhs: &[Z],
     rhs: &[ResiduePoly<Z, EXTENSION_DEGREE>],
 ) {
-    debug_assert!(
-        lhs.len() == rhs.len(),
-        "lhs (len: {}) and rhs (len: {}) must have the same length",
-        lhs.len(),
-        rhs.len()
-    );
-    debug_assert!(
-        output.len() == lhs.len(),
-        "output (len: {}) and lhs (len: {}) must have the same length",
-        output.len(),
-        lhs.len()
-    );
-    output.fill(ResiduePoly::ZERO);
-    let mut rev_rhs = rhs.to_vec();
-    rev_rhs.reverse();
-    let lhs_pol = Poly::from_coefs(lhs.to_vec());
-    let rhs_pol = Poly::from_coefs(rev_rhs);
-
-    let res = pol_mul_reduce(&lhs_pol, &rhs_pol, output.len());
-    *output = res.coefs().to_vec();
-}
-
-pub fn slice_to_polynomials<Z: Ring>(slice: &[Z], pol_size: usize) -> Vec<Poly<Z>> {
-    let mut res: Vec<Poly<Z>> = Vec::new();
-    for coefs in &slice.iter().chunks(pol_size) {
-        let coef = coefs.copied().collect_vec();
-        res.push(Poly::from_coefs(coef));
-    }
-    res
-}
-
-pub fn pol_mul_reduce<Z: BaseRing, const EXTENSION_DEGREE: usize>(
-    poly_1: &Poly<Z>,
-    poly_2: &Poly<ResiduePoly<Z, EXTENSION_DEGREE>>,
-    output_size: usize,
-) -> Poly<ResiduePoly<Z, EXTENSION_DEGREE>> {
-    let mut coefs = (0..output_size)
-        .map(|_| ResiduePoly::default())
-        .collect_vec();
-
-    assert!(
-        output_size == poly_1.coefs().len(),
-        "Output polynomial size {:?} is not the same as input polynomial1 {:?}.",
-        output_size,
-        poly_1.coefs().len(),
-    );
-    assert!(
-        output_size == poly_2.coefs().len(),
-        "Output polynomial size {:?} is not the same as input polynomial2 {:?}.",
-        output_size,
-        poly_2.coefs().len(),
-    );
-
-    for (lhs_degree, lhs_coef) in poly_1.coefs().iter().enumerate() {
-        for (rhs_degree, rhs_coef) in poly_2.coefs().iter().enumerate() {
+    let n = acc.len();
+    assert_eq!(lhs.len(), n, "lhs length must equal acc length");
+    assert_eq!(rhs.len(), n, "rhs length must equal acc length");
+    for (lhs_degree, &lhs_coef) in lhs.iter().enumerate() {
+        for (rhs_degree, &rhs_coef) in rhs.iter().enumerate() {
+            let prod = rhs_coef * lhs_coef;
             let target_degree = lhs_degree + rhs_degree;
-            if target_degree < output_size {
-                //Safe to unwrap as we checked the size above
-                let output_coefficient = coefs.get_mut(target_degree).unwrap();
-                *output_coefficient += *rhs_coef * *lhs_coef;
+            if target_degree < n {
+                acc[target_degree] += prod;
             } else {
-                let target_degree = target_degree % output_size;
-
-                //Safe to unwrap as we took the target degree modulo output size
-                let output_coefficient = coefs.get_mut(target_degree).unwrap();
-                *output_coefficient -= *rhs_coef * *lhs_coef;
+                // target_degree is in [n, 2n-2], so the negacyclic wrap is target_degree - n.
+                acc[target_degree - n] -= prod;
             }
         }
     }
-
-    Poly::from_coefs(coefs)
 }
 
 pub fn slice_wrapping_dot_product<Z: BaseRing, const EXTENSION_DEGREE: usize>(
     lhs: &[Z],
-    rhs: &[ResiduePoly<Z, EXTENSION_DEGREE>],
+    rhs: impl ExactSizeIterator<Item = ResiduePoly<Z, EXTENSION_DEGREE>>,
 ) -> ResiduePoly<Z, EXTENSION_DEGREE> {
     assert_eq!(
         lhs.len(),
@@ -117,36 +60,8 @@ pub fn slice_wrapping_dot_product<Z: BaseRing, const EXTENSION_DEGREE: usize>(
     // zip_eq can panic but we just asserted that lhs and rhs have the same length
     // so that'd panic first but would be a bug in the code
     lhs.iter()
-        .zip_eq(rhs.iter())
+        .zip_eq(rhs)
         .fold(ResiduePoly::ZERO, |acc, (left, right)| acc + right * *left)
-}
-
-pub fn polynomial_wrapping_add_multisum_assign<Z: BaseRing, const EXTENSION_DEGREE: usize>(
-    output_body: &mut [ResiduePoly<Z, EXTENSION_DEGREE>],
-    output_mask: &[Z],
-    glwe_secret_key_share: &GlweSecretKeyShare<Z, EXTENSION_DEGREE>,
-) where
-    ResiduePoly<Z, EXTENSION_DEGREE>: ErrorCorrect,
-{
-    let pol_dimension = glwe_secret_key_share.polynomial_size.0;
-    let mut pol_output_body = Poly::from_coefs(output_body.to_vec());
-    let pol_output_mask = slice_to_polynomials(output_mask, pol_dimension);
-    let pol_glwe_secret_key_share =
-        slice_to_polynomials(&glwe_secret_key_share.data_as_raw_vec(), pol_dimension);
-
-    for (poly_1, poly_2) in pol_output_mask
-        .iter()
-        .zip_eq(pol_glwe_secret_key_share.iter())
-    {
-        pol_output_body = pol_output_body + pol_mul_reduce(poly_1, poly_2, pol_dimension);
-    }
-
-    for (coef_output, coef_pol) in output_body
-        .iter_mut()
-        .zip_eq(pol_output_body.coefs().iter())
-    {
-        *coef_output = *coef_pol;
-    }
 }
 
 pub fn slice_wrapping_scalar_mul_assign<Z: BaseRing, const EXTENSION_DEGREE: usize>(

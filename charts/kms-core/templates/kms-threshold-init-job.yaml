@@ -23,7 +23,7 @@ spec:
         {{- toYaml .Values.podSecurityContext | nindent 8 }}
       initContainers:
         - name: check-kms-cores
-          image: {{ .Values.kubeUtils.image.name }}:{{ .Values.kubeUtils.image.tag }}
+          image: {{ .Values.grpcHeathProbe.image.name }}:{{ .Values.grpcHeathProbe.image.tag }}
           command: ["/bin/bash", "-c"]
           args:
             - |
@@ -91,7 +91,7 @@ spec:
               {{- else -}}
               {{ range $peerID := $peersIDList }} {{ printf "http://%s-%d:%d" $kmsCoreName $peerID (int $.Values.kmsCore.ports.client) }}{{ end }}
               {{- end }}
-              exit 0
+              exit $?
           volumeMounts:
             - name: kms-core-health
               mountPath: /mnt

@@ -1,6 +1,5 @@
 //! Choreographer is the client of the grpc choreography service.
-//! It is not really an issue to have "unsafe" code here (e.g. unsafe deserialization)
-//! as this is meant for testing and benchmarking, and definitely not for production use.
+//! This is meant for testing and benchmarking, and definitely not for production use.
 use threshold_bgv::algebra::levels::{LevelEll, LevelKsw};
 use threshold_bgv::algebra::ntt::N65536;
 use threshold_bgv::bgv::basics::{LevelEllCiphertext, PublicKey};
@@ -147,7 +146,7 @@ impl BgvChoreoExt for ChoreoRuntime {
         let mut responses: Vec<SessionId> = Vec::new();
         while let Some(response) = join_set.join_next().await {
             responses
-                .push(bc2wrap::deserialize_safe(&(response??.into_inner().request_id)).unwrap());
+                .push(bc2wrap::deserialize_slice(&(response??.into_inner().request_id)).unwrap());
         }
 
         let ref_response = responses.first().unwrap();
@@ -191,7 +190,7 @@ impl BgvChoreoExt for ChoreoRuntime {
         let mut responses: Vec<SessionId> = Vec::new();
         while let Some(response) = join_set.join_next().await {
             responses
-                .push(bc2wrap::deserialize_safe(&(response??.into_inner().request_id)).unwrap());
+                .push(bc2wrap::deserialize_slice(&(response??.into_inner().request_id)).unwrap());
         }
 
         let ref_response = responses.first().unwrap();
@@ -244,7 +243,7 @@ impl BgvChoreoExt for ChoreoRuntime {
         //    assert_eq!(response, ref_response);
         //}
         let pub_key = responses.pop().unwrap();
-        let pub_key = bc2wrap::deserialize_safe(&pub_key)?;
+        let pub_key = bc2wrap::deserialize_slice(&pub_key)?;
         Ok(pub_key)
     }
 
@@ -285,7 +284,7 @@ impl BgvChoreoExt for ChoreoRuntime {
         let mut responses: Vec<SessionId> = Vec::new();
         while let Some(response) = join_set.join_next().await {
             responses
-                .push(bc2wrap::deserialize_safe(&(response??.into_inner().request_id)).unwrap());
+                .push(bc2wrap::deserialize_slice(&(response??.into_inner().request_id)).unwrap());
         }
 
         let ref_response = responses.first().unwrap();
@@ -317,7 +316,7 @@ impl BgvChoreoExt for ChoreoRuntime {
 
         let mut responses: Vec<Vec<Vec<u32>>> = Vec::new();
         while let Some(response) = join_set.join_next().await {
-            responses.push(bc2wrap::deserialize_safe(
+            responses.push(bc2wrap::deserialize_slice(
                 &(response??.into_inner().plaintext),
             )?);
         }

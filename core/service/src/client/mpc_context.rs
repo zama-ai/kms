@@ -14,6 +14,8 @@ impl Client {
         })
     }
 
+    /// Build a [`DestroyMpcContextRequest`] for `context_id` together with the epochs to destroy
+    /// alongside it.
     pub fn destroy_mpc_context_request(
         &mut self,
         context_id: &ContextId,

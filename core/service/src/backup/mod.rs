@@ -17,6 +17,8 @@ mod tests;
 
 pub const KMS_CUSTODIAN: &str = "kms-custodian";
 pub const SEED_PHRASE_DESC: &str = "The SECRET seed phrase for the custodian keys is: ";
+pub const SETUP_MESSAGE_DESC: &str = "The custodian setup message is: ";
+pub const RECOVERY_OUTPUT_DESC: &str = "The custodian recovery output is: ";
 
 #[derive(Debug, Clone, Eq, PartialEq, Serialize, Deserialize, VersionsDispatch)]
 pub enum BackupCiphertextVersions {

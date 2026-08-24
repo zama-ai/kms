@@ -116,7 +116,7 @@ deploy_kms() {
         export ENABLE_TLS="${ENABLE_TLS:-false}"
         log_info "TLS for ${DEPLOYMENT_TYPE} mode: ${ENABLE_TLS} (default: disabled)"
     fi
-    log_info "DEBUG: Final ENABLE_TLS='${ENABLE_TLS}' (checking if == 'true': $([[ '${ENABLE_TLS}' == 'true' ]] && echo YES || echo NO))"
+    log_info "DEBUG: Final ENABLE_TLS='${ENABLE_TLS}'"
 
     #=========================================================================
     # STEP 4: Generate Peers Configuration
@@ -179,6 +179,8 @@ deploy_threshold_mode() {
     local wait_args=(--wait --wait-for-jobs --timeout=1200s)
 
     # Deploy each party in parallel
+    local helm_pids=()
+    local helm_releases=()
     for i in $(seq 1 "${NUM_PARTIES}"); do
         log_info "Deploying Party ${i}/${NUM_PARTIES}..."
 
@@ -311,11 +313,29 @@ deploy_threshold_mode() {
         helm_upgrade_with_version "${release_name}" "${helm_chart_location}" \
             "${HELM_ARGS[@]}" \
             "${wait_args[@]}" &
+        helm_pids+=("$!")
+        helm_releases+=("${release_name}")
     done
 
     # Wait for all party deployments to complete
     log_info "Waiting for all ${NUM_PARTIES} party deployments to complete..."
-    wait
+    local failed_releases=()
+    for idx in "${!helm_pids[@]}"; do
+        local pid="${helm_pids[$idx]}"
+        local release_name="${helm_releases[$idx]}"
+        if ! wait "${pid}"; then
+            log_error "Helm deployment failed for ${release_name}"
+            failed_releases+=("${release_name}")
+        fi
+    done
+
+    if [[ "${#failed_releases[@]}" -gt 0 ]]; then
+        log_error "Failed party deployments: ${failed_releases[*]}"
+        log_info "Kubernetes snapshot after failed party deployment:"
+        kubectl get jobs,pods -n "${NAMESPACE}" -o wide || true
+        kubectl get events -n "${NAMESPACE}" --sort-by=.lastTimestamp | tail -100 || true
+        return 1
+    fi
 
     # AWS-CI: Explicitly wait for pod readiness
     if [[ "${TARGET}" == "aws-ci" ]]; then

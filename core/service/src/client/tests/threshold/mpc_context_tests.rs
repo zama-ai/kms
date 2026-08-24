@@ -1,5 +1,9 @@
 use aes_prng::AesRng;
-use kms_grpc::{RequestId, rpc_types::PubDataType};
+use kms_grpc::{
+    RequestId,
+    kms::v1::DestroyMpcContextRequest,
+    rpc_types::{PrivDataType, PubDataType},
+};
 use rand::SeedableRng;
 use threshold_execution::{
     endpoints::decryption::DecryptionMode, tfhe_internals::parameters::DKGParams,
@@ -11,17 +15,19 @@ use crate::{
         run_decryption_threshold, run_decryption_threshold_optionally_fail,
     },
     consts::{
-        DEFAULT_MPC_CONTEXT, PRIVATE_STORAGE_PREFIX_THRESHOLD_ALL,
+        DEFAULT_EPOCH_ID, DEFAULT_MPC_CONTEXT, PRIVATE_STORAGE_PREFIX_THRESHOLD_ALL,
         PUBLIC_STORAGE_PREFIX_THRESHOLD_ALL, SIGNING_KEY_ID, TEST_PARAM, TEST_THRESHOLD_KEY_ID_4P,
     },
     cryptography::signatures::PublicSigKey,
+    engine::context::SchemeDigests,
     testing::prelude::{TestMaterialSpec, ThresholdTestEnv},
     util::{
         key_setup::test_tools::{EncryptionConfig, TestingPlaintext},
         rate_limiter::RateLimiterConfig,
     },
     vault::storage::{
-        StorageType, file::FileStorage, read_context_at_id, read_versioned_at_request_id,
+        StorageReaderExt, StorageType, file::FileStorage, read_context_at_id,
+        read_versioned_at_request_id, store_versioned_at_request_and_epoch_id, tests::TestType,
     },
 };
 
@@ -121,7 +127,7 @@ async fn do_context_switch(
             )
             .await
             .unwrap();
-            node.verification_key = Some(pk);
+            node.scheme_digests = SchemeDigests::from_ecdsa_verification_key(&pk);
         }
         new_context
     };
@@ -171,6 +177,8 @@ async fn do_context_switch(
 
     // delete the new context
     {
+        // This context was created without an epoch transition of its own (decryption above reused
+        // the existing key/epoch), so it has no associated epochs to remove.
         let req = internal_client
             .destroy_mpc_context_request(&new_context_id)
             .unwrap();
@@ -224,6 +232,96 @@ async fn do_context_switch(
         Some(&material_path),
     )
     .await;
+
+    for (_, server) in kms_servers {
+        server.assert_shutdown().await;
+    }
+}
+
+// The KMS always keeps at least one context and one epoch: `DestroyMpcContext` on the only
+// remaining context (which owns the only epoch) is rejected with `FailedPrecondition` and leaves
+// all data intact.
+#[tokio::test(flavor = "multi_thread")]
+async fn test_destroy_only_context_is_rejected_4p() {
+    let party_count = 4;
+    let env = ThresholdTestEnv::builder()
+        .with_test_name("destroy_only_context_is_rejected_4p".to_string())
+        .with_party_count(party_count)
+        .with_threshold(1)
+        .with_material_spec(TestMaterialSpec::threshold_signing_only(party_count))
+        .with_prss()
+        .build()
+        .await
+        .expect("ThresholdTestEnv setup failed");
+    let (kms_clients, kms_servers, material_path, _guards) = env.into_parts();
+
+    let priv_prefixes = &PRIVATE_STORAGE_PREFIX_THRESHOLD_ALL[0..party_count];
+    let default_context = *DEFAULT_MPC_CONTEXT;
+    let epoch_id = *DEFAULT_EPOCH_ID;
+    let data_id = RequestId::from_bytes([7u8; 32]);
+    let fhe_key_info = PrivDataType::FheKeyInfo.to_string();
+
+    // Seed dummy private data under the default epoch for every party.
+    for prefix in priv_prefixes {
+        let mut storage =
+            FileStorage::new(Some(&material_path), StorageType::PRIV, prefix.as_deref()).unwrap();
+        store_versioned_at_request_and_epoch_id(
+            &mut storage,
+            &data_id,
+            &epoch_id,
+            &TestType { i: 42 },
+            &fhe_key_info,
+        )
+        .await
+        .unwrap();
+        // Sanity: the data we just wrote is present before the (rejected) destruction attempt.
+        assert!(
+            storage
+                .all_data_ids_at_epoch(&epoch_id, &fhe_key_info)
+                .await
+                .unwrap()
+                .contains(&data_id)
+        );
+    }
+
+    // Attempt to destroy the default context, which is the only context (and owns the only epoch).
+    // The guard must reject every party's request with `FailedPrecondition`.
+    let mut destroy_tasks = JoinSet::new();
+    for client in kms_clients.values() {
+        let mut client = client.clone();
+        let req = DestroyMpcContextRequest {
+            context_id: Some(default_context.into()),
+        };
+        destroy_tasks.spawn(async move { client.destroy_mpc_context(req).await });
+    }
+    destroy_tasks.join_all().await.into_iter().for_each(|res| {
+        let status = res.expect_err("destroying the only context must be rejected");
+        assert_eq!(
+            status.code(),
+            tonic::Code::FailedPrecondition,
+            "expected FailedPrecondition, got: {status:?}"
+        );
+    });
+
+    // Because the destruction was rejected, nothing was erased: the epoch's key shares remain and
+    // the context is still present on every party.
+    for prefix in priv_prefixes {
+        let storage =
+            FileStorage::new(Some(&material_path), StorageType::PRIV, prefix.as_deref()).unwrap();
+
+        let ids = storage
+            .all_data_ids_at_epoch(&epoch_id, &fhe_key_info)
+            .await
+            .unwrap();
+        assert!(
+            ids.contains(&data_id),
+            "epoch key shares must be preserved for {prefix:?} after a rejected destruction"
+        );
+
+        read_context_at_id(&storage, &default_context)
+            .await
+            .expect("the only context must still exist after a rejected destruction");
+    }
 
     for (_, server) in kms_servers {
         server.assert_shutdown().await;

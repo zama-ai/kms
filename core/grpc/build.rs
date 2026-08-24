@@ -2,12 +2,14 @@ use tonic_prost_build::Builder;
 
 const DERIVES: &str = "#[derive(serde::Deserialize, serde::Serialize)]";
 const EXTENDED_DERIVES: &str = "#[derive(serde::Deserialize, serde::Serialize, Ord, PartialOrd)]";
+const ZEROIZE_DERIVES: &str = "#[derive(zeroize::Zeroize, zeroize::ZeroizeOnDrop)]";
 
 fn default_builder() -> Builder {
     tonic_prost_build::configure()
         .type_attribute("OperatorBackupOutput", EXTENDED_DERIVES)
         .type_attribute("PkeSchemeType", DERIVES)
         .type_attribute("SigningSchemeType", DERIVES)
+        .type_attribute("TypedSignature", DERIVES)
         .type_attribute("PublicDecryptionRequest", DERIVES)
         .type_attribute("PublicDecryptionResponsePayload", DERIVES)
         .type_attribute("ExternalDecryptionResult", DERIVES)
@@ -20,12 +22,12 @@ fn default_builder() -> Builder {
         .type_attribute("KeyGenResult", DERIVES)
         .type_attribute("RequestId", EXTENDED_DERIVES)
         .type_attribute("Config", EXTENDED_DERIVES)
-        .type_attribute("SignedPubDataHandle", EXTENDED_DERIVES)
         .type_attribute("CrsGenRequest", DERIVES)
         .type_attribute("CrsGenResult", DERIVES)
         .type_attribute("VerifyProvenCtResponse", DERIVES)
         .type_attribute("VerifyProvenCtResponsePayload", DERIVES)
         .type_attribute("TypedPlaintext", EXTENDED_DERIVES)
+        .type_attribute("TypedPlaintext", ZEROIZE_DERIVES)
         .type_attribute("KeySetConfig", DERIVES)
         .type_attribute("KeySetType", DERIVES)
         .type_attribute("FheParameter", DERIVES)
@@ -72,6 +74,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         )
         .type_attribute(
             "TypedSigncryptedCiphertext",
+            "#[wasm_bindgen::prelude::wasm_bindgen(getter_with_clone)]",
+        )
+        .type_attribute(
+            "TypedSignature",
             "#[wasm_bindgen::prelude::wasm_bindgen(getter_with_clone)]",
         )
         .type_attribute(

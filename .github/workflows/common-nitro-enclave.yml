@@ -91,12 +91,21 @@ jobs:
           COMMIT_HASH: ${{ github.event.pull_request.head.sha || github.sha }}
         run: |
           if [[ "${EVENT_NAME}" == "release" ]]; then
-            echo "tag=${REF_NAME}" >> "$GITHUB_OUTPUT"
+            TAG="${REF_NAME}"
           elif [[ "${EVENT_NAME}" == "schedule" ]]; then
-            echo "tag=nightly-$(git rev-parse --short "$COMMIT_HASH")" >> "$GITHUB_OUTPUT"
+            TAG="nightly-$(git rev-parse --short "$COMMIT_HASH")"
           else
-            echo "tag=$(git rev-parse --short "$COMMIT_HASH")" >> "$GITHUB_OUTPUT"
+            TAG="$(git rev-parse --short "$COMMIT_HASH")"
           fi
+          echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
+          echo "Docker image tag: ${TAG}"
+          {
+            echo "## Nitro enclave Docker tag"
+            echo ""
+            echo "| Field | Value |"
+            echo "| --- | --- |"
+            echo "| Docker image tag | \`${TAG}\` |"
+          } >> "$GITHUB_STEP_SUMMARY"
 
   build-and-push-enclave:
     permissions:

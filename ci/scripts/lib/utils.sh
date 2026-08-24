@@ -14,8 +14,8 @@ build_container() {
     log_info "Building and Loading Docker Images"
     log_info "========================================="
 
-    # Use RUST_IMAGE_VERSION from environment or default
-    local RUST_IMAGE_VERSION="${RUST_IMAGE_VERSION:-1.94}"
+    # Use RUST_IMAGE_VERSION from environment, or the version pinned in rust-toolchain.toml
+    local RUST_IMAGE_VERSION="${RUST_IMAGE_VERSION:-$(grep 'channel' "${REPO_ROOT}/rust-toolchain.toml" | awk -F' = ' '{print $2}' | tr -d '"')}"
 
     #-------------------------------------------------------------------------
     # Build and load core-service
@@ -66,12 +66,10 @@ setup_port_forwarding() {
 
     # Determine output destination based on DEBUG flag
     local log_dir=""
-    local output_redirect="/dev/null 2>&1"
     if [[ "${DEBUG:-false}" == "true" ]]; then
         log_dir="logs/port-forward"
         mkdir -p "${log_dir}"
         log_debug "Port-forward logs will be saved to ${log_dir}/"
-        output_redirect=""
     fi
 
     #-------------------------------------------------------------------------

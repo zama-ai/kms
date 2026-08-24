@@ -59,6 +59,7 @@ fn build_key_gen_metadata_inner() -> KeyGenMetadataInner {
         preprocessing_id,
         digest_map,
         vec![0xEE; 64],
+        Vec::new(),
         b"extra".to_vec(),
     ) {
         KeyGenMetadata::Current(inner) => inner,

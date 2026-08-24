@@ -78,7 +78,7 @@ pub async fn transfer_pub_key<S: BaseSessionHandles>(
 
         let bytes = data?;
         let pk = thread_handles::spawn_compute_bound(move || {
-            bc2wrap::deserialize_safe::<PublicBgvKeySet>(&bytes)
+            bc2wrap::deserialize_slice::<PublicBgvKeySet>(&bytes)
                 .map_err(|_| anyhow_error_and_log("failed to deserialize PublicBgvKeySet"))
         })
         .await??;

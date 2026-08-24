@@ -17,7 +17,6 @@ use threshold_execution::tests::helper::tests_and_benches::execute_protocol_larg
 use threshold_execution::tests::helper::tests_and_benches::execute_protocol_small;
 use threshold_types::network::NetworkMode;
 
-use pprof::criterion::{Output, PProfProfiler};
 use rand::SeedableRng;
 
 #[derive(Debug, Clone, Copy)]
@@ -447,7 +446,7 @@ fn batch_decode2t(c: &mut Criterion) {
 
 criterion_group! {
     name = prep;
-    config = Criterion::default().with_profiler(PProfProfiler::new(100, Output::Flamegraph(None)));
+    config = Criterion::default();
     targets = batch_decode2t, triple_z128, triple_z64, triple_nsmall128, random_sharing, double_sharing, bitgen_nlarge
 }
 

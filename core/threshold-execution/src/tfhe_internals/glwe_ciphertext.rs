@@ -10,7 +10,7 @@ use algebra::{
 
 use super::{
     glwe_key::GlweSecretKeyShare, parameters::EncryptionType,
-    randomness::MPCEncryptionRandomGenerator, utils::polynomial_wrapping_add_multisum_assign,
+    randomness::MPCEncryptionRandomGenerator, utils::negacyclic_mul_reduce_acc,
 };
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -166,8 +166,20 @@ fn fill_glwe_mask_and_body_for_encryption_assign<Z, Gen, const EXTENSION_DEGREE:
     //Put the noise in the body
     generator.unsigned_torus_slice_wrapping_add_random_noise_custom_mod_assign(output_body);
 
-    //Do the inner product between mask and key and add it to the body
-    polynomial_wrapping_add_multisum_assign(output_body, output_mask, glwe_secret_key_share);
+    // Next do the inner product between mask and key and add it to the body
+
+    let pol_dimension = glwe_secret_key_share.polynomial_size.0;
+    // Materialize the secret-key shares once so we can chunk them into polynomials;
+    // `output_mask` is chunked directly from the caller's buffer. Both feed the
+    // in-place kernel, which accumulates each `mask_chunk * sk_chunk` product into
+    // `output_body`.
+    let sk = glwe_secret_key_share.data_iter().collect_vec();
+    for (mask_chunk, sk_chunk) in output_mask
+        .chunks(pol_dimension)
+        .zip_eq(sk.chunks(pol_dimension))
+    {
+        negacyclic_mul_reduce_acc(output_body, mask_chunk, sk_chunk);
+    }
 }
 
 ///Returns a tuple (number_of_triples,number_of_random) required for mpc glwe encrpytion

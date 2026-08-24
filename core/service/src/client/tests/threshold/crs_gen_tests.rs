@@ -309,7 +309,7 @@ pub async fn wait_for_crsgen_result(
                     client,
                     req_id.clone(),
                     "crs gen result",
-                    PollConfig::default(),
+                    PollConfig::long_poll_config(),
                     |c, req| Box::pin(c.get_crs_gen_result(req)),
                 )
                 .await

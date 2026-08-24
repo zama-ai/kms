@@ -3,7 +3,10 @@ use crate::vault::keychain::RootKeyMeasurements;
 use anyhow::{bail, ensure};
 use attestation_doc_validation::attestation_doc::decode_attestation_document;
 use enum_dispatch::enum_dispatch;
-use k256::pkcs8::EncodePrivateKey;
+use k256::{
+    ecdsa::{Signature as EcdsaSignature, signature::Verifier as _},
+    pkcs8::EncodePrivateKey,
+};
 #[cfg(feature = "insecure")]
 use nsm_nitro_enclave_utils::{driver::dev::DevNitro, pcr::Pcrs};
 #[cfg(feature = "insecure")]
@@ -28,11 +31,144 @@ use tokio_rustls::rustls::{
 };
 
 use webpki::{EndEntityCert, KeyUsage, anchor_from_trusted_cert};
-use x509_parser::{parse_x509_certificate, pem::Pem};
+use x509_parser::{
+    oid_registry::{OID_KEY_TYPE_EC_PUBLIC_KEY, OID_SIG_ECDSA_WITH_SHA256},
+    parse_x509_certificate,
+    pem::{Pem, parse_x509_pem},
+    public_key::PublicKey,
+    x509::X509Version,
+};
 
 pub mod nitro;
 #[cfg(feature = "insecure")]
 pub mod nitro_mock;
+
+const SECP256K1_OID: &str = "1.3.132.0.10";
+
+/// Validate the threshold CA certificate against the node's private signing key.
+///
+/// The certificate is expected to be the self-signed, secp256k1 CA certificate produced by
+/// threshold key setup. The returned PEM has been parsed and validated and can be reused by TLS
+/// setup without parsing the public-storage value again.
+pub fn validate_ca_cert(ca_cert_bytes: &[u8], signing_key: &PrivateSigKey) -> anyhow::Result<Pem> {
+    let (remaining_pem, ca_cert_pem) = parse_x509_pem(ca_cert_bytes)
+        .map_err(|e| anyhow::anyhow!("Invalid CA certificate PEM: {e}"))?;
+    ensure!(
+        remaining_pem.iter().all(u8::is_ascii_whitespace),
+        "Invalid CA certificate PEM: expected exactly one certificate"
+    );
+    ensure!(
+        ca_cert_pem.label == "CERTIFICATE",
+        "Invalid CA certificate PEM label: expected CERTIFICATE, got {}",
+        ca_cert_pem.label
+    );
+
+    let (remaining_der, ca_cert) = parse_x509_certificate(&ca_cert_pem.contents)
+        .map_err(|e| anyhow::anyhow!("Invalid CA certificate X.509 structure: {e}"))?;
+    ensure!(
+        remaining_der.is_empty(),
+        "Invalid CA certificate X.509 structure: trailing DER data"
+    );
+    ensure!(
+        ca_cert.version() == X509Version::V3,
+        "Invalid CA certificate: expected X.509 v3"
+    );
+    ensure!(
+        ca_cert.subject() == ca_cert.issuer(),
+        "Invalid CA certificate: certificate is not self-issued"
+    );
+    // This validates SAN presence, subject/issuer CN agreement, and that the subject CN appears
+    // in the SAN list; the actual subject value is not otherwise needed here.
+    let _validated_subject = extract_subject_from_cert(&ca_cert)
+        .map_err(|e| anyhow::anyhow!("Invalid CA certificate identity: {e}"))?;
+    ensure!(
+        ca_cert.validity().is_valid(),
+        "Invalid CA certificate: certificate is not currently valid"
+    );
+
+    let basic_constraints = ca_cert
+        .basic_constraints()?
+        .ok_or_else(|| anyhow::anyhow!("Invalid CA certificate: missing basic constraints"))?;
+    ensure!(
+        basic_constraints.critical,
+        "Invalid CA certificate: basic constraints must be critical"
+    );
+    ensure!(
+        basic_constraints.value.ca,
+        "Invalid CA certificate: basic constraints do not identify a CA"
+    );
+    ensure!(
+        basic_constraints.value.path_len_constraint == Some(0),
+        "Invalid CA certificate: basic constraints must set path length to 0"
+    );
+
+    let key_usage = ca_cert
+        .key_usage()?
+        .ok_or_else(|| anyhow::anyhow!("Invalid CA certificate: missing key usage"))?;
+    ensure!(
+        key_usage.critical,
+        "Invalid CA certificate: key usage must be critical"
+    );
+    ensure!(
+        key_usage.value.digital_signature()
+            && key_usage.value.key_cert_sign()
+            && key_usage.value.crl_sign(),
+        "Invalid CA certificate: key usage must permit digital signatures, certificate signing, and CRL signing"
+    );
+
+    let public_key_algorithm = &ca_cert.public_key().algorithm;
+    ensure!(
+        public_key_algorithm.algorithm == OID_KEY_TYPE_EC_PUBLIC_KEY,
+        "Invalid CA certificate: public key is not an EC key"
+    );
+    let curve = public_key_algorithm
+        .parameters
+        .as_ref()
+        .ok_or_else(|| anyhow::anyhow!("Invalid CA certificate: EC curve is not specified"))?
+        .as_oid()
+        .map_err(|e| anyhow::anyhow!("Invalid CA certificate EC curve: {e}"))?;
+    ensure!(
+        curve.to_id_string() == SECP256K1_OID,
+        "Invalid CA certificate: expected secp256k1, got curve OID {curve}"
+    );
+
+    let PublicKey::EC(cert_public_key) = ca_cert.public_key().parsed()? else {
+        anyhow::bail!("Invalid CA certificate: public key is not an EC key");
+    };
+    let expected_verf_key = signing_key.verf_key();
+    let expected_public_key = expected_verf_key
+        .raw_verifying_key()
+        .to_encoded_point(false);
+    ensure!(
+        cert_public_key.data() == expected_public_key.as_bytes(),
+        "Invalid CA certificate: public key does not match the private signing key"
+    );
+
+    ensure!(
+        ca_cert.signature_algorithm == ca_cert.tbs_certificate.signature,
+        "Invalid CA certificate: signature algorithms are inconsistent"
+    );
+    ensure!(
+        ca_cert.signature_algorithm.algorithm == OID_SIG_ECDSA_WITH_SHA256,
+        "Invalid CA certificate: expected an ECDSA-with-SHA256 signature"
+    );
+    ensure!(
+        ca_cert.signature_algorithm.parameters.is_none(),
+        "Invalid CA certificate: ECDSA-with-SHA256 signature parameters must be absent"
+    );
+    let signature = EcdsaSignature::from_der(ca_cert.signature_value.data.as_ref())
+        .map_err(|e| anyhow::anyhow!("Invalid CA certificate signature encoding: {e}"))?;
+    // AWS-LC may emit either mathematically valid representation of `s`, while k256 deliberately
+    // accepts only low-s signatures. Normalize before verification; this does not change which key
+    // signed the certificate.
+    let signature = signature.normalize_s().unwrap_or(signature);
+    expected_verf_key
+        .raw_verifying_key()
+        .verify(ca_cert.tbs_certificate.as_ref(), &signature)
+        .map_err(|e| anyhow::anyhow!("Invalid CA certificate signature: {e}"))?;
+
+    Ok(ca_cert_pem)
+}
 
 #[allow(async_fn_in_trait)]
 #[enum_dispatch]
@@ -239,7 +375,7 @@ pub trait SecurityModule {
     }
 }
 
-#[expect(clippy::large_enum_variant)]
+#[allow(clippy::large_enum_variant)]
 #[enum_dispatch(SecurityModule)]
 pub enum SecurityModuleProxy {
     Nitro(nitro::Nitro),
@@ -472,5 +608,118 @@ impl ResolvesClientCert for CertResolver {
             CertResolver::Single(s) => s.has_certs(),
             CertResolver::AutoRefresh(ar) => ar.has_certs(),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::cryptography::signatures::gen_sig_keys;
+    use aes_prng::AesRng;
+    use rand::SeedableRng;
+
+    #[test]
+    fn valid_threshold_ca_cert_is_accepted() {
+        let signing_key = test_signing_key(1);
+        let cert = test_ca_cert(&signing_key, true);
+
+        validate_ca_cert(cert.pem().as_bytes(), &signing_key)
+            .expect("a CA certificate generated by threshold key setup must validate");
+    }
+
+    #[test]
+    fn ca_cert_with_another_public_key_is_rejected() {
+        let signing_key = test_signing_key(2);
+        let other_signing_key = test_signing_key(3);
+        let cert = test_ca_cert(&other_signing_key, true);
+
+        let err = validate_ca_cert(cert.pem().as_bytes(), &signing_key)
+            .expect_err("a CA certificate for another signing key must be rejected");
+        assert!(
+            err.to_string().contains("public key does not match"),
+            "expected a public-key mismatch, got: {err}"
+        );
+    }
+
+    #[test]
+    fn ca_cert_with_invalid_signature_is_rejected() {
+        let signing_key = test_signing_key(4);
+        let wrong_signing_key = test_signing_key(5);
+        let public_key = rcgen_key_pair(&signing_key);
+        let wrong_signer = rcgen_key_pair(&wrong_signing_key);
+        let (_, _, params) = threshold_networking::tls_certs::create_selfsigned_cert_from_keypair(
+            "party.example.com",
+            false,
+            true,
+            &public_key,
+        )
+        .expect("test CA parameters must be generated");
+        let issuer = Issuer::from_params(&params, &wrong_signer);
+        let cert = params
+            .signed_by(&public_key, &issuer)
+            .expect("test CA certificate must be generated");
+
+        let err = validate_ca_cert(cert.pem().as_bytes(), &signing_key)
+            .expect_err("a CA certificate signed by another key must be rejected");
+        assert!(
+            err.to_string().contains("Invalid CA certificate signature"),
+            "expected an invalid-signature error, got: {err}"
+        );
+    }
+
+    #[test]
+    fn certificate_without_ca_constraints_is_rejected() {
+        let signing_key = test_signing_key(6);
+        let cert = test_ca_cert(&signing_key, false);
+
+        let err = validate_ca_cert(cert.pem().as_bytes(), &signing_key)
+            .expect_err("a non-CA certificate must be rejected");
+        assert!(
+            err.to_string().contains("do not identify a CA"),
+            "expected a CA-constraints error, got: {err}"
+        );
+    }
+
+    #[test]
+    fn multiple_ca_cert_pem_blocks_are_rejected() {
+        let signing_key = test_signing_key(7);
+        let cert = test_ca_cert(&signing_key, true);
+        let duplicated_pem = format!("{}{}", cert.pem(), cert.pem());
+
+        let err = validate_ca_cert(duplicated_pem.as_bytes(), &signing_key)
+            .expect_err("more than one PEM certificate must be rejected");
+        assert!(
+            err.to_string().contains("exactly one certificate"),
+            "expected a strict-PEM error, got: {err}"
+        );
+    }
+
+    fn test_signing_key(seed: u64) -> PrivateSigKey {
+        gen_sig_keys(&mut AesRng::seed_from_u64(seed)).1
+    }
+
+    #[expect(deprecated)]
+    fn rcgen_key_pair(signing_key: &PrivateSigKey) -> KeyPair {
+        let signing_key_der = signing_key
+            .sk()
+            .to_pkcs8_der()
+            .expect("test signing key must serialize");
+        KeyPair::from_pkcs8_der_and_sign_algo(
+            &signing_key_der.as_bytes().into(),
+            &PKCS_ECDSA_P256K1_SHA256,
+        )
+        .expect("test signing key must convert to an rcgen key pair")
+    }
+
+    fn test_ca_cert(signing_key: &PrivateSigKey, is_ca: bool) -> rcgen::Certificate {
+        let key_pair = rcgen_key_pair(signing_key);
+        threshold_networking::tls_certs::create_selfsigned_cert_from_keypair(
+            "party.example.com",
+            false,
+            is_ca,
+            &key_pair,
+        )
+        .expect("test CA certificate must be generated")
+        .1
     }
 }

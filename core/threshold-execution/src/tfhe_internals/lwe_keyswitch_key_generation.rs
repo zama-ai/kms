@@ -42,7 +42,7 @@ where
     let decomp_base_log = lwe_keyswitch_key.decomposition_base_log();
     let decomp_level_count = lwe_keyswitch_key.decomposition_level_count();
 
-    let input_key_it = input_lwe_sk.data_as_raw_vec().into_iter();
+    let input_key_it = input_lwe_sk.data_iter();
     let key_switch_key_block_it = lwe_keyswitch_key.iter_mut_levels();
 
     assert_eq!(

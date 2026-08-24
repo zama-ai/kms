@@ -2,17 +2,13 @@ use std::collections::HashMap;
 
 use crate::role::Role;
 
-/// Enum to state whether we want to open
-/// only to some designated parties or
-/// to all parties at once.
+/// Enum to state whether we want to open only to some designated parties or to all parties at once.
 pub enum OpeningKind<Z> {
     ToSome(HashMap<Role, Vec<Z>>),
     ToAll(Vec<Z>),
 }
 
-/// Enum to state from which set
-/// we are expecting to receive openings
-/// as well as how many
+/// Enum to state from which set we are expecting to receive openings as well as how many
 #[derive(Clone, Copy)]
 pub enum ExternalOpeningInfo {
     FromSet1(usize),

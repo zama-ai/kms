@@ -1,15 +1,19 @@
 //! This module provides the context definition that
 //! can be constructed from the protobuf types and stored in the vault.
-use kms_grpc::identifiers::ContextId;
+use std::collections::BTreeMap;
+
+use alloy_primitives::Address;
+use kms_grpc::{identifiers::ContextId, kms::v1::SchemeDigest};
 use serde::{Deserialize, Serialize};
 use tfhe::{Versionize, named::Named};
-use tfhe_versionable::VersionsDispatch;
+use tfhe_versionable::{Upgrade, Version, VersionsDispatch};
 use threshold_networking::tls::ReleasePCRValues;
 use threshold_types::role::Role;
 
 use crate::{
-    cryptography::{internal_crypto_types::LegacySerialization, signatures::PublicSigKey},
+    cryptography::{signatures::PublicSigKey, signing::SigningSchemeType},
     engine::validation::{RequestIdParsingErr, parse_optional_grpc_request_id},
+    impl_generic_versionize,
     vault::storage::{StorageReader, crypto_material::get_core_signing_key},
 };
 
@@ -105,20 +109,170 @@ impl SoftwareVersion {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, VersionsDispatch)]
-pub enum NodeInfoVersions {
-    V0(NodeInfo),
+/// Ethereum address identifying the verification key of a node operator.
+///
+/// This newtype exists solely to implement [`tfhe_versionable::Versionize`] for
+/// [`alloy_primitives::Address`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SignerAddress(pub Address);
+impl_generic_versionize!(SignerAddress);
+
+/// A digest was offered for a signature scheme it cannot belong to.
+#[derive(Debug, thiserror::Error)]
+pub enum SchemeDigestErr {
+    #[error("{scheme:?} verification-key digest has length {actual}, expected {expected}")]
+    WrongLength {
+        scheme: SigningSchemeType,
+        expected: usize,
+        actual: usize,
+    },
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Versionize, Serialize, Deserialize)]
-#[versionize(NodeInfoVersions)]
-pub struct NodeInfo {
+#[derive(Clone, Debug, VersionsDispatch)]
+pub enum SchemeDigestsVersions {
+    V0(SchemeDigests),
+}
+
+/// Digests of a node operator's verification keys, one per signature scheme the operator has
+/// published a key for, used to identify the node.
+///
+/// This explicit type is here to ensure embedded validation of digests.
+/// For now this validation is limited to ensuring the length is as expected.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, Versionize)]
+#[versionize(SchemeDigestsVersions)]
+// Route serialization through this type, hence doing needed checks upon insertion.
+#[serde(
+    try_from = "BTreeMap<SigningSchemeType, Vec<u8>>",
+    into = "BTreeMap<SigningSchemeType, Vec<u8>>"
+)]
+pub struct SchemeDigests(BTreeMap<SigningSchemeType, Vec<u8>>);
+
+impl SchemeDigests {
+    /// Create a new and empty [`SchemeDigests`].
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// The digests of a node identified by the Ethereum address of its ECDSA-256k1 key.
+    pub fn from_ecdsa_address(address: SignerAddress) -> Self {
+        Self(BTreeMap::from([(
+            SigningSchemeType::Ecdsa256k1,
+            address.0.to_vec(),
+        )]))
+    }
+
+    /// The digests of a node that has published only an ECDSA-256k1 verification key.
+    pub fn from_ecdsa_verification_key(key: &PublicSigKey) -> Self {
+        Self::from_ecdsa_address(SignerAddress(key.address()))
+    }
+
+    /// File `digest` as the digest of the operator's `scheme` verification key, returning the
+    /// digest it replaced, if any.
+    ///
+    /// Returns an error if internal validation fails.
+    pub fn insert(
+        &mut self,
+        scheme: SigningSchemeType,
+        digest: Vec<u8>,
+    ) -> Result<Option<Vec<u8>>, SchemeDigestErr> {
+        let expected = scheme.expected_digest_len();
+        if digest.len() != expected {
+            return Err(SchemeDigestErr::WrongLength {
+                scheme,
+                expected,
+                actual: digest.len(),
+            });
+        }
+        Ok(self.0.insert(scheme, digest))
+    }
+
+    /// The digest of the operator's `scheme` verification key, if it has published one.
+    pub fn get(&self, scheme: &SigningSchemeType) -> Option<&[u8]> {
+        self.0.get(scheme).map(Vec::as_slice)
+    }
+
+    /// The digests, in scheme order.
+    pub fn iter(&self) -> impl Iterator<Item = (SigningSchemeType, &[u8])> {
+        self.0.iter().map(|(scheme, digest)| (*scheme, &digest[..]))
+    }
+}
+
+impl TryFrom<BTreeMap<SigningSchemeType, Vec<u8>>> for SchemeDigests {
+    type Error = SchemeDigestErr;
+
+    fn try_from(value: BTreeMap<SigningSchemeType, Vec<u8>>) -> Result<Self, Self::Error> {
+        let mut digests = Self::new();
+        for (scheme, digest) in value {
+            digests.insert(scheme, digest)?;
+        }
+        Ok(digests)
+    }
+}
+
+impl From<SchemeDigests> for BTreeMap<SigningSchemeType, Vec<u8>> {
+    fn from(value: SchemeDigests) -> Self {
+        value.0
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, VersionsDispatch)]
+pub enum NodeInfoVersions {
+    V0(NodeInfoV0),
+    V1(NodeInfoV1),
+    V2(NodeInfo),
+}
+
+/// Legacy [`NodeInfo`] layout, kept for backward compatibility.
+///
+/// Persisted contexts stored the operator's full `PublicSigKey` instead of its Ethereum address.
+/// Upgraded to the current [`NodeInfoV1`] by deriving the address from each key.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, Version)]
+pub struct NodeInfoV0 {
+    pub mpc_identity: String,
+    pub party_id: u32,
+    pub verification_key: Option<PublicSigKey>,
+    pub external_url: String,
+    pub ca_cert: Option<Vec<u8>>,
+    pub public_storage_url: String,
+    pub public_storage_prefix: Option<String>,
+    pub extra_verification_keys: Vec<PublicSigKey>,
+}
+
+impl Upgrade<NodeInfoV1> for NodeInfoV0 {
+    type Error = std::convert::Infallible;
+
+    fn upgrade(self) -> Result<NodeInfoV1, Self::Error> {
+        Ok(NodeInfoV1 {
+            mpc_identity: self.mpc_identity,
+            party_id: self.party_id,
+            signer_address: self.verification_key.map(|k| SignerAddress(k.address())),
+            external_url: self.external_url,
+            ca_cert: self.ca_cert,
+            public_storage_url: self.public_storage_url,
+            public_storage_prefix: self.public_storage_prefix,
+            extra_signer_addresses: self
+                .extra_verification_keys
+                .into_iter()
+                .map(|k| SignerAddress(k.address()))
+                .collect(),
+        })
+    }
+}
+
+/// Legacy [`NodeInfo`] layout, kept for backward compatibility.
+///
+/// Persisted contexts stored the operator Ethereum address instead of verification keys.
+/// Upgraded to the current [`NodeInfo`] by adding ecdsa256k1 as the scheme digest for the operator's verification key.
+#[derive(Clone, Debug, PartialEq, Eq, Version, Serialize, Deserialize)]
+pub struct NodeInfoV1 {
     pub mpc_identity: String,
     pub party_id: u32,
 
+    /// Ethereum address of the node operator's signing key, used to identify the node.
+    ///
     /// This is optional for legacy reasons because typically MPC parties
-    /// do not know the public verification keys of other parties when it first starts.
-    pub verification_key: Option<PublicSigKey>,
+    /// do not know the signing keys of other parties when it first starts.
+    pub signer_address: Option<SignerAddress>,
 
     /// Must be a valid URL.
     pub external_url: String,
@@ -131,7 +285,78 @@ pub struct NodeInfo {
 
     pub public_storage_url: String,
     pub public_storage_prefix: Option<String>,
-    pub extra_verification_keys: Vec<PublicSigKey>,
+
+    /// Ethereum addresses of additional signing keys permitted to make transactions on behalf of
+    /// this node.
+    pub extra_signer_addresses: Vec<SignerAddress>,
+}
+
+impl Upgrade<NodeInfo> for NodeInfoV1 {
+    type Error = std::convert::Infallible;
+
+    fn upgrade(self) -> Result<NodeInfo, Self::Error> {
+        // The digest of an ECDSA-256k1 verification key is its Ethereum address, so the
+        // dedicated `signer_address` field is carried over as the ECDSA-256k1 entry of
+        // `scheme_digests`, which supersedes it.
+        let scheme_digests = self
+            .signer_address
+            .map(SchemeDigests::from_ecdsa_address)
+            .unwrap_or_default();
+        Ok(NodeInfo {
+            mpc_identity: self.mpc_identity,
+            party_id: self.party_id,
+            external_url: self.external_url,
+            ca_cert: self.ca_cert,
+            public_storage_url: self.public_storage_url,
+            public_storage_prefix: self.public_storage_prefix,
+            extra_signer_addresses: self.extra_signer_addresses,
+            scheme_digests,
+        })
+    }
+}
+
+/// The information about a node in an MPC context, including its identity, party ID, external URL,
+/// TLS certificate, public storage information, and the digests of its verification keys for
+/// different signature schemes.
+#[derive(Clone, Debug, PartialEq, Eq, Versionize, Serialize, Deserialize)]
+#[versionize(NodeInfoVersions)]
+pub struct NodeInfo {
+    pub mpc_identity: String,
+    pub party_id: u32,
+
+    /// Must be a valid URL.
+    pub external_url: String,
+
+    /// The TLS certificate is a String here
+    /// because we cannot versionize the X509Certificate type.
+    ///
+    /// Also it's optional because we need to support non-TLS connections for testing purposes.
+    pub ca_cert: Option<Vec<u8>>,
+
+    pub public_storage_url: String,
+    pub public_storage_prefix: Option<String>,
+
+    /// Ethereum addresses of additional signing keys permitted to make transactions on behalf of
+    /// this node.
+    pub extra_signer_addresses: Vec<SignerAddress>,
+
+    /// Digest of the node operator's verification key for each signature scheme it supports,
+    /// used to identify the node.
+    pub scheme_digests: SchemeDigests,
+}
+
+/// Parses a 20-byte Ethereum address carried in a gRPC `MpcNode` address field.
+///
+/// `field_label` identifies which field the `bytes` came from, for error reporting
+/// (ex: "signer address").
+fn parse_signer_address(
+    bytes: &[u8],
+    mpc_identity: &str,
+    field_label: &str,
+) -> anyhow::Result<SignerAddress> {
+    let addr = Address::try_from(bytes)
+        .map_err(|e| anyhow::anyhow!("Invalid {field_label} for node {mpc_identity}: {e}",))?;
+    Ok(SignerAddress(addr))
 }
 
 impl TryFrom<kms_grpc::kms::v1::MpcNode> for NodeInfo {
@@ -150,23 +375,54 @@ impl TryFrom<kms_grpc::kms::v1::MpcNode> for NodeInfo {
 
         // check the external_url is a valid URL
         let _ = url::Url::parse(&value.external_url)?;
-        let mut extra_verification_keys = Vec::new();
-        for k in &value.extra_verification_keys {
-            let pk = PublicSigKey::from_legacy_bytes(k)?;
-            extra_verification_keys.push(pk);
+        let mut extra_signer_addresses = Vec::new();
+        for k in &value.extra_signer_addresses {
+            extra_signer_addresses.push(parse_signer_address(
+                k,
+                &value.mpc_identity,
+                "extra signer address",
+            )?);
         }
+        let mut scheme_digests = SchemeDigests::new();
+        for cur_s in &value.scheme_digests {
+            let scheme = SigningSchemeType::try_from(cur_s.scheme)?;
+            let previous = scheme_digests.insert(scheme, cur_s.digest.clone())?;
+            // Repeating the same scheme is only allowed if the digests agree; a disagreement means
+            // the sender has an inconsistent view of this node's identity, so we cannot pick one.
+            if previous.is_some_and(|previous| previous != cur_s.digest) {
+                return Err(anyhow::anyhow!(
+                    "Conflicting {scheme:?} scheme digests for node {}",
+                    value.mpc_identity
+                ));
+            }
+        }
+
+        // The dedicated `signer_address` field predates `scheme_digests` and carries the same
+        // Ethereum address that is now the ECDSA-256k1 digest, so export it into `scheme_digests`.
+        if let Some(addr_bytes) = &value.signer_address {
+            match scheme_digests.get(&SigningSchemeType::Ecdsa256k1) {
+                None => {
+                    scheme_digests.insert(SigningSchemeType::Ecdsa256k1, addr_bytes.clone())?;
+                }
+                Some(digest) if digest != addr_bytes => {
+                    return Err(anyhow::anyhow!(
+                        "Signer address and ECDSA-256k1 scheme digest disagree for node {}",
+                        value.mpc_identity
+                    ));
+                }
+                Some(_) => (),
+            }
+        }
+
         Ok(NodeInfo {
             mpc_identity: value.mpc_identity,
             party_id: value.party_id.try_into()?,
-            verification_key: match value.verification_key {
-                None => None,
-                Some(vk_bytes) => Some(PublicSigKey::from_legacy_bytes(&vk_bytes)?),
-            },
             external_url: value.external_url,
             ca_cert,
             public_storage_url: value.public_storage_url,
             public_storage_prefix: value.public_storage_prefix,
-            extra_verification_keys,
+            extra_signer_addresses,
+            scheme_digests,
         })
     }
 }
@@ -174,23 +430,32 @@ impl TryFrom<kms_grpc::kms::v1::MpcNode> for NodeInfo {
 impl TryFrom<NodeInfo> for kms_grpc::kms::v1::MpcNode {
     type Error = anyhow::Error;
     fn try_from(value: NodeInfo) -> anyhow::Result<Self> {
-        // Observe that legacy formats have never been used here, so it is safe to use safe_serialize
         Ok(kms_grpc::kms::v1::MpcNode {
             mpc_identity: value.mpc_identity,
             party_id: value.party_id.try_into()?,
-            verification_key: match value.verification_key {
-                Some(inner) => Some(inner.to_legacy_bytes()?),
-                None => None,
-            },
+            // Kept populated for peers that still read the legacy field; it mirrors the
+            // ECDSA-256k1 entry of `scheme_digests`.
+            signer_address: value
+                .scheme_digests
+                .get(&SigningSchemeType::Ecdsa256k1)
+                .map(<[u8]>::to_vec),
             external_url: value.external_url,
             ca_cert: value.ca_cert,
             public_storage_url: value.public_storage_url,
             public_storage_prefix: value.public_storage_prefix,
-            extra_verification_keys: value
-                .extra_verification_keys
+            extra_signer_addresses: value
+                .extra_signer_addresses
                 .into_iter()
-                .map(|k| k.to_legacy_bytes())
-                .collect::<Result<Vec<_>, _>>()?,
+                .map(|addr| addr.0.to_vec())
+                .collect(),
+            scheme_digests: value
+                .scheme_digests
+                .iter()
+                .map(|(scheme, digest)| SchemeDigest {
+                    scheme: kms_grpc::kms::v1::SigningSchemeType::from(scheme) as i32,
+                    digest: digest.to_vec(),
+                })
+                .collect(),
         })
     }
 }
@@ -224,13 +489,10 @@ impl ContextInfo {
     pub async fn verify<S: StorageReader>(&self, storage: &S) -> anyhow::Result<Option<Role>> {
         // Check the signing key is consistent with the private key in storage.
         let signing_key = get_core_signing_key(storage).await?;
-        let verification_key = signing_key.verf_key();
+        let core_address = signing_key.verf_key().verf_key_id();
 
         let my_node = self.mpc_nodes.iter().find(|node| {
-            node.verification_key
-                .as_ref()
-                .map(|inner| inner == &verification_key)
-                .unwrap_or(false)
+            node.scheme_digests.get(&SigningSchemeType::Ecdsa256k1) == Some(core_address.as_slice())
         });
         // check mpc_nodes have unique party_ids
         let party_ids: std::collections::HashSet<_> =
@@ -372,6 +634,7 @@ impl TryFrom<ContextInfo> for kms_grpc::kms::v1::MpcContext {
 #[cfg(test)]
 mod tests {
     use kms_grpc::rpc_types::PrivDataType;
+    use strum::EnumCount;
 
     use crate::{
         cryptography::signatures::gen_sig_keys,
@@ -503,22 +766,22 @@ mod tests {
                 NodeInfo {
                     mpc_identity: "Node1".to_string(),
                     party_id: 1,
-                    verification_key: Some(verification_key.clone()),
                     external_url: "localhost:12345".to_string(),
                     ca_cert: None,
                     public_storage_url: "http://storage".to_string(),
                     public_storage_prefix: None,
-                    extra_verification_keys: vec![],
+                    extra_signer_addresses: vec![],
+                    scheme_digests: SchemeDigests::from_ecdsa_verification_key(&verification_key),
                 },
                 NodeInfo {
                     mpc_identity: "Node2".to_string(),
                     party_id: 1, // Duplicate party_id
-                    verification_key: Some(verification_key),
                     external_url: "localhost:12345".to_string(),
                     ca_cert: None,
                     public_storage_url: "http://storage".to_string(),
                     public_storage_prefix: None,
-                    extra_verification_keys: vec![],
+                    extra_signer_addresses: vec![],
+                    scheme_digests: SchemeDigests::from_ecdsa_verification_key(&verification_key),
                 },
             ],
             context_id: ContextId::from_bytes([4u8; 32]),
@@ -549,6 +812,208 @@ mod tests {
                 .to_string()
                 .contains(ERR_DUPLICATE_PARTY_IDS)
         );
+    }
+
+    const ALL_SCHEMES: [SigningSchemeType; 5] = [
+        SigningSchemeType::Ecdsa256k1,
+        SigningSchemeType::Ed25519,
+        SigningSchemeType::MlDsa44,
+        SigningSchemeType::MlDsa65,
+        SigningSchemeType::MlDsa87,
+    ];
+
+    fn node_proto_with_schemes(
+        party_id: u32,
+        schemes: &[SigningSchemeType],
+    ) -> (NodeInfo, kms_grpc::kms::v1::MpcNode) {
+        let (verification_key, _sk) = gen_sig_keys(&mut rand::rngs::OsRng);
+        let mut scheme_digests = SchemeDigests::new();
+        for scheme in schemes {
+            let digest = match scheme {
+                SigningSchemeType::Ecdsa256k1 => verification_key.verf_key_id(),
+                _ => vec![*scheme as u8; scheme.expected_digest_len()],
+            };
+            scheme_digests.insert(*scheme, digest).unwrap();
+        }
+        let node = NodeInfo {
+            mpc_identity: format!("Node{party_id}"),
+            party_id,
+            external_url: format!("http://node{party_id}.example.com:12345"),
+            ca_cert: None,
+            public_storage_url: "http://storage".to_string(),
+            public_storage_prefix: None,
+            extra_signer_addresses: vec![],
+            scheme_digests,
+        };
+        let proto = kms_grpc::kms::v1::MpcNode::try_from(node.clone()).unwrap();
+        (node, proto)
+    }
+
+    #[test]
+    fn mpc_node_proto_round_trip_all_schemes() {
+        let (node, proto) = node_proto_with_schemes(1, &ALL_SCHEMES);
+
+        assert_eq!(proto.scheme_digests.len(), ALL_SCHEMES.len());
+        // Peers that only know the legacy field must still find the ECDSA-256k1 digest there.
+        assert_eq!(
+            proto.signer_address.as_deref(),
+            node.scheme_digests.get(&SigningSchemeType::Ecdsa256k1)
+        );
+
+        let recovered = NodeInfo::try_from(proto).unwrap();
+        assert_eq!(recovered, node);
+        // Every scheme's digest can be looked up individually.
+        for scheme in ALL_SCHEMES {
+            let digest = recovered
+                .scheme_digests
+                .get(&scheme)
+                .unwrap_or_else(|| panic!("no digest for {scheme}"));
+            assert_eq!(digest.len(), scheme.expected_digest_len());
+        }
+    }
+
+    #[test]
+    fn mpc_node_accepts_identical_repeated_scheme() {
+        let (node, mut proto) = node_proto_with_schemes(
+            1,
+            &[SigningSchemeType::Ecdsa256k1, SigningSchemeType::Ed25519],
+        );
+        let repeated = proto
+            .scheme_digests
+            .iter()
+            .find(|entry| entry.scheme == SigningSchemeType::Ed25519 as i32)
+            .unwrap()
+            .clone();
+        proto.scheme_digests.push(repeated);
+
+        let recovered = NodeInfo::try_from(proto).unwrap();
+        assert_eq!(recovered, node);
+    }
+
+    #[test]
+    fn mpc_node_rejects_conflicting_repeated_scheme() {
+        let (_node, mut proto) = node_proto_with_schemes(
+            1,
+            &[SigningSchemeType::Ecdsa256k1, SigningSchemeType::Ed25519],
+        );
+        proto.scheme_digests.push(SchemeDigest {
+            scheme: SigningSchemeType::Ed25519 as i32,
+            digest: vec![0xab; SigningSchemeType::Ed25519.expected_digest_len()],
+        });
+
+        let err = NodeInfo::try_from(proto).unwrap_err().to_string();
+        assert!(err.contains("Conflicting Ed25519 scheme digests"), "{err}");
+    }
+
+    #[test]
+    fn mpc_node_rejects_signer_address_disagreeing_with_ecdsa_digest() {
+        let (_node, mut proto) = node_proto_with_schemes(1, &[SigningSchemeType::Ecdsa256k1]);
+        let (other_key, _sk) = gen_sig_keys(&mut rand::rngs::OsRng);
+        proto.signer_address = Some(other_key.verf_key_id());
+
+        let err = NodeInfo::try_from(proto).unwrap_err().to_string();
+        assert!(
+            err.contains("Signer address and ECDSA-256k1 scheme digest disagree"),
+            "{err}"
+        );
+    }
+
+    #[test]
+    fn mpc_node_rejects_unknown_scheme() {
+        let (_node, mut proto) = node_proto_with_schemes(1, &[SigningSchemeType::Ecdsa256k1]);
+        // A scheme a future release might add, which this one cannot make sense of.
+        let unknown = SigningSchemeType::COUNT as i32;
+        proto.scheme_digests.push(SchemeDigest {
+            scheme: unknown,
+            digest: vec![0xab; 32],
+        });
+
+        let err = NodeInfo::try_from(proto).unwrap_err().to_string();
+        assert!(
+            err.contains(&format!(
+                "unsupported signing scheme discriminant: {unknown}"
+            )),
+            "{err}"
+        );
+    }
+
+    /// A digest of the wrong length cannot be a digest of a key of that scheme, so it must be
+    /// rejected at the boundary rather than persisted.
+    #[test]
+    fn mpc_node_rejects_wrong_length_digest() {
+        for scheme in ALL_SCHEMES {
+            let expected = scheme.expected_digest_len();
+            for actual in [expected - 1, expected + 1] {
+                let (_node, mut proto) = node_proto_with_schemes(1, &[]);
+                proto.scheme_digests.push(SchemeDigest {
+                    scheme: kms_grpc::kms::v1::SigningSchemeType::from(scheme) as i32,
+                    digest: vec![0xab; actual],
+                });
+
+                let err = NodeInfo::try_from(proto).unwrap_err().to_string();
+                assert!(
+                    err.contains(&format!(
+                        "{scheme:?} verification-key digest has length {actual}, expected {expected}"
+                    )),
+                    "{err}"
+                );
+            }
+        }
+    }
+
+    /// The proto boundary is not the only way into a `SchemeDigests` — a persisted context is
+    /// deserialized straight into one. `serde` must apply the same rule there, so that a context
+    /// written by a buggy or older build cannot be read back as a valid one.
+    #[test]
+    fn deserializing_rejects_wrong_length_digest() {
+        // `SchemeDigests` serializes as the bare map, so this is byte-for-byte what a persisted
+        // context holding a bad digest would look like.
+        let corrupt = BTreeMap::from([(SigningSchemeType::Ed25519, vec![0xab_u8; 31])]);
+        let bytes = bc2wrap::serialize(&corrupt).unwrap();
+
+        let err = bc2wrap::deserialize_slice::<SchemeDigests>(&bytes)
+            .unwrap_err()
+            .to_string();
+        assert!(
+            err.contains("Ed25519 verification-key digest has length 31, expected 32"),
+            "{err}"
+        );
+
+        // ... and the well-formed map round-trips through the same bytes.
+        let valid = BTreeMap::from([(SigningSchemeType::Ed25519, vec![0xab_u8; 32])]);
+        let bytes = bc2wrap::serialize(&valid).unwrap();
+        let digests = bc2wrap::deserialize_slice::<SchemeDigests>(&bytes).unwrap();
+        assert_eq!(bc2wrap::serialize(&digests).unwrap(), bytes);
+    }
+
+    fn node_info_v1(signer_address: Option<SignerAddress>) -> NodeInfoV1 {
+        NodeInfoV1 {
+            mpc_identity: "Node1".to_string(),
+            party_id: 1,
+            signer_address,
+            external_url: "http://node1.example.com:12345".to_string(),
+            ca_cert: None,
+            public_storage_url: "http://storage".to_string(),
+            public_storage_prefix: None,
+            extra_signer_addresses: vec![],
+        }
+    }
+
+    /// A legacy context's `signer_address` is the ECDSA-256k1 digest, so it must land there when
+    /// the context is upgraded — this is the only key material legacy contexts carry.
+    #[test]
+    fn node_info_v1_upgrades_signer_address_into_ecdsa_digest() {
+        let (verification_key, _sk) = gen_sig_keys(&mut rand::rngs::OsRng);
+        let address = SignerAddress(verification_key.address());
+
+        let upgraded = node_info_v1(Some(address)).upgrade().unwrap();
+
+        assert_eq!(
+            upgraded.scheme_digests.get(&SigningSchemeType::Ecdsa256k1),
+            Some(verification_key.verf_key_id().as_slice())
+        );
+        // No other scheme can be inferred from a legacy context.
+        assert_eq!(upgraded.scheme_digests.iter().count(), 1);
     }
 
     #[test]

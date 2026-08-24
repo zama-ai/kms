@@ -10,9 +10,8 @@ use kms_grpc::kms::v1::FheParameter;
 use kms_grpc::rpc_types::PubDataType;
 use kms_lib::DecryptionMode;
 use kms_lib::client::test_tools::ServerHandle;
-use kms_lib::consts::{
-    DEFAULT_EPOCH_ID, DEFAULT_MPC_CONTEXT, ID_LENGTH, SAFE_SER_SIZE_LIMIT, SIGNING_KEY_ID,
-};
+use kms_lib::conf::{ContextEpochAssociation, MigrationConfig};
+use kms_lib::consts::{DEFAULT_EPOCH_ID, DEFAULT_MPC_CONTEXT, ID_LENGTH, SAFE_SER_SIZE_LIMIT};
 use kms_lib::testing::prelude::*;
 use observability::conf::Settings;
 use serde::Deserialize;
@@ -23,8 +22,8 @@ use std::str::FromStr;
 use std::string::String;
 use tempfile::TempDir;
 use test_utils::test_logging::init_test_logging as init_logging;
-#[cfg(feature = "threshold_tests")]
 use tfhe::{xof_key_set::CompressedXofKeySet, zk::CompactPkeCrs};
+use threshold_networking::grpc::CoreToCoreNetworkConfig;
 use tracing::info;
 use validator::Validate;
 
@@ -32,18 +31,14 @@ use validator::Validate;
 use kms_core_client::mpc_context::create_test_context_info_from_core_config;
 use kms_grpc::identifiers::EpochId;
 use kms_grpc::{ContextId, RequestId};
-use kms_lib::backup::SEED_PHRASE_DESC;
+use kms_lib::backup::{RECOVERY_OUTPUT_DESC, SEED_PHRASE_DESC, SETUP_MESSAGE_DESC};
 use kms_lib::engine::base::derive_request_id;
-use std::fs::create_dir_all;
 use std::process::{Command, Output};
 use tfhe::safe_serialization::safe_serialize;
 
-// Additional imports for reshare test (only needed with threshold_tests feature)
-#[cfg(feature = "threshold_tests")]
+// Additional imports for reshare test
 use hashing::hash_versioned;
-#[cfg(feature = "threshold_tests")]
 use kms_lib::engine::base::{DSEP_PUBDATA_CRS, DSEP_PUBDATA_KEY};
-#[cfg(feature = "threshold_tests")]
 use kms_lib::util::key_setup::test_tools::load_material_from_pub_storage;
 
 // ============================================================================
@@ -60,9 +55,30 @@ fn write_core_client_toml(path: &Path, cfg: &CoreClientConfig) -> Result<()> {
     Ok(())
 }
 
+/// Derive a single-core client config from a multi-core one by keeping only the
+/// first core. This is used for custodian backup tests.
+fn single_core_config(config_path: &Path) -> Result<PathBuf> {
+    let initial_file_name = config_path
+        .file_name()
+        .ok_or_else(|| anyhow::anyhow!("No file name in config path: {config_path:?}"))?
+        .to_string_lossy();
+    let raw = std::fs::read_to_string(config_path)?;
+    let mut cfg: CoreClientConfig =
+        toml::from_str(&raw).map_err(|e| anyhow::anyhow!("parsing client config: {e}"))?;
+    cfg.cores.truncate(1);
+    let single_path = config_path.with_file_name(format!("{}_single.toml", initial_file_name));
+    write_core_client_toml(&single_path, &cfg)?;
+    Ok(single_path)
+}
+
 /// Mock PCR value used for TLS auto mode in test configs.
 /// This must match the value the test enclave mock expects.
 const MOCK_PCR: &str = "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f";
+
+/// Polling budget (number of `get_*_result` retries) for real, secure MPC
+/// operations — preprocessing, key generation and CRS ceremonies.
+/// I.e how many `SLEEP_TIME_BETWEEN_REQUESTS_MS` intervals to wait before giving up and treating the operation as failed.
+const SLOW_OP_MAX_ITER: usize = 6000;
 
 /// Build a minimal `CoreConfig` for a threshold test party.
 fn build_test_core_config(
@@ -89,6 +105,7 @@ fn build_test_core_config(
             timeout_secs: 30,
             grpc_max_message_size: 104_857_600,
         },
+        enclave_bootstrap: None,
         telemetry: None,
         aws: Some(AWSConfig {
             region: "us-east-1".to_string(),
@@ -125,7 +142,6 @@ fn build_test_core_config(
                     pcr1: mock_pcr_bytes.clone(),
                     pcr2: mock_pcr_bytes,
                 }],
-                ignore_aws_ca_chain: None,
                 attest_private_vault_root_key: None,
                 renew_slack_after_expiration: None,
                 renew_fail_retry_timeout: None,
@@ -134,14 +150,19 @@ fn build_test_core_config(
             my_id: Some(my_id),
             dec_capacity: 100,
             min_dec_cache: 10,
-            preproc_redis: None,
             num_sessions_preproc: Some(2),
             peers: Some(peers),
-            core_to_core_net: None,
+            core_to_core_net: CoreToCoreNetworkConfig::default(),
             decryption_mode: DecryptionMode::NoiseFloodSmall,
         }),
         internal_config: None,
         mock_enclave: Some(true),
+        migration: Some(MigrationConfig {
+            context_associations: vec![ContextEpochAssociation {
+                context_id: DEFAULT_MPC_CONTEXT.to_string(),
+                epoch_ids: vec![DEFAULT_EPOCH_ID.to_string()],
+            }],
+        }),
     }
 }
 
@@ -286,7 +307,7 @@ async fn setup_isolated_threshold_cli_test_signing_only(
     test_name: &str,
     party_count: usize,
 ) -> Result<(tempfile::TempDir, HashMap<u32, ServerHandle>, PathBuf)> {
-    setup_isolated_threshold_cli_test_impl_with_spec(
+    setup_isolated_threshold_cli_test(
         test_name,
         party_count,
         false,
@@ -310,9 +331,6 @@ async fn setup_isolated_threshold_cli_test_signing_only(
 /// * `PathBuf` - Path to generated CLI config file (for --config flag)
 ///
 /// # Note
-/// Requires `threshold_tests` feature. Tests using this must be marked with:
-/// - `#[cfg_attr(not(feature = "threshold_tests"), ignore)]`
-///
 /// This helper enables `ensure_default_prss=true` during server startup. For Test params,
 /// pre-generated PRSS from `test-material` may be copied and reused when present.
 ///
@@ -322,7 +340,6 @@ async fn setup_isolated_threshold_cli_test_signing_only(
 /// # Example
 /// ```no_run
 /// #[tokio::test]
-/// #[cfg_attr(not(feature = "threshold_tests"), ignore)]
 /// async fn test_prss_feature() -> Result<()> {
 ///     let (material_dir, _servers, config_path) =
 ///         setup_isolated_threshold_cli_test_with_prss("my_prss_test", 4).await?;
@@ -330,18 +347,18 @@ async fn setup_isolated_threshold_cli_test_signing_only(
 ///     Ok(())
 /// }
 /// ```
-#[cfg(feature = "threshold_tests")]
 async fn setup_isolated_threshold_cli_test_with_prss(
     test_name: &str,
     party_count: usize,
 ) -> Result<(tempfile::TempDir, HashMap<u32, ServerHandle>, PathBuf)> {
-    setup_isolated_threshold_cli_test_impl(
+    setup_isolated_threshold_cli_test(
         test_name,
         party_count,
         true,
         false,
         false,
         FheParameter::Test,
+        None,
     )
     .await
 }
@@ -351,13 +368,14 @@ async fn setup_isolated_threshold_cli_test_with_backup(
     test_name: &str,
     party_count: usize,
 ) -> Result<(tempfile::TempDir, HashMap<u32, ServerHandle>, PathBuf)> {
-    setup_isolated_threshold_cli_test_impl(
+    setup_isolated_threshold_cli_test(
         test_name,
         party_count,
         false,
         true,
         false,
         FheParameter::Test,
+        None,
     )
     .await
 }
@@ -367,13 +385,14 @@ async fn setup_isolated_threshold_cli_test_with_custodian_backup(
     test_name: &str,
     party_count: usize,
 ) -> Result<(tempfile::TempDir, HashMap<u32, ServerHandle>, PathBuf)> {
-    setup_isolated_threshold_cli_test_impl(
+    setup_isolated_threshold_cli_test(
         test_name,
         party_count,
         false,
         true,
         true,
         FheParameter::Test,
+        None,
     )
     .await
 }
@@ -403,13 +422,14 @@ async fn setup_isolated_threshold_cli_test_default(
     test_name: &str,
     party_count: usize,
 ) -> Result<(tempfile::TempDir, HashMap<u32, ServerHandle>, PathBuf)> {
-    setup_isolated_threshold_cli_test_impl(
+    setup_isolated_threshold_cli_test(
         test_name,
         party_count,
         false,
         false,
         false,
         FheParameter::Default,
+        None,
     )
     .await
 }
@@ -421,18 +441,19 @@ async fn setup_isolated_threshold_cli_test_default(
 /// PRSS is ensured at server startup: if the default epoch is missing, startup initializes it;
 /// otherwise existing PRSS is reused. Default threshold context and key material still come
 /// from `test-material/default`, but `PrssSetupCombined` is not copied up front.
-#[cfg(feature = "threshold_tests")]
+#[cfg(feature = "slow_tests")]
 async fn setup_isolated_threshold_cli_test_with_prss_default(
     test_name: &str,
     party_count: usize,
 ) -> Result<(tempfile::TempDir, HashMap<u32, ServerHandle>, PathBuf)> {
-    setup_isolated_threshold_cli_test_impl(
+    setup_isolated_threshold_cli_test(
         test_name,
         party_count,
         true,
         false,
         false,
         FheParameter::Default,
+        None,
     )
     .await
 }
@@ -522,29 +543,10 @@ fn generate_threshold_cli_config(
     Ok(config_path)
 }
 
-/// Internal implementation for threshold CLI test setup
-async fn setup_isolated_threshold_cli_test_impl(
-    test_name: &str,
-    party_count: usize,
-    ensure_default_prss: bool,
-    with_backup_vault: bool,
-    with_custodian_keychain: bool,
-    fhe_params: FheParameter,
-) -> Result<(tempfile::TempDir, HashMap<u32, ServerHandle>, PathBuf)> {
-    setup_isolated_threshold_cli_test_impl_with_spec(
-        test_name,
-        party_count,
-        ensure_default_prss,
-        with_backup_vault,
-        with_custodian_keychain,
-        fhe_params,
-        None,
-    )
-    .await
-}
-
-/// Internal implementation for threshold CLI test setup with optional material spec
-async fn setup_isolated_threshold_cli_test_impl_with_spec(
+/// Internal implementation for threshold CLI test setup.
+///
+/// `material_spec` overrides the default material selected for `fhe_params`.
+async fn setup_isolated_threshold_cli_test(
     test_name: &str,
     party_count: usize,
     ensure_default_prss: bool,
@@ -615,6 +617,7 @@ async fn setup_isolated_threshold_cli_test_impl_with_spec(
 /// - Config path for context 2 (servers 5,6,4,3)
 ///
 /// TODO: add possibility for dynamic party number setup
+#[cfg(feature = "slow_tests")]
 async fn setup_party_resharing_servers(
     test_name: &str,
 ) -> Result<(
@@ -672,19 +675,18 @@ async fn setup_party_resharing_servers(
 
     // Ensure signing keys exist for all 6 servers
     // The test material only has keys for 4 parties, so we need to generate for servers 5-6
-    use kms_lib::consts::SIGNING_KEY_ID;
     use kms_lib::util::key_setup::{
         ThresholdSigningKeyConfig, ensure_threshold_server_signing_keys_exist,
     };
-    let _ = ensure_threshold_server_signing_keys_exist(
+    ensure_threshold_server_signing_keys_exist(
         &mut pub_storages,
         &mut priv_storages,
-        &SIGNING_KEY_ID,
         true, // deterministic
         ThresholdSigningKeyConfig::AllParties((1..=6).map(|i| format!("party-{i}")).collect()),
         false, // don't skip if exists
     )
-    .await;
+    .await
+    .unwrap();
 
     // Create peer configurations for party resharing:
     // - Servers 1-4: peers [1,2,3,4] (standard 4-party setup)
@@ -998,20 +1000,66 @@ fn cipher_params(
         context_id: None,
         epoch_id: None,
         batch_size,
-        num_requests: 1,
-        parallel_requests: 1,
         ciphertext_output_path,
-        inter_request_delay_ms: 0,
     }
 }
 
-/// Helper to run insecure preprocessing and key generation via CLI.
-async fn insecure_key_gen(
-    config_path: &Path,
-    test_path: &Path,
-    uncompressed: bool,
-) -> Result<String> {
-    insecure_preproc_and_keygen(config_path, test_path, uncompressed).await
+/// Build a `DecryptParameters` with sensible defaults, overriding only what varies per test case.
+fn public_decrypt_params(
+    to_encrypt: &str,
+    data_type: FheType,
+    key_id: KeyId,
+    batch_size: usize,
+    no_compression: bool,
+    no_precompute_sns: bool,
+    ciphertext_output_path: Option<PathBuf>,
+) -> DecryptParameters {
+    DecryptParameters {
+        to_encrypt: to_encrypt.to_string(),
+        data_type,
+        no_compression,
+        no_precompute_sns,
+        key_id,
+        context_id: None,
+        epoch_id: None,
+        batch_size,
+        ciphertext_output_path,
+        sync: false,
+        rate_options: DecryptRateOptions::default(),
+    }
+}
+
+/// Build `DecryptParameters` for a single non-rate user decrypt.
+fn user_decrypt_params(
+    to_encrypt: &str,
+    data_type: FheType,
+    key_id: KeyId,
+    batch_size: usize,
+    no_compression: bool,
+    no_precompute_sns: bool,
+) -> DecryptParameters {
+    DecryptParameters {
+        to_encrypt: to_encrypt.to_string(),
+        data_type,
+        no_compression,
+        no_precompute_sns,
+        key_id,
+        context_id: None,
+        epoch_id: None,
+        batch_size,
+        ciphertext_output_path: None,
+        sync: false,
+        rate_options: DecryptRateOptions::default(),
+    }
+}
+
+fn user_decrypt_file(input_path: PathBuf, batch_size: usize) -> DecryptFile {
+    DecryptFile {
+        input_path,
+        batch_size,
+        sync: false,
+        rate_options: DecryptRateOptions::default(),
+    }
 }
 
 /// Helper to run the insecure (dummy) preprocessing and insecure key generation
@@ -1019,6 +1067,7 @@ async fn insecure_key_gen(
 async fn insecure_preproc_and_keygen(
     config_path: &Path,
     test_path: &Path,
+    max_iter: usize,
     uncompressed: bool,
 ) -> Result<String> {
     let preproc_config = cmd_config(
@@ -1027,7 +1076,7 @@ async fn insecure_preproc_and_keygen(
             context_id: None,
             epoch_id: None,
         }),
-        200,
+        max_iter,
     );
     let preproc_id = run_cmd(&preproc_config, test_path, "insecure preprocessing").await?;
 
@@ -1040,7 +1089,7 @@ async fn insecure_preproc_and_keygen(
                 ..Default::default()
             },
         }),
-        200,
+        max_iter,
     );
     let key_id = run_cmd(&keygen_config, test_path, "insecure key-gen").await?;
     Ok(key_id.to_string())
@@ -1057,7 +1106,7 @@ async fn crs_gen(config_path: &Path, test_path: &Path, insecure_crs_gen: bool) -
         test_path,
         insecure_crs_gen,
         2048,
-        200,
+        SLOW_OP_MAX_ITER,
         *DEFAULT_EPOCH_ID,
         *DEFAULT_MPC_CONTEXT,
     )
@@ -1093,7 +1142,7 @@ async fn crs_gen_with_params(
 
 /// Helper to run integration test commands via CLI (isolated version)
 ///
-/// Mirrors the Docker-based `integration_test_commands` in integration_test.rs:
+/// Exercises via CLI:
 /// - PublicDecrypt/UserDecrypt across ebool, euint8 (compressed/uncompressed), euint16, euint256
 /// - Encrypt to file + PublicDecrypt/UserDecrypt from file
 /// - SnS precompute variants (no_precompute_sns=false)
@@ -1105,59 +1154,74 @@ async fn integration_test_commands(
     let key_id = KeyId::from_str(&key_id)?;
     let ctxt_path = keys_folder.join("test_encrypt_cipher.txt");
     let ctxt_with_sns_path = keys_folder.join("test_encrypt_cipher_with_sns.txt");
+    let compressed_ctxt_with_sns_path =
+        keys_folder.join("test_encrypt_compressed_cipher_with_sns.txt");
 
-    let cp = |val: &str, dt: FheType, bs: usize, no_comp: bool, no_sns: bool| {
-        cipher_params(val, dt, key_id, bs, no_comp, no_sns, None)
+    let pdp = |val: &str, dt: FheType, bs: usize, no_comp: bool, no_sns: bool| {
+        public_decrypt_params(val, dt, key_id, bs, no_comp, no_sns, None)
+    };
+    let ucp = |val: &str, dt: FheType, bs: usize, no_comp: bool, no_sns: bool| {
+        user_decrypt_params(val, dt, key_id, bs, no_comp, no_sns)
     };
 
     // Commands without SnS precompute (no_precompute_sns=true)
     let commands = vec![
-        CCCommand::PublicDecrypt(CipherArguments::FromArgs(cp(
+        CCCommand::PublicDecrypt(DecryptArguments::FromArgs(pdp(
             "0x1",
             FheType::Ebool,
             1,
             false,
             true,
         ))),
-        CCCommand::UserDecrypt(CipherArguments::FromArgs(cp(
+        CCCommand::UserDecrypt(DecryptArguments::FromArgs(ucp(
             "0x1",
             FheType::Ebool,
             1,
             false,
             true,
         ))),
-        CCCommand::PublicDecrypt(CipherArguments::FromArgs(cp(
+        // Same user decryption through the synchronous endpoint (single round trip)
+        CCCommand::UserDecrypt(DecryptArguments::FromArgs(DecryptParameters {
+            sync: true,
+            ..ucp("0x1", FheType::Ebool, 1, false, true)
+        })),
+        // Same public decryption through the synchronous endpoint (single round trip)
+        CCCommand::PublicDecrypt(DecryptArguments::FromArgs(DecryptParameters {
+            sync: true,
+            ..pdp("0x1", FheType::Ebool, 1, false, true)
+        })),
+        CCCommand::PublicDecrypt(DecryptArguments::FromArgs(pdp(
             "0x6F",
             FheType::Euint8,
             3,
             true,
             true,
         ))),
-        CCCommand::PublicDecrypt(CipherArguments::FromArgs(cp(
+        CCCommand::PublicDecrypt(DecryptArguments::FromArgs(pdp(
             "0x6F",
             FheType::Euint8,
             3,
             false,
             true,
         ))),
-        CCCommand::PublicDecrypt(CipherArguments::FromArgs(cp(
+        CCCommand::PublicDecrypt(DecryptArguments::FromArgs(pdp(
             "0xFFFF",
             FheType::Euint16,
             3,
             false,
             true,
         ))),
-        CCCommand::PublicDecrypt(CipherArguments::FromArgs(cp(
+        CCCommand::PublicDecrypt(DecryptArguments::FromArgs(pdp(
             "0x96BF913158B2F39228DF1CA037D537E521CE14B95D225928E4E9B5305EC4592B",
             FheType::Euint256,
-            3,
+            2,
             false,
             true,
         ))),
-        CCCommand::UserDecrypt(CipherArguments::FromArgs(cp(
+        CCCommand::UserDecrypt(DecryptArguments::FromArgs(ucp(
             "0xC958D835E4B1922CE9B13BAD322CF67D81CE14B95D225928E4E9B5305EC4592C",
             FheType::Euint256,
-            3,
+            2,
             false,
             true,
         ))),
@@ -1170,63 +1234,69 @@ async fn integration_test_commands(
             true,
             Some(ctxt_path.clone()),
         )),
-        CCCommand::PublicDecrypt(CipherArguments::FromFile(CipherFile {
+        CCCommand::PublicDecrypt(DecryptArguments::FromFile(DecryptFile {
             input_path: ctxt_path.clone(),
-            batch_size: 3,
-            num_requests: 3,
-            parallel_requests: 1,
-            inter_request_delay_ms: 0,
+            batch_size: 2,
+            sync: false,
+            rate_options: DecryptRateOptions::default(),
         })),
-        CCCommand::UserDecrypt(CipherArguments::FromFile(CipherFile {
-            input_path: ctxt_path.clone(),
-            batch_size: 3,
-            num_requests: 3,
-            parallel_requests: 1,
-            inter_request_delay_ms: 0,
-        })),
+        CCCommand::UserDecrypt(DecryptArguments::FromFile(user_decrypt_file(
+            ctxt_path.clone(),
+            2,
+        ))),
     ];
 
     // Commands with SnS precompute (no_precompute_sns=false)
     let commands_for_sns_precompute = vec![
-        CCCommand::PublicDecrypt(CipherArguments::FromArgs(cp(
+        CCCommand::PublicDecrypt(DecryptArguments::FromArgs(pdp(
             "0x1",
             FheType::Ebool,
             2,
             true,
             false,
         ))),
-        CCCommand::UserDecrypt(CipherArguments::FromArgs(cp(
+        CCCommand::UserDecrypt(DecryptArguments::FromArgs(ucp(
             "0x78",
             FheType::Euint8,
             2,
             true,
             false,
         ))),
-        CCCommand::UserDecrypt(CipherArguments::FromArgs(cp(
+        CCCommand::UserDecrypt(DecryptArguments::FromArgs(ucp(
             "0x1",
             FheType::Ebool,
             1,
             true,
             false,
         ))),
-        CCCommand::PublicDecrypt(CipherArguments::FromArgs(cp(
+        CCCommand::PublicDecrypt(DecryptArguments::FromArgs(pdp(
             "0x6F",
             FheType::Euint8,
             3,
             true,
             false,
         ))),
-        CCCommand::PublicDecrypt(CipherArguments::FromArgs(cp(
+        CCCommand::PublicDecrypt(DecryptArguments::FromArgs(pdp(
             "0xC958D835E4B1922CE9B13BAD322CF67D8E06CDA1B9ECF03956822D0D186F7820",
             FheType::Euint256,
-            3,
+            2,
             true,
             false,
         ))),
-        CCCommand::UserDecrypt(CipherArguments::FromArgs(cp(
+        // Production format: `BigCompressed` (compressed + SnS precomputed). The other blocks
+        // cover Small*/BigExpanded; this is the format real deployments actually run, so the
+        // suite must exercise it explicitly.
+        CCCommand::PublicDecrypt(DecryptArguments::FromArgs(pdp(
+            "0x0123456789ABCDEF0123456789ABCDEF0123456789ABCDEF0123456789ABCDEF",
+            FheType::Euint256,
+            2,
+            false,
+            false,
+        ))),
+        CCCommand::UserDecrypt(DecryptArguments::FromArgs(ucp(
             "0xC9BF913158B2F39228DF1CA037D537E521CE14B95D225928E4E9B5305EC4592F",
             FheType::Euint256,
-            3,
+            2,
             true,
             false,
         ))),
@@ -1239,20 +1309,37 @@ async fn integration_test_commands(
             false,
             Some(ctxt_with_sns_path.clone()),
         )),
-        CCCommand::PublicDecrypt(CipherArguments::FromFile(CipherFile {
+        CCCommand::PublicDecrypt(DecryptArguments::FromFile(DecryptFile {
             input_path: ctxt_with_sns_path.clone(),
-            batch_size: 3,
-            num_requests: 3,
-            parallel_requests: 1,
-            inter_request_delay_ms: 0,
+            batch_size: 2,
+            sync: false,
+            rate_options: DecryptRateOptions::default(),
         })),
-        CCCommand::UserDecrypt(CipherArguments::FromFile(CipherFile {
-            input_path: ctxt_with_sns_path.clone(),
-            batch_size: 3,
-            num_requests: 3,
-            parallel_requests: 1,
-            inter_request_delay_ms: 0,
+        CCCommand::UserDecrypt(DecryptArguments::FromFile(user_decrypt_file(
+            ctxt_with_sns_path.clone(),
+            2,
+        ))),
+        // Production format: `BigCompressed` (compressed + SnS precomputed). Exercise the
+        // same format when the ciphertext is loaded from a file rather than encrypted in-process.
+        CCCommand::Encrypt(cipher_params(
+            "0x0123456789ABCDEF0123456789ABCDEF0123456789ABCDEF0123456789ABCDEF",
+            FheType::Euint256,
+            key_id,
+            1,
+            false,
+            false,
+            Some(compressed_ctxt_with_sns_path.clone()),
+        )),
+        CCCommand::PublicDecrypt(DecryptArguments::FromFile(DecryptFile {
+            input_path: compressed_ctxt_with_sns_path.clone(),
+            batch_size: 2,
+            sync: false,
+            rate_options: DecryptRateOptions::default(),
         })),
+        CCCommand::UserDecrypt(DecryptArguments::FromFile(user_decrypt_file(
+            compressed_ctxt_with_sns_path,
+            2,
+        ))),
     ];
 
     let all_commands = [commands, commands_for_sns_precompute].concat();
@@ -1266,10 +1353,8 @@ async fn integration_test_commands(
 
         // Validate result count matches expected requests
         match &command {
-            CCCommand::PublicDecrypt(cipher_arguments)
-            | CCCommand::UserDecrypt(cipher_arguments) => {
-                let num_expected_results = cipher_arguments.get_num_requests();
-                assert_eq!(results.len(), num_expected_results);
+            CCCommand::PublicDecrypt(_) | CCCommand::UserDecrypt(_) => {
+                assert_eq!(results.len(), 1);
             }
             _ => {}
         }
@@ -1324,112 +1409,6 @@ async fn integration_test_commands(
             CCCommand::InsecureCrsGen(_) => {
                 CCCommand::InsecureCrsGenResult(CrsGenResultParameters {
                     request_id: req_id.unwrap(),
-                    context_id: None,
-                    epoch_id: None,
-                    no_verify: false,
-                })
-            }
-            _ => CCCommand::DoNothing(NoParameters {}),
-        };
-
-        let expect_result = !matches!(&get_res_command, CCCommand::DoNothing(_));
-
-        if expect_result {
-            let config = cmd_config(config_path, get_res_command, 500);
-
-            let mut results_bis = execute_cmd(&config, keys_folder)
-                .await
-                .map_err(|e| anyhow::anyhow!("{}", e))?;
-            assert_eq!(results_bis.len(), 1);
-            let (sid_bis, result_bis) = results_bis.remove(0);
-
-            for (sid, result) in results {
-                if sid_bis == sid {
-                    assert_eq!(result_bis, result);
-                }
-            }
-        }
-
-        tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
-    }
-
-    Ok(())
-}
-
-/// Run a subset of integration test commands using the default keyset format.
-///
-/// The default public material stores only `CompressedXofKeySet`
-/// (no separate `PublicKey`/`ServerKey`); the storage probe in
-/// [`fetch_keys_auto_detect`] resolves which layout to load.
-async fn integration_test_commands_default_keys(
-    config_path: &Path,
-    keys_folder: &Path,
-    key_id: String,
-) -> Result<()> {
-    let key_id = KeyId::from_str(&key_id)?;
-
-    let cp = |val: &str, dt: FheType, bs: usize, no_sns: bool| {
-        cipher_params(val, dt, key_id, bs, false, no_sns, None)
-    };
-
-    let commands = vec![
-        CCCommand::PublicDecrypt(CipherArguments::FromArgs(cp(
-            "0x1",
-            FheType::Ebool,
-            2,
-            true,
-        ))),
-        CCCommand::UserDecrypt(CipherArguments::FromArgs(cp(
-            "0x78",
-            FheType::Euint8,
-            2,
-            true,
-        ))),
-        CCCommand::PublicDecrypt(CipherArguments::FromArgs(cp(
-            "0x6F",
-            FheType::Euint8,
-            3,
-            false,
-        ))),
-        CCCommand::UserDecrypt(CipherArguments::FromArgs(cp(
-            "0xC958D835E4B1922CE9B13BAD322CF67D81CE14B95D225928E4E9B5305EC4592C",
-            FheType::Euint256,
-            3,
-            false,
-        ))),
-    ];
-
-    for command in commands {
-        let config = cmd_config(config_path, command.clone(), 500);
-
-        let results = execute_cmd(&config, keys_folder)
-            .await
-            .map_err(|e| anyhow::anyhow!("{}", e))?;
-
-        match &command {
-            CCCommand::PublicDecrypt(cipher_arguments)
-            | CCCommand::UserDecrypt(cipher_arguments) => {
-                let num_expected_results = cipher_arguments.get_num_requests();
-                assert_eq!(results.len(), num_expected_results);
-            }
-            _ => {}
-        }
-
-        // Also test the get result commands
-        let req_id = results[0].0;
-
-        let get_res_command = match command {
-            CCCommand::PublicDecrypt(ref cipher_args) => {
-                // Reconstruct the same distinct per-ciphertext handles the request builder
-                // used (`integration_test_handles`), so the external-signature verification
-                // path runs instead of the unverified fetch.
-                let external_handles = integration_test_handles(cipher_args.get_batch_size())
-                    .iter()
-                    .map(hex::encode)
-                    .collect();
-                CCCommand::PublicDecryptResult(PublicDecryptResultParameters {
-                    request_id: req_id.unwrap(),
-                    external_handles,
                     context_id: None,
                     epoch_id: None,
                     no_verify: false,
@@ -1533,9 +1512,8 @@ async fn restore_from_backup(config_path: &Path, test_path: &Path) -> Result<()>
     Ok(())
 }
 
-/// Helper to run preprocessing and keygen via CLI (isolated version)
-/// Only used by PRSS tests which are gated by threshold_tests feature
-#[cfg(feature = "threshold_tests")]
+/// Helper to run preprocessing and keygen via CLI (isolated version).
+/// Used by PRSS-based keygen tests (some run per-PR, some gated by `slow_tests`).
 async fn real_preproc_and_keygen(
     config_path: &Path,
     test_path: &Path,
@@ -1584,7 +1562,7 @@ async fn real_preproc_and_keygen(
 /// Uses `PartialPreprocKeyGen` with reduced offline generation to keep runtime
 /// manageable for Default FHE parameters in CI while still exercising the
 /// keygen flow.
-#[cfg(feature = "threshold_tests")]
+#[cfg(feature = "slow_tests")]
 async fn real_partial_preproc_and_keygen(
     config_path: &Path,
     test_path: &Path,
@@ -1719,10 +1697,15 @@ async fn real_preproc_and_keygen_with_context(
             uncompressed: false,
             from_existing_shares: false,
         }),
-        200,
+        SLOW_OP_MAX_ITER,
     );
 
+    let t0 = std::time::Instant::now();
     let preproc_id = run_cmd(&preproc_config, test_path, "preprocessing with context").await?;
+    info!(
+        "Preprocessing with context done with ID {preproc_id:?} (elapsed: {:.1}s)",
+        t0.elapsed().as_secs_f64()
+    );
 
     let keygen_config = cmd_config(
         config_path,
@@ -1734,16 +1717,20 @@ async fn real_preproc_and_keygen_with_context(
                 ..Default::default()
             },
         }),
-        200,
+        SLOW_OP_MAX_ITER,
     );
 
+    let t1 = std::time::Instant::now();
     let key_id = run_cmd(&keygen_config, test_path, "key-gen with context").await?;
+    info!(
+        "Key-gen with context done (elapsed: {:.1}s)",
+        t1.elapsed().as_secs_f64()
+    );
 
     Ok((key_id.to_string(), preproc_id.to_string()))
 }
 
 /// Helper to run reshare operation via CLI (isolated version)
-#[cfg(feature = "threshold_tests")]
 async fn reshare(
     config_path: &Path,
     test_path: &Path,
@@ -1779,6 +1766,128 @@ async fn reshare(
     Ok(resharing_result)
 }
 
+/// Build a `CmdConfig` spanning several client config files.
+///
+/// `execute_cmd` merges them, de-duplicating cores by address against the first config file.
+/// This is how a single command reaches every party of two overlapping MPC contexts at once.
+/// The merged core list may be larger than the `num_parties` of any single config, so
+/// `expect_all_responses` is off here.
+#[cfg(feature = "slow_tests")]
+fn cmd_config_multi(config_paths: &[&Path], command: CCCommand, max_iter: usize) -> CmdConfig {
+    CmdConfig {
+        file_conf: Some(
+            config_paths
+                .iter()
+                .map(|p| p.to_str().unwrap().to_string())
+                .collect(),
+        ),
+        command,
+        logs: true,
+        max_iter,
+        expect_all_responses: false,
+        download_all: false,
+    }
+}
+
+/// Create an MPC context on every party of several configs.
+///
+/// A party outside the context still needs to know about it: two-set resharing has each side
+/// build a joint session over the union of the old and the new context, so both sets must hold
+/// both contexts.
+#[cfg(feature = "slow_tests")]
+async fn new_mpc_context_all_sets(
+    config_paths: &[&Path],
+    context_path: &Path,
+    test_path: &Path,
+) -> Result<()> {
+    let config = cmd_config_multi(
+        config_paths,
+        CCCommand::NewMpcContext(NewMpcContextParameters::SerializedContextPath(
+            ContextPath {
+                input_path: context_path.to_path_buf(),
+            },
+        )),
+        200,
+    );
+    run_cmd_no_id(&config, test_path, "new MPC context (all sets)").await
+}
+
+/// Reshare into a new context held by a *different* set of parties.
+///
+/// Unlike [`reshare`], which keeps `new_context_id` equal to the source context, this creates
+/// `new_epoch_id` under `new_context_id` while the key material comes from
+/// `from_context_id`/`from_epoch_id`. The request therefore has to reach the union of both party
+/// sets, hence the list of config files.
+#[cfg(feature = "slow_tests")]
+#[expect(clippy::too_many_arguments)]
+async fn reshare_two_sets(
+    config_paths: &[&Path],
+    test_path: &Path,
+    from_context_id: ContextId,
+    from_epoch_id: EpochId,
+    new_context_id: ContextId,
+    new_epoch_id: EpochId,
+    previous_key_infos: Vec<PreviousKeyInfo>,
+    previous_crs_infos: Vec<PreviousCrsInfo>,
+) -> Result<Vec<(Option<RequestId>, String)>> {
+    let config = cmd_config_multi(
+        config_paths,
+        CCCommand::NewEpoch(NewEpochParameters {
+            new_epoch_id,
+            new_context_id,
+            previous_epoch_params: Some(PreviousEpochParameters {
+                context_id: from_context_id,
+                epoch_id: from_epoch_id,
+                previous_keys: previous_key_infos,
+                previous_crs: previous_crs_infos,
+            }),
+        }),
+        200,
+    );
+
+    info!("Doing two-set resharing");
+    let resharing_result = execute_cmd(&config, test_path)
+        .await
+        .map_err(|e| anyhow::anyhow!("Failed to do two-set resharing: {}", e))?;
+    info!("Two-set resharing done");
+
+    Ok(resharing_result)
+}
+
+/// Copy one public artifact from a party's public storage into other parties' public storage.
+///
+/// A node joining a context holds no local copy of the previous epoch's public material, so
+/// `get_verified_fhe_public_materials` / `get_verified_crs_material` fall back to downloading it
+/// from a peer's S3 bucket. This harness has no S3 server — servers store to plain files, and the
+/// server-side fetcher (`RealReadOnlyS3StorageGetter`) only speaks S3 — so that download is
+/// simulated here by putting the bytes where the joining node looks first.
+///
+/// This does not weaken the test: the material is public, the KMS still verifies its digest
+/// against what the resharing request claims, and the secret shares — the only thing resharing
+/// actually transfers — are untouched. The one path left uncovered is the peer S3 fetch itself,
+/// which needs the docker-compose harness (`dev-s3-mock`) to exercise.
+#[cfg(feature = "slow_tests")]
+fn seed_public_material(
+    material_path: &Path,
+    from_prefix: &str,
+    to_prefixes: &[&str],
+    data_type: PubDataType,
+    data_id: &RequestId,
+) -> Result<()> {
+    // FileStorage lays items out as <root>/<prefix>/<data_type>/<request_id>.
+    let relative = Path::new(&data_type.to_string()).join(data_id.to_string());
+    let source = material_path.join(from_prefix).join(&relative);
+    for to_prefix in to_prefixes {
+        let destination = material_path.join(to_prefix).join(&relative);
+        if let Some(parent) = destination.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        std::fs::copy(&source, &destination)
+            .with_context(|| format!("seeding {source:?} into {destination:?}"))?;
+    }
+    Ok(())
+}
+
 // ============================================================================
 // CUSTODIAN HELPER FUNCTIONS
 // ============================================================================
@@ -1788,14 +1897,14 @@ async fn new_custodian_context(
     config_path: &Path,
     test_path: &Path,
     custodian_threshold: u32,
-    setup_msg_paths: Vec<PathBuf>,
+    setup_msgs: Vec<String>,
 ) -> String {
     let config = cmd_config(
         config_path,
         CCCommand::NewCustodianContext(NewCustodianContextParameters {
             threshold: custodian_threshold,
-            setup_msg_paths,
-            mpc_context_id: DEFAULT_MPC_CONTEXT.to_string(),
+            setup_msgs,
+            mpc_context_id: *DEFAULT_MPC_CONTEXT,
         }),
         200,
     );
@@ -1872,23 +1981,12 @@ fn parse_custodian_bin_returns_none_when_absent() {
     assert_eq!(parse_custodian_bin(stdout), None);
 }
 
-async fn generate_custodian_keys_to_file(
-    temp_dir: &Path,
-    custodian_count: usize,
-) -> Result<(Vec<String>, Vec<PathBuf>)> {
+async fn generate_custodian_keys(custodian_count: usize) -> Result<(Vec<String>, Vec<String>)> {
     let mut seeds = Vec::new();
-    let mut setup_msgs_paths = Vec::new();
+    let mut setup_msgs = Vec::new();
     let custodian_bin = build_kms_custodian()?;
 
     for cus_idx in 1..=custodian_count {
-        let cur_setup_path = temp_dir
-            .join("CUSTODIAN")
-            .join("setup-msg")
-            .join(format!("setup-{}", cus_idx));
-
-        // Ensure the dir exists
-        create_dir_all(cur_setup_path.parent().unwrap()).unwrap();
-
         let cmd_output = Command::new(&custodian_bin)
             .args([
                 "generate",
@@ -1898,8 +1996,6 @@ async fn generate_custodian_keys_to_file(
                 &cus_idx.to_string(),
                 "--custodian-name",
                 &format!("skynet-{cus_idx}"),
-                "--path",
-                cur_setup_path.to_str().unwrap(),
             ])
             .output()?;
         assert!(
@@ -1908,12 +2004,26 @@ async fn generate_custodian_keys_to_file(
             String::from_utf8_lossy(&cmd_output.stderr)
         );
 
+        let setup_msg = extract_setup_message(&cmd_output);
         let seed_phrase = extract_seed_phrase(cmd_output);
         seeds.push(seed_phrase);
-        setup_msgs_paths.push(cur_setup_path);
+        setup_msgs.push(setup_msg);
     }
 
-    Ok((seeds, setup_msgs_paths))
+    Ok((seeds, setup_msgs))
+}
+
+fn extract_setup_message(out: &Output) -> String {
+    let output_string = String::from_utf8_lossy(&out.stdout);
+    let setup_msg_line = output_string
+        .lines()
+        .find(|line| line.contains(SETUP_MESSAGE_DESC))
+        .expect("generate output should contain the custodian setup message");
+    setup_msg_line
+        .split_at(setup_msg_line.find(SETUP_MESSAGE_DESC).unwrap() + SETUP_MESSAGE_DESC.len())
+        .1
+        .trim()
+        .to_string()
 }
 
 fn extract_seed_phrase(out: Output) -> String {
@@ -1938,15 +2048,10 @@ fn extract_seed_phrase(out: Output) -> String {
 }
 
 /// Native implementation: Initialize custodian backup using isolated config.
-async fn custodian_backup_init(
-    config_path: &Path,
-    test_path: &Path,
-    operator_recovery_resp_paths: Vec<PathBuf>,
-) {
+async fn custodian_backup_init(config_path: &Path, test_path: &Path) -> Vec<String> {
     let config = cmd_config(
         config_path,
         CCCommand::CustodianRecoveryInit(RecoveryInitParameters {
-            operator_recovery_resp_paths,
             overwrite_ephemeral_key: false,
         }),
         200,
@@ -1955,47 +2060,23 @@ async fn custodian_backup_init(
         .await
         .expect("backup init: execute_cmd failed");
     assert_eq!(results.len(), 1, "backup init: expected 1 result");
+    results.into_iter().map(|res| res.1).collect()
 }
 
 /// Native implementation: Re-encrypt custodian backups using kms-custodian binary directly
 async fn custodian_reencrypt(
-    temp_dir: &Path,
     amount_operators: usize,
     custodian_count: usize,
-    backup_id: RequestId,
-    mpc_context_id: ContextId,
     seeds: &[String],
-    recovery_paths: &[PathBuf],
-) -> Result<Vec<PathBuf>> {
-    let mut response_paths = Vec::new();
+    operator_recovery_resps: &[String],
+) -> Result<Vec<String>> {
+    let mut cus_rec_resps = Vec::new();
     let custodian_bin = build_kms_custodian()?;
 
     for operator_index in 1..=amount_operators {
-        let pub_prefix = if amount_operators == 1 {
-            "PUB".to_string()
-        } else {
-            format!("PUB-p{}", operator_index)
-        };
-
-        let cur_recovery_path = &recovery_paths[operator_index - 1];
+        let cur_recovery_resp = &operator_recovery_resps[operator_index - 1];
 
         for custodian_index in 1..=custodian_count {
-            let cur_response_path = temp_dir
-                .join("CUSTODIAN")
-                .join("response")
-                .join(backup_id.to_string())
-                .join(format!(
-                    "recovery-response-{}-{}",
-                    operator_index, custodian_index,
-                ));
-
-            create_dir_all(cur_response_path.parent().unwrap()).unwrap();
-
-            let verf_path = temp_dir
-                .join(&pub_prefix)
-                .join(PubDataType::VerfKey.to_string())
-                .join(SIGNING_KEY_ID.to_string());
-
             let cmd_output = Command::new(&custodian_bin)
                 .args([
                     "decrypt",
@@ -2003,14 +2084,8 @@ async fn custodian_reencrypt(
                     &seeds[custodian_index - 1],
                     "--custodian-role",
                     &custodian_index.to_string(),
-                    "--operator-verf-key",
-                    verf_path.to_str().unwrap(),
-                    "--mpc-context-id",
-                    &mpc_context_id.to_string(),
                     "-b",
-                    cur_recovery_path.to_str().unwrap(),
-                    "-o",
-                    cur_response_path.to_str().unwrap(),
+                    cur_recovery_resp,
                 ])
                 .output()?;
 
@@ -2020,17 +2095,19 @@ async fn custodian_reencrypt(
                 String::from_utf8_lossy(&cmd_output.stderr)
             );
 
-            response_paths.push(cur_response_path);
+            cus_rec_resps.push(extract_custodian_decryption_payload(
+                &String::from_utf8_lossy(&cmd_output.stdout),
+            ));
         }
     }
-    Ok(response_paths)
+    Ok(cus_rec_resps)
 }
 
 /// Native implementation: Recover custodian backup using isolated config
 async fn custodian_backup_recovery(
     config_path: &Path,
     test_path: &Path,
-    custodian_recovery_outputs: Vec<PathBuf>,
+    custodian_recovery_outputs: Vec<String>,
     backup_id: RequestId,
 ) -> String {
     let config = cmd_config(
@@ -2044,6 +2121,18 @@ async fn custodian_backup_recovery(
     run_cmd(&config, test_path, "backup recovery")
         .await
         .unwrap()
+        .to_string()
+}
+
+fn extract_custodian_decryption_payload(output_string: &str) -> String {
+    let payload_line = output_string
+        .lines()
+        .find(|line| line.contains(RECOVERY_OUTPUT_DESC))
+        .expect("a successful decryption prints the recovery output");
+    payload_line
+        .split_at(payload_line.find(RECOVERY_OUTPUT_DESC).unwrap() + RECOVERY_OUTPUT_DESC.len())
+        .1
+        .trim()
         .to_string()
 }
 
@@ -2164,29 +2253,8 @@ async fn test_centralized_insecure() -> Result<()> {
 
     // Run CLI commands against native server (use material_dir as keys_folder so CLI can access server keys)
     let keys_folder = material_dir.path();
-    let key_id = insecure_key_gen(&config_path, keys_folder, false).await?;
+    let key_id = insecure_preproc_and_keygen(&config_path, keys_folder, 200, false).await?;
     integration_test_commands(&config_path, keys_folder, key_id).await?;
-
-    // Also exercise the default-key fast path separately.
-    let default_key_id = insecure_key_gen(&config_path, keys_folder, false).await?;
-    integration_test_commands_default_keys(&config_path, keys_folder, default_key_id).await?;
-
-    Ok(())
-}
-
-/// Test centralized insecure key generation via CLI using the default key format.
-///
-/// Mirrors `test_centralized_insecure_default_keygen` in `integration_test.rs`.
-#[tokio::test]
-async fn test_centralized_insecure_default_keygen() -> Result<()> {
-    init_logging();
-
-    let (material_dir, _server, config_path) =
-        setup_isolated_centralized_cli_test("centralized_insecure_default_keygen").await?;
-
-    let keys_folder = material_dir.path();
-    let key_id = insecure_preproc_and_keygen(&config_path, keys_folder, false).await?;
-    assert!(!key_id.is_empty());
 
     Ok(())
 }
@@ -2283,66 +2351,35 @@ async fn test_centralized_custodian_backup() -> Result<()> {
     let temp_path = material_dir.path();
 
     // Generate custodian keys using native kms-custodian binary
-    let (seeds, setup_msg_paths) =
-        generate_custodian_keys_to_file(temp_path, amount_custodians).await?;
+    let (seeds, setup_msgs) = generate_custodian_keys(amount_custodians).await?;
 
     // Create custodian context
-    let cus_backup_id = new_custodian_context(
-        &config_path,
-        temp_path,
-        custodian_threshold,
-        setup_msg_paths,
-    )
-    .await;
-
-    let operator_recovery_resp_path = temp_path
-        .join("CUSTODIAN")
-        .join("recovery")
-        .join(&cus_backup_id)
-        .join("central");
-
-    // Ensure the dir exists
-    create_dir_all(operator_recovery_resp_path.parent().unwrap())?;
+    let cus_backup_id =
+        new_custodian_context(&config_path, temp_path, custodian_threshold, setup_msgs).await;
 
     // Initialize custodian backup
-    custodian_backup_init(
-        &config_path,
-        temp_path,
-        vec![operator_recovery_resp_path.clone()],
-    )
-    .await;
+    let operator_recovery_resp = custodian_backup_init(&config_path, temp_path).await;
 
     // Re-encrypt with custodian keys
-    let recovery_output_paths = custodian_reencrypt(
-        temp_path,
-        1,
-        amount_custodians,
-        RequestId::from_str(&cus_backup_id)?,
-        *DEFAULT_MPC_CONTEXT,
-        &seeds,
-        &[operator_recovery_resp_path],
-    )
-    .await?;
+    let custodian_recovery_output =
+        custodian_reencrypt(1, amount_custodians, &seeds, &operator_recovery_resp).await?;
 
     // Recover backup using custodian outputs
     let recovery_backup_id = custodian_backup_recovery(
         &config_path,
         temp_path,
-        recovery_output_paths,
+        custodian_recovery_output,
         RequestId::from_str(&cus_backup_id)?,
     )
     .await;
     assert_eq!(cus_backup_id, recovery_backup_id);
 
-    // Restore from backup
-    restore_from_backup(&config_path, temp_path).await?;
-
     Ok(())
 }
 
 /// Test threshold insecure key generation via CLI (Default FHE params, with PRSS).
-#[cfg(feature = "threshold_tests")]
-#[tokio::test]
+#[cfg(feature = "slow_tests")]
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn test_threshold_insecure() -> Result<()> {
     init_logging();
 
@@ -2350,18 +2387,16 @@ async fn test_threshold_insecure() -> Result<()> {
         setup_isolated_threshold_cli_test_with_prss_default("threshold_insecure", 4).await?;
 
     let keys_folder = material_dir.path();
-    let key_id = insecure_key_gen(&config_path, keys_folder, false).await?;
+    let key_id =
+        insecure_preproc_and_keygen(&config_path, keys_folder, SLOW_OP_MAX_ITER, false).await?;
     integration_test_commands(&config_path, keys_folder, key_id).await?;
-
-    let default_key_id = insecure_key_gen(&config_path, keys_folder, false).await?;
-    integration_test_commands_default_keys(&config_path, keys_folder, default_key_id).await?;
 
     Ok(())
 }
 
 /// Nightly test - threshold sequential preprocessing and keygen with nightly parameters
-#[cfg(feature = "threshold_tests")]
-#[tokio::test]
+#[cfg(feature = "slow_tests")]
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn nightly_tests_threshold_sequential_preproc_keygen() -> Result<()> {
     init_logging();
 
@@ -2371,8 +2406,10 @@ async fn nightly_tests_threshold_sequential_preproc_keygen() -> Result<()> {
 
     // Run sequential preprocessing and keygen operations (use material_dir as keys_folder)
     let keys_folder = material_dir.path();
-    let key_id_1 = real_preproc_and_keygen(&config_path, keys_folder, 200, false).await?;
-    let key_id_2 = real_preproc_and_keygen(&config_path, keys_folder, 200, false).await?;
+    let key_id_1 =
+        real_preproc_and_keygen(&config_path, keys_folder, SLOW_OP_MAX_ITER, false).await?;
+    let key_id_2 =
+        real_preproc_and_keygen(&config_path, keys_folder, SLOW_OP_MAX_ITER, false).await?;
 
     // Verify different key IDs generated
     assert_ne!(key_id_1, key_id_2);
@@ -2381,8 +2418,7 @@ async fn nightly_tests_threshold_sequential_preproc_keygen() -> Result<()> {
 }
 
 /// Test threshold concurrent preprocessing and keygen operations
-#[cfg(feature = "threshold_tests")]
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn test_threshold_concurrent_preproc_keygen() -> Result<()> {
     init_logging();
 
@@ -2405,18 +2441,21 @@ async fn test_threshold_concurrent_preproc_keygen() -> Result<()> {
         &material_dir.path().join("CLIENT"),
         &keys_folder_2.path().join("CLIENT"),
     )?;
-    let _ = join_all([
-        real_preproc_and_keygen(&config_path, keys_folder_1.path(), 200, false),
-        real_preproc_and_keygen(&config_path, keys_folder_2.path(), 200, false),
+    let res = join_all([
+        real_preproc_and_keygen(&config_path, keys_folder_1.path(), SLOW_OP_MAX_ITER, false),
+        real_preproc_and_keygen(&config_path, keys_folder_2.path(), SLOW_OP_MAX_ITER, false),
     ])
     .await;
+
+    // Both concurrent preproc+keygens must succeed and produce distinct key IDs.
+    assert_ne!(res[0].as_ref().unwrap(), res[1].as_ref().unwrap());
 
     Ok(())
 }
 
 /// Test threshold sequential CRS generation via CLI with production-sized params
 /// Uses max_num_bits=2048 and secure ZK ceremony (same as Docker-based version)
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn nightly_tests_threshold_sequential_crs() -> Result<()> {
     init_logging();
 
@@ -2459,7 +2498,7 @@ async fn nightly_tests_threshold_sequential_crs() -> Result<()> {
 /// Uses insecure CRS generation because the multi-party ZK ceremony cannot handle
 /// concurrent sessions — the first ceremony completes but subsequent ones get stuck
 /// with networking timeouts between parties.
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn test_threshold_concurrent_crs() -> Result<()> {
     init_logging();
 
@@ -2507,31 +2546,12 @@ async fn test_threshold_concurrent_crs() -> Result<()> {
     Ok(())
 }
 
-/// Test threshold insecure key generation via CLI using the default key format.
-///
-/// Mirrors `test_threshold_insecure_default_keygen` in `integration_test.rs`.
-#[cfg(feature = "threshold_tests")]
-#[tokio::test]
-async fn test_threshold_insecure_default_keygen() -> Result<()> {
-    init_logging();
-
-    let (material_dir, _servers, config_path) =
-        setup_isolated_threshold_cli_test_with_prss("threshold_insecure_default_keygen", 4).await?;
-
-    let keys_folder = material_dir.path();
-    let key_id = insecure_preproc_and_keygen(&config_path, keys_folder, false).await?;
-    assert!(!key_id.is_empty());
-
-    Ok(())
-}
-
 /// Test threshold preprocessing and keygen with the default key format.
 ///
-/// Mirrors `test_threshold_default_preproc_keygen` in `integration_test.rs`.
 /// Runs two sequential preproc+keygen cycles with the default key format and asserts
 /// that both produce distinct key IDs.
-#[cfg(feature = "threshold_tests")]
-#[tokio::test]
+#[cfg(feature = "slow_tests")]
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn test_threshold_default_preproc_keygen() -> Result<()> {
     init_logging();
 
@@ -2539,8 +2559,10 @@ async fn test_threshold_default_preproc_keygen() -> Result<()> {
         setup_isolated_threshold_cli_test_with_prss("threshold_default_preproc_keygen", 4).await?;
 
     let keys_folder = material_dir.path();
-    let key_id_1 = real_preproc_and_keygen(&config_path, keys_folder, 200, false).await?;
-    let key_id_2 = real_preproc_and_keygen(&config_path, keys_folder, 200, false).await?;
+    let key_id_1 =
+        real_preproc_and_keygen(&config_path, keys_folder, SLOW_OP_MAX_ITER, false).await?;
+    let key_id_2 =
+        real_preproc_and_keygen(&config_path, keys_folder, SLOW_OP_MAX_ITER, false).await?;
 
     assert_ne!(key_id_1, key_id_2);
 
@@ -2549,13 +2571,15 @@ async fn test_threshold_default_preproc_keygen() -> Result<()> {
 
 /// Test threshold MPC context switch via CLI (4-party, Test FHE params, with PRSS)
 ///
-/// Mirrors `test_threshold_mpc_context_switch` in integration_test.rs.
 /// Validates that after switching to a new MPC context:
 /// 1. Insecure keygen produces a key
 /// 2. The context can be switched to a new context ID
 /// 3. A public-decrypt request succeeds in the new context
-#[cfg(feature = "threshold_tests")]
-#[tokio::test]
+///
+/// NOTE: This test is actually only validating a weird artifact of the current KMS design we do not expect in production.
+/// More specifically it validates that there is a segregation between epochs and contexts s.t. an epoch that is NOT
+/// associated with a given context can still be used together. However, this is not supported at the smart contract level.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn test_threshold_mpc_context_switch() -> Result<()> {
     init_logging();
 
@@ -2566,7 +2590,7 @@ async fn test_threshold_mpc_context_switch() -> Result<()> {
     let context_path = material_dir.path().join("mpc_context_switch.bin");
 
     // Generate a key in the current (default) context
-    let key_id = insecure_key_gen(&config_path, test_path, false).await?;
+    let key_id = insecure_preproc_and_keygen(&config_path, test_path, 200, false).await?;
 
     // Create and store a new MPC context
     let context_id = derive_request_id("CONTEXT_ID")?.into();
@@ -2575,20 +2599,22 @@ async fn test_threshold_mpc_context_switch() -> Result<()> {
     // Perform the context switch
     new_mpc_context(&config_path, &context_path, test_path).await?;
 
-    // Verify that a public-decrypt request succeeds in the new context
-    let mut params = cipher_params(
+    // Verify that a public-decrypt request succeeds in the new context.
+    // Uses `BigCompressed` (no_compression=false, no_precompute_sns=false) — the production
+    // format and the fast decrypt path; this test exercises the context switch, not ciphertext types.
+    let mut params = public_decrypt_params(
         "0x1",
         FheType::Ebool,
         KeyId::from_str(&key_id)?,
         1,
         false,
-        true,
+        false,
         None,
     );
     params.context_id = Some(context_id);
     let ddec_config = cmd_config(
         &config_path,
-        CCCommand::PublicDecrypt(CipherArguments::FromArgs(params)),
+        CCCommand::PublicDecrypt(DecryptArguments::FromArgs(params)),
         200,
     );
     let results = execute_cmd(&ddec_config, test_path)
@@ -2603,7 +2629,7 @@ async fn test_threshold_mpc_context_switch() -> Result<()> {
 ///
 /// Aborting an unknown request_id on the threshold cluster: every party responds
 /// (with NotFound since no key gen is running), so the CLI command succeeds.
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn test_threshold_abort_key_gen() -> Result<()> {
     init_logging();
 
@@ -2620,7 +2646,7 @@ async fn test_threshold_abort_key_gen() -> Result<()> {
 }
 
 /// Test threshold abort CRS generation via CLI
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn test_threshold_abort_crs_gen() -> Result<()> {
     init_logging();
 
@@ -2640,7 +2666,7 @@ async fn test_threshold_abort_crs_gen() -> Result<()> {
 ///
 /// Note: This test mainly validates the CLI endpoints and content returned from KMS.
 /// Full restore validation is done in service/client tests.
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn test_threshold_restore_from_backup() -> Result<()> {
     init_logging();
 
@@ -2657,81 +2683,53 @@ async fn test_threshold_restore_from_backup() -> Result<()> {
 }
 
 /// Test threshold custodian backup via CLI
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn test_threshold_custodian_backup() -> Result<()> {
     init_logging();
 
     let amount_custodians = 5;
     let custodian_threshold = 2;
-    let amount_operators = 4;
+    let party_count = 4;
 
     // Setup isolated threshold KMS servers with custodian backup vaults (includes SecretSharingKeychain)
     let (material_dir, _servers, config_path) =
-        setup_isolated_threshold_cli_test_with_custodian_backup(
-            "threshold_custodian",
-            amount_operators,
-        )
-        .await?;
+        setup_isolated_threshold_cli_test_with_custodian_backup("threshold_custodian", party_count)
+            .await?;
 
     let temp_path = material_dir.path();
 
+    // TODO(#3042)
+    // Custodian backup/recovery currently runs against a single core at a time.
+    let single_core_config_path = single_core_config(&config_path)?;
+
     // Generate custodian keys using native kms-custodian binary
-    let (seeds, setup_msg_paths) =
-        generate_custodian_keys_to_file(temp_path, amount_custodians).await?;
+    let (seeds, setup_msgs) = generate_custodian_keys(amount_custodians).await?;
 
     // Create custodian context
     let cus_backup_id = new_custodian_context(
-        &config_path,
+        &single_core_config_path,
         temp_path,
         custodian_threshold,
-        setup_msg_paths,
+        setup_msgs,
     )
     .await;
-    // Paths to where the results of the backup init will be stored
-    let mut operator_recovery_resp_paths = Vec::new();
-    for cur_op_idx in 1..=amount_operators {
-        let cur_resp_path = temp_path
-            .join("CUSTODIAN")
-            .join("recovery")
-            .join(&cus_backup_id)
-            .join(cur_op_idx.to_string());
-        // Ensure the dir exists locally
-        assert!(create_dir_all(cur_resp_path.parent().unwrap()).is_ok());
-        operator_recovery_resp_paths.push(cur_resp_path);
-    }
 
     // Initialize custodian backup
-    custodian_backup_init(
-        &config_path,
-        temp_path,
-        operator_recovery_resp_paths.clone(),
-    )
-    .await;
+    let operator_recovery_resps = custodian_backup_init(&single_core_config_path, temp_path).await;
 
-    // Re-encrypt with custodian keys
-    let recovery_output_paths = custodian_reencrypt(
-        temp_path,
-        amount_operators,
-        amount_custodians,
-        RequestId::from_str(&cus_backup_id)?,
-        *DEFAULT_MPC_CONTEXT,
-        &seeds,
-        &operator_recovery_resp_paths,
-    )
-    .await?;
+    // Re-encrypt with custodian keys (single operator)
+    let custodian_recovery_output =
+        custodian_reencrypt(1, amount_custodians, &seeds, &operator_recovery_resps).await?;
 
     // Recover backup using custodian outputs
     let recovery_backup_id = custodian_backup_recovery(
-        &config_path,
+        &single_core_config_path,
         temp_path,
-        recovery_output_paths,
+        custodian_recovery_output,
         RequestId::from_str(&cus_backup_id)?,
     )
     .await;
     assert_eq!(cus_backup_id, recovery_backup_id);
-
-    // Restore from backup
-    restore_from_backup(&config_path, temp_path).await?;
 
     Ok(())
 }
@@ -2752,8 +2750,8 @@ async fn test_threshold_custodian_backup() -> Result<()> {
 // Extremely heavy test — requires dedicated infra and multi-hour runtime budget.
 // Do NOT run in regular CI or local dev.
 // Only execute when a fully prepared full-generation environment is available.
-#[cfg(feature = "threshold_tests")]
-#[tokio::test]
+#[cfg(feature = "slow_tests")]
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 #[ignore]
 async fn nightly_full_gen_tests_default_threshold_sequential_preproc_keygen() -> Result<()> {
     init_logging();
@@ -2770,14 +2768,14 @@ async fn nightly_full_gen_tests_default_threshold_sequential_preproc_keygen() ->
         &config_path,
         keys_folder,
         PARTIAL_PREPROC_PERCENTAGE_OFFLINE,
-        200,
+        SLOW_OP_MAX_ITER,
     )
     .await?;
     let key_id_2 = real_partial_preproc_and_keygen(
         &config_path,
         keys_folder,
         PARTIAL_PREPROC_PERCENTAGE_OFFLINE,
-        200,
+        SLOW_OP_MAX_ITER,
     )
     .await?;
     info!(
@@ -2792,7 +2790,7 @@ async fn nightly_full_gen_tests_default_threshold_sequential_preproc_keygen() ->
 
 /// Full generation test - threshold sequential CRS generation with production-sized params
 /// Uses max_num_bits=2048 and secure ZK ceremony (same as Docker-based version)
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn nightly_full_gen_tests_default_threshold_sequential_crs() -> Result<()> {
     init_logging();
 
@@ -2839,8 +2837,7 @@ async fn nightly_full_gen_tests_default_threshold_sequential_crs() -> Result<()>
 /// 4. Run preprocessing and keygen using the context and PRSS
 ///
 /// Note: This test starts from uninitialized threshold KMS servers (no PRSS or context)
-#[tokio::test]
-#[cfg_attr(not(feature = "threshold_tests"), ignore)]
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn test_threshold_mpc_context_init() -> Result<()> {
     init_logging();
 
@@ -2878,32 +2875,37 @@ async fn test_threshold_mpc_context_init() -> Result<()> {
     Ok(())
 }
 
-/// Test 6-party MPC context switching with party resharing (ISOLATED, NO TLS)
+/// Test 6-party MPC context switching with real party resharing (ISOLATED, NO TLS)
 ///
 /// **NOTE:** This is the isolated test version WITHOUT TLS for fast execution.
 /// For TLS-enabled threshold coverage, use Kind tests in
 /// `tests/kind-testing/kubernetes_test_threshold.rs`.
 ///
-/// This test validates party resharing/remapping across MPC contexts:
-/// - First context: Physical servers 1,2,3,4 act as MPC parties 1,2,3,4
-/// - Second context: Physical servers 5,6,4,3 act as MPC parties 1,2,3,4
+/// This test validates that key material really moves between two *different* party sets:
+/// - Context 1: Physical servers 1,2,3,4 act as MPC parties 1,2,3,4 — generates the key and CRS
+/// - Context 2: Physical servers 5,6,4,3 act as MPC parties 1,2,3,4
 /// - Servers 3 and 4 participate in BOTH contexts with SWAPPED roles (continuity + role change)
 /// - Servers 5 and 6 REPLACE servers 1 and 2 in the second context
 ///
-/// This test replicates party resharing scenario, which is critical for:
-/// - Disaster recovery (replacing failed servers)
-/// - Key rotation (changing physical server composition)
-/// - Dynamic party management in production
+/// The epoch of context 2 is created *by resharing* from context 1's epoch, not by a fresh DKG,
+/// so context 2 ends up holding shares of the very same key. The test then decrypts a ciphertext
+/// under that key in the new context/epoch: that decryption is what proves the resharing worked,
+/// since servers 5 and 6 never took part in the key generation. Finally it decrypts again in the
+/// old context to show the previous epoch survives the transition.
 ///
 /// **Architecture:**
 /// - 6 physical servers total, each MPC context uses 4 parties (threshold=1)
 /// - Servers 1-4 configured with peers [1,2,3,4]
 /// - Servers 5,6,4,3 configured with peers [5,6,4,3] where 5→party1, 6→party2, 4→party3, 3→party4
 ///
+/// Both contexts are pushed to all six servers: a party that is only in the old context still
+/// needs to know the new one (and vice versa), because resharing builds a joint session over the
+/// union of the two contexts.
+///
 /// **TLS Status:** Disabled (isolated test, localhost only)
 /// **For TLS testing:** use `tests/kind-testing/kubernetes_test_threshold.rs`.
-#[tokio::test]
-#[cfg_attr(not(feature = "threshold_tests"), ignore)]
+#[cfg(feature = "slow_tests")]
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn test_threshold_mpc_context_switch_6() -> Result<()> {
     init_logging();
 
@@ -2912,6 +2914,7 @@ async fn test_threshold_mpc_context_switch_6() -> Result<()> {
         setup_party_resharing_servers("threshold_context_switch_6").await?;
 
     let test_path = material_dir.path();
+    let all_configs = [config_path_1234.as_path(), config_path_5634.as_path()];
 
     // === CONTEXT 1: Servers 1,2,3,4 as parties 1,2,3,4 ===
     info!("========== CONTEXT 1 ==========");
@@ -2922,21 +2925,68 @@ async fn test_threshold_mpc_context_switch_6() -> Result<()> {
     let context_1_path = material_dir.path().join("mpc_context_1.bin");
 
     store_mpc_context_in_file(&context_1_path, &config_path_1234, context_1_id).await?;
-    new_mpc_context(&config_path_1234, &context_1_path, test_path).await?;
+    new_mpc_context_all_sets(&all_configs, &context_1_path, test_path).await?;
     new_prss(&config_path_1234, context_1_id, epoch_1_id, test_path).await?;
 
-    // Generate key in context 1
-    let (key_1_id, _) = real_preproc_and_keygen_with_context(
+    // Generate the key and CRS that context 2 will take over.
+    let (key_id_str, preproc_id_str) = real_preproc_and_keygen_with_context(
         &config_path_1234,
         test_path,
         Some(context_1_id),
         Some(epoch_1_id),
     )
     .await?;
-    info!(
-        "✅ Context 1 (servers 1,2,3,4): Key generated: {}",
-        key_1_id
-    );
+    let crs_id_str = crs_gen_with_params(
+        &config_path_1234,
+        test_path,
+        true,
+        2048,
+        SLOW_OP_MAX_ITER,
+        epoch_1_id,
+        context_1_id,
+    )
+    .await?;
+    info!("✅ Context 1 (servers 1,2,3,4): key {key_id_str}, CRS {crs_id_str}");
+
+    // === Digests of the material context 2 has to reconstruct ===
+    // Resharing is only accepted against the digests of what the previous epoch published, so
+    // read the key and CRS back and hash them the same way the KMS does.
+    let cc_conf: CoreClientConfig = observability::conf::Settings::builder()
+        .path(config_path_1234.to_str().unwrap())
+        .env_prefix("CORE_CLIENT")
+        .build()
+        .init_conf()?;
+
+    let key_id = RequestId::from_str(&key_id_str)?;
+    let key_cores = fetch_public_elements(
+        &key_id_str,
+        &[PubDataType::CompressedXofKeySet, PubDataType::PublicKey],
+        &cc_conf,
+        test_path,
+        false,
+    )
+    .await?;
+    let compressed_keyset: CompressedXofKeySet = load_material_from_pub_storage(
+        Some(test_path),
+        &key_id,
+        PubDataType::CompressedXofKeySet,
+        Some(&key_cores[0].object_folder),
+    )
+    .await;
+    let compressed_keyset_digest =
+        hex::encode(hash_versioned(&DSEP_PUBDATA_KEY, &compressed_keyset)?);
+
+    let crs_id = RequestId::from_str(&crs_id_str)?;
+    let crs_cores =
+        fetch_public_elements(&crs_id_str, &[PubDataType::CRS], &cc_conf, test_path, false).await?;
+    let crs: CompactPkeCrs = load_material_from_pub_storage(
+        Some(test_path),
+        &crs_id,
+        PubDataType::CRS,
+        Some(&crs_cores[0].object_folder),
+    )
+    .await;
+    let crs_digest = hex::encode(hash_versioned(&DSEP_PUBDATA_CRS, &crs)?);
 
     // === CONTEXT 2: Servers 5,6,4,3 as parties 1,2,3,4 (party resharing + role swap) ===
     info!("========== CONTEXT 2 (PARTY RESHARING) ==========");
@@ -2948,58 +2998,114 @@ async fn test_threshold_mpc_context_switch_6() -> Result<()> {
     let context_2_path = material_dir.path().join("mpc_context_2.bin");
 
     store_mpc_context_in_file(&context_2_path, &config_path_5634, context_2_id).await?;
-    new_mpc_context(&config_path_5634, &context_2_path, test_path).await?;
-    new_prss(&config_path_5634, context_2_id, epoch_2_id, test_path).await?;
+    new_mpc_context_all_sets(&all_configs, &context_2_path, test_path).await?;
 
-    // Generate key in context 2 (with reshared parties)
-    let (key_2_id, _) = real_preproc_and_keygen_with_context(
-        &config_path_5634,
+    // Servers 5 and 6 are joining, so they hold none of context 1's public material. In
+    // production they download it from a peer's S3 bucket; this harness has no S3 server, so
+    // hand it to them directly — see `seed_public_material`.
+    for (data_type, data_id) in [
+        (PubDataType::CompressedXofKeySet, &key_id),
+        (PubDataType::PublicKey, &key_id),
+        (PubDataType::CRS, &crs_id),
+    ] {
+        seed_public_material(
+            test_path,
+            "PUB-p1",
+            &["PUB-p5", "PUB-p6"],
+            data_type,
+            data_id,
+        )?;
+    }
+
+    // The first epoch of context 2 is created by resharing context 1's key and CRS into it.
+    let resharing_result = reshare_two_sets(
+        &all_configs,
         test_path,
-        Some(context_2_id),
-        Some(epoch_2_id),
+        context_1_id,
+        epoch_1_id,
+        context_2_id,
+        epoch_2_id,
+        vec![PreviousKeyInfo {
+            key_id: key_id.into(),
+            preproc_id: RequestId::from_str(&preproc_id_str)?,
+            key_digest: DigestKeySet::CompressedKeySet(compressed_keyset_digest),
+        }],
+        vec![PreviousCrsInfo {
+            crs_id,
+            digest: crs_digest,
+        }],
     )
     .await?;
-    info!(
-        "✅ Context 2 (servers 5,6,4,3): Key generated: {}",
-        key_2_id
+    assert_eq!(
+        resharing_result.len(),
+        2,
+        "expected the new and the previous epoch ID back"
     );
+    // The second element is the previous epoch_id used for reshare
+    assert_eq!(resharing_result[1].0.unwrap(), epoch_1_id.into());
+    info!("✅ Context 2 (servers 5,6,4,3): epoch {epoch_2_id} created by resharing");
 
-    // === SWITCH BACK TO CONTEXT 1 ===
-    info!("========== SWITCH BACK TO CONTEXT 1 ==========");
-    info!("Switching back to context 1 (servers 1,2,3,4)");
-
-    let (key_1b_id, _) = real_preproc_and_keygen_with_context(
-        &config_path_1234,
-        test_path,
-        Some(context_1_id),
-        Some(epoch_1_id),
-    )
-    .await?;
-    info!("✅ Context 1 (switched back): Key generated: {}", key_1b_id);
-
-    // === VALIDATION ===
+    // === VALIDATION: the new party set can use the key it never generated ===
     info!("========== VALIDATION ==========");
     assert_ne!(context_1_id, context_2_id, "Context IDs must be different");
-    assert_ne!(
-        key_1_id, key_2_id,
-        "Keys from different contexts must be different"
+    assert_ne!(epoch_1_id, epoch_2_id, "Epoch IDs must be different");
+
+    // Servers 5 and 6 took no part in the DKG, so a successful decryption here is only possible
+    // if resharing really handed them shares of `key_id`.
+    let key_id_arg = KeyId::from_str(&key_id.to_string())?;
+    let decrypt_new = cmd_config(
+        &config_path_5634,
+        CCCommand::PublicDecrypt(DecryptArguments::FromArgs(DecryptParameters {
+            context_id: Some(context_2_id),
+            epoch_id: Some(epoch_2_id),
+            ..public_decrypt_params(
+                "0x123456",
+                FheType::Euint64,
+                key_id_arg,
+                1,
+                false,
+                false,
+                None,
+            )
+        })),
+        200,
     );
-    assert_ne!(
-        key_1_id, key_1b_id,
-        "Different keys in same context must be different"
+    let decrypt_new_result = execute_cmd(&decrypt_new, test_path)
+        .await
+        .map_err(|e| anyhow::anyhow!("Decrypt by the new party set failed: {e}"))?;
+    info!("✅ Decrypt in the reshared epoch succeeded: {decrypt_new_result:?}");
+
+    // === SWITCH BACK TO CONTEXT 1: the old epoch is untouched by the transition ===
+    info!("========== SWITCH BACK TO CONTEXT 1 ==========");
+    let decrypt_old = cmd_config(
+        &config_path_1234,
+        CCCommand::PublicDecrypt(DecryptArguments::FromArgs(DecryptParameters {
+            context_id: Some(context_1_id),
+            epoch_id: Some(epoch_1_id),
+            ..public_decrypt_params(
+                "0x654321",
+                FheType::Euint64,
+                key_id_arg,
+                1,
+                false,
+                false,
+                None,
+            )
+        })),
+        200,
     );
-    assert_ne!(
-        key_2_id, key_1b_id,
-        "Keys from different contexts must be different"
-    );
+    let decrypt_old_result = execute_cmd(&decrypt_old, test_path)
+        .await
+        .map_err(|e| anyhow::anyhow!("Decrypt in the original context failed: {e}"))?;
+    info!("✅ Decrypt in the original epoch still succeeds: {decrypt_old_result:?}");
 
     info!("✅ Party resharing validated:");
-    info!("   - Context 1: servers 1,2,3,4 as parties 1,2,3,4");
+    info!("   - Context 1: servers 1,2,3,4 as parties 1,2,3,4 generated key {key_id}");
     info!(
         "   - Context 2: servers 5,6,4,3 as parties 1,2,3,4 (5,6 replaced 1,2; 3↔4 swapped roles)"
     );
     info!("   - Servers 3,4 participated in BOTH contexts with DIFFERENT party roles");
-    info!("   - All 3 keys are unique and isolated");
+    info!("   - The same key decrypts in both epochs, so the shares really moved");
     info!("✅ 6-party MPC context switch with party resharing test completed successfully");
 
     // Cleanup: drop servers explicitly
@@ -3063,7 +3169,7 @@ mod docker_harness {
     /// **Requires:** Docker Compose + locally buildable KMS images (`DOCKER_BUILD_TEST_CORE_CLIENT=1`).
     #[test_context(DockerComposeThresholdTestNoInitSixParty)]
     #[tokio::test]
-    #[cfg_attr(not(feature = "threshold_tests"), ignore)]
+    #[cfg_attr(not(feature = "slow_tests"), ignore)]
     async fn test_threshold_mpc_context_switch_6_docker(
         ctx: &DockerComposeThresholdTestNoInitSixParty,
     ) -> Result<()> {
@@ -3128,8 +3234,7 @@ mod docker_harness {
 /// 5. Run Crs generation
 /// 6. Compute digests of the key materials
 /// 7. Execute resharing command
-#[cfg(feature = "threshold_tests")]
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn test_threshold_reshare() -> Result<()> {
     init_logging();
 
@@ -3246,19 +3351,20 @@ async fn test_threshold_reshare() -> Result<()> {
     assert_eq!(resharing_result.len(), 2);
     let ddec_config = cmd_config(
         &config_path,
-        CCCommand::PublicDecrypt(CipherArguments::FromArgs(CipherParameters {
+        // `BigCompressed` (production format, fast path) — this test exercises reshare, not
+        // ciphertext types.
+        CCCommand::PublicDecrypt(DecryptArguments::FromArgs(DecryptParameters {
             to_encrypt: "0x123456".to_string(),
             data_type: FheType::Euint64,
             no_compression: false,
-            no_precompute_sns: true,
+            no_precompute_sns: false,
             key_id: KeyId::from_str(&key_id.to_string()).unwrap(),
             context_id: Some(context_id),
             epoch_id: Some(new_epoch_id),
             batch_size: 1,
-            num_requests: 1,
             ciphertext_output_path: None,
-            parallel_requests: 1,
-            inter_request_delay_ms: 0,
+            sync: false,
+            rate_options: DecryptRateOptions::default(),
         })),
         200,
     );

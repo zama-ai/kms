@@ -5,7 +5,6 @@ use super::Party;
 use itertools::Itertools;
 use observability::conf::TelemetryConfig;
 use serde::{Deserialize, Serialize};
-use threshold_execution::online::preprocessing::redis::RedisConf;
 use threshold_networking::grpc::CoreToCoreNetworkConfig;
 use tokio_rustls::rustls::{
     RootCertStore,
@@ -39,7 +38,6 @@ impl Protocol {
 pub struct PartyConf {
     protocol: Protocol,
     pub telemetry: Option<TelemetryConfig>,
-    pub redis: Option<RedisConf>,
     /// If [certpaths] is Some(_), then TLS will be enabled
     /// for the core-to-core communication
     pub certpaths: Option<CertificatePaths>,
@@ -196,9 +194,6 @@ impl CertificatePaths {
 /// service_name = "moby"
 /// endpoint = "http://localhost:4317"
 ///
-/// [redis]
-/// host = "redis://127.0.0.1"
-///
 /// [certpaths]
 /// cert = "/path/to/cert"
 /// key = "/path/to/key"
@@ -228,7 +223,7 @@ impl CertificatePaths {
 /// not using the `peers` field, but it is there for future use.
 /// If it is present, the `peers` field will be `Some(Vec<Party>)`.
 /// The `peers` field is a list of `Party` struct.
-/// The telemetry, redis and certpaths fields are also optional.
+/// The telemetry and certpaths fields are also optional.
 /// Core-to-core TLS will be enabled if certpaths is not empty.
 impl PartyConf {
     /// Returns the protocol configuration.
@@ -294,14 +289,17 @@ mod tests {
         let core_to_core_net_conf = party_conf.net_conf;
         assert!(core_to_core_net_conf.is_some());
         let core_to_core_net_conf = core_to_core_net_conf.unwrap();
-        assert_eq!(core_to_core_net_conf.message_limit, 70);
-        assert_eq!(core_to_core_net_conf.multiplier, 1.1);
-        assert_eq!(core_to_core_net_conf.max_interval, 5);
+        assert_eq!(core_to_core_net_conf.message_limit, Some(70));
+        assert_eq!(core_to_core_net_conf.multiplier, Some(1.1));
+        assert_eq!(core_to_core_net_conf.max_interval, Some(5));
         assert_eq!(core_to_core_net_conf.max_elapsed_time, Some(300));
-        assert_eq!(core_to_core_net_conf.network_timeout, 10);
-        assert_eq!(core_to_core_net_conf.network_timeout_bk, 300);
-        assert_eq!(core_to_core_net_conf.network_timeout_bk_sns, 1200);
-        assert_eq!(core_to_core_net_conf.max_en_decode_message_size, 2147483648);
+        assert_eq!(core_to_core_net_conf.network_timeout, Some(10));
+        assert_eq!(core_to_core_net_conf.network_timeout_bk, Some(300));
+        assert_eq!(core_to_core_net_conf.network_timeout_bk_sns, Some(1200));
+        assert_eq!(
+            core_to_core_net_conf.max_en_decode_message_size,
+            Some(2147483648)
+        );
     }
 
     #[test]
@@ -338,32 +336,36 @@ mod tests {
         assert!(r.is_err());
     }
 
-    // Sets process-wide env vars; safe under nextest because each test runs
-    // in its own process, so the mutations are not visible to siblings.
+    // Sets process-wide env vars. These mutations are visible to any sibling
+    // test running in the same process, and `init_conf` layers env vars on top
+    // of file config, so they would override the values the file-based tests
+    // (e.g. `test_party_conf_no_peers`) load. To keep this test isolated
+    // regardless of the test runner's process model, it uses a dedicated
+    // `DDECENV` prefix that no other test reads from.
     #[test]
     fn test_party_conf_with_env() {
         unsafe {
-            env::set_var("DDEC__PROTOCOL__HOST__ADDRESS", "p3");
-            env::set_var("DDEC__PROTOCOL__HOST__PORT", "50000");
-            env::set_var("DDEC__PROTOCOL__HOST__ID", "3");
-            env::set_var("DDEC__PROTOCOL__HOST__CHOREOPORT", "60000");
-            env::set_var("DDEC__CERTPATHS__CERT", "/path/to/cert");
-            env::set_var("DDEC__CERTPATHS__KEY", "/path/to/key");
-            env::set_var("DDEC__CERTPATHS__CALIST", "/path/one,/path/two");
-            env::set_var("DDEC__TELEMETRY__TRACING_SERVICE_NAME", "moby-p3");
-            env::set_var("DDEC__TELEMETRY__TRACING_ENDPOINT", "moby-p3-endpoint");
+            env::set_var("DDECENV__PROTOCOL__HOST__ADDRESS", "p3");
+            env::set_var("DDECENV__PROTOCOL__HOST__PORT", "50000");
+            env::set_var("DDECENV__PROTOCOL__HOST__ID", "3");
+            env::set_var("DDECENV__PROTOCOL__HOST__CHOREOPORT", "60000");
+            env::set_var("DDECENV__CERTPATHS__CERT", "/path/to/cert");
+            env::set_var("DDECENV__CERTPATHS__KEY", "/path/to/key");
+            env::set_var("DDECENV__CERTPATHS__CALIST", "/path/one,/path/two");
+            env::set_var("DDECENV__TELEMETRY__TRACING_SERVICE_NAME", "moby-p3");
+            env::set_var("DDECENV__TELEMETRY__TRACING_ENDPOINT", "moby-p3-endpoint");
 
-            env::set_var("DDEC__NET_CONF__MESSAGE_LIMIT", "60");
-            env::set_var("DDEC__NET_CONF__MULTIPLIER", "2.2");
-            env::set_var("DDEC__NET_CONF__MAX_INTERVAL", "4");
-            env::set_var("DDEC__NET_CONF__MAX_ELAPSED_TIME", "200");
-            env::set_var("DDEC__NET_CONF__NETWORK_TIMEOUT", "20");
-            env::set_var("DDEC__NET_CONF__NETWORK_TIMEOUT_BK", "200");
-            env::set_var("DDEC__NET_CONF__NETWORK_TIMEOUT_BK_SNS", "2300");
-            env::set_var("DDEC__NET_CONF__MAX_EN_DECODE_MESSAGE_SIZE", "3258");
+            env::set_var("DDECENV__NET_CONF__MESSAGE_LIMIT", "60");
+            env::set_var("DDECENV__NET_CONF__MULTIPLIER", "2.2");
+            env::set_var("DDECENV__NET_CONF__MAX_INTERVAL", "4");
+            env::set_var("DDECENV__NET_CONF__MAX_ELAPSED_TIME", "200");
+            env::set_var("DDECENV__NET_CONF__NETWORK_TIMEOUT", "20");
+            env::set_var("DDECENV__NET_CONF__NETWORK_TIMEOUT_BK", "200");
+            env::set_var("DDECENV__NET_CONF__NETWORK_TIMEOUT_BK_SNS", "2300");
+            env::set_var("DDECENV__NET_CONF__MAX_EN_DECODE_MESSAGE_SIZE", "3258");
         }
         let party_conf: PartyConf = Settings::builder()
-            .env_prefix("DDEC")
+            .env_prefix("DDECENV")
             .build()
             .init_conf()
             .unwrap();
@@ -371,14 +373,14 @@ mod tests {
         let core_to_core_net_conf = party_conf.net_conf;
         assert!(core_to_core_net_conf.is_some());
         let core_to_core_net_conf = core_to_core_net_conf.unwrap();
-        assert_eq!(core_to_core_net_conf.message_limit, 60);
-        assert_eq!(core_to_core_net_conf.multiplier, 2.2);
-        assert_eq!(core_to_core_net_conf.max_interval, 4);
+        assert_eq!(core_to_core_net_conf.message_limit, Some(60));
+        assert_eq!(core_to_core_net_conf.multiplier, Some(2.2));
+        assert_eq!(core_to_core_net_conf.max_interval, Some(4));
         assert_eq!(core_to_core_net_conf.max_elapsed_time, Some(200));
-        assert_eq!(core_to_core_net_conf.network_timeout, 20);
-        assert_eq!(core_to_core_net_conf.network_timeout_bk, 200);
-        assert_eq!(core_to_core_net_conf.network_timeout_bk_sns, 2300);
-        assert_eq!(core_to_core_net_conf.max_en_decode_message_size, 3258);
+        assert_eq!(core_to_core_net_conf.network_timeout, Some(20));
+        assert_eq!(core_to_core_net_conf.network_timeout_bk, Some(200));
+        assert_eq!(core_to_core_net_conf.network_timeout_bk_sns, Some(2300));
+        assert_eq!(core_to_core_net_conf.max_en_decode_message_size, Some(3258));
 
         let bundle = party_conf.certpaths.unwrap();
         assert_eq!(bundle.cert, "/path/to/cert");
@@ -390,24 +392,24 @@ mod tests {
         );
 
         unsafe {
-            env::remove_var("DDEC__PROTOCOL__HOST__ADDRESS");
-            env::remove_var("DDEC__PROTOCOL__HOST__PORT");
-            env::remove_var("DDEC__PROTOCOL__HOST__ID");
-            env::remove_var("DDEC__PROTOCOL__HOST__CHOREOPORT");
-            env::remove_var("DDEC__CERTPATHS__CERT");
-            env::remove_var("DDEC__CERTPATHS__KEY");
-            env::remove_var("DDEC__CERTPATHS__CALIST");
-            env::remove_var("DDEC__TELEMETRY__TRACING_SERVICE_NAME");
-            env::remove_var("DDEC__TELEMETRY__TRACING_ENDPOINT");
+            env::remove_var("DDECENV__PROTOCOL__HOST__ADDRESS");
+            env::remove_var("DDECENV__PROTOCOL__HOST__PORT");
+            env::remove_var("DDECENV__PROTOCOL__HOST__ID");
+            env::remove_var("DDECENV__PROTOCOL__HOST__CHOREOPORT");
+            env::remove_var("DDECENV__CERTPATHS__CERT");
+            env::remove_var("DDECENV__CERTPATHS__KEY");
+            env::remove_var("DDECENV__CERTPATHS__CALIST");
+            env::remove_var("DDECENV__TELEMETRY__TRACING_SERVICE_NAME");
+            env::remove_var("DDECENV__TELEMETRY__TRACING_ENDPOINT");
 
-            env::remove_var("DDEC__NET_CONF__MESSAGE_LIMIT");
-            env::remove_var("DDEC__NET_CONF__MULTIPLIER");
-            env::remove_var("DDEC__NET_CONF__MAX_INTERVAL");
-            env::remove_var("DDEC__NET_CONF__MAX_ELAPSED_TIME");
-            env::remove_var("DDEC__NET_CONF__NETWORK_TIMEOUT");
-            env::remove_var("DDEC__NET_CONF__NETWORK_TIMEOUT_BK");
-            env::remove_var("DDEC__NET_CONF__NETWORK_TIMEOUT_BK_SNS");
-            env::remove_var("DDEC__NET_CONF__MAX_EN_DECODE_MESSAGE_SIZE");
+            env::remove_var("DDECENV__NET_CONF__MESSAGE_LIMIT");
+            env::remove_var("DDECENV__NET_CONF__MULTIPLIER");
+            env::remove_var("DDECENV__NET_CONF__MAX_INTERVAL");
+            env::remove_var("DDECENV__NET_CONF__MAX_ELAPSED_TIME");
+            env::remove_var("DDECENV__NET_CONF__NETWORK_TIMEOUT");
+            env::remove_var("DDECENV__NET_CONF__NETWORK_TIMEOUT_BK");
+            env::remove_var("DDECENV__NET_CONF__NETWORK_TIMEOUT_BK_SNS");
+            env::remove_var("DDECENV__NET_CONF__MAX_EN_DECODE_MESSAGE_SIZE");
         }
     }
 }

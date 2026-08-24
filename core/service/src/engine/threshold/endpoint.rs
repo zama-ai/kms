@@ -7,6 +7,7 @@ use crate::engine::threshold::traits::{
 use crate::engine::threshold::traits::{InsecureCrsGenerator, InsecureKeyGenerator};
 use crate::engine::traits::{BackupOperator, ContextManager, EpochManager};
 use crate::engine::validation::{RequestIdParsingErr, parse_grpc_request_id};
+use kms_grpc::ContextId;
 use kms_grpc::kms::v1::*;
 use kms_grpc::kms_service::v1::core_service_endpoint_server::CoreServiceEndpoint;
 use observability::{metrics::METRICS, metrics_names::*};
@@ -125,12 +126,16 @@ impl_endpoint! {
             self.keygen_preprocessor.abort_key_gen_preproc(preproc_id, key_gen_abort_res).await.map_err(|e| e.into())
         }
 
+        // NOTE: unlike other endpoints, the decryption counters are incremented inside the
+        // shared implementation, not here: one place instead of two (sync/async), and the
+        // sync path calls `get_result` directly, bypassing this dispatch, so incrementing
+        // here would skip that counter bump entirely.
+
         #[tracing::instrument(skip(self, request))]
         async fn user_decrypt(
             &self,
             request: Request<UserDecryptionRequest>,
         ) -> Result<Response<Empty>, Status> {
-            METRICS.increment_request_counter(OP_USER_DECRYPT_REQUEST);
             self.user_decryptor.user_decrypt(request).await.map_err(|e| e.into())
         }
 
@@ -139,8 +144,15 @@ impl_endpoint! {
             &self,
             request: Request<RequestId>,
         ) -> Result<Response<UserDecryptionResponse>, Status> {
-            METRICS.increment_request_counter(OP_USER_DECRYPT_RESULT);
             self.user_decryptor.get_result(request).await.map_err(|e| e.into())
+        }
+
+        #[tracing::instrument(skip(self, request))]
+        async fn user_decrypt_sync(
+            &self,
+            request: Request<UserDecryptionRequest>,
+        ) -> Result<Response<UserDecryptionResponse>, Status> {
+            self.user_decryptor.user_decrypt_sync(request).await.map_err(|e| e.into())
         }
 
         #[tracing::instrument(skip(self, request))]
@@ -148,7 +160,6 @@ impl_endpoint! {
             &self,
             request: Request<PublicDecryptionRequest>,
         ) -> Result<Response<Empty>, Status> {
-            METRICS.increment_request_counter(OP_PUBLIC_DECRYPT_REQUEST);
             self.decryptor.public_decrypt(request).await.map_err(|e| e.into())
         }
 
@@ -157,9 +168,16 @@ impl_endpoint! {
             &self,
             request: Request<RequestId>,
         ) -> Result<Response<PublicDecryptionResponse>, Status> {
-            METRICS.increment_request_counter(OP_PUBLIC_DECRYPT_RESULT);
             self.decryptor.get_result(request).await.map_err(|e| e.into())
        }
+
+        #[tracing::instrument(skip(self, request))]
+        async fn public_decrypt_sync(
+            &self,
+            request: Request<PublicDecryptionRequest>,
+        ) -> Result<Response<PublicDecryptionResponse>, Status> {
+            self.decryptor.public_decrypt_sync(request).await.map_err(|e| e.into())
+        }
 
         #[tracing::instrument(skip(self, request))]
         async fn crs_gen(&self, request: Request<CrsGenRequest>) -> Result<Response<Empty>, Status> {
@@ -230,9 +248,50 @@ impl_endpoint! {
         async fn destroy_mpc_context(
             &self,
             request: Request<DestroyMpcContextRequest>,
-        ) -> Result<Response<Empty>, Status> {
+        ) -> Result<Response<DestroyMpcContextResponse>, Status> {
             METRICS.increment_request_counter(OP_DESTROY_MPC_CONTEXT);
-            self.context_manager.destroy_mpc_context(request).await.map_err(|e| e.into())
+            let inner = request.into_inner();
+
+            // Validate the whole request before mutating anything: a request with valid epoch_ids
+            // but a missing/malformed context_id must not erase epochs and only then fail context
+            // parsing.
+            //
+            // Note: we extract the inner message and later re-wrap it in `Request::new(inner)`.
+            let proto_context_id = inner
+                .context_id
+                .as_ref()
+                .ok_or_else(|| Status::invalid_argument("context_id is required"))?;
+            let context_id = parse_grpc_request_id::<ContextId>(proto_context_id, RequestIdParsingErr::Context)?;
+
+            // Hold the exclusive context lease across both phases. This makes the epoch snapshot
+            // stable with respect to `NewMpcEpoch`, including creations that are still running PRSS
+            // and therefore have not registered their epoch in the session maker yet.
+            let _destruction_lease = self
+                .session_maker
+                .try_start_context_destruction(&context_id)
+                .await
+                .map_err(|e| {
+                    Status::failed_precondition(format!(
+                        "Cannot destroy MPC context {context_id}: {e}. Retry once epoch creation has settled."
+                    ))
+                })?;
+
+            // Destroy the associated epochs first: their secret key shares and PRSS randomness are security-sensitive
+            // material. Erase them before touching anything else so that if there is a problem, the worst transient
+            // state is "shares gone, context metadata lingers" rather than "context gone, shares still on disk".
+            //
+            // If any epoch fails to delete we return here and leave the context intact. The caller is expected to retry
+            // the whole `DestroyMpcContext` until both epochs and context are destroyed successfully.
+            let epochs_destroyed = self.epoch_manager.destroy_epochs_for_context(&context_id).await.map_err(Status::from)?;
+
+            // Every epoch is now gone, so it is safe to remove the context.
+            self.context_manager
+                .destroy_mpc_context(Request::new(inner))
+                .await
+                .map_err(Status::from)?;
+            Ok(Response::new(DestroyMpcContextResponse {
+                epoch_ids: epochs_destroyed.into_iter().map(|id| id.into()).collect(),
+            }))
         }
 
         #[tracing::instrument(skip_all)]

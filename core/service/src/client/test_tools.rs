@@ -119,7 +119,6 @@ pub async fn setup_threshold_no_client<
             dec_capacity: DEC_CAPACITY,
             min_dec_cache: MIN_DEC_CACHE,
             my_id: Some(i),
-            preproc_redis: None,
             // Add some parallelism so CI runs a bit faster
             // since it uses large machines
             num_sessions_preproc: Some(5),
@@ -128,7 +127,8 @@ pub async fn setup_threshold_no_client<
             core_to_core_net: core_config
                 .threshold
                 .as_ref()
-                .and_then(|t| t.core_to_core_net),
+                .map(|t| t.core_to_core_net)
+                .unwrap_or_default(),
             decryption_mode,
         };
         core_config.threshold = Some(threshold_party_config);
@@ -148,7 +148,6 @@ pub async fn setup_threshold_no_client<
                 mpc_listener,
                 base_kms,
                 None,
-                false,
                 ensure_default_prss,
                 mpc_core_rx.map(drop),
             )
@@ -348,14 +347,14 @@ pub async fn setup_threshold_with_custom_peers<
             dec_capacity: DEC_CAPACITY,
             min_dec_cache: MIN_DEC_CACHE,
             my_id: Some(*my_id),
-            preproc_redis: None,
             num_sessions_preproc: Some(5),
             tls: None,
             peers: Some(updated_peers),
             core_to_core_net: core_config
                 .threshold
                 .as_ref()
-                .and_then(|t| t.core_to_core_net),
+                .map(|t| t.core_to_core_net)
+                .unwrap_or_default(),
             decryption_mode,
         };
         core_config.threshold = Some(threshold_party_config);
@@ -381,7 +380,6 @@ pub async fn setup_threshold_with_custom_peers<
                 mpc_listener,
                 base_kms,
                 None,
-                false,
                 ensure_default_prss,
                 mpc_core_rx.map(drop),
             )

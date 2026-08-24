@@ -55,7 +55,8 @@ async fn test_user_decryption_threshold(
         pt,
         EncryptionConfig {
             compression: true,
-            precompute_sns: false,
+            // BitDecSmall explicitly exercises the small-ciphertext path.
+            precompute_sns: !matches!(decryption_mode, DecryptionMode::BitDecSmall),
         },
         1,
         secure,
@@ -83,7 +84,7 @@ async fn test_user_decryption_threshold_malicious(
         pt,
         EncryptionConfig {
             compression: true,
-            precompute_sns: false,
+            precompute_sns: true,
         },
         1,    // parallelism
         true, // secure
@@ -106,7 +107,7 @@ async fn test_user_decryption_threshold_malicious_failure() {
         TestingPlaintext::U32(u32::MAX),
         EncryptionConfig {
             compression: true,
-            precompute_sns: false,
+            precompute_sns: true,
         },
         1,    // parallelism
         true, // secure
@@ -134,7 +135,7 @@ async fn test_user_decryption_threshold_all_malicious_failure() {
         TestingPlaintext::U16(u16::MAX),
         EncryptionConfig {
             compression: true,
-            precompute_sns: false,
+            precompute_sns: true,
         },
         1,    // parallelism
         true, // secure
@@ -197,7 +198,7 @@ async fn test_user_decryption_threshold_and_write_transcript(
         TestingPlaintext::U8(42),
         EncryptionConfig {
             compression: true,
-            precompute_sns: false,
+            precompute_sns: true,
         },
         1,
         secure,
@@ -227,7 +228,7 @@ async fn default_user_decryption_threshold_and_write_transcript(
         msg,
         EncryptionConfig {
             compression: true,
-            precompute_sns: false,
+            precompute_sns: true,
         },
         1, // wasm tests are single-threaded
         secure,
@@ -257,7 +258,7 @@ async fn default_user_decryption_threshold(
         msg,
         EncryptionConfig {
             compression: true,
-            precompute_sns: false,
+            precompute_sns: true,
         },
         parallelism,
         secure,
@@ -316,7 +317,7 @@ async fn default_user_decryption_threshold_with_crash(
         msg,
         EncryptionConfig {
             compression: true,
-            precompute_sns: false,
+            precompute_sns: true,
         },
         parallelism,
         secure,
@@ -453,22 +454,12 @@ pub(crate) async fn user_decryption_threshold(
             }
             let cur_client = kms_clients.get(&i).unwrap().clone();
             let req_id_clone = reqs.get(j).as_ref().unwrap().0.clone().request_id.unwrap();
-            let bits = msg.bits() as u64;
             resp_tasks.spawn(async move {
-                // Sleep initially to give the server time to complete user
-                // decryption, then poll every 4*bits ms (clamped to [100ms, 1s])
-                // for up to 600 tries (~10 minutes for large types).
                 let response = retrying_poll(
                     cur_client,
                     req_id_clone.clone(),
                     "user decryption result",
-                    PollConfig {
-                        initial_delay: tokio::time::Duration::from_millis(
-                            100 * bits * parallelism as u64,
-                        ),
-                        retry_delay: tokio::time::Duration::from_millis(4 * bits.clamp(100, 1000)),
-                        max_retries: 600,
-                    },
+                    PollConfig::default(),
                     |client, request| {
                         Box::pin(async move { client.get_user_decryption_result(request).await })
                     },
@@ -625,7 +616,9 @@ async fn process_batch_threshold_user_decryption(
                         &server_private_keys[&orig_party_id],
                     )
                     .unwrap();
-                    resp.signature = sig.sig.to_vec();
+                    // Remove in 0.16 TODO(0.16)
+                    resp.signature = sig.to_bytes();
+                    resp.signatures = kms_grpc::rpc_types::ecdsa_signatures(sig.to_bytes());
                 }
             });
 

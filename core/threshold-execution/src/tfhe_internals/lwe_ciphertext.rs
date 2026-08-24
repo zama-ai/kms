@@ -245,7 +245,7 @@ fn fill_lwe_mask_and_body_for_encryption<Z, Gen, const EXTENSION_DEGREE: usize>(
 
     //Compute the multisum betweem sk and mask
     let mask_key_dot_product =
-        slice_wrapping_dot_product(output_mask, &lwe_secret_key_share.data_as_raw_vec());
+        slice_wrapping_dot_product(output_mask, lwe_secret_key_share.data_iter());
 
     //Finish computing the body
     *output_body = mask_key_dot_product + noise + encoded;

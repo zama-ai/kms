@@ -2,9 +2,11 @@ use crate::backup::custodian::InternalCustodianRecoveryOutput;
 use crate::backup::error::{BackupError, RecoverySkipReason};
 use crate::backup::operator::BackupMaterial;
 use crate::consts::DEFAULT_EPOCH_ID;
+use crate::cryptography::internal_crypto_types::LegacySerialization;
 use crate::cryptography::signcryption::UnifiedSigncryption;
 use crate::engine::base::{CrsGenMetadata, KmsFheKeyHandles, derive_request_id};
 use crate::engine::context::ContextInfo;
+use crate::engine::threshold::service::epoch_manager::EpochData;
 use crate::engine::threshold::service::session::PRSSSetupCombined;
 use crate::engine::utils::{MetricedError, query_key_material_availability};
 use crate::engine::validation::parse_optional_grpc_request_id;
@@ -62,6 +64,7 @@ use threshold_execution::small_execution::prss::PRSSSetup;
 use threshold_types::role::Role;
 use tokio::sync::{Mutex, MutexGuard};
 use tonic::{Request, Response};
+use zeroize::Zeroizing;
 
 pub struct RealBackupOperator<
     PubS: Storage + Sync + Send + 'static,
@@ -102,6 +105,7 @@ where
         cts: BTreeMap<Role, InnerOperatorBackupOutput>,
     ) -> anyhow::Result<(RecoveryRequest, UnifiedPrivateEncKey, UnifiedPublicEncKey)> {
         let mut rng = self.base_kms.new_rng().await;
+        let operator_verf_key = self.base_kms.verf_key().to_legacy_bytes()?;
         // Generate asymmetric ephemeral keys for the operator to use to encrypt the backup
         let mut enc = Encryption::new(PkeSchemeType::MlKem512, &mut rng);
         let (ephem_operator_priv_key, ephem_operator_pub_key) = enc.keygen()?;
@@ -123,6 +127,7 @@ where
         )?;
         let recovery_request = RecoveryRequest {
             ephem_op_enc_key: serialized_pub_key,
+            operator_verf_key,
             cts: grpc_cts,
         };
         tracing::info!(
@@ -145,7 +150,7 @@ where
         ephemeral_dec_key: &UnifiedPrivateEncKey,
         ephemeral_enc_key: &UnifiedPublicEncKey,
         req: CustodianRecoveryRequest,
-    ) -> anyhow::Result<(HashMap<Role, BackupMaterial>, Operator)> {
+    ) -> anyhow::Result<(HashMap<Role, Zeroizing<BackupMaterial>>, Operator)> {
         let custodian_context_id = parse_optional_grpc_request_id(
             &req.custodian_context_id,
             RequestIdParsingErr::BackupRecovery,
@@ -389,7 +394,7 @@ where
                                 )
                             })?;
                         let backup_dec_key: UnifiedPrivateEncKey = safe_deserialize(
-                            std::io::Cursor::new(&serialized_dec_key),
+                            std::io::Cursor::new(&*serialized_dec_key),
                             SAFE_SER_SIZE_LIMIT,
                         )
                         .map_err(|e| {
@@ -401,25 +406,38 @@ where
                             )
                         })?;
                         keychain.set_dec_key(Some(backup_dec_key));
-                        Ok(Response::new(Empty {}))
                     }
-                    _ => Err(MetricedError::new(
-                        OP_CUSTODIAN_BACKUP_RECOVERY,
-                        None,
-                        anyhow::anyhow!(
-                            "Backup vault is not setup with a keychain for custodian-based backup recovery"
-                        ),
-                        tonic::Code::Unavailable,
-                    )),
+                    _ => {
+                        return Err(MetricedError::new(
+                            OP_CUSTODIAN_BACKUP_RECOVERY,
+                            None,
+                            anyhow::anyhow!(
+                                "Backup vault is not setup with a keychain for custodian-based backup recovery"
+                            ),
+                            tonic::Code::Unavailable,
+                        ));
+                    }
                 }
             }
-            None => Err(MetricedError::new(
-                OP_CUSTODIAN_BACKUP_RECOVERY,
-                None,
-                anyhow::anyhow!("Backup vault is not configured"),
-                tonic::Code::Unavailable,
-            )),
+            None => {
+                return Err(MetricedError::new(
+                    OP_CUSTODIAN_BACKUP_RECOVERY,
+                    None,
+                    anyhow::anyhow!("Backup vault is not configured"),
+                    tonic::Code::Unavailable,
+                ));
+            }
         }
+        // Finally restore the backup data
+        let res = self
+            .restore_from_backup(tonic::Request::new(Empty {}))
+            .await;
+        // Only clear the ephemeral keys after a successful restore so operators can retry on failure.
+        if res.is_ok() {
+            let mut ephemeral_keys = self.ephemeral_keys.lock().await;
+            *ephemeral_keys = None;
+        }
+        res
     }
 
     /// Restores the private data from the backup vault.
@@ -454,12 +472,6 @@ where
                                 tonic::Code::Internal,
                             )
                         })?;
-                }
-                // Finally remove the ephemeral keys
-                {
-                    let mut ephemeral_keys = self.ephemeral_keys.lock().await;
-                    // Remove any decryption key (if it is there) now that restoration is done.
-                    *ephemeral_keys = None;
                 }
                 tracing::info!("Successfully restored private data from backup vault");
                 Ok(Response::new(Empty {}))
@@ -497,7 +509,7 @@ where
 async fn load_recovery_validation_material<S>(
     public_storage: &Mutex<S>,
     custodian_context_id: &ContextId,
-    verf_key: &Arc<PublicSigKey>,
+    verf_key: &PublicSigKey,
 ) -> anyhow::Result<RecoveryValidationMaterial>
 where
     S: StorageReader + Send,
@@ -505,7 +517,7 @@ where
     let public_storage_guard = public_storage.lock().await;
     let recovery_material: RecoveryValidationMaterial = public_storage_guard
         .read_data(
-            &(*custodian_context_id).into(),
+            &custodian_context_id.into(),
             &PubDataType::RecoveryMaterial.to_string(),
         )
         .await?;
@@ -526,10 +538,10 @@ async fn filter_custodian_data(
     recovery_material: &RecoveryValidationMaterial,
     ephemeral_dec_key: &UnifiedPrivateEncKey,
     ephemeral_enc_key: &UnifiedPublicEncKey,
-) -> anyhow::Result<HashMap<Role, BackupMaterial>> {
+) -> anyhow::Result<HashMap<Role, Zeroizing<BackupMaterial>>> {
     // Use the number of custodian nodes that was part of the context, not the amount we have received from
     let outputs_len = recovery_material.custodian_context().custodian_nodes.len();
-    let mut parsed_custodian_rec: HashMap<Role, BackupMaterial> = HashMap::new();
+    let mut parsed_custodian_rec: HashMap<Role, Zeroizing<BackupMaterial>> = HashMap::new();
     let mut skip_reasons: Vec<RecoverySkipReason> = Vec::new();
 
     for cur_recovery_output in &custodian_recovery_outputs {
@@ -753,6 +765,7 @@ where
                 .await?;
             }
             // Non epoched types
+            #[expect(deprecated)]
             PrivDataType::PrssSetupCombined => {
                 restore_data_type::<PrivS, PRSSSetupCombined>(priv_storage, backup_vault, cur_type)
                     .await?;
@@ -777,6 +790,9 @@ where
             PrivDataType::ContextInfo => {
                 restore_data_type::<PrivS, ContextInfo>(priv_storage, backup_vault, cur_type)
                     .await?;
+            }
+            PrivDataType::EpochData => {
+                restore_data_type::<PrivS, EpochData>(priv_storage, backup_vault, cur_type).await?;
             }
         }
     }
@@ -921,7 +937,7 @@ where
 }
 
 // *WARNING* this function only works with n=13, t=4
-#[allow(deprecated)]
+#[expect(deprecated)]
 pub(crate) async fn update_legacy_prss_13_4<PrivS: Storage + Sync + Send + 'static>(
     priv_storage: &PrivS,
     backup_vault: &mut Vault,
@@ -1000,7 +1016,7 @@ pub(crate) async fn update_legacy_prss_13_4<PrivS: Storage + Sync + Send + 'stat
     Ok(())
 }
 
-#[allow(deprecated)]
+#[expect(deprecated)]
 async fn restore_legacy_prss_13_4<PrivS: Storage + Sync + Send + 'static>(
     priv_storage: &mut PrivS,
     backup_vault: &Vault,

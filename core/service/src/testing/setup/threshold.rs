@@ -326,10 +326,9 @@ impl ThresholdTestEnvBuilder {
         }
 
         // Ensure signing keys exist (generates VerfAddress if missing)
-        let _ = ensure_threshold_server_signing_keys_exist(
+        ensure_threshold_server_signing_keys_exist(
             &mut pub_storages,
             &mut priv_storages,
-            &SIGNING_KEY_ID,
             true, // deterministic
             ThresholdSigningKeyConfig::AllParties(
                 (1..=self.party_count)
@@ -338,7 +337,7 @@ impl ThresholdTestEnvBuilder {
             ),
             false, // don't skip if exists
         )
-        .await;
+        .await?;
 
         // Ensure client signing/verification keys exist
         ensure_client_keys_exist(Some(material_dir.path()), &SIGNING_KEY_ID, true).await;

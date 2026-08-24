@@ -22,6 +22,8 @@ pub struct CoreConfig {
     #[validate(nested)]
     pub service: ServiceEndpoint,
     #[validate(nested)]
+    pub enclave_bootstrap: Option<EnclaveBootstrapConfig>,
+    #[validate(nested)]
     pub telemetry: Option<TelemetryConfig>,
     #[validate(nested)]
     pub aws: Option<AWSConfig>,
@@ -39,8 +41,45 @@ pub struct CoreConfig {
     pub threshold: Option<ThresholdPartyConf>,
     #[validate(nested)]
     pub internal_config: Option<InternalConfig>,
+    #[validate(nested)]
+    pub migration: Option<MigrationConfig>,
     #[cfg(feature = "insecure")]
     pub mock_enclave: Option<bool>,
+}
+
+/// One-time migration input associating existing epochs with the context they belong to.
+///
+/// Before the epoch↔context association existed, epoch data was persisted without a context
+/// reference. Upgrading such a deployment requires attaching each legacy epoch to its owning
+/// context. This mapping supplies that information to the migration step in
+/// [`crate::engine::migration`]. It is consumed once and, because the migration is idempotent,
+/// becomes a no-op on subsequent startups.
+///
+/// IDs are hex-encoded strings (with or without a `0x` prefix); the migration code parses them
+/// into [`kms_grpc::identifiers::ContextId`] / [`kms_grpc::identifiers::EpochId`].
+///
+/// Should be removed in version 0.16.x or above
+#[derive(Serialize, Deserialize, Validate, Clone, Debug, PartialEq, Default)]
+#[serde(deny_unknown_fields)]
+pub struct MigrationConfig {
+    /// One entry per context, each listing the epochs that belong to that context.
+    #[serde(default)]
+    #[validate(nested)]
+    pub context_associations: Vec<ContextEpochAssociation>,
+}
+
+/// A single context together with the epochs associated with it.
+///
+/// Each epoch is associated with exactly one context, so a given epoch ID must not appear under
+/// more than one [`ContextEpochAssociation`].
+#[derive(Serialize, Deserialize, Validate, Clone, Debug, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct ContextEpochAssociation {
+    /// Hex-encoded context ID that owns `epoch_ids`.
+    #[validate(length(min = 1))]
+    pub context_id: String,
+    /// Hex-encoded epoch IDs belonging to `context_id`.
+    pub epoch_ids: Vec<String>,
 }
 
 #[derive(Serialize, Deserialize, Validate, Clone, Debug)]
@@ -132,6 +171,18 @@ impl Default for BandwidthBenchmarkConfig {
             max_concurrent_runs: 1,
         }
     }
+}
+
+/// The enclave init script extracts networking configuration from the
+/// kms-server config before kms-server even starts. We add these fields to the
+/// config schema so serde validation wouldn't be thrown off by unknown
+/// fields. Kms-server doesn't actually use them.
+#[derive(Serialize, Deserialize, Validate, Clone, Debug)]
+#[serde(deny_unknown_fields)]
+pub struct EnclaveBootstrapConfig {
+    // vsock to read fresh k8s web identity tokens from
+    #[validate(range(min = 1, max = 65535))]
+    pub web_identity_token_port: u16,
 }
 
 impl ConfigTracing for CoreConfig {
@@ -329,7 +380,6 @@ mod tests {
             assert_eq!(peers[i].tls_cert, cert, "peer[{i}] TLS cert mismatch");
         }
 
-        assert!(threshold_config.preproc_redis.is_none());
         let tls_config = threshold_config
             .tls
             .as_ref()
@@ -366,17 +416,18 @@ mod tests {
         );
 
         let core_to_core_net = threshold_config.core_to_core_net;
-        assert!(core_to_core_net.is_some());
-        let core_to_core_net = core_to_core_net.unwrap();
-        assert_eq!(core_to_core_net.message_limit, 70);
-        assert_eq!(core_to_core_net.multiplier, 2.0);
-        assert_eq!(core_to_core_net.max_interval, 60);
+        assert_eq!(core_to_core_net.message_limit, Some(70));
+        assert_eq!(core_to_core_net.multiplier, Some(2.0));
+        assert_eq!(core_to_core_net.max_interval, Some(60));
         assert_eq!(core_to_core_net.initial_interval_ms, Some(100));
         assert_eq!(core_to_core_net.max_elapsed_time, Some(300));
-        assert_eq!(core_to_core_net.network_timeout, 20);
-        assert_eq!(core_to_core_net.network_timeout_bk, 300);
-        assert_eq!(core_to_core_net.network_timeout_bk_sns, 1200);
-        assert_eq!(core_to_core_net.max_en_decode_message_size, 2147483648);
+        assert_eq!(core_to_core_net.network_timeout, Some(20));
+        assert_eq!(core_to_core_net.network_timeout_bk, Some(300));
+        assert_eq!(core_to_core_net.network_timeout_bk_sns, Some(1200));
+        assert_eq!(
+            core_to_core_net.max_en_decode_message_size,
+            Some(2147483648)
+        );
         assert_eq!(core_to_core_net.session_update_interval_secs, Some(60));
         assert_eq!(core_to_core_net.session_cleanup_interval_secs, Some(86400));
         assert_eq!(
@@ -467,6 +518,20 @@ mod tests {
             core_config.threshold.is_none(),
             "threshold section should be absent in centralized config"
         );
+    }
+
+    #[test]
+    fn test_centralized_enclave_config() {
+        let core_config: CoreConfig = init_conf("config/default_centralized_enclave").unwrap();
+        core_config
+            .validate()
+            .expect("centralized enclave config must validate");
+
+        let enclave_bootstrap = core_config
+            .enclave_bootstrap
+            .as_ref()
+            .expect("enclave_bootstrap section required for enclave config");
+        assert_eq!(enclave_bootstrap.web_identity_token_port, 4100);
     }
 
     // -----------------------------------------------------------------------

@@ -140,6 +140,31 @@ kubectl get pvc -n <NAMESPACE>
 
 ---
 
+### Public Storage Verification Failures at Startup
+
+Every node verifies its public storage against private storage during startup and refuses to
+serve if they disagree. Public storage can drift out of a consistent state — a misconfigured
+bucket or prefix pointing at the wrong material, or a crash part-way through a non-atomic write
+leaving an entry missing, truncated, or stale. Private storage holds the digests and signatures
+describing what should be published, so it is the reference.
+
+**Symptoms:** the pod exits during startup with one of these log lines, before any request is
+served:
+
+| Log line | Meaning |
+|---|---|
+| `missing or unreadable public material <type> for id=<id>` | Private storage expects a published object that public storage does not have, or it cannot be read. |
+| `Server key digest mismatch` / `Public key digest mismatch` / `Compressed xof keyset digest mismatch` / `CRS digest mismatch` | The published bytes do not hash to the digest recorded in private storage. |
+| `Verification key/address in public storage does not match the private signing key`  | The published `VerfKey` / `VerfAddress` is not the one derived from this node's signing key. |
+
+**Common Fixes:**
+- Confirm the node is pointed at the correct public storage bucket and prefix.
+- Restore the named object from a known-good copy, either from a backup or from another party.
+- Seek the Zama team if any of these issues occur since resolving most of these will
+  require manual intervention.
+
+---
+
 ### Key Management Issues
 
 **Symptoms:**

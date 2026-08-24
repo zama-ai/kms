@@ -27,11 +27,9 @@ use kms_0_14_0::cryptography::{
         Signcrypt, UnifiedSigncryption, UnifiedSigncryptionKeyOwned, UnifiedUnsigncryptionKeyOwned,
     },
 };
-use kms_0_14_0::engine::base::{
-    safe_serialize_hash_element_versioned, CrsGenMetadata, KeyGenMetadataInner, KmsFheKeyHandles,
-};
+use kms_0_14_0::engine::base::{CrsGenMetadata, KeyGenMetadataInner, KmsFheKeyHandles};
 use kms_0_14_0::engine::centralized::central_kms::generate_client_fhe_key;
-use kms_0_14_0::engine::context::{ContextInfo, NodeInfo, SoftwareVersion};
+use kms_0_14_0::engine::context::{ContextInfo, NodeInfo, SignerAddress, SoftwareVersion};
 use kms_0_14_0::engine::threshold::service::session::PRSSSetupCombined;
 use kms_0_14_0::engine::threshold::service::{PublicKeyMaterial, ThresholdFheKeys};
 use kms_0_14_0::util::key_setup::FhePublicKey;
@@ -50,7 +48,9 @@ use std::num::Wrapping;
 use std::{borrow::Cow, collections::HashMap, fs::create_dir_all, path::PathBuf};
 use tfhe_1_6_2::safe_serialization::safe_serialize;
 use tfhe_1_6_2::shortint::parameters::{
-    LweCiphertextCount, NoiseSquashingClassicParameters, NoiseSquashingCompressionParameters,
+    AtomicPatternParameters, Backend, LweCiphertextCount, MetaNoiseSquashingParameters,
+    MetaParameters, NoiseSquashingClassicParameters, NoiseSquashingCompressionParameters,
+    PBSParameters,
 };
 use tfhe_1_6_2::{
     core_crypto::commons::{
@@ -76,7 +76,7 @@ use threshold_execution_0_14_0::{
     small_execution::prss::{PrssSet, PrssSetV0},
     tests::helper::testing::{get_dummy_prss_setup, get_networkless_base_session_for_parties},
     tfhe_internals::{
-        parameters::{DKGParams, DKGParamsRegular, DKGParamsSnS, DkgMode},
+        parameters::{DKGParams, DkgMode},
         test_feature::insecure_initialize_key_material,
     },
 };
@@ -85,8 +85,8 @@ use threshold_types_0_14_0::role::Role;
 use tokio::runtime::Runtime;
 
 use backward_compatibility::parameters::{
-    ClassicPBSParametersTest, DKGParamsRegularTest, DKGParamsSnSTest,
-    SwitchAndSquashCompressionParametersTest, SwitchAndSquashParametersTest,
+    ClassicPBSParametersTest, DKGParamsSnSTest, SwitchAndSquashCompressionParametersTest,
+    SwitchAndSquashParametersTest,
 };
 use backward_compatibility::{
     AppKeyBlobTest, BackupCiphertextTest, ContextInfoTest, CrsGenMetadataTest,
@@ -102,7 +102,7 @@ use backward_compatibility::{
     UnifiedUnsigncryptionKeyTest, DISTRIBUTED_DECRYPTION_MODULE_NAME, KMS_GRPC_MODULE_NAME,
     KMS_MODULE_NAME,
 };
-
+use hashing_0_14_0::hash_versioned;
 use kms_0_14_0::cryptography::signcryption::SigncryptionPayload;
 
 use crate::generate::{
@@ -130,28 +130,28 @@ fn fixed_fixture_timestamp() -> std::time::SystemTime {
     std::time::UNIX_EPOCH + std::time::Duration::from_secs(50 * 8760 * 3600)
 }
 
-fn convert_dkg_params_sns(value: DKGParamsSnSTest) -> DKGParamsSnS {
-    DKGParamsSnS {
-        regular_params: convert_dkg_params_regular(value.regular_params),
-        sns_params: convert_sns_parameters(value.sns_params),
-        sns_compression_params: Some(convert_sns_compression_parameters(
-            value.sns_compression_parameters,
-        )),
-    }
-}
-
-// Parameters `dedicated_compact_public_key_parameters` and `compression_decompression_parameters`
-// are set to None because they are optional tfhe-rs types, which means their backward compatibility
-// is already tested.
-fn convert_dkg_params_regular(value: DKGParamsRegularTest) -> DKGParamsRegular {
-    DKGParamsRegular {
+// The compact-public-key and compression parameters are left as `None` because they
+// are optional tfhe-rs types whose backward compatibility is already tested elsewhere.
+fn convert_dkg_params_sns(value: DKGParamsSnSTest) -> DKGParams {
+    DKGParams {
         dkg_mode: DkgMode::Z128,
-        sec: value.sec,
-        ciphertext_parameters: convert_classic_pbs_parameters(value.ciphertext_parameters),
-        dedicated_compact_public_key_parameters: None,
-        compression_decompression_parameters: None,
+        sec: value.regular_params.sec,
+        meta: MetaParameters {
+            backend: Backend::Cpu,
+            compute_parameters: AtomicPatternParameters::Standard(PBSParameters::PBS(
+                convert_classic_pbs_parameters(value.regular_params.ciphertext_parameters),
+            )),
+            dedicated_compact_public_key_parameters: None,
+            compression_parameters: None,
+            noise_squashing_parameters: Some(MetaNoiseSquashingParameters {
+                parameters: convert_sns_parameters(value.sns_params),
+                compression_parameters: Some(convert_sns_compression_parameters(
+                    value.sns_compression_parameters,
+                )),
+            }),
+            rerand_configuration: None,
+        },
         secret_key_deviations: None,
-        cpk_re_randomization_ksk_params: None,
     }
 }
 
@@ -540,12 +540,12 @@ const OPERATOR_BACKUP_OUTPUT_TEST: OperatorBackupOutputTest = OperatorBackupOutp
     seed: 42,
 };
 
-fn dummy_domain() -> alloy_sol_types_1_4_1::Eip712Domain {
-    alloy_sol_types_1_4_1::eip712_domain!(
+fn dummy_domain() -> alloy_sol_types_1_6_0::Eip712Domain {
+    alloy_sol_types_1_6_0::eip712_domain!(
         name: "Authorization token",
         version: "1",
         chain_id: 8006,
-        verifying_contract: alloy_primitives_1_4_1::address!("66f9664f97F2b50F62D13eA064982f936dE76657"),
+        verifying_contract: alloy_primitives_1_6_0::address!("66f9664f97F2b50F62D13eA064982f936dE76657"),
     )
 }
 
@@ -612,10 +612,8 @@ impl KmsV0_14_0 {
 
         let mut key_digest_map: BTreeMap<PubDataType, Vec<u8>> = BTreeMap::new();
         let mut legacy: BTreeMap<PubDataType, SignedPubDataHandleInternal> = BTreeMap::new();
-        let server_key_digest =
-            safe_serialize_hash_element_versioned(b"TESTTEST", &pretend_server_key).unwrap();
-        let pub_key_digest =
-            safe_serialize_hash_element_versioned(b"TESTTEST", &pretend_public_key).unwrap();
+        let server_key_digest = hash_versioned(b"TESTTEST", &pretend_server_key).unwrap();
+        let pub_key_digest = hash_versioned(b"TESTTEST", &pretend_public_key).unwrap();
         let sol_type = KeygenVerificationQ126::new_standard(
             &preprocessing_id,
             &key_id,
@@ -710,10 +708,8 @@ impl KmsV0_14_0 {
 
         let extra_data = KEY_GEN_METADATA_WITH_EXTRA_DATA_TEST.extra_data.to_vec();
         let mut key_digest_map: BTreeMap<PubDataType, Vec<u8>> = BTreeMap::new();
-        let server_key_digest =
-            safe_serialize_hash_element_versioned(b"TESTTEST", &pretend_server_key).unwrap();
-        let pub_key_digest =
-            safe_serialize_hash_element_versioned(b"TESTTEST", &pretend_public_key).unwrap();
+        let server_key_digest = hash_versioned(b"TESTTEST", &pretend_server_key).unwrap();
+        let pub_key_digest = hash_versioned(b"TESTTEST", &pretend_public_key).unwrap();
         let sol_type = KeygenVerification::new_uncompressed(
             &preprocessing_id,
             &key_id,
@@ -964,12 +960,12 @@ impl KmsV0_14_0 {
         let node_info = NodeInfo {
             mpc_identity: "Staoshi Nakamoto".to_string(),
             party_id: 42,
-            verification_key: None,
+            signer_address: None,
             external_url: "https://node42.example.com".to_string(),
             ca_cert: None,
             public_storage_url: "https://storage.example.com/node42".to_string(),
             public_storage_prefix: Some("PUB".to_string()),
-            extra_verification_keys: vec![],
+            extra_signer_addresses: vec![],
         };
         let software_version = SoftwareVersion {
             major: 2,
@@ -1003,12 +999,12 @@ impl KmsV0_14_0 {
         let node_info = NodeInfo {
             mpc_identity: node_info_test.mpc_identity.to_string(),
             party_id: node_info_test.party_id,
-            verification_key: Some(verf_key),
+            signer_address: Some(SignerAddress(verf_key.address())),
             external_url: node_info_test.external_url.to_string(),
             ca_cert: node_info_test.ca_cert.clone(), // We currently don't have simple code for generating certificates
             public_storage_url: node_info_test.public_storage_url.to_string(),
             public_storage_prefix: Some(node_info_test.public_storage_prefix.to_string()),
-            extra_verification_keys: vec![verf_key2],
+            extra_signer_addresses: vec![SignerAddress(verf_key2.address())],
         };
 
         store_versioned_test!(&node_info, dir, &node_info_test.test_filename);
@@ -1046,9 +1042,7 @@ impl KmsV0_14_0 {
                 operator_pk: operator_pk.clone(),
                 shares: Vec::new(),
             };
-            let msg_digest =
-                safe_serialize_hash_element_versioned(&DSEP_BACKUP_COMMITMENT, &backup_material)
-                    .unwrap();
+            let msg_digest = hash_versioned(&DSEP_BACKUP_COMMITMENT, &backup_material).unwrap();
             commitments.insert(cus_role, msg_digest);
             let mut payload = [0_u8; 32];
             rng.fill_bytes(&mut payload);
@@ -1119,6 +1113,7 @@ impl KmsV0_14_0 {
         let mut rng = AesRng::seed_from_u64(INTERNAL_RECOVERY_REQUEST_TEST.state);
         let mut encryption = Encryption::new(PkeSchemeType::MlKem512, &mut rng);
         let (_dec_key, enc_key) = encryption.keygen().unwrap();
+        let (operator_verf_key, _operator_sig_key) = gen_sig_keys(&mut rng);
         let mut cts = BTreeMap::new();
         for role_j in 1..=INTERNAL_RECOVERY_REQUEST_TEST.amount {
             let cur_role = Role::indexed_from_one(role_j as usize);
@@ -1131,7 +1126,8 @@ impl KmsV0_14_0 {
             };
             cts.insert(cur_role, InnerOperatorBackupOutput { signcryption });
         }
-        let recovery_material = InternalRecoveryRequest::new(enc_key, cts).unwrap();
+        let recovery_material =
+            InternalRecoveryRequest::new(enc_key, operator_verf_key, cts).unwrap();
         store_versioned_test!(
             &recovery_material,
             dir,
@@ -1198,9 +1194,8 @@ impl KmsV0_14_0 {
             &KMS_FHE_KEY_HANDLES_TEST.sig_key_filename,
         );
 
-        let dkg_params: DKGParams = DKGParams::WithSnS(convert_dkg_params_sns(
-            KMS_FHE_KEY_HANDLES_TEST.dkg_parameters_sns,
-        ));
+        let dkg_params: DKGParams =
+            convert_dkg_params_sns(KMS_FHE_KEY_HANDLES_TEST.dkg_parameters_sns);
         let seed = Some(Seed(KMS_FHE_KEY_HANDLES_TEST.seed));
 
         let client_key = generate_client_fhe_key(dkg_params, Tag::default(), seed);
@@ -1289,9 +1284,8 @@ impl KmsV0_14_0 {
             THRESHOLD_FHE_KEYS_TEST.threshold,
             role,
         );
-        let dkg_params: DKGParams = DKGParams::WithSnS(convert_dkg_params_sns(
-            THRESHOLD_FHE_KEYS_TEST.dkg_parameters_sns,
-        ));
+        let dkg_params: DKGParams =
+            convert_dkg_params_sns(THRESHOLD_FHE_KEYS_TEST.dkg_parameters_sns);
 
         let rt = Runtime::new().unwrap();
         let (fhe_pub_key_set, private_key_set) = rt.block_on(async {

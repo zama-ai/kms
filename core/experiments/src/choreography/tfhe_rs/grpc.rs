@@ -20,7 +20,9 @@ use crate::allocator::MEM_ALLOCATOR;
 use aes_prng::AesRng;
 use algebra::base_ring::{Z64, Z128};
 use algebra::galois_rings::common::ResiduePoly;
-use algebra::structure_traits::{Derive, ErrorCorrect, FromU128, Invert, Ring, Solve, Syndrome};
+use algebra::structure_traits::{
+    Derive, ErrorCorrect, FromU128, Invert, QuotientMaximalIdeal, Ring, Solve,
+};
 use async_trait::async_trait;
 use clap::ValueEnum;
 use dashmap::DashMap;
@@ -175,7 +177,7 @@ where
         keys: (CompressedXofKeySet, PrivateKeySet<EXTENSION_DEGREE>),
         params: DKGParams,
     ) -> Self {
-        let (public_key, server_key) = keys.0.decompress().unwrap().into_raw_parts();
+        let (public_key, server_key) = keys.0.decompress().into_raw_parts();
         Self {
             pub_keyset: Arc::new(Some(keys.0)),
             pub_keyset_decompressed: Arc::new(FhePubKeySet {
@@ -330,8 +332,10 @@ impl<
     >
 where
     // Ring requirements for both Z64 and Z128 polynomials
-    ResiduePoly<Z64, EXTENSION_DEGREE>: Syndrome + ErrorCorrect + Invert + Solve + Derive,
-    ResiduePoly<Z128, EXTENSION_DEGREE>: Syndrome + ErrorCorrect + Invert + Solve + Derive,
+    ResiduePoly<Z64, EXTENSION_DEGREE>:
+        QuotientMaximalIdeal + ErrorCorrect + Invert + Solve + Derive,
+    ResiduePoly<Z128, EXTENSION_DEGREE>:
+        QuotientMaximalIdeal + ErrorCorrect + Invert + Solve + Derive,
     // PRSS initialization and state derivation
     PRSSInitStrategy: PRSSInit<ResiduePoly<Z64, EXTENSION_DEGREE>>
         + PRSSInit<ResiduePoly<Z128, EXTENSION_DEGREE>>,
@@ -554,8 +558,10 @@ impl<
     >
 where
     // Ring requirements for both Z64 and Z128 polynomials
-    ResiduePoly<Z64, EXTENSION_DEGREE>: Syndrome + ErrorCorrect + Invert + Solve + Derive,
-    ResiduePoly<Z128, EXTENSION_DEGREE>: Syndrome + ErrorCorrect + Invert + Solve + Derive,
+    ResiduePoly<Z64, EXTENSION_DEGREE>:
+        QuotientMaximalIdeal + ErrorCorrect + Invert + Solve + Derive,
+    ResiduePoly<Z128, EXTENSION_DEGREE>:
+        QuotientMaximalIdeal + ErrorCorrect + Invert + Solve + Derive,
     // PRSS initialization and state derivation
     PRSSInitStrategy: PRSSInit<ResiduePoly<Z64, EXTENSION_DEGREE>>
         + PRSSInit<ResiduePoly<Z128, EXTENSION_DEGREE>>,
@@ -604,7 +610,7 @@ where
         })?;
 
         let role_assignment: HashMap<Role, Identity> =
-            bc2wrap::deserialize_safe(&request.role_assignment).map_err(|e| {
+            bc2wrap::deserialize_slice(&request.role_assignment).map_err(|e| {
                 tonic::Status::new(
                     tonic::Code::Aborted,
                     format!("Failed to parse role assignment: {e:?}"),
@@ -613,7 +619,7 @@ where
         let role_assignment = Arc::new(RwLock::new(RoleAssignment::from(role_assignment)));
 
         let prss_params: PrssInitParams =
-            bc2wrap::deserialize_safe(&request.params).map_err(|e| {
+            bc2wrap::deserialize_slice(&request.params).map_err(|e| {
                 tonic::Status::new(
                     tonic::Code::Aborted,
                     format!("Failed to parse prss params: {e:?}"),
@@ -723,7 +729,7 @@ where
         })?;
 
         let role_assignment: HashMap<Role, Identity> =
-            bc2wrap::deserialize_safe(&request.role_assignment).map_err(|e| {
+            bc2wrap::deserialize_slice(&request.role_assignment).map_err(|e| {
                 tonic::Status::new(
                     tonic::Code::Aborted,
                     format!("Failed to parse role assignment: {e:?}"),
@@ -731,7 +737,7 @@ where
             })?;
         let role_assignment = Arc::new(RwLock::new(RoleAssignment::from(role_assignment)));
 
-        let preproc_params: PreprocKeyGenParams = bc2wrap::deserialize_safe(&request.params)
+        let preproc_params: PreprocKeyGenParams = bc2wrap::deserialize_slice(&request.params)
             .map_err(|e| {
                 tonic::Status::new(
                     tonic::Code::Aborted,
@@ -949,7 +955,7 @@ where
         })?;
 
         let role_assignment: HashMap<Role, Identity> =
-            bc2wrap::deserialize_safe(&request.role_assignment).map_err(|e| {
+            bc2wrap::deserialize_slice(&request.role_assignment).map_err(|e| {
                 tonic::Status::new(
                     tonic::Code::Aborted,
                     format!("Failed to parse role assignment: {e:?}"),
@@ -957,8 +963,8 @@ where
             })?;
         let role_assignment = Arc::new(RwLock::new(RoleAssignment::from(role_assignment)));
 
-        let kg_params: ThresholdKeyGenParams =
-            bc2wrap::deserialize_safe(&request.params).map_err(|e| {
+        let kg_params: ThresholdKeyGenParams = bc2wrap::deserialize_slice(&request.params)
+            .map_err(|e| {
                 tonic::Status::new(
                     tonic::Code::Aborted,
                     format!("Failed to parse Threshold KeyGen params: {e:?}"),
@@ -1141,7 +1147,7 @@ where
         let tag = tfhe::Tag::default();
 
         let kg_result_params: ThresholdKeyGenResultParams =
-            bc2wrap::deserialize_safe(&request.params).map_err(|e| {
+            bc2wrap::deserialize_slice(&request.params).map_err(|e| {
                 tonic::Status::new(
                     tonic::Code::Aborted,
                     format!("Failed to parse Threshold KeyGen Result params: {e:?}"),
@@ -1153,7 +1159,7 @@ where
 
         if let Some(dkg_params) = dkg_params {
             let role_assignment: HashMap<Role, Identity> =
-                bc2wrap::deserialize_safe(&request.role_assignment).map_err(|e| {
+                bc2wrap::deserialize_slice(&request.role_assignment).map_err(|e| {
                     tonic::Status::new(
                         tonic::Code::Aborted,
                         format!("Failed to parse role assignment: {e:?}"),
@@ -1249,7 +1255,7 @@ where
         })?;
 
         let role_assignment: HashMap<Role, Identity> =
-            bc2wrap::deserialize_safe(&request.role_assignment).map_err(|e| {
+            bc2wrap::deserialize_slice(&request.role_assignment).map_err(|e| {
                 tonic::Status::new(
                     tonic::Code::Aborted,
                     format!("Failed to parse role assignment: {e:?}"),
@@ -1257,7 +1263,7 @@ where
             })?;
         let role_assignment = Arc::new(RwLock::new(RoleAssignment::from(role_assignment)));
 
-        let preproc_params: PreprocDecryptParams = bc2wrap::deserialize_safe(&request.params)
+        let preproc_params: PreprocDecryptParams = bc2wrap::deserialize_slice(&request.params)
             .map_err(|e| {
                 tonic::Status::new(
                     tonic::Code::Aborted,
@@ -1595,7 +1601,7 @@ where
         })?;
 
         let role_assignment: HashMap<Role, Identity> =
-            bc2wrap::deserialize_safe(&request.role_assignment).map_err(|e| {
+            bc2wrap::deserialize_slice(&request.role_assignment).map_err(|e| {
                 tonic::Status::new(
                     tonic::Code::Aborted,
                     format!("Failed to parse role assignment: {e:?}"),
@@ -1605,7 +1611,7 @@ where
         let roles = role_assignment.keys().cloned().collect();
         let role_assignment = Arc::new(RwLock::new(RoleAssignment::from(role_assignment)));
 
-        let decrypt_params: ThresholdDecryptParams = bc2wrap::deserialize_safe(&request.params)
+        let decrypt_params: ThresholdDecryptParams = bc2wrap::deserialize_slice(&request.params)
             .map_err(|e| {
                 tonic::Status::new(
                     tonic::Code::Aborted,
@@ -2319,7 +2325,7 @@ where
         request: tonic::Request<ThresholdDecryptResultRequest>,
     ) -> Result<tonic::Response<ThresholdDecryptResultResponse>, tonic::Status> {
         let request = request.into_inner();
-        let session_id = bc2wrap::deserialize_safe(&request.request_id).map_err(|e| {
+        let session_id = bc2wrap::deserialize_slice(&request.request_id).map_err(|e| {
             tonic::Status::new(
                 tonic::Code::Aborted,
                 format!("Error deserializing session_id: {e}"),
@@ -2373,7 +2379,7 @@ where
         })?;
 
         let role_assignment: HashMap<Role, Identity> =
-            bc2wrap::deserialize_safe(&request.role_assignment).map_err(|e| {
+            bc2wrap::deserialize_slice(&request.role_assignment).map_err(|e| {
                 tonic::Status::new(
                     tonic::Code::Aborted,
                     format!("Failed to parse role assignment: {e:?}"),
@@ -2381,12 +2387,13 @@ where
             })?;
         let role_assignment = Arc::new(RwLock::new(RoleAssignment::from(role_assignment)));
 
-        let crs_params: CrsGenParams = bc2wrap::deserialize_safe(&request.params).map_err(|e| {
-            tonic::Status::new(
-                tonic::Code::Aborted,
-                format!("Failed to parse Crs Gen params: {e:?}"),
-            )
-        })?;
+        let crs_params: CrsGenParams =
+            bc2wrap::deserialize_slice(&request.params).map_err(|e| {
+                tonic::Status::new(
+                    tonic::Code::Aborted,
+                    format!("Failed to parse Crs Gen params: {e:?}"),
+                )
+            })?;
 
         let session_id = crs_params.session_id;
         let witness_dim = crs_params.witness_dim;
@@ -2446,7 +2453,7 @@ where
         let request = request.into_inner();
 
         let session_id: SessionId =
-            bc2wrap::deserialize_safe(&request.request_id).map_err(|e| {
+            bc2wrap::deserialize_slice(&request.request_id).map_err(|e| {
                 tonic::Status::new(
                     tonic::Code::Aborted,
                     format!("Error deserializing session_id: {e}"),
@@ -2482,7 +2489,7 @@ where
         request: tonic::Request<StatusCheckRequest>,
     ) -> Result<tonic::Response<StatusCheckResponse>, tonic::Status> {
         let request = request.into_inner();
-        let sid: SessionId = bc2wrap::deserialize_safe(&request.request_id).map_err(|e| {
+        let sid: SessionId = bc2wrap::deserialize_slice(&request.request_id).map_err(|e| {
             tonic::Status::new(
                 tonic::Code::Aborted,
                 format!("Error deserializing session_id: {e}"),
@@ -2537,7 +2544,7 @@ where
         })?;
 
         let role_assignment: HashMap<Role, Identity> =
-            bc2wrap::deserialize_safe(&request.role_assignment).map_err(|e| {
+            bc2wrap::deserialize_slice(&request.role_assignment).map_err(|e| {
                 tonic::Status::new(
                     tonic::Code::Aborted,
                     format!("Failed to parse role assignment: {e:?}"),
@@ -2545,7 +2552,7 @@ where
             })?;
 
         let reshare_params: ReshareParams =
-            bc2wrap::deserialize_safe(&request.params).map_err(|e| {
+            bc2wrap::deserialize_slice(&request.params).map_err(|e| {
                 tonic::Status::new(
                     tonic::Code::Aborted,
                     format!("Failed to parse Reshare params: {e:?}"),

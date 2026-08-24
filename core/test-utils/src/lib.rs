@@ -1,8 +1,8 @@
 pub mod random_free_port;
 pub mod test_logging;
 
-use serde::{Serialize, de::DeserializeOwned};
-use std::path::Path;
+use serde::de::DeserializeOwned;
+use std::{fs::File, path::Path};
 
 /// Helper method to write a generic element to a file for tests or benchmarks.
 pub fn write_element<T: serde::Serialize, P: AsRef<Path>>(
@@ -13,19 +13,14 @@ pub fn write_element<T: serde::Serialize, P: AsRef<Path>>(
     if let Some(p) = file_path.as_ref().parent() {
         std::fs::create_dir_all(p)?
     };
-    let serialized_data = bc2wrap::serialize(element)?;
-    std::fs::write(file_path, serialized_data.as_slice())?;
+    // Serialize straight into the file to avoid buffering the whole serialized element in memory.
+    bc2wrap::serialize_into(element, &mut File::create(file_path)?)?;
     Ok(())
 }
 
 /// Helper method to read a generic element from a file for tests or benchmarks.
-pub fn read_element<T: DeserializeOwned + Serialize, P: AsRef<Path>>(
-    file_path: P,
-) -> anyhow::Result<T> {
-    let read_element = std::fs::read(file_path)?;
-    // This is inside a test utility, so we can use the unsafe deserialization here
-    // (Might be useful to deserialize keys which may be huge)
-    Ok(bc2wrap::deserialize_unsafe(read_element.as_slice())?)
+pub fn read_element<T: DeserializeOwned, P: AsRef<Path>>(file_path: P) -> anyhow::Result<T> {
+    Ok(bc2wrap::deserialize_from(File::open(file_path)?)?)
 }
 
 #[cfg(test)]

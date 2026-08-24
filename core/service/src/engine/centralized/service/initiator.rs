@@ -69,12 +69,13 @@ pub async fn init_impl<
 
     // Check that the system is not already initialized
     {
-        if !service
+        if service
             .epoch_ids
             .read()
             .await
-            .get_all_request_ids()
-            .is_empty()
+            .get_successful_completed_request_ids()
+            .next()
+            .is_some()
         {
             return Err(MetricedError::new(
                 OP_NEW_EPOCH,
@@ -84,17 +85,14 @@ pub async fn init_impl<
             ));
         }
     }
-    add_req_to_meta_store(
-        &mut service.epoch_ids.write().await,
+    let permit = add_req_to_meta_store(
+        &service.epoch_ids,
         &verified_request.epoch_id.into(),
         OP_NEW_EPOCH,
-    )?;
-    update_req_in_meta_store::<(), anyhow::Error>(
-        &mut service.epoch_ids.write().await,
-        &verified_request.epoch_id.into(),
-        Ok(()),
-        OP_NEW_EPOCH,
-    );
+    )
+    .await?;
+    update_req_in_meta_store::<(), anyhow::Error>(&service.epoch_ids, permit, Ok(()), OP_NEW_EPOCH)
+        .await;
     tracing::warn!(
         "Init called on centralized KMS with ID {} - no action taken",
         verified_request.epoch_id
@@ -124,6 +122,7 @@ mod tests {
         let req_id = derive_request_id("test_init_sunshine").unwrap();
 
         let preproc_req = NewMpcEpochRequest {
+            signing_schemes: vec![kms_grpc::kms::v1::SigningSchemeType::Ecdsa256k1 as i32],
             context_id: Some((*DEFAULT_MPC_CONTEXT).into()),
             epoch_id: Some(req_id.into()),
             previous_epoch: None,
@@ -143,6 +142,7 @@ mod tests {
 
         // First initialization should succeed
         let preproc_req1 = NewMpcEpochRequest {
+            signing_schemes: vec![kms_grpc::kms::v1::SigningSchemeType::Ecdsa256k1 as i32],
             context_id: Some((*DEFAULT_MPC_CONTEXT).into()),
             epoch_id: Some(req_id1.into()),
             previous_epoch: None,
@@ -155,6 +155,7 @@ mod tests {
 
         // Second initialization should fail with AlreadyExists
         let preproc_req2 = NewMpcEpochRequest {
+            signing_schemes: vec![kms_grpc::kms::v1::SigningSchemeType::Ecdsa256k1 as i32],
             context_id: Some((*DEFAULT_MPC_CONTEXT).into()),
             epoch_id: Some(req_id1.into()),
             previous_epoch: None,
@@ -172,6 +173,7 @@ mod tests {
         let mut rng = AesRng::seed_from_u64(1234);
         let (kms, _) = setup_central_test_kms(&mut rng).await;
         let preproc_req = NewMpcEpochRequest {
+            signing_schemes: vec![kms_grpc::kms::v1::SigningSchemeType::Ecdsa256k1 as i32],
             epoch_id: Some((*DEFAULT_EPOCH_ID).into()),
             context_id: Some(RequestId {
                 request_id: "not a valid context".to_string(),

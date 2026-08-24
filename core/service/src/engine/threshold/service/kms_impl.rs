@@ -32,7 +32,7 @@ use threshold_execution::endpoints::reshare_sk::SecureReshareSecretKeys;
 use threshold_execution::{
     endpoints::keygen::SecureOnlineDistributedKeyGen128,
     online::preprocessing::{
-        DKGPreprocessing, create_memory_factory, create_redis_factory,
+        DKGPreprocessing, create_memory_factory,
         orchestration::producer_traits::SecureSmallProducerFactory,
     },
     small_execution::prss::RobustSecurePrssInit,
@@ -73,6 +73,7 @@ use crate::{
         },
         context_manager::{ThresholdContextManager, ensure_default_threshold_context_in_storage},
         prepare_shutdown_signals,
+        public_material_verification::verify_public_storage_material,
         threshold::{
             service::{
                 public_decryptor::SecureNoiseFloodDecryptor,
@@ -82,7 +83,6 @@ use crate::{
             threshold_kms::ThresholdKms,
         },
         traits::PrivateKeyMaterialMetadata,
-        utils::{sanity_check_crs_materials, sanity_check_public_materials},
     },
     grpc::metastore_status_service::MetaStoreStatusServiceImpl,
     util::{meta_store::MetaStore, rate_limiter::RateLimiter},
@@ -91,6 +91,7 @@ use crate::{
         storage::{
             Storage, StorageExt, crypto_material::ThresholdCryptoMaterialStorage,
             read_all_data_from_all_epochs_versioned, read_all_data_versioned,
+            select_data_from_max_epoch,
         },
     },
 };
@@ -339,10 +340,7 @@ impl ThresholdFheKeys {
                 decompression_key: decompression_key.clone(),
             },
             PublicKeyMaterial::Compressed { keyset } => {
-                let (_pk, sk) = keyset
-                    .decompress()
-                    .expect("Call is infallible")
-                    .into_raw_parts();
+                let (_pk, sk) = keyset.decompress().into_raw_parts();
                 let (isk, _, _, decompk, snsk, _, _, _, _) = sk.into_raw_parts();
                 UncompressedKeys {
                     integer_server_key: Arc::new(isk),
@@ -421,6 +419,7 @@ impl std::fmt::Debug for ThresholdFheKeys {
 pub struct BucketMetaStore {
     pub(crate) preprocessing_id: RequestId,
     pub(crate) external_signature: Vec<u8>,
+    pub(crate) signatures: Vec<crate::engine::base::StoredTypedSignature>,
     pub(crate) preprocessing_store: PreprocMaterial,
     pub(crate) dkg_param: DKGParams,
 }
@@ -444,13 +443,15 @@ pub enum PreprocMaterial {
 #[cfg(feature = "insecure")]
 pub(crate) fn new_insecure_preproc_bucket(
     sk: &crate::cryptography::signatures::PrivateSigKey,
+    schemes: &[crate::cryptography::signing::SigningSchemeType],
     preprocessing_id: RequestId,
     dkg_param: DKGParams,
     domain: &alloy_sol_types::Eip712Domain,
     extra_data: Vec<u8>,
 ) -> anyhow::Result<BucketMetaStore> {
-    let external_signature = crate::engine::base::compute_external_signature_preprocessing(
+    let (external_signature, signatures) = crate::engine::base::compute_preprocessing_signatures(
         sk,
+        schemes,
         &preprocessing_id,
         domain,
         extra_data,
@@ -458,6 +459,7 @@ pub(crate) fn new_insecure_preproc_bucket(
     Ok(BucketMetaStore {
         preprocessing_id,
         external_signature,
+        signatures,
         preprocessing_store: PreprocMaterial::Insecure,
         dkg_param,
     })
@@ -511,7 +513,6 @@ pub async fn new_real_threshold_kms<PubS, PrivS, F>(
     mpc_listener: TcpListener,
     base_kms: BaseKmsStruct,
     tls_config: Option<(ServerConfig, ClientConfig, Arc<AttestedVerifier>)>,
-    peer_tcp_proxy: bool,
     ensure_default_prss: bool,
     shutdown_signal: F,
 ) -> anyhow::Result<(
@@ -540,50 +541,60 @@ where
         )
         .await?;
 
-    let mut public_key_info = HashMap::new();
-    let validation_material: HashMap<RequestId, RecoveryValidationMaterial> =
+    let recovery_validation_material: HashMap<RequestId, RecoveryValidationMaterial> =
         read_all_data_versioned(&public_storage, &PubDataType::RecoveryMaterial.to_string())
             .await?;
 
-    // Validate the recovery material against the provided verification key
-    for (cur_req_id, cur_rec_material) in &validation_material {
-        if !cur_rec_material.validate(&base_kms.verf_key()) {
-            anyhow::bail!(
-                "Validation material for context {cur_req_id} failed to validate against the verification key"
-            );
-        }
-    }
+    // Build public_key_info map using the chronologically latest epoch for each key ID.
+    // Epoch IDs are ordered chronologically by comparing their raw bytes as a
+    // big-endian integer.
+    let public_key_info = select_data_from_max_epoch(
+        key_info_versioned
+            .iter()
+            .map(|((id, epoch_id), info)| ((*id, *epoch_id), info.meta_data.clone())),
+    );
 
-    // Build public_key_info map
-    for ((id, _), info) in &key_info_versioned {
-        public_key_info.insert(*id, info.meta_data.clone());
-    }
-
-    // sanity check the public materials
-    let entries: Vec<_> = key_info_versioned
+    let key_info: Vec<_> = key_info_versioned
         .iter()
         .map(|((id, _), info)| (*id, info.meta_data.clone()))
         .collect();
-    sanity_check_public_materials(&public_storage, &entries).await?;
 
     // load crs_info (roughly hashes of CRS) from storage
-    let crs_info: HashMap<RequestId, CrsGenMetadata> = read_all_data_from_all_epochs_versioned(
-        &private_storage,
-        &PrivDataType::CrsInfo.to_string(),
-    )
-    .await?
-    .into_iter()
-    .map(|((req, _epoch), v)| (req, v))
-    .collect();
+    let crs_info: HashMap<RequestId, CrsGenMetadata> = select_data_from_max_epoch(
+        read_all_data_from_all_epochs_versioned(
+            &private_storage,
+            &PrivDataType::CrsInfo.to_string(),
+        )
+        .await?,
+    );
 
-    sanity_check_crs_materials(&public_storage, &crs_info).await?;
+    // Verify public material and recovery validation material when the signing key is available.
+    // Recovery mode only supports backup recovery operations, so it skips both startup checks.
+    // Private storage is the reference; extra material in public storage is ignored.
+    match base_kms.sig_key() {
+        Ok(signing_key) => {
+            verify_public_storage_material(
+                &public_storage,
+                &key_info,
+                &crs_info,
+                &recovery_validation_material,
+                signing_key.as_ref(),
+            )
+            .await?;
+        }
+        Err(_) => {
+            tracing::warn!(
+                "No signing key available (recovery mode): skipping public material and recovery \
+                 validation material verification"
+            );
+        }
+    }
 
     let networking_manager = Arc::new(RwLock::new(GrpcNetworkingManager::new(
         tls_config
             .as_ref()
             .map(|(_, client_config, _)| client_config.clone()),
         threshold_config.core_to_core_net,
-        peer_tcp_proxy,
     )?));
 
     // the initial MPC node might not accept any peers because initially there's no context
@@ -664,13 +675,9 @@ where
         Ok(())
     });
 
-    // If no RedisConf is provided, we just use in-memory storage for storing preprocessing materials
-    let preproc_factory = match &threshold_config.preproc_redis {
-        None => create_memory_factory(),
-        Some(conf) => {
-            create_redis_factory(format!("REDIS_{}", base_kms.verf_key().address()), conf)
-        }
-    };
+    // Create a factory for producing preprocessing material,
+    // the only backend available in production is the in-memory one.
+    let preproc_factory = create_memory_factory();
 
     let num_sessions_preproc = threshold_config
         .num_sessions_preproc
@@ -678,19 +685,19 @@ where
             std::cmp::max(x, MINIMUM_SESSIONS_PREPROC)
         });
 
-    let preproc_buckets = Arc::new(RwLock::new(MetaStore::new_unlimited()));
+    let preproc_buckets = MetaStore::new_unlimited();
     let preproc_factory = Arc::new(Mutex::new(preproc_factory));
-    let crs_meta_store = Arc::new(RwLock::new(MetaStore::new_from_map(crs_info)));
-    let dkg_pubinfo_meta_store = Arc::new(RwLock::new(MetaStore::new_from_map(public_key_info)));
-    let pub_dec_meta_store = Arc::new(RwLock::new(MetaStore::new(
+    let crs_meta_store = MetaStore::new_from_map(crs_info);
+    let dkg_pubinfo_meta_store = MetaStore::new_from_map(public_key_info);
+    let pub_dec_meta_store = MetaStore::new(
         threshold_config.dec_capacity,
         threshold_config.min_dec_cache,
-    )));
-    let user_decrypt_meta_store = Arc::new(RwLock::new(MetaStore::new(
+    );
+    let user_decrypt_meta_store = MetaStore::new(
         threshold_config.dec_capacity,
         threshold_config.min_dec_cache,
-    )));
-    let custodian_meta_store = Arc::new(RwLock::new(MetaStore::new_from_map(validation_material)));
+    );
+    let custodian_meta_store = MetaStore::new_from_map(recovery_validation_material);
 
     // TODO(zama-ai/kms-internal/issues/2758)
     // If we're still using peer config, we need to manually write the default context into storage.
@@ -760,7 +767,7 @@ where
         crypto_storage: crypto_storage.clone(),
         session_maker: session_maker.clone(),
         base_kms: base_kms.new_instance().await,
-        reshare_pubinfo_meta_store: Arc::new(RwLock::new(MetaStore::new_unlimited())),
+        reshare_pubinfo_meta_store: MetaStore::new_unlimited(),
         tracker: Arc::clone(&tracker),
         rate_limiter: rate_limiter.clone(),
         _init: PhantomData,
@@ -780,7 +787,7 @@ where
                 private_storage_info
             );
             epoch_manager
-                .init_prss(&default_context_id, &epoch_id_prss)
+                .init_epoch(&default_context_id, &epoch_id_prss)
                 .await?;
         }
     }
@@ -1087,6 +1094,7 @@ mod tests {
                     BTreeMap::new(),
                     vec![],
                     vec![],
+                    vec![],
                 ),
                 key_cache: OnceLock::new(),
             };
@@ -1133,6 +1141,7 @@ mod tests {
                 RequestId::zeros(),
                 RequestId::zeros(),
                 BTreeMap::new(),
+                vec![],
                 vec![],
                 vec![],
             ),
@@ -1207,6 +1216,7 @@ mod tests {
                 RequestId::zeros(),
                 RequestId::zeros(),
                 BTreeMap::new(),
+                vec![],
                 vec![],
                 vec![],
             ),

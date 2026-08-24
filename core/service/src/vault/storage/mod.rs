@@ -474,7 +474,7 @@ pub async fn store_context_at_id<S: Storage>(
 ) -> anyhow::Result<()> {
     store_versioned_at_request_id(
         storage,
-        &(*context_id).into(),
+        &context_id.into(),
         context_info,
         &PrivDataType::ContextInfo.to_string(),
     )
@@ -489,7 +489,7 @@ pub async fn read_context_at_id<S: StorageReader>(
 ) -> anyhow::Result<context::ContextInfo> {
     read_versioned_at_request_id(
         storage,
-        &(*context_id).into(),
+        &context_id.into(),
         &PrivDataType::ContextInfo.to_string(),
     )
     .await
@@ -497,11 +497,11 @@ pub async fn read_context_at_id<S: StorageReader>(
 
 pub async fn delete_context_at_id<S: Storage>(
     storage: &mut S,
-    request_id: &ContextId,
+    context_id: &ContextId,
 ) -> anyhow::Result<()> {
     delete_at_request_id(
         storage,
-        &(*request_id).into(),
+        &context_id.into(),
         &PrivDataType::ContextInfo.to_string(),
     )
     .await
@@ -554,6 +554,33 @@ pub async fn read_all_data_from_all_epochs_versioned<
     }
 
     Ok(res)
+}
+
+/// Select the data stored at the greatest epoch ID for each request ID.
+///
+/// The selection compares epoch IDs explicitly, so it does not depend on the
+/// iteration order of the input collection.
+pub(crate) fn select_data_from_max_epoch<T>(
+    entries: impl IntoIterator<Item = ((RequestId, EpochId), T)>,
+) -> HashMap<RequestId, T> {
+    let mut selected = HashMap::<RequestId, (EpochId, T)>::new();
+    for ((request_id, epoch_id), data) in entries {
+        match selected.entry(request_id) {
+            std::collections::hash_map::Entry::Vacant(entry) => {
+                entry.insert((epoch_id, data));
+            }
+            std::collections::hash_map::Entry::Occupied(mut entry) => {
+                if epoch_id > entry.get().0 {
+                    entry.insert((epoch_id, data));
+                }
+            }
+        }
+    }
+
+    selected
+        .into_iter()
+        .map(|(request_id, (_epoch_id, data))| (request_id, data))
+        .collect()
 }
 
 /// Helper method for reading all data of a specific type.
@@ -778,6 +805,38 @@ pub mod tests {
             .delete_data_at_epoch(&id4, &epoch2, &data_type)
             .await
             .unwrap();
+    }
+
+    #[test]
+    fn select_data_from_max_epoch_selects_maximum_for_each_request() {
+        let request_id_1 = derive_request_id("max_epoch_request_1").unwrap();
+        let request_id_2 = derive_request_id("max_epoch_request_2").unwrap();
+        let earlier_epoch = EpochId::try_from(1_u128).unwrap();
+        let later_epoch = EpochId::try_from(2_u128).unwrap();
+
+        let selected = select_data_from_max_epoch([
+            ((request_id_1, earlier_epoch), 10),
+            ((request_id_2, earlier_epoch), 20),
+            ((request_id_1, later_epoch), 11),
+        ]);
+
+        assert_eq!(selected.len(), 2);
+        assert_eq!(selected.get(&request_id_1), Some(&11));
+        assert_eq!(selected.get(&request_id_2), Some(&20));
+    }
+
+    #[test]
+    fn select_data_from_max_epoch_ignores_later_lower_epoch_entry() {
+        let request_id = derive_request_id("max_epoch_reverse_order").unwrap();
+        let earlier_epoch = EpochId::try_from(1_u128).unwrap();
+        let later_epoch = EpochId::try_from(2_u128).unwrap();
+
+        let selected = select_data_from_max_epoch([
+            ((request_id, later_epoch), 11),
+            ((request_id, earlier_epoch), 10),
+        ]);
+
+        assert_eq!(selected.get(&request_id), Some(&11));
     }
 
     pub async fn test_batch_helper_methods<S: Storage>(storage: &mut S) {

@@ -103,10 +103,7 @@ fn main() {
     for (name, params) in ALL_PARAMS {
         let (client_key, compressed_server_key) = generate_tfhe_keys(&params);
 
-        let (public_key, server_key) = compressed_server_key
-            .decompress()
-            .expect("Decompression failed")
-            .into_raw_parts();
+        let (public_key, server_key) = compressed_server_key.decompress().into_raw_parts();
 
         set_server_key(server_key);
 

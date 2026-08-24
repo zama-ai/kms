@@ -7,7 +7,7 @@ metadata:
     app: threshold-kms-enclave-ci-test-suite
 spec:
   serviceAccountName: workflow-runner
-  activeDeadlineSeconds: 691200  # 96 hours total timeout
+  activeDeadlineSeconds: 345600  # 96 hours total timeout
   ttlStrategy:
     secondsAfterCompletion: 86400  # Keep for 1 day after completion
   tolerations:
@@ -42,6 +42,8 @@ spec:
       value: "Manually triggered"
     - name: fhe-params
       value: "Test"
+    - name: client-logs
+      value: "disabled"
 
 
   templates:
@@ -50,57 +52,9 @@ spec:
       dag:
         tasks:
           ##########################################################################
-          # Preprocessing
+          # insecure Keygen (v0.13.x: single step, no preprocessing, no -i)
           ##########################################################################
-          - name: preproc-key-gen
-            template: run-test
-            continueOn:
-              failed: true
-            arguments:
-              parameters:
-                - name: test-name
-                  value: "preproc-key-gen"
-                - name: test-command
-                  value: "preproc-key-gen"
-                - name: fhe-params
-                  value: "{{workflow.parameters.fhe-params}}"
-
-          ##########################################################################
-          # Keygen
-          ##########################################################################
-          - name: key-gen
-            dependencies: ["preproc-key-gen"]
-            template: run-test
-            continueOn:
-              failed: true
-            arguments:
-              parameters:
-                - name: test-name
-                  value: "key-gen"
-                - name: test-command
-                  value: "key-gen -i {{tasks.preproc-key-gen.outputs.parameters.request-id}}"
-                - name: fhe-params
-                  value: "{{workflow.parameters.fhe-params}}"
-
-          ##########################################################################
-          # insecure Keygen
-          ##########################################################################
-          - name: insecure-preproc-key-gen
-            dependencies: ["key-gen"]
-            template: run-test
-            continueOn:
-              failed: true
-            arguments:
-              parameters:
-                - name: test-name
-                  value: "insecure-preproc-key-gen"
-                - name: test-command
-                  value: "insecure-preproc-key-gen"
-                - name: fhe-params
-                  value: "Default"
-
           - name: insecure-key-gen
-            dependencies: ["insecure-preproc-key-gen"]
             template: run-test
             continueOn:
               failed: true
@@ -109,9 +63,9 @@ spec:
                 - name: test-name
                   value: "insecure-key-gen"
                 - name: test-command
-                  value: "insecure-key-gen -i {{tasks.insecure-preproc-key-gen.outputs.parameters.request-id}}"
+                  value: "insecure-key-gen"
                 - name: fhe-params
-                  value: "Default"
+                  value: "{{workflow.parameters.fhe-params}}"
 
           ##########################################################################
           # real CRS gen
@@ -128,28 +82,12 @@ spec:
                 - name: test-command
                   value: "crs-gen --max-num-bits 2048"
                 - name: fhe-params
-                  value: "Default"
-          ##########################################################################
-          # WARMUP Decrypt test (1 request)
-          ##########################################################################
-          - name: warmup-public-decrypt-euint64-req1
-            dependencies: ["crs-gen"]
-            template: run-test
-            continueOn:
-              failed: true
-            arguments:
-              parameters:
-                - name: test-name
-                  value: "warmup-public-decrypt-euint64-req1"
-                - name: test-command
-                  value: "public-decrypt from-args -d euint64 -k {{tasks.insecure-key-gen.outputs.parameters.request-id}} -e ffffffffffffffff --num-requests 1"
-                - name: fhe-params
-                  value: "Default"
+                  value: "{{workflow.parameters.fhe-params}}"
           ##########################################################################
           # Public decrypt tests
           ##########################################################################
           - name: public-decrypt-euint64-req1
-            dependencies: ["warmup-public-decrypt-euint64-req1"]
+            dependencies: ["crs-gen"]
             template: run-test
             continueOn:
               failed: true
@@ -160,7 +98,7 @@ spec:
                 - name: test-command
                   value: "public-decrypt from-args -d euint64 -k {{tasks.insecure-key-gen.outputs.parameters.request-id}} -e ffffffffffffffff --num-requests 1"
                 - name: fhe-params
-                  value: "Default"
+                  value: "{{workflow.parameters.fhe-params}}"
           ##########################################################################
           # User decrypt tests
           ##########################################################################
@@ -174,9 +112,9 @@ spec:
                 - name: test-name
                   value: "user-decrypt-euint64-req1"
                 - name: test-command
-                  value: "user-decrypt from-args -d euint64 -k {{tasks.insecure-key-gen.outputs.parameters.request-id}} -e ffffffffffffffff --num-requests 1"
+                  value: "user-decrypt from-args -d euint64 -k {{tasks.insecure-key-gen.outputs.parameters.request-id}} -e ffffffffffffffff --batch-size 1"
                 - name: fhe-params
-                  value: "Default"
+                  value: "{{workflow.parameters.fhe-params}}"
 
           ##########################################################################
           # Public decrypt tests
@@ -193,7 +131,7 @@ spec:
                 - name: test-command
                   value: "public-decrypt from-args -d euint64 -k {{tasks.insecure-key-gen.outputs.parameters.request-id}} -e ffffffffffffffff --num-requests 10"
                 - name: fhe-params
-                  value: "Default"
+                  value: "{{workflow.parameters.fhe-params}}"
 
           ##########################################################################
           # User decrypt tests
@@ -208,132 +146,19 @@ spec:
                 - name: test-name
                   value: "user-decrypt-euint64-req10"
                 - name: test-command
-                  value: "user-decrypt from-args -d euint64 -k {{tasks.insecure-key-gen.outputs.parameters.request-id}} -e ffffffffffffffff --num-requests 10"
+                  value: "user-decrypt from-args -d euint64 -k {{tasks.insecure-key-gen.outputs.parameters.request-id}} -e ffffffffffffffff --batch-size 10"
                 - name: fhe-params
-                  value: "Default"
-
-          ##########################################################################
-          # Public decrypt tests
-          ##########################################################################
-          - name: public-decrypt-euint64-req100
-            dependencies: ["user-decrypt-euint64-req10"]
-            template: run-test
-            continueOn:
-              failed: true
-            arguments:
-              parameters:
-                - name: test-name
-                  value: "public-decrypt-euint64-req100"
-                - name: test-command
-                  value: "public-decrypt from-args -d euint64 -k {{tasks.insecure-key-gen.outputs.parameters.request-id}} -e ffffffffffffffff --num-requests 100"
-                - name: fhe-params
-                  value: "Default"
-
-
-          ##########################################################################
-          # User decrypt tests
-          ##########################################################################
-          - name: user-decrypt-euint64-req100
-            dependencies: ["public-decrypt-euint64-req100"]
-            template: run-test
-            continueOn:
-              failed: true
-            arguments:
-              parameters:
-                - name: test-name
-                  value: "user-decrypt-euint64-req100"
-                - name: test-command
-                  value: "user-decrypt from-args -d euint64 -k {{tasks.insecure-key-gen.outputs.parameters.request-id}} -e ffffffffffffffff --num-requests 100"
-                - name: fhe-params
-                  value: "Default"
-
-          ##########################################################################
-          # Public decrypt tests
-          ##########################################################################
-          - name: public-decrypt-euint64-req500
-            dependencies: ["user-decrypt-euint64-req100"]
-            template: run-test
-            continueOn:
-              failed: true
-            arguments:
-              parameters:
-                - name: test-name
-                  value: "public-decrypt-euint64-req500"
-                - name: test-command
-                  value: "public-decrypt from-args -d euint64 -k {{tasks.insecure-key-gen.outputs.parameters.request-id}} -e ffffffffffffffff --num-requests 500"
-                - name: fhe-params
-                  value: "Default"
-
-
-          ##########################################################################
-          # User decrypt tests
-          ##########################################################################
-          - name: user-decrypt-euint64-req500
-            dependencies: ["public-decrypt-euint64-req500"]
-            template: run-test
-            continueOn:
-              failed: true
-            arguments:
-              parameters:
-                - name: test-name
-                  value: "user-decrypt-euint64-req500"
-                - name: test-command
-                  value: "user-decrypt from-args -d euint64 -k {{tasks.insecure-key-gen.outputs.parameters.request-id}} -e ffffffffffffffff --num-requests 500"
-                - name: fhe-params
-                  value: "Default"
-
-          ##########################################################################
-          # Public decrypt tests
-          ##########################################################################
-          - name: public-decrypt-euint64-req1000
-            dependencies: ["user-decrypt-euint64-req500"]
-            template: run-test
-            continueOn:
-              failed: true
-            arguments:
-              parameters:
-                - name: test-name
-                  value: "public-decrypt-euint64-req1000"
-                - name: test-command
-                  value: "public-decrypt from-args -d euint64 -k {{tasks.insecure-key-gen.outputs.parameters.request-id}} -e ffffffffffffffff --num-requests 1000"
-                - name: fhe-params
-                  value: "Default"
-
-
-          ##########################################################################
-          # User decrypt tests
-          ##########################################################################
-          - name: user-decrypt-euint64-req1000
-            dependencies: ["public-decrypt-euint64-req1000"]
-            template: run-test
-            continueOn:
-              failed: true
-            arguments:
-              parameters:
-                - name: test-name
-                  value: "user-decrypt-euint64-req1000"
-                - name: test-command
-                  value: "user-decrypt from-args -d euint64 -k {{tasks.insecure-key-gen.outputs.parameters.request-id}} -e ffffffffffffffff --num-requests 1000"
-                - name: fhe-params
-                  value: "Default"
+                  value: "{{workflow.parameters.fhe-params}}"
 
           # Summary report generation
           - name: generate-summary
             dependencies: [
-              "preproc-key-gen",                # Preprocessing keygen with FHE_PARAMS = Test
-              "key-gen",                        # Keygen with FHE_PARAMS = Test
-              "insecure-key-gen",               # Insecure keygen with FHE_PARAMS = Default
-              "crs-gen",                        # CRS gen with FHE_PARAMS = Default
-              "public-decrypt-euint64-req1",    # 1 req euint64 Public decrypt tests with FHE_PARAMS = Default
-              "user-decrypt-euint64-req1",      # 1 req euint64 User decrypt tests with FHE_PARAMS = Default
-              "public-decrypt-euint64-req10",   # 10 req euint64 Public decrypt tests with FHE_PARAMS = Default
-              "user-decrypt-euint64-req10",     # 10 req euint64 User decrypt tests with FHE_PARAMS = Default
-              "public-decrypt-euint64-req100",  # 100 req euint64 Public decrypt tests with FHE_PARAMS = Default
-              "user-decrypt-euint64-req100",    # 100 req euint64 User decrypt tests with FHE_PARAMS = Default
-              "public-decrypt-euint64-req500",  # 500 req euint64 Public decrypt tests with FHE_PARAMS = Default
-              "user-decrypt-euint64-req500",    # 500 req euint64 User decrypt tests with FHE_PARAMS = Default
-              "public-decrypt-euint64-req1000", # 1000 req euint64 Public decrypt tests with FHE_PARAMS = Default
-              "user-decrypt-euint64-req1000"    # 1000 req euint64 User decrypt tests with FHE_PARAMS = Default
+              "insecure-key-gen",               # Insecure keygen
+              "crs-gen",                        # CRS gen
+              "public-decrypt-euint64-req1",    # 1 req euint64 Public decrypt (correctness)
+              "user-decrypt-euint64-req1",      # 1 req euint64 User decrypt (correctness)
+              "public-decrypt-euint64-req10",   # 10 req euint64 Public decrypt (correctness)
+              "user-decrypt-euint64-req10",     # 10 req euint64 User decrypt (correctness)
             ]
             template: summary-report
             continueOn:
@@ -341,33 +166,17 @@ spec:
             arguments:
               parameters:
               - name: test-result-1
-                value: "{{tasks.preproc-key-gen.outputs.parameters.test-result}}"
-              - name: test-result-2
-                value: "{{tasks.key-gen.outputs.parameters.test-result}}"
-              - name: test-result-3
                 value: "{{tasks.insecure-key-gen.outputs.parameters.test-result}}"
-              - name: test-result-4
+              - name: test-result-2
                 value: "{{tasks.crs-gen.outputs.parameters.test-result}}"
-              - name: test-result-5
+              - name: test-result-3
                 value: "{{tasks.public-decrypt-euint64-req1.outputs.parameters.test-result}}"
-              - name: test-result-6
+              - name: test-result-4
                 value: "{{tasks.user-decrypt-euint64-req1.outputs.parameters.test-result}}"
-              - name: test-result-7
+              - name: test-result-5
                 value: "{{tasks.public-decrypt-euint64-req10.outputs.parameters.test-result}}"
-              - name: test-result-8
+              - name: test-result-6
                 value: "{{tasks.user-decrypt-euint64-req10.outputs.parameters.test-result}}"
-              - name: test-result-9
-                value: "{{tasks.public-decrypt-euint64-req100.outputs.parameters.test-result}}"
-              - name: test-result-10
-                value: "{{tasks.user-decrypt-euint64-req100.outputs.parameters.test-result}}"
-              - name: test-result-11
-                value: "{{tasks.public-decrypt-euint64-req500.outputs.parameters.test-result}}"
-              - name: test-result-12
-                value: "{{tasks.user-decrypt-euint64-req500.outputs.parameters.test-result}}"
-              - name: test-result-13
-                value: "{{tasks.public-decrypt-euint64-req1000.outputs.parameters.test-result}}"
-              - name: test-result-14
-                value: "{{tasks.user-decrypt-euint64-req1000.outputs.parameters.test-result}}"
               - name: tls
                 value: "{{workflow.parameters.tls}}"
               - name: run_url
@@ -391,10 +200,14 @@ spec:
         labels:
           test: "{{inputs.parameters.test-name}}"
           app: kms-enclave-test-suite
+      nodeSelector:
+          karpenter.sh/nodepool: kms-pool
       script:
-        image: hub.zama.org/ghcr/zama-ai/kms/core-client:<version>
+        image: hub.zama.org/ghcr/zama-ai/kms/core-client:<client-version>
         command: ["/bin/bash", "-c"]
         source: |
+          set -e
+
           cat <<EOF >>config.toml
             kms_type = "threshold"
             num_majority=${NUM_MAJORITY}
@@ -473,9 +286,15 @@ spec:
           echo "=========================================="
 
           # Run the specific test with timing and capture logs
+          client_logs_arg=""
+          if [ "{{workflow.parameters.client-logs}}" = "enabled" ]; then
+            client_logs_arg="--logs"
+          fi
           start_time=$(date +%s)
-          ./bin/kms-core-client --logs --max-iter 2880 -f config.toml {{inputs.parameters.test-command}} 2>&1 | tee /tmp/test_logs.txt
+          set +e
+          ./bin/kms-core-client ${client_logs_arg} --max-iter 2880 -f config.toml {{inputs.parameters.test-command}} 2>&1 | tee /tmp/test_logs.txt
           test_exit=${PIPESTATUS[0]}
+          set -e
           end_time=$(date +%s)
           duration=$((end_time - start_time))
 
@@ -580,11 +399,11 @@ spec:
             value: '{{inputs.parameters.fhe-params}}'
         resources:
           requests:
-            memory: "24Gi"
-            cpu: "4"
+            memory: "96Gi"
+            cpu: "64"
           limits:
-            memory: "24Gi"
-            cpu: "4"
+            memory: "96Gi"
+            cpu: "64"
 
 
     - name: summary-report
@@ -596,14 +415,6 @@ spec:
         - name: test-result-4
         - name: test-result-5
         - name: test-result-6
-        - name: test-result-7
-        - name: test-result-8
-        - name: test-result-9
-        - name: test-result-10
-        - name: test-result-11
-        - name: test-result-12
-        - name: test-result-13
-        - name: test-result-14
         - name: tls
         - name: run_url
       script:
@@ -618,23 +429,17 @@ spec:
         - name: slack-webhook-volume
           mountPath: /etc/slack
         source: |
+          set -e
+
           apk add --no-cache jq
           # Make a directory for all the results
           mkdir -p /mnt/results
-          echo '{{inputs.parameters.test-result-1}}' > /mnt/results/preproc-key-gen.json
-          echo '{{inputs.parameters.test-result-2}}' > /mnt/results/key-gen.json
-          echo '{{inputs.parameters.test-result-3}}' > /mnt/results/insecure-key-gen.json
-          echo '{{inputs.parameters.test-result-4}}' > /mnt/results/crs-gen.json
-          echo '{{inputs.parameters.test-result-5}}' > /mnt/results/public-decrypt-euint64-req1.json
-          echo '{{inputs.parameters.test-result-6}}' > /mnt/results/user-decrypt-euint64-req1.json
-          echo '{{inputs.parameters.test-result-7}}' > /mnt/results/public-decrypt-euint64-req10.json
-          echo '{{inputs.parameters.test-result-8}}' > /mnt/results/user-decrypt-euint64-req10.json
-          echo '{{inputs.parameters.test-result-9}}' > /mnt/results/public-decrypt-euint64-req100.json
-          echo '{{inputs.parameters.test-result-10}}' > /mnt/results/user-decrypt-euint64-req100.json
-          echo '{{inputs.parameters.test-result-11}}' > /mnt/results/public-decrypt-euint64-req500.json
-          echo '{{inputs.parameters.test-result-12}}' > /mnt/results/user-decrypt-euint64-req500.json
-          echo '{{inputs.parameters.test-result-13}}' > /mnt/results/public-decrypt-euint64-req1000.json
-          echo '{{inputs.parameters.test-result-14}}' > /mnt/results/user-decrypt-euint64-req1000.json
+          echo '{{inputs.parameters.test-result-1}}' > /mnt/results/insecure-key-gen.json
+          echo '{{inputs.parameters.test-result-2}}' > /mnt/results/crs-gen.json
+          echo '{{inputs.parameters.test-result-3}}' > /mnt/results/public-decrypt-euint64-req1.json
+          echo '{{inputs.parameters.test-result-4}}' > /mnt/results/user-decrypt-euint64-req1.json
+          echo '{{inputs.parameters.test-result-5}}' > /mnt/results/public-decrypt-euint64-req10.json
+          echo '{{inputs.parameters.test-result-6}}' > /mnt/results/user-decrypt-euint64-req10.json
           ls -ali /mnt/results/
 
           echo "=========================================="
@@ -654,20 +459,12 @@ spec:
 
           # Process result files in execution order
           for result in \
-            /mnt/results/preproc-key-gen.json \
-            /mnt/results/key-gen.json \
             /mnt/results/insecure-key-gen.json \
             /mnt/results/crs-gen.json \
             /mnt/results/public-decrypt-euint64-req1.json \
             /mnt/results/user-decrypt-euint64-req1.json \
             /mnt/results/public-decrypt-euint64-req10.json \
-            /mnt/results/user-decrypt-euint64-req10.json \
-            /mnt/results/public-decrypt-euint64-req100.json \
-            /mnt/results/user-decrypt-euint64-req100.json \
-            /mnt/results/public-decrypt-euint64-req500.json \
-            /mnt/results/user-decrypt-euint64-req500.json \
-            /mnt/results/public-decrypt-euint64-req1000.json \
-            /mnt/results/user-decrypt-euint64-req1000.json; do
+            /mnt/results/user-decrypt-euint64-req10.json; do
             if [ -f "$result" ]; then
               echo "DEBUG: Processing file: $result"
               cat $result
@@ -684,7 +481,7 @@ spec:
               # Check if file is valid JSON before processing
               if ! jq empty "$result" 2>/dev/null; then
                 echo "⚠️  JSON validation failed, showing jq error:"
-                jq empty "$result"
+                jq empty "$result" || true
                 echo "⚠️  Skipping invalid JSON file: $result"
                 continue
               else
@@ -708,10 +505,10 @@ spec:
               max_latency=$(jq -r '.performance_metrics.latency.max // empty' "$result" 2>/dev/null || echo "")
               throughput=$(jq -r '.performance_metrics.throughput // empty' "$result" 2>/dev/null || echo "")
 
-              # Ensure duration is numeric
-              if ! [[ "$duration" =~ ^[0-9]+$ ]]; then
-                duration=0
-              fi
+              # Ensure duration is numeric (POSIX sh — Alpine ash lacks bash regex tests)
+              case "$duration" in
+                ""|*[!0-9]*) duration=0 ;;
+              esac
               total_time=$((total_time + duration))
 
               # Format result line
@@ -827,20 +624,12 @@ spec:
                   }
                 ],
                 "text": "\`\`\`\n$(for result in \
-                  /mnt/results/preproc-key-gen.json \
-                  /mnt/results/key-gen.json \
                   /mnt/results/insecure-key-gen.json \
                   /mnt/results/crs-gen.json \
                   /mnt/results/public-decrypt-euint64-req1.json \
                   /mnt/results/user-decrypt-euint64-req1.json \
                   /mnt/results/public-decrypt-euint64-req10.json \
-                  /mnt/results/user-decrypt-euint64-req10.json \
-                  /mnt/results/public-decrypt-euint64-req100.json \
-                  /mnt/results/user-decrypt-euint64-req100.json \
-                  /mnt/results/public-decrypt-euint64-req500.json \
-                  /mnt/results/user-decrypt-euint64-req500.json \
-                  /mnt/results/public-decrypt-euint64-req1000.json \
-                  /mnt/results/user-decrypt-euint64-req1000.json; do
+                  /mnt/results/user-decrypt-euint64-req10.json; do
                   if [ -f "$result" ]; then
                     test_name=$(jq -r '.test_name' $result)
                     fhe_params=$(jq -r '.fhe_params' $result)
@@ -880,45 +669,6 @@ spec:
           apk add --no-cache curl
           # Send the notification
           curl -s -X POST -H "Content-type: application/json" -d "$SLACK_MESSAGE" $SLACK_WEBHOOK_URL
-
-          # Check for low throughput on 100 request tests
-          for result in /mnt/results/public-decrypt-euint64-req100.json /mnt/results/user-decrypt-euint64-req100.json; do
-            if [ -f "$result" ]; then
-              exit_code=$(jq -r '.exit_code // 1' "$result")
-              if [ "$exit_code" -eq 0 ]; then
-                test_name=$(jq -r '.test_name' "$result")
-                throughput=$(jq -r '.performance_metrics.throughput // 0' "$result")
-
-                # Check if throughput is below 80
-                is_low=$(awk -v t="$throughput" 'BEGIN {print (t < 80 ? 1 : 0)}')
-
-                if [ "$is_low" -eq 1 ]; then
-                  echo "⚠️ Low throughput detected for $test_name: $throughput req/s"
-
-                  LOW_TP_MESSAGE=$(cat << EOF
-          {
-            "attachments": [
-              {
-                "color": "danger",
-                "title": ":warning: Low Throughput Alert",
-                "text": "Test *$test_name* has low throughput: *$throughput req/s* (threshold: 80 req/s)",
-                "fields": [
-                  {
-                    "title": "Run ID",
-                    "value": "$WORKFLOW_NAME",
-                    "short": true
-                  }
-                ]
-              }
-            ]
-          }
-          EOF
-                  )
-                  curl -s -X POST -H "Content-type: application/json" -d "$LOW_TP_MESSAGE" $SLACK_WEBHOOK_URL
-                fi
-              fi
-            fi
-          done
 
           echo "=========================================="
           if [ $failed -gt 0 ]; then

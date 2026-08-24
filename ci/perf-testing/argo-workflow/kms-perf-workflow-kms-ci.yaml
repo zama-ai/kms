@@ -1,0 +1,1135 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Workflow
+metadata:
+  generateName: kms-perf-<version>-
+  namespace: kms-ci
+  labels:
+    app: kms-perf
+spec:
+  serviceAccountName: workflow-runner
+  activeDeadlineSeconds: 28800  # 8h cap for full perf runs.
+  # Delete the completed Workflow object and pod metadata after 24h. Test output
+  # remains in pod logs, Slack, and any external log/artifact sinks.
+  ttlStrategy:
+    secondsAfterCompletion: 86400
+  tolerations:
+  - key: karpenter.sh/nodepool
+    effect: NoSchedule
+    operator: Equal
+    value: kms-pool
+  volumes:
+  - name: slack-webhook-volume
+    secret:
+      secretName: slack-webhook
+
+  entrypoint: kms-perf
+  arguments:
+    parameters:
+    - name: tls
+      value: "disabled"
+    - name: client-logs
+      value: "disabled"
+    - name: run_url
+      value: "Manually triggered"
+    - name: job_url
+      value: "Manually triggered"
+    - name: job_label
+      value: "GitHub Actions"
+    - name: fhe-params
+      value: "Test"
+    - name: max-in-flight
+      value: "10000"
+    - name: data-type
+      value: "euint64"
+    - name: batch-size
+      value: "1"
+    - name: s3-config-map-name
+      value: "kms-ci-1"
+    # TODO: parameterize num-parties, num-majority, and num-reconstruct together
+    # with the CI deployment. Useful target: 4 parties with 2/3 thresholds in
+    # addition to the current 13-party 5/9 setup.
+
+  templates:
+    - name: kms-perf
+      dag:
+        tasks:
+          - name: preproc-key-gen
+            template: run-test
+            continueOn:
+              failed: true
+            arguments:
+              parameters:
+              - name: test-name
+                value: "preproc-key-gen"
+              - name: test-command
+                value: "preproc-key-gen"
+              - name: fhe-params
+                value: "{{workflow.parameters.fhe-params}}"
+
+          - name: key-gen
+            dependencies: ["preproc-key-gen"]
+            template: run-test
+            continueOn:
+              failed: true
+            arguments:
+              parameters:
+              - name: test-name
+                value: "key-gen"
+              - name: test-command
+                value: "key-gen -i {{tasks.preproc-key-gen.outputs.parameters.request-id}}"
+              - name: fhe-params
+                value: "{{workflow.parameters.fhe-params}}"
+
+          - name: udec-preproc-key-gen
+            dependencies: ["key-gen"]
+            template: run-test
+            continueOn:
+              failed: true
+            arguments:
+              parameters:
+              - name: test-name
+                value: "udec-preproc-key-gen"
+              - name: test-command
+                value: "insecure-preproc-key-gen"
+              - name: fhe-params
+                value: "Default"
+
+          - name: udec-key-gen
+            dependencies: ["udec-preproc-key-gen"]
+            template: run-test
+            continueOn:
+              failed: true
+            arguments:
+              parameters:
+              - name: test-name
+                value: "udec-key-gen"
+              - name: test-command
+                value: "insecure-key-gen -i {{tasks.udec-preproc-key-gen.outputs.parameters.request-id}}"
+              - name: fhe-params
+                value: "Default"
+
+          - name: crs-gen
+            dependencies: ["udec-key-gen"]
+            template: run-test
+            continueOn:
+              failed: true
+            arguments:
+              parameters:
+              - name: test-name
+                value: "crs-gen"
+              - name: test-command
+                value: "crs-gen --max-num-bits 2048"
+              - name: fhe-params
+                value: "Default"
+
+          # <<GENERATED:dag-tasks>>
+
+          - name: summary
+            dependencies:
+              - "preproc-key-gen"
+              - "key-gen"
+              - "udec-preproc-key-gen"
+              - "udec-key-gen"
+              - "crs-gen"
+              # <<GENERATED:summary-deps>>
+            template: summary-report
+            arguments:
+              parameters:
+              - name: test-result-preproc-key-gen
+                value: "{{tasks.preproc-key-gen.outputs.parameters.test-result}}"
+              - name: test-result-key-gen
+                value: "{{tasks.key-gen.outputs.parameters.test-result}}"
+              - name: test-result-udec-preproc-key-gen
+                value: "{{tasks.udec-preproc-key-gen.outputs.parameters.test-result}}"
+              - name: test-result-udec-key-gen
+                value: "{{tasks.udec-key-gen.outputs.parameters.test-result}}"
+              - name: test-result-crs-gen
+                value: "{{tasks.crs-gen.outputs.parameters.test-result}}"
+              # <<GENERATED:summary-args>>
+              - name: tls
+                value: "{{workflow.parameters.tls}}"
+              - name: run_url
+                value: "{{workflow.parameters.run_url}}"
+              - name: job_url
+                value: "{{workflow.parameters.job_url}}"
+              - name: job_label
+                value: "{{workflow.parameters.job_label}}"
+              - name: max-in-flight
+                value: "{{workflow.parameters.max-in-flight}}"
+
+    - name: run-test
+      inputs:
+        parameters:
+        - name: test-name
+        - name: test-command
+        - name: fhe-params
+      outputs:
+        parameters:
+        - name: test-result
+          valueFrom:
+            path: /tmp/artifacts/{{inputs.parameters.test-name}}.json
+        - name: request-id
+          valueFrom:
+            path: /tmp/artifacts/request_id.txt
+      metadata:
+        labels:
+          test: "{{inputs.parameters.test-name}}"
+          app: kms-perf
+      nodeSelector:
+        karpenter.sh/nodepool: kms-pool
+        karpenter.k8s.aws/instance-family: m5n
+      script:
+        image: hub.zama.org/ghcr/zama-ai/kms/core-client:<client-version>
+        command: ["/bin/bash", "-c"]
+        source: |
+          set -e
+
+          cat <<EOF > config.toml
+            kms_type = "threshold"
+            num_majority=${NUM_MAJORITY}
+            num_reconstruct=${NUM_RECONSTRUCT}
+            decryption_mode="${DECRYPTION_MODE}"
+            fhe_params="${FHE_PARAMETER:=Test}"
+            [[cores]]
+            party_id=1
+            address="kms-core-1-core-1:50100"
+            s3_endpoint="${S3_ENDPOINT}"
+            object_folder="PUB-p1"
+            [[cores]]
+            party_id=2
+            address="kms-core-2-core-2:50100"
+            s3_endpoint="${S3_ENDPOINT}"
+            object_folder="PUB-p2"
+            [[cores]]
+            party_id=3
+            address="kms-core-3-core-3:50100"
+            s3_endpoint="${S3_ENDPOINT}"
+            object_folder="PUB-p3"
+            [[cores]]
+            party_id=4
+            address="kms-core-4-core-4:50100"
+            s3_endpoint="${S3_ENDPOINT}"
+            object_folder="PUB-p4"
+            [[cores]]
+            party_id=5
+            address="kms-core-5-core-5:50100"
+            s3_endpoint="${S3_ENDPOINT}"
+            object_folder="PUB-p5"
+            [[cores]]
+            party_id=6
+            address="kms-core-6-core-6:50100"
+            s3_endpoint="${S3_ENDPOINT}"
+            object_folder="PUB-p6"
+            [[cores]]
+            party_id=7
+            address="kms-core-7-core-7:50100"
+            s3_endpoint="${S3_ENDPOINT}"
+            object_folder="PUB-p7"
+            [[cores]]
+            party_id=8
+            address="kms-core-8-core-8:50100"
+            s3_endpoint="${S3_ENDPOINT}"
+            object_folder="PUB-p8"
+            [[cores]]
+            party_id=9
+            address="kms-core-9-core-9:50100"
+            s3_endpoint="${S3_ENDPOINT}"
+            object_folder="PUB-p9"
+            [[cores]]
+            party_id=10
+            address="kms-core-10-core-10:50100"
+            s3_endpoint="${S3_ENDPOINT}"
+            object_folder="PUB-p10"
+            [[cores]]
+            party_id=11
+            address="kms-core-11-core-11:50100"
+            s3_endpoint="${S3_ENDPOINT}"
+            object_folder="PUB-p11"
+            [[cores]]
+            party_id=12
+            address="kms-core-12-core-12:50100"
+            s3_endpoint="${S3_ENDPOINT}"
+            object_folder="PUB-p12"
+            [[cores]]
+            party_id=13
+            address="kms-core-13-core-13:50100"
+            s3_endpoint="${S3_ENDPOINT}"
+            object_folder="PUB-p13"
+          EOF
+
+          echo "=========================================="
+          echo "Starting test: {{inputs.parameters.test-command}}"
+          echo "=========================================="
+
+          client_logs_arg=""
+          if [ "{{workflow.parameters.client-logs}}" = "enabled" ]; then
+            client_logs_arg="--logs"
+          fi
+
+          start_time=$(date +%s)
+          set +e
+          ./bin/kms-core-client ${client_logs_arg} --max-iter 2880 -f config.toml {{inputs.parameters.test-command}} 2>&1 | tee /tmp/test_logs.txt
+          test_exit=${PIPESTATUS[0]}
+          set -e
+          end_time=$(date +%s)
+          duration=$((end_time - start_time))
+
+          avg_latency=""
+          std_dev_latency=""
+          p50_latency=""
+          p95_latency=""
+          p99_latency=""
+          min_latency=""
+          max_latency=""
+          throughput=""
+
+          if grep -q "Latency for" /tmp/test_logs.txt; then
+            latency_line=$(grep "Latency for" /tmp/test_logs.txt | tail -1)
+            avg_latency=$(echo "$latency_line" | sed -n 's/.*Avg: \([^,]*\).*/\1/p')
+            std_dev_latency=$(echo "$latency_line" | sed -n 's/.*StdDev: \([^,]*\).*/\1/p')
+            p50_latency=$(echo "$latency_line" | sed -n 's/.*P50: \([^,]*\).*/\1/p')
+            p95_latency=$(echo "$latency_line" | sed -n 's/.*P95: \([^,]*\).*/\1/p')
+            p99_latency=$(echo "$latency_line" | sed -n 's/.*P99: \([^,]*\).*/\1/p')
+            min_latency=$(echo "$latency_line" | sed -n 's/.*Min: \([^,]*\).*/\1/p')
+            max_latency=$(echo "$latency_line" | sed -n 's/.*Max: \([^,}"]*\).*/\1/p')
+          fi
+
+          if grep -q "Throughput:" /tmp/test_logs.txt; then
+            throughput_line=$(grep "Throughput:" /tmp/test_logs.txt | tail -1)
+            throughput=$(echo "$throughput_line" | sed -n 's/.*Throughput: \([0-9.]*\) requests\/s.*/\1/p')
+          fi
+
+          mkdir -p /tmp/artifacts
+          request_id=""
+          if grep -q '"request_id"' /tmp/test_logs.txt; then
+            request_id=$(grep -o '"request_id": "[^"]*"' /tmp/test_logs.txt | tail -1 | sed 's/"request_id": "\([^"]*\)"/\1/')
+          fi
+          echo "$request_id" > /tmp/artifacts/request_id.txt
+
+          echo ""
+          echo "=========================================="
+          if [ "$test_exit" -eq 0 ]; then
+            echo "PASS test '{{inputs.parameters.test-name}}' (${duration}s)"
+          else
+            echo "FAIL test '{{inputs.parameters.test-name}}' exit=${test_exit} (${duration}s)"
+          fi
+          echo "=========================================="
+
+          escaped_command=$(printf '%s' "{{inputs.parameters.test-command}}" | sed 's/"/\\"/g')
+          printf '{\n  "test_name": "{{inputs.parameters.test-name}}",\n  "test_command": "%s",\n  "exit_code": %s,\n  "duration": %s,\n  "timestamp": "%s",\n  "request_id": "%s",\n  "fhe_params": "{{inputs.parameters.fhe-params}}",\n  "performance_metrics": {\n    "latency": {\n      "avg": "%s",\n      "std_dev": "%s",\n      "p50": "%s",\n      "p95": "%s",\n      "p99": "%s",\n      "min": "%s",\n      "max": "%s"\n    },\n    "throughput": "%s"\n  }\n}\n' \
+            "$escaped_command" \
+            "$test_exit" \
+            "$duration" \
+            "$(date -u +"%Y-%m-%dT%H:%M:%SZ")" \
+            "$request_id" \
+            "$avg_latency" \
+            "$std_dev_latency" \
+            "$p50_latency" \
+            "$p95_latency" \
+            "$p99_latency" \
+            "$min_latency" \
+            "$max_latency" \
+            "$throughput" \
+            > /tmp/artifacts/{{inputs.parameters.test-name}}.json
+
+          exit "$test_exit"
+        env:
+          - name: S3_ENDPOINT
+            valueFrom:
+              configMapKeyRef:
+                name: '{{workflow.parameters.s3-config-map-name}}'
+                key: CORE_CLIENT__S3_ENDPOINT
+          - name: NUM_MAJORITY
+            value: '5'
+          - name: NUM_RECONSTRUCT
+            value: '9'
+          - name: DECRYPTION_MODE
+            value: 'NoiseFloodSmall'
+          - name: FHE_PARAMETER
+            value: '{{inputs.parameters.fhe-params}}'
+        resources: &core-client-resources
+          requests:
+            memory: "96Gi"
+            cpu: "64"
+          limits:
+            memory: "96Gi"
+            cpu: "64"
+
+    - name: run-decrypt-rate
+      inputs:
+        parameters:
+        - name: kind
+        - name: rate
+        - name: key_id
+        - name: previous-ok
+        - name: duration
+        - name: pause
+        - name: maxfail
+        - name: maxshed
+        - name: pct
+        - name: allowfail
+      outputs:
+        parameters:
+        - name: test-result
+          valueFrom:
+            path: /tmp/artifacts/{{inputs.parameters.kind}}-rate-{{inputs.parameters.rate}}.json
+        - name: capacity-ok
+          valueFrom:
+            path: /tmp/artifacts/{{inputs.parameters.kind}}-rate-{{inputs.parameters.rate}}.ok
+      metadata:
+        labels:
+          test: "{{inputs.parameters.kind}}-rate-{{inputs.parameters.rate}}"
+          app: kms-perf
+      nodeSelector:
+        karpenter.sh/nodepool: kms-pool
+        karpenter.k8s.aws/instance-family: m5n
+      script:
+        image: hub.zama.org/ghcr/zama-ai/kms/core-client:<client-version>
+        command: ["/bin/bash", "-c"]
+        source: |
+          set -e
+
+          cat <<EOF > config.toml
+            kms_type = "threshold"
+            num_majority=${NUM_MAJORITY}
+            num_reconstruct=${NUM_RECONSTRUCT}
+            decryption_mode="${DECRYPTION_MODE}"
+            fhe_params="${FHE_PARAMETER:=Default}"
+            [[cores]]
+            party_id=1
+            address="kms-core-1-core-1:50100"
+            s3_endpoint="${S3_ENDPOINT}"
+            object_folder="PUB-p1"
+            [[cores]]
+            party_id=2
+            address="kms-core-2-core-2:50100"
+            s3_endpoint="${S3_ENDPOINT}"
+            object_folder="PUB-p2"
+            [[cores]]
+            party_id=3
+            address="kms-core-3-core-3:50100"
+            s3_endpoint="${S3_ENDPOINT}"
+            object_folder="PUB-p3"
+            [[cores]]
+            party_id=4
+            address="kms-core-4-core-4:50100"
+            s3_endpoint="${S3_ENDPOINT}"
+            object_folder="PUB-p4"
+            [[cores]]
+            party_id=5
+            address="kms-core-5-core-5:50100"
+            s3_endpoint="${S3_ENDPOINT}"
+            object_folder="PUB-p5"
+            [[cores]]
+            party_id=6
+            address="kms-core-6-core-6:50100"
+            s3_endpoint="${S3_ENDPOINT}"
+            object_folder="PUB-p6"
+            [[cores]]
+            party_id=7
+            address="kms-core-7-core-7:50100"
+            s3_endpoint="${S3_ENDPOINT}"
+            object_folder="PUB-p7"
+            [[cores]]
+            party_id=8
+            address="kms-core-8-core-8:50100"
+            s3_endpoint="${S3_ENDPOINT}"
+            object_folder="PUB-p8"
+            [[cores]]
+            party_id=9
+            address="kms-core-9-core-9:50100"
+            s3_endpoint="${S3_ENDPOINT}"
+            object_folder="PUB-p9"
+            [[cores]]
+            party_id=10
+            address="kms-core-10-core-10:50100"
+            s3_endpoint="${S3_ENDPOINT}"
+            object_folder="PUB-p10"
+            [[cores]]
+            party_id=11
+            address="kms-core-11-core-11:50100"
+            s3_endpoint="${S3_ENDPOINT}"
+            object_folder="PUB-p11"
+            [[cores]]
+            party_id=12
+            address="kms-core-12-core-12:50100"
+            s3_endpoint="${S3_ENDPOINT}"
+            object_folder="PUB-p12"
+            [[cores]]
+            party_id=13
+            address="kms-core-13-core-13:50100"
+            s3_endpoint="${S3_ENDPOINT}"
+            object_folder="PUB-p13"
+          EOF
+
+          kind="{{inputs.parameters.kind}}"
+          case "$kind" in
+            pdec)
+              command_name="public-decrypt"
+              metrics_marker="PUBLIC_DECRYPT_METRICS"
+              metrics_key="public_decrypt"
+              display_name="public decrypt"
+              ;;
+            udec)
+              command_name="user-decrypt"
+              metrics_marker="USER_DECRYPT_METRICS"
+              metrics_key="user_decrypt"
+              display_name="user decrypt"
+              ;;
+            *)
+              echo "Unsupported decrypt kind: $kind"
+              exit 1
+              ;;
+          esac
+
+          test_name="${kind}-rate-{{inputs.parameters.rate}}"
+          key_id="{{inputs.parameters.key_id}}"
+          test_command="${command_name} from-args -d {{workflow.parameters.data-type}} -k ${key_id} -e ffffffffffffffff --batch-size {{workflow.parameters.batch-size}} --rate {{inputs.parameters.rate}} --duration {{inputs.parameters.duration}} --max-in-flight {{workflow.parameters.max-in-flight}}"
+          mkdir -p /tmp/artifacts
+
+          capture_net_snapshot() {
+            local output="$1"
+            printf 'iface\trx_bytes\ttx_bytes\trx_packets\ttx_packets\trx_errors\ttx_errors\trx_dropped\ttx_dropped\tmtu\n' > "$output"
+            for iface_path in /sys/class/net/*; do
+              iface="${iface_path##*/}"
+              printf '%s\t' "$iface" >> "$output"
+              for stat in rx_bytes tx_bytes rx_packets tx_packets rx_errors tx_errors rx_dropped tx_dropped; do
+                tr -d '\n' < "${iface_path}/statistics/${stat}" >> "$output" 2>/dev/null || printf '0' >> "$output"
+                printf '\t' >> "$output"
+              done
+              tr -d '\n' < "${iface_path}/mtu" >> "$output" 2>/dev/null || printf '0' >> "$output"
+              printf '\n' >> "$output"
+            done
+          }
+
+          network_metrics_suffix() {
+            local sample_secs="$1"
+            awk -F '\t' -v sample_secs="$sample_secs" '
+              NR == FNR && FNR > 1 {
+                before[$1, "rx_bytes"] = $2 + 0
+                before[$1, "tx_bytes"] = $3 + 0
+                before[$1, "rx_packets"] = $4 + 0
+                before[$1, "tx_packets"] = $5 + 0
+                before[$1, "rx_errors"] = $6 + 0
+                before[$1, "tx_errors"] = $7 + 0
+                before[$1, "rx_dropped"] = $8 + 0
+                before[$1, "tx_dropped"] = $9 + 0
+                next
+              }
+              FNR > 1 && $1 == "eth0" {
+                rx_bytes = ($2 + 0) - before[$1, "rx_bytes"]
+                tx_bytes = ($3 + 0) - before[$1, "tx_bytes"]
+                rx_packets = ($4 + 0) - before[$1, "rx_packets"]
+                tx_packets = ($5 + 0) - before[$1, "tx_packets"]
+                rx_errors = ($6 + 0) - before[$1, "rx_errors"]
+                tx_errors = ($7 + 0) - before[$1, "tx_errors"]
+                rx_dropped = ($8 + 0) - before[$1, "rx_dropped"]
+                tx_dropped = ($9 + 0) - before[$1, "tx_dropped"]
+                mtu = $10 + 0
+                found = 1
+              }
+              END {
+                if (sample_secs <= 0) {
+                  sample_secs = 1
+                }
+                if (!found) {
+                  rx_bytes = tx_bytes = rx_packets = tx_packets = rx_errors = tx_errors = rx_dropped = tx_dropped = mtu = 0
+                }
+                printf ",\"network\":{\"iface\":\"eth0\",\"sample_secs\":%d,\"mtu\":%d,\"rx_bytes\":%.0f,\"tx_bytes\":%.0f,\"rx_packets\":%.0f,\"tx_packets\":%.0f,\"rx_errors\":%.0f,\"tx_errors\":%.0f,\"rx_dropped\":%.0f,\"tx_dropped\":%.0f,\"rx_mib_per_sec\":%.6f,\"tx_mib_per_sec\":%.6f,\"rx_gbps\":%.6f,\"tx_gbps\":%.6f}", sample_secs, mtu, rx_bytes, tx_bytes, rx_packets, tx_packets, rx_errors, tx_errors, rx_dropped, tx_dropped, rx_bytes / 1024 / 1024 / sample_secs, tx_bytes / 1024 / 1024 / sample_secs, rx_bytes * 8 / sample_secs / 1000000000, tx_bytes * 8 / sample_secs / 1000000000
+              }
+            ' /tmp/net-before.tsv /tmp/net-after.tsv
+          }
+
+          parameter_set="maxfail={{inputs.parameters.maxfail}},maxshed={{inputs.parameters.maxshed}},pct={{inputs.parameters.pct}}"
+          allowed_failure="{{inputs.parameters.allowfail}}"
+
+          if [ -z "$key_id" ]; then
+            printf '{\n  "test_name": "%s",\n  "test_command": "%s",\n  "status": "failed",\n  "exit_code": 1,\n  "duration": 0,\n  "timestamp": "%s",\n  "fhe_params": "Default",\n  "performance_metrics": {\n    "%s": {\n      "target_rate": %s,\n      "failed": 1,\n      "parameter_set": "%s",\n      "within_parameter_set": false,\n      "allowed_failure": %s\n    }\n  }\n}\n' \
+              "$test_name" \
+              "$test_command" \
+              "$(date -u +"%Y-%m-%dT%H:%M:%SZ")" \
+              "$metrics_key" \
+              "{{inputs.parameters.rate}}" \
+              "$parameter_set" \
+              "$allowed_failure" \
+              > /tmp/artifacts/${test_name}.json
+            echo "false" > /tmp/artifacts/${test_name}.ok
+            echo "Missing key_id from udec-key-gen; refusing to run $display_name"
+            exit 0
+          fi
+
+          if [ "{{inputs.parameters.previous-ok}}" != "true" ]; then
+            printf '{\n  "test_name": "%s",\n  "test_command": "%s",\n  "status": "skipped",\n  "exit_code": 0,\n  "duration": 0,\n  "timestamp": "%s",\n  "fhe_params": "Default",\n  "performance_metrics": {\n    "%s": {\n      "target_rate": %s,\n      "parameter_set": "%s",\n      "within_parameter_set": false,\n      "allowed_failure": %s\n    }\n  }\n}\n' \
+              "$test_name" \
+              "$test_command" \
+              "$(date -u +"%Y-%m-%dT%H:%M:%SZ")" \
+              "$metrics_key" \
+              "{{inputs.parameters.rate}}" \
+              "$parameter_set" \
+              "$allowed_failure" \
+              > /tmp/artifacts/${test_name}.json
+            echo "false" > /tmp/artifacts/${test_name}.ok
+            echo "Skipping $test_name because a lower $display_name rate did not produce valid metrics"
+            exit 0
+          fi
+
+          echo "=========================================="
+          echo "Starting test: $test_command"
+          echo "=========================================="
+
+          client_logs_arg=""
+          if [ "{{workflow.parameters.client-logs}}" = "enabled" ]; then
+            client_logs_arg="--logs"
+          fi
+          rate_timeout=$(({{inputs.parameters.duration}} + 300))
+          capture_net_snapshot /tmp/net-before.tsv
+          start_time=$(date +%s)
+          set +e
+          if command -v timeout >/dev/null 2>&1; then
+            timeout "${rate_timeout}s" ./bin/kms-core-client ${client_logs_arg} --max-iter 2880 -f config.toml $test_command 2>&1 | tee /tmp/test_logs.txt
+          else
+            echo "WARNING: timeout command not found; running without per-rate wall timeout"
+            ./bin/kms-core-client ${client_logs_arg} --max-iter 2880 -f config.toml $test_command 2>&1 | tee /tmp/test_logs.txt
+          fi
+          test_exit=${PIPESTATUS[0]}
+          set -e
+          end_time=$(date +%s)
+          duration=$((end_time - start_time))
+          capture_net_snapshot /tmp/net-after.tsv
+
+          # Keep the last valid metrics line; normal logs may contain many JSON records.
+          decrypt_metrics=""
+          while IFS= read -r metrics_line; do
+            candidate="${metrics_line#*${metrics_marker} }"
+            # Accept only the raw println! JSON, not an escaped copy inside tracing JSON logs.
+            if [[ "$candidate" == \{\"* ]] && [[ "$candidate" =~ \"failed\":[0-9]+ ]] && [[ "$candidate" =~ \"shed\":[0-9]+ ]] && [[ "$candidate" =~ \"saturated\":(true|false) ]]; then
+              decrypt_metrics="$candidate"
+            fi
+          done < <(grep "$metrics_marker " /tmp/test_logs.txt || true)
+
+          if [[ -n "$decrypt_metrics" && "$decrypt_metrics" =~ \"failed\":([0-9]+) ]]; then
+            metrics_valid=true
+            metrics_failed="${BASH_REMATCH[1]}"
+            if [[ "$decrypt_metrics" =~ \"shed\":([0-9]+) ]]; then
+              metrics_shed="${BASH_REMATCH[1]}"
+            else
+              metrics_shed=0
+            fi
+            if [[ "$decrypt_metrics" =~ \"saturated\":(true|false) ]]; then
+              metrics_saturated="${BASH_REMATCH[1]}"
+            else
+              metrics_saturated=true
+            fi
+          else
+            metrics_valid=false
+            metrics_failed=1
+            metrics_shed=0
+            metrics_saturated=true
+            decrypt_metrics="{\"target_rate\":{{inputs.parameters.rate}},\"failed\":1,\"shed\":0,\"saturated\":true}"
+            echo "ERROR: no valid $metrics_marker JSON with failed/shed/saturated found"
+          fi
+          network_metrics="$(network_metrics_suffix "$duration")"
+          maxfail="{{inputs.parameters.maxfail}}"
+          maxshed="{{inputs.parameters.maxshed}}"
+          pct="{{inputs.parameters.pct}}"
+          if [[ "$decrypt_metrics" =~ \"offered\":([0-9]+) ]]; then
+            metrics_offered="${BASH_REMATCH[1]}"
+          else
+            metrics_offered=0
+          fi
+          if [[ "$decrypt_metrics" =~ \"achieved_rate\":([-0-9.eE]+) ]]; then
+            metrics_achieved_rate="${BASH_REMATCH[1]}"
+          else
+            metrics_achieved_rate=0
+          fi
+          within_parameter_set=$(awk \
+            -v offered="$metrics_offered" \
+            -v failed="$metrics_failed" \
+            -v shed="$metrics_shed" \
+            -v achieved="$metrics_achieved_rate" \
+            -v target="{{inputs.parameters.rate}}" \
+            -v maxfail="$maxfail" \
+            -v maxshed="$maxshed" \
+            -v pct="$pct" '
+              BEGIN {
+                if (offered <= 0 || target <= 0) {
+                  print "false"
+                } else if ((failed * 100 / offered) <= maxfail &&
+                           (shed * 100 / offered) <= maxshed &&
+                           (achieved * 100 / target) >= pct) {
+                  print "true"
+                } else {
+                  print "false"
+                }
+              }')
+          # Escape the brace; ${var%}} does not trim the final JSON object brace in bash.
+          limit_metrics=",\"parameter_set\":\"${parameter_set}\",\"within_parameter_set\":${within_parameter_set},\"allowed_failure\":${allowed_failure}"
+          decrypt_metrics="${decrypt_metrics%\}}${network_metrics}${limit_metrics}}"
+
+          # Task success means "measurement exists"; capacity-ok gates the next rung.
+          if [ "$test_exit" -eq 0 ] && [ "$metrics_valid" = "true" ]; then
+            status="passed"
+          else
+            status="failed"
+          fi
+          if [ "$status" = "passed" ] && [ "$within_parameter_set" = "true" ]; then
+            capacity_ok="true"
+          else
+            capacity_ok="false"
+          fi
+
+          printf '{\n  "test_name": "%s",\n  "test_command": "%s",\n  "status": "%s",\n  "exit_code": %s,\n  "duration": %s,\n  "timestamp": "%s",\n  "fhe_params": "Default",\n  "performance_metrics": {\n    "%s": %s\n  }\n}\n' \
+            "$test_name" \
+            "$test_command" \
+            "$status" \
+            "$test_exit" \
+            "$duration" \
+            "$(date -u +"%Y-%m-%dT%H:%M:%SZ")" \
+            "$metrics_key" \
+            "$decrypt_metrics" \
+            > /tmp/artifacts/${test_name}.json
+          echo "$capacity_ok" > /tmp/artifacts/${test_name}.ok
+
+          sleep "{{inputs.parameters.pause}}"
+
+          exit 0
+        env:
+          - name: S3_ENDPOINT
+            valueFrom:
+              configMapKeyRef:
+                name: '{{workflow.parameters.s3-config-map-name}}'
+                key: CORE_CLIENT__S3_ENDPOINT
+          - name: NUM_MAJORITY
+            value: '5'
+          - name: NUM_RECONSTRUCT
+            value: '9'
+          - name: DECRYPTION_MODE
+            value: 'NoiseFloodSmall'
+          - name: FHE_PARAMETER
+            value: 'Default'
+        resources: *core-client-resources
+
+    - name: summary-report
+      inputs:
+        parameters:
+        - name: test-result-preproc-key-gen
+        - name: test-result-key-gen
+        - name: test-result-udec-preproc-key-gen
+        - name: test-result-udec-key-gen
+        - name: test-result-crs-gen
+        # <<GENERATED:summary-inputs>>
+        - name: tls
+        - name: run_url
+        - name: job_url
+        - name: job_label
+        - name: max-in-flight
+      script:
+        image: public.ecr.aws/docker/library/alpine:3.23
+        command: ["/bin/sh", "-c"]
+        env:
+        - name: WORKFLOW_NAME
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.labels['workflows.argoproj.io/workflow']
+        volumeMounts:
+        - name: slack-webhook-volume
+          mountPath: /etc/slack
+        source: |
+          set -e
+
+          apk add --no-cache jq curl
+          mkdir -p /mnt/results
+          echo '{{inputs.parameters.test-result-preproc-key-gen}}' > /mnt/results/preproc-key-gen.json
+          echo '{{inputs.parameters.test-result-key-gen}}' > /mnt/results/key-gen.json
+          echo '{{inputs.parameters.test-result-udec-preproc-key-gen}}' > /mnt/results/udec-preproc-key-gen.json
+          echo '{{inputs.parameters.test-result-udec-key-gen}}' > /mnt/results/udec-key-gen.json
+          echo '{{inputs.parameters.test-result-crs-gen}}' > /mnt/results/crs-gen.json
+          # <<GENERATED:summary-echo>>
+
+          echo "=========================================="
+          echo "KMS PERFORMANCE SUMMARY"
+          echo "=========================================="
+          echo "Report generated: $(date -u)"
+          echo "Payload: {{workflow.parameters.batch-size}} x {{workflow.parameters.data-type}} per request"
+          echo "Preproc/keygen FHE params: {{workflow.parameters.fhe-params}}"
+          echo "Decrypt FHE params: Default"
+          echo "Rate durations: per scenario, max in-flight: {{inputs.parameters.max-in-flight}}"
+          echo ""
+
+          keygen_total=0
+          keygen_passed=0
+          keygen_failed=0
+          keygen_lines=""
+
+          crs_total=0
+          crs_passed=0
+          crs_failed=0
+          crs_lines=""
+
+          pdec_total=0
+          pdec_passed=0
+          pdec_warned=0
+          pdec_failed=0
+          pdec_skipped=0
+          pdec_lines=""
+          pdec_raw_lines=""
+
+          udec_total=0
+          udec_passed=0
+          udec_warned=0
+          udec_failed=0
+          udec_skipped=0
+          udec_lines=""
+          udec_raw_lines=""
+
+          status_label() {
+            case "$1" in
+              passed) echo "✅" ;;
+              warned) echo "⚠️" ;;
+              failed) echo "❌" ;;
+              skipped) echo "⏭️" ;;
+              *) echo "❔" ;;
+            esac
+          }
+
+          fmt_1() {
+            if [ -z "$1" ] || [ "$1" = "null" ]; then
+              echo "-"
+            else
+              awk -v value="$1" 'BEGIN { printf "%.1f", value + 0 }'
+            fi
+          }
+
+          fmt_ms_2() {
+            if [ -z "$1" ] || [ "$1" = "null" ]; then
+              echo "-"
+            else
+              awk -v value="$1" 'BEGIN { printf "%.2fms", value + 0 }'
+            fi
+          }
+
+          operation_for_test() {
+            case "$1" in
+              preproc-key-gen|key-gen|udec-preproc-key-gen|udec-key-gen) echo "keygen" ;;
+              crs-gen) echo "crs" ;;
+              public-decrypt-*) echo "pdec" ;;
+              *) echo "unknown" ;;
+            esac
+          }
+
+          append_operation_line() {
+            case "$1" in
+              keygen) keygen_lines="${keygen_lines}${2}\n" ;;
+              crs) crs_lines="${crs_lines}${2}\n" ;;
+              pdec) pdec_lines="${pdec_lines}${2}\n" ;;
+              udec) udec_lines="${udec_lines}${2}\n" ;;
+            esac
+          }
+
+          inc_decrypt_counter() {
+            eval "${1}_${2}=\$((\${${1}_${2}} + 1))"
+          }
+
+          append_decrypt_raw_line() {
+            case "$1" in
+              pdec) pdec_raw_lines="${pdec_raw_lines}${2}\n" ;;
+              udec) udec_raw_lines="${udec_raw_lines}${2}\n" ;;
+            esac
+          }
+
+          summarize_decrypt_rates() {
+            kind="$1"
+            shift
+
+            case "$kind" in
+              pdec)
+                display="Public decrypt"
+                metrics_key="public_decrypt"
+                extra_failed_key="verification_failed"
+                timing_key="verification_ms"
+                timing_label="verify"
+                ;;
+              udec)
+                display="User decrypt"
+                metrics_key="user_decrypt"
+                extra_failed_key="reconstruction_failed"
+                timing_key="reconstruction_ms"
+                timing_label="recon"
+                ;;
+              *)
+                echo "Unsupported decrypt summary kind: $kind"
+                return 1
+                ;;
+            esac
+
+            echo "${display} perf tests:"
+            for rate in "$@"; do
+              result="/mnt/results/${kind}-rate-${rate}.json"
+              inc_decrypt_counter "$kind" total
+              if ! jq empty "$result" 2>/dev/null; then
+                inc_decrypt_counter "$kind" failed
+                line="$(status_label failed) ${rate}/s invalid result JSON"
+                echo "$line"
+                append_operation_line "$kind" "$line"
+                append_decrypt_raw_line "$kind" "$line"
+                continue
+              fi
+
+              status=$(jq -r '.status // empty' "$result")
+              target_rate=$(jq -r --arg k "$metrics_key" '.performance_metrics[$k].target_rate // empty' "$result")
+              offered=$(jq -r --arg k "$metrics_key" '.performance_metrics[$k].offered // empty' "$result")
+              completed=$(jq -r --arg k "$metrics_key" '.performance_metrics[$k].completed // empty' "$result")
+              failed_requests=$(jq -r --arg k "$metrics_key" '.performance_metrics[$k].failed // empty' "$result")
+              shed=$(jq -r --arg k "$metrics_key" '.performance_metrics[$k].shed // empty' "$result")
+              achieved_rate=$(jq -r --arg k "$metrics_key" '.performance_metrics[$k].achieved_rate // empty' "$result")
+              saturated=$(jq -r --arg k "$metrics_key" '.performance_metrics[$k] | if has("saturated") then .saturated else "" end' "$result")
+              request_payload_mib_per_sec=$(jq -r --arg k "$metrics_key" '.performance_metrics[$k].request_payload_mib_per_sec // empty' "$result")
+              response_payload_mib_per_sec=$(jq -r --arg k "$metrics_key" '.performance_metrics[$k].response_payload_mib_per_sec // empty' "$result")
+              network_rx_gbps=$(jq -r --arg k "$metrics_key" '.performance_metrics[$k].network.rx_gbps // empty' "$result")
+              network_tx_gbps=$(jq -r --arg k "$metrics_key" '.performance_metrics[$k].network.tx_gbps // empty' "$result")
+              network_rx_dropped=$(jq -r --arg k "$metrics_key" '.performance_metrics[$k].network.rx_dropped // 0' "$result")
+              network_tx_dropped=$(jq -r --arg k "$metrics_key" '.performance_metrics[$k].network.tx_dropped // 0' "$result")
+              network_rx_errors=$(jq -r --arg k "$metrics_key" '.performance_metrics[$k].network.rx_errors // 0' "$result")
+              network_tx_errors=$(jq -r --arg k "$metrics_key" '.performance_metrics[$k].network.tx_errors // 0' "$result")
+              parameter_set=$(jq -r --arg k "$metrics_key" '.performance_metrics[$k].parameter_set // empty' "$result")
+              within_parameter_set=$(jq -r --arg k "$metrics_key" '.performance_metrics[$k].within_parameter_set // false' "$result")
+              allowed_failure=$(jq -r --arg k "$metrics_key" '.performance_metrics[$k].allowed_failure // false' "$result")
+              extra_failed=$(jq -r --arg k "$metrics_key" --arg f "$extra_failed_key" '.performance_metrics[$k][$f] // 0' "$result")
+              p50=$(jq -r --arg k "$metrics_key" '.performance_metrics[$k].latency_ms.p50 // empty' "$result")
+              p95=$(jq -r --arg k "$metrics_key" '.performance_metrics[$k].latency_ms.p95 // empty' "$result")
+              p99=$(jq -r --arg k "$metrics_key" '.performance_metrics[$k].latency_ms.p99 // empty' "$result")
+              timing_avg=$(jq -r --arg k "$metrics_key" --arg t "$timing_key" '.performance_metrics[$k][$t].avg // empty' "$result")
+              timing_p50=$(jq -r --arg k "$metrics_key" --arg t "$timing_key" '.performance_metrics[$k][$t].p50 // empty' "$result")
+              timing_p99=$(jq -r --arg k "$metrics_key" --arg t "$timing_key" '.performance_metrics[$k][$t].p99 // empty' "$result")
+
+              [ -n "$target_rate" ] || target_rate="$rate"
+              [ -n "$offered" ] || offered=0
+              [ -n "$completed" ] || completed=0
+              [ -n "$failed_requests" ] || failed_requests=0
+              [ -n "$shed" ] || shed=0
+              [ -n "$achieved_rate" ] || achieved_rate=0
+              [ -n "$saturated" ] || saturated=false
+              achieved_short="$(fmt_1 "$achieved_rate")"
+              p50_short="$(fmt_ms_2 "$p50")"
+              p95_short="$(fmt_ms_2 "$p95")"
+              p99_short="$(fmt_ms_2 "$p99")"
+              network_rx_short="$(fmt_1 "$network_rx_gbps")"
+              network_tx_short="$(fmt_1 "$network_tx_gbps")"
+
+              # WARN is accepted-but-degraded. The top rate for each decrypt type
+              # is an exploratory probe and can exceed its parameter set.
+              if [ "$status" = "skipped" ]; then
+                outcome=skipped
+                inc_decrypt_counter "$kind" skipped
+                line="$(status_label "$outcome") ${target_rate}/s skipped"
+              elif [ "$status" != "passed" ]; then
+                if [ "$allowed_failure" = "true" ]; then
+                  outcome=warned
+                  inc_decrypt_counter "$kind" warned
+                else
+                  outcome=failed
+                  inc_decrypt_counter "$kind" failed
+                fi
+                line="$(status_label "$outcome") ${target_rate}/s measurement failed"
+              elif [ "$within_parameter_set" = "true" ]; then
+                if [ "$failed_requests" != "0" ] || [ "$shed" != "0" ] || [ "$saturated" = "true" ]; then
+                  outcome=warned
+                  inc_decrypt_counter "$kind" warned
+                else
+                  outcome=passed
+                  inc_decrypt_counter "$kind" passed
+                fi
+                line="$(status_label "$outcome") ${target_rate}/s p50=${p50_short} p99=${p99_short}"
+              else
+                if [ "$allowed_failure" = "true" ]; then
+                  outcome=warned
+                  inc_decrypt_counter "$kind" warned
+                else
+                  outcome=failed
+                  inc_decrypt_counter "$kind" failed
+                fi
+                line="$(status_label "$outcome") ${target_rate}/s outside params achieved=${achieved_short}/s p50=${p50_short} p99=${p99_short}"
+              fi
+
+              if [ -n "$network_rx_gbps" ] && [ "$network_rx_gbps" != "null" ]; then
+                line="${line} net_rx=${network_rx_short}Gbps net_tx=${network_tx_short}Gbps"
+              fi
+              if [ "$failed_requests" != "0" ] || [ "$shed" != "0" ] || [ "$saturated" = "true" ]; then
+                line="${line} fail=${failed_requests} shed=${shed} sat=${saturated}"
+              fi
+              if [ "$network_rx_errors" != "0" ] || [ "$network_tx_errors" != "0" ] || [ "$network_rx_dropped" != "0" ] || [ "$network_tx_dropped" != "0" ]; then
+                line="${line} net_err=${network_rx_errors}/${network_tx_errors} net_drop=${network_rx_dropped}/${network_tx_dropped}"
+              fi
+              if [ "$extra_failed" != "0" ]; then
+                line="${line} ${timing_label}_failed=${extra_failed}"
+              fi
+
+              echo "$line"
+              append_operation_line "$kind" "$line"
+              append_decrypt_raw_line "$kind" "$(status_label "$outcome") rate=${target_rate}/s achieved=${achieved_short}/s completed=${completed}/${offered} failed=${failed_requests} shed=${shed} p50=${p50_short} p95=${p95_short} p99=${p99_short} app_req=$(fmt_1 "$request_payload_mib_per_sec")MiB/s app_resp=$(fmt_1 "$response_payload_mib_per_sec")MiB/s ${timing_label}_avg=$(fmt_ms_2 "$timing_avg") ${timing_label}_p50=$(fmt_ms_2 "$timing_p50") ${timing_label}_p99=$(fmt_ms_2 "$timing_p99") net_rx=${network_rx_short}Gbps net_tx=${network_tx_short}Gbps params=${parameter_set}"
+            done
+          }
+
+          echo "Keygen and CRS perf tests:"
+          for result in \
+            /mnt/results/preproc-key-gen.json \
+            /mnt/results/key-gen.json \
+            /mnt/results/udec-preproc-key-gen.json \
+            /mnt/results/udec-key-gen.json \
+            /mnt/results/crs-gen.json; do
+            result_name="$(basename "$result" .json)"
+            operation="$(operation_for_test "$result_name")"
+            if ! jq empty "$result" 2>/dev/null; then
+              label="$(status_label failed)"
+              line="${label} ${result_name} invalid JSON"
+              case "$operation" in
+                keygen) keygen_total=$((keygen_total + 1)); keygen_failed=$((keygen_failed + 1)) ;;
+                crs) crs_total=$((crs_total + 1)); crs_failed=$((crs_failed + 1)) ;;
+              esac
+              echo "$line"
+              append_operation_line "$operation" "$line"
+              continue
+            fi
+
+            test_name=$(jq -r '.test_name // "unknown"' "$result")
+            exit_code=$(jq -r '.exit_code // "1"' "$result")
+            duration=$(jq -r '.duration // "0"' "$result")
+            p50_latency=$(jq -r '.performance_metrics.latency.p50 // empty' "$result")
+            p95_latency=$(jq -r '.performance_metrics.latency.p95 // empty' "$result")
+            p99_latency=$(jq -r '.performance_metrics.latency.p99 // empty' "$result")
+            throughput=$(jq -r '.performance_metrics.throughput // empty' "$result")
+            operation="$(operation_for_test "$test_name")"
+            if [ "$operation" = "unknown" ]; then
+              operation="$(operation_for_test "$result_name")"
+            fi
+
+            label="$(status_label failed)"
+            if [ "$exit_code" = "0" ]; then
+              label="$(status_label passed)"
+            fi
+
+            case "$operation" in
+              keygen)
+                keygen_total=$((keygen_total + 1))
+                if [ "$exit_code" = "0" ]; then keygen_passed=$((keygen_passed + 1)); else keygen_failed=$((keygen_failed + 1)); fi
+                line="${label} ${test_name} ${duration}s"
+                ;;
+              crs)
+                crs_total=$((crs_total + 1))
+                if [ "$exit_code" = "0" ]; then crs_passed=$((crs_passed + 1)); else crs_failed=$((crs_failed + 1)); fi
+                line="${label} ${test_name} ${duration}s"
+                ;;
+              *)
+                line="${label} ${test_name} ${duration}s"
+                ;;
+            esac
+            if [ "$exit_code" != "0" ]; then
+              line="${line} exit=${exit_code}"
+            fi
+            echo "$line"
+            append_operation_line "$operation" "$line"
+          done
+
+          echo ""
+          # <<GENERATED:summary-calls>>
+
+          finite_total=$((keygen_total + crs_total))
+          finite_passed=$((keygen_passed + crs_passed))
+          finite_failed=$((keygen_failed + crs_failed))
+          pdec_accepted=$((pdec_passed + pdec_warned))
+          if [ $pdec_total -gt 0 ]; then
+            pdec_success_rate=$(( (pdec_accepted * 100) / pdec_total ))
+          else
+            pdec_success_rate=0
+          fi
+          udec_accepted=$((udec_passed + udec_warned))
+          if [ $udec_total -gt 0 ]; then
+            udec_success_rate=$(( (udec_accepted * 100) / udec_total ))
+          else
+            udec_success_rate=0
+          fi
+
+          echo "----------------------------------------"
+          echo "Keygen: ${keygen_passed}/${keygen_total} passed"
+          echo "CRS: ${crs_passed}/${crs_total} passed"
+          echo "Public decrypt: ${pdec_passed} passed, ${pdec_warned} warned, ${pdec_failed} failed, ${pdec_skipped} skipped (${pdec_success_rate}% accepted)"
+          echo "User decrypt: ${udec_passed} passed, ${udec_warned} warned, ${udec_failed} failed, ${udec_skipped} skipped (${udec_success_rate}% accepted)"
+          echo "=========================================="
+
+          if [ $finite_failed -gt 0 ] || [ $pdec_failed -gt 0 ] || [ $udec_failed -gt 0 ]; then
+            title="KMS perf failed"
+          elif [ $pdec_warned -gt 0 ] || [ $udec_warned -gt 0 ]; then
+            title="KMS perf passed with warnings"
+          else
+            title="KMS perf passed"
+          fi
+
+          slack_webhook_url=$(cat /etc/slack/url)
+          keygen_block="$(printf '*Keygen*\n%b' "${keygen_lines:-No keygen tests\n}")"
+          crs_block="$(printf '*CRS*\n%b' "${crs_lines:-No CRS tests\n}")"
+          pdec_raw_text="$(printf '%b' "$pdec_raw_lines" | head -c 2200)"
+          if [ -n "$pdec_raw_text" ]; then
+            pdec_block="$(printf '*Public decrypt {{workflow.parameters.data-type}}*\n%b\n```%s\n```' "${pdec_lines:-No public decrypt tests\n}" "$pdec_raw_text")"
+          else
+            pdec_block="$(printf '*Public decrypt {{workflow.parameters.data-type}}*\n%b' "${pdec_lines:-No public decrypt tests\n}")"
+          fi
+          udec_raw_text="$(printf '%b' "$udec_raw_lines" | head -c 2200)"
+          if [ -n "$udec_raw_text" ]; then
+            udec_block="$(printf '*User decrypt {{workflow.parameters.data-type}}*\n%b\n```%s\n```' "${udec_lines:-No user decrypt tests\n}" "$udec_raw_text")"
+          else
+            udec_block="$(printf '*User decrypt {{workflow.parameters.data-type}}*\n%b' "${udec_lines:-No user decrypt tests\n}")"
+          fi
+          status_line="Keygen: ${keygen_passed}/${keygen_total} | CRS: ${crs_passed}/${crs_total} | Public decrypt: ${pdec_passed}/${pdec_total} | User decrypt: ${udec_passed}/${udec_total}"
+          # NOTE: core/core-client instance types and tokioWorkerThreads/rayonNumThreads below are
+          # hardcoded mirrors of the deployed config (kms-service values-kms-ci.yaml + the karpenter
+          # nodepools). They do NOT auto-update — keep them in sync here, and in the sibling
+          # *-test-suite report workflows that duplicate them, whenever that config changes.
+          # (core-img/client-img ARE live: <version>/<client-version> are sed-substituted at submit.)
+          # Two physical lines: the '\n' renders as a line break in the Slack context element.
+          config_line=$(printf '%s\n%s' \
+            "payload={{workflow.parameters.batch-size}} x {{workflow.parameters.data-type}}, preproc/keygen params={{workflow.parameters.fhe-params}}, decrypt params=Default, max-in-flight={{inputs.parameters.max-in-flight}}, TLS={{inputs.parameters.tls}}" \
+            "core=c7a.16xlarge, core-client=m5n, tokioWorkerThreads=10, rayonNumThreads=40, core-img=<version>, client-img=<client-version>")
+          if echo "{{inputs.parameters.job_url}}" | grep -q '^http'; then
+            run_line="<{{inputs.parameters.job_url}}|{{inputs.parameters.job_label}}>"
+          else
+            run_line="{{inputs.parameters.job_label}}"
+          fi
+
+          slack_message=$(jq -n \
+            --arg title "$title" \
+            --arg status "$status_line" \
+            --arg config "$config_line" \
+            --arg run "$run_line" \
+            --arg keygen "$keygen_block" \
+            --arg crs "$crs_block" \
+            --arg pdec "$pdec_block" \
+            --arg udec "$udec_block" \
+            '{
+              text: $title,
+              blocks: [
+                {type: "header", text: {type: "plain_text", text: $title, emoji: false}},
+                {type: "section", fields: [
+                  {type: "mrkdwn", text: $status},
+                  {type: "mrkdwn", text: $run}
+                ]},
+                {type: "context", elements: [
+                  {type: "mrkdwn", text: $config}
+                ]},
+                {type: "divider"},
+                {type: "section", text: {type: "mrkdwn", text: $keygen}},
+                {type: "section", text: {type: "mrkdwn", text: $crs}},
+                {type: "section", text: {type: "mrkdwn", text: $pdec}},
+                {type: "section", text: {type: "mrkdwn", text: $udec}}
+              ]
+            }'
+          )
+
+          curl -s -X POST -H "Content-type: application/json" -d "$slack_message" "$slack_webhook_url"
+
+          if [ $finite_failed -gt 0 ] || [ $pdec_failed -gt 0 ] || [ $udec_failed -gt 0 ]; then
+            exit 1
+          fi
+
+  # Credentials for pulling private registry images.
+  imagePullSecrets:
+  - name: registry-credentials

@@ -24,9 +24,9 @@ pub use preprocessing::*;
 mod tests {
     use crate::conf::{CoreConfig, init_conf};
     use crate::consts::{DEFAULT_MPC_CONTEXT, SIGNING_KEY_ID};
-    use crate::engine::context::{NodeInfo, SoftwareVersion};
+    use crate::engine::context::{NodeInfo, SchemeDigests, SoftwareVersion};
     use crate::engine::traits::ContextManager;
-    use crate::vault::storage::store_versioned_at_request_id;
+    use crate::util::key_setup::store_server_signing_keys;
     use crate::{
         cryptography::signatures::{PublicSigKey, gen_sig_keys},
         engine::centralized::central_kms::RealCentralizedKms,
@@ -34,22 +34,22 @@ mod tests {
     };
     use aes_prng::AesRng;
     use kms_grpc::kms::v1::{MpcContext, NewMpcContextRequest};
-    use kms_grpc::rpc_types::PrivDataType;
 
     /// This also adds a dummy context
     pub(crate) async fn setup_central_test_kms(
         rng: &mut AesRng,
     ) -> (RealCentralizedKms<RamStorage, RamStorage>, PublicSigKey) {
         let (verf_key, sig_key) = gen_sig_keys(rng);
-        let public_storage = RamStorage::new();
+        let mut public_storage = RamStorage::new();
         let mut private_storage = RamStorage::new();
 
-        // store sig_key in private storage
-        store_versioned_at_request_id(
+        // Store the signing key privately and its verification key / address publicly, the
+        // same shape `kms-gen-keys` leaves behind in production.
+        store_server_signing_keys(
+            &mut public_storage,
             &mut private_storage,
             &SIGNING_KEY_ID,
             &sig_key,
-            &PrivDataType::SigningKey.to_string(),
         )
         .await
         .unwrap();
@@ -68,12 +68,12 @@ mod tests {
         let kms_node = NodeInfo {
             mpc_identity: "test_node".to_string(),
             party_id: 1,
-            verification_key: Some(verf_key.clone()),
             external_url: "http://test_node.com:1234".to_string(),
             ca_cert: None,
             public_storage_url: "http://test_storage.com:1234".to_string(),
             public_storage_prefix: None,
-            extra_verification_keys: vec![],
+            extra_signer_addresses: vec![],
+            scheme_digests: SchemeDigests::from_ecdsa_verification_key(&verf_key),
         };
         kms.context_manager
             .new_mpc_context(tonic::Request::new(NewMpcContextRequest {

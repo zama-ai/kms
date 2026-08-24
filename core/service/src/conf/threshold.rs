@@ -5,7 +5,6 @@ use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use strum_macros::EnumIs;
 use threshold_execution::endpoints::decryption::DecryptionMode;
-use threshold_execution::online::preprocessing::redis::RedisConf;
 use threshold_networking::{
     grpc::CoreToCoreNetworkConfig,
     tls::{ReleasePCRValues, extract_subject_from_cert},
@@ -39,12 +38,13 @@ pub struct ThresholdPartyConf {
 
     pub dec_capacity: usize,
     pub min_dec_cache: usize,
-    pub preproc_redis: Option<RedisConf>,
     pub num_sessions_preproc: Option<u16>,
     // NOTE: eventually the peer list will be removed in favor of context
     #[validate(nested)]
     pub peers: Option<Vec<PeerConf>>,
-    pub core_to_core_net: Option<CoreToCoreNetworkConfig>,
+    // `#[serde(default)]` lets the whole section be omitted from the config file.
+    #[serde(default)]
+    pub core_to_core_net: CoreToCoreNetworkConfig,
     pub decryption_mode: DecryptionMode,
 }
 
@@ -111,7 +111,6 @@ pub enum TlsConf {
         #[serde(skip_serializing, default)]
         eif_signing_cert: Option<TlsCert>,
         trusted_releases: Vec<ReleasePCRValues>,
-        ignore_aws_ca_chain: Option<bool>,
         attest_private_vault_root_key: Option<bool>,
         renew_slack_after_expiration: Option<u64>,
         renew_fail_retry_timeout: Option<u64>,

@@ -8,7 +8,7 @@ use kms_grpc::{
 #[cfg(feature = "testing")]
 use kms_lib::{
     conf::{CoreConfig, init_conf},
-    engine::context::{NodeInfo, SoftwareVersion},
+    engine::context::{NodeInfo, SchemeDigests, SoftwareVersion},
 };
 use kms_lib::{consts::SAFE_SER_SIZE_LIMIT, engine::context::ContextInfo};
 use std::collections::HashMap;
@@ -62,7 +62,6 @@ pub async fn create_test_context_info_from_core_config(
             kms_lib::conf::threshold::TlsConf::Auto {
                 eif_signing_cert: _,
                 trusted_releases,
-                ignore_aws_ca_chain: _,
                 attest_private_vault_root_key: _,
                 renew_slack_after_expiration: _,
                 renew_fail_retry_timeout: _,
@@ -183,12 +182,12 @@ pub async fn create_test_context_info_from_core_config(
         mpc_nodes.push(NodeInfo {
             mpc_identity: mpc_identity.to_string(),
             party_id: role.one_based() as u32,
-            verification_key: Some(verification_key.clone()),
             external_url: format!("https://{}:{}", identity.hostname(), identity.port()),
             ca_cert: Some(ca_cert.pem().as_bytes().to_vec()),
             public_storage_url: s3_endpoint,
             public_storage_prefix: prefix,
-            extra_verification_keys: vec![],
+            extra_signer_addresses: vec![],
+            scheme_digests: SchemeDigests::from_ecdsa_verification_key(verification_key),
         });
 
         thresholds.push(threshold_config.threshold);

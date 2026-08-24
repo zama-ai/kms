@@ -168,9 +168,12 @@ async fn test_largecipher() -> Result<()> {
 
     // Setup with RAM storage and custom rate limiter
     let (kms_server, mut kms_client) = crate::client::test_tools::setup_centralized(
-        new_pub_ram_storage_from_existing_keys(&keys.pub_fhe_keys)
-            .await
-            .unwrap(),
+        new_pub_ram_storage_from_existing_keys(
+            &keys.pub_fhe_keys,
+            &keys.centralized_kms_keys.sig_pk,
+        )
+        .await
+        .unwrap(),
         new_priv_ram_storage_from_existing_keys(
             &keys.centralized_kms_keys,
             &crate::consts::DEFAULT_EPOCH_ID,
@@ -226,7 +229,7 @@ async fn test_largecipher() -> Result<()> {
         kms_client.clone(),
         req.request_id.clone().unwrap(),
         "user decryption result",
-        PollConfig::default(),
+        PollConfig::long_poll_config(),
         |client, request| Box::pin(async move { client.get_user_decryption_result(request).await }),
     )
     .await;

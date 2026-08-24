@@ -1,5 +1,7 @@
 use crate::client::client_wasm::Client;
+use crate::engine::utils::MetricedError;
 use crate::testing::setup::CentralizedTestEnv;
+use crate::testing::utils::poll_result_until_ready;
 use crate::vault::storage::{StorageType, file::FileStorage};
 use crate::{
     consts::TEST_PARAM,
@@ -219,15 +221,19 @@ pub(crate) async fn run_crs_centralized(
         }
     };
 
-    let mut response = Err(tonic::Status::not_found(""));
-    let mut ctr = 0;
-    while response.is_err() && ctr < 5 {
-        response = kms_client
+    let inner_resp = poll_result_until_ready(|| async {
+        kms_client
+            .clone()
             .get_crs_gen_result(tonic::Request::new((*crs_req_id).into()))
-            .await;
-        ctr += 1;
-    }
-    let inner_resp = response.unwrap().into_inner();
+            .await
+            .map_err(|e| {
+                let code = e.code();
+                MetricedError::new("test", Some(*crs_req_id), e, code)
+            })
+    })
+    .await
+    .unwrap()
+    .into_inner();
     let pub_storage = FileStorage::new(test_path, StorageType::PUB, None).unwrap();
     let pp = internal_client
         .process_get_crs_resp(

@@ -6,18 +6,16 @@ use crate::grpc::metastore_status_service::MetaStoreStatusServiceImpl;
 use crate::util::meta_store::MetaStore;
 use kms_grpc::RequestId;
 use std::str::FromStr;
-use std::sync::Arc;
-use tokio::sync::RwLock;
 
 /// Creates a test service with all stores available and configured with standard test capacities
 pub fn create_test_service() -> MetaStoreStatusServiceImpl {
     MetaStoreStatusServiceImpl {
-        key_gen_store: Some(Arc::new(RwLock::new(MetaStore::new(100, 50)))),
-        pub_dec_store: Some(Arc::new(RwLock::new(MetaStore::new(100, 50)))),
-        user_dec_store: Some(Arc::new(RwLock::new(MetaStore::new(100, 50)))),
-        crs_store: Some(Arc::new(RwLock::new(MetaStore::new(100, 50)))),
-        preproc_store: Some(Arc::new(RwLock::new(MetaStore::new(100, 50)))),
-        custodian_context_store: Some(Arc::new(RwLock::new(MetaStore::new(100, 50)))),
+        key_gen_store: Some(MetaStore::new(100, 50)),
+        pub_dec_store: Some(MetaStore::new(100, 50)),
+        user_dec_store: Some(MetaStore::new(100, 50)),
+        crs_store: Some(MetaStore::new(100, 50)),
+        preproc_store: Some(MetaStore::new(100, 50)),
+        custodian_context_store: Some(MetaStore::new(100, 50)),
     }
 }
 
@@ -36,12 +34,12 @@ pub fn create_unavailable_service() -> MetaStoreStatusServiceImpl {
 /// Creates a service with mixed store availability for testing partial availability scenarios
 pub fn create_mixed_availability_service() -> MetaStoreStatusServiceImpl {
     MetaStoreStatusServiceImpl {
-        key_gen_store: Some(Arc::new(RwLock::new(MetaStore::new(100, 50)))),
+        key_gen_store: Some(MetaStore::new(100, 50)),
         pub_dec_store: None, // Not available
-        user_dec_store: Some(Arc::new(RwLock::new(MetaStore::new(200, 100)))),
+        user_dec_store: Some(MetaStore::new(200, 100)),
         crs_store: None, // Not available
-        preproc_store: Some(Arc::new(RwLock::new(MetaStore::new(300, 150)))),
-        custodian_context_store: Some(Arc::new(RwLock::new(MetaStore::new(100, 50)))),
+        preproc_store: Some(MetaStore::new(300, 150)),
+        custodian_context_store: Some(MetaStore::new(100, 50)),
     }
 }
 

@@ -95,7 +95,3 @@ kyverno:
 
 kmsGenKeys:
   enabled: false
-
-kubeUtils:
-  image:
-    pullPolicy: IfNotPresent

@@ -206,6 +206,45 @@ wait_crossplane_resources_ready() {
 # Wait for TKMS infrastructure components to be ready
 # This includes: S3 buckets, IAM roles, Kmsparties, and enclave nodegroups
 #=============================================================================
+dump_tkms_infra_status() {
+    local resource_name="${1:-}"
+
+    log_warn "Dumping TKMS infrastructure status for namespace ${NAMESPACE}"
+    kubectl get s3 -n "${NAMESPACE}" -o wide || true
+    kubectl get Kmsparties -n "${NAMESPACE}" -o wide || true
+    kubectl get enclavenodegroup -n "${NAMESPACE}" -o wide || true
+    kubectl describe enclavenodegroup -n "${NAMESPACE}" || true
+
+    if [[ -n "${resource_name}" ]]; then
+        kubectl describe Kmsparties "${resource_name}" -n "${NAMESPACE}" || true
+        kubectl get Kmsparties "${resource_name}" -n "${NAMESPACE}" -o yaml || true
+    fi
+}
+
+wait_kmsparty_ready() {
+    local resource_name="$1"
+    local wait_output
+    local ready_status
+
+    log_info "Waiting for Kmsparties/${resource_name} to become ready..."
+    if ! wait_output=$(kubectl wait --for=condition=ready Kmsparties "${resource_name}" \
+        -n "${NAMESPACE}" --timeout=120s 2>&1); then
+        echo "${wait_output}"
+        log_error "Timed out waiting for Kmsparties/${resource_name}"
+        dump_tkms_infra_status "${resource_name}"
+        return 1
+    fi
+    echo "${wait_output}"
+
+    ready_status=$(kubectl get Kmsparties "${resource_name}" -n "${NAMESPACE}" \
+        -o jsonpath='{.status.conditions[?(@.type=="Ready")].status}' 2>/dev/null || true)
+    if [[ "${ready_status}" != *"True"* ]]; then
+        log_error "Kmsparties/${resource_name} is not Ready after kubectl wait; status=${ready_status:-missing}"
+        dump_tkms_infra_status "${resource_name}"
+        return 1
+    fi
+}
+
 wait_tkms_infra_ready() {
     # Determine party prefix based on target
     local party_prefix="kms-party-${NAMESPACE}"
@@ -227,16 +266,24 @@ wait_tkms_infra_ready() {
     local max_wait=120
     local elapsed=0
     local check_interval=5
+    local kmsparties_found="false"
 
     while [[ $elapsed -lt $max_wait ]]; do
         if kubectl get Kmsparties -n "${NAMESPACE}" 2>/dev/null | grep -qF "${party_prefix}"; then
             log_info "Kmsparties resources found"
+            kmsparties_found="true"
             break
         fi
         log_info "Waiting for Kmsparties to be created... ($elapsed/$max_wait seconds)"
         sleep $check_interval
         elapsed=$((elapsed + check_interval))
     done
+
+    if [[ "${kmsparties_found}" != "true" ]]; then
+        log_error "Timed out waiting for Kmsparties resources matching ${party_prefix}"
+        dump_tkms_infra_status
+        return 1
+    fi
 
     #-------------------------------------------------------------------------
     # Phase 3: Wait for Kmsparties to become ready
@@ -246,21 +293,19 @@ wait_tkms_infra_ready() {
     if [[ "${DEPLOYMENT_TYPE}" == *"centralized"* ]]; then
         # Centralized: Try both possible naming patterns
         if kubectl get Kmsparties "${party_prefix}-1" -n "${NAMESPACE}" >/dev/null 2>&1; then
-            kubectl wait --for=condition=ready Kmsparties "${party_prefix}-1" \
-                -n "${NAMESPACE}" --timeout=120s
+            wait_kmsparty_ready "${party_prefix}-1" || return 1
         elif kubectl get Kmsparties "${party_prefix}" -n "${NAMESPACE}" >/dev/null 2>&1; then
-            kubectl wait --for=condition=ready Kmsparties "${party_prefix}" \
-                -n "${NAMESPACE}" --timeout=120s
+            wait_kmsparty_ready "${party_prefix}" || return 1
         else
             log_warn "No KMS party found with name ${party_prefix} or ${party_prefix}-1"
-            kubectl get Kmsparties -n "${NAMESPACE}" -o name || true
+            dump_tkms_infra_status
             return 1
         fi
     elif [[ "${DEPLOYMENT_TYPE}" == *"threshold"* ]]; then
         # Threshold: Wait for all parties
         for i in $(seq 1 "${NUM_PARTIES}"); do
-            kubectl wait --for=condition=ready Kmsparties "${party_prefix}-${i}" \
-                -n "${NAMESPACE}" --timeout=120s
+            local resource_name="${party_prefix}-${i}"
+            wait_kmsparty_ready "${resource_name}" || return 1
         done
     fi
 
@@ -269,9 +314,13 @@ wait_tkms_infra_ready() {
     #-------------------------------------------------------------------------
     if [[ "${DEPLOYMENT_TYPE}" == *"Enclave"* ]]; then
         log_info "Waiting for enclave nodegroups to be ready..."
-        kubectl wait --for=condition=ready enclavenodegroup \
+        if ! kubectl wait --for=condition=ready enclavenodegroup \
             "${party_prefix}" \
-            -n "${NAMESPACE}" --timeout=1200s
+            -n "${NAMESPACE}" --timeout=1200s; then
+            log_error "Timed out waiting for enclavenodegroup/${party_prefix}"
+            dump_tkms_infra_status
+            return 1
+        fi
     fi
 }
 
@@ -430,10 +479,12 @@ deploy_registry_credentials() {
             return 0
         fi
 
-        # kind-ci: build a dockerconfigjson secret for hub.zama.org
-        if [[ -z "${HARBOR_READ_TOKEN:-}" ]]; then
-            log_warn "HARBOR_READ_TOKEN not set, skipping registry credentials setup"
-            log_warn "Set HARBOR_READ_TOKEN to enable private image pulls"
+        # kind-ci: build a dockerconfigjson secret for hub.zama.org.
+        # Both vars are needed; guarding only the token would let an unset
+        # HARBOR_READ_LOGIN abort the script under `set -u` a few lines down.
+        if [[ -z "${HARBOR_READ_LOGIN:-}" || -z "${HARBOR_READ_TOKEN:-}" ]]; then
+            log_warn "HARBOR_READ_LOGIN/HARBOR_READ_TOKEN not both set, skipping registry credentials setup"
+            log_warn "Set HARBOR_READ_LOGIN and HARBOR_READ_TOKEN to enable private image pulls"
             return 0
         fi
 

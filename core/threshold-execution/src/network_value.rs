@@ -43,8 +43,14 @@ pub enum BroadcastValue<Z: Eq + Zero + Sized> {
     Round2VSS(Vec<VerificationValues<Z>>),
     Round3VSS(BTreeMap<(Role, Role, Role), Vec<Z>>),
     Round4VSS(BTreeMap<(Role, Role), ValueOrPoly<Z>>),
-    LocalSingleShare(MapsSharesChallenges<Z>),
-    LocalDoubleShare(MapsDoubleSharesChallenges<Z>),
+    /// Batched check-value maps for a `LocalSingleShare` verification: one
+    /// [`MapsSharesChallenges`] per challenge index `g in 0..m`, broadcast in a
+    /// single parallel round (see `local_single_share::verify_sharing`).
+    LocalSingleShare(Vec<MapsSharesChallenges<Z>>),
+    /// Batched check-value maps for a `LocalDoubleShare` verification: one
+    /// [`MapsDoubleSharesChallenges`] per challenge index `g in 0..m`, broadcast
+    /// in a single parallel round (see `local_double_share::verify_sharing`).
+    LocalDoubleShare(Vec<MapsDoubleSharesChallenges<Z>>),
     PartialProof(ceremony::PartialProof),
     MapRingVector(BTreeMap<Role, Vec<Z>>),
 }
@@ -194,12 +200,12 @@ impl<Z: Ring> NetworkValue<Z> {
         serialization_runtime: DeSerializationRunTime,
     ) -> anyhow::Result<Self> {
         match serialization_runtime {
-            DeSerializationRunTime::Tokio => bc2wrap::deserialize_safe::<Self>(&serialized?)
+            DeSerializationRunTime::Tokio => bc2wrap::deserialize_slice::<Self>(&serialized?)
                 .map_err(|_e| anyhow_error_and_log("failed to parse value")),
             DeSerializationRunTime::Rayon => {
                 // offload to rayon threadpool
                 spawn_compute_bound(move || {
-                    bc2wrap::deserialize_safe::<Self>(&serialized?)
+                    bc2wrap::deserialize_slice::<Self>(&serialized?)
                         .map_err(|_e| anyhow_error_and_log("failed to parse value"))
                 })
                 .await?

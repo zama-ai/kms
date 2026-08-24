@@ -1,10 +1,11 @@
 use crate::{
     engine::{
         context::ContextInfo,
-        utils::{
-            MetricedError, verify_compressed_key_digest_from_bytes, verify_crs_digest_from_bytes,
+        material_integrity::{
+            verify_compressed_key_digest_from_bytes, verify_crs_digest_from_bytes,
             verify_key_digest_from_bytes,
         },
+        utils::MetricedError,
     },
     vault::storage::{
         Storage, StorageExt, StorageReader, StorageType,
@@ -603,12 +604,12 @@ mod tests {
     use std::collections::HashMap;
 
     use crate::engine::context::ContextInfo;
-    use crate::engine::context::NodeInfo;
     use crate::engine::context::SoftwareVersion;
+    use crate::engine::context::{NodeInfo, SchemeDigests};
+    use crate::engine::material_integrity::ERR_SERVER_KEY_DIGEST_MISMATCH;
     use crate::engine::threshold::service::reshare_utils::ERR_FAILED_TO_FETCH_PUBLIC_MATERIALS;
     use crate::engine::threshold::service::reshare_utils::fetch_public_fhe_materials_from_peers;
     use crate::engine::threshold::service::reshare_utils::get_verified_fhe_public_materials;
-    use crate::engine::utils::ERR_SERVER_KEY_DIGEST_MISMATCH;
     use crate::vault::storage::crypto_material::ThresholdCryptoMaterialStorage;
     use crate::vault::storage::ram::RamStorage;
     use crate::vault::storage::s3::DummyReadOnlyS3Storage;
@@ -731,20 +732,19 @@ mod tests {
                 vec![NodeInfo {
                     mpc_identity: "Node1".to_string(),
                     party_id: 1,
-                    verification_key: None,
                     external_url: "http://localhost:12345".to_string(),
                     ca_cert: None,
                     // the storage url does not matter as we're using the mock
                     public_storage_url:
                         "https://zama-zws-dev-tkms-b6q87.s3.eu-west-1.amazonaws.com/".to_string(),
                     public_storage_prefix: None,
-                    extra_verification_keys: vec![],
+                    extra_signer_addresses: vec![],
+                    scheme_digests: SchemeDigests::new(),
                 }],
                 if two_nodes {
                     vec![NodeInfo {
                         mpc_identity: "Node2".to_string(),
                         party_id: 2,
-                        verification_key: None,
                         external_url: "http://localhost:12345".to_string(),
                         ca_cert: None,
                         // the storage url does not matter as we're using the mock
@@ -752,7 +752,8 @@ mod tests {
                             "https://zama-zws-dev-tkms-b6q87.s3.eu-west-1.amazonaws.com/"
                                 .to_string(),
                         public_storage_prefix: None,
-                        extra_verification_keys: vec![],
+                        extra_signer_addresses: vec![],
+                        scheme_digests: SchemeDigests::new(),
                     }]
                 } else {
                     vec![]
@@ -999,7 +1000,7 @@ mod tests {
 
     // ==================== Compressed Key Tests ====================
     use super::VerifiedPublicMaterial;
-    use crate::engine::utils::ERR_COMPRESSED_KEYSET_DIGEST_MISMATCH;
+    use crate::engine::material_integrity::ERR_COMPRESSED_KEYSET_DIGEST_MISMATCH;
     use tfhe::core_crypto::prelude::NormalizedHammingWeightBound;
     use tfhe::xof_key_set::CompressedXofKeySet;
 
@@ -1059,20 +1060,19 @@ mod tests {
                 vec![NodeInfo {
                     mpc_identity: "Node1".to_string(),
                     party_id: 1,
-                    verification_key: None,
                     external_url: "http://localhost:12345".to_string(),
                     ca_cert: None,
                     // the storage url does not matter as we're using the mock
                     public_storage_url:
                         "https://zama-zws-dev-tkms-b6q87.s3.eu-west-1.amazonaws.com/".to_string(),
                     public_storage_prefix: None,
-                    extra_verification_keys: vec![],
+                    extra_signer_addresses: vec![],
+                    scheme_digests: SchemeDigests::new(),
                 }],
                 if two_nodes {
                     vec![NodeInfo {
                         mpc_identity: "Node2".to_string(),
                         party_id: 2,
-                        verification_key: None,
                         external_url: "http://localhost:12345".to_string(),
                         ca_cert: None,
                         // the storage url does not matter as we're using the mock
@@ -1080,7 +1080,8 @@ mod tests {
                             "https://zama-zws-dev-tkms-b6q87.s3.eu-west-1.amazonaws.com/"
                                 .to_string(),
                         public_storage_prefix: None,
-                        extra_verification_keys: vec![],
+                        extra_signer_addresses: vec![],
+                        scheme_digests: SchemeDigests::new(),
                     }]
                 } else {
                     vec![]

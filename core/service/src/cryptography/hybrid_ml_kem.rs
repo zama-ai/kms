@@ -1,14 +1,15 @@
 use super::error::CryptographyError;
 use aes_gcm::{AeadCore, Aes256Gcm, Key, KeyInit, KeySizeUser, aead::Aead};
+use hybrid_array::{Array, typenum::Unsigned};
 use ml_kem::{
     KemCore,
-    array::{Array, typenum::Unsigned},
     kem::{Decapsulate, Encapsulate},
 };
 use rand::{CryptoRng, Rng};
 use serde::{Deserialize, Serialize};
 use tfhe::{Versionize, named::Named};
 use tfhe_versionable::VersionsDispatch;
+use zeroize::Zeroizing;
 
 #[cfg(test)]
 pub(crate) const ML_KEM_512_CT_LENGTH: usize = 768; // ciphertext size for MlKem512Params
@@ -95,6 +96,9 @@ pub(crate) fn enc<C: KemCore, R: Rng + CryptoRng>(
     let (kem_ct, kem_shared_secret) = enc_k
         .encapsulate(rng)
         .map_err(|_| CryptographyError::MlKemError)?;
+    // kem_shared_secret (Array type) has no ZeroizeOnDrop,
+    // using Zeroizing wipes it on every exit path.
+    let kem_shared_secret = Zeroizing::new(kem_shared_secret);
 
     let key_size = <Aes256Gcm as KeySizeUser>::key_size();
     #[allow(deprecated)]
@@ -114,7 +118,7 @@ pub(crate) fn enc<C: KemCore, R: Rng + CryptoRng>(
 pub(crate) fn dec<C: KemCore>(
     ct: HybridKemCt,
     dec_k: &C::DecapsulationKey,
-) -> Result<Vec<u8>, CryptographyError> {
+) -> Result<Zeroizing<Vec<u8>>, CryptographyError> {
     let ct: InnerHybridKemCt<C> = ct.try_into()?;
     let InnerHybridKemCt {
         nonce,
@@ -128,14 +132,18 @@ pub(crate) fn dec<C: KemCore>(
     let kem_shared_secret = dec_k
         .decapsulate(&kem_ct)
         .map_err(|_| CryptographyError::MlKemError)?;
+    // kem_shared_secret (Array type) has no ZeroizeOnDrop,
+    // using Zeroizing wipes it on every exit path.
+    let kem_shared_secret = Zeroizing::new(kem_shared_secret);
 
     let key_size = <Aes256Gcm as KeySizeUser>::key_size();
     #[allow(deprecated)]
-    let aead_key = Key::<aes_gcm::Aes256Gcm>::clone_from_slice(&kem_shared_secret[0..key_size]);
+    let aead_key = Key::<Aes256Gcm>::from_slice(&kem_shared_secret[0..key_size]);
 
-    let cipher = aes_gcm::Aes256Gcm::new(&aead_key);
+    let cipher = Aes256Gcm::new(aead_key);
     let out = cipher.decrypt(&nonce.into(), &*payload_ct)?;
-    Ok(out)
+    // Decrypted plaintext can contain private key material, so wipe it when it leaves scope.
+    Ok(Zeroizing::new(out))
 }
 
 #[cfg(test)]
@@ -164,9 +172,9 @@ mod tests {
         let plain_encoding = bc2wrap::serialize(&Cipher(ct.clone())).unwrap();
         let wrapped_encoding = bc2wrap::serialize(&Cipher(ct.clone())).unwrap();
         assert_eq!(plain_encoding, wrapped_encoding);
-        let decoded_wrapping = bc2wrap::deserialize_unsafe::<Cipher>(&plain_encoding).unwrap();
+        let decoded_wrapping = bc2wrap::deserialize_slice::<Cipher>(&plain_encoding).unwrap();
         let decoded_unwrapped =
-            bc2wrap::deserialize_unsafe::<HybridKemCt>(&wrapped_encoding).unwrap();
+            bc2wrap::deserialize_slice::<HybridKemCt>(&wrapped_encoding).unwrap();
         assert_eq!(decoded_wrapping.0.nonce, decoded_unwrapped.nonce);
         assert_eq!(decoded_wrapping.0.kem_ct, decoded_unwrapped.kem_ct);
         assert_eq!(decoded_wrapping.0.payload_ct, decoded_unwrapped.payload_ct);
@@ -184,13 +192,13 @@ mod tests {
         assert_eq!(sk_buf.len(), ML_KEM_512_SK_LEN + 8);
         assert_eq!(pk_buf.len(), ML_KEM_512_PK_LENGTH + 8);
         // deserialize and test if encryption still works.
-        let pk2: PublicEncKey<ml_kem::MlKem512> = bc2wrap::deserialize_unsafe(&pk_buf).unwrap();
-        let sk2: PrivateEncKey<ml_kem::MlKem512> = bc2wrap::deserialize_unsafe(&sk_buf).unwrap();
+        let pk2: PublicEncKey<ml_kem::MlKem512> = bc2wrap::deserialize_slice(&pk_buf).unwrap();
+        let sk2: PrivateEncKey<ml_kem::MlKem512> = bc2wrap::deserialize_slice(&sk_buf).unwrap();
 
         let msg = b"four legs good, two legs better";
         let ct = enc::<ml_kem::MlKem512, _>(&mut rng, msg, &pk2.0).unwrap();
         let pt = dec::<ml_kem::MlKem512>(ct, &sk2.0).unwrap();
-        assert_eq!(msg.to_vec(), pt);
+        assert_eq!(&msg[..], &pt[..]);
     }
 
     proptest! {
@@ -215,7 +223,7 @@ mod tests {
             .unwrap();
 
             let pt = dec::<ml_kem::MlKem512>(ct_new, &sk).unwrap();
-            assert_eq!(msg, pt);
+            assert_eq!(&msg[..], &pt[..]);
         }
 
         #[test]

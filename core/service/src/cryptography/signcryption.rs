@@ -20,6 +20,7 @@ use crate::cryptography::signatures::{
     HasSigningScheme, PrivateSigKey, PublicSigKey, SIG_SIZE, Signature, SigningSchemeType,
     check_normalized, internal_sign,
 };
+use crate::cryptography::zeroizing_writer::ZeroizingWriter;
 use ::signature::Verifier;
 use hashing::{DIGEST_BYTES, DomainSep, serialize_hash_element};
 use kms_grpc::kms::v1::TypedPlaintext;
@@ -29,7 +30,7 @@ use serde::{Deserialize, Serialize};
 use tfhe::FheTypes;
 use tfhe::safe_serialization::{safe_deserialize, safe_serialize};
 use tfhe_versionable::{Versionize, VersionsDispatch};
-use zeroize::{Zeroize, ZeroizeOnDrop};
+use zeroize::{Zeroize, ZeroizeOnDrop, Zeroizing};
 
 const DSEP_SIGNCRYPTION: DomainSep = *b"SIGNCRYP";
 
@@ -84,6 +85,9 @@ pub trait UnsigncryptFHEPlaintext: Unsigncrypt {
     /// If the signature verification fails, an error is returned.
     /// The link parameter is used to verify that the signcryption corresponds to the expected context or session.
     /// The method is exclusively used to decrypt partially decrypted FHE ciphertexts for user decryption.
+    ///
+    /// The returned payload contains cleartext and implements [`Zeroize`], but not
+    /// [`ZeroizeOnDrop`], because callers may move out `plaintext`.
     fn unsigncrypt_plaintext(
         &self,
         dsep: &DomainSep,
@@ -348,12 +352,22 @@ pub enum SigncryptionPayloadVersions {
 /// - Unit test: `test_signcryption_payload_v0_serialization_locked` locks the binary format
 /// - BC tests: Verify v0.11.x data can be deserialized by current version
 /// - Both tests MUST pass before any changes to this type
-
+//
+// TODO(zama-ai/tfhe-rs-internal/issues/1535)
+// we should also have ZeroizeOnDrop but this requires some changes on tfhe-rs
 #[derive(Clone, Serialize, Deserialize, Hash, PartialEq, Eq, Debug, Versionize)]
 #[versionize(SigncryptionPayloadVersions)]
 pub struct SigncryptionPayload {
     pub plaintext: TypedPlaintext,
     pub link: Vec<u8>,
+}
+
+impl Zeroize for SigncryptionPayload {
+    fn zeroize(&mut self) {
+        // `fhe_type` is public metadata; wipe the plaintext and link.
+        self.plaintext.zeroize();
+        self.link.zeroize();
+    }
 }
 
 /// Compute the signcryption of a message encrypted under the public keys received from a client and
@@ -377,13 +391,13 @@ impl<'a> Signcrypt for UnifiedSigncryptionKey<'a> {
     where
         T: Serialize + tfhe::Versionize + tfhe::named::Named,
     {
-        let mut serialized_msg = Vec::new();
+        let mut serialized_msg = ZeroizingWriter::new();
         safe_serialize(msg, &mut serialized_msg, SAFE_SER_SIZE_LIMIT).map_err(|e| {
             CryptographyError::SerializationError(format!(
                 "Could not serialize message for signcryption: {e}",
             ))
         })?;
-        inner_signcryption(self, rng, dsep, &serialized_msg)
+        inner_signcryption(self, rng, dsep, serialized_msg.as_slice())
     }
 }
 
@@ -414,12 +428,17 @@ impl<'a> SigncryptFHEPlaintext for UnifiedSigncryptionKey<'a> {
         fhe_type: FheTypes,
         link: &[u8],
     ) -> Result<UnifiedSigncryption, CryptographyError> {
-        let signcryption_msg = SigncryptionPayload {
+        // Wipe the cleartext payload after serialization.
+        let signcryption_msg = Zeroizing::new(SigncryptionPayload {
             plaintext: TypedPlaintext::from_bytes(plaintext.to_owned(), fhe_type),
             link: link.to_owned(),
-        };
+        });
         // LEGACY Code: should be using safe_serialization
-        inner_signcryption(self, rng, dsep, &bc2wrap::serialize(&signcryption_msg)?)
+        // Serialize into a sink that wipes intermediate buffers.
+        let mut serialized_msg = ZeroizingWriter::new();
+        bc2wrap::serialize_into(&*signcryption_msg, &mut serialized_msg)
+            .map_err(|e| CryptographyError::BincodeError(e.to_string()))?;
+        inner_signcryption(self, rng, dsep, serialized_msg.as_slice())
     }
 }
 
@@ -438,11 +457,11 @@ impl SigncryptFHEPlaintext for UnifiedSigncryptionKeyOwned {
 }
 
 // Implements the actual signcryption but without serialization
-fn inner_signcryption<T: Serialize + AsRef<[u8]>>(
+fn inner_signcryption(
     signcrypt_key: &UnifiedSigncryptionKey,
     rng: &mut (impl CryptoRng + RngCore),
     dsep: &DomainSep,
-    msg: &T,
+    msg: &[u8],
 ) -> Result<UnifiedSigncryption, CryptographyError> {
     // Adds the hash digest of the receivers public encryption key to the message to sign
     // Sign msg || H(client_verf_key) || H(client_pub_key)
@@ -457,10 +476,10 @@ fn inner_signcryption<T: Serialize + AsRef<[u8]>>(
             return Err(CryptographyError::MlKem1024Unsupported);
         }
     };
-    let to_sign = [msg.as_ref(), signcrypt_key.receiver_id, &serialized_enc_key].concat();
+    // Wipe the temporary signed message after signing.
+    let to_sign = Zeroizing::new([msg, signcrypt_key.receiver_id, &serialized_enc_key].concat());
     let sig = internal_sign(dsep, &to_sign, signcrypt_key.signing_key)
-        .map_err(|e| CryptographyError::SigningError(e.to_string()))?
-        .sig;
+        .map_err(|e| CryptographyError::SigningError(e.to_string()))?;
 
     // Encrypt msg || sig || H(server_verification_key) || H(server_enc_pub_key)
     // OBSERVE: serialization is simply r concatenated with s. That is NOT an Ethereum compatible
@@ -473,12 +492,9 @@ fn inner_signcryption<T: Serialize + AsRef<[u8]>>(
         &PublicSigKey::from_sk(signcrypt_key.signing_key),
     )
     .map_err(|e| CryptographyError::DeserializationError(e.to_string()))?;
-    let to_encrypt = [
-        msg.as_ref(),
-        sig.to_bytes().as_ref(),
-        verf_key_hash.as_ref(),
-    ]
-    .concat();
+    // Wipe the temporary encrypted message after encryption.
+    let to_encrypt =
+        Zeroizing::new([msg, sig.to_bytes().as_ref(), verf_key_hash.as_ref()].concat());
 
     let ciphertext = match &signcrypt_key.receiver_enc_key {
         UnifiedPublicEncKey::MlKem512(public_enc_key) => {
@@ -504,7 +520,7 @@ impl<'a> Unsigncrypt for UnifiedUnsigncryptionKey<'a> {
         cipher: &UnifiedSigncryption,
     ) -> Result<T, CryptographyError> {
         let msg_vec = inner_unsigncrypt(self, dsep, cipher)?;
-        safe_deserialize(std::io::Cursor::new(&msg_vec), SAFE_SER_SIZE_LIMIT)
+        safe_deserialize(std::io::Cursor::new(&*msg_vec), SAFE_SER_SIZE_LIMIT)
             .map_err(CryptographyError::SerializationError)
     }
 
@@ -558,10 +574,12 @@ impl<'a> UnsigncryptFHEPlaintext for UnifiedUnsigncryptionKey<'a> {
         };
         let decrypted_signcryption = inner_unsigncrypt(self, dsep, &parsed_signcryption)?;
         // LEGACY should be using safe_deserialization from tfhe-rs
-        let signcrypted_msg: SigncryptionPayload =
-            bc2wrap::deserialize_safe(&decrypted_signcryption)
+        let mut signcrypted_msg: SigncryptionPayload =
+            bc2wrap::deserialize_slice(&decrypted_signcryption)
                 .map_err(|e| CryptographyError::BincodeError(e.to_string()))?;
         if link != signcrypted_msg.link {
+            // Wipe the payload before returning on a link mismatch.
+            signcrypted_msg.zeroize();
             return Err(CryptographyError::VerificationError(
                 "signcryption link does not match!".to_string(),
             ));
@@ -587,14 +605,14 @@ fn inner_unsigncrypt(
     unsign_key: &UnifiedUnsigncryptionKey,
     dsep: &DomainSep,
     cipher: &UnifiedSigncryption,
-) -> Result<Vec<u8>, CryptographyError> {
+) -> Result<Zeroizing<Vec<u8>>, CryptographyError> {
     if cipher.pke_type != unsign_key.encryption_key.encryption_scheme_type() {
         return Err(CryptographyError::VerificationError(
             "encryption type of cipher does not match the decryption key type".to_string(),
         ));
     }
     // LEGACY Code: should be using safe_deserialization from tfhe-rs
-    let deserialized_payload: HybridKemCt = bc2wrap::deserialize_safe(&cipher.payload)
+    let deserialized_payload: HybridKemCt = bc2wrap::deserialize_slice(&cipher.payload)
         .map_err(|e| CryptographyError::BincodeError(e.to_string()))?;
     let decrypted_plaintext = match &unsign_key.decryption_key {
         UnifiedPrivateEncKey::MlKem512(dec_key) => {
@@ -605,16 +623,16 @@ fn inner_unsigncrypt(
         }
     }?;
     let (msg, sig) = parse_msg(decrypted_plaintext, unsign_key.sender_verf_key)?;
-    check_format_and_signature(dsep, msg.clone(), &sig, unsign_key)?;
+    check_format_and_signature(dsep, &msg, &sig, unsign_key)?;
     Ok(msg)
 }
 
 /// Helper method for parsing a signcrypted message consisting of the _true_ msg || sig ||
 /// H(server_verification_key)
 fn parse_msg(
-    decrypted_plaintext: Vec<u8>,
+    decrypted_plaintext: Zeroizing<Vec<u8>>,
     server_verf_key: &PublicSigKey,
-) -> Result<(Vec<u8>, Signature), CryptographyError> {
+) -> Result<(Zeroizing<Vec<u8>>, Signature), CryptographyError> {
     // The plaintext contains msg || sig || H(server_verification_key)
     let msg_len = decrypted_plaintext
         .len()
@@ -643,14 +661,15 @@ fn parse_msg(
     }
     let sig = k256::ecdsa::Signature::from_slice(sig_bytes)
         .map_err(|e| CryptographyError::SerializationError(e.to_string()))?;
-    Ok((msg.to_vec(), Signature { sig }))
+    // Wipe the extracted message on drop.
+    Ok((Zeroizing::new(msg.to_vec()), Signature::from_ecdsa(sig)))
 }
 
 /// Helper method for performing the necessary checks on a signcryption signature.
 /// Returns true if the signature is ok and false otherwise
 fn check_format_and_signature(
     dsep: &DomainSep,
-    msg: Vec<u8>,
+    msg: &[u8],
     sig: &Signature,
     unsigncryption_key: &UnifiedUnsigncryptionKey,
 ) -> Result<(), CryptographyError> {
@@ -664,20 +683,27 @@ fn check_format_and_signature(
             return Err(CryptographyError::MlKem1024Unsupported);
         }
     };
-    let msg_signed = [
-        dsep.to_vec(),
-        msg,
-        unsigncryption_key.receiver_id.to_vec(),
-        serialized_enc_key,
-    ]
-    .concat();
-    // Check that the signature is normalized
+
+    let msg_signed = Zeroizing::new(
+        [
+            &dsep[..],
+            msg,
+            unsigncryption_key.receiver_id,
+            &serialized_enc_key,
+        ]
+        .concat(),
+    );
+
     check_normalized(sig)?;
-    // Verify signature
+
     unsigncryption_key
         .sender_verf_key
         .pk()
-        .verify(&msg_signed[..], &sig.sig)
+        .verify(
+            &msg_signed,
+            &sig.ecdsa_sig()
+                .map_err(|e| CryptographyError::VerificationError(e.to_string()))?,
+        )
         .map_err(|e| CryptographyError::VerificationError(e.to_string()))
 }
 
@@ -691,7 +717,7 @@ pub(crate) fn insecure_decrypt_ignoring_signature(
     dec_key: &UnifiedPrivateEncKey,
 ) -> Result<TypedPlaintext, CryptographyError> {
     // LEGACY should be using safe_deserialization from tfhe-rs
-    let cipher: HybridKemCt = bc2wrap::deserialize_safe(cipher)
+    let cipher: HybridKemCt = bc2wrap::deserialize_slice(cipher)
         .map_err(|e| CryptographyError::BincodeError(e.to_string()))?;
     let decrypted_plaintext = match dec_key {
         UnifiedPrivateEncKey::MlKem512(dk) => {
@@ -706,7 +732,7 @@ pub(crate) fn insecure_decrypt_ignoring_signature(
     let msg_len = decrypted_plaintext.len() - DIGEST_BYTES - SIG_SIZE;
     let msg = &decrypted_plaintext[..msg_len];
     // LEGACY should be using safe_deserialization from tfhe-rs
-    let signcrypted_msg: SigncryptionPayload = bc2wrap::deserialize_safe(msg)
+    let signcrypted_msg: SigncryptionPayload = bc2wrap::deserialize_slice(msg)
         .map_err(|e| CryptographyError::BincodeError(e.to_string()))?;
 
     Ok(signcrypted_msg.plaintext)
@@ -802,13 +828,13 @@ mod tests {
             .unwrap();
         let serialized_cipher = bc2wrap::serialize(&cipher).unwrap();
         let deserialized_cipher: UnifiedSigncryption =
-            bc2wrap::deserialize_unsafe(&serialized_cipher).unwrap();
+            bc2wrap::deserialize_slice(&serialized_cipher).unwrap();
 
         let serialized_server_verf_key =
             bc2wrap::serialize(&client_signcryption_keys.unsigncryption_key.sender_verf_key)
                 .unwrap();
         let deserialized_server_verf_key: PublicSigKey =
-            bc2wrap::deserialize_unsafe(&serialized_server_verf_key).unwrap();
+            bc2wrap::deserialize_slice(&serialized_server_verf_key).unwrap();
         let client_id = client_signcryption_keys
             .unsigncryption_key
             .receiver_id
@@ -915,7 +941,8 @@ mod tests {
         let mut rng = AesRng::seed_from_u64(42);
         let (server_verf_key, _server_sig_key) = gen_sig_keys(&mut rng);
         let to_encrypt = [0_u8; 1 + DIGEST_BYTES + SIG_SIZE];
-        let res = parse_msg(to_encrypt.to_vec(), &server_verf_key);
+        // Keep test input under the zeroizing ownership contract.
+        let res = parse_msg(Zeroizing::new(to_encrypt.to_vec()), &server_verf_key);
         // unwrapping fails
         assert!(res.is_err());
         assert!(

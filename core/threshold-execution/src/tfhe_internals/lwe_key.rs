@@ -14,6 +14,10 @@ use tfhe::{
 };
 use tfhe_versionable::VersionsDispatch;
 
+use super::{
+    glwe_ciphertext::GlweCiphertextShare, parameters::EncryptionType,
+    randomness::MPCEncryptionRandomGenerator, utils::negacyclic_mul_reduce_acc,
+};
 use crate::{
     online::{
         preprocessing::{BitPreprocessing, DKGPreprocessing},
@@ -28,14 +32,9 @@ use crate::{
 use algebra::{
     galois_rings::common::ResiduePoly,
     sharing::share::Share,
-    structure_traits::{BaseRing, ErrorCorrect},
+    structure_traits::{BaseRing, ErrorCorrect, Zero},
 };
 use error_utils::anyhow_error_and_log;
-
-use super::{
-    glwe_ciphertext::GlweCiphertextShare, parameters::EncryptionType,
-    randomness::MPCEncryptionRandomGenerator, utils::slice_semi_reverse_negacyclic_convolution,
-};
 
 #[derive(Clone, Serialize, Deserialize, VersionsDispatch)]
 pub enum LweSecretKeyShareVersions<Z: Clone, const EXTENSION_DEGREE: usize> {
@@ -231,11 +230,7 @@ where
         LweDimension(self.data.len())
     }
 
-    pub fn data_as_raw_vec(&self) -> Vec<ResiduePoly<Z, EXTENSION_DEGREE>> {
-        self.data.iter().map(|share| share.value()).collect_vec()
-    }
-
-    pub fn data_as_raw_iter(&self) -> impl Iterator<Item = ResiduePoly<Z, EXTENSION_DEGREE>> + '_ {
+    pub fn data_iter(&self) -> impl ExactSizeIterator<Item = ResiduePoly<Z, EXTENSION_DEGREE>> {
         self.data.iter().map(|share| share.value())
     }
 }
@@ -269,7 +264,11 @@ pub fn generate_lwe_compact_public_key<Z, Gen, const EXTENSION_DEGREE: usize>(
     let (mask, body) = output.get_mut_mask_and_body();
     generator.fill_slice_with_random_mask_custom_mod(mask, encryption_type);
 
-    slice_semi_reverse_negacyclic_convolution(body, mask, &lwe_secret_key_share.data_as_raw_vec());
+    let mut rev_keyshares = lwe_secret_key_share.data_iter().collect_vec();
+    rev_keyshares.reverse();
+    // `body` is overwritten with the product (not accumulated into), so zero it before accumulating in place.
+    body.fill(ResiduePoly::ZERO);
+    negacyclic_mul_reduce_acc(body, mask, &rev_keyshares);
 
     generator.unsigned_torus_slice_wrapping_add_random_noise_custom_mod_assign(body);
 }
