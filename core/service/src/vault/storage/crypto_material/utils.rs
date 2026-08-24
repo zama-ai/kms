@@ -4,7 +4,7 @@
 //! storage management, and common operations needed by the cryptographic material
 //! storage system.
 
-use crate::consts::{SIGNING_KEY_ID, signing_material_id};
+use crate::consts::SIGNING_KEY_ID;
 use crate::cryptography::signatures::{PrivateSigKey, PublicSigKey, RootSigningSeed};
 use crate::cryptography::signing::{
     Ed25519VerfKey, MlDsaVerfKey, SigningSchemeType, UnifiedPublicSigKey,
@@ -443,24 +443,8 @@ pub async fn get_client_verification_key<S: Storage>(storage: &S) -> anyhow::Res
     get_unique::<S, PublicSigKey, ClientDataType>(storage, ClientDataType::VerfKey).await
 }
 
-/// Read the verification key that [`store_scheme_verification_key`] wrote for
-/// `scheme`, and tag it back up into a [`UnifiedPublicSigKey`].
-pub async fn read_scheme_verification_key<S: StorageReader>(
-    storage: &S,
-    scheme: SigningSchemeType,
-) -> anyhow::Result<UnifiedPublicSigKey> {
-    read_verification_key_at(
-        storage,
-        &signing_material_id(scheme),
-        PubDataType::TypedVerfKey,
-        scheme,
-    )
-    .await
-}
-
-/// Read a `scheme` verification key from an explicit handle and folder, and tag it
-/// back up into a [`UnifiedPublicSigKey`]. The inverse of
-/// [`store_verification_key_at`].
+/// Read a signing `scheme` verification key from a handle and folder, and tag it
+/// back up into a [`UnifiedPublicSigKey`].
 pub async fn read_verification_key_at<S: StorageReader>(
     storage: &S,
     req_id: &RequestId,

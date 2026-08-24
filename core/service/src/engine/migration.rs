@@ -873,9 +873,7 @@ mod tests {
         LEGACY_ECDSA_MATERIAL_TYPES, SCHEME_MATERIAL_TYPES, delete_scheme_verification_material,
         ensure_central_server_signing_keys_exist,
     };
-    use crate::vault::storage::crypto_material::{
-        get_core_signing_key, read_scheme_verification_key,
-    };
+    use crate::vault::storage::crypto_material::{get_core_signing_key, read_verification_key_at};
     use crate::vault::storage::file::FileStorage;
     use crate::vault::storage::ram::{self, RamStorage};
     use crate::vault::storage::{
@@ -3165,9 +3163,14 @@ mod tests {
         for scheme in SigningSchemeType::iter() {
             let expected = sk.unified_verifying_key(scheme).unwrap();
             assert_eq!(
-                read_scheme_verification_key(pub_storage, scheme)
-                    .await
-                    .unwrap(),
+                read_verification_key_at(
+                    pub_storage,
+                    &signing_material_id(scheme),
+                    PubDataType::TypedVerfKey,
+                    scheme
+                )
+                .await
+                .unwrap(),
                 expected,
                 "{scheme} verification key does not match the signing key"
             );

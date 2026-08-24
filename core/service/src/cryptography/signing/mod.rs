@@ -378,7 +378,8 @@ impl UnifiedPublicSigKey {
     pub fn digest(&self) -> Vec<u8> {
         match self {
             UnifiedPublicSigKey::Ecdsa256k1(vk) => vk.verf_key_id(),
-            UnifiedPublicSigKey::Ed25519(vk) => Ed25519::digest(&vk.0),
+            // The raw public key, which is also its Solana address.
+            UnifiedPublicSigKey::Ed25519(vk) => vk.0.as_bytes().to_vec(),
             UnifiedPublicSigKey::MlDsa44(vk) => MlDsa::digest(SigningSchemeType::MlDsa44, &vk.0),
             UnifiedPublicSigKey::MlDsa65(vk) => MlDsa::digest(SigningSchemeType::MlDsa65, &vk.0),
             UnifiedPublicSigKey::MlDsa87(vk) => MlDsa::digest(SigningSchemeType::MlDsa87, &vk.0),

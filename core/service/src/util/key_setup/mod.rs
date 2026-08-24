@@ -1675,7 +1675,7 @@ mod tests {
     use crate::cryptography::signing::{HasSigningScheme, SigningSchemeType, unified_verify};
     use crate::util::key_setup::store_verification_key_at;
     use crate::vault::storage::crypto_material::{
-        get_core_root_signing_seed, get_core_signing_key, read_scheme_verification_key,
+        get_core_root_signing_seed, get_core_signing_key, read_verification_key_at,
     };
     use crate::vault::storage::ram::RamStorage;
     use crate::vault::storage::{
@@ -1735,9 +1735,14 @@ mod tests {
             let id = signing_material_id(scheme);
             let expected = sk.unified_verifying_key(scheme).unwrap();
 
-            let stored_vk = read_scheme_verification_key(pub_storage, scheme)
-                .await
-                .unwrap();
+            let stored_vk = read_verification_key_at(
+                pub_storage,
+                &signing_material_id(scheme),
+                PubDataType::TypedVerfKey,
+                scheme,
+            )
+            .await
+            .unwrap();
             assert_eq!(stored_vk, expected, "{scheme:?} verf key mismatch");
 
             let stored_addr = read_text_at_request_id(pub_storage, &id, &addr_type)
@@ -2096,9 +2101,14 @@ mod tests {
         let msg = b"signed by the identity the server boots with";
         for scheme in SigningSchemeType::iter() {
             let sig = sk.unified_sign_with(scheme, DSEP, msg).unwrap();
-            let published = read_scheme_verification_key(&pub_storage, scheme)
-                .await
-                .unwrap();
+            let published = read_verification_key_at(
+                &pub_storage,
+                &signing_material_id(scheme),
+                PubDataType::TypedVerfKey,
+                scheme,
+            )
+            .await
+            .unwrap();
             unified_verify(DSEP, msg, &sig, &published).unwrap_or_else(|e| {
                 panic!("{scheme} signature does not verify against the published key: {e}")
             });
@@ -2243,17 +2253,27 @@ mod tests {
         let sk = get_core_signing_key(&priv_storage).await.unwrap();
         for scheme in SigningSchemeType::iter() {
             assert_eq!(
-                read_scheme_verification_key(&pub_storage, scheme)
-                    .await
-                    .unwrap(),
+                read_verification_key_at(
+                    &pub_storage,
+                    &signing_material_id(scheme),
+                    PubDataType::TypedVerfKey,
+                    scheme
+                )
+                .await
+                .unwrap(),
                 sk.unified_verifying_key(scheme).unwrap(),
                 "{scheme} material does not match the loaded identity"
             );
         }
         assert_eq!(
-            read_scheme_verification_key(&pub_storage, SigningSchemeType::Ecdsa256k1)
-                .await
-                .unwrap(),
+            read_verification_key_at(
+                &pub_storage,
+                &signing_material_id(SigningSchemeType::Ecdsa256k1),
+                PubDataType::TypedVerfKey,
+                SigningSchemeType::Ecdsa256k1
+            )
+            .await
+            .unwrap(),
             legacy_sk
                 .unified_verifying_key(SigningSchemeType::Ecdsa256k1)
                 .unwrap(),
@@ -2374,9 +2394,14 @@ mod tests {
         );
         for scheme in SigningSchemeType::iter() {
             assert_eq!(
-                read_scheme_verification_key(&pub_storage, scheme)
-                    .await
-                    .unwrap(),
+                read_verification_key_at(
+                    &pub_storage,
+                    &signing_material_id(scheme),
+                    PubDataType::TypedVerfKey,
+                    scheme
+                )
+                .await
+                .unwrap(),
                 sk.unified_verifying_key(scheme).unwrap(),
                 "{scheme} material was not republished for the regenerated identity"
             );
