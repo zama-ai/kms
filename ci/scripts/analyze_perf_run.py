@@ -723,7 +723,6 @@ def analyze_directory(root: Path, run_id: int | None = None) -> dict[str, Any]:
                 "scrape_error",
                 "scrape_partial",
                 "warning:",
-                "no-ena-interface-found",
                 "OOMKilled",
                 "CrashLoopBackOff",
                 "ImagePullBackOff",
@@ -731,6 +730,11 @@ def analyze_directory(root: Path, run_id: int | None = None) -> dict[str, Any]:
             )
         )
     ]
+    degraded_lines.extend(
+        line.strip()
+        for line in ena_text.splitlines()
+        if "no-ena-interface-found" in line
+    )
     return {
         "run": {
             "id": run_id or metadata.get("databaseId") or metadata.get("id"),
@@ -1228,6 +1232,24 @@ class AnalyzerTests(unittest.TestCase):
             lifecycle["pods"]["ena-probe-a"]["waiting_reasons"], ["CrashLoopBackOff"]
         )
         self.assertEqual(len(lifecycle["warning_events"]), 1)
+
+    def test_ena_degradation_comes_from_probe_output_not_descriptions(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "ena-lifecycle.log").write_text(
+                'echo "$timestamp node=$NODE_NAME no-ena-interface-found"\n',
+                encoding="utf-8",
+            )
+            self.assertEqual(
+                analyze_directory(root)["instrumentation"]["degraded_samples"], []
+            )
+
+            sample = "2026-08-24T10:00:00Z node=node-a no-ena-interface-found\n"
+            (root / "ena-samples.log").write_text(sample, encoding="utf-8")
+            self.assertEqual(
+                analyze_directory(root)["instrumentation"]["degraded_samples"],
+                [sample.strip()],
+            )
 
 
 def parse_args() -> argparse.Namespace:
