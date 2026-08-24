@@ -3,6 +3,7 @@ use clap::Parser;
 use futures_util::future::OptionFuture;
 use kms_grpc::RequestId;
 use kms_grpc::rpc_types::{PrivDataType, PubDataType};
+use kms_lib::cryptography::signatures::SigningSchemeType;
 use kms_lib::{
     conf::{
         AWSConfig, EnclaveBootstrapConfig, Keychain, Storage as StorageConfig, VaultConfig,
@@ -492,13 +493,13 @@ async fn handle_repopulate_cmd<PubS: Storage, PrivS: Storage>(
     let sk = get_core_signing_key(priv_storage).await?;
     // Checked up front rather than left to the first non-ECDSA derivation.
     if !sk.has_root_seed() {
-        Err(anyhow_error_and_log(format!(
+        return Err(anyhow::anyhow!(
             "no {} object is present under the handle {}, so this node can only sign under {}; \
          run kms-gen-keys to generate one",
             PrivDataType::SigningSeed,
             *SIGNING_KEY_ID,
             SigningSchemeType::Ecdsa256k1
-        )));
+        ));
     }
     ensure_published_verification_material(pub_storage, &sk).await?;
     tracing::info!("Repopulated verification material from the existing signing identity");
