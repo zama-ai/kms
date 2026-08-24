@@ -570,15 +570,15 @@ where
         if !slot.exists(pub_storage).await? {
             continue;
         }
-        if !verf_keys.contains_key(&slot.scheme) {
+        if let std::collections::btree_map::Entry::Vacant(e) = verf_keys.entry(slot.scheme) {
             let verf_key = sk.unified_verifying_key(slot.scheme).map_err(|e| {
                 anyhow_error_and_log(format!(
                     "the {slot} is published, but this node cannot derive the {} verification \
-                     key to check it against: {e}",
+                      key to check it against: {e}",
                     slot.scheme
                 ))
             })?;
-            verf_keys.insert(slot.scheme, verf_key);
+            e.insert(verf_key);
         }
         if !slot.matches(pub_storage, &verf_keys[&slot.scheme]).await? {
             return Err(anyhow_error_and_log(format!(
