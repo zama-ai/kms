@@ -3,7 +3,7 @@
 //! These are the lowest-level building blocks of material integrity: pure functions over raw
 //! bytes with no storage, no key metadata and no orchestration. They live below both the
 //! storage layer and the startup checks in
-//! [`crate::engine::public_material_verification`], so either can call them without depending
+//! [`crate::engine::storage_material_verification`], so either can call them without depending
 //! on boot logic.
 //!
 //! Every function takes the **raw bytes as they were stored** rather than a deserialized value.

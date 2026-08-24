@@ -351,7 +351,7 @@ where
 /// The canonical bytes a non-ECDSA scheme signs for a keygen result.
 ///
 /// Shared between signing and after-the-fact verification (see
-/// [`crate::engine::public_material_verification`]) so there is exactly one definition of
+/// [`crate::engine::storage_material_verification`]) so there is exactly one definition of
 /// what was signed.
 pub(crate) fn keygen_payload_bytes(
     prep_id: &RequestId,
@@ -370,7 +370,7 @@ pub(crate) fn keygen_payload_bytes(
 /// The canonical bytes a non-ECDSA scheme signs for a CRS result.
 ///
 /// Shared between signing and after-the-fact verification (see
-/// [`crate::engine::public_material_verification`]) so there is exactly one definition of
+/// [`crate::engine::storage_material_verification`]) so there is exactly one definition of
 /// what was signed.
 pub(crate) fn crs_payload_bytes(
     crs_id: &RequestId,

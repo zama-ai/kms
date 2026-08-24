@@ -73,7 +73,7 @@ use crate::{
         },
         context_manager::{ThresholdContextManager, ensure_default_threshold_context_in_storage},
         prepare_shutdown_signals,
-        public_material_verification::verify_storage_material,
+        storage_material_verification::verify_storage_material,
         threshold::{
             service::{
                 public_decryptor::SecureNoiseFloodDecryptor,

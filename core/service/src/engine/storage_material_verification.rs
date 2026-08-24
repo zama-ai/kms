@@ -1,4 +1,4 @@
-//! Verification of the material published in public storage.
+//! Verification of material in private and public storage.
 //!
 //! Public storage may deviate from a consistent state: a misconfigured bucket or prefix can
 //! point a node at the wrong material, and writes are not atomic, so a crash part-way through
@@ -312,7 +312,7 @@ where
     }
 
     tracing::info!(
-        "Verified public storage material in storage \"{}\": {} keyset(s), {} CRS(es), {} recovery validation material item(s)",
+        "Verified storage material in storage \"{}\": {} keyset(s), {} CRS(es), {} recovery validation material item(s)",
         public_storage.info(),
         key_entries.len(),
         crs_entries.len(),
@@ -1255,7 +1255,7 @@ mod tests {
     // === End to end ===
 
     #[tokio::test]
-    async fn verify_public_storage_material_accepts_consistent_storage() {
+    async fn verify_storage_material_accepts_consistent_storage() {
         let mut storage = RamStorage::new();
         let mut rng = AesRng::seed_from_u64(160);
         let material = setup_standard_keys(&mut storage, 161).await;

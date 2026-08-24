@@ -83,7 +83,7 @@ The service crate is the main surface area. Key subdirectories under
   [material_integrity.rs](core/service/src/engine/material_integrity.rs) (digest
   primitives over raw stored bytes, depended on by both the storage layer and the
   startup checks) and
-  [public_material_verification.rs](core/service/src/engine/public_material_verification.rs)
+  [storage_material_verification.rs](core/service/src/engine/storage_material_verification.rs)
   (the startup orchestration built on top of them — see
   [Boot-time storage verification](#boot-time-storage-verification)),
   [validation_non_wasm.rs](core/service/src/engine/validation_non_wasm.rs) and
@@ -295,8 +295,8 @@ so it is the reference.
 The code is split by level. [material_integrity.rs](core/service/src/engine/material_integrity.rs)
 holds the digest primitives — pure functions over raw stored bytes, with no storage or
 orchestration — so the vault layer can reuse them without depending on startup logic.
-[public_material_verification.rs](core/service/src/engine/public_material_verification.rs)
-sits above it and owns the startup orchestration, entered through `verify_public_material`.
+[storage_material_verification.rs](core/service/src/engine/storage_material_verification.rs)
+sits above it and owns the startup orchestration, entered through `verify_storage_material`.
 The checks follow three rules:
 
 1. **Private storage is the reference.** Iteration is always "for each entry in private
