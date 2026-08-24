@@ -18,7 +18,14 @@ use kms_lib::{
 };
 use prost::Message as _;
 use rand::{CryptoRng, Rng};
-use std::{collections::HashMap, future::Future, sync::Arc};
+use std::{
+    collections::{BTreeMap, HashMap},
+    future::Future,
+    sync::{
+        Arc,
+        atomic::{AtomicU64, Ordering},
+    },
+};
 use tokio::{
     sync::RwLock,
     task::JoinSet,
@@ -28,6 +35,171 @@ use tonic::transport::Channel;
 
 type CoreEndpointClient = CoreServiceEndpointClient<Channel>;
 type CoreEndpointClients = Arc<[CoreEndpointClient]>;
+
+// Tonic exposes no iterable list of stable machine-readable names. Keep these in discriminant
+// order so a `tonic::Code` can index the fixed-size counter array without allocation or locking.
+const GRPC_CODES: [(tonic::Code, &str); 17] = [
+    (tonic::Code::Ok, "ok"),
+    (tonic::Code::Cancelled, "cancelled"),
+    (tonic::Code::Unknown, "unknown"),
+    (tonic::Code::InvalidArgument, "invalid_argument"),
+    (tonic::Code::DeadlineExceeded, "deadline_exceeded"),
+    (tonic::Code::NotFound, "not_found"),
+    (tonic::Code::AlreadyExists, "already_exists"),
+    (tonic::Code::PermissionDenied, "permission_denied"),
+    (tonic::Code::ResourceExhausted, "resource_exhausted"),
+    (tonic::Code::FailedPrecondition, "failed_precondition"),
+    (tonic::Code::Aborted, "aborted"),
+    (tonic::Code::OutOfRange, "out_of_range"),
+    (tonic::Code::Unimplemented, "unimplemented"),
+    (tonic::Code::Internal, "internal"),
+    (tonic::Code::Unavailable, "unavailable"),
+    (tonic::Code::DataLoss, "data_loss"),
+    (tonic::Code::Unauthenticated, "unauthenticated"),
+];
+
+#[derive(Clone, Copy)]
+enum RpcPhase {
+    Submit,
+    Result,
+}
+
+/// Live RPC diagnostics shared by all logical decryptions in one rate-test rung.
+///
+/// RPC tasks update these atomics concurrently, including detached post-quorum tasks. Call
+/// [`RpcDiagnostics::snapshot`] at the drain boundary to freeze values for the final report.
+#[derive(Default)]
+struct RpcDiagnostics {
+    /// Submit RPC attempts by gRPC status-code discriminant.
+    submit_status: [AtomicU64; GRPC_CODES.len()],
+    /// Result RPC attempts by gRPC status-code discriminant.
+    result_status: [AtomicU64; GRPC_CODES.len()],
+    /// Submit RPCs currently awaiting a response.
+    submit_in_flight: AtomicU64,
+    /// Highest observed number of concurrent submit RPCs.
+    submit_peak_in_flight: AtomicU64,
+    /// Result RPCs currently awaiting a response.
+    result_in_flight: AtomicU64,
+    /// Highest observed number of concurrent result RPCs.
+    result_peak_in_flight: AtomicU64,
+    /// Result RPCs repeated after a retryable not-ready response.
+    result_retries: AtomicU64,
+    /// Result tasks handed to the background drainer after quorum.
+    post_quorum_tasks: AtomicU64,
+    /// Post-quorum result tasks completed by the background drainer.
+    post_quorum_tasks_drained: AtomicU64,
+    /// Post-quorum result tasks still running.
+    post_quorum_tasks_outstanding: AtomicU64,
+}
+
+/// Decrements an RPC phase's in-flight gauge when the call finishes or is cancelled.
+struct RpcInFlightGuard<'a> {
+    current: &'a AtomicU64,
+}
+
+impl Drop for RpcInFlightGuard<'_> {
+    fn drop(&mut self) {
+        self.current.fetch_sub(1, Ordering::Relaxed);
+    }
+}
+
+/// Immutable RPC diagnostics captured at the logical-request drain boundary.
+///
+/// This is separate from [`RpcDiagnostics`] so serialization observes one consistent reporting
+/// point even though detached post-quorum tasks may continue updating the live counters.
+#[derive(Debug, PartialEq, Eq, serde::Serialize)]
+struct RpcDiagnosticsJson {
+    /// Nonzero submit RPC counts keyed by gRPC status name.
+    submit_status: BTreeMap<&'static str, u64>,
+    /// Nonzero result RPC counts keyed by gRPC status name.
+    result_status: BTreeMap<&'static str, u64>,
+    /// Submit RPCs left in flight after the logical-request drain.
+    outstanding_submit_rpcs: u64,
+    /// Peak concurrent submit RPCs during the rung.
+    submit_peak_in_flight: u64,
+    /// Result RPCs left in flight after the logical-request drain.
+    outstanding_result_rpcs: u64,
+    /// Peak concurrent result RPCs during the rung.
+    result_peak_in_flight: u64,
+    /// Result RPCs repeated after a retryable not-ready response.
+    result_retries: u64,
+    /// Result tasks handed to the background drainer after quorum.
+    post_quorum_tasks: u64,
+    /// Post-quorum result tasks completed before metrics are emitted.
+    post_quorum_tasks_drained: u64,
+    /// Post-quorum result tasks left after the logical-request drain.
+    outstanding_post_quorum_tasks: u64,
+}
+
+impl RpcDiagnostics {
+    fn gauges(&self, phase: RpcPhase) -> (&AtomicU64, &AtomicU64) {
+        match phase {
+            RpcPhase::Submit => (&self.submit_in_flight, &self.submit_peak_in_flight),
+            RpcPhase::Result => (&self.result_in_flight, &self.result_peak_in_flight),
+        }
+    }
+
+    fn start(&self, phase: RpcPhase) -> RpcInFlightGuard<'_> {
+        let (current, peak) = self.gauges(phase);
+        let current_value = current.fetch_add(1, Ordering::Relaxed) + 1;
+        peak.fetch_max(current_value, Ordering::Relaxed);
+        RpcInFlightGuard { current }
+    }
+
+    fn record<T>(&self, phase: RpcPhase, result: &Result<T, tonic::Status>) {
+        let code = result
+            .as_ref()
+            .map(|_| tonic::Code::Ok)
+            .unwrap_or_else(|status| status.code());
+        let counters = match phase {
+            RpcPhase::Submit => &self.submit_status,
+            RpcPhase::Result => &self.result_status,
+        };
+        counters[code as usize].fetch_add(1, Ordering::Relaxed);
+    }
+
+    fn status_snapshot(counters: &[AtomicU64; GRPC_CODES.len()]) -> BTreeMap<&'static str, u64> {
+        GRPC_CODES
+            .iter()
+            .zip(counters)
+            .filter_map(|((_code, label), counter)| {
+                let count = counter.load(Ordering::Relaxed);
+                (count > 0).then_some((*label, count))
+            })
+            .collect()
+    }
+
+    /// Freeze the live counters into their stable, serializable representation.
+    fn snapshot(&self) -> RpcDiagnosticsJson {
+        RpcDiagnosticsJson {
+            submit_status: Self::status_snapshot(&self.submit_status),
+            result_status: Self::status_snapshot(&self.result_status),
+            outstanding_submit_rpcs: self.submit_in_flight.load(Ordering::Relaxed),
+            submit_peak_in_flight: self.submit_peak_in_flight.load(Ordering::Relaxed),
+            outstanding_result_rpcs: self.result_in_flight.load(Ordering::Relaxed),
+            result_peak_in_flight: self.result_peak_in_flight.load(Ordering::Relaxed),
+            result_retries: self.result_retries.load(Ordering::Relaxed),
+            post_quorum_tasks: self.post_quorum_tasks.load(Ordering::Relaxed),
+            post_quorum_tasks_drained: self.post_quorum_tasks_drained.load(Ordering::Relaxed),
+            outstanding_post_quorum_tasks: self
+                .post_quorum_tasks_outstanding
+                .load(Ordering::Relaxed),
+        }
+    }
+}
+
+async fn observe_rpc<T>(
+    diagnostics: Option<&RpcDiagnostics>,
+    phase: RpcPhase,
+    rpc: impl Future<Output = Result<T, tonic::Status>>,
+) -> Result<T, tonic::Status> {
+    let _guard = diagnostics.map(|diagnostics| diagnostics.start(phase));
+    let result = rpc.await;
+    if let Some(diagnostics) = diagnostics {
+        diagnostics.record(phase, &result);
+    }
+    result
+}
 
 /// check that the external signature on the decryption result(s) is valid, i.e. was made by one of the supplied addresses
 fn check_ext_pt_signature(
@@ -140,6 +312,12 @@ impl CollectedDecryptRateResult for CollectedPublicDecrypt {
 
 /// Accumulated responses and counters from a single rate-test run.
 struct DecryptRateCollection<T> {
+    /// Requested rate in logical decryptions per second.
+    target_rate: u64,
+    /// Configured measurement duration.
+    duration_secs: u64,
+    /// Maximum number of concurrent decryptions.
+    max_in_flight: usize,
     /// Successful requests, including those completed during drain.
     collected: Vec<T>,
     /// Total successful requests, including drain completions.
@@ -176,6 +354,29 @@ struct DecryptRateCollection<T> {
     response_payload_messages_in_window: u64,
     /// Host-interface traffic observed during measurement.
     network: Option<NetworkMetrics>,
+}
+
+/// Local result processing performed after the RPC phase reaches quorum.
+///
+/// This is response verification/validation for public decrypt and reconstruction for user decrypt. It is
+/// kept separate from [`RpcDiagnostics`] because it performs no KMS RPCs.
+struct PostProcessMetrics {
+    /// Logical requests whose local result processing failed.
+    failed: u64,
+    /// Per-request local result-processing latency.
+    stat: crate::DurationStat,
+    /// Wall time for the complete parallel result-processing phase.
+    wall: Duration,
+}
+
+impl PostProcessMetrics {
+    fn new(failed: u64, durations: &[Duration], wall: Duration) -> Self {
+        Self {
+            failed,
+            stat: crate::compute_stat_on_durations(durations),
+            wall,
+        }
+    }
 }
 
 /// Metrics computed from a rate-test run: throughput, payloads, and latency stats.
@@ -236,6 +437,7 @@ struct DecryptRateMetrics {
     post_process_stat: crate::DurationStat,
     /// Wall time spent on client-side post-processing.
     post_process_wall: Duration,
+    rpc_diagnostics: RpcDiagnosticsJson,
 }
 
 /// JSON-serializable view of [`DecryptRateMetrics`] consumed by the CI parser.
@@ -444,6 +646,10 @@ impl DecryptRateMetrics {
                 self.post_process_wall,
             ))?,
         );
+        object.insert(
+            "rpc_diagnostics".to_owned(),
+            serde_json::to_value(&self.rpc_diagnostics)?,
+        );
         serde_json::to_string(&value)
     }
 
@@ -476,6 +682,7 @@ async fn collect_decrypt_responses<Resp: Send + 'static>(
     mut resp_tasks: JoinSet<anyhow::Result<Resp>>,
     num_parties: usize,
     num_expected_responses: usize,
+    rpc_diagnostics: Option<Arc<RpcDiagnostics>>,
 ) -> anyhow::Result<(Vec<Resp>, Duration)> {
     let mut resp_response_vec = Vec::with_capacity(num_expected_responses);
     let mut collect_duration = None;
@@ -501,6 +708,14 @@ async fn collect_decrypt_responses<Resp: Send + 'static>(
 
     let pending_response_tasks = resp_tasks.len();
     if pending_response_tasks > 0 {
+        if let Some(diagnostics) = &rpc_diagnostics {
+            diagnostics
+                .post_quorum_tasks
+                .fetch_add(pending_response_tasks as u64, Ordering::Relaxed);
+            diagnostics
+                .post_quorum_tasks_outstanding
+                .fetch_add(pending_response_tasks as u64, Ordering::Relaxed);
+        }
         tokio::spawn(async move {
             while let Some(resp) = resp_tasks.join_next().await {
                 match resp {
@@ -509,6 +724,14 @@ async fn collect_decrypt_responses<Resp: Send + 'static>(
                     Err(e) => {
                         tracing::debug!("Outstanding {label} response task panicked: {e}")
                     }
+                }
+                if let Some(diagnostics) = &rpc_diagnostics {
+                    diagnostics
+                        .post_quorum_tasks_drained
+                        .fetch_add(1, Ordering::Relaxed);
+                    diagnostics
+                        .post_quorum_tasks_outstanding
+                        .fetch_sub(1, Ordering::Relaxed);
                 }
             }
             tracing::debug!(
@@ -535,15 +758,20 @@ fn spawn_public_decrypt_sync(
     dec_req: &PublicDecryptionRequest,
     core_endpoints: &CoreEndpointClients,
     max_iter: usize,
+    rpc_diagnostics: Option<Arc<RpcDiagnostics>>,
 ) -> JoinSet<anyhow::Result<PublicDecryptionResponse>> {
     let mut resp_tasks = JoinSet::new();
     for ce in core_endpoints.iter() {
         let req_cloned = dec_req.clone();
         let mut cur_client = ce.clone();
+        let rpc_diagnostics = rpc_diagnostics.clone();
         resp_tasks.spawn(async move {
-            let mut response = cur_client
-                .public_decrypt_sync(tonic::Request::new(req_cloned.clone()))
-                .await;
+            let mut response = observe_rpc(
+                rpc_diagnostics.as_deref(),
+                RpcPhase::Result,
+                cur_client.public_decrypt_sync(tonic::Request::new(req_cloned.clone())),
+            )
+            .await;
             let mut ctr = 0_usize;
 
             // `Unavailable`: the result is not ready yet. `ResourceExhausted`: the rate limiter
@@ -559,11 +787,17 @@ fn spawn_public_decrypt_sync(
                     );
                 }
                 ctr += 1;
+                if let Some(diagnostics) = &rpc_diagnostics {
+                    diagnostics.result_retries.fetch_add(1, Ordering::Relaxed);
+                }
                 // Re-sending the request attaches to the in-flight decryption instead of starting
                 // a new one.
-                response = cur_client
-                    .public_decrypt_sync(tonic::Request::new(req_cloned.clone()))
-                    .await;
+                response = observe_rpc(
+                    rpc_diagnostics.as_deref(),
+                    RpcPhase::Result,
+                    cur_client.public_decrypt_sync(tonic::Request::new(req_cloned.clone())),
+                )
+                .await;
             }
             let resp =
                 response.map_err(|e| anyhow::anyhow!("sync public decryption failed: {e}"))?;
@@ -579,15 +813,20 @@ async fn send_public_decrypt_requests(
     core_endpoints: &CoreEndpointClients,
     num_parties: usize,
     num_expected_responses: usize,
+    rpc_diagnostics: Option<Arc<RpcDiagnostics>>,
 ) -> anyhow::Result<()> {
     let mut req_tasks = JoinSet::new();
     for ce in core_endpoints.iter() {
         let req_cloned = dec_req.clone();
         let mut cur_client = ce.clone();
+        let rpc_diagnostics = rpc_diagnostics.clone();
         req_tasks.spawn(async move {
-            cur_client
-                .public_decrypt(tonic::Request::new(req_cloned))
-                .await
+            observe_rpc(
+                rpc_diagnostics.as_deref(),
+                RpcPhase::Submit,
+                cur_client.public_decrypt(tonic::Request::new(req_cloned)),
+            )
+            .await
         });
     }
 
@@ -616,14 +855,19 @@ fn spawn_get_public_decrypt_result(
     req_id: RequestId,
     core_endpoints: &CoreEndpointClients,
     max_iter: usize,
+    rpc_diagnostics: Option<Arc<RpcDiagnostics>>,
 ) -> JoinSet<anyhow::Result<PublicDecryptionResponse>> {
     let mut resp_tasks = JoinSet::new();
     for ce in core_endpoints.iter() {
         let mut cur_client = ce.clone();
+        let rpc_diagnostics = rpc_diagnostics.clone();
         resp_tasks.spawn(async move {
-            let mut response = cur_client
-                .get_public_decryption_result(tonic::Request::new(req_id.into()))
-                .await;
+            let mut response = observe_rpc(
+                rpc_diagnostics.as_deref(),
+                RpcPhase::Result,
+                cur_client.get_public_decryption_result(tonic::Request::new(req_id.into())),
+            )
+            .await;
             let mut ctr = 0_usize;
             while response.is_err()
                 && response.as_ref().unwrap_err().code() == tonic::Code::Unavailable
@@ -635,9 +879,15 @@ fn spawn_get_public_decrypt_result(
                     );
                 }
                 ctr += 1;
-                response = cur_client
-                    .get_public_decryption_result(tonic::Request::new(req_id.into()))
-                    .await;
+                if let Some(diagnostics) = &rpc_diagnostics {
+                    diagnostics.result_retries.fetch_add(1, Ordering::Relaxed);
+                }
+                response = observe_rpc(
+                    rpc_diagnostics.as_deref(),
+                    RpcPhase::Result,
+                    cur_client.get_public_decryption_result(tonic::Request::new(req_id.into())),
+                )
+                .await;
             }
             let resp =
                 response.map_err(|e| anyhow::anyhow!("public decryption response failed: {e}"))?;
@@ -658,11 +908,17 @@ async fn send_and_collect_public_decrypt(
     max_iter: usize,
     num_expected_responses: usize,
     use_sync_endpoint: bool,
+    rpc_diagnostics: Option<Arc<RpcDiagnostics>>,
 ) -> anyhow::Result<CollectedPublicDecrypt> {
     let request_start = Instant::now();
 
     let (label, resp_tasks) = if use_sync_endpoint {
-        let tasks = spawn_public_decrypt_sync(&dec_req, &core_endpoints_req, max_iter);
+        let tasks = spawn_public_decrypt_sync(
+            &dec_req,
+            &core_endpoints_req,
+            max_iter,
+            rpc_diagnostics.clone(),
+        );
         ("sync public decrypt", tasks)
     } else {
         send_public_decrypt_requests(
@@ -670,9 +926,15 @@ async fn send_and_collect_public_decrypt(
             &core_endpoints_req,
             num_parties,
             num_expected_responses,
+            rpc_diagnostics.clone(),
         )
         .await?;
-        let tasks = spawn_get_public_decrypt_result(req_id, &core_endpoints_resp, max_iter);
+        let tasks = spawn_get_public_decrypt_result(
+            req_id,
+            &core_endpoints_resp,
+            max_iter,
+            rpc_diagnostics.clone(),
+        );
         ("public decrypt", tasks)
     };
 
@@ -683,6 +945,7 @@ async fn send_and_collect_public_decrypt(
         resp_tasks,
         num_parties,
         num_expected_responses,
+        rpc_diagnostics,
     )
     .await?;
 
@@ -782,6 +1045,7 @@ pub(crate) async fn do_public_decrypt_once<R: Rng + CryptoRng>(
         max_iter,
         num_expected_responses,
         use_sync_endpoint,
+        None,
     )
     .await?;
     let collect_duration = collected.collect_duration;
@@ -834,6 +1098,7 @@ pub(crate) async fn do_public_decrypt<R: Rng + CryptoRng>(
     let extra_data = crate::extra_data_from_context_epoch(context_id, epoch_id)?;
     let core_endpoints_req = endpoint_clients(core_endpoints_req);
     let core_endpoints_resp = endpoint_clients(core_endpoints_resp);
+    let rpc_diagnostics = Arc::new(RpcDiagnostics::default());
 
     // PHASE 1: build the request batch before the timed launch window.
     tracing::info!(
@@ -867,6 +1132,7 @@ pub(crate) async fn do_public_decrypt<R: Rng + CryptoRng>(
         |(req_id, dec_req)| {
             let core_endpoints_req = Arc::clone(&core_endpoints_req);
             let core_endpoints_resp = Arc::clone(&core_endpoints_resp);
+            let rpc_diagnostics = Arc::clone(&rpc_diagnostics);
             send_and_collect_public_decrypt(
                 rate,
                 req_id,
@@ -877,10 +1143,13 @@ pub(crate) async fn do_public_decrypt<R: Rng + CryptoRng>(
                 max_iter,
                 num_expected_responses,
                 use_sync_endpoint,
+                Some(rpc_diagnostics),
             )
         },
     )
     .await;
+    // Snapshot before verification so detached tasks cannot shift the reporting boundary.
+    let rpc_diagnostics = rpc_diagnostics.snapshot();
 
     let collected = std::mem::take(&mut collection.collected);
 
@@ -925,13 +1194,9 @@ pub(crate) async fn do_public_decrypt<R: Rng + CryptoRng>(
     let verify_elapsed = verify_start.elapsed();
 
     let metrics = decrypt_rate_metrics(
-        rate,
-        duration_secs,
-        max_in_flight,
         &collection,
-        verification_failed,
-        &verification_durations,
-        verify_elapsed,
+        PostProcessMetrics::new(verification_failed, &verification_durations, verify_elapsed),
+        rpc_diagnostics,
     );
     metrics.log_json(
         "PUBLIC_DECRYPT_METRICS",
@@ -1233,6 +1498,9 @@ where
 
     let completed = accumulator.collected.len() as u64;
     DecryptRateCollection {
+        target_rate: rate,
+        duration_secs,
+        max_in_flight,
         collected: accumulator.collected,
         completed,
         completed_in_window: accumulator.completed_in_window,
@@ -1255,13 +1523,9 @@ where
 }
 
 fn decrypt_rate_metrics<T>(
-    rate: u64,
-    duration_secs: u64,
-    max_in_flight: usize,
     collection: &DecryptRateCollection<T>,
-    post_process_failed: u64,
-    post_process_durations: &[Duration],
-    post_process_wall: Duration,
+    post_process: PostProcessMetrics,
+    rpc_diagnostics: RpcDiagnosticsJson,
 ) -> DecryptRateMetrics {
     let request_payload_mib_per_sec = if collection.measurement_elapsed.is_zero() {
         0.0
@@ -1287,9 +1551,9 @@ fn decrypt_rate_metrics<T>(
     };
 
     DecryptRateMetrics {
-        target_rate: rate,
-        duration_secs,
-        max_in_flight,
+        target_rate: collection.target_rate,
+        duration_secs: collection.duration_secs,
+        max_in_flight: collection.max_in_flight,
         offered: collection.offered,
         completed: collection.completed,
         completed_in_window: collection.completed_in_window,
@@ -1317,10 +1581,11 @@ fn decrypt_rate_metrics<T>(
         response_payload_mib_per_sec,
         response_payload_avg_bytes,
         network: collection.network.clone(),
-        post_process_failed,
+        post_process_failed: post_process.failed,
         latency_stat: crate::compute_stat_on_durations(&collection.durations_to_get_responses),
-        post_process_stat: crate::compute_stat_on_durations(post_process_durations),
-        post_process_wall,
+        post_process_stat: post_process.stat,
+        post_process_wall: post_process.wall,
+        rpc_diagnostics,
     }
 }
 
@@ -1329,15 +1594,20 @@ fn spawn_user_decrypt_sync(
     user_decrypt_req: &UserDecryptionRequest,
     core_endpoints: &CoreEndpointClients,
     max_iter: usize,
+    rpc_diagnostics: Option<Arc<RpcDiagnostics>>,
 ) -> JoinSet<anyhow::Result<UserDecryptionResponse>> {
     let mut resp_tasks = JoinSet::new();
     for ce in core_endpoints.iter() {
         let req_cloned = user_decrypt_req.clone();
         let mut cur_client = ce.clone();
+        let rpc_diagnostics = rpc_diagnostics.clone();
         resp_tasks.spawn(async move {
-            let mut response = cur_client
-                .user_decrypt_sync(tonic::Request::new(req_cloned.clone()))
-                .await;
+            let mut response = observe_rpc(
+                rpc_diagnostics.as_deref(),
+                RpcPhase::Result,
+                cur_client.user_decrypt_sync(tonic::Request::new(req_cloned.clone())),
+            )
+            .await;
             let mut ctr = 0_usize;
 
             // `Unavailable`: the result is not ready yet. `ResourceExhausted`: the rate limiter
@@ -1353,11 +1623,17 @@ fn spawn_user_decrypt_sync(
                     );
                 }
                 ctr += 1;
+                if let Some(diagnostics) = &rpc_diagnostics {
+                    diagnostics.result_retries.fetch_add(1, Ordering::Relaxed);
+                }
                 // Re-sending the request attaches to the in-flight decryption instead of starting
                 // a new one.
-                response = cur_client
-                    .user_decrypt_sync(tonic::Request::new(req_cloned.clone()))
-                    .await;
+                response = observe_rpc(
+                    rpc_diagnostics.as_deref(),
+                    RpcPhase::Result,
+                    cur_client.user_decrypt_sync(tonic::Request::new(req_cloned.clone())),
+                )
+                .await;
             }
             let resp = response.map_err(|e| anyhow::anyhow!("sync user decryption failed: {e}"))?;
             Ok(resp.into_inner())
@@ -1372,15 +1648,20 @@ async fn send_user_decrypt_requests(
     core_endpoints: &CoreEndpointClients,
     num_parties: usize,
     num_expected_responses: usize,
+    rpc_diagnostics: Option<Arc<RpcDiagnostics>>,
 ) -> anyhow::Result<()> {
     let mut req_tasks = JoinSet::new();
     for ce in core_endpoints.iter() {
         let req_cloned = user_decrypt_req.clone();
         let mut cur_client = ce.clone();
+        let rpc_diagnostics = rpc_diagnostics.clone();
         req_tasks.spawn(async move {
-            cur_client
-                .user_decrypt(tonic::Request::new(req_cloned))
-                .await
+            observe_rpc(
+                rpc_diagnostics.as_deref(),
+                RpcPhase::Submit,
+                cur_client.user_decrypt(tonic::Request::new(req_cloned)),
+            )
+            .await
         });
     }
 
@@ -1409,6 +1690,7 @@ fn spawn_get_user_decrypt_result(
     user_decrypt_req: &UserDecryptionRequest,
     core_endpoints: &CoreEndpointClients,
     max_iter: usize,
+    rpc_diagnostics: Option<Arc<RpcDiagnostics>>,
 ) -> anyhow::Result<JoinSet<anyhow::Result<UserDecryptionResponse>>> {
     let req_id = user_decrypt_req
         .request_id
@@ -1419,11 +1701,15 @@ fn spawn_get_user_decrypt_result(
     for ce in core_endpoints.iter() {
         let mut cur_client = ce.clone();
         let req_id_clone = req_id.clone();
+        let rpc_diagnostics = rpc_diagnostics.clone();
 
         resp_tasks.spawn(async move {
-            let mut response = cur_client
-                .get_user_decryption_result(tonic::Request::new(req_id_clone.clone()))
-                .await;
+            let mut response = observe_rpc(
+                rpc_diagnostics.as_deref(),
+                RpcPhase::Result,
+                cur_client.get_user_decryption_result(tonic::Request::new(req_id_clone.clone())),
+            )
+            .await;
             let mut ctr = 0_usize;
             while response.is_err()
                 && response.as_ref().unwrap_err().code() == tonic::Code::Unavailable
@@ -1435,9 +1721,16 @@ fn spawn_get_user_decrypt_result(
                     );
                 }
                 ctr += 1;
-                response = cur_client
-                    .get_user_decryption_result(tonic::Request::new(req_id_clone.clone()))
-                    .await;
+                if let Some(diagnostics) = &rpc_diagnostics {
+                    diagnostics.result_retries.fetch_add(1, Ordering::Relaxed);
+                }
+                response = observe_rpc(
+                    rpc_diagnostics.as_deref(),
+                    RpcPhase::Result,
+                    cur_client
+                        .get_user_decryption_result(tonic::Request::new(req_id_clone.clone())),
+                )
+                .await;
             }
             let resp =
                 response.map_err(|e| anyhow::anyhow!("user decryption response failed: {e}"))?;
@@ -1460,11 +1753,17 @@ async fn send_and_collect_user_decrypt(
     max_iter: usize,
     num_expected_responses: usize,
     use_sync_endpoint: bool,
+    rpc_diagnostics: Option<Arc<RpcDiagnostics>>,
 ) -> anyhow::Result<CollectedUserDecrypt> {
     let request_start = Instant::now();
 
     let (label, resp_tasks) = if use_sync_endpoint {
-        let tasks = spawn_user_decrypt_sync(&user_decrypt_req, &core_endpoints_req, max_iter);
+        let tasks = spawn_user_decrypt_sync(
+            &user_decrypt_req,
+            &core_endpoints_req,
+            max_iter,
+            rpc_diagnostics.clone(),
+        );
         ("sync user decrypt", tasks)
     } else {
         send_user_decrypt_requests(
@@ -1472,10 +1771,15 @@ async fn send_and_collect_user_decrypt(
             &core_endpoints_req,
             num_parties,
             num_expected_responses,
+            rpc_diagnostics.clone(),
         )
         .await?;
-        let tasks =
-            spawn_get_user_decrypt_result(&user_decrypt_req, &core_endpoints_resp, max_iter)?;
+        let tasks = spawn_get_user_decrypt_result(
+            &user_decrypt_req,
+            &core_endpoints_resp,
+            max_iter,
+            rpc_diagnostics.clone(),
+        )?;
         ("user decrypt", tasks)
     };
 
@@ -1486,6 +1790,7 @@ async fn send_and_collect_user_decrypt(
         resp_tasks,
         num_parties,
         num_expected_responses,
+        rpc_diagnostics,
     )
     .await?;
 
@@ -1600,6 +1905,7 @@ pub(crate) async fn do_user_decrypt_once<R: Rng + CryptoRng>(
         max_iter,
         num_expected_responses,
         use_sync_endpoint,
+        None,
     )
     .await?;
     let collect_duration = collected.collect_duration;
@@ -1646,6 +1952,7 @@ pub(crate) async fn do_user_decrypt<R: Rng + CryptoRng>(
     let expected = TestingPlaintext::try_from(ptxt)?;
     let core_endpoints_req = endpoint_clients(core_endpoints_req);
     let core_endpoints_resp = endpoint_clients(core_endpoints_resp);
+    let rpc_diagnostics = Arc::new(RpcDiagnostics::default());
 
     // PHASE 1: build the request batch before the timed launch window.
     tracing::info!(
@@ -1680,6 +1987,7 @@ pub(crate) async fn do_user_decrypt<R: Rng + CryptoRng>(
         |(req_id, user_decrypt_req, enc_pk, enc_sk)| {
             let core_endpoints_req = Arc::clone(&core_endpoints_req);
             let core_endpoints_resp = Arc::clone(&core_endpoints_resp);
+            let rpc_diagnostics = Arc::clone(&rpc_diagnostics);
             send_and_collect_user_decrypt(
                 rate,
                 req_id,
@@ -1692,10 +2000,13 @@ pub(crate) async fn do_user_decrypt<R: Rng + CryptoRng>(
                 max_iter,
                 num_expected_responses,
                 use_sync_endpoint,
+                Some(rpc_diagnostics),
             )
         },
     )
     .await;
+    // Snapshot before reconstruction so detached tasks cannot shift the reporting boundary.
+    let rpc_diagnostics = rpc_diagnostics.snapshot();
 
     let collected = std::mem::take(&mut collection.collected);
 
@@ -1732,13 +2043,13 @@ pub(crate) async fn do_user_decrypt<R: Rng + CryptoRng>(
     let reconstruct_elapsed = reconstruct_start.elapsed();
 
     let metrics = decrypt_rate_metrics(
-        rate,
-        duration_secs,
-        max_in_flight,
         &collection,
-        reconstruction_failed,
-        &reconstruction_durations,
-        reconstruct_elapsed,
+        PostProcessMetrics::new(
+            reconstruction_failed,
+            &reconstruction_durations,
+            reconstruct_elapsed,
+        ),
+        rpc_diagnostics,
     );
     metrics.log_json(
         "USER_DECRYPT_METRICS",
@@ -2009,6 +2320,13 @@ mod tests {
             tx_bytes: 2_000_000_000,
             ..network_before
         };
+        let rpc_diagnostics = RpcDiagnostics::default();
+        rpc_diagnostics.record::<()>(RpcPhase::Submit, &Ok(()));
+        rpc_diagnostics.record::<()>(
+            RpcPhase::Result,
+            &Err(tonic::Status::unavailable("not ready")),
+        );
+        rpc_diagnostics.result_retries.store(1, Ordering::Relaxed);
         DecryptRateMetrics {
             target_rate,
             duration_secs: 60,
@@ -2038,6 +2356,7 @@ mod tests {
             latency_stat: crate::compute_stat_on_durations(&sample),
             post_process_stat: crate::compute_stat_on_durations(&sample),
             post_process_wall: Duration::from_millis(5),
+            rpc_diagnostics: rpc_diagnostics.snapshot(),
         }
     }
 
@@ -2063,6 +2382,9 @@ mod tests {
         assert!(v["achieved_rate"].is_number());
         assert!(v["latency_ms"]["p50"].is_number());
         assert!(v["latency_ms"]["p99"].is_number());
+        assert_eq!(v["rpc_diagnostics"]["submit_status"]["ok"], 1);
+        assert_eq!(v["rpc_diagnostics"]["result_status"]["unavailable"], 1);
+        assert_eq!(v["rpc_diagnostics"]["result_retries"], 1);
         assert!(v["verification_ms"]["wall"].is_number());
         assert_eq!(v["verification_failed"], 0);
 
@@ -2097,6 +2419,9 @@ mod tests {
         assert!(v["achieved_rate"].is_number());
         assert!(v["latency_ms"]["p50"].is_number());
         assert!(v["latency_ms"]["p99"].is_number());
+        assert_eq!(v["rpc_diagnostics"]["submit_status"]["ok"], 1);
+        assert_eq!(v["rpc_diagnostics"]["result_status"]["unavailable"], 1);
+        assert_eq!(v["rpc_diagnostics"]["result_retries"], 1);
         assert!(v["reconstruction_ms"]["wall"].is_number());
         assert_eq!(v["reconstruction_failed"], 0);
 
@@ -2114,6 +2439,9 @@ mod tests {
         const MIB: u64 = 1024 * 1024;
         let durations = [Duration::from_millis(10), Duration::from_millis(20)];
         let collection = DecryptRateCollection::<()> {
+            target_rate: 12,
+            duration_secs: 10,
+            max_in_flight: 1_000,
             collected: Vec::new(),
             completed: 100,
             completed_in_window: 80,
@@ -2134,8 +2462,11 @@ mod tests {
             network: None,
         };
 
-        let metrics =
-            decrypt_rate_metrics(12, 10, 1_000, &collection, 0, &durations, Duration::ZERO);
+        let metrics = decrypt_rate_metrics(
+            &collection,
+            PostProcessMetrics::new(0, &durations, Duration::ZERO),
+            RpcDiagnostics::default().snapshot(),
+        );
 
         assert_eq!(metrics.completed, 100);
         assert_eq!(metrics.completed_in_window, 80);
@@ -2179,5 +2510,49 @@ mod tests {
         assert_eq!(metrics.tx_gbps, 0.016);
         assert_eq!(metrics.rx_errors, 1);
         assert_eq!(metrics.tx_dropped, 4);
+    }
+
+    #[test]
+    fn rpc_diagnostics_track_status_in_flight_and_post_quorum_work() {
+        let diagnostics = RpcDiagnostics::default();
+        diagnostics.record::<()>(RpcPhase::Submit, &Ok(()));
+        diagnostics.record::<()>(
+            RpcPhase::Submit,
+            &Err(tonic::Status::resource_exhausted("busy")),
+        );
+        diagnostics.record::<()>(RpcPhase::Result, &Ok(()));
+
+        let first = diagnostics.start(RpcPhase::Result);
+        let second = diagnostics.start(RpcPhase::Result);
+        drop(first);
+        diagnostics.result_retries.store(7, Ordering::Relaxed);
+        diagnostics.post_quorum_tasks.store(4, Ordering::Relaxed);
+        diagnostics
+            .post_quorum_tasks_drained
+            .store(3, Ordering::Relaxed);
+        diagnostics
+            .post_quorum_tasks_outstanding
+            .store(1, Ordering::Relaxed);
+
+        let snapshot = diagnostics.snapshot();
+        assert_eq!(snapshot.submit_status["ok"], 1);
+        assert_eq!(snapshot.submit_status["resource_exhausted"], 1);
+        assert_eq!(snapshot.result_status["ok"], 1);
+        assert_eq!(snapshot.outstanding_result_rpcs, 1);
+        assert_eq!(snapshot.result_peak_in_flight, 2);
+        assert_eq!(snapshot.result_retries, 7);
+        assert_eq!(snapshot.post_quorum_tasks, 4);
+        assert_eq!(snapshot.post_quorum_tasks_drained, 3);
+        assert_eq!(snapshot.outstanding_post_quorum_tasks, 1);
+
+        drop(second);
+        assert_eq!(diagnostics.snapshot().outstanding_result_rpcs, 0);
+    }
+
+    #[test]
+    fn grpc_diagnostic_codes_follow_tonic_discriminant_order() {
+        for (index, (code, _label)) in GRPC_CODES.iter().enumerate() {
+            assert_eq!(*code as usize, index);
+        }
     }
 }
