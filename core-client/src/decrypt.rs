@@ -1,5 +1,6 @@
 use crate::{CoreConf, SLEEP_TIME_BETWEEN_REQUESTS_MS, print_phased_timings};
 use alloy_sol_types::Eip712Domain;
+use anyhow::Context as _;
 use kms_grpc::{
     ContextId, EpochId, KeyId, RequestId,
     kms::v1::{
@@ -18,7 +19,14 @@ use kms_lib::{
 };
 use prost::Message as _;
 use rand::{CryptoRng, Rng};
-use std::{collections::HashMap, future::Future, sync::Arc};
+use std::{
+    collections::HashMap,
+    future::Future,
+    sync::{
+        Arc,
+        atomic::{AtomicUsize, Ordering},
+    },
+};
 use tokio::{
     sync::RwLock,
     task::JoinSet,
@@ -28,6 +36,24 @@ use tonic::transport::Channel;
 
 type CoreEndpointClient = CoreServiceEndpointClient<Channel>;
 type CoreEndpointClients = Arc<[CoreEndpointClient]>;
+
+/// Tonic clients for request submission and result polling against one KMS core.
+struct CoreEndpointClientPair {
+    submit: Arc<[CoreEndpointClient]>,
+    result: CoreEndpointClient,
+}
+
+impl CoreEndpointClientPair {
+    fn submit(&self, index: usize) -> CoreEndpointClient {
+        self.submit[index % self.submit.len()].clone()
+    }
+}
+
+type CoreEndpointClientPairs = Arc<[CoreEndpointClientPair]>;
+
+// Rate tests use a global counter to rotate requests across four tonic clients per KMS core.
+const USER_DECRYPT_RATE_SUBMIT_CONNECTIONS_PER_CORE: usize = 4;
+static NEXT_USER_DECRYPT_SUBMIT_CONNECTION: AtomicUsize = AtomicUsize::new(0);
 
 /// check that the external signature on the decryption result(s) is valid, i.e. was made by one of the supplied addresses
 fn check_ext_pt_signature(
@@ -293,6 +319,68 @@ fn endpoint_clients(
     core_endpoints: &HashMap<CoreConf, CoreServiceEndpointClient<Channel>>,
 ) -> CoreEndpointClients {
     Arc::<[CoreEndpointClient]>::from(core_endpoints.values().cloned().collect::<Vec<_>>())
+}
+
+fn endpoint_client_pairs(
+    submit_endpoints: &HashMap<CoreConf, CoreEndpointClient>,
+    result_endpoints: &HashMap<CoreConf, CoreEndpointClient>,
+) -> CoreEndpointClientPairs {
+    let pairs = submit_endpoints
+        .iter()
+        .map(|(core, submit)| {
+            // Both endpoint maps are built from the same core configuration.
+            let result = result_endpoints
+                .get(core)
+                .expect("each submission endpoint must have a result endpoint");
+            CoreEndpointClientPair {
+                submit: Arc::from([submit.clone()]),
+                result: result.clone(),
+            }
+        })
+        .collect::<Vec<_>>();
+
+    Arc::from(pairs)
+}
+
+/// Builds four independent tonic clients per KMS core for UDEC rate-test submissions.
+async fn rate_endpoint_client_pairs(
+    submit_endpoints: &HashMap<CoreConf, CoreEndpointClient>,
+    result_endpoints: &HashMap<CoreConf, CoreEndpointClient>,
+) -> anyhow::Result<CoreEndpointClientPairs> {
+    let mut pairs = Vec::with_capacity(submit_endpoints.len());
+    for (core, submit) in submit_endpoints {
+        // Both endpoint maps are built from the same core configuration.
+        let result = result_endpoints
+            .get(core)
+            .expect("each submission endpoint must have a result endpoint");
+        let url = if core.address.starts_with("http://") {
+            core.address.clone()
+        } else {
+            format!("http://{}", core.address)
+        };
+        let mut submit_connections =
+            Vec::with_capacity(USER_DECRYPT_RATE_SUBMIT_CONNECTIONS_PER_CORE);
+        submit_connections.push(submit.clone());
+        for connection_index in 1..USER_DECRYPT_RATE_SUBMIT_CONNECTIONS_PER_CORE {
+            let connection = CoreEndpointClient::connect(url.clone())
+                .await
+                .with_context(|| {
+                    format!(
+                        "failed to create user decrypt submit connection {} for party {} at {}",
+                        connection_index + 1,
+                        core.party_id,
+                        core.address
+                    )
+                })?;
+            submit_connections.push(connection);
+        }
+        pairs.push(CoreEndpointClientPair {
+            submit: Arc::from(submit_connections),
+            result: result.clone(),
+        });
+    }
+
+    Ok(Arc::from(pairs))
 }
 
 /// Collect responses from a set of already-spawned per-party fetch tasks, stopping as soon as
@@ -1085,13 +1173,14 @@ fn decrypt_rate_metrics<T>(
 /// Fan out the request to the sync endpoint, which returns the decryption result directly.
 fn spawn_user_decrypt_sync(
     user_decrypt_req: &UserDecryptionRequest,
-    core_endpoints: &CoreEndpointClients,
+    core_endpoints: &CoreEndpointClientPairs,
     max_iter: usize,
 ) -> JoinSet<anyhow::Result<UserDecryptionResponse>> {
     let mut resp_tasks = JoinSet::new();
+    let submit_index = NEXT_USER_DECRYPT_SUBMIT_CONNECTION.fetch_add(1, Ordering::Relaxed);
     for ce in core_endpoints.iter() {
         let req_cloned = user_decrypt_req.clone();
-        let mut cur_client = ce.clone();
+        let mut cur_client = ce.submit(submit_index);
         resp_tasks.spawn(async move {
             let mut response = cur_client
                 .user_decrypt_sync(tonic::Request::new(req_cloned.clone()))
@@ -1124,48 +1213,10 @@ fn spawn_user_decrypt_sync(
     resp_tasks
 }
 
-/// Fan out the request to the async endpoint and check that enough cores accepted it.
-async fn send_user_decrypt_requests(
+/// Submits to each KMS core and starts polling that core when its submission completes.
+fn spawn_user_decrypt(
     user_decrypt_req: &UserDecryptionRequest,
-    core_endpoints: &CoreEndpointClients,
-    num_parties: usize,
-    num_expected_responses: usize,
-) -> anyhow::Result<()> {
-    let mut req_tasks = JoinSet::new();
-    for ce in core_endpoints.iter() {
-        let req_cloned = user_decrypt_req.clone();
-        let mut cur_client = ce.clone();
-        req_tasks.spawn(async move {
-            cur_client
-                .user_decrypt(tonic::Request::new(req_cloned))
-                .await
-        });
-    }
-
-    let mut succeeded = 0_usize;
-    while let Some(inner) = req_tasks.join_next().await {
-        match inner {
-            Ok(Ok(_resp)) => succeeded += 1,
-            Ok(Err(e)) => {
-                tracing::debug!("User decrypt request to a core failed: {e}");
-            }
-            Err(e) => {
-                tracing::debug!("User decrypt request task panicked: {e}");
-            }
-        }
-    }
-    if succeeded < num_expected_responses {
-        anyhow::bail!(
-            "Only {succeeded}/{num_parties} user decrypt requests succeeded, need at least {num_expected_responses}"
-        );
-    }
-    Ok(())
-}
-
-/// Poll the async endpoint until every core has a decryption result available.
-fn spawn_get_user_decrypt_result(
-    user_decrypt_req: &UserDecryptionRequest,
-    core_endpoints: &CoreEndpointClients,
+    core_endpoints: &CoreEndpointClientPairs,
     max_iter: usize,
 ) -> anyhow::Result<JoinSet<anyhow::Result<UserDecryptionResponse>>> {
     let req_id = user_decrypt_req
@@ -1174,12 +1225,20 @@ fn spawn_get_user_decrypt_result(
         .ok_or_else(|| anyhow::anyhow!("request_id not set in user decrypt request"))?;
 
     let mut resp_tasks = JoinSet::new();
+    let submit_index = NEXT_USER_DECRYPT_SUBMIT_CONNECTION.fetch_add(1, Ordering::Relaxed);
     for ce in core_endpoints.iter() {
-        let mut cur_client = ce.clone();
+        let req_cloned = user_decrypt_req.clone();
+        let mut submit_client = ce.submit(submit_index);
+        let mut result_client = ce.result.clone();
         let req_id_clone = req_id.clone();
 
         resp_tasks.spawn(async move {
-            let mut response = cur_client
+            submit_client
+                .user_decrypt(tonic::Request::new(req_cloned))
+                .await
+                .map_err(|e| anyhow::anyhow!("user decryption request failed: {e}"))?;
+
+            let mut response = result_client
                 .get_user_decryption_result(tonic::Request::new(req_id_clone.clone()))
                 .await;
             let mut ctr = 0_usize;
@@ -1193,7 +1252,7 @@ fn spawn_get_user_decrypt_result(
                     );
                 }
                 ctr += 1;
-                response = cur_client
+                response = result_client
                     .get_user_decryption_result(tonic::Request::new(req_id_clone.clone()))
                     .await;
             }
@@ -1212,8 +1271,7 @@ async fn send_and_collect_user_decrypt(
     user_decrypt_req: UserDecryptionRequest,
     enc_pk: UnifiedPublicEncKey,
     enc_sk: UnifiedPrivateEncKey,
-    core_endpoints_req: CoreEndpointClients,
-    core_endpoints_resp: CoreEndpointClients,
+    core_endpoints: CoreEndpointClientPairs,
     num_parties: usize,
     max_iter: usize,
     num_expected_responses: usize,
@@ -1222,18 +1280,10 @@ async fn send_and_collect_user_decrypt(
     let request_start = Instant::now();
 
     let (label, resp_tasks) = if use_sync_endpoint {
-        let tasks = spawn_user_decrypt_sync(&user_decrypt_req, &core_endpoints_req, max_iter);
+        let tasks = spawn_user_decrypt_sync(&user_decrypt_req, &core_endpoints, max_iter);
         ("sync user decrypt", tasks)
     } else {
-        send_user_decrypt_requests(
-            &user_decrypt_req,
-            &core_endpoints_req,
-            num_parties,
-            num_expected_responses,
-        )
-        .await?;
-        let tasks =
-            spawn_get_user_decrypt_result(&user_decrypt_req, &core_endpoints_resp, max_iter)?;
+        let tasks = spawn_user_decrypt(&user_decrypt_req, &core_endpoints, max_iter)?;
         ("user decrypt", tasks)
     };
 
@@ -1331,8 +1381,7 @@ pub(crate) async fn do_user_decrypt_once<R: Rng + CryptoRng>(
 ) -> anyhow::Result<Vec<(Option<RequestId>, String)>> {
     let extra_data = crate::extra_data_from_context_epoch(context_id, epoch_id)?;
     let expected = TestingPlaintext::try_from(ptxt)?;
-    let core_endpoints_req = endpoint_clients(core_endpoints_req);
-    let core_endpoints_resp = endpoint_clients(core_endpoints_resp);
+    let core_endpoints = endpoint_client_pairs(core_endpoints_req, core_endpoints_resp);
 
     let req_id = RequestId::new_random(rng);
     let (user_decrypt_req, enc_pk, enc_sk) =
@@ -1352,8 +1401,7 @@ pub(crate) async fn do_user_decrypt_once<R: Rng + CryptoRng>(
         user_decrypt_req,
         enc_pk,
         enc_sk,
-        core_endpoints_req,
-        core_endpoints_resp,
+        core_endpoints,
         num_parties,
         max_iter,
         num_expected_responses,
@@ -1402,8 +1450,8 @@ pub(crate) async fn do_user_decrypt<R: Rng + CryptoRng>(
     let total_requests = (rate * duration_secs) as usize;
     let extra_data = crate::extra_data_from_context_epoch(context_id, epoch_id)?;
     let expected = TestingPlaintext::try_from(ptxt)?;
-    let core_endpoints_req = endpoint_clients(core_endpoints_req);
-    let core_endpoints_resp = endpoint_clients(core_endpoints_resp);
+    let core_endpoints =
+        rate_endpoint_client_pairs(core_endpoints_req, core_endpoints_resp).await?;
 
     // PHASE 1: build the request batch before the timed launch window.
     tracing::info!(
@@ -1433,19 +1481,17 @@ pub(crate) async fn do_user_decrypt<R: Rng + CryptoRng>(
         drain_timeout_secs,
         total_requests,
         requests.into_iter(),
-        core_endpoints_req.len(),
+        core_endpoints.len(),
         |(_req_id, user_decrypt_req, _enc_pk, _enc_sk)| user_decrypt_req.encoded_len() as u64,
         |(req_id, user_decrypt_req, enc_pk, enc_sk)| {
-            let core_endpoints_req = Arc::clone(&core_endpoints_req);
-            let core_endpoints_resp = Arc::clone(&core_endpoints_resp);
+            let core_endpoints = Arc::clone(&core_endpoints);
             send_and_collect_user_decrypt(
                 rate,
                 req_id,
                 user_decrypt_req,
                 enc_pk,
                 enc_sk,
-                core_endpoints_req,
-                core_endpoints_resp,
+                core_endpoints,
                 num_parties,
                 max_iter,
                 num_expected_responses,
