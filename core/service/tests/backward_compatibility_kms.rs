@@ -106,15 +106,28 @@ fn test_private_sig_key(
     let (_, new_versionized) = gen_sig_keys(&mut rng);
 
     if original_versionized != new_versionized {
-        Err(test.failure(
+        return Err(test.failure(
             format!(
                 "Invalid private sig key:\n Expected :\n{original_versionized:?}\nGot:\n{new_versionized:?}"
             ),
             format,
-        ))
-    } else {
-        Ok(test.success(format))
+        ));
     }
+
+    // The persisted key holds the ECDSA scalar and nothing else: the root seed is a
+    // separate object (`PrivDataType::SigningSeed`, pinned by `test_root_signing_seed`).
+    // A key read back from storage must therefore come up seedless — if it ever does
+    // not, the seed has leaked into this format and every older stored key is missing a
+    // field the current code expects.
+    if original_versionized.has_root_seed() {
+        return Err(test.failure(
+            "the stored private signing key carries a root signing seed; the seed must be \
+             persisted on its own",
+            format,
+        ));
+    }
+
+    Ok(test.success(format))
 }
 
 /// The root signing seed's stored format must never drift: it is the only copy of
@@ -135,26 +148,6 @@ fn test_root_signing_seed(
             "the stored root signing seed does not match the one the current code derives",
             format,
         ));
-    }
-
-    // The seed is only ever a means to the per-scheme keys, so a format that
-    // round-trips but no longer derives the same keys is just as broken.
-    for scheme in SigningSchemeType::iter() {
-        let stored_key = original.unified_verifying_key(scheme).map_err(|e| {
-            test.failure(
-                format!("could not derive {scheme} key from the stored seed: {e}"),
-                format,
-            )
-        })?;
-        let expected_key = expected
-            .unified_verifying_key(scheme)
-            .map_err(|e| test.failure(format!("could not derive {scheme} key: {e}"), format))?;
-        if stored_key != expected_key {
-            return Err(test.failure(
-                format!("the stored root signing seed derives a different {scheme} key"),
-                format,
-            ));
-        }
     }
 
     Ok(test.success(format))
