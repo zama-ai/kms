@@ -262,8 +262,8 @@ Network diagnostics are printed directly in the GitHub Actions log. The output
 is intentionally terse: KMS core pod placement and after-run `eth0` rx/tx
 deltas for each running KMS core pod plus a total. The `perf-diagnostics`
 artifact contains the full time series from the KMS metrics endpoints and ENA
-interfaces, plus a placement snapshot containing the KMS cores and the first
-rate-test client pod.
+interfaces, ENA probe pod states and events, plus a placement snapshot
+containing the KMS cores and the first rate-test client pod.
 
 Each decrypt scenario also captures its own `eth0` rx/tx counters inside the
 Argo test pod. The core client samples them around the measurement window, and
