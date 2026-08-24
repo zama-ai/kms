@@ -31,6 +31,7 @@ use crate::engine::material_integrity::{
     verify_compressed_key_digest_from_bytes, verify_crs_digest_from_bytes,
     verify_public_key_digest_from_bytes, verify_server_key_digest_from_bytes,
 };
+use crate::util::key_setup::validate_published_verification_material;
 use crate::vault::storage::{StorageReader, read_text_at_request_id};
 use kms_grpc::RequestId;
 use kms_grpc::rpc_types::PubDataType;
@@ -280,18 +281,18 @@ where
             PubDataType::RecoveryMaterial => {
                 verify_recovery_material(recovery_material, signing_key)?;
             }
+            PubDataType::TypedVerfKey => {
+                validate_published_verification_material(public_storage, signing_key).await?;
+            }
             PubDataType::ServerKey
             | PubDataType::DecompressionKey
             | PubDataType::CACert
             | PubDataType::CompressedXofKeySet
-            | PubDataType::TypedVerfKey
             | PubDataType::TypedVerfAddress => {
                 // ServerKey and CompressedXofKeySet are checked by verify_keysets above.
                 // CACert is done during certificate loading.
                 // DecompressionKey is not used in production at the moment and it does not have a private component.
-                //
-                // TODO(https://github.com/zama-ai/kms-internal/issues/3078)
-                // The remaining types (TypedVerfKey, TypedVerfAddress) will be done later
+                // TypedVerfAddress is checked by verify_scheme_verification_material above.
             }
             #[allow(deprecated)]
             PubDataType::VerfAddress | PubDataType::PublicKeyMetadata => {

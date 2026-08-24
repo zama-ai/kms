@@ -9,7 +9,7 @@
 //!
 //! # Invariants
 //!
-//! Three properties hold across this module and the key-generation paths that use
+//! Four properties hold across this module and the key-generation paths that use
 //! it. Each is enforced structurally *and* pinned by a test, because each fails
 //! silently rather than loudly if a later change breaks it.
 //!
@@ -19,8 +19,13 @@
 //! 2. **A seed is generated exactly once, by `kms-gen-keys`, and never
 //!    regenerated behind published material.** Tested by
 //!    `seed_is_not_reminted_behind_published_material`.
-//! 3. **All keys are generated from the seed if no ECDSA key is present**
-//! 4. **Only non-ECDSA keys are derived from the seed an ECDSA key is present**.
+//! 3. **On a fresh node — one with no ECDSA key yet — every key descends from the
+//!    seed, ECDSA's included.** Tested by
+//!    `fresh_node_derives_its_ecdsa_key_from_the_seed` and
+//!    `threshold_parties_get_independent_seeds`.
+//! 4. **On a node that already has an ECDSA key, only the non-ECDSA keys are
+//!    derived from the seed**; the existing key is left byte-for-byte alone.
+//!    Tested by `upgraded_node_keeps_its_ecdsa_key_and_gains_a_seed`.
 
 use super::cache::DerivedKeyCache;
 use super::ecdsa::PrivateSigKey;
@@ -147,11 +152,11 @@ impl RootSigningSeed {
         }
     }
 
-    /// The verification key that signatures made with [`Self::derive_signing_key`]
-    /// under `scheme` verify against.
+    /// The verification key that signatures made with this root's signing key for
+    /// `scheme` verify against.
     ///
-    /// Carries the same ECDSA caveat as [`Self::derive_signing_key`]: for an
-    /// upgraded node the ECDSA verification key returned here is the
+    /// Carries the same ECDSA caveat as the crate-internal `derive_signing_key`:
+    /// for an upgraded node the ECDSA verification key returned here is the
     /// *post-rotation* one, not the identity it currently signs with.
     pub fn unified_verifying_key(
         &self,

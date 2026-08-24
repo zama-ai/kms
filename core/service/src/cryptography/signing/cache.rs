@@ -5,7 +5,7 @@ use std::sync::{Arc, OnceLock};
 use strum::EnumCount;
 use zeroize::Zeroize;
 
-/// Per-scheme cache of the signing keys a [`super::RootSigningSeed`] derives.
+/// Per-scheme cache of the signing keys a [`super::seed::RootSigningSeed`] derives.
 ///
 /// Deriving a key runs a KDF plus a (for ML-DSA, non-trivial) key expansion, so
 /// each scheme's key is derived once and memoized here. Every slot may be

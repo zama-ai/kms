@@ -191,6 +191,15 @@ pub struct PrivateSigKey {
     /// Skipped from (de)serialization and versioning to ensure backward
     /// compatibility: the seed is persisted as its own object
     /// (`PrivDataType::SigningSeed`) instead.
+    ///
+    /// # Equality
+    ///
+    /// The derived [`PartialEq`] **covers this field**, deliberately: two values
+    /// that hold the same secp256k1 scalar but different roots are different
+    /// identities, since they derive different post-quantum keys. Note the
+    /// consequence, which is easy to trip over — a key read back from storage is
+    /// seedless, so it does *not* compare equal to the same key with a seed
+    /// attached by [`Self::with_root_seed`].
     #[serde(skip)]
     #[versionize(skip)]
     seed: Option<RootSigningSeed>,

@@ -255,6 +255,25 @@ where
     })?;
     let pk = sk.verf_key();
 
+    // The seed is written first, before anything derived from it,
+    // such that if something goes wrong things will fail loudly at boot
+    // since no signing key will be present.
+    store_versioned_at_request_id(
+        priv_storage,
+        &SIGNING_KEY_ID,
+        &seed,
+        &PrivDataType::SigningSeed.to_string(),
+    )
+    .await
+    .map_err(|e| anyhow::anyhow!("Failed to store the root signing seed: {e}"))?;
+    log_storage_success(
+        *SIGNING_KEY_ID,
+        priv_storage.info(),
+        "root signing seed",
+        false,
+        is_threshold,
+    );
+
     // Store public verification key
     store_versioned_at_request_id(
         pub_storage,
@@ -529,6 +548,48 @@ async fn store_verification_key_at<S: Storage>(
     }
 }
 
+/// Check every verification object *already published* against the signing
+/// identity `sk`.
+///
+/// Note: Only slots that actually hold something are examined.
+///
+/// A node that has published non-ECDSA material but carries no root seed **is** an
+/// error, and is reported as one.
+pub async fn validate_published_verification_material<PubS>(
+    pub_storage: &PubS,
+    sk: &PrivateSigKey,
+) -> anyhow::Result<()>
+where
+    PubS: StorageReader,
+{
+    let mut verf_keys: BTreeMap<SigningSchemeType, UnifiedPublicSigKey> = BTreeMap::new();
+
+    for slot in published_material_slots() {
+        if !pub_storage
+            .data_exists(&slot.req_id, &slot.folder.to_string())
+            .await?
+        {
+            continue;
+        }
+        if !verf_keys.contains_key(&slot.scheme) {
+            let verf_key = sk.unified_verifying_key(slot.scheme).map_err(|e| {
+                anyhow_error_and_log(format!(
+                    "the {slot} is published, but this node cannot derive the {} verification \
+                     key to check it against: {e}",
+                    slot.scheme
+                ))
+            })?;
+            verf_keys.insert(slot.scheme, verf_key);
+        }
+        if !slot_is_up_to_date(pub_storage, slot, &verf_keys[&slot.scheme]).await? {
+            return Err(anyhow_error_and_log(format!(
+                "the stored {slot} does not match the provided signing key"
+            )));
+        }
+    }
+    Ok(())
+}
+
 /// Publish every verification object the signing identity `sk` implies, and check
 /// every one already published against it.
 ///
@@ -542,26 +603,16 @@ pub async fn ensure_published_verification_material<PubS>(
 where
     PubS: Storage,
 {
-    // Derived once per scheme rather than once per slot
+    validate_published_verification_material(pub_storage, sk).await?;
+
+    // Derived once per scheme rather than once per slot. Unlike the validation
+    // pass this covers every scheme, because every scheme is about to be written.
     let mut verf_keys = BTreeMap::new();
     for scheme in SigningSchemeType::iter() {
         let verf_key = sk.unified_verifying_key(scheme).map_err(|e| {
             anyhow_error_and_log(format!("could not derive {scheme} verification key: {e}"))
         })?;
         verf_keys.insert(scheme, verf_key);
-    }
-
-    for slot in published_material_slots() {
-        let verf_key = &verf_keys[&slot.scheme];
-        if pub_storage
-            .data_exists(&slot.req_id, &slot.folder.to_string())
-            .await?
-            && !slot_is_up_to_date(pub_storage, slot, verf_key).await?
-        {
-            return Err(anyhow_error_and_log(format!(
-                "the stored {slot} does not match the provided signing key"
-            )));
-        }
     }
 
     for slot in published_material_slots() {
@@ -2359,6 +2410,10 @@ mod tests {
             .await
             .unwrap();
         let first_key = persisted_signing_key_bytes(&priv_storage).await;
+        let first_seed = get_core_root_signing_seed(&priv_storage)
+            .await
+            .unwrap()
+            .expect("the first run must write a root seed");
 
         super::delete_scheme_verification_material(&mut pub_storage)
             .await
@@ -2374,18 +2429,24 @@ mod tests {
                 .unwrap();
         }
 
+        // Regenerate non-deterministically.
         assert!(
-            ensure_central_server_signing_keys_exist(&mut pub_storage, &mut priv_storage, true)
+            ensure_central_server_signing_keys_exist(&mut pub_storage, &mut priv_storage, false)
                 .await
                 .unwrap(),
             "a wiped storage must generate a fresh identity"
         );
 
-        assert_eq!(persisted_signing_key_bytes(&priv_storage).await, first_key);
         let seed = get_core_root_signing_seed(&priv_storage)
             .await
             .unwrap()
             .expect("regeneration must write a root seed");
+        assert_ne!(
+            persisted_signing_key_bytes(&priv_storage).await,
+            first_key,
+            "the ECDSA key survived the overwrite"
+        );
+        assert_ne!(seed, first_seed, "the root seed survived the overwrite");
         let sk = get_core_signing_key(&priv_storage).await.unwrap();
         assert_eq!(
             sk.verf_key(),
@@ -2441,5 +2502,127 @@ mod tests {
             seeds.push(seed);
         }
         assert_ne!(seeds[0], seeds[1], "two parties share a root seed");
+    }
+
+    /// What a node generated and what it published agree, so the read-only
+    /// validation the server runs at boot passes on a healthy storage.
+    #[tokio::test]
+    async fn validation_accepts_a_healthy_storage() {
+        let mut pub_storage = RamStorage::new();
+        let mut priv_storage = RamStorage::new();
+
+        ensure_central_server_signing_keys_exist(&mut pub_storage, &mut priv_storage, true)
+            .await
+            .unwrap();
+        let sk = get_core_signing_key(&priv_storage).await.unwrap();
+
+        super::validate_published_verification_material(&pub_storage, &sk)
+            .await
+            .unwrap();
+    }
+
+    /// A node whose seed was swapped out from under its published material is rejected.
+    #[tokio::test]
+    async fn validation_rejects_material_from_a_different_root() {
+        for scheme in SigningSchemeType::iter() {
+            let mut rng = AesRng::seed_from_u64(41);
+            let mut pub_storage = RamStorage::new();
+            let mut priv_storage = RamStorage::new();
+
+            ensure_central_server_signing_keys_exist(&mut pub_storage, &mut priv_storage, true)
+                .await
+                .unwrap();
+            let sk = get_core_signing_key(&priv_storage).await.unwrap();
+            super::validate_published_verification_material(&pub_storage, &sk)
+                .await
+                .unwrap();
+
+            // Re-root this one scheme's published key onto an unrelated identity,
+            // leaving everything else exactly as generated.
+            let impostor = seeded_identity(&mut rng);
+            let req_id = signing_material_id(scheme);
+            let data_type = PubDataType::TypedVerfKey.to_string();
+            delete_at_request_id(&mut pub_storage, &req_id, &data_type)
+                .await
+                .unwrap();
+            store_verification_key_at(
+                &mut pub_storage,
+                &req_id,
+                PubDataType::TypedVerfKey,
+                &impostor.unified_verifying_key(scheme).unwrap(),
+            )
+            .await
+            .unwrap();
+
+            assert!(
+                super::validate_published_verification_material(&pub_storage, &sk)
+                    .await
+                    .is_err(),
+                "a {scheme} verification key from a different root was accepted"
+            );
+        }
+    }
+
+    /// An ECDSA-only node — upgraded from a release that predates the root seed and
+    /// not yet through `kms-gen-keys` — validates cleanly.
+    #[tokio::test]
+    async fn validation_accepts_a_seedless_ecdsa_only_node() {
+        let mut rng = AesRng::seed_from_u64(42);
+        let (_pk, legacy_sk) = gen_sig_keys(&mut rng);
+        let mut pub_storage = RamStorage::new();
+
+        for data_type in LEGACY_ECDSA_MATERIAL_TYPES {
+            let slot_is_key = data_type == PubDataType::VerfKey;
+            let vk = legacy_sk
+                .unified_verifying_key(SigningSchemeType::Ecdsa256k1)
+                .unwrap();
+            if slot_is_key {
+                store_verification_key_at(&mut pub_storage, &SIGNING_KEY_ID, data_type, &vk)
+                    .await
+                    .unwrap();
+            } else {
+                store_text_at_request_id(
+                    &mut pub_storage,
+                    &SIGNING_KEY_ID,
+                    &vk.address_text(),
+                    &data_type.to_string(),
+                )
+                .await
+                .unwrap();
+            }
+        }
+
+        assert!(!legacy_sk.has_root_seed());
+        super::validate_published_verification_material(&pub_storage, &legacy_sk)
+            .await
+            .unwrap();
+    }
+
+    /// The lost-seed state: post-quantum material is published, but the node no
+    /// longer holds the root that produced it.
+    #[tokio::test]
+    async fn validation_rejects_published_pq_material_without_a_seed() {
+        let mut pub_storage = RamStorage::new();
+        let mut priv_storage = RamStorage::new();
+
+        ensure_central_server_signing_keys_exist(&mut pub_storage, &mut priv_storage, true)
+            .await
+            .unwrap();
+
+        // Same ECDSA scalar, seed gone: reading the `SigningKey` object on its own
+        // is exactly how a node ends up seedless, since the seed is a separate
+        // object that `#[serde(skip)]` keeps out of this one.
+        let seedless: PrivateSigKey = priv_storage
+            .read_data(&SIGNING_KEY_ID, &PrivDataType::SigningKey.to_string())
+            .await
+            .unwrap();
+        assert!(!seedless.has_root_seed());
+
+        assert!(
+            super::validate_published_verification_material(&pub_storage, &seedless)
+                .await
+                .is_err(),
+            "published post-quantum material with no seed behind it was accepted"
+        );
     }
 }
