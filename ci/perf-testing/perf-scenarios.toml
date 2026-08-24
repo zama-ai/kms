@@ -20,18 +20,20 @@ maxshed = 0        # max shed (rate-limited) requests, % of offered
 pct = 98           # min achieved/target rate, %
 allowfail = false  # false → a limit breach fails the run; true → warns only
 
-[scenarios.udec]
+[scenarios.pdec]
 key = "udec-key-gen"                          # task whose request-id becomes each rate's key_id
-after = ["udec-rate-2400-probe"]              # repeat 2400/s after the unreported probe
-stop_on_failure = false                        # diagnostics: collect every rung even after collapse
+after = ["crs-gen"]
+rates = [
+  { rate = 1100 },
+  { rate = 1300, maxfail = 1, maxshed = 1, pct = 90 },
+  { rate = 1500, maxfail = 10, maxshed = 25, pct = 70, allowfail = true },
+]
+
+[scenarios.udec]
+key = "udec-key-gen"
+after = ["pdec"]
 rates = [
   { rate = 2400 },
-  { rate = 2700, maxfail = 1, maxshed = 1, pct = 95 },
-  { rate = 2750, maxfail = 10, maxshed = 25, pct = 70, allowfail = true },
-  { rate = 2800, maxfail = 10, maxshed = 25, pct = 70, allowfail = true },
-  { rate = 2900, maxfail = 10, maxshed = 25, pct = 70, allowfail = true },
-  { rate = 3000, maxfail = 10, maxshed = 25, pct = 70, allowfail = true },
+  { rate = 2800, maxfail = 1, maxshed = 1, pct = 95 },
   { rate = 3200, maxfail = 10, maxshed = 25, pct = 70, allowfail = true },
-  { rate = 3400, maxfail = 10, maxshed = 25, pct = 70, allowfail = true },
-  { rate = 3600, maxfail = 10, maxshed = 25, pct = 70, allowfail = true },
 ]

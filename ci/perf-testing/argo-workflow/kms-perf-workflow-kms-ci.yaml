@@ -53,7 +53,35 @@ spec:
     - name: kms-perf
       dag:
         tasks:
+          - name: preproc-key-gen
+            template: run-test
+            continueOn:
+              failed: true
+            arguments:
+              parameters:
+              - name: test-name
+                value: "preproc-key-gen"
+              - name: test-command
+                value: "preproc-key-gen"
+              - name: fhe-params
+                value: "{{workflow.parameters.fhe-params}}"
+
+          - name: key-gen
+            dependencies: ["preproc-key-gen"]
+            template: run-test
+            continueOn:
+              failed: true
+            arguments:
+              parameters:
+              - name: test-name
+                value: "key-gen"
+              - name: test-command
+                value: "key-gen -i {{tasks.preproc-key-gen.outputs.parameters.request-id}}"
+              - name: fhe-params
+                value: "{{workflow.parameters.fhe-params}}"
+
           - name: udec-preproc-key-gen
+            dependencies: ["key-gen"]
             template: run-test
             continueOn:
               failed: true
@@ -80,42 +108,43 @@ spec:
               - name: fhe-params
                 value: "Default"
 
-          # Keep this first 2400/s result out of the summary so the following
-          # same-rate measurement can show whether position affects UDEC.
-          - name: udec-rate-2400-probe
+          - name: crs-gen
             dependencies: ["udec-key-gen"]
-            template: run-decrypt-rate
+            template: run-test
+            continueOn:
+              failed: true
             arguments:
               parameters:
-              - name: kind
-                value: "udec"
-              - name: rate
-                value: "2400"
-              - name: key_id
-                value: "{{tasks.udec-key-gen.outputs.parameters.request-id}}"
-              - name: previous-ok
-                value: "true"
-              - {name: duration, value: "60"}
-              - {name: pause, value: "10"}
-              - {name: maxfail, value: "0"}
-              - {name: maxshed, value: "0"}
-              - {name: pct, value: "98"}
-              - {name: allowfail, value: "true"}
+              - name: test-name
+                value: "crs-gen"
+              - name: test-command
+                value: "crs-gen --max-num-bits 2048"
+              - name: fhe-params
+                value: "Default"
 
           # <<GENERATED:dag-tasks>>
 
           - name: summary
             dependencies:
+              - "preproc-key-gen"
+              - "key-gen"
               - "udec-preproc-key-gen"
               - "udec-key-gen"
+              - "crs-gen"
               # <<GENERATED:summary-deps>>
             template: summary-report
             arguments:
               parameters:
+              - name: test-result-preproc-key-gen
+                value: "{{tasks.preproc-key-gen.outputs.parameters.test-result}}"
+              - name: test-result-key-gen
+                value: "{{tasks.key-gen.outputs.parameters.test-result}}"
               - name: test-result-udec-preproc-key-gen
                 value: "{{tasks.udec-preproc-key-gen.outputs.parameters.test-result}}"
               - name: test-result-udec-key-gen
                 value: "{{tasks.udec-key-gen.outputs.parameters.test-result}}"
+              - name: test-result-crs-gen
+                value: "{{tasks.crs-gen.outputs.parameters.test-result}}"
               # <<GENERATED:summary-args>>
               - name: tls
                 value: "{{workflow.parameters.tls}}"
@@ -683,8 +712,11 @@ spec:
     - name: summary-report
       inputs:
         parameters:
+        - name: test-result-preproc-key-gen
+        - name: test-result-key-gen
         - name: test-result-udec-preproc-key-gen
         - name: test-result-udec-key-gen
+        - name: test-result-crs-gen
         # <<GENERATED:summary-inputs>>
         - name: tls
         - name: run_url
@@ -707,8 +739,11 @@ spec:
 
           apk add --no-cache jq curl
           mkdir -p /mnt/results
+          echo '{{inputs.parameters.test-result-preproc-key-gen}}' > /mnt/results/preproc-key-gen.json
+          echo '{{inputs.parameters.test-result-key-gen}}' > /mnt/results/key-gen.json
           echo '{{inputs.parameters.test-result-udec-preproc-key-gen}}' > /mnt/results/udec-preproc-key-gen.json
           echo '{{inputs.parameters.test-result-udec-key-gen}}' > /mnt/results/udec-key-gen.json
+          echo '{{inputs.parameters.test-result-crs-gen}}' > /mnt/results/crs-gen.json
           # <<GENERATED:summary-echo>>
 
           echo "=========================================="
