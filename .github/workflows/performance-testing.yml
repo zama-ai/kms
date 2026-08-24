@@ -525,7 +525,7 @@ jobs:
 
           echo "Fetching final workflow logs..."
           if ! timeout --signal=TERM 10m \
-            argo logs "${WORKFLOW_NAME}" -n "${NAMESPACE}" \
+            argo logs "${WORKFLOW_NAME}" -n "${NAMESPACE}" --timestamps \
               | tee argo-workflow-logs.txt; then
             echo "::warning::Could not fetch complete logs for ${WORKFLOW_NAME}"
           fi
