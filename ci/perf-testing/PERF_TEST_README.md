@@ -88,6 +88,9 @@ Note that `FHE parameters` only affects preprocessing and keygen. The decrypt
 scenarios always run with production-size `Default` parameters, so the numbers
 they produce are real regardless of this setting.
 
+Rate-tests run on a `c6in.32xlarge` instance to get as much network bandwidth as possible. Both threshold deployment
+modes configure a 30,000-entry MetaStore decryption store for these tests.
+
 ## Reading the results
 
 The public- and user-decrypt rates, their durations, and their budgets
@@ -249,8 +252,8 @@ What the workflow does, end to end:
 6. Print a terse `before-perf` placement and network-counter snapshot.
 7. Submit the Argo workflow
    (`ci/perf-testing/argo-workflow/kms-perf-workflow-kms-ci.yaml`).
-8. Stream the Argo logs and send the Slack report.
-9. Print terse `after-perf` KMS core pod network-counter deltas in the CI logs.
+8. Collect logs and send the Slack report.
+9. Print `after-perf` KMS core pod network-counter deltas in the CI logs.
 
 ## Network diagnostics
 
