@@ -1662,7 +1662,6 @@ pub struct CrsGenMetadataInnerV0 {
 }
 
 #[derive(Clone, Serialize, Deserialize, VersionsDispatch)]
-#[expect(clippy::large_enum_variant)]
 pub enum CrsGenMetadataVersions {
     V0(CrsGenMetadataV0),
     V1(CrsGenMetadata),
@@ -1670,7 +1669,6 @@ pub enum CrsGenMetadataVersions {
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, Versionize)]
 #[versionize(CrsGenMetadataVersions)]
-#[expect(clippy::large_enum_variant)]
 pub enum CrsGenMetadata {
     Current(CrsGenMetadataInner),
     LegacyV0(SignedPubDataHandleInternal),
