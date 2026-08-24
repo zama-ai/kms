@@ -7,7 +7,8 @@ use kms_grpc::utils::tonic_result::top_1k_chars;
 use kms_grpc::{ContextId, EpochId, RequestId};
 use observability::metrics::METRICS;
 use observability::metrics_names::{
-    ERR_ASYNC, OP_KEY_MATERIAL_AVAILABILITY, map_tonic_code_to_metric_err_tag,
+    ERR_ASYNC, OP_KEY_MATERIAL_AVAILABILITY, OP_PUBLIC_DECRYPT_REQUEST, OP_PUBLIC_DECRYPT_RESULT,
+    OP_USER_DECRYPT_REQUEST, OP_USER_DECRYPT_RESULT, map_tonic_code_to_metric_err_tag,
 };
 use serde::Serialize;
 use serde::de::DeserializeOwned;
@@ -247,6 +248,18 @@ pub struct MetricedError {
     returned: bool,
 }
 
+fn is_expected_grpc_outcome(operation: &str, code: tonic::Code) -> bool {
+    match operation {
+        OP_PUBLIC_DECRYPT_RESULT | OP_USER_DECRYPT_RESULT => {
+            code == tonic::Code::Unavailable || code == tonic::Code::NotFound
+        }
+        OP_PUBLIC_DECRYPT_REQUEST | OP_USER_DECRYPT_REQUEST => {
+            code == tonic::Code::AlreadyExists || code == tonic::Code::ResourceExhausted
+        }
+        _ => false,
+    }
+}
+
 impl MetricedError {
     /// Create a new MetricedError wrapping the given MetricedError and gRPC error code.
     ///
@@ -301,14 +314,12 @@ impl MetricedError {
         internal_error: E,
     ) {
         let error = internal_error.into(); // converts anyhow::Error or any other error
-        let error_string = format!(
-            "Failure on requestID {} with metric {}. Error: {}",
-            request_id.unwrap_or_default(),
-            op_metric,
-            error
+        tracing::error!(
+            request_id = %request_id.unwrap_or_default(),
+            operation = op_metric,
+            error = %error,
+            "asynchronous request failed"
         );
-
-        tracing::error!(error_string);
 
         // Increment the method specific metric
         METRICS.increment_error_counter(op_metric, ERR_ASYNC);
@@ -325,15 +336,15 @@ impl MetricedError {
                 self.op_metric,
                 map_tonic_code_to_metric_err_tag(self.error_code),
             );
-            let error_string = format!(
-                "Grpc failure on requestID {} with metric {} and error code {}. Error message: {}",
-                self.request_id.unwrap_or_default(),
-                self.op_metric,
-                self.error_code,
-                self.internal_error
-            );
-
-            tracing::error!(error_string);
+            if !is_expected_grpc_outcome(self.op_metric, self.error_code) {
+                tracing::error!(
+                    request_id = %self.request_id.unwrap_or_default(),
+                    operation = self.op_metric,
+                    code = %self.error_code,
+                    error = %self.internal_error,
+                    "gRPC request failed"
+                );
+            }
         }
     }
 }
@@ -446,6 +457,35 @@ mod tests {
         let status: Status = error.into();
         assert!(status.message().contains("test_op"));
         assert!(!status.message().contains("test error"));
+    }
+
+    #[test]
+    fn classifies_expected_decrypt_outcomes() {
+        assert!(is_expected_grpc_outcome(
+            OP_USER_DECRYPT_RESULT,
+            tonic::Code::Unavailable
+        ));
+        assert!(is_expected_grpc_outcome(
+            OP_PUBLIC_DECRYPT_RESULT,
+            tonic::Code::NotFound
+        ));
+        assert!(is_expected_grpc_outcome(
+            OP_USER_DECRYPT_REQUEST,
+            tonic::Code::ResourceExhausted
+        ));
+        assert!(is_expected_grpc_outcome(
+            OP_PUBLIC_DECRYPT_REQUEST,
+            tonic::Code::AlreadyExists
+        ));
+
+        assert!(!is_expected_grpc_outcome(
+            OP_USER_DECRYPT_RESULT,
+            tonic::Code::Internal
+        ));
+        assert!(!is_expected_grpc_outcome(
+            OP_KEY_MATERIAL_AVAILABILITY,
+            tonic::Code::ResourceExhausted
+        ));
     }
 
     #[test]
