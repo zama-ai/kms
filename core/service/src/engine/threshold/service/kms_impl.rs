@@ -503,6 +503,10 @@ pub type RealThresholdKms<PubS, PrivS> = ThresholdKms<
     RealBackupOperator<PubS, PrivS>,
 >;
 
+/// Note: The RNGs in `BaseKmsStruct` derived from the `base_kms` parameter
+/// (and all RNGs derived from a call to `BaseKmsStruct::fresh_registered_rng` )
+/// parameter will be registered (in a shared registry).
+/// This allows the RNGs to be refreshed (re-seeded) when a new epoch is started, so that all derived RNGs are re-seeded from the OS and optionally the security module.
 #[expect(clippy::too_many_arguments)]
 pub async fn new_real_threshold_kms<PubS, PrivS, F>(
     config: CoreConfig,

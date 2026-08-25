@@ -1068,6 +1068,12 @@ fn sign_decryption_result<P: Serialize, D: SolStruct>(
     })
 }
 
+/// A base struct for KMS implementations, containing common fields and methods.
+///
+/// In particular, it contains a rng_registry that allows for refreshing all RNGs in the registry with new RNGs seeded from the OS and optionally the security module.
+/// A call to [`BaseKmsStruct::new_instance`] or [`BaseKmsStruct::fresh_registered_rng`]
+/// will add a new RNG to the registry, and a call to [`BaseKmsStruct::refresh_all_rngs_in_registry`]
+/// will refresh all RNGs in the registry.
 pub struct BaseKmsStruct {
     kms_type: KMSType,
     sig_key: Option<Arc<PrivateSigKey>>,
@@ -1173,6 +1179,7 @@ impl BaseKmsStruct {
         *self_rng = rng;
     }
 
+    /// Refreshes all RNGs in the registry with new RNGs seeded from the OS and optionally the security module.
     pub async fn refresh_all_rngs_in_registry(&self) {
         let mut registry = self.rng_registry.lock().await;
         registry.retain(|weak_rng| weak_rng.upgrade().is_some());
@@ -1210,8 +1217,8 @@ impl BaseKmsStruct {
                     }
                 }
                 Err(e) => {
-                    // Qu: Do we want to abort here if the security module failed to give
-                    // us the randomness we expected ?
+                    // Question to reviewer: Do we want to abort/err here if the security module failed to give
+                    // us the randomness we expected ? (Note that we'd still get randomness from the OS)
                     tracing::error!("Failed to get random bytes from security module: {}", e);
                 }
             }
