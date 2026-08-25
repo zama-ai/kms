@@ -3114,4 +3114,234 @@ pub(crate) mod tests {
             q126.external_signature
         );
     }
+
+    /// Tests for the RNG lifecycle machinery on [`super::BaseKmsStruct`]:
+    /// forking, fresh reseeding, per-instance registration in the shared
+    /// registry, and the single-shot `refresh_all` that reseeds every live
+    /// instance in one call.
+    ///
+    /// These reach into the private `rng` / `rng_registry` fields (allowed since
+    /// this is a descendant module of the one defining the struct) so we can
+    /// pin the RNGs to deterministic seeds and observe the plumbing directly.
+    /// The security module is left as `None`, so seeding draws from OS entropy
+    /// only; that still exercises every code path added here.
+    mod rng_machinery {
+        use super::super::BaseKmsStruct;
+        use crate::cryptography::signatures::gen_sig_keys;
+        use aes_prng::AesRng;
+        use kms_grpc::rpc_types::KMSType;
+        use rand::{RngCore, SeedableRng};
+        use std::sync::Arc;
+        use tokio::sync::Mutex;
+
+        async fn test_base_kms() -> BaseKmsStruct {
+            let mut rng = AesRng::seed_from_u64(0xDEAD_BEEF);
+            let (_pk, sk) = gen_sig_keys(&mut rng);
+            BaseKmsStruct::new(KMSType::Threshold, sk, None)
+                .await
+                .expect("building a BaseKmsStruct with a signing key must succeed")
+        }
+
+        /// Draw 16 bytes from an RNG handle, advancing its state.
+        async fn draw(rng: &Arc<Mutex<AesRng>>) -> [u8; 16] {
+            let mut out = [0u8; 16];
+            let mut guard = rng.lock().await;
+            guard.fill_bytes(&mut out);
+            out
+        }
+
+        /// Pin an RNG handle to a deterministic seed so its output is reproducible.
+        async fn set_seed(rng: &Arc<Mutex<AesRng>>, seed: u64) {
+            let mut guard = rng.lock().await;
+            *guard = AesRng::seed_from_u64(seed);
+        }
+
+        #[tokio::test]
+        async fn fork_rng_is_deterministic_in_base_state_and_advances_it() {
+            let base = test_base_kms().await;
+
+            // Two consecutive forks observe different base states (each fork
+            // consumes entropy from the base), so their streams differ.
+            let mut f1 = base.fork_rng().await;
+            let mut f2 = base.fork_rng().await;
+            let (mut a, mut b) = ([0u8; 16], [0u8; 16]);
+            f1.fill_bytes(&mut a);
+            f2.fill_bytes(&mut b);
+            assert_ne!(a, b, "consecutive forks must not share a stream");
+
+            // Forking is a pure function of the base RNG state: from an identical
+            // base seed the fork output is reproducible.
+            set_seed(&base.rng, 42).await;
+            let mut g1 = base.fork_rng().await;
+            set_seed(&base.rng, 42).await;
+            let mut g2 = base.fork_rng().await;
+            let (mut c, mut d) = ([0u8; 16], [0u8; 16]);
+            g1.fill_bytes(&mut c);
+            g2.fill_bytes(&mut d);
+            assert_eq!(c, d, "fork from an identical base state must reproduce");
+        }
+
+        #[tokio::test]
+        async fn fresh_rng_injects_new_entropy_on_every_call() {
+            let base = test_base_kms().await;
+
+            // Even from an identical base state, `fresh_rng` mixes in fresh OS
+            // entropy, so two calls yield independent streams.
+            set_seed(&base.rng, 7).await;
+            let mut r1 = BaseKmsStruct::fresh_rng(base.rng.clone(), None).await;
+            set_seed(&base.rng, 7).await;
+            let mut r2 = BaseKmsStruct::fresh_rng(base.rng.clone(), None).await;
+            let (mut a, mut b) = ([0u8; 16], [0u8; 16]);
+            r1.fill_bytes(&mut a);
+            r2.fill_bytes(&mut b);
+            assert_ne!(a, b, "fresh_rng must reseed with new entropy on every call");
+        }
+
+        #[tokio::test]
+        async fn new_instance_registers_in_shared_registry_with_independent_rng() {
+            let base = test_base_kms().await;
+            // `new` seeds the registry with the base RNG.
+            assert_eq!(base.rng_registry.lock().await.len(), 1);
+
+            let child = base.new_instance().await;
+            assert_eq!(
+                base.rng_registry.lock().await.len(),
+                2,
+                "new_instance must register its RNG in the shared registry"
+            );
+            // The registry Arc is shared across instances; the RNG allocations are not.
+            assert!(Arc::ptr_eq(&base.rng_registry, &child.rng_registry));
+            assert!(!Arc::ptr_eq(&base.rng, &child.rng));
+
+            // Registration is transitive: an instance spawned from a child lands
+            // in the same shared registry.
+            let grandchild = child.new_instance().await;
+            assert_eq!(base.rng_registry.lock().await.len(), 3);
+            assert!(Arc::ptr_eq(&base.rng_registry, &grandchild.rng_registry));
+
+            // Independent allocations: consuming from one RNG does not disturb
+            // another. Seed base and child identically, advance base twice but
+            // child once — the child's first draw still matches base's first draw.
+            set_seed(&base.rng, 99).await;
+            set_seed(&child.rng, 99).await;
+            let base_first = draw(&base.rng).await;
+            let _ = draw(&base.rng).await; // advance base only
+            let child_first = draw(&child.rng).await;
+            assert_eq!(
+                base_first, child_first,
+                "child RNG must be unaffected by draws on the base RNG"
+            );
+        }
+
+        #[tokio::test]
+        async fn refresh_self_rng_replaces_the_base_rng() {
+            let base = test_base_kms().await;
+
+            // Capture the deterministic stream at a fixed seed.
+            set_seed(&base.rng, 555).await;
+            let before = draw(&base.rng).await;
+
+            // Control: without a refresh the stream is reproducible.
+            set_seed(&base.rng, 555).await;
+            assert_eq!(draw(&base.rng).await, before);
+
+            // After a refresh the base RNG is reseeded with fresh entropy, so the
+            // "seed 555" stream is gone.
+            set_seed(&base.rng, 555).await;
+            base.refresh_self_rng().await;
+            assert_ne!(
+                draw(&base.rng).await,
+                before,
+                "refresh_self_rng must reseed the base RNG"
+            );
+        }
+
+        #[tokio::test]
+        async fn refresh_all_reseeds_every_registered_instance_in_place() {
+            let base = test_base_kms().await;
+            let i1 = base.new_instance().await;
+            let i2 = base.new_instance().await;
+            let i3 = base.new_instance().await;
+
+            // Registry holds the base plus the three instances.
+            assert_eq!(base.rng_registry.lock().await.len(), 4);
+
+            let handles: [&Arc<Mutex<AesRng>>; 4] = [&base.rng, &i1.rng, &i2.rng, &i3.rng];
+            let seeds = [1u64, 2, 3, 4];
+
+            // Seed each RNG deterministically, record its stream and the pointer
+            // to its backing allocation, then restore the seed so `refresh_all`
+            // starts from a known state.
+            let mut pre = Vec::new();
+            let mut ptrs = Vec::new();
+            for (h, s) in handles.iter().copied().zip(seeds) {
+                set_seed(h, s).await;
+                pre.push(draw(h).await);
+                set_seed(h, s).await;
+                ptrs.push(Arc::as_ptr(h));
+            }
+
+            // A single call reseeds all of them.
+            base.refresh_all_rngs_in_registry().await;
+
+            for (idx, h) in handles.iter().copied().enumerate() {
+                assert_ne!(
+                    draw(h).await,
+                    pre[idx],
+                    "instance {idx} was not reseeded by refresh_all"
+                );
+                // Crucially, the refresh mutates the RNG *in place* behind the
+                // existing Arc: the allocation pointer is unchanged, so both the
+                // registry's Weak and each service's Arc keep pointing at the
+                // refreshed RNG rather than a stale one.
+                assert_eq!(
+                    Arc::as_ptr(h),
+                    ptrs[idx],
+                    "instance {idx} allocation changed; registry Weak would dangle"
+                );
+            }
+        }
+
+        #[tokio::test]
+        async fn refresh_all_prunes_weaks_for_dropped_instances() {
+            let base = test_base_kms().await;
+            let i1 = base.new_instance().await;
+            let i2 = base.new_instance().await;
+            assert_eq!(base.rng_registry.lock().await.len(), 3);
+
+            let base_ptr = Arc::as_ptr(&base.rng);
+            let i1_ptr = Arc::as_ptr(&i1.rng);
+
+            // Dropping an instance releases the only strong ref to its RNG, so the
+            // registry now holds a dangling Weak for it — but not yet pruned.
+            drop(i2);
+            assert_eq!(
+                base.rng_registry.lock().await.len(),
+                3,
+                "a dead Weak is not pruned until the next refresh_all"
+            );
+
+            base.refresh_all_rngs_in_registry().await;
+
+            let registry = base.rng_registry.lock().await;
+            assert_eq!(
+                registry.len(),
+                2,
+                "refresh_all must prune Weaks for dropped instances"
+            );
+            let alive: Vec<_> = registry
+                .iter()
+                .filter_map(|w| w.upgrade())
+                .map(|arc| Arc::as_ptr(&arc))
+                .collect();
+            assert!(
+                alive.contains(&base_ptr),
+                "the base RNG must survive pruning"
+            );
+            assert!(
+                alive.contains(&i1_ptr),
+                "the live instance RNG must survive pruning"
+            );
+        }
+    }
 }
