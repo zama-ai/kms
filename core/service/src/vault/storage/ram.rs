@@ -324,6 +324,9 @@ pub struct FailingRamStorage {
     /// When set, every deletion (epoch-scoped or not) fails. Used to exercise the
     /// partial-failure retry logic in epoch/context destruction.
     fail_deletes: bool,
+    /// When set, only epoch-scoped deletions fail. Used to exercise a partial failure
+    /// that leaves the epoch markers, which are not epoch-scoped, deletable.
+    fail_epoch_deletes: bool,
     inner: RamStorage,
 }
 
@@ -333,6 +336,7 @@ impl FailingRamStorage {
         Self {
             available_writes: writes_before_failure,
             fail_deletes: false,
+            fail_epoch_deletes: false,
             inner: RamStorage::new(),
         }
     }
@@ -343,6 +347,10 @@ impl FailingRamStorage {
 
     pub fn set_fail_deletes(&mut self, fail_deletes: bool) {
         self.fail_deletes = fail_deletes
+    }
+
+    pub fn set_fail_epoch_deletes(&mut self, fail_epoch_deletes: bool) {
+        self.fail_epoch_deletes = fail_epoch_deletes
     }
 }
 
@@ -493,7 +501,7 @@ impl StorageExt for FailingRamStorage {
         epoch_id: &EpochId,
         data_type: &str,
     ) -> anyhow::Result<()> {
-        if self.fail_deletes {
+        if self.fail_deletes || self.fail_epoch_deletes {
             anyhow::bail!("storage delete failed!")
         }
         self.inner

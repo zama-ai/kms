@@ -656,6 +656,7 @@ impl<
     #[expect(clippy::too_many_arguments)]
     async fn store_reshared_keys(
         crypto_storage: &ThresholdCryptoMaterialStorage<PubS, PrivS>,
+        session_maker: &SessionMaker,
         sk: &PrivateSigKey,
         signing_schemes: &[SigningSchemeType],
         new_epoch_id: EpochId,
@@ -809,31 +810,19 @@ impl<
 
             // Roll back any partial successes in case something fails during the resharing,
             // to not leave the storage in a partial state.
-            for key_info in verified_previous_epoch.keys_info.iter() {
-                if !crypto_storage
-                    .purge_fhe_keys(&key_info.key_id, &new_epoch_id)
-                    .await
-                {
-                    tracing::warn!(
-                        "Best-effort rollback failed to purge threshold key material for key_id={} new_epoch_id={}",
-                        key_info.key_id,
-                        new_epoch_id
-                    );
-                }
+            let priv_storage = crypto_storage.get_private_storage();
+            match Self::purge_epoch_material(&new_epoch_id, &priv_storage).await {
+                Ok(()) => session_maker.remove_epoch(&new_epoch_id).await,
+                Err(e) => tracing::error!(
+                    "Rollback of epoch {new_epoch_id} failed to delete its private material: {e:?}. The \
+                 epoch remains registered so that the deletion can be retried."
+                ),
             }
-            for crs_info in verified_previous_epoch.crs_info.iter() {
-                if !crypto_storage
-                    .inner
-                    .purge_crs_material(&crs_info.crs_id, &new_epoch_id)
-                    .await
-                {
-                    tracing::warn!(
-                        "Best-effort rollback failed to purge CRS material for crs_id={} new_epoch_id={}",
-                        crs_info.crs_id,
-                        new_epoch_id
-                    );
-                }
-            }
+
+            let removed = crypto_storage.purge_epoch_from_cache(&new_epoch_id).await;
+            tracing::info!(
+                "Freed {removed} in-memory FHE key cache entries for rolled back epoch {new_epoch_id}"
+            );
 
             return Err(anyhow::anyhow!(storage_err_msg));
         }
@@ -892,6 +881,7 @@ impl<
         })?;
 
         let crypto_storage = self.crypto_storage.clone();
+        let session_maker = self.session_maker.clone();
 
         let task = async move {
             let (mut session_z128, mut session_z64, session_online) =
@@ -946,6 +936,7 @@ impl<
 
             Self::store_reshared_keys(
                 &crypto_storage,
+                &session_maker,
                 &sk,
                 &signing_schemes,
                 new_epoch_id,
@@ -1011,6 +1002,7 @@ impl<
         })?;
 
         let crypto_storage = self.crypto_storage.clone();
+        let session_maker = self.session_maker.clone();
 
         let task = async move {
             let (mut session_z128_set_1, mut session_z64_set_1) = Self::create_set1_sessions(
@@ -1082,6 +1074,7 @@ impl<
 
             Self::store_reshared_keys(
                 &crypto_storage,
+                &session_maker,
                 &sk,
                 &signing_schemes,
                 new_epoch_id,
@@ -1098,38 +1091,15 @@ impl<
         Ok(task)
     }
 
-    /// Destroys an epoch by removing all private data stored under the given epoch for each of the
-    /// given data types, then removing the PRSS setup data, and finally removing the epoch from the
-    /// session maker.
+    /// Deletes every piece of private material that belongs to `epoch_id`: the FHE key shares and
+    /// the CRS metadata stored under the epoch, followed by the epoch data itself.
     ///
-    /// In case of any error during the deletion of private data, the epoch will not be removed from the session maker,
-    /// and an error will be returned. This allows the caller to retry the operation until it succeeds.
-    async fn destroy_epoch(
+    /// The deletion continues past a failure and the first error is returned, so that a caller can
+    /// retry until it succeeds.
+    async fn purge_epoch_material(
         epoch_id: &EpochId,
         priv_storage: &tokio::sync::Mutex<PrivS>,
-        session_maker: &SessionMaker,
-    ) -> Result<Response<Empty>, MetricedError> {
-        if !session_maker.epoch_exists(epoch_id).await {
-            return Err(MetricedError::new(
-                OP_DESTROY_EPOCH,
-                Some((*epoch_id).into()),
-                anyhow::anyhow!("Epoch ID {} does not exist", epoch_id),
-                tonic::Code::NotFound,
-            ));
-        }
-
-        if session_maker.epoch_count().await < 2 {
-            return Err(MetricedError::new(
-                OP_DESTROY_EPOCH,
-                Some((*epoch_id).into()),
-                anyhow::anyhow!(
-                    "Cannot destroy epoch ID {} because it is the only epoch remaining",
-                    epoch_id
-                ),
-                tonic::Code::FailedPrecondition,
-            ));
-        }
-
+    ) -> anyhow::Result<()> {
         let mut priv_storage_guard = priv_storage.lock().await;
 
         // At this point we're committed to deleting the epoch, so do not return if there's an error,
@@ -1180,43 +1150,84 @@ impl<
         // resurrects the epoch after a restart — the session maker is rebuilt from epoch-data
         // storage on startup — hence keeping the epoch data for last guarantees a restarted node still
         // sees the epoch and can finish the deletion.
-        if let Err(e) = delete_at_request_id(
-            &mut (*priv_storage_guard),
-            &epoch_id.into(),
-            &PrivDataType::EpochData.to_string(),
-        )
-        .await
+        if first_error.is_none()
+            && let Err(e) = delete_at_request_id(
+                &mut (*priv_storage_guard),
+                &epoch_id.into(),
+                &PrivDataType::EpochData.to_string(),
+            )
+            .await
         {
             tracing::error!("Error deleting EpochData epoch ID {epoch_id}: {e:?}");
-            if first_error.is_none() {
-                first_error = Some(e);
-            }
+            first_error = Some(e);
         }
         // Also delete legacy data to avoid it coming back on migration at restart.
-        if let Err(e) = delete_at_request_id(
-            &mut (*priv_storage_guard),
-            &epoch_id.into(),
-            #[expect(deprecated)]
-            &PrivDataType::PrssSetupCombined.to_string(),
-        )
-        .await
+        #[expect(deprecated)]
+        let legacy_prss_type = PrivDataType::PrssSetupCombined.to_string();
+        if first_error.is_none()
+            && let Err(e) = delete_at_request_id(
+                &mut (*priv_storage_guard),
+                &epoch_id.into(),
+                &legacy_prss_type,
+            )
+            .await
         {
             tracing::error!("Error deleting PrssSetupCombined on epoch ID {epoch_id}: {e:?}");
-            if first_error.is_none() {
-                first_error = Some(e);
-            }
+            first_error = Some(e);
         }
 
-        if let Some(e) = first_error {
-            // If there was a problem, stop and signal error here so that the operation can be retried. We must never
-            // end up in a situation where the epoch is gone, but data lingers on disk.
+        match first_error {
+            // If there was a problem, stop and signal the error here so that the operation can be
+            // retried. We must never end up in a situation where the epoch is gone, but data
+            // lingers on disk.
+            Some(e) => Err(e),
+            None => Ok(()),
+        }
+    }
+
+    /// Destroys an epoch by removing all private data stored under the given epoch, and then
+    /// removing the epoch from the session maker.
+    ///
+    /// The epoch must exist and must not be the last epoch on the node.
+    ///
+    /// In case of any error during the deletion of private data, the epoch will not be removed from the session maker,
+    /// and an error will be returned. This allows the caller to retry the operation until it succeeds.
+    async fn destroy_epoch(
+        epoch_id: &EpochId,
+        priv_storage: &tokio::sync::Mutex<PrivS>,
+        session_maker: &SessionMaker,
+    ) -> Result<Response<Empty>, MetricedError> {
+        if !session_maker.epoch_exists(epoch_id).await {
             return Err(MetricedError::new(
                 OP_DESTROY_EPOCH,
                 Some((*epoch_id).into()),
-                e,
-                tonic::Code::Internal,
+                anyhow::anyhow!("Epoch ID {} does not exist", epoch_id),
+                tonic::Code::NotFound,
             ));
         }
+
+        if session_maker.epoch_count().await < 2 {
+            return Err(MetricedError::new(
+                OP_DESTROY_EPOCH,
+                Some((*epoch_id).into()),
+                anyhow::anyhow!(
+                    "Cannot destroy epoch ID {} because it is the only epoch remaining",
+                    epoch_id
+                ),
+                tonic::Code::FailedPrecondition,
+            ));
+        }
+
+        Self::purge_epoch_material(epoch_id, priv_storage)
+            .await
+            .map_err(|e| {
+                MetricedError::new(
+                    OP_DESTROY_EPOCH,
+                    Some((*epoch_id).into()),
+                    e,
+                    tonic::Code::Internal,
+                )
+            })?;
 
         // Only forget the epoch once every piece of its private data has been deleted.
         session_maker.remove_epoch(epoch_id).await;
@@ -2478,6 +2489,20 @@ pub(crate) mod tests {
         verify_epoch_info(&new_epoch_id, missing_field_previous_epoch).unwrap_err();
     }
 
+    /// Builds epoch data with an empty PRSS setup, for a test that only needs the epoch to be
+    /// present in the session maker or in storage.
+    fn dummy_epoch_data() -> EpochData {
+        EpochData {
+            context_id: *DEFAULT_MPC_CONTEXT,
+            prss: PRSSSetupCombined {
+                prss_setup_z128: PRSSSetup::<ResiduePolyF4Z128>::new_testing_prss(vec![], vec![]),
+                prss_setup_z64: PRSSSetup::<ResiduePolyF4Z64>::new_testing_prss(vec![], vec![]),
+                num_parties: 4,
+                threshold: 1,
+            },
+        }
+    }
+
     /// Builds key material whose metadata records `preproc_id`. Cheap enough for a unit test
     /// because it pairs the small `TEST_PARAM` keyset with a dummy private keyset.
     fn make_threshold_keys_with_preproc_id(
@@ -3116,6 +3141,252 @@ pub(crate) mod tests {
             assert!(
                 !guard
                     .data_exists(&epoch_data_id, &PrivDataType::EpochData.to_string())
+                    .await
+                    .unwrap()
+            );
+        }
+    }
+
+    /// A share deletion that fails must leave the epoch markers in place, so that a restarted node
+    /// still sees the epoch and can complete the deletion. Only the epoch-scoped deletions fail
+    /// here, hence the markers are deletable and the guard on them is what keeps them.
+    #[tokio::test]
+    async fn test_destroy_epoch_keeps_markers_when_share_deletion_fails() {
+        let mut rng = AesRng::seed_from_u64(44);
+        let epoch_manager = make_epoch_manager::<EmptyPrss>(&mut rng).await;
+        let session_maker = &epoch_manager.session_maker;
+
+        let epoch = dummy_epoch_data();
+        let epoch_id = EpochId::new_random(&mut rng);
+        let keeper_epoch_id = EpochId::new_random(&mut rng);
+        session_maker.add_epoch(epoch_id, epoch.clone()).await;
+        session_maker
+            .add_epoch(keeper_epoch_id, epoch.clone())
+            .await;
+
+        let priv_storage = tokio::sync::Mutex::new(FailingRamStorage::new(100));
+        let data_id = derive_request_id("marker_guard_data").unwrap();
+        let epoch_data_id: RequestId = epoch_id.into();
+
+        {
+            let mut guard = priv_storage.lock().await;
+            store_versioned_at_request_and_epoch_id(
+                &mut (*guard),
+                &data_id,
+                &epoch_id,
+                &TestType { i: 42 },
+                &PrivDataType::FheKeyInfo.to_string(),
+            )
+            .await
+            .unwrap();
+            store_versioned_at_request_id(
+                &mut (*guard),
+                &epoch_data_id,
+                &epoch,
+                &PrivDataType::EpochData.to_string(),
+            )
+            .await
+            .unwrap();
+            guard.set_fail_epoch_deletes(true);
+        }
+
+        let err = RealThresholdEpochManager::<
+            ram::RamStorage,
+            FailingRamStorage,
+            EmptyPrss,
+            SecureReshareSecretKeys,
+        >::destroy_epoch(&epoch_id, &priv_storage, session_maker)
+        .await
+        .unwrap_err();
+        assert_eq!(err.code(), tonic::Code::Internal);
+
+        assert!(
+            session_maker.epoch_exists(&epoch_id).await,
+            "epoch must remain in the session maker after a failed destruction"
+        );
+        {
+            let guard = priv_storage.lock().await;
+            assert!(
+                guard
+                    .all_data_ids_at_epoch(&epoch_id, &PrivDataType::FheKeyInfo.to_string())
+                    .await
+                    .unwrap()
+                    .contains(&data_id)
+            );
+            assert!(
+                guard
+                    .data_exists(&epoch_data_id, &PrivDataType::EpochData.to_string())
+                    .await
+                    .unwrap(),
+                "EpochData retry marker must survive while a key share lingers on disk"
+            );
+        }
+    }
+
+    /// The public key material of a key belongs to every epoch of that key, because public storage
+    /// has no epoch dimension. A rollback of a failed reshare must therefore keep it, and delete the
+    /// private material of the new epoch only.
+    #[tokio::test]
+    async fn test_rollback_failed_epoch_keeps_public_key_material() {
+        let mut rng = AesRng::seed_from_u64(45);
+        let epoch_manager = make_epoch_manager::<EmptyPrss>(&mut rng).await;
+        let crypto_storage = &epoch_manager.crypto_storage;
+        let session_maker = &epoch_manager.session_maker;
+
+        let previous_epoch_id = *DEFAULT_EPOCH_ID;
+        let new_epoch_id = EpochId::new_random(&mut rng);
+        let key_id = derive_request_id("rollback_key").unwrap();
+        let preproc_id = derive_request_id("rollback_preproc").unwrap();
+
+        // Stand-ins for the real key material: the test asserts on the presence of the objects, not
+        // on their content.
+        let public_types = [PubDataType::PublicKey, PubDataType::ServerKey];
+        {
+            let public_storage = crypto_storage.inner.get_public_storage();
+            let mut guard = public_storage.lock().await;
+            for public_type in &public_types {
+                store_versioned_at_request_id(
+                    &mut (*guard),
+                    &key_id,
+                    &TestType { i: 7 },
+                    &public_type.to_string(),
+                )
+                .await
+                .unwrap();
+            }
+        }
+
+        // The state a partially completed reshare leaves behind: the key shares of the previous
+        // epoch, plus the shares and the epoch data of the new epoch.
+        let keys = make_threshold_keys_with_preproc_id(&key_id, &preproc_id, &mut rng);
+        store_previous_epoch_keys(crypto_storage, &key_id, &previous_epoch_id, &keys).await;
+        let epoch = dummy_epoch_data();
+        session_maker
+            .add_epoch(previous_epoch_id, epoch.clone())
+            .await;
+        session_maker.add_epoch(new_epoch_id, epoch.clone()).await;
+        {
+            let private_storage = crypto_storage.get_private_storage();
+            let mut guard = private_storage.lock().await;
+            store_versioned_at_request_id(
+                &mut (*guard),
+                &new_epoch_id.into(),
+                &epoch,
+                &PrivDataType::EpochData.to_string(),
+            )
+            .await
+            .unwrap();
+        }
+        crypto_storage
+            .resharing_fhe_write_no_backup(&key_id, &new_epoch_id, keys)
+            .await
+            .unwrap();
+        assert_eq!(crypto_storage.cached_fhe_key_count(), Some(1));
+
+        RealThresholdEpochManager::<
+            ram::RamStorage,
+            ram::RamStorage,
+            EmptyPrss,
+            SecureReshareSecretKeys,
+        >::rollback_failed_epoch(crypto_storage, session_maker, &new_epoch_id)
+        .await;
+
+        // The public material of the key survives, since the previous epoch still serves it.
+        {
+            let public_storage = crypto_storage.inner.get_public_storage();
+            let guard = public_storage.lock().await;
+            for public_type in &public_types {
+                assert!(
+                    guard
+                        .data_exists(&key_id, &public_type.to_string())
+                        .await
+                        .unwrap(),
+                    "{public_type} of key {key_id} must survive the rollback"
+                );
+            }
+        }
+
+        // The new epoch is gone from storage, from the cache and from the session maker, while the
+        // previous epoch keeps its shares.
+        {
+            let private_storage = crypto_storage.get_private_storage();
+            let guard = private_storage.lock().await;
+            assert!(
+                !guard
+                    .data_exists_at_epoch(
+                        &key_id,
+                        &new_epoch_id,
+                        &PrivDataType::FheKeyInfo.to_string()
+                    )
+                    .await
+                    .unwrap()
+            );
+            assert!(
+                !guard
+                    .data_exists(&new_epoch_id.into(), &PrivDataType::EpochData.to_string())
+                    .await
+                    .unwrap()
+            );
+            assert!(
+                guard
+                    .data_exists_at_epoch(
+                        &key_id,
+                        &previous_epoch_id,
+                        &PrivDataType::FheKeyInfo.to_string()
+                    )
+                    .await
+                    .unwrap(),
+                "the shares of the previous epoch must survive the rollback"
+            );
+        }
+        assert_eq!(crypto_storage.cached_fhe_key_count(), Some(0));
+        assert!(!session_maker.epoch_exists(&new_epoch_id).await);
+        assert!(session_maker.epoch_exists(&previous_epoch_id).await);
+    }
+
+    /// A node that joins the cluster holds the new epoch as its only epoch. The rollback must clean
+    /// that epoch up, unlike [`RealThresholdEpochManager::destroy_epoch`], which refuses to remove
+    /// the last epoch of a node.
+    #[tokio::test]
+    async fn test_rollback_failed_epoch_on_only_epoch() {
+        let mut rng = AesRng::seed_from_u64(46);
+        let epoch_manager = make_epoch_manager::<EmptyPrss>(&mut rng).await;
+        let crypto_storage = &epoch_manager.crypto_storage;
+        let session_maker = &epoch_manager.session_maker;
+
+        let new_epoch_id = EpochId::new_random(&mut rng);
+        let key_id = derive_request_id("rollback_only_epoch_key").unwrap();
+        let preproc_id = derive_request_id("rollback_only_epoch_preproc").unwrap();
+
+        let epoch = dummy_epoch_data();
+        session_maker.add_epoch(new_epoch_id, epoch.clone()).await;
+        let keys = make_threshold_keys_with_preproc_id(&key_id, &preproc_id, &mut rng);
+        crypto_storage
+            .resharing_fhe_write_no_backup(&key_id, &new_epoch_id, keys)
+            .await
+            .unwrap();
+        assert_eq!(session_maker.epoch_count().await, 1);
+
+        RealThresholdEpochManager::<
+            ram::RamStorage,
+            ram::RamStorage,
+            EmptyPrss,
+            SecureReshareSecretKeys,
+        >::rollback_failed_epoch(crypto_storage, session_maker, &new_epoch_id)
+        .await;
+
+        assert!(!session_maker.epoch_exists(&new_epoch_id).await);
+        assert_eq!(crypto_storage.cached_fhe_key_count(), Some(0));
+        {
+            let private_storage = crypto_storage.get_private_storage();
+            let guard = private_storage.lock().await;
+            assert!(
+                !guard
+                    .data_exists_at_epoch(
+                        &key_id,
+                        &new_epoch_id,
+                        &PrivDataType::FheKeyInfo.to_string()
+                    )
                     .await
                     .unwrap()
             );
