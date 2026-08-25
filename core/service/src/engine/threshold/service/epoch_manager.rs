@@ -1808,6 +1808,7 @@ pub(crate) mod tests {
         rpc_types::{KMSType, PrivDataType, alloy_to_protobuf_domain},
     };
     use rand::SeedableRng;
+    use strum::IntoEnumIterator;
     use threshold_execution::{
         endpoints::reshare_sk::SecureReshareSecretKeys,
         malicious_execution::small_execution::malicious_prss::EmptyPrss,
@@ -3154,16 +3155,10 @@ pub(crate) mod tests {
         let key_id = derive_request_id("reshared_key").unwrap();
         let preproc_id = derive_request_id("reshared_key_preproc").unwrap();
 
-        // Stand-ins for the real key material, since the assertions below only test for presence.
-        let public_types = [
-            PubDataType::PublicKey,
-            PubDataType::ServerKey,
-            PubDataType::CompressedXofKeySet,
-        ];
         {
             let public_storage = crypto_storage.inner.get_public_storage();
             let mut guard = public_storage.lock().await;
-            for public_type in &public_types {
+            for public_type in PubDataType::iter() {
                 store_versioned_at_request_id(
                     &mut (*guard),
                     &key_id,
@@ -3225,7 +3220,8 @@ pub(crate) mod tests {
         {
             let public_storage = crypto_storage.inner.get_public_storage();
             let guard = public_storage.lock().await;
-            for public_type in &public_types {
+            // Validate that no public material of the key was deleted.
+            for public_type in PubDataType::iter() {
                 assert!(
                     guard
                         .data_exists(&key_id, &public_type.to_string())
