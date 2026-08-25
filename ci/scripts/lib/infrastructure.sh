@@ -42,16 +42,15 @@ setup_infrastructure() {
         deploy_tkms_infra           # S3 buckets, IAM roles, service accounts
         deploy_registry_credentials # GHCR access via sync-secrets
 
-        # Metrics here ride the cluster's own Prometheus operator: we only enable
-        # the kms-core ServiceMonitor and let it scrape, rather than installing a
-        # second stack into a shared cluster. Its CRD is what makes the
-        # ServiceMonitor renderable, so without the operator turn metrics off
-        # instead of failing the deploy.
+        # Metrics here ride the cluster's own Prometheus: we only enable the
+        # kms-core ServiceMonitor, rather than installing a second stack into a
+        # shared cluster. Without the CRD the resource cannot be created at all,
+        # so turn metrics off instead of failing the deploy.
         if [[ "${ENABLE_METRICS:-false}" == "true" ]]; then
             if kubectl get crd servicemonitors.monitoring.coreos.com > /dev/null 2>&1; then
-                log_info "Prometheus operator found; enabling the kms-core ServiceMonitor."
+                log_info "ServiceMonitor CRD present; enabling the kms-core ServiceMonitor."
             else
-                log_warn "No ServiceMonitor CRD in this cluster (no Prometheus operator); continuing without metrics."
+                log_warn "No ServiceMonitor CRD in this cluster; continuing without metrics."
                 export ENABLE_METRICS="false"
             fi
         fi

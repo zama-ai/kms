@@ -102,9 +102,9 @@ const-label: the nightly runs `thresholdWithEnclave`, and const-labels come from
 
 The aws path deliberately installs nothing: that cluster is long-lived and shared,
 so a second Prometheus operator would compete with the existing one over the same
-ServiceMonitors. If no operator is present the deploy warns and continues
-**without** metrics rather than failing — the ServiceMonitor CRD is what makes the
-resource renderable.
+ServiceMonitors. If the ServiceMonitor CRD is absent the deploy warns and
+continues **without** metrics rather than failing, since Kubernetes cannot create
+the resource without its CRD.
 
 #### `kind-metrics` label
 
