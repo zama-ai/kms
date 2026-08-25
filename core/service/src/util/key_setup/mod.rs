@@ -266,13 +266,6 @@ where
     )
     .await
     .map_err(|e| anyhow::anyhow!("Failed to store the root signing seed: {e}"))?;
-    log_storage_success(
-        *SIGNING_KEY_ID,
-        priv_storage.info(),
-        "root signing seed",
-        false,
-        is_threshold,
-    );
 
     // Store public verification key
     store_versioned_at_request_id(
@@ -283,13 +276,6 @@ where
     )
     .await
     .map_err(|e| anyhow::anyhow!("Failed to store public verification key: {e}"))?;
-    log_storage_success(
-        *SIGNING_KEY_ID,
-        pub_storage.info(),
-        "server signing key",
-        true,
-        is_threshold,
-    );
 
     let ethereum_address = pk.address();
 
@@ -322,25 +308,6 @@ where
         *SIGNING_KEY_ID,
         priv_storage.info(),
         "server signing key",
-        false,
-        is_threshold,
-    );
-
-    // The seed is stored after the ECDSA key on purpose. If the process dies
-    // between the two writes, the next run sees "signing key, no seed" and
-    // a new seed will be generated.
-    store_versioned_at_request_id(
-        priv_storage,
-        &SIGNING_KEY_ID,
-        &seed,
-        &PrivDataType::SigningSeed.to_string(),
-    )
-    .await
-    .map_err(|e| anyhow::anyhow!("Failed to store the root signing seed: {e}"))?;
-    log_storage_success(
-        *SIGNING_KEY_ID,
-        priv_storage.info(),
-        "root signing seed",
         false,
         is_threshold,
     );
