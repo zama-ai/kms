@@ -818,7 +818,7 @@ impl<
                  epoch remains registered so that the deletion can be retried."
                 ),
             }
-
+            // Remove regardless of whether the rollback succeeded or not, to avoid leaving the in-memory cache in a partial state.
             let removed = crypto_storage.purge_epoch_from_cache(&new_epoch_id).await;
             tracing::info!(
                 "Freed {removed} in-memory FHE key cache entries for rolled back epoch {new_epoch_id}"
@@ -1178,8 +1178,7 @@ impl<
 
         match first_error {
             // If there was a problem, stop and signal the error here so that the operation can be
-            // retried. We must never end up in a situation where the epoch is gone, but data
-            // lingers on disk.
+            // retried.
             Some(e) => Err(e),
             None => Ok(()),
         }
