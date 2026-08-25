@@ -70,8 +70,10 @@ jobs:
           rust-toolchain: ${{ env.RUST_IMAGE_VERSION }}
 
       # WASM handling
-      - name: Install
-        run: curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
+      - name: Install wasm-pack
+        uses: taiki-e/install-action@b6ff580856c41316412a0b9b60540fbc6f8c82cc # v2.86.7
+        with:
+          tool: wasm-pack@0.15.0
 
       # Build the same artifact that gets published (no `wasm_tests`): the JS tests load a
       # stable JSON vector and only exercise the stable public API, so the transcript helpers
