@@ -181,6 +181,7 @@ pub trait SigningScheme {
     type VerificationKey;
 
     /// Sign `dsep ‖ msg`, returning the scheme's standard signature encoding.
+    #[cfg(feature = "non-wasm")]
     fn sign(dsep: &DomainSep, msg: &[u8], sk: &Self::SigningKey) -> Result<Vec<u8>, SigningError>;
 
     /// Verify a signature over `dsep ‖ msg`.
@@ -433,6 +434,7 @@ impl PrivateSigKey {
     }
 
     /// Sign `msg` (domain-separated by `dsep`) under `scheme`.
+    #[cfg(feature = "non-wasm")]
     pub(crate) fn unified_sign_with(
         &self,
         scheme: SigningSchemeType,
@@ -461,6 +463,7 @@ impl PrivateSigKey {
 }
 
 /// Sign `msg` (domain-separated by `dsep`) under the scheme of `sk`.
+#[cfg(feature = "non-wasm")]
 pub fn unified_sign(
     dsep: &DomainSep,
     msg: &[u8],

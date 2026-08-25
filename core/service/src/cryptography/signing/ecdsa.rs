@@ -515,6 +515,7 @@ impl SigningScheme for Ecdsa256k1 {
     type SigningKey = PrivateSigKey;
     type VerificationKey = PublicSigKey;
 
+    #[cfg(feature = "non-wasm")]
     fn sign(dsep: &DomainSep, msg: &[u8], sk: &PrivateSigKey) -> Result<Vec<u8>, SigningError> {
         internal_sign(dsep, msg, sk)
             .map(|s| s.to_bytes())
