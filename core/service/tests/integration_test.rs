@@ -152,7 +152,7 @@ path = "{private_path}"
         let (temp_dir_priv, temp_dir_pub, config_dir) =
             (tempdir().unwrap(), tempdir().unwrap(), tempdir().unwrap());
         let log = run_centralized_overwrite(&config_dir, &temp_dir_priv, &temp_dir_pub);
-        assert!(log.contains("Deleting VerfKey under request ID"));
+        assert!(log.contains("Deleting published verification material from public storage"));
         assert!(log.contains("Deleting SigningKey under request ID "));
         assert!(log.contains(
             "Successfully stored public centralized server signing key under the handle"
@@ -180,7 +180,10 @@ path = "{private_path}"
         // regenerating, or key generation would fail against its own leftovers.
         let overwrite_again_log =
             run_centralized_overwrite(&config_dir, &temp_dir_priv, &temp_dir_pub);
-        assert!(overwrite_again_log.contains("Deleting VerfKey under request ID"));
+        assert!(
+            overwrite_again_log
+                .contains("Deleting published verification material from public storage")
+        );
         assert!(overwrite_again_log.contains(
             "Successfully stored public centralized server signing key under the handle"
         ));
