@@ -51,6 +51,8 @@ Options:
   --enable-metrics         Install kube-prometheus-stack and remote-write KMS metrics
                            to Grafana Cloud (kind targets only; reads
                            GRAFANA_CLOUD_PROM_* from env)
+  --tracing-endpoint <url> Enable kms-core tracing and send OTLP traces to <url>
+                           (e.g. http://jaeger:4317; default: disabled)
   --debug                  Enable debug logging (port-forward logs to ./logs/port-forward/)
   --help                   Show this help
 EOF
@@ -81,6 +83,7 @@ parse_args() {
             --enable-tls) ENABLE_TLS="true"; shift ;;
             --disable-tls) ENABLE_TLS="false"; shift ;;
             --enable-metrics) ENABLE_METRICS="true"; shift ;;
+            --tracing-endpoint) TRACING_ENDPOINT="$2"; shift 2 ;;
             --debug) DEBUG="true"; shift ;;
             --help) usage; exit 0 ;;
             *) log_error "Unknown argument: $1"; usage; exit 1 ;;
