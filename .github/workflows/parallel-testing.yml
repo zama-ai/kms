@@ -1,6 +1,7 @@
 name: parallel-testing
 
 on:
+  workflow_dispatch:
   workflow_call:
 
 concurrency:
@@ -110,6 +111,7 @@ jobs:
 
   test-matrix:
     name: parallel-testing/${{ matrix.job_name }}
+    if: github.event_name != 'workflow_dispatch'
     needs: [generate-test-material]
     permissions:
       checks: write # Required to write to the GitHub Actions check suite
@@ -411,6 +413,36 @@ jobs:
       # Same EFS material path for every matrix entry, so reference the
       # generate-test-material output once here instead of per entry.
       efs-test-material-path: ${{ needs.generate-test-material.outputs.efs-test-material-path }}
+    secrets: inherit
+
+  # TEMPORARY Manual benchmark for the service tests currently excluded from regular CI.
+  # Keep the runner, partitioning, and concurrency aligned with the service lib
+  # shards above so their JUnit timings are directly comparable.
+  test-kms-nightly:
+    name: parallel-testing/kms-nightly-p${{ matrix.partition }}
+    if: github.event_name == 'workflow_dispatch'
+    needs: [generate-test-material]
+    permissions:
+      checks: write # Required to write to the GitHub Actions check suite
+      packages: read # Required to read from the GitHub Packages registry
+      issues: write # Required to write to the GitHub Issues API
+      pull-requests: write # Required to write to the GitHub Pull Requests API
+      actions: read # Required to read the GitHub Actions API
+      contents: read # Required to read the GitHub Contents API
+    strategy:
+      fail-fast: false
+      matrix:
+        partition: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
+    uses: ./.github/workflows/common-testing.yml
+    with:
+      crate-names: '-p kms'
+      args-tests: '-F slow_tests -F insecure --partition count:${{ matrix.partition }}/10 --lib -E test(/nightly/)'
+      efs-test-material-path: ${{ needs.generate-test-material.outputs.efs-test-material-path }}
+      lfs: true
+      runs-on: '64cpu-linux-x64'
+      runner-volume: '400gb'
+      rust-log-level: 'info'
+      nextest-test-threads: '4'
     secrets: inherit
 
   test-reporter:

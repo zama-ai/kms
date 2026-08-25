@@ -49,7 +49,7 @@ on:
       nextest-profile:
         type: string
         required: false
-        default: 'ci'  # Use 'ci-nightly' for nightly builds that run all tests
+        default: 'ci'
       nextest-test-threads:
         type: string
         required: false

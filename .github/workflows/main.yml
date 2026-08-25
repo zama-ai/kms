@@ -196,12 +196,10 @@ jobs:
       crate-names: '-p kms-core-client'
       # Run ALL tests except k8s_* (cluster-only), isolated_test_example (demo),
       # and the docker-tls test which has its own dedicated job.
-      # nightly_* and nightly_full_gen_tests_* are intentionally included here
-      # (they're skipped only in the regular-CI profile via --skip).
+      # nightly_* and nightly_full_gen_tests_* are intentionally included here.
       args-tests: >-
         --features slow_tests -- --skip k8s_ --skip isolated_test_example
         --skip test_threshold_mpc_context_switch_6_docker
-      nextest-profile: 'ci-nightly'
       runs-on: '64cpu-linux-x64'
       nextest-test-threads: "10"
     secrets: inherit

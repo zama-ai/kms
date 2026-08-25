@@ -7,8 +7,8 @@
 k8s-integration = { max-threads = 1 }
 
 # =============================================================================
-# CI profile: used for PR checks. Test selection lives in the workflow YAMLs so
-# it's visible at the `cargo nextest run` invocation site.
+# CI profile: used by pull-request and scheduled jobs. Test selection lives in
+# the workflow YAMLs so it's visible at the `cargo nextest run` invocation site.
 # =============================================================================
 [profile.ci]
 
@@ -17,25 +17,5 @@ path = "junit.xml"
 
 # Ensure K8s tests run serially, they share the same Kind cluster pods.
 [[profile.ci.overrides]]
-filter = "binary(/^kubernetes_test_/)"
-test-group = "k8s-integration"
-
-# =============================================================================
-# CI-nightly profile: used for scheduled builds — runs ALL tests
-# =============================================================================
-[profile.ci-nightly]
-
-[profile.ci-nightly.junit]
-path = "junit.xml"
-
-# Long timeout for slow production-param nightly tests. They live in
-# `kms-core-client` and are isolated per-test (tempdirs + OS-assigned ports),
-# so no `test-group` — they can run in parallel.
-[[profile.ci-nightly.overrides]]
-filter = 'package(kms-core-client) & binary(=integration_test) & test(/nightly_full_gen_tests_default|nightly_tests_threshold_sequential_crs|test_threshold_concurrent_crs/)'
-slow-timeout = { period = "600s", terminate-after = 12 }
-
-# Ensure K8s tests run serially, they share the same Kind cluster pods.
-[[profile.ci-nightly.overrides]]
 filter = "binary(/^kubernetes_test_/)"
 test-group = "k8s-integration"

@@ -160,6 +160,13 @@ Most test jobs depend on pre-generated FHE / signing material under `./test-mate
 
 ## Reusable Workflows
 
+### `parallel-testing.yml`
+
+Calls `common-testing.yml` for the main sharded Rust test matrix and shares one
+EFS-backed test-material set across its jobs. A manual workflow dispatch runs a
+10-shard benchmark of the non-ignored `kms` library tests whose names contain
+`nightly`; each shard uploads JUnit timings for grooming those tests.
+
 ### `common-testing.yml`
 
 Steps (subset):
@@ -172,7 +179,7 @@ Steps (subset):
 | Swatinem rust-cache | Saves only on `main` |
 | Generate Test Material | Unless `skip-test-material: true` |
 | Build `kms-custodian` binary | Required by integration tests |
-| Run Tests | `cargo nextest --profile <ci\|ci-nightly> run …` |
+| Run Tests | `cargo nextest --profile ci run …` |
 | Upload JUnit + integration logs | On PR runs |
 | Slack notification | Scheduled runs only |
 
@@ -180,7 +187,7 @@ Inputs of note:
 - `crate-names` — `-p <crate> [-p …]` forwarded to cargo
 - `args-tests` — extra cargo / nextest args
 - `nextest-test-threads` — parallelism cap (empty = nextest default ≈ num-CPUs)
-- `nextest-profile` — `ci` (default) or `ci-nightly`
+- `nextest-profile` — nextest profile, defaulting to `ci`
 - `lfs` — pull Git-LFS objects on checkout
 - `skip-test-material` — skip material generation + custodian build
 - `runs-on`, `runner-volume` — runs-on slab selector

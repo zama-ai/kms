@@ -275,7 +275,7 @@ jobs:
           DEPLOYMENT_TYPE: ${{ matrix.deployment-type }} # Deployment type: threshold or centralized
           NAMESPACE: kms-test-${{ matrix.deployment-type }}
           NUM_PARTIES: ${{ matrix.num-parties }} # Number of parties
-          NEXTEST_PROFILE: ${{ github.event_name == 'schedule' && 'ci-nightly' || 'ci' }}
+          NEXTEST_PROFILE: ci
         run: |
           #============================================================
           # Here we run the tests and capture exit code
@@ -297,7 +297,7 @@ jobs:
       - name: Copy Test Results
         if: always() && !cancelled()
         env:
-          NEXTEST_PROFILE: ${{ github.event_name == 'schedule' && 'ci-nightly' || 'ci' }}
+          NEXTEST_PROFILE: ci
         run: |
           NEXTEST_OUT="${GITHUB_WORKSPACE}/target/nextest/${NEXTEST_PROFILE}"
           if find "${NEXTEST_OUT}" -mindepth 1 -type f -print -quit 2>/dev/null | grep -q .; then
