@@ -181,7 +181,7 @@ impl SessionMaker {
         crypto_storage: &ThresholdCryptoMaterialStorage<PubS, PrivS>,
         networking_manager: Arc<RwLock<GrpcNetworkingManager>>,
         verifier: Option<Arc<AttestedVerifier>>,
-        rng: AesRng,
+        rng: Arc<Mutex<AesRng>>,
     ) -> anyhow::Result<Self> {
         let session_maker: SessionMaker =
             Self::new_uninitialized(networking_manager, verifier, rng);
@@ -217,7 +217,7 @@ impl SessionMaker {
     pub(crate) fn new_uninitialized(
         networking_manager: Arc<RwLock<GrpcNetworkingManager>>,
         verifier: Option<Arc<AttestedVerifier>>,
-        rng: AesRng,
+        rng: Arc<Mutex<AesRng>>,
     ) -> Self {
         Self {
             networking_manager,
@@ -225,7 +225,7 @@ impl SessionMaker {
             epoch_map: Arc::new(RwLock::new(HashMap::new())),
             lifecycle: LifecycleCoordinator::default(),
             verifier,
-            rng: Arc::new(Mutex::new(rng)),
+            rng,
         }
     }
 

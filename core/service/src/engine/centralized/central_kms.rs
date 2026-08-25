@@ -974,7 +974,8 @@ impl<
             backup_vault,
             key_info,
         );
-        let base_kms = BaseKmsStruct::new(KMSType::Centralized, sk)?;
+        let base_kms =
+            BaseKmsStruct::new(KMSType::Centralized, sk, security_module.clone()).await?;
 
         let context_manager: CentralizedContextManager<PubS, PrivS> =
             CentralizedContextManager::new(
@@ -1845,7 +1846,7 @@ pub(crate) mod tests {
             }
             keys
         };
-        let mut rng = kms.base_kms.new_rng().await;
+        let mut rng = kms.base_kms.fork_rng().await;
 
         let raw_cipher = RealCentralizedKms::<FileStorage, FileStorage>::user_decrypt(
             &kms.crypto_storage

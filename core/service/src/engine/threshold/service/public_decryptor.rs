@@ -875,7 +875,9 @@ mod tests {
         RealPublicDecryptor<ram::RamStorage, ram::RamStorage, DummyNoisefloodDecryptor>,
     ) {
         let (_pk, sk) = gen_sig_keys(rng);
-        let base_kms = BaseKmsStruct::new(KMSType::Threshold, sk.clone()).unwrap();
+        let base_kms = BaseKmsStruct::new(KMSType::Threshold, sk.clone(), None)
+            .await
+            .unwrap();
         let param = TEST_PARAM;
         let epoch_id = EpochId::new_random(rng);
 
@@ -885,7 +887,7 @@ mod tests {
             prss_setup_z128,
             prss_setup_z64,
             &epoch_id,
-            base_kms.new_rng().await,
+            base_kms.fork_rng().await,
         );
 
         let key_id = RequestId::new_random(rng);

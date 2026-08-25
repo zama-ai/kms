@@ -759,7 +759,9 @@ mod tests {
     ) -> RealPreprocessor<P> {
         let epoch_id = *DEFAULT_EPOCH_ID;
         let (_pk, sk) = gen_sig_keys(rng);
-        let base_kms = BaseKmsStruct::new(KMSType::Threshold, sk.clone()).unwrap();
+        let base_kms = BaseKmsStruct::new(KMSType::Threshold, sk.clone(), None)
+            .await
+            .unwrap();
         let prss_setup_z128 = if use_prss {
             Some(PRSSSetup::new_testing_prss(vec![], vec![]))
         } else {
@@ -775,7 +777,7 @@ mod tests {
             prss_setup_z128,
             prss_setup_z64,
             &epoch_id,
-            base_kms.new_rng().await,
+            base_kms.fork_rng().await,
         );
         RealPreprocessor::<P>::init_test(base_kms, session_maker.make_immutable())
     }

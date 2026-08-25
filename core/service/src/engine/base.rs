@@ -1,6 +1,8 @@
 use super::traits::BaseKms;
 use crate::consts::ID_LENGTH;
 use crate::consts::SAFE_SER_SIZE_LIMIT;
+use crate::cryptography::attestation::SecurityModule;
+use crate::cryptography::attestation::SecurityModuleProxy;
 use crate::cryptography::decompression;
 use crate::cryptography::internal_crypto_types::WrappedDKGParams;
 use crate::cryptography::signatures::internal_sign;
@@ -38,6 +40,7 @@ use std::collections::HashSet;
 use std::str::FromStr;
 use std::sync::Arc;
 use std::sync::LazyLock;
+use std::sync::Weak;
 use tfhe::FheUint80;
 use tfhe::integer::BooleanBlock;
 use tfhe::integer::compression_keys::DecompressionKey;
@@ -1070,27 +1073,49 @@ pub struct BaseKmsStruct {
     sig_key: Option<Arc<PrivateSigKey>>,
     verf_key: Arc<PublicSigKey>,
     rng: Arc<Mutex<AesRng>>,
+    security_module: Option<Arc<SecurityModuleProxy>>,
+    rng_registry: Arc<Mutex<Vec<Weak<Mutex<AesRng>>>>>,
 }
 
 impl BaseKmsStruct {
-    pub fn new(kms_type: KMSType, sig_key: PrivateSigKey) -> anyhow::Result<Self> {
+    pub async fn new(
+        kms_type: KMSType,
+        sig_key: PrivateSigKey,
+        security_module: Option<Arc<SecurityModuleProxy>>,
+    ) -> anyhow::Result<Self> {
+        let rng = Arc::new(Mutex::new(AesRng::from_seed(
+            Self::fresh_seed(security_module.clone()).await,
+        )));
+        let registry = Arc::new(Mutex::new(vec![Arc::downgrade(&rng)]));
         Ok(BaseKmsStruct {
             kms_type,
             verf_key: Arc::new(sig_key.verf_key()),
             sig_key: Some(Arc::new(sig_key)),
-            rng: Arc::new(Mutex::new(AesRng::from_entropy())),
+            security_module,
+            rng,
+            rng_registry: registry,
         })
     }
 
-    pub fn new_no_signing_key(kms_type: KMSType, verf_key: PublicSigKey) -> Self {
+    pub async fn new_no_signing_key(
+        kms_type: KMSType,
+        verf_key: PublicSigKey,
+        security_module: Option<Arc<SecurityModuleProxy>>,
+    ) -> Self {
         tracing::warn!(
             "Initializing KMS without a signing key. ONLY BACKUP RECOVERY OPERATIONS WILL BE POSSIBLE."
         );
+        let rng = Arc::new(Mutex::new(AesRng::from_seed(
+            Self::fresh_seed(security_module.clone()).await,
+        )));
+        let registry = Arc::new(Mutex::new(vec![Arc::downgrade(&rng)]));
         BaseKmsStruct {
             kms_type,
             sig_key: None,
             verf_key: Arc::new(verf_key),
-            rng: Arc::new(Mutex::new(AesRng::from_entropy())),
+            security_module,
+            rng,
+            rng_registry: registry,
         }
     }
 
@@ -1109,21 +1134,28 @@ impl BaseKmsStruct {
         Arc::clone(&self.verf_key)
     }
 
-    /// Make a clone of this struct with a newly initialized RNG s.t. that both the new and old struct are safe to use.
+    /// Make a clone of this struct with a newly initialized RNG s.t. that both the new and old struct are safe to use (the RNG is pushed into the shared registry).
     pub async fn new_instance(&self) -> Self {
         let sig_key = match &self.sig_key {
             Some(sk) => Some(Arc::clone(sk)),
             None => None,
         };
+        let rng = self.fresh_registered_rng().await;
         Self {
             kms_type: self.kms_type,
             verf_key: Arc::clone(&self.verf_key),
             sig_key,
-            rng: Arc::new(Mutex::new(self.new_rng().await)),
+            security_module: self.security_module.clone(),
+            rng,
+            rng_registry: Arc::clone(&self.rng_registry),
         }
     }
 
-    pub async fn new_rng(&self) -> AesRng {
+    /// Forks a new RNG from the base RNG, ensuring that the new RNG is independent of the base RNG.
+    /// Useful for creating a new RNG for a ask that can run in parallel.
+    ///
+    /// __NOTE__: If the goal is to refresh entropy for the base RNG, use [`refresh_rng`] instead.
+    pub async fn fork_rng(&self) -> AesRng {
         let mut seed = [0u8; crate::consts::RND_SIZE];
         // Make a seperate scope for the rng so that it is dropped before the lock is released
         {
@@ -1131,6 +1163,94 @@ impl BaseKmsStruct {
             base_rng.fill_bytes(seed.as_mut());
         }
         AesRng::from_seed(seed)
+    }
+
+    /// Refreshes the base RNG with a new RNG seeded from the OS and optionally the security module.
+    pub async fn refresh_self_rng(&self) {
+        let rng = Self::fresh_rng(self.rng.clone(), self.security_module.clone()).await;
+
+        let mut self_rng = self.rng.lock().await;
+        *self_rng = rng;
+    }
+
+    pub async fn refresh_all_rngs_in_registry(&self) {
+        let mut registry = self.rng_registry.lock().await;
+        registry.retain(|weak_rng| weak_rng.upgrade().is_some());
+        for weak_rng in registry.iter() {
+            if let Some(rng) = weak_rng.upgrade() {
+                let fresh_rng =
+                    Self::fresh_rng(Arc::clone(&rng), self.security_module.clone()).await;
+                let mut rng_lock = rng.lock().await;
+                *rng_lock = fresh_rng;
+            }
+        }
+    }
+
+    async fn fresh_seed(
+        security_module: Option<Arc<SecurityModuleProxy>>,
+    ) -> [u8; crate::consts::RND_SIZE] {
+        // Pulls randomness from freshly OS seeded rng.
+        //
+        // Note to reviewer: Using AesRng::from_entropy here because getrandom isn't
+        // one of our dependencies, but might be fine also to add it just for this?
+        let mut os_rng = AesRng::from_entropy();
+        let mut seed = [0u8; crate::consts::RND_SIZE];
+        os_rng.fill_bytes(seed.as_mut());
+
+        // Pulls randomness from the security module if available.
+        if let Some(security_module) = security_module {
+            match security_module.get_random(crate::consts::RND_SIZE).await {
+                Ok(bytes) => {
+                    // Mix in the randomness from the security module into the OS seed
+                    for i in 0..crate::consts::RND_SIZE {
+                        // Sanity check but if the call to the security module is successful, we should have the right number of bytes.
+                        if i < bytes.len() {
+                            seed[i] ^= bytes[i];
+                        }
+                    }
+                }
+                Err(e) => {
+                    // Qu: Do we want to abort here if the security module failed to give
+                    // us the randomness we expected ?
+                    tracing::error!("Failed to get random bytes from security module: {}", e);
+                }
+            }
+        };
+
+        seed
+    }
+
+    /// Creates a new RNG seeded with randomness from the OS, the base RNG, and optionally a security module.
+    async fn fresh_rng(
+        rng: Arc<Mutex<AesRng>>,
+        security_module: Option<Arc<SecurityModuleProxy>>,
+    ) -> AesRng {
+        let fresh_seed = Self::fresh_seed(security_module.clone()).await;
+
+        // Pulls randomness from the exisiting rng
+        let mut seed = [0u8; crate::consts::RND_SIZE];
+        // Make a seperate scope for the rng so that it is dropped before the lock is released
+        {
+            let mut base_rng = rng.lock().await;
+            base_rng.fill_bytes(seed.as_mut());
+        }
+
+        // Mix in all the randomness sources to create a new seed
+        for i in 0..crate::consts::RND_SIZE {
+            seed[i] ^= fresh_seed[i];
+        }
+
+        AesRng::from_seed(seed)
+    }
+
+    /// Calls [`Self::fresh_rng`] and registers it in the rng_registry (so it gets refreshed upon [`Self::refresh_all_rngs_in_registry`]).
+    pub async fn fresh_registered_rng(&self) -> Arc<Mutex<AesRng>> {
+        let rng = Arc::new(Mutex::new(
+            Self::fresh_rng(self.rng.clone(), self.security_module.clone()).await,
+        ));
+        let mut registry = self.rng_registry.lock().await;
+        registry.push(Arc::downgrade(&rng));
+        rng
     }
 }
 

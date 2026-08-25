@@ -136,7 +136,9 @@ pub async fn setup_threshold_no_client<
 
         handles.spawn(async move {
             let sk = get_core_signing_key(&cur_priv_storage).await.unwrap();
-            let base_kms = BaseKmsStruct::new(KMSType::Threshold, sk).unwrap();
+            let base_kms = BaseKmsStruct::new(KMSType::Threshold, sk, None)
+                .await
+                .unwrap();
 
             // TODO pass in cert_paths for testing TLS
             let server = new_real_threshold_kms(
@@ -364,7 +366,9 @@ pub async fn setup_threshold_with_custom_peers<
         let server_idx = idx; // Track the physical server index
         handles.push(tokio::spawn(async move {
             let sk = get_core_signing_key(&cur_priv_storage).await.unwrap();
-            let base_kms = BaseKmsStruct::new(KMSType::Threshold, sk).unwrap();
+            let base_kms = BaseKmsStruct::new(KMSType::Threshold, sk, None)
+                .await
+                .unwrap();
 
             // Note: explicit some of the types to avoid clippy complaining
             let server: anyhow::Result<(

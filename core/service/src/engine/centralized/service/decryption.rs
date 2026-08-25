@@ -106,7 +106,7 @@ pub async fn user_decrypt_impl<
     })?;
 
     let meta_store = Arc::clone(&service.user_dec_meta_store);
-    let mut rng = service.base_kms.new_rng().await;
+    let mut rng = service.base_kms.fork_rng().await;
     let meta_permit = add_or_redo_failed_in_meta_store(
         &service.user_dec_meta_store,
         &request_id,

@@ -104,7 +104,7 @@ where
         backup_id: RequestId,
         cts: BTreeMap<Role, InnerOperatorBackupOutput>,
     ) -> anyhow::Result<(RecoveryRequest, UnifiedPrivateEncKey, UnifiedPublicEncKey)> {
-        let mut rng = self.base_kms.new_rng().await;
+        let mut rng = self.base_kms.fork_rng().await;
         let operator_verf_key = self.base_kms.verf_key().to_legacy_bytes()?;
         // Generate asymmetric ephemeral keys for the operator to use to encrypt the backup
         let mut enc = Encryption::new(PkeSchemeType::MlKem512, &mut rng);

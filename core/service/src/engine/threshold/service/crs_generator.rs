@@ -208,7 +208,7 @@ impl<
 
         // we do not need to hold the handle,
         // the result of the computation is tracked the crs_meta_store
-        let rng = self.base_kms.new_rng().await.to_owned();
+        let rng = self.base_kms.fork_rng().await.to_owned();
 
         let token = CancellationToken::new();
         {
@@ -699,7 +699,9 @@ mod tests {
         rng: &mut AesRng,
     ) -> RealCrsGenerator<ram::RamStorage, ram::RamStorage, C> {
         let (_pk, sk) = gen_sig_keys(rng);
-        let base_kms = BaseKmsStruct::new(KMSType::Threshold, sk).unwrap();
+        let base_kms = BaseKmsStruct::new(KMSType::Threshold, sk, None)
+            .await
+            .unwrap();
         let prss_setup_z128 = Some(PRSSSetup::new_testing_prss(vec![], vec![]));
         let prss_setup_z64 = Some(PRSSSetup::new_testing_prss(vec![], vec![]));
         let epoch_id = *DEFAULT_EPOCH_ID;
@@ -707,7 +709,7 @@ mod tests {
             prss_setup_z128,
             prss_setup_z64,
             &epoch_id,
-            base_kms.new_rng().await,
+            base_kms.fork_rng().await,
         );
 
         let pub_storage = ram::RamStorage::new();

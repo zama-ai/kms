@@ -739,7 +739,7 @@ where
         &crypto_storage,
         networking_manager,
         verifier,
-        base_kms.new_rng().await,
+        base_kms.fresh_registered_rng().await,
     )
     .await?;
     let immutable_session_maker = session_maker.make_immutable();

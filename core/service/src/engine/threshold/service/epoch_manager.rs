@@ -491,8 +491,8 @@ impl<
         SmallSession<ResiduePolyF4Z64>,
     )> {
         let session_z128 =
-            // Note that we need to use the new epoch ID when deriving the session ID, otherwise we would not be able to create multiple 
-            // new epochs from the same previous epoch, in case an epoch creation failed, as the session ID would be the same and the 
+            // Note that we need to use the new epoch ID when deriving the session ID, otherwise we would not be able to create multiple
+            // new epochs from the same previous epoch, in case an epoch creation failed, as the session ID would be the same and the
             // session maker would return an error.
             async { new_epoch_id.derive_session_id_with_counter(LIFT_Z128_SESSION_COUNTER) }
                 .and_then(|id| {
@@ -2013,10 +2013,16 @@ pub(crate) mod tests {
     ) -> RealThresholdEpochManager<ram::RamStorage, ram::RamStorage, I, SecureReshareSecretKeys>
     {
         let (_pk, sk) = gen_sig_keys(rng);
-        let base_kms = BaseKmsStruct::new(KMSType::Threshold, sk).unwrap();
+        let base_kms = BaseKmsStruct::new(KMSType::Threshold, sk, None)
+            .await
+            .unwrap();
         let epoch_id = *DEFAULT_EPOCH_ID;
-        let session_maker =
-            SessionMaker::four_party_dummy_session(None, None, &epoch_id, base_kms.new_rng().await);
+        let session_maker = SessionMaker::four_party_dummy_session(
+            None,
+            None,
+            &epoch_id,
+            base_kms.fork_rng().await,
+        );
 
         RealThresholdEpochManager::<ram::RamStorage, ram::RamStorage, I, SecureReshareSecretKeys>::init_test(
             base_kms,
