@@ -173,6 +173,31 @@ impl StorageReader for FileStorage {
         self.all_data_from_path(path.as_path(), true).await
     }
 
+    async fn all_data_types(&self) -> anyhow::Result<HashSet<String>> {
+        let root = self.root_dir();
+        let mut entries = tokio::fs::read_dir(root).await.map_err(|e| {
+            anyhow::anyhow!(
+                "Could not read storage root {} due to error {}!",
+                root.display(),
+                e
+            )
+        })?;
+        let mut res = HashSet::new();
+        while let Some(entry) = entries.next_entry().await? {
+            let name = entry.file_name();
+            let name = some_or_err(
+                name.to_str(),
+                "Could not convert OsStr to string".to_string(),
+            )?;
+            // Dot-prefixed names are partial-write temp files, see `sweep_stale_partials`.
+            if name.starts_with('.') {
+                continue;
+            }
+            res.insert(name.to_string());
+        }
+        Ok(res)
+    }
+
     fn info(&self) -> String {
         format!(
             "file storage with root_path \'{}\'",
@@ -551,6 +576,46 @@ pub mod tests {
         let path = temp_dir.path();
         let mut storage = FileStorage::new(Some(path), StorageType::PRIV, None).unwrap();
         test_all_data_ids_from_all_epochs(&mut storage).await;
+    }
+
+    #[tokio::test]
+    async fn test_all_data_types_file() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let mut storage = FileStorage::new(Some(temp_dir.path()), StorageType::PUB, None).unwrap();
+        test_all_data_types(&mut storage).await;
+    }
+
+    #[tokio::test]
+    async fn all_data_types_lists_stray_files_and_skips_hidden_ones() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let storage = FileStorage::new(Some(temp_dir.path()), StorageType::PUB, None).unwrap();
+        fs::write(storage.root_dir().join("stray"), b"x").unwrap();
+        fs::write(storage.root_dir().join(".partial"), b"x").unwrap();
+        assert_eq!(
+            storage.all_data_types().await.unwrap(),
+            HashSet::from(["stray".to_string()])
+        );
+    }
+
+    /// Each party's storage is rooted at its own prefix, so a sibling party's material under
+    /// the same parent directory is never listed.
+    #[tokio::test]
+    async fn all_data_types_is_scoped_to_own_root() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let own =
+            FileStorage::new(Some(temp_dir.path()), StorageType::PUB, Some("PUB-p1")).unwrap();
+        let mut other =
+            FileStorage::new(Some(temp_dir.path()), StorageType::PUB, Some("PUB-p2")).unwrap();
+        let id = derive_request_id("other-party").unwrap();
+        let pk_type = PubDataType::PublicKey.to_string();
+        other.store_bytes(b"pk", &id, &pk_type).await.unwrap();
+
+        assert!(own.all_data_types().await.unwrap().is_empty());
+        assert!(own.all_data_ids(&pk_type).await.unwrap().is_empty());
+        assert_eq!(
+            other.all_data_types().await.unwrap(),
+            HashSet::from([pk_type])
+        );
     }
 
     #[tokio::test]

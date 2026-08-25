@@ -163,6 +163,15 @@ served:
 - Seek the Zama team if any of these issues occur since resolving most of these will
   require manual intervention.
 
+**Warnings that do not stop the node:** after these checks pass, the node lists its public
+storage and warns about material that private storage does not account for. Look for
+`Unexpected public material <type> for id=<id>`, `Unexpected data type in public storage`, or
+`Could not list public material <type>`. Such an entry can be a harmless leftover (a retired
+keyset, a previous deployment that shared the bucket) or a sign of corruption or of an
+unauthorized write. Confirm the bucket and prefix, remove the entry if you know where it came
+from, and escalate to the Zama team if you do not. Only the node's own prefix (`PUB`, or
+`PUB-pX` for party X) is inspected.
+
 ---
 
 ### Key Management Issues

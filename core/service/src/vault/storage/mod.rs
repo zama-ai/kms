@@ -67,6 +67,12 @@ pub trait StorageReader {
     /// [StorageReaderExt::all_data_ids_from_all_epochs] instead.
     async fn all_data_ids(&self, data_type: &str) -> anyhow::Result<HashSet<RequestId>>;
 
+    /// Return the name of every top-level entry under the storage root, unparsed.
+    ///
+    /// Normally these are the data-type folders, but a stray object or folder that belongs to
+    /// no data type is returned too, so callers can detect names they do not recognise.
+    async fn all_data_types(&self) -> anyhow::Result<HashSet<String>>;
+
     /// Output some information on the storage instance.
     fn info(&self) -> String;
 }
@@ -901,6 +907,29 @@ pub mod tests {
                 .await
                 .unwrap();
         assert!(pks.is_empty());
+    }
+
+    /// Exercise [`StorageReader::all_data_types`]: nothing before the first write, exactly the
+    /// written data types afterwards, and no other names after a delete. A file or S3 backend
+    /// may keep an empty folder around, so the final check is a subset check.
+    pub async fn test_all_data_types<S: Storage>(storage: &mut S) {
+        let req_id = derive_request_id("all_data_types").unwrap();
+        let pk_type = PubDataType::PublicKey.to_string();
+        let crs_type = PubDataType::CRS.to_string();
+        assert!(storage.all_data_types().await.unwrap().is_empty());
+
+        storage.store_bytes(b"pk", &req_id, &pk_type).await.unwrap();
+        storage
+            .store_bytes(b"crs", &req_id, &crs_type)
+            .await
+            .unwrap();
+        let expected = HashSet::from([pk_type.clone(), crs_type.clone()]);
+        assert_eq!(storage.all_data_types().await.unwrap(), expected);
+
+        storage.delete_data(&req_id, &crs_type).await.unwrap();
+        let after_delete = storage.all_data_types().await.unwrap();
+        assert!(after_delete.contains(&pk_type));
+        assert!(after_delete.is_subset(&expected));
     }
 
     pub(crate) async fn test_store_bytes_does_not_overwrite_existing_bytes<S: Storage>(

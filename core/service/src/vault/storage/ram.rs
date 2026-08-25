@@ -85,6 +85,14 @@ impl StorageReader for RamStorage {
         Ok(res)
     }
 
+    async fn all_data_types(&self) -> anyhow::Result<HashSet<String>> {
+        Ok(self
+            .internal_storage
+            .keys()
+            .map(|(_, cur_data_type)| cur_data_type.clone())
+            .collect())
+    }
+
     fn info(&self) -> String {
         "memory storage".to_string()
     }
@@ -368,6 +376,10 @@ impl StorageReader for FailingRamStorage {
         self.inner.all_data_ids(data_type).await
     }
 
+    async fn all_data_types(&self) -> anyhow::Result<HashSet<String>> {
+        self.inner.all_data_types().await
+    }
+
     fn info(&self) -> String {
         "FailingRamStorage".to_string()
     }
@@ -524,6 +536,12 @@ pub mod tests {
     async fn test_all_data_ids_from_all_epochs_ram() {
         let mut storage = RamStorage::new();
         test_all_data_ids_from_all_epochs(&mut storage).await;
+    }
+
+    #[tokio::test]
+    async fn test_all_data_types_ram() {
+        let mut storage = RamStorage::new();
+        test_all_data_types(&mut storage).await;
     }
 
     #[tokio::test]

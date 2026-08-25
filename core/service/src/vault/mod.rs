@@ -286,6 +286,16 @@ impl StorageReader for Vault {
             .map_err(|e| anyhow!("Getting all ids failed: {e}"))
     }
 
+    /// Returns the top-level names of the wrapped storage. For a custodian backup vault these
+    /// are backup IDs rather than data types, because [`VaultDataType::CustodianBackupData`]
+    /// nests each data type under its backup ID.
+    async fn all_data_types(&self) -> anyhow::Result<HashSet<String>> {
+        self.storage
+            .all_data_types()
+            .await
+            .map_err(|e| anyhow!("Getting all data types failed: {e}"))
+    }
+
     fn info(&self) -> String {
         self.storage.info()
     }
