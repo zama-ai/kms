@@ -1094,8 +1094,9 @@ impl<
     /// Deletes every piece of private material that belongs to `epoch_id`: the FHE key shares and
     /// the CRS metadata stored under the epoch, followed by the epoch data itself.
     ///
-    /// The deletion continues past a failure and the first error is returned, so that a caller can
-    /// retry until it succeeds.
+    /// The deletion continues past a failure and the first error is returned.
+    /// However, only if all deletions succeed is the epoch data itself deleted, so that a restarted
+    /// node can still see the epoch and hence finish the deletion.
     async fn purge_epoch_material(
         epoch_id: &EpochId,
         priv_storage: &tokio::sync::Mutex<PrivS>,
@@ -1145,6 +1146,21 @@ impl<
             }
         }
 
+        // Delete legacy data to avoid it coming back on migration at restart.
+        #[expect(deprecated)]
+        let legacy_prss_type = PrivDataType::PrssSetupCombined.to_string();
+        if first_error.is_none()
+            && let Err(e) = delete_at_request_id(
+                &mut (*priv_storage_guard),
+                &epoch_id.into(),
+                &legacy_prss_type,
+            )
+            .await
+        {
+            tracing::error!("Error deleting PrssSetupCombined on epoch ID {epoch_id}: {e:?}");
+            first_error = Some(e);
+        }
+
         // Delete the epoch data (stored under epoch_id as a request_id) only once every key/CRS
         // meta data deletion above has succeeded. The epoch data (which holds the PRSS setup) is what
         // resurrects the epoch after a restart — the session maker is rebuilt from epoch-data
@@ -1159,20 +1175,6 @@ impl<
             .await
         {
             tracing::error!("Error deleting EpochData epoch ID {epoch_id}: {e:?}");
-            first_error = Some(e);
-        }
-        // Also delete legacy data to avoid it coming back on migration at restart.
-        #[expect(deprecated)]
-        let legacy_prss_type = PrivDataType::PrssSetupCombined.to_string();
-        if first_error.is_none()
-            && let Err(e) = delete_at_request_id(
-                &mut (*priv_storage_guard),
-                &epoch_id.into(),
-                &legacy_prss_type,
-            )
-            .await
-        {
-            tracing::error!("Error deleting PrssSetupCombined on epoch ID {epoch_id}: {e:?}");
             first_error = Some(e);
         }
 

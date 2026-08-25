@@ -189,10 +189,12 @@ The primary service is `CoreServiceEndpoint`. Its RPCs group into:
   request, whereas a pure set 2 party (a node joining the new context) never held
   the key and logs a warning instead. When resharing legacy key material that
   has no dedicated OPRF secret-key share, the OPRF sub-protocol is skipped and
-the reshared private keyset keeps that field absent. A storage failure during
-resharing rolls the new epoch back on the party that fails. That party attempts to delete
-the key shares, the CRS metadata and the epoch data of the new epoch. If cleanup succeeds,
-it forgets the epoch; otherwise, it keeps the epoch registered so that deletion can be retried. `DestroyMpcContext` carries
+  the reshared private keyset keeps that field absent. A storage failure during
+  resharing rolls the new epoch back on the party that fails. 
+  That party attempts to delete the key shares, the CRS metadata and the epoch data of the new epoch. 
+  Observe that no public data is deleted as this is, and should be, unaffected by an epoch change. 
+  If cleanup succeeds, it forgets the epoch; otherwise, it keeps the epoch registered so that deletion can be retried. 
+  `DestroyMpcContext` carries
   the context's epoch IDs and erases their secret shares (cascading to the
   existing per-epoch deletion) before forgetting the context, so retiring a
   party set leaves no usable key shares behind; the kms-connector is the source
