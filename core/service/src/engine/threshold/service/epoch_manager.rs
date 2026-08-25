@@ -3223,11 +3223,89 @@ pub(crate) mod tests {
         }
     }
 
+    /// Store the last key of `key_ids` in `new_epoch_id`, then attempt to reshare all keys into the new epoch.
+    /// This leaves an inconsistent partial state in the storage.
+    async fn failing_reshare_into_epoch(
+        epoch_manager: &RealThresholdEpochManager<
+            RamStorage,
+            RamStorage,
+            EmptyPrss,
+            SecureReshareSecretKeys,
+        >,
+        key_ids: &[RequestId],
+        previous_epoch_id: &EpochId,
+        new_epoch_id: &EpochId,
+        rng: &mut AesRng,
+    ) -> anyhow::Error {
+        let crypto_storage = &epoch_manager.crypto_storage;
+        let preproc_id = derive_request_id("failing_reshare_preproc").unwrap();
+
+        let mut keys_info = Vec::new();
+        let mut verified_materials = Vec::new();
+        let mut new_private_keysets = Vec::new();
+        for key_id in key_ids {
+            let (_keyset, compressed_keyset) =
+                gen_key_set(crate::consts::TEST_PARAM, tfhe::Tag::default(), rng).unwrap();
+            keys_info.push(VerifiedKeyInfo {
+                key_id: *key_id,
+                preproc_id,
+                key_parameters: crate::consts::TEST_PARAM,
+                key_digests: HashMap::new(),
+            });
+            verified_materials.push(VerifiedPublicMaterial::Compressed(compressed_keyset));
+            new_private_keysets.push(PrivateKeySet::init_dummy(crate::consts::TEST_PARAM));
+        }
+
+        // Occupy the slot of the last key in the new epoch, which makes its write fail.
+        let blocked_key_id = key_ids.last().expect("the reshare needs at least one key");
+        store_previous_epoch_keys(
+            crypto_storage,
+            blocked_key_id,
+            new_epoch_id,
+            &make_threshold_keys_with_preproc_id(blocked_key_id, &preproc_id, rng),
+        )
+        .await;
+
+        let verified_previous_epoch = VerifiedPreviousEpochInfo {
+            context_id: *DEFAULT_MPC_CONTEXT,
+            epoch_id: *previous_epoch_id,
+            keys_info,
+            crs_info: vec![],
+        };
+        let sk = epoch_manager.base_kms.sig_key().unwrap();
+
+        let res = RealThresholdEpochManager::<
+            RamStorage,
+            RamStorage,
+            EmptyPrss,
+            SecureReshareSecretKeys,
+        >::store_reshared_keys(
+            crypto_storage,
+            &epoch_manager.session_maker,
+            &sk,
+            &[SigningSchemeType::Ecdsa256k1],
+            *new_epoch_id,
+            vec![],
+            &verified_previous_epoch,
+            verified_materials,
+            new_private_keysets,
+            &dummy_domain(),
+            vec![],
+        )
+        .await;
+
+        match res {
+            // `EpochOutput` has no `Debug`, hence the match instead of `unwrap_err`.
+            Ok(_) => panic!("the reshare must fail, as a key slot of the new epoch is taken"),
+            Err(e) => e,
+        }
+    }
+
     /// The public key material of a key belongs to every epoch of that key, because public storage
-    /// has no epoch dimension. A rollback of a failed reshare must therefore keep it, and delete the
-    /// private material of the new epoch only.
+    /// has no epoch dimension. A failed reshare must therefore keep it, and delete the private
+    /// material of the new epoch only.
     #[tokio::test]
-    async fn test_rollback_failed_epoch_keeps_public_key_material() {
+    async fn test_failed_reshare_keeps_public_key_material() {
         let mut rng = AesRng::seed_from_u64(45);
         let epoch_manager = make_epoch_manager::<EmptyPrss>(&mut rng).await;
         let crypto_storage = &epoch_manager.crypto_storage;
@@ -3235,8 +3313,10 @@ pub(crate) mod tests {
 
         let previous_epoch_id = *DEFAULT_EPOCH_ID;
         let new_epoch_id = EpochId::new_random(&mut rng);
-        let key_id = derive_request_id("rollback_key").unwrap();
-        let preproc_id = derive_request_id("rollback_preproc").unwrap();
+        // The reshare writes the first key and fails on the second one.
+        let reshared_key_id = derive_request_id("reshared_key").unwrap();
+        let blocked_key_id = derive_request_id("blocked_key").unwrap();
+        let preproc_id = derive_request_id("previous_epoch_preproc").unwrap();
 
         // Stand-ins for the real key material: the test asserts on the presence of the objects, not
         // on their content.
@@ -3244,22 +3324,24 @@ pub(crate) mod tests {
         {
             let public_storage = crypto_storage.inner.get_public_storage();
             let mut guard = public_storage.lock().await;
-            for public_type in &public_types {
-                store_versioned_at_request_id(
-                    &mut (*guard),
-                    &key_id,
-                    &TestType { i: 7 },
-                    &public_type.to_string(),
-                )
-                .await
-                .unwrap();
+            for key_id in [&reshared_key_id, &blocked_key_id] {
+                for public_type in &public_types {
+                    store_versioned_at_request_id(
+                        &mut (*guard),
+                        key_id,
+                        &TestType { i: 7 },
+                        &public_type.to_string(),
+                    )
+                    .await
+                    .unwrap();
+                }
             }
         }
 
-        // The state a partially completed reshare leaves behind: the key shares of the previous
-        // epoch, plus the shares and the epoch data of the new epoch.
-        let keys = make_threshold_keys_with_preproc_id(&key_id, &preproc_id, &mut rng);
-        store_previous_epoch_keys(crypto_storage, &key_id, &previous_epoch_id, &keys).await;
+        // The state before the reshare: both epochs are known, and the previous epoch holds the
+        // shares of the key that the reshare writes. Writing those shares through the resharing path
+        // also puts them in the key cache, which lets the assertions below pin down what the
+        // rollback purges from the cache.
         let epoch = dummy_epoch_data();
         session_maker
             .add_epoch(previous_epoch_id, epoch.clone())
@@ -3278,49 +3360,65 @@ pub(crate) mod tests {
             .unwrap();
         }
         crypto_storage
-            .resharing_fhe_write_no_backup(&key_id, &new_epoch_id, keys)
+            .resharing_fhe_write_no_backup(
+                &reshared_key_id,
+                &previous_epoch_id,
+                make_threshold_keys_with_preproc_id(&reshared_key_id, &preproc_id, &mut rng),
+            )
             .await
             .unwrap();
         assert_eq!(crypto_storage.cached_fhe_key_count(), Some(1));
 
-        RealThresholdEpochManager::<
-            ram::RamStorage,
-            ram::RamStorage,
-            EmptyPrss,
-            SecureReshareSecretKeys,
-        >::rollback_failed_epoch(crypto_storage, session_maker, &new_epoch_id)
+        let err = failing_reshare_into_epoch(
+            &epoch_manager,
+            &[reshared_key_id, blocked_key_id],
+            &previous_epoch_id,
+            &new_epoch_id,
+            &mut rng,
+        )
         .await;
+        assert!(
+            err.to_string()
+                .contains("Failed to store all reshared keys"),
+            "the reshare must fail in its storage step, got: {err}"
+        );
 
-        // The public material of the key survives, since the previous epoch still serves it.
+        // The public material of both keys survives, since the previous epoch still serves it.
+        // This validates a bug fix where the rollback deleted public material of the failed reshare.
         {
             let public_storage = crypto_storage.inner.get_public_storage();
             let guard = public_storage.lock().await;
-            for public_type in &public_types {
-                assert!(
-                    guard
-                        .data_exists(&key_id, &public_type.to_string())
-                        .await
-                        .unwrap(),
-                    "{public_type} of key {key_id} must survive the rollback"
-                );
+            for key_id in [&reshared_key_id, &blocked_key_id] {
+                for public_type in &public_types {
+                    assert!(
+                        guard
+                            .data_exists(key_id, &public_type.to_string())
+                            .await
+                            .unwrap(),
+                        "{public_type} of key {key_id} must survive a failed reshare"
+                    );
+                }
             }
         }
 
-        // The new epoch is gone from storage, from the cache and from the session maker, while the
-        // previous epoch keeps its shares.
+        // The new epoch is gone from storage and from the session maker, while the previous epoch
+        // keeps its shares.
         {
             let private_storage = crypto_storage.get_private_storage();
             let guard = private_storage.lock().await;
-            assert!(
-                !guard
-                    .data_exists_at_epoch(
-                        &key_id,
-                        &new_epoch_id,
-                        &PrivDataType::FheKeyInfo.to_string()
-                    )
-                    .await
-                    .unwrap()
-            );
+            for key_id in [&reshared_key_id, &blocked_key_id] {
+                assert!(
+                    !guard
+                        .data_exists_at_epoch(
+                            key_id,
+                            &new_epoch_id,
+                            &PrivDataType::FheKeyInfo.to_string()
+                        )
+                        .await
+                        .unwrap(),
+                    "the shares of key {key_id} in the new epoch must be rolled back"
+                );
+            }
             assert!(
                 !guard
                     .data_exists(&new_epoch_id.into(), &PrivDataType::EpochData.to_string())
@@ -3330,50 +3428,67 @@ pub(crate) mod tests {
             assert!(
                 guard
                     .data_exists_at_epoch(
-                        &key_id,
+                        &reshared_key_id,
                         &previous_epoch_id,
                         &PrivDataType::FheKeyInfo.to_string()
                     )
                     .await
                     .unwrap(),
-                "the shares of the previous epoch must survive the rollback"
+                "the shares of the previous epoch must survive a failed reshare"
             );
         }
-        assert_eq!(crypto_storage.cached_fhe_key_count(), Some(0));
+        // Only the entry of the previous epoch is left in the cache.
+        assert_eq!(crypto_storage.cached_fhe_key_count(), Some(1));
+        crypto_storage
+            .read_guarded_fhe_keys(&reshared_key_id, &previous_epoch_id)
+            .await
+            .expect("the key of the previous epoch stays usable");
+        assert!(
+            crypto_storage
+                .read_guarded_fhe_keys(&reshared_key_id, &new_epoch_id)
+                .await
+                .is_err(),
+            "the key of the rolled back epoch must not be readable"
+        );
+
         assert!(!session_maker.epoch_exists(&new_epoch_id).await);
         assert!(session_maker.epoch_exists(&previous_epoch_id).await);
     }
 
-    /// A node that joins the cluster holds the new epoch as its only epoch. The rollback must clean
-    /// that epoch up, unlike [`RealThresholdEpochManager::destroy_epoch`], which refuses to remove
-    /// the last epoch of a node.
+    /// A node that joins the cluster holds the new epoch as its only epoch. A failed reshare must
+    /// still clean that epoch up, unlike
+    /// [`RealThresholdEpochManager::destroy_epoch`], which refuses to remove the last epoch of a
+    /// node.
     #[tokio::test]
-    async fn test_rollback_failed_epoch_on_only_epoch() {
+    async fn test_failed_reshare_rolls_back_only_epoch() {
         let mut rng = AesRng::seed_from_u64(46);
         let epoch_manager = make_epoch_manager::<EmptyPrss>(&mut rng).await;
         let crypto_storage = &epoch_manager.crypto_storage;
         let session_maker = &epoch_manager.session_maker;
 
+        // A joining node holds no material of the previous epoch, and the new epoch is its first.
+        let previous_epoch_id = EpochId::new_random(&mut rng);
         let new_epoch_id = EpochId::new_random(&mut rng);
-        let key_id = derive_request_id("rollback_only_epoch_key").unwrap();
-        let preproc_id = derive_request_id("rollback_only_epoch_preproc").unwrap();
+        let key_id = derive_request_id("only_epoch_key").unwrap();
 
-        let epoch = dummy_epoch_data();
-        session_maker.add_epoch(new_epoch_id, epoch.clone()).await;
-        let keys = make_threshold_keys_with_preproc_id(&key_id, &preproc_id, &mut rng);
-        crypto_storage
-            .resharing_fhe_write_no_backup(&key_id, &new_epoch_id, keys)
-            .await
-            .unwrap();
+        session_maker
+            .add_epoch(new_epoch_id, dummy_epoch_data())
+            .await;
         assert_eq!(session_maker.epoch_count().await, 1);
 
-        RealThresholdEpochManager::<
-            ram::RamStorage,
-            ram::RamStorage,
-            EmptyPrss,
-            SecureReshareSecretKeys,
-        >::rollback_failed_epoch(crypto_storage, session_maker, &new_epoch_id)
+        let err = failing_reshare_into_epoch(
+            &epoch_manager,
+            &[key_id],
+            &previous_epoch_id,
+            &new_epoch_id,
+            &mut rng,
+        )
         .await;
+        assert!(
+            err.to_string()
+                .contains("Failed to store all reshared keys"),
+            "the reshare must fail in its storage step, got: {err}"
+        );
 
         assert!(!session_maker.epoch_exists(&new_epoch_id).await);
         assert_eq!(crypto_storage.cached_fhe_key_count(), Some(0));
