@@ -19,7 +19,6 @@ use hashing::{DIGEST_BYTES, DomainSep};
 use ml_dsa::{MlDsa44, MlDsa65, MlDsa87, SigningKey as MlDsaSigningKey};
 use mldsa::MlDsa;
 pub use mldsa::MlDsaVerfKey;
-use seed::RootSigningSeed;
 use serde::{Deserialize, Serialize};
 use strum::{EnumCount, EnumIter};
 use strum_macros::Display;
@@ -410,29 +409,12 @@ impl HasSigningScheme for UnifiedPublicSigKey {
     }
 }
 
-/// Where a node's key for a given scheme comes from.
-/// [`PrivateSigKey::scheme_source`].
-enum SchemeSource<'a> {
-    /// ECDSA: the persisted key *is* the node's identity
-    Persisted(&'a PrivateSigKey),
-    /// Every other scheme: derived from the attached root seed.
-    Seeded(&'a RootSigningSeed),
-}
-
 /// The multi-scheme surface of a node's signing identity.
 ///
-/// - **ECDSA** uses this key itself.
+/// - **ECDSA** uses this key itself: the persisted key *is* the node's identity.
 /// - **Every other scheme** is derived from the attached [`seed::RootSigningSeed`],
 ///   and errors with [`SigningError::MissingRootSeed`] if none is attached.
 impl PrivateSigKey {
-    /// Which key answers for `scheme` — the persisted ECDSA key, or the root seed.
-    fn scheme_source(&self, scheme: SigningSchemeType) -> Result<SchemeSource<'_>, SigningError> {
-        match scheme {
-            SigningSchemeType::Ecdsa256k1 => Ok(SchemeSource::Persisted(self)),
-            _ => Ok(SchemeSource::Seeded(self.require_root_seed(scheme)?)),
-        }
-    }
-
     /// Sign `msg` (domain-separated by `dsep`) under `scheme`.
     #[cfg(feature = "non-wasm")]
     pub(crate) fn unified_sign_with(
@@ -441,11 +423,14 @@ impl PrivateSigKey {
         dsep: &DomainSep,
         msg: &[u8],
     ) -> Result<Signature, SigningError> {
-        match self.scheme_source(scheme)? {
-            SchemeSource::Persisted(sk) => {
-                Ok(Signature::new(scheme, Ecdsa256k1::sign(dsep, msg, sk)?))
+        match scheme {
+            SigningSchemeType::Ecdsa256k1 => {
+                Ok(Signature::new(scheme, Ecdsa256k1::sign(dsep, msg, self)?))
             }
-            SchemeSource::Seeded(seed) => unified_sign(dsep, msg, seed.derive_signing_key(scheme)?),
+            _ => {
+                let seed = self.require_root_seed(scheme)?;
+                unified_sign(dsep, msg, seed.derive_signing_key(scheme)?)
+            }
         }
     }
 
@@ -455,9 +440,11 @@ impl PrivateSigKey {
         &self,
         scheme: SigningSchemeType,
     ) -> Result<UnifiedPublicSigKey, SigningError> {
-        match self.scheme_source(scheme)? {
-            SchemeSource::Persisted(sk) => Ok(UnifiedPublicSigKey::Ecdsa256k1(sk.verf_key())),
-            SchemeSource::Seeded(seed) => seed.unified_verifying_key(scheme),
+        match scheme {
+            SigningSchemeType::Ecdsa256k1 => Ok(UnifiedPublicSigKey::Ecdsa256k1(self.verf_key())),
+            _ => self
+                .require_root_seed(scheme)?
+                .unified_verifying_key(scheme),
         }
     }
 }

@@ -14,7 +14,10 @@ use crate::vault::storage::{StorageExt, StorageReader, StorageReaderExt};
 use crate::{
     anyhow_error_and_warn_log,
     client::client_non_wasm::ClientDataType,
-    vault::storage::{Storage, read_all_data_versioned, store_versioned_at_request_id},
+    vault::storage::{
+        Storage, read_all_data_versioned, read_versioned_at_request_id,
+        store_versioned_at_request_id,
+    },
 };
 use aes_prng::AesRng;
 use kms_grpc::RequestId;
@@ -407,32 +410,21 @@ pub async fn get_core_signing_key<S: StorageReader>(storage: &S) -> anyhow::Resu
 pub async fn get_core_root_signing_seed<S: StorageReader>(
     storage: &S,
 ) -> anyhow::Result<Option<RootSigningSeed>> {
-    let mut seeds: HashMap<RequestId, RootSigningSeed> =
-        read_all_data_versioned(storage, &PrivDataType::SigningSeed.to_string())
-            .await
-            .map_err(|e| {
-                anyhow_error_and_warn_log(format!(
-                    "Failed to read the root signing seed from \"{}\": {e}",
-                    storage.info()
-                ))
-            })?;
-    let seed = seeds.remove(&SIGNING_KEY_ID);
-    if !seeds.is_empty() {
-        tracing::warn!(
-            "Ignoring {} root signing seed(s) under handles other than {} in storage \"{}\": {}. \
-             Only the seed under {} is ever used.",
-            seeds.len(),
-            *SIGNING_KEY_ID,
-            storage.info(),
-            seeds
-                .keys()
-                .map(|id| id.to_string())
-                .collect::<Vec<_>>()
-                .join(", "),
-            *SIGNING_KEY_ID
-        );
+    let data_type = PrivDataType::SigningSeed.to_string();
+    // A seed is only ever written under `SIGNING_KEY_ID`, so this is the only
+    // handle worth looking at.
+    if !storage.data_exists(&SIGNING_KEY_ID, &data_type).await? {
+        return Ok(None);
     }
-    Ok(seed)
+    read_versioned_at_request_id(storage, &SIGNING_KEY_ID, &data_type)
+        .await
+        .map(Some)
+        .map_err(|e| {
+            anyhow_error_and_warn_log(format!(
+                "Failed to read the root signing seed from \"{}\": {e}",
+                storage.info()
+            ))
+        })
 }
 
 pub async fn get_client_signing_key<S: Storage>(storage: &S) -> anyhow::Result<PrivateSigKey> {

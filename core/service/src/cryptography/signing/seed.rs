@@ -38,7 +38,7 @@ use super::{
 use crate::impl_generic_versionize;
 use hashing::{DIGEST_BYTES, hash_element};
 use ml_dsa::{MlDsa44, MlDsa65, MlDsa87};
-use serde::{Deserialize, Serialize, de::Visitor};
+use serde::{Deserialize, Serialize};
 use tfhe::named::Named;
 use tfhe_versionable::{Versionize, VersionsDispatch};
 use zeroize::{Zeroize, ZeroizeOnDrop, Zeroizing};
@@ -221,7 +221,12 @@ impl RootSigningSeed {
 }
 
 /// The raw root secret, in a newtype that wipes itself on drop.
-#[derive(Clone, PartialEq, Eq, Zeroize, ZeroizeOnDrop)]
+///
+/// The derived `Serialize`/`Deserialize` write the fixed-size array as exactly its
+/// [`ROOT_SEED_LEN`] bytes — no length prefix, and no room for the persisted object
+/// to be anything but the secret itself. A wrong length cannot decode, since the
+/// array size is part of the type.
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize, Zeroize, ZeroizeOnDrop)]
 struct WrappedSeed([u8; ROOT_SEED_LEN]);
 impl_generic_versionize!(WrappedSeed);
 
@@ -229,45 +234,6 @@ impl_generic_versionize!(WrappedSeed);
 impl std::fmt::Debug for WrappedSeed {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str("WrappedSeed(..)")
-    }
-}
-
-/// Serialize as the raw seed bytes, so the persisted object is exactly the
-/// secret and nothing else.
-impl Serialize for WrappedSeed {
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: serde::Serializer,
-    {
-        serializer.serialize_bytes(&self.0)
-    }
-}
-
-impl<'de> Deserialize<'de> for WrappedSeed {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: serde::Deserializer<'de>,
-    {
-        deserializer.deserialize_bytes(WrappedSeedVisitor)
-    }
-}
-
-struct WrappedSeedVisitor;
-impl Visitor<'_> for WrappedSeedVisitor {
-    type Value = WrappedSeed;
-
-    fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
-        write!(formatter, "a {ROOT_SEED_LEN}-byte root signing seed")
-    }
-
-    fn visit_bytes<E>(self, v: &[u8]) -> Result<Self::Value, E>
-    where
-        E: serde::de::Error,
-    {
-        let bytes: [u8; ROOT_SEED_LEN] = v
-            .try_into()
-            .map_err(|_| E::invalid_length(v.len(), &self))?;
-        Ok(WrappedSeed(bytes))
     }
 }
 

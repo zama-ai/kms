@@ -51,7 +51,6 @@ use crate::vault::storage::{
 use k256::pkcs8::EncodePrivateKey;
 use kms_grpc::RequestId;
 use kms_grpc::rpc_types::{PrivDataType, PubDataType};
-use std::collections::BTreeMap;
 use std::collections::HashMap;
 use std::path::Path;
 use strum::IntoEnumIterator;
@@ -326,25 +325,6 @@ where
         is_threshold,
     );
 
-    // The seed is stored after the ECDSA key on purpose. If the process dies
-    // between the two writes, the next run sees "signing key, no seed" and
-    // a new seed will be generated.
-    store_versioned_at_request_id(
-        priv_storage,
-        &SIGNING_KEY_ID,
-        &seed,
-        &PrivDataType::SigningSeed.to_string(),
-    )
-    .await
-    .map_err(|e| anyhow::anyhow!("Failed to store the root signing seed: {e}"))?;
-    log_storage_success(
-        *SIGNING_KEY_ID,
-        priv_storage.info(),
-        "root signing seed",
-        false,
-        is_threshold,
-    );
-
     Ok(sk.with_root_seed(seed))
 }
 
@@ -452,6 +432,19 @@ impl MaterialSlot {
     /// Whether anything is published in this slot.
     async fn exists<S: StorageReader>(self, storage: &S) -> anyhow::Result<bool> {
         storage.data_exists(&self.req_id, &self.data_type()).await
+    }
+
+    /// The verification key the signing identity `sk` implies for this slot.
+    ///
+    /// Cheap to call once per slot rather than once per scheme: the per-scheme
+    /// signing keys are already memoized in the root seed's `DerivedKeyCache`, and
+    /// `verifying_key()` on top of one is an accessor.
+    fn expected_key(self, sk: &PrivateSigKey) -> anyhow::Result<UnifiedPublicSigKey> {
+        sk.unified_verifying_key(self.scheme).map_err(|e| {
+            anyhow_error_and_log(format!(
+                "this node cannot derive the verification key of the {self}: {e}"
+            ))
+        })
     }
 
     /// Whether this slot already holds exactly what `verf_key` implies.
@@ -564,23 +557,11 @@ pub async fn validate_published_verification_material<PubS>(
 where
     PubS: StorageReader,
 {
-    let mut verf_keys: BTreeMap<SigningSchemeType, UnifiedPublicSigKey> = BTreeMap::new();
-
     for slot in published_material_slots() {
         if !slot.exists(pub_storage).await? {
             continue;
         }
-        if let std::collections::btree_map::Entry::Vacant(e) = verf_keys.entry(slot.scheme) {
-            let verf_key = sk.unified_verifying_key(slot.scheme).map_err(|e| {
-                anyhow_error_and_log(format!(
-                    "the {slot} is published, but this node cannot derive the {} verification \
-                      key to check it against: {e}",
-                    slot.scheme
-                ))
-            })?;
-            e.insert(verf_key);
-        }
-        if !slot.matches(pub_storage, &verf_keys[&slot.scheme]).await? {
+        if !slot.matches(pub_storage, &slot.expected_key(sk)?).await? {
             return Err(anyhow_error_and_log(format!(
                 "the stored {slot} does not match the provided signing key"
             )));
@@ -604,21 +585,18 @@ where
 {
     validate_published_verification_material(pub_storage, sk).await?;
 
-    // Derived once per scheme rather than once per slot. Unlike the validation
-    // pass this covers every scheme, because every scheme is about to be written.
-    let mut verf_keys = BTreeMap::new();
-    for scheme in SigningSchemeType::iter() {
-        let verf_key = sk.unified_verifying_key(scheme).map_err(|e| {
-            anyhow_error_and_log(format!("could not derive {scheme} verification key: {e}"))
-        })?;
-        verf_keys.insert(scheme, verf_key);
+    // Every missing slot is resolved to the key it needs *before* the first write,
+    // so an identity that cannot derive some scheme fails with storage untouched
+    // rather than half-updated.
+    let mut pending = Vec::new();
+    for slot in published_material_slots() {
+        if !slot.exists(pub_storage).await? {
+            pending.push((slot, slot.expected_key(sk)?));
+        }
     }
 
-    for slot in published_material_slots() {
-        if slot.exists(pub_storage).await? {
-            continue;
-        }
-        slot.write(pub_storage, &verf_keys[&slot.scheme])
+    for (slot, verf_key) in pending {
+        slot.write(pub_storage, &verf_key)
             .await
             .map_err(|e| anyhow_error_and_log(format!("failed to store the {slot}: {e}")))?;
         tracing::info!("Stored {slot} in storage \"{}\"", pub_storage.info());
