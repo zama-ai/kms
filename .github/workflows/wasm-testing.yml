@@ -69,7 +69,6 @@ jobs:
         with:
           rust-toolchain: ${{ env.RUST_IMAGE_VERSION }}
 
-      # WASM handling
       - name: Install wasm-pack
         uses: taiki-e/install-action@b6ff580856c41316412a0b9b60540fbc6f8c82cc # v2.86.7
         with:
@@ -136,7 +135,6 @@ jobs:
             exit 1
           fi
 
-          rm -rf ./test-material
           ln -s "${EFS_TEST_MATERIAL_PATH}" ./test-material
           echo "Linked ./test-material -> ${EFS_TEST_MATERIAL_PATH}"
           du -shL ./test-material || true
@@ -165,12 +163,10 @@ jobs:
         run: |
           echo "NPM_TAG=prerelease" >> "${GITHUB_ENV}"
 
-      # Node package build and publish
-      - name: NPM build node package
+      # Node package preparation and publish
+      - name: Prepare Node package
         working-directory: ./core/service
         run: |
-          rm -rf pkg
-          wasm-pack build --target nodejs . --no-default-features
           sed -i 's/"kms"/"node-tkms"/g' pkg/package.json
           echo "# node-tkms" > pkg/README.md
 
@@ -186,19 +182,14 @@ jobs:
       - name: NPM build web package
         working-directory: ./core/service
         run: |
-          rm -rf pkg
-          wasm-pack build --target web . --no-default-features
-          sed -i 's/"kms"/"tkms"/g' pkg/package.json
-          echo "# tkms" > pkg/README.md
+          wasm-pack build --target web --out-dir pkg-web . --no-default-features
+          sed -i 's/"kms"/"tkms"/g' pkg-web/package.json
+          echo "# tkms" > pkg-web/README.md
 
       - name: NPM publish web package
         uses: JS-DevTools/npm-publish@7f8fe47b3bea1be0c3aec2b717c5ec1f3e03410b # v4.1.1
         with:
-          package: ./core/service/pkg/package.json
+          package: ./core/service/pkg-web/package.json
           dry-run: true
           provenance: true
           tag: ${{ env.NPM_TAG }}
-
-      - name: Remove aws credentials file
-        run: |
-          rm -rf ~/.aws
