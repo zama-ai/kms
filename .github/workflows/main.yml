@@ -42,7 +42,7 @@ jobs:
     outputs:
       # Each output indicates if files in a specific component were modified.
       # Only outputs consumed by jobs in *this* workflow are exported here.
-      # NOTE: the per-package test matrix in `parallel-testing.yml` does NOT
+      # NOTE: the per-package test matrix in `rust-testing.yml` does NOT
       # consume these outputs - it currently runs unconditionally (no change
       # filter) so every PR exercises and warms the shared rust cache. Wire a
       # filter back in once the caching approach is validated.
@@ -105,14 +105,14 @@ jobs:
               - 'docs/**'
 
   ############################################################################
-  # Parallel testing pipeline
+  # Rust testing pipeline
   # Runs UNCONDITIONALLY on every PR/push (no change filter, no `needs`): this
   # is intentional while we validate the shared rust cache, so every run
   # exercises and warms it. Tighten with a change filter once that's settled.
   ############################################################################
-  parallel-testing:
-    name: main/parallel-testing
-    uses: ./.github/workflows/parallel-testing.yml
+  rust-testing:
+    name: main/rust-testing
+    uses: ./.github/workflows/rust-testing.yml
     permissions:
       checks: write # Required to write to the GitHub Actions check suite
       packages: read # Required to read from the GitHub Packages registry
@@ -171,7 +171,7 @@ jobs:
   ############################################################################
   # Core Client nightly pipeline
   # Regular per-partition tests and the schedule-driven KMS service nightly
-  # tests live in `.github/workflows/parallel-testing.yml`. This section keeps
+  # tests live in `.github/workflows/rust-testing.yml`. This section keeps
   # the schedule-driven nightly job for `kms-core-client`.
   ############################################################################
   # Core client nightly tests (runs ALL tests including nightly and full_gen_tests).
@@ -295,7 +295,7 @@ jobs:
 
   # Test reporting job that runs after all tests complete.
   # Only runs on pull requests to generate test reports.
-  # Note: per-package test jobs that moved to `parallel-testing.yml` are reported by
+  # Note: per-package test jobs that moved to `rust-testing.yml` are reported by
   # that workflow's own `test-reporter` job. This reporter only covers the
   # jobs that still live in this workflow.
   test-reporter:

@@ -90,8 +90,8 @@ jobs:
         id: generate-test-material
         env:
           # Distinct leaf dir from the `insecure_secure_4_13` set used by
-          # parallel-testing.yml: the set name + hash prefix keep the two from
-          # colliding on a shared path or `ready` flag (see parallel-testing.yml).
+          # generate-test-material.yml: the set name + hash prefix keep the two
+          # from colliding on a shared path or `ready` flag.
           MATERIAL_PROFILE: insecure
           MATERIAL_PARTIES: 4,10
           MATERIAL_SET_NAME: insecure_4_10
@@ -107,7 +107,7 @@ jobs:
             echo "Reusing existing test material at ${EFS_ROOT}"
           else
             # Generate into a temp dir, then publish-if-absent via atomic
-            # `mv -T` (see parallel-testing.yml for the full rationale). We
+            # `mv -T` (see generate-test-material.yml for the full rationale). We
             # never overwrite an existing EFS_ROOT, so a concurrent first-time
             # run only wastes work; it can't clobber a live directory.
             TMP_DIR="$(mktemp -d "${BASE}/.tmp.XXXXXX")"
