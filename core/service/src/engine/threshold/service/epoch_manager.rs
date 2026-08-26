@@ -3217,7 +3217,7 @@ pub(crate) mod tests {
         assert!(
             res.unwrap_err()
                 .to_string()
-                .contains("the reshare must fail on the occupied slot")
+                .contains("Failed to store all reshared keys for new epoch 8b4803c41504a7acc9a59ebfb4838379f2b50c3ba0dd4a0b984bd7e566ab1b56: [Err(Duplicate)]")
         );
 
         {
