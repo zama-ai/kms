@@ -213,14 +213,20 @@ deploy_threshold_mode() {
             log_info "TLS enabled for threshold mode (target: ${TARGET})"
         fi
 
-        # Enable the ServiceMonitor (scraped by kube-prometheus-stack) and
-        # prefix metric names with ci_ so the central Prometheus can separate
-        # CI metrics from production series.
+        # Enable the ServiceMonitor (scraped by kube-prometheus-stack). Kind CI
+        # prefixes names with ci_ so Grafana Cloud can keep them apart from
+        # production. aws-perf rides the cluster Prometheus, whose remote-write
+        # keep list only matches kms_.+ — leave names unprefixed and tell the
+        # run apart with namespace=kms-ci.
         if [[ "${ENABLE_METRICS:-false}" == "true" ]]; then
             HELM_ARGS+=(
                 --set kmsCore.serviceMonitor.enabled=true
-                --set kmsCore.serviceMonitor.metricNamePrefix=ci_
             )
+            if [[ "${TARGET}" == *"kind"* ]]; then
+                HELM_ARGS+=(
+                    --set kmsCore.serviceMonitor.metricNamePrefix=ci_
+                )
+            fi
         fi
 
         # Enable OTLP tracing export when an endpoint is provided.
@@ -400,12 +406,16 @@ deploy_centralized_mode() {
         --set kmsCoreClient.nameOverride="kms-core-client"
     )
 
-    # Same ServiceMonitor / ci_ metric-prefix enablement as threshold mode.
+    # Same ServiceMonitor enablement as threshold mode (ci_ prefix on kind only).
     if [[ "${ENABLE_METRICS:-false}" == "true" ]]; then
         HELM_ARGS+=(
             --set kmsCore.serviceMonitor.enabled=true
-            --set kmsCore.serviceMonitor.metricNamePrefix=ci_
         )
+        if [[ "${TARGET}" == *"kind"* ]]; then
+            HELM_ARGS+=(
+                --set kmsCore.serviceMonitor.metricNamePrefix=ci_
+            )
+        fi
     fi
 
     # Enable OTLP tracing export when an endpoint is provided.
