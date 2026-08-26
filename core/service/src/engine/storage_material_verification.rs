@@ -28,8 +28,9 @@ use crate::consts::SIGNING_KEY_ID;
 use crate::cryptography::signatures::recover_address_from_ext_signature;
 use crate::cryptography::signing::ecdsa::{PrivateSigKey, PublicSigKey};
 use crate::engine::base::{
-    CrsGenMetadata, CrsGenMetadataInner, DSEP_PUBDATA_KEY, KeyGenMetadata, KeyGenMetadataInner,
-    StoredEip712Domain,
+    CrsGenMetadata, CrsGenMetadataInner, CurrentPublicMaterialLayout, DSEP_PUBDATA_KEY,
+    KeyGenMetadata, KeyGenMetadataInner, StoredEip712Domain, classify_current_public_material,
+    crs_sol_type, keygen_sol_type,
 };
 use crate::engine::material_integrity::{
     verify_compressed_key_digest_from_bytes, verify_crs_digest_from_bytes,
@@ -40,12 +41,10 @@ use alloy_primitives::Address;
 use alloy_sol_types::{Eip712Domain, SolStruct};
 use kms_grpc::RequestId;
 use kms_grpc::rpc_types::PubDataType;
-use kms_grpc::solidity_types::{CrsgenVerification, KeygenVerification};
 use std::collections::{BTreeMap, HashMap};
 use std::str::FromStr;
 use strum::IntoEnumIterator;
 
-const ERR_INVALID_CURRENT_PUBLIC_KEY_SHAPE: &str = "Invalid current public key metadata shape";
 const ERR_INVALID_LEGACY_PUBLIC_KEY_SHAPE: &str = "Invalid legacy public key metadata shape";
 pub(crate) const ERR_METADATA_ID_MISMATCH: &str =
     "Result metadata is stored under a different ID than it declares";
@@ -53,35 +52,6 @@ pub(crate) const ERR_VERF_KEY_MISMATCH: &str =
     "Verification key in public storage does not match the private signing key";
 pub(crate) const ERR_VERF_ADDRESS_MISMATCH: &str =
     "Verification address in public storage does not match the private signing key";
-
-#[derive(Clone, Copy)]
-enum CurrentPublicMaterialLayout {
-    Standard,
-    Compressed,
-}
-
-fn classify_current_public_material(
-    key_digest_map: &BTreeMap<PubDataType, Vec<u8>>,
-) -> anyhow::Result<CurrentPublicMaterialLayout> {
-    let has_public_key = key_digest_map.contains_key(&PubDataType::PublicKey);
-    let has_server_key = key_digest_map.contains_key(&PubDataType::ServerKey);
-    let has_compressed_keyset = key_digest_map.contains_key(&PubDataType::CompressedXofKeySet);
-
-    match (
-        has_public_key,
-        has_server_key,
-        has_compressed_keyset,
-        key_digest_map.len(),
-    ) {
-        (true, true, false, 2) => Ok(CurrentPublicMaterialLayout::Standard),
-        (true, false, true, 2) => Ok(CurrentPublicMaterialLayout::Compressed),
-        _ => anyhow::bail!(
-            "{ERR_INVALID_CURRENT_PUBLIC_KEY_SHAPE}: expected either \
-             {{PublicKey, ServerKey}} or {{PublicKey, CompressedXofKeySet}}, got {:?}",
-            key_digest_map.keys().collect::<Vec<_>>()
-        ),
-    }
-}
 
 fn validate_legacy_public_material_shape<T>(
     public_materials: &HashMap<PubDataType, T>,
@@ -323,7 +293,7 @@ where
 
 /// Verify the signatures that authenticate current metadata in private storage.
 ///
-/// We cannot authenticate the signatures for oldre metadata since the EIP-712
+/// We cannot authenticate the signatures for older metadata since the EIP-712
 /// domain was not persisted. So those entries remain usable for backward
 /// compatibility. All newly written current metadata must carry a domain and a
 /// valid signature from this node.
@@ -381,62 +351,27 @@ fn verify_keygen_metadata_signature(
         return Ok(());
     };
 
-    let extra_data = metadata.extra_data.clone().unwrap_or_default();
-
-    match classify_current_public_material(&metadata.key_digest_map)? {
-        CurrentPublicMaterialLayout::Standard => {
-            let server_key_digest = metadata
-                .key_digest_map
-                .get(&PubDataType::ServerKey)
-                .ok_or_else(|| anyhow::anyhow!("Missing server-key digest for id={key_id}"))?;
-            let public_key_digest = metadata
-                .key_digest_map
-                .get(&PubDataType::PublicKey)
-                .ok_or_else(|| anyhow::anyhow!("Missing public-key digest for id={key_id}"))?;
-            let sol_type = KeygenVerification::new_uncompressed(
+    // Signing sites know their layout statically; here it can only be read back off the
+    // stored digest map.
+    let sol_type = classify_current_public_material(&metadata.key_digest_map)
+        .and_then(|layout| {
+            keygen_sol_type(
+                layout,
                 &metadata.preprocessing_id,
                 &metadata.key_id,
-                server_key_digest.clone(),
-                public_key_digest.clone(),
-                extra_data,
-            );
-            verify_eip712_metadata_signature(
-                "keygen",
-                key_id,
-                &sol_type,
-                stored_domain,
-                &metadata.external_signature,
-                expected_address,
-            )?;
-        }
-        CurrentPublicMaterialLayout::Compressed => {
-            let compressed_keyset_digest = metadata
-                .key_digest_map
-                .get(&PubDataType::CompressedXofKeySet)
-                .ok_or_else(|| {
-                    anyhow::anyhow!("Missing compressed-keyset digest for id={key_id}")
-                })?;
-            let public_key_digest = metadata
-                .key_digest_map
-                .get(&PubDataType::PublicKey)
-                .ok_or_else(|| anyhow::anyhow!("Missing public-key digest for id={key_id}"))?;
-            let sol_type = KeygenVerification::new_compressed(
-                &metadata.preprocessing_id,
-                &metadata.key_id,
-                compressed_keyset_digest.clone(),
-                public_key_digest.clone(),
-                extra_data,
-            );
-            verify_eip712_metadata_signature(
-                "compressed keygen",
-                key_id,
-                &sol_type,
-                stored_domain,
-                &metadata.external_signature,
-                expected_address,
-            )?;
-        }
-    }
+                &metadata.key_digest_map,
+                metadata.extra_data.as_deref().unwrap_or_default(),
+            )
+        })
+        .map_err(|e| anyhow::anyhow!("Invalid private keygen metadata for id={key_id}: {e}"))?;
+    verify_eip712_metadata_signature(
+        "keygen",
+        key_id,
+        &sol_type,
+        stored_domain,
+        &metadata.external_signature,
+        expected_address,
+    )?;
 
     Ok(())
 }
@@ -458,11 +393,11 @@ fn verify_crs_metadata_signature(
         return Ok(());
     };
 
-    let sol_type = CrsgenVerification::new(
+    let sol_type = crs_sol_type(
         &metadata.crs_id,
-        metadata.max_num_bits as usize,
-        metadata.crs_digest.clone(),
-        metadata.extra_data.clone().unwrap_or_default(),
+        &metadata.crs_digest,
+        metadata.max_num_bits,
+        metadata.extra_data.as_deref().unwrap_or_default(),
     );
     verify_eip712_metadata_signature(
         "CRS",
@@ -608,8 +543,8 @@ mod tests {
     use crate::consts::DEFAULT_MPC_CONTEXT;
     use crate::cryptography::encryption::{Encryption, PkeScheme, PkeSchemeType};
     use crate::cryptography::signatures::gen_sig_keys;
-    use crate::engine::base::DSEP_PUBDATA_CRS;
     use crate::engine::base::KeyGenMetadataInner;
+    use crate::engine::base::{DSEP_PUBDATA_CRS, ERR_INVALID_CURRENT_PUBLIC_KEY_SHAPE};
     use crate::engine::material_integrity::{
         ERR_COMPRESSED_KEYSET_DIGEST_MISMATCH, ERR_CRS_DIGEST_MISMATCH,
         ERR_PUBLIC_KEY_DIGEST_MISMATCH, ERR_SERVER_KEY_DIGEST_MISMATCH,
@@ -1177,6 +1112,53 @@ mod tests {
     }
 
     #[test]
+    fn private_standard_keygen_metadata_signature_verifies_with_stored_domain() {
+        let mut rng = AesRng::seed_from_u64(176);
+        let (_verf_key, signing_key) = gen_sig_keys(&mut rng);
+        let domain = crate::dummy_domain();
+        let prep_id = RequestId::new_random(&mut rng);
+        let key_id = RequestId::new_random(&mut rng);
+        let metadata = crate::engine::base::compute_info_standard_keygen_from_digests(
+            &signing_key,
+            &[],
+            &prep_id,
+            &key_id,
+            vec![0x11; 32],
+            vec![0x22; 32],
+            &domain,
+            vec![0x03],
+        )
+        .expect("standard keygen metadata construction must succeed");
+
+        let KeyGenMetadata::Current(inner) = &metadata else {
+            panic!("metadata construction must produce current metadata");
+        };
+        verify_keygen_metadata_signature(
+            &key_id,
+            inner,
+            PublicSigKey::from_sk(&signing_key).address(),
+        )
+        .expect("the stored domain must verify the standard keygen signature");
+
+        // The server-key digest is the field that separates the standard signed message from
+        // the compressed one, so changing it must invalidate the signature.
+        let mut tampered_inner = inner.clone();
+        tampered_inner
+            .key_digest_map
+            .insert(PubDataType::ServerKey, vec![0x44; 32]);
+        let err = verify_keygen_metadata_signature(
+            &key_id,
+            &tampered_inner,
+            PublicSigKey::from_sk(&signing_key).address(),
+        )
+        .expect_err("a changed server-key digest must invalidate the signature");
+        assert!(
+            err.to_string().contains("Invalid EIP-712 signature"),
+            "expected a signature verification error, got: {err}"
+        );
+    }
+
+    #[test]
     fn private_compressed_keygen_metadata_signature_verifies_with_stored_domain() {
         let mut rng = AesRng::seed_from_u64(174);
         let (_verf_key, signing_key) = gen_sig_keys(&mut rng);
@@ -1256,14 +1238,111 @@ mod tests {
 
     #[tokio::test]
     async fn verify_storage_material_accepts_consistent_storage() {
-        let mut storage = RamStorage::new();
-        let mut rng = AesRng::seed_from_u64(160);
-        let material = setup_standard_keys(&mut storage, 161).await;
         let (_pk, sk) = gen_sig_keys(&mut AesRng::seed_from_u64(161));
-        store_signing_key_material(&mut storage, &sk, None).await;
-        let domain = crate::dummy_domain();
-        let metadata = crate::engine::base::compute_info_standard_keygen_from_digests(
+        let (storage, entries, crs_entries) = setup_consistent_material(160, &sk, &sk).await;
+
+        verify_storage_material(
+            &storage,
+            &entries,
+            &crs_entries,
+            &recovery_material_for(&sk),
             &sk,
+        )
+        .await
+        .expect("consistent public storage must verify");
+    }
+
+    #[tokio::test]
+    async fn verify_storage_material_rejects_metadata_signed_by_another_key() {
+        let mut rng = AesRng::seed_from_u64(162);
+        let (_pk, sk) = gen_sig_keys(&mut rng);
+        let (other_pk, other_sk) = gen_sig_keys(&mut rng);
+        // Everything public storage holds is this node's own and internally consistent; only
+        // the private metadata was signed by another node's key. Material replicated from a
+        // peer and then filed as ours would look exactly like this.
+        let (storage, entries, _crs_entries) = setup_consistent_material(163, &other_sk, &sk).await;
+
+        let err = verify_storage_material(
+            &storage,
+            &entries,
+            &HashMap::new(),
+            &recovery_material_for(&sk),
+            &sk,
+        )
+        .await
+        .expect_err("metadata signed by another key must be rejected");
+        let msg = err.to_string();
+        assert!(
+            msg.contains("Invalid EIP-712 signature")
+                && msg.contains(&other_pk.address().to_string())
+                && msg.contains(&PublicSigKey::from_sk(&sk).address().to_string()),
+            "error should name both the recovered and the expected signer, got: {msg}"
+        );
+    }
+
+    #[tokio::test]
+    async fn verify_storage_material_accepts_current_metadata_without_stored_domain() {
+        let mut rng = AesRng::seed_from_u64(164);
+        let mut storage = RamStorage::new();
+        let (_pk, sk) = gen_sig_keys(&mut rng);
+        store_signing_key_material(&mut storage, &sk, None).await;
+
+        // Metadata written before the EIP-712 domain was persisted: current format, but with
+        // no domain and therefore no signature that can be rebuilt. Every already-deployed
+        // node holds only entries of this shape, so startup must keep accepting them.
+        let material = setup_standard_keys(&mut storage, 165).await;
+        let metadata = material.current_metadata();
+        assert!(
+            matches!(&metadata, KeyGenMetadata::Current(inner) if inner.eip712_domain.is_none()),
+            "this test is only meaningful for current metadata with no stored domain"
+        );
+        let entries = vec![(material.key_id, metadata)];
+
+        let crs_id = RequestId::new_random(&mut rng);
+        let crs_digest = setup_crs(&mut storage, &crs_id).await;
+        let crs_metadata = current_crs_metadata(crs_id, crs_digest);
+        assert!(
+            matches!(&crs_metadata, CrsGenMetadata::Current(inner) if inner.eip712_domain.is_none()),
+            "this test is only meaningful for current CRS metadata with no stored domain"
+        );
+        let crs_entries = HashMap::from_iter([(crs_id, crs_metadata)]);
+
+        verify_storage_material(
+            &storage,
+            &entries,
+            &crs_entries,
+            &recovery_material_for(&sk),
+            &sk,
+        )
+        .await
+        .expect("current metadata without a stored domain must still verify");
+    }
+
+    // === Helpers ===
+
+    /// Public storage that is consistent by construction — matching key and CRS digests plus a
+    /// published verification key and address — together with the private metadata describing
+    /// it.
+    ///
+    /// `metadata_sk` signs the metadata and `node_sk` is the key the node boots with. Passing
+    /// two different keys yields storage whose only defect is the metadata signature.
+    async fn setup_consistent_material(
+        seed: u64,
+        metadata_sk: &PrivateSigKey,
+        node_sk: &PrivateSigKey,
+    ) -> (
+        RamStorage,
+        Vec<(RequestId, KeyGenMetadata)>,
+        HashMap<RequestId, CrsGenMetadata>,
+    ) {
+        let mut rng = AesRng::seed_from_u64(seed);
+        let mut storage = RamStorage::new();
+        let material = setup_standard_keys(&mut storage, seed + 1).await;
+        store_signing_key_material(&mut storage, node_sk, None).await;
+        let domain = crate::dummy_domain();
+
+        let key_metadata = crate::engine::base::compute_info_standard_keygen_from_digests(
+            metadata_sk,
             &[],
             &material.preproc_id,
             &material.key_id,
@@ -1285,7 +1364,7 @@ mod tests {
         let crs_id = RequestId::new_random(&mut rng);
         let crs_digest = setup_crs(&mut storage, &crs_id).await;
         let crs_metadata = crate::engine::base::compute_info_crs_from_digest(
-            &sk,
+            metadata_sk,
             &[],
             &crs_id,
             crs_digest,
@@ -1295,17 +1374,22 @@ mod tests {
         )
         .expect("signed CRS metadata construction must succeed");
 
-        let entries = vec![(material.key_id, metadata)];
-        let crs_entries = HashMap::from_iter([(crs_id, crs_metadata)]);
-        let recovery_material = test_recovery_material(&sk);
-        let context_id = recovery_material.custodian_context().context_id;
-        let recovery_material = HashMap::from([(context_id, recovery_material)]);
-        verify_storage_material(&storage, &entries, &crs_entries, &recovery_material, &sk)
-            .await
-            .expect("consistent public storage must verify");
+        (
+            storage,
+            vec![(material.key_id, key_metadata)],
+            HashMap::from_iter([(crs_id, crs_metadata)]),
+        )
     }
 
-    // === Helpers ===
+    /// Recovery validation material signed by `signing_key`, keyed by its own context ID, so
+    /// end-to-end tests can pass the recovery check and isolate what they are actually testing.
+    fn recovery_material_for(
+        signing_key: &PrivateSigKey,
+    ) -> HashMap<RequestId, RecoveryValidationMaterial> {
+        let material = test_recovery_material(signing_key);
+        let context_id = material.custodian_context().context_id;
+        HashMap::from([(context_id, material)])
+    }
 
     fn test_recovery_material(signing_key: &PrivateSigKey) -> RecoveryValidationMaterial {
         let mut rng = AesRng::seed_from_u64(173);

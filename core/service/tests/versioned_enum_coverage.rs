@@ -79,7 +79,7 @@ const ALLOW_UNCOVERED: &[&str] = &[
     // Covered via CrsGenMetadataTest.
     "CrsGenMetadataInner",
     // Field of KeyGenMetadataInner.eip712_domain.
-    // Covered via KeyGenMetadataTest and current-format metadata roundtrip tests.
+    // TODO(github.com/zama-ai/kms-internal/issues/3200)
     "StoredEip712Domain",
     // Field of Share.
     // Covered via ShareTest.

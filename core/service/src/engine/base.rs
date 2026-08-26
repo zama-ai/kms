@@ -386,6 +386,98 @@ pub(crate) fn crs_payload_bytes(
     })
 }
 
+pub(crate) const ERR_INVALID_CURRENT_PUBLIC_KEY_SHAPE: &str =
+    "Invalid current public key metadata shape";
+
+#[derive(Clone, Copy)]
+pub(crate) enum CurrentPublicMaterialLayout {
+    Standard,
+    Compressed,
+}
+
+/// Classify the supported current keygen metadata layouts.
+pub(crate) fn classify_current_public_material(
+    key_digest_map: &BTreeMap<PubDataType, Vec<u8>>,
+) -> anyhow::Result<CurrentPublicMaterialLayout> {
+    let has_public_key = key_digest_map.contains_key(&PubDataType::PublicKey);
+    let has_server_key = key_digest_map.contains_key(&PubDataType::ServerKey);
+    let has_compressed_keyset = key_digest_map.contains_key(&PubDataType::CompressedXofKeySet);
+
+    match (
+        has_public_key,
+        has_server_key,
+        has_compressed_keyset,
+        key_digest_map.len(),
+    ) {
+        (true, true, false, 2) => Ok(CurrentPublicMaterialLayout::Standard),
+        (true, false, true, 2) => Ok(CurrentPublicMaterialLayout::Compressed),
+        _ => anyhow::bail!(
+            "{ERR_INVALID_CURRENT_PUBLIC_KEY_SHAPE}: expected either \
+             {{PublicKey, ServerKey}} or {{PublicKey, CompressedXofKeySet}}, got {:?}",
+            key_digest_map.keys().collect::<Vec<_>>()
+        ),
+    }
+}
+
+/// Build the EIP-712 struct signed for a keygen result.
+///
+/// Shared between signing and after-the-fact verification so there is exactly one definition of
+/// the message represented by keygen metadata.
+///
+/// `layout` decides which of the two messages is built. Signing sites pass the layout they are
+/// generating for, so the choice stays static there; verification has only the stored metadata
+/// to go on and derives it with [`classify_current_public_material`].
+pub(crate) fn keygen_sol_type(
+    layout: CurrentPublicMaterialLayout,
+    prep_id: &RequestId,
+    key_id: &RequestId,
+    key_digest_map: &BTreeMap<PubDataType, Vec<u8>>,
+    extra_data: &[u8],
+) -> anyhow::Result<KeygenVerification> {
+    let digest = |data_type: PubDataType| {
+        key_digest_map
+            .get(&data_type)
+            .cloned()
+            .ok_or_else(|| anyhow::anyhow!("missing {data_type} digest"))
+    };
+    let public_key_digest = digest(PubDataType::PublicKey)?;
+
+    Ok(match layout {
+        CurrentPublicMaterialLayout::Standard => KeygenVerification::new_uncompressed(
+            prep_id,
+            key_id,
+            digest(PubDataType::ServerKey)?,
+            public_key_digest,
+            extra_data.to_vec(),
+        ),
+        CurrentPublicMaterialLayout::Compressed => KeygenVerification::new_compressed(
+            prep_id,
+            key_id,
+            digest(PubDataType::CompressedXofKeySet)?,
+            public_key_digest,
+            extra_data.to_vec(),
+        ),
+    })
+}
+
+/// Build the EIP-712 struct signed for a CRS result.
+///
+/// Shared between signing and after-the-fact verification so there is exactly one definition of
+/// the message represented by CRS metadata.
+pub(crate) fn crs_sol_type(
+    crs_id: &RequestId,
+    crs_digest: &[u8],
+    max_num_bits: u32,
+    extra_data: &[u8],
+) -> CrsgenVerification {
+    CrsgenVerification::new(
+        crs_id,
+        max_num_bits as usize,
+        crs_digest.to_vec(),
+        extra_data.to_vec(),
+    )
+}
+
 /// Convert stored per-scheme signatures into their gRPC representation.
 pub(crate) fn stored_scheme_signatures_to_proto(
     signatures: &[StoredTypedSignature],
@@ -516,8 +608,7 @@ pub(crate) fn compute_info_crs_from_digest(
     domain: &alloy_sol_types::Eip712Domain,
     extra_data: Vec<u8>,
 ) -> anyhow::Result<CrsGenMetadata> {
-    let sol_type =
-        CrsgenVerification::new(crs_id, max_num_bits, crs_digest.clone(), extra_data.clone());
+    let sol_type = crs_sol_type(crs_id, &crs_digest, max_num_bits as u32, &extra_data);
     let payload_bytes = crs_payload_bytes(crs_id, max_num_bits as u32, &crs_digest, &extra_data)?;
     let (external_signature, signatures) = sign_result(
         sk,
@@ -617,17 +708,17 @@ pub(crate) fn compute_info_standard_keygen_from_digests(
     domain: &alloy_sol_types::Eip712Domain,
     extra_data: Vec<u8>,
 ) -> anyhow::Result<KeyGenMetadata> {
-    let sol_type = KeygenVerification::new_uncompressed(
-        prep_id,
-        key_id,
-        server_key_digest.clone(),
-        public_key_digest.clone(),
-        extra_data.clone(),
-    );
     let key_digests = BTreeMap::from([
         (PubDataType::ServerKey, server_key_digest),
         (PubDataType::PublicKey, public_key_digest),
     ]);
+    let sol_type = keygen_sol_type(
+        CurrentPublicMaterialLayout::Standard,
+        prep_id,
+        key_id,
+        &key_digests,
+        &extra_data,
+    )?;
     let payload_bytes = keygen_payload_bytes(prep_id, key_id, &key_digests, &extra_data)?;
     let (external_signature, signatures) = sign_result(
         sk,
@@ -734,17 +825,17 @@ pub(crate) fn compute_info_compressed_keygen_from_digests(
         hex::encode(&public_key_digest),
     );
 
-    let sol_type = KeygenVerification::new_compressed(
-        prep_id,
-        key_id,
-        compressed_keyset_digest.clone(),
-        public_key_digest.clone(),
-        extra_data.clone(),
-    );
     let key_digests = BTreeMap::from([
         (PubDataType::CompressedXofKeySet, compressed_keyset_digest),
         (PubDataType::PublicKey, public_key_digest),
     ]);
+    let sol_type = keygen_sol_type(
+        CurrentPublicMaterialLayout::Compressed,
+        prep_id,
+        key_id,
+        &key_digests,
+        &extra_data,
+    )?;
     let payload_bytes = keygen_payload_bytes(prep_id, key_id, &key_digests, &extra_data)?;
     let (external_signature, signatures) = sign_result(
         sk,
