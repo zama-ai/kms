@@ -134,7 +134,7 @@ pub trait Broadcast: ProtocolDescription + Send + Sync + Clone {
             })? {
                 session.add_corrupt_with_reason(
                     role,
-                    "broadcast produced Bot: parties did not agree on this sender's value. Missed deadline?",
+                    "broadcast produced Bot: parties did not agree on this sender's value (possible timeout or equivocation).",
                 );
             }
         }
