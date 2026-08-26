@@ -1182,8 +1182,8 @@ impl<
                     OP_DESTROY_EPOCH,
                     Some((*epoch_id).into()),
                     anyhow::anyhow!(
-                        "Cannot destroy epoch ID {epoch_id}: {e}. Retry once epoch creation has \
-                         settled."
+"Cannot destroy epoch ID {epoch_id}: {e}. Retry once the conflicting lifecycle \
+ operation has settled."
                     ),
                     tonic::Code::FailedPrecondition,
                 )
@@ -2421,6 +2421,7 @@ pub(crate) mod tests {
             .await
             .unwrap();
 
+      
         let err = epoch_manager
             .destroy_epoch_with_lease(&epoch_id)
             .await

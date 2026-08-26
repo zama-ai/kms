@@ -275,7 +275,7 @@ impl_endpoint! {
                 .await
                 .map_err(|e| {
                     Status::failed_precondition(format!(
-                        "Cannot destroy MPC context {context_id}: {e}. Retry once epoch creation has settled."
+                      "Cannot destroy MPC context {context_id}: {e}. Retry once the conflicting lifecycle operation has settled."
                     ))
                 })?;
 
