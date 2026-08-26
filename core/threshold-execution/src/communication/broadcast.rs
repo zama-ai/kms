@@ -132,7 +132,10 @@ pub trait Broadcast: ProtocolDescription + Send + Sync + Clone {
             if let BroadcastValue::Bot = broadcast_res.get(&role).ok_or_else(|| {
                 anyhow_error_and_log(format!("Cannot find {role} in broadcast's result."))
             })? {
-                session.add_corrupt(role);
+                session.add_corrupt_with_reason(
+                    role,
+                    "broadcast produced Bot: parties did not agree on this sender's value. Missed deadline?",
+                );
             }
         }
         Ok(broadcast_res)

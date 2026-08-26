@@ -256,17 +256,30 @@ where
                         session.my_role().one_based(),
                         cur_role.one_based()
                     );
-                    session.add_corrupt(cur_role);
+                    session.add_corrupt_with_reason(
+                        cur_role,
+                        &format!(
+                            "broadcast d-values had wrong length: expected {amount}, got {}",
+                            cur_values.len()
+                        ),
+                    );
                     continue;
                 }
                 party_vectors.push((cur_role, cur_values));
             }
-            _ => {
+            other => {
                 tracing::warn!(
                     "Party {:?} did not broadcast the correct type and is thus malicious",
                     cur_role.one_based()
                 );
-                session.add_corrupt(cur_role);
+                let got = match other {
+                    BroadcastValue::Bot => "Bot (no agreement reached in the broadcast)",
+                    _ => "an unexpected BroadcastValue variant",
+                };
+                session.add_corrupt_with_reason(
+                    cur_role,
+                    &format!("broadcast d-values had wrong type: expected RingVector, got {got}"),
+                );
                 continue;
             }
         };
@@ -275,10 +288,30 @@ where
     // Check if there are enough honest parties to correct the errors
     if session.num_parties() - session.corrupt_roles().len() < 2 * session.threshold() as usize + 1
     {
+        // Why each party was deemed corrupt: actually misbehaved or merely missed a round deadline.
+        let mut reasons = session
+            .corrupt_reasons()
+            .iter()
+            .map(|(role, why)| format!("{role}: {}", why.join("; ")))
+            .collect::<Vec<_>>();
+        reasons.sort();
+        let no_reason = session
+            .corrupt_roles()
+            .iter()
+            .filter(|r| !session.corrupt_reasons().contains_key(r))
+            .count();
         return Err(anyhow::anyhow!(
-            "BUG: Not enough honest parties to correct the errors: {} honest parties, threshold={}",
+            "Not enough honest parties to correct the errors: {} honest parties, threshold={}. \
+             Corrupt set ({} parties): [{}]{}",
             session.num_parties() - session.corrupt_roles().len(),
-            session.threshold()
+            session.threshold(),
+            session.corrupt_roles().len(),
+            reasons.join(", "),
+            if no_reason > 0 {
+                format!(" (+{no_reason} with no recorded reason)")
+            } else {
+                String::new()
+            },
         ));
     }
 
