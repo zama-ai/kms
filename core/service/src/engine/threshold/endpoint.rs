@@ -247,7 +247,8 @@ impl_endpoint! {
                 .context_id
                 .as_ref()
                 .ok_or_else(|| Status::invalid_argument("context_id is required"))?;
-            parse_grpc_request_id::<ContextId>(proto_context_id, RequestIdParsingErr::Context)?;
+            let context_id =
+                parse_grpc_request_id::<ContextId>(proto_context_id, RequestIdParsingErr::Context)?;
 
             // Bound the epoch list so a malformed or hostile request cannot trigger unbounded
             // deletion work.
@@ -264,6 +265,19 @@ impl_endpoint! {
                 .iter()
                 .map(|id| parse_grpc_request_id::<EpochId>(id, RequestIdParsingErr::Epoch))
                 .collect::<Result<Vec<EpochId>, _>>()?;
+
+            // Hold the exclusive context lease across both phases. This makes the epoch snapshot
+            // stable with respect to `NewMpcEpoch`, including creations that are still running PRSS
+            // and therefore have not registered their epoch in the session maker yet.
+            let _destruction_lease = self
+                .session_maker
+                .try_start_context_destruction(&context_id)
+                .await
+                .map_err(|e| {
+                    Status::failed_precondition(format!(
+"Cannot destroy MPC context {context_id}: {e}. Retry once the conflicting lifecycle operation has settled."
+                    ))
+                })?;
 
             // Destroy the associated epochs first: their secret key shares and PRSS randomness are security-sensitive
             // material. Erase them before touching anything else so that if there is a problem, the worst transient
