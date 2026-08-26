@@ -1,0 +1,20 @@
+# Temporary compatibility entry point for manual validation.
+# Remove this file after kms-nightly.yml reaches the default branch.
+name: kms-nightly-shim
+
+on:
+  workflow_dispatch:
+
+permissions: {}
+
+jobs:
+  kms-nightly:
+    permissions:
+      checks: write
+      packages: read
+      issues: write
+      pull-requests: write
+      actions: read
+      contents: read
+    uses: ./.github/workflows/kms-nightly.yml
+    secrets: inherit
