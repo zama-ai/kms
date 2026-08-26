@@ -173,19 +173,21 @@ fn four_party_dummy_role_assignment() -> RoleAssignment<Role> {
 }
 
 impl SessionMaker {
+    /// Builds a session maker that serves `all_epochs`, the epoch data read from private
+    /// storage, and every MPC context stored in `crypto_storage`.
     pub(crate) async fn new_initialized<
         PubS: Storage + Sync + Send + 'static,
         PrivS: StorageExt + Sync + Send + 'static,
     >(
         my_id: Option<Role>,
         crypto_storage: &ThresholdCryptoMaterialStorage<PubS, PrivS>,
+        all_epochs: HashMap<EpochId, EpochData>,
         networking_manager: Arc<RwLock<GrpcNetworkingManager>>,
         verifier: Option<Arc<AttestedVerifier>>,
         rng: AesRng,
     ) -> anyhow::Result<Self> {
         let session_maker: SessionMaker =
             Self::new_uninitialized(networking_manager, verifier, rng);
-        let all_epochs = crypto_storage.read_all_epoch_data().await?;
         if all_epochs.is_empty() {
             tracing::warn!(
                 "No epoch data found in storage. You may need to call the init end-point later before you can use the KMS server"

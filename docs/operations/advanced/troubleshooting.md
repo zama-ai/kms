@@ -174,6 +174,40 @@ from, and escalate to the Zama team if you do not. Only the node's own prefix (`
 
 ---
 
+### Private Storage Verification Failures at Startup
+
+Every node also checks that its private storage is internally consistent before it serves.
+Private storage belongs to one node, so material that no flow of this node writes points at a
+misconfiguration (the wrong bucket or prefix, or a store reused between a centralized and a
+threshold deployment) or at a deletion that stopped half-way.
+
+**Symptoms:** the pod exits during startup with one of these log lines:
+
+| Log line | Meaning |
+|---|---|
+| `Foreign FHE key material in private storage` | A threshold node found `FhePrivateKey` entries, or a centralized node found `FheKeyInfo` entries. Only a node of the other mode writes that type. |
+| `EpochData on centralized node` | A centralized node found `EpochData` entries, which only threshold nodes use. |
+| `Dangling epoch in private storage` | Keysets or CRS metadata sit under an epoch that has no `EpochData`, so the node can neither serve nor delete them. Usually an epoch destruction that failed half-way. |
+| `Epoch without context in private storage` | An `EpochData` entry names a context that has no `Context` entry. |
+| `Invalid signing key layout in private storage` | `SigningKey` holds an entry that is not the single flat entry at `SIGNING_KEY_ID`, or holds an entry under an epoch. |
+| `Invalid signing seed layout in private storage` | `SigningSeed` holds an entry that is not the single flat entry at `SIGNING_KEY_ID`, or holds an entry under an epoch. |
+
+**Common Fixes:**
+- Confirm the node is pointed at its own private storage.
+- For a dangling epoch, restore its `EpochData` from backup, or remove the named entries once you
+  have confirmed that the epoch was meant to be destroyed.
+- Seek the Zama team before you delete anything you cannot account for.
+
+**Warnings that do not stop the node:** `Legacy non-epoched private material`,
+`Unexpected data type in private storage`, `Could not list private material`,
+`Epoch folder under a legacy PRSS type` (no release writes a PRSS setup under an epoch, so the
+folder is most likely a leftover of an older layout), `Default epoch is not initialized` (keys are
+staged but `init` has not run yet), and `Default context is missing` (startup rewrites it from the
+peer list). Flat `PrssSetup` and `PrssSetupCombined` entries are not reported: the 0.15 migration
+leaves them in place, and their removal is deferred to the 0.16 migration.
+
+---
+
 ### Key Management Issues
 
 **Symptoms:**
