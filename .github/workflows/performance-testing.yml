@@ -213,9 +213,10 @@ jobs:
           NAMESPACE: 'kms-ci'
           KMS_CHART_VERSION: ${{ inputs.kms_chart_version || 'repository' }}
           TKMS_INFRA_CHART_VERSION: ${{ inputs.tkms_infra_chart_version || '0.3.2' }}
-          # Metrics are collected on the nightly only; workflow_dispatch is already
-          # at the 10-input limit, so there is no knob to opt a manual run in.
-          ENABLE_KMS_METRICS: ${{ github.event_name == 'schedule' }}
+          # No dispatch input: the workflow is already at GitHub's 10-input
+          # limit. Enable on both schedule and workflow_dispatch so a branch
+          # run can verify scrape/remote-write without waiting for the nightly.
+          ENABLE_KMS_METRICS: ${{ github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' }}
         run: |
           {
             echo "ENABLE_KMS_METRICS=${ENABLE_KMS_METRICS}"
