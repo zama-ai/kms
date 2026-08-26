@@ -2,6 +2,19 @@ name: rust-testing
 
 on:
   workflow_call:
+    secrets:
+      BLOCKCHAIN_ACTIONS_TOKEN:
+        required: true
+      SLACK_CHANNEL:
+        required: true
+      BOT_USERNAME:
+        required: true
+      SLACK_WEBHOOK:
+        required: true
+      CGR_USERNAME:
+        required: true
+      CGR_PASSWORD:
+        required: true
 
 concurrency:
   # Include the event so a push to main cannot cancel an in-progress scheduled run.
@@ -325,7 +338,12 @@ jobs:
       # Same EFS material path for every matrix entry, so reference the
       # generate-test-material output once here instead of per entry.
       efs-test-material-path: ${{ needs.generate-test-material.outputs.efs-test-material-path }}
-    secrets: inherit
+    secrets:
+      SLACK_CHANNEL: ${{ secrets.SLACK_CHANNEL }}
+      BOT_USERNAME: ${{ secrets.BOT_USERNAME }}
+      SLACK_WEBHOOK: ${{ secrets.SLACK_WEBHOOK }}
+      CGR_USERNAME: ${{ secrets.CGR_USERNAME }}
+      CGR_PASSWORD: ${{ secrets.CGR_PASSWORD }}
 
   # KMS service tests that are too slow for regular CI.
   test-kms-nightly:
@@ -354,12 +372,18 @@ jobs:
       rust-log-level: 'info'
       nextest-test-threads: '4'
       notify-slack: false
-    secrets: inherit
+    secrets:
+      SLACK_CHANNEL: ${{ secrets.SLACK_CHANNEL }}
+      BOT_USERNAME: ${{ secrets.BOT_USERNAME }}
+      SLACK_WEBHOOK: ${{ secrets.SLACK_WEBHOOK }}
+      CGR_USERNAME: ${{ secrets.CGR_USERNAME }}
+      CGR_PASSWORD: ${{ secrets.CGR_PASSWORD }}
 
   notify-kms-nightly:
     name: rust-testing/kms-nightly-notification
     if: always() && github.event_name == 'schedule'
     needs: [generate-test-material, test-kms-nightly]
+    environment: main
     runs-on: ubuntu-latest
     steps:
       - name: Post nightly tests result in a channel
@@ -388,4 +412,5 @@ jobs:
       pull-requests: write # Required to write to the GitHub Pull Requests API
       actions: read # Required to read the GitHub Actions API
       contents: read # Required to read the GitHub Contents API
-    secrets: inherit
+    secrets:
+      BLOCKCHAIN_ACTIONS_TOKEN: ${{ secrets.BLOCKCHAIN_ACTIONS_TOKEN }}

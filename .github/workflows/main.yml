@@ -120,7 +120,13 @@ jobs:
       pull-requests: write # Required to write to the GitHub Pull Requests API
       actions: read # Required to read the GitHub Actions API
       contents: read # Required to read the GitHub Contents API
-    secrets: inherit
+    secrets:
+      BLOCKCHAIN_ACTIONS_TOKEN: ${{ secrets.BLOCKCHAIN_ACTIONS_TOKEN }}
+      SLACK_CHANNEL: ${{ secrets.SLACK_CHANNEL }}
+      BOT_USERNAME: ${{ secrets.BOT_USERNAME }}
+      SLACK_WEBHOOK: ${{ secrets.SLACK_WEBHOOK }}
+      CGR_USERNAME: ${{ secrets.CGR_USERNAME }}
+      CGR_PASSWORD: ${{ secrets.CGR_PASSWORD }}
 
   ############################################################################
   # Docker build pipeline

@@ -3,6 +3,17 @@ name: kms-nightly
 on:
   workflow_dispatch:
   workflow_call:
+    secrets:
+      SLACK_CHANNEL:
+        required: true
+      BOT_USERNAME:
+        required: true
+      SLACK_WEBHOOK:
+        required: true
+      CGR_USERNAME:
+        required: true
+      CGR_PASSWORD:
+        required: true
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref || github.run_id }}
@@ -46,4 +57,9 @@ jobs:
       runner-volume: '400gb'
       rust-log-level: 'info'
       nextest-test-threads: '4'
-    secrets: inherit
+    secrets:
+      SLACK_CHANNEL: ${{ secrets.SLACK_CHANNEL }}
+      BOT_USERNAME: ${{ secrets.BOT_USERNAME }}
+      SLACK_WEBHOOK: ${{ secrets.SLACK_WEBHOOK }}
+      CGR_USERNAME: ${{ secrets.CGR_USERNAME }}
+      CGR_PASSWORD: ${{ secrets.CGR_PASSWORD }}

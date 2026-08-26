@@ -59,8 +59,6 @@ on:
         required: false
         default: true
     secrets:
-      GHCR_READ_TOKEN:
-        required: true
       SLACK_CHANNEL:
         required: true
       BOT_USERNAME:
