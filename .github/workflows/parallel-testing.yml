@@ -110,7 +110,7 @@ jobs:
           echo "efs-test-material-path=${EFS_ROOT}" >> "$GITHUB_OUTPUT"
 
   test-matrix:
-    name: parallel-testing/${{ matrix.job_name }}
+    name: ${{ github.event_name == 'workflow_dispatch' && 'parallel-testing/regular-matrix' || format('parallel-testing/{0}', matrix.job_name) }}
     if: github.event_name != 'workflow_dispatch'
     needs: [generate-test-material]
     permissions:
