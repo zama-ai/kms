@@ -23,6 +23,7 @@ use std::collections::HashMap;
 use std::str::FromStr;
 use std::sync::Arc;
 use test_utils::random_free_port::get_listeners_random_free_ports;
+use thread_handles::init_rayon_thread_pool;
 use threshold_execution::endpoints::decryption::DecryptionMode;
 use threshold_networking::grpc::GrpcServer;
 use tokio::task::{JoinHandle, JoinSet};
@@ -37,6 +38,15 @@ use tonic_health::server::HealthReporter;
 // We need a high limit because ciphertexts may be large after SnS.
 const GRPC_MAX_MESSAGE_SIZE: usize = 100 * 1024 * 1024;
 
+/// Size the global MPC rayon pool the same way the `kms-server` binary does: rayon = #CPUs = tokio threads
+async fn init_test_rayon_pool() {
+    let num_threads = crate::conf::InternalConfig::default().num_rayon_threads;
+    match init_rayon_thread_pool(num_threads).await {
+        Ok(n) => tracing::info!("Test MPC rayon pool has {n} threads"),
+        Err(e) => tracing::warn!("Could not initialize the test MPC rayon pool: {e}"),
+    }
+}
+
 pub async fn setup_threshold_no_client<
     PubS: Storage + Clone + Sync + Send + 'static,
     PrivS: StorageExt + Clone + Sync + Send + 'static,
@@ -49,6 +59,7 @@ pub async fn setup_threshold_no_client<
     rate_limiter_conf: Option<RateLimiterConfig>,
     decryption_mode: Option<DecryptionMode>,
 ) -> HashMap<u32, ServerHandle> {
+    init_test_rayon_pool().await;
     let mut handles = JoinSet::new();
     tracing::info!("Spawning servers...");
     let num_parties = priv_storage.len();
@@ -262,6 +273,7 @@ pub async fn setup_threshold_with_custom_peers<
     rate_limiter_conf: Option<RateLimiterConfig>,
     decryption_mode: Option<DecryptionMode>,
 ) -> HashMap<u32, ServerHandle> {
+    init_test_rayon_pool().await;
     let mut handles: Vec<JoinHandle<_>> = Vec::new();
     tracing::info!("Spawning servers with custom peer configs...");
     let num_servers = server_configs.len();
