@@ -118,11 +118,15 @@ The Slack report and JSON artifacts use these fields.
 | Metric | Meaning |
 | --- | --- |
 | `offered` | Requests the rate generator scheduled. |
-| `completed` | Requests that collected enough KMS responses. |
+| `completed` | Requests that collected enough KMS responses |
+| `completed_in_window` | Requests completed during the configured measurement window. |
+| `completed_during_drain` | Requests completed after the measurement window while draining in-flight work. |
+| `measurement_elapsed_seconds` | Duration of the measurement window. |
+| `drain_elapsed_seconds` | Time spent draining in-flight work after the measurement window. |
 | `failed` | Requests that were sent but didn't collect enough responses in time. |
 | `shed` | Requests dropped before sending because `max_in_flight` was already reached. |
 | `saturated` | `true` if anything was shed, or the post-run drain timed out with requests still in flight. |
-| `achieved_rate` | `completed / collection_elapsed_seconds`. |
+| `achieved_rate` | `completed_in_window / measurement_elapsed_seconds`. |
 
 **Payload throughput** (protobuf-encoded body only — excludes gRPC/TLS/header
 overhead):
@@ -130,14 +134,16 @@ overhead):
 | Metric | Meaning |
 | --- | --- |
 | `request_payload_bytes` | Total request bytes submitted, counted once per core target. |
-| `request_payload_mib_per_sec` | Request bytes per second, in MiB/s. |
+| `request_payload_mib_per_sec` | Request bytes per measurement-window second, in MiB/s. |
 | `request_payload_avg_bytes` | Average encoded size of one request. |
 | `response_payload_bytes` | Total response bytes accepted for verification/reconstruction (excludes late/abandoned responses). |
-| `response_payload_mib_per_sec` | Response bytes per second, in MiB/s. |
+| `response_payload_bytes_in_window` | Response bytes accepted during the measurement window. |
+| `response_payload_mib_per_sec` | Measurement-window response bytes per second, in MiB/s. |
 | `response_payload_avg_bytes` | Average encoded size of one accepted response. |
 
 The `request_payload_messages` / `response_payload_messages` counters record how
-many payloads went into the corresponding `_bytes` totals.
+many payloads went into the corresponding `_bytes` totals;
+`response_payload_messages_in_window` is the same, counting inside the measurement-window.
 
 **RPC diagnostics:**
 
@@ -252,10 +258,9 @@ Network diagnostics are printed directly in the GitHub Actions log. The output
 is intentionally terse: node placement, KMS core pod placement, and after-run
 `eth0` rx/tx deltas for each running KMS core pod plus a total.
 
-Each decrypt scenario also captures its own `eth0` rx/tx counters *inside* the
-Argo test pod, reported as `net_rx`/`net_tx` in Slack — the outer before/after
-diagnostics only include KMS core pods that are still running when the snapshot
-is taken.
+Each decrypt scenario also captures its own `eth0` rx/tx counters inside the
+Argo test pod. The core client samples them around the measurement window, and
+the resulting rates are reported as `net_rx`/`net_tx` in Slack.
 
 Pod-level `ethtool` can't see AWS ENA allowance counters; those need a
 privileged node-level probe.

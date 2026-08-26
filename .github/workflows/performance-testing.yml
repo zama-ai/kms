@@ -213,8 +213,12 @@ jobs:
           NAMESPACE: 'kms-ci'
           KMS_CHART_VERSION: ${{ inputs.kms_chart_version || 'repository' }}
           TKMS_INFRA_CHART_VERSION: ${{ inputs.tkms_infra_chart_version || '0.3.2' }}
+          # Metrics are collected on the nightly only; workflow_dispatch is already
+          # at the 10-input limit, so there is no knob to opt a manual run in.
+          ENABLE_KMS_METRICS: ${{ github.event_name == 'schedule' }}
         run: |
           {
+            echo "ENABLE_KMS_METRICS=${ENABLE_KMS_METRICS}"
             echo "DEPLOYMENT_TYPE=${DEPLOYMENT_TYPE}"
             echo "TLS=${TLS}"
             echo "CLIENT_LOGS=${CLIENT_LOGS}"
@@ -412,6 +416,11 @@ jobs:
           sudo chmod +x /usr/local/bin/jq
           echo "JQ version: $(jq --version)"
 
+          METRICS_FLAG=()
+          if [[ "${ENABLE_KMS_METRICS}" == "true" ]]; then
+            METRICS_FLAG=(--enable-metrics)
+          fi
+
           chmod +x ci/scripts/deploy.sh
           ./ci/scripts/deploy.sh \
             --target aws-perf \
@@ -421,7 +430,8 @@ jobs:
             --client-tag "${KMS_CORE_CLIENT_IMAGE_TAG}" \
             --num-parties 13 \
             --kms-chart-version "${KMS_CHART_VERSION}" \
-            --tkms-infra-version "${TKMS_INFRA_CHART_VERSION}"
+            --tkms-infra-version "${TKMS_INFRA_CHART_VERSION}" \
+            "${METRICS_FLAG[@]}"
 
       - name: Capture network diagnostics before perf
         if: always()

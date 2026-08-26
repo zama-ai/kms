@@ -43,8 +43,14 @@ pub enum BroadcastValue<Z: Eq + Zero + Sized> {
     Round2VSS(Vec<VerificationValues<Z>>),
     Round3VSS(BTreeMap<(Role, Role, Role), Vec<Z>>),
     Round4VSS(BTreeMap<(Role, Role), ValueOrPoly<Z>>),
-    LocalSingleShare(MapsSharesChallenges<Z>),
-    LocalDoubleShare(MapsDoubleSharesChallenges<Z>),
+    /// Batched check-value maps for a `LocalSingleShare` verification: one
+    /// [`MapsSharesChallenges`] per challenge index `g in 0..m`, broadcast in a
+    /// single parallel round (see `local_single_share::verify_sharing`).
+    LocalSingleShare(Vec<MapsSharesChallenges<Z>>),
+    /// Batched check-value maps for a `LocalDoubleShare` verification: one
+    /// [`MapsDoubleSharesChallenges`] per challenge index `g in 0..m`, broadcast
+    /// in a single parallel round (see `local_double_share::verify_sharing`).
+    LocalDoubleShare(Vec<MapsDoubleSharesChallenges<Z>>),
     PartialProof(ceremony::PartialProof),
     MapRingVector(BTreeMap<Role, Vec<Z>>),
 }
