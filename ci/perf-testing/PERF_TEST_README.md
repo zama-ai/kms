@@ -148,6 +148,52 @@ The `request_payload_messages` / `response_payload_messages` counters record how
 many payloads went into the corresponding `_bytes` totals;
 `response_payload_messages_in_window` is the same, counting inside the measurement-window.
 
+**RPC diagnostics:**
+
+One aggregate `rpc_diagnostics` object is emitted at the end of each public- or
+user-decrypt rate-test rung. It covers every RPC made during that rung;
+diagnostics are not emitted per request or pacing tick. `submit_status` and
+`result_status` count gRPC calls by status code; successful calls use `ok`, and
+zero-valued statuses are omitted. The `outstanding_*` fields report work left
+after the measurement window and its bounded logical-request drain; the drain
+lasts up to 30 seconds but ends early when all logical requests finish. The
+`*_peak_in_flight` fields show peak concurrency across the full rate test.
+`result_retries` counts repeat
+result calls after a not-ready response. `post_quorum_tasks` counts per-core
+result tasks left after enough responses were collected, while
+`post_quorum_tasks_drained` counts how many finished before metrics were emitted.
+`outstanding_post_quorum_tasks` is the remainder still running after the drain.
+For the synchronous endpoint, the combined call is recorded as a result RPC.
+For result polling, `unavailable` normally means the KMS knows the request but
+has not produced its result yet; it does not by itself indicate a network outage.
+
+The statuses normally relevant to these tests are:
+
+- `ok` — the RPC succeeded.
+- `unavailable` — commonly an expected result poll whose result is still pending.
+- `resource_exhausted` — KMS admission capacity or rate limiting was exhausted.
+- `not_found` — the requested result is absent, for example after cache eviction;
+  unexpected during a healthy run.
+- Any other status is uncommon and should be investigated with the client and
+  KMS logs.
+
+For example, a healthy asynchronous run might report:
+
+```json
+{
+  "submit_status": { "ok": 1872000 },
+  "result_status": { "ok": 1872000, "unavailable": 936000 },
+  "outstanding_submit_rpcs": 0,
+  "submit_peak_in_flight": 742,
+  "outstanding_result_rpcs": 0,
+  "result_peak_in_flight": 1534,
+  "result_retries": 936000,
+  "post_quorum_tasks": 576000,
+  "post_quorum_tasks_drained": 576000,
+  "outstanding_post_quorum_tasks": 0
+}
+```
+
 ## Reusing Docker image tags
 
 Building images is the slow part of a run. If you just want to re-run the tests
