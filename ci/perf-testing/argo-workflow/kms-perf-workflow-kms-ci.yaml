@@ -487,59 +487,6 @@ spec:
           test_command="${command_name} from-args -d {{workflow.parameters.data-type}} -k ${key_id} -e ffffffffffffffff --batch-size {{workflow.parameters.batch-size}} --rate {{inputs.parameters.rate}} --duration {{inputs.parameters.duration}} --max-in-flight {{workflow.parameters.max-in-flight}}"
           mkdir -p /tmp/artifacts
 
-          capture_net_snapshot() {
-            local output="$1"
-            printf 'iface\trx_bytes\ttx_bytes\trx_packets\ttx_packets\trx_errors\ttx_errors\trx_dropped\ttx_dropped\tmtu\n' > "$output"
-            for iface_path in /sys/class/net/*; do
-              iface="${iface_path##*/}"
-              printf '%s\t' "$iface" >> "$output"
-              for stat in rx_bytes tx_bytes rx_packets tx_packets rx_errors tx_errors rx_dropped tx_dropped; do
-                tr -d '\n' < "${iface_path}/statistics/${stat}" >> "$output" 2>/dev/null || printf '0' >> "$output"
-                printf '\t' >> "$output"
-              done
-              tr -d '\n' < "${iface_path}/mtu" >> "$output" 2>/dev/null || printf '0' >> "$output"
-              printf '\n' >> "$output"
-            done
-          }
-
-          network_metrics_suffix() {
-            local sample_secs="$1"
-            awk -F '\t' -v sample_secs="$sample_secs" '
-              NR == FNR && FNR > 1 {
-                before[$1, "rx_bytes"] = $2 + 0
-                before[$1, "tx_bytes"] = $3 + 0
-                before[$1, "rx_packets"] = $4 + 0
-                before[$1, "tx_packets"] = $5 + 0
-                before[$1, "rx_errors"] = $6 + 0
-                before[$1, "tx_errors"] = $7 + 0
-                before[$1, "rx_dropped"] = $8 + 0
-                before[$1, "tx_dropped"] = $9 + 0
-                next
-              }
-              FNR > 1 && $1 == "eth0" {
-                rx_bytes = ($2 + 0) - before[$1, "rx_bytes"]
-                tx_bytes = ($3 + 0) - before[$1, "tx_bytes"]
-                rx_packets = ($4 + 0) - before[$1, "rx_packets"]
-                tx_packets = ($5 + 0) - before[$1, "tx_packets"]
-                rx_errors = ($6 + 0) - before[$1, "rx_errors"]
-                tx_errors = ($7 + 0) - before[$1, "tx_errors"]
-                rx_dropped = ($8 + 0) - before[$1, "rx_dropped"]
-                tx_dropped = ($9 + 0) - before[$1, "tx_dropped"]
-                mtu = $10 + 0
-                found = 1
-              }
-              END {
-                if (sample_secs <= 0) {
-                  sample_secs = 1
-                }
-                if (!found) {
-                  rx_bytes = tx_bytes = rx_packets = tx_packets = rx_errors = tx_errors = rx_dropped = tx_dropped = mtu = 0
-                }
-                printf ",\"network\":{\"iface\":\"eth0\",\"sample_secs\":%d,\"mtu\":%d,\"rx_bytes\":%.0f,\"tx_bytes\":%.0f,\"rx_packets\":%.0f,\"tx_packets\":%.0f,\"rx_errors\":%.0f,\"tx_errors\":%.0f,\"rx_dropped\":%.0f,\"tx_dropped\":%.0f,\"rx_mib_per_sec\":%.6f,\"tx_mib_per_sec\":%.6f,\"rx_gbps\":%.6f,\"tx_gbps\":%.6f}", sample_secs, mtu, rx_bytes, tx_bytes, rx_packets, tx_packets, rx_errors, tx_errors, rx_dropped, tx_dropped, rx_bytes / 1024 / 1024 / sample_secs, tx_bytes / 1024 / 1024 / sample_secs, rx_bytes * 8 / sample_secs / 1000000000, tx_bytes * 8 / sample_secs / 1000000000
-              }
-            ' /tmp/net-before.tsv /tmp/net-after.tsv
-          }
-
           parameter_set="maxfail={{inputs.parameters.maxfail}},maxshed={{inputs.parameters.maxshed}},pct={{inputs.parameters.pct}}"
           allowed_failure="{{inputs.parameters.allowfail}}"
 
@@ -582,7 +529,6 @@ spec:
             client_logs_arg="--logs"
           fi
           rate_timeout=$(({{inputs.parameters.duration}} + 300))
-          capture_net_snapshot /tmp/net-before.tsv
           start_time=$(date +%s)
           set +e
           if command -v timeout >/dev/null 2>&1; then
@@ -595,7 +541,6 @@ spec:
           set -e
           end_time=$(date +%s)
           duration=$((end_time - start_time))
-          capture_net_snapshot /tmp/net-after.tsv
 
           # Keep the last valid metrics line; normal logs may contain many JSON records.
           decrypt_metrics=""
@@ -628,7 +573,6 @@ spec:
             decrypt_metrics="{\"target_rate\":{{inputs.parameters.rate}},\"failed\":1,\"shed\":0,\"saturated\":true}"
             echo "ERROR: no valid $metrics_marker JSON with failed/shed/saturated found"
           fi
-          network_metrics="$(network_metrics_suffix "$duration")"
           maxfail="{{inputs.parameters.maxfail}}"
           maxshed="{{inputs.parameters.maxshed}}"
           pct="{{inputs.parameters.pct}}"
@@ -664,7 +608,7 @@ spec:
               }')
           # Escape the brace; ${var%}} does not trim the final JSON object brace in bash.
           limit_metrics=",\"parameter_set\":\"${parameter_set}\",\"within_parameter_set\":${within_parameter_set},\"allowed_failure\":${allowed_failure}"
-          decrypt_metrics="${decrypt_metrics%\}}${network_metrics}${limit_metrics}}"
+          decrypt_metrics="${decrypt_metrics%\}}${limit_metrics}}"
 
           # Task success means "measurement exists"; capacity-ok gates the next rung.
           if [ "$test_exit" -eq 0 ] && [ "$metrics_valid" = "true" ]; then
