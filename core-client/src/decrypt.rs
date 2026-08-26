@@ -533,8 +533,7 @@ async fn rate_endpoint_client_pairs(
             Vec::with_capacity(USER_DECRYPT_RATE_SUBMIT_CONNECTIONS_PER_CORE);
         submit_connections.push(submit.clone());
         for connection_index in 1..USER_DECRYPT_RATE_SUBMIT_CONNECTIONS_PER_CORE {
-            let connection = CoreEndpointClient::connect(url.clone())
-                .await
+            let connection = crate::retry!(CoreEndpointClient::connect(url.clone()).await, 5, 100)
                 .with_context(|| {
                     format!(
                         "failed to create user decrypt submit connection {} for party {} at {}",
