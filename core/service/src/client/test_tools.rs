@@ -38,7 +38,8 @@ use tonic_health::server::HealthReporter;
 // We need a high limit because ciphertexts may be large after SnS.
 const GRPC_MAX_MESSAGE_SIZE: usize = 100 * 1024 * 1024;
 
-/// Size the global MPC rayon pool the same way the `kms-server` binary does: rayon = #CPUs = tokio threads
+/// Size the global MPC rayon pool the same way the `kms-server` does, i.e. from
+/// [`InternalConfig`]: `tokio = ceil(#CPUs / 8)` and `rayon = #CPUs - tokio`.
 async fn init_test_rayon_pool() {
     let num_threads = crate::conf::InternalConfig::default().num_rayon_threads;
     match init_rayon_thread_pool(num_threads).await {

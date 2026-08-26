@@ -272,9 +272,12 @@ where
                     "Party {:?} did not broadcast the correct type and is thus malicious",
                     cur_role.one_based()
                 );
+                // `Bot` is the common case and means "the broadcast reached no agreement on this party's value".
                 let got = match other {
-                    BroadcastValue::Bot => "Bot (no agreement reached in the broadcast)",
-                    _ => "an unexpected BroadcastValue variant",
+                    BroadcastValue::Bot => {
+                        "Bot (no agreement reached in the broadcast)".to_string()
+                    }
+                    other => other.type_name(),
                 };
                 session.add_corrupt_with_reason(
                     cur_role,
@@ -288,30 +291,25 @@ where
     // Check if there are enough honest parties to correct the errors
     if session.num_parties() - session.corrupt_roles().len() < 2 * session.threshold() as usize + 1
     {
-        // Why each party was deemed corrupt: actually misbehaved or merely missed a round deadline.
-        let mut reasons = session
-            .corrupt_reasons()
-            .iter()
-            .map(|(role, why)| format!("{role}: {}", why.join("; ")))
-            .collect::<Vec<_>>();
-        reasons.sort();
-        let no_reason = session
+        // Why each party was deemed corrupt: actually misbehaved or merely missed a round deadline. Enumerate
+        // `corrupt_roles()` rather than `corrupt_reasons()` so that roles marked via `add_corrupt` are named too.
+        let reasons = session.corrupt_reasons();
+        let mut corrupt = session
             .corrupt_roles()
             .iter()
-            .filter(|r| !session.corrupt_reasons().contains_key(r))
-            .count();
+            .map(|role| match reasons.get(role) {
+                Some(why) if !why.is_empty() => format!("{role}: {}", why.join("; ")),
+                _ => format!("{role}: <no reason recorded>"),
+            })
+            .collect::<Vec<_>>();
+        corrupt.sort();
         return Err(anyhow::anyhow!(
             "Not enough honest parties to correct the errors: {} honest parties, threshold={}. \
-             Corrupt set ({} parties): [{}]{}",
+             Corrupt set ({} parties): [{}]",
             session.num_parties() - session.corrupt_roles().len(),
             session.threshold(),
             session.corrupt_roles().len(),
-            reasons.join(", "),
-            if no_reason > 0 {
-                format!(" (+{no_reason} with no recorded reason)")
-            } else {
-                String::new()
-            },
+            corrupt.join(", "),
         ));
     }
 
