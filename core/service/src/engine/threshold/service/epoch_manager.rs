@@ -43,7 +43,7 @@ use std::{collections::HashMap, future::Future, marker::PhantomData, sync::Arc};
 use tfhe::{Versionize, zk::CompactPkeCrs};
 use tfhe_versionable::VersionsDispatch;
 use threshold_execution::{
-    endpoints::reshare_sk::{ResharePreprocRequired, ReshareSecretKeys},
+    endpoints::reshare_sk::{DedicatedKeysPresent, ResharePreprocRequired, ReshareSecretKeys},
     online::preprocessing::BasePreprocessing,
     runtime::sessions::{
         base_session::{BaseSession, TwoSetsBaseSession},
@@ -491,8 +491,8 @@ impl<
         SmallSession<ResiduePolyF4Z64>,
     )> {
         let session_z128 =
-            // Note that we need to use the new epoch ID when deriving the session ID, otherwise we would not be able to create multiple 
-            // new epochs from the same previous epoch, in case an epoch creation failed, as the session ID would be the same and the 
+            // Note that we need to use the new epoch ID when deriving the session ID, otherwise we would not be able to create multiple
+            // new epochs from the same previous epoch, in case an epoch creation failed, as the session ID would be the same and the
             // session maker would return an error.
             async { new_epoch_id.derive_session_id_with_counter(LIFT_Z128_SESSION_COUNTER) }
                 .and_then(|id| {
@@ -561,22 +561,19 @@ impl<
                             .await?
                     }
                 };
-                // S1 has the previous epoch's private shares, so we read
-                // `oprf_key_present` from local state. The S2-only path in
-                // `reshare_as_set_2` has no private share and derives the same
-                // flag from the verified public `ServerKey` instead. Both
-                // derivations must yield the same value for the reshare
-                // sub-protocols to converge; this holds by construction
-                // because public and private OPRF material are produced
-                // together (legacy keysets predating the dedicated OPRF share
-                // have neither).
-                let oprf_key_present = private_keys.oprf_secret_key_share.is_some();
+                // S1 has the previous epoch's private shares, so we read which
+                // dedicated key shares exist from local state. The S2-only path
+                // in `reshare_as_set_2` has no private share and derives the
+                // same flags from the verified public material instead. For
+                // uncompressed keys this is the `ServerKey`; for compressed
+                // keys it is the `CompressedXofKeySet`.
+                let dedicated_keys = DedicatedKeysPresent::from_private_keyset(&private_keys);
 
                 Reshare::reshare_sk_two_sets_as_s1(
                     &mut two_sets_session,
                     &mut private_keys,
                     key_info.key_parameters,
-                    oprf_key_present,
+                    dedicated_keys,
                 )
                 .await?;
                 keys_metadata.push(key_metadata);
@@ -697,7 +694,7 @@ impl<
                         }
                     };
 
-                    let (integer_server_key, _, _, decompression_key, sns_key, _, _, _, _) =
+                    let (integer_server_key, _, _, decompression_key, sns_key, _, _, _, _, _) =
                         fhe_pubkeys.server_key.clone().into_raw_parts();
 
                     let threshold_fhe_keys = ThresholdFheKeys::new(
@@ -912,16 +909,17 @@ impl<
                 .zip_eq(verified_fhe_public_materials.iter())
             {
                 // S2 has no private share for the previous epoch, so unlike
-                // the S1 / both-sets paths (which read
-                // `private_keys.oprf_secret_key_share.is_some()`) we derive
-                // `oprf_key_present` from the verified public `ServerKey`.
-                // The protocol assumes both derivations yield the same value
-                // — see the comment in `reshare_as_set_1`.
-                let oprf_key_present = verified_material.has_oprf_key();
+                // the S1 / both-sets paths (which read the flags off the local
+                // `PrivateKeySet`) we derive them from the verified
+                // public material.
+                let dedicated_keys = DedicatedKeysPresent {
+                    oprf: verified_material.has_oprf_key(),
+                    transciphering: verified_material.has_transciphering_key(),
+                };
                 let num_needed_preproc = ResharePreprocRequired::new(
                     num_parties_set_1,
                     key_info.key_parameters,
-                    oprf_key_present,
+                    dedicated_keys,
                 );
 
                 let (mut correlated_randomness_z64, mut correlated_randomness_z128) =
@@ -937,7 +935,7 @@ impl<
                     &mut correlated_randomness_z128,
                     &mut correlated_randomness_z64,
                     key_info.key_parameters,
-                    oprf_key_present,
+                    dedicated_keys,
                 )
                 .await?;
 
@@ -1049,16 +1047,13 @@ impl<
                             .await?
                     }
                 };
-                // Same as `reshare_as_set_1`: derived from local private
-                // state. The pure-S2 path in `reshare_as_set_2` derives the
-                // same flag from the verified public `ServerKey`; both must
-                // agree.
-                let oprf_key_present = private_keys.oprf_secret_key_share.is_some();
+
+                let dedicated_keys = DedicatedKeysPresent::from_private_keyset(&private_keys);
 
                 let num_needed_preproc = ResharePreprocRequired::new(
                     num_parties_set_1,
                     key_info.key_parameters,
-                    oprf_key_present,
+                    dedicated_keys,
                 );
                 let (mut correlated_randomness_z64, mut correlated_randomness_z128) =
                     Self::compute_s2_preproc(
@@ -1074,7 +1069,7 @@ impl<
                     &mut correlated_randomness_z64,
                     &mut private_keys,
                     key_info.key_parameters,
-                    oprf_key_present,
+                    dedicated_keys,
                 )
                 .await?;
                 new_private_keysets.push(new_private_keyset);

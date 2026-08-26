@@ -202,11 +202,16 @@ sysinfo = "0.38.4"  # System information gathering - MEDIUM RISK: Reputable indi
 tempfile = "=3.20.0"  # Temporary file handling - MEDIUM RISK: Individual maintainers (Stebalien, KodrAus), 345M+ downloads, test-only dependency
 test-context = "=0.4.1"  # Test context utilities - MEDIUM RISK: Individual maintainers (markhildreth, JasperV), test-only dependency
 # NOTE: when changing the tfhe dependency, consider also updating the pinned version of dylint lints from tfhe (see dylint.toml)
-tfhe = "=1.7.0"  # Fully Homomorphic Encryption library - LOW RISK: Zama
-tfhe-csprng = "=0.9.2"  # Cryptographically secure PRNG for TFHE - LOW RISK: Zama
-tfhe-safe-serialize = "=0.1.1" # TFHE safe serialization - LOW RISK: Zama
-tfhe-versionable = "=0.8.0"  # TFHE versioning support - LOW RISK: Zama
-tfhe-zk-pok = "=0.8.3"  # Zero-knowledge proofs for TFHE - LOW RISK: Zama
+# TEMPORARY pre-release pin on an unmerged tfhe-rs branch. It is the only source of the
+# transciphering key material (`tfhe::transciphering`) that the DKG needs; no released version
+# carries it. All five crates must come from the same source, otherwise `tfhe-csprng` types that
+# appear in our own signatures (`XofSeed`, `SoftwareRandomGenerator`) exist twice and do not unify.
+# The exact commit is pinned by `Cargo.lock`. Revert to the crates.io versions once the branch lands.
+tfhe = { git = "https://github.com/zama-ai/tfhe-rs.git", branch = "ns/chore/add_transciphering_keys" }  # Fully Homomorphic Encryption library - LOW RISK: Zama
+tfhe-csprng = { git = "https://github.com/zama-ai/tfhe-rs.git", branch = "ns/chore/add_transciphering_keys" }  # Cryptographically secure PRNG for TFHE - LOW RISK: Zama
+tfhe-safe-serialize = { git = "https://github.com/zama-ai/tfhe-rs.git", branch = "ns/chore/add_transciphering_keys" } # TFHE safe serialization - LOW RISK: Zama
+tfhe-versionable = { git = "https://github.com/zama-ai/tfhe-rs.git", branch = "ns/chore/add_transciphering_keys" }  # TFHE versioning support - LOW RISK: Zama
+tfhe-zk-pok = { git = "https://github.com/zama-ai/tfhe-rs.git", branch = "ns/chore/add_transciphering_keys" }  # Zero-knowledge proofs for TFHE - LOW RISK: Zama
 thiserror = "=2.0.18"  # Error derive macro - MEDIUM RISK: Reputable individual maintainer (dtolnay), 545M downloads
 tokio = { version = "=1.52.3", features = ["full"] }  # Async runtime - LOW RISK: tokio team, industry standard
 tokio-rustls = { version = "=0.26.4", default-features = false, features = ["aws_lc_rs"] }  # Async TLS - LOW RISK: rustls team, memory-safe TLS implementation

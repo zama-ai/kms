@@ -171,6 +171,10 @@ The primary service is `CoreServiceEndpoint`. Its RPCs group into:
   field are upgraded with the OPRF share absent; `UseExisting` keygen generates
   and persists a fresh OPRF share for such legacy material before regenerating
   public keys.
+  When the parameter set carries transciphering parameters, keygen additionally
+  persists a *second*, independently sampled LWE secret-key share and includes the
+  matching transciphering server key. Similar to the OPRF key, a new
+  transciphering key is created when keygen uses the `UseExisting` option.
 - **Decryption** — `PublicDecrypt` (returns plaintext) and `UserDecrypt`
   (user-initiated, EIP-712 authenticated). `PublicDecryptSync` / `UserDecryptSync`
   start a decryption and wait for its result in the same call, so the caller does
@@ -188,8 +192,10 @@ The primary service is `CoreServiceEndpoint`. Its RPCs group into:
   both sets must hold the key material, so failing to read it rejects the
   request, whereas a pure set 2 party (a node joining the new context) never held
   the key and logs a warning instead. When resharing legacy key material that
-  has no dedicated OPRF secret-key share, the OPRF sub-protocol is skipped and
-  the reshared private keyset keeps that field absent. `DestroyMpcContext` carries
+  has no dedicated OPRF/transciphering secret-key share, the OPRF/transciphering
+  sub-protocol is skipped and the reshared private keyset keeps that field
+  absent. Which of these optional shares to reshare is decided from the input
+  keyset, and every party must agree. `DestroyMpcContext` carries
   the context's epoch IDs and erases their secret shares (cascading to the
   existing per-epoch deletion) before forgetting the context, so retiring a
   party set leaves no usable key shares behind; the kms-connector is the source
