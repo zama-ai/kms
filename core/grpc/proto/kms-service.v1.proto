@@ -97,6 +97,7 @@ service CoreServiceEndpoint {
   //
   // # Conditions
   // ## Pre-condition:
+  // * No `NewMpcEpoch`, `DestroyMpcEpoch`, or `DestroyMpcContext` call may be executed concurrently!
   // * `request_id` in `request` must be present, valid, fresh and unique [`RequestId`]. I.e. 32 byte lower-case hex encoding without `0x` prefix.
   // * `params` in `request` must be castable to a [`FheParameter`], currently this means 0 or 1.
   // * `preproc_id` in `request` must be present, and a valid [`RequestId`] which has already been used to start a preprocessing request with method `key_gen_preproc` that has completed successfully
@@ -150,6 +151,7 @@ service CoreServiceEndpoint {
   //
   // # Conditions
   // ## Pre-condition:
+  // * No `NewMpcEpoch`, `DestroyMpcEpoch`, or `DestroyMpcContext` call may be executed concurrently!
   // * `request` must be a valid [`RequestId`]. I.e. 32 byte lower-case hex encoding without `0x` prefix.
   //   Furthermore, the request ID must be the same as the one used to start a preprocessing generation with method `KeyGenPreproc`.
   //   In the threshold KMS the preprocessing or key generation identified by the `preproc_id` must be ongoing.
@@ -254,6 +256,7 @@ service CoreServiceEndpoint {
   //
   // # Conditions
   // ## Pre-condition:
+  // * No `NewMpcEpoch`, `DestroyMpcEpoch`, or `DestroyMpcContext` call may be executed concurrently!
   // * `request_id` in `request` must be present, valid, fresh and unique [`RequestId`]. I.e. 32 byte lower-case hex encoding without `0x` prefix.
   // * `params` in `request` must be castable to a [`FheParameter`], currently this means 0 or 1.
   // * `max_number_bits` is the amount of bits that can be proven for ciphertext vector using the generated CRS. If this is not provided, then it defaults to the maximum supported by the fhevm.
@@ -290,6 +293,7 @@ service CoreServiceEndpoint {
   //
   // # Conditions
   // ## Pre-condition:
+  // * No `NewMpcEpoch`, `DestroyMpcEpoch`, or `DestroyMpcContext` call may be executed concurrently!
   // * `request` must be a valid [`RequestId`]. I.e. 32 byte lower-case hex encoding without `0x` prefix.
   //   Furthermore, the request ID must be the same as the one used to start a CRS generation with method `CrsGen`.
   //   The CRS generation identified by the `crs_id` in `request` must be ongoing.
@@ -354,7 +358,8 @@ service CoreServiceEndpoint {
   // # Parameters
   // * `NewMpcEpochRequest` - Struct containing all the data of the request
   //
-  // #Conditions
+  // # Conditions
+  // *  No `KeyGen`, `CrsGen`, `AbortKeyGen`, or `AbortCrsGen` call may be executed concurrently!
   // * `context_id` in `request` must be present, valid, and unique [`RequestId`] of an MPC context that has been constructed with `NewMpcContext`.
   // * `epoch_id` in `request` must be present, valid, and unique. It represents the ID of the new epoch that is created.
   // * `previous_epoch` is optional, if set we perform a resharing from the previous epoch to the new one.
@@ -377,7 +382,10 @@ service CoreServiceEndpoint {
   // and if the shares of the secret key.
   //
   // # Parameters
+  // * `DestroyMpcEpochRequest` - Struct containing all the data of the request
+  //
   // # Conditions
+  // *  No `KeyGen`, `CrsGen`, `AbortKeyGen`, or `AbortCrsGen` call may be executed concurrently!
   rpc DestroyMpcEpoch(kms.v1.DestroyMpcEpochRequest) returns (kms.v1.Empty);
 
   // Constructs a new custodian context.
