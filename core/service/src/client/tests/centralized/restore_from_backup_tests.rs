@@ -6,7 +6,7 @@
 //! ## Tests Included
 //! - DKG backup and restore flow
 //! - Auto-backup after server restart
-//! - CRS backup and restore flow (nightly)
+//! - CRS backup and restore flow
 
 use crate::client::tests::common::{PollConfig, retrying_poll};
 use crate::consts::{DEFAULT_EPOCH_ID, DEFAULT_MPC_CONTEXT, default_extra_data};
@@ -269,11 +269,11 @@ async fn test_insecure_central_autobackup_after_deletion() -> Result<()> {
 /// Test centralized CRS backup and restore flow.
 ///
 /// Generates a CRS, deletes it from private storage, restores from backup,
-/// and verifies restoration. This is a slow test that runs in nightly CI.
+/// and verifies restoration.
 ///
 #[cfg(feature = "slow_tests")]
 #[tokio::test]
-async fn nightly_test_insecure_central_crs_backup() -> Result<()> {
+async fn test_insecure_central_crs_backup() -> Result<()> {
     use kms_grpc::kms::v1::CrsGenRequest;
 
     use crate::consts::DEFAULT_EPOCH_ID;
