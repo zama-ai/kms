@@ -287,7 +287,7 @@ fn check_preproc_id_matches(
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub enum EpochOutput {
     PRSSInitOnly,
     Reshare((Vec<KeyGenMetadata>, Vec<CrsGenMetadata>)),
@@ -3214,8 +3214,11 @@ pub(crate) mod tests {
             vec![],
         )
         .await;
-        // `EpochOutput` has no `Debug`, hence `is_err` instead of `unwrap_err`.
-        assert!(res.is_err(), "the reshare must fail on the occupied slot");
+        assert!(
+            res.unwrap_err()
+                .to_string()
+                .contains("the reshare must fail on the occupied slot")
+        );
 
         {
             let public_storage = crypto_storage.inner.get_public_storage();
