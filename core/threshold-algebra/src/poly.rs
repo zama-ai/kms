@@ -3,7 +3,6 @@ use super::{
     structure_traits::{Field, Invert, One, Ring, RingWithExceptionalSequence, Sample, Zero},
 };
 use error_utils::anyhow_error_and_log;
-use itertools::Itertools;
 use rand::{CryptoRng, Rng};
 use serde::{Deserialize, Serialize};
 use std::ops::{Add, AddAssign, Div, Mul, Sub, SubAssign};
@@ -16,56 +15,27 @@ pub struct Poly<F> {
     coefs: Vec<F>,
 }
 
-/// Polynomial struct where all coefficients are bit-strings.
-/// We use this as a helper to optimize the reconstruction algorithms
-/// where we need to lift binary polynomials into the full ring domain.
-#[derive(Serialize, Deserialize, Hash, Clone, Default, Debug)]
-pub struct BitwisePoly {
-    coefs: Vec<u8>,
+/// A borrowed view of a polynomial whose coefficients are interpreted as bit strings.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct BitWisePoly<'a, F> {
+    poly: &'a Poly<F>,
 }
 
-impl From<Poly<super::galois_fields::gf8::GF8>> for BitwisePoly {
-    fn from(poly: Poly<super::galois_fields::gf8::GF8>) -> BitwisePoly {
-        let coefs: Vec<u8> = poly.coefs.iter().map(|coef_2| coef_2.0).collect();
-        BitwisePoly { coefs }
+impl<'a, F> From<&'a Poly<F>> for BitWisePoly<'a, F> {
+    fn from(poly: &'a Poly<F>) -> Self {
+        Self { poly }
     }
 }
 
-impl From<Poly<super::galois_fields::gf16::GF16>> for BitwisePoly {
-    fn from(poly: Poly<super::galois_fields::gf16::GF16>) -> BitwisePoly {
-        let coefs: Vec<u8> = poly.coefs.iter().map(|coef_2| coef_2.0).collect();
-        BitwisePoly { coefs }
+impl<F> BitWisePoly<'_, F> {
+    /// Return the borrowed field coefficients.
+    pub(crate) fn coefs(&self) -> &[F] {
+        self.poly.coefs()
     }
 }
 
-impl From<Poly<super::galois_fields::gf32::GF32>> for BitwisePoly {
-    fn from(poly: Poly<super::galois_fields::gf32::GF32>) -> BitwisePoly {
-        let coefs: Vec<u8> = poly.coefs.iter().map(|coef_2| coef_2.0).collect();
-        BitwisePoly { coefs }
-    }
-}
-
-impl From<Poly<super::galois_fields::gf64::GF64>> for BitwisePoly {
-    fn from(poly: Poly<super::galois_fields::gf64::GF64>) -> BitwisePoly {
-        let coefs: Vec<u8> = poly.coefs.iter().map(|coef_2| coef_2.0).collect();
-        BitwisePoly { coefs }
-    }
-}
-
-impl From<Poly<super::galois_fields::gf128::GF128>> for BitwisePoly {
-    fn from(poly: Poly<super::galois_fields::gf128::GF128>) -> BitwisePoly {
-        let coefs: Vec<u8> = poly.coefs.iter().map(|coef_2| coef_2.0).collect();
-        BitwisePoly { coefs }
-    }
-}
-
-impl From<Poly<super::galois_fields::gf256::GF256>> for BitwisePoly {
-    fn from(poly: Poly<super::galois_fields::gf256::GF256>) -> BitwisePoly {
-        let coefs: Vec<u8> = poly.coefs.iter().map(|coef_2| coef_2.0).collect();
-        BitwisePoly { coefs }
-    }
-}
-
+/// Evaluate a bitwise polynomial over `GF(2^EXTENSION_DEGREE)` at a Galois-ring point.
+/// The evaluation lifts each coefficient to `GR(2^k, EXTENSION_DEGREE)` on demand.
 pub trait BitWiseEval<Z, const EXTENSION_DEGREE: usize>
 where
     Z: Zero + for<'a> AddAssign<&'a Z> + Copy + Clone,
@@ -75,6 +45,46 @@ where
         &self,
         powers: &[ResiduePoly<Z, EXTENSION_DEGREE>],
     ) -> ResiduePoly<Z, EXTENSION_DEGREE>;
+}
+
+/// Generic implementation of [BitWiseEval::lazy_eval].
+pub(crate) fn bitwise_eval_coefficients<
+    Z,
+    F,
+    const EXTENSION_DEGREE: usize,
+    const PRODUCT_LENGTH: usize,
+>(
+    coefs: &[F],
+    powers: &[ResiduePoly<Z, EXTENSION_DEGREE>],
+) -> [Z; PRODUCT_LENGTH]
+where
+    Z: Zero + for<'a> AddAssign<&'a Z> + Copy + Clone,
+    F: Copy + Into<u8>,
+{
+    // Surplus powers are harmless (the missing high coefficients are zero and contribute nothing),
+    // so only the other direction is an error — and it can only be a bug.
+    assert!(
+        coefs.len() <= powers.len(),
+        "Not enough powers supplied for bitwise evaluation. Only {:?} are supplied but {:?} are needed.",
+        powers.len(),
+        coefs.len()
+    );
+
+    let mut result = [Z::ZERO; PRODUCT_LENGTH];
+    for (coef, power) in coefs.iter().zip(powers) {
+        // Bit b of this byte is the lifted ring coefficient of X^b; bits >= D are always clear.
+        let coef: u8 = (*coef).into();
+        for bit_idx in 0..EXTENSION_DEGREE {
+            if ((coef >> bit_idx) & 1) == 1 {
+                // Multiplying by a 1 bit is a shift by X^bit_idx, i.e. add `power` into `result`
+                // offset by bit_idx. A 0 bit contributes nothing, so it is simply skipped.
+                for (power_idx, power_coef) in power.coefs.iter().enumerate() {
+                    result[power_idx + bit_idx] += power_coef;
+                }
+            }
+        }
+    }
+    result
 }
 
 impl<Z> Poly<Z> {
@@ -126,41 +136,6 @@ impl<Z> Poly<Z> {
 
     pub fn into_container(self) -> Vec<Z> {
         self.coefs
-    }
-}
-
-impl BitwisePoly {
-    pub fn coef(&self, idx: usize) -> u8 {
-        if idx < self.coefs.len() {
-            self.coefs[idx]
-        } else {
-            0
-        }
-    }
-
-    pub fn coefs(&self) -> &[u8] {
-        &self.coefs
-    }
-
-    pub fn set_coef(&mut self, idx: usize, value: u8) {
-        if idx < self.coefs.len() {
-            self.coefs[idx] = value;
-        } else {
-            // extend the coefficients vector with zeros if needed
-            self.coefs.resize(idx + 1, 0);
-            self.coefs[idx] = value;
-        }
-    }
-
-    /// Overwrite the coefficients from `poly`, reusing this buffer's existing allocation.
-    ///
-    /// Each field coefficient is reduced to its byte representation — the same value the
-    /// `From<Poly<GFx>>` impls produce (those map `coef.0`; `Into<u8>` is the identity on the
-    /// stored byte) — but `clear` + `extend` keeps the `Vec`'s capacity, so the hot reconstruction
-    /// loop reuses one buffer across all bits instead of allocating a fresh `BitwisePoly` per bit.
-    pub fn overwrite_from_poly<F: Into<u8> + Copy>(&mut self, poly: &Poly<F>) {
-        self.coefs.clear();
-        self.coefs.extend(poly.coefs().iter().map(|c| (*c).into()));
     }
 }
 
@@ -592,6 +567,58 @@ fn quo_rem<F: Field>(a: Poly<F>, b: &Poly<F>) -> (Poly<F>, Poly<F>) {
     (q, r)
 }
 
+/// Replace `remainder` with `remainder mod divisor` and write the corresponding quotient into
+/// `quotient`, reusing both allocations.
+fn quo_rem_assign<F: Field>(remainder: &mut Poly<F>, divisor: &Poly<F>, quotient: &mut Poly<F>) {
+    let remainder_len = remainder.deg() + 1;
+    let divisor_len = divisor.deg() + 1;
+
+    if divisor_len == 1 && divisor.coef(0) == F::ZERO {
+        panic!("division by 0 in quo_rem");
+    }
+
+    // Clear every previously live quotient coefficient before changing its logical length. This
+    // also ensures stale coefficients cannot affect a shorter quotient in a later EEA round.
+    quotient.coefs.fill(F::ZERO);
+    if remainder_len == 1 && remainder.coef(0) == F::ZERO {
+        quotient.coefs.clear();
+        return;
+    }
+
+    let quotient_len = remainder_len.saturating_sub(divisor_len) + 1;
+    quotient.coefs.resize(quotient_len, F::ZERO);
+
+    if remainder_len >= divisor_len {
+        let inverse_leading = divisor.highest_coefficient().invert();
+        for i in (0..=(remainder_len - divisor_len)).rev() {
+            quotient.coefs[i] = remainder.coefs[i + divisor_len - 1] * inverse_leading;
+            for j in 0..divisor_len {
+                remainder.coefs[i + j] -= quotient.coefs[i] * divisor.coefs[j];
+            }
+        }
+    }
+    quotient.compress();
+    remainder.compress();
+}
+
+/// Compute `target -= lhs * rhs` coefficient-wise without allocating the product polynomial.
+fn sub_mul_assign<F: Field>(target: &mut Poly<F>, lhs: &Poly<F>, rhs: &Poly<F>) {
+    if lhs.is_zero() || rhs.is_zero() {
+        return;
+    }
+
+    let product_len = lhs.coefs.len() + rhs.coefs.len() - 1;
+    if target.coefs.len() < product_len {
+        target.coefs.resize(product_len, F::ZERO);
+    }
+    for (i, lhs_coef) in lhs.coefs.iter().enumerate() {
+        for (j, rhs_coef) in rhs.coefs.iter().enumerate() {
+            target.coefs[i + j] -= *lhs_coef * *rhs_coef;
+        }
+    }
+    target.compress();
+}
+
 /// Build the vanishing polynomial `V(Z) = ∏_j (Z - points[j])` (monic, degree `points.len()`).
 /// We do so iteratively, starting from the low to the high coefficients, so that the leading coefficient is always 1 (monic).
 /// Then for each subsequent point, we multiply the running product by `(Z - alpha)`.
@@ -641,7 +668,7 @@ pub(crate) fn deflate_root<F: Ring>(v: &Poly<F>, root: F) -> Poly<F> {
     qc[deg - 1] = vc[deg]; // leading coefficient drops straight down since the result, q(Z), is one degree lower than the input v(Z)
     for k in (0..deg - 1).rev() {
         // iterate from highest coefficients to lowest in the incremental result since qc[k+1] has already been fully computed
-        qc[k] = vc[k + 1] + root * qc[k + 1]; // I.e. q_{k−1} = v_k + root * q_k  
+        qc[k] = vc[k + 1] + root * qc[k + 1]; // I.e. q_{k−1} = v_k + root * q_k
     }
     assert!(vc[0] + root * qc[0] == F::ZERO, "remainder must vanish");
     // Invariant: coefs is canonical because the leading coef == vc[deg] (nonzero)
@@ -692,10 +719,24 @@ mod lagrange_basis_tests {
 
 /// interpolate a polynomial through coordinates where points holds the x-coordinates and values holds the y-coordinates
 pub fn lagrange_interpolation<F: Field>(points: &[F], values: &[F]) -> anyhow::Result<Poly<F>> {
+    lagrange_interpolation_from_values(points, values.iter().copied())
+}
+
+/// Like [`lagrange_interpolation`] but with the y-coordinates streamed instead of materialized.
+///
+/// Uses the memoized Lagrange basis for `points` when one is available, otherwise builds it.
+pub(crate) fn lagrange_interpolation_from_values<F, I>(
+    points: &[F],
+    values: I,
+) -> anyhow::Result<Poly<F>>
+where
+    F: Field,
+    I: IntoIterator<Item = F>,
+{
     if let Some(cached) = F::cached_lagrange_polys(points) {
-        lagrange_interpolation_with_polys(cached, values)
+        lagrange_interpolation_with_polys_from_values(cached, values)
     } else {
-        lagrange_interpolation_with_polys(lagrange_polynomials(points), values)
+        lagrange_interpolation_with_polys_from_values(lagrange_polynomials(points), values)
     }
 }
 
@@ -704,13 +745,25 @@ pub fn lagrange_interpolation_with_polys<F: Field>(
     lagrange_polys: impl AsRef<[Poly<F>]>,
     values: &[F],
 ) -> anyhow::Result<Poly<F>> {
+    lagrange_interpolation_with_polys_from_values(lagrange_polys, values.iter().copied())
+}
+
+/// Interpolate a polynomial using pre-computed Lagrange basis polynomials and a stream of
+/// y-coordinates.
+///
+/// Unlike [`lagrange_interpolation_with_polys`], this does not require the y-coordinates to be
+/// materialized in a separate buffer. The iterator must yield exactly one value per basis
+/// polynomial.
+pub(crate) fn lagrange_interpolation_with_polys_from_values<F, I>(
+    lagrange_polys: impl AsRef<[Poly<F>]>,
+    values: I,
+) -> anyhow::Result<Poly<F>>
+where
+    F: Field,
+    I: IntoIterator<Item = F>,
+{
     let lagrange_polys = lagrange_polys.as_ref();
-    if lagrange_polys.len() != values.len() {
-        return Err(anyhow_error_and_log(
-            "Lagrange interpolation failure: mismatch between number of points and values"
-                .to_string(),
-        ));
-    }
+    let mut values = values.into_iter();
 
     // res = Σ_i lagrange_polys[i] * values[i], accumulated coefficient-wise into a single buffer. This function runs
     // once per bit, ring_size times per opened value, so this is a hot spot for reconstruction.
@@ -718,17 +771,29 @@ pub fn lagrange_interpolation_with_polys<F: Field>(
     // Each Lagrange basis poly over these `n` points has degree exactly n-1 (n coefficients), so the interpolant has at
     // most `n` coefficients.
     let mut coefs = vec![F::ZERO; lagrange_polys.len()];
-    for (li, vi) in lagrange_polys.iter().zip_eq(values.iter()) {
+    for li in lagrange_polys {
+        let Some(vi) = values.next() else {
+            return Err(anyhow_error_and_log(
+                "Lagrange interpolation failure: mismatch between number of points and values"
+                    .to_string(),
+            ));
+        };
         for (acc, lc) in coefs.iter_mut().zip(li.coefs.iter()) {
-            *acc += *lc * *vi;
+            *acc += *lc * vi;
         }
+    }
+    if values.next().is_some() {
+        return Err(anyhow_error_and_log(
+            "Lagrange interpolation failure: mismatch between number of points and values"
+                .to_string(),
+        ));
     }
     Ok(Poly::from_coefs(coefs))
 }
 
 /// Runs the extended Euclidean algorithm for `a` and `b` until `deg(r1) < stop`.
 ///
-/// Precondition: `deg(b) >= stop`. Callers should ensure `deg(b) < stop`. This code runs the loop at least once and `a`
+/// Precondition: `deg(b) >= stop`. Callers ensure this code runs the loop at least once, and `a`
 /// is always read — hence `a` is cloned up front.
 ///
 /// Returns the low-degree remainder `r1` and its Bézout cofactor `t1` with
@@ -738,18 +803,26 @@ fn partial_xgcd<F: Field>(a: &Poly<F>, b: Poly<F>, stop: usize) -> (Poly<F>, Pol
     let mut r1 = b;
 
     // Invariant: each remainder is `a * s + b * t`; we only track `t`.
-    let mut t0 = Poly::zero();
-    let mut t1 = Poly::one();
+    let capacity = a.coefs.len();
+    let mut t0 = Poly {
+        coefs: Vec::with_capacity(capacity),
+    };
+    let mut t1 = Poly {
+        coefs: Vec::with_capacity(capacity),
+    };
+    t1.coefs.push(F::ONE);
+    let mut q = Poly {
+        coefs: Vec::with_capacity(capacity),
+    };
 
     while r1.deg() >= stop {
-        let (q, r2) = &r0 / &r1;
-        let t2 = t0 - (&q * &t1);
+        // Turn r0 into the next remainder and reuse q's allocation across every EEA round.
+        quo_rem_assign(&mut r0, &r1, &mut q);
+        // Turn t0 into the next cofactor directly, without materializing q * t1 or t2.
+        sub_mul_assign(&mut t0, &q, &t1);
 
-        r0 = r1;
-        r1 = r2;
-
-        t0 = t1;
-        t1 = t2;
+        std::mem::swap(&mut r0, &mut r1);
+        std::mem::swap(&mut t0, &mut t1);
     }
 
     (r1, t1)
@@ -857,8 +930,6 @@ pub fn gao_decoding<F: Field>(
     // parameter k is called v in the NIST doc (the RS dimension)
     // this means that n is the number of points xi for which we have some values yi
     // yi ~= G(xi)), where deg(G) <= k-1
-    let n = points.len();
-
     // sanity check for parameter sizes
     if values.len() != points.len() {
         return Err(anyhow_error_and_log(
@@ -866,8 +937,26 @@ pub fn gao_decoding<F: Field>(
         ));
     }
 
+    gao_decoding_from_values(points, values.iter().copied(), k, max_errors)
+}
+
+/// Run Gao decoding with streamed y-coordinates, avoiding a separate values buffer.
+///
+/// The iterator must yield exactly one value per point.
+pub(crate) fn gao_decoding_from_values<F, I>(
+    points: &[F],
+    values: I,
+    k: usize,
+    max_errors: usize,
+) -> anyhow::Result<Poly<F>>
+where
+    F: Field,
+    I: IntoIterator<Item = F>,
+{
+    let n = points.len();
+
     // R \in F[X] such that R(xi) = yi. Called g_1(x) in the Gao paper.
-    let r = lagrange_interpolation(points, values)?;
+    let r = lagrange_interpolation_from_values(points, values)?;
 
     // G = prod(X - xi) where xi is party i's index. Called g_0(x) in the Gao paper.
     // note that deg(G) >= deg(R)
@@ -889,16 +978,41 @@ pub fn gao_decoding_with_field_hints<F: Field>(
     lagrange_polys: &[Poly<F>],
     vanishing_poly: &Poly<F>,
 ) -> anyhow::Result<Poly<F>> {
-    let n = points.len();
-
     if values.len() != points.len() {
         return Err(anyhow_error_and_log(
             "Gao decoding failure: mismatch between number of values and points".to_string(),
         ));
     }
 
+    gao_decoding_with_field_hints_from_values(
+        points,
+        values.iter().copied(),
+        k,
+        max_errors,
+        lagrange_polys,
+        vanishing_poly,
+    )
+}
+
+/// Run Gao decoding with precomputed field hints and streamed y-coordinates.
+///
+/// The iterator must yield exactly one value per point and basis polynomial.
+pub(crate) fn gao_decoding_with_field_hints_from_values<F, I>(
+    points: &[F],
+    values: I,
+    k: usize,
+    max_errors: usize,
+    lagrange_polys: &[Poly<F>],
+    vanishing_poly: &Poly<F>,
+) -> anyhow::Result<Poly<F>>
+where
+    F: Field,
+    I: IntoIterator<Item = F>,
+{
+    let n = points.len();
+
     // R = interpolation polynomial through (points, values), using the precomputed Lagrange basis.
-    let r = lagrange_interpolation_with_polys(lagrange_polys, values)?;
+    let r = lagrange_interpolation_with_polys_from_values(lagrange_polys, values)?;
 
     // partial_xgcd only clones "G" if the EEA loop actually runs, which is quite rare.
     gao_decoding_common(n, k, max_errors, r, vanishing_poly)
@@ -939,6 +1053,22 @@ mod tests {
         let ys: Vec<_> = xs.iter().map(|x| poly.eval(x)).collect();
         let interpolated = lagrange_interpolation(&xs, &ys);
         assert_eq!(poly, interpolated.unwrap());
+
+        let streamed = lagrange_interpolation_with_polys_from_values(
+            lagrange_polynomials(&xs),
+            ys.iter().copied(),
+        )
+        .unwrap();
+        assert_eq!(poly, streamed);
+
+        let mismatch = lagrange_interpolation_with_polys_from_values(
+            lagrange_polynomials(&xs),
+            ys.iter().copied().take(ys.len() - 1),
+        )
+        .unwrap_err();
+        assert!(mismatch.to_string().contains(
+            "Lagrange interpolation failure: mismatch between number of points and values"
+        ));
     }
 
     #[rstest]
@@ -971,9 +1101,55 @@ mod tests {
 
             if !b.is_zero() {
                 let (q, r) = a.clone() / b.clone();
-                assert_eq!(q * b + r, a);
+                assert_eq!(q.clone() * b.clone() + r.clone(), a);
+
+                let mut in_place_r = a.clone();
+                let mut in_place_q = Poly::zero();
+                quo_rem_assign(&mut in_place_r, &b, &mut in_place_q);
+                assert_eq!(in_place_q, q);
+                assert_eq!(in_place_r, r);
             }
 
+        }
+    }
+
+    fn partial_xgcd_allocating<F: Field>(
+        a: &Poly<F>,
+        b: Poly<F>,
+        stop: usize,
+    ) -> (Poly<F>, Poly<F>) {
+        let mut r0 = a.clone();
+        let mut r1 = b;
+        let mut t0 = Poly::zero();
+        let mut t1 = Poly::one();
+
+        while r1.deg() >= stop {
+            let (q, r2) = &r0 / &r1;
+            let t2 = t0 - (&q * &t1);
+            r0 = r1;
+            r1 = r2;
+            t0 = t1;
+            t1 = t2;
+        }
+        (r1, t1)
+    }
+
+    proptest! {
+        #[test]
+        fn in_place_partial_xgcd_matches_allocating_version(
+            coefs_a in proptest::collection::vec(any::<u8>().prop_map(GF16::from), 2..10),
+            coefs_b in proptest::collection::vec(any::<u8>().prop_map(GF16::from), 2..9),
+            stop in 1usize..8,
+        ) {
+            let a = Poly::from_coefs(coefs_a);
+            let b = Poly::from_coefs(coefs_b);
+            prop_assume!(!b.is_zero());
+            prop_assume!(a.deg() >= b.deg());
+            prop_assume!(b.deg() >= stop);
+
+            let expected = partial_xgcd_allocating(&a, b.clone(), stop);
+            let actual = partial_xgcd(&a, b, stop);
+            prop_assert_eq!(actual, expected);
         }
     }
 
@@ -1099,10 +1275,11 @@ mod tests {
     }
 
     #[test]
-    fn test_bitwise_poly() {
+    fn test_polynomial_bitwise_eval() {
         let f = Poly {
             coefs: vec![GF16::from(7), GF16::from(3), GF16::from(8)],
         };
+        let bitwise = BitWisePoly::from(&f);
         let degree = f.coefs.len();
 
         let shifted_pos = 10;
@@ -1117,8 +1294,6 @@ mod tests {
             })
             .collect::<anyhow::Result<Vec<_>>>()
             .unwrap();
-
-        let bitwise = BitwisePoly::from(f);
 
         for party_id in party_ids {
             assert_eq!(
