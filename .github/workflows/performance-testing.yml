@@ -514,7 +514,7 @@ jobs:
           echo "Slack report link: ${JOB_LABEL} (${JOB_URL})"
 
           SUBMIT_JSON="$(
-            timeout --signal=TERM 5m argo submit -n argo \
+            timeout --signal=TERM 5m argo submit -n "${NAMESPACE}" \
               "${WORKFLOW_TEMPLATE}" \
               -p tls="${TLS_STATUS}" \
               -p client-logs="${CLIENT_LOGS_STATUS}" \
