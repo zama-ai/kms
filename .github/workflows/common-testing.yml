@@ -54,6 +54,10 @@ on:
         type: string
         required: false
         default: ''  # Empty = use nextest's default (~ num-CPUs).
+      notify-slack:
+        type: boolean
+        required: false
+        default: true
     secrets:
       GHCR_READ_TOKEN:
         required: true
@@ -240,19 +244,8 @@ jobs:
           name: junit-test-report-${{ env.TIMESTAMP }}
           path: /tmp/junit.xml
 
-      - name: Set Slack color
-        id: slack_color
-        env:
-          JOB_RESULT: ${{ steps.tests.outcome }}
-        run: |
-          if [ "${JOB_RESULT}" = "success" ]; then
-            echo "color=good" >> "$GITHUB_OUTPUT"
-          else
-            echo "color=danger" >> "$GITHUB_OUTPUT"
-          fi
-
       - name: Post nightly tests results in a channel
-        if: always() && github.event_name == 'schedule'
+        if: always() && github.event_name == 'schedule' && inputs.notify-slack
         uses: rtCamp/action-slack-notify@e31e87e03dd19038e411e38ae27cbad084a90661 # v2.3.3
         env:
           ACTION_RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
@@ -261,8 +254,8 @@ jobs:
           SLACK_WEBHOOK: ${{ secrets.SLACK_WEBHOOK }}
           SLACK_ICON_EMOJI: ':github-octocat:'
           SLACK_TITLE: 'Nightly Tests Result'
-          SLACK_COLOR: ${{ steps.slack_color.outputs.color }}
-          SLACK_MESSAGE: "${{ steps.tests.outcome }} \nFor args: ${{ inputs.args-tests }}"
+          SLACK_COLOR: ${{ steps.tests.outcome || job.status }}
+          SLACK_MESSAGE: "${{ steps.tests.outcome || job.status }} \nFor args: ${{ inputs.args-tests }}"
 
       - name: Generate unique ID
         if: always()

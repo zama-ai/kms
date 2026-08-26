@@ -4,7 +4,8 @@ on:
   workflow_call:
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.head_ref || github.ref || github.run_id }}
+  # Include the event so a push to main cannot cancel an in-progress scheduled run.
+  group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.head_ref || github.ref || github.run_id }}
   cancel-in-progress: true
 
 permissions: {} # No permissions required for this workflow
@@ -352,7 +353,26 @@ jobs:
       runner-volume: '400gb'
       rust-log-level: 'info'
       nextest-test-threads: '4'
+      notify-slack: false
     secrets: inherit
+
+  notify-kms-nightly:
+    name: rust-testing/kms-nightly-notification
+    if: always() && github.event_name == 'schedule'
+    needs: [generate-test-material, test-kms-nightly]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Post nightly tests result in a channel
+        uses: rtCamp/action-slack-notify@e31e87e03dd19038e411e38ae27cbad084a90661 # v2.3.3
+        env:
+          ACTION_RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          SLACK_CHANNEL: ${{ secrets.SLACK_CHANNEL }}
+          SLACK_USERNAME: ${{ secrets.BOT_USERNAME }}
+          SLACK_WEBHOOK: ${{ secrets.SLACK_WEBHOOK }}
+          SLACK_ICON_EMOJI: ':github-octocat:'
+          SLACK_TITLE: 'KMS Nightly Tests Result'
+          SLACK_COLOR: ${{ needs.generate-test-material.result == 'success' && needs.test-kms-nightly.result == 'success' && 'good' || 'danger' }}
+          SLACK_MESSAGE: "Test material: ${{ needs.generate-test-material.result }} \nKMS nightly shards: ${{ needs.test-kms-nightly.result }}"
 
   test-reporter:
     name: rust-testing/test-reporter
