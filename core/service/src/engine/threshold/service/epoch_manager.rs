@@ -2395,6 +2395,87 @@ pub(crate) mod tests {
         assert_eq!(err.code(), tonic::Code::NotFound);
     }
 
+    /// The creation lease remains live after PRSS registers the epoch, preventing destruction while
+    /// resharing can still write private shares. Releasing the lease makes destruction retryable.
+    #[tokio::test]
+    async fn test_destroy_epoch_rejected_while_creation_in_flight() {
+        use crate::vault::storage::StorageReader;
+
+        let mut rng = AesRng::seed_from_u64(44);
+        let epoch_manager = make_epoch_manager::<EmptyPrss>(&mut rng).await;
+
+        let epoch_id = *DEFAULT_EPOCH_ID;
+        let prss = PRSSSetupCombined {
+            prss_setup_z128: PRSSSetup::<ResiduePolyF4Z128>::new_testing_prss(vec![], vec![]),
+            prss_setup_z64: PRSSSetup::<ResiduePolyF4Z64>::new_testing_prss(vec![], vec![]),
+            num_parties: 4,
+            threshold: 1,
+        };
+        epoch_manager
+            .session_maker
+            .add_epoch(epoch_id, prss.clone())
+            .await;
+        let private_storage = epoch_manager.crypto_storage.get_private_storage();
+        {
+            let mut priv_storage = private_storage.lock().await;
+            store_versioned_at_request_id(
+                &mut (*priv_storage),
+                &epoch_id.into(),
+                &prss,
+                &PrivDataType::PrssSetupCombined.to_string(),
+            )
+            .await
+            .unwrap();
+        }
+
+        // Mirror a creation task that has registered its epoch after PRSS but is still resharing.
+        let creation_lease = epoch_manager
+            .session_maker
+            .try_get_epoch_creation_lease(&DEFAULT_MPC_CONTEXT, &epoch_id)
+            .await
+            .unwrap();
+
+        let err = epoch_manager
+            .destroy_epoch_and_purge_cache(&epoch_id)
+            .await
+            .unwrap_err();
+        assert_eq!(err.code(), tonic::Code::FailedPrecondition);
+
+        // Destruction must return before touching the registered epoch or its persisted PRSS data.
+        assert!(epoch_manager.session_maker.epoch_exists(&epoch_id).await);
+        {
+            let priv_storage = private_storage.lock().await;
+            assert!(
+                priv_storage
+                    .data_exists(
+                        &epoch_id.into(),
+                        &PrivDataType::PrssSetupCombined.to_string()
+                    )
+                    .await
+                    .unwrap()
+            );
+        }
+
+        // Success, failure, panic and task cancellation all drop this owned lease, allowing cleanup.
+        drop(creation_lease);
+        epoch_manager
+            .destroy_epoch_and_purge_cache(&epoch_id)
+            .await
+            .unwrap();
+
+        assert!(!epoch_manager.session_maker.epoch_exists(&epoch_id).await);
+        let priv_storage = private_storage.lock().await;
+        assert!(
+            !priv_storage
+                .data_exists(
+                    &epoch_id.into(),
+                    &PrivDataType::PrssSetupCombined.to_string()
+                )
+                .await
+                .unwrap()
+        );
+    }
+
     #[tokio::test]
     async fn test_destroy_mpc_epochs() {
         use crate::vault::storage::{
