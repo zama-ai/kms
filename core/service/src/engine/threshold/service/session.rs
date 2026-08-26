@@ -300,6 +300,7 @@ impl SessionMaker {
         self.context_map.read().await.len()
     }
 
+    #[cfg(test)]
     pub(crate) async fn epoch_count(&self) -> usize {
         self.epoch_map.read().await.len()
     }

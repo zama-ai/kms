@@ -1121,8 +1121,7 @@ impl<
     /// Destroys an epoch by removing all private data stored under the given epoch, dropping its
     /// entries from the key cache, and then removing the epoch from the session maker.
     ///
-    /// The epoch must exist and must not be the last epoch on the node. A rejected precondition
-    /// leaves the epoch untouched, cache included.
+    /// The epoch must exist. A rejected precondition leaves the epoch untouched, cache included.
     ///
     /// In case of any error during the deletion of private data, the epoch will not be removed from the session maker,
     /// and an error will be returned. This allows the caller to retry the operation until it succeeds.
@@ -1137,18 +1136,6 @@ impl<
                 Some((*epoch_id).into()),
                 anyhow::anyhow!("Epoch ID {} does not exist", epoch_id),
                 tonic::Code::NotFound,
-            ));
-        }
-
-        if session_maker.epoch_count().await < 2 {
-            return Err(MetricedError::new(
-                OP_DESTROY_EPOCH,
-                Some((*epoch_id).into()),
-                anyhow::anyhow!(
-                    "Cannot destroy epoch ID {} because it is the only epoch remaining",
-                    epoch_id
-                ),
-                tonic::Code::FailedPrecondition,
             ));
         }
 
@@ -1456,11 +1443,10 @@ impl<
             // Attempt to destroy every epoch even if an earlier one fails, but keep the first failure to return so the
             // caller learns that some shares may remain and can retry. Later failures are logged via their own
             // `MetricedError` drop handling.
-            if let Err(e) = self.destroy_epoch_with_lease(epoch_id).await {
-                if first_error.is_none() {
-                    first_error = Some(e);
-                }
-                continue;
+            if let Err(e) = self.destroy_epoch_with_lease(epoch_id).await
+                && first_error.is_none()
+            {
+                first_error = Some(e);
             }
         }
 
@@ -2436,7 +2422,7 @@ pub(crate) mod tests {
             .unwrap();
 
         let err = epoch_manager
-            .destroy_epoch_and_purge_cache(&epoch_id)
+            .destroy_epoch_with_lease(&epoch_id)
             .await
             .unwrap_err();
         assert_eq!(err.code(), tonic::Code::FailedPrecondition);
@@ -2459,7 +2445,7 @@ pub(crate) mod tests {
         // Success, failure, panic and task cancellation all drop this owned lease, allowing cleanup.
         drop(creation_lease);
         epoch_manager
-            .destroy_epoch_and_purge_cache(&epoch_id)
+            .destroy_epoch_with_lease(&epoch_id)
             .await
             .unwrap();
 
