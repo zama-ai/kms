@@ -298,7 +298,20 @@ pub enum PrivDataTypeVersions {
 /// Data stored with this type either need to be kept secret and/or need to be kept authentic.
 /// Thus some data may indeed be safe to release publicly, but a malicious replacement could completely
 /// compromise the entire system.
-#[derive(Clone, Copy, Debug, Hash, PartialEq, Eq, Serialize, Deserialize, EnumIter, Versionize)]
+#[derive(
+    Clone,
+    Copy,
+    Debug,
+    Hash,
+    PartialEq,
+    Eq,
+    PartialOrd,
+    Ord,
+    Serialize,
+    Deserialize,
+    EnumIter,
+    Versionize,
+)]
 #[versionize(PrivDataTypeVersions)]
 pub enum PrivDataType {
     SigningKey,

@@ -20,7 +20,9 @@ use crate::engine::base::{BaseKmsStruct, KmsFheKeyHandles};
 use crate::engine::base::{KeyGenMetadata, PubDecCallValues, UserDecryptCallValues};
 use crate::engine::context_manager::CentralizedContextManager;
 #[cfg(feature = "non-wasm")]
-use crate::engine::storage_material_verification::verify_storage_material;
+use crate::engine::storage_material_verification::{
+    PrivateLayout, verify_private_storage_layout, verify_storage_material,
+};
 use crate::engine::traits::{BackupOperator, ContextManager};
 use crate::engine::traits::{BaseKms, Kms};
 use crate::engine::validation::DSEP_USER_DECRYPTION;
@@ -954,6 +956,8 @@ impl<
             read_all_data_versioned(&public_storage, &PubDataType::RecoveryMaterial.to_string())
                 .await?;
 
+        // Verify the private layout first: a centralized node must hold no threshold key shares.
+        verify_private_storage_layout(&private_storage, PrivateLayout::Centralized).await?;
         // Verify that public storage holds exactly what private storage says it should, and
         // that it is intact. Private storage is the reference; extra material in public
         // storage is reported as a warning.

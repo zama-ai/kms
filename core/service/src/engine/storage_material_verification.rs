@@ -19,14 +19,25 @@
 //!    planted by someone with write access to the storage. The node cannot tell these apart, so
 //!    once the integrity checks pass, [`report_unexpected_public_material`] lists public storage
 //!    and warns about every entry that private storage does not account for.
-//! 3. **Read-only.** Nothing here writes to, repairs, or re-fetches public storage.
+//! 3. **Read-only.** Nothing here writes to, repairs, or re-fetches either storage.
+//!
+//! Private storage gets its own checks in [`verify_private_storage_layout`]. It belongs to this
+//! node alone, so nothing legitimate lands there by accident. Three states fail boot: key material
+//! of the other deployment mode, keysets or CRS metadata under an epoch the node does not serve,
+//! and an epoch whose context is not stored. Two variants of those states only warn, because the
+//! node repairs them itself: keysets under the default epoch before `init` created its PRSS
+//! setup, and epochs of the default context while startup rewrites that context from the peer
+//! list. Every other entry the current layout does not account for — a legacy PRSS setup, a file
+//! in the pre-epoch layout, an unknown folder — is listed by
+//! [`report_unexpected_private_material`] and left to the operator.
 //!
 //! Startup verification operates on raw stored bytes. It never deserializes stored keys or
 //! CRSes: current material is checked by hashing those bytes, while legacy material (which has
-//! no digest) is checked for presence only.
+//! no digest) is checked for presence only. The private checks only list folders; their one
+//! deserialized input, the epoch registry, is what boot loads for the session maker anyway.
 
 use crate::backup::operator::RecoveryValidationMaterial;
-use crate::consts::{SIGNING_KEY_ID, signing_material_id};
+use crate::consts::{DEFAULT_EPOCH_ID, DEFAULT_MPC_CONTEXT, SIGNING_KEY_ID, signing_material_id};
 use crate::cryptography::signatures::recover_address_from_ext_signature;
 use crate::cryptography::signing::SigningSchemeType;
 use crate::cryptography::signing::ecdsa::{PrivateSigKey, PublicSigKey};
@@ -39,11 +50,11 @@ use crate::engine::material_integrity::{
     verify_compressed_key_digest_from_bytes, verify_crs_digest_from_bytes,
     verify_public_key_digest_from_bytes, verify_server_key_digest_from_bytes,
 };
-use crate::vault::storage::{StorageReader, read_text_at_request_id};
+use crate::vault::storage::{StorageReader, StorageReaderExt, read_text_at_request_id};
 use alloy_primitives::Address;
 use alloy_sol_types::{Eip712Domain, SolStruct};
-use kms_grpc::RequestId;
-use kms_grpc::rpc_types::PubDataType;
+use kms_grpc::rpc_types::{PrivDataType, PubDataType};
+use kms_grpc::{ContextId, EpochId, RequestId};
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::str::FromStr;
 use strum::IntoEnumIterator;
@@ -58,6 +69,15 @@ pub(crate) const ERR_VERF_ADDRESS_MISMATCH: &str =
 const WARN_UNEXPECTED_PUBLIC_MATERIAL: &str = "Unexpected public material";
 const WARN_UNKNOWN_PUBLIC_DATA_TYPE: &str = "Unexpected data type in public storage";
 const WARN_UNLISTABLE_PUBLIC_MATERIAL: &str = "Could not list public material";
+const ERR_FOREIGN_KEY_MATERIAL: &str = "Foreign FHE key material in private storage";
+const ERR_DANGLING_EPOCH: &str = "Dangling epoch in private storage";
+const ERR_EPOCH_WITHOUT_CONTEXT: &str = "Epoch without context in private storage";
+const WARN_UNEXPECTED_PRIVATE_MATERIAL: &str = "Unexpected private material";
+const WARN_LEGACY_UNEPOCHED_PRIVATE_MATERIAL: &str = "Legacy non-epoched private material";
+const WARN_DEFAULT_EPOCH_NOT_INITIALIZED: &str = "Default epoch is not initialized";
+const WARN_DEFAULT_CONTEXT_MISSING: &str = "Default context is missing";
+const WARN_UNKNOWN_PRIVATE_DATA_TYPE: &str = "Unexpected data type in private storage";
+const WARN_UNLISTABLE_PRIVATE_MATERIAL: &str = "Could not list private material";
 
 fn validate_legacy_public_material_shape<T>(
     public_materials: &HashMap<PubDataType, T>,
@@ -728,6 +748,417 @@ where
     report
 }
 
+/// The keyset type a node owns and, for a threshold node, the epochs it serves.
+pub(crate) enum PrivateLayout<'a> {
+    /// A centralized node keeps no epoch registry: its `FhePrivateKey` and `CrsInfo` entries sit
+    /// under whatever epoch the request named, and nothing else refers to that epoch.
+    Centralized,
+    /// A threshold node serves exactly the epochs in its registry, each within one context.
+    Threshold {
+        epoch_contexts: &'a BTreeMap<EpochId, ContextId>,
+    },
+}
+
+impl PrivateLayout<'_> {
+    /// Returns the keyset type that only a node of the other deployment mode writes, together
+    /// with the name of that mode.
+    fn foreign_key_type(&self) -> (PrivDataType, &'static str) {
+        match self {
+            PrivateLayout::Centralized => (PrivDataType::FheKeyInfo, "threshold"),
+            PrivateLayout::Threshold { .. } => (PrivDataType::FhePrivateKey, "centralized"),
+        }
+    }
+}
+
+/// Private material that the current layout does not account for.
+///
+/// Built by [`verify_private_storage_layout`]. Nothing in here fails boot. BTree containers keep
+/// the log order and test assertions deterministic.
+#[derive(Debug, Default, PartialEq, Eq)]
+pub(crate) struct UnexpectedPrivateMaterial {
+    /// Flat entries no rule explains: every split `PrssSetup`, a `PrssSetupCombined` with no
+    /// epoch in the registry, and any PRSS setup or epoch data on a centralized node.
+    unexpected: BTreeMap<PrivDataType, BTreeSet<RequestId>>,
+    /// Files directly under an epoched type, in the layout of releases before 0.13. The node
+    /// never reads them.
+    legacy_unepoched: BTreeMap<PrivDataType, BTreeSet<RequestId>>,
+    /// Keysets and CRS metadata under `DEFAULT_EPOCH_ID` while that epoch has no PRSS setup.
+    uninitialized_default_epoch: BTreeMap<PrivDataType, BTreeSet<RequestId>>,
+    /// Epochs of `DEFAULT_MPC_CONTEXT` while no such context is stored.
+    epochs_without_default_context: BTreeSet<EpochId>,
+    /// Top-level names in private storage that are not a [`PrivDataType`].
+    unknown_data_types: BTreeSet<String>,
+    /// Data types whose folder could not be listed, with the listing error. The `None` key means
+    /// the root listing itself failed.
+    unlistable: BTreeMap<Option<PrivDataType>, String>,
+}
+
+impl UnexpectedPrivateMaterial {
+    /// Returns the number of reported items across all categories.
+    pub(crate) fn unexpected_count(&self) -> usize {
+        self.unexpected.values().map(BTreeSet::len).sum::<usize>()
+            + self
+                .legacy_unepoched
+                .values()
+                .map(BTreeSet::len)
+                .sum::<usize>()
+            + self
+                .uninitialized_default_epoch
+                .values()
+                .map(BTreeSet::len)
+                .sum::<usize>()
+            + self.epochs_without_default_context.len()
+            + self.unknown_data_types.len()
+            + self.unlistable.len()
+    }
+}
+
+fn join_display<T: std::fmt::Display>(items: impl IntoIterator<Item = T>) -> String {
+    items
+        .into_iter()
+        .map(|item| item.to_string())
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
+fn describe_epoched(entries: &BTreeMap<EpochId, BTreeSet<RequestId>>) -> String {
+    join_display(
+        entries
+            .iter()
+            .map(|(epoch_id, ids)| format!("epoch {epoch_id}: [{}]", join_display(ids))),
+    )
+}
+
+/// List the entries of an epoched private data type, per epoch. Epochs without entries are left
+/// out: an empty folder is not material.
+async fn epoched_private_entries<S: StorageReaderExt + Sync>(
+    storage: &S,
+    data_type: PrivDataType,
+) -> anyhow::Result<BTreeMap<EpochId, BTreeSet<RequestId>>> {
+    let data_type = data_type.to_string();
+    let mut entries = BTreeMap::new();
+    for epoch_id in storage.all_epoch_ids_for_data(&data_type).await? {
+        let ids: BTreeSet<RequestId> = storage
+            .all_data_ids_at_epoch(&epoch_id, &data_type)
+            .await?
+            .into_iter()
+            .collect();
+        if !ids.is_empty() {
+            entries.insert(epoch_id, ids);
+        }
+    }
+    Ok(entries)
+}
+
+/// Fail if private storage holds key material that only a node of the other deployment mode
+/// writes. Private storage is exclusively this node's, so such material means the node points at
+/// another node's store, or at a store reused across modes. A folder that cannot be listed fails
+/// too, since it cannot be told apart from foreign material.
+async fn ensure_no_foreign_key_material<S: StorageReaderExt + Sync>(
+    storage: &S,
+    layout: &PrivateLayout<'_>,
+) -> anyhow::Result<()> {
+    let (foreign, writer) = layout.foreign_key_type();
+    let flat: BTreeSet<RequestId> = storage
+        .all_data_ids(&foreign.to_string())
+        .await
+        .map_err(|e| {
+            anyhow::anyhow!(
+                "{ERR_FOREIGN_KEY_MATERIAL}: could not list {foreign} in storage \"{}\": {e}",
+                storage.info()
+            )
+        })?
+        .into_iter()
+        .collect();
+    let epoched = epoched_private_entries(storage, foreign)
+        .await
+        .map_err(|e| {
+            anyhow::anyhow!(
+                "{ERR_FOREIGN_KEY_MATERIAL}: could not list {foreign} epochs in storage \"{}\": {e}",
+                storage.info()
+            )
+        })?;
+    if flat.is_empty() && epoched.is_empty() {
+        return Ok(());
+    }
+    anyhow::bail!(
+        "{ERR_FOREIGN_KEY_MATERIAL}: storage \"{}\" holds {foreign} entries, which only a {writer} node writes: flat [{}], {}",
+        storage.info(),
+        join_display(&flat),
+        describe_epoched(&epoched)
+    )
+}
+
+/// Fail if keysets or CRS metadata sit under an epoch that is not in the registry, unless that
+/// epoch is `DEFAULT_EPOCH_ID`: the init end-point creates the default epoch's PRSS setup after
+/// keys may already be staged, so those entries are returned for the sweep to report instead.
+async fn ensure_no_dangling_epochs<S: StorageReaderExt + Sync>(
+    storage: &S,
+    epoch_contexts: &BTreeMap<EpochId, ContextId>,
+) -> anyhow::Result<BTreeMap<PrivDataType, BTreeSet<RequestId>>> {
+    let mut dangling: BTreeMap<PrivDataType, BTreeMap<EpochId, BTreeSet<RequestId>>> =
+        BTreeMap::new();
+    let mut uninitialized_default_epoch = BTreeMap::new();
+    for data_type in [PrivDataType::FheKeyInfo, PrivDataType::CrsInfo] {
+        let entries = epoched_private_entries(storage, data_type)
+            .await
+            .map_err(|e| {
+                anyhow::anyhow!(
+                    "{ERR_DANGLING_EPOCH}: could not list {data_type} epochs in storage \"{}\": {e}",
+                    storage.info()
+                )
+            })?;
+        for (epoch_id, ids) in entries {
+            if epoch_contexts.contains_key(&epoch_id) {
+                continue;
+            }
+            if epoch_id == *DEFAULT_EPOCH_ID {
+                uninitialized_default_epoch.insert(data_type, ids);
+            } else {
+                dangling.entry(data_type).or_default().insert(epoch_id, ids);
+            }
+        }
+    }
+    if dangling.is_empty() {
+        return Ok(uninitialized_default_epoch);
+    }
+    anyhow::bail!(
+        "{ERR_DANGLING_EPOCH}: storage \"{}\" holds material under epochs that have no epoch data, so the node can neither serve nor delete it: {}",
+        storage.info(),
+        join_display(
+            dangling
+                .iter()
+                .map(|(data_type, entries)| format!("{data_type} {}", describe_epoched(entries)))
+        )
+    )
+}
+
+/// Fail if an epoch belongs to a context that is not stored, unless that context is
+/// `DEFAULT_MPC_CONTEXT`: startup rewrites the default context from the peer list right after
+/// these checks, so its epochs are returned for the sweep to report instead.
+async fn ensure_epochs_have_contexts<S: StorageReaderExt + Sync>(
+    storage: &S,
+    epoch_contexts: &BTreeMap<EpochId, ContextId>,
+) -> anyhow::Result<BTreeSet<EpochId>> {
+    let stored_contexts = storage
+        .all_data_ids(&PrivDataType::ContextInfo.to_string())
+        .await
+        .map_err(|e| {
+            anyhow::anyhow!(
+                "{ERR_EPOCH_WITHOUT_CONTEXT}: could not list contexts in storage \"{}\": {e}",
+                storage.info()
+            )
+        })?;
+    let mut epochs_without_default_context = BTreeSet::new();
+    let mut orphaned = Vec::new();
+    for (epoch_id, context_id) in epoch_contexts {
+        if stored_contexts.contains(&RequestId::from(context_id)) {
+            continue;
+        }
+        if *context_id == *DEFAULT_MPC_CONTEXT {
+            epochs_without_default_context.insert(*epoch_id);
+        } else {
+            orphaned.push(format!("epoch {epoch_id} (context {context_id})"));
+        }
+    }
+    if orphaned.is_empty() {
+        return Ok(epochs_without_default_context);
+    }
+    anyhow::bail!(
+        "{ERR_EPOCH_WITHOUT_CONTEXT}: storage \"{}\" holds epochs whose context is not stored: {}",
+        storage.info(),
+        orphaned.join(", ")
+    )
+}
+
+/// How the sweep treats the flat entries of one private data type.
+enum FlatRule<'a> {
+    /// Every entry is a file in the pre-epoch layout.
+    LegacyUnepoched,
+    /// Every entry is unexpected, for the given reason.
+    Unexpected(&'static str),
+    /// Every entry whose ID is not an epoch in the registry is unexpected, for the given reason.
+    UnexpectedUnlessEpoch(&'static str, &'a BTreeMap<EpochId, ContextId>),
+}
+
+/// Returns the sweep rule for the flat entries of `data_type`, or `None` when they are not
+/// inspected.
+#[expect(deprecated)]
+fn flat_rule<'a>(data_type: PrivDataType, layout: &PrivateLayout<'a>) -> Option<FlatRule<'a>> {
+    match (data_type, layout) {
+        // TODO(#3182): check that the folder holds exactly one entry, at `SIGNING_KEY_ID`.
+        (PrivDataType::SigningKey, _) => None,
+        // Contexts are validated when they are loaded.
+        (PrivDataType::ContextInfo, _) => None,
+        // The registry that the abort checks reconcile against is built from this folder.
+        (PrivDataType::EpochData, PrivateLayout::Threshold { .. }) => None,
+        (PrivDataType::EpochData, PrivateLayout::Centralized) => Some(FlatRule::Unexpected(
+            "a centralized node keeps no epoch data",
+        )),
+        (PrivDataType::FheKeyInfo | PrivDataType::FhePrivateKey | PrivDataType::CrsInfo, _) => {
+            Some(FlatRule::LegacyUnepoched)
+        }
+        (PrivDataType::PrssSetup, _) => Some(FlatRule::Unexpected(
+            "a split legacy PRSS setup that the migration did not combine",
+        )),
+        (PrivDataType::PrssSetupCombined, PrivateLayout::Threshold { epoch_contexts }) => {
+            Some(FlatRule::UnexpectedUnlessEpoch(
+                "a legacy PRSS setup for an epoch that has no epoch data",
+                epoch_contexts,
+            ))
+        }
+        (PrivDataType::PrssSetupCombined, PrivateLayout::Centralized) => Some(
+            FlatRule::Unexpected("a centralized node keeps no PRSS setup"),
+        ),
+    }
+}
+
+/// Report private material that the current layout does not account for.
+///
+/// Lists private storage and warns about every top-level name that is not a known data type and
+/// every flat entry no rule explains: a file in the pre-epoch layout under an epoched type, a
+/// split legacy PRSS setup, a combined PRSS setup whose epoch has no epoch data, and any PRSS
+/// setup or epoch data on a centralized node. Nothing here fails boot: a leftover from a migration
+/// or an old release is legitimate, so the operator is told and left to decide. Read-only; never
+/// deserializes anything.
+///
+/// The `SigningKey` and `Context` folders are not inspected. Neither are the epoch folders of the
+/// node's own key type and of `CrsInfo`; the abort checks in [`verify_private_storage_layout`]
+/// reconcile those against the epoch registry.
+pub(crate) async fn report_unexpected_private_material<S>(
+    private_storage: &S,
+    layout: &PrivateLayout<'_>,
+) -> UnexpectedPrivateMaterial
+where
+    S: StorageReaderExt + Sync,
+{
+    let mut report = UnexpectedPrivateMaterial::default();
+    let storage_info = private_storage.info();
+
+    // Compared as exact strings: `PrivDataType::try_from` is case-insensitive, but the storage
+    // backends are not, so a folder that differs only in case is never read.
+    let known_data_types: BTreeSet<String> = PrivDataType::iter().map(|t| t.to_string()).collect();
+    match private_storage.all_data_types().await {
+        Ok(names) => {
+            for name in names {
+                if !known_data_types.contains(&name) {
+                    tracing::warn!(
+                        "{WARN_UNKNOWN_PRIVATE_DATA_TYPE} \"{storage_info}\": \"{name}\" is not a known data type"
+                    );
+                    report.unknown_data_types.insert(name);
+                }
+            }
+        }
+        Err(e) => {
+            tracing::warn!(
+                "{WARN_UNLISTABLE_PRIVATE_MATERIAL} in storage \"{storage_info}\", so unknown data types were not detected: {e}"
+            );
+            report.unlistable.insert(None, e.to_string());
+        }
+    }
+
+    for data_type in PrivDataType::iter() {
+        let Some(rule) = flat_rule(data_type, layout) else {
+            continue;
+        };
+        let found: BTreeSet<RequestId> = match private_storage
+            .all_data_ids(&data_type.to_string())
+            .await
+        {
+            Ok(found) => found.into_iter().collect(),
+            Err(e) => {
+                tracing::warn!(
+                    "{WARN_UNLISTABLE_PRIVATE_MATERIAL} {data_type} in storage \"{storage_info}\", so its entries were not reconciled: {e}"
+                );
+                report.unlistable.insert(Some(data_type), e.to_string());
+                continue;
+            }
+        };
+        let (unexpected, reason): (BTreeSet<RequestId>, &str) = match rule {
+            FlatRule::LegacyUnepoched => {
+                for id in &found {
+                    tracing::warn!(
+                        "{WARN_LEGACY_UNEPOCHED_PRIVATE_MATERIAL} {data_type} for id={id} in storage \"{storage_info}\": the node only reads this type under an epoch"
+                    );
+                }
+                if !found.is_empty() {
+                    report.legacy_unepoched.insert(data_type, found);
+                }
+                continue;
+            }
+            FlatRule::Unexpected(reason) => (found, reason),
+            FlatRule::UnexpectedUnlessEpoch(reason, epoch_contexts) => (
+                found
+                    .into_iter()
+                    .filter(|id| !epoch_contexts.contains_key(&EpochId::from(id)))
+                    .collect(),
+                reason,
+            ),
+        };
+        for id in &unexpected {
+            tracing::warn!(
+                "{WARN_UNEXPECTED_PRIVATE_MATERIAL} {data_type} for id={id} in storage \"{storage_info}\": {reason}"
+            );
+        }
+        if !unexpected.is_empty() {
+            report.unexpected.insert(data_type, unexpected);
+        }
+    }
+    report
+}
+
+/// Verify that the private layout is one the node can serve, then sweep it for leftovers.
+///
+/// Three checks fail boot: key material of the other deployment mode, keysets or CRS metadata
+/// under an epoch the node does not serve, and an epoch whose context is not stored. Under the
+/// default epoch and for the default context the same findings only warn, because `init` creates
+/// the one and every startup rewrites the other. See the module documentation for the reasoning
+/// and [`report_unexpected_private_material`] for the sweep.
+///
+/// Returns the sweep report so callers and tests can inspect the same single scan that startup
+/// performs.
+pub(crate) async fn verify_private_storage_layout<S>(
+    private_storage: &S,
+    layout: PrivateLayout<'_>,
+) -> anyhow::Result<UnexpectedPrivateMaterial>
+where
+    S: StorageReaderExt + Sync,
+{
+    ensure_no_foreign_key_material(private_storage, &layout).await?;
+    let (uninitialized_default_epoch, epochs_without_default_context) = match &layout {
+        PrivateLayout::Centralized => (BTreeMap::new(), BTreeSet::new()),
+        PrivateLayout::Threshold { epoch_contexts } => (
+            ensure_no_dangling_epochs(private_storage, epoch_contexts).await?,
+            ensure_epochs_have_contexts(private_storage, epoch_contexts).await?,
+        ),
+    };
+
+    let mut report = report_unexpected_private_material(private_storage, &layout).await;
+    let storage_info = private_storage.info();
+    for (data_type, ids) in &uninitialized_default_epoch {
+        for id in ids {
+            tracing::warn!(
+                "{WARN_DEFAULT_EPOCH_NOT_INITIALIZED}: {data_type} for id={id} in storage \"{storage_info}\" sits under epoch {}, which has no PRSS setup; call the init end-point",
+                *DEFAULT_EPOCH_ID
+            );
+        }
+    }
+    for epoch_id in &epochs_without_default_context {
+        tracing::warn!(
+            "{WARN_DEFAULT_CONTEXT_MISSING}: epoch {epoch_id} in storage \"{storage_info}\" belongs to the default context {}, which is not stored; startup rewrites it from the peer list",
+            *DEFAULT_MPC_CONTEXT
+        );
+    }
+    report.uninitialized_default_epoch = uninitialized_default_epoch;
+    report.epochs_without_default_context = epochs_without_default_context;
+
+    tracing::info!(
+        "Verified private storage layout in storage \"{storage_info}\": {} unexpected entry(ies)",
+        report.unexpected_count()
+    );
+    Ok(report)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -743,7 +1174,9 @@ mod tests {
         ERR_PUBLIC_KEY_DIGEST_MISMATCH, ERR_SERVER_KEY_DIGEST_MISMATCH,
     };
     use crate::vault::storage::ram::RamStorage;
-    use crate::vault::storage::{Storage, delete_at_request_id, store_versioned_at_request_id};
+    use crate::vault::storage::{
+        Storage, StorageExt, delete_at_request_id, store_versioned_at_request_id,
+    };
 
     use aes_prng::AesRng;
     use hashing::{DomainSep, hash_element};
@@ -1759,6 +2192,329 @@ mod tests {
         .expect("current metadata without a stored domain must still verify");
     }
 
+    // === Private storage layout ===
+
+    #[expect(deprecated)]
+    const LEGACY_PRSS_SETUP: PrivDataType = PrivDataType::PrssSetup;
+    #[expect(deprecated)]
+    const LEGACY_PRSS_SETUP_COMBINED: PrivDataType = PrivDataType::PrssSetupCombined;
+
+    #[tokio::test]
+    async fn private_layout_accepts_consistent_threshold_storage() {
+        let mut storage = RamStorage::new();
+        let (epoch, context) = (test_epoch(1), test_context(1));
+        let registry = store_epoch_registry(&mut storage, &[(epoch, context)]).await;
+        store_epoched(
+            &mut storage,
+            PrivDataType::FheKeyInfo,
+            &epoch,
+            &test_id(200),
+        )
+        .await;
+        store_epoched(&mut storage, PrivDataType::CrsInfo, &epoch, &test_id(201)).await;
+        store_flat(&mut storage, PrivDataType::SigningKey, &SIGNING_KEY_ID).await;
+        // The 0.15 migration leaves the combined PRSS setup next to the epoch data it produced.
+        store_flat(&mut storage, LEGACY_PRSS_SETUP_COMBINED, &(&epoch).into()).await;
+
+        let report = verify_private_storage_layout(&storage, threshold_layout(&registry))
+            .await
+            .expect("consistent threshold private storage must verify");
+        assert_eq!(report.unexpected_count(), 0, "got: {report:?}");
+    }
+
+    #[tokio::test]
+    async fn private_layout_accepts_consistent_centralized_storage() {
+        let mut storage = RamStorage::new();
+        let epoch = test_epoch(2);
+        store_epoched(
+            &mut storage,
+            PrivDataType::FhePrivateKey,
+            &epoch,
+            &test_id(202),
+        )
+        .await;
+        store_epoched(&mut storage, PrivDataType::CrsInfo, &epoch, &test_id(203)).await;
+        store_flat(&mut storage, PrivDataType::SigningKey, &SIGNING_KEY_ID).await;
+
+        let report = verify_private_storage_layout(&storage, PrivateLayout::Centralized)
+            .await
+            .expect("consistent centralized private storage must verify");
+        assert_eq!(report.unexpected_count(), 0, "got: {report:?}");
+    }
+
+    #[tokio::test]
+    async fn empty_private_storage_verifies_in_both_modes() {
+        let storage = RamStorage::new();
+        let report = verify_private_storage_layout(&storage, threshold_layout(&BTreeMap::new()))
+            .await
+            .expect("an empty store is a fresh node");
+        assert_eq!(report.unexpected_count(), 0, "got: {report:?}");
+        let report = verify_private_storage_layout(&storage, PrivateLayout::Centralized)
+            .await
+            .expect("an empty store is a fresh node");
+        assert_eq!(report.unexpected_count(), 0, "got: {report:?}");
+    }
+
+    #[tokio::test]
+    async fn keysets_under_unknown_epoch_fail_boot() {
+        let mut storage = RamStorage::new();
+        let registry =
+            store_epoch_registry(&mut storage, &[(test_epoch(1), test_context(1))]).await;
+        let dangling_epoch = test_epoch(9);
+        store_epoched(
+            &mut storage,
+            PrivDataType::FheKeyInfo,
+            &dangling_epoch,
+            &test_id(204),
+        )
+        .await;
+
+        let err = verify_private_storage_layout(&storage, threshold_layout(&registry))
+            .await
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains(ERR_DANGLING_EPOCH), "got: {err}");
+        assert!(err.contains(&dangling_epoch.to_string()), "got: {err}");
+    }
+
+    #[tokio::test]
+    async fn crs_metadata_under_unknown_epoch_fails_boot() {
+        let mut storage = RamStorage::new();
+        let registry =
+            store_epoch_registry(&mut storage, &[(test_epoch(1), test_context(1))]).await;
+        store_epoched(
+            &mut storage,
+            PrivDataType::CrsInfo,
+            &test_epoch(9),
+            &test_id(205),
+        )
+        .await;
+
+        let err = verify_private_storage_layout(&storage, threshold_layout(&registry))
+            .await
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains(ERR_DANGLING_EPOCH), "got: {err}");
+        assert!(err.contains("CrsInfo"), "got: {err}");
+    }
+
+    /// Keys are staged under the default epoch before `init` creates its PRSS setup, both in the
+    /// test harness and on a node that lost its PRSS. That state must boot, so init can run.
+    #[tokio::test]
+    async fn keysets_under_default_epoch_without_prss_are_reported_not_rejected() {
+        let mut storage = RamStorage::new();
+        let key_id = test_id(206);
+        store_epoched(
+            &mut storage,
+            PrivDataType::FheKeyInfo,
+            &DEFAULT_EPOCH_ID,
+            &key_id,
+        )
+        .await;
+        let expected = BTreeMap::from([(PrivDataType::FheKeyInfo, BTreeSet::from([key_id]))]);
+
+        let report = verify_private_storage_layout(&storage, threshold_layout(&BTreeMap::new()))
+            .await
+            .expect("an uninitialized node must boot");
+        assert_eq!(report.uninitialized_default_epoch, expected);
+        assert_eq!(report.unexpected_count(), 1, "got: {report:?}");
+
+        // The exemption is by epoch ID, not by an empty registry.
+        let registry =
+            store_epoch_registry(&mut storage, &[(test_epoch(1), test_context(1))]).await;
+        let report = verify_private_storage_layout(&storage, threshold_layout(&registry))
+            .await
+            .expect("an uninitialized default epoch must boot");
+        assert_eq!(report.uninitialized_default_epoch, expected);
+        assert_eq!(report.unexpected_count(), 1, "got: {report:?}");
+    }
+
+    #[tokio::test]
+    async fn epoch_of_unknown_context_fails_boot() {
+        let mut storage = RamStorage::new();
+        let (epoch, context) = (test_epoch(1), test_context(1));
+        store_flat(&mut storage, PrivDataType::EpochData, &(&epoch).into()).await;
+        let registry = BTreeMap::from([(epoch, context)]);
+
+        let err = verify_private_storage_layout(&storage, threshold_layout(&registry))
+            .await
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains(ERR_EPOCH_WITHOUT_CONTEXT), "got: {err}");
+        assert!(err.contains(&context.to_string()), "got: {err}");
+    }
+
+    /// Startup rewrites the default context from the peer list right after these checks, so an
+    /// epoch of the default context must not fail boot while that context is absent.
+    #[tokio::test]
+    async fn epoch_of_missing_default_context_is_reported_not_rejected() {
+        let mut storage = RamStorage::new();
+        let epoch = test_epoch(1);
+        store_flat(&mut storage, PrivDataType::EpochData, &(&epoch).into()).await;
+        let registry = BTreeMap::from([(epoch, *DEFAULT_MPC_CONTEXT)]);
+
+        let report = verify_private_storage_layout(&storage, threshold_layout(&registry))
+            .await
+            .expect("a missing default context must boot");
+        assert_eq!(
+            report.epochs_without_default_context,
+            BTreeSet::from([epoch])
+        );
+        assert_eq!(report.unexpected_count(), 1, "got: {report:?}");
+    }
+
+    #[tokio::test]
+    async fn centralized_key_material_on_threshold_node_fails_boot() {
+        let mut storage = RamStorage::new();
+        let (epoch, context) = (test_epoch(1), test_context(1));
+        let registry = store_epoch_registry(&mut storage, &[(epoch, context)]).await;
+        store_epoched(
+            &mut storage,
+            PrivDataType::FhePrivateKey,
+            &epoch,
+            &test_id(207),
+        )
+        .await;
+        let err = verify_private_storage_layout(&storage, threshold_layout(&registry))
+            .await
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains(ERR_FOREIGN_KEY_MATERIAL), "got: {err}");
+
+        // The pre-epoch layout of the foreign type is rejected as well.
+        let mut storage = RamStorage::new();
+        let registry = store_epoch_registry(&mut storage, &[(epoch, context)]).await;
+        store_flat(&mut storage, PrivDataType::FhePrivateKey, &test_id(208)).await;
+        let err = verify_private_storage_layout(&storage, threshold_layout(&registry))
+            .await
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains(ERR_FOREIGN_KEY_MATERIAL), "got: {err}");
+    }
+
+    #[tokio::test]
+    async fn threshold_key_material_on_centralized_node_fails_boot() {
+        let mut storage = RamStorage::new();
+        store_epoched(
+            &mut storage,
+            PrivDataType::FheKeyInfo,
+            &test_epoch(1),
+            &test_id(209),
+        )
+        .await;
+
+        let err = verify_private_storage_layout(&storage, PrivateLayout::Centralized)
+            .await
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains(ERR_FOREIGN_KEY_MATERIAL), "got: {err}");
+        assert!(err.contains("FheKeyInfo"), "got: {err}");
+    }
+
+    #[tokio::test]
+    async fn legacy_private_leftovers_are_reported_and_boot_succeeds() {
+        let mut storage = RamStorage::new();
+        let (epoch, context) = (test_epoch(1), test_context(1));
+        let registry = store_epoch_registry(&mut storage, &[(epoch, context)]).await;
+        let split_prss_id = test_id(210);
+        store_flat(&mut storage, LEGACY_PRSS_SETUP, &split_prss_id).await;
+        store_flat(&mut storage, LEGACY_PRSS_SETUP_COMBINED, &(&epoch).into()).await;
+        let gone_epoch = test_epoch(9);
+        store_flat(
+            &mut storage,
+            LEGACY_PRSS_SETUP_COMBINED,
+            &(&gone_epoch).into(),
+        )
+        .await;
+        let unepoched_key_id = test_id(211);
+        store_flat(&mut storage, PrivDataType::FheKeyInfo, &unepoched_key_id).await;
+        store_flat(&mut storage, PrivDataType::SigningKey, &SIGNING_KEY_ID).await;
+        storage
+            .store_bytes(RAW_PRIVATE_ENTRY, &test_id(212), "stray")
+            .await
+            .unwrap();
+
+        let report = verify_private_storage_layout(&storage, threshold_layout(&registry))
+            .await
+            .expect("leftovers must not fail boot");
+        assert_eq!(
+            report.unexpected,
+            BTreeMap::from([
+                (LEGACY_PRSS_SETUP, BTreeSet::from([split_prss_id])),
+                (
+                    LEGACY_PRSS_SETUP_COMBINED,
+                    BTreeSet::from([RequestId::from(&gone_epoch)])
+                ),
+            ])
+        );
+        assert_eq!(
+            report.legacy_unepoched,
+            BTreeMap::from([(PrivDataType::FheKeyInfo, BTreeSet::from([unepoched_key_id]))])
+        );
+        assert_eq!(
+            report.unknown_data_types,
+            BTreeSet::from(["stray".to_string()])
+        );
+        assert_eq!(report.unexpected_count(), 4, "got: {report:?}");
+    }
+
+    #[tokio::test]
+    async fn prss_and_epoch_data_on_centralized_node_are_reported() {
+        let mut storage = RamStorage::new();
+        let epoch_id = RequestId::from(&test_epoch(1));
+        store_flat(&mut storage, PrivDataType::EpochData, &epoch_id).await;
+        store_flat(&mut storage, LEGACY_PRSS_SETUP_COMBINED, &epoch_id).await;
+        let split_prss_id = test_id(213);
+        store_flat(&mut storage, LEGACY_PRSS_SETUP, &split_prss_id).await;
+
+        let report = verify_private_storage_layout(&storage, PrivateLayout::Centralized)
+            .await
+            .expect("PRSS leftovers must not fail a centralized boot");
+        assert_eq!(
+            report.unexpected,
+            BTreeMap::from([
+                (LEGACY_PRSS_SETUP, BTreeSet::from([split_prss_id])),
+                (LEGACY_PRSS_SETUP_COMBINED, BTreeSet::from([epoch_id])),
+                (PrivDataType::EpochData, BTreeSet::from([epoch_id])),
+            ])
+        );
+        assert_eq!(report.unexpected_count(), 3, "got: {report:?}");
+    }
+
+    #[tokio::test]
+    async fn unlistable_private_folder_is_reported_and_boot_succeeds() {
+        use crate::vault::storage::{StorageType, file::FileStorage};
+
+        let temp_dir = tempfile::tempdir().unwrap();
+        let storage = FileStorage::new(Some(temp_dir.path()), StorageType::PRIV, None).unwrap();
+        // A name that is not a request ID makes the folder listing fail.
+        let prss_dir = storage.root_dir().join(LEGACY_PRSS_SETUP.to_string());
+        std::fs::create_dir_all(&prss_dir).unwrap();
+        std::fs::write(prss_dir.join("not-a-request-id"), b"x").unwrap();
+
+        let report = verify_private_storage_layout(&storage, threshold_layout(&BTreeMap::new()))
+            .await
+            .expect("an unlistable folder must not fail boot");
+        assert!(
+            report.unlistable.contains_key(&Some(LEGACY_PRSS_SETUP)),
+            "got: {report:?}"
+        );
+        assert!(report.unexpected.is_empty());
+    }
+
+    /// The `SigningKey` folder is outside the sweep; see the TODO in `flat_rule`.
+    #[tokio::test]
+    async fn extra_signing_key_entries_are_not_reported_yet() {
+        let mut storage = RamStorage::new();
+        store_flat(&mut storage, PrivDataType::SigningKey, &SIGNING_KEY_ID).await;
+        store_flat(&mut storage, PrivDataType::SigningKey, &test_id(214)).await;
+
+        let report = verify_private_storage_layout(&storage, PrivateLayout::Centralized)
+            .await
+            .expect("signing key entries are not checked");
+        assert_eq!(report.unexpected_count(), 0, "got: {report:?}");
+    }
+
     // === Helpers ===
 
     /// Public storage that is consistent by construction — matching key and CRS digests plus a
@@ -2009,5 +2765,57 @@ mod tests {
             &DSEP_PUBDATA_CRS,
         )
         .await
+    }
+
+    // The private sweep only lists folders, so any bytes stand in for real material; an invalid
+    // encoding makes sure that stays true.
+    const RAW_PRIVATE_ENTRY: &[u8] = b"deliberately not serialized private material";
+
+    fn test_id(seed: u64) -> RequestId {
+        RequestId::new_random(&mut AesRng::seed_from_u64(seed))
+    }
+
+    fn test_epoch(seed: u8) -> EpochId {
+        EpochId::from_bytes([seed; 32])
+    }
+
+    fn test_context(seed: u8) -> ContextId {
+        ContextId::from_bytes([seed; 32])
+    }
+
+    fn threshold_layout(epoch_contexts: &BTreeMap<EpochId, ContextId>) -> PrivateLayout<'_> {
+        PrivateLayout::Threshold { epoch_contexts }
+    }
+
+    async fn store_flat(storage: &mut RamStorage, data_type: PrivDataType, id: &RequestId) {
+        storage
+            .store_bytes(RAW_PRIVATE_ENTRY, id, &data_type.to_string())
+            .await
+            .unwrap();
+    }
+
+    async fn store_epoched(
+        storage: &mut RamStorage,
+        data_type: PrivDataType,
+        epoch_id: &EpochId,
+        id: &RequestId,
+    ) {
+        storage
+            .store_bytes_at_epoch(RAW_PRIVATE_ENTRY, id, epoch_id, &data_type.to_string())
+            .await
+            .unwrap();
+    }
+
+    /// Store an epoch data entry per epoch and a context entry per context, and return the
+    /// registry a threshold node would build from them.
+    async fn store_epoch_registry(
+        storage: &mut RamStorage,
+        epochs: &[(EpochId, ContextId)],
+    ) -> BTreeMap<EpochId, ContextId> {
+        for (epoch_id, context_id) in epochs {
+            store_flat(storage, PrivDataType::EpochData, &epoch_id.into()).await;
+            store_flat(storage, PrivDataType::ContextInfo, &context_id.into()).await;
+        }
+        epochs.iter().copied().collect()
     }
 }

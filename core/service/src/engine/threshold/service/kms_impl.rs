@@ -1,6 +1,6 @@
 // === Standard Library ===
 use std::{
-    collections::HashMap,
+    collections::{BTreeMap, HashMap},
     convert::Infallible,
     marker::PhantomData,
     sync::{Arc, OnceLock},
@@ -10,7 +10,7 @@ use std::{
 use algebra::{galois_rings::degree_4::ResiduePolyF4Z128, structure_traits::Ring};
 use kms_grpc::{
     RequestId,
-    identifiers::EpochId,
+    identifiers::{ContextId, EpochId},
     kms_service::v1::core_service_endpoint_server::CoreServiceEndpointServer,
     rpc_types::{PrivDataType, PubDataType, SignedPubDataHandleInternal},
 };
@@ -58,7 +58,7 @@ use tonic_health::{
 };
 use tonic_tls::rustls::TlsIncoming;
 
-use crate::engine::threshold::service::epoch_manager::RealThresholdEpochManager;
+use crate::engine::threshold::service::epoch_manager::{EpochData, RealThresholdEpochManager};
 // === Internal Crate ===
 use crate::{
     anyhow_error_and_log,
@@ -73,7 +73,9 @@ use crate::{
         },
         context_manager::{ThresholdContextManager, ensure_default_threshold_context_in_storage},
         prepare_shutdown_signals,
-        storage_material_verification::verify_storage_material,
+        storage_material_verification::{
+            PrivateLayout, verify_private_storage_layout, verify_storage_material,
+        },
         threshold::{
             service::{
                 public_decryptor::SecureNoiseFloodDecryptor,
@@ -568,11 +570,34 @@ where
         .await?,
     );
 
-    // Verify public material and recovery validation material when the signing key is available.
-    // Recovery mode only supports backup recovery operations, so it skips both startup checks.
-    // Private storage is the reference; extra material in public storage is reported as a warning.
+    // The epoch registry: every epoch this node serves, keyed by the ID it is stored under. It is
+    // read once here; it anchors the private storage checks below and seeds the session maker.
+    let all_epochs: HashMap<EpochId, EpochData> = read_all_data_versioned::<_, EpochData>(
+        &private_storage,
+        &PrivDataType::EpochData.to_string(),
+    )
+    .await?
+    .into_iter()
+    .map(|(epoch_id, epoch_data)| (epoch_id.into(), epoch_data))
+    .collect();
+    let epoch_contexts: BTreeMap<EpochId, ContextId> = all_epochs
+        .iter()
+        .map(|(epoch_id, epoch_data)| (*epoch_id, epoch_data.context_id))
+        .collect();
+
+    // Verify the private layout, then public material and recovery validation material, when the
+    // signing key is available. Recovery mode only supports backup recovery operations, so it
+    // skips every startup check. Private storage is the reference; extra material in public
+    // storage is reported as a warning.
     match base_kms.sig_key() {
         Ok(signing_key) => {
+            verify_private_storage_layout(
+                &private_storage,
+                PrivateLayout::Threshold {
+                    epoch_contexts: &epoch_contexts,
+                },
+            )
+            .await?;
             verify_storage_material(
                 &public_storage,
                 &key_info,
@@ -584,8 +609,8 @@ where
         }
         Err(_) => {
             tracing::warn!(
-                "No signing key available (recovery mode): skipping public material and recovery \
-                 validation material verification"
+                "No signing key available (recovery mode): skipping private storage, public \
+                 material and recovery validation material verification"
             );
         }
     }
@@ -737,6 +762,7 @@ where
     let session_maker = SessionMaker::new_initialized(
         threshold_config.my_id.map(Role::indexed_from_one),
         &crypto_storage,
+        all_epochs,
         networking_manager,
         verifier,
         base_kms.new_rng().await,
