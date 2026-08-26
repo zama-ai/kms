@@ -2421,7 +2421,6 @@ pub(crate) mod tests {
             .await
             .unwrap();
 
-      
         let err = epoch_manager
             .destroy_epoch_with_lease(&epoch_id)
             .await
