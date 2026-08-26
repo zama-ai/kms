@@ -160,12 +160,18 @@ Most test jobs depend on pre-generated FHE / signing material under `./test-mate
 
 ## Reusable Workflows
 
-### `parallel-testing.yml`
+### `rust-testing.yml`
 
 Calls `common-testing.yml` for the main sharded Rust test matrix and shares one
-EFS-backed test-material set across its jobs. A manual workflow dispatch runs a
-10-shard benchmark of the non-ignored `kms` library tests whose names contain
-`nightly`; each shard uploads JUnit timings for grooming those tests.
+EFS-backed test-material set across its jobs. On scheduled runs, it also runs the
+slow `kms` library tests whose names contain `nightly` in five shards and sends
+one aggregate Slack notification.
+
+### `kms-nightly.yml`
+
+Provides a manually dispatchable version of the same five-shard `kms` nightly
+suite for validation and test-timing investigations.
+
 
 ### `common-testing.yml`
 
