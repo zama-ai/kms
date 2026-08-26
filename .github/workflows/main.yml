@@ -170,10 +170,9 @@ jobs:
 
   ############################################################################
   # Core Client nightly pipeline
-  # Note: regular per-partition core-client/core-service/core-grpc/core-threshold
-  # test jobs live in `.github/workflows/parallel-testing.yml` (see the `test-matrix`
-  # job in that file). This workflow only keeps the schedule-driven nightly
-  # job for `kms-core-client`.
+  # Regular per-partition tests and the schedule-driven KMS service nightly
+  # tests live in `.github/workflows/parallel-testing.yml`. This section keeps
+  # the schedule-driven nightly job for `kms-core-client`.
   ############################################################################
   # Core client nightly tests (runs ALL tests including nightly and full_gen_tests).
   # Triggered by scheduled runs, or by PRs touching core-client/tests/{kind-testing,integration}/**.

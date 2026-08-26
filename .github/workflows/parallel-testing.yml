@@ -415,12 +415,11 @@ jobs:
       efs-test-material-path: ${{ needs.generate-test-material.outputs.efs-test-material-path }}
     secrets: inherit
 
-  # TEMPORARY Manual benchmark for the service tests currently excluded from regular CI.
-  # Keep the runner, partitioning, and concurrency aligned with the service lib
-  # shards above so their JUnit timings are directly comparable.
+  # KMS service tests that are too slow for regular CI. Scheduled runs exercise
+  # them nightly; workflow_dispatch keeps the same job available for diagnosis.
   test-kms-nightly:
     name: parallel-testing/kms-nightly-p${{ matrix.partition }}
-    if: github.event_name == 'workflow_dispatch'
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
     needs: [generate-test-material]
     permissions:
       checks: write # Required to write to the GitHub Actions check suite
@@ -432,11 +431,11 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        partition: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
+        partition: [1, 2, 3, 4, 5]
     uses: ./.github/workflows/common-testing.yml
     with:
       crate-names: '-p kms'
-      args-tests: '-F slow_tests -F insecure --partition count:${{ matrix.partition }}/10 --lib -E test(/nightly/)'
+      args-tests: '-F slow_tests -F insecure --partition count:${{ matrix.partition }}/5 --lib -E test(/::nightly_/)'
       efs-test-material-path: ${{ needs.generate-test-material.outputs.efs-test-material-path }}
       lfs: true
       runs-on: '64cpu-linux-x64'
