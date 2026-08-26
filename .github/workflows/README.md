@@ -187,7 +187,6 @@ Inputs of note:
 - `crate-names` — `-p <crate> [-p …]` forwarded to cargo
 - `args-tests` — extra cargo / nextest args
 - `nextest-test-threads` — parallelism cap (empty = nextest default ≈ num-CPUs)
-- `nextest-profile` — nextest profile, defaulting to `ci`
 - `notify-slack` — post the result for a scheduled caller, defaulting to `true`
 - `lfs` — pull Git-LFS objects on checkout
 - `skip-test-material` — skip material generation + custodian build

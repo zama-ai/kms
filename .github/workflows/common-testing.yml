@@ -46,10 +46,6 @@ on:
         type: boolean
         required: false
         default: false
-      nextest-profile:
-        type: string
-        required: false
-        default: 'ci'
       nextest-test-threads:
         type: string
         required: false
@@ -183,7 +179,6 @@ jobs:
         env:
           CRATE_NAMES: ${{ inputs.crate-names }}
           ARGS_TESTS: ${{inputs.args-tests}}
-          NEXTEST_PROFILE: ${{ inputs.nextest-profile }}
           NEXTEST_TEST_THREADS_INPUT: ${{ inputs.nextest-test-threads }}
           EVENT_NAME: ${{ github.event_name }}
           RUST_LOG: ${{ inputs.rust-log-level }}
@@ -212,16 +207,14 @@ jobs:
           cat ~/.aws/config
           # Intentional word-splitting on CMD_ENV, CRATE_NAMES, and ARGS_TESTS.
           # shellcheck disable=SC2086
-          echo "EXECUTING: env ${CMD_ENV} cargo nextest run --profile ${NEXTEST_PROFILE} --no-fail-fast --no-tests=pass ${CRATE_NAMES} ${ARGS_TESTS:+$ARGS_TESTS}"
+          echo "EXECUTING: env ${CMD_ENV} cargo nextest run --profile ci --no-fail-fast --no-tests=pass ${CRATE_NAMES} ${ARGS_TESTS:+$ARGS_TESTS}"
           # shellcheck disable=SC2086
-          env ${CMD_ENV} cargo nextest run --profile "${NEXTEST_PROFILE}" --no-fail-fast --no-tests=pass ${CRATE_NAMES} ${ARGS_TESTS:+$ARGS_TESTS}
+          env ${CMD_ENV} cargo nextest run --profile ci --no-fail-fast --no-tests=pass ${CRATE_NAMES} ${ARGS_TESTS:+$ARGS_TESTS}
 
       - name: Copy Test Results
         if: (!cancelled() || !failure() && github.event_name == 'pull_request')
-        env:
-          NEXTEST_PROFILE: ${{ inputs.nextest-profile }}
         run: |
-          NEXTEST_OUT="${GITHUB_WORKSPACE}/target/nextest/${NEXTEST_PROFILE}"
+          NEXTEST_OUT="${GITHUB_WORKSPACE}/target/nextest/ci"
           if find "${NEXTEST_OUT}" -mindepth 1 -type f -print -quit 2>/dev/null | grep -q .; then
             echo "Files found in ${NEXTEST_OUT}"
             ls -R "${NEXTEST_OUT}"
