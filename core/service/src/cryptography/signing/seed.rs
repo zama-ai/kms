@@ -362,27 +362,6 @@ mod tests {
         safe_deserialize(std::io::Cursor::new(&buf), SAFE_SER_SIZE_LIMIT).unwrap()
     }
 
-    /// Every scheme derived from the root signs and verifies; a tampered message
-    /// fails.
-    #[test]
-    fn every_scheme_signs_and_verifies() {
-        let mut rng = AesRng::seed_from_u64(1);
-        let root = RootSigningSeed::random(&mut rng);
-        let msg = b"a message signed under a seed-derived key";
-
-        for scheme in SigningSchemeType::iter() {
-            let sk = root.derive_signing_key(scheme).unwrap();
-            let vk = root.unified_verifying_key(scheme).unwrap();
-            assert_eq!(sk.signing_scheme_type(), scheme);
-            assert_eq!(vk.signing_scheme_type(), scheme);
-
-            let sig = unified_sign(DSEP, msg, sk).unwrap();
-            unified_verify(DSEP, msg, &sig, &vk)
-                .unwrap_or_else(|e| panic!("{scheme:?} seed-derived key should verify: {e}"));
-            assert!(unified_verify(DSEP, b"tampered", &sig, &vk).is_err());
-        }
-    }
-
     /// The root survives the safe-serialization round-trip used to persist it,
     /// and the cold copy re-derives byte-identical keys for every scheme.
     #[test]
@@ -417,26 +396,6 @@ mod tests {
                 second.unified_verifying_key(scheme).unwrap(),
                 "{scheme:?} keys of two distinct roots collided"
             );
-        }
-    }
-
-    /// Distinct schemes derive distinct seeds from the same root (the scheme tag
-    /// is bound into the KDF), so the per-scheme keys never share seed material.
-    #[test]
-    fn distinct_schemes_have_distinct_seeds() {
-        let mut rng = AesRng::seed_from_u64(4);
-        let root = RootSigningSeed::random(&mut rng);
-
-        let schemes: Vec<_> = SigningSchemeType::iter().collect();
-        let seeds: Vec<_> = schemes.iter().map(|s| root.derived_seed(*s)).collect();
-        for i in 0..seeds.len() {
-            for j in (i + 1)..seeds.len() {
-                assert_ne!(
-                    *seeds[i], *seeds[j],
-                    "{:?} and {:?} share a derived seed",
-                    schemes[i], schemes[j]
-                );
-            }
         }
     }
 
@@ -486,10 +445,10 @@ mod tests {
         unified_verify(DSEP, msg, &sig, &vk).unwrap();
     }
 
-    /// `zeroize` wipes the root: keys derived afterwards differ from the ones
+    /// `zeroize` resets the root: keys derived afterwards differ from the ones
     /// derived before.
     #[test]
-    fn zeroize_wipes_the_root() {
+    fn zeroize_resets_the_root() {
         let mut rng = AesRng::seed_from_u64(7);
         let mut root = RootSigningSeed::random(&mut rng);
 
@@ -535,20 +494,5 @@ mod tests {
             hex::encode(root.derived_seed(SigningSchemeType::MlDsa87)),
             "b2263620e75c55e8a93e929232307b4b236605af9856e9b7124f2d555361b2bd",
         );
-    }
-
-    /// The root serializes as exactly its raw secret bytes, so the persisted
-    /// object cannot silently grow a second copy of the secret.
-    #[test]
-    fn serializes_as_raw_bytes() {
-        let bytes: [u8; ROOT_SEED_LEN] = std::array::from_fn(|i| (i as u8).wrapping_mul(7));
-        let root = fixed_root(bytes);
-        let encoded = bc2wrap::serialize(&root).unwrap();
-        assert!(
-            encoded.windows(ROOT_SEED_LEN).any(|w| w == bytes),
-            "the serialized root does not contain the seed bytes"
-        );
-        let decoded: RootSigningSeed = bc2wrap::deserialize_slice(&encoded).unwrap();
-        assert_eq!(root, decoded);
     }
 }

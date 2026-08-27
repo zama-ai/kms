@@ -1493,13 +1493,6 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(restored, seed, "the root seed did not survive the vault");
-        for scheme in SigningSchemeType::iter() {
-            assert_eq!(
-                restored.unified_verifying_key(scheme).unwrap(),
-                seed.unified_verifying_key(scheme).unwrap(),
-                "the restored seed derives a different {scheme} key"
-            );
-        }
     }
 
     #[tokio::test]

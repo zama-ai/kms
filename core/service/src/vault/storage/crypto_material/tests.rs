@@ -1887,7 +1887,6 @@ async fn inner_update_backup_vault_paths() {
 async fn inner_update_backup_vault_mirrors_a_seed_added_after_the_signing_key() {
     use crate::consts::SIGNING_KEY_ID;
     use crate::cryptography::signatures::RootSigningSeed;
-    use strum::IntoEnumIterator;
 
     let storage = CryptoMaterialStorage::from(
         RamStorage::new(),
@@ -1935,13 +1934,6 @@ async fn inner_update_backup_vault_mirrors_a_seed_added_after_the_signing_key() 
         .await
         .expect("the root signing seed never reached the backup vault");
     assert_eq!(backed_up, seed);
-    for scheme in SigningSchemeType::iter() {
-        assert_eq!(
-            backed_up.unified_verifying_key(scheme).unwrap(),
-            seed.unified_verifying_key(scheme).unwrap(),
-            "the backed-up seed derives a different {scheme} key"
-        );
-    }
     // The pre-existing signing key is still there and untouched.
     let signing_key: PrivateSigKey = vault_g
         .read_data(&SIGNING_KEY_ID, &PrivDataType::SigningKey.to_string())

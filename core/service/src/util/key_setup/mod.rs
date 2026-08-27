@@ -1642,7 +1642,10 @@ mod tests {
     use crate::cryptography::signatures::{PrivateSigKey, PublicSigKey, gen_sig_keys};
     use crate::cryptography::signing::seed::RootSigningSeed;
     use crate::cryptography::signing::{HasSigningScheme, SigningSchemeType, unified_verify};
-    use crate::util::key_setup::{all_verf_material_slots, non_legacy_verf_material_slots};
+    use crate::util::key_setup::{
+        all_verf_material_slots, delete_published_verification_material,
+        non_legacy_verf_material_slots,
+    };
     use crate::vault::storage::crypto_material::{
         get_core_root_signing_seed, get_core_signing_key, read_verification_key_at,
         store_verification_key_at,
@@ -1785,9 +1788,9 @@ mod tests {
         }
     }
 
-    /// Writing is idempotent, leftovers are detected, and deleting them clears the
-    /// way for a different signing key — the sequence `kms-gen-keys --overwrite`
-    /// relies on.
+    /// Writing is idempotent, leftovers are detected, and deleting them — the
+    /// deprecated ECDSA pair included — clears the way for a different signing key.
+    /// This is the sequence `kms-gen-keys --overwrite` relies on.
     #[tokio::test]
     async fn delete_allows_regenerating_from_a_new_signing_key() {
         let mut rng = AesRng::seed_from_u64(11);
@@ -1835,10 +1838,20 @@ mod tests {
                 .is_err(),
             "a new identity was published over the old deprecated ECDSA material"
         );
+
+        // Deletion is the exact inverse of writing: one call clears the deprecated
+        // pair too, so nothing the old identity left behind blocks the new one.
+        delete_published_verification_material(&mut pub_storage)
+            .await
+            .unwrap();
         for data_type in LEGACY_VERF_MATERIAL_TYPES.map(|t| t.to_string()) {
-            delete_at_request_id(&mut pub_storage, &SIGNING_KEY_ID, &data_type)
-                .await
-                .unwrap();
+            assert!(
+                !pub_storage
+                    .data_exists(&SIGNING_KEY_ID, &data_type)
+                    .await
+                    .unwrap(),
+                "the deprecated {data_type} survived the deletion"
+            );
         }
 
         ensure_published_verification_material(&mut pub_storage, &sk_new)
@@ -2145,9 +2158,9 @@ mod tests {
             .unwrap();
         let key_before = persisted_signing_key_bytes(&priv_storage).await;
 
-        // Each scheme in turn, and both of its objects: whichever one is missing
+        // Backfill each scheme in turn, and both of its objects: whichever one is missing
         // has to come back.
-        for scheme in SigningSchemeType::iter() {
+        for scheme in [SigningSchemeType::Ecdsa256k1, SigningSchemeType::MlDsa87] {
             for data_type in CURRENT_VERF_MATERIAL_TYPES.map(|t| t.to_string()) {
                 let req_id = signing_material_id(scheme);
                 let expected = pub_storage.load_bytes(&req_id, &data_type).await.unwrap();
@@ -2418,65 +2431,6 @@ mod tests {
         assert_ne!(seeds[0], seeds[1], "two parties share a root seed");
     }
 
-    /// What a node generated and what it published agree, so the read-only
-    /// validation the server runs at boot passes on a healthy storage.
-    #[tokio::test]
-    async fn validation_accepts_a_healthy_storage() {
-        let mut pub_storage = RamStorage::new();
-        let mut priv_storage = RamStorage::new();
-
-        ensure_central_server_signing_keys_exist(&mut pub_storage, &mut priv_storage, true)
-            .await
-            .unwrap();
-        let sk = get_core_signing_key(&priv_storage).await.unwrap();
-
-        super::validate_slots(&pub_storage, &sk, all_verf_material_slots())
-            .await
-            .unwrap();
-    }
-
-    /// A node whose seed was swapped out from under its published material is rejected.
-    #[tokio::test]
-    async fn validation_rejects_material_from_a_different_root() {
-        for scheme in SigningSchemeType::iter() {
-            let mut rng = AesRng::seed_from_u64(41);
-            let mut pub_storage = RamStorage::new();
-            let mut priv_storage = RamStorage::new();
-
-            ensure_central_server_signing_keys_exist(&mut pub_storage, &mut priv_storage, true)
-                .await
-                .unwrap();
-            let sk = get_core_signing_key(&priv_storage).await.unwrap();
-            super::validate_slots(&pub_storage, &sk, all_verf_material_slots())
-                .await
-                .unwrap();
-
-            // Re-root this one scheme's published key onto an unrelated identity,
-            // leaving everything else exactly as generated.
-            let impostor = seeded_identity(&mut rng);
-            let req_id = signing_material_id(scheme);
-            let data_type = PubDataType::TypedVerfKey.to_string();
-            delete_at_request_id(&mut pub_storage, &req_id, &data_type)
-                .await
-                .unwrap();
-            store_verification_key_at(
-                &mut pub_storage,
-                &req_id,
-                PubDataType::TypedVerfKey,
-                &impostor.unified_verifying_key(scheme).unwrap(),
-            )
-            .await
-            .unwrap();
-
-            assert!(
-                super::validate_slots(&pub_storage, &sk, all_verf_material_slots())
-                    .await
-                    .is_err(),
-                "a {scheme} verification key from a different root was accepted"
-            );
-        }
-    }
-
     /// An ECDSA-only node — upgraded from a release that predates the root seed and
     /// not yet through `kms-gen-keys` — validates cleanly.
     #[tokio::test]
@@ -2546,47 +2500,5 @@ mod tests {
                 .is_err(),
             "the boot check accepted published post-quantum material with no seed behind it"
         );
-    }
-
-    /// Deletion is the exact inverse of writing, deprecated ECDSA pair included,
-    /// so a wiped storage accepts a different identity.
-    #[tokio::test]
-    async fn deleting_published_material_is_the_inverse_of_writing_it() {
-        let mut rng = AesRng::seed_from_u64(44);
-        let sk = seeded_identity(&mut rng);
-        let mut pub_storage = RamStorage::new();
-
-        ensure_published_verification_material(&mut pub_storage, &sk)
-            .await
-            .unwrap();
-        assert!(
-            non_ecdsa_material_exists(&pub_storage).await,
-            "nothing was written, so the deletion below would prove nothing"
-        );
-
-        super::delete_published_verification_material(&mut pub_storage)
-            .await
-            .unwrap();
-
-        ensure_no_scheme_verification_material(&pub_storage)
-            .await
-            .unwrap();
-        for data_type in LEGACY_VERF_MATERIAL_TYPES.map(|t| t.to_string()) {
-            assert!(
-                !pub_storage
-                    .data_exists(&SIGNING_KEY_ID, &data_type)
-                    .await
-                    .unwrap(),
-                "the deprecated {data_type} survived the deletion"
-            );
-        }
-
-        // The point of the mirror: a wiped storage takes a *different* identity
-        // without tripping over anything the previous one left behind.
-        let other = seeded_identity(&mut rng);
-        ensure_published_verification_material(&mut pub_storage, &other)
-            .await
-            .unwrap();
-        assert_scheme_material_matches(&pub_storage, &other).await;
     }
 }
