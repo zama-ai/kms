@@ -182,6 +182,12 @@ where
             .await
             .map_err(|e| anyhow::anyhow!("Failed to read existing server signing keys: {e}"))?;
 
+    // Reject a storage that still holds material derived from a previous signing
+    // key. We already checked no signing key exists so if verification material
+    // exist it means inconsistent storage.
+    ensure_no_verification_material(pub_storage).await?;
+    ensure_no_root_signing_seed(priv_storage).await?;
+
     #[cfg(any(test, feature = "testing", feature = "insecure"))]
     let mut rng = get_rng(deterministic, Some(0));
     #[cfg(not(any(test, feature = "testing", feature = "insecure")))]
@@ -211,12 +217,6 @@ where
             *SIGNING_KEY_ID
         );
     }
-
-    // Reject a storage that still holds material derived from a previous signing
-    // key. We already checked no signing key exists so if verification material
-    // exist it means inconsistent storage.
-    ensure_no_scheme_verification_material(pub_storage).await?;
-    ensure_no_root_signing_seed(priv_storage).await?;
 
     let sk = generate_and_store_signing_key_material(priv_storage, &mut rng, false).await?;
 
@@ -550,11 +550,11 @@ where
 }
 
 /// Validate that no canonical scheme verification material is present.
-pub async fn ensure_no_scheme_verification_material<PubS>(pub_storage: &PubS) -> anyhow::Result<()>
+pub async fn ensure_no_verification_material<PubS>(pub_storage: &PubS) -> anyhow::Result<()>
 where
     PubS: StorageReader,
 {
-    match first_existing_slot(pub_storage, non_legacy_verf_material_slots()).await? {
+    match first_existing_slot(pub_storage, all_verf_material_slots()).await? {
         Some(slot) => Err(anyhow_error_and_log(format!(
             "data already exist for {slot}"
         ))),
@@ -1063,6 +1063,16 @@ where
     PubS: Storage,
     PrivS: Storage,
 {
+    // Reject a storage that still holds material derived from a previous signing
+    // key. We already checked no signing key exists so if verification material
+    // exist it means inconsistent storage.
+    ensure_no_verification_material(pub_storage)
+        .await
+        .map_err(|e| anyhow::anyhow!("Party {party_id}: {e}"))?;
+    ensure_no_root_signing_seed(priv_storage)
+        .await
+        .map_err(|e| anyhow::anyhow!("Party {party_id}: {e}"))?;
+
     #[cfg(any(test, feature = "testing", feature = "insecure"))]
     let mut rng = get_rng(deterministic, Some(party_id.get() as u64));
     #[cfg(not(any(test, feature = "testing", feature = "insecure")))]
@@ -1120,16 +1130,6 @@ where
             *SIGNING_KEY_ID
         );
     }
-
-    // Reject a storage that still holds material derived from a previous signing
-    // key. We already checked no signing key exists so if verification material
-    // exist it means inconsistent storage.
-    ensure_no_scheme_verification_material(pub_storage)
-        .await
-        .map_err(|e| anyhow::anyhow!("Party {party_id}: {e}"))?;
-    ensure_no_root_signing_seed(priv_storage)
-        .await
-        .map_err(|e| anyhow::anyhow!("Party {party_id}: {e}"))?;
 
     let sk = generate_and_store_signing_key_material(priv_storage, &mut rng, true)
         .await
@@ -1635,7 +1635,7 @@ mod tests {
     use super::{
         CURRENT_VERF_MATERIAL_TYPES, LEGACY_VERF_MATERIAL_TYPES,
         delete_scheme_verification_material, ensure_central_server_signing_keys_exist,
-        ensure_no_scheme_verification_material, ensure_published_verification_material,
+        ensure_no_verification_material, ensure_published_verification_material,
         ensure_threshold_server_signing_key_exists,
     };
     use crate::consts::{SIGNING_KEY_ID, signing_material_id};
@@ -1799,9 +1799,7 @@ mod tests {
         let mut pub_storage = RamStorage::new();
 
         // Empty storage: nothing to detect, and deleting is a no-op.
-        ensure_no_scheme_verification_material(&pub_storage)
-            .await
-            .unwrap();
+        ensure_no_verification_material(&pub_storage).await.unwrap();
         delete_scheme_verification_material(&mut pub_storage)
             .await
             .unwrap();
@@ -1816,18 +1814,12 @@ mod tests {
         assert_scheme_material_matches(&pub_storage, &sk_old).await;
 
         // The leftovers are what stops key generation from running over them.
-        assert!(
-            ensure_no_scheme_verification_material(&pub_storage)
-                .await
-                .is_err()
-        );
+        assert!(ensure_no_verification_material(&pub_storage).await.is_err());
 
         delete_scheme_verification_material(&mut pub_storage)
             .await
             .unwrap();
-        ensure_no_scheme_verification_material(&pub_storage)
-            .await
-            .unwrap();
+        ensure_no_verification_material(&pub_storage).await.unwrap();
 
         // The deprecated pair still describes the old key, and a different key must
         // not be published beside it. `kms-gen-keys --overwrite` deletes it together
