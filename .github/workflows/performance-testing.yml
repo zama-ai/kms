@@ -213,8 +213,12 @@ jobs:
           NAMESPACE: 'kms-ci'
           KMS_CHART_VERSION: ${{ inputs.kms_chart_version || 'repository' }}
           TKMS_INFRA_CHART_VERSION: ${{ inputs.tkms_infra_chart_version || '0.3.2' }}
+          # Metrics are collected on the nightly only; workflow_dispatch is already
+          # at the 10-input limit, so there is no knob to opt a manual run in.
+          ENABLE_KMS_METRICS: ${{ github.event_name == 'schedule' }}
         run: |
           {
+            echo "ENABLE_KMS_METRICS=${ENABLE_KMS_METRICS}"
             echo "DEPLOYMENT_TYPE=${DEPLOYMENT_TYPE}"
             echo "TLS=${TLS}"
             echo "CLIENT_LOGS=${CLIENT_LOGS}"
@@ -412,6 +416,11 @@ jobs:
           sudo chmod +x /usr/local/bin/jq
           echo "JQ version: $(jq --version)"
 
+          METRICS_FLAG=()
+          if [[ "${ENABLE_KMS_METRICS}" == "true" ]]; then
+            METRICS_FLAG=(--enable-metrics)
+          fi
+
           chmod +x ci/scripts/deploy.sh
           ./ci/scripts/deploy.sh \
             --target aws-perf \
@@ -421,7 +430,8 @@ jobs:
             --client-tag "${KMS_CORE_CLIENT_IMAGE_TAG}" \
             --num-parties 13 \
             --kms-chart-version "${KMS_CHART_VERSION}" \
-            --tkms-infra-version "${TKMS_INFRA_CHART_VERSION}"
+            --tkms-infra-version "${TKMS_INFRA_CHART_VERSION}" \
+            "${METRICS_FLAG[@]}"
 
       - name: Capture network diagnostics before perf
         if: always()
@@ -510,21 +520,44 @@ jobs:
           fi
           echo "Slack report link: ${JOB_LABEL} (${JOB_URL})"
 
-          echo "Submitting Argo workflow..."
-          argo submit -n argo \
-            "${WORKFLOW_TEMPLATE}" \
-            -p tls="${TLS_STATUS}" \
-            -p client-logs="${CLIENT_LOGS_STATUS}" \
-            "${EXTRA_SUBMIT_ARGS[@]}" \
-            -p run_url="${SERVER_URL}/${REPOSITORY}/actions/runs/${RUN_ID}" \
-            -p job_url="${JOB_URL}" \
-            -p job_label="${JOB_LABEL}"
+          SUBMIT_JSON="$(
+            timeout --signal=TERM 5m argo submit -n "${NAMESPACE}" \
+              "${WORKFLOW_TEMPLATE}" \
+              -p tls="${TLS_STATUS}" \
+              -p client-logs="${CLIENT_LOGS_STATUS}" \
+              "${EXTRA_SUBMIT_ARGS[@]}" \
+              -p run_url="${SERVER_URL}/${REPOSITORY}/actions/runs/${RUN_ID}" \
+              -p job_url="${JOB_URL}" \
+              -p job_label="${JOB_LABEL}" \
+              -o json
+          )"
+          WORKFLOW_NAME="$(jq -er '.metadata.name' <<< "${SUBMIT_JSON}")"
+          echo "Submitted Argo workflow: ${WORKFLOW_NAME}"
+          echo "PERF_WORKFLOW_NAME=${WORKFLOW_NAME}" >> "${GITHUB_ENV}"
 
-          echo "Streaming workflow logs..."
-          argo logs @latest -f -n "${NAMESPACE}" | tee argo-workflow-logs.txt
+          echo "Waiting up to two hours for ${WORKFLOW_NAME}..."
+          wait_exit=0
+          timeout --signal=TERM 2h \
+            argo wait "${WORKFLOW_NAME}" -n "${NAMESPACE}" || wait_exit=$?
 
-          workflow_phase=$(argo get @latest -n "${NAMESPACE}" -o json | jq -r '.status.phase')
+          echo "Fetching final workflow logs..."
+          if ! timeout --signal=TERM 10m \
+            argo logs "${WORKFLOW_NAME}" -n "${NAMESPACE}" --timestamps \
+              | tee argo-workflow-logs.txt; then
+            echo "::warning::Could not fetch complete logs for ${WORKFLOW_NAME}"
+          fi
+
+          workflow_phase=$(
+            argo get "${WORKFLOW_NAME}" -n "${NAMESPACE}" \
+              --request-timeout 1m -o json | jq -r '.status.phase'
+          )
           echo "Argo workflow phase: ${workflow_phase}"
+          if [[ "${wait_exit}" -eq 124 ]]; then
+            echo "::error::Timed out waiting for ${WORKFLOW_NAME}"
+            exit 1
+          elif [[ "${wait_exit}" -ne 0 ]]; then
+            echo "::warning::argo wait exited with status ${wait_exit}"
+          fi
           if [[ "${workflow_phase}" != "Succeeded" ]]; then
             exit 1
           fi
@@ -660,6 +693,8 @@ jobs:
 
           # Clean up workflow
           echo "Cleaning up workflow..."
-          argo delete @latest -n kms-ci -n "${NAMESPACE}" || true
+          if [[ -n "${PERF_WORKFLOW_NAME:-}" ]]; then
+            argo delete "${PERF_WORKFLOW_NAME}" -n "${NAMESPACE}" || true
+          fi
 
           echo "✅ Cleanup completed successfully"
