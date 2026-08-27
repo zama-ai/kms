@@ -1881,8 +1881,8 @@ async fn inner_update_backup_vault_paths() {
 }
 
 /// The upgrade case: a node whose signing key is *already* in the vault later
-/// gains a root signing seed, and the ordinary boot pass — which runs with
-/// `overwrite = false` — must still mirror the seed.
+/// gains a root signing seed, and the ordinary boot pass without overwriting
+/// anything.
 #[tokio::test]
 async fn inner_update_backup_vault_mirrors_a_seed_added_after_the_signing_key() {
     use crate::consts::SIGNING_KEY_ID;
