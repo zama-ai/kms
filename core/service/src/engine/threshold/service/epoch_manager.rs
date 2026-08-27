@@ -73,6 +73,7 @@ use crate::{
             compute_info_compressed_keygen, compute_info_crs, compute_info_uncompressed_keygen,
             retrieve_parameters, stored_scheme_signatures_to_proto,
         },
+        rng_registry::RngRegistry,
         threshold::service::{
             PublicKeyMaterial, ThresholdFheKeys,
             reshare_utils::{
@@ -1512,7 +1513,7 @@ impl<
         }
 
         // Refreshes all rngs that were derived from the same base_kms as this one.
-        self.base_kms.refresh_all_rngs_in_registry().await;
+        RngRegistry::refresh_all_rngs_in_registry().await;
 
         let resharing_task = match resharing_params {
             Some(ResharingParams {

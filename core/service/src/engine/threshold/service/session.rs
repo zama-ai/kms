@@ -575,6 +575,7 @@ impl SessionMaker {
         context_map.contains_key(context_id)
     }
 
+    /// Code duplication of [`crate::engine::base::BaseKmsStruct::fork_rng`]
     async fn new_rng(&self) -> AesRng {
         let mut seed = [0u8; crate::consts::RND_SIZE];
         // Make a seperate scope for the rng so that it is dropped before the lock is released
