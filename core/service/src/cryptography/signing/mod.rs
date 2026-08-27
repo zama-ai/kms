@@ -721,7 +721,7 @@ mod tests {
     }
 
     /// Without a root seed an identity can still do everything ECDSA, and fails
-    /// loudy for every other scheme.
+    /// loudly for every other scheme.
     #[test]
     fn non_ecdsa_requires_a_root_seed() {
         let mut rng = AesRng::seed_from_u64(707);
