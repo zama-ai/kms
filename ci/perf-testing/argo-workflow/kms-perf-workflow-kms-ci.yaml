@@ -382,7 +382,7 @@ spec:
           app: kms-perf
       nodeSelector:
         karpenter.sh/nodepool: kms-pool
-        karpenter.k8s.aws/instance-family: m5n
+        node.kubernetes.io/instance-type: c6in.32xlarge
       script:
         image: hub.zama.org/ghcr/zama-ai/kms/core-client:<client-version>
         command: ["/bin/bash", "-c"]
@@ -1032,7 +1032,7 @@ spec:
           # Two physical lines: the '\n' renders as a line break in the Slack context element.
           config_line=$(printf '%s\n%s' \
             "payload={{workflow.parameters.batch-size}} x {{workflow.parameters.data-type}}, preproc/keygen params={{workflow.parameters.fhe-params}}, decrypt params=Default, max-in-flight={{inputs.parameters.max-in-flight}}, TLS={{inputs.parameters.tls}}" \
-            "core=c7a.16xlarge, core-client=m5n, tokioWorkerThreads=10, rayonNumThreads=40, core-img=<version>, client-img=<client-version>")
+            "core=c7a.16xlarge, rate-test client=c6in.32xlarge, setup client=m5n, core Tokio workers=10, core Rayon threads=40, rate-client Tokio workers=available CPUs, core-img=<version>, client-img=<client-version>")
           if echo "{{inputs.parameters.job_url}}" | grep -q '^http'; then
             run_line="<{{inputs.parameters.job_url}}|{{inputs.parameters.job_label}}>"
           else
@@ -1068,7 +1068,10 @@ spec:
             }'
           )
 
-          curl -s -X POST -H "Content-type: application/json" -d "$slack_message" "$slack_webhook_url"
+          curl --fail-with-body --silent --show-error \
+            --connect-timeout 10 --max-time 30 \
+            -X POST -H "Content-type: application/json" \
+            -d "$slack_message" "$slack_webhook_url"
 
           if [ $finite_failed -gt 0 ] || [ $pdec_failed -gt 0 ] || [ $udec_failed -gt 0 ]; then
             exit 1

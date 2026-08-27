@@ -18,6 +18,9 @@ ci/scripts/
 ├── manage_lifecycle.sh            # Lifecycle management
 ├── rolling_upgrade.sh             # Partially upgrade enclave KMS parties
 ├── sample_core_cpu.sh             # Sample KMS core CPU and memory during benchmarks
+├── sample_core_metrics.sh         # Scrape KMS Prometheus metrics throughout a benchmark
+├── sample_perf_diagnostics.sh     # Orchestrate metrics, ENA, and placement collection
+├── sample_pod_placement.sh        # Record core/client node and AZ placement
 └── lib/                           # Modular libraries
     ├── common.sh                  # Logging, parsing, utilities (277 lines)
     ├── context.sh                 # Kubernetes context setup (87 lines)
@@ -100,6 +103,7 @@ The build process will:
 | **Log collection** | `lib/utils.sh` |
 | **Rolling KMS upgrades** ([docs](#rolling-upgrade-testing)) | `rolling_upgrade.sh` |
 | **Core CPU/memory benchmark samples** | `sample_core_cpu.sh` |
+| **Perf application, ENA, and placement diagnostics** | `sample_perf_diagnostics.sh` |
 
 ### Module Details
 

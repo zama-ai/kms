@@ -18,6 +18,7 @@ use backoff::future::retry_notify;
 use dashmap::DashSet;
 use error_utils::anyhow_error_and_log;
 use hyper_rustls_ring::{FixedServerNameResolver, HttpsConnectorBuilder};
+use observability::metrics::{self, NetworkDebugEvent};
 use observability::telemetry::ContextPropagator;
 use threshold_types::party::{Identity, RoleAssignment};
 use threshold_types::role::{RoleKind, RoleTrait};
@@ -209,6 +210,8 @@ impl GrpcSendingService {
 
             if receiver_completed {
                 skipped += 1;
+                metrics::METRICS
+                    .increment_network_event(NetworkDebugEvent::SendSkippedAfterCompleted);
                 continue;
             }
 
@@ -229,6 +232,7 @@ impl GrpcSendingService {
             };
 
             let on_network_fail = |e, duration: Duration| {
+                metrics::METRICS.increment_network_event(NetworkDebugEvent::SendRetry);
                 tracing::debug!(
                     "Network retry for message: {e:?} - Duration {:?} secs. Talking to {other_role_kind}.",
                     duration.as_secs()
@@ -242,11 +246,11 @@ impl GrpcSendingService {
                 Ok(send_response) => {
                     match send_response.status() {
                         Status::Active => {
-                            // All good, nothing to do
+                            metrics::METRICS.increment_network_event(NetworkDebugEvent::SendActive);
                         }
                         Status::Inactive => {
-                            // The receiver is inactive
-                            tracing::warn!("Receiver {other_role_kind} is inactive.");
+                            metrics::METRICS
+                                .increment_network_event(NetworkDebugEvent::SendInactive);
                         }
                         Status::Completed => {
                             // The receiver already completed this session.
@@ -254,9 +258,8 @@ impl GrpcSendingService {
                             // "channel closed" errors on subsequent sends.
                             // Instead, mark as completed and drain remaining messages.
                             completed_parties.insert(other_role_kind);
-                            tracing::warn!(
-                                "Failed to send message to {other_role_kind} party since it claims the session is already completed"
-                            );
+                            metrics::METRICS
+                                .increment_network_event(NetworkDebugEvent::SendCompleted);
                             incorrectly_sent += 1;
                             receiver_completed = true;
                         }
@@ -264,7 +267,8 @@ impl GrpcSendingService {
                 }
                 Err(status) => {
                     incorrectly_sent += 1;
-                    tracing::warn!(
+                    metrics::METRICS.increment_network_event(NetworkDebugEvent::SendFailed);
+                    tracing::debug!(
                         "Failed to send message to {other_role_kind} after {incorrectly_sent} retries: {} - {} (source: {:?})",
                         status.code(),
                         status.message(),
@@ -284,7 +288,7 @@ impl GrpcSendingService {
                 "No more listeners on {other_role_kind}, everything failed, {incorrectly_sent} errors, shutting down network task"
             );
         } else if incorrectly_sent > 0 {
-            tracing::warn!(
+            tracing::debug!(
                 "Network task with {other_role_kind} finished with: {incorrectly_sent} errors, {skipped} skipped, {received_request} total requests"
             );
         } else {
@@ -332,14 +336,20 @@ impl SendingService for GrpcSendingService {
             ..Default::default()
         };
 
-        // 4. Spawns the sender in its own task and discard the handle
-        tokio::spawn(Self::run_network_task(
-            receiver,
-            network_channel,
-            exponential_backoff,
-            other_role_kind,
-            aborted,
-        ));
+        // 4. Each session runs one sender task per peer. Track them to reveal tasks that accumulate
+        // or fail to finish.
+        let task_metrics = metrics::METRICS.track_network_sender_task();
+        tokio::spawn(async move {
+            let _task_metrics = task_metrics;
+            Self::run_network_task(
+                receiver,
+                network_channel,
+                exponential_backoff,
+                other_role_kind,
+                aborted,
+            )
+            .await;
+        });
 
         Ok(sender)
     }

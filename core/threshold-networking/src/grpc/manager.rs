@@ -11,6 +11,7 @@ use crate::sending_service::{
     GrpcSendingService, NetworkSession, SendingService, now_activity_millis,
 };
 use dashmap::DashMap;
+use observability::metrics::{self, NetworkDebugEvent};
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -84,6 +85,7 @@ impl GrpcNetworkingManager {
                 interval.tick().await;
                 let mut internal_inactive_sessions_count = 0;
                 let mut internal_active_sessions_count = 0;
+                let mut internal_completed_sessions_count = 0;
                 let mut to_remove = Vec::new();
                 for mut cur in session_store.iter_mut() {
                     let (session_id, status) = cur.pair_mut();
@@ -91,16 +93,19 @@ impl GrpcNetworkingManager {
                         SessionStatus::Completed(started) => {
                             // Remove completed sessions that have been completed for a very long time
                             if started.elapsed() > cleanup_interval {
+                                metrics::METRICS.increment_network_event(
+                                    NetworkDebugEvent::SessionCompletedRemoved,
+                                );
                                 to_remove.push(*session_id);
+                            } else {
+                                internal_completed_sessions_count += 1;
                             }
                         }
                         SessionStatus::Inactive((_, started)) => {
                             // Remove inactive sessions that have been inactive for awhile
                             if started.elapsed() > discard_inactive_interval {
-                                tracing::warn!(
-                                    "Discarding Inactive session {:?} after {:?} seconds. We never heard about such session.",
-                                    session_id,
-                                    started.elapsed().as_secs()
+                                metrics::METRICS.increment_network_event(
+                                    NetworkDebugEvent::SessionInactiveDiscarded,
                                 );
                                 to_remove.push(*session_id);
                                 continue;
@@ -118,10 +123,8 @@ impl GrpcNetworkingManager {
                                     ),
                                 );
                                 if time_since_last_rec > discard_inactive_interval {
-                                    tracing::warn!(
-                                        "Discarding Active session {:?} after {:?} seconds.",
-                                        session_id,
-                                        time_since_last_rec.as_secs()
+                                    metrics::METRICS.increment_network_event(
+                                        NetworkDebugEvent::SessionActiveDiscarded,
                                     );
                                     to_remove.push(*session_id);
                                     continue;
@@ -130,6 +133,9 @@ impl GrpcNetworkingManager {
                             }
                             None => {
                                 *status = SessionStatus::Completed(Instant::now());
+                                internal_completed_sessions_count += 1;
+                                metrics::METRICS
+                                    .increment_network_event(NetworkDebugEvent::SessionCompleted);
                             }
                         },
                     };
@@ -139,6 +145,7 @@ impl GrpcNetworkingManager {
                 }
                 inactive_session_count.store(internal_inactive_sessions_count, Ordering::Relaxed);
                 active_session_count.store(internal_active_sessions_count, Ordering::Relaxed);
+                metrics::METRICS.record_completed_sessions(internal_completed_sessions_count);
             }
         });
     }
@@ -245,7 +252,6 @@ impl GrpcNetworkingManager {
         my_role: R,
         network_mode: NetworkMode,
     ) -> anyhow::Result<Arc<impl Networking<R> + use<R>>> {
-        let party_count = role_assignment.len();
         let mut others = role_assignment.clone();
 
         // Removing self from the role_assignment map
@@ -297,6 +303,7 @@ impl GrpcNetworkingManager {
                 ));
 
                 *mutable_status = SessionStatus::Active(Arc::downgrade(&session));
+                metrics::METRICS.increment_network_event(NetworkDebugEvent::SessionActivated);
 
                 session
             }
@@ -318,17 +325,11 @@ impl GrpcNetworkingManager {
                 ));
 
                 vacant.insert(SessionStatus::Active(Arc::downgrade(&session)));
+                metrics::METRICS.increment_network_event(NetworkDebugEvent::SessionActiveCreated);
 
                 session
             }
         };
-
-        tracing::info!(
-            "[SESSION_CREATION] Starting session {:?} with {} parties. (Owner: {:?})",
-            session_id,
-            party_count,
-            owner,
-        );
 
         Ok(session)
     }
