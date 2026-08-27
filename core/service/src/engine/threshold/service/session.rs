@@ -591,12 +591,6 @@ impl SessionMaker {
         context_id: ContextId,
         network_mode: NetworkMode,
     ) -> anyhow::Result<BaseSession> {
-        tracing::info!(
-            "Making base session: session_id={}, context_id={}, network_mode={:?}",
-            session_id,
-            context_id,
-            network_mode
-        );
         let networking = self
             .get_networking(session_id, context_id, network_mode)
             .await;

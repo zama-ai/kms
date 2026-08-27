@@ -249,24 +249,30 @@ What the workflow does, end to end:
 3. Validate the deployment type and the TLS combination.
 4. Verify the required image tags exist in the registry.
 5. Deploy KMS to the `kms-ci` namespace via `ci/scripts/deploy.sh`.
-6. Print a terse `before-perf` placement and network-counter snapshot.
+6. Print a terse `before-perf` network snapshot and start the diagnostics.
 7. Submit the Argo workflow
    (`ci/perf-testing/argo-workflow/kms-perf-workflow-kms-ci.yaml`).
-8. Collect logs and send the Slack report.
-9. Print `after-perf` KMS core pod network-counter deltas in the CI logs.
+8. Stream the Argo logs and send the Slack report.
+9. Print terse `after-perf` KMS core pod network-counter deltas in the CI logs.
+10. Upload CPU, KMS metric, ENA counter, and pod placement samples.
 
 ## Network diagnostics
 
 Network diagnostics are printed directly in the GitHub Actions log. The output
-is intentionally terse: node placement, KMS core pod placement, and after-run
-`eth0` rx/tx deltas for each running KMS core pod plus a total.
+is intentionally terse: KMS core pod placement and after-run `eth0` rx/tx
+deltas for each running KMS core pod plus a total. The `perf-diagnostics`
+artifact contains the full time series from the KMS metrics endpoints and ENA
+interfaces, ENA probe pod states and events, plus a placement snapshot
+containing the KMS cores and the first rate-test client pod.
 
 Each decrypt scenario also captures its own `eth0` rx/tx counters inside the
 Argo test pod. The core client samples them around the measurement window, and
 the resulting rates are reported as `net_rx`/`net_tx` in Slack.
 
-Pod-level `ethtool` can't see AWS ENA allowance counters; those need a
-privileged node-level probe.
+ENA (Elastic Network Adapter) is AWS's EC2 network interface and driver. It
+exposes hardware-level throttling and allowance counters that ordinary pod
+network interfaces do not. The workflow runs a host-networked DaemonSet on the
+KMS and benchmark node pools to collect them.
 
 ## Reference: workflow form fields
 
