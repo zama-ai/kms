@@ -1476,8 +1476,6 @@ impl<
         &self,
         request: Request<NewMpcEpochRequest>,
     ) -> Result<Response<Empty>, MetricedError> {
-        // Refreshes all rngs that were derived from the same base_kms as this one.
-        self.base_kms.refresh_all_rngs_in_registry().await;
         let rate_limiter_permit = self.rate_limiter.start_new_epoch().await?;
 
         let inner = request.into_inner();
@@ -1512,6 +1510,9 @@ impl<
                 tonic::Code::InvalidArgument,
             ));
         }
+
+        // Refreshes all rngs that were derived from the same base_kms as this one.
+        self.base_kms.refresh_all_rngs_in_registry().await;
 
         let resharing_task = match resharing_params {
             Some(ResharingParams {
