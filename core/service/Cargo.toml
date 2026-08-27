@@ -65,7 +65,7 @@ console_error_panic_hook.workspace = true
 ed25519-dalek.workspace = true
 enum_dispatch.workspace = true
 futures-util.workspace = true
-getrandom.workspace = true
+getrandom = { workspace = true, features = ["wasm_js"] }
 hashing.workspace = true
 hex.workspace = true
 hybrid-array.workspace = true

@@ -148,7 +148,7 @@ enum_dispatch = "=0.3.13"  # Enum dispatch optimization - HIGH RISK: Individual 
 escargot = "=0.5.15" # Interact with cargo without spawning external processes. MEDIUM RISK: single maintainer, 8M downloads, test-only dependency.
 futures = "=0.3.32"  # Async futures - LOW RISK: rust-lang team
 futures-util = "=0.3.32"  # Futures utilities - LOW RISK: rust-lang team
-getrandom = "=0.4.3" # Random number generation - LOW RISK: rust-random team, 1.8B+ downloads
+getrandom = { version = "=0.4.3", features = ["wasm_js"] }  # Random number generation - LOW RISK: rust-random team, 1.8B+ downloads
 g2p = "=1.2.2"  # Galois field arithmetic (GF(2^p)) - LOW RISK: Essential for threshold cryptography, finite field operations
 hex = "=0.4.3"  # Hex encoding/decoding - HIGH RISK: Individual maintainer (KokaKiwi), despite 284M downloads
 http = "=1.3.1"  # HTTP types - LOW RISK: hyperium team, 100M+ downloads
