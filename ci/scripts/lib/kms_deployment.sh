@@ -215,8 +215,7 @@ deploy_threshold_mode() {
 
         # Enable the ServiceMonitor (scraped by kube-prometheus-stack). Kind CI
         # prefixes names with ci_ so Grafana Cloud can keep them apart from
-        # production. aws-perf rides the cluster Prometheus, whose remote-write
-        # keep list only matches kms_.+ — leave names unprefixed and tell the
+        # production. For aws-perf we remove the prefix and tell the
         # run apart with namespace=kms-ci.
         if [[ "${ENABLE_METRICS:-false}" == "true" ]]; then
             HELM_ARGS+=(
