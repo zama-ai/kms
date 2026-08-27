@@ -13,19 +13,17 @@
 //! it. Each is enforced structurally *and* pinned by a test, because each fails
 //! silently rather than loudly if a later change breaks it.
 //!
-//! 1. **The persisted ECDSA key is the authoritative identity.** Tested by
-//!    `ecdsa_identity_is_never_the_seed_derived_key` and
-//!    `upgraded_node_keeps_its_ecdsa_key_and_gains_a_seed`.
-//! 2. **A seed is generated exactly once, by `kms-gen-keys`, and never
-//!    regenerated behind published material.** Tested by
-//!    `seed_is_not_reminted_behind_published_material`.
+//! 1. **The persisted ECDSA key is the authoritative identity.**
+//!    If it exists, it determines the node's ECDSA key, and the root signing seed
+//!    cannot override it.
+//! 2. **A seed is generated exactly once, by `kms-gen-keys`.**
+//!    A seed for generating non-ECDSA keys is never silently generated.
 //! 3. **On a fresh node — one with no ECDSA key yet — every key descends from the
-//!    seed, ECDSA's included.** Tested by
-//!    `fresh_node_derives_its_ecdsa_key_from_the_seed` and
-//!    `threshold_parties_get_independent_seeds`.
+//!    seed, ECDSA's included.**
+//!    This allows gracefully moving to a seed-only approach, once we want to roll
+//!    the ECDSA signing keys.
 //! 4. **On a node that already has an ECDSA key, only the non-ECDSA keys are
-//!    derived from the seed**; the existing key is left byte-for-byte alone.
-//!    Tested by `upgraded_node_keeps_its_ecdsa_key_and_gains_a_seed`.
+//!    derived from the seed**
 
 use super::ecdsa::PrivateSigKey;
 use super::eddsa::Ed25519;
@@ -58,9 +56,6 @@ pub enum RootSigningSeedVersions {
 /// [`PrivateSigKey`], so that adding it to an existing node is a purely additive
 /// write that the ordinary backup pass picks up, and so the `#[wasm_bindgen]`
 /// [`PrivateSigKey`] byte format is untouched.
-///
-/// **Losing this seed loses every non-ECDSA identity of the node**: they are
-/// derived from it and stored nowhere else. It must be in the backup set.
 #[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize, Zeroize, Versionize)]
 #[versionize(RootSigningSeedVersions)]
 pub struct RootSigningSeed {
@@ -87,10 +82,6 @@ impl ZeroizeOnDrop for RootSigningSeed {}
 
 impl RootSigningSeed {
     /// A fresh root seed drawn from `rng`.
-    ///
-    /// The seed is generated independently of all other key material — in
-    /// particular it is never derived from the ECDSA signing key. That
-    /// independence is the entire point of this type.
     pub fn random<R: rand::CryptoRng + rand::RngCore>(rng: &mut R) -> Self {
         let mut seed = [0u8; ROOT_SEED_LEN];
         rng.fill_bytes(&mut seed);
@@ -105,21 +96,8 @@ impl RootSigningSeed {
 
     /// The memoized signing key this root derives for `scheme`.
     ///
-    /// # ECDSA is derived here, but is not the node's identity
-    ///
-    /// This covers *every* scheme, ECDSA included — the seed is the root of the
-    /// whole key hierarchy. The ECDSA arm exists for two callers: generating the
-    /// key of a *fresh* node, and, later, rotating an existing node onto its
-    /// seed-derived key.
-    ///
-    /// It is **not** the current ECDSA identity of an upgraded node, whose
-    /// identity is the separately persisted [`PrivateSigKey`] — which is why
-    /// [`PrivateSigKey::unified_verifying_key`] answers ECDSA from itself and
-    /// only delegates the other schemes here. Signing with, publishing, or
-    /// validating against the ECDSA key derived here would use the wrong
-    /// identity for such a node. Use [`Self::derive_ecdsa_signing_key`] at the
-    /// two call sites that legitimately want it, so the intent is explicit and
-    /// auditable.
+    /// WARNING: This includes ECDSA, which will be _distinct_ from the node's
+    /// current ECDSA identity if it has one (as it may for legacy support).
     pub(crate) fn derive_signing_key(
         &self,
         scheme: SigningSchemeType,
@@ -138,10 +116,11 @@ impl RootSigningSeed {
 
     /// The ECDSA signing key this root derives.
     ///
+    /// WARBNING:
     /// Only two callers are correct: key generation on a fresh node (which has
     /// no prior identity, so this *becomes* its identity and is persisted as
     /// such), and the future rotation of an existing node. Everything else must
-    /// use the persisted [`PrivateSigKey`] — see [`Self::derive_signing_key`].
+    /// use the persisted [`PrivateSigKey`].
     #[cfg(feature = "non-wasm")]
     pub(crate) fn derive_ecdsa_signing_key(&self) -> Result<PrivateSigKey, SigningError> {
         use crate::cryptography::signing::HasSigningScheme;
@@ -158,9 +137,8 @@ impl RootSigningSeed {
     /// The verification key that signatures made with this root's signing key for
     /// `scheme` verify against.
     ///
-    /// Carries the same ECDSA caveat as the crate-internal `derive_signing_key`:
-    /// for an upgraded node the ECDSA verification key returned here is the
-    /// *post-rotation* one, not the identity it currently signs with.
+    /// WARNING: This includes ECDSA, which will be _distinct_ from the node's
+    /// current ECDSA identity if it has one (as it may for legacy support).
     pub fn unified_verifying_key(
         &self,
         scheme: SigningSchemeType,
@@ -175,10 +153,6 @@ impl RootSigningSeed {
     ) -> Result<UnifiedPrivateSigKey, SigningError> {
         Ok(match scheme {
             SigningSchemeType::Ecdsa256k1 => UnifiedPrivateSigKey::Ecdsa256k1(
-                // Fallible: a derived seed that is zero or `>= n` is not a valid
-                // secp256k1 scalar. That happens with probability ~2^-128, so in
-                // practice this only ever returns `Ok`, but it is an error rather
-                // than a panic so a caller can regenerate instead of crashing.
                 PrivateSigKey::keygen_from_seed(&self.derived_seed(scheme))?,
             ),
             SigningSchemeType::Ed25519 => {

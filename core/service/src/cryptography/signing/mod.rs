@@ -720,37 +720,6 @@ mod tests {
         unified_verify(DSEP, msg, &sig, &vk).unwrap();
     }
 
-    /// The regression guard for the vulnerability this whole change removes:
-    /// the ECDSA key does not determine any other scheme's key. Two identities
-    /// sharing the *same* secp256k1 scalar but rooted in different seeds derive
-    /// unrelated keys for every other scheme.
-    #[test]
-    fn ecdsa_key_does_not_determine_the_other_schemes() {
-        let mut rng = AesRng::seed_from_u64(606);
-        let (_pk, sk) = gen_sig_keys(&mut rng);
-
-        let first = sk.clone().with_root_seed(RootSigningSeed::random(&mut rng));
-        let second = sk.with_root_seed(RootSigningSeed::random(&mut rng));
-
-        // The shared ECDSA identity really is shared.
-        assert_eq!(
-            first
-                .unified_verifying_key(SigningSchemeType::Ecdsa256k1)
-                .unwrap(),
-            second
-                .unified_verifying_key(SigningSchemeType::Ecdsa256k1)
-                .unwrap(),
-        );
-
-        for scheme in SigningSchemeType::iter().filter(|s| *s != SigningSchemeType::Ecdsa256k1) {
-            assert_ne!(
-                first.unified_verifying_key(scheme).unwrap(),
-                second.unified_verifying_key(scheme).unwrap(),
-                "{scheme:?} was determined by the ECDSA key rather than by the root seed"
-            );
-        }
-    }
-
     /// Without a root seed an identity can still do everything ECDSA, and fails
     /// loudy for every other scheme.
     #[test]

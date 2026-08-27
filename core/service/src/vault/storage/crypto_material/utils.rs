@@ -384,7 +384,7 @@ async fn get_unique<
 
 /// The node's signing identity: its ECDSA key with the root seed attached.
 ///
-/// A node that has not yet had `kms-gen-keys` generate a seed simply has none
+/// A node that has not yet had a seed generated simply has none
 /// attached: that is ECDSA-only operation, not a failure, and must not stop the
 /// server from booting.
 pub async fn get_core_signing_key<S: StorageReader>(storage: &S) -> anyhow::Result<PrivateSigKey> {
