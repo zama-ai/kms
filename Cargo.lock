@@ -4574,6 +4574,7 @@ dependencies = [
  "ed25519-dalek",
  "enum_dispatch",
  "futures-util",
+ "getrandom 0.4.3",
  "hex",
  "hybrid-array 0.2.3",
  "iam-rs",

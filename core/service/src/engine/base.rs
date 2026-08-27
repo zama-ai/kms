@@ -1125,7 +1125,7 @@ impl BaseKmsStruct {
         }
     }
 
-    pub fn kms_type(&self) -> KMSType {
+    pub(crate) fn kms_type(&self) -> KMSType {
         self.kms_type
     }
 
@@ -1141,7 +1141,7 @@ impl BaseKmsStruct {
     }
 
     /// Make a clone of this struct with a newly initialized RNG s.t. that both the new and old struct are safe to use (the RNG is pushed into the shared registry).
-    pub async fn new_instance(&self) -> Self {
+    pub(crate) async fn new_instance(&self) -> Self {
         let sig_key = match &self.sig_key {
             Some(sk) => Some(Arc::clone(sk)),
             None => None,
@@ -1161,7 +1161,7 @@ impl BaseKmsStruct {
     /// Useful for creating a new RNG for a ask that can run in parallel.
     ///
     /// __NOTE__: If the goal is to refresh entropy for the base RNG, use [`refresh_rng`] instead.
-    pub async fn fork_rng(&self) -> AesRng {
+    pub(crate) async fn fork_rng(&self) -> AesRng {
         let mut seed = [0u8; crate::consts::RND_SIZE];
         // Make a seperate scope for the rng so that it is dropped before the lock is released
         {
@@ -1171,16 +1171,8 @@ impl BaseKmsStruct {
         AesRng::from_seed(seed)
     }
 
-    /// Refreshes the base RNG with a new RNG seeded from the OS and optionally the security module.
-    pub async fn refresh_self_rng(&self) {
-        let rng = Self::fresh_rng(self.rng.clone(), self.security_module.clone()).await;
-
-        let mut self_rng = self.rng.lock().await;
-        *self_rng = rng;
-    }
-
     /// Refreshes all RNGs in the registry with new RNGs seeded from the OS and optionally the security module.
-    pub async fn refresh_all_rngs_in_registry(&self) {
+    pub(crate) async fn refresh_all_rngs_in_registry(&self) {
         let mut registry = self.rng_registry.lock().await;
         registry.retain(|weak_rng| weak_rng.upgrade().is_some());
         for weak_rng in registry.iter() {
@@ -1196,30 +1188,31 @@ impl BaseKmsStruct {
     async fn fresh_seed(
         security_module: Option<Arc<SecurityModuleProxy>>,
     ) -> [u8; crate::consts::RND_SIZE] {
-        // Pulls randomness from freshly OS seeded rng.
-        //
-        // Note to reviewer: Using AesRng::from_entropy here because getrandom isn't
-        // one of our dependencies, but might be fine also to add it just for this?
-        let mut os_rng = AesRng::from_entropy();
+        // Pulls randomness from OS entropy pool.
         let mut seed = [0u8; crate::consts::RND_SIZE];
-        os_rng.fill_bytes(seed.as_mut());
+        if let Err(err) = getrandom::fill(seed.as_mut()) {
+            panic!("getrandom failed: {}", err);
+        }
 
         // Pulls randomness from the security module if available.
         if let Some(security_module) = security_module {
             match security_module.get_random(crate::consts::RND_SIZE).await {
                 Ok(bytes) => {
+                    if bytes.len() != crate::consts::RND_SIZE {
+                        panic!(
+                            "Security module returned {} bytes, expected {}",
+                            bytes.len(),
+                            crate::consts::RND_SIZE
+                        );
+                    }
                     // Mix in the randomness from the security module into the OS seed
                     for i in 0..crate::consts::RND_SIZE {
-                        // Sanity check but if the call to the security module is successful, we should have the right number of bytes.
-                        if i < bytes.len() {
-                            seed[i] ^= bytes[i];
-                        }
+                        // Direct indexing as we just checked the size is correct
+                        seed[i] ^= bytes[i];
                     }
                 }
                 Err(e) => {
-                    // Question to reviewer: Do we want to abort/err here if the security module failed to give
-                    // us the randomness we expected ? (Note that we'd still get randomness from the OS)
-                    tracing::error!("Failed to get random bytes from security module: {}", e);
+                    panic!("Failed to get random bytes from security module: {}", e);
                 }
             }
         };
@@ -1251,7 +1244,7 @@ impl BaseKmsStruct {
     }
 
     /// Calls [`Self::fresh_rng`] and registers it in the rng_registry (so it gets refreshed upon [`Self::refresh_all_rngs_in_registry`]).
-    pub async fn fresh_registered_rng(&self) -> Arc<Mutex<AesRng>> {
+    pub(crate) async fn fresh_registered_rng(&self) -> Arc<Mutex<AesRng>> {
         let rng = Arc::new(Mutex::new(
             Self::fresh_rng(self.rng.clone(), self.security_module.clone()).await,
         ));
@@ -3237,29 +3230,6 @@ pub(crate) mod tests {
             assert_eq!(
                 base_first, child_first,
                 "child RNG must be unaffected by draws on the base RNG"
-            );
-        }
-
-        #[tokio::test]
-        async fn refresh_self_rng_replaces_the_base_rng() {
-            let base = test_base_kms().await;
-
-            // Capture the deterministic stream at a fixed seed.
-            set_seed(&base.rng, 555).await;
-            let before = draw(&base.rng).await;
-
-            // Control: without a refresh the stream is reproducible.
-            set_seed(&base.rng, 555).await;
-            assert_eq!(draw(&base.rng).await, before);
-
-            // After a refresh the base RNG is reseeded with fresh entropy, so the
-            // "seed 555" stream is gone.
-            set_seed(&base.rng, 555).await;
-            base.refresh_self_rng().await;
-            assert_ne!(
-                draw(&base.rng).await,
-                before,
-                "refresh_self_rng must reseed the base RNG"
             );
         }
 
