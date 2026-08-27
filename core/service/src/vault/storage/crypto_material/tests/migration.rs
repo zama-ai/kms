@@ -221,7 +221,7 @@ async fn setup_pre_migration_uncompressed(
     prep_id: &RequestId,
     domain: &alloy_sol_types::Eip712Domain,
 ) -> (ThresholdFheKeys, tfhe::CompactPublicKey) {
-    let (_, fhe_keys_skeleton, fhe_key_set) = setup_threshold_store(old_key_id);
+    let (_, fhe_keys_skeleton, fhe_key_set) = setup_threshold_store(old_key_id, RamStorage::new());
     let compact_pk = fhe_key_set.public_key.clone();
 
     // Compute real metadata that matches what we'll actually store in pub storage.
