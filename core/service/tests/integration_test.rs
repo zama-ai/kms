@@ -40,7 +40,10 @@ mod kms_init_binary_test {
 
 #[cfg(test)]
 mod kms_gen_keys_binary_test {
-    use kms_lib::{consts::signing_material_id, cryptography::signatures::SigningSchemeType};
+    use kms_lib::{
+        consts::{SIGNING_KEY_ID, signing_material_id},
+        cryptography::signatures::SigningSchemeType,
+    };
     use std::path::{Path, PathBuf};
     use tempfile::tempdir;
 
@@ -154,9 +157,15 @@ path = "{private_path}"
         let log = run_centralized_overwrite(&config_dir, &temp_dir_priv, &temp_dir_pub);
         assert!(log.contains("Deleting published verification material from public storage"));
         assert!(log.contains("Deleting SigningKey under request ID "));
+        assert!(log.contains("Deleting SigningSeed under request ID "));
         assert!(log.contains(
-            "Successfully stored public centralized server signing key under the handle"
+            "Successfully stored private centralized server signing key under the handle"
         ));
+        assert!(log.contains(&format!(
+            "Stored {} TypedVerfKey under the handle {}",
+            SigningSchemeType::Ecdsa256k1,
+            signing_material_id(SigningSchemeType::Ecdsa256k1)
+        )));
 
         let config_path = write_file_storage_config(
             &config_dir,
@@ -185,8 +194,13 @@ path = "{private_path}"
                 .contains("Deleting published verification material from public storage")
         );
         assert!(overwrite_again_log.contains(
-            "Successfully stored public centralized server signing key under the handle"
+            "Successfully stored private centralized server signing key under the handle"
         ));
+        assert!(overwrite_again_log.contains(&format!(
+            "Stored {} TypedVerfKey under the handle {}",
+            SigningSchemeType::Ecdsa256k1,
+            signing_material_id(SigningSchemeType::Ecdsa256k1)
+        )));
     }
 
     /// `repopulate = true` restores verification material from the existing ECDSA
@@ -279,6 +293,114 @@ path = "{private_path}"
         assert!(
             !temp_dir_pub.path().join("PUB/TypedVerfKey").exists(),
             "verification material was written without a signing key to derive it from"
+        );
+    }
+
+    /// `repopulate = true` derives every non-ECDSA scheme from the root signing
+    /// seed, so a node that kept its ECDSA key but lost the seed must fail up
+    /// front rather than publish an ECDSA-only layout.
+    #[test]
+    #[integration_test]
+    fn central_repopulate_without_root_seed_fails() {
+        let (temp_dir_priv, temp_dir_pub, config_dir) =
+            (tempdir().unwrap(), tempdir().unwrap(), tempdir().unwrap());
+        run_centralized_overwrite(&config_dir, &temp_dir_priv, &temp_dir_pub);
+
+        // The state this guards against: the ECDSA identity survives, the seed
+        // every other scheme descends from does not.
+        let seed_path = temp_dir_priv
+            .path()
+            .join("PRIV/SigningSeed")
+            .join(SIGNING_KEY_ID.to_string());
+        assert!(seed_path.exists(), "the seed was never written");
+        fs::remove_file(&seed_path).unwrap();
+
+        // Purge one non-ECDSA object, so "nothing was published" below means
+        // something.
+        let purged = temp_dir_pub
+            .path()
+            .join("PUB/TypedVerfKey")
+            .join(signing_material_id(SigningSchemeType::Ed25519).to_string());
+        assert!(purged.exists(), "{} was never written", purged.display());
+        fs::remove_file(&purged).unwrap();
+
+        let config_path = write_file_storage_config(
+            &config_dir,
+            temp_dir_priv.path(),
+            temp_dir_pub.path(),
+            "repopulate = true",
+            None,
+        );
+        let output = kms_gen_keys_command()
+            .arg("--config-file")
+            .arg(config_path)
+            .output()
+            .unwrap();
+
+        assert!(!output.status.success());
+        let err_log = String::from_utf8_lossy(&output.stderr);
+        assert!(
+            err_log.contains("SigningSeed") && err_log.contains("kms-gen-keys"),
+            "the failure does not name the missing seed: {err_log}"
+        );
+        assert!(
+            !purged.exists(),
+            "verification material was published without a root seed to derive it from"
+        );
+    }
+
+    /// `show_existing = true` lists both halves of the private signing identity
+    /// and the per-scheme public material, and deletes nothing.
+    #[test]
+    #[integration_test]
+    fn central_show_existing_lists_the_signing_identity() {
+        let (temp_dir_priv, temp_dir_pub, config_dir) =
+            (tempdir().unwrap(), tempdir().unwrap(), tempdir().unwrap());
+        run_centralized_overwrite(&config_dir, &temp_dir_priv, &temp_dir_pub);
+
+        let config_path = write_file_storage_config(
+            &config_dir,
+            temp_dir_priv.path(),
+            temp_dir_pub.path(),
+            "show_existing = true",
+            None,
+        );
+        let output = kms_gen_keys_command()
+            .arg("--config-file")
+            .arg(config_path)
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "stderr: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let log = String::from_utf8_lossy(&output.stdout);
+
+        for data_type in ["SigningKey", "SigningSeed"] {
+            let expected = format!("{data_type}, {}", *SIGNING_KEY_ID);
+            assert!(
+                log.contains(&expected),
+                "{expected:?} is missing from {log}"
+            );
+        }
+        let expected = format!(
+            "TypedVerfKey, {}",
+            signing_material_id(SigningSchemeType::MlDsa65)
+        );
+        assert!(
+            log.contains(&expected),
+            "{expected:?} is missing from {log}"
+        );
+
+        // Showing is read-only.
+        assert!(
+            temp_dir_priv
+                .path()
+                .join("PRIV/SigningSeed")
+                .join(SIGNING_KEY_ID.to_string())
+                .exists(),
+            "show_existing deleted the root signing seed"
         );
     }
 
@@ -439,8 +561,17 @@ tls_subject = "kms-party"
             );
         }
         assert!(output.status.success());
-        assert!(log.contains("Successfully stored public centralized server signing key under the handle 60b7070add74be3827160aa635fb255eeeeb88586c4debf7ab1134ddceb4beee in storage \"file storage with"));
         assert!(log.contains("Successfully stored private centralized server signing key under the handle 60b7070add74be3827160aa635fb255eeeeb88586c4debf7ab1134ddceb4beee in storage \"file storage with"));
+        // The public ECDSA material of the same identity, at the same handle.
+        assert!(log.lines().any(|line| {
+            line.contains("Successfully stored ethereum address 0x")
+                && line.contains("under the handle 60b7070add74be3827160aa635fb255eeeeb88586c4debf7ab1134ddceb4beee in storage \"file storage with")
+        }));
+        assert!(log.contains(&format!(
+            "Stored {} TypedVerfKey under the handle {} in storage \"file storage with",
+            SigningSchemeType::Ecdsa256k1,
+            signing_material_id(SigningSchemeType::Ecdsa256k1)
+        )));
     }
 }
 

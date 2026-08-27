@@ -869,8 +869,8 @@ mod tests {
     use crate::cryptography::signing::SigningSchemeType;
     use crate::engine::context::{ContextInfo, NodeInfo, SchemeDigests, SoftwareVersion};
     use crate::util::key_setup::{
-        LEGACY_ECDSA_MATERIAL_TYPES, SCHEME_MATERIAL_TYPES, delete_scheme_verification_material,
-        ensure_central_server_signing_keys_exist,
+        CURRENT_VERF_MATERIAL_TYPES, LEGACY_VERF_MATERIAL_TYPES,
+        delete_scheme_verification_material, ensure_central_server_signing_keys_exist,
     };
     use crate::vault::storage::crypto_material::{get_core_signing_key, read_verification_key_at};
     use crate::vault::storage::file::FileStorage;
@@ -2936,7 +2936,7 @@ mod tests {
     async fn assert_scheme_material_present<S: StorageReader>(pub_storage: &S, expected: bool) {
         for scheme in SigningSchemeType::iter() {
             let id = signing_material_id(scheme);
-            for data_type in SCHEME_MATERIAL_TYPES.map(|t| t.to_string()) {
+            for data_type in CURRENT_VERF_MATERIAL_TYPES.map(|t| t.to_string()) {
                 assert_eq!(
                     pub_storage.data_exists(&id, &data_type).await.unwrap(),
                     expected,
@@ -3189,9 +3189,9 @@ mod tests {
     #[tokio::test]
     async fn backfills_material_for_a_pre_multi_scheme_node() {
         let (mut pub_storage, priv_storage) = pre_multi_scheme_node().await;
-        let legacy_before = snapshot(&pub_storage, &LEGACY_ECDSA_MATERIAL_TYPES).await;
+        let legacy_before = snapshot(&pub_storage, &LEGACY_VERF_MATERIAL_TYPES).await;
         assert!(
-            snapshot(&pub_storage, &SCHEME_MATERIAL_TYPES)
+            snapshot(&pub_storage, &CURRENT_VERF_MATERIAL_TYPES)
                 .await
                 .is_empty(),
             "the fixture is not a pre-multi-scheme node"
@@ -3204,7 +3204,7 @@ mod tests {
         let sk = get_core_signing_key(&priv_storage).await.unwrap();
         assert_material_matches(&pub_storage, &sk).await;
         assert_eq!(
-            snapshot(&pub_storage, &LEGACY_ECDSA_MATERIAL_TYPES).await,
+            snapshot(&pub_storage, &LEGACY_VERF_MATERIAL_TYPES).await,
             legacy_before,
             "the deprecated ECDSA material was modified"
         );
@@ -3223,7 +3223,7 @@ mod tests {
             .unwrap();
 
         assert!(
-            snapshot(&pub_storage, &SCHEME_MATERIAL_TYPES)
+            snapshot(&pub_storage, &CURRENT_VERF_MATERIAL_TYPES)
                 .await
                 .is_empty(),
             "material was written without a signing key to derive it from"
@@ -3239,14 +3239,14 @@ mod tests {
         migrate_public_verification_material(&priv_storage, &mut pub_storage)
             .await
             .unwrap();
-        let after_first_run = snapshot(&pub_storage, &SCHEME_MATERIAL_TYPES).await;
+        let after_first_run = snapshot(&pub_storage, &CURRENT_VERF_MATERIAL_TYPES).await;
 
         migrate_public_verification_material(&priv_storage, &mut pub_storage)
             .await
             .unwrap();
 
         assert_eq!(
-            snapshot(&pub_storage, &SCHEME_MATERIAL_TYPES).await,
+            snapshot(&pub_storage, &CURRENT_VERF_MATERIAL_TYPES).await,
             after_first_run
         );
     }
