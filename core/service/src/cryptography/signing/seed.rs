@@ -116,7 +116,7 @@ impl RootSigningSeed {
 
     /// The ECDSA signing key this root derives.
     ///
-    /// WARBNING:
+    /// WARNING:
     /// Only two callers are correct: key generation on a fresh node (which has
     /// no prior identity, so this *becomes* its identity and is persisted as
     /// such), and the future rotation of an existing node. Everything else must
