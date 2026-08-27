@@ -12,6 +12,11 @@ use tfhe::{
     safe_serialization::{safe_deserialize, safe_serialize},
 };
 
+#[cfg(test)]
+use super::test_support::{
+    EntryFingerprint, StorageEntry, StorageFault, StorageMutation, StorageOp, StorageState,
+};
+
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct RamStorage {
     // Store data_id, data_type to serialized data
@@ -314,35 +319,119 @@ impl StorageExt for RamStorage {
     }
 }
 
-/// This is a storage that fails after a predetermined number of writes.
+/// Test-only [`RamStorage`] wrapper with entry-specific fault injection and side-effect recording.
 ///
-/// It uses a [RamStorage] internally
-/// and make it fail after a configurable number of operations.
+/// Store and delete fail points name the exact storage entry to reject. Both can be active at the
+/// same time and remain active until replaced or cleared. Successful mutations and failed
+/// operations are recorded separately, and [`Self::state`] snapshots the stored entries. Reads
+/// pass through to the wrapped storage and are not recorded.
 #[cfg(test)]
 pub struct FailingRamStorage {
-    available_writes: usize,
-    /// When set, every deletion (epoch-scoped or not) fails. Used to exercise the
-    /// partial-failure retry logic in epoch/context destruction.
-    fail_deletes: bool,
+    fail_store_at: Option<StorageEntry>,
+    fail_delete_at: Option<StorageEntry>,
+    mutations: Vec<StorageMutation>,
+    faults: Vec<StorageFault>,
     inner: RamStorage,
 }
 
 #[cfg(test)]
 impl FailingRamStorage {
-    pub fn new(writes_before_failure: usize) -> Self {
+    pub fn new() -> Self {
         Self {
-            available_writes: writes_before_failure,
-            fail_deletes: false,
+            fail_store_at: None,
+            fail_delete_at: None,
+            mutations: Vec::new(),
+            faults: Vec::new(),
             inner: RamStorage::new(),
         }
     }
 
-    pub fn set_available_writes(&mut self, available_writes: usize) {
-        self.available_writes = available_writes
+    pub(crate) fn set_fail_store_at(&mut self, entry: StorageEntry) {
+        self.fail_store_at = Some(entry);
     }
 
-    pub fn set_fail_deletes(&mut self, fail_deletes: bool) {
-        self.fail_deletes = fail_deletes
+    pub(crate) fn set_fail_delete_at(&mut self, entry: StorageEntry) {
+        self.fail_delete_at = Some(entry);
+    }
+
+    pub(crate) fn clear_fail_points(&mut self) {
+        self.fail_store_at = None;
+        self.fail_delete_at = None;
+    }
+
+    pub(crate) fn clear_events(&mut self) {
+        self.mutations.clear();
+        self.faults.clear();
+    }
+
+    pub(crate) fn mutations(&self) -> &[StorageMutation] {
+        &self.mutations
+    }
+
+    pub(crate) fn faults(&self) -> &[StorageFault] {
+        &self.faults
+    }
+
+    pub(crate) fn state(&self) -> StorageState {
+        self.inner
+            .internal_storage
+            .iter()
+            .map(|(((data_id, epoch_id), data_type), bytes)| {
+                (
+                    StorageEntry::new(*data_id, *epoch_id, data_type),
+                    EntryFingerprint::from_bytes(bytes),
+                )
+            })
+            .collect()
+    }
+
+    fn should_fail_store(&self, entry: &StorageEntry) -> bool {
+        self.fail_store_at.as_ref() == Some(entry)
+    }
+
+    fn should_fail_delete(&self, entry: &StorageEntry) -> bool {
+        self.fail_delete_at.as_ref() == Some(entry)
+    }
+
+    fn record_store_result(
+        &mut self,
+        entry: StorageEntry,
+        result: anyhow::Result<StoreWriteOutcome>,
+    ) -> anyhow::Result<StoreWriteOutcome> {
+        match result {
+            Ok(StoreWriteOutcome::Created) => {
+                self.mutations
+                    .push(StorageMutation::new(entry, StorageOp::Store));
+                Ok(StoreWriteOutcome::Created)
+            }
+            Ok(StoreWriteOutcome::SkippedExisting) => Ok(StoreWriteOutcome::SkippedExisting),
+            Err(error) => {
+                self.record_fault(entry, StorageOp::Store);
+                Err(error)
+            }
+        }
+    }
+
+    fn record_delete_result(
+        &mut self,
+        entry: StorageEntry,
+        result: anyhow::Result<()>,
+    ) -> anyhow::Result<()> {
+        match result {
+            Ok(()) => {
+                self.mutations
+                    .push(StorageMutation::new(entry, StorageOp::Delete));
+                Ok(())
+            }
+            Err(error) => {
+                self.record_fault(entry, StorageOp::Delete);
+                Err(error)
+            }
+        }
+    }
+
+    fn record_fault(&mut self, entry: StorageEntry, operation: StorageOp) {
+        self.faults.push(StorageFault::new(entry, operation));
     }
 }
 
@@ -381,12 +470,13 @@ impl Storage for FailingRamStorage {
         data_id: &RequestId,
         data_type: &str,
     ) -> anyhow::Result<StoreWriteOutcome> {
-        if self.available_writes < 1 {
+        let entry = StorageEntry::new(*data_id, None, data_type);
+        if self.should_fail_store(&entry) {
+            self.record_fault(entry, StorageOp::Store);
             anyhow::bail!("storage failed!")
-        } else {
-            self.available_writes -= 1;
-            self.inner.store_data(data, data_id, data_type).await
         }
+        let result = self.inner.store_data(data, data_id, data_type).await;
+        self.record_store_result(entry, result)
     }
 
     async fn store_bytes(
@@ -395,14 +485,23 @@ impl Storage for FailingRamStorage {
         data_id: &RequestId,
         data_type: &str,
     ) -> anyhow::Result<StoreWriteOutcome> {
-        self.inner.store_bytes(bytes, data_id, data_type).await
+        let entry = StorageEntry::new(*data_id, None, data_type);
+        if self.should_fail_store(&entry) {
+            self.record_fault(entry, StorageOp::Store);
+            anyhow::bail!("storage failed!")
+        }
+        let result = self.inner.store_bytes(bytes, data_id, data_type).await;
+        self.record_store_result(entry, result)
     }
 
     async fn delete_data(&mut self, data_id: &RequestId, data_type: &str) -> anyhow::Result<()> {
-        if self.fail_deletes {
+        let entry = StorageEntry::new(*data_id, None, data_type);
+        if self.should_fail_delete(&entry) {
+            self.record_fault(entry, StorageOp::Delete);
             anyhow::bail!("storage delete failed!")
         }
-        self.inner.delete_data(data_id, data_type).await
+        let result = self.inner.delete_data(data_id, data_type).await;
+        self.record_delete_result(entry, result)
     }
 }
 
@@ -470,9 +569,16 @@ impl StorageExt for FailingRamStorage {
         epoch_id: &EpochId,
         data_type: &str,
     ) -> anyhow::Result<StoreWriteOutcome> {
-        self.inner
+        let entry = StorageEntry::new(*data_id, Some(*epoch_id), data_type);
+        if self.should_fail_store(&entry) {
+            self.record_fault(entry, StorageOp::Store);
+            anyhow::bail!("storage failed!")
+        }
+        let result = self
+            .inner
             .store_data_at_epoch(data, data_id, epoch_id, data_type)
-            .await
+            .await;
+        self.record_store_result(entry, result)
     }
 
     async fn store_bytes_at_epoch(
@@ -482,9 +588,16 @@ impl StorageExt for FailingRamStorage {
         epoch_id: &EpochId,
         data_type: &str,
     ) -> anyhow::Result<StoreWriteOutcome> {
-        self.inner
+        let entry = StorageEntry::new(*data_id, Some(*epoch_id), data_type);
+        if self.should_fail_store(&entry) {
+            self.record_fault(entry, StorageOp::Store);
+            anyhow::bail!("storage failed!")
+        }
+        let result = self
+            .inner
             .store_bytes_at_epoch(bytes, data_id, epoch_id, data_type)
-            .await
+            .await;
+        self.record_store_result(entry, result)
     }
 
     async fn delete_data_at_epoch(
@@ -493,12 +606,16 @@ impl StorageExt for FailingRamStorage {
         epoch_id: &EpochId,
         data_type: &str,
     ) -> anyhow::Result<()> {
-        if self.fail_deletes {
+        let entry = StorageEntry::new(*data_id, Some(*epoch_id), data_type);
+        if self.should_fail_delete(&entry) {
+            self.record_fault(entry, StorageOp::Delete);
             anyhow::bail!("storage delete failed!")
         }
-        self.inner
+        let result = self
+            .inner
             .delete_data_at_epoch(data_id, epoch_id, data_type)
-            .await
+            .await;
+        self.record_delete_result(entry, result)
     }
 }
 
