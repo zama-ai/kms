@@ -282,13 +282,10 @@ impl HasSigningScheme for PrivateSigKey {
     }
 }
 
-// Marker only: both secret-bearing fields wipe themselves when dropped — `sk:
-// WrappedSigningKey` through its derived `ZeroizeOnDrop`, and the attached
-// `RootSigningSeed` through its own (see its `ZeroizeOnDrop` impl) — so dropping
-// a `PrivateSigKey` wipes all of its key material. Not derived because that
-// would generate a `Drop` impl, which conflicts with the other macros on this
-// type (this is why the zeroizing `Drop` lives on the `WrappedSigningKey`
-// newtype).
+// Marker only: the `sk: WrappedSigningKey` field is `ZeroizeOnDrop`, so dropping
+// a `PrivateSigKey` wipes its key material. Not derived because that would
+// generate a `Drop` impl, which conflicts with the other macros on this type
+// (this is why the zeroizing `Drop` lives on the `WrappedSigningKey` newtype).
 impl ZeroizeOnDrop for PrivateSigKey {}
 
 #[derive(Clone, PartialEq, Eq, Debug, ZeroizeOnDrop)]

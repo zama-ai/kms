@@ -424,10 +424,11 @@ path = "{private_path}"
 
         let log = String::from_utf8_lossy(&output.stdout);
         assert!(output.status.success());
-        assert!(log.contains("Successfully stored ethereum address 0x"));
-        assert!(
-            log.contains("under the handle 60b7070add74be3827160aa635fb255eeeeb88586c4debf7ab1134ddceb4beee in storage")
-        );
+        assert!(log.contains(&format!(
+            "Stored {} VerfAddress under the handle {} in storage",
+            SigningSchemeType::Ecdsa256k1,
+            signing_material_id(SigningSchemeType::Ecdsa256k1)
+        )));
 
         let mut adress_path = temp_dir_pub.path().to_path_buf();
         adress_path.push(
@@ -520,10 +521,11 @@ tls_subject = "kms-party"
             .unwrap();
 
         assert!(output.status.success());
-        assert!(
-            String::from_utf8_lossy(&output.stdout)
-                .contains("Successfully stored ethereum address 0x")
-        );
+        assert!(String::from_utf8_lossy(&output.stdout).contains(&format!(
+            "Stored {} VerfAddress under the handle {} in storage",
+            SigningSchemeType::Ecdsa256k1,
+            signing_material_id(SigningSchemeType::Ecdsa256k1)
+        )));
     }
 
     /// Deterministic centralized key generation persists both the public and private signing keys
@@ -562,16 +564,15 @@ tls_subject = "kms-party"
         }
         assert!(output.status.success());
         assert!(log.contains("Successfully stored private centralized server signing key under the handle 60b7070add74be3827160aa635fb255eeeeb88586c4debf7ab1134ddceb4beee in storage \"file storage with"));
-        // The public ECDSA material of the same identity, at the same handle.
-        assert!(log.lines().any(|line| {
-            line.contains("Successfully stored ethereum address 0x")
-                && line.contains("under the handle 60b7070add74be3827160aa635fb255eeeeb88586c4debf7ab1134ddceb4beee in storage \"file storage with")
-        }));
-        assert!(log.contains(&format!(
-            "Stored {} TypedVerfKey under the handle {} in storage \"file storage with",
-            SigningSchemeType::Ecdsa256k1,
-            signing_material_id(SigningSchemeType::Ecdsa256k1)
-        )));
+        // The public ECDSA material of the same identity, at the same handle, in
+        // both the canonical and the deprecated location.
+        for folder in ["TypedVerfKey", "VerfKey"] {
+            assert!(log.contains(&format!(
+                "Stored {} {folder} under the handle {} in storage \"file storage with",
+                SigningSchemeType::Ecdsa256k1,
+                signing_material_id(SigningSchemeType::Ecdsa256k1)
+            )));
+        }
     }
 }
 

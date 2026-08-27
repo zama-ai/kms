@@ -27,7 +27,6 @@
 //!    derived from the seed**; the existing key is left byte-for-byte alone.
 //!    Tested by `upgraded_node_keeps_its_ecdsa_key_and_gains_a_seed`.
 
-use super::cache::DerivedKeyCache;
 use super::ecdsa::PrivateSigKey;
 use super::eddsa::Ed25519;
 use super::mldsa::MlDsa;
@@ -39,6 +38,8 @@ use crate::impl_generic_versionize;
 use hashing::{DIGEST_BYTES, hash_element};
 use ml_dsa::{MlDsa44, MlDsa65, MlDsa87};
 use serde::{Deserialize, Serialize, de::Visitor};
+use std::sync::{Arc, OnceLock};
+use strum::EnumCount;
 use tfhe::named::Named;
 use tfhe_versionable::{Versionize, VersionsDispatch};
 use zeroize::{Zeroize, ZeroizeOnDrop, Zeroizing};
@@ -271,6 +272,67 @@ impl Visitor<'_> for WrappedSeedVisitor {
     }
 }
 
+/// Per-scheme cache of the signing keys a [`RootSigningSeed`] derives.
+///
+/// Deriving a key runs a KDF plus a (for ML-DSA, non-trivial) key expansion, so
+/// each scheme's key is derived once and memoized here. Every slot may be
+/// filled: the seed is the root of the whole key hierarchy, ECDSA included.
+struct DerivedKeyCache {
+    /// One slot per [`SigningSchemeType`], indexed by `scheme as usize`.
+    slots: Arc<[OnceLock<UnifiedPrivateSigKey>; SigningSchemeType::COUNT]>,
+}
+
+impl DerivedKeyCache {
+    fn slot(&self, scheme: SigningSchemeType) -> &OnceLock<UnifiedPrivateSigKey> {
+        &self.slots[scheme as usize]
+    }
+}
+
+impl Default for DerivedKeyCache {
+    fn default() -> Self {
+        Self {
+            slots: Arc::new(std::array::from_fn(|_| OnceLock::new())),
+        }
+    }
+}
+
+// Warm clone: sharing the `Arc` is deliberate, so clones of a root secret share
+// one warmed cache rather than each re-deriving.
+impl Clone for DerivedKeyCache {
+    fn clone(&self) -> Self {
+        Self {
+            slots: Arc::clone(&self.slots),
+        }
+    }
+}
+
+// Ignore the key cache when doing equality comparision.
+// Instead we only care about the underlying root secret when comparing.
+impl PartialEq for DerivedKeyCache {
+    fn eq(&self, _other: &Self) -> bool {
+        true
+    }
+}
+impl Eq for DerivedKeyCache {}
+
+// Never render cached secret-key material.
+impl std::fmt::Debug for DerivedKeyCache {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("DerivedKeyCache(..)")
+    }
+}
+
+impl Zeroize for DerivedKeyCache {
+    fn zeroize(&mut self) {
+        // Drop this handle to the shared cache. If it is the last one, the slots
+        // drop and each cached key wipes itself in place
+        // (`UnifiedPrivateSigKey: ZeroizeOnDrop`); if other clones still share
+        // the cache, the derived keys are wiped once the final clone drops. The
+        // root secret itself is wiped in place regardless.
+        *self = Self::default();
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -380,7 +442,7 @@ mod tests {
 
     /// `derive_signing_key` memoizes: repeated calls return the same cached
     /// instance, and a (warm) clone shares that cache rather than re-deriving.
-    /// Unlike the [`PrivateSigKey`] cache, the ECDSA slot is live here.
+    /// Every slot is covered, the ECDSA one included.
     #[test]
     fn derived_keys_are_cached_and_shared_across_clones() {
         let mut rng = AesRng::seed_from_u64(5);

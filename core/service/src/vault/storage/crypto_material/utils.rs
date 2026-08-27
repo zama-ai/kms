@@ -14,7 +14,10 @@ use crate::vault::storage::{StorageExt, StorageReader, StorageReaderExt};
 use crate::{
     anyhow_error_and_warn_log,
     client::client_non_wasm::ClientDataType,
-    vault::storage::{Storage, read_all_data_versioned, store_versioned_at_request_id},
+    vault::storage::{
+        Storage, read_all_data_versioned, read_versioned_at_request_id,
+        store_versioned_at_request_id,
+    },
 };
 use aes_prng::AesRng;
 use kms_grpc::RequestId;
@@ -402,37 +405,25 @@ pub async fn get_core_signing_key<S: StorageReader>(storage: &S) -> anyhow::Resu
 
 /// The node's root signing seed, if it has one.
 ///
-/// Absence is a normal state — a node that predates the seed, or one that has not
-/// yet run `kms-gen-keys` — so this returns `None` rather than failing.
+/// The seed is only ever written under [`SIGNING_KEY_ID`], so only that handle is
+/// read. Absence is a normal state, so this returns `None` rather than failing: a
+/// node predates the seed, or has not yet run `kms-gen-keys`.
 pub async fn get_core_root_signing_seed<S: StorageReader>(
     storage: &S,
 ) -> anyhow::Result<Option<RootSigningSeed>> {
-    let mut seeds: HashMap<RequestId, RootSigningSeed> =
-        read_all_data_versioned(storage, &PrivDataType::SigningSeed.to_string())
-            .await
-            .map_err(|e| {
-                anyhow_error_and_warn_log(format!(
-                    "Failed to read the root signing seed from \"{}\": {e}",
-                    storage.info()
-                ))
-            })?;
-    let seed = seeds.remove(&SIGNING_KEY_ID);
-    if !seeds.is_empty() {
-        tracing::warn!(
-            "Ignoring {} root signing seed(s) under handles other than {} in storage \"{}\": {}. \
-             Only the seed under {} is ever used.",
-            seeds.len(),
-            *SIGNING_KEY_ID,
-            storage.info(),
-            seeds
-                .keys()
-                .map(|id| id.to_string())
-                .collect::<Vec<_>>()
-                .join(", "),
-            *SIGNING_KEY_ID
-        );
+    let data_type = PrivDataType::SigningSeed.to_string();
+    if !storage.data_exists(&SIGNING_KEY_ID, &data_type).await? {
+        return Ok(None);
     }
-    Ok(seed)
+    let seed = read_versioned_at_request_id(storage, &SIGNING_KEY_ID, &data_type)
+        .await
+        .map_err(|e| {
+            anyhow_error_and_warn_log(format!(
+                "Failed to read the root signing seed from \"{}\": {e}",
+                storage.info()
+            ))
+        })?;
+    Ok(Some(seed))
 }
 
 pub async fn get_client_signing_key<S: Storage>(storage: &S) -> anyhow::Result<PrivateSigKey> {
@@ -451,23 +442,22 @@ pub async fn store_verification_key_at<S: Storage>(
     folder: PubDataType,
     verf_key: &UnifiedPublicSigKey,
 ) -> anyhow::Result<()> {
-    let req_id = *req_id;
     let data_type = folder.to_string();
     match verf_key {
         UnifiedPublicSigKey::Ecdsa256k1(vk) => {
-            store_versioned_at_request_id(storage, &req_id, vk, &data_type).await
+            store_versioned_at_request_id(storage, req_id, vk, &data_type).await
         }
         UnifiedPublicSigKey::Ed25519(vk) => {
-            store_versioned_at_request_id(storage, &req_id, vk, &data_type).await
+            store_versioned_at_request_id(storage, req_id, vk, &data_type).await
         }
         UnifiedPublicSigKey::MlDsa44(vk) => {
-            store_versioned_at_request_id(storage, &req_id, vk.as_ref(), &data_type).await
+            store_versioned_at_request_id(storage, req_id, vk.as_ref(), &data_type).await
         }
         UnifiedPublicSigKey::MlDsa65(vk) => {
-            store_versioned_at_request_id(storage, &req_id, vk.as_ref(), &data_type).await
+            store_versioned_at_request_id(storage, req_id, vk.as_ref(), &data_type).await
         }
         UnifiedPublicSigKey::MlDsa87(vk) => {
-            store_versioned_at_request_id(storage, &req_id, vk.as_ref(), &data_type).await
+            store_versioned_at_request_id(storage, req_id, vk.as_ref(), &data_type).await
         }
     }
 }
@@ -480,27 +470,26 @@ pub async fn read_verification_key_at<S: StorageReader>(
     folder: PubDataType,
     scheme: SigningSchemeType,
 ) -> anyhow::Result<UnifiedPublicSigKey> {
-    let req_id = *req_id;
     let data_type = folder.to_string();
     Ok(match scheme {
         SigningSchemeType::Ecdsa256k1 => {
-            let vk: PublicSigKey = storage.read_data(&req_id, &data_type).await?;
+            let vk: PublicSigKey = storage.read_data(req_id, &data_type).await?;
             UnifiedPublicSigKey::Ecdsa256k1(vk)
         }
         SigningSchemeType::Ed25519 => {
-            let vk: Ed25519VerfKey = storage.read_data(&req_id, &data_type).await?;
+            let vk: Ed25519VerfKey = storage.read_data(req_id, &data_type).await?;
             UnifiedPublicSigKey::Ed25519(vk)
         }
         SigningSchemeType::MlDsa44 => {
-            let vk: MlDsaVerfKey<MlDsa44> = storage.read_data(&req_id, &data_type).await?;
+            let vk: MlDsaVerfKey<MlDsa44> = storage.read_data(req_id, &data_type).await?;
             UnifiedPublicSigKey::MlDsa44(Box::new(vk))
         }
         SigningSchemeType::MlDsa65 => {
-            let vk: MlDsaVerfKey<MlDsa65> = storage.read_data(&req_id, &data_type).await?;
+            let vk: MlDsaVerfKey<MlDsa65> = storage.read_data(req_id, &data_type).await?;
             UnifiedPublicSigKey::MlDsa65(Box::new(vk))
         }
         SigningSchemeType::MlDsa87 => {
-            let vk: MlDsaVerfKey<MlDsa87> = storage.read_data(&req_id, &data_type).await?;
+            let vk: MlDsaVerfKey<MlDsa87> = storage.read_data(req_id, &data_type).await?;
             UnifiedPublicSigKey::MlDsa87(Box::new(vk))
         }
     })

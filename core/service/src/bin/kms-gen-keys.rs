@@ -491,7 +491,6 @@ async fn handle_repopulate_cmd<PubS: Storage, PrivS: Storage>(
     priv_storage: &PrivS,
 ) -> anyhow::Result<()> {
     let sk = get_core_signing_key(priv_storage).await?;
-    // Checked up front rather than left to the first non-ECDSA derivation.
     if !sk.has_root_seed() {
         return Err(anyhow::anyhow!(
             "no {} object is present under the handle {}, so this node can only sign under {}; \

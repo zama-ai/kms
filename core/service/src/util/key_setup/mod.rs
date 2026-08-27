@@ -218,8 +218,7 @@ where
     ensure_no_scheme_verification_material(pub_storage).await?;
     ensure_no_root_signing_seed(priv_storage).await?;
 
-    let sk =
-        generate_and_store_signing_key_material(pub_storage, priv_storage, &mut rng, false).await?;
+    let sk = generate_and_store_signing_key_material(priv_storage, &mut rng, false).await?;
 
     // Persist every scheme's verification material, ECDSA's included, from the
     // freshly generated ECDSA signing key.
@@ -230,22 +229,14 @@ where
     Ok(true)
 }
 
-/// Generates a fresh signing identity and persists it at [`SIGNING_KEY_ID`]: the
-/// root seed, and the ECDSA key derived from it together with its verification
-/// material (public key, Ethereum address, private key).
-///
-/// Callers must first confirm no signing key already exists, that public storage
-/// holds no leftover verification material (via
-/// [`ensure_no_scheme_verification_material`]) and that no seed is left behind
-/// (via [`ensure_no_root_signing_seed`]).
-async fn generate_and_store_signing_key_material<PubS, PrivS, R>(
-    pub_storage: &mut PubS,
+/// Generates a fresh signing identity and persists its private half at
+/// [`SIGNING_KEY_ID`]: the root seed, and the ECDSA key derived from it.
+async fn generate_and_store_signing_key_material<PrivS, R>(
     priv_storage: &mut PrivS,
     rng: &mut R,
     is_threshold: bool,
 ) -> anyhow::Result<PrivateSigKey>
 where
-    PubS: Storage,
     PrivS: Storage,
     R: rand::CryptoRng + rand::Rng,
 {
@@ -253,7 +244,6 @@ where
     let sk = seed.derive_ecdsa_signing_key().map_err(|e| {
         anyhow::anyhow!("Failed to derive the ECDSA signing key from the seed: {e}")
     })?;
-    let pk = sk.verf_key();
 
     // The seed is written first, before anything derived from it,
     // such that if something goes wrong things will fail loudly at boot
@@ -267,35 +257,6 @@ where
     .await
     .map_err(|e| anyhow::anyhow!("Failed to store the root signing seed: {e}"))?;
 
-    // Store public verification key
-    store_versioned_at_request_id(
-        pub_storage,
-        &SIGNING_KEY_ID,
-        &pk,
-        &PubDataType::VerfKey.to_string(),
-    )
-    .await
-    .map_err(|e| anyhow::anyhow!("Failed to store public verification key: {e}"))?;
-
-    let ethereum_address = pk.address();
-
-    // Store ethereum address (derived from public key), needed for KMS signature verification
-    store_text_at_request_id(
-        pub_storage,
-        &SIGNING_KEY_ID,
-        &ethereum_address.to_string(),
-        &PubDataType::VerfAddress.to_string(),
-    )
-    .await
-    .map_err(|e| anyhow::anyhow!("Failed to store ethereum address: {e}"))?;
-    tracing::info!(
-        "Successfully stored ethereum address {} under the handle {} in storage \"{}\"",
-        ethereum_address,
-        *SIGNING_KEY_ID,
-        pub_storage.info()
-    );
-
-    // Store private signing key
     store_versioned_at_request_id(
         priv_storage,
         &SIGNING_KEY_ID,
@@ -358,10 +319,8 @@ where
     .await
     .map_err(|e| anyhow::anyhow!("Failed to store the root signing seed: {e}"))?;
     tracing::info!(
-        "Generated a root signing seed under the handle {} in storage \"{}\". \
-         Every non-ECDSA identity of this node derives from it and it is stored \
-         nowhere else, so it must reach the backup vault before anything derived \
-         from it is published.",
+        "Generated a root signing seed under the handle {} in storage \"{}\". Every \
+         non-ECDSA identity of this node derives from it, so it must reach the backup vault.",
         *SIGNING_KEY_ID,
         priv_storage.info()
     );
@@ -370,12 +329,11 @@ where
 
 /// Reject a storage that holds a root signing seed but no signing key.
 ///
-/// The two are generated together — and `kms-gen-keys --overwrite` deletes both —
-/// so a seed on its own means an interrupted run or a partial wipe. Generating a
-/// fresh identity next to it would leave the persisted seed paired with an ECDSA
-/// key it did not produce, and deriving the new key *from* it would silently
-/// resurrect an identity the operator may have meant to destroy — so neither is
-/// done automatically.
+/// The two are generated together, and `kms-gen-keys --overwrite` deletes both. A
+/// seed on its own therefore means an interrupted run or a partial wipe. Neither
+/// repair is safe to do automatically: a fresh identity beside the seed pairs it
+/// with an ECDSA key it did not produce, and deriving the new key from the seed
+/// resurrects an identity the operator may have meant to destroy.
 async fn ensure_no_root_signing_seed<PrivS: StorageReader>(
     priv_storage: &PrivS,
 ) -> anyhow::Result<()> {
@@ -617,9 +575,10 @@ where
 
 /// Delete every scheme's canonical verification material, ECDSA's included.
 ///
-/// The deprecated ECDSA-only pair is deliberately *not* touched here, so a caller
-/// can purge the per-scheme layout alone. Callers wiping the whole identity want
-/// [`delete_published_verification_material`] instead.
+/// The deprecated ECDSA-only pair is deliberately *not* touched, which lets a test
+/// purge the per-scheme layout alone and check that it is rebuilt. Production code
+/// wipes the whole identity with [`delete_published_verification_material`].
+#[cfg(test)]
 pub async fn delete_scheme_verification_material<PubS>(pub_storage: &mut PubS) -> anyhow::Result<()>
 where
     PubS: Storage,
@@ -1172,7 +1131,7 @@ where
         .await
         .map_err(|e| anyhow::anyhow!("Party {party_id}: {e}"))?;
 
-    let sk = generate_and_store_signing_key_material(pub_storage, priv_storage, &mut rng, true)
+    let sk = generate_and_store_signing_key_material(priv_storage, &mut rng, true)
         .await
         .map_err(|e| anyhow::anyhow!("Party {party_id}: {e}"))?;
 
@@ -2589,9 +2548,8 @@ mod tests {
         );
     }
 
-    /// Deletion is the exact inverse of writing, deprecated ECDSA pair included.
-    /// When the two disagreed, the leftovers silently blocked the next identity
-    /// from being published.
+    /// Deletion is the exact inverse of writing, deprecated ECDSA pair included,
+    /// so a wiped storage accepts a different identity.
     #[tokio::test]
     async fn deleting_published_material_is_the_inverse_of_writing_it() {
         let mut rng = AesRng::seed_from_u64(44);
