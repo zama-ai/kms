@@ -281,6 +281,9 @@ and
 
 Every node checks its storage during service construction, before it serves any request.
 Two independent things happen.
+Boot-time verification lets us ensure the public and private storage are
+consistent, and detect any malicious behaviour and/or misconfiguration before
+the the KMS party boots up.
 
 **The backup vault is repaired.** `update_backup_vault(false, OP_BOOT)` copies anything
 present in private storage but missing from the backup vault, so a vault that moved or lost

@@ -344,6 +344,10 @@ fn verify_keygen_metadata_signature(
     metadata: &KeyGenMetadataInner,
     expected_address: Address,
 ) -> anyhow::Result<()> {
+    // TODO(github.com/zama-ai/kms-internal#3201)
+    // After we upgrade to 0.16 (and have migrated keys in 0.15),
+    // or after we retire the default epoch, then remove the backward compatibility support.
+    // That is, we should always have a domain in the metadata that we can use to verify the signature.
     let Some(stored_domain) = metadata.eip712_domain.as_ref() else {
         tracing::info!(
             "Current keygen metadata for id={key_id} has no stored EIP-712 domain; skipping signature verification"
@@ -386,6 +390,10 @@ fn verify_crs_metadata_signature(
     metadata: &CrsGenMetadataInner,
     expected_address: Address,
 ) -> anyhow::Result<()> {
+    // TODO(github.com/zama-ai/kms-internal#3201)
+    // After we can retire the default epoch, we can remove the backward compatibility support
+    // since new epochs will be re-signed using the more recent format.
+    // That is, we should always have a domain in the metadata that we can use to verify the signature.
     let Some(stored_domain) = metadata.eip712_domain.as_ref() else {
         tracing::info!(
             "Current CRS metadata for id={crs_id} has no stored EIP-712 domain; skipping signature verification"

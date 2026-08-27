@@ -1581,7 +1581,9 @@ pub enum KeyGenMetadataVersions {
     V0(KeyGenMetadata),
 }
 
-// Values that need to be stored temporarily as part of an async key generation call.
+/// Values that need to be stored temporarily as part of an async key generation call.
+// We marked it as a large enum variant because the LegacyV0 variant (~48 B) is
+// much smaller than the Current variant (nearly 300 B) at the time of writing.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, Versionize)]
 #[versionize(KeyGenMetadataVersions)]
 #[expect(clippy::large_enum_variant)]
