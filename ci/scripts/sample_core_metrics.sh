@@ -36,9 +36,9 @@ extract_metrics() {
     /^kms_network_debug_events_total([[:space:]]|\{|$)/ ||
     /^kms_(active_sessions|inactive_sessions|completed_sessions|rate_limiter_usage|fhe_key_cache_size|meta_storage_user_decryptions|meta_storage_pub_decryptions|meta_storage_user_decryptions_in_store|meta_storage_pub_decryptions_in_store|network_rx_bytes_total|network_tx_bytes_total|tasks|cpu_load|process_cpu_usage|process_memory_usage|total_cpus|tokio_alive_tasks|tokio_global_queue_depth|user_decrypt_background_tasks|user_decrypt_stage_duration_microseconds_total|user_decrypt_stage_observations_total|network_sender_tasks|network_sender_tasks_spawned_total|network_sender_tasks_completed_total)([[:space:]]|\{|$)/ ||
     /^process_(cpu_seconds_total|threads)([[:space:]]|\{|$)/ ||
-    (/^kms_operation_duration_ms_(bucket|sum|count)\{/ && /operation_type="user_decrypt_/) ||
-    (/^kms_operations_total\{/ && /operation="user_decrypt_(request|result)"/) ||
-    (/^kms_operation_errors_total\{/ && /operation="user_decrypt_(request|result)"/) {
+    (/^kms_operation_duration_ms_(bucket|sum|count)\{/ && /operation_type="(user|public)_decrypt_/) ||
+    (/^kms_operations_total\{/ && /operation="(user|public)_decrypt_(request|result)"/) ||
+    (/^kms_operation_errors_total\{/ && /operation="(user|public)_decrypt_(request|result)"/) {
       print ts, pod, $1, $2
     }
   '

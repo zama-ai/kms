@@ -16,12 +16,31 @@ pub type SecureSingleSharing<Z> = RealSingleSharing<Z, SecureLocalSingleShare>;
 
 #[async_trait]
 pub trait SingleSharing<Z: Ring>: ProtocolDescription + Send + Sync + Clone {
+    /// Initialise the single sharing protocol, producing a batch of `l` degree-t local single shares for each party.
+    /// The caller can then call `next()` to extract randomness from the produced local single shares.
+    ///
+    /// NOTE: This function may not be called if the caller has already called `load_local_single_shares()` to load externally produced local single shares (e.g. produced by [`DoubleSharing::init_joint_with_single`])
     async fn init<L: LargeSessionHandles>(
         &mut self,
         session: &mut L,
         l: usize,
     ) -> anyhow::Result<()>;
+
+    /// Extract the next random value from the local single shares produced by [`init`](Self::init) or loaded by [`load_local_single_shares`](Self::load_local_single_shares).
     async fn next<L: LargeSessionHandles>(&mut self, session: &mut L) -> anyhow::Result<Z>;
+
+    /// Load an externally produced set of degree-t local single shares (e.g. coming from a joint
+    /// single+double sharing) as the material `next()` will extract from, (re)initialising the
+    /// extraction VDM matrix. `local_single_shares` maps each role to its `l` degree-t shares.
+    ///
+    /// This is the non-interactive counterpart of [`init`](Self::init): the caller has already
+    /// run the local single share protocol elsewhere.
+    fn load_local_single_shares<L: LargeSessionHandles>(
+        &mut self,
+        session: &L,
+        local_single_shares: HashMap<Role, Vec<Z>>,
+        l: usize,
+    ) -> anyhow::Result<()>;
 }
 
 //Might want to store the dispute set at the output of the lsl call
@@ -93,9 +112,10 @@ impl<Z: Invert + Derive + ErrorCorrect, S: LocalSingleShare> SingleSharing<Z>
             .execute(session, &my_secrets)
             .await?;
 
+        // Run every fallible step before mutating `self`, so a failure leaves the sharing
+        // state untouched (all-or-nothing), as in `load_local_single_shares`.
         // Prepare data from the map output by LocalSingleShare to the vector ready to be multiplied with the VDM matrix
-        self.available_lsl = format_for_next(shares, l)?;
-        self.max_num_iterations = l;
+        let available_lsl = format_for_next(shares, l)?;
 
         //Init vdm matrix only once or when dim changes
         let curr_height = session.num_parties();
@@ -104,11 +124,41 @@ impl<Z: Invert + Derive + ErrorCorrect, S: LocalSingleShare> SingleSharing<Z>
             || curr_height != self.vdm_matrix.height()
             || curr_width != self.vdm_matrix.width()
         {
-            self.vdm_matrix = VdmMatrix::from_exceptional_sequence(
-                session.num_parties(),
-                session.num_parties() - session.threshold() as usize,
-            )?;
+            self.vdm_matrix = VdmMatrix::from_exceptional_sequence(curr_height, curr_width)?;
         }
+
+        self.available_lsl = available_lsl;
+        self.max_num_iterations = l;
+        Ok(())
+    }
+
+    fn load_local_single_shares<L: LargeSessionHandles>(
+        &mut self,
+        session: &L,
+        local_single_shares: HashMap<Role, Vec<Z>>,
+        l: usize,
+    ) -> anyhow::Result<()> {
+        if l == 0 {
+            return Ok(());
+        }
+
+        // Run every fallible step before mutating `self`, so a failure leaves the sharing
+        // state untouched (all-or-nothing; also keeps the
+        // `non_local_effect_before_error_return` lint happy).
+        let available_lsl = format_for_next(local_single_shares, l)?;
+
+        //Init vdm matrix only once or when dim changes
+        let curr_height = session.num_parties();
+        let curr_width = session.num_parties() - session.threshold() as usize;
+        if self.vdm_matrix.is_empty()
+            || curr_height != self.vdm_matrix.height()
+            || curr_width != self.vdm_matrix.width()
+        {
+            self.vdm_matrix = VdmMatrix::from_exceptional_sequence(curr_height, curr_width)?;
+        }
+
+        self.available_lsl = available_lsl;
+        self.max_num_iterations = l;
         Ok(())
     }
 
@@ -178,7 +228,6 @@ fn compute_next_batch<Z: Ring>(
 
 #[cfg(test)]
 pub(crate) mod tests {
-    use crate::large_execution::constants::DISPUTE_STAT_SEC;
     use crate::runtime::sessions::base_session::GenericBaseSessionHandles;
     use crate::runtime::sessions::session_parameters::GenericParameterHandles;
     use crate::tests::helper::tests_and_benches::execute_protocol_large;
@@ -197,7 +246,6 @@ pub(crate) mod tests {
         },
         structure_traits::{Derive, ErrorCorrect, Invert, Ring, Sample},
     };
-    use num_integer::div_ceil;
     use rstest::rstest;
     use std::num::Wrapping;
     use threshold_types::network::NetworkMode;
@@ -229,16 +277,15 @@ pub(crate) mod tests {
         // Rounds (only on the happy path here)
         // RealPreprocessing
         // init single sharing
-        //      share dispute = 1 round
-        //      pads =  1 round
+        //      share dispute = 1 round (secrets and pads shared together)
         //      coinflip = vss + open = (1 + 3 + threshold) + 1
-        //      verify = m reliable_broadcast = m*(3 + t) rounds
+        //      verify = 1 reliable_broadcast = (3 + t) rounds
+        //          (the m check-value maps are batched into a single broadcast)
         // next() calls for the batch
         //      We're doing one more sharing than pre-computed in the initial init (see num_output)
         //      Thus we have one more call to init, and therefore we double the rounds from above
         // SingleSharing assumes Sync network
-        let m = div_ceil(DISPUTE_STAT_SEC, Z::LOG_SIZE_EXCEPTIONAL_SET);
-        let rounds = (1 + 1 + (1 + 3 + threshold) + 1 + m * (3 + threshold)) * 2;
+        let rounds = (1 + (1 + 3 + threshold) + 1 + (3 + threshold)) * 2;
         let result = execute_protocol_large::<_, _, Z, EXTENSION_DEGREE>(
             parties,
             threshold,
