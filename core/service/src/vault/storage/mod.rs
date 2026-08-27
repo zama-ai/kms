@@ -413,23 +413,6 @@ pub async fn delete_at_request_and_epoch_id<S: StorageExt>(
     }
 }
 
-/// Helper method to remove public key given a request ID.
-pub async fn delete_pk_at_request_id<S: Storage>(
-    storage: &mut S,
-    request_id: &RequestId,
-) -> anyhow::Result<()> {
-    delete_at_request_id(storage, request_id, &PubDataType::PublicKey.to_string()).await?;
-    // Best-effort delete of legacy PublicKeyMetadata (ignore errors if not found)
-    #[allow(deprecated)]
-    let _ = delete_at_request_id(
-        storage,
-        request_id,
-        &PubDataType::PublicKeyMetadata.to_string(),
-    )
-    .await;
-    Ok(())
-}
-
 /// Read some data stored in a location defined by `request_id` and `data_type`.
 /// The returned result is automatically unversioned.
 pub async fn read_versioned_at_request_id<

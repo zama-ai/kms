@@ -88,6 +88,9 @@ Note that `FHE parameters` only affects preprocessing and keygen. The decrypt
 scenarios always run with production-size `Default` parameters, so the numbers
 they produce are real regardless of this setting.
 
+Rate-tests run on a `c6in.32xlarge` instance to get as much network bandwidth as possible. Both threshold deployment
+modes configure a 30,000-entry MetaStore decryption store for these tests.
+
 ## Reading the results
 
 The public- and user-decrypt rates, their durations, and their budgets
@@ -118,11 +121,15 @@ The Slack report and JSON artifacts use these fields.
 | Metric | Meaning |
 | --- | --- |
 | `offered` | Requests the rate generator scheduled. |
-| `completed` | Requests that collected enough KMS responses. |
+| `completed` | Requests that collected enough KMS responses |
+| `completed_in_window` | Requests completed during the configured measurement window. |
+| `completed_during_drain` | Requests completed after the measurement window while draining in-flight work. |
+| `measurement_elapsed_seconds` | Duration of the measurement window. |
+| `drain_elapsed_seconds` | Time spent draining in-flight work after the measurement window. |
 | `failed` | Requests that were sent but didn't collect enough responses in time. |
 | `shed` | Requests dropped before sending because `max_in_flight` was already reached. |
 | `saturated` | `true` if anything was shed, or the post-run drain timed out with requests still in flight. |
-| `achieved_rate` | `completed / collection_elapsed_seconds`. |
+| `achieved_rate` | `completed_in_window / measurement_elapsed_seconds`. |
 
 **Payload throughput** (protobuf-encoded body only — excludes gRPC/TLS/header
 overhead):
@@ -130,14 +137,62 @@ overhead):
 | Metric | Meaning |
 | --- | --- |
 | `request_payload_bytes` | Total request bytes submitted, counted once per core target. |
-| `request_payload_mib_per_sec` | Request bytes per second, in MiB/s. |
+| `request_payload_mib_per_sec` | Request bytes per measurement-window second, in MiB/s. |
 | `request_payload_avg_bytes` | Average encoded size of one request. |
 | `response_payload_bytes` | Total response bytes accepted for verification/reconstruction (excludes late/abandoned responses). |
-| `response_payload_mib_per_sec` | Response bytes per second, in MiB/s. |
+| `response_payload_bytes_in_window` | Response bytes accepted during the measurement window. |
+| `response_payload_mib_per_sec` | Measurement-window response bytes per second, in MiB/s. |
 | `response_payload_avg_bytes` | Average encoded size of one accepted response. |
 
 The `request_payload_messages` / `response_payload_messages` counters record how
-many payloads went into the corresponding `_bytes` totals.
+many payloads went into the corresponding `_bytes` totals;
+`response_payload_messages_in_window` is the same, counting inside the measurement-window.
+
+**RPC diagnostics:**
+
+One aggregate `rpc_diagnostics` object is emitted at the end of each public- or
+user-decrypt rate-test rung. It covers every RPC made during that rung;
+diagnostics are not emitted per request or pacing tick. `submit_status` and
+`result_status` count gRPC calls by status code; successful calls use `ok`, and
+zero-valued statuses are omitted. The `outstanding_*` fields report work left
+after the measurement window and its bounded logical-request drain; the drain
+lasts up to 30 seconds but ends early when all logical requests finish. The
+`*_peak_in_flight` fields show peak concurrency across the full rate test.
+`result_retries` counts repeat
+result calls after a not-ready response. `post_quorum_tasks` counts per-core
+result tasks left after enough responses were collected, while
+`post_quorum_tasks_drained` counts how many finished before metrics were emitted.
+`outstanding_post_quorum_tasks` is the remainder still running after the drain.
+For the synchronous endpoint, the combined call is recorded as a result RPC.
+For result polling, `unavailable` normally means the KMS knows the request but
+has not produced its result yet; it does not by itself indicate a network outage.
+
+The statuses normally relevant to these tests are:
+
+- `ok` — the RPC succeeded.
+- `unavailable` — commonly an expected result poll whose result is still pending.
+- `resource_exhausted` — KMS admission capacity or rate limiting was exhausted.
+- `not_found` — the requested result is absent, for example after cache eviction;
+  unexpected during a healthy run.
+- Any other status is uncommon and should be investigated with the client and
+  KMS logs.
+
+For example, a healthy asynchronous run might report:
+
+```json
+{
+  "submit_status": { "ok": 1872000 },
+  "result_status": { "ok": 1872000, "unavailable": 936000 },
+  "outstanding_submit_rpcs": 0,
+  "submit_peak_in_flight": 742,
+  "outstanding_result_rpcs": 0,
+  "result_peak_in_flight": 1534,
+  "result_retries": 936000,
+  "post_quorum_tasks": 576000,
+  "post_quorum_tasks_drained": 576000,
+  "outstanding_post_quorum_tasks": 0
+}
+```
 
 ## Reusing Docker image tags
 
@@ -197,8 +252,8 @@ What the workflow does, end to end:
 6. Print a terse `before-perf` placement and network-counter snapshot.
 7. Submit the Argo workflow
    (`ci/perf-testing/argo-workflow/kms-perf-workflow-kms-ci.yaml`).
-8. Stream the Argo logs and send the Slack report.
-9. Print terse `after-perf` KMS core pod network-counter deltas in the CI logs.
+8. Collect logs and send the Slack report.
+9. Print `after-perf` KMS core pod network-counter deltas in the CI logs.
 
 ## Network diagnostics
 
@@ -206,10 +261,9 @@ Network diagnostics are printed directly in the GitHub Actions log. The output
 is intentionally terse: node placement, KMS core pod placement, and after-run
 `eth0` rx/tx deltas for each running KMS core pod plus a total.
 
-Each decrypt scenario also captures its own `eth0` rx/tx counters *inside* the
-Argo test pod, reported as `net_rx`/`net_tx` in Slack — the outer before/after
-diagnostics only include KMS core pods that are still running when the snapshot
-is taken.
+Each decrypt scenario also captures its own `eth0` rx/tx counters inside the
+Argo test pod. The core client samples them around the measurement window, and
+the resulting rates are reported as `net_rx`/`net_tx` in Slack.
 
 Pod-level `ethtool` can't see AWS ENA allowance counters; those need a
 privileged node-level probe.
