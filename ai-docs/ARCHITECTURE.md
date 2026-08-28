@@ -190,22 +190,24 @@ The primary service is `CoreServiceEndpoint`. Its RPCs group into:
   the key and logs a warning instead. When resharing legacy key material that
   has no dedicated OPRF secret-key share, the OPRF sub-protocol is skipped and
   the reshared private keyset keeps that field absent. A storage failure during
-  resharing rolls the new epoch back on the party that fails. 
-  That party attempts to delete the key shares, the CRS metadata and the epoch data of the new epoch. 
-  Observe that no public data is deleted as this is, and should be, unaffected by an epoch change. 
-  If cleanup succeeds, it forgets the epoch; otherwise, it keeps the epoch registered so that deletion can be retried. 
-  `DestroyMpcContext` carries
-  the context's epoch IDs and erases their secret shares (cascading to the
-  existing per-epoch deletion) before forgetting the context, so retiring a
-  party set leaves no usable key shares behind; the kms-connector is the source
-  of truth for which epochs belong to a context. In-memory lifecycle leases
-  serialize creation against destruction: `NewMpcEpoch` holds shared leases for
-  its target context and epoch through all PRSS, resharing and persistence work,
+  resharing rolls the new epoch back on the party that fails. That party attempts
+  to delete the key shares, the CRS metadata and the epoch data of the new epoch.
+  Public data remains because an epoch change does not affect it. If cleanup
+  succeeds, the party forgets the epoch. Otherwise, the party keeps the epoch
+  registered so that deletion can be retried. `DestroyMpcContext` takes a stable
+  snapshot of the context's registered epochs and erases their secret shares
+  before it forgets the context. This order leaves no usable key shares after the
+  party set retires. Its response lists the deleted epoch IDs. In-memory
+  lifecycle leases serialize creation against destruction: `NewMpcEpoch` holds
+  shared leases for its target context and epoch through all PRSS, resharing and
+  persistence work,
   while `DestroyMpcEpoch` and `DestroyMpcContext` require exclusive leases before
   taking snapshots or deleting data. A conflicting destruction is refused with
   `FailedPrecondition`, including while PRSS is still running and the new epoch
   has not yet been registered in the session maker; callers retry once creation
-  has settled.
+  has settled. MPC context updates serialize the existence check with storage and
+  cache or session updates. A failed deletion keeps the in-memory context if its
+  persistent entry remains, which permits a retry before or after restart.
 - **Session management** — creation, result retrieval, and cleanup for
   long-running threshold sessions.
 
@@ -281,6 +283,25 @@ end-to-end tests live at
 [core/service/src/client/tests/centralized/custodian_backup_tests.rs](core/service/src/client/tests/centralized/custodian_backup_tests.rs)
 and
 [core/service/src/client/tests/threshold/custodian_backup_tests.rs](core/service/src/client/tests/threshold/custodian_backup_tests.rs).
+
+## Paired material writes
+
+Threshold calls to `CryptoMaterialStorage::write_all` use two public/private pairs:
+
+- `PublicKey` and `FheKeyInfo` share a key ID.
+- `CRS` and `CrsInfo` share a CRS ID.
+
+The public half has no epoch. The private half has an epoch and contains one party's material.
+Initial generation writes both halves through `CryptoMaterialStorage::write_all`. The method also
+accepts one-sided writes. Resharing writes only the private half for the new epoch and reuses the
+public half. A `ContextInfo` write stores one request-scoped private entry with no public half.
+
+Storage never overwrites an entry. If one requested half exists, storage keeps its bytes and writes
+the missing half. The caller must ensure that the two halves belong together. If either write
+fails, cleanup removes only entries created by that call. It retains each entry that existed
+before the call. A backend can apply a write and then return an error, so cleanup checks the
+earlier state. Callers must serialize writes to the same entries until cleanup finishes. A later
+backup failure does not purge the primary material.
 
 ## Boot-time storage verification
 

@@ -14,7 +14,7 @@ use crate::{
     util::meta_store::{EntryState, add_req_to_meta_store, retrieve_from_meta_store},
     vault::{
         Vault, VaultDataType,
-        storage::{Storage, StorageProxy, crypto_material::PublicKeySet},
+        storage::{Storage, StorageProxy, StoreWriteOutcome, crypto_material::PublicKeySet},
     },
 };
 use aes_prng::AesRng;
@@ -59,6 +59,7 @@ use crate::{
         ram::{FailingRamStorage, RamStorage},
         read_versioned_at_request_and_epoch_id, read_versioned_at_request_id,
         store_versioned_at_request_and_epoch_id, store_versioned_at_request_id,
+        test_support::StorageEntry,
         tests::TestType,
     },
 };
@@ -131,11 +132,17 @@ fn generate_compressed_keys(
 
 const TEST_METRIC: &str = "test";
 
+fn failing_public_store(data_id: RequestId, data_type: PubDataType) -> FailingRamStorage {
+    let mut storage = FailingRamStorage::new();
+    storage.set_fail_store_at(StorageEntry::new(data_id, None, data_type.to_string()));
+    storage
+}
+
 #[tokio::test]
 async fn write_crs() {
     // write the CRS, first try with storage that are functional
     // then try to write into a failing storage and expect an error
-    let pub_storage = Arc::new(Mutex::new(FailingRamStorage::new(100)));
+    let pub_storage = Arc::new(Mutex::new(FailingRamStorage::new()));
     let crypto_storage = CryptoMaterialStorage {
         public_storage: pub_storage.clone(),
         private_storage: Arc::new(Mutex::new(RamStorage::new())),
@@ -186,12 +193,16 @@ async fn write_crs() {
     // req_id" path is impossible from the outside — `MetaStore::insert`
     // refuses to mint a second permit for an existing entry.
 
+    let new_req_id = derive_request_id("write_crs_2").unwrap();
     // writing on a failed storage device should fail
     {
         let mut storage_guard = pub_storage.lock().await;
-        storage_guard.set_available_writes(0);
+        storage_guard.set_fail_store_at(StorageEntry::new(
+            new_req_id,
+            None,
+            PubDataType::CRS.to_string(),
+        ));
     }
-    let new_req_id = derive_request_id("write_crs_2").unwrap();
     let new_permit = {
         let mut guard = meta_store.write().await;
         guard.insert(&new_req_id).unwrap()
@@ -226,7 +237,7 @@ async fn read_public_key() {
     // it doens't matter if we use centralized or threshold
     // the public key reading logic is the same
     let crypto_storage = CentralizedCryptoMaterialStorage::new(
-        FailingRamStorage::new(100),
+        RamStorage::new(),
         RamStorage::new(),
         None,
         HashMap::new(),
@@ -261,7 +272,7 @@ async fn read_public_key() {
 async fn write_central_keys() {
     let param = TEST_PARAM;
     let crypto_storage = CentralizedCryptoMaterialStorage::new(
-        FailingRamStorage::new(100),
+        FailingRamStorage::new(),
         RamStorage::new(),
         None,
         HashMap::new(),
@@ -316,12 +327,16 @@ async fn write_central_keys() {
     // is impossible from the outside — `insert` refuses to mint a duplicate
     // permit.
 
+    let new_req_id = derive_request_id("write_central_keys_2").unwrap();
     // write on a failed storage device should fail
     {
         let mut storage_guard = pub_storage.lock().await;
-        storage_guard.set_available_writes(0);
+        storage_guard.set_fail_store_at(StorageEntry::new(
+            new_req_id,
+            None,
+            PubDataType::ServerKey.to_string(),
+        ));
     }
-    let new_req_id = derive_request_id("write_central_keys_2").unwrap();
     let new_permit = {
         let mut guard = meta_store.write().await;
         guard.insert(&new_req_id).unwrap()
@@ -355,7 +370,7 @@ async fn write_central_keys() {
 async fn write_central_keys_failed_storage_sets_terminal_error() {
     let param = TEST_PARAM;
     let crypto_storage = CentralizedCryptoMaterialStorage::new(
-        FailingRamStorage::new(100),
+        FailingRamStorage::new(),
         RamStorage::new(),
         None,
         HashMap::new(),
@@ -394,7 +409,11 @@ async fn write_central_keys_failed_storage_sets_terminal_error() {
 
     {
         let mut storage_guard = pub_storage.lock().await;
-        storage_guard.set_available_writes(0);
+        storage_guard.set_fail_store_at(StorageEntry::new(
+            req_id,
+            None,
+            PubDataType::ServerKey.to_string(),
+        ));
     }
 
     let result = crypto_storage
@@ -434,7 +453,8 @@ async fn write_threshold_keys_sunshine() {
     let epoch_id = derive_request_id("write_threshold_empty_update_epoch")
         .unwrap()
         .into();
-    let (crypto_storage, threshold_fhe_keys, fhe_key_set) = setup_threshold_store(&req_id);
+    let (crypto_storage, threshold_fhe_keys, fhe_key_set) =
+        setup_threshold_store(&req_id, RamStorage::new());
     let meta_store = MetaStore::new_unlimited();
     let boxed_public_key_set = PublicKeySet::Uncompressed(Arc::new(fhe_key_set.clone()));
 
@@ -470,7 +490,8 @@ async fn write_threshold_keys_meta_update() {
     let epoch_id: EpochId = derive_request_id("write_threshold_keys_meta_update_epoch")
         .unwrap()
         .into();
-    let (crypto_storage, threshold_fhe_keys, fhe_key_set) = setup_threshold_store(&req_id);
+    let (crypto_storage, threshold_fhe_keys, fhe_key_set) =
+        setup_threshold_store(&req_id, RamStorage::new());
     let boxed_public_key_set = PublicKeySet::Uncompressed(Arc::new(fhe_key_set));
     let meta_store = MetaStore::new_unlimited();
 
@@ -539,9 +560,9 @@ async fn purge_epoch_from_cache_removes_only_matching_epoch() {
         .unwrap()
         .into();
 
-    let (crypto_storage, keys_a, pubset_a) = setup_threshold_store(&req_a);
+    let (crypto_storage, keys_a, pubset_a) = setup_threshold_store(&req_a, RamStorage::new());
     // A second keyset; the throwaway storage is unused, only the key material is.
-    let (_throwaway, keys_b, pubset_b) = setup_threshold_store(&req_b);
+    let (_throwaway, keys_b, pubset_b) = setup_threshold_store(&req_b, RamStorage::new());
 
     let meta_store = MetaStore::new_unlimited();
 
@@ -603,7 +624,8 @@ async fn write_threshold_keys_failed_storage() {
     let epoch_id: EpochId = derive_request_id("write_threshold_keys_failed_storage_epoch")
         .unwrap()
         .into();
-    let (crypto_storage, threshold_fhe_keys, fhe_key_set) = setup_threshold_store(&req_id);
+    let (crypto_storage, threshold_fhe_keys, fhe_key_set) =
+        setup_threshold_store(&req_id, FailingRamStorage::new());
     let meta_store = MetaStore::new_unlimited();
 
     let pub_storage = crypto_storage.inner.public_storage.clone();
@@ -631,12 +653,16 @@ async fn write_threshold_keys_failed_storage() {
         assert!(guard.has_existed(&req_id));
     }
 
+    let new_req_id = derive_request_id("write_threshold_keys_failed_storage_2").unwrap();
     // write on a failed storage device should fail
     {
         let mut storage_guard = pub_storage.lock().await;
-        storage_guard.set_available_writes(0);
+        storage_guard.set_fail_store_at(StorageEntry::new(
+            new_req_id,
+            None,
+            PubDataType::ServerKey.to_string(),
+        ));
     }
-    let new_req_id = derive_request_id("write_threshold_keys_failed_storage_2").unwrap();
     let new_permit = {
         let mut guard = meta_store.write().await;
         guard.insert(&new_req_id).unwrap()
@@ -675,7 +701,7 @@ async fn read_guarded_threshold_fhe_keys_not_found() {
 
     // Create a threshold storage with no keys in the cache and no keys in storage
     let crypto_storage = ThresholdCryptoMaterialStorage::new(
-        FailingRamStorage::new(100),
+        RamStorage::new(),
         RamStorage::new(),
         None,
         HashMap::new(),
@@ -709,7 +735,7 @@ async fn compressed_fhe_keys_exist_requires_standalone_public_key() {
             .into();
 
     let crypto_storage = CentralizedCryptoMaterialStorage::new(
-        FailingRamStorage::new(100),
+        RamStorage::new(),
         RamStorage::new(),
         None,
         HashMap::new(),
@@ -777,12 +803,13 @@ async fn read_guarded_crypto_material_from_cache_not_found() {
         Arc::new(RwLock::new(HashMap::new()));
 
     // Try to read from an empty cache - should return an error
-    let result = CryptoMaterialStorage::<FailingRamStorage, RamStorage>::read_guarded_crypto_material_from_cache(
-        &key_id,
-        &epoch_id,
-        empty_cache,
-    )
-    .await;
+    let result =
+        CryptoMaterialStorage::<RamStorage, RamStorage>::read_guarded_crypto_material_from_cache(
+            &key_id,
+            &epoch_id,
+            empty_cache,
+        )
+        .await;
 
     assert!(result.is_err());
     let err = result.unwrap_err();
@@ -797,15 +824,19 @@ async fn read_guarded_crypto_material_from_cache_not_found() {
     );
 }
 
-fn setup_threshold_store(
+fn setup_threshold_store<PubS>(
     req_id: &RequestId,
+    public_storage: PubS,
 ) -> (
-    ThresholdCryptoMaterialStorage<FailingRamStorage, RamStorage>,
+    ThresholdCryptoMaterialStorage<PubS, RamStorage>,
     ThresholdFheKeys,
     FhePubKeySet,
-) {
+)
+where
+    PubS: Storage + Send + Sync + 'static,
+{
     let crypto_storage = ThresholdCryptoMaterialStorage::new(
-        FailingRamStorage::new(100),
+        public_storage,
         RamStorage::new(),
         None,
         HashMap::new(),
@@ -1042,19 +1073,21 @@ async fn write_pub_data_and_priv_data_paths() {
     let priv_orphan = TestType { i: 0 };
 
     // Sunshine: write_pub_data persists the value.
-    assert!(
+    assert_eq!(
         storage
             .write_pub_data(&req_id, &pub_data, &PubDataType::PublicKey)
-            .await
+            .await,
+        Some(StoreWriteOutcome::Created)
     );
     // Sunshine: write_priv_data with a non-epoched type.
-    assert!(
+    assert_eq!(
         storage
             .write_priv_data(&req_id, None, &priv_non_epoched, &PrivDataType::SigningKey)
-            .await
+            .await,
+        Some(StoreWriteOutcome::Created)
     );
     // Sunshine: write_priv_data with an epoched type + epoch_id.
-    assert!(
+    assert_eq!(
         storage
             .write_priv_data(
                 &req_id,
@@ -1062,13 +1095,15 @@ async fn write_pub_data_and_priv_data_paths() {
                 &priv_epoched,
                 &PrivDataType::FhePrivateKey,
             )
-            .await
+            .await,
+        Some(StoreWriteOutcome::Created)
     );
-    // Negative: epoched type without epoch_id must return false and store nothing.
+    // Negative: epoched type without epoch_id must fail and store nothing.
     assert!(
-        !storage
+        storage
             .write_priv_data(&req_id, None, &priv_orphan, &PrivDataType::FhePrivateKey)
             .await
+            .is_none()
     );
 
     let pub_s = storage.public_storage.lock().await;
@@ -1107,11 +1142,16 @@ async fn write_pub_data_and_priv_data_paths() {
     );
 
     // Failure path needs its own storage, since FailingRamStorage is the public side.
-    let failing = CryptoMaterialStorage::from(FailingRamStorage::new(0), RamStorage::new(), None);
+    let failing = CryptoMaterialStorage::from(
+        failing_public_store(req_id, PubDataType::PublicKey),
+        RamStorage::new(),
+        None,
+    );
     assert!(
-        !failing
+        failing
             .write_pub_data(&req_id, &pub_data, &PubDataType::PublicKey)
             .await
+            .is_none()
     );
 }
 
@@ -1211,111 +1251,6 @@ async fn purge_material_paths() {
         !storage
             .purge_material(&req_id, None, &[], &[PrivDataType::FhePrivateKey])
             .await
-    );
-}
-
-#[tokio::test]
-async fn write_all_no_overwrite_of_existing_data() {
-    let storage = fresh_ram_storage();
-    let req_id = derive_request_id("handle_all_dup").unwrap();
-    let epoch_id: EpochId = derive_request_id("handle_all_dup_epoch").unwrap().into();
-    let original = TestType { i: 1 };
-    let attempted_overwrite = TestType { i: 2 };
-
-    storage
-        .write_all(
-            &req_id,
-            Some(&epoch_id),
-            Some((&original, PubDataType::PublicKey)),
-            Some((&original, PrivDataType::FhePrivateKey)),
-            false,
-            TEST_METRIC,
-        )
-        .await
-        .unwrap();
-
-    // Initial entries are present.
-    {
-        let pub_s = storage.public_storage.lock().await;
-        let priv_s = storage.private_storage.lock().await;
-        assert!(
-            pub_s
-                .data_exists(&req_id, &PubDataType::PublicKey.to_string())
-                .await
-                .unwrap()
-        );
-        assert!(
-            priv_s
-                .data_exists_at_epoch(&req_id, &epoch_id, &PrivDataType::FhePrivateKey.to_string())
-                .await
-                .unwrap()
-        );
-    }
-
-    // Duplicate call must not purge the original entries.
-    assert!(matches!(
-        storage
-            .write_all(
-                &req_id,
-                Some(&epoch_id),
-                Some((&attempted_overwrite, PubDataType::PublicKey)),
-                Some((&attempted_overwrite, PrivDataType::FhePrivateKey)),
-                false,
-                TEST_METRIC,
-            )
-            .await
-            .unwrap_err(),
-        StorageError::Duplicate
-    ));
-    // Initial entries are still there and unchanged.
-    {
-        let pub_s = storage.public_storage.lock().await;
-        let priv_s = storage.private_storage.lock().await;
-        let pub_read: TestType =
-            read_versioned_at_request_id(&*pub_s, &req_id, &PubDataType::PublicKey.to_string())
-                .await
-                .unwrap();
-        assert_eq!(pub_read, original);
-
-        let priv_read: TestType = read_versioned_at_request_and_epoch_id(
-            &*priv_s,
-            &req_id,
-            &epoch_id,
-            &PrivDataType::FhePrivateKey.to_string(),
-        )
-        .await
-        .unwrap();
-        assert_eq!(priv_read, original);
-    }
-}
-
-#[tokio::test]
-async fn write_all_purges_on_write_failure() {
-    // Public storage rejects every write; the private write succeeds, so write_all
-    // must purge the orphan and report `WritingError`.
-    let storage = CryptoMaterialStorage::from(FailingRamStorage::new(0), RamStorage::new(), None);
-    let req_id = derive_request_id("handle_all_purge").unwrap();
-    let data = TestType { i: 11 };
-
-    let res = storage
-        .write_all(
-            &req_id,
-            None,
-            Some((&data, PubDataType::PublicKey)),
-            Some((&data, PrivDataType::SigningKey)),
-            false,
-            TEST_METRIC,
-        )
-        .await;
-    assert_eq!(res, Err(StorageError::Writing));
-
-    let priv_g = storage.private_storage.lock().await;
-    assert!(
-        !priv_g
-            .data_exists(&req_id, &PrivDataType::SigningKey.to_string())
-            .await
-            .unwrap(),
-        "successful private write must be purged when public write fails"
     );
 }
 
@@ -1456,16 +1391,16 @@ async fn write_backup_keys_no_vault() {
 
 #[tokio::test]
 async fn write_backup_keys_write_failure() {
-    // Public storage rejects every write while the backup-vault purge succeeds; the
+    // Public storage rejects the recovery-material write while the backup-vault purge succeeds; the
     // purge must not mask the write failure, so the meta store has to record the
     // request as failed.
+    let recovery = dummy_recovery_material("write_backup_keys_write_failure");
+    let req_id = recovery.custodian_context().context_id;
     let storage = CryptoMaterialStorage::from(
-        FailingRamStorage::new(0),
+        failing_public_store(req_id, PubDataType::RecoveryMaterial),
         RamStorage::new(),
         Some(make_unencrypted_backup_vault()),
     );
-    let recovery = dummy_recovery_material("write_backup_keys_write_failure");
-    let req_id = recovery.custodian_context().context_id;
     let meta_store = MetaStore::new_unlimited();
 
     let permit = add_req_to_meta_store(&meta_store, &req_id, TEST_METRIC)
@@ -1520,8 +1455,11 @@ async fn write_backup_keys_write_failure_custodian_vault() {
         .await
         .unwrap();
 
-    let storage =
-        CryptoMaterialStorage::from(FailingRamStorage::new(0), RamStorage::new(), Some(vault));
+    let storage = CryptoMaterialStorage::from(
+        failing_public_store(req_id, PubDataType::RecoveryMaterial),
+        RamStorage::new(),
+        Some(vault),
+    );
     let meta_store = MetaStore::new_unlimited();
     let permit = add_req_to_meta_store(&meta_store, &req_id, TEST_METRIC)
         .await
@@ -1659,8 +1597,11 @@ async fn write_backup_keys_purge_failure_keeps_write_error() {
     let _ = std::fs::remove_file(&probe);
 
     let outcome = if perms_enforced {
-        let storage =
-            CryptoMaterialStorage::from(FailingRamStorage::new(0), RamStorage::new(), Some(vault));
+        let storage = CryptoMaterialStorage::from(
+            failing_public_store(req_id, PubDataType::RecoveryMaterial),
+            RamStorage::new(),
+            Some(vault),
+        );
         let meta_store = MetaStore::new_unlimited();
         let permit = add_req_to_meta_store(&meta_store, &req_id, TEST_METRIC)
             .await
@@ -1962,3 +1903,4 @@ async fn refresh_fhe_private_material_paths() {
 }
 
 mod migration;
+mod storage_side_effects;
