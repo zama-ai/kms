@@ -535,9 +535,9 @@ jobs:
           echo "Submitted Argo workflow: ${WORKFLOW_NAME}"
           echo "PERF_WORKFLOW_NAME=${WORKFLOW_NAME}" >> "${GITHUB_ENV}"
 
-          echo "Waiting up to two hours for ${WORKFLOW_NAME}..."
+          echo "Waiting up to 1 hour for ${WORKFLOW_NAME}..."
           wait_exit=0
-          timeout --signal=TERM 2h \
+          timeout --signal=TERM 1h \
             argo wait "${WORKFLOW_NAME}" -n "${NAMESPACE}" || wait_exit=$?
 
           echo "Fetching final workflow logs..."

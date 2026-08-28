@@ -11,6 +11,7 @@
 
 ```
 ci/scripts/
+├── analyze_perf_run.py            # Correlate artifacts from one performance run
 ├── backward_snapshot.sh           # Generate and compare backward-compatibility snapshots
 ├── collect_network_diagnostics.sh # Capture per-pod network interface counters
 ├── deploy.sh                      # Main deployment entry point
