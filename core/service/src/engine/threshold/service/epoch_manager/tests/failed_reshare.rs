@@ -3,9 +3,9 @@ use crate::vault::storage::test_support::{
     StorageEntry, StorageEvent, StorageOp, StorageOutcome, assert_same_events,
 };
 
-/// Public key and CRS material carry no epoch in their storage paths, so they belong to every
-/// epoch that uses the same handle. A reshare that fails to store its private shares must not
-/// touch that public material and may delete only private material from the new epoch.
+/// Threshold storage pairs `PublicKey` with `FheKeyInfo` and `CRS` with `CrsInfo`.
+/// `PublicKey` and `CRS` have no epoch, so all epochs for an ID share them. Resharing writes only
+/// the new epoch's `FheKeyInfo` and `CrsInfo`. Failed resharing must not touch either public half.
 ///
 /// This is a regression test for a bug found during a devnet deployment on 0.14.x. It covers
 /// both successful rollback and failed rollback. A failed rollback must retain the durable
@@ -115,17 +115,17 @@ async fn run_failed_reshare_storage_test(fail_rollback: bool) {
         .unwrap();
     }
 
-    let failed_write = StorageEntry::new(
+    let new_fhe_key_info = StorageEntry::new(
         key_id,
         Some(new_epoch_id),
         PrivDataType::FheKeyInfo.to_string(),
     );
-    let crs_write = StorageEntry::new(
+    let new_crs_info = StorageEntry::new(
         crs_id,
         Some(new_epoch_id),
         PrivDataType::CrsInfo.to_string(),
     );
-    let epoch_marker = StorageEntry::new(
+    let new_epoch_data = StorageEntry::new(
         new_epoch_id.into(),
         None,
         PrivDataType::EpochData.to_string(),
@@ -143,9 +143,9 @@ async fn run_failed_reshare_storage_test(fail_rollback: bool) {
         let private_storage = crypto_storage.get_private_storage();
         let mut guard = private_storage.lock().await;
         guard.clear_events();
-        guard.set_fail_store_at(failed_write.clone());
+        guard.set_fail_store_at(new_fhe_key_info.clone());
         if fail_rollback {
-            guard.set_fail_delete_at(crs_write.clone());
+            guard.set_fail_delete_at(new_crs_info.clone());
         }
         private_before = guard.state();
     }
@@ -209,41 +209,44 @@ async fn run_failed_reshare_storage_test(fail_rollback: bool) {
     {
         let private_storage = crypto_storage.get_private_storage();
         let guard = private_storage.lock().await;
-        // The reshare stores the CRS share, fails on the key share, and then rolls the new
-        // epoch back. A rollback that cannot delete the CRS share stops there and leaves
-        // the epoch marker in place for a retry.
+        // The reshare stores CrsInfo, fails on FheKeyInfo, and then rolls the new epoch back.
+        // A failed CrsInfo delete retains the epoch marker so cleanup can run again.
         let mut expected_events = vec![
             StorageEvent::new(
-                failed_write.clone(),
+                new_fhe_key_info.clone(),
                 StorageOp::Store,
                 StorageOutcome::FailedBeforeMutation,
             ),
-            StorageEvent::new(crs_write.clone(), StorageOp::Store, StorageOutcome::Created),
+            StorageEvent::new(
+                new_crs_info.clone(),
+                StorageOp::Store,
+                StorageOutcome::Created,
+            ),
         ];
 
         let mut expected_state = private_before.clone();
         if fail_rollback {
             expected_events.push(StorageEvent::new(
-                crs_write.clone(),
+                new_crs_info.clone(),
                 StorageOp::Delete,
                 StorageOutcome::FailedBeforeMutation,
             ));
             let mut state_without_failed_cleanup = guard.state();
-            state_without_failed_cleanup.remove(&crs_write);
+            state_without_failed_cleanup.remove(&new_crs_info);
             assert_eq!(state_without_failed_cleanup, expected_state);
-            assert!(guard.state().contains_key(&epoch_marker));
+            assert!(guard.state().contains_key(&new_epoch_data));
         } else {
             expected_events.push(StorageEvent::new(
-                crs_write.clone(),
+                new_crs_info.clone(),
                 StorageOp::Delete,
                 StorageOutcome::Deleted,
             ));
             expected_events.push(StorageEvent::new(
-                epoch_marker.clone(),
+                new_epoch_data.clone(),
                 StorageOp::Delete,
                 StorageOutcome::Deleted,
             ));
-            expected_state.remove(&epoch_marker);
+            expected_state.remove(&new_epoch_data);
             assert_eq!(guard.state(), expected_state);
         }
 
@@ -266,11 +269,13 @@ async fn run_failed_reshare_storage_test(fail_rollback: bool) {
     );
 }
 
+/// Failed resharing removes new `CrsInfo` and keeps both shared public halves.
 #[tokio::test]
 async fn failed_reshare_only_removes_new_epoch_private_material() {
     run_failed_reshare_storage_test(false).await;
 }
 
+/// A failed `CrsInfo` cleanup retains `CrsInfo` and `EpochData` for a retry.
 #[tokio::test]
 async fn failed_reshare_cleanup_keeps_retry_state() {
     run_failed_reshare_storage_test(true).await;

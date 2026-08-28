@@ -282,6 +282,22 @@ end-to-end tests live at
 and
 [core/service/src/client/tests/threshold/custodian_backup_tests.rs](core/service/src/client/tests/threshold/custodian_backup_tests.rs).
 
+## Paired material writes
+
+Threshold calls to `CryptoMaterialStorage::write_all` use two public/private pairs:
+
+- `PublicKey` and `FheKeyInfo` share a key ID.
+- `CRS` and `CrsInfo` share a CRS ID.
+
+The public half has no epoch. The private half has an epoch and contains one party's material.
+Initial generation can write both halves through `CryptoMaterialStorage::write_all`. Resharing
+writes only the private half for the new epoch and reuses the public half.
+
+Storage never overwrites an entry. If either write fails, cleanup removes only entries created by
+that call. It retains each entry that existed before the call. A backend can apply a write and
+then return an error, so cleanup also checks the earlier state. A later backup failure does not
+purge the primary material. `write_all` also supports one-sided data such as `ContextInfo`.
+
 ## Boot-time storage verification
 
 Every node checks its storage during service construction, before it serves any request.
