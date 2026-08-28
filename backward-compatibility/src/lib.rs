@@ -363,6 +363,37 @@ impl TestType for CrsGenMetadataWithExtraDataTest {
     }
 }
 
+// KMS test — the EIP-712 domain that keygen and CRS metadata retain. Every optional
+// field of the domain is set, so one fixture pins the byte layout of all of them.
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct StoredEip712DomainTest {
+    pub test_filename: Cow<'static, str>,
+    /// EIP-712 domain name.
+    pub name: Cow<'static, str>,
+    /// EIP-712 domain version.
+    pub version: Cow<'static, str>,
+    /// Chain ID. The stored form widens it to a 32-byte big-endian integer.
+    pub chain_id: u64,
+    /// Address of the verifying contract.
+    pub verifying_contract: [u8; 20],
+    /// Domain salt.
+    pub salt: [u8; 32],
+}
+
+impl TestType for StoredEip712DomainTest {
+    fn module(&self) -> String {
+        KMS_MODULE_NAME.to_string()
+    }
+
+    fn target_type(&self) -> String {
+        "StoredEip712Domain".to_string()
+    }
+
+    fn test_filename(&self) -> String {
+        self.test_filename.to_string()
+    }
+}
+
 // KMS test
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct AppKeyBlobTest {
@@ -1119,6 +1150,7 @@ pub enum TestMetadataKMS {
     KeyGenMetadata(KeyGenMetadataTest),
     CrsGenMetadataWithExtraData(CrsGenMetadataWithExtraDataTest),
     KeyGenMetadataWithExtraData(KeyGenMetadataWithExtraDataTest),
+    StoredEip712Domain(StoredEip712DomainTest),
     SigncryptionPayload(SigncryptionPayloadTest),
     PrssSetupCombined(PrssSetupCombinedTest),
     EpochData(EpochDataTest),
