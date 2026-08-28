@@ -184,7 +184,7 @@ impl TlsCert {
     }
 }
 
-#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+#[derive(Serialize, Deserialize, Clone, PartialEq)]
 #[serde(deny_unknown_fields, rename_all = "lowercase")]
 pub enum TlsKey {
     Path(PathBuf),
@@ -194,6 +194,15 @@ pub enum TlsKey {
 impl Default for TlsKey {
     fn default() -> Self {
         TlsKey::Pem("REDACTED".to_string())
+    }
+}
+
+impl std::fmt::Debug for TlsKey {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            TlsKey::Path(path) => write!(f, "TlsKey::Path({})", path.display()),
+            TlsKey::Pem(_) => write!(f, "TlsKey::Pem(REDACTED)"),
+        }
     }
 }
 
