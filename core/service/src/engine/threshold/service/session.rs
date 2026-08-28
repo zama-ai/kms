@@ -1108,7 +1108,7 @@ pub(crate) async fn validate_context_and_epoch(
 mod tests {
     use super::*;
     use crate::engine::{
-        context::{NodeInfo, SoftwareVersion},
+        context::{NodeInfo, SchemeDigests, SoftwareVersion},
         threshold::service::epoch_manager::tests::dummy_epoch_data,
     };
     use rcgen::{KeyPair, PKCS_ECDSA_P256_SHA256};
@@ -1300,8 +1300,9 @@ mod tests {
             )
             .unwrap(),
         );
-        let networking_manager =
-            Arc::new(RwLock::new(GrpcNetworkingManager::new(None, None).unwrap()));
+        let networking_manager = Arc::new(RwLock::new(
+            GrpcNetworkingManager::new(None, CoreToCoreNetworkConfig::default()).unwrap(),
+        ));
         let session_maker = SessionMaker::new_uninitialized(
             networking_manager,
             Some(Arc::clone(&verifier)),
@@ -1320,12 +1321,12 @@ mod tests {
             mpc_nodes: vec![NodeInfo {
                 mpc_identity: identity.to_string(),
                 party_id: 1,
-                signer_address: None,
                 external_url: format!("https://{identity}:8443"),
                 ca_cert: Some(certificate_pem.clone()),
                 public_storage_url: String::new(),
                 public_storage_prefix: None,
                 extra_signer_addresses: vec![],
+                scheme_digests: SchemeDigests::new(),
             }],
             context_id,
             software_version: SoftwareVersion {

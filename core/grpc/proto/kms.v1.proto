@@ -616,7 +616,6 @@ message MpcNode {
   // A list of 20-byte Ethereum addresses of additional signing keys that are permitted to make
   // transactions on behalf of this node.
   // Each entry is stored as the raw 20 bytes of the address, not a hex string, so there is no "0x" prefix.
-  // Every address must be unique among all primary and extra signer addresses in the context.
   repeated bytes extra_signer_addresses = 8;
 
   // A list of scheme-digest pairs of the possible signature verification keys.

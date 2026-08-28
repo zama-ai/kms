@@ -1295,8 +1295,6 @@ mod tests {
     use tonic::Request;
 
     const DUMMY_SIGNING_KEY_REQ_ID: [u8; 32] = [1u8; 32];
-    const EXPECTED_ERR_DUPLICATE_SIGNER_ADDRESSES: &str =
-        "Duplicate signer addresses found in context";
     const EXPECTED_ERR_DUPLICATE_CUSTODIAN_ENCRYPTION_KEY: &str =
         "Duplicate custodian encryption key found in custodian context";
     const EXPECTED_ERR_DUPLICATE_CUSTODIAN_VERIFICATION_KEY: &str =
@@ -1561,12 +1559,12 @@ mod tests {
             mpc_nodes: vec![NodeInfo {
                 mpc_identity: "Node1".to_string(),
                 party_id: 1,
-                signer_address: Some(SignerAddress(verification_key.address())),
                 external_url: "https://localhost:12345".to_string(),
                 ca_cert: None,
                 public_storage_url: "http://storage".to_string(),
                 public_storage_prefix: None,
                 extra_signer_addresses: vec![],
+                scheme_digests: SchemeDigests::from_ecdsa_verification_key(&verification_key),
             }],
             context_id,
             software_version: SoftwareVersion {
@@ -1621,98 +1619,6 @@ mod tests {
         });
         context_manager.new_mpc_context(request).await.unwrap();
         assert_eq!(context_manager.session_maker.context_count().await, 1);
-    }
-
-    #[tokio::test]
-    async fn test_new_mpc_context_rejects_duplicate_signer_addresses() {
-        let (verification_key, sig_key, crypto_storage) = setup_crypto_storage(false).await;
-        let base_kms = BaseKmsStruct::new(KMSType::Threshold, sig_key).unwrap();
-        let session_maker = SessionMaker::empty_dummy_session(base_kms.new_rng().await);
-        let context_manager = ThresholdContextManager::new(
-            base_kms,
-            crypto_storage.clone(),
-            MetaStore::new(100, 10),
-            session_maker,
-            false,
-        );
-
-        let mut signer_addresses = vec![SignerAddress(verification_key.address())];
-        for _ in 1..4 {
-            let (verification_key, _) = gen_sig_keys(&mut OsRng);
-            signer_addresses.push(SignerAddress(verification_key.address()));
-        }
-        let make_context = |context_id| ContextInfo {
-            mpc_nodes: signer_addresses
-                .iter()
-                .enumerate()
-                .map(|(index, signer_address)| NodeInfo {
-                    mpc_identity: format!("Node{}", index + 1),
-                    party_id: index as u32 + 1,
-                    signer_address: Some(*signer_address),
-                    external_url: format!("http://localhost:{}", 12345 + index),
-                    ca_cert: None,
-                    public_storage_url: "http://storage".to_string(),
-                    public_storage_prefix: None,
-                    extra_signer_addresses: vec![],
-                })
-                .collect(),
-            context_id,
-            software_version: SoftwareVersion {
-                major: 0,
-                minor: 1,
-                patch: 0,
-                tag: None,
-            },
-            threshold: 1,
-            pcr_values: vec![],
-        };
-
-        let mut duplicate_primary = make_context(ContextId::from_bytes([20u8; 32]));
-        duplicate_primary.mpc_nodes[1].signer_address =
-            duplicate_primary.mpc_nodes[0].signer_address;
-
-        let mut duplicate_primary_as_extra = make_context(ContextId::from_bytes([21u8; 32]));
-        duplicate_primary_as_extra.mpc_nodes[1]
-            .extra_signer_addresses
-            .push(signer_addresses[0]);
-
-        let mut duplicate_extra = make_context(ContextId::from_bytes([22u8; 32]));
-        let (extra_verification_key, _) = gen_sig_keys(&mut OsRng);
-        let extra_signer_address = SignerAddress(extra_verification_key.address());
-        duplicate_extra.mpc_nodes[0].extra_signer_addresses =
-            vec![extra_signer_address, extra_signer_address];
-
-        for context in [
-            duplicate_primary,
-            duplicate_primary_as_extra,
-            duplicate_extra,
-        ] {
-            let context_id = *context.context_id();
-            let request = Request::new(NewMpcContextRequest {
-                new_context: Some(context.try_into().unwrap()),
-            });
-
-            let error = context_manager
-                .new_mpc_context(request)
-                .await
-                .expect_err("duplicate signer addresses must be rejected");
-            assert_eq!(error.code(), tonic::Code::InvalidArgument);
-            assert!(
-                error
-                    .internal_err()
-                    .to_string()
-                    .contains(EXPECTED_ERR_DUPLICATE_SIGNER_ADDRESSES)
-            );
-
-            let guarded_priv_storage = crypto_storage.private_storage.lock().await;
-            assert!(
-                read_context_at_id(&*guarded_priv_storage, &context_id)
-                    .await
-                    .is_err(),
-                "rejected context {context_id} must not be persisted"
-            );
-        }
-        assert_eq!(0, context_manager.session_maker.context_count().await);
     }
 
     #[tokio::test]
@@ -1817,12 +1723,12 @@ mod tests {
             mpc_nodes: vec![NodeInfo {
                 mpc_identity: "Node1".to_string(),
                 party_id: 1,
-                signer_address: Some(SignerAddress(verification_key.address())),
                 external_url: "https://localhost:12345".to_string(),
                 ca_cert: None,
                 public_storage_url: "http://storage".to_string(),
                 public_storage_prefix: None,
                 extra_signer_addresses: vec![],
+                scheme_digests: SchemeDigests::from_ecdsa_verification_key(&verification_key),
             }],
             context_id,
             software_version: SoftwareVersion {
@@ -2731,6 +2637,7 @@ mod tests {
             crypto_storage,
             MetaStore::new(100, 10),
             session_maker,
+            false,
         );
 
         assert!(
