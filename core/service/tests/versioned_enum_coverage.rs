@@ -78,6 +78,9 @@ const ALLOW_UNCOVERED: &[&str] = &[
     // Variant payload of CrsGenMetadata::Current.
     // Covered via CrsGenMetadataTest.
     "CrsGenMetadataInner",
+    // Field of KeyGenMetadataInner.eip712_domain.
+    // TODO(github.com/zama-ai/kms-internal/issues/3200)
+    "StoredEip712Domain",
     // Field of Share.
     // Covered via ShareTest.
     "Role",

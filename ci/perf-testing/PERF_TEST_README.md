@@ -70,19 +70,19 @@ python3 ci/perf-testing/generate-perf-workflow.py \
 
 To iterate on the decrypt tests, trigger the workflow with these values:
 
-| Field | Value |
-| --- | --- |
-| Use workflow from | This branch |
-| Build new Docker images | ✅ Checked |
-| Deployment type | `threshold` |
-| Enable core-client tracing logs | Unchecked (logging skews perf numbers) |
-| FHE parameters for preprocessing and keygen | `Test` (faster setup) |
-| TLS enabled | Unchecked (required for `threshold`) |
-| KMS chart source ref | Leave empty |
-| KMS chart version | `repository` |
-| TKMS Infra chart version | `0.3.2` |
-| KMS Core image tag | Leave empty (build fills it in) |
-| KMS Core client image tag | Leave empty (build fills it in) |
+| Field                                       | Value                                  |
+| ------------------------------------------- | -------------------------------------- |
+| Use workflow from                           | This branch                            |
+| Build new Docker images                     | ✅ Checked                             |
+| Deployment type                             | `threshold`                            |
+| Enable core-client tracing logs             | Unchecked (logging skews perf numbers) |
+| FHE parameters for preprocessing and keygen | `Test` (faster setup)                  |
+| TLS enabled                                 | Unchecked (required for `threshold`)   |
+| KMS chart source ref                        | Leave empty                            |
+| KMS chart version                           | `repository`                           |
+| TKMS Infra chart version                    | `0.3.2`                                |
+| KMS Core image tag                          | Leave empty (build fills it in)        |
+| KMS Core client image tag                   | Leave empty (build fills it in)        |
 
 Note that `FHE parameters` only affects preprocessing and keygen. The decrypt
 scenarios always run with production-size `Default` parameters, so the numbers
@@ -97,7 +97,7 @@ The public- and user-decrypt rates, their durations, and their budgets
 are defined in [`perf-scenarios.toml`](perf-scenarios.toml). The Slack report
 labels each result by its target rate, for example `✅ 2400/s`.
 
-The budget percentages (`maxfail`, `maxshed`) are shares of *offered* requests,
+The budget percentages (`maxfail`, `maxshed`) are shares of _offered_ requests,
 not raw counts — `maxshed=25` means "no more than 25% of offered requests were
 shed." The rate percentage (`pct`) is the minimum acceptable ratio of achieved
 rate to target rate.
@@ -106,7 +106,7 @@ Each scenario lands on one of these outcomes:
 
 - **✅ pass** — stayed inside its budget with zero failed, shed, or saturated
   traffic.
-- **⚠️ warn** — either stayed inside budget but saw *some* failed/shed/saturated
+- **⚠️ warn** — either stayed inside budget but saw _some_ failed/shed/saturated
   traffic, or has `allowfail = true` and exceeded its budget.
 - **❌ fail** — a scenario without `allowfail = true` went outside its budget.
 - **⏭️ skipped** — an earlier scenario failed, so this one didn't run (scenarios
@@ -118,31 +118,31 @@ The Slack report and JSON artifacts use these fields.
 
 **Outcome:**
 
-| Metric | Meaning |
-| --- | --- |
-| `offered` | Requests the rate generator scheduled. |
-| `completed` | Requests that collected enough KMS responses |
-| `completed_in_window` | Requests completed during the configured measurement window. |
-| `completed_during_drain` | Requests completed after the measurement window while draining in-flight work. |
-| `measurement_elapsed_seconds` | Duration of the measurement window. |
-| `drain_elapsed_seconds` | Time spent draining in-flight work after the measurement window. |
-| `failed` | Requests that were sent but didn't collect enough responses in time. |
-| `shed` | Requests dropped before sending because `max_in_flight` was already reached. |
-| `saturated` | `true` if anything was shed, or the post-run drain timed out with requests still in flight. |
-| `achieved_rate` | `completed_in_window / measurement_elapsed_seconds`. |
+| Metric                        | Meaning                                                                                     |
+| ----------------------------- | ------------------------------------------------------------------------------------------- |
+| `offered`                     | Requests the rate generator scheduled.                                                      |
+| `completed`                   | Requests that collected enough KMS responses                                                |
+| `completed_in_window`         | Requests completed during the configured measurement window.                                |
+| `completed_during_drain`      | Requests completed after the measurement window while draining in-flight work.              |
+| `measurement_elapsed_seconds` | Duration of the measurement window.                                                         |
+| `drain_elapsed_seconds`       | Time spent draining in-flight work after the measurement window.                            |
+| `failed`                      | Requests that were sent but didn't collect enough responses in time.                        |
+| `shed`                        | Requests dropped before sending because `max_in_flight` was already reached.                |
+| `saturated`                   | `true` if anything was shed, or the post-run drain timed out with requests still in flight. |
+| `achieved_rate`               | `completed_in_window / measurement_elapsed_seconds`.                                        |
 
 **Payload throughput** (protobuf-encoded body only — excludes gRPC/TLS/header
 overhead):
 
-| Metric | Meaning |
-| --- | --- |
-| `request_payload_bytes` | Total request bytes submitted, counted once per core target. |
-| `request_payload_mib_per_sec` | Request bytes per measurement-window second, in MiB/s. |
-| `request_payload_avg_bytes` | Average encoded size of one request. |
-| `response_payload_bytes` | Total response bytes accepted for verification/reconstruction (excludes late/abandoned responses). |
-| `response_payload_bytes_in_window` | Response bytes accepted during the measurement window. |
-| `response_payload_mib_per_sec` | Measurement-window response bytes per second, in MiB/s. |
-| `response_payload_avg_bytes` | Average encoded size of one accepted response. |
+| Metric                             | Meaning                                                                                            |
+| ---------------------------------- | -------------------------------------------------------------------------------------------------- |
+| `request_payload_bytes`            | Total request bytes submitted, counted once per core target.                                       |
+| `request_payload_mib_per_sec`      | Request bytes per measurement-window second, in MiB/s.                                             |
+| `request_payload_avg_bytes`        | Average encoded size of one request.                                                               |
+| `response_payload_bytes`           | Total response bytes accepted for verification/reconstruction (excludes late/abandoned responses). |
+| `response_payload_bytes_in_window` | Response bytes accepted during the measurement window.                                             |
+| `response_payload_mib_per_sec`     | Measurement-window response bytes per second, in MiB/s.                                            |
+| `response_payload_avg_bytes`       | Average encoded size of one accepted response.                                                     |
 
 The `request_payload_messages` / `response_payload_messages` counters record how
 many payloads went into the corresponding `_bytes` totals;
@@ -181,16 +181,16 @@ For example, a healthy asynchronous run might report:
 
 ```json
 {
-  "submit_status": { "ok": 1872000 },
-  "result_status": { "ok": 1872000, "unavailable": 936000 },
-  "outstanding_submit_rpcs": 0,
-  "submit_peak_in_flight": 742,
-  "outstanding_result_rpcs": 0,
-  "result_peak_in_flight": 1534,
-  "result_retries": 936000,
-  "post_quorum_tasks": 576000,
-  "post_quorum_tasks_drained": 576000,
-  "outstanding_post_quorum_tasks": 0
+	"submit_status": { "ok": 1872000 },
+	"result_status": { "ok": 1872000, "unavailable": 936000 },
+	"outstanding_submit_rpcs": 0,
+	"submit_peak_in_flight": 742,
+	"outstanding_result_rpcs": 0,
+	"result_peak_in_flight": 1534,
+	"result_retries": 936000,
+	"post_quorum_tasks": 576000,
+	"post_quorum_tasks_drained": 576000,
+	"outstanding_post_quorum_tasks": 0
 }
 ```
 
@@ -221,10 +221,10 @@ run's head commit SHA — but prefer the logged value when you can get it.
 
 **Then re-run without building:**
 
-| Field | Value |
-| --- | --- |
-| Build new Docker images | ⬜ Unchecked |
-| KMS Core image tag | The `KMS Core image tag` from the previous run's summary |
+| Field                     | Value                                                           |
+| ------------------------- | --------------------------------------------------------------- |
+| Build new Docker images   | ⬜ Unchecked                                                    |
+| KMS Core image tag        | The `KMS Core image tag` from the previous run's summary        |
 | KMS Core client image tag | The `KMS Core client image tag` from the previous run's summary |
 
 ## Common pitfalls
@@ -236,7 +236,7 @@ run's head commit SHA — but prefer the logged value when you can get it.
   `KMS chart source ref`, falling back to the "Use workflow from" ref when that's
   empty.
 - **`build=true` ignores the image-tag fields.** Only fill those in when build is
-  unchecked *and* you know the tags already exist in the registry.
+  unchecked _and_ you know the tags already exist in the registry.
 - **Leave FHE params at `Test`** unless you specifically want production-size
   preproc/keygen. It doesn't touch the decrypt scenarios either way.
 
@@ -301,16 +301,16 @@ The full mapping from each form field to its internal effect. Most runs only
 need the [Quick start](#quick-start) values above; this table is for when you
 need to understand or override something specific.
 
-| Field | Effect |
-| --- | --- |
-| **Use workflow from** | Selects which branch/tag provides the workflow file. When `kms_chart_version=repository` and `KMS chart source ref` is empty, the KMS chart is also taken from this ref. |
-| **Build new Docker images** | When checked, builds images from the selected ref and ignores the manual image-tag fields. Also builds the enclave image by default. Feeds `KMS_CORE_IMAGE_TAG` / `KMS_CORE_CLIENT_IMAGE_TAG`. |
-| **Deployment type** | `threshold` → non-enclave `core-service`, path suffix `kms-ci`. `thresholdWithEnclave` → `core-service-enclave`, path suffix `kms-enclave-ci`. |
-| **Enable core-client tracing logs** | Adds `--logs` to `kms-core-client`. Keep off for measurements — logging materially affects perf. |
-| **FHE parameters for preprocessing and keygen** | Controls only `preproc-key-gen` and `key-gen`. Decrypt scenarios are pinned to `Default`. |
-| **TLS enabled** | Only valid with `thresholdWithEnclave` here; non-enclave threshold TLS fails fast during deploy. |
-| **KMS chart source ref** | Override used only when `kms_chart_version=repository`. Defaults to the "Use workflow from" ref when empty. |
-| **KMS chart version** | `repository` deploys the chart from the source ref; a version like `1.4.17` deploys that OCI chart instead. |
-| **TKMS Infra chart version** | Version of the TKMS infra chart that provisions S3/IAM/KMS-party resources. |
-| **KMS Core image tag** | Used only when build is unchecked. Must be an existing `core-service` (or `core-service-enclave`) tag matching the deployment type. |
-| **KMS Core client image tag** | Used only when build is unchecked. Must be an existing `core-client` tag. |
+| Field                                           | Effect                                                                                                                                                                                         |
+| ----------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Use workflow from**                           | Selects which branch/tag provides the workflow file. When `kms_chart_version=repository` and `KMS chart source ref` is empty, the KMS chart is also taken from this ref.                       |
+| **Build new Docker images**                     | When checked, builds images from the selected ref and ignores the manual image-tag fields. Also builds the enclave image by default. Feeds `KMS_CORE_IMAGE_TAG` / `KMS_CORE_CLIENT_IMAGE_TAG`. |
+| **Deployment type**                             | `threshold` → non-enclave `core-service`, path suffix `kms-ci`. `thresholdWithEnclave` → `core-service-enclave`, path suffix `kms-enclave-ci`.                                                 |
+| **Enable core-client tracing logs**             | Adds `--logs` to `kms-core-client`. Keep off for measurements — logging materially affects perf.                                                                                               |
+| **FHE parameters for preprocessing and keygen** | Controls only `preproc-key-gen` and `key-gen`. Decrypt scenarios are pinned to `Default`.                                                                                                      |
+| **TLS enabled**                                 | Only valid with `thresholdWithEnclave` here; non-enclave threshold TLS fails fast during deploy.                                                                                               |
+| **KMS chart source ref**                        | Override used only when `kms_chart_version=repository`. Defaults to the "Use workflow from" ref when empty.                                                                                    |
+| **KMS chart version**                           | `repository` deploys the chart from the source ref; a version like `1.4.17` deploys that OCI chart instead.                                                                                    |
+| **TKMS Infra chart version**                    | Version of the TKMS infra chart that provisions S3/IAM/KMS-party resources.                                                                                                                    |
+| **KMS Core image tag**                          | Used only when build is unchecked. Must be an existing `core-service` (or `core-service-enclave`) tag matching the deployment type.                                                            |
+| **KMS Core client image tag**                   | Used only when build is unchecked. Must be an existing `core-client` tag.                                                                                                                      |
