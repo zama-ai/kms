@@ -236,6 +236,7 @@ impl<R: RoleTrait> Networking<R> for NetworkSession {
                         round,
                         packet.value,
                         network_round,
+                        self.conf.get_max_future_rounds(),
                         self.conf.get_max_buffered_future_msgs(),
                     ) {
                         // Note that the sender is never warned of this failure, so a honest party
@@ -1027,6 +1028,8 @@ mod tests {
                 .unwrap()
                 .unwrap();
             let state = rx.lock().await;
+
+            // Keep the round 2 message, but drop round 5's: it is outside the configured window.
             assert!(
                 state.future.contains_key(&2),
                 "round 2 is within the configured window and must be buffered"
