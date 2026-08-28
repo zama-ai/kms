@@ -195,6 +195,7 @@ impl Default for TlsKey {
     }
 }
 
+// Deliberately never render secret-key material to avoid it accidentally leaking in logs or debug output.
 impl std::fmt::Debug for TlsKey {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
