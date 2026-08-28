@@ -13,6 +13,10 @@ use tfhe::{Unversionize, Versionize, named::Named};
 
 /// Test-only [`RamStorage`] wrapper with entry-specific fault injection and side-effect recording.
 ///
+/// Each [`StorageEntry`] identifies the same data type, request ID, and optional epoch that form a
+/// path in file-backed storage. The wrapper keeps those entries in RAM so tests can fail one exact
+/// path and compare the complete state before and after the operation.
+///
 /// Store and delete fail points name the exact storage entry to reject, and choose whether the
 /// error arrives before or after the wrapped storage applies the change. Both can be active at
 /// the same time and remain active until replaced or cleared. Every store and delete appends a
