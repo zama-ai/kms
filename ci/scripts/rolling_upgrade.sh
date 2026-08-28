@@ -251,8 +251,8 @@ main() {
             --namespace "${NAMESPACE}" \
             --reuse-values \
             --set kmsGenCertAndKeys.enabled=false \
-            --set "kmsCore.legacyPrssMask.beforePublicDecryptId=${threshold}" \
-            --set "kmsCore.legacyPrssMask.beforeUserDecryptId=${threshold}" \
+            --set "kmsCore.thresholdMode.legacyPrssMask.beforePublicDecryptId=${threshold}" \
+            --set "kmsCore.thresholdMode.legacyPrssMask.beforeUserDecryptId=${threshold}" \
             --wait --wait-for-jobs --timeout=1200s &
         _prss_pids+=("$!")
         _prss_parties+=("${i}")
@@ -268,7 +268,39 @@ main() {
         log_error "PRSS-Mask threshold rollout failed for parties: ${_prss_failed[*]}"
         exit 1
     fi
-    log_info "PRSS-Mask threshold enabled on all upgraded parties."
+
+    # A successful helm upgrade only proves Helm accepted the values, not that the threshold
+    # reached the core config: a misplaced value is dropped without error and the server then
+    # defaults to "0" (fixed schedule). The startup line below is the only signal that the value
+    # took effect, so gate the wave on it per party rather than trusting the upgrade exit status.
+    local _prss_unconfirmed=()
+    for _id in "${_prss_ids[@]}"; do
+        local i; i="$(echo "${_id}" | tr -d ' ')"
+        [[ -z "${i}" ]] && continue
+        local _pod; _pod="$(get_party_pod_name "${i}")"
+        local _confirmed="false"
+        for _attempt in 1 2 3 4 5 6; do
+            if kubectl logs "${_pod}" -n "${NAMESPACE}" --all-containers=true 2>/dev/null \
+                | grep -qF "PRSS-Mask legacy schedule activation thresholds configured: requests with ID strictly below public=${threshold} / user=${threshold}"; then
+                _confirmed="true"
+                break
+            fi
+            log_info "  Party ${i}: threshold startup line not present yet (attempt ${_attempt}/6)..."
+            sleep 10
+        done
+        if [[ "${_confirmed}" == "true" ]]; then
+            log_info "  Party ${i}: PRSS-Mask threshold=${threshold} confirmed in startup log."
+        else
+            _prss_unconfirmed+=("${i}")
+        fi
+    done
+    if [[ "${#_prss_unconfirmed[@]}" -gt 0 ]]; then
+        log_error "PRSS-Mask threshold=${threshold} never appeared in the startup log of parties: ${_prss_unconfirmed[*]}"
+        log_error "Those parties are running the fixed schedule while unpatched peers run the legacy one."
+        log_error "Check that the value is set at kmsCore.thresholdMode.legacyPrssMask (not kmsCore.legacyPrssMask)."
+        exit 1
+    fi
+    log_info "PRSS-Mask threshold enabled and confirmed on all upgraded parties."
 
     log_info "========================================="
     log_info "Rolling Upgrade Complete!"
