@@ -218,9 +218,7 @@ multiplier = 2.0
 max_interval = 60
 initial_interval_ms = 100
 max_elapsed_time = 300
-# 60 (not 20) because tests run all parties in one process and goes beyond a 20s deadline even on a 64-core CI box.
-# Sibling configs stay at 20.
-network_timeout = 60
+network_timeout = 20
 network_timeout_bk = 300
 network_timeout_bk_sns = 1200
 max_en_decode_message_size = 2147483648

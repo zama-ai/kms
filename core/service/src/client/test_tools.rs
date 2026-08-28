@@ -37,6 +37,8 @@ use tonic_health::server::HealthReporter;
 // Put gRPC size limit to 100 MB.
 // We need a high limit because ciphertexts may be large after SnS.
 const GRPC_MAX_MESSAGE_SIZE: usize = 100 * 1024 * 1024;
+// The in-process harness runs all MPC parties together, so concurrent protocols can exceed the default deadline on CI.
+const IN_PROCESS_TEST_NETWORK_TIMEOUT_SECS: u64 = 60;
 
 /// Size the global MPC rayon pool the same way the `kms-server` does, i.e. from
 /// [`InternalConfig`]: `tokio = ceil(#CPUs / 8)` and `rayon = #CPUs - tokio`.
@@ -124,6 +126,12 @@ pub async fn setup_threshold_no_client<
         // Make a configuration based on the default, but customized with the needed changes for the test setup
         let config_path = format!("{}/config/default_1", env!("CARGO_MANIFEST_DIR"));
         let mut core_config: CoreConfig = init_conf(&config_path).expect("config must parse");
+        let mut core_to_core_net = core_config
+            .threshold
+            .as_ref()
+            .map(|t| t.core_to_core_net)
+            .unwrap_or_default();
+        core_to_core_net.network_timeout = Some(IN_PROCESS_TEST_NETWORK_TIMEOUT_SECS);
         let threshold_party_config = ThresholdPartyConf {
             listen_address: mpc_conf[i - 1].address.clone(),
             listen_port: mpc_conf[i - 1].port,
@@ -136,11 +144,7 @@ pub async fn setup_threshold_no_client<
             num_sessions_preproc: Some(5),
             tls: None,
             peers: Some(mpc_conf),
-            core_to_core_net: core_config
-                .threshold
-                .as_ref()
-                .map(|t| t.core_to_core_net)
-                .unwrap_or_default(),
+            core_to_core_net,
             decryption_mode,
         };
         core_config.threshold = Some(threshold_party_config);
@@ -353,6 +357,12 @@ pub async fn setup_threshold_with_custom_peers<
 
         let config_path = format!("{}/config/default_1", env!("CARGO_MANIFEST_DIR"));
         let mut core_config: CoreConfig = init_conf(&config_path).expect("config must parse");
+        let mut core_to_core_net = core_config
+            .threshold
+            .as_ref()
+            .map(|t| t.core_to_core_net)
+            .unwrap_or_default();
+        core_to_core_net.network_timeout = Some(IN_PROCESS_TEST_NETWORK_TIMEOUT_SECS);
         let threshold_party_config = ThresholdPartyConf {
             listen_address: ip_addr.to_string(),
             listen_port: mpc_ports[idx],
@@ -363,11 +373,7 @@ pub async fn setup_threshold_with_custom_peers<
             num_sessions_preproc: Some(5),
             tls: None,
             peers: Some(updated_peers),
-            core_to_core_net: core_config
-                .threshold
-                .as_ref()
-                .map(|t| t.core_to_core_net)
-                .unwrap_or_default(),
+            core_to_core_net,
             decryption_mode,
         };
         core_config.threshold = Some(threshold_party_config);
