@@ -8,7 +8,6 @@ use crate::util::meta_store::{
     MetaStorePermit, update_err_req_in_meta_store, update_ok_req_in_meta_store,
 };
 use crate::vault::storage::crypto_material::{data_exists, data_exists_at_epoch};
-use crate::vault::storage::store_versioned_at_request_and_epoch_id;
 use crate::{
     anyhow_error_and_warn_log,
     backup::operator::RecoveryValidationMaterial,
@@ -23,12 +22,12 @@ use crate::{
     vault::{
         Vault,
         storage::{
-            Storage, StorageExt,
+            Storage, StorageExt, StoreWriteOutcome,
             crypto_material::{
                 log_storage_success_optional_variant, traits::PrivateCryptoMaterialReader,
             },
             delete_at_request_and_epoch_id, delete_at_request_id, read_all_data_versioned,
-            read_context_at_id, store_versioned_at_request_id,
+            read_context_at_id,
         },
     },
 };
@@ -67,6 +66,51 @@ pub enum StorageError {
     Backup,
     #[error("Other error: {0}")]
     Other(String),
+}
+
+/// Result of one public or private store requested by [`CryptoMaterialStorage::write_all`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum MaterialWriteOutcome {
+    /// The caller supplied no value for this public or private slot.
+    NotRequested,
+    /// The backend either created the entry or kept an entry that already existed.
+    Stored(StoreWriteOutcome),
+    /// The backend returned an error and may or may not have applied the write.
+    Failed,
+}
+
+impl MaterialWriteOutcome {
+    /// Whether this public or private store completed without an error.
+    fn succeeded(self) -> bool {
+        !matches!(self, Self::Failed)
+    }
+
+    /// Whether rollback should remove this public or private entry.
+    fn should_purge(self, existed_before: bool) -> bool {
+        match self {
+            Self::Stored(StoreWriteOutcome::Created) => true,
+            Self::Stored(StoreWriteOutcome::SkippedExisting) | Self::NotRequested => false,
+            // A backend error may arrive after the write took effect. Never delete an entry that
+            // was already there; otherwise cleanup must remove any partial result.
+            Self::Failed => !existed_before,
+        }
+    }
+}
+
+/// Store outcomes for the optional public and private entries passed to `write_all`.
+///
+/// Threshold callers pair `PublicKey` with `FheKeyInfo`, or `CRS` with `CrsInfo`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct PairWriteOutcome {
+    public: MaterialWriteOutcome,
+    private: MaterialWriteOutcome,
+}
+
+impl PairWriteOutcome {
+    /// Whether both halves completed without a storage error.
+    fn succeeded(self) -> bool {
+        self.public.succeeded() && self.private.succeeded()
+    }
 }
 
 /// How a caller of [`update_meta_store`] wants a failed backup to be recorded.
@@ -340,7 +384,11 @@ where
         .await
     }
 
-    /// General method for handling the storage of both public and private material along with the backup.
+    /// Stores up to one public entry and one private entry, then optionally updates the backup.
+    ///
+    /// Threshold callers use this for `PublicKey`/`FheKeyInfo` and `CRS`/`CrsInfo` pairs.
+    /// Resharing passes only the new epoch's private half. If a store fails, cleanup preserves
+    /// entries that existed before the call and removes entries created during the call.
     pub(in crate::vault::storage::crypto_material) async fn write_all<
         'a,
         PubData: Serialize + Versionize + Named + Send + Sync,
@@ -381,11 +429,43 @@ where
         {
             return Err(StorageError::Duplicate);
         }
+
+        let public_existed = if pub_type.is_empty() {
+            false
+        } else {
+            self.data_exists(req_id, &pub_type, &[])
+                .await
+                .map_err(|e| StorageError::Other(e.to_string()))?
+        };
+        let private_existed = match priv_type.first() {
+            None => false,
+            Some(
+                PrivDataType::FheKeyInfo | PrivDataType::FhePrivateKey | PrivDataType::CrsInfo,
+            ) => match epoch_id {
+                Some(epoch_id) => {
+                    self.data_exists_at_epoch(req_id, epoch_id, &[], &priv_type)
+                        .await?
+                }
+                None => false,
+            },
+            #[expect(deprecated)]
+            Some(
+                PrivDataType::SigningKey
+                | PrivDataType::PrssSetup
+                | PrivDataType::PrssSetupCombined
+                | PrivDataType::ContextInfo
+                | PrivDataType::EpochData,
+            ) => self
+                .data_exists(req_id, &[], &priv_type)
+                .await
+                .map_err(|e| StorageError::Other(e.to_string()))?,
+        };
+
         // Now proceed with writing
-        if self
+        let write_outcome = self
             .write_data_pair(req_id, epoch_id, pub_data, priv_data)
-            .await
-        {
+            .await;
+        if write_outcome.succeeded() {
             if update_backup {
                 // If storage is ok, then update the backup
                 if !self.update_backup_vault(false, op_metric_tag).await {
@@ -394,11 +474,25 @@ where
                 }
             }
         } else {
-            // If storage write failed then purge
-            let pub_types: Vec<PubDataType> = pub_type.into_iter().collect();
-            let priv_types: Vec<PrivDataType> = priv_type.into_iter().collect();
+            let public_types_to_purge: &[PubDataType] =
+                if write_outcome.public.should_purge(public_existed) {
+                    &pub_type
+                } else {
+                    &[]
+                };
+            let private_types_to_purge: &[PrivDataType] =
+                if write_outcome.private.should_purge(private_existed) {
+                    &priv_type
+                } else {
+                    &[]
+                };
             if !self
-                .purge_material(req_id, epoch_id, &pub_types, &priv_types)
+                .purge_material(
+                    req_id,
+                    epoch_id,
+                    public_types_to_purge,
+                    private_types_to_purge,
+                )
                 .await
             {
                 return Err(StorageError::Purging);
@@ -456,7 +550,7 @@ where
             let mut failed = false;
             for cur_priv_type in private_types {
                 match cur_priv_type {
-                    // For FHE keys and CRS info, we need to delete at epoch level
+                    // The private halves of threshold pairs use epoch paths. Centralized FHE keys do too.
                     PrivDataType::FheKeyInfo
                     | PrivDataType::FhePrivateKey
                     | PrivDataType::CrsInfo => {
@@ -481,7 +575,7 @@ where
                             );
                         }
                     }
-                    // For other private data, we can delete at request level
+                    // All other private types use request paths without an epoch.
                     // Observe we make the types explicit to ensure a compile error when a new type is added
                     #[expect(deprecated)]
                     PrivDataType::SigningKey
@@ -512,10 +606,9 @@ where
         !(pub_failed || priv_failed)
     }
 
-    /// Write both public and private data to storage.
-    /// Returns true if both writes are successful, false otherwise.
+    /// Stores the optional public and private entries and retains each store outcome.
     /// WARNING: Does NOT validate the type of `pub_data` matches the `pub_data_type` nor `priv_data` matches `priv_data_type`.
-    pub(in crate::vault::storage::crypto_material) async fn write_data_pair<
+    async fn write_data_pair<
         'a,
         PubData: Serialize + Versionize + Named + Send + Sync,
         PrivData: Serialize + Versionize + Named + Send + Sync,
@@ -525,30 +618,38 @@ where
         epoch_id: Option<&EpochId>,
         pub_data: Option<(&'a PubData, PubDataType)>,
         priv_data: Option<(&'a PrivData, PrivDataType)>,
-    ) -> bool
+    ) -> PairWriteOutcome
     where
         <PubData as Versionize>::Versioned<'a>: Send + Sync,
         <PrivData as Versionize>::Versioned<'a>: Send + Sync,
     {
         let pub_write = async {
             let Some((pub_d, pub_t)) = pub_data else {
-                return true;
+                return MaterialWriteOutcome::NotRequested;
             };
-            self.write_pub_data(req_id, pub_d, &pub_t).await
+            match self.write_pub_data(req_id, pub_d, &pub_t).await {
+                Some(outcome) => MaterialWriteOutcome::Stored(outcome),
+                None => MaterialWriteOutcome::Failed,
+            }
         };
         let priv_write = async {
             let Some((priv_d, priv_t)) = priv_data else {
-                return true;
+                return MaterialWriteOutcome::NotRequested;
             };
-            self.write_priv_data(req_id, epoch_id, priv_d, &priv_t)
+            match self
+                .write_priv_data(req_id, epoch_id, priv_d, &priv_t)
                 .await
+            {
+                Some(outcome) => MaterialWriteOutcome::Stored(outcome),
+                None => MaterialWriteOutcome::Failed,
+            }
         };
-        let (pub_ok, priv_ok) = tokio::join!(pub_write, priv_write);
-        pub_ok && priv_ok
+        let (public, private) = tokio::join!(pub_write, priv_write);
+        PairWriteOutcome { public, private }
     }
 
     /// Write data to the public storage backend.
-    /// Returns true if the write is successful, false otherwise.
+    /// Returns the store outcome, or `None` if the write fails.
     /// WARNING: Does NOT validate the type of `pub_data` matches the `pub_data_type`.
     pub(in crate::vault::storage::crypto_material) async fn write_pub_data<
         'a,
@@ -558,30 +659,28 @@ where
         req_id: &RequestId,
         pub_data: &'a PubData,
         pub_data_type: &PubDataType,
-    ) -> bool
+    ) -> Option<StoreWriteOutcome>
     where
         <PubData as Versionize>::Versioned<'a>: Send + Sync,
     {
         let mut pub_storage = self.public_storage.lock().await;
         // Observe that there is no epoched version for public data
-        if let Err(e) = store_versioned_at_request_id(
-            &mut *pub_storage,
-            req_id,
-            pub_data,
-            &pub_data_type.to_string(),
-        )
-        .await
+        match pub_storage
+            .store_data(pub_data, req_id, &pub_data_type.to_string())
+            .await
         {
-            tracing::error!(
-                "Failed to store public type {pub_data_type} for request {req_id}: {e}"
-            );
-            return false;
+            Ok(outcome) => Some(outcome),
+            Err(e) => {
+                tracing::error!(
+                    "Failed to store public type {pub_data_type} for request {req_id}: {e}"
+                );
+                None
+            }
         }
-        true
     }
 
     /// Write data to the private storage backend.
-    /// Returns true if the write is successful, false otherwise.
+    /// Returns the store outcome, or `None` if the write fails.
     /// WARNING: Does NOT validate the type of `priv_data` matches the `priv_data_type`.
     pub(in crate::vault::storage::crypto_material) async fn write_priv_data<
         'a,
@@ -592,37 +691,40 @@ where
         epoch_id: Option<&EpochId>,
         priv_data: &'a PrivData,
         priv_data_type: &PrivDataType,
-    ) -> bool
+    ) -> Option<StoreWriteOutcome>
     where
         <PrivData as Versionize>::Versioned<'a>: Send + Sync,
     {
         let mut priv_storage = self.private_storage.lock().await;
         match priv_data_type {
-            // For FHE keys and CRS info, we need to delete at epoch level
+            // The private halves of threshold pairs use epoch paths. Centralized FHE keys do too.
             PrivDataType::FheKeyInfo | PrivDataType::FhePrivateKey | PrivDataType::CrsInfo => {
                 if let Some(inner_epoch) = epoch_id {
-                    if let Err(e) = store_versioned_at_request_and_epoch_id(
-                        &mut *priv_storage,
-                        req_id,
-                        inner_epoch,
-                        priv_data,
-                        &priv_data_type.to_string(),
-                    )
-                    .await
+                    match priv_storage
+                        .store_data_at_epoch(
+                            priv_data,
+                            req_id,
+                            inner_epoch,
+                            &priv_data_type.to_string(),
+                        )
+                        .await
                     {
-                        tracing::error!(
-                            "Failed to store private type {priv_data_type} for request {req_id} and epoch {inner_epoch}: {e}"
-                        );
-                        return false;
+                        Ok(outcome) => Some(outcome),
+                        Err(e) => {
+                            tracing::error!(
+                                "Failed to store private type {priv_data_type} for request {req_id} and epoch {inner_epoch}: {e}"
+                            );
+                            None
+                        }
                     }
                 } else {
                     tracing::error!(
                         "Epoch ID is required for writing private type {priv_data_type} for request {req_id}, but it is not provided. Skipping writing this type."
                     );
-                    return false;
+                    None
                 }
             }
-            // For other private data, we can delete at request level
+            // All other private types use request paths without an epoch.
             // Observe we make the types explicit to ensure a compile error when a new type is added
             #[expect(deprecated)]
             PrivDataType::SigningKey
@@ -630,22 +732,20 @@ where
             | PrivDataType::PrssSetupCombined
             | PrivDataType::ContextInfo
             | PrivDataType::EpochData => {
-                if let Err(e) = store_versioned_at_request_id(
-                    &mut *priv_storage,
-                    req_id,
-                    priv_data,
-                    &priv_data_type.to_string(),
-                )
-                .await
+                match priv_storage
+                    .store_data(priv_data, req_id, &priv_data_type.to_string())
+                    .await
                 {
-                    tracing::error!(
-                        "Failed to store private type {priv_data_type} for request {req_id}: {e}"
-                    );
-                    return false;
+                    Ok(outcome) => Some(outcome),
+                    Err(e) => {
+                        tracing::error!(
+                            "Failed to store private type {priv_data_type} for request {req_id}: {e}"
+                        );
+                        None
+                    }
                 }
             }
-        };
-        true
+        }
     }
 
     /// Helper function to write the FHE keys to storage, along with updating the cache if the storage operation was successful.
