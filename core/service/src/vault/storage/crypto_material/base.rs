@@ -113,6 +113,19 @@ impl PairWriteOutcome {
     }
 }
 
+/// Returns whether private data is stored under both an epoch ID and a request ID.
+fn private_data_is_epoch_scoped(data_type: PrivDataType) -> bool {
+    match data_type {
+        PrivDataType::FheKeyInfo | PrivDataType::FhePrivateKey | PrivDataType::CrsInfo => true,
+        #[expect(deprecated)]
+        PrivDataType::SigningKey
+        | PrivDataType::PrssSetup
+        | PrivDataType::PrssSetupCombined
+        | PrivDataType::ContextInfo
+        | PrivDataType::EpochData => false,
+    }
+}
+
 /// How a caller of [`update_meta_store`] wants a failed backup to be recorded.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(in crate::vault::storage::crypto_material) enum BackupPolicy {
@@ -387,8 +400,11 @@ where
     /// Stores up to one public entry and one private entry, then optionally updates the backup.
     ///
     /// Threshold callers use this for `PublicKey`/`FheKeyInfo` and `CRS`/`CrsInfo` pairs.
+    /// If one requested half exists, the method preserves it and stores the missing half. The
+    /// caller must ensure that the two halves belong together.
     /// Resharing passes only the new epoch's private half. If a store fails, cleanup preserves
     /// entries that existed before the call and removes entries created during the call.
+    /// Callers must serialize calls that can write the same entries until this method returns.
     pub(in crate::vault::storage::crypto_material) async fn write_all<
         'a,
         PubData: Serialize + Versionize + Named + Send + Sync,
@@ -430,6 +446,8 @@ where
             return Err(StorageError::Duplicate);
         }
 
+        // Capture existence before either store starts. A backend can apply a write and then
+        // return an error, so a later query cannot tell whether this call created the entry.
         let public_existed = if pub_type.is_empty() {
             false
         } else {
@@ -439,26 +457,21 @@ where
         };
         let private_existed = match priv_type.first() {
             None => false,
-            Some(
-                PrivDataType::FheKeyInfo | PrivDataType::FhePrivateKey | PrivDataType::CrsInfo,
-            ) => match epoch_id {
-                Some(epoch_id) => {
-                    self.data_exists_at_epoch(req_id, epoch_id, &[], &priv_type)
-                        .await?
+            Some(private_type) => {
+                if private_data_is_epoch_scoped(*private_type) {
+                    match epoch_id {
+                        Some(epoch_id) => {
+                            self.data_exists_at_epoch(req_id, epoch_id, &[], &priv_type)
+                                .await?
+                        }
+                        None => false,
+                    }
+                } else {
+                    self.data_exists(req_id, &[], &priv_type)
+                        .await
+                        .map_err(|e| StorageError::Other(e.to_string()))?
                 }
-                None => false,
-            },
-            #[expect(deprecated)]
-            Some(
-                PrivDataType::SigningKey
-                | PrivDataType::PrssSetup
-                | PrivDataType::PrssSetupCombined
-                | PrivDataType::ContextInfo
-                | PrivDataType::EpochData,
-            ) => self
-                .data_exists(req_id, &[], &priv_type)
-                .await
-                .map_err(|e| StorageError::Other(e.to_string()))?,
+            }
         };
 
         // Now proceed with writing
@@ -549,52 +562,39 @@ where
         let f_priv = async {
             let mut failed = false;
             for cur_priv_type in private_types {
-                match cur_priv_type {
-                    // The private halves of threshold pairs use epoch paths. Centralized FHE keys do too.
-                    PrivDataType::FheKeyInfo
-                    | PrivDataType::FhePrivateKey
-                    | PrivDataType::CrsInfo => {
-                        if let Some(inner_epoch) = epoch_id {
-                            let del_res = delete_at_request_and_epoch_id(
-                                &mut (*priv_storage),
-                                req_id,
-                                inner_epoch,
-                                &cur_priv_type.to_string(),
-                            )
-                            .await;
-                            if let Err(e) = &del_res {
-                                failed = true;
-                                tracing::warn!(
-                                    "Failed to delete private type {cur_priv_type} for request {req_id} and epoch {inner_epoch}: {e}"
-                                );
-                            }
-                        } else {
-                            failed = true;
-                            tracing::error!(
-                                "Epoch ID is required for deleting private type {cur_priv_type} for request {req_id}, but it is not provided. Skipping deletion of this type."
-                            );
-                        }
-                    }
-                    // All other private types use request paths without an epoch.
-                    // Observe we make the types explicit to ensure a compile error when a new type is added
-                    #[expect(deprecated)]
-                    PrivDataType::SigningKey
-                    | PrivDataType::PrssSetup
-                    | PrivDataType::PrssSetupCombined
-                    | PrivDataType::ContextInfo
-                    | PrivDataType::EpochData => {
-                        let del_res = delete_at_request_id(
+                if private_data_is_epoch_scoped(*cur_priv_type) {
+                    if let Some(inner_epoch) = epoch_id {
+                        let del_res = delete_at_request_and_epoch_id(
                             &mut (*priv_storage),
                             req_id,
+                            inner_epoch,
                             &cur_priv_type.to_string(),
                         )
                         .await;
                         if let Err(e) = &del_res {
                             failed = true;
                             tracing::warn!(
-                                "Failed to delete private type {cur_priv_type} for request {req_id}: {e}"
+                                "Failed to delete private type {cur_priv_type} for request {req_id} and epoch {inner_epoch}: {e}"
                             );
                         }
+                    } else {
+                        failed = true;
+                        tracing::error!(
+                            "Epoch ID is required for deleting private type {cur_priv_type} for request {req_id}, but it is not provided. Skipping deletion of this type."
+                        );
+                    }
+                } else {
+                    let del_res = delete_at_request_id(
+                        &mut (*priv_storage),
+                        req_id,
+                        &cur_priv_type.to_string(),
+                    )
+                    .await;
+                    if let Err(e) = &del_res {
+                        failed = true;
+                        tracing::warn!(
+                            "Failed to delete private type {cur_priv_type} for request {req_id}: {e}"
+                        );
                     }
                 }
             }
@@ -696,53 +696,42 @@ where
         <PrivData as Versionize>::Versioned<'a>: Send + Sync,
     {
         let mut priv_storage = self.private_storage.lock().await;
-        match priv_data_type {
-            // The private halves of threshold pairs use epoch paths. Centralized FHE keys do too.
-            PrivDataType::FheKeyInfo | PrivDataType::FhePrivateKey | PrivDataType::CrsInfo => {
-                if let Some(inner_epoch) = epoch_id {
-                    match priv_storage
-                        .store_data_at_epoch(
-                            priv_data,
-                            req_id,
-                            inner_epoch,
-                            &priv_data_type.to_string(),
-                        )
-                        .await
-                    {
-                        Ok(outcome) => Some(outcome),
-                        Err(e) => {
-                            tracing::error!(
-                                "Failed to store private type {priv_data_type} for request {req_id} and epoch {inner_epoch}: {e}"
-                            );
-                            None
-                        }
-                    }
-                } else {
-                    tracing::error!(
-                        "Epoch ID is required for writing private type {priv_data_type} for request {req_id}, but it is not provided. Skipping writing this type."
-                    );
-                    None
-                }
-            }
-            // All other private types use request paths without an epoch.
-            // Observe we make the types explicit to ensure a compile error when a new type is added
-            #[expect(deprecated)]
-            PrivDataType::SigningKey
-            | PrivDataType::PrssSetup
-            | PrivDataType::PrssSetupCombined
-            | PrivDataType::ContextInfo
-            | PrivDataType::EpochData => {
+        if private_data_is_epoch_scoped(*priv_data_type) {
+            if let Some(inner_epoch) = epoch_id {
                 match priv_storage
-                    .store_data(priv_data, req_id, &priv_data_type.to_string())
+                    .store_data_at_epoch(
+                        priv_data,
+                        req_id,
+                        inner_epoch,
+                        &priv_data_type.to_string(),
+                    )
                     .await
                 {
                     Ok(outcome) => Some(outcome),
                     Err(e) => {
                         tracing::error!(
-                            "Failed to store private type {priv_data_type} for request {req_id}: {e}"
+                            "Failed to store private type {priv_data_type} for request {req_id} and epoch {inner_epoch}: {e}"
                         );
                         None
                     }
+                }
+            } else {
+                tracing::error!(
+                    "Epoch ID is required for writing private type {priv_data_type} for request {req_id}, but it is not provided. Skipping writing this type."
+                );
+                None
+            }
+        } else {
+            match priv_storage
+                .store_data(priv_data, req_id, &priv_data_type.to_string())
+                .await
+            {
+                Ok(outcome) => Some(outcome),
+                Err(e) => {
+                    tracing::error!(
+                        "Failed to store private type {priv_data_type} for request {req_id}: {e}"
+                    );
+                    None
                 }
             }
         }

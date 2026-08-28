@@ -201,6 +201,7 @@ async fn failed_public_store_keeps_existing_private_entry(
 }
 
 /// An error on an existing `PublicKey` or `CRS` rolls back only the new private half.
+/// Only a before-mutation fault applies because an after-mutation fault requires a new public entry.
 #[rstest::rstest]
 #[case::fhe_key(PairKind::FheKey)]
 #[case::crs(PairKind::Crs)]
@@ -232,6 +233,7 @@ async fn failed_existing_public_store_rolls_back_new_private_entry(#[case] pair_
 }
 
 /// An error on existing `FheKeyInfo` or `CrsInfo` rolls back only the new public half.
+/// Only a before-mutation fault applies because an after-mutation fault requires a new private entry.
 #[rstest::rstest]
 #[case::fhe_key(PairKind::FheKey)]
 #[case::crs(PairKind::Crs)]

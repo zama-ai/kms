@@ -290,13 +290,16 @@ Threshold calls to `CryptoMaterialStorage::write_all` use two public/private pai
 - `CRS` and `CrsInfo` share a CRS ID.
 
 The public half has no epoch. The private half has an epoch and contains one party's material.
-Initial generation can write both halves through `CryptoMaterialStorage::write_all`. Resharing
-writes only the private half for the new epoch and reuses the public half.
+Initial generation writes both halves through `CryptoMaterialStorage::write_all`. The method also
+accepts one-sided writes. Resharing writes only the private half for the new epoch and reuses the
+public half. A `ContextInfo` write stores one request-scoped private entry with no public half.
 
-Storage never overwrites an entry. If either write fails, cleanup removes only entries created by
-that call. It retains each entry that existed before the call. A backend can apply a write and
-then return an error, so cleanup also checks the earlier state. A later backup failure does not
-purge the primary material. `write_all` also supports one-sided data such as `ContextInfo`.
+Storage never overwrites an entry. If one requested half exists, storage keeps its bytes and writes
+the missing half. The caller must ensure that the two halves belong together. If either write
+fails, cleanup removes only entries created by that call. It retains each entry that existed
+before the call. A backend can apply a write and then return an error, so cleanup checks the
+earlier state. Callers must serialize writes to the same entries until cleanup finishes. A later
+backup failure does not purge the primary material.
 
 ## Boot-time storage verification
 
