@@ -31,6 +31,10 @@ use super::{
 
 pub(crate) const HEADER: &str = "ZAMA TKMS SETUP TEST OPERATORS-CUSTODIAN";
 pub(crate) const DSEP_BACKUP_CUSTODIAN: DomainSep = *b"BKUPCUST";
+const ERR_DUPLICATE_CUSTODIAN_ENCRYPTION_KEYS: &str =
+    "Duplicate custodian encryption key found in custodian context";
+const ERR_DUPLICATE_CUSTODIAN_VERIFICATION_KEYS: &str =
+    "Duplicate custodian verification key found in custodian context";
 
 #[derive(Clone, Serialize, Deserialize, VersionsDispatch)]
 pub enum InternalCustodianRecoveryOutputVersions {
@@ -201,10 +205,14 @@ impl Named for InternalCustodianContext {
 }
 
 impl InternalCustodianContext {
-    pub fn new(
-        custodian_context: CustodianContext,
-        backup_enc_key: UnifiedPublicEncKey,
-    ) -> anyhow::Result<Self> {
+    /// Validate the threshold, roles, payloads, and cryptographic identities of custodian nodes.
+    pub(crate) fn validate_nodes(custodian_context: &CustodianContext) -> anyhow::Result<()> {
+        Self::validated_nodes(custodian_context).map(drop)
+    }
+
+    fn validated_nodes(
+        custodian_context: &CustodianContext,
+    ) -> anyhow::Result<BTreeMap<Role, InternalCustodianSetupMessage>> {
         if custodian_context.threshold == 0
             || 2 * custodian_context.threshold as usize >= custodian_context.custodian_nodes.len()
         {
@@ -215,7 +223,7 @@ impl InternalCustodianContext {
             ));
         }
         let mut node_map = BTreeMap::new();
-        for setup_message in custodian_context.custodian_nodes.iter() {
+        for setup_message in &custodian_context.custodian_nodes {
             if setup_message.custodian_role == 0 {
                 return Err(anyhow::anyhow!(
                     "Custodian role cannot be zero in custodian context"
@@ -239,6 +247,37 @@ impl InternalCustodianContext {
                 ));
             }
         }
+
+        let nodes = node_map.values().collect::<Vec<_>>();
+        for (index, node) in nodes.iter().enumerate() {
+            for previous_node in &nodes[..index] {
+                if previous_node.public_enc_key == node.public_enc_key {
+                    return Err(anyhow::anyhow!(
+                        "{}: roles {} and {}",
+                        ERR_DUPLICATE_CUSTODIAN_ENCRYPTION_KEYS,
+                        previous_node.custodian_role,
+                        node.custodian_role
+                    ));
+                }
+                if previous_node.public_verf_key == node.public_verf_key {
+                    return Err(anyhow::anyhow!(
+                        "{}: roles {} and {}",
+                        ERR_DUPLICATE_CUSTODIAN_VERIFICATION_KEYS,
+                        previous_node.custodian_role,
+                        node.custodian_role
+                    ));
+                }
+            }
+        }
+
+        Ok(node_map)
+    }
+
+    pub fn new(
+        custodian_context: CustodianContext,
+        backup_enc_key: UnifiedPublicEncKey,
+    ) -> anyhow::Result<Self> {
+        let node_map = Self::validated_nodes(&custodian_context)?;
         let context_id: RequestId = parse_optional_grpc_request_id(
             &custodian_context.custodian_context_id,
             RequestIdParsingErr::CustodianContext,
@@ -563,6 +602,64 @@ mod tests {
                 .to_string()
                 .contains("Duplicate custodian role found")
         );
+    }
+
+    #[test]
+    fn internal_custodian_context_duplicate_cryptographic_identity_should_fail() {
+        let mut rng = AesRng::seed_from_u64(41);
+        let (_, backup_pk) = {
+            let mut enc = Encryption::new(PkeSchemeType::MlKem512, &mut rng);
+            enc.keygen().unwrap()
+        };
+        let mut setup_messages = Vec::new();
+        for role in 1..=3 {
+            let (_, public_enc_key) = {
+                let mut enc = Encryption::new(PkeSchemeType::MlKem512, &mut rng);
+                enc.keygen().unwrap()
+            };
+            let (public_verf_key, _) = gen_sig_keys(&mut rng);
+            setup_messages.push(InternalCustodianSetupMessage {
+                header: HEADER.to_string(),
+                custodian_role: Role::indexed_from_one(role),
+                name: format!("Custodian-{role}"),
+                random_value: [role as u8; 32],
+                timestamp: SystemTime::now(),
+                public_enc_key,
+                public_verf_key,
+            });
+        }
+
+        let mut duplicate_encryption_key = setup_messages.clone();
+        duplicate_encryption_key[1].public_enc_key =
+            duplicate_encryption_key[0].public_enc_key.clone();
+        let mut duplicate_verification_key = setup_messages;
+        duplicate_verification_key[1].public_verf_key =
+            duplicate_verification_key[0].public_verf_key.clone();
+
+        for (messages, expected_error) in [
+            (
+                duplicate_encryption_key,
+                ERR_DUPLICATE_CUSTODIAN_ENCRYPTION_KEYS,
+            ),
+            (
+                duplicate_verification_key,
+                ERR_DUPLICATE_CUSTODIAN_VERIFICATION_KEYS,
+            ),
+        ] {
+            let context = CustodianContext {
+                custodian_nodes: messages
+                    .into_iter()
+                    .map(|message| message.try_into().unwrap())
+                    .collect(),
+                custodian_context_id: None,
+                threshold: 1,
+            };
+
+            let error = InternalCustodianContext::new(context, backup_pk.clone())
+                .expect_err("duplicate custodian cryptographic identities must be rejected");
+            assert!(error.to_string().contains(expected_error));
+            assert!(error.to_string().contains("roles 1 and 2"));
+        }
     }
 
     #[test]
