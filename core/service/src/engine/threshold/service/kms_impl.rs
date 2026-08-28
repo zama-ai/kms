@@ -73,7 +73,7 @@ use crate::{
         },
         context_manager::{ThresholdContextManager, ensure_default_threshold_context_in_storage},
         prepare_shutdown_signals,
-        public_material_verification::verify_public_storage_material,
+        storage_material_verification::verify_storage_material,
         threshold::{
             service::{
                 public_decryptor::SecureNoiseFloodDecryptor,
@@ -573,7 +573,7 @@ where
     // Private storage is the reference; extra material in public storage is ignored.
     match base_kms.sig_key() {
         Ok(signing_key) => {
-            verify_public_storage_material(
+            verify_storage_material(
                 &public_storage,
                 &key_info,
                 &crs_info,
@@ -1025,6 +1025,7 @@ mod tests {
         }
 
         #[derive(Clone, Serialize, Deserialize, VersionsDispatch)]
+        #[expect(clippy::large_enum_variant)]
         pub enum ThresholdFheKeysVersions {
             V0(PlaceholderV0),
             V1(PlaceholderV1),
@@ -1092,6 +1093,7 @@ mod tests {
                     RequestId::zeros(),
                     RequestId::zeros(),
                     BTreeMap::new(),
+                    &crate::dummy_domain(),
                     vec![],
                     vec![],
                     vec![],
@@ -1141,6 +1143,7 @@ mod tests {
                 RequestId::zeros(),
                 RequestId::zeros(),
                 BTreeMap::new(),
+                &crate::dummy_domain(),
                 vec![],
                 vec![],
                 vec![],
@@ -1216,6 +1219,7 @@ mod tests {
                 RequestId::zeros(),
                 RequestId::zeros(),
                 BTreeMap::new(),
+                &crate::dummy_domain(),
                 vec![],
                 vec![],
                 vec![],
