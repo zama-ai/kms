@@ -1,6 +1,7 @@
 use super::*;
-use crate::vault::storage::test_support::{StorageEntry, StorageEvent, StorageOp, StorageOutcome};
-use std::collections::HashSet;
+use crate::vault::storage::test_support::{
+    StorageEntry, StorageEvent, StorageOp, StorageOutcome, assert_same_events,
+};
 
 /// Public key and CRS material carry no epoch in their storage paths, so they belong to every
 /// epoch that uses the same handle. A reshare that fails to store its private shares must not
@@ -246,21 +247,7 @@ async fn run_failed_reshare_storage_test(fail_rollback: bool) {
             assert_eq!(guard.state(), expected_state);
         }
 
-        // Paired writes may land in either order, so compare as a set. The expected events
-        // are distinct, so pinning the count first rules out a repeated operation that set
-        // equality on its own would hide.
-        assert_eq!(
-            guard.events().len(),
-            expected_events.len(),
-            "actual events: {:#?}",
-            guard.events()
-        );
-        assert_eq!(
-            guard.events().iter().collect::<HashSet<_>>(),
-            expected_events.iter().collect::<HashSet<_>>(),
-            "actual events: {:#?}",
-            guard.events()
-        );
+        assert_same_events(guard.events(), &expected_events);
     }
 
     assert_eq!(
