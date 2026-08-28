@@ -77,7 +77,15 @@ where
 
 fn dummy_info() -> KeyGenMetadata {
     let req_id = derive_request_id("dummy_info").unwrap();
-    KeyGenMetadata::new(req_id, req_id, BTreeMap::new(), vec![], vec![], vec![])
+    KeyGenMetadata::new(
+        req_id,
+        req_id,
+        BTreeMap::new(),
+        &crate::dummy_domain(),
+        vec![],
+        vec![],
+        vec![],
+    )
 }
 
 fn ram_threshold_storage(
@@ -842,6 +850,7 @@ fn dummy_crs_metadata(seed: u8) -> CrsGenMetadata {
         crs_id,
         vec![seed; 32],
         128,
+        &crate::dummy_domain(),
         vec![seed; 8],
         vec![],
         format!("extra-{seed}").into_bytes(),

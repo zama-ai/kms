@@ -58,8 +58,9 @@ use kms_lib::{
     },
     engine::{
         base::{
-            CrsGenMetadata, CrsSignedPayload, KeyGenMetadata, KeyGenMetadataInner,
-            KeygenSignedPayload, KmsFheKeyHandles, PrepKeygenSignedPayload, StoredTypedSignature,
+            CrsGenMetadata, CrsGenMetadataInner, CrsGenMetadataInnerV2, CrsSignedPayload,
+            KeyGenMetadata, KeyGenMetadataInner, KeygenSignedPayload, KmsFheKeyHandles,
+            PrepKeygenSignedPayload, StoredTypedSignature,
         },
         context::{ContextInfo, NodeInfo, SchemeDigests, SignerAddress, SoftwareVersion},
         threshold::service::{
@@ -79,6 +80,7 @@ use std::{
 };
 use strum::IntoEnumIterator;
 use tfhe::integer::compression_keys::DecompressionKey;
+use tfhe_versionable::Upgrade;
 use threshold_execution::{
     small_execution::prss::PRSSSetup, tfhe_internals::public_keysets::FhePubKeySet,
 };
@@ -240,6 +242,7 @@ fn test_key_gen_metadata(
         key_id,
         preprocessing_id,
         key_digest_map,
+        eip712_domain: None,
         external_signature,
         extra_data: None, // Legacy approach
     };
@@ -291,14 +294,17 @@ fn test_crs_gen_metadata(
                 format,
             )
         })?;
-    let new_current = CrsGenMetadata::new(
+    let new_inner: CrsGenMetadataInner = CrsGenMetadataInnerV2 {
         crs_id,
-        digest,
+        crs_digest: digest,
         max_num_bits,
-        external_signature.clone(),
-        vec![],
-        vec![],
-    );
+        extra_data: None,
+        external_signature: external_signature.clone(),
+        signatures: vec![],
+    }
+    .upgrade()
+    .unwrap();
+    let new_current = CrsGenMetadata::Current(new_inner);
     match &new_current {
         CrsGenMetadata::LegacyV0(_) => {
             return Err(test.failure(
@@ -382,6 +388,7 @@ fn test_key_gen_metadata_with_extra_data(
         key_id,
         preprocessing_id,
         key_digest_map,
+        eip712_domain: None,
         external_signature,
         extra_data: Some(extra_data),
     };
@@ -425,14 +432,17 @@ fn test_crs_gen_metadata_with_extra_data(
                 format,
             )
         })?;
-    let new_current = CrsGenMetadata::new(
+    let new_inner: CrsGenMetadataInner = CrsGenMetadataInnerV2 {
         crs_id,
-        digest,
+        crs_digest: digest,
         max_num_bits,
-        external_signature.clone(),
-        vec![],
-        extra_data,
-    );
+        extra_data: Some(extra_data),
+        external_signature: external_signature.clone(),
+        signatures: vec![],
+    }
+    .upgrade()
+    .unwrap();
+    let new_current = CrsGenMetadata::Current(new_inner);
     match &new_current {
         CrsGenMetadata::LegacyV0(_) => {
             return Err(test.failure(
