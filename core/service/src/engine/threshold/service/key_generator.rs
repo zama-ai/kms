@@ -1531,7 +1531,7 @@ impl<
         let (prep_id, dkg_res) = match outcome {
             Some(res) => res,
             None => {
-                crypto_storage.purge_fhe_keys(req_id, epoch_id).await;
+                // Persistent writes start after generation, so this branch has nothing to purge.
                 let _ = update_err_req_in_meta_store(
                     &meta_store,
                     meta_permit,
@@ -1906,7 +1906,9 @@ mod tests {
         dummy_domain,
         engine::threshold::service::session::SessionMaker,
         util::meta_store::update_ok_req_in_meta_store,
-        vault::storage::ram,
+        vault::storage::{
+            ram, read_versioned_at_request_id, store_versioned_at_request_id, tests::TestType,
+        },
     };
 
     use super::*;
@@ -2593,8 +2595,9 @@ mod tests {
         );
     }
 
-    /// Dummy preprocessing (pre-populated into the bucket by [`setup_key_generator`]) is
-    /// consumed by the key generation, after which the slow DKG is aborted mid-execution.
+    /// A slow key generation abort preserves material stored before the request.
+    ///
+    /// Dummy preprocessing from [`setup_key_generator`] is consumed before the abort.
     #[tokio::test]
     async fn abort_during_key_gen() {
         let (prep_ids, kg) = setup_key_generator::<
@@ -2604,6 +2607,18 @@ mod tests {
         let prep_id = prep_ids[0];
         let mut rng = AesRng::seed_from_u64(8);
         let key_id = RequestId::new_random(&mut rng);
+        let existing = TestType { i: 3183 };
+        {
+            let mut public = kg.crypto_storage.inner.public_storage.lock().await;
+            store_versioned_at_request_id(
+                &mut *public,
+                &key_id,
+                &existing,
+                &PubDataType::ServerKey.to_string(),
+            )
+            .await
+            .unwrap();
+        }
 
         let domain = alloy_to_protobuf_domain(&dummy_domain()).unwrap();
         let tonic_req = tonic::Request::new(KeyGenRequest {
@@ -2633,5 +2648,12 @@ mod tests {
         .await
         .unwrap_err();
         assert_eq!(err.code(), tonic::Code::Aborted);
+
+        let public = kg.crypto_storage.inner.public_storage.lock().await;
+        let stored: TestType =
+            read_versioned_at_request_id(&*public, &key_id, &PubDataType::ServerKey.to_string())
+                .await
+                .unwrap();
+        assert_eq!(stored, existing);
     }
 }

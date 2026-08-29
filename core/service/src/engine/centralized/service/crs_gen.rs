@@ -266,24 +266,7 @@ pub(crate) async fn crs_gen_background<
     match outcome {
         Err(msg) => {
             tracing::error!("{msg}");
-            let del_res = crypto_storage
-                .inner
-                .purge_crs_material(req_id, epoch_id)
-                .await;
-            let msg = if del_res {
-                let m = format!(
-                    "CRS generation aborted and CRS material deleted successfully for request {req_id}"
-                );
-                tracing::info!(m);
-                m
-            } else {
-                let m = format!(
-                    "CRS generation aborted but failed to delete CRS material for request {req_id}"
-                );
-                tracing::error!(m);
-                m
-            };
-
+            // Persistent writes start after generation, so this branch has nothing to purge.
             let _ = update_err_req_in_meta_store(&meta_store, permit, msg, op_tag).await;
         }
         Ok((pp, crs_info)) => {
@@ -306,7 +289,10 @@ pub(crate) async fn crs_gen_background<
 
 #[cfg(test)]
 mod tests {
-    use kms_grpc::{kms::v1::FheParameter, rpc_types::alloy_to_protobuf_domain};
+    use kms_grpc::{
+        kms::v1::FheParameter,
+        rpc_types::{PubDataType, alloy_to_protobuf_domain},
+    };
     use rand::SeedableRng;
 
     use crate::{
@@ -314,6 +300,9 @@ mod tests {
         dummy_domain,
         engine::{base::derive_request_id, centralized::service::tests::setup_central_test_kms},
         testing::utils::poll_result_until_ready,
+        vault::storage::{
+            read_versioned_at_request_id, store_versioned_at_request_id, tests::TestType,
+        },
     };
 
     use super::*;
@@ -621,11 +610,24 @@ mod tests {
         assert_eq!(err.code(), tonic::Code::NotFound);
     }
 
+    /// Aborting CRS generation preserves material stored before the request.
     #[tokio::test]
     async fn abort_during_crs_gen() {
         let mut rng = AesRng::seed_from_u64(1234);
         let (kms, _) = setup_central_test_kms(&mut rng).await;
         let req_id = derive_request_id("abort_during_crs_gen_crs_id").unwrap();
+        let existing = TestType { i: 3183 };
+        {
+            let mut public = kms.crypto_storage.inner.public_storage.lock().await;
+            store_versioned_at_request_id(
+                &mut *public,
+                &req_id,
+                &existing,
+                &PubDataType::CRS.to_string(),
+            )
+            .await
+            .unwrap();
+        }
         let domain = alloy_to_protobuf_domain(&dummy_domain()).unwrap();
         let request = CrsGenRequest {
             signing_schemes: vec![kms_grpc::kms::v1::SigningSchemeType::Ecdsa256k1 as i32],
@@ -664,6 +666,13 @@ mod tests {
         .await
         .unwrap_err();
         assert_eq!(err.code(), tonic::Code::Aborted);
+
+        let public = kms.crypto_storage.inner.public_storage.lock().await;
+        let stored: TestType =
+            read_versioned_at_request_id(&*public, &req_id, &PubDataType::CRS.to_string())
+                .await
+                .unwrap();
+        assert_eq!(stored, existing);
     }
 
     #[tokio::test]

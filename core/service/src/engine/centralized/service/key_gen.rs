@@ -423,10 +423,7 @@ pub(crate) async fn key_gen_background<
             let keygen_result = match outcome {
                 Ok(result) => result,
                 Err(msg) => {
-                    // Purge any partial key material on cancellation
-                    if cancel_token.is_cancelled() {
-                        crypto_storage.purge_fhe_keys(req_id, epoch_id).await;
-                    }
+                    // Persistent writes start after generation, so this branch has nothing to purge.
                     let _ = update_err_req_in_meta_store(&meta_store, permit, msg, op_tag).await;
                     return;
                 }
@@ -536,9 +533,10 @@ pub(crate) mod tests {
     use aes_prng::AesRng;
     use kms_grpc::{
         kms::v1::{FheParameter, KeyGenPreprocRequest},
-        rpc_types::alloy_to_protobuf_domain,
+        rpc_types::{PubDataType, alloy_to_protobuf_domain},
     };
     use rand::SeedableRng;
+    use std::collections::HashMap;
 
     use crate::{
         cryptography::signatures::PublicSigKey,
@@ -550,7 +548,11 @@ pub(crate) mod tests {
                 service::{preprocessing_impl, tests::setup_central_test_kms},
             },
         },
-        vault::storage::ram::RamStorage,
+        vault::storage::{
+            ram::{FailingRamStorage, RamStorage},
+            store_versioned_at_request_id,
+            tests::TestType,
+        },
     };
 
     use super::*;
@@ -1057,6 +1059,79 @@ pub(crate) mod tests {
             .await
             .unwrap_err();
         assert_eq!(err.code(), tonic::Code::NotFound);
+    }
+
+    /// Cancellation does not remove key material that was present before generation started.
+    #[tokio::test]
+    async fn cancelled_keygen_keeps_pre_existing_material() {
+        let req_id = derive_request_id("cancelled_keygen_existing_material").unwrap();
+        let preproc_id = derive_request_id("cancelled_keygen_existing_preproc").unwrap();
+        let control_id = derive_request_id("cancelled_keygen_control").unwrap();
+        let epoch_id = *crate::consts::DEFAULT_EPOCH_ID;
+        let existing = TestType { i: 3183 };
+        let storage = CentralizedCryptoMaterialStorage::new(
+            FailingRamStorage::new(),
+            FailingRamStorage::new(),
+            None,
+            HashMap::new(),
+        );
+        {
+            let mut public = storage.inner.public_storage.lock().await;
+            store_versioned_at_request_id(
+                &mut *public,
+                &req_id,
+                &existing,
+                &PubDataType::ServerKey.to_string(),
+            )
+            .await
+            .unwrap();
+            store_versioned_at_request_id(
+                &mut *public,
+                &control_id,
+                &TestType { i: 99 },
+                &PubDataType::CACert.to_string(),
+            )
+            .await
+            .unwrap();
+            public.clear_events();
+        }
+        let public_before = storage.inner.public_storage.lock().await.state();
+
+        let meta_store = MetaStore::new_unlimited();
+        let permit = add_req_to_meta_store(&meta_store, &req_id, OP_KEYGEN_REQUEST)
+            .await
+            .unwrap();
+        let cancel_token = CancellationToken::new();
+        cancel_token.cancel();
+        let mut rng = AesRng::seed_from_u64(3183);
+        let (_, signing_key) = crate::cryptography::signatures::gen_sig_keys(&mut rng);
+
+        key_gen_background(
+            permit,
+            cancel_token,
+            &req_id,
+            &preproc_id,
+            &epoch_id,
+            meta_store.clone(),
+            storage.clone(),
+            Arc::new(signing_key),
+            vec![SigningSchemeType::Ecdsa256k1],
+            crate::consts::TEST_PARAM,
+            InternalKeySetConfig::new(None, None).unwrap(),
+            dummy_domain(),
+            vec![],
+            OP_KEYGEN_REQUEST,
+        )
+        .await;
+
+        let public = storage.inner.public_storage.lock().await;
+        assert_eq!(public.state(), public_before);
+        assert!(public.events().is_empty());
+        drop(public);
+        assert!(matches!(
+            meta_store.read().await.retrieve(&req_id),
+            Some(EntryState::Done(Err(message))) if message.contains("aborted")
+        ));
     }
 
     /// Preprocessing alone does not register an ongoing key generation, so an abort
