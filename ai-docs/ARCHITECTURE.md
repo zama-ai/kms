@@ -170,9 +170,9 @@ The primary service is `CoreServiceEndpoint`. Its RPCs group into:
   key in the generated TFHE server key. Legacy private keysets that predate this
   field are upgraded with the OPRF share absent; `UseExisting` keygen generates
   and persists a fresh OPRF share for such legacy material before regenerating
-  public keys. Standard key generation and CRS generation write persistent
-  material only after generation completes. An abort updates request state but
-  does not purge storage.
+  public keys. Key generation and CRS generation write persistent material only
+  after generation completes. An abort updates request state but does not purge
+  storage.
 - **Decryption** — `PublicDecrypt` (returns plaintext) and `UserDecrypt`
   (user-initiated, EIP-712 authenticated). `PublicDecryptSync` / `UserDecryptSync`
   start a decryption and wait for its result in the same call, so the caller does
