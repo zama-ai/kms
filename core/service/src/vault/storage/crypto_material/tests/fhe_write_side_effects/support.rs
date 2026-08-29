@@ -22,15 +22,28 @@ pub(super) async fn assert_fhe_write_rollback<PrivData>(
     // `CompressedXofKeySet` for centralized keys.
     special_public_type: PubDataType,
 ) where
-    PrivData: Serialize + Versionize + Named + Send + Sync,
+    PrivData: Clone + Serialize + Versionize + Named + Send + Sync,
     for<'a> <PrivData as Versionize>::Versioned<'a>: Send + Sync,
 {
     let storage =
         CryptoMaterialStorage::from(FailingRamStorage::new(), FailingRamStorage::new(), None);
     let control_id = derive_request_id("fhe_write_failure_control").unwrap();
+    let other_epoch_id: EpochId = derive_request_id("fhe_write_failure_other_epoch")
+        .unwrap()
+        .into();
     let control = TestType { i: 99 };
     {
         let mut public = storage.public_storage.lock().await;
+        for data_type in [PubDataType::PublicKey, special_public_type] {
+            store_versioned_at_request_id(
+                &mut *public,
+                &control_id,
+                &control,
+                &data_type.to_string(),
+            )
+            .await
+            .unwrap();
+        }
         store_versioned_at_request_id(
             &mut *public,
             &control_id,
@@ -43,6 +56,24 @@ pub(super) async fn assert_fhe_write_rollback<PrivData>(
     }
     {
         let mut private = storage.private_storage.lock().await;
+        store_versioned_at_request_and_epoch_id(
+            &mut *private,
+            &control_id,
+            &epoch_id,
+            &control,
+            &private_type.to_string(),
+        )
+        .await
+        .unwrap();
+        store_versioned_at_request_and_epoch_id(
+            &mut *private,
+            &key_id,
+            &other_epoch_id,
+            &control,
+            &private_type.to_string(),
+        )
+        .await
+        .unwrap();
         store_versioned_at_request_id(
             &mut *private,
             &control_id,
@@ -64,7 +95,11 @@ pub(super) async fn assert_fhe_write_rollback<PrivData>(
         .lock()
         .await
         .set_fail_store_after_mutation_at(private_entry.clone());
-    let cache = Arc::new(RwLock::new(HashMap::new()));
+    let cache_control = (control_id, other_epoch_id);
+    let cache = Arc::new(RwLock::new(HashMap::from([(
+        cache_control,
+        private_data.clone(),
+    )])));
 
     let result = storage
         .handle_fhe_keys(
@@ -82,7 +117,10 @@ pub(super) async fn assert_fhe_write_rollback<PrivData>(
     assert_eq!(result, Err(StorageError::Writing));
     assert_eq!(storage.public_storage.lock().await.state(), public_before);
     assert_eq!(storage.private_storage.lock().await.state(), private_before);
-    assert!(cache.read().await.is_empty());
+    let guarded_cache = cache.read().await;
+    assert_eq!(guarded_cache.len(), 1);
+    assert!(guarded_cache.contains_key(&cache_control));
+    drop(guarded_cache);
     assert_same_events(
         storage.public_storage.lock().await.events(),
         &[

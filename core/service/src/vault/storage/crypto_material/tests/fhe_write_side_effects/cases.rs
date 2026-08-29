@@ -8,8 +8,9 @@ async fn compressed_fhe_write_cleans_new_entries_after_private_failure() {
     let epoch_id: EpochId = derive_request_id("compressed_fhe_write_failure_epoch")
         .unwrap()
         .into();
+    let preproc_id = derive_request_id("compressed_fhe_write_failure_preproc").unwrap();
     let (_, _, compressed_keyset, compact_public_key, private_keys) =
-        generate_compressed_keys(&key_id, &key_id, 3183);
+        generate_compressed_keys(&key_id, &preproc_id, 3183);
 
     assert_fhe_write_rollback(
         key_id,

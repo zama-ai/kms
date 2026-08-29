@@ -579,9 +579,10 @@ mod tests {
     use algebra::structure_traits::Ring;
     use kms_grpc::{
         kms::v1::FheParameter,
-        rpc_types::{KMSType, PubDataType, alloy_to_protobuf_domain},
+        rpc_types::{KMSType, PrivDataType, PubDataType, alloy_to_protobuf_domain},
     };
     use rand::SeedableRng;
+    use rstest::rstest;
     use threshold_execution::{
         runtime::sessions::base_session::BaseSessionHandles, small_execution::prss::PRSSSetup,
         zk::ceremony::FinalizedInternalPublicParameter,
@@ -595,7 +596,9 @@ mod tests {
         engine::threshold::service::session::SessionMaker,
         testing::utils::poll_result_until_ready,
         vault::storage::{
-            read_versioned_at_request_id, store_versioned_at_request_id, tests::TestType,
+            read_versioned_at_request_and_epoch_id, read_versioned_at_request_id,
+            store_versioned_at_request_and_epoch_id, store_versioned_at_request_id,
+            tests::TestType,
         },
     };
 
@@ -999,24 +1002,49 @@ mod tests {
         assert_eq!(err.code(), tonic::Code::NotFound);
     }
 
+    /// Which half of a partial CRS state exists when generation begins.
+    #[derive(Clone, Copy)]
+    enum ExistingCrsMaterial {
+        Public,
+        Private,
+    }
+
     /// Aborting CRS generation preserves material stored before the request.
+    #[rstest]
+    #[case::public(ExistingCrsMaterial::Public)]
+    #[case::private(ExistingCrsMaterial::Private)]
     #[tokio::test]
-    async fn abort_during_crs_gen() {
+    async fn abort_during_crs_gen(#[case] existing_material: ExistingCrsMaterial) {
         let mut rng = AesRng::seed_from_u64(123);
         // SlowCeremony keeps the background task running long enough for abort to land
         let crs_gen = make_crs_gen::<SlowCeremony>(&mut rng).await;
         let req_id = RequestId::new_random(&mut rng);
+        let epoch_id = *DEFAULT_EPOCH_ID;
         let existing = TestType { i: 3183 };
-        {
-            let mut public = crs_gen.crypto_storage.inner.public_storage.lock().await;
-            store_versioned_at_request_id(
-                &mut *public,
-                &req_id,
-                &existing,
-                &PubDataType::CRS.to_string(),
-            )
-            .await
-            .unwrap();
+        match existing_material {
+            ExistingCrsMaterial::Public => {
+                let mut public = crs_gen.crypto_storage.inner.public_storage.lock().await;
+                store_versioned_at_request_id(
+                    &mut *public,
+                    &req_id,
+                    &existing,
+                    &PubDataType::CRS.to_string(),
+                )
+                .await
+                .unwrap();
+            }
+            ExistingCrsMaterial::Private => {
+                let mut private = crs_gen.crypto_storage.inner.private_storage.lock().await;
+                store_versioned_at_request_and_epoch_id(
+                    &mut *private,
+                    &req_id,
+                    &epoch_id,
+                    &existing,
+                    &PrivDataType::CrsInfo.to_string(),
+                )
+                .await
+                .unwrap();
+            }
         }
         let domain = alloy_to_protobuf_domain(&dummy_domain()).unwrap();
         let req = CrsGenRequest {
@@ -1027,7 +1055,7 @@ mod tests {
             domain: Some(domain),
             extra_data: vec![],
             context_id: Some((*DEFAULT_MPC_CONTEXT).into()),
-            epoch_id: Some((*DEFAULT_EPOCH_ID).into()),
+            epoch_id: Some(epoch_id.into()),
         };
 
         crs_gen.crs_gen(Request::new(req)).await.unwrap();
@@ -1049,11 +1077,27 @@ mod tests {
             .unwrap_err();
         assert_eq!(err.code(), tonic::Code::Aborted);
 
-        let public = crs_gen.crypto_storage.inner.public_storage.lock().await;
-        let stored: TestType =
-            read_versioned_at_request_id(&*public, &req_id, &PubDataType::CRS.to_string())
+        match existing_material {
+            ExistingCrsMaterial::Public => {
+                let public = crs_gen.crypto_storage.inner.public_storage.lock().await;
+                let stored: TestType =
+                    read_versioned_at_request_id(&*public, &req_id, &PubDataType::CRS.to_string())
+                        .await
+                        .unwrap();
+                assert_eq!(stored, existing);
+            }
+            ExistingCrsMaterial::Private => {
+                let private = crs_gen.crypto_storage.inner.private_storage.lock().await;
+                let stored: TestType = read_versioned_at_request_and_epoch_id(
+                    &*private,
+                    &req_id,
+                    &epoch_id,
+                    &PrivDataType::CrsInfo.to_string(),
+                )
                 .await
                 .unwrap();
-        assert_eq!(stored, existing);
+                assert_eq!(stored, existing);
+            }
+        }
     }
 }

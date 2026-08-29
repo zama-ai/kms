@@ -481,9 +481,7 @@ pub(crate) async fn key_gen_background<
             let decompression_key = match outcome {
                 Ok(k) => k,
                 Err(msg) => {
-                    if cancel_token.is_cancelled() {
-                        crypto_storage.purge_fhe_keys(req_id, epoch_id).await;
-                    }
+                    // Persistent writes start after generation, so this branch has nothing to purge.
                     let _ = update_err_req_in_meta_store(&meta_store, permit, msg, op_tag).await;
                     return;
                 }
@@ -533,7 +531,7 @@ pub(crate) mod tests {
     use aes_prng::AesRng;
     use kms_grpc::{
         kms::v1::{FheParameter, KeyGenPreprocRequest},
-        rpc_types::{PubDataType, alloy_to_protobuf_domain},
+        rpc_types::{PrivDataType, PubDataType, alloy_to_protobuf_domain},
     };
     use rand::SeedableRng;
     use std::collections::HashMap;
@@ -550,7 +548,7 @@ pub(crate) mod tests {
         },
         vault::storage::{
             ram::{FailingRamStorage, RamStorage},
-            store_versioned_at_request_id,
+            store_versioned_at_request_and_epoch_id, store_versioned_at_request_id,
             tests::TestType,
         },
     };
@@ -1077,14 +1075,20 @@ pub(crate) mod tests {
         );
         {
             let mut public = storage.inner.public_storage.lock().await;
-            store_versioned_at_request_id(
-                &mut *public,
-                &req_id,
-                &existing,
-                &PubDataType::ServerKey.to_string(),
-            )
-            .await
-            .unwrap();
+            for data_type in [
+                PubDataType::PublicKey,
+                PubDataType::ServerKey,
+                PubDataType::CompressedXofKeySet,
+            ] {
+                store_versioned_at_request_id(
+                    &mut *public,
+                    &req_id,
+                    &existing,
+                    &data_type.to_string(),
+                )
+                .await
+                .unwrap();
+            }
             store_versioned_at_request_id(
                 &mut *public,
                 &control_id,
@@ -1095,7 +1099,29 @@ pub(crate) mod tests {
             .unwrap();
             public.clear_events();
         }
+        {
+            let mut private = storage.inner.private_storage.lock().await;
+            store_versioned_at_request_and_epoch_id(
+                &mut *private,
+                &req_id,
+                &epoch_id,
+                &existing,
+                &PrivDataType::FhePrivateKey.to_string(),
+            )
+            .await
+            .unwrap();
+            store_versioned_at_request_id(
+                &mut *private,
+                &control_id,
+                &TestType { i: 99 },
+                &PrivDataType::ContextInfo.to_string(),
+            )
+            .await
+            .unwrap();
+            private.clear_events();
+        }
         let public_before = storage.inner.public_storage.lock().await.state();
+        let private_before = storage.inner.private_storage.lock().await.state();
 
         let meta_store = MetaStore::new_unlimited();
         let permit = add_req_to_meta_store(&meta_store, &req_id, OP_KEYGEN_REQUEST)
@@ -1128,6 +1154,10 @@ pub(crate) mod tests {
         assert_eq!(public.state(), public_before);
         assert!(public.events().is_empty());
         drop(public);
+        let private = storage.inner.private_storage.lock().await;
+        assert_eq!(private.state(), private_before);
+        assert!(private.events().is_empty());
+        drop(private);
         assert!(matches!(
             meta_store.read().await.retrieve(&req_id),
             Some(EntryState::Done(Err(message))) if message.contains("aborted")

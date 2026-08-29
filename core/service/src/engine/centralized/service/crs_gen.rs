@@ -291,9 +291,10 @@ pub(crate) async fn crs_gen_background<
 mod tests {
     use kms_grpc::{
         kms::v1::FheParameter,
-        rpc_types::{PubDataType, alloy_to_protobuf_domain},
+        rpc_types::{PrivDataType, PubDataType, alloy_to_protobuf_domain},
     };
     use rand::SeedableRng;
+    use rstest::rstest;
 
     use crate::{
         consts::DEFAULT_EPOCH_ID,
@@ -301,7 +302,9 @@ mod tests {
         engine::{base::derive_request_id, centralized::service::tests::setup_central_test_kms},
         testing::utils::poll_result_until_ready,
         vault::storage::{
-            read_versioned_at_request_id, store_versioned_at_request_id, tests::TestType,
+            read_versioned_at_request_and_epoch_id, read_versioned_at_request_id,
+            store_versioned_at_request_and_epoch_id, store_versioned_at_request_id,
+            tests::TestType,
         },
     };
 
@@ -610,29 +613,54 @@ mod tests {
         assert_eq!(err.code(), tonic::Code::NotFound);
     }
 
+    /// Which half of a partial CRS state exists when generation begins.
+    #[derive(Clone, Copy)]
+    enum ExistingCrsMaterial {
+        Public,
+        Private,
+    }
+
     /// Aborting CRS generation preserves material stored before the request.
+    #[rstest]
+    #[case::public(ExistingCrsMaterial::Public)]
+    #[case::private(ExistingCrsMaterial::Private)]
     #[tokio::test]
-    async fn abort_during_crs_gen() {
+    async fn abort_during_crs_gen(#[case] existing_material: ExistingCrsMaterial) {
         let mut rng = AesRng::seed_from_u64(1234);
         let (kms, _) = setup_central_test_kms(&mut rng).await;
         let req_id = derive_request_id("abort_during_crs_gen_crs_id").unwrap();
+        let epoch_id = *DEFAULT_EPOCH_ID;
         let existing = TestType { i: 3183 };
-        {
-            let mut public = kms.crypto_storage.inner.public_storage.lock().await;
-            store_versioned_at_request_id(
-                &mut *public,
-                &req_id,
-                &existing,
-                &PubDataType::CRS.to_string(),
-            )
-            .await
-            .unwrap();
+        match existing_material {
+            ExistingCrsMaterial::Public => {
+                let mut public = kms.crypto_storage.inner.public_storage.lock().await;
+                store_versioned_at_request_id(
+                    &mut *public,
+                    &req_id,
+                    &existing,
+                    &PubDataType::CRS.to_string(),
+                )
+                .await
+                .unwrap();
+            }
+            ExistingCrsMaterial::Private => {
+                let mut private = kms.crypto_storage.inner.private_storage.lock().await;
+                store_versioned_at_request_and_epoch_id(
+                    &mut *private,
+                    &req_id,
+                    &epoch_id,
+                    &existing,
+                    &PrivDataType::CrsInfo.to_string(),
+                )
+                .await
+                .unwrap();
+            }
         }
         let domain = alloy_to_protobuf_domain(&dummy_domain()).unwrap();
         let request = CrsGenRequest {
             signing_schemes: vec![kms_grpc::kms::v1::SigningSchemeType::Ecdsa256k1 as i32],
             request_id: Some(req_id.into()),
-            epoch_id: Some((*DEFAULT_EPOCH_ID).into()), // use default epoch to make sure the test works even if the default epoch fallback is removed in validation
+            epoch_id: Some(epoch_id.into()), // use default epoch to make sure the test works even if the default epoch fallback is removed in validation
             context_id: None,
             params: FheParameter::Test.into(),
             domain: Some(domain),
@@ -667,12 +695,28 @@ mod tests {
         .unwrap_err();
         assert_eq!(err.code(), tonic::Code::Aborted);
 
-        let public = kms.crypto_storage.inner.public_storage.lock().await;
-        let stored: TestType =
-            read_versioned_at_request_id(&*public, &req_id, &PubDataType::CRS.to_string())
+        match existing_material {
+            ExistingCrsMaterial::Public => {
+                let public = kms.crypto_storage.inner.public_storage.lock().await;
+                let stored: TestType =
+                    read_versioned_at_request_id(&*public, &req_id, &PubDataType::CRS.to_string())
+                        .await
+                        .unwrap();
+                assert_eq!(stored, existing);
+            }
+            ExistingCrsMaterial::Private => {
+                let private = kms.crypto_storage.inner.private_storage.lock().await;
+                let stored: TestType = read_versioned_at_request_and_epoch_id(
+                    &*private,
+                    &req_id,
+                    &epoch_id,
+                    &PrivDataType::CrsInfo.to_string(),
+                )
                 .await
                 .unwrap();
-        assert_eq!(stored, existing);
+                assert_eq!(stored, existing);
+            }
+        }
     }
 
     #[tokio::test]

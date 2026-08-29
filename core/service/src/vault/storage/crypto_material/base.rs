@@ -811,7 +811,8 @@ where
                 }
             }
             Err(_) => {
-                // Clean up the "special" key data stored in the first step, in case the second storage step fails, to avoid having orphaned data
+                // The first write created the special public key; an existing entry would have
+                // made `write_all` return `Duplicate`. Remove it if the paired write fails.
                 if !self
                     .purge_material(key_id, Some(epoch_id), &[special_pub_type], &[])
                     .await
