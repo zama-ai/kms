@@ -518,16 +518,6 @@ where
         Ok(())
     }
 
-    pub(crate) async fn purge_crs_material(&self, req_id: &RequestId, epoch_id: &EpochId) -> bool {
-        self.purge_material(
-            req_id,
-            Some(epoch_id),
-            &[PubDataType::CRS],
-            &[PrivDataType::CrsInfo],
-        )
-        .await
-    }
-
     /// Helper method to purge material.
     /// Returns true if purge is successful, false otherwise.
     /// Even if no data exists, it is still considered a successful purge.
