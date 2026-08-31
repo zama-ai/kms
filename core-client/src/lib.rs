@@ -58,7 +58,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
-use std::sync::Arc;
+use std::sync::{Arc, LazyLock};
 use std::time::Duration;
 use strum_macros::{Display, EnumString};
 use tfhe::FheTypes as TfheFheType;
@@ -67,8 +67,20 @@ use tracing_appender::rolling::{RollingFileAppender, Rotation};
 use tracing_subscriber::fmt::writer::MakeWriterExt;
 use validator::{Validate, ValidationError};
 
-// time to sleep between `get_result` poll requests in milliseconds
-const SLEEP_TIME_BETWEEN_REQUESTS_MS: u64 = 500;
+/// Delay between successive `get_*_result` poll requests to each core, in milliseconds.
+///
+/// Overridable at runtime via the `KMS_CLIENT_POLL_INTERVAL_MS` environment
+/// variable (default 500). Raising it makes long-running operations such as DKG
+/// preprocessing poll less aggressively, which lightens core-side logs and load;
+/// it also delays result retrieval by up to this interval, so keep it small (the
+/// 500 ms default) for latency-sensitive commands like decryption.
+static SLEEP_TIME_BETWEEN_REQUESTS_MS: LazyLock<u64> = LazyLock::new(|| {
+    std::env::var("KMS_CLIENT_POLL_INTERVAL_MS")
+        .ok()
+        .and_then(|s| s.parse::<u64>().ok())
+        .filter(|&ms| ms > 0)
+        .unwrap_or(500)
+});
 const DECRYPT_RATE_DRAIN_TIMEOUT_SECS: u64 = 30;
 
 /// Retries a function a given number of times with a given interval between retries.

@@ -162,6 +162,17 @@ impl GrpcSendingService {
                 // then this should be changed
                 let endpoint = Channel::builder(endpoint)
                     .http2_adaptive_window(true)
+                    // Large HTTP/2 flow-control windows so per-stream throughput
+                    // is not capped at 64KiB/RTT over the added-latency vsock
+                    // tunnel (tonic default is 65535B stream + connection).
+                    // adaptive_window can still grow beyond this floor.
+                    .initial_stream_window_size(4u32 * 1024 * 1024)
+                    .initial_connection_window_size(32u32 * 1024 * 1024)
+                    // Keep idle P2P connections alive so the tunnel/NAT does not
+                    // silently drop them (a drop = full TCP+TLS re-handshake mid-DKG).
+                    .http2_keep_alive_interval(Duration::from_secs(20))
+                    .keep_alive_timeout(Duration::from_secs(10))
+                    .keep_alive_while_idle(true)
                     .tcp_nodelay(true);
                 // we have to pass a custom TLS connector to
                 // tonic::transport::Channel to be able to use a custom rustls
@@ -182,6 +193,13 @@ impl GrpcSendingService {
                 // then this should be changed
                 Channel::builder(endpoint)
                     .http2_adaptive_window(true)
+                    // See TLS branch above: large windows + keepalive to tolerate
+                    // the added-latency tunnel.
+                    .initial_stream_window_size(4u32 * 1024 * 1024)
+                    .initial_connection_window_size(32u32 * 1024 * 1024)
+                    .http2_keep_alive_interval(Duration::from_secs(20))
+                    .keep_alive_timeout(Duration::from_secs(10))
+                    .keep_alive_while_idle(true)
                     .tcp_nodelay(true)
                     .connect_lazy()
             }

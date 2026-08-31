@@ -10,7 +10,12 @@ TUN_IF=vsocktun
 LOG_PORT=3000
 CONFIG_PORT=4000
 NETWORK_TUNNEL_PORT=2100
-TUN_TOKIO_WORKER_THREADS=4
+TUN_TOKIO_WORKER_THREADS=8
+# Jumbo MTU on the TUN cuts fragmentation of large MPC messages across the vsock
+# relay (fewer packets => fewer userspace relay hops). MUST match the parent-side
+# TUN MTU (charts/kms-core/values.yaml kmsCore.nitroEnclave.networkTunnel.mtu).
+# 8500 stays under the AWS VPC 9001 jumbo ceiling for the parent eth0 hop.
+TUN_MTU=8500
 
 KMS_SERVER_CONFIG_FILE="config.toml"
 AWS_WEB_IDENTITY_TOKEN_FILE="token"
@@ -80,6 +85,9 @@ do
     sleep 1
 done
 ifconfig "$TUN_IF" |& logger || fail "cannot setup tunnel interface"
+# Non-fatal: if MTU can't be raised, fall back to the default rather than
+# bringing the enclave down (but latency benefit is lost).
+ifconfig "$TUN_IF" mtu "$TUN_MTU" |& logger || log "warning: could not set MTU $TUN_MTU on $TUN_IF"
 log "enclave /etc/resolv.conf from vsocktun bootstrap:"
 cat /etc/resolv.conf |& logger
 
