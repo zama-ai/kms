@@ -611,10 +611,20 @@ impl fmt::Display for StorageType {
 #[cfg(feature = "non-wasm")]
 #[enum_dispatch(StorageReader, Storage, StorageReaderExt, StorageExt)]
 #[derive(Debug, Clone)]
+#[cfg_attr(
+    test,
+    expect(
+        clippy::large_enum_variant,
+        reason = "the test-only faulting RAM variant also stores fault points and recorded events"
+    )
+)]
 pub enum StorageProxy {
     File(file::FileStorage),
     #[allow(dead_code)]
     Ram(ram::RamStorage),
+    #[cfg(test)]
+    /// Test-only RAM storage with entry-specific faults and event recording.
+    FailingRam(ram::FailingRamStorage),
     S3(s3::S3Storage),
 }
 
