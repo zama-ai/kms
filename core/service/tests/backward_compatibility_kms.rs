@@ -9,8 +9,8 @@ use aes_prng::AesRng;
 use algebra::galois_rings::degree_4::{ResiduePolyF4Z64, ResiduePolyF4Z128};
 use backward_compatibility::{
     AppKeyBlobTest, BackupCiphertextTest, ContextInfoTest, CrsGenMetadataTest,
-    CrsGenMetadataWithExtraDataTest, CrsSignedPayloadTest, EpochDataTest, HybridKemCtTest,
-    InternalCustodianContextTest, InternalCustodianRecoveryOutputTest,
+    CrsGenMetadataWithExtraDataTest, CrsSignedPayloadTest, Eip712DomainTest, EpochDataTest,
+    HybridKemCtTest, InternalCustodianContextTest, InternalCustodianRecoveryOutputTest,
     InternalCustodianSetupMessageTest, InternalRecoveryRequestTest, KeyGenMetadataTest,
     KeyGenMetadataWithExtraDataTest, KeygenSignedPayloadTest, KmsFheKeyHandlesTest, NodeInfoTest,
     OperatorBackupOutputTest, PrepKeygenSignedPayloadTest, PrivateSigKeyTest,
@@ -94,6 +94,17 @@ fn dummy_domain() -> alloy_sol_types::Eip712Domain {
         version: "1",
         chain_id: 8006,
         verifying_contract: alloy_primitives::address!("66f9664f97F2b50F62D13eA064982f936dE76657"),
+    )
+}
+
+/// Rebuilds the EIP-712 domain that `test` describes.
+fn domain_from_test(test: &Eip712DomainTest) -> alloy_sol_types::Eip712Domain {
+    alloy_sol_types::Eip712Domain::new(
+        Some(test.name.to_string().into()),
+        Some(test.version.to_string().into()),
+        Some(alloy_primitives::U256::from(test.chain_id)),
+        Some(alloy_primitives::Address::from(test.verifying_contract)),
+        test.salt.map(alloy_primitives::B256::from),
     )
 }
 
@@ -380,15 +391,20 @@ fn test_key_gen_metadata_with_extra_data(
     );
     key_digest_map.insert(PubDataType::ServerKey, server_key_digest);
     key_digest_map.insert(PubDataType::PublicKey, pub_key_digest);
+    // The versions that predate the stored domain signed with `dummy_domain` and kept
+    // no domain. The later versions name their domain in the fixture metadata, and the
+    // same domain signs the external signature.
+    let stored_domain = test.eip712_domain.as_ref().map(domain_from_test);
+    let signing_domain = stored_domain.clone().unwrap_or_else(dummy_domain);
     let external_signature =
-        compute_eip712_signature(&sig_key, &sol_type, &dummy_domain()).unwrap();
+        compute_eip712_signature(&sig_key, &sol_type, &signing_domain).unwrap();
 
     let new_versionized = KeyGenMetadataInner {
         signatures: vec![],
         key_id,
         preprocessing_id,
         key_digest_map,
-        eip712_domain: None,
+        eip712_domain: stored_domain.as_ref().map(StoredEip712Domain::from),
         external_signature,
         extra_data: Some(extra_data),
     };

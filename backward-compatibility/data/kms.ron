@@ -1046,6 +1046,7 @@
                 187,
                 204,
             ],
+            eip712_domain: None,
         )),
     ),
     (
@@ -1391,6 +1392,7 @@
                 187,
                 204,
             ],
+            eip712_domain: None,
         )),
     ),
     (
@@ -1804,6 +1806,13 @@
                 187,
                 204,
             ],
+            eip712_domain: Some((
+                name: "Keygen metadata domain",
+                version: "2",
+                chain_id: 70001,
+                verifying_contract: (30, 47, 58, 75, 92, 109, 126, 143, 144, 161, 178, 195, 212, 229, 246, 7, 24, 41, 58, 75),
+                salt: None,
+            )),
         )),
     ),
     (

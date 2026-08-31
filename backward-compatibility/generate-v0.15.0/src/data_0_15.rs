@@ -98,8 +98,8 @@ use backward_compatibility::parameters::{
 };
 use backward_compatibility::{
     AppKeyBlobTest, BackupCiphertextTest, ContextInfoTest, CrsGenMetadataTest,
-    CrsGenMetadataWithExtraDataTest, CrsSignedPayloadTest, EpochDataTest, HybridKemCtTest,
-    InternalCustodianContextTest, InternalCustodianRecoveryOutputTest,
+    CrsGenMetadataWithExtraDataTest, CrsSignedPayloadTest, Eip712DomainTest, EpochDataTest,
+    HybridKemCtTest, InternalCustodianContextTest, InternalCustodianRecoveryOutputTest,
     InternalCustodianSetupMessageTest, InternalRecoveryRequestTest, KeyGenMetadataTest,
     KeyGenMetadataWithExtraDataTest, KeygenSignedPayloadTest, KmsFheKeyHandlesTest, NodeInfoTest,
     OperatorBackupOutputTest, PRSSSetupTest, PrepKeygenSignedPayloadTest, PrfKeyTest,
@@ -383,7 +383,22 @@ const KEY_GEN_METADATA_WITH_EXTRA_DATA_TEST: KeyGenMetadataWithExtraDataTest =
         test_filename: Cow::Borrowed("key_gen_metadata_with_extra_data"),
         state: 101,
         extra_data: Cow::Borrowed(&[0x02, 0xAA, 0xBB, 0xCC]),
+        eip712_domain: Some(KEY_GEN_METADATA_DOMAIN),
     };
+
+// KMS test — the domain of the keygen metadata fixture above. The values differ from
+// `dummy_domain`, so a loader that rebuilds the metadata must read the domain from
+// this entry. The salt is unset, because the KMS also stores domains without a salt.
+const KEY_GEN_METADATA_DOMAIN: Eip712DomainTest = Eip712DomainTest {
+    name: Cow::Borrowed("Keygen metadata domain"),
+    version: Cow::Borrowed("2"),
+    chain_id: 70001,
+    verifying_contract: [
+        0x1e, 0x2f, 0x3a, 0x4b, 0x5c, 0x6d, 0x7e, 0x8f, 0x90, 0xa1, 0xb2, 0xc3, 0xd4, 0xe5, 0xf6,
+        0x07, 0x18, 0x29, 0x3a, 0x4b,
+    ],
+    salt: None,
+};
 
 const CRS_GEN_METADATA_WITH_EXTRA_DATA_TEST: CrsGenMetadataWithExtraDataTest =
     CrsGenMetadataWithExtraDataTest {
@@ -664,6 +679,19 @@ fn dummy_domain() -> alloy_sol_types_1_6_0::Eip712Domain {
     )
 }
 
+/// Rebuilds the EIP-712 domain that `test` describes.
+fn domain_from_test(test: &Eip712DomainTest) -> alloy_sol_types_1_6_0::Eip712Domain {
+    alloy_sol_types_1_6_0::Eip712Domain::new(
+        Some(test.name.to_string().into()),
+        Some(test.version.to_string().into()),
+        Some(alloy_primitives_1_6_0::U256::from(test.chain_id)),
+        Some(alloy_primitives_1_6_0::Address::from(
+            test.verifying_contract,
+        )),
+        test.salt.map(alloy_primitives_1_6_0::B256::from),
+    )
+}
+
 pub struct V0_15_0;
 
 struct KmsV0_15_0;
@@ -846,7 +874,8 @@ impl KmsV0_15_0 {
         TestMetadataKMS::CrsGenMetadata(CRS_GEN_METADATA_TEST)
     }
 
-    /// Twin of `gen_key_gen_metadata` for version 15.0 (with extra_data).
+    /// Twin of `gen_key_gen_metadata` for version 15.0, with extra data and the
+    /// stored EIP-712 domain.
     fn gen_key_gen_metadata_with_extra_data(dir: &PathBuf) -> TestMetadataKMS {
         let mut rng = AesRng::seed_from_u64(KEY_GEN_METADATA_WITH_EXTRA_DATA_TEST.state);
         let (_verf_key, sig_key) = gen_sig_keys(&mut rng);
@@ -867,14 +896,14 @@ impl KmsV0_15_0 {
         );
         key_digest_map.insert(PubDataType::ServerKey, server_key_digest);
         key_digest_map.insert(PubDataType::PublicKey, pub_key_digest);
-        let external_signature =
-            compute_eip712_signature(&sig_key, &sol_type, &dummy_domain()).unwrap();
+        let domain = domain_from_test(&KEY_GEN_METADATA_DOMAIN);
+        let external_signature = compute_eip712_signature(&sig_key, &sol_type, &domain).unwrap();
 
         let current = KeyGenMetadataInner {
             key_id,
             preprocessing_id,
             key_digest_map,
-            eip712_domain: None, // Legacy (before the domain was stored)
+            eip712_domain: Some(StoredEip712Domain::from(&domain)),
             external_signature,
             signatures: Vec::new(), // Legacy (before multiple signing key support)
             extra_data: Some(extra_data),
