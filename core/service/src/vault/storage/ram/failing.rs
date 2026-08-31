@@ -22,7 +22,9 @@ use tfhe::{Unversionize, Versionize, named::Named};
 /// the same time and remain active until replaced or cleared. Every store and delete appends a
 /// [`StorageEvent`], and [`Self::state`] snapshots the stored entries. Reads pass through to the
 /// wrapped storage and are not recorded.
-#[derive(Default)]
+///
+/// Cloning copies the stored data, fault points, and events. Clones do not share later changes.
+#[derive(Clone, Debug, Default)]
 pub struct FailingRamStorage {
     fail_store_at: Option<(StorageEntry, FaultPhase)>,
     fail_delete_at: Option<(StorageEntry, FaultPhase)>,
