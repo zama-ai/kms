@@ -9,16 +9,16 @@ use aes_prng::AesRng;
 use algebra::galois_rings::degree_4::{ResiduePolyF4Z64, ResiduePolyF4Z128};
 use backward_compatibility::{
     AppKeyBlobTest, BackupCiphertextTest, ContextInfoTest, CrsGenMetadataTest,
-    CrsGenMetadataWithExtraDataTest, CrsSignedPayloadTest, EpochDataTest, HybridKemCtTest,
-    InternalCustodianContextTest, InternalCustodianRecoveryOutputTest,
+    CrsGenMetadataWithExtraDataTest, CrsSignedPayloadTest, Eip712DomainTest, EpochDataTest,
+    HybridKemCtTest, InternalCustodianContextTest, InternalCustodianRecoveryOutputTest,
     InternalCustodianSetupMessageTest, InternalRecoveryRequestTest, KeyGenMetadataTest,
     KeyGenMetadataWithExtraDataTest, KeygenSignedPayloadTest, KmsFheKeyHandlesTest, NodeInfoTest,
     OperatorBackupOutputTest, PrepKeygenSignedPayloadTest, PrivateSigKeyTest,
     PrssSetupCombinedTest, PublicSigKeyTest, RecoveryValidationMaterialTest, SchemeDigestsTest,
-    SigncryptionPayloadTest, SoftwareVersionTest, StoredTypedSignatureTest, TestMetadataKMS,
-    TestType, Testcase, ThresholdFheKeysTest, TypedPlaintextTest, UnifiedCipherTest,
-    UnifiedPublicSigKeyTest, UnifiedSigncryptionKeyTest, UnifiedSigncryptionTest,
-    UnifiedUnsigncryptionKeyTest, data_dir,
+    SigncryptionPayloadTest, SoftwareVersionTest, StoredEip712DomainTest, StoredTypedSignatureTest,
+    TestMetadataKMS, TestType, Testcase, ThresholdFheKeysTest, TypedPlaintextTest,
+    UnifiedCipherTest, UnifiedPublicSigKeyTest, UnifiedSigncryptionKeyTest,
+    UnifiedSigncryptionTest, UnifiedUnsigncryptionKeyTest, data_dir,
     load::{DataFormat, TestFailure, TestResult, TestSuccess},
     tests::{TestedModule, run_all_tests},
 };
@@ -60,7 +60,7 @@ use kms_lib::{
         base::{
             CrsGenMetadata, CrsGenMetadataInner, CrsGenMetadataInnerV2, CrsSignedPayload,
             KeyGenMetadata, KeyGenMetadataInner, KeygenSignedPayload, KmsFheKeyHandles,
-            PrepKeygenSignedPayload, StoredTypedSignature,
+            PrepKeygenSignedPayload, StoredEip712Domain, StoredTypedSignature,
         },
         context::{ContextInfo, NodeInfo, SchemeDigests, SignerAddress, SoftwareVersion},
         threshold::service::{
@@ -94,6 +94,17 @@ fn dummy_domain() -> alloy_sol_types::Eip712Domain {
         version: "1",
         chain_id: 8006,
         verifying_contract: alloy_primitives::address!("66f9664f97F2b50F62D13eA064982f936dE76657"),
+    )
+}
+
+/// Rebuilds the EIP-712 domain that `test` describes.
+fn domain_from_test(test: &Eip712DomainTest) -> alloy_sol_types::Eip712Domain {
+    alloy_sol_types::Eip712Domain::new(
+        Some(test.name.to_string().into()),
+        Some(test.version.to_string().into()),
+        Some(alloy_primitives::U256::from(test.chain_id)),
+        Some(alloy_primitives::Address::from(test.verifying_contract)),
+        test.salt.map(alloy_primitives::B256::from),
     )
 }
 
@@ -380,15 +391,20 @@ fn test_key_gen_metadata_with_extra_data(
     );
     key_digest_map.insert(PubDataType::ServerKey, server_key_digest);
     key_digest_map.insert(PubDataType::PublicKey, pub_key_digest);
+    // The versions that predate the stored domain signed with `dummy_domain` and kept
+    // no domain. The later versions name their domain in the fixture metadata, and the
+    // same domain signs the external signature.
+    let stored_domain = test.eip712_domain.as_ref().map(domain_from_test);
+    let signing_domain = stored_domain.clone().unwrap_or_else(dummy_domain);
     let external_signature =
-        compute_eip712_signature(&sig_key, &sol_type, &dummy_domain()).unwrap();
+        compute_eip712_signature(&sig_key, &sol_type, &signing_domain).unwrap();
 
     let new_versionized = KeyGenMetadataInner {
         signatures: vec![],
         key_id,
         preprocessing_id,
         key_digest_map,
-        eip712_domain: None,
+        eip712_domain: stored_domain.as_ref().map(StoredEip712Domain::from),
         external_signature,
         extra_data: Some(extra_data),
     };
@@ -1384,6 +1400,46 @@ fn scheme_from_name(name: &str) -> SigningSchemeType {
     }
 }
 
+fn test_stored_eip712_domain(
+    dir: &Path,
+    test: &StoredEip712DomainTest,
+    format: DataFormat,
+) -> Result<TestSuccess, TestFailure> {
+    let original_versionized: StoredEip712Domain = load_and_unversionize(dir, test, format)?;
+
+    let domain = alloy_sol_types::Eip712Domain::new(
+        Some(test.name.to_string().into()),
+        Some(test.version.to_string().into()),
+        Some(alloy_primitives::U256::from(test.chain_id)),
+        Some(alloy_primitives::Address::from(test.verifying_contract)),
+        Some(alloy_primitives::B256::from(test.salt)),
+    );
+    let new_versionized = StoredEip712Domain::from(&domain);
+
+    if original_versionized != new_versionized {
+        return Err(test.failure(
+            format!(
+                "Invalid StoredEip712Domain:\n Expected :\n{original_versionized:?}\nGot:\n{new_versionized:?}"
+            ),
+            format,
+        ));
+    }
+
+    // Boot-time signature verification runs on the domain converted back from
+    // storage, so the stored form must round-trip to the domain it was built from.
+    let round_trip = alloy_sol_types::Eip712Domain::from(&original_versionized);
+    if round_trip != domain {
+        Err(test.failure(
+            format!(
+                "StoredEip712Domain does not convert back to its domain:\n Expected :\n{domain:?}\nGot:\n{round_trip:?}"
+            ),
+            format,
+        ))
+    } else {
+        Ok(test.success(format))
+    }
+}
+
 fn test_stored_scheme_signature(
     dir: &Path,
     test: &StoredTypedSignatureTest,
@@ -1545,6 +1601,9 @@ impl TestedModule for KMS {
             }
             Self::Metadata::CrsGenMetadataWithExtraData(test) => {
                 test_crs_gen_metadata_with_extra_data(test_dir.as_ref(), test, format).into()
+            }
+            Self::Metadata::StoredEip712Domain(test) => {
+                test_stored_eip712_domain(test_dir.as_ref(), test, format).into()
             }
             Self::Metadata::SigncryptionPayload(test) => {
                 test_signcryption_payload(test_dir.as_ref(), test, format).into()
