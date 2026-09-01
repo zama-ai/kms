@@ -9,7 +9,10 @@ use crate::{
             Storage, StorageExt, StorageProxy, StorageReader, StorageReaderExt, StorageType,
             file::FileStorage,
             ram::{FailingRamStorage, RamStorage},
-            test_support::{BackupEntry, FaultPhase, StorageOutcome, failing_ram_storage_mut},
+            test_support::{
+                BackupEntry, FaultPhase, StorageEvent, StorageOp, StorageOutcome,
+                failing_ram_storage_mut,
+            },
         },
     },
 };
@@ -237,6 +240,100 @@ async fn remove_old_backup_failure_is_retryable(#[case] fault_phase: FaultPhase)
         .await;
     fixture
         .assert_entries_present(&fixture.current_entries)
+        .await;
+    fixture
+        .assert_entries_present(&fixture.control_entries)
+        .await;
+}
+
+/// A backend acknowledgement is insufficient when the retired backup entry remains stored.
+#[tokio::test]
+async fn remove_old_backup_rejects_a_delete_that_did_not_happen() {
+    let mut fixture = BackupRemovalFixture::new(StorageProxy::from(FailingRamStorage::new())).await;
+    let ignored_entry = fixture.retired_entries[0];
+    let storage = failing_ram_storage_mut(&mut fixture.vault);
+    storage.set_noop_delete_at(ignored_entry.storage_entry());
+    storage.clear_events();
+
+    let error = fixture
+        .vault
+        .remove_old_backup(&fixture.retired_id)
+        .await
+        .unwrap_err();
+
+    assert!(error.to_string().contains("residual data remains"));
+    fixture.assert_entries_present(&[ignored_entry]).await;
+    fixture
+        .assert_entries_present(&fixture.current_entries)
+        .await;
+    fixture
+        .assert_entries_present(&fixture.control_entries)
+        .await;
+    let storage = failing_ram_storage_mut(&mut fixture.vault);
+    assert!(storage.events().contains(&StorageEvent::new(
+        ignored_entry.storage_entry(),
+        StorageOp::Delete,
+        StorageOutcome::SucceededWithoutMutation,
+    )));
+    storage.clear_fail_points();
+
+    fixture
+        .vault
+        .remove_old_backup(&fixture.retired_id)
+        .await
+        .unwrap();
+    fixture
+        .assert_entries_absent(&fixture.retired_entries)
+        .await;
+    fixture
+        .assert_entries_present(&fixture.current_entries)
+        .await;
+    fixture
+        .assert_entries_present(&fixture.control_entries)
+        .await;
+}
+
+/// Custodian setup rollback also rejects a successful response that leaves backup data behind.
+#[tokio::test]
+async fn purge_backup_rejects_a_delete_that_did_not_happen() {
+    let mut fixture = BackupRemovalFixture::new(StorageProxy::from(FailingRamStorage::new())).await;
+    let ignored_entry = fixture.current_entries[1];
+    let storage = failing_ram_storage_mut(&mut fixture.vault);
+    storage.set_noop_delete_at(ignored_entry.storage_entry());
+    storage.clear_events();
+
+    let error = fixture
+        .vault
+        .purge_backup(&fixture.current_id)
+        .await
+        .unwrap_err();
+
+    assert!(error.to_string().contains("residual data remains"));
+    fixture.assert_entries_present(&[ignored_entry]).await;
+    fixture
+        .assert_entries_present(&fixture.retired_entries)
+        .await;
+    fixture
+        .assert_entries_present(&fixture.control_entries)
+        .await;
+    let storage = failing_ram_storage_mut(&mut fixture.vault);
+    assert!(storage.events().contains(&StorageEvent::new(
+        ignored_entry.storage_entry(),
+        StorageOp::Delete,
+        StorageOutcome::SucceededWithoutMutation,
+    )));
+    storage.clear_fail_points();
+
+    fixture
+        .vault
+        .purge_backup(&fixture.current_id)
+        .await
+        .unwrap();
+    fixture
+        .assert_entries_absent(&fixture.current_entries)
+        .await;
+    fixture
+        .assert_entries_present(&fixture.retired_entries)
         .await;
     fixture
         .assert_entries_present(&fixture.control_entries)

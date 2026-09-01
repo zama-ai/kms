@@ -109,8 +109,11 @@ impl Vault {
         // when erasing a retired context.
         self.delete_custodian_backup_data(backup_id).await?;
 
-        // A backend can report a successful delete without removing the object. Re-enumerate the
-        // namespace before the caller removes recovery material and lifecycle state.
+        self.ensure_custodian_backup_removed(backup_id).await
+    }
+
+    /// Confirm that no custodian backup data remains under `backup_id`.
+    async fn ensure_custodian_backup_removed(&self, backup_id: &RequestId) -> anyhow::Result<()> {
         let mut residual = Vec::new();
         for cur_type in PrivDataType::iter() {
             let vault_data_type =
@@ -143,7 +146,7 @@ impl Vault {
         }
         if !residual.is_empty() {
             return Err(anyhow!(
-                "remove_old_backup did not fully erase backup id {backup_id}; residual data remains: {}",
+                "custodian backup cleanup did not fully erase backup id {backup_id}; residual data remains: {}",
                 residual.join(", ")
             ));
         }
@@ -210,7 +213,10 @@ impl Vault {
     pub(crate) async fn purge_backup(&mut self, backup_id: &RequestId) -> anyhow::Result<()> {
         match self.keychain.as_ref() {
             Some(KeychainProxy::SecretSharing(_)) => {
-                self.delete_custodian_backup_data(backup_id).await
+                self.delete_custodian_backup_data(backup_id).await?;
+                // A backend can report a successful delete without removing the object. Confirm
+                // the rollback completed before its caller proceeds.
+                self.ensure_custodian_backup_removed(backup_id).await
             }
             _ => storage::delete_all_at_request_id(self, backup_id).await,
         }
