@@ -582,14 +582,13 @@ pub fn process_user_decryption_resp_solana_from_js(
     );
 
     // Internally plaintexts are little-endian; JS expects big-endian (mirror the EVM wrapper).
+    // Reverse in place to avoid unwiped plaintext copies.
     match released {
-        Ok(le_res) => Ok(le_res
-            .into_iter()
-            .map(|x| TypedPlaintext {
-                bytes: x.bytes.into_iter().rev().collect(),
-                fhe_type: x.fhe_type,
-            })
-            .collect()),
+        Ok(mut res) => {
+            res.iter_mut()
+                .for_each(|plaintext| plaintext.bytes.reverse());
+            Ok(res)
+        }
         Err(e) => Err(JsError::new(&e.to_string())),
     }
 }
