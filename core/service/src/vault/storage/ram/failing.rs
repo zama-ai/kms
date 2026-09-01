@@ -18,8 +18,10 @@ use tfhe::{Unversionize, Versionize, named::Named};
 /// path and compare the complete state before and after the operation.
 ///
 /// Store and delete fail points name the exact storage entry to reject, and choose whether the
-/// error arrives before or after the wrapped storage applies the change. Both can be active at
-/// the same time and remain active until replaced or cleared. Every store and delete appends a
+/// error arrives before or after the wrapped storage applies the change. A separate delete mode
+/// models S3's idempotent `DeleteObject`: deleting a nonexistent key reports success, so addressing
+/// the wrong key can leave the intended object stored without returning an error. Faults remain
+/// active until replaced or cleared. Every store and delete appends a
 /// [`StorageEvent`], and [`Self::state`] snapshots the stored entries. Reads pass through to the
 /// wrapped storage and are not recorded.
 ///
@@ -28,6 +30,8 @@ use tfhe::{Unversionize, Versionize, named::Named};
 pub struct FailingRamStorage {
     fail_store_at: Option<(StorageEntry, FaultPhase)>,
     fail_delete_at: Option<(StorageEntry, FaultPhase)>,
+    /// Entry whose delete returns success without changing the wrapped storage, like S3's idempotent `DeleteObject`..
+    noop_delete_at: Option<StorageEntry>,
     events: Vec<StorageEvent>,
     inner: RamStorage,
 }
@@ -49,17 +53,26 @@ impl FailingRamStorage {
 
     /// Reject the delete of `entry` without touching the wrapped storage.
     pub(crate) fn set_fail_delete_at(&mut self, entry: StorageEntry) {
+        self.noop_delete_at = None;
         self.fail_delete_at = Some((entry, FaultPhase::BeforeMutation));
     }
 
     /// Remove `entry` from the wrapped storage and then return an error.
     pub(crate) fn set_fail_delete_after_mutation_at(&mut self, entry: StorageEntry) {
+        self.noop_delete_at = None;
         self.fail_delete_at = Some((entry, FaultPhase::AfterMutation));
+    }
+
+    /// Make deletion of `entry` succeed without changing the wrapped storage, like S3's idempotent `DeleteObject`..
+    pub(crate) fn set_noop_delete_at(&mut self, entry: StorageEntry) {
+        self.fail_delete_at = None;
+        self.noop_delete_at = Some(entry);
     }
 
     pub(crate) fn clear_fail_points(&mut self) {
         self.fail_store_at = None;
         self.fail_delete_at = None;
+        self.noop_delete_at = None;
     }
 
     pub(crate) fn clear_events(&mut self) {
@@ -106,6 +119,11 @@ impl FailingRamStorage {
 
     fn delete_fault_phase(&self, entry: &StorageEntry) -> Option<FaultPhase> {
         Self::fault_phase(&self.fail_delete_at, entry)
+    }
+
+    /// Whether deleting `entry` should return success without changing storage.
+    fn delete_is_noop(&self, entry: &StorageEntry) -> bool {
+        self.noop_delete_at.as_ref() == Some(entry)
     }
 
     fn fault_phase(
@@ -250,6 +268,14 @@ impl Storage for FailingRamStorage {
 
     async fn delete_data(&mut self, data_id: &RequestId, data_type: &str) -> anyhow::Result<()> {
         let entry = StorageEntry::new(*data_id, None, data_type);
+        if self.delete_is_noop(&entry) {
+            self.record(
+                entry,
+                StorageOp::Delete,
+                StorageOutcome::SucceededWithoutMutation,
+            );
+            return Ok(());
+        }
         if self.delete_fault_phase(&entry) == Some(FaultPhase::BeforeMutation) {
             self.record(
                 entry,
@@ -371,6 +397,14 @@ impl StorageExt for FailingRamStorage {
         data_type: &str,
     ) -> anyhow::Result<()> {
         let entry = StorageEntry::new(*data_id, Some(*epoch_id), data_type);
+        if self.delete_is_noop(&entry) {
+            self.record(
+                entry,
+                StorageOp::Delete,
+                StorageOutcome::SucceededWithoutMutation,
+            );
+            return Ok(());
+        }
         if self.delete_fault_phase(&entry) == Some(FaultPhase::BeforeMutation) {
             self.record(
                 entry,
@@ -459,6 +493,41 @@ mod tests {
                 StorageOutcome::FailedAfterMutation
             )]
         );
+    }
+
+    /// An S3 delete addressed to a nonexistent key records success while the intended entry remains.
+    #[tokio::test]
+    async fn delete_can_succeed_without_mutating_storage() {
+        let (data_id, entry) = fault_test_entry("noop_delete");
+        let mut storage = FailingRamStorage::new();
+        storage
+            .store_data(&TestType { i: 1 }, &data_id, FAULT_TEST_TYPE)
+            .await
+            .unwrap();
+        storage.clear_events();
+        storage.set_noop_delete_at(entry.clone());
+
+        storage
+            .delete_data(&data_id, FAULT_TEST_TYPE)
+            .await
+            .unwrap();
+
+        assert!(
+            storage
+                .data_exists(&data_id, FAULT_TEST_TYPE)
+                .await
+                .unwrap()
+        );
+        assert_eq!(
+            storage.events(),
+            [StorageEvent::new(
+                entry,
+                StorageOp::Delete,
+                StorageOutcome::SucceededWithoutMutation,
+            )]
+        );
+        assert!(storage.mutations().is_empty());
+        assert!(storage.faults().is_empty());
     }
 
     /// A store that finds existing data records the skip, so a caller that discards

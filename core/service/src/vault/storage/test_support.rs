@@ -136,6 +136,8 @@ pub(crate) enum StorageOutcome {
     SkippedExisting,
     /// A delete removed data.
     Deleted,
+    /// A delete returned success without changing storage, like S3's `DeleteObject`.
+    SucceededWithoutMutation,
     /// The operation returned an error without changing storage.
     FailedBeforeMutation,
     /// The operation changed storage and then returned an error.
