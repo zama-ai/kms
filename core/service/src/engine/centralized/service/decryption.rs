@@ -945,8 +945,7 @@ mod test_user_decryption {
             epoch_id: None,
             // This is the EVM test path; the Solana fields are exercised by
             // `validation_solana` and the Solana response tests.
-            solana_pubkey: None,
-            solana_verifying_program_id: None,
+            signing_metadata: vec![],
         }
     }
 

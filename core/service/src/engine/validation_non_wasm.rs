@@ -1321,8 +1321,7 @@ mod tests {
                 extra_data: vec![],
                 context_id: None,
                 epoch_id: None,
-                solana_pubkey: None,
-                solana_verifying_program_id: None,
+                signing_metadata: vec![],
             };
             assert!(
                 unpack_user_decrypt_req(&req)
@@ -1345,8 +1344,7 @@ mod tests {
                 extra_data: vec![],
                 context_id: None,
                 epoch_id: None,
-                solana_pubkey: None,
-                solana_verifying_program_id: None,
+                signing_metadata: vec![],
             };
             assert!(
                 unpack_user_decrypt_req(&req)
@@ -1372,8 +1370,7 @@ mod tests {
                 extra_data: vec![],
                 context_id: None,
                 epoch_id: None,
-                solana_pubkey: None,
-                solana_verifying_program_id: None,
+                signing_metadata: vec![],
             };
             assert!(
                 unpack_user_decrypt_req(&req)
@@ -1396,8 +1393,7 @@ mod tests {
                 extra_data: vec![],
                 context_id: None,
                 epoch_id: None,
-                solana_pubkey: None,
-                solana_verifying_program_id: None,
+                signing_metadata: vec![],
             };
             assert!(
                 unpack_user_decrypt_req(&req)
@@ -1420,8 +1416,7 @@ mod tests {
                 extra_data: vec![],
                 context_id: None,
                 epoch_id: None,
-                solana_pubkey: None,
-                solana_verifying_program_id: None,
+                signing_metadata: vec![],
             };
             assert!(
                 unpack_user_decrypt_req(&req).unwrap_err().to_string().contains(
@@ -1449,8 +1444,7 @@ mod tests {
                 extra_data: vec![],
                 context_id: None,
                 epoch_id: None,
-                solana_pubkey: None,
-                solana_verifying_program_id: None,
+                signing_metadata: vec![],
             };
             assert!(
                 unpack_user_decrypt_req(&req)
@@ -1473,8 +1467,7 @@ mod tests {
                 extra_data: vec![],
                 context_id: None,
                 epoch_id: None,
-                solana_pubkey: None,
-                solana_verifying_program_id: None,
+                signing_metadata: vec![],
             };
             assert!(unpack_user_decrypt_req(&req).is_ok());
         }
@@ -1500,8 +1493,7 @@ mod tests {
                 extra_data: vec![],
                 context_id: None,
                 epoch_id: None,
-                solana_pubkey: None,
-                solana_verifying_program_id: None,
+                signing_metadata: vec![],
                 signing_schemes: vec![],
             };
             assert!(
@@ -1532,8 +1524,10 @@ mod tests {
                 extra_data: vec![],
                 context_id: None,
                 epoch_id: None,
-                solana_pubkey: Some(vec![0x11; 32]),
-                solana_verifying_program_id: Some(vec![0x22; 32]),
+                signing_metadata: vec![kms_grpc::kms::v1::SigningMetadata::solana(
+                    vec![0x11; 32],
+                    vec![0x22; 32],
+                )],
                 signing_schemes: vec![],
             };
             assert!(unpack_user_decrypt_req(&solana_req).is_ok());
@@ -1554,7 +1548,9 @@ mod tests {
 
             for actual in [31, 33] {
                 let mut invalid_identity = solana_req.clone();
-                invalid_identity.solana_pubkey = Some(vec![0x11; actual]);
+                invalid_identity.signing_metadata = vec![
+                    kms_grpc::kms::v1::SigningMetadata::solana(vec![0x11; actual], vec![0x22; 32]),
+                ];
                 assert_eq!(
                     unpack_user_decrypt_req(&invalid_identity)
                         .unwrap_err()
@@ -1563,12 +1559,10 @@ mod tests {
                 );
             }
 
-            // A purely legacy request: no typed Solana field at all. A program id without the
-            // pubkey is its own rejection (a contradictory request, tested with the adapter), so
-            // it is cleared here to keep this case about the legacy string alone.
+            // A purely legacy request: no signing metadata at all, so the request falls to the
+            // EVM path and the legacy string is judged there.
             let mut legacy_string = solana_req.clone();
-            legacy_string.solana_pubkey = None;
-            legacy_string.solana_verifying_program_id = None;
+            legacy_string.signing_metadata = vec![];
             legacy_string.client_address =
                 format!("solana:{}", alloy_primitives::hex::encode([0x11; 32]));
             assert!(
@@ -1656,8 +1650,10 @@ mod tests {
             extra_data: vec![0x77; 4],
             context_id: None,
             epoch_id: None,
-            solana_pubkey: Some(vec![0x11; 32]),
-            solana_verifying_program_id: Some(vec![0x22; 32]),
+            signing_metadata: vec![kms_grpc::kms::v1::SigningMetadata::solana(
+                vec![0x11; 32],
+                vec![0x22; 32],
+            )],
             signing_schemes: vec![],
         };
 
@@ -1753,8 +1749,7 @@ mod tests {
             extra_data: vec![],
             context_id: None,
             epoch_id: None,
-            solana_pubkey: None,
-            solana_verifying_program_id: None,
+            signing_metadata: vec![],
         };
 
         {
