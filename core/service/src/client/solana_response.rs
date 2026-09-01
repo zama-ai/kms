@@ -46,14 +46,14 @@
 //!     user_pubkey: [0x11; 32],
 //!     host_chain_id: (1 << 63) | 12_345,
 //!     verifying_program_id: [0x22; 32],
-//!     kms_context_id: [0x44; 32],
-//!     kms_epoch_id: [0x55; 32],
 //!     handles: vec![handle.to_vec()],
 //!     enc_key: vec![0x66; 869],
-//!     // Neither is an input to the link; they are what an external node signature is verified
-//!     // against, and a caller that only wants the link can leave them empty.
-//!     response_domain: Default::default(),
+//!     // A link input like the fields above it, and also part of what an external node
+//!     // signature is verified against.
 //!     extra_data: Vec::new(),
+//!     // Not an input to the link: only what an external node signature is verified against. A
+//!     // caller that only wants the link can leave it empty.
+//!     response_domain: Default::default(),
 //! };
 //!
 //! assert_eq!(request.expected_link().expect("a canonical request").len(), 32);
@@ -84,11 +84,12 @@ use crate::engine::validation::{
 /// holds — what it asked for, who it asked as, and which deployment it asked of. Nothing in this
 /// struct is ever taken from a response.
 ///
-/// Two groups of fields, and the split matters. Everything down to [`Self::enc_key`] is an input
-/// the link commits to, and [`Self::expected_link`] is built from exactly those.
-/// [`Self::response_domain`] and [`Self::extra_data`] commit to nothing: they are the request-side
-/// inputs to the EIP-712 message a KMS node's `external_signature` is made over, and they exist
-/// here so a node's external signature can be verified instead of merely noticed.
+/// Two groups of fields, and the split matters. Everything except [`Self::response_domain`] is an
+/// input the link commits to, and [`Self::expected_link`] is built from exactly those.
+/// [`Self::response_domain`] commits to nothing: it is the request-side input to the EIP-712
+/// message a KMS node's `external_signature` is made over, and it exists here so a node's
+/// external signature can be verified instead of merely noticed. [`Self::extra_data`] does double
+/// duty — a link input, and an input to that same EIP-712 message.
 ///
 /// The fields are public because they carry no invariant of their own: validation happens where it
 /// is defined, in the canonical binding's constructor, which [`Self::binding`] calls. A request
@@ -102,15 +103,18 @@ pub struct SolanaUserDecryptionRequest {
     pub host_chain_id: u64,
     /// The on-chain verifying program; half of the deployment pair the response is bound to.
     pub verifying_program_id: [u8; SOLANA_IDENTITY_LEN],
-    /// The KMS context the request selects keys by.
-    pub kms_context_id: [u8; SOLANA_IDENTITY_LEN],
-    /// The KMS epoch the request selects keys by.
-    pub kms_epoch_id: [u8; SOLANA_IDENTITY_LEN],
     /// The ciphertext handles, in request order, duplicates preserved.
     pub handles: Vec<Vec<u8>>,
     /// The serialized transport (ephemeral ML-KEM) public key, exactly as the request carried it.
     /// The linker binds these bytes verbatim rather than reframing them.
     pub enc_key: Vec<u8>,
+    /// The request's `extra_data`, verbatim.
+    ///
+    /// Opaque bytes, bound verbatim by the linker and never parsed — the host-side metadata
+    /// travels inside it, so the contract can evolve what it carries without a KMS release. It is
+    /// also one of the fields the EIP-712 message behind an `external_signature` is built from,
+    /// so a response carrying different `extra_data` is not a response to this request.
+    pub extra_data: Vec<u8>,
     /// The EIP-712 domain a KMS node produces the response's `external_signature` under.
     ///
     /// The gateway's own domain, as the client's configuration holds it. The Solana path invents no
@@ -118,14 +122,6 @@ pub struct SolanaUserDecryptionRequest {
     /// so the client must be told the same one to verify an external signature against.
     /// Not an input to the link.
     pub response_domain: Eip712Domain,
-    /// The request's `extra_data`, verbatim.
-    ///
-    /// Opaque bytes. The KMS never parses `extra_data` and neither does this module: it is
-    /// signature-verification input and nothing else. It is one of the fields the EIP-712 message
-    /// behind an `external_signature` is built from, so one cannot be verified without it, and a
-    /// response carrying different `extra_data` is not a response to this request. Not an input to
-    /// the link.
-    pub extra_data: Vec<u8>,
 }
 
 impl SolanaUserDecryptionRequest {
@@ -139,10 +135,9 @@ impl SolanaUserDecryptionRequest {
         let binding = SolanaUserDecryptBinding::new(
             &self.verifying_program_id,
             &self.user_pubkey,
-            &self.kms_context_id,
-            &self.kms_epoch_id,
             self.handles.iter().map(|handle| handle.as_slice()),
             &self.enc_key,
+            &self.extra_data,
         )?;
         binding.validate_declared_chain_id(self.host_chain_id)?;
         Ok(binding)

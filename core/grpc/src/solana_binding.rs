@@ -28,8 +28,7 @@ pub const SOLANA_LINKER_SCHEME_TAG: &[u8; 29] = b"SolanaUserDecryptionLinker:v1"
 /// bump in the scheme tag, not an edit. `core/grpc/tests/solana_frozen_constants.rs` is the gate.
 pub const DSEP_SOLANA_LINKER: DomainSep = *b"SOLLNK01";
 
-/// Width of every identity the binding accepts: handles, the recipient, the program id, and the
-/// KMS context and epoch ids.
+/// Width of every identity the binding accepts: handles, the recipient, and the program id.
 pub const SOLANA_IDENTITY_LEN: usize = 32;
 
 /// Width of the link, in bytes.
@@ -42,9 +41,9 @@ const SOLANA_LINK_LEN: usize = 32;
 const CHAIN_ID_LEN: usize = size_of::<u64>();
 
 /// Hashed elements that are not a ciphertext handle: the scheme tag, the deployment pair, the
-/// recipient, the KMS context and epoch, and the transport key. The element count is this plus the
+/// recipient, the transport key, and the extra data. The element count is this plus the
 /// handle count, which is what lets a reader recover the handle count from the count alone.
-const FIXED_ELEMENTS: usize = 7;
+const FIXED_ELEMENTS: usize = 6;
 
 /// Bit 63 of the embedded chain id marks a Solana-kind host chain. It is the KMS-side backstop
 /// that keeps Solana handles off the EVM linker and vice versa.
@@ -96,10 +95,9 @@ impl TryFrom<u64> for SolanaHostChainId {
 ///     // The chain id's type is itself private, so its name cannot even be written here.
 ///     chain_id: todo!(),
 ///     receiver_id: [0u8; 32],
-///     kms_context_id: [0u8; 32],
-///     kms_epoch_id: [0u8; 32],
 ///     handles: vec![[0u8; 32]],
 ///     transport_key: vec![],
+///     extra_data: vec![],
 /// };
 /// ```
 ///
@@ -114,10 +112,9 @@ impl TryFrom<u64> for SolanaHostChainId {
 /// let binding = SolanaUserDecryptBinding::new(
 ///     &[0x22u8; 32],                       // verifying_program_id
 ///     &[0x33u8; 32],                       // receiver_id (the raw ed25519 wallet key)
-///     &[0x44u8; 32],                       // kms_context_id
-///     &[0x55u8; 32],                       // kms_epoch_id
 ///     std::iter::once(handle.as_slice()),   // ordered ciphertext handles
 ///     &[0x66u8; 869],                      // transport key, as the request carries it
+///     &[0x77u8; 4],                        // extra_data, as the request carries it
 /// )
 /// .expect("a canonical Solana request");
 ///
@@ -128,10 +125,9 @@ pub struct SolanaUserDecryptBinding {
     verifying_program_id: [u8; SOLANA_IDENTITY_LEN],
     chain_id: SolanaHostChainId,
     receiver_id: [u8; SOLANA_IDENTITY_LEN],
-    kms_context_id: [u8; SOLANA_IDENTITY_LEN],
-    kms_epoch_id: [u8; SOLANA_IDENTITY_LEN],
     handles: Vec<[u8; SOLANA_IDENTITY_LEN]>,
     transport_key: Vec<u8>,
+    extra_data: Vec<u8>,
 }
 
 impl SolanaUserDecryptBinding {
@@ -148,14 +144,16 @@ impl SolanaUserDecryptBinding {
     /// `UnifiedPublicEncKey::MlKem512` container — the 800-byte encapsulation key plus its framing
     /// — which is the one representation the key has anywhere in the system; the linker binds
     /// those bytes verbatim rather than reframing them. `transport_key` is taken as the request
-    /// carries it, the same way the EVM linker takes its `publicKey`.
+    /// carries it, the same way the EVM linker takes its `publicKey`. `extra_data` is likewise
+    /// bound verbatim and never parsed: the host-side metadata travels inside it, so the contract
+    /// can evolve what it carries without a KMS release, and the commitment still covers every
+    /// byte.
     pub fn new<'a>(
         verifying_program_id: &[u8],
         receiver_id: &[u8],
-        kms_context_id: &[u8],
-        kms_epoch_id: &[u8],
         handles: impl IntoIterator<Item = &'a [u8]>,
         transport_key: &[u8],
+        extra_data: &[u8],
     ) -> Result<Self, SolanaUserDecryptBindingError> {
         let verifying_program_id = identity(verifying_program_id).ok_or(
             SolanaUserDecryptBindingError::InvalidProgramIdLength {
@@ -165,15 +163,6 @@ impl SolanaUserDecryptBinding {
         let receiver_id =
             identity(receiver_id).ok_or(SolanaUserDecryptBindingError::InvalidReceiverLength {
                 actual: receiver_id.len(),
-            })?;
-        let kms_context_id = identity(kms_context_id).ok_or(
-            SolanaUserDecryptBindingError::InvalidContextIdLength {
-                actual: kms_context_id.len(),
-            },
-        )?;
-        let kms_epoch_id =
-            identity(kms_epoch_id).ok_or(SolanaUserDecryptBindingError::InvalidEpochIdLength {
-                actual: kms_epoch_id.len(),
             })?;
 
         let mut canonical_handles = Vec::new();
@@ -218,10 +207,9 @@ impl SolanaUserDecryptBinding {
             verifying_program_id,
             chain_id,
             receiver_id,
-            kms_context_id,
-            kms_epoch_id,
             handles: canonical_handles,
             transport_key: transport_key.to_vec(),
+            extra_data: extra_data.to_vec(),
         })
     }
 
@@ -259,19 +247,19 @@ impl SolanaUserDecryptBinding {
 
     /// The hashed elements, in order.
     ///
-    /// The transport key is last and is the only element of variable length, which is the
-    /// precondition the shared list hash needs to stay injective: every element before it has a
-    /// position-determined width, so the element count recovers the handle count exactly.
+    /// The transport key and the extra data are last and are the only elements of variable
+    /// length. Every element is length-prefixed by the shared list hash, so injectivity does not
+    /// depend on widths; keeping the variable-length pair at fixed trailing positions is what
+    /// lets the element count recover the handle count exactly.
     fn hashed_elements(&self) -> Vec<&[u8]> {
         let mut elements: Vec<&[u8]> = Vec::with_capacity(FIXED_ELEMENTS + self.handles.len());
         elements.push(SOLANA_LINKER_SCHEME_TAG.as_slice());
         elements.push(self.verifying_program_id.as_slice());
         elements.push(self.chain_id.as_bytes().as_slice());
         elements.push(self.receiver_id.as_slice());
-        elements.push(self.kms_context_id.as_slice());
-        elements.push(self.kms_epoch_id.as_slice());
         elements.extend(self.handles.iter().map(|handle| handle.as_slice()));
         elements.push(self.transport_key.as_slice());
+        elements.push(self.extra_data.as_slice());
         elements
     }
 
@@ -330,10 +318,6 @@ pub enum SolanaUserDecryptBindingError {
     InvalidProgramIdLength { actual: usize },
     #[error("Solana recipient must be a 32-byte ed25519 public key, got {actual}")]
     InvalidReceiverLength { actual: usize },
-    #[error("KMS context ID must be 32 bytes, got {actual}")]
-    InvalidContextIdLength { actual: usize },
-    #[error("KMS epoch ID must be 32 bytes, got {actual}")]
-    InvalidEpochIdLength { actual: usize },
 }
 
 /// An identity of the one width this binding accepts, or `None` for anything else.

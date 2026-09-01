@@ -1,6 +1,4 @@
-use crate::consts::{DEFAULT_EPOCH_ID, DEFAULT_MPC_CONTEXT};
 use crate::cryptography::encryption::UnifiedPublicEncKey;
-use kms_grpc::identifiers::{ContextId, EpochId};
 use kms_grpc::{
     kms::v1::UserDecryptionRequest,
     rpc_types::{SigncryptionReceiver, optional_protobuf_to_alloy_domain},
@@ -15,8 +13,10 @@ type SolanaValidation = (Vec<u8>, SigncryptionReceiver, alloy_sol_types::Eip712D
 /// request that carries no Solana identity — that request belongs to the EVM path.
 ///
 /// The adapter is where host knowledge ends: it reads the typed Solana fields, hands them to the
-/// checked binding, and returns bytes. Wallet signatures, PDAs, ACL/MMR evidence, delegation and
-/// `extra_data` are all settled upstream, by the connector that verified the signed request.
+/// checked binding, and returns bytes. Wallet signatures, PDAs, ACL/MMR evidence and delegation
+/// are all settled upstream, by the connector that verified the signed request; `extra_data` is
+/// the host-side metadata of that settled request, bound verbatim by the linker and never parsed
+/// here.
 pub(super) fn validate_solana_request(
     req: &UserDecryptionRequest,
 ) -> Result<Option<SolanaValidation>, Box<dyn std::error::Error + Send + Sync>> {
@@ -49,17 +49,6 @@ pub(super) fn validate_solana_request(
         )
     })?;
 
-    // The same context and epoch the KMS selects keys by; the defaults mirror the shared request
-    // path, so a request that omits them is bound to the values the KMS actually used.
-    let context_id: ContextId = match &req.context_id {
-        Some(context_id) => context_id.try_into()?,
-        None => *DEFAULT_MPC_CONTEXT,
-    };
-    let epoch_id: EpochId = match &req.epoch_id {
-        Some(epoch_id) => epoch_id.try_into()?,
-        None => *DEFAULT_EPOCH_ID,
-    };
-
     let transport_key =
         UnifiedPublicEncKey::deserialize_and_validate(&req.enc_key).map_err(|error| {
             anyhow::anyhow!(
@@ -72,12 +61,11 @@ pub(super) fn validate_solana_request(
     let binding = SolanaUserDecryptBinding::new(
         verifying_program_id,
         &pubkey,
-        context_id.as_bytes(),
-        epoch_id.as_bytes(),
         req.typed_ciphertexts
             .iter()
             .map(|ciphertext| ciphertext.external_handle.as_slice()),
         &req.enc_key,
+        &req.extra_data,
     )?;
 
     let response_domain = optional_protobuf_to_alloy_domain(req.domain.as_ref())?;

@@ -31,7 +31,8 @@ Out of scope here, and belonging to the FHEVM integration:
 
 Every Solana user-decryption request produces one 32-byte **link**: a SHAKE256 list-hash over the
 deployment pair (`verifying_program_id`, host chain id), the recipient (the raw 32-byte ed25519
-wallet key), the KMS context and epoch ids, the ordered ciphertext handles, and the transport key.
+wallet key), the ordered ciphertext handles, the transport key, and the request's `extra_data`
+bound verbatim — the KMS never parses it, exactly as on the EVM path.
 A KMS node embeds this link in its response as `payload.digest` and binds it into the
 authenticated encryption of the plaintext share. The client recomputes the link from its own
 request fields and accepts only responses that carry exactly that value — the response never gets
@@ -81,7 +82,7 @@ the response call takes that client plus the request-side values the link commit
   call.
 - **`process_user_decryption_resp_solana_from_js(client, request, solana_request, …)`** verifies
   and releases. The Solana-owned request fields travel as one named object,
-  `{ user_pubkey, host_chain_id, verifying_program_id, kms_context_id, kms_epoch_id }`, with
+  `{ user_pubkey, host_chain_id, verifying_program_id }`, with
   identities as 32-byte hex strings and `host_chain_id` as a decimal string — the vector-set
   convention, because a Solana chain id sets bit 63 and does not fit a JS number. Its trailing
   **`eip712_domain`** argument is the EIP-712 domain KMS nodes produced the response's
