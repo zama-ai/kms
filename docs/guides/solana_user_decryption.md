@@ -99,6 +99,15 @@ Solana vectors (one centralized, one threshold; generated deterministically by
 needed) are driven through the public functions above, and a client configured with a foreign
 signer set is asserted to reject the very same responses.
 
+## Calling from the reference core-client
+
+`kms-core-client` has a native `solana-user-decrypt` command (see `core_client.md`) that sends a
+Solana-shaped request — the `SigningMetadata` envelope, handles embedding the declared host chain
+id — and verifies the responses through `Client::process_user_decryption_resp_solana`, the same
+Rust verifier the WASM API wraps. One deliberate difference from production: the trusted signer
+set comes from the cores' fetched verification keys (`VerfAddress`), not from on-chain Solana
+state, because the reference client talks gRPC to the cores directly.
+
 ## Frozen bytes and the shared vector set
 
 The linker v1 construction is frozen by a normative vector set:

@@ -19,8 +19,9 @@ use crate::backup::{
 };
 use crate::crsgen::{do_abort_crs_gen, do_crsgen, fetch_and_check_crsgen, get_crsgen_responses};
 use crate::decrypt::{
-    PubDecVerificationMaterial, do_public_decrypt, do_public_decrypt_once, do_user_decrypt,
-    do_user_decrypt_once, get_public_decrypt_responses,
+    PubDecVerificationMaterial, SolanaDecryptIdentity, do_public_decrypt, do_public_decrypt_once,
+    do_solana_user_decrypt_once, do_user_decrypt, do_user_decrypt_once,
+    get_public_decrypt_responses,
 };
 use crate::keygen::{
     do_abort_key_gen, do_keygen, do_partial_preproc, do_preproc, fetch_and_check_keygen,
@@ -748,6 +749,68 @@ pub struct DecryptParameters {
     pub rate_options: DecryptRateOptions,
 }
 
+/// `user-decrypt from-args`, sealed to a Solana wallet instead of the client's EVM address.
+///
+/// The identities are the two values the KMS Connector would read out of the settled on-chain
+/// request; here they come from flags, so the reference client can exercise the Solana server
+/// path and the real client-side verifier without a chain. Rate mode is deliberately not carried
+/// over — this command is a correctness probe, and the EVM command remains the load generator.
+#[derive(Debug, Args, Clone)]
+pub struct SolanaDecryptParameters {
+    #[clap(flatten)]
+    pub decrypt: DecryptParameters,
+    /// The Solana user's ed25519 public key the result is sealed to — base58, or 32 bytes hex
+    /// (optionally 0x-prefixed).
+    #[clap(long, value_parser = solana_identity_arg)]
+    pub user_pubkey: [u8; 32],
+    /// The host deployment's verifying program id — base58, or 32 bytes hex (optionally
+    /// 0x-prefixed).
+    #[clap(long, value_parser = solana_identity_arg)]
+    pub verifying_program_id: [u8; 32],
+    /// The Solana host chain id to embed in every ciphertext handle — decimal or 0x-prefixed
+    /// hex. Bit 63 must be set: it is what marks the handles (and so the request) as
+    /// Solana-kind.
+    #[clap(long, value_parser = solana_chain_id_arg)]
+    pub host_chain_id: u64,
+}
+
+/// One Solana identity from the command line: base58 (the form Solana tooling prints) or 32-byte
+/// hex, decided by shape — a 64-char hex string cannot be confused with base58 of 32 bytes,
+/// which is 43 or 44 characters.
+fn solana_identity_arg(text: &str) -> Result<[u8; 32], String> {
+    let text = text.trim();
+    let bytes = if let Some(hex_text) = text.strip_prefix("0x") {
+        hex::decode(hex_text).map_err(|error| format!("invalid hex identity: {error}"))?
+    } else if text.len() == 64 && text.chars().all(|c| c.is_ascii_hexdigit()) {
+        hex::decode(text).map_err(|error| format!("invalid hex identity: {error}"))?
+    } else {
+        bs58::decode(text)
+            .into_vec()
+            .map_err(|error| format!("invalid base58 identity: {error}"))?
+    };
+    <[u8; 32]>::try_from(bytes.as_slice())
+        .map_err(|_| format!("a Solana identity is 32 bytes, got {}", bytes.len()))
+}
+
+/// A Solana host chain id from the command line, decimal or 0x-prefixed hex, bit 63 required.
+fn solana_chain_id_arg(text: &str) -> Result<u64, String> {
+    let text = text.trim();
+    let chain_id = match text.strip_prefix("0x") {
+        Some(hex_text) => u64::from_str_radix(hex_text, 16),
+        None => text.parse::<u64>(),
+    }
+    .map_err(|error| format!("invalid chain id: {error}"))?;
+
+    if chain_id & (1 << 63) == 0 {
+        return Err(format!(
+            "a Solana host chain id sets bit 63; {chain_id} (0x{chain_id:016x}) does not. The \
+             deployed ids are derived as 0x8000000000000000 | (SHA-256 of the genesis hash), so \
+             a real one always carries the bit."
+        ));
+    }
+    Ok(chain_id)
+}
+
 impl DecryptParameters {
     fn to_cipher_parameters(&self) -> CipherParameters {
         CipherParameters {
@@ -791,6 +854,7 @@ pub struct DecryptFile {
     #[clap(flatten)]
     pub rate_options: DecryptRateOptions,
 }
+
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct CipherWithParams {
@@ -1164,6 +1228,7 @@ pub enum CCCommand {
     PublicDecryptResult(PublicDecryptResultParameters),
     #[clap(subcommand)]
     UserDecrypt(DecryptArguments),
+    SolanaUserDecrypt(SolanaDecryptParameters),
     CrsGen(CrsParameters),
     CrsGenResult(CrsGenResultParameters),
     AbortCrsGen(AbortParameters),
@@ -1244,6 +1309,21 @@ pub fn integration_test_handles(count: usize) -> Vec<Vec<u8>> {
             // leading bytes (kept <= 32 bytes, as required by the signing-message builder).
             let mut handle = dummy_handle();
             handle[..8].copy_from_slice(&(i as u64).to_be_bytes());
+            handle
+        })
+        .collect()
+}
+
+/// Distinct ciphertext handles for a Solana user-decryption batch: the Solana rules require
+/// every handle to embed the host chain id at bytes 22..30 (big-endian, bit 63 set) and all
+/// handles of one request to agree on it, so the placeholder handles embed it too and stay
+/// distinct through their leading bytes.
+pub fn solana_test_handles(host_chain_id: u64, count: usize) -> Vec<Vec<u8>> {
+    (0..count)
+        .map(|i| {
+            let mut handle = dummy_handle();
+            handle[..8].copy_from_slice(&(i as u64).to_be_bytes());
+            handle[22..30].copy_from_slice(&host_chain_id.to_be_bytes());
             handle
         })
         .collect()
@@ -2198,6 +2278,93 @@ pub async fn execute_cmd(
                 }
                 _ => unreachable!("user-decrypt rate arguments are validated before dispatch"),
             }
+        }
+        CCCommand::SolanaUserDecrypt(solana_args) => {
+            let rate_options = &solana_args.decrypt.rate_options;
+            if rate_options.rate.is_some()
+                || rate_options.duration.is_some()
+                || rate_options.max_in_flight.is_some()
+            {
+                return Err(anyhow::anyhow!(
+                    "solana-user-decrypt is a correctness probe and has no rate mode; use \
+                     user-decrypt for load generation"
+                )
+                .into());
+            }
+            let internal_client = Arc::new(RwLock::new(
+                internal_client.expect("SolanaUserDecrypt requires a KMS client"),
+            ));
+            let num_expected_responses = if expect_all_responses {
+                num_parties
+            } else {
+                cc_conf.num_reconstruct
+            };
+
+            let cipher_parameters = &solana_args.decrypt;
+            let party_confs = fetch_keys_auto_detect(
+                &cipher_parameters.key_id.as_str(),
+                &cc_conf,
+                destination_prefix,
+            )
+            .await?;
+            let storage_prefix = Some(
+                cc_conf
+                    .cores
+                    .iter()
+                    .find(|c| c == &&party_confs[0])
+                    .expect("party ID not found in config")
+                    .object_folder
+                    .as_str(),
+            );
+            let EncryptionResult {
+                cipher: ciphertext,
+                ct_format,
+                plaintext: ptxt,
+                key_id,
+                context_id,
+                epoch_id,
+            } = encrypt(
+                destination_prefix,
+                storage_prefix,
+                cipher_parameters.to_cipher_parameters(),
+            )
+            .await?;
+
+            // Solana-shaped handles: the server-side binding requires every handle to embed the
+            // declared host chain id with bit 63 set, one distinct handle per batch entry.
+            let ct_batch: Vec<TypedCiphertext> =
+                solana_test_handles(solana_args.host_chain_id, cipher_parameters.batch_size)
+                    .into_iter()
+                    .map(|external_handle| TypedCiphertext {
+                        ciphertext: ciphertext.clone(),
+                        fhe_type: ptxt.fhe_type,
+                        external_handle,
+                        ciphertext_format: ct_format.into(),
+                    })
+                    .collect();
+
+            do_solana_user_decrypt_once(
+                &mut rng,
+                internal_client,
+                ct_batch,
+                key_id,
+                context_id,
+                epoch_id,
+                &core_endpoints_req,
+                &core_endpoints_resp,
+                ptxt,
+                num_parties,
+                max_iter,
+                num_expected_responses,
+                cc_conf.default_domain()?,
+                cipher_parameters.sync,
+                SolanaDecryptIdentity {
+                    user_pubkey: solana_args.user_pubkey,
+                    verifying_program_id: solana_args.verifying_program_id,
+                    host_chain_id: solana_args.host_chain_id,
+                },
+            )
+            .await?
         }
         CCCommand::KeyGen(KeyGenParameters {
             preproc_id,
