@@ -1615,4 +1615,144 @@ async fn refresh_fhe_private_material_paths() {
     assert!(cache_guard.get(&(miss_req, miss_epoch)).is_none());
 }
 
+/// Regression tests for zama-ai/kms-internal#3204.
+///
+/// A pre-0.13 deployment keeps its private CRS metadata at the flat, non-epoch-scoped path.
+/// `write_all` rejects a write whose data id exists at the flat path *even when the write targets
+/// an epoch*, so every resharing attempt failed with `StorageError::Duplicate` and rolled the new
+/// epoch back on all nodes. These tests pin the causal chain: the flat entry causes the failure,
+/// and the CRS migration is what clears it.
+mod crs_flat_entry_blocks_resharing {
+    use super::*;
+    use crate::engine::migration::migrate_to_0_14_2;
+    use kms_grpc::rpc_types::KMSType;
+
+    /// `dummy_crs_metadata` derives its CRS id from the seed; mirror that here so tests can refer
+    /// to the id without an accessor on `CrsGenMetadata`.
+    fn crs_fixture(seed: u8) -> (RequestId, CrsGenMetadata) {
+        (
+            derive_request_id(&format!("crs_meta_{seed}")).unwrap(),
+            dummy_crs_metadata(seed),
+        )
+    }
+
+    /// Writes `crs_meta` the way resharing does: epoch-scoped, private-only, no backup.
+    async fn reshare_crs_write(
+        storage: &ThresholdCryptoMaterialStorage<RamStorage, RamStorage>,
+        crs_id: &RequestId,
+        epoch_id: &EpochId,
+        crs_meta: CrsGenMetadata,
+    ) -> Result<(), StorageError> {
+        storage
+            .resharing_crs_write_no_backup(crs_id, epoch_id, crs_meta)
+            .await
+    }
+
+    /// Baseline: on a storage that never had a flat CRS entry, the resharing write succeeds.
+    /// This is why the existing fresh-storage tests never reproduced the bug.
+    #[tokio::test]
+    async fn fresh_storage_allows_reshared_crs_write() {
+        let storage = ram_threshold_storage(None);
+        let (crs_id, crs_meta) = crs_fixture(1);
+        let new_epoch: EpochId = *DEFAULT_EPOCH_ID;
+
+        reshare_crs_write(&storage, &crs_id, &new_epoch, crs_meta)
+            .await
+            .expect("a reshared CRS write must succeed on storage with no flat entry");
+    }
+
+    /// Reproduces the reported failure: a flat CRS entry makes the epoch-scoped resharing write
+    /// fail with `Duplicate`, which is what aborted every epoch rotation on zws-dev.
+    #[tokio::test]
+    async fn flat_crs_entry_makes_reshared_write_fail_with_duplicate() {
+        let storage = ram_threshold_storage(None);
+        let (crs_id, crs_meta) = crs_fixture(2);
+        let new_epoch: EpochId = *DEFAULT_EPOCH_ID;
+
+        // Simulate the pre-0.13 layout: CRS metadata directly under the data type, no epoch.
+        {
+            let mut priv_s = storage.inner.private_storage.lock().await;
+            store_versioned_at_request_id(
+                &mut *priv_s,
+                &crs_id,
+                &crs_meta,
+                &PrivDataType::CrsInfo.to_string(),
+            )
+            .await
+            .unwrap();
+        }
+
+        let err = reshare_crs_write(&storage, &crs_id, &new_epoch, crs_meta)
+            .await
+            .expect_err("a flat CRS entry must make the epoch-scoped write fail");
+        assert!(
+            matches!(err, StorageError::Duplicate),
+            "expected Duplicate, got {err:?}"
+        );
+    }
+
+    /// The fix: after the migration moves the flat entry to the epoch-scoped path, the same
+    /// resharing write that previously failed now succeeds.
+    #[tokio::test]
+    async fn migration_unblocks_reshared_crs_write() {
+        let storage = ram_threshold_storage(None);
+        let (crs_id, crs_meta) = crs_fixture(3);
+        // Resharing targets a *new* epoch, distinct from the one the migration writes to.
+        let new_epoch: EpochId = derive_request_id("crs_reshare_new_epoch").unwrap().into();
+
+        {
+            let mut priv_s = storage.inner.private_storage.lock().await;
+            store_versioned_at_request_id(
+                &mut *priv_s,
+                &crs_id,
+                &crs_meta,
+                &PrivDataType::CrsInfo.to_string(),
+            )
+            .await
+            .unwrap();
+        }
+
+        // Before the migration the write is rejected.
+        assert!(matches!(
+            reshare_crs_write(&storage, &crs_id, &new_epoch, crs_meta.clone())
+                .await
+                .unwrap_err(),
+            StorageError::Duplicate
+        ));
+
+        // Run the real startup migration entry point, as `kms-server` does.
+        {
+            let mut priv_s = storage.inner.private_storage.lock().await;
+            migrate_to_0_14_2(&mut *priv_s, KMSType::Threshold)
+                .await
+                .unwrap();
+        }
+
+        // The flat entry is gone and the write now goes through.
+        {
+            let priv_s = storage.inner.private_storage.lock().await;
+            assert!(
+                !priv_s
+                    .data_exists(&crs_id, &PrivDataType::CrsInfo.to_string())
+                    .await
+                    .unwrap()
+            );
+            assert!(
+                priv_s
+                    .data_exists_at_epoch(
+                        &crs_id,
+                        &DEFAULT_EPOCH_ID,
+                        &PrivDataType::CrsInfo.to_string()
+                    )
+                    .await
+                    .unwrap()
+            );
+        }
+
+        reshare_crs_write(&storage, &crs_id, &new_epoch, crs_meta)
+            .await
+            .expect("after the migration the reshared CRS write must succeed");
+    }
+}
+
 mod migration;
