@@ -27,7 +27,7 @@ use itertools::Itertools;
 use kms_grpc::kms::v1::{
     TypedPlaintext, UserDecryptionRequest, UserDecryptionResponse, UserDecryptionResponsePayload,
 };
-use kms_grpc::rpc_types::{SigncryptionReceiver, fhe_types_to_num_blocks};
+use kms_grpc::rpc_types::{PlaintextReceiver, fhe_types_to_num_blocks};
 use kms_grpc::solidity_types::UserDecryptionLinker;
 use std::num::Wrapping;
 use tfhe::FheTypes;
@@ -254,7 +254,7 @@ impl Client {
         )?
         .into_inner();
         self.reconstruct_validated_user_decryption(
-            SigncryptionReceiver::Evm(self.client_address),
+            PlaintextReceiver::Evm(self.client_address),
             &validated_resps,
             enc_key,
             dec_key,
@@ -271,7 +271,7 @@ impl Client {
     /// reconstruction below exist exactly once.
     pub(crate) fn reconstruct_validated_user_decryption(
         &self,
-        receiver: SigncryptionReceiver,
+        receiver: PlaintextReceiver,
         validated_resps: &[UserDecryptionResponsePayload],
         enc_key: &UnifiedPublicEncKey,
         dec_key: &UnifiedPrivateEncKey,
@@ -656,7 +656,7 @@ impl Client {
     #[expect(clippy::type_complexity)]
     fn recover_sharings<Z: BaseRing>(
         &self,
-        receiver: &SigncryptionReceiver,
+        receiver: &PlaintextReceiver,
         agg_resp: &[UserDecryptionResponsePayload],
         enc_key: &UnifiedPublicEncKey,
         dec_key: &UnifiedPrivateEncKey,

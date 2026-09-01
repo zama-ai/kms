@@ -63,7 +63,7 @@ use std::collections::{BTreeSet, HashMap};
 
 use alloy_dyn_abi::Eip712Domain;
 use kms_grpc::kms::v1::{TypedPlaintext, UserDecryptionResponse, UserDecryptionResponsePayload};
-use kms_grpc::rpc_types::SigncryptionReceiver;
+use kms_grpc::rpc_types::PlaintextReceiver;
 use kms_grpc::solana_binding::{
     SOLANA_IDENTITY_LEN, SolanaUserDecryptBinding, SolanaUserDecryptBindingError,
 };
@@ -583,7 +583,7 @@ pub fn release_solana_user_decryption(
         shares,
     } = shares;
     // The same receiver mapping the server signcrypted under: the raw 32-byte wallet key.
-    let receiver = SigncryptionReceiver::Solana(receiver_id);
+    let receiver = PlaintextReceiver::Solana(receiver_id);
 
     if shares.len() > 1 {
         // Every accepted payload carries the recomputed link as its digest — that is what it was
