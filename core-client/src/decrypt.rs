@@ -10,7 +10,10 @@ use kms_grpc::{
     rpc_types::protobuf_to_alloy_domain,
 };
 use kms_lib::{
-    client::{client_wasm::Client, user_decryption_wasm::ParsedUserDecryptionRequest},
+    client::{
+        client_wasm::Client, solana_response::SolanaUserDecryptionRequest,
+        user_decryption_wasm::ParsedUserDecryptionRequest,
+    },
     cryptography::encryption::{UnifiedPrivateEncKey, UnifiedPublicEncKey},
     cryptography::signatures::recover_address_from_ext_signature,
     engine::base::compute_public_decryption_message,
@@ -1374,6 +1377,163 @@ pub(crate) async fn do_user_decrypt_once<R: Rng + CryptoRng>(
         reconstruct_elapsed,
     );
     tracing::debug!(elapsed = ?reconstruct_duration, "udec reconstruct");
+
+    Ok(vec![(Some(req_id), msg)])
+}
+
+/// The Solana identity of a user-decryption request: everything host-specific the decrypt
+/// helpers need, in one value.
+#[derive(Clone, Copy, Debug)]
+pub struct SolanaDecryptIdentity {
+    /// The user's 32-byte ed25519 key the result is sealed to.
+    pub user_pubkey: [u8; 32],
+    /// The host deployment's 32-byte verifying program id.
+    pub verifying_program_id: [u8; 32],
+    /// The Solana host chain id every handle of the batch embeds (bit 63 set).
+    pub host_chain_id: u64,
+}
+
+/// The Solana sibling of [`reconstruct_user_decrypt`]: rebuilds the request-side expectation from
+/// the client's own fields and hands verification and release to
+/// [`Client::process_user_decryption_resp_solana`] — link recompute, node signatures, threshold
+/// and share consistency are all the library's fail-closed rules, none of them re-implemented
+/// here.
+async fn reconstruct_solana_user_decrypt(
+    internal_client: Arc<RwLock<Client>>,
+    identity: SolanaDecryptIdentity,
+    expected: TestingPlaintext,
+    collected: CollectedUserDecrypt,
+) -> anyhow::Result<(RequestId, String, Duration)> {
+    let CollectedUserDecrypt {
+        req_id,
+        user_decrypt_req,
+        enc_pk,
+        enc_sk,
+        resp_response_vec,
+        collect_duration: _,
+    } = collected;
+    let reconstruct_one_start = Instant::now();
+
+    let response_domain = protobuf_to_alloy_domain(
+        user_decrypt_req
+            .domain
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("domain not set in user decrypt request"))?,
+    )?;
+    let request = SolanaUserDecryptionRequest {
+        user_pubkey: identity.user_pubkey,
+        host_chain_id: identity.host_chain_id,
+        verifying_program_id: identity.verifying_program_id,
+        handles: user_decrypt_req
+            .typed_ciphertexts
+            .iter()
+            .map(|ciphertext| ciphertext.external_handle.clone())
+            .collect(),
+        enc_key: user_decrypt_req.enc_key.clone(),
+        extra_data: user_decrypt_req.extra_data.clone(),
+        response_domain,
+    };
+
+    let plaintexts = internal_client
+        .read()
+        .await
+        .process_user_decryption_resp_solana(&request, &enc_pk, &enc_sk, &resp_response_vec)
+        .map_err(|error| anyhow::anyhow!("Solana user decryption response rejected: {error}"))?;
+
+    let mut decoded = plaintexts.into_iter().map(TestingPlaintext::try_from);
+    let first = decoded
+        .next()
+        .ok_or_else(|| anyhow::anyhow!("no plaintexts in user decryption response"))??;
+    anyhow::ensure!(
+        first == expected,
+        "user decryption result mismatch: expected {expected:?}, got {first:?}"
+    );
+    for pt in decoded {
+        let pt = pt?;
+        anyhow::ensure!(
+            pt == expected,
+            "user decryption result mismatch: expected {expected:?}, got {pt:?}"
+        );
+    }
+
+    tracing::debug!("Solana user decryption response is ok: {expected:?} / {first:?}");
+    Ok((
+        req_id,
+        format!("User decrypted Plaintext {first:?}"),
+        reconstruct_one_start.elapsed(),
+    ))
+}
+
+/// The Solana sibling of [`do_user_decrypt_once`]. The transport is byte-for-byte the EVM one;
+/// only the request builder and the reconstruction tail differ.
+#[expect(clippy::too_many_arguments)]
+pub(crate) async fn do_solana_user_decrypt_once<R: Rng + CryptoRng>(
+    rng: &mut R,
+    internal_client: Arc<RwLock<Client>>,
+    ct_batch: Vec<TypedCiphertext>,
+    key_id: KeyId,
+    context_id: Option<ContextId>,
+    epoch_id: Option<EpochId>,
+    core_endpoints_req: &HashMap<CoreConf, CoreServiceEndpointClient<Channel>>,
+    core_endpoints_resp: &HashMap<CoreConf, CoreServiceEndpointClient<Channel>>,
+    ptxt: TypedPlaintext,
+    num_parties: usize,
+    max_iter: usize,
+    num_expected_responses: usize,
+    response_domain: Eip712Domain,
+    use_sync_endpoint: bool,
+    identity: SolanaDecryptIdentity,
+) -> anyhow::Result<Vec<(Option<RequestId>, String)>> {
+    let extra_data = crate::extra_data_from_context_epoch(context_id, epoch_id)?;
+    let expected = TestingPlaintext::try_from(ptxt)?;
+    let core_endpoints_req = endpoint_clients(core_endpoints_req);
+    let core_endpoints_resp = endpoint_clients(core_endpoints_resp);
+
+    let req_id = RequestId::new_random(rng);
+    let (user_decrypt_req, enc_pk, enc_sk) =
+        internal_client
+            .write()
+            .await
+            .solana_user_decryption_request(
+                &response_domain,
+                ct_batch,
+                &req_id,
+                &key_id.into(),
+                context_id.as_ref(),
+                epoch_id.as_ref(),
+                &extra_data,
+                identity.user_pubkey,
+                identity.verifying_program_id,
+            )?;
+
+    let collected = send_and_collect_user_decrypt(
+        1,
+        req_id,
+        user_decrypt_req,
+        enc_pk,
+        enc_sk,
+        core_endpoints_req,
+        core_endpoints_resp,
+        num_parties,
+        max_iter,
+        num_expected_responses,
+        use_sync_endpoint,
+    )
+    .await?;
+    let collect_duration = collected.collect_duration;
+
+    let reconstruct_start = Instant::now();
+    let (req_id, msg, reconstruct_duration) =
+        reconstruct_solana_user_decrypt(internal_client, identity, expected, collected).await?;
+    let reconstruct_elapsed = reconstruct_start.elapsed();
+
+    print_phased_timings(
+        "solana user decrypt",
+        collect_duration,
+        &[collect_duration],
+        reconstruct_elapsed,
+    );
+    tracing::debug!(elapsed = ?reconstruct_duration, "solana udec reconstruct");
 
     Ok(vec![(Some(req_id), msg)])
 }

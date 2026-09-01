@@ -636,6 +636,31 @@ Upon success, the above commands print the decrypted plaintext. To run a fixed-r
 
 User decryption also supports `--sync`, which uses the synchronous `UserDecryptSync` endpoint: each request returns the decryption result directly in a single call instead of polling `GetUserDecryptionResult`. The request still goes through the meta-store on the server, so the result remains retrievable via `GetUserDecryptionResult` afterwards.
 
+#### Solana User Decryption
+
+The same decryption can be sealed to a Solana wallet instead of the client's EVM address:
+
+```{bash}
+$ cargo run --bin kms-core-client -- -f <path-to-toml-config-file> solana-user-decrypt --to-encrypt <hex-value-encrypt> --data-type <euint-value> --key-id <public-key-id> --user-pubkey <base58-or-hex> --verifying-program-id <base58-or-hex> --host-chain-id <chain-id>
+```
+
+The three extra flags are the values the KMS Connector reads out of the settled on-chain request
+(see `solana_user_decryption.md`):
+ - `--user-pubkey`: the user's 32-byte ed25519 key the result is sealed to — base58 as Solana
+   tooling prints it, or 32 bytes of hex (optionally `0x`-prefixed).
+ - `--verifying-program-id`: the host deployment's program id, same formats.
+ - `--host-chain-id`: the Solana host chain id embedded in every ciphertext handle, decimal or
+   `0x`-prefixed hex. Bit 63 must be set — it marks the request family — and a deployed id
+   always carries it by derivation.
+
+The request travels with the `SigningMetadata` envelope and Solana-shaped handles, and the
+responses come back through the library's real Solana verifier: the link is recomputed from the
+request's own fields, node signatures are checked against the fetched verification keys, and the
+threshold and share-consistency rules are the same fail-closed ones the WASM client applies. The
+command shares `--batch-size`, `--no-compression`, `--no-precompute-sns`, `--context-id`,
+`--epoch-id` and `--sync` with `user-decrypt from-args`; it is a correctness probe, so rate mode
+and `from-file` are deliberately not carried over.
+
 #### Arguments
 Arguments required for public and user decryption from args are:
  - `--to-encrypt <TO_ENCRYPT>` - The hex value to encrypt and decrypt. The value will be converted from a little endian hex string to a `Vec<u8>`. Can optionally have a "0x" prefix.
