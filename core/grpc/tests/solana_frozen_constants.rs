@@ -44,7 +44,7 @@ const FROZEN_SCHEME_TAG_LEN: usize = 29;
 const FROZEN_CHAIN_ID_DERIVATION_TAG: &str = "zama-solana-chain-id-v1";
 
 /// The linker digest over [`frozen_request`]. Frozen: see the module comment.
-const FROZEN_LINK: &str = "a5378dec03acd0455d38fe7a57bc07f1a71aa7cb1ad7d7462e3983b3de17212e";
+const FROZEN_LINK: &str = "273d3961c0ce772e8cf7c17e89c3582bd5aefb38cca5eba2261b97a7e80b7801";
 
 // ---------------------------------------------------------------------------
 // The frozen fixture, spelled out
@@ -58,8 +58,11 @@ const FROZEN_CHAIN_ID: u64 = (1 << 63) | 8006;
 
 const FROZEN_PROGRAM_ID: [u8; SOLANA_IDENTITY_LEN] = [0x22; SOLANA_IDENTITY_LEN];
 const FROZEN_RECEIVER: [u8; SOLANA_IDENTITY_LEN] = [0x33; SOLANA_IDENTITY_LEN];
-const FROZEN_CONTEXT_ID: [u8; SOLANA_IDENTITY_LEN] = [0x44; SOLANA_IDENTITY_LEN];
-const FROZEN_EPOCH_ID: [u8; SOLANA_IDENTITY_LEN] = [0x55; SOLANA_IDENTITY_LEN];
+
+/// The frozen request's `extra_data`. Deliberately 4 bytes — a width shared by no other element —
+/// so the layout check below can only pass if the variable-width tail sits where the specification
+/// puts it.
+const FROZEN_EXTRA_DATA: [u8; 4] = [0x44, 0x55, 0x66, 0x77];
 
 /// Byte range of the chain id embedded in a ciphertext handle, restated locally.
 const HANDLE_CHAIN_ID: std::ops::Range<usize> = 22..30;
@@ -87,10 +90,9 @@ fn frozen_request() -> SolanaUserDecryptBinding {
     SolanaUserDecryptBinding::new(
         &FROZEN_PROGRAM_ID,
         &FROZEN_RECEIVER,
-        &FROZEN_CONTEXT_ID,
-        &FROZEN_EPOCH_ID,
         handles.iter().map(|handle| handle.as_slice()),
         &frozen_transport_key(),
+        &FROZEN_EXTRA_DATA,
     )
     .expect("the frozen Solana request must validate")
 }
@@ -107,15 +109,14 @@ fn expected_elements() -> Vec<Vec<u8>> {
         FROZEN_PROGRAM_ID.to_vec(),
         FROZEN_CHAIN_ID.to_be_bytes().to_vec(),
         FROZEN_RECEIVER.to_vec(),
-        FROZEN_CONTEXT_ID.to_vec(),
-        FROZEN_EPOCH_ID.to_vec(),
     ];
     elements.extend(frozen_handles().iter().map(|handle| handle.to_vec()));
     elements.push(frozen_transport_key());
+    elements.push(FROZEN_EXTRA_DATA.to_vec());
     elements
 }
 
-/// `HASH_LST ‖ SOLLNK01 ‖ u64le(7 + n) ‖ elements…`, assembled from the specification.
+/// `HASH_LST ‖ SOLLNK01 ‖ u64le(6 + n) ‖ elements…`, assembled from the specification.
 fn expected_hasher_input() -> Vec<u8> {
     let elements = expected_elements();
 
@@ -154,13 +155,12 @@ mod offset {
     pub const PROGRAM_ID: usize = 53;
     pub const CHAIN_ID: usize = 85;
     pub const RECEIVER: usize = 93;
-    pub const CONTEXT_ID: usize = 125;
-    pub const EPOCH_ID: usize = 157;
-    pub const FIRST_HANDLE: usize = 189;
-    pub const SECOND_HANDLE: usize = 221;
-    pub const TRANSPORT_KEY: usize = 253;
-    /// Two handles and an 800-byte transport key.
-    pub const TOTAL: usize = 1053;
+    pub const FIRST_HANDLE: usize = 125;
+    pub const SECOND_HANDLE: usize = 157;
+    pub const TRANSPORT_KEY: usize = 189;
+    pub const EXTRA_DATA: usize = 989;
+    /// Two handles, an 800-byte transport key and 4 bytes of extra_data.
+    pub const TOTAL: usize = 993;
 }
 
 // ---------------------------------------------------------------------------
@@ -202,8 +202,8 @@ fn element_layout_sits_at_its_frozen_offsets() {
     assert_eq!(&input[offset::DSEP_CALL..offset::COUNT], &FROZEN_DSEP);
     assert_eq!(
         &input[offset::COUNT..offset::SCHEME_TAG],
-        &9u64.to_le_bytes(),
-        "seven fixed elements plus two handles, little-endian per the KMS engine convention",
+        &8u64.to_le_bytes(),
+        "six fixed elements plus two handles, little-endian per the KMS engine convention",
     );
     assert_eq!(
         &input[offset::SCHEME_TAG..offset::PROGRAM_ID],
@@ -219,16 +219,8 @@ fn element_layout_sits_at_its_frozen_offsets() {
         "the chain id is big-endian, the form the handles embed",
     );
     assert_eq!(
-        &input[offset::RECEIVER..offset::CONTEXT_ID],
+        &input[offset::RECEIVER..offset::FIRST_HANDLE],
         &FROZEN_RECEIVER
-    );
-    assert_eq!(
-        &input[offset::CONTEXT_ID..offset::EPOCH_ID],
-        &FROZEN_CONTEXT_ID
-    );
-    assert_eq!(
-        &input[offset::EPOCH_ID..offset::FIRST_HANDLE],
-        &FROZEN_EPOCH_ID
     );
     assert_eq!(
         &input[offset::FIRST_HANDLE..offset::SECOND_HANDLE],
@@ -239,9 +231,10 @@ fn element_layout_sits_at_its_frozen_offsets() {
         &frozen_handle(0xa2),
     );
     assert_eq!(
-        &input[offset::TRANSPORT_KEY..],
+        &input[offset::TRANSPORT_KEY..offset::EXTRA_DATA],
         frozen_transport_key().as_slice()
     );
+    assert_eq!(&input[offset::EXTRA_DATA..], &FROZEN_EXTRA_DATA);
 }
 
 #[test]

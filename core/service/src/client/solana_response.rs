@@ -692,11 +692,9 @@ mod tests {
     const CHAIN_ID: u64 = (1 << 63) | 12_345;
     const PUBKEY: [u8; 32] = [0x11; 32];
     const PROGRAM_ID: [u8; 32] = [0x22; 32];
-    const CONTEXT_ID: [u8; 32] = [0x44; 32];
-    const EPOCH_ID: [u8; 32] = [0x55; 32];
-    /// The request's opaque `extra_data`. Non-empty on purpose: it is an input to the message an
-    /// external node signature commits to, so an all-empty fixture would let an implementation that
-    /// ignores the field pass by coincidence.
+    /// The request's opaque `extra_data`. Non-empty on purpose: it is a link input and an input to
+    /// the message an external node signature commits to, so an all-empty fixture would let an
+    /// implementation that ignores the field pass by coincidence.
     const EXTRA_DATA: [u8; 3] = [0x9a, 0x9b, 0x9c];
 
     /// A ciphertext handle on the canonical chain, `discriminator` filling every other byte so that
@@ -730,8 +728,6 @@ mod tests {
             user_pubkey: PUBKEY,
             host_chain_id: CHAIN_ID,
             verifying_program_id: PROGRAM_ID,
-            kms_context_id: CONTEXT_ID,
-            kms_epoch_id: EPOCH_ID,
             handles,
             enc_key: transport_key(0).2,
             response_domain: dummy_domain(),
@@ -1093,10 +1089,9 @@ mod tests {
         let binding = SolanaUserDecryptBinding::new(
             &PROGRAM_ID,
             &PUBKEY,
-            &CONTEXT_ID,
-            &EPOCH_ID,
             request.handles.iter().map(|handle| handle.as_slice()),
             &request.enc_key,
+            &request.extra_data,
         )
         .expect("a canonical request");
 
@@ -2131,10 +2126,6 @@ mod tests {
             host_chain_id: String,
             /// The on-chain verifying program id, 32 bytes hex.
             verifying_program_id: String,
-            /// The KMS context id, 32 bytes hex.
-            kms_context_id: String,
-            /// The KMS epoch id, 32 bytes hex.
-            kms_epoch_id: String,
             /// The request in the hex shape `process_user_decryption_resp_solana_from_js` expects.
             request: ParsedUserDecryptionRequestHex,
             /// The EIP-712 domain the responses' external signatures were produced under.
@@ -2193,8 +2184,6 @@ mod tests {
                 solana_user_pubkey: hex::encode(request.user_pubkey),
                 host_chain_id: request.host_chain_id.to_string(),
                 verifying_program_id: hex::encode(request.verifying_program_id),
-                kms_context_id: hex::encode(request.kms_context_id),
-                kms_epoch_id: hex::encode(request.kms_epoch_id),
                 request: request_hex,
                 eip712_domain: alloy_to_protobuf_domain(&request.response_domain)
                     .expect("the fixture domain converts"),

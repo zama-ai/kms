@@ -344,8 +344,7 @@ mod tests {
     const CHAIN_ID: u64 = SOLANA_CHAIN_TYPE_BIT | 12_345;
     const PROGRAM_ID: [u8; 32] = [0x22; 32];
     const RECEIVER: [u8; 32] = [0x33; 32];
-    const CONTEXT_ID: [u8; 32] = [0x44; 32];
-    const EPOCH_ID: [u8; 32] = [0x55; 32];
+    const EXTRA_DATA: [u8; 4] = [0x77; 4];
 
     /// A handle embedding `chain_id`, with `discriminator` filling every other byte so two
     /// handles of the same request are distinguishable.
@@ -362,17 +361,16 @@ mod tests {
         SolanaUserDecryptBinding::new(
             &PROGRAM_ID,
             &RECEIVER,
-            &CONTEXT_ID,
-            &EPOCH_ID,
             handles.iter().map(|handle| handle.as_slice()),
             &[0x66; 800],
+            &EXTRA_DATA,
         )
     }
 
     #[test]
     fn scheme_tag_is_specified_twenty_nine_bytes() {
-        // Length is part of the layout: every element before the transport key has a
-        // position-determined constant length, which is what makes the list hash injective.
+        // Length is part of the layout: every element before the trailing variable-length pair
+        // (transport key, extra data) has a position-determined constant length.
         assert_eq!(SOLANA_LINKER_SCHEME_TAG.len(), 29);
         assert_eq!(
             SOLANA_LINKER_SCHEME_TAG.as_slice(),
@@ -421,10 +419,9 @@ mod tests {
             let error = SolanaUserDecryptBinding::new(
                 &PROGRAM_ID,
                 &RECEIVER,
-                &CONTEXT_ID,
-                &EPOCH_ID,
                 std::iter::once(bytes),
                 &[0x66; 800],
+                &EXTRA_DATA,
             )
             .unwrap_err();
 
@@ -507,10 +504,9 @@ mod tests {
             let error = SolanaUserDecryptBinding::new(
                 &vec![0x22; actual],
                 &RECEIVER,
-                &CONTEXT_ID,
-                &EPOCH_ID,
                 std::iter::once(handle(CHAIN_ID, 1).as_slice()),
                 &[0x66; 800],
+                &EXTRA_DATA,
             )
             .unwrap_err();
 
@@ -529,10 +525,9 @@ mod tests {
             let error = SolanaUserDecryptBinding::new(
                 &PROGRAM_ID,
                 &vec![0x33; actual],
-                &CONTEXT_ID,
-                &EPOCH_ID,
                 std::iter::once(handle(CHAIN_ID, 1).as_slice()),
                 &[0x66; 800],
+                &EXTRA_DATA,
             )
             .unwrap_err();
 
@@ -544,39 +539,23 @@ mod tests {
     }
 
     #[test]
-    fn rejects_wrong_width_context_id() {
-        let error = SolanaUserDecryptBinding::new(
-            &PROGRAM_ID,
-            &RECEIVER,
-            &[0x44; 31],
-            &EPOCH_ID,
-            std::iter::once(handle(CHAIN_ID, 1).as_slice()),
-            &[0x66; 800],
-        )
-        .unwrap_err();
+    fn accepts_extra_data_of_any_length_including_empty() {
+        // Opaque bytes, bound verbatim: the binding never parses `extra_data` and puts no width
+        // rule on it, so the host contract can evolve what it carries without a KMS release.
+        for length in [0usize, 1, 32, 512] {
+            let binding = SolanaUserDecryptBinding::new(
+                &PROGRAM_ID,
+                &RECEIVER,
+                std::iter::once(handle(CHAIN_ID, 1).as_slice()),
+                &[0x66; 800],
+                &vec![0x77; length],
+            );
 
-        assert_eq!(
-            error,
-            SolanaUserDecryptBindingError::InvalidContextIdLength { actual: 31 },
-        );
-    }
-
-    #[test]
-    fn rejects_wrong_width_epoch_id() {
-        let error = SolanaUserDecryptBinding::new(
-            &PROGRAM_ID,
-            &RECEIVER,
-            &CONTEXT_ID,
-            &[0x55; 33],
-            std::iter::once(handle(CHAIN_ID, 1).as_slice()),
-            &[0x66; 800],
-        )
-        .unwrap_err();
-
-        assert_eq!(
-            error,
-            SolanaUserDecryptBindingError::InvalidEpochIdLength { actual: 33 },
-        );
+            assert!(
+                binding.is_ok(),
+                "extra_data is opaque and width-free (length {length})",
+            );
+        }
     }
 
     #[test]
@@ -588,10 +567,9 @@ mod tests {
             let binding = SolanaUserDecryptBinding::new(
                 &PROGRAM_ID,
                 &RECEIVER,
-                &CONTEXT_ID,
-                &EPOCH_ID,
                 std::iter::once(handle(CHAIN_ID, 1).as_slice()),
                 &vec![0x66; length],
+                &EXTRA_DATA,
             );
 
             assert!(

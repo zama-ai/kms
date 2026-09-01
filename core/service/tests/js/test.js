@@ -88,8 +88,6 @@ function solanaRequestFields(data) {
         user_pubkey: data.solana_user_pubkey,
         host_chain_id: data.host_chain_id,
         verifying_program_id: data.verifying_program_id,
-        kms_context_id: data.kms_context_id,
-        kms_epoch_id: data.kms_epoch_id,
     };
 }
 
@@ -205,8 +203,6 @@ test('solana chain ID crosses the WASM boundary as an exact decimal string', (_t
         user_pubkey: '11'.repeat(32),
         host_chain_id: solanaChainId.toString(),
         verifying_program_id: '22'.repeat(32),
-        kms_context_id: '33'.repeat(32),
-        kms_epoch_id: '44'.repeat(32),
     };
 
     // The rules run in order even with no responses: an invalid request reports its own problem.

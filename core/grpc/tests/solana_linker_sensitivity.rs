@@ -119,36 +119,34 @@ fn changing_chain_id_changes_link() {
 }
 
 #[test]
-fn changing_kms_context_changes_link() {
-    // The party set that produced the result. A response from a different context answers a
-    // different question, however similar the request looks.
+fn changing_extra_data_changes_link() {
+    // The request's host-side metadata rides through the KMS opaquely, but it is still part of
+    // what the client asked for: a response computed under different extra_data answers a
+    // different request.
     let canonical = Request::canonical();
     let mut other = Request::canonical();
-    other.kms_context_id[0] ^= 0xff;
+    other.extra_data[0] ^= 0xff;
 
     assert_ne!(canonical.link(), other.link());
 }
 
 #[test]
-fn changing_kms_epoch_changes_link() {
+fn emptying_extra_data_changes_link() {
+    // Length is bound, not just content — the length-prefixed encoding is what keeps an empty
+    // element from being absorbed by its neighbour.
     let canonical = Request::canonical();
-    let mut other = Request::canonical();
-    other.kms_epoch_id[0] ^= 0xff;
+    let mut emptied = Request::canonical();
+    emptied.extra_data.clear();
 
-    assert_ne!(canonical.link(), other.link());
+    assert_ne!(canonical.link(), emptied.link());
 }
 
 #[test]
 fn same_width_fields_are_not_interchangeable() {
-    // Five elements are 32 bytes wide. If any two were hashed in the wrong order, or one were
-    // read from the other's slot, this swap would leave the link unchanged.
+    // The program id, the receiver and every handle are 32 bytes wide. If any two were hashed in
+    // the wrong order, or one were read from the other's slot, this swap would leave the link
+    // unchanged.
     let canonical = Request::canonical();
-
-    let mut context_and_epoch_swapped = Request::canonical();
-    std::mem::swap(
-        &mut context_and_epoch_swapped.kms_context_id,
-        &mut context_and_epoch_swapped.kms_epoch_id,
-    );
 
     let mut program_and_receiver_swapped = Request::canonical();
     std::mem::swap(
@@ -156,12 +154,7 @@ fn same_width_fields_are_not_interchangeable() {
         &mut program_and_receiver_swapped.receiver_id,
     );
 
-    assert_ne!(canonical.link(), context_and_epoch_swapped.link());
     assert_ne!(canonical.link(), program_and_receiver_swapped.link());
-    assert_ne!(
-        context_and_epoch_swapped.link(),
-        program_and_receiver_swapped.link(),
-    );
 }
 
 #[test]
@@ -174,11 +167,11 @@ fn single_field_variant_links_are_unique() {
     let mut other_program = Request::canonical();
     other_program.verifying_program_id[0] ^= 0xff;
 
-    let mut other_context = Request::canonical();
-    other_context.kms_context_id[0] ^= 0xff;
+    let mut other_extra_data = Request::canonical();
+    other_extra_data.extra_data[0] ^= 0xff;
 
-    let mut other_epoch = Request::canonical();
-    other_epoch.kms_epoch_id[0] ^= 0xff;
+    let mut empty_extra_data = Request::canonical();
+    empty_extra_data.extra_data.clear();
 
     let mut other_transport = Request::canonical();
     other_transport.transport_key[0] ^= 0xff;
@@ -218,8 +211,8 @@ fn single_field_variant_links_are_unique() {
         ),
         ("other receiver", other_receiver.link()),
         ("other program", other_program.link()),
-        ("other context", other_context.link()),
-        ("other epoch", other_epoch.link()),
+        ("other extra_data", other_extra_data.link()),
+        ("empty extra_data", empty_extra_data.link()),
         ("other transport key", other_transport.link()),
     ]);
 }

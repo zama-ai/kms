@@ -295,12 +295,11 @@ mod tests {
         let binding = SolanaUserDecryptBinding::new(
             &PROGRAM_ID,
             &PUBKEY,
-            &CONTEXT_ID,
-            &EPOCH_ID,
             req.typed_ciphertexts
                 .iter()
                 .map(|ciphertext| ciphertext.external_handle.as_slice()),
             &req.enc_key,
+            &req.extra_data,
         )
         .expect("canonical");
 
@@ -389,45 +388,30 @@ mod tests {
     }
 
     #[test]
-    fn context_and_epoch_come_from_typed_fields() {
-        // They are what selected the keys that produced the result, so the link must move when
-        // they do.
-        let canonical = link_of(&solana_request());
-
-        let mut other_context = solana_request();
-        other_context.context_id = Some(request_id([0x66; 32]));
-
-        let mut other_epoch = solana_request();
-        other_epoch.epoch_id = Some(request_id([0x77; 32]));
-
-        assert_ne!(canonical, link_of(&other_context));
-        assert_ne!(canonical, link_of(&other_epoch));
-        assert_ne!(link_of(&other_context), link_of(&other_epoch));
-    }
-
-    #[test]
-    fn extra_data_is_never_parsed() {
+    fn extra_data_is_bound_verbatim_never_parsed() {
         // The KMS is agnostic to `extra_data` content by design, and the Solana path does not get
-        // its own stricter copy of that rule: the connector parses the signed container and
-        // forwards the typed values. A second parser here would be a second authority on what the
-        // wallet signed, disagreeing with the first at the worst possible moment.
-        let canonical = link_of(&solana_request());
+        // its own stricter copy of that rule: any bytes validate, because the connector — not this
+        // adapter — is the authority on what the wallet signed. But the bytes are bound: they are
+        // part of what the client asked for, so a response computed under different extra_data
+        // must surface as a link mismatch, exactly as on the EVM path where extra_data is an
+        // EIP-712 input.
+        let mut links = vec![("canonical", link_of(&solana_request()))];
 
-        for extra_data in [
-            vec![],
-            vec![0x00],
-            vec![0x02; 65],
-            vec![0xff; 3],
-            b"not a container at all".to_vec(),
+        for (name, extra_data) in [
+            ("one zero byte", vec![0x00]),
+            ("a kms-routing envelope", vec![0x02; 65]),
+            ("three bytes", vec![0xff; 3]),
+            ("arbitrary text", b"not a container at all".to_vec()),
         ] {
             let mut variant = solana_request();
-            variant.extra_data = extra_data.clone();
+            variant.extra_data = extra_data;
+            links.push((name, link_of(&variant)));
+        }
 
-            assert_eq!(
-                link_of(&variant),
-                canonical,
-                "extra_data {extra_data:?} changed the link",
-            );
+        for (i, (left_name, left)) in links.iter().enumerate() {
+            for (right_name, right) in &links[i + 1..] {
+                assert_ne!(left, right, "{left_name} and {right_name} share a link");
+            }
         }
     }
 

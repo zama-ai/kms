@@ -103,11 +103,14 @@ const RECEIVER_ID_HEX: &str = "c11a7cf8eb1cdfcb1bcb84b9d8314ddec3bb1410f0a95badd
 const VERIFYING_PROGRAM_ID_HEX: &str =
     "4cd3022dff504a675caf2d9b4f4014d0b3dc3ea17ffb97ba355cec5a933a30ee";
 
-/// The permit set's `kms_routing.kms_context_id`, as parsed from the signed `extra_data`.
-const KMS_CONTEXT_ID_HEX: &str = "bb801121e2ea198af189c9331dfc57f675802c35206f96a5964deeac39f79d18";
-
-/// The permit set's `kms_routing.kms_epoch_id`.
-const KMS_EPOCH_ID_HEX: &str = "7772d6a5c7fc28db485c51abbe18cba52b775baf1015b59ac363e5bf5827a3f2";
+/// The permit set's signed `extra_data`, verbatim: the kms-routing envelope — version byte `0x02`,
+/// then the KMS context id and the KMS epoch id, 32 bytes each. The linker binds these 65 bytes
+/// opaquely; the routing structure inside them is the permit layer's concern, not this scheme's.
+const REFERENCE_EXTRA_DATA_HEX: &str = concat!(
+    "02",
+    "bb801121e2ea198af189c9331dfc57f675802c35206f96a5964deeac39f79d18",
+    "7772d6a5c7fc28db485c51abbe18cba52b775baf1015b59ac363e5bf5827a3f2",
+);
 
 /// Derivation of the handle filler, so a regenerating implementation reproduces these bytes.
 ///
@@ -217,7 +220,7 @@ const CLUSTER_REGISTRY_NOTE: &str = concat!(
 /// Provenance of the shared inputs, written into the file so a reader of the JSON alone can tell
 /// which values are supposed to match the permit set and which are this layer's own.
 const SHARED_INPUTS: &str = concat!(
-    "Recipient, verifying program id, KMS context and epoch ids and the reference cluster are the ",
+    "Recipient, verifying program id, signed extra_data and the reference cluster are the ",
     "fhevm permit set's (test-fixtures/permit/permit_v1.json, record ",
     "reference-permit-two-domains): the two halves of the specification's fixture set bind the ",
     "same objects. Handles are this layer's own — the permit carries none. Two deliberate ",
@@ -380,14 +383,12 @@ struct Record {
     receiver_id: String,
     /// The verifying program id, hex.
     verifying_program_id: String,
-    /// The KMS context id, hex.
-    kms_context_id: String,
-    /// The KMS epoch id, hex.
-    kms_epoch_id: String,
     /// The ciphertext handles in request order, hex, duplicates preserved.
     handles: Vec<String>,
     /// Name of this record's transport key in the file's `transport_keys` table.
     transport_key: String,
+    /// The request's `extra_data`, hex, bound verbatim and possibly empty.
+    extra_data: String,
     /// The scheme tag this record's preimage opens with.
     scheme_tag: String,
     /// The call separator this record's preimage uses.
@@ -417,8 +418,7 @@ mod rule {
     pub const WRONG_TRANSPORT_KEY: &str = "wrong-transport-key";
     pub const WRONG_RECIPIENT: &str = "wrong-recipient";
     pub const WRONG_VERIFYING_PROGRAM_ID: &str = "wrong-verifying-program-id";
-    pub const WRONG_KMS_CONTEXT: &str = "wrong-kms-context";
-    pub const WRONG_KMS_EPOCH: &str = "wrong-kms-epoch";
+    pub const WRONG_EXTRA_DATA: &str = "wrong-extra-data";
     pub const WRONG_CHAIN_ID: &str = "wrong-chain-id";
     pub const DUPLICATED_HANDLE: &str = "duplicated-handle";
 
@@ -441,8 +441,7 @@ mod rule {
         WRONG_TRANSPORT_KEY,
         WRONG_RECIPIENT,
         WRONG_VERIFYING_PROGRAM_ID,
-        WRONG_KMS_CONTEXT,
-        WRONG_KMS_EPOCH,
+        WRONG_EXTRA_DATA,
         WRONG_CHAIN_ID,
         DUPLICATED_HANDLE,
         EMPTY_HANDLE_LIST,
@@ -563,10 +562,9 @@ struct Inputs {
     genesis: &'static str,
     verifying_program_id: Vec<u8>,
     receiver_id: Vec<u8>,
-    kms_context_id: Vec<u8>,
-    kms_epoch_id: Vec<u8>,
     handles: Vec<Vec<u8>>,
     transport_key: &'static str,
+    extra_data: Vec<u8>,
     declared_chain_id: Option<u64>,
 }
 
@@ -578,10 +576,9 @@ impl Inputs {
             genesis: REFERENCE_GENESIS,
             verifying_program_id: bytes(VERIFYING_PROGRAM_ID_HEX),
             receiver_id: bytes(RECEIVER_ID_HEX),
-            kms_context_id: bytes(KMS_CONTEXT_ID_HEX),
-            kms_epoch_id: bytes(KMS_EPOCH_ID_HEX),
             handles: vec![handle(chain_id, 1), handle(chain_id, 2)],
             transport_key: TRANSPORT_REFERENCE,
+            extra_data: bytes(REFERENCE_EXTRA_DATA_HEX),
             declared_chain_id: None,
         }
     }
@@ -605,10 +602,9 @@ impl Inputs {
         SolanaUserDecryptBinding::new(
             &self.verifying_program_id,
             &self.receiver_id,
-            &self.kms_context_id,
-            &self.kms_epoch_id,
             self.handles.iter().map(|handle| handle.as_slice()),
             &self.transport_key_bytes(),
+            &self.extra_data,
         )
     }
 }
@@ -716,11 +712,10 @@ fn foreign_scheme_bytes(inputs: &Inputs, scheme_tag: &str) -> (Vec<u8>, Vec<u8>)
         &inputs.verifying_program_id,
         &chain_id,
         &inputs.receiver_id,
-        &inputs.kms_context_id,
-        &inputs.kms_epoch_id,
     ];
     elements.extend(inputs.handles.iter().map(|handle| handle.as_slice()));
     elements.push(&transport_key);
+    elements.push(&inputs.extra_data);
 
     let mut hasher_input = Vec::new();
     hasher_input.extend_from_slice(&DSEP_LIST);
@@ -775,10 +770,9 @@ fn finish(draft: Draft) -> Record {
             .map(|declared| declared.to_string()),
         receiver_id: hex::encode(&draft.inputs.receiver_id),
         verifying_program_id: hex::encode(&draft.inputs.verifying_program_id),
-        kms_context_id: hex::encode(&draft.inputs.kms_context_id),
-        kms_epoch_id: hex::encode(&draft.inputs.kms_epoch_id),
         handles: draft.inputs.handles.iter().map(hex::encode).collect(),
         transport_key: draft.inputs.transport_key.to_string(),
+        extra_data: hex::encode(&draft.inputs.extra_data),
         scheme_tag: draft.scheme_tag,
         dsep: canonical_dsep(),
         linker_hasher_input: hasher_input,
@@ -797,8 +791,8 @@ fn drafts() -> Vec<Draft> {
         // --- valid ---------------------------------------------------------
         Draft::valid(
             "reference-two-handles",
-            "The reference request: the permit set's recipient, program id and KMS pair, two \
-             handles on the permit set's cluster, and the canonical transport key — the 869-byte \
+            "The reference request: the permit set's recipient, program id and signed extra_data, \
+             two handles on the permit set's cluster, and the canonical transport key — the 869-byte \
              serialized UnifiedPublicEncKey::MlKem512 container a KMS request actually carries. \
              Every record below that names a base names this one unless it says otherwise.",
             Inputs::reference(),
@@ -806,7 +800,7 @@ fn drafts() -> Vec<Draft> {
         Draft::valid(
             "single-handle",
             "One handle. Base for the duplication record, and the smallest element count the \
-             construction admits (8 = 7 + 1).",
+             construction admits (7 = 6 + 1).",
             Inputs::reference().with_handles(vec![h(1)]),
         ),
         Draft::valid(
@@ -819,7 +813,7 @@ fn drafts() -> Vec<Draft> {
         ),
         Draft::valid(
             "eight-handles",
-            "A batch: element count 15 = 7 + 8, well past a single-byte count, so a consumer that \
+            "A batch: element count 14 = 6 + 8, well past a single-byte count, so a consumer that \
              wrote the count as anything narrower than u64 little-endian still agrees here.",
             Inputs::reference().with_handles((1..=8).map(h).collect()),
         ),
@@ -903,27 +897,31 @@ fn drafts() -> Vec<Draft> {
             },
         ),
         Draft::invalid(
-            "wrong-kms-context",
-            "The party set that produced the result. A response from a different context answers a \
-             different question, however similar the request looks.",
+            "wrong-extra-data",
+            "The request's host-side metadata — here the permit set's kms-routing envelope, with \
+             one byte flipped inside the context id it carries. The linker never parses these \
+             bytes, but it binds them: a response computed under different extra_data answers a \
+             different request, so a routing substitution surfaces as a link mismatch.",
             VectorClass::LinkDivergence,
-            rule::WRONG_KMS_CONTEXT,
+            rule::WRONG_EXTRA_DATA,
             "reference-two-handles",
-            "the KMS context id's first byte flipped",
+            "one byte of the extra_data flipped",
             Inputs {
-                kms_context_id: flip_first(&bytes(KMS_CONTEXT_ID_HEX)),
+                extra_data: flip_first(&bytes(REFERENCE_EXTRA_DATA_HEX)),
                 ..Inputs::reference()
             },
         ),
         Draft::invalid(
-            "wrong-kms-epoch",
-            "The share generation. Same context, different epoch, different result.",
+            "emptied-extra-data",
+            "The same request with its extra_data removed. Length is bound, not just content: the \
+             length-prefixed encoding keeps an empty element from being absorbed by its neighbour, \
+             and this record is the vector that pins it.",
             VectorClass::LinkDivergence,
-            rule::WRONG_KMS_EPOCH,
+            rule::WRONG_EXTRA_DATA,
             "reference-two-handles",
-            "the KMS epoch id's first byte flipped",
+            "the extra_data emptied",
             Inputs {
-                kms_epoch_id: flip_first(&bytes(KMS_EPOCH_ID_HEX)),
+                extra_data: Vec::new(),
                 ..Inputs::reference()
             },
         ),
@@ -1038,30 +1036,6 @@ fn drafts() -> Vec<Draft> {
             "the verifying program id extended to 33 bytes",
             Inputs {
                 verifying_program_id: extend_by_one(&bytes(VERIFYING_PROGRAM_ID_HEX)),
-                ..Inputs::reference()
-            },
-        ),
-        Draft::invalid(
-            "kms-context-id-of-wrong-width",
-            "A 31-byte KMS context id.",
-            VectorClass::ConstructionReject,
-            rule::IDENTITY_WIDTH,
-            "reference-two-handles",
-            "the KMS context id truncated to 31 bytes",
-            Inputs {
-                kms_context_id: bytes(KMS_CONTEXT_ID_HEX)[..31].to_vec(),
-                ..Inputs::reference()
-            },
-        ),
-        Draft::invalid(
-            "kms-epoch-id-of-wrong-width",
-            "A 33-byte KMS epoch id.",
-            VectorClass::ConstructionReject,
-            rule::IDENTITY_WIDTH,
-            "reference-two-handles",
-            "the KMS epoch id extended to 33 bytes",
-            Inputs {
-                kms_epoch_id: extend_by_one(&bytes(KMS_EPOCH_ID_HEX)),
                 ..Inputs::reference()
             },
         ),
@@ -1268,10 +1242,9 @@ impl Record {
         SolanaUserDecryptBinding::new(
             &hex::decode(&self.verifying_program_id).expect("hex"),
             &hex::decode(&self.receiver_id).expect("hex"),
-            &hex::decode(&self.kms_context_id).expect("hex"),
-            &hex::decode(&self.kms_epoch_id).expect("hex"),
             handles.iter().map(|handle| handle.as_slice()),
             &file.transport_key_bytes(self),
+            &hex::decode(&self.extra_data).expect("hex"),
         )
     }
 
@@ -1309,10 +1282,7 @@ fn rejection_matches(rule: &str, error: &SolanaUserDecryptBindingError) -> bool 
         ),
         rule::IDENTITY_WIDTH => matches!(
             error,
-            Error::InvalidProgramIdLength { .. }
-                | Error::InvalidReceiverLength { .. }
-                | Error::InvalidContextIdLength { .. }
-                | Error::InvalidEpochIdLength { .. }
+            Error::InvalidProgramIdLength { .. } | Error::InvalidReceiverLength { .. }
         ),
         _ => false,
     }
@@ -1769,8 +1739,7 @@ fn reference_cluster_matches_permit_set() {
     assert_eq!(reference.genesis_hash_bytes, PERMIT_GENESIS_HASH_HEX);
     assert_eq!(reference.receiver_id, RECEIVER_ID_HEX);
     assert_eq!(reference.verifying_program_id, VERIFYING_PROGRAM_ID_HEX);
-    assert_eq!(reference.kms_context_id, KMS_CONTEXT_ID_HEX);
-    assert_eq!(reference.kms_epoch_id, KMS_EPOCH_ID_HEX);
+    assert_eq!(reference.extra_data, REFERENCE_EXTRA_DATA_HEX);
     assert_eq!(reference.transport_key, TRANSPORT_REFERENCE);
     assert_eq!(
         file.transport_keys
