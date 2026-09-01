@@ -48,9 +48,6 @@ impl<'a> UserDecTrustedValidationContext<'a> {
     pub fn num_parties(&self) -> usize {
         self.server_addresses.len()
     }
-    pub fn threshold(&self) -> usize {
-        self.threshold
-    }
 }
 
 impl<'a> UserDecTrustedValidationContext<'a> {
