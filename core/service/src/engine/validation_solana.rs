@@ -208,6 +208,36 @@ mod tests {
     }
 
     #[test]
+    fn solana_request_signing_schemes_resolve_like_evm() {
+        // The validator hands the caller an explicit choice of response signing schemes, and it
+        // happens in `validate_user_decrypt_req` identically for both receivers: requested
+        // schemes are validated and de-duplicated, and an unknown scheme number fails the whole
+        // request. Sealing (who can open the result) and signing (which schemes the response
+        // carries) are orthogonal.
+        let mut req = solana_request();
+        req.signing_schemes = vec![
+            kms_grpc::kms::v1::SigningSchemeType::Ed25519 as i32,
+            kms_grpc::kms::v1::SigningSchemeType::Ecdsa256k1 as i32,
+            kms_grpc::kms::v1::SigningSchemeType::Ed25519 as i32,
+        ];
+        let (.., schemes) = crate::engine::validation::validate_user_decrypt_req(&req)
+            .expect("a canonical Solana request with valid schemes validates");
+        assert_eq!(
+            schemes,
+            vec![
+                crate::cryptography::signing::SigningSchemeType::Ed25519,
+                crate::cryptography::signing::SigningSchemeType::Ecdsa256k1,
+            ]
+        );
+
+        req.signing_schemes = vec![999];
+        assert!(
+            crate::engine::validation::validate_user_decrypt_req(&req).is_err(),
+            "an unknown scheme number fails the request",
+        );
+    }
+
+    #[test]
     fn dispatch_table_is_closed() {
         // The dispatch field (`solana_pubkey`) and the load-bearing invariant (bit 63 of the
         // chain id embedded in every handle) are pinned together, in all four combinations, so a
