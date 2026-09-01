@@ -158,8 +158,13 @@ where
 /// byte-for-byte identical, so the metadata is never left without at least one intact copy.
 /// If the read-back does not match, the unverified copy is deleted again and the migration fails:
 /// leaving it behind would poison the storage, because readers resolve CRS metadata from the
-/// epoch-scoped path and a later run of this migration would classify the pair as a conflict and
-/// skip it indefinitely.
+/// epoch-scoped path.
+///
+/// If an entry already exists at the target epoch and *differs* from the flat one, the migration
+/// fails without touching either copy. There is no way to tell which of the two is authoritative,
+/// and this runs at boot, so aborting is preferable to starting the node against whichever copy
+/// the readers happen to resolve. An identical entry is treated as a completed earlier run and the
+/// flat copy is removed.
 ///
 /// Public CRS material ([`kms_grpc::rpc_types::PubDataType::CRS`]) is deliberately left alone:
 /// public data is shared across epochs and is stored flat by design.
@@ -168,7 +173,8 @@ where
 /// * `Ok(migrated_count)` - Number of CRS entries copied to the epoch-aware path and then removed
 ///   from the flat path.
 /// * `Err(...)` - If reading the legacy entry, writing the copy, verifying the copy, or deleting
-///   the flat entry fails. The flat entry is always left intact when this happens.
+///   the flat entry fails, or if a conflicting entry exists at the target epoch. The flat entry is
+///   always left intact when this happens.
 async fn migrate_crs_to_0_14_2<PrivS>(priv_storage: &mut PrivS) -> anyhow::Result<usize>
 where
     PrivS: StorageExt + Sync + Send,
@@ -203,24 +209,28 @@ where
         {
             // Something is already there, e.g. an earlier run of this migration that was
             // interrupted between the write and the delete. Drop the flat copy only when the two
-            // agree; otherwise keep both, because deleting the flat copy cannot be undone.
+            // agree; deleting the flat copy cannot be undone.
             let existing_data = priv_storage
                 .load_bytes_at_epoch(&crs_id, &target_epoch_id, &data_type_str)
                 .await?;
-            if existing_data == legacy_data {
-                // Now that we know it's safe to do so, delete the legacy data      
-                priv_storage.delete_data(&crs_id, &data_type_str).await?;
-                tracing::info!(
-                    "Legacy {data_type_str} {crs_id} was already migrated to epoch {target_epoch_id}, removed the flat copy"
-                );
-            } else {
-                tracing::error!(
+            if existing_data != legacy_data {
+                // Two different CRS metadata entries claim the same id and there is no way to tell
+                // which one is authoritative. Abort rather than pick one: this migration runs at
+                // boot, and starting the node would leave it serving whichever copy the readers
+                // happen to resolve. Neither copy is touched, so the operator can inspect both.
+                anyhow::bail!(
                     "Legacy {data_type_str} {crs_id} ({} bytes) differs from the entry already \
-stored at epoch {target_epoch_id} ({} bytes). Keeping both copies; this needs manual resolution.",
+stored at epoch {target_epoch_id} ({} bytes). Refusing to start: both copies were kept and this \
+conflict needs manual resolution.",
                     legacy_data.len(),
                     existing_data.len(),
                 );
             }
+            // Now that we know it's safe to do so, delete the legacy data
+            priv_storage.delete_data(&crs_id, &data_type_str).await?;
+            tracing::info!(
+                "Legacy {data_type_str} {crs_id} was already migrated to epoch {target_epoch_id}, removed the flat copy"
+            );
             continue;
         }
 
@@ -2406,11 +2416,9 @@ mod tests {
         );
     }
 
-    /// A *different* entry already sits at the epoch path: nothing is overwritten and, crucially,
-    /// the flat copy is kept.
-    pub async fn test_migrate_crs_keeps_both_on_conflict<S: StorageExt + Sync + Send>(
-        storage: &mut S,
-    ) {
+    /// A *different* entry already sits at the epoch path. The migration must abort so the node
+    /// does not boot in an undefined state, and neither copy may be touched.
+    pub async fn test_migrate_crs_aborts_on_conflict<S: StorageExt + Sync + Send>(storage: &mut S) {
         let crs_id = crs_test_id("c5");
         let data_type = PrivDataType::CrsInfo.to_string();
         let target_epoch_id: EpochId = *DEFAULT_EPOCH_ID;
@@ -2426,7 +2434,13 @@ mod tests {
             .await
             .unwrap();
 
-        assert_eq!(migrate_crs_to_0_14_2(storage).await.unwrap(), 0);
+        let err = migrate_crs_to_0_14_2(storage)
+            .await
+            .expect_err("a conflicting epoch entry must abort the migration");
+        assert!(
+            err.to_string().contains("needs manual resolution"),
+            "unexpected error: {err}"
+        );
 
         // Both copies survive untouched so a human can resolve the conflict.
         assert_eq!(
@@ -2539,8 +2553,8 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_migrate_crs_keeps_both_on_conflict_ram() {
-        test_migrate_crs_keeps_both_on_conflict(&mut RamStorage::new()).await;
+    async fn test_migrate_crs_aborts_on_conflict_ram() {
+        test_migrate_crs_aborts_on_conflict(&mut RamStorage::new()).await;
     }
 
     #[tokio::test]
@@ -2563,10 +2577,10 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_migrate_crs_keeps_both_on_conflict_file() {
+    async fn test_migrate_crs_aborts_on_conflict_file() {
         let temp_dir = tempfile::tempdir().unwrap();
         let mut storage = FileStorage::new(Some(temp_dir.path()), StorageType::PRIV, None).unwrap();
-        test_migrate_crs_keeps_both_on_conflict(&mut storage).await;
+        test_migrate_crs_aborts_on_conflict(&mut storage).await;
     }
 
     /// The copy must be verified before the flat entry is deleted. A silent short write on the
@@ -2731,13 +2745,13 @@ mod tests {
         }
 
         #[tokio::test]
-        async fn test_migrate_crs_keeps_both_on_conflict_s3() {
+        async fn test_migrate_crs_aborts_on_conflict_s3() {
             let mut storage = create_s3_storage(
                 StorageType::PRIV,
-                std::stringify!(test_migrate_crs_keeps_both_on_conflict_s3),
+                std::stringify!(test_migrate_crs_aborts_on_conflict_s3),
             )
             .await;
-            test_migrate_crs_keeps_both_on_conflict(&mut storage).await;
+            test_migrate_crs_aborts_on_conflict(&mut storage).await;
         }
 
         #[tokio::test]
