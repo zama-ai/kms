@@ -1,9 +1,12 @@
 //! The root secret a KMS node's per-scheme signing keys are derived from.
 //!
-//! Every non-ECDSA signing key descends from a [`RootSigningSeed`] drawn from the
-//! rng. This is deliberately *not* derived from the node's ECDSA signing key:
-//! the post-quantum keys exist to outlive secp256k1, so recovering the ECDSA
-//! scalar must not reveal them.
+//! Every signing key *may* descend from a [`RootSigningSeed`] drawn from the
+//! rng. This is deliberately *not* derived from the node's ECDSA signing key,
+//! if it were, then breaking ECDSA would compromise all other signing keys as well.
+//!
+//! Currently we have a separate ECDSA (for legacy support) and derive all non-ECDSA
+//! keys from the root signing seed. However, in the future, once parties need to roll
+//! their ECDSA keys, the ECDSA key will also be derived from the root signing seed.
 //!
 //! Long term the ECDSA key will eventually be derived from the seed too.
 //!
