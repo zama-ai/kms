@@ -12,7 +12,7 @@
 use prost::Message;
 use prost::encoding::{WireType, encode_key, encode_varint};
 
-use kms_grpc::kms::v1::UserDecryptionRequest;
+use kms_grpc::kms::v1::{SigningMetadata, UserDecryptionRequest};
 
 /// `(number, name)` of every field of `UserDecryptionRequest`, in schema order.
 const FROZEN_FIELDS: &[(u32, &str)] = &[
@@ -26,18 +26,17 @@ const FROZEN_FIELDS: &[(u32, &str)] = &[
     (8, "context_id"),
     (9, "epoch_id"),
     (10, "signing_schemes"),
-    (11, "solana_pubkey"),
-    (12, "solana_verifying_program_id"),
+    (13, "signing_metadata"),
 ];
 
-/// Field numbers that have never been used, and must not be — currently none.
+/// Field numbers that must never be used.
 ///
-/// 10 was once reserved here: it was skipped when the Solana identity was added, on the assumption
-/// that nothing would claim it. `signing_schemes` then claimed it on `main`. That allocation wins,
-/// and the reservation does not survive: the gap only ever existed on an unreleased branch, while
-/// 10 is released as `signing_schemes` in the mixed-version population this file exists to protect.
-/// The Solana fields keep 11 and 12, so no released number changes meaning.
-const RESERVED_GAPS: &[u32] = &[];
+/// 11 and 12 briefly carried the Solana identity and program id as loose bytes fields, on this
+/// branch only. They were replaced by the `signing_metadata` envelope at 13 before any release,
+/// and are reserved in the schema: bytes and messages share a wire type, so a reused number would
+/// decode on an old party as whatever it expected there. (10 was once reserved here too; it was
+/// claimed by `signing_schemes` on `main` before this branch shipped, and that allocation wins.)
+const RESERVED_GAPS: &[u32] = &[11, 12];
 
 fn schema() -> String {
     let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("proto/kms.v1.proto");
@@ -109,8 +108,7 @@ fn reserved_gaps_stay_unfilled() {
 fn solana_fields_survive_protobuf_round_trip() {
     let request = UserDecryptionRequest {
         client_address: String::new(),
-        solana_pubkey: Some(vec![0x11; 32]),
-        solana_verifying_program_id: Some(vec![0x22; 32]),
+        signing_metadata: vec![SigningMetadata::solana(vec![0x11; 32], vec![0x22; 32])],
         ..Default::default()
     };
 
@@ -132,8 +130,7 @@ fn evm_request_leaves_solana_fields_unset() {
     let decoded =
         UserDecryptionRequest::decode(request.encode_to_vec().as_slice()).expect("decode");
 
-    assert_eq!(decoded.solana_pubkey, None);
-    assert_eq!(decoded.solana_verifying_program_id, None);
+    assert_eq!(decoded.signing_metadata, vec![]);
     assert_eq!(decoded.client_address, request.client_address);
 }
 

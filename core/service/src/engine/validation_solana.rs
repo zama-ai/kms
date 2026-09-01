@@ -191,8 +191,10 @@ mod tests {
             extra_data: vec![],
             context_id: Some(request_id(CONTEXT_ID)),
             epoch_id: Some(request_id(EPOCH_ID)),
-            solana_pubkey: Some(PUBKEY.to_vec()),
-            solana_verifying_program_id: Some(PROGRAM_ID.to_vec()),
+            signing_metadata: vec![kms_grpc::kms::v1::SigningMetadata::solana(
+                PUBKEY.to_vec(),
+                PROGRAM_ID.to_vec(),
+            )],
             // Empty: the Solana path is authenticated by the legacy scalar signature fields, and
             // scheme selection is orthogonal to who the result is sealed to.
             signing_schemes: vec![],
@@ -214,8 +216,7 @@ mod tests {
     fn evm_request_left_to_evm_path() {
         // The adapter's first duty is to not exist for EVM traffic.
         let mut evm = solana_request();
-        evm.solana_pubkey = None;
-        evm.solana_verifying_program_id = None;
+        evm.signing_metadata = vec![];
         evm.client_address = "0xdadB0d80178819F2319190D340ce9A924f783711".to_string();
 
         assert!(validate_solana_request(&evm).expect("no error").is_none());
@@ -253,7 +254,7 @@ mod tests {
 
     #[test]
     fn dispatch_table_is_closed() {
-        // The dispatch field (`solana_pubkey`) and the load-bearing invariant (bit 63 of the
+        // The dispatch field (`signing_metadata`) and the load-bearing invariant (bit 63 of the
         // chain id embedded in every handle) are pinned together, in all four combinations, so a
         // request cannot reach the wrong linker by carrying the wrong field. The two rejecting
         // cells live in two crates — `validate_solana_request` here and `compute_link_checked` in
@@ -278,8 +279,7 @@ mod tests {
 
         // pubkey absent + EVM-kind handles: left to the EVM path, which accepts them.
         let mut evm = solana_request();
-        evm.solana_pubkey = None;
-        evm.solana_verifying_program_id = None;
+        evm.signing_metadata = vec![];
         evm.client_address = "0xdadB0d80178819F2319190D340ce9A924f783711".to_string();
         evm.typed_ciphertexts
             .iter_mut()
@@ -369,7 +369,8 @@ mod tests {
     fn wrong_width_identity_rejected() {
         for width in [20usize, 31, 33] {
             let mut wrong = solana_request();
-            wrong.solana_pubkey = Some(vec![0x11; width]);
+            wrong.signing_metadata =
+                vec![kms_grpc::kms::v1::SigningMetadata::solana(vec![0x11; width], PROGRAM_ID)];
 
             assert!(
                 error_of(&wrong).contains("32"),
@@ -381,36 +382,72 @@ mod tests {
     #[test]
     fn request_without_program_id_rejected() {
         // Half the deployment domain: without it the link would commit to a deployment the
-        // request never named, and a permit signed for one program would answer for another.
+        // request never named, and a permit signed for one program would answer for another. In
+        // proto3 an unset bytes field and an empty one are the same wire, so "missing" is an
+        // empty program id in the envelope, and the width check is what refuses it.
         let mut missing = solana_request();
-        missing.solana_verifying_program_id = None;
+        missing.signing_metadata = vec![kms_grpc::kms::v1::SigningMetadata::solana(
+            PUBKEY.to_vec(),
+            Vec::new(),
+        )];
 
         assert!(!error_of(&missing).is_empty());
-    }
-
-    #[test]
-    fn program_id_without_pubkey_rejected() {
-        // The mirror of the missing-program-id case: a request carrying the other Solana field
-        // without the identity is contradictory, and must fail here rather than be silently
-        // reinterpreted as EVM traffic with the field ignored.
-        let mut contradictory = solana_request();
-        contradictory.solana_pubkey = None;
-        contradictory.client_address = "0xdadB0d80178819F2319190D340ce9A924f783711".to_string();
-
-        assert!(
-            error_of(&contradictory).contains("solana_verifying_program_id"),
-            "the rejection must name the field that made the request contradictory",
-        );
     }
 
     #[test]
     fn wrong_width_program_id_rejected() {
         for width in [20usize, 31, 33] {
             let mut wrong = solana_request();
-            wrong.solana_verifying_program_id = Some(vec![0x22; width]);
+            wrong.signing_metadata =
+                vec![kms_grpc::kms::v1::SigningMetadata::solana(PUBKEY, vec![0x22; width])];
 
             assert!(!error_of(&wrong).is_empty(), "width {width}");
         }
+    }
+
+    #[test]
+    fn second_metadata_entry_rejected() {
+        // The field is repeated for a future batch of host requests; this version accepts
+        // exactly one entry, and more must fail loudly rather than have one picked.
+        let mut batched = solana_request();
+        batched
+            .signing_metadata
+            .push(kms_grpc::kms::v1::SigningMetadata::solana(PUBKEY, PROGRAM_ID));
+
+        assert!(
+            error_of(&batched).contains("exactly one"),
+            "two entries must be refused by the one-entry rule",
+        );
+    }
+
+    #[test]
+    fn ethereum_variant_rejected() {
+        // EVM requests leave the list empty — the variant is declared empty and carries nothing
+        // to verify against — so carrying it is a mistake to surface, never an EVM fallback.
+        let mut ethereum = solana_request();
+        ethereum.signing_metadata = vec![kms_grpc::kms::v1::SigningMetadata {
+            metadata: Some(kms_grpc::kms::v1::signing_metadata::Metadata::Ethereum(
+                kms_grpc::kms::v1::EthereumMetadata {},
+            )),
+        }];
+
+        assert!(
+            error_of(&ethereum).contains("ethereum"),
+            "the rejection must name the variant that cannot be dispatched",
+        );
+    }
+
+    #[test]
+    fn unset_variant_rejected() {
+        // An entry whose oneof is unset is what a newer producer's unknown variant decodes to on
+        // this version: refusing it is the mixed-version safety the envelope exists for.
+        let mut undispatchable = solana_request();
+        undispatchable.signing_metadata = vec![kms_grpc::kms::v1::SigningMetadata { metadata: None }];
+
+        assert!(
+            error_of(&undispatchable).contains("no host variant"),
+            "an entry naming no variant must be refused, not guessed at",
+        );
     }
 
     #[test]

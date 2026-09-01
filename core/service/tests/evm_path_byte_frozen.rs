@@ -88,8 +88,7 @@ fn frozen_request() -> UserDecryptionRequest {
         extra_data: vec![],
         context_id: None,
         epoch_id: None,
-        solana_pubkey: None,
-        solana_verifying_program_id: None,
+        signing_metadata: vec![],
         // Empty, so this fixture keeps exercising the legacy scalar signature fields the frozen
         // digests were taken over.
         signing_schemes: vec![],
@@ -126,8 +125,10 @@ fn evm_linker_digest_ignores_solana_request_fields() {
     // receives a request carrying them — including one that predates them and ignores them as
     // unknown protobuf fields — computes the same EVM bytes as one that does not.
     let mut with_solana_fields = frozen_request();
-    with_solana_fields.solana_pubkey = Some(vec![0x11; 32]);
-    with_solana_fields.solana_verifying_program_id = Some(vec![0x22; 32]);
+    with_solana_fields.signing_metadata = vec![kms_grpc::kms::v1::SigningMetadata::solana(
+        vec![0x11; 32],
+        vec![0x22; 32],
+    )];
     with_solana_fields.extra_data = vec![0x02; 65];
     with_solana_fields.context_id = Some(kms_grpc::kms::v1::RequestId {
         request_id: "a".repeat(64),
