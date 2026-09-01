@@ -745,15 +745,17 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::engine::base::CrsGenMetadata;
     use crate::engine::context::{ContextInfo, NodeInfo, SoftwareVersion};
     use crate::vault::storage::file::FileStorage;
     use crate::vault::storage::ram::{self, FailingRamStorage, RamStorage};
     use crate::vault::storage::{
-        Storage, StorageExt, StorageReader, StorageReaderExt, StorageType, store_context_at_id,
+        Storage, StorageExt, StorageReader, StorageReaderExt, StorageType,
+        read_all_data_from_all_epochs_versioned, store_context_at_id,
         store_versioned_at_request_id,
     };
     use kms_grpc::RequestId;
-    use std::collections::HashSet;
+    use std::collections::HashMap;
     use std::str::FromStr;
 
     /// Test migration of threshold FHE keys (FheKeyInfo)
@@ -2501,34 +2503,43 @@ mod tests {
         let crs_id = crs_test_id("cb");
         let data_type = PrivDataType::CrsInfo.to_string();
         let target_epoch_id: EpochId = *DEFAULT_EPOCH_ID;
+        // A real, versioned `CrsGenMetadata`, so the assertions below cover deserialization and
+        // not just the presence of some bytes at the right path.
+        let crs_meta = CrsGenMetadata::new(
+            crs_id,
+            vec![7u8; 32],
+            128,
+            vec![9u8; 8],
+            b"startup-loader-fixture".to_vec(),
+        );
 
-        storage
-            .store_bytes(&[1, 2, 3], &crs_id, &data_type)
+        // Pre-0.13 layout: metadata directly under the data type, with no epoch component.
+        store_versioned_at_request_id(storage, &crs_id, &crs_meta, &data_type)
             .await
             .unwrap();
 
-        // Before: the loader's enumeration finds nothing, even though the entry exists.
-        assert!(
-            storage
-                .all_epoch_ids_for_data(&data_type)
+        // Before: the loader reads nothing at all, even though the entry exists on disk.
+        let before: HashMap<(RequestId, EpochId), CrsGenMetadata> =
+            read_all_data_from_all_epochs_versioned(storage, &data_type)
                 .await
-                .unwrap()
-                .is_empty()
+                .unwrap();
+        assert!(
+            before.is_empty(),
+            "the flat entry must be invisible to the startup loader before migrating"
         );
 
         assert_eq!(migrate_crs_to_0_14_2(storage).await.unwrap(), 1);
 
-        // After: the entry is enumerated under the default epoch.
-        assert_eq!(
-            storage.all_epoch_ids_for_data(&data_type).await.unwrap(),
-            HashSet::from([target_epoch_id])
-        );
-        assert_eq!(
-            storage
-                .all_data_ids_at_epoch(&target_epoch_id, &data_type)
+        // After: the loader finds it under the default epoch and deserializes it unchanged.
+        let after: HashMap<(RequestId, EpochId), CrsGenMetadata> =
+            read_all_data_from_all_epochs_versioned(storage, &data_type)
                 .await
-                .unwrap(),
-            HashSet::from([crs_id])
+                .unwrap();
+        assert_eq!(after.len(), 1);
+        assert_eq!(
+            after.get(&(crs_id, target_epoch_id)),
+            Some(&crs_meta),
+            "migrated CRS metadata must round-trip byte-for-byte through the loader"
         );
     }
 
