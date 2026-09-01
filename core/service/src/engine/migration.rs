@@ -141,40 +141,32 @@ where
 
 /// Copy private CRS metadata from the legacy flat path to the epoch-aware path.
 ///
-/// Before v0.13, private CRS metadata was stored at `<prefix>/CrsInfo/<crs_id>`, with no epoch
-/// component. The 0.13 migrations moved every other private data type to the epoch-aware layout
-/// `<prefix>/<data_type>/<epoch_id>/<data_id>` but never covered [`PrivDataType::CrsInfo`], so a
-/// storage created before v0.13 keeps a flat CRS entry indefinitely. Without an epoch-scoped copy
-/// the CRS is invisible to the startup loader, which enumerates epochs only, and to
-/// `purge_epoch_material`. Installations created on v0.13 or later are unaffected, because CRS
-/// generation has written epoch-scoped data since then.
+/// Before v0.13, private CRS metadata was stored at `<prefix>/CrsInfo/<crs_id>` with no epoch
+/// component. The 0.13 migrations moved every other private data type to
+/// `<prefix>/<data_type>/<epoch_id>/<data_id>` but never covered [`PrivDataType::CrsInfo`], leaving
+/// pre-0.13 storages with a CRS that the startup loader and `purge_epoch_material` cannot see,
+/// since both enumerate epochs only. Copies go under [`DEFAULT_EPOCH_ID`], where the 0.13
+/// migrations put the FHE key material. Storages created on v0.13 or later have nothing to copy.
 ///
-/// Copies are placed under [`DEFAULT_EPOCH_ID`], which is where the 0.13 migrations put the FHE
-/// key material.
+/// **The legacy entry is deliberately kept**, so the node can be downgraded to a release that
+/// reads the flat path; that release then sees the CRS frozen as of this migration. This is only
+/// safe because `write_all` scopes its duplicate check to the path being written, so the retained
+/// entry does not block later epoch-scoped writes such as resharing.
 ///
-/// **The legacy entry is deliberately kept.** Leaving it in place means the node can still be
-/// downgraded to a release that reads the flat path; that older release then sees the CRS frozen
-/// as of this migration, which is accepted. Retaining it is only safe because `write_all` scopes
-/// its duplicate check to the path being written, so the legacy entry does not block later
-/// epoch-scoped writes such as resharing.
+/// Runs at boot, so it fails loudly rather than leaving the node in an ambiguous state. The copy is
+/// read back byte-for-byte and rolled back if it does not match, since readers resolve CRS metadata
+/// from the epoch-scoped path. An entry already at the target epoch that *differs* from the legacy
+/// one aborts without touching either copy — there is no way to tell which is authoritative. An
+/// identical entry means an earlier run already copied it, and is a no-op.
 ///
-/// The copy is read back byte-for-byte before it is accepted. If the read-back does not match, the
-/// unverified copy is deleted again and the migration fails: leaving it behind would poison the
-/// storage, because readers resolve CRS metadata from the epoch-scoped path.
-///
-/// If an entry already exists at the target epoch and *differs* from the legacy one, the migration
-/// fails without touching either copy. There is no way to tell which is authoritative, and this
-/// runs at boot, so aborting is preferable to starting the node against whichever copy the readers
-/// happen to resolve. An identical entry means an earlier run already copied it, and is a no-op.
-///
-/// Public CRS material ([`kms_grpc::rpc_types::PubDataType::CRS`]) is deliberately left alone:
-/// public data is shared across epochs and is stored flat by design.
+/// Public CRS material ([`kms_grpc::rpc_types::PubDataType::CRS`]) is left alone: public data is
+/// shared across epochs and is stored flat by design.
 ///
 /// # Returns
-/// * `Ok(copied_count)` - Number of CRS entries newly copied to the epoch-aware path. Entries an
-///   earlier run already copied are not counted, so a repeat run on a migrated storage returns 0.
-/// * `Err(...)` - If reading the legacy entry, writing the copy or verifying the copy fails, or if
-///   a conflicting entry exists at the target epoch. The legacy entry is never modified.
+/// * `Ok(copied_count)` - Entries newly copied. Entries an earlier run already copied are not
+///   counted, so a repeat run on a migrated storage returns 0.
+/// * `Err(...)` - Read, write or verification failure, or a conflicting entry at the target epoch.
+///   The legacy entry is never modified.
 async fn migrate_crs_to_0_14_2<PrivS>(priv_storage: &mut PrivS) -> anyhow::Result<usize>
 where
     PrivS: StorageExt + Sync + Send,
@@ -182,8 +174,7 @@ where
     let data_type_str = PrivDataType::CrsInfo.to_string();
     let target_epoch_id: EpochId = *DEFAULT_EPOCH_ID;
 
-    // Only entries directly under the data type directory are legacy; epoch-scoped entries are
-    // already in the target layout.
+    // Only entries directly under the data type directory are legacy.
     let legacy_crs_ids = priv_storage.all_data_ids(&data_type_str).await?;
 
     if legacy_crs_ids.is_empty() {
@@ -199,25 +190,20 @@ where
     let mut migrated_count = 0;
 
     for crs_id in legacy_crs_ids {
-        // Read raw bytes to avoid type-specific deserialization issues, matching the FHE key
-        // migration above.
+        // Raw bytes, to avoid type-specific deserialization issues, as the FHE key migration does.
         let legacy_data: Vec<u8> = priv_storage.load_bytes(&crs_id, &data_type_str).await?;
 
         if priv_storage
             .data_exists_at_epoch(&crs_id, &target_epoch_id, &data_type_str)
             .await?
         {
-            // Something is already there, e.g. an earlier run of this migration that was
-            // interrupted between the write and the delete. Drop the flat copy only when the two
-            // agree; deleting the flat copy cannot be undone.
+            // An earlier run, or something else, already wrote here.
             let existing_data = priv_storage
                 .load_bytes_at_epoch(&crs_id, &target_epoch_id, &data_type_str)
                 .await?;
             if existing_data != legacy_data {
-                // Two different CRS metadata entries claim the same id and there is no way to tell
-                // which one is authoritative. Abort rather than pick one: this migration runs at
-                // boot, and starting the node would leave it serving whichever copy the readers
-                // happen to resolve. Neither copy is touched, so the operator can inspect both.
+                // No way to tell which is authoritative, so abort instead of picking one and
+                // leave both for the operator to inspect.
                 anyhow::bail!(
                     "Legacy {data_type_str} {crs_id} ({} bytes) differs from the entry already \
 stored at epoch {target_epoch_id} ({} bytes). Refusing to start: this conflict needs manual \
@@ -226,7 +212,6 @@ resolution.",
                     existing_data.len(),
                 );
             }
-            // An earlier run already made the copy and it still matches. Nothing to do.
             tracing::debug!(
                 "{data_type_str} {crs_id} is already present at epoch {target_epoch_id}, nothing to copy"
             );
@@ -237,26 +222,21 @@ resolution.",
             .store_bytes_at_epoch(&legacy_data, &crs_id, &target_epoch_id, &data_type_str)
             .await?;
         if outcome != StoreWriteOutcome::Created {
-            // The store declines to overwrite and reports `SkippedExisting` instead of failing, so
-            // an entry must have appeared between the existence check above and this write. Bail
-            // before the read-back: the rollback below deletes the epoch-scoped entry, and it must
-            // never delete one that this migration did not write.
+            // An entry raced in after the check above. Bail before the read-back: its rollback
+            // must never delete an entry this migration did not write.
             anyhow::bail!(
                 "Storing {data_type_str} {crs_id} at epoch {target_epoch_id} reported {outcome:?} \
 instead of writing the data, so another entry appeared concurrently. Nothing was modified."
             );
         }
 
-        // Verify the copy by reading it back. Guards against a write that reports success without
-        // persisting the expected bytes, which would leave readers resolving corrupt metadata.
+        // Guards against a write that reports success without persisting the expected bytes.
         let written_data = priv_storage
             .load_bytes_at_epoch(&crs_id, &target_epoch_id, &data_type_str)
             .await?;
         if written_data != legacy_data {
-            // Roll the bad copy back. Leaving it in place would poison the storage: readers
-            // resolve CRS metadata from the epoch-scoped path, and every later run of this
-            // migration would classify the pair as a conflict and refuse to start. Abort so the
-            // operator sees the failure on the first attempt.
+            // Leaving the bad copy would poison the storage and make every later run abort on
+            // the conflict branch, so roll it back and fail on this attempt instead.
             priv_storage
                 .delete_data_at_epoch(&crs_id, &target_epoch_id, &data_type_str)
                 .await
@@ -2402,42 +2382,6 @@ mod tests {
         );
     }
 
-    /// An earlier run already made an identical copy at the epoch: nothing is written, nothing is
-    /// counted, and both entries stay in place.
-    pub async fn test_migrate_crs_is_noop_when_identical_copy_exists<
-        S: StorageExt + Sync + Send,
-    >(
-        storage: &mut S,
-    ) {
-        let crs_id = crs_test_id("c4");
-        let data_type = PrivDataType::CrsInfo.to_string();
-        let target_epoch_id: EpochId = *DEFAULT_EPOCH_ID;
-        let crs_data = vec![4, 2];
-
-        storage
-            .store_bytes(&crs_data, &crs_id, &data_type)
-            .await
-            .unwrap();
-        storage
-            .store_bytes_at_epoch(&crs_data, &crs_id, &target_epoch_id, &data_type)
-            .await
-            .unwrap();
-
-        assert_eq!(migrate_crs_to_0_14_2(storage).await.unwrap(), 0);
-
-        assert_eq!(
-            storage.load_bytes(&crs_id, &data_type).await.unwrap(),
-            crs_data
-        );
-        assert_eq!(
-            storage
-                .load_bytes_at_epoch(&crs_id, &target_epoch_id, &data_type)
-                .await
-                .unwrap(),
-            crs_data
-        );
-    }
-
     /// A *different* entry already sits at the epoch path. The migration must abort so the node
     /// does not boot in an undefined state, and neither copy may be touched.
     pub async fn test_migrate_crs_aborts_on_conflict<S: StorageExt + Sync + Send>(storage: &mut S) {
@@ -2576,11 +2520,6 @@ mod tests {
     #[tokio::test]
     async fn test_migrate_crs_idempotent_ram() {
         test_migrate_crs_idempotent(&mut RamStorage::new()).await;
-    }
-
-    #[tokio::test]
-    async fn test_migrate_crs_is_noop_when_identical_copy_exists_ram() {
-        test_migrate_crs_is_noop_when_identical_copy_exists(&mut RamStorage::new()).await;
     }
 
     #[tokio::test]

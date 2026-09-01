@@ -349,16 +349,15 @@ impl FailingRamStorage {
         self.available_epoch_writes = available_epoch_writes
     }
 
-    /// When set, epoch-aware byte writes report success but persist truncated data.
-    /// This models a write that does not persist the bytes it was given while still reporting
-    /// `Created`, which a caller can only detect by reading the data back.
+    /// When set, epoch-aware byte writes report `Created` but persist truncated data — a write
+    /// that loses bytes silently, detectable only by reading it back.
     pub fn set_corrupt_epoch_writes(&mut self, corrupt_epoch_writes: bool) {
         self.corrupt_epoch_writes = corrupt_epoch_writes
     }
 
     /// When set, epoch-aware byte writes persist nothing and report
-    /// [`StoreWriteOutcome::SkippedExisting`]. This models the real backends' refusal to overwrite
-    /// an entry that appeared after the caller's existence check.
+    /// [`StoreWriteOutcome::SkippedExisting`], as the real backends do when an entry appeared
+    /// after the caller's existence check.
     pub fn set_skip_epoch_writes(&mut self, skip_epoch_writes: bool) {
         self.skip_epoch_writes = skip_epoch_writes
     }
@@ -516,8 +515,7 @@ impl StorageExt for FailingRamStorage {
         if self.skip_epoch_writes {
             return Ok(StoreWriteOutcome::SkippedExisting);
         }
-        // Drop the last byte rather than writing nothing, so the corrupted entry is still
-        // discoverable by `data_exists_at_epoch` and only a read-back can tell it apart.
+        // Drop the last byte rather than writing nothing, so only a read-back can tell it apart.
         let to_store = if self.corrupt_epoch_writes {
             &bytes[..bytes.len().saturating_sub(1)]
         } else {

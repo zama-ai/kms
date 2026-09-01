@@ -324,10 +324,9 @@ where
     /// General method for handling the storage of both public and private material along with the backup.
     ///
     /// Existing data is never overwritten: the call returns [`StorageError::Duplicate`] instead.
-    /// Which location is checked depends on `epoch_id`. An epoch-scoped write only conflicts with
-    /// data at that same epoch; a legacy entry at the flat, non-epoch-scoped path does not block
-    /// it, so a storage that keeps its pre-0.13 material for downgrades can still be written to
-    /// under new epochs. A write with no epoch checks the flat path as before.
+    /// The check is scoped to the path being written — an epoch-scoped write only conflicts with
+    /// data at that same epoch, so a legacy entry at the flat path (kept for downgrades) does not
+    /// block it. A write with no epoch checks the flat path as before.
     pub(in crate::vault::storage::crypto_material) async fn write_all<
         'a,
         PubData: Serialize + Versionize + Named + Send + Sync,
@@ -361,9 +360,8 @@ where
         {
             return Err(StorageError::Duplicate);
         }
-        // Only guard the flat path for writes that target it. An epoch-scoped write is already
-        // covered by the epoch-scoped check above, and must not be blocked by a legacy flat entry
-        // that a pre-0.13 storage deliberately retains so it can be downgraded.
+        // Only guard the flat path for writes that target it; epoch-scoped writes are covered
+        // above and must not be blocked by a retained legacy entry.
         if epoch_id.is_none()
             && self
                 .data_exists(req_id, &pub_type, &priv_type)

@@ -1618,18 +1618,20 @@ async fn refresh_fhe_private_material_paths() {
 /// Regression tests for zama-ai/kms-internal#3204.
 ///
 /// A pre-0.13 deployment keeps its private CRS metadata at the flat, non-epoch-scoped path.
-/// `write_all` used to reject a write whose data id existed at the flat path *even when the write
-/// targeted an epoch*, so every resharing attempt failed with `StorageError::Duplicate` and rolled
-/// the new epoch back on all nodes. The duplicate check is now scoped to the path being written,
-/// and the migration copies the entry into the epoch-aware layout while leaving the legacy one in
-/// place for downgrades. These tests pin both halves of that.
+/// `write_all` used to reject an epoch-scoped write whose data id existed at that flat path, so
+/// every resharing attempt failed with `Duplicate` and rolled the new epoch back on all nodes.
+/// The duplicate check is now scoped to the path being written, and the migration copies the entry
+/// into the epoch-aware layout while keeping the legacy one so the node stays downgradable.
 mod crs_legacy_entry_and_resharing {
     use super::*;
     use crate::engine::migration::migrate_to_0_14_2;
+    use crate::vault::storage::{
+        read_all_data_from_all_epochs_versioned, select_data_from_max_epoch,
+    };
     use kms_grpc::rpc_types::KMSType;
+    use std::collections::HashMap;
 
-    /// `dummy_crs_metadata` derives its CRS id from the seed; mirror that here so tests can refer
-    /// to the id without an accessor on `CrsGenMetadata`.
+    /// `dummy_crs_metadata` derives its CRS id from the seed; mirror that so tests can name the id.
     fn crs_fixture(seed: u8) -> (RequestId, CrsGenMetadata) {
         (
             derive_request_id(&format!("crs_meta_{seed}")).unwrap(),
@@ -1637,85 +1639,82 @@ mod crs_legacy_entry_and_resharing {
         )
     }
 
-    /// Writes `crs_meta` the way resharing does: epoch-scoped, private-only, no backup.
-    async fn reshare_crs_write(
+    /// Epoch ids ordered by their raw bytes, so `b` orders them predictably against
+    /// `DEFAULT_EPOCH_ID` (`0x08…01`).
+    fn epoch_from_low_byte(b: u8) -> EpochId {
+        let mut raw = [0u8; 32];
+        raw[0] = 8;
+        raw[31] = b;
+        EpochId::from_bytes(raw)
+    }
+
+    async fn store_flat(
         storage: &ThresholdCryptoMaterialStorage<RamStorage, RamStorage>,
         crs_id: &RequestId,
-        epoch_id: &EpochId,
-        crs_meta: CrsGenMetadata,
-    ) -> Result<(), StorageError> {
-        storage
-            .resharing_crs_write_no_backup(crs_id, epoch_id, crs_meta)
-            .await
+        meta: &CrsGenMetadata,
+    ) {
+        let mut priv_s = storage.inner.private_storage.lock().await;
+        store_versioned_at_request_id(
+            &mut *priv_s,
+            crs_id,
+            meta,
+            &PrivDataType::CrsInfo.to_string(),
+        )
+        .await
+        .unwrap();
     }
 
-    /// Baseline: on a storage that never had a flat CRS entry, the resharing write succeeds.
-    /// This is why the existing fresh-storage tests never reproduced the bug.
-    #[tokio::test]
-    async fn fresh_storage_allows_reshared_crs_write() {
-        let storage = ram_threshold_storage(None);
-        let (crs_id, crs_meta) = crs_fixture(1);
-        let new_epoch: EpochId = *DEFAULT_EPOCH_ID;
-
-        reshare_crs_write(&storage, &crs_id, &new_epoch, crs_meta)
+    async fn flat_exists(
+        storage: &ThresholdCryptoMaterialStorage<RamStorage, RamStorage>,
+        crs_id: &RequestId,
+    ) -> bool {
+        let priv_s = storage.inner.private_storage.lock().await;
+        priv_s
+            .data_exists(crs_id, &PrivDataType::CrsInfo.to_string())
             .await
-            .expect("a reshared CRS write must succeed on storage with no flat entry");
+            .unwrap()
     }
 
-    /// The core of #3204: a legacy flat CRS entry must not block the epoch-scoped resharing write.
-    /// Before the duplicate check was scoped to the path being written, this returned `Duplicate`
-    /// and aborted every epoch rotation on zws-dev.
+    /// What the startup loader would see: epoch-scoped entries only, newest epoch per id.
+    async fn loader_view(
+        storage: &ThresholdCryptoMaterialStorage<RamStorage, RamStorage>,
+    ) -> HashMap<RequestId, CrsGenMetadata> {
+        let priv_s = storage.inner.private_storage.lock().await;
+        select_data_from_max_epoch(
+            read_all_data_from_all_epochs_versioned::<_, CrsGenMetadata>(
+                &*priv_s,
+                &PrivDataType::CrsInfo.to_string(),
+            )
+            .await
+            .unwrap(),
+        )
+    }
+
+    /// The core of #3204: a legacy flat entry must not block the epoch-scoped resharing write.
     #[tokio::test]
     async fn legacy_flat_entry_does_not_block_reshared_write() {
         let storage = ram_threshold_storage(None);
         let (crs_id, crs_meta) = crs_fixture(2);
-        let new_epoch: EpochId = *DEFAULT_EPOCH_ID;
 
-        // Simulate the pre-0.13 layout: CRS metadata directly under the data type, no epoch.
-        {
-            let mut priv_s = storage.inner.private_storage.lock().await;
-            store_versioned_at_request_id(
-                &mut *priv_s,
-                &crs_id,
-                &crs_meta,
-                &PrivDataType::CrsInfo.to_string(),
-            )
+        store_flat(&storage, &crs_id, &crs_meta).await;
+
+        storage
+            .resharing_crs_write_no_backup(&crs_id, &epoch_from_low_byte(2), crs_meta)
             .await
-            .unwrap();
-        }
-
-        reshare_crs_write(&storage, &crs_id, &new_epoch, crs_meta)
-            .await
-            .expect("a legacy flat CRS entry must not block an epoch-scoped write");
-
-        // The legacy entry is untouched by the write.
-        let priv_s = storage.inner.private_storage.lock().await;
+            .expect("a legacy flat entry must not block an epoch-scoped write");
         assert!(
-            priv_s
-                .data_exists(&crs_id, &PrivDataType::CrsInfo.to_string())
-                .await
-                .unwrap()
+            flat_exists(&storage, &crs_id).await,
+            "write must not touch the legacy entry"
         );
     }
 
-    /// The duplicate check must still fire for writes that actually target the flat path, so
-    /// scoping it to the epoch has not disabled overwrite protection.
+    /// Scoping the check to the epoch must not disable overwrite protection on the flat path.
     #[tokio::test]
     async fn non_epoch_write_still_rejects_duplicates() {
         let storage = ram_threshold_storage(None);
         let (crs_id, crs_meta) = crs_fixture(4);
 
-        {
-            let mut priv_s = storage.inner.private_storage.lock().await;
-            store_versioned_at_request_id(
-                &mut *priv_s,
-                &crs_id,
-                &crs_meta,
-                &PrivDataType::CrsInfo.to_string(),
-            )
-            .await
-            .unwrap();
-        }
+        store_flat(&storage, &crs_id, &crs_meta).await;
 
         let err = storage
             .inner
@@ -1735,28 +1734,17 @@ mod crs_legacy_entry_and_resharing {
         );
     }
 
-    /// The migration copies the legacy entry into the epoch-aware layout, keeps the legacy one,
-    /// and leaves resharing into a further epoch working.
+    /// End to end: migrate, keep the legacy entry, then reshare into a further epoch and confirm
+    /// the loader serves the reshared metadata.
     #[tokio::test]
-    async fn migration_copies_legacy_entry_and_keeps_it() {
+    async fn migration_copies_legacy_entry_then_resharing_works() {
         let storage = ram_threshold_storage(None);
         let (crs_id, crs_meta) = crs_fixture(3);
-        // Resharing targets a *new* epoch, distinct from the one the migration writes to.
-        let new_epoch: EpochId = derive_request_id("crs_reshare_new_epoch").unwrap().into();
+        let reshared = dummy_crs_metadata(33);
+        let new_epoch = epoch_from_low_byte(2); // orders above DEFAULT_EPOCH_ID
 
-        {
-            let mut priv_s = storage.inner.private_storage.lock().await;
-            store_versioned_at_request_id(
-                &mut *priv_s,
-                &crs_id,
-                &crs_meta,
-                &PrivDataType::CrsInfo.to_string(),
-            )
-            .await
-            .unwrap();
-        }
+        store_flat(&storage, &crs_id, &crs_meta).await;
 
-        // Run the real startup migration entry point, as `kms-server` does.
         {
             let mut priv_s = storage.inner.private_storage.lock().await;
             migrate_to_0_14_2(&mut *priv_s, KMSType::Threshold)
@@ -1764,165 +1752,45 @@ mod crs_legacy_entry_and_resharing {
                 .unwrap();
         }
 
-        // The legacy entry is retained and the epoch-scoped copy now exists alongside it.
-        {
-            let priv_s = storage.inner.private_storage.lock().await;
-            assert!(
-                priv_s
-                    .data_exists(&crs_id, &PrivDataType::CrsInfo.to_string())
-                    .await
-                    .unwrap(),
-                "the legacy entry must be kept so the node stays downgradable"
-            );
-            assert!(
-                priv_s
-                    .data_exists_at_epoch(
-                        &crs_id,
-                        &DEFAULT_EPOCH_ID,
-                        &PrivDataType::CrsInfo.to_string()
-                    )
-                    .await
-                    .unwrap()
-            );
-        }
+        assert!(
+            flat_exists(&storage, &crs_id).await,
+            "the legacy entry must be kept so the node stays downgradable"
+        );
+        assert_eq!(loader_view(&storage).await.get(&crs_id), Some(&crs_meta));
 
-        reshare_crs_write(&storage, &crs_id, &new_epoch, crs_meta)
+        storage
+            .resharing_crs_write_no_backup(&crs_id, &new_epoch, reshared.clone())
             .await
             .expect("resharing into a further epoch must work after the migration");
-    }
-}
-
-/// Behaviour when the legacy flat CRS entry is kept alongside the migrated epoch-scoped one.
-///
-/// The migration copies rather than moves, so a node can be downgraded to a release that reads the
-/// flat path. These tests pin that the retained entry is inert during normal operation.
-mod crs_flat_and_epoch_copies_coexist {
-    use super::*;
-    use crate::vault::storage::{
-        read_all_data_from_all_epochs_versioned, select_data_from_max_epoch,
-    };
-    use std::collections::HashMap;
-
-    fn epoch_from_low_byte(b: u8) -> EpochId {
-        let mut raw = [0u8; 32];
-        raw[0] = 8;
-        raw[31] = b;
-        EpochId::from_bytes(raw)
+        assert_eq!(loader_view(&storage).await.get(&crs_id), Some(&reshared));
     }
 
-    /// Seeds a flat CRS entry plus one epoch-scoped entry per `(epoch, metadata)` pair.
-    async fn seed(
-        storage: &ThresholdCryptoMaterialStorage<RamStorage, RamStorage>,
-        crs_id: &RequestId,
-        flat: &CrsGenMetadata,
-        epoched: &[(EpochId, CrsGenMetadata)],
-    ) {
-        let data_type = PrivDataType::CrsInfo.to_string();
-        let mut priv_s = storage.inner.private_storage.lock().await;
-        store_versioned_at_request_id(&mut *priv_s, crs_id, flat, &data_type)
-            .await
-            .unwrap();
-        for (epoch, meta) in epoched {
-            store_versioned_at_request_and_epoch_id(&mut *priv_s, crs_id, epoch, meta, &data_type)
-                .await
-                .unwrap();
-        }
-    }
-
-    async fn loader_view(
-        storage: &ThresholdCryptoMaterialStorage<RamStorage, RamStorage>,
-    ) -> HashMap<RequestId, CrsGenMetadata> {
-        let priv_s = storage.inner.private_storage.lock().await;
-        select_data_from_max_epoch(
-            read_all_data_from_all_epochs_versioned::<_, CrsGenMetadata>(
-                &*priv_s,
-                &PrivDataType::CrsInfo.to_string(),
-            )
-            .await
-            .unwrap(),
-        )
-    }
-
-    /// The startup loader must ignore the flat copy and serve the epoch-scoped one.
-    #[tokio::test]
-    async fn startup_loader_ignores_flat_copy() {
-        let storage = ram_threshold_storage(None);
-        let crs_id = derive_request_id("coexist_crs_1").unwrap();
-        let flat = dummy_crs_metadata(10);
-        let epoched = dummy_crs_metadata(11);
-
-        seed(
-            &storage,
-            &crs_id,
-            &flat,
-            &[(*DEFAULT_EPOCH_ID, epoched.clone())],
-        )
-        .await;
-
-        let view = loader_view(&storage).await;
-        assert_eq!(view.len(), 1);
-        assert_eq!(
-            view.get(&crs_id),
-            Some(&epoched),
-            "must serve the epoch-scoped copy"
-        );
-        assert_ne!(view.get(&crs_id), Some(&flat));
-    }
-
-    /// With several epochs present the loader must pick the highest one, flat copy notwithstanding.
+    /// With several epochs present the loader picks the highest, legacy entry notwithstanding.
     #[tokio::test]
     async fn startup_loader_picks_latest_epoch() {
         let storage = ram_threshold_storage(None);
         let crs_id = derive_request_id("coexist_crs_2").unwrap();
-        let flat = dummy_crs_metadata(20);
         let older = dummy_crs_metadata(21);
         let newer = dummy_crs_metadata(22);
 
-        seed(
-            &storage,
-            &crs_id,
-            &flat,
-            &[
-                (epoch_from_low_byte(1), older.clone()),
-                (epoch_from_low_byte(2), newer.clone()),
-            ],
-        )
-        .await;
+        store_flat(&storage, &crs_id, &dummy_crs_metadata(20)).await;
+        {
+            let mut priv_s = storage.inner.private_storage.lock().await;
+            let data_type = PrivDataType::CrsInfo.to_string();
+            for (epoch, meta) in [(1u8, &older), (2u8, &newer)] {
+                store_versioned_at_request_and_epoch_id(
+                    &mut *priv_s,
+                    &crs_id,
+                    &epoch_from_low_byte(epoch),
+                    meta,
+                    &data_type,
+                )
+                .await
+                .unwrap();
+            }
+        }
 
-        let view = loader_view(&storage).await;
-        assert_eq!(
-            view.get(&crs_id),
-            Some(&newer),
-            "must serve the newest epoch"
-        );
-    }
-
-    /// An epoch change must still work with both copies present. This is what makes it safe for
-    /// the migration to keep the legacy entry rather than delete it.
-    #[tokio::test]
-    async fn reshare_into_new_epoch_works_with_flat_copy_present() {
-        let storage = ram_threshold_storage(None);
-        let crs_id = derive_request_id("coexist_crs_3").unwrap();
-        let flat = dummy_crs_metadata(30);
-        let current = dummy_crs_metadata(31);
-        let reshared = dummy_crs_metadata(32);
-
-        seed(
-            &storage,
-            &crs_id,
-            &flat,
-            &[(epoch_from_low_byte(1), current)],
-        )
-        .await;
-
-        storage
-            .resharing_crs_write_no_backup(&crs_id, &epoch_from_low_byte(2), reshared.clone())
-            .await
-            .expect("a retained legacy copy must not block the epoch change");
-
-        // The new epoch now holds the reshared metadata, and the loader serves it.
-        let view = loader_view(&storage).await;
-        assert_eq!(view.get(&crs_id), Some(&reshared));
+        assert_eq!(loader_view(&storage).await.get(&crs_id), Some(&newer));
     }
 }
 
