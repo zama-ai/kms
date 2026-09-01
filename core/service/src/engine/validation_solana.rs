@@ -1,13 +1,13 @@
 use crate::cryptography::encryption::UnifiedPublicEncKey;
 use kms_grpc::{
     kms::v1::UserDecryptionRequest,
-    rpc_types::{SigncryptionReceiver, optional_protobuf_to_alloy_domain},
+    rpc_types::{PlaintextReceiver, optional_protobuf_to_alloy_domain},
     solana_binding::{SOLANA_IDENTITY_LEN, SolanaUserDecryptBinding},
 };
 
 /// What the adapter hands to the shared engine: the request's link, the recipient the result is
 /// sealed to, and the domain the response signature is produced under.
-type SolanaValidation = (Vec<u8>, SigncryptionReceiver, alloy_sol_types::Eip712Domain);
+type SolanaValidation = (Vec<u8>, PlaintextReceiver, alloy_sol_types::Eip712Domain);
 
 /// Builds the canonical binding for a Solana user-decryption request, or returns `Ok(None)` for a
 /// request that carries no Solana identity — that request belongs to the EVM path.
@@ -74,7 +74,7 @@ pub(super) fn validate_solana_request(
     // signcryption.
     Ok(Some((
         binding.compute_link(),
-        SigncryptionReceiver::Solana(*binding.receiver_id()),
+        PlaintextReceiver::Solana(*binding.receiver_id()),
         response_domain,
     )))
 }

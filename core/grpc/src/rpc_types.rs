@@ -178,12 +178,18 @@ pub fn alloy_to_protobuf_domain(domain: &Eip712Domain) -> anyhow::Result<Eip712D
     Ok(domain_msg)
 }
 
-/// The validated identity a signcrypted user-decryption result is sealed to.
+/// The validated identity a user-decryption plaintext is sealed to: the one party able to open
+/// the signcrypted result. The typed form of signcryption's `receiver_id`.
 ///
 /// Signcryption itself takes the receiver id as opaque bytes and has no notion of host chains; the
 /// width of those bytes is a property of the adapter that produced them. This type carries that
 /// property to the seam without teaching the engine what a host is: the adapter decides once, and
 /// everything downstream sees bytes.
+///
+/// Orthogonal to [`crate::kms::v1::SigningSchemeType`]: that axis picks which signature schemes a
+/// response carries so that a verifier can check it, this one picks who can decrypt the plaintext
+/// inside. A request chooses the two independently — an EVM-verified response can be sealed to a
+/// Solana key and vice versa, and neither choice constrains the other.
 ///
 /// Variants are matched exhaustively — there is deliberately no wildcard arm anywhere, so adding a
 /// host makes every place that must decide fail to compile rather than silently take a default.
@@ -193,27 +199,27 @@ pub fn alloy_to_protobuf_domain(domain: &Eip712Domain) -> anyhow::Result<Eip712D
 ///
 /// ```compile_fail
 /// // A hashed-and-truncated Solana key is 20 bytes. It has no representation here.
-/// let receiver = kms_grpc::rpc_types::SigncryptionReceiver::Solana([0u8; 20]);
+/// let receiver = kms_grpc::rpc_types::PlaintextReceiver::Solana([0u8; 20]);
 /// ```
 ///
 /// ```
-/// use kms_grpc::rpc_types::SigncryptionReceiver;
+/// use kms_grpc::rpc_types::PlaintextReceiver;
 ///
-/// assert_eq!(SigncryptionReceiver::Solana([0u8; 32]).as_bytes().len(), 32);
+/// assert_eq!(PlaintextReceiver::Solana([0u8; 32]).as_bytes().len(), 32);
 /// assert_eq!(
-///     SigncryptionReceiver::Evm(alloy_primitives::Address::ZERO).as_bytes().len(),
+///     PlaintextReceiver::Evm(alloy_primitives::Address::ZERO).as_bytes().len(),
 ///     20,
 /// );
 /// ```
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum SigncryptionReceiver {
+pub enum PlaintextReceiver {
     /// A 20-byte EVM address, exactly as the EVM path has always passed it.
     Evm(alloy_primitives::Address),
     /// A 32-byte Solana ed25519 wallet key, never hashed and never truncated.
     Solana([u8; 32]),
 }
 
-impl SigncryptionReceiver {
+impl PlaintextReceiver {
     /// The receiver id as signcryption consumes it.
     pub fn as_bytes(&self) -> &[u8] {
         match self {
