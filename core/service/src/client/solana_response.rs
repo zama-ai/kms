@@ -664,7 +664,7 @@ mod tests {
         TypedPlaintext, TypedSigncryptedCiphertext, UserDecryptionResponse,
         UserDecryptionResponsePayload,
     };
-    use kms_grpc::rpc_types::{SigncryptionReceiver, fhe_types_to_num_blocks};
+    use kms_grpc::rpc_types::{PlaintextReceiver, fhe_types_to_num_blocks};
     use kms_grpc::solana_binding::{SolanaUserDecryptBinding, SolanaUserDecryptBindingError};
     use rand::SeedableRng;
     use tfhe::FheTypes;
@@ -911,7 +911,7 @@ mod tests {
         assert_eq!(num_parties, 3 * DEGREE + 1, "the fixture is n = 3t + 1");
 
         let link = request.expected_link().expect("a canonical request");
-        let receiver_id = SigncryptionReceiver::Solana(PUBKEY).as_bytes().to_vec();
+        let receiver_id = PlaintextReceiver::Solana(PUBKEY).as_bytes().to_vec();
         let expected = TypedPlaintext::new(0xAB, FheTypes::Uint8);
 
         // Least significant block first, one Shamir sharing per block: party i's payload is its
@@ -1801,7 +1801,7 @@ mod tests {
         assert_eq!(request.enc_key, enc_key_bytes, "the request binds this key");
 
         let expected = TypedPlaintext::new(42, FheTypes::Uint64);
-        let receiver_id = SigncryptionReceiver::Solana(PUBKEY).as_bytes().to_vec();
+        let receiver_id = PlaintextReceiver::Solana(PUBKEY).as_bytes().to_vec();
         let signcrypted = UnifiedSigncryptionKey::new(&sks[0], &enc_key, &receiver_id)
             .signcrypt_plaintext(
                 &mut rng,
@@ -2238,7 +2238,7 @@ mod tests {
             assert_eq!(num_parties, 3 * DEGREE + 1, "the fixture is n = 3t + 1");
 
             let link = request.expected_link().expect("a canonical request");
-            let receiver_id = SigncryptionReceiver::Solana(PUBKEY).as_bytes().to_vec();
+            let receiver_id = PlaintextReceiver::Solana(PUBKEY).as_bytes().to_vec();
             let expected = TypedPlaintext::new(0xAB, FheTypes::Uint8);
 
             let pbs = TEST_PARAM.classic_pbs();
@@ -2329,7 +2329,7 @@ mod tests {
             assert_eq!(request.enc_key, enc_key_bytes, "the request binds this key");
 
             let expected = TypedPlaintext::new(42, FheTypes::Uint64);
-            let receiver_id = SigncryptionReceiver::Solana(PUBKEY).as_bytes().to_vec();
+            let receiver_id = PlaintextReceiver::Solana(PUBKEY).as_bytes().to_vec();
             let signcrypted = UnifiedSigncryptionKey::new(&sks[0], &enc_key, &receiver_id)
                 .signcrypt_plaintext(
                     &mut rng,

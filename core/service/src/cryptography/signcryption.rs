@@ -998,7 +998,7 @@ mod receiver_representation_tests {
         SigncryptFHEPlaintext, UnsigncryptFHEPlaintext, ephemeral_signcryption_key_generation,
     };
     use aes_prng::AesRng;
-    use kms_grpc::rpc_types::SigncryptionReceiver;
+    use kms_grpc::rpc_types::PlaintextReceiver;
     use rand::SeedableRng;
     use tfhe::FheTypes;
 
@@ -1014,8 +1014,8 @@ mod receiver_representation_tests {
         // One call site, two identity widths, no branch: the 20-byte constraint was always a
         // property of the EVM adapter, not of signcryption.
         for receiver in [
-            SigncryptionReceiver::Evm(evm_address()),
-            SigncryptionReceiver::Solana(SOLANA_PUBKEY),
+            PlaintextReceiver::Evm(evm_address()),
+            PlaintextReceiver::Solana(SOLANA_PUBKEY),
         ] {
             let mut rng = AesRng::seed_from_u64(1);
             let keys = ephemeral_signcryption_key_generation(&mut rng, receiver.as_bytes(), None);

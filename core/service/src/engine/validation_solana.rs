@@ -102,7 +102,7 @@ mod tests {
     use aes_prng::AesRng;
     use kms_grpc::{
         kms::v1::{RequestId, TypedCiphertext, UserDecryptionRequest},
-        rpc_types::{SigncryptionReceiver, alloy_to_protobuf_domain},
+        rpc_types::{PlaintextReceiver, alloy_to_protobuf_domain},
         solana_binding::SolanaUserDecryptBinding,
     };
     use rand::SeedableRng;
@@ -282,7 +282,7 @@ mod tests {
             .expect("a Solana request");
 
         assert_eq!(link.len(), 32);
-        assert_eq!(receiver, SigncryptionReceiver::Solana(PUBKEY));
+        assert_eq!(receiver, PlaintextReceiver::Solana(PUBKEY));
     }
 
     #[test]
