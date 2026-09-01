@@ -208,6 +208,7 @@ where
                 .load_bytes_at_epoch(&crs_id, &target_epoch_id, &data_type_str)
                 .await?;
             if existing_data == legacy_data {
+                // Now that we know it's safe to do so, delete the legacy data      
                 priv_storage.delete_data(&crs_id, &data_type_str).await?;
                 tracing::info!(
                     "Legacy {data_type_str} {crs_id} was already migrated to epoch {target_epoch_id}, removed the flat copy"
