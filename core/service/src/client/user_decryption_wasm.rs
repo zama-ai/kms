@@ -175,6 +175,7 @@ impl Client {
         let cur_verf_key = authenticate_user_decrypt_share(
             &payload,
             expected_server_addr,
+            &resp.signatures,
             &resp.signature,
             &resp.external_signature,
             &resp.extra_data,

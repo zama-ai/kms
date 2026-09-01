@@ -381,6 +381,7 @@ fn verify_share(
     let advertised = authenticate_user_decrypt_share(
         payload,
         trusted_addr,
+        &response.signatures,
         &response.signature,
         &response.external_signature,
         &response.extra_data,
@@ -395,7 +396,9 @@ fn verify_share(
         }
         ShareAuthenticationError::MissingSignature
         | ShareAuthenticationError::InvalidInternalSignature
-        | ShareAuthenticationError::InvalidExternalSignature => {
+        | ShareAuthenticationError::InvalidExternalSignature
+        | ShareAuthenticationError::UnsupportedTypedSignatureScheme
+        | ShareAuthenticationError::InvalidTypedSignature => {
             ShareRejection::NodeSignature { party_id }
         }
     })?;
