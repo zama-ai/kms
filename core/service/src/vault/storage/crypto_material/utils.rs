@@ -387,6 +387,10 @@ async fn get_unique<
 /// A node that has not yet had a seed generated simply has none
 /// attached: that is ECDSA-only operation, not a failure, and must not stop the
 /// server from booting.
+///
+/// # Errors
+///
+/// A seed that is present but unreadable is an error, not an absent seed.
 pub async fn get_core_signing_key<S: StorageReader>(storage: &S) -> anyhow::Result<PrivateSigKey> {
     let sk =
         get_unique::<S, PrivateSigKey, PrivDataType>(storage, PrivDataType::SigningKey).await?;
@@ -408,6 +412,11 @@ pub async fn get_core_signing_key<S: StorageReader>(storage: &S) -> anyhow::Resu
 /// The seed is only ever written under [`SIGNING_KEY_ID`], so only that handle is
 /// read. Absence is a normal state, so this returns `None` rather than failing: a
 /// node predates the seed, or has not yet run `kms-gen-keys`.
+///
+/// # Errors
+///
+/// Only an absent seed gives `None`. A seed object that exists but does not
+/// deserialize gives an error.
 pub async fn get_core_root_signing_seed<S: StorageReader>(
     storage: &S,
 ) -> anyhow::Result<Option<RootSigningSeed>> {

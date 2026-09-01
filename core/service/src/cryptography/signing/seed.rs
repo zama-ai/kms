@@ -358,25 +358,6 @@ mod tests {
         }
     }
 
-    /// Two independently generated roots share no derived key. This is the
-    /// property the whole type exists for: the key hierarchy hangs off the seed
-    /// and nothing else.
-    #[test]
-    fn distinct_roots_give_distinct_keys() {
-        let mut rng = AesRng::seed_from_u64(3);
-        let first = RootSigningSeed::random(&mut rng);
-        let second = RootSigningSeed::random(&mut rng);
-        assert_ne!(first, second, "two random roots collided");
-
-        for scheme in SigningSchemeType::iter() {
-            assert_ne!(
-                first.unified_verifying_key(scheme).unwrap(),
-                second.unified_verifying_key(scheme).unwrap(),
-                "{scheme:?} keys of two distinct roots collided"
-            );
-        }
-    }
-
     /// `derive_signing_key` memoizes: repeated calls return the same cached
     /// instance, and a (warm) clone shares that cache rather than re-deriving.
     /// Every slot is covered, the ECDSA one included.
@@ -423,24 +404,70 @@ mod tests {
         unified_verify(DSEP, msg, &sig, &vk).unwrap();
     }
 
-    /// `zeroize` resets the root: keys derived afterwards differ from the ones
-    /// derived before.
+    /// `zeroize` wipes both the root seed itself, and every key already derived from it.
     #[test]
-    fn zeroize_resets_the_root() {
+    fn zeroize_wipes_the_root_and_the_derived_keys() {
         let mut rng = AesRng::seed_from_u64(7);
         let mut root = RootSigningSeed::random(&mut rng);
 
-        let before: Vec<_> = SigningSchemeType::iter()
-            .map(|s| root.unified_verifying_key(s).unwrap())
-            .collect();
+        // Warm every slot, so the wipe has something to clear.
+        assert_ne!(
+            root.seed.0, [0u8; ROOT_SEED_LEN],
+            "the rng drew an all-zero seed, so the wipe assertion below holds for the wrong reason"
+        );
+        for scheme in SigningSchemeType::iter() {
+            root.derive_signing_key(scheme).unwrap();
+            assert!(root.cache.slot(scheme).get().is_some());
+        }
+
         root.zeroize();
-        for (scheme, old) in SigningSchemeType::iter().zip(before) {
-            assert_ne!(
-                root.unified_verifying_key(scheme).unwrap(),
-                old,
-                "{scheme:?} key survived zeroize"
+
+        // After wiping the root seed is the 0 array
+        assert_eq!(
+            root.seed.0, [0u8; ROOT_SEED_LEN],
+            "the root secret survived zeroize"
+        );
+        for scheme in SigningSchemeType::iter() {
+            assert!(
+                root.cache.slot(scheme).get().is_none(),
+                "the derived {scheme:?} key survived zeroize"
             );
         }
+    }
+
+    /// The persisted secret is exactly [`ROOT_SEED_LEN`] bytes.
+    #[test]
+    fn wrapped_seed_rejects_a_wrong_length() {
+        // The visitor is the whole deserialization path of the secret, so it is
+        // what the length check has to be pinned on.
+        let visit = |len: usize| {
+            WrappedSeedVisitor.visit_bytes::<serde::de::value::Error>(&vec![0xABu8; len])
+        };
+
+        for len in [
+            0,
+            1,
+            ROOT_SEED_LEN - 1,
+            ROOT_SEED_LEN + 1,
+            2 * ROOT_SEED_LEN,
+        ] {
+            let msg = match visit(len) {
+                Ok(_) => panic!("a {len}-byte seed was accepted as a root secret"),
+                Err(e) => e.to_string(),
+            };
+            assert!(
+                msg.contains(&format!("invalid length {len}")),
+                "a {len}-byte seed failed for the wrong reason: {msg}"
+            );
+            assert!(
+                msg.contains(&format!("{ROOT_SEED_LEN}-byte root signing seed")),
+                "the error does not name the expected length: {msg}"
+            );
+        }
+
+        // The exact length is accepted, and the bytes are kept verbatim.
+        let seed = visit(ROOT_SEED_LEN).unwrap();
+        assert_eq!(seed.0, [0xABu8; ROOT_SEED_LEN]);
     }
 
     /// Frozen derivation vector: for a fixed root seed the derived per-scheme

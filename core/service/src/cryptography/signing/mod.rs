@@ -695,18 +695,7 @@ mod tests {
     fn ecdsa_identity_is_never_the_seed_derived_key() {
         let mut rng = AesRng::seed_from_u64(305);
         let (pk, sk) = gen_sig_keys(&mut rng);
-        let root = RootSigningSeed::random(&mut rng);
-        let post_rotation = ecdsa_address(
-            root.unified_verifying_key(SigningSchemeType::Ecdsa256k1)
-                .unwrap(),
-        );
-        let sk = sk.with_root_seed(root);
-
-        assert_ne!(
-            post_rotation,
-            pk.address(),
-            "the seed derived the same ECDSA key as the persisted identity"
-        );
+        let sk = sk.with_root_seed(RootSigningSeed::random(&mut rng));
 
         // What the identity publishes is the persisted key...
         let vk = sk

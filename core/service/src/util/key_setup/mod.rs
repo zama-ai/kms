@@ -1651,8 +1651,8 @@ mod tests {
     };
     use crate::vault::storage::ram::RamStorage;
     use crate::vault::storage::{
-        StorageReader, delete_at_request_id, read_text_at_request_id, store_text_at_request_id,
-        store_versioned_at_request_id,
+        Storage, StorageReader, delete_at_request_id, read_text_at_request_id,
+        store_text_at_request_id, store_versioned_at_request_id,
     };
     use crate::{
         consts::DEFAULT_PARAM, dummy_domain, engine::centralized::central_kms::gen_centralized_crs,
@@ -2289,6 +2289,43 @@ mod tests {
             !seed_exists(&priv_storage).await,
             "a replacement seed was written anyway"
         );
+    }
+
+    /// A seed object that exists but does not deserialize fails.
+    #[tokio::test]
+    async fn a_corrupt_seed_fails_closed() {
+        let mut pub_storage = RamStorage::new();
+        let mut priv_storage = RamStorage::new();
+
+        ensure_central_server_signing_keys_exist(&mut pub_storage, &mut priv_storage, true)
+            .await
+            .unwrap();
+        // The ECDSA key stays untouched throughout, so it is the seed alone that
+        // decides the outcome below.
+        let key_before = persisted_signing_key_bytes(&priv_storage).await;
+
+        // Overwrite the seed with bytes that are no seed at all.
+        let data_type = PrivDataType::SigningSeed.to_string();
+        delete_at_request_id(&mut priv_storage, &SIGNING_KEY_ID, &data_type)
+            .await
+            .unwrap();
+        priv_storage
+            .store_bytes(&[0xFFu8; 64], &SIGNING_KEY_ID, &data_type)
+            .await
+            .unwrap();
+
+        // The object is there, so this is not the absent-seed state...
+        assert!(seed_exists(&priv_storage).await);
+        assert!(
+            get_core_root_signing_seed(&priv_storage).await.is_err(),
+            "garbage under the seed handle was reported as a missing seed"
+        );
+        // ...and the whole identity is refused, rather than degraded to ECDSA-only.
+        assert!(
+            get_core_signing_key(&priv_storage).await.is_err(),
+            "a node with an unreadable seed loaded an ECDSA-only identity"
+        );
+        assert_eq!(persisted_signing_key_bytes(&priv_storage).await, key_before);
     }
 
     /// A seed with no signing key beside it is an interrupted run or a partial wipe,

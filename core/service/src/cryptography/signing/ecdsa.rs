@@ -548,8 +548,18 @@ impl SigningScheme for Ecdsa256k1 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::consts::SAFE_SER_SIZE_LIMIT;
     use aes_prng::AesRng;
     use rand::SeedableRng;
+    use tfhe::safe_serialization::{safe_deserialize, safe_serialize};
+
+    /// The bytes this key is persisted as, in the format storage and the backup
+    /// vault hold.
+    fn persisted_bytes(sk: &PrivateSigKey) -> Vec<u8> {
+        let mut buf = Vec::new();
+        safe_serialize(sk, &mut buf, SAFE_SER_SIZE_LIMIT).unwrap();
+        buf
+    }
 
     #[test]
     fn plain_signing() {
@@ -624,6 +634,61 @@ mod tests {
         let verf_id = verf_key.verf_key_id();
         let signing_id = sig_key.signing_key_id();
         assert!(verf_id == signing_id);
+    }
+
+    /// The root seed stays out of the persisted key
+    #[test]
+    fn the_persisted_key_carries_no_root_seed() {
+        let mut rng = AesRng::seed_from_u64(3078);
+        let (_pk, seedless) = gen_sig_keys(&mut rng);
+        let seeded = seedless
+            .clone()
+            .with_root_seed(RootSigningSeed::random(&mut rng));
+        assert!(!seedless.has_root_seed());
+        assert!(seeded.has_root_seed());
+
+        assert_eq!(
+            persisted_bytes(&seedless),
+            persisted_bytes(&seeded),
+            "the root seed leaked into the persisted signing key"
+        );
+
+        let restored: PrivateSigKey = safe_deserialize(
+            std::io::Cursor::new(persisted_bytes(&seeded)),
+            SAFE_SER_SIZE_LIMIT,
+        )
+        .unwrap();
+        assert!(
+            !restored.has_root_seed(),
+            "a seed was read back out of the persisted key"
+        );
+        assert_eq!(restored.verf_key(), seedless.verf_key());
+    }
+
+    /// Equality covers the root seed, deliberately
+    #[test]
+    fn equality_covers_the_root_seed() {
+        let mut rng = AesRng::seed_from_u64(3079);
+        let (_pk, seedless) = gen_sig_keys(&mut rng);
+        let root = RootSigningSeed::random(&mut rng);
+        let seeded = seedless.clone().with_root_seed(root.clone());
+
+        assert_ne!(
+            seedless, seeded,
+            "a seedless key compared equal to the same scalar with a seed attached"
+        );
+        assert_eq!(
+            seeded,
+            seedless.clone().with_root_seed(root),
+            "the same scalar under the same root compared unequal"
+        );
+        assert_ne!(
+            seeded,
+            seedless
+                .clone()
+                .with_root_seed(RootSigningSeed::random(&mut rng)),
+            "the same scalar under two different roots compared equal"
+        );
     }
 
     #[test]

@@ -1886,6 +1886,7 @@ pub(crate) mod tests {
     use rand::{RngCore, SeedableRng};
     use std::collections::BTreeMap;
     use std::collections::HashMap;
+    use strum::IntoEnumIterator;
     use tfhe::{
         FheTypes, FheUint32, Seed, prelude::SquashNoise, safe_serialization::safe_serialize,
     };
@@ -2214,6 +2215,51 @@ pub(crate) mod tests {
                         |e| panic!("{scheme:?} keygen signature should verify: {e}"),
                     );
                 }
+            }
+        }
+    }
+
+    /// An ECDSA-only node keeps serving the requests it can, and rejects the ones it
+    /// cannot.
+    #[test]
+    fn seedless_node_rejects_pq_schemes_and_still_serves_ecdsa() {
+        let mut rng = AesRng::seed_from_u64(0x5EED1E55);
+        let (_pk, sk) = gen_sig_keys(&mut rng);
+        assert!(!sk.has_root_seed(), "this node is meant to be seedless");
+        let domain = dummy_domain();
+        let prep_id = RequestId::new_random(&mut rng);
+        let extra_data = b"extra".to_vec();
+
+        let signatures_for = |schemes: &[SigningSchemeType]| {
+            compute_preprocessing_signatures(&sk, schemes, &prep_id, &domain, extra_data.clone())
+        };
+
+        // ECDSA needs no seed, so an ECDSA-only request still succeed
+        for schemes in [vec![], vec![SigningSchemeType::Ecdsa256k1]] {
+            let (external_signature, sigs) = signatures_for(&schemes)
+                .unwrap_or_else(|e| panic!("{schemes:?} must not need a root seed: {e}"));
+            assert_eq!(sigs.len(), schemes.len());
+            let sol_type = PrepKeygenVerification::new(&prep_id, extra_data.clone());
+            assert_eq!(
+                recover_address_from_ext_signature(&sol_type, &domain, &external_signature)
+                    .unwrap(),
+                sk.verf_key().address()
+            );
+            for stored in &sigs {
+                assert_eq!(stored.signature, external_signature);
+            }
+        }
+
+        // Every other scheme fails, whether asked for alone or beside ECDSA, and the
+        // error names what the node is missing.
+        for scheme in SigningSchemeType::iter().filter(|s| *s != SigningSchemeType::Ecdsa256k1) {
+            for schemes in [vec![scheme], vec![SigningSchemeType::Ecdsa256k1, scheme]] {
+                let err = signatures_for(&schemes)
+                    .expect_err("a seedless node signed under a derived scheme");
+                assert!(
+                    err.to_string().contains("no root signing seed"),
+                    "{schemes:?} failed for an unexpected reason: {err}"
+                );
             }
         }
     }
