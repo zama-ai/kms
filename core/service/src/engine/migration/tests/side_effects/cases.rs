@@ -17,11 +17,11 @@ async fn non_epoched_fhe_cleanup_rejects_a_mismatched_replacement() {
     let key_id = request_id("mismatched_non_epoched_fhe_key");
     let data_type = PrivDataType::FheKeyInfo.to_string();
     storage
-        .store_bytes(b"legacy", &key_id, &data_type)
+        .store_bytes(b"legacy-aa", &key_id, &data_type)
         .await
         .unwrap();
     storage
-        .store_bytes_at_epoch(b"different", &key_id, &LEGACY_DEFAULT_EPOCH_ID, &data_type)
+        .store_bytes_at_epoch(b"legacy-bb", &key_id, &LEGACY_DEFAULT_EPOCH_ID, &data_type)
         .await
         .unwrap();
     seed_controls(&mut storage).await;
@@ -44,11 +44,11 @@ async fn epoched_fhe_cleanup_rejects_a_mismatched_replacement() {
     let key_id = request_id("mismatched_epoched_fhe_key");
     let data_type = PrivDataType::FheKeyInfo.to_string();
     storage
-        .store_bytes_at_epoch(b"legacy", &key_id, &LEGACY_DEFAULT_EPOCH_ID, &data_type)
+        .store_bytes_at_epoch(b"legacy-aa", &key_id, &LEGACY_DEFAULT_EPOCH_ID, &data_type)
         .await
         .unwrap();
     storage
-        .store_bytes_at_epoch(b"different", &key_id, &DEFAULT_EPOCH_ID, &data_type)
+        .store_bytes_at_epoch(b"legacy-bb", &key_id, &DEFAULT_EPOCH_ID, &data_type)
         .await
         .unwrap();
     seed_controls(&mut storage).await;
