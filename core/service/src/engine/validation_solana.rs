@@ -369,8 +369,10 @@ mod tests {
     fn wrong_width_identity_rejected() {
         for width in [20usize, 31, 33] {
             let mut wrong = solana_request();
-            wrong.signing_metadata =
-                vec![kms_grpc::kms::v1::SigningMetadata::solana(vec![0x11; width], PROGRAM_ID)];
+            wrong.signing_metadata = vec![kms_grpc::kms::v1::SigningMetadata::solana(
+                vec![0x11; width],
+                PROGRAM_ID,
+            )];
 
             assert!(
                 error_of(&wrong).contains("32"),
@@ -398,8 +400,10 @@ mod tests {
     fn wrong_width_program_id_rejected() {
         for width in [20usize, 31, 33] {
             let mut wrong = solana_request();
-            wrong.signing_metadata =
-                vec![kms_grpc::kms::v1::SigningMetadata::solana(PUBKEY, vec![0x22; width])];
+            wrong.signing_metadata = vec![kms_grpc::kms::v1::SigningMetadata::solana(
+                PUBKEY,
+                vec![0x22; width],
+            )];
 
             assert!(!error_of(&wrong).is_empty(), "width {width}");
         }
@@ -412,7 +416,9 @@ mod tests {
         let mut batched = solana_request();
         batched
             .signing_metadata
-            .push(kms_grpc::kms::v1::SigningMetadata::solana(PUBKEY, PROGRAM_ID));
+            .push(kms_grpc::kms::v1::SigningMetadata::solana(
+                PUBKEY, PROGRAM_ID,
+            ));
 
         assert!(
             error_of(&batched).contains("exactly one"),
@@ -442,7 +448,8 @@ mod tests {
         // An entry whose oneof is unset is what a newer producer's unknown variant decodes to on
         // this version: refusing it is the mixed-version safety the envelope exists for.
         let mut undispatchable = solana_request();
-        undispatchable.signing_metadata = vec![kms_grpc::kms::v1::SigningMetadata { metadata: None }];
+        undispatchable.signing_metadata =
+            vec![kms_grpc::kms::v1::SigningMetadata { metadata: None }];
 
         assert!(
             error_of(&undispatchable).contains("no host variant"),
