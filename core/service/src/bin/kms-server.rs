@@ -539,12 +539,13 @@ async fn main_exec() -> anyhow::Result<()> {
         keychain: private_keychain,
     };
 
-    // Migrate legacy FHE keys to epoch-aware format.
-    // Must run after Vault init so the keychain can decrypt AppKeyBlob-wrapped data from older versions.
     let kms_type = match core_config.threshold {
         Some(_) => KMSType::Threshold,
         None => KMSType::Centralized,
     };
+
+    // Migrate legacy FHE keys and CRS files to epoch-aware format.
+    // Must run after Vault init so the keychain can decrypt AppKeyBlob-wrapped data from older versions.
     migrate_to_0_14_2(&mut private_vault, kms_type)
         .await
         .inspect_err(|e| tracing::error!("Could not complete migration: {e}"))?;
