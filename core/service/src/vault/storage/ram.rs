@@ -363,7 +363,8 @@ impl FailingRamStorage {
         self.skip_epoch_writes = skip_epoch_writes
     }
 
-    /// Returns an error and consumes one epoch-write budget unit if the budget is exhausted.
+    /// Consumes one epoch-write budget unit, or returns an error if the budget is exhausted.
+    /// A budget of `None` is unlimited and consumes nothing.
     fn consume_epoch_write(&mut self) -> anyhow::Result<()> {
         if let Some(remaining) = self.available_epoch_writes.as_mut() {
             if *remaining < 1 {
