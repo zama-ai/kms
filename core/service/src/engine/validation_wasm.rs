@@ -34,6 +34,14 @@ pub(crate) struct UserDecTrustedValidationContext<'a> {
     /// request family links differently (the Solana path) supplies its own recomputed link via
     /// [`Self::new_with_expected_link`]; the consensus rule itself is family-agnostic.
     expected_link: Option<Vec<u8>>,
+    /// How many authenticated responses the validation demands before voting on the invariants.
+    /// [`Self::new`] sets `2t + 1`: it guarantees a pivot group of `t + 1` *forms* even when `t`
+    /// registered parties lie, which the EVM client needs because it discovers the link from the
+    /// responses. Safety never depends on this floor — the vote needs `t + 1` agreeing payloads,
+    /// and any such group contains an honest one whenever at most `t` parties are corrupt — so
+    /// [`Self::new_with_expected_link`], whose caller pins the link from its own request and
+    /// prefers failing closed over robustness, lowers it to its release quorum of `t + 1`.
+    min_authenticated: usize,
 }
 
 impl<'a> UserDecTrustedValidationContext<'a> {
@@ -82,6 +90,7 @@ impl<'a> UserDecTrustedValidationContext<'a> {
             eip712_domain,
             threshold,
             expected_link: None,
+            min_authenticated: 2 * threshold + 1,
         })
     }
 
@@ -97,6 +106,7 @@ impl<'a> UserDecTrustedValidationContext<'a> {
     ) -> anyhow::Result<Self> {
         let mut ctx = Self::new(server_addresses, client_request, eip712_domain, threshold)?;
         ctx.expected_link = Some(expected_link);
+        ctx.min_authenticated = ctx.threshold + 1;
         Ok(ctx)
     }
 }
@@ -550,8 +560,10 @@ pub(crate) fn validate_user_decrypt_responses(
         authenticated_payloads.push((verification_key, role, payload));
     }
 
-    // We need 2t+1 (where threshold == degree) authenticated responses to guarantee that at least t+1 of them are honest.
-    if authenticated_payloads.len() < 2 * trusted_ctx.threshold() + 1 {
+    // The context's quorum: 2t+1 by default, so a pivot group of t+1 is guaranteed to form even
+    // when t registered parties lie; t+1 for a caller that pinned the expected link itself. See
+    // `UserDecTrustedValidationContext::min_authenticated`.
+    if authenticated_payloads.len() < trusted_ctx.min_authenticated {
         anyhow::bail!(ERR_VALIDATE_USER_DECRYPTION_NOT_ENOUGH_RESP);
     }
 
