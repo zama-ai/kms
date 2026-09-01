@@ -856,7 +856,6 @@ pub struct DecryptFile {
     pub rate_options: DecryptRateOptions,
 }
 
-
 #[derive(Debug, Serialize, Deserialize)]
 pub struct CipherWithParams {
     params: CipherParameters,
