@@ -1,11 +1,12 @@
 When reviewing changes — whether a single commit or an entire branch — ignore any changes merged in from `main`, and then perform the following steps:
 
 - Verify every rule in this file is satisfied.
-- Validate that every item on the [pull-request template](.github/PULL_REQUEST_TEMPLATE.md) can be checked off. Flag any items you cannot personally verify.
+- Validate that every item on the [pull-request template](../.github/PULL_REQUEST_TEMPLATE.md) can be checked off. Flag any items you cannot personally verify.
 - Remove code that is now dead.
 - Public and `pub(crate)` methods have positive tests; critical code also has negative tests. Reject trivial or redundant tests.
 - Check for deadlocks, livelocks, TOCTOU, and other concurrency issues.
 - Variable names and comments are consistent across touched files — identical semantic concepts share names.
+- Comments and docs follow [PROSE.md](./PROSE.md). Watch for the common failures: comments that narrate the change instead of the code, comments on trivial code, and comments the change made stale.
 - When changing a function or pattern, check whether siblings and analogous implementations need matching changes. Examples: `purge_crs_data` ↔ `purge_key_data`; `*_threshold` ↔ `*_central` / `*_centralized`; S3-storage ↔ filesystem-storage.
 - If CLI code or configuration changed, update docs (`md`) and deployment configs (`yml`, `toml`) consistently.
 - No internal protobuf/comms compatibility breaks — a KMS released from `main` after this PR can still talk to the previous release.

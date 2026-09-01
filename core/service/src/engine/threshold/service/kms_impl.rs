@@ -73,6 +73,7 @@ use crate::{
         },
         context_manager::{ThresholdContextManager, ensure_default_threshold_context_in_storage},
         prepare_shutdown_signals,
+        storage_material_verification::verify_storage_material,
         threshold::{
             service::{
                 public_decryptor::SecureNoiseFloodDecryptor,
@@ -82,7 +83,6 @@ use crate::{
             threshold_kms::ThresholdKms,
         },
         traits::PrivateKeyMaterialMetadata,
-        utils::{sanity_check_crs_materials, sanity_check_public_materials},
     },
     grpc::metastore_status_service::MetaStoreStatusServiceImpl,
     util::{meta_store::MetaStore, rate_limiter::RateLimiter},
@@ -91,6 +91,7 @@ use crate::{
         storage::{
             Storage, StorageExt, crypto_material::ThresholdCryptoMaterialStorage,
             read_all_data_from_all_epochs_versioned, read_all_data_versioned,
+            select_data_from_max_epoch,
         },
     },
 };
@@ -524,6 +525,7 @@ where
     PrivS: StorageExt + Send + Sync + 'static,
     F: std::future::Future<Output = ()> + Send + 'static,
 {
+    let require_pcr_allowlist = config.requires_pcr_allowlist();
     let threshold_config = config.threshold.as_ref().ok_or_else(|| {
         anyhow_error_and_log("Threshold party configuration is required for threshold KMS")
     })?;
@@ -540,43 +542,54 @@ where
         )
         .await?;
 
-    let mut public_key_info = HashMap::new();
-    let validation_material: HashMap<RequestId, RecoveryValidationMaterial> =
+    let recovery_validation_material: HashMap<RequestId, RecoveryValidationMaterial> =
         read_all_data_versioned(&public_storage, &PubDataType::RecoveryMaterial.to_string())
             .await?;
 
-    // Validate the recovery material against the provided verification key
-    for (cur_req_id, cur_rec_material) in &validation_material {
-        if !cur_rec_material.validate(&base_kms.verf_key()) {
-            anyhow::bail!(
-                "Validation material for context {cur_req_id} failed to validate against the verification key"
-            );
-        }
-    }
+    // Build public_key_info map using the chronologically latest epoch for each key ID.
+    // Epoch IDs are ordered chronologically by comparing their raw bytes as a
+    // big-endian integer.
+    let public_key_info = select_data_from_max_epoch(
+        key_info_versioned
+            .iter()
+            .map(|((id, epoch_id), info)| ((*id, *epoch_id), info.meta_data.clone())),
+    );
 
-    // Build public_key_info map
-    for ((id, _), info) in &key_info_versioned {
-        public_key_info.insert(*id, info.meta_data.clone());
-    }
-
-    // sanity check the public materials
-    let entries: Vec<_> = key_info_versioned
+    let key_info: Vec<_> = key_info_versioned
         .iter()
         .map(|((id, _), info)| (*id, info.meta_data.clone()))
         .collect();
-    sanity_check_public_materials(&public_storage, &entries).await?;
 
     // load crs_info (roughly hashes of CRS) from storage
-    let crs_info: HashMap<RequestId, CrsGenMetadata> = read_all_data_from_all_epochs_versioned(
-        &private_storage,
-        &PrivDataType::CrsInfo.to_string(),
-    )
-    .await?
-    .into_iter()
-    .map(|((req, _epoch), v)| (req, v))
-    .collect();
+    let crs_info: HashMap<RequestId, CrsGenMetadata> = select_data_from_max_epoch(
+        read_all_data_from_all_epochs_versioned(
+            &private_storage,
+            &PrivDataType::CrsInfo.to_string(),
+        )
+        .await?,
+    );
 
-    sanity_check_crs_materials(&public_storage, &crs_info).await?;
+    // Verify public material and recovery validation material when the signing key is available.
+    // Recovery mode only supports backup recovery operations, so it skips both startup checks.
+    // Private storage is the reference; extra material in public storage is ignored.
+    match base_kms.sig_key() {
+        Ok(signing_key) => {
+            verify_storage_material(
+                &public_storage,
+                &key_info,
+                &crs_info,
+                &recovery_validation_material,
+                signing_key.as_ref(),
+            )
+            .await?;
+        }
+        Err(_) => {
+            tracing::warn!(
+                "No signing key available (recovery mode): skipping public material and recovery \
+                 validation material verification"
+            );
+        }
+    }
 
     let networking_manager = Arc::new(RwLock::new(GrpcNetworkingManager::new(
         tls_config
@@ -685,7 +698,7 @@ where
         threshold_config.dec_capacity,
         threshold_config.min_dec_cache,
     );
-    let custodian_meta_store = MetaStore::new_from_map(validation_material);
+    let custodian_meta_store = MetaStore::new_from_map(recovery_validation_material);
 
     // TODO(zama-ai/kms-internal/issues/2758)
     // If we're still using peer config, we need to manually write the default context into storage.
@@ -742,6 +755,7 @@ where
         crypto_storage.inner.clone(),
         custodian_meta_store,
         session_maker.clone(),
+        require_pcr_allowlist,
     );
     if let Err(e) = context_manager.load_mpc_context_from_storage().await {
         tracing::warn!(
@@ -1013,6 +1027,7 @@ mod tests {
         }
 
         #[derive(Clone, Serialize, Deserialize, VersionsDispatch)]
+        #[expect(clippy::large_enum_variant)]
         pub enum ThresholdFheKeysVersions {
             V0(PlaceholderV0),
             V1(PlaceholderV1),
@@ -1080,6 +1095,7 @@ mod tests {
                     RequestId::zeros(),
                     RequestId::zeros(),
                     BTreeMap::new(),
+                    &crate::dummy_domain(),
                     vec![],
                     vec![],
                     vec![],
@@ -1129,6 +1145,7 @@ mod tests {
                 RequestId::zeros(),
                 RequestId::zeros(),
                 BTreeMap::new(),
+                &crate::dummy_domain(),
                 vec![],
                 vec![],
                 vec![],
@@ -1204,6 +1221,7 @@ mod tests {
                 RequestId::zeros(),
                 RequestId::zeros(),
                 BTreeMap::new(),
+                &crate::dummy_domain(),
                 vec![],
                 vec![],
                 vec![],

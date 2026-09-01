@@ -67,6 +67,7 @@ enum_dispatch.workspace = true
 futures-util.workspace = true
 hashing.workspace = true
 hex.workspace = true
+hybrid-array.workspace = true
 iam-rs = { workspace = true, optional = true }
 itertools.workspace = true
 k256.workspace = true
@@ -137,6 +138,7 @@ assert_cmd.workspace = true
 aws-smithy-mocks = { workspace = true }
 backward-compatibility = { workspace = true, features = ["load", "tests"] }
 cargo_metadata = { workspace = true }
+criterion.workspace = true
 threshold-execution = { workspace = true, features = ["testing", "malicious_strategies"] }
 # Self-import for integration tests
 kms = { workspace = true, features = ["insecure", "testing"] }
@@ -148,6 +150,11 @@ tempfile.workspace = true
 test-utils-service = { path = "./test-utils-service" }
 tracing-subscriber = { workspace = true, features = ["fmt", "std"] }
 walkdir = { workspace = true }
+
+[[bench]]
+name = "meta_store"
+harness = false
+required-features = ["testing"]
 
 
 [features]

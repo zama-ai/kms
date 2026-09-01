@@ -25,7 +25,7 @@ use kms_grpc::{
     },
 };
 use observability::{
-    metrics,
+    metrics::{self, UserDecryptStage},
     metrics_names::{
         OP_USER_DECRYPT_INNER, OP_USER_DECRYPT_REQUEST, OP_USER_DECRYPT_RESULT, TAG_PARTY_ID,
         TAG_TFHE_TYPE, TAG_USER_DECRYPTION_KIND,
@@ -57,6 +57,7 @@ use crate::{
         internal_crypto_types::LegacySerialization,
         signcryption::{SigncryptFHEPlaintext, UnifiedSigncryptionKeyOwned},
         signing::SigningSchemeType,
+        zeroizing_writer::ZeroizingWriter,
     },
     engine::{
         base::{
@@ -85,6 +86,9 @@ use crate::{
 
 // === Current Module Imports ===
 use super::ThresholdFheKeys;
+
+/// A serialized partial plaintext share kept behind a zeroizing guard.
+type PartialDecryption = (ZeroizingWriter, u32, std::time::Duration);
 
 #[tonic::async_trait]
 pub trait NoiseFloodPartialDecryptor: Send + Sync {
@@ -229,11 +233,16 @@ impl<
                 CiphertextFormat::SmallCompressed => keys.decompression_key(),
                 _ => None,
             };
+            let deserialize_timer =
+                metrics::METRICS.time_user_decrypt_stage(UserDecryptStage::Deserialize);
             let low_level_ct =
                 deserialize_to_low_level(fhe_type, ct_format, &ct, decomp_key.as_deref())?;
+            drop(deserialize_timer);
 
-            let pdec: Result<(Vec<u8>, u32, std::time::Duration), anyhow::Error> = match dec_mode {
+            let pdec: Result<PartialDecryption, anyhow::Error> = match dec_mode {
                 DecryptionMode::NoiseFloodSmall => {
+                    let session_timer =
+                        metrics::METRICS.time_user_decrypt_stage(UserDecryptStage::SessionCreate);
                     let session = session_maker
                         .make_small_async_session_z128(session_id, context_id, epoch_id)
                         .await
@@ -242,6 +251,7 @@ impl<
                                 "Could not prepare ddec data for noiseflood decryption: {e}",
                             )
                         })?;
+                    drop(session_timer);
                     let mut noiseflood_session = Dec::Prep::new(session);
 
                     // Only `Small` ciphertexts need switch&squash; the closure (and hence the
@@ -252,16 +262,23 @@ impl<
                         Ok((server_key, ck))
                     })?;
 
+                    // TODO(github.com/zama-ai/kms-internal/issues/3159): make `partial_decrypt` return a zeroizing value.
+                    let partial_decrypt_timer =
+                        metrics::METRICS.time_user_decrypt_stage(UserDecryptStage::PartialDecrypt);
                     let pdec =
                         Dec::partial_decrypt(&mut noiseflood_session, ct, &keys.private_keys).await;
+                    drop(partial_decrypt_timer);
 
                     let res = match pdec {
                         Ok((partial_dec_map, packing_factor, time)) => {
                             let pdec_serialized = match partial_dec_map.get(&session_id.to_string())
                             {
                                 Some(partial_dec) => {
+                                    // Wipe the serialized partial plaintext after signcryption.
                                     let partial_dec = pack_residue_poly(partial_dec);
-                                    bc2wrap::serialize(&partial_dec)?
+                                    let mut serialized = ZeroizingWriter::new();
+                                    bc2wrap::serialize_into(&partial_dec, &mut serialized)?;
+                                    serialized
                                 }
                                 None => {
                                     return Err(anyhow!(
@@ -279,6 +296,8 @@ impl<
                     Ok(res)
                 }
                 DecryptionMode::BitDecSmall => {
+                    let session_timer =
+                        metrics::METRICS.time_user_decrypt_stage(UserDecryptStage::SessionCreate);
                     let mut session = session_maker
                         .make_small_async_session_z64(session_id, context_id, epoch_id)
                         .await
@@ -287,7 +306,10 @@ impl<
                                 "Could not prepare ddec data for bitdec decryption: {e}",
                             )
                         })?;
+                    drop(session_timer);
 
+                    let partial_decrypt_timer =
+                        metrics::METRICS.time_user_decrypt_stage(UserDecryptStage::PartialDecrypt);
                     let pdec = secure_partial_decrypt_using_bitdec(
                         &mut session,
                         &low_level_ct.try_get_small_ct()?,
@@ -295,6 +317,7 @@ impl<
                         &keys.key_switching_key()?,
                     )
                     .await;
+                    drop(partial_decrypt_timer);
 
                     let res = match pdec {
                         Ok((partial_dec_map, time)) => {
@@ -302,7 +325,10 @@ impl<
                             {
                                 Some(partial_dec) => {
                                     // let partial_dec = pack_residue_poly(partial_dec); // TODO use more compact packing for bitdec?
-                                    bc2wrap::serialize(&partial_dec)?
+                                    // Wipe the serialized partial plaintext after signcryption.
+                                    let mut serialized = ZeroizingWriter::new();
+                                    bc2wrap::serialize_into(partial_dec, &mut serialized)?;
+                                    serialized
                                 }
                                 None => {
                                     return Err(anyhow!(
@@ -328,6 +354,8 @@ impl<
 
             let (partial_signcryption, packing_factor) = match pdec {
                 Ok((pdec_serialized, packing_factor, time)) => {
+                    let signcrypt_timer =
+                        metrics::METRICS.time_user_decrypt_stage(UserDecryptStage::Signcrypt);
                     let enc_res = {
                         let mut rng = rng.lock().map_err(|_| {
                             CryptographyError::Other("Poisoned mutex guard".to_string())
@@ -335,11 +363,12 @@ impl<
                         signcryption_key.signcrypt_plaintext(
                             rng.deref_mut(),
                             &DSEP_USER_DECRYPTION,
-                            &pdec_serialized,
+                            pdec_serialized.as_slice(),
                             fhe_type,
                             &link,
                         )
                     }?;
+                    drop(signcrypt_timer);
 
                     tracing::debug!(
                         "User decryption {req_id} in session {session_id} completed for type {:?}. Partial decrypt took {:?} ms",
@@ -382,6 +411,8 @@ impl<
         };
 
         let domain = domain.clone();
+        let result_sign_timer =
+            metrics::METRICS.time_user_decrypt_stage(UserDecryptStage::ResultSign);
         let signed = spawn_compute_bound(move || {
             sign_user_decryption_result(
                 &signcryption_key.signing_key,
@@ -394,6 +425,7 @@ impl<
         })
         .await
         .map_err(|e| anyhow!("Failed to run signing task for user decryption {req_id}: {e}"))?;
+        drop(result_sign_timer);
         signed.map_err(|e| anyhow!("Failed to sign user decryption {req_id}: {e}"))
     }
 
@@ -448,6 +480,7 @@ impl<
         &self,
         request: Request<UserDecryptionRequest>,
     ) -> Result<Response<Empty>, MetricedError> {
+        let admission_timer = metrics::METRICS.time_user_decrypt_stage(UserDecryptStage::Admission);
         metrics::METRICS.increment_request_counter(OP_USER_DECRYPT_REQUEST);
 
         // Check for resource exhaustion once all the other checks are ok
@@ -460,7 +493,6 @@ impl<
             .start();
 
         let inner = Arc::new(request.into_inner());
-        tracing::info!("{}", format_user_request(&inner));
 
         let (
             typed_ciphertexts,
@@ -544,7 +576,11 @@ impl<
         // store's reaper fails the entry rather than leaving it Pending forever.
         let meta_permit =
             add_or_redo_failed_in_meta_store(&meta_store, &req_id, OP_USER_DECRYPT_REQUEST).await?;
+        drop(admission_timer);
+        let schedule_timer =
+            metrics::METRICS.time_user_decrypt_stage(UserDecryptStage::ScheduleDelay);
         let inner_dec_future = move |_permit| async move {
+            drop(schedule_timer);
             // Capture the timer, it is stopped when it's dropped
             let _timer = timer;
             let meta_permit = meta_permit;
@@ -567,10 +603,15 @@ impl<
                 metric_tags,
             )
             .await;
+            let meta_store_update_timer =
+                metrics::METRICS.time_user_decrypt_stage(UserDecryptStage::MetaStoreUpdate);
             update_req_in_meta_store(&meta_store, meta_permit, result, OP_USER_DECRYPT_REQUEST)
                 .await;
+            drop(meta_store_update_timer);
         };
+        let task_metrics = metrics::METRICS.track_user_decrypt_background_task();
         self.tracker.spawn(async move {
+            let _task_metrics = task_metrics;
             // Ignore the result since this is a background thread.
             let _ = inner_dec_future(permit)
                 .instrument(tracing::Span::current())
@@ -644,21 +685,6 @@ impl<
             extra_data,
         }))
     }
-}
-
-// We want most of the metadata but not the actual ciphertexts
-fn format_user_request(request: &UserDecryptionRequest) -> String {
-    format!(
-        "UserDecryptionRequest {{ request_id: {:?}, key_id: {:?}, context_id: {:?}, epoch_id: {:?}, client_address: {:?}, enc_key: {:?}, domain: {:?}, typed_ciphertexts_count: {} }}",
-        request.request_id,
-        request.key_id,
-        request.context_id,
-        request.epoch_id,
-        request.client_address,
-        hex::encode(&request.enc_key),
-        request.domain,
-        request.typed_ciphertexts.len(),
-    )
 }
 
 #[cfg(test)]

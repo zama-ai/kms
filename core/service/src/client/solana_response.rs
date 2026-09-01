@@ -512,22 +512,30 @@ pub fn verify_solana_user_decryption_response(
                 .unwrap_or_default(),
             request.extra_data.clone(),
         );
-        let trusted_ctx = UserDecTrustedValidationContext {
-            server_addresses: trusted_signers,
-            client_request: &parsed,
-            eip712_domain: &request.response_domain,
-            threshold: None,
-        };
+        // The expected link is the Solana binding recomputed above, not the EVM EIP-712 link the
+        // validation would otherwise derive from the parsed request.
+        let trusted_ctx = UserDecTrustedValidationContext::new_with_expected_link(
+            trusted_signers,
+            &parsed,
+            &request.response_domain,
+            None,
+            expected_link.clone(),
+        )
+        .map_err(
+            |error| SolanaUserDecryptionResponseError::InconsistentShares {
+                reason: error.to_string(),
+            },
+        )?;
         let consistent = validate_user_decrypt_responses(&trusted_ctx, &accepted_responses)
             .map_err(
                 |error| SolanaUserDecryptionResponseError::InconsistentShares {
                     reason: error.to_string(),
                 },
             )?;
-        let surviving: BTreeSet<u32> = consistent
-            .as_slice()
+        let (_invariants, authenticated, _rejected) = consistent.into_parts();
+        let surviving: BTreeSet<u32> = authenticated
             .iter()
-            .map(|payload| payload.party_id)
+            .map(|response| response.role.one_based() as u32)
             .collect();
         shares.retain(|share| surviving.contains(&share.party_id));
     }

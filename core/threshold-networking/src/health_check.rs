@@ -1,4 +1,4 @@
-use super::ggen::gnetworking_client::GnetworkingClient;
+use crate::ggen::gnetworking_client::GnetworkingClient;
 use crate::grpc::HealthTag;
 use error_utils::anyhow_error_and_log;
 use observability::telemetry::ContextPropagator;
@@ -197,7 +197,7 @@ impl<R: RoleTrait> HealthCheckSession<R> {
         id: Identity,
     ) -> (R, Identity, HealthCheckStatus) {
         let start = std::time::Instant::now();
-        let request = tonic::Request::new(super::ggen::HealthCheckRequest {
+        let request = tonic::Request::new(crate::ggen::HealthCheckRequest {
             tag: tag_serialized,
             payload,
         });

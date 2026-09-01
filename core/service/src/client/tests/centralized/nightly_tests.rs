@@ -108,7 +108,7 @@ async fn default_user_decryption_centralized(
         msg,
         EncryptionConfig {
             compression: true,
-            precompute_sns: false,
+            precompute_sns: true,
         },
         parallelism,
         secure,

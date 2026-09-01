@@ -84,12 +84,29 @@ Builds Docker images **once per PR** and fans out to dependent workflows. Saves 
 
 Concurrency: groups by PR head ref, cancels in-progress runs.
 
-### Opt-in kind metrics (`kind-metrics` label)
+### KMS metrics
 
-When the PR carries the `kind-metrics` label, `kind-testing` installs a lean
-kube-prometheus-stack in the kind cluster and remote-writes the KMS metrics
-(names `ci_`-prefixed, const-label `deployment_profile=kind-ci`, external label
-`ci_run_id`) to Grafana Cloud using the `GRAFANA_CLOUD_PROM_*` secrets.
+`deploy.sh --enable-metrics` turns on the kms-core ServiceMonitor, which prefixes
+every metric name with `ci_` at scrape time. Two CI paths use it, and they get the
+metrics out in different ways:
+
+| Where | When | Scraped by | Identified by |
+|-------|------|------------|---------------|
+| `performance-testing` on `aws-perf` | every nightly | the cluster's own Prometheus operator — nothing is installed | `namespace="kms-ci"` |
+| `kind-testing` on kind | PRs carrying the `kind-metrics` label | a lean kube-prometheus-stack installed into the throwaway kind cluster, remote-writing to Grafana Cloud via `GRAFANA_CLOUD_PROM_*` | `deployment_profile="kind-ci"` |
+
+The perf rows are identified by namespace rather than a `deployment_profile`
+const-label: the nightly runs `thresholdWithEnclave`, and const-labels come from
+`KMS_METRICS_LABELS` in the server's environment, which a Nitro enclave never sees
+(see the developer metrics guide).
+
+The aws path deliberately installs nothing: that cluster is long-lived and shared,
+so a second Prometheus operator would compete with the existing one over the same
+ServiceMonitors. If the ServiceMonitor CRD is absent the deploy warns and
+continues **without** metrics rather than failing, since Kubernetes cannot create
+the resource without its CRD.
+
+#### `kind-metrics` label
 
 Note: adding the label does **not** start a run by itself — `labeled` events
 only trigger CI for the `docker` and `pr-preview-*` labels — and re-running an

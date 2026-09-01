@@ -187,51 +187,49 @@ fn create_core_certs<S: rcgen::SigningKey>(
     issuing_ca: &Issuer<S>,
     wildcard: bool,
 ) -> anyhow::Result<HashMap<usize, (KeyPair, Certificate)>> {
-    let core_cert_bundle: HashMap<usize, (KeyPair, Certificate)> = (1..=num_cores)
-        .map(|i: usize| {
-            let core_name = format!("core{i}.{ca_name}");
-            let core_keypair = KeyPair::generate_for(&PKCS_ECDSA_P256_SHA256).unwrap();
-            let sans_vec = [
-                if wildcard {
-                    vec![format!("*.{}", core_name.clone())]
-                } else {
-                    vec![]
-                },
-                vec![core_name.clone()],
-            ]
-            .concat();
-            let mut cp = CertificateParams::new(sans_vec).unwrap();
+    (1..=num_cores)
+        .map(
+            |i: usize| -> anyhow::Result<(usize, (KeyPair, Certificate))> {
+                let core_name = format!("core{i}.{ca_name}");
+                let core_keypair = KeyPair::generate_for(&PKCS_ECDSA_P256_SHA256)?;
+                let sans_vec = [
+                    if wildcard {
+                        vec![format!("*.{}", core_name.clone())]
+                    } else {
+                        vec![]
+                    },
+                    vec![core_name.clone()],
+                ]
+                .concat();
+                let mut cp = CertificateParams::new(sans_vec)?;
 
-            // set core cert CA flag to false
-            cp.is_ca = IsCa::ExplicitNoCa;
+                // set core cert CA flag to false
+                cp.is_ca = IsCa::ExplicitNoCa;
 
-            // set distinguished name of core cert
-            let mut distinguished_name = DistinguishedName::new();
-            distinguished_name.push(DnType::CommonName, core_name);
-            cp.distinguished_name = distinguished_name;
+                // set distinguished name of core cert
+                let mut distinguished_name = DistinguishedName::new();
+                distinguished_name.push(DnType::CommonName, core_name);
+                cp.distinguished_name = distinguished_name;
 
-            // set core cert Key Usage Purposes
-            cp.key_usages = vec![
-                KeyUsagePurpose::DigitalSignature,
-                KeyUsagePurpose::KeyEncipherment,
-                KeyUsagePurpose::KeyAgreement,
-            ];
+                // set core cert Key Usage Purposes
+                cp.key_usages = vec![
+                    KeyUsagePurpose::DigitalSignature,
+                    KeyUsagePurpose::KeyEncipherment,
+                    KeyUsagePurpose::KeyAgreement,
+                ];
 
-            // set core cert Extended Key Usage Purposes
-            cp.extended_key_usages = vec![
-                ExtendedKeyUsagePurpose::ServerAuth,
-                ExtendedKeyUsagePurpose::ClientAuth,
-            ];
+                // set core cert Extended Key Usage Purposes
+                cp.extended_key_usages = vec![
+                    ExtendedKeyUsagePurpose::ServerAuth,
+                    ExtendedKeyUsagePurpose::ClientAuth,
+                ];
 
-            tracing::info!("Generating keys and cert for {:?}", cp.subject_alt_names[0]);
-            let core_cert = cp
-                .signed_by(&core_keypair, issuing_ca)
-                .expect("Should never happen: core certificate generation failed, cannot recover");
-            (i, (core_keypair, core_cert))
-        })
-        .collect();
-
-    Ok(core_cert_bundle)
+                tracing::info!("Generating keys and cert for {:?}", cp.subject_alt_names[0]);
+                let core_cert = cp.signed_by(&core_keypair, issuing_ca)?;
+                Ok((i, (core_keypair, core_cert)))
+            },
+        )
+        .collect()
 }
 
 /// write the given certificate and keypair to the given path under the given name
@@ -242,9 +240,6 @@ async fn write_certs_and_keys(
     keypair: &KeyPair,
     file_type: CertFileType,
 ) -> anyhow::Result<()> {
-    tracing::info!("{}", cert.pem());
-    tracing::info!("{}", keypair.serialize_pem());
-
     match file_type {
         CertFileType::Der => {
             let cert_dir = root_dir.join(format!("cert_{name}.der"));

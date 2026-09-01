@@ -12,8 +12,8 @@ use crate::{
     cryptography::signatures::{PrivateSigKey, compute_eip712_signature},
     engine::{
         base::{CrsGenMetadata, KeyGenMetadata},
+        material_integrity::verify_public_key_digest_from_bytes,
         threshold::service::{ThresholdFheKeys, epoch_manager::EpochData},
-        utils::verify_public_key_digest_from_bytes,
     },
     util::meta_store::{MetaStore, MetaStorePermit, with_overwriting_claim},
     vault::{
@@ -395,6 +395,7 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: StorageExt + Send + Sync + 's
                     *old_key_id,
                     migrated_inner.preprocessing_id,
                     migrated_inner.key_digest_map.clone(),
+                    eip712_domain,
                     new_signature,
                     Vec::new(),
                     extra_data,

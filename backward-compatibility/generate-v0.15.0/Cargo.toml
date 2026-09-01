@@ -9,23 +9,23 @@ license = "BSD-3-Clause-Clear"
 [dependencies]
 # Import the base backward-compatibility crate for shared types and utilities
 backward-compatibility = { path = ".." }
-bc2wrap = { git = "https://github.com/zama-ai/kms.git", package = "bc2wrap", rev = "a732260d04bd3ec4fd49fb7611b5feaca307f25c" }
+bc2wrap = { git = "https://github.com/zama-ai/kms.git", package = "bc2wrap", rev = "1a16d5fc37f629f51bf7a3a2729a9d0ac428570a" }
 
 # NOTE: Some dependencies below are duplicated from ../Cargo.toml
 # This is intentional - these crates are excluded from the workspace for isolation.
 # Each generator may need different versions to match its target KMS version.
 
 # All dependencies below target the v0.15.0 release.
-# NOTE: v0.15.0 is not tagged yet, so we pin a commit rev on this branch. This rev
-# MUST be updated to the commit that introduces the `EpochData` type (and its public
-# re-export) once these changes are pushed, otherwise the generator will not compile.
-kms_0_15_0 = { git = "https://github.com/zama-ai/kms.git", package = "kms", rev = "a732260d04bd3ec4fd49fb7611b5feaca307f25c" }
-kms_grpc_0_15_0 = { git = "https://github.com/zama-ai/kms.git", package = "kms-grpc", rev = "a732260d04bd3ec4fd49fb7611b5feaca307f25c" }
-algebra_0_15_0 = { git = "https://github.com/zama-ai/kms.git", package = "threshold-algebra", default-features = false, rev = "a732260d04bd3ec4fd49fb7611b5feaca307f25c" }
-threshold_execution_0_15_0 = { git = "https://github.com/zama-ai/kms.git", package = "threshold-execution", default-features = false, rev = "a732260d04bd3ec4fd49fb7611b5feaca307f25c", features = ["testing"] }
-threshold_networking_0_15_0 = { git = "https://github.com/zama-ai/kms.git", package = "threshold-networking", default-features = false, rev = "a732260d04bd3ec4fd49fb7611b5feaca307f25c" }
-threshold_types_0_15_0 = { git = "https://github.com/zama-ai/kms.git", package = "threshold-types", default-features = false, rev = "a732260d04bd3ec4fd49fb7611b5feaca307f25c" }
-hashing_0_15_0 = { git = "https://github.com/zama-ai/kms.git", package = "threshold-hashing", default-features = false, rev = "a732260d04bd3ec4fd49fb7611b5feaca307f25c" }
+# NOTE: v0.15.0 is not tagged yet, so we pin a commit rev on `main`. Bump this rev to a
+# commit that contains every type this generator serializes, otherwise the generator will
+# not compile.
+kms_0_15_0 = { git = "https://github.com/zama-ai/kms.git", package = "kms", rev = "1a16d5fc37f629f51bf7a3a2729a9d0ac428570a" }
+kms_grpc_0_15_0 = { git = "https://github.com/zama-ai/kms.git", package = "kms-grpc", rev = "1a16d5fc37f629f51bf7a3a2729a9d0ac428570a" }
+algebra_0_15_0 = { git = "https://github.com/zama-ai/kms.git", package = "threshold-algebra", default-features = false, rev = "1a16d5fc37f629f51bf7a3a2729a9d0ac428570a" }
+threshold_execution_0_15_0 = { git = "https://github.com/zama-ai/kms.git", package = "threshold-execution", default-features = false, rev = "1a16d5fc37f629f51bf7a3a2729a9d0ac428570a", features = ["testing"] }
+threshold_networking_0_15_0 = { git = "https://github.com/zama-ai/kms.git", package = "threshold-networking", default-features = false, rev = "1a16d5fc37f629f51bf7a3a2729a9d0ac428570a" }
+threshold_types_0_15_0 = { git = "https://github.com/zama-ai/kms.git", package = "threshold-types", default-features = false, rev = "1a16d5fc37f629f51bf7a3a2729a9d0ac428570a" }
+hashing_0_15_0 = { git = "https://github.com/zama-ai/kms.git", package = "threshold-hashing", default-features = false, rev = "1a16d5fc37f629f51bf7a3a2729a9d0ac428570a" }
 #error-utils_0_15_0 = { path = "./core/error-utils", default-features = false }
 #thread-handles_0_15_0 = { path = "./core/thread-handles" }
 
@@ -34,7 +34,7 @@ hashing_0_15_0 = { git = "https://github.com/zama-ai/kms.git", package = "thresh
 # modules as much as possible to avoid serialization differences
 cfg-if_1_0_4 = { package = "cfg-if", version = "=1.0.4" }
 tfhe_versionable_0_8 = { package = "tfhe-versionable", version = "=0.8.0" }
-tfhe_1_6_2 = { package = "tfhe", version = "=1.6.2", features = [
+tfhe_1_7_0 = { package = "tfhe", version = "=1.7.0", features = [
     "shortint",
 ] }
 alloy-sol-types-1_6_0 = { package = "alloy-sol-types", version = "=1.6.0" }
@@ -53,6 +53,7 @@ bincode = { version = "=2.0.1", features = ["serde"] }
 aes-prng = "=0.2.1"
 rand = "=0.8.6"
 ron = { version = "=0.10.1", features = ["integer128"] }
+strum = "=0.27.2"
 tokio = { version = "=1.52.3", features = ["full"] }
 tokio-rustls = { version = "=0.26.4", default-features = false, features = ["aws_lc_rs"] }  # Async TLS - LOW RISK: rustls team, memory-safe TLS implementation
 

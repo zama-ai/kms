@@ -1,4 +1,6 @@
 #[cfg(feature = "non-wasm")]
+use crate::cryptography::signing::SigningSchemeType;
+#[cfg(feature = "non-wasm")]
 use crate::engine::base::derive_request_id;
 #[cfg(feature = "non-wasm")]
 use kms_grpc::{EpochId, RequestId, identifiers::ContextId};
@@ -155,6 +157,21 @@ cfg_if::cfg_if! {
 // This is a bit hackish, but it works for now.
 pub static SIGNING_KEY_ID: LazyLock<RequestId> =
     LazyLock::new(|| derive_request_id("SIGNING_KEY_ID").unwrap());
+
+/// The storage `RequestId` (filename) under which a KMS party's verification
+/// material for `scheme` is stored, within the `TypedVerfKey`/`TypedVerfAddress`
+/// data-type folders.
+#[cfg(feature = "non-wasm")]
+pub fn signing_material_id(scheme: SigningSchemeType) -> RequestId {
+    match scheme {
+        // Note that for compatibility and legacy reasons we keep the ECDSA/secp256k1 scheme's signing material at the historical [`SIGNING_KEY_ID`].
+        SigningSchemeType::Ecdsa256k1 => *SIGNING_KEY_ID,
+        // `scheme` renders as its variant name (e.g. "Ed25519", "MlDsa44"). The
+        // input is a fixed string, so derivation cannot fail in correct execution.
+        other => derive_request_id(&format!("SIGNING_KEY_ID_{other:?}"))
+            .expect("deriving a signing-material id from a fixed scheme name cannot fail"),
+    }
+}
 
 // TODO(zama-ai/kms-internal/issues/2758)
 // In the future we will remove the default context.
