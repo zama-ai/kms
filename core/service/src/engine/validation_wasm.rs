@@ -77,12 +77,12 @@ const ERR_VALIDATE_USER_DECRYPTION_NOT_ENOUGH_RESP: &str =
 pub(crate) fn check_ext_user_decryption_signature(
     external_sig: &[u8],
     payload: &UserDecryptionResponsePayload,
-    request: &ParsedUserDecryptionRequest,
+    request_enc_key: &[u8],
+    request_extra_data: &[u8],
     eip712_domain: &Eip712Domain,
     expected_addr: &alloy_primitives::Address,
 ) -> anyhow::Result<()> {
-    let extra_data = request.extra_data();
-    let message = compute_user_decrypt_message(payload, request.enc_key(), extra_data)?;
+    let message = compute_user_decrypt_message(payload, request_enc_key, request_extra_data)?;
     tracing::debug!(
         "Verifying external user decryption signature for UserDecryptResponseVerification"
     );
@@ -92,6 +92,87 @@ pub(crate) fn check_ext_user_decryption_signature(
     }
 
     Ok(())
+}
+
+/// Why one response payload failed authentication against its registered signer address.
+///
+/// Every user-decryption flavor — the EVM threshold and centralized paths and the Solana path —
+/// authenticates a share through [`authenticate_user_decrypt_share`] and maps these reasons onto
+/// its own error surface, so the rule itself exists in one copy.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ShareAuthenticationError {
+    /// The advertised `verification_key` did not deserialize.
+    MalformedVerificationKey,
+    /// The advertised key's address is not the registered one.
+    WrongAddress,
+    /// Both signature fields are empty; the share carries no authentication at all.
+    MissingSignature,
+    /// The internal ECDSA signature is present but does not verify.
+    InvalidInternalSignature,
+    /// The external EIP-712 signature does not verify, or the response does not echo the
+    /// request's `extra_data` — the signed message covers it, so a signature over other bytes
+    /// authenticates a request that was never made.
+    InvalidExternalSignature,
+}
+
+/// Authenticates one user-decryption response payload against the registered address of the party
+/// claiming it, and returns the admitted verification key.
+///
+/// The rule: the advertised key is authenticated by its address — a secp256k1 key determines its
+/// address, so a key whose address is the registered one is the registered key, while the trust
+/// itself comes from the caller's registered set. Then whichever signature the share carries is
+/// the one verified — a non-empty internal `signature` is ECDSA over the serialized payload, an
+/// empty one falls back to the external EIP-712 signature, and the branches never cross: a
+/// present-but-wrong internal signature is not rescued by a valid external one sitting next to
+/// it. The internal branch verifies with the advertised key, already admitted by its address; the
+/// external branch needs no key at all — recovery yields an address to compare.
+// TODO(0.16) verify the typed `signatures` list here and drop the two deprecated scalar fields.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn authenticate_user_decrypt_share(
+    payload: &UserDecryptionResponsePayload,
+    expected_addr: &alloy_primitives::Address,
+    internal_signature: &[u8],
+    external_signature: &[u8],
+    response_extra_data: &[u8],
+    request_enc_key: &[u8],
+    request_extra_data: &[u8],
+    eip712_domain: &Eip712Domain,
+) -> Result<PublicSigKey, ShareAuthenticationError> {
+    let advertised: PublicSigKey = bc2wrap::deserialize_slice(&payload.verification_key)
+        .map_err(|_| ShareAuthenticationError::MalformedVerificationKey)?;
+    if advertised.address() != *expected_addr {
+        return Err(ShareAuthenticationError::WrongAddress);
+    }
+
+    if internal_signature.is_empty() {
+        if external_signature.is_empty() {
+            return Err(ShareAuthenticationError::MissingSignature);
+        }
+        if response_extra_data != request_extra_data {
+            return Err(ShareAuthenticationError::InvalidExternalSignature);
+        }
+        check_ext_user_decryption_signature(
+            external_signature,
+            payload,
+            request_enc_key,
+            request_extra_data,
+            eip712_domain,
+            expected_addr,
+        )
+        .map_err(|_| ShareAuthenticationError::InvalidExternalSignature)?;
+    } else {
+        let sig = k256::ecdsa::Signature::from_slice(internal_signature)
+            .map_err(|_| ShareAuthenticationError::InvalidInternalSignature)?;
+        let sig = Signature::from_ecdsa(sig);
+        let serialized = bc2wrap::serialize(payload)
+            .map_err(|_| ShareAuthenticationError::InvalidInternalSignature)?;
+        // NOTE that we cannot use `BaseKmsStruct::verify_sig`
+        // because `BaseKmsStruct` cannot be compiled for wasm (it has an async mutex).
+        internal_verify_sig(&DSEP_USER_DECRYPTION, &serialized, &sig, &advertised)
+            .map_err(|_| ShareAuthenticationError::InvalidInternalSignature)?;
+    }
+
+    Ok(advertised)
 }
 
 fn validate_user_decrypt_meta_data_and_signature(
@@ -136,60 +217,47 @@ fn validate_user_decrypt_meta_data_and_signature(
         );
     }
 
-    // TODO: Need to update this to a safer deserialization (which checks versions) with #2781 ?
-    let resp_verf_key: PublicSigKey = bc2wrap::deserialize_slice(&other_resp.verification_key)?;
+    let Some(expected_addr) = trusted_ctx.server_addresses.get(&(other_resp.party_id)) else {
+        anyhow::bail!(ERR_VALIDATE_USER_DECRYPTION_ID_NOT_FOUND)
+    };
 
-    let expected_addr =
-        if let Some(expected_addr) = trusted_ctx.server_addresses.get(&(other_resp.party_id)) {
-            if *expected_addr != resp_verf_key.address() {
-                anyhow::bail!(ERR_VALIDATE_USER_DECRYPTION_WRONG_ADDRESS)
-            }
-            expected_addr
-        } else {
-            anyhow::bail!(ERR_VALIDATE_USER_DECRYPTION_ID_NOT_FOUND)
-        };
-
-    // The response must echo the request's extra data whichever signature we go
-    // on to verify below. The EIP-712 signature covers `extraData`, but the raw
-    // ECDSA one does not, so this check has to happen outside the branch.
+    // The response must echo the request's extra data whichever signature the authenticator goes
+    // on to verify. The EIP-712 signature covers `extraData`, but the raw ECDSA one does not, so
+    // this check has to happen outside the authenticator's branch.
     if eip712_params.response_extra_data != trusted_ctx.client_request.extra_data() {
         return Err(anyhow_error_and_log(
             ERR_VALIDATE_USER_DECRYPTION_MISMATCH_EXTRA_DATA,
         ));
     }
 
-    // Prefer ECDSA signature over the eip712 one
-    if signature.is_empty() {
-        // check signature
-        if eip712_params.response_external_signature.is_empty() {
-            return Err(anyhow_error_and_log(
-                ERR_VALIDATE_USER_DECRYPTION_MISSING_SIGNATURE,
-            ));
+    authenticate_user_decrypt_share(
+        other_resp,
+        expected_addr,
+        signature,
+        eip712_params.response_external_signature,
+        eip712_params.response_extra_data,
+        trusted_ctx.client_request.enc_key(),
+        trusted_ctx.client_request.extra_data(),
+        eip712_params.trusted_eip712_domain,
+    )
+    .map_err(|reason| match reason {
+        ShareAuthenticationError::MalformedVerificationKey => {
+            anyhow::anyhow!("Malformed verification key in user decryption response")
         }
-
-        check_ext_user_decryption_signature(
-            eip712_params.response_external_signature,
-            other_resp,
-            trusted_ctx.client_request,
-            eip712_params.trusted_eip712_domain,
-            expected_addr,
-        )
-        .inspect_err(|e| tracing::warn!("signature on received response is not valid ({})!", e))?;
-    } else {
-        let sig = Signature::from_ecdsa(k256::ecdsa::Signature::from_slice(signature)?);
-        // NOTE that we cannot use `BaseKmsStruct::verify_sig`
-        // because `BaseKmsStruct` cannot be compiled for wasm (it has an async mutex).
-        if internal_verify_sig(
-            &DSEP_USER_DECRYPTION,
-            &bc2wrap::serialize(&other_resp)?,
-            &sig,
-            &resp_verf_key,
-        )
-        .is_err()
-        {
-            anyhow::bail!("Signature on received response is not valid!");
+        ShareAuthenticationError::WrongAddress => {
+            anyhow::anyhow!(ERR_VALIDATE_USER_DECRYPTION_WRONG_ADDRESS)
         }
-    }
+        ShareAuthenticationError::MissingSignature => {
+            anyhow_error_and_log(ERR_VALIDATE_USER_DECRYPTION_MISSING_SIGNATURE)
+        }
+        ShareAuthenticationError::InvalidExternalSignature => {
+            tracing::warn!("signature on received response is not valid!");
+            anyhow::anyhow!(ERR_EXT_USER_DECRYPTION_SIG_VERIFICATION_FAILURE)
+        }
+        ShareAuthenticationError::InvalidInternalSignature => {
+            anyhow::anyhow!("Signature on received response is not valid!")
+        }
+    })?;
 
     Ok(())
 }
@@ -634,7 +702,8 @@ mod tests {
                 check_ext_user_decryption_signature(
                     &external_sig[0..64],
                     &payload,
-                    &request,
+                    request.enc_key(),
+                    request.extra_data(),
                     &domain,
                     &kms_addrs[&1],
                 )
@@ -659,7 +728,8 @@ mod tests {
                 check_ext_user_decryption_signature(
                     &bad_external_sig,
                     &payload,
-                    &request,
+                    request.enc_key(),
+                    request.extra_data(),
                     &domain,
                     &kms_addrs[&1],
                 )
@@ -679,7 +749,8 @@ mod tests {
                 check_ext_user_decryption_signature(
                     &external_sig,
                     &payload,
-                    &request,
+                    request.enc_key(),
+                    request.extra_data(),
                     &bad_domain,
                     &kms_addrs[&1],
                 )
@@ -695,7 +766,8 @@ mod tests {
                 check_ext_user_decryption_signature(
                     &external_sig,
                     &bad_payload,
-                    &request,
+                    request.enc_key(),
+                    request.extra_data(),
                     &domain,
                     &kms_addrs[&1],
                 )
@@ -710,7 +782,8 @@ mod tests {
             check_ext_user_decryption_signature(
                 &external_sig,
                 &payload,
-                &request,
+                request.enc_key(),
+                request.extra_data(),
                 &domain,
                 &kms_addrs[&1],
             )

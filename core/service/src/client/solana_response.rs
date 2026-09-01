@@ -70,14 +70,12 @@ use kms_grpc::solana_binding::{
 
 use crate::client::client_wasm::Client;
 use crate::client::user_decryption_wasm::{CiphertextHandle, ParsedUserDecryptionRequest};
-use crate::cryptography::compute_user_decrypt_message;
 use crate::cryptography::encryption::{UnifiedPrivateEncKey, UnifiedPublicEncKey};
-use crate::cryptography::signatures::{
-    PublicSigKey, Signature, internal_verify_sig, recover_address_from_ext_signature,
-};
+use crate::cryptography::signatures::PublicSigKey;
 use crate::cryptography::signcryption::{UnifiedUnsigncryptionKey, UnsigncryptFHEPlaintext};
 use crate::engine::validation::{
-    DSEP_USER_DECRYPTION, UserDecTrustedValidationContext, validate_user_decrypt_responses,
+    DSEP_USER_DECRYPTION, ShareAuthenticationError, UserDecTrustedValidationContext,
+    authenticate_user_decrypt_share, validate_user_decrypt_responses,
 };
 
 /// A Solana user-decryption request, in the client's own typed terms.
@@ -374,29 +372,33 @@ fn verify_share(
         return Err(ShareRejection::UnknownParty { party_id });
     };
 
-    // The advertised key is authenticated by its address: a secp256k1 key determines its
-    // address, so a key whose address is the registered one is the registered key. The trust
-    // itself still comes from the caller's signer set — the key material only has to match it.
-    let advertised: PublicSigKey = bc2wrap::deserialize_slice(&payload.verification_key)
-        .map_err(|_| ShareRejection::MalformedVerificationKey { party_id })?;
-    if advertised.address() != *trusted_addr {
-        return Err(ShareRejection::MalformedVerificationKey { party_id });
-    }
-
-    // Whichever signature the share carries is the one verified — a non-empty internal
-    // signature is ECDSA over the serialized payload, an empty one falls back to the EIP-712
-    // external signature, and the branches never cross: a present-but-wrong internal signature
-    // is not rescued by a valid external one sitting next to it. The internal branch verifies
-    // with the advertised key, already admitted by its address; the external branch needs no key
-    // at all — recovery yields an address to compare.
-    let authenticated = if response.signature.is_empty() {
-        external_signature_authenticates(request, payload, trusted_addr, response)
-    } else {
-        internal_signature_authenticates(payload, &advertised, &response.signature)
-    };
-    if !authenticated {
-        return Err(ShareRejection::NodeSignature { party_id });
-    }
+    // One copy of the authentication rule for every user-decryption flavor: the key is admitted
+    // by its address binding to the caller's signer set, then whichever signature the share
+    // carries is the one verified — see `authenticate_user_decrypt_share`. Both address failures
+    // fold into the malformed-key rejection, everything after the key into the node-signature
+    // rejection: the counters record which of this module's rules failed, not the shared rule's
+    // internals.
+    let advertised = authenticate_user_decrypt_share(
+        payload,
+        trusted_addr,
+        &response.signature,
+        &response.external_signature,
+        &response.extra_data,
+        &request.enc_key,
+        &request.extra_data,
+        &request.response_domain,
+    )
+    .map_err(|reason| match reason {
+        ShareAuthenticationError::MalformedVerificationKey
+        | ShareAuthenticationError::WrongAddress => {
+            ShareRejection::MalformedVerificationKey { party_id }
+        }
+        ShareAuthenticationError::MissingSignature
+        | ShareAuthenticationError::InvalidInternalSignature
+        | ShareAuthenticationError::InvalidExternalSignature => {
+            ShareRejection::NodeSignature { party_id }
+        }
+    })?;
 
     // Byte equality, length included. An unauthenticated share never gets here.
     if payload.digest != expected_link {
@@ -408,56 +410,6 @@ fn verify_share(
         verification_key: advertised,
         payload: payload.clone(),
     })
-}
-
-/// The internal authentication branch: ECDSA over the serialized payload, under the user-decryption
-/// domain separator, against the advertised key — already admitted by its address binding.
-fn internal_signature_authenticates(
-    payload: &UserDecryptionResponsePayload,
-    verification_key: &PublicSigKey,
-    signature: &[u8],
-) -> bool {
-    let Ok(sig) = k256::ecdsa::Signature::from_slice(signature) else {
-        return false;
-    };
-    let sig = Signature::from_ecdsa(sig);
-    let Ok(serialized) = bc2wrap::serialize(payload) else {
-        return false;
-    };
-    internal_verify_sig(&DSEP_USER_DECRYPTION, &serialized, &sig, verification_key).is_ok()
-}
-
-/// The external authentication branch: the EIP-712 signature a share carries when the internal one is
-/// empty — the only authentication a share that travelled the wire has.
-///
-/// The message is rebuilt from the payload and the *request's* transport key and `extra_data`,
-/// exactly as the server built it, and the response's own `extra_data` must be the request's
-/// before anything is verified: a signature over other bytes authenticates a request that was
-/// never made. The recovered signer must be the registered address.
-fn external_signature_authenticates(
-    request: &SolanaUserDecryptionRequest,
-    payload: &UserDecryptionResponsePayload,
-    trusted_addr: &alloy_primitives::Address,
-    response: &UserDecryptionResponse,
-) -> bool {
-    if response.external_signature.is_empty() {
-        return false;
-    }
-    if response.extra_data != request.extra_data {
-        return false;
-    }
-    let Ok(message) = compute_user_decrypt_message(payload, &request.enc_key, &request.extra_data)
-    else {
-        return false;
-    };
-    let Ok(address) = recover_address_from_ext_signature(
-        &message,
-        &request.response_domain,
-        &response.external_signature,
-    ) else {
-        return false;
-    };
-    address == *trusted_addr
 }
 
 /// Verifies an aggregated Solana user-decryption response against the request that produced it —

@@ -4,12 +4,12 @@ use crate::cryptography::signatures::PrivateSigKey;
 use crate::cryptography::signcryption::insecure_decrypt_ignoring_signature;
 use crate::cryptography::{
     encryption::{UnifiedPrivateEncKey, UnifiedPublicEncKey},
-    signatures::{PublicSigKey, Signature, internal_verify_sig},
+    signatures::PublicSigKey,
     signcryption::{UnifiedUnsigncryptionKey, UnsigncryptFHEPlaintext},
 };
 use crate::engine::validation::{
     DSEP_USER_DECRYPTION, ERR_VALIDATE_USER_DECRYPTION_MISMATCH_EXTRA_DATA,
-    UserDecTrustedValidationContext, check_ext_user_decryption_signature,
+    ShareAuthenticationError, UserDecTrustedValidationContext, authenticate_user_decrypt_share,
     validate_user_decrypt_responses_against_request,
 };
 use crate::{anyhow_error_and_log, some_or_err};
@@ -157,62 +157,41 @@ impl Client {
             return Err(anyhow_error_and_log("incorrect length for addresses"));
         }
 
-        let cur_verf_key: PublicSigKey = bc2wrap::deserialize_slice(&payload.verification_key)?;
-
         // NOTE: ID starts at 1
-        let expected_server_addr = if let Some(server_addr) = stored_server_addrs.get(&1) {
-            if *server_addr != cur_verf_key.address() {
-                return Err(anyhow_error_and_log("server address is not consistent"));
-            }
-            server_addr
-        } else {
-            return Err(anyhow_error_and_log("missing server address at ID 1"));
-        };
+        let expected_server_addr = some_or_err(
+            stored_server_addrs.get(&1),
+            "missing server address at ID 1".to_owned(),
+        )?;
 
-        // The response must echo the request's extra data whichever signature we go
-        // on to verify below. The EIP-712 signature covers `extraData`, but the raw
-        // ECDSA one does not, so this check has to happen outside the branch.
+        // The response must echo the request's extra data whichever signature the authenticator
+        // goes on to verify. The EIP-712 signature covers `extraData`, but the raw ECDSA one does
+        // not, so this check has to happen outside the authenticator's branch.
         if resp.extra_data != request.extra_data() {
             return Err(anyhow_error_and_log(
                 ERR_VALIDATE_USER_DECRYPTION_MISMATCH_EXTRA_DATA,
             ));
         }
 
-        // Prefer the normal ECDSA verification over the EIP712 one.
-        // The deprecated scalar `signature` field carries the raw internal ECDSA
-        // signature over the serialized payload.
-        // TODO(0.16) verify `signatures` and drop the two deprecated fields.
-        if resp.signature.is_empty() {
-            // we only consider the external signature in wasm
-            let eip712_signature = &resp.external_signature;
-
-            // check signature
-            if eip712_signature.is_empty() {
-                return Err(anyhow_error_and_log("empty signature"));
+        let cur_verf_key = authenticate_user_decrypt_share(
+            &payload,
+            expected_server_addr,
+            &resp.signature,
+            &resp.external_signature,
+            &resp.extra_data,
+            request.enc_key(),
+            request.extra_data(),
+            eip712_domain,
+        )
+        .map_err(|reason| match reason {
+            ShareAuthenticationError::WrongAddress => {
+                anyhow_error_and_log("server address is not consistent")
             }
-
-            check_ext_user_decryption_signature(
-                eip712_signature,
-                &payload,
-                request,
-                eip712_domain,
-                expected_server_addr,
-            )
-            .inspect_err(|e| {
-                tracing::warn!("signature on received response is not valid ({})", e)
-            })?;
-        } else {
-            let sig = Signature::from_ecdsa(k256::ecdsa::Signature::from_slice(&resp.signature)?);
-            internal_verify_sig(
-                &DSEP_USER_DECRYPTION,
-                &bc2wrap::serialize(&payload)?,
-                &sig,
-                &cur_verf_key,
-            )
-            .inspect_err(|e| {
-                tracing::warn!("signature on received response is not valid ({})", e)
-            })?;
-        }
+            ShareAuthenticationError::MissingSignature => anyhow_error_and_log("empty signature"),
+            reason => {
+                tracing::warn!("signature on received response is not valid ({reason:?})");
+                anyhow_error_and_log("signature on received response is not valid")
+            }
+        })?;
         let receiver_id = self.client_address.to_vec();
         let unsign_key =
             UnifiedUnsigncryptionKey::new(dec_key, enc_key, &cur_verf_key, &receiver_id);
