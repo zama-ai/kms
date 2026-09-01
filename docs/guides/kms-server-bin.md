@@ -59,13 +59,21 @@ handle:
 
 | Folder | Contents |
 | --- | --- |
-| `SigningKey` | The ECDSA/secp256k1 signing key. This is the node's authoritative identity: it is the one registered on-chain, and it is what the node signs ECDSA with. Unchanged from earlier releases. |
-| `SigningSeed` | A 32-byte root secret drawn from the CSPRNG, which every **non-ECDSA** signing key of the node is derived from. |
+| `SigningKey` | The ECDSA/secp256k1 signing key. This is the node's authoritative identity: it is the one registered on-chain, and it is what the node signs ECDSA with. It stays authoritative for ECDSA until operators rotate onto their seed-derived ECDSA key. Unchanged from earlier releases. |
+| `SigningSeed` | A 32-byte root secret drawn from the CSPRNG, which the node's signing keys are derived from eventually. |
 
 The seed is generated independently of the ECDSA key, so recovering the secp256k1
 scalar does not reveal any post-quantum key. **Losing the seed loses every
-non-ECDSA identity of the node** — they exist nowhere else — so it is part of the
-backup set, handled exactly like `SigningKey`.
+seed-derived identity of the node** — they exist nowhere else — so it is part of
+the backup set, handled exactly like `SigningKey`.
+
+The seed is meant to root *all* of a node's signing keys, ECDSA included, and on a
+freshly generated node it already does: its ECDSA key is derived from the seed. An
+existing operator is the exception, and only temporarily — its ECDSA key is
+registered on-chain and cannot be rotated by a software upgrade, so the
+`SigningKey` object above remains the authoritative ECDSA identity and the seed
+serves the other schemes, until a later release rotates ECDSA onto the seed as
+well.
 
 A seed is only ever created by an explicit `kms-gen-keys` run, never silently at
 boot:
@@ -87,9 +95,7 @@ boot:
 
 ### What is written to public storage
 
-A node signs ECDSA with its persisted ECDSA signing key; the verification keys of
-the other supported signature schemes are derived from its root signing seed. Every
-scheme's public material — including ECDSA's — is written to the two `Typed*`
+Every scheme's public material — including ECDSA's — is written to the two `Typed*`
 folders below, each under its own scheme-specific handle, so that a folder holds
 exactly one kind of object and can be read whole:
 

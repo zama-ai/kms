@@ -109,16 +109,17 @@ The service crate is the main surface area. Key subdirectories under
   private objects: its ECDSA signing key (`PrivDataType::SigningKey`, the
   authoritative on-chain identity) and an independent, CSPRNG-generated
   `RootSigningSeed` (`PrivDataType::SigningSeed`), both under `SIGNING_KEY_ID`.
-  Every non-ECDSA key is derived on demand from the *seed*, never from the ECDSA
-  scalar, so compromising the ECDSA key does not compromise the post-quantum ones.
+  The seed will eventuall be the root of *every* signing key of the node, ECDSA 
+  included: keys are derived on demand from the *seed*. However to ensure backward
+  compatibility and avoid requiring nodes to roll their ECDSA keys, legacy ECDSA 
+  are derived and stored seperately, and the seed is only used to derive every 
+  non-ECDSA key. That is, if a legacy ECDSA key is stored, then the seed will *not* 
+  be used to derive ECDSA material. 
   The seed is carried in memory on `PrivateSigKey` (a `#[serde(skip)]` field, so
   the persisted format is unchanged) and attached by `get_core_signing_key`; a key
   without it — a client wallet key, or a node that has not yet run `kms-gen-keys` —
   can only do ECDSA and errors with `SigningError::MissingRootSeed` for anything
-  else. The seed derives an ECDSA key too, used to *generate* a fresh node's
-  identity and, later (#3078 sub-issue 7), to rotate an existing one; until that
-  rotation the persisted key stays authoritative and the seed-derived ECDSA key is
-  never published. Every scheme's public verification material — ECDSA's included —
+  else. Every scheme's public verification material — ECDSA's included —
   is stored under the handle `consts::signing_material_id(scheme)` gives, in the
   data types `key_setup::CURRENT_VERF_MATERIAL_TYPES` names:
   `PubDataType::TypedVerfKey` holds the scheme's *own* verification key type
@@ -142,15 +143,19 @@ All under [core/service/src/bin/](core/service/src/bin/):
 - [kms-init.rs](core/service/src/bin/kms-init.rs) — post-deployment cluster
   initialization.
 - [kms-gen-keys.rs](core/service/src/bin/kms-gen-keys.rs) — generate the server
-  signing keys (and, in threshold mode, per-party self-signed CA certificates
-  for mTLS). Also derives and persists every non-ECDSA scheme's public
-  verification material from the ECDSA key. Reads a keygen TOML with
+  signing identity — the `RootSigningSeed` plus the ECDSA signing key, derived
+  from the seed on a fresh node and left untouched on an upgraded one — and, in
+  threshold mode, per-party self-signed CA certificates for mTLS. It is the
+  **only** thing that ever creates a seed. Also derives and persists every
+  scheme's public verification material: ECDSA's from the persisted signing key,
+  every other scheme's from the seed. Reads a keygen TOML with
   `--config-file`; `[keygen] repopulate = true` backfills the per-scheme
-  verification material from an existing ECDSA signing key instead of
-  generating keys (the same backfill runs automatically on server start via
-  `migration::migrate_public_verification_material`), and `[keygen] overwrite =
-  true` deletes the signing key together with the verification material derived
-  from it, since generating a key alongside another key's derived material is
+  verification material from the signing identity already in private storage
+  instead of generating keys (the same backfill runs automatically on server 
+  start via `migration::migrate_public_verification_material`, which warns and 
+  skips when the seed is absent), and `[keygen] overwrite = true` deletes the signing key
+  and the seed together with the verification material derived from them, since
+  generating an identity alongside another identity's derived material is
   rejected. Supports `mock_enclave` in config for local dev when compiled with
   the `insecure` feature.
 - [kms-custodian.rs](core/service/src/bin/kms-custodian.rs) — custodian-side

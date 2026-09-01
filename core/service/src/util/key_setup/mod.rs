@@ -220,8 +220,7 @@ where
 
     let sk = generate_and_store_signing_key_material(priv_storage, &mut rng, false).await?;
 
-    // Persist every scheme's verification material, ECDSA's included, from the
-    // freshly generated ECDSA signing key.
+    // Persist every scheme's verification material, ECDSA's included.
     ensure_published_verification_material(pub_storage, &sk)
         .await
         .map_err(|e| anyhow::anyhow!("Failed to store scheme verification material: {e}"))?;
@@ -319,8 +318,8 @@ where
     .await
     .map_err(|e| anyhow::anyhow!("Failed to store the root signing seed: {e}"))?;
     tracing::info!(
-        "Generated a root signing seed under the handle {} in storage \"{}\". Every \
-         non-ECDSA identity of this node derives from it, so it must reach the backup vault.",
+        "Generated a root signing seed under the handle {} in storage \"{}\". This node's \
+         derived signing identities descend from it so it must reach the backup vault.",
         *SIGNING_KEY_ID,
         priv_storage.info()
     );

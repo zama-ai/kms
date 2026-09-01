@@ -186,7 +186,10 @@ pub enum PrivateSigKeyVersions {
 #[versionize(PrivateSigKeyVersions)]
 pub struct PrivateSigKey {
     sk: WrappedSigningKey,
-    /// The seed every non-ECDSA key of this identity is derived from.
+    /// The root seed this identity's derived signing keys come from.
+    ///
+    /// The seed may be used for *every* scheme, including ECDSA.
+    /// However if a legacy ECDSA key already exists, that should take presidence.
     ///
     /// Skipped from (de)serialization and versioning to ensure backward
     /// compatibility: the seed is persisted as its own object
@@ -218,14 +221,14 @@ impl PrivateSigKey {
         }
     }
 
-    /// Attach `seed` as the root of this identity's non-ECDSA keys.
+    /// Attach `seed` as the root this identity's derived keys come from.
     pub fn with_root_seed(mut self, seed: RootSigningSeed) -> Self {
         self.seed = Some(seed);
         self
     }
 
-    /// Whether a root seed is attached, i.e. whether this identity can produce
-    /// non-ECDSA keys at all.
+    /// Whether a root seed is attached, i.e. whether this identity can derive
+    /// keys at all. Without one it is limited to ECDSA.
     pub fn has_root_seed(&self) -> bool {
         self.seed.is_some()
     }

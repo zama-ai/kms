@@ -70,7 +70,8 @@ pub enum SigningError {
     /// Deriving a verification key from a signing key failed.
     #[error("could not derive verification key: {0}")]
     KeyDerivation(String),
-    /// A non-ECDSA key was requested from a signing key that carries no root seed.
+    /// A key that has to be derived from the root seed was requested, but the
+    /// signing key carries none.
     #[error("no root signing seed is attached to this signing key, so no {0} key can be derived")]
     MissingRootSeed(SigningSchemeType),
     /// An integer discriminant did not correspond to any known signing scheme.
@@ -410,7 +411,8 @@ impl HasSigningScheme for UnifiedPublicSigKey {
 
 /// The multi-scheme surface of a node's signing identity.
 ///
-/// - **ECDSA** uses this key itself.
+/// - **ECDSA** uses this key itself. That is a property of the transition rather
+///   than of the design.
 /// - **Every other scheme** is derived from the attached [`seed::RootSigningSeed`],
 ///   and errors with [`SigningError::MissingRootSeed`] if none is attached.
 impl PrivateSigKey {

@@ -20,7 +20,8 @@
 //!    If it exists, it determines the node's ECDSA key, and the root signing seed
 //!    cannot override it.
 //! 2. **A seed is generated exactly once, by `kms-gen-keys`.**
-//!    A seed for generating non-ECDSA keys is never silently generated.
+//!    A seed is never silently generated: it roots the node's derived
+//!    identities, so minting one is an explicit, operator-driven step.
 //! 3. **On a fresh node — one with no ECDSA key yet — every key descends from the
 //!    seed, ECDSA's included.**
 //!    This allows gracefully moving to a seed-only approach, once we want to roll
