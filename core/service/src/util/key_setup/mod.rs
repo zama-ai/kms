@@ -182,12 +182,6 @@ where
             .await
             .map_err(|e| anyhow::anyhow!("Failed to read existing server signing keys: {e}"))?;
 
-    // Reject a storage that still holds verification material.
-    // We already checked that no signing key exists so if verification material
-    // exist it means inconsistent storage.
-    ensure_no_verification_material(pub_storage).await?;
-    ensure_no_root_signing_seed(priv_storage).await?;
-
     #[cfg(any(test, feature = "testing", feature = "insecure"))]
     let mut rng = get_rng(deterministic, Some(0));
     #[cfg(not(any(test, feature = "testing", feature = "insecure")))]
@@ -210,6 +204,11 @@ where
 
         return Ok(false);
     }
+    // Reject a storage that still holds verification material.
+    // We already checked that no signing key exists so if verification material
+    // exist it means inconsistent storage.
+    ensure_no_verification_material(pub_storage).await?;
+    ensure_no_root_signing_seed(priv_storage).await?;
 
     if !signing_keys_map.is_empty() {
         tracing::warn!(
@@ -1062,16 +1061,6 @@ where
     PubS: Storage,
     PrivS: Storage,
 {
-    // Reject a storage that still holds verification material.
-    // We already checked that no signing key exists so if verification material
-    // exist it means inconsistent storage.
-    ensure_no_verification_material(pub_storage)
-        .await
-        .map_err(|e| anyhow::anyhow!("Party {party_id}: {e}"))?;
-    ensure_no_root_signing_seed(priv_storage)
-        .await
-        .map_err(|e| anyhow::anyhow!("Party {party_id}: {e}"))?;
-
     #[cfg(any(test, feature = "testing", feature = "insecure"))]
     let mut rng = get_rng(deterministic, Some(party_id.get() as u64));
     #[cfg(not(any(test, feature = "testing", feature = "insecure")))]
@@ -1121,6 +1110,16 @@ where
 
         return Ok(false);
     }
+
+    // Reject a storage that still holds verification material.
+    // We already checked that no signing key exists so if verification material
+    // exist it means inconsistent storage.
+    ensure_no_verification_material(pub_storage)
+        .await
+        .map_err(|e| anyhow::anyhow!("Party {party_id}: {e}"))?;
+    ensure_no_root_signing_seed(priv_storage)
+        .await
+        .map_err(|e| anyhow::anyhow!("Party {party_id}: {e}"))?;
 
     if !signing_keys_map.is_empty() {
         tracing::warn!(
