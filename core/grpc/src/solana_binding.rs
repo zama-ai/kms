@@ -13,7 +13,8 @@
 
 use hashing::{DSEP_LIST, DomainSep, unsafe_hash_list_w_size};
 
-/// Scheme and version tag, first element of the hashed list. Exactly 29 bytes.
+/// Scheme and version tag, first element of the hashed list. The width in the type is the tag
+/// string's own length, not a parameter of the construction.
 ///
 /// A change to any normative rule of the construction bumps the version in this tag rather than
 /// silently reinterpreting the same bytes. Frozen: see [`DSEP_SOLANA_LINKER`].
@@ -54,12 +55,19 @@ const HANDLE_CHAIN_ID_START: usize = 22;
 const HANDLE_CHAIN_ID_END: usize = 30;
 
 /// A host chain id that is valid for the Solana request path.
+///
+/// Stored as the big-endian bytes the linker hashes, so the hashed element can be borrowed
+/// straight from the binding.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-struct SolanaHostChainId(u64);
+struct SolanaHostChainId([u8; CHAIN_ID_LEN]);
 
 impl SolanaHostChainId {
     fn get(self) -> u64 {
-        self.0
+        u64::from_be_bytes(self.0)
+    }
+
+    fn as_bytes(&self) -> &[u8; CHAIN_ID_LEN] {
+        &self.0
     }
 }
 
@@ -70,7 +78,7 @@ impl TryFrom<u64> for SolanaHostChainId {
         if chain_id & SOLANA_CHAIN_TYPE_BIT == 0 {
             return Err(SolanaUserDecryptBindingError::InvalidDeclaredChainId { chain_id });
         }
-        Ok(Self(chain_id))
+        Ok(Self(chain_id.to_be_bytes()))
     }
 }
 
@@ -203,7 +211,7 @@ impl SolanaUserDecryptBinding {
         // The chain-kind bit was checked for every handle above, which is why this wraps the value
         // directly: the fallible conversion exists for a chain id a caller declares separately.
         let chain_id = common_chain_id
-            .map(SolanaHostChainId)
+            .map(|chain_id| SolanaHostChainId(chain_id.to_be_bytes()))
             .ok_or(SolanaUserDecryptBindingError::EmptyHandles)?;
 
         Ok(Self {
@@ -219,22 +227,20 @@ impl SolanaUserDecryptBinding {
 
     /// The per-request commitment: 32 bytes, delivered to signcryption as opaque bytes.
     pub fn compute_link(&self) -> Vec<u8> {
-        let chain_id = self.chain_id.get().to_be_bytes();
-
         unsafe_hash_list_w_size(
             &DSEP_SOLANA_LINKER,
-            &self.hashed_elements(&chain_id),
+            &self.hashed_elements(),
             SOLANA_LINK_LEN,
         )
     }
 
     /// The exact byte sequence fed to the hasher, in order — the `linker_hasher_input` field of
-    /// the published vectors. Consumed by the vector generator and the freeze gate; not part of
-    /// the client contract.
+    /// the published vectors. Consumed by the vector generator and the freeze gate
+    /// (`core/grpc/tests/solana_linker_vectors.rs` and
+    /// `core/grpc/tests/solana_frozen_constants.rs`); not part of the client contract.
     #[doc(hidden)]
     pub fn linker_hasher_input(&self) -> Vec<u8> {
-        let chain_id = self.chain_id.get().to_be_bytes();
-        let elements = self.hashed_elements(&chain_id);
+        let elements = self.hashed_elements();
 
         let mut input = Vec::with_capacity(
             DSEP_LIST.len()
@@ -256,14 +262,11 @@ impl SolanaUserDecryptBinding {
     /// The transport key is last and is the only element of variable length, which is the
     /// precondition the shared list hash needs to stay injective: every element before it has a
     /// position-determined width, so the element count recovers the handle count exactly.
-    ///
-    /// `chain_id` is passed in rather than produced here because the elements borrow from `self`
-    /// and the big-endian chain id has to outlive the returned slice list.
-    fn hashed_elements<'a>(&'a self, chain_id: &'a [u8; CHAIN_ID_LEN]) -> Vec<&'a [u8]> {
+    fn hashed_elements(&self) -> Vec<&[u8]> {
         let mut elements: Vec<&[u8]> = Vec::with_capacity(FIXED_ELEMENTS + self.handles.len());
         elements.push(SOLANA_LINKER_SCHEME_TAG.as_slice());
         elements.push(self.verifying_program_id.as_slice());
-        elements.push(chain_id.as_slice());
+        elements.push(self.chain_id.as_bytes().as_slice());
         elements.push(self.receiver_id.as_slice());
         elements.push(self.kms_context_id.as_slice());
         elements.push(self.kms_epoch_id.as_slice());
