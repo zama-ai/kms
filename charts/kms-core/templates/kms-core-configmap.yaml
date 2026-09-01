@@ -1,6 +1,20 @@
 {{- if or .Values.kmsCore.enabled .Values.kmsGenCertAndKeys.enabled -}}
 {{- $kmsCoreName := include "kmsCoreName" . }}
 {{- $peersIDList := untilStep (include "kmsPeersStartID" . | int) (.Values.kmsPeers.count | add1 | int) 1  }}
+{{- /* Issue#3089: the PRSS-Mask activation thresholds render into the [threshold] config
+       section, so as of chart 1.6.2 they live with the rest of that section under
+       kmsCore.thresholdMode instead of at the top-level kmsCore.legacyPrssMask used by chart
+       <=1.6.1. Reject the old path loudly: Helm drops misplaced keys without error and the
+       server config defaults the fields to "0", so a wrongly-nested threshold is invisible —
+       the party runs the fixed schedule while unpatched peers run the legacy one, and
+       decryption keeps passing because the divergence sits inside the fault budget.
+       Only non-empty values are rejected, since `helm upgrade --reuse-values` from chart
+       <=1.6.1 carries the old empty defaults forward and those mean "unset". */}}
+{{- with (.Values.kmsCore).legacyPrssMask }}
+  {{- if or .beforePublicDecryptId .beforeUserDecryptId }}
+    {{- fail "kmsCore.legacyPrssMask moved to kmsCore.thresholdMode.legacyPrssMask in chart 1.6.2. Set kmsCore.thresholdMode.legacyPrssMask.beforePublicDecryptId and .beforeUserDecryptId instead, and remove kmsCore.legacyPrssMask: at the old path the value is silently ignored." }}
+  {{- end }}
+{{- end }}
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -114,13 +128,13 @@ data:
 
     {{- /* Issue#3089: temporary PRSS-Mask schedule activation thresholds, see values.yaml.
            Safe navigation (parenthesized) so the traversal returns nil rather than erroring when
-           legacyPrssMask is absent — e.g. on a `helm upgrade --reuse-values` from a pre-1.6.1
+           legacyPrssMask is absent — e.g. on a `helm upgrade --reuse-values` from a pre-1.6.2
            release, where the reused values snapshot has no legacyPrssMask key and chart defaults
            are not re-merged. */}}
-    {{- with ((.Values.kmsCore).legacyPrssMask).beforePublicDecryptId }}
+    {{- with ((.Values.kmsCore.thresholdMode).legacyPrssMask).beforePublicDecryptId }}
     legacy_prss_mask_before_public_decrypt_id = {{ . | quote }}
     {{- end }}
-    {{- with ((.Values.kmsCore).legacyPrssMask).beforeUserDecryptId }}
+    {{- with ((.Values.kmsCore.thresholdMode).legacyPrssMask).beforeUserDecryptId }}
     legacy_prss_mask_before_user_decrypt_id = {{ . | quote }}
     {{- end }}
 

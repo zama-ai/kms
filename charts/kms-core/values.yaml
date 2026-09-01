@@ -42,24 +42,6 @@ kmsCore:
         backupVaultKeychainAWSKMSRootKeyID: KMS_CORE__BACKUP_VAULT__KEYCHAIN__AWS_KMS__ROOT_KEY_ID
   rateLimiter:
     bucketSize: 50000
-  # Issue#3089: temporary request-ID activation thresholds for the PRSS-Mask counter-schedule
-  # fix (#663). Requests with an ID strictly below the configured value run the legacy
-  # (pre-#663) schedule for interop with unpatched peers; requests at or above it run the
-  # fixed schedule. MANDATORY fields of the server config (chart rendering fails if nulled);
-  # "0" means the fixed schedule is always used.
-  #
-  # ALL MPC parties MUST configure identical values, chosen
-  # with enough margin for the slowest party to upgrade before the counters reach
-  # them. ALWAYS quote the values (they are 256-bit integers, decimal or 0x-prefixed hex;
-  # unquoted large YAML numbers get mangled). Remove once the migration is complete.
-  # PRSS-Mask legacy-schedule activation thresholds (Issue#3089). Left EMPTY by default so the
-  # config omits the fields entirely — pre-#663 binaries reject unknown config keys, so during a
-  # rolling upgrade these must stay unset until every party runs the new binary, then be enabled
-  # in a second pass (see ci/scripts/rolling_upgrade.sh). Empty => new binary defaults to "0"
-  # (always the fixed schedule). Set to a decimal/0x-hex request-ID threshold to activate.
-  legacyPrssMask:
-    beforePublicDecryptId: ""
-    beforeUserDecryptId: ""
   # Add the following to enable threshold mode:
   thresholdMode:
     enabled: false
@@ -127,6 +109,32 @@ kmsCore:
     # Number of sessions to pre-process should be equal to number of vCPUs
     numSessionsPreproc: 100
     decryptionMode: "NoiseFloodSmall"
+    # Issue#3089: temporary request-ID activation thresholds for the PRSS-Mask counter-schedule
+    # fix (#663). A decryption request whose ID, read as a big-endian integer, is strictly below
+    # the configured value runs the legacy (pre-#663) schedule for interop with unpatched peers;
+    # requests at or above it run the fixed schedule. Public and user decryption request IDs come
+    # from separate counters, hence one threshold each.
+    #
+    # These render into the [threshold] section of kms-server.toml, so they MUST stay nested here
+    # under thresholdMode. Set anywhere else — in particular at the old kmsCore.legacyPrssMask
+    # path used by chart <=1.6.1 — Helm ignores them without error and the party silently runs the
+    # fixed schedule against legacy-schedule peers. The chart hard-fails on that old path.
+    #
+    # Left EMPTY by default so the rendered config omits the fields entirely: pre-#663 binaries
+    # reject unknown config keys, so during a rolling upgrade these must stay unset until every
+    # party runs the new binary, then be enabled in a second pass (see
+    # ci/scripts/rolling_upgrade.sh). Omitted => the new binary defaults to "0", i.e. always the
+    # fixed schedule.
+    #
+    # ALL MPC parties MUST configure identical values, chosen with enough margin for the slowest
+    # party to upgrade before the counters reach them. ALWAYS quote the values (they are 256-bit
+    # integers, decimal or 0x-prefixed hex; unquoted large YAML numbers get mangled). After each
+    # party restarts, confirm the "PRSS-Mask legacy schedule activation thresholds configured"
+    # startup line in its log — that line is the only signal the value took effect. Remove this
+    # whole block once the migration is complete.
+    legacyPrssMask:
+      beforePublicDecryptId: ""
+      beforeUserDecryptId: ""
   # Add the following to enable nitro enclave:
   # Nitro enclave needs specific instance types
   nitroEnclave:

@@ -227,7 +227,20 @@ main() {
     # bumps `checksum/config`, restarting the (already-new) pod to pick it up.
     # Non-upgraded (old) parties are never touched, so no old binary ever sees it.
     #=========================================================================
+    # The server parses the threshold as a U256 and logs it back in canonical decimal, and the
+    # confirmation below gates the wave on that log line. An input that differs from its own
+    # canonical form could never match it, so restrict this script to decimal and strip leading
+    # zeros. 0x-prefixed hex remains valid for the chart value and the server config; only this
+    # script's automated comparison requires decimal.
     local threshold="${LEGACY_PRSS_MASK_THRESHOLD:-100}"
+    if [[ ! "${threshold}" =~ ^[0-9]+$ ]]; then
+        log_error "LEGACY_PRSS_MASK_THRESHOLD must be a decimal integer, got '${threshold}'."
+        log_error "0x-prefixed hex is accepted by the chart value but not by this script; convert it to decimal."
+        exit 1
+    fi
+    threshold="$(echo "${threshold}" | sed 's/^0*//')"
+    threshold="${threshold:-0}"
+
     log_info "Step 4: Enabling PRSS-Mask threshold=${threshold} on upgraded parties [${ALL_UPGRADED_PARTIES}]..."
 
     local new_chart_loc="${REPO_ROOT}/charts/kms-core"
@@ -251,8 +264,8 @@ main() {
             --namespace "${NAMESPACE}" \
             --reuse-values \
             --set kmsGenCertAndKeys.enabled=false \
-            --set "kmsCore.legacyPrssMask.beforePublicDecryptId=${threshold}" \
-            --set "kmsCore.legacyPrssMask.beforeUserDecryptId=${threshold}" \
+            --set "kmsCore.thresholdMode.legacyPrssMask.beforePublicDecryptId=${threshold}" \
+            --set "kmsCore.thresholdMode.legacyPrssMask.beforeUserDecryptId=${threshold}" \
             --wait --wait-for-jobs --timeout=1200s &
         _prss_pids+=("$!")
         _prss_parties+=("${i}")
@@ -268,7 +281,59 @@ main() {
         log_error "PRSS-Mask threshold rollout failed for parties: ${_prss_failed[*]}"
         exit 1
     fi
-    log_info "PRSS-Mask threshold enabled on all upgraded parties."
+
+    # A successful helm upgrade only proves Helm accepted the values, not that the threshold
+    # reached the core config: a misplaced value is dropped without error and the server then
+    # defaults to "0" (fixed schedule). The startup line below is the only signal that the value
+    # took effect, so gate the wave on it per party rather than trusting the upgrade exit status.
+    #
+    # A threshold of 0 is the one value that cannot be confirmed this way: it means "no legacy
+    # window" (no request ID is strictly below 0), which is already the default, so the server
+    # emits no line at all. Skip the gate rather than fail it, and say so loudly — running this
+    # step with 0 configures nothing.
+    if [[ "${threshold}" == "0" ]]; then
+        log_warn "PRSS-Mask threshold is 0: no legacy-schedule window is configured and the server"
+        log_warn "logs no activation line, so there is nothing to confirm. Skipping the startup check."
+        log_warn "If you meant to enable a legacy window, set LEGACY_PRSS_MASK_THRESHOLD to a non-zero value."
+    else
+        local _prss_unconfirmed=()
+        local _expected="PRSS-Mask legacy schedule activation thresholds configured: requests with ID strictly below public=${threshold} / user=${threshold}"
+        local _max_attempts=6
+        for _id in "${_prss_ids[@]}"; do
+            local i; i="$(echo "${_id}" | tr -d ' ')"
+            [[ -z "${i}" ]] && continue
+            local _pod; _pod="$(get_party_pod_name "${i}")"
+            local _confirmed="false"
+            local _logs _attempt
+            for ((_attempt = 1; _attempt <= _max_attempts; _attempt++)); do
+                # Read the whole stream into a variable and match in-shell. Piping into `grep -q`
+                # would let grep exit on the first match and SIGPIPE `kubectl logs`, which under
+                # this script's `set -o pipefail` makes the pipeline fail — turning a successful
+                # match into a reported failure.
+                _logs="$(kubectl logs "${_pod}" -n "${NAMESPACE}" --all-containers=true 2>/dev/null || true)"
+                if [[ "${_logs}" == *"${_expected}"* ]]; then
+                    _confirmed="true"
+                    break
+                fi
+                if [[ "${_attempt}" -lt "${_max_attempts}" ]]; then
+                    log_info "  Party ${i}: threshold startup line not present yet (attempt ${_attempt}/${_max_attempts})..."
+                    sleep 10
+                fi
+            done
+            if [[ "${_confirmed}" == "true" ]]; then
+                log_info "  Party ${i}: PRSS-Mask threshold=${threshold} confirmed in startup log."
+            else
+                _prss_unconfirmed+=("${i}")
+            fi
+        done
+        if [[ "${#_prss_unconfirmed[@]}" -gt 0 ]]; then
+            log_error "PRSS-Mask threshold=${threshold} never appeared in the startup log of parties: ${_prss_unconfirmed[*]}"
+            log_error "Those parties are running the fixed schedule while unpatched peers run the legacy one."
+            log_error "Check that the value is set at kmsCore.thresholdMode.legacyPrssMask (not kmsCore.legacyPrssMask)."
+            exit 1
+        fi
+        log_info "PRSS-Mask threshold enabled and confirmed on all upgraded parties."
+    fi
 
     log_info "========================================="
     log_info "Rolling Upgrade Complete!"
