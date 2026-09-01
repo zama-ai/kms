@@ -258,8 +258,8 @@ instead of writing the data, so another entry appeared concurrently. Nothing was
         if written_data != legacy_data {
             // Roll the bad copy back while the flat source is still intact. Leaving it in place
             // would poison the storage: readers resolve CRS metadata from the epoch-scoped path,
-            // and the next run of this migration would classify the pair as a conflict and skip
-            // it forever. Abort so the operator sees the failure instead of a degraded start.
+            // and every later run of this migration would classify the pair as a conflict and
+            // refuse to start. Abort so the operator sees the failure on the first attempt.
             priv_storage
                 .delete_data_at_epoch(&crs_id, &target_epoch_id, &data_type_str)
                 .await
