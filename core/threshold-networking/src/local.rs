@@ -191,7 +191,9 @@ impl<R: RoleTrait> Networking<R> for LocalNetworking<R> {
 
     async fn increase_round_counter(&self) {
         if let Some(duration) = self.delayed_party {
-            std::thread::sleep(duration);
+            // Async sleep: a blocking `std::thread::sleep` here would stall the
+            // tokio worker thread (and any other tasks scheduled on it).
+            tokio::time::sleep(duration).await;
         }
         //Locking all mutexes in same place
         //Update max_elapsed_time

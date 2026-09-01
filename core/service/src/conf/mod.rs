@@ -1,4 +1,4 @@
-use self::threshold::ThresholdPartyConf;
+use self::threshold::{ThresholdPartyConf, TlsConf};
 use crate::util::rate_limiter::RateLimiterConfig;
 use clap::ValueEnum;
 use observability::{
@@ -45,6 +45,24 @@ pub struct CoreConfig {
     pub migration: Option<MigrationConfig>,
     #[cfg(feature = "insecure")]
     pub mock_enclave: Option<bool>,
+}
+
+impl CoreConfig {
+    /// Whether MPC contexts must contain trusted PCR values.
+    pub(crate) fn requires_pcr_allowlist(&self) -> bool {
+        let uses_auto_tls = self
+            .threshold
+            .as_ref()
+            .and_then(|threshold| threshold.tls.as_ref())
+            .is_some_and(TlsConf::is_auto);
+
+        #[cfg(feature = "insecure")]
+        if self.mock_enclave.is_some_and(|mock_enclave| mock_enclave) {
+            return false;
+        }
+
+        uses_auto_tls
+    }
 }
 
 /// One-time migration input associating existing epochs with the context they belong to.
@@ -416,17 +434,18 @@ mod tests {
         );
 
         let core_to_core_net = threshold_config.core_to_core_net;
-        assert!(core_to_core_net.is_some());
-        let core_to_core_net = core_to_core_net.unwrap();
-        assert_eq!(core_to_core_net.message_limit, 70);
-        assert_eq!(core_to_core_net.multiplier, 2.0);
-        assert_eq!(core_to_core_net.max_interval, 60);
+        assert_eq!(core_to_core_net.message_limit, Some(70));
+        assert_eq!(core_to_core_net.multiplier, Some(2.0));
+        assert_eq!(core_to_core_net.max_interval, Some(60));
         assert_eq!(core_to_core_net.initial_interval_ms, Some(100));
         assert_eq!(core_to_core_net.max_elapsed_time, Some(300));
-        assert_eq!(core_to_core_net.network_timeout, 20);
-        assert_eq!(core_to_core_net.network_timeout_bk, 300);
-        assert_eq!(core_to_core_net.network_timeout_bk_sns, 1200);
-        assert_eq!(core_to_core_net.max_en_decode_message_size, 2147483648);
+        assert_eq!(core_to_core_net.network_timeout, Some(20));
+        assert_eq!(core_to_core_net.network_timeout_bk, Some(300));
+        assert_eq!(core_to_core_net.network_timeout_bk_sns, Some(1200));
+        assert_eq!(
+            core_to_core_net.max_en_decode_message_size,
+            Some(2147483648)
+        );
         assert_eq!(core_to_core_net.session_update_interval_secs, Some(60));
         assert_eq!(core_to_core_net.session_cleanup_interval_secs, Some(86400));
         assert_eq!(
@@ -517,6 +536,27 @@ mod tests {
             core_config.threshold.is_none(),
             "threshold section should be absent in centralized config"
         );
+    }
+
+    #[test]
+    fn test_requires_pcr_allowlist() {
+        let mut core_config: CoreConfig = init_conf("config/default_2").unwrap();
+        assert!(!core_config.requires_pcr_allowlist());
+
+        core_config.threshold.as_mut().unwrap().tls = Some(TlsConf::Auto {
+            eif_signing_cert: None,
+            trusted_releases: vec![],
+            attest_private_vault_root_key: None,
+            renew_slack_after_expiration: None,
+            renew_fail_retry_timeout: None,
+        });
+        assert!(core_config.requires_pcr_allowlist());
+
+        #[cfg(feature = "insecure")]
+        {
+            core_config.mock_enclave = Some(true);
+            assert!(!core_config.requires_pcr_allowlist());
+        }
     }
 
     #[test]

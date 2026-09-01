@@ -55,7 +55,8 @@ async fn test_user_decryption_threshold(
         pt,
         EncryptionConfig {
             compression: true,
-            precompute_sns: false,
+            // BitDecSmall explicitly exercises the small-ciphertext path.
+            precompute_sns: !matches!(decryption_mode, DecryptionMode::BitDecSmall),
         },
         1,
         secure,
@@ -83,7 +84,7 @@ async fn test_user_decryption_threshold_malicious(
         pt,
         EncryptionConfig {
             compression: true,
-            precompute_sns: false,
+            precompute_sns: true,
         },
         1,    // parallelism
         true, // secure
@@ -106,7 +107,7 @@ async fn test_user_decryption_threshold_malicious_failure() {
         TestingPlaintext::U32(u32::MAX),
         EncryptionConfig {
             compression: true,
-            precompute_sns: false,
+            precompute_sns: true,
         },
         1,    // parallelism
         true, // secure
@@ -134,7 +135,7 @@ async fn test_user_decryption_threshold_all_malicious_failure() {
         TestingPlaintext::U16(u16::MAX),
         EncryptionConfig {
             compression: true,
-            precompute_sns: false,
+            precompute_sns: true,
         },
         1,    // parallelism
         true, // secure
@@ -197,7 +198,7 @@ async fn test_user_decryption_threshold_and_write_transcript(
         TestingPlaintext::U8(42),
         EncryptionConfig {
             compression: true,
-            precompute_sns: false,
+            precompute_sns: true,
         },
         1,
         secure,
@@ -227,7 +228,7 @@ async fn default_user_decryption_threshold_and_write_transcript(
         msg,
         EncryptionConfig {
             compression: true,
-            precompute_sns: false,
+            precompute_sns: true,
         },
         1, // wasm tests are single-threaded
         secure,
@@ -257,7 +258,7 @@ async fn default_user_decryption_threshold(
         msg,
         EncryptionConfig {
             compression: true,
-            precompute_sns: false,
+            precompute_sns: true,
         },
         parallelism,
         secure,
@@ -316,7 +317,7 @@ async fn default_user_decryption_threshold_with_crash(
         msg,
         EncryptionConfig {
             compression: true,
-            precompute_sns: false,
+            precompute_sns: true,
         },
         parallelism,
         secure,

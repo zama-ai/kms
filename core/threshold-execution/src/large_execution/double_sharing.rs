@@ -1,3 +1,6 @@
+use super::local_double_and_single_share::{
+    JointShares, LocalDoubleAndSingleShare, RealLocalDoubleAndSingleShare,
+};
 use super::local_double_share::{DoubleShares, LocalDoubleShare, SecureLocalDoubleShare};
 use crate::runtime::sessions::large_session::LargeSessionHandles;
 use algebra::{
@@ -28,16 +31,36 @@ pub struct DoubleShare<Z> {
 
 #[async_trait]
 pub trait DoubleSharing<Z: Ring>: ProtocolDescription + Send + Sync + Clone {
+    /// Initialise the double sharing protocol, producing a batch of `l` degree-t and degree-2t local double shares for each party.
     async fn init<L: LargeSessionHandles>(
         &mut self,
         session: &mut L,
         l: usize,
     ) -> anyhow::Result<()>;
 
+    /// Extract the next random value from the local double shares produced by [`init`](Self::init).
+    /// (The same value is produced with both degree-t and degree-2t shares)
     async fn next<L: LargeSessionHandles>(
         &mut self,
         session: &mut L,
     ) -> anyhow::Result<DoubleShare<Z>>;
+
+    /// Jointly initialise this double sharing and a companion single sharing in a single
+    /// local-share protocol execution. Shares `l_single + l_double` secrets through one
+    /// [`LocalDoubleShare`](super::local_double_share::LocalDoubleShare), stores the last
+    /// `l_double` of them as this double sharing's material, and returns the first `l_single`
+    /// degree-t shares (one vector per role) for the companion single sharing to load via
+    /// [`SingleSharing::load_local_single_shares`](super::single_sharing::SingleSharing::load_local_single_shares).
+    ///
+    /// This collapses the previously separate single- and double-sharing inits into one round of
+    /// ShareDispute + Coinflip + verify (spec parity), at the cost of also carrying the single
+    /// secrets as 2t shares on the wire.
+    async fn init_joint_with_single<L: LargeSessionHandles>(
+        &mut self,
+        session: &mut L,
+        l_single: usize,
+        l_double: usize,
+    ) -> anyhow::Result<HashMap<Role, Vec<Z>>>;
 }
 
 //Might want to store the dispute set at the output of the ldl call
@@ -109,9 +132,10 @@ impl<Z: Derive + ErrorCorrect + Invert, S: LocalDoubleShare> DoubleSharing<Z>
             .execute(session, &my_secrets)
             .await?;
 
+        // Run every fallible step before mutating `self`, so a failure leaves the sharing
+        // state untouched (all-or-nothing), as in `load_local_single_shares`.
         //Prepare data from the map output by LocalDoubleShare to 2 vectors ready to be multiplied with the VDM matrix
-        self.available_ldl = format_for_next(ldl, l)?;
-        self.max_num_iterations = l;
+        let available_ldl = format_for_next(ldl, l)?;
 
         //Init vdm matrix only once or when dim changes
         let curr_height = session.num_parties();
@@ -120,12 +144,59 @@ impl<Z: Derive + ErrorCorrect + Invert, S: LocalDoubleShare> DoubleSharing<Z>
             || curr_height != self.vdm_matrix.height()
             || curr_width != self.vdm_matrix.width()
         {
-            self.vdm_matrix = VdmMatrix::from_exceptional_sequence(
-                session.num_parties(),
-                session.num_parties() - session.threshold() as usize,
-            )?;
+            self.vdm_matrix = VdmMatrix::from_exceptional_sequence(curr_height, curr_width)?;
         }
+
+        self.available_ldl = available_ldl;
+        self.max_num_iterations = l;
         Ok(())
+    }
+
+    #[instrument(name="DoubleAndSingleSharing.Init",skip(self,session),fields(sid = ?session.session_id(),my_role=?session.my_role(), single_batch_size = ?l_single, double_batch_size = ?l_double))]
+    async fn init_joint_with_single<L: LargeSessionHandles>(
+        &mut self,
+        session: &mut L,
+        l_single: usize,
+        l_double: usize,
+    ) -> anyhow::Result<HashMap<Role, Vec<Z>>> {
+        if l_single + l_double == 0 {
+            return Ok(HashMap::new());
+        }
+
+        let single_secrets = (0..l_single)
+            .map(|_| Z::sample(session.rng()))
+            .collect_vec();
+        let double_secrets = (0..l_double)
+            .map(|_| Z::sample(session.rng()))
+            .collect_vec();
+
+        //Share single and double secrets together in one LocalDoubleShare
+        let joint = RealLocalDoubleAndSingleShare::new(self.local_double_share.clone());
+        let JointShares { single, double } = joint
+            .execute(session, &single_secrets, &double_secrets)
+            .await?;
+
+        // Run every fallible step before mutating `self`, so a failure leaves the sharing
+        // state untouched (all-or-nothing), as in `load_local_single_shares`.
+        //Prepare the double-sharing material for next()
+        let available_ldl = format_for_next(double, l_double)?;
+
+        //Init vdm matrix only once or when dim changes
+        let curr_height = session.num_parties();
+        let curr_width = session.num_parties() - session.threshold() as usize;
+        if self.vdm_matrix.is_empty()
+            || curr_height != self.vdm_matrix.height()
+            || curr_width != self.vdm_matrix.width()
+        {
+            self.vdm_matrix = VdmMatrix::from_exceptional_sequence(curr_height, curr_width)?;
+        }
+
+        //Store the double-sharing material for next()
+        self.available_ldl = available_ldl;
+        self.max_num_iterations = l_double;
+
+        //Return the single-sharing material for the companion SingleSharing to load
+        Ok(single)
     }
 
     //NOTE: This is instrumented by the caller function to use the same span for all calls
@@ -211,10 +282,8 @@ fn compute_next_batch<Z: Ring>(
 
 #[cfg(test)]
 pub(crate) mod tests {
-    use num_integer::div_ceil;
     use rstest::rstest;
 
-    use crate::large_execution::constants::DISPUTE_STAT_SEC;
     use crate::large_execution::double_sharing::SecureDoubleSharing;
     use crate::runtime::sessions::base_session::GenericBaseSessionHandles;
     use crate::runtime::sessions::session_parameters::GenericParameterHandles;
@@ -260,15 +329,14 @@ pub(crate) mod tests {
         // Rounds (only on the happy path here)
         // RealPreprocessing
         // init double sharing
-        //      share dispute = 1 round
-        //      pads =  1 round
+        //      share dispute = 1 round (secrets and pads shared together)
         //      coinflip = vss + open = (1 + 3 + threshold) + 1
-        //      verify = m reliable_broadcast = m*(3 + t) rounds
+        //      verify = 1 reliable_broadcast = (3 + t) rounds
+        //          (the m check-value tuples are batched into a single broadcast)
         // next() calls for the batch
         //      We're doing one more sharing than pre-computed in the initial init (see num_output)
         //      Thus we have one more call to init, and therefore we double the rounds from above
-        let m = div_ceil(DISPUTE_STAT_SEC, Z::LOG_SIZE_EXCEPTIONAL_SET);
-        let rounds = (1 + 1 + (1 + 3 + threshold) + 1 + m * (3 + threshold)) * 2;
+        let rounds = (1 + (1 + 3 + threshold) + 1 + (3 + threshold)) * 2;
         //DoubleSharing assumes Sync network
         let result = execute_protocol_large::<_, _, Z, EXTENSION_DEGREE>(
             parties,

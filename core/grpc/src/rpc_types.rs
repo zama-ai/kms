@@ -1,5 +1,4 @@
 pub use crate::identifiers::{ID_LENGTH, KeyId, RequestId};
-use crate::kms::v1::UserDecryptionResponsePayload;
 use crate::kms::v1::{
     Eip712DomainMsg, TypedCiphertext, TypedPlaintext, TypedSigncryptedCiphertext,
 };
@@ -294,12 +293,16 @@ pub enum PubDataType {
     )]
     PublicKeyMetadata,
     CRS,
-    VerfKey,     // Type for the servers public verification keys
-    VerfAddress, // The ethereum address of the KMS core, needed for KMS signature verification
+    VerfKey, // DEPRECATED (superseded by [`PubDataType::TypedVerfKey`]): Type for the servers public ECDSA 256k1 verification keys
+    VerfAddress, // DEPRECATED (superseded by [`PubDataType::TypedVerfAddress`]): The ethereum address of the KMS core, needed for KMS signature verification
     DecompressionKey,
     CACert, // Certificate that signs TLS certificates used by MPC nodes // TODO will change in connection with #2491, also see #2723
     RecoveryMaterial, // Recovery material for the backup vault
     CompressedXofKeySet, // Compressed xof keyset
+    /// A signature scheme's public verification key, holding one object per scheme.
+    TypedVerfKey,
+    /// The digest identifying a [`PubDataType::TypedVerfKey`], stored as text.
+    TypedVerfAddress,
 }
 
 impl std::str::FromStr for PubDataType {
@@ -331,6 +334,8 @@ impl fmt::Display for PubDataType {
             PubDataType::CACert => write!(f, "CACert"),
             PubDataType::RecoveryMaterial => write!(f, "RecoveryMaterial"),
             PubDataType::CompressedXofKeySet => write!(f, "CompressedXofKeySet"),
+            PubDataType::TypedVerfKey => write!(f, "TypedVerfKey"),
+            PubDataType::TypedVerfAddress => write!(f, "TypedVerfAddress"),
         }
     }
 }
@@ -543,6 +548,9 @@ pub fn fhe_types_to_num_blocks(
     packing_factor: u32,
 ) -> anyhow::Result<usize> {
     let num_bits = fhe_type_to_num_bits(fhe_type)?;
+    if packing_factor == 0 {
+        anyhow::bail!("Packing factor must be greater than 0");
+    }
     let msg_modulus = (params.message_modulus.0.ilog2() * packing_factor) as usize;
     Ok(num_bits.div_ceil(msg_modulus))
 }
@@ -1191,10 +1199,6 @@ impl From<bool> for TypedPlaintext {
     }
 }
 
-pub trait FheTypeResponse {
-    fn fhe_types(&self) -> anyhow::Result<Vec<FheTypes>>;
-}
-
 impl TypedSigncryptedCiphertext {
     pub fn fhe_type(&self) -> anyhow::Result<FheTypes> {
         self.fhe_type
@@ -1224,15 +1228,6 @@ impl TypedCiphertext {
         } else {
             UNSUPPORTED_FHE_TYPE_STR.to_string()
         }
-    }
-}
-
-impl FheTypeResponse for UserDecryptionResponsePayload {
-    fn fhe_types(&self) -> anyhow::Result<Vec<FheTypes>> {
-        self.signcrypted_ciphertexts
-            .iter()
-            .map(|x| x.fhe_type())
-            .collect::<Result<Vec<_>, _>>()
     }
 }
 

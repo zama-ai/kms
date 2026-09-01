@@ -66,7 +66,20 @@ Narrow to a single test by name pattern, scoped to a crate:
 cargo test -F testing -p <crate> <pattern>
 ```
 
-Unit tests live alongside source in `#[cfg(test)]` blocks. Integration tests live in each crate's `tests/` directory, notably `core/service/tests/`.
+Run the focused metastore microbenchmarks:
+
+```
+cargo bench -p kms --bench meta_store --features testing
+```
+
+Save and compare a local Criterion baseline:
+
+```
+cargo bench -p kms --bench meta_store --features testing -- --save-baseline before
+cargo bench -p kms --bench meta_store --features testing -- --baseline before
+```
+
+Unit tests live alongside source in `#[cfg(test)]` blocks. Integration tests live in each crate's `tests/` directory, notably `core/service/tests/` and `core/threshold/tests/integration_redis.rs`.
 
 ## Backward compatibility
 

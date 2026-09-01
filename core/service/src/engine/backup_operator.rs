@@ -64,6 +64,7 @@ use threshold_execution::small_execution::prss::PRSSSetup;
 use threshold_types::role::Role;
 use tokio::sync::{Mutex, MutexGuard};
 use tonic::{Request, Response};
+use zeroize::Zeroizing;
 
 pub struct RealBackupOperator<
     PubS: Storage + Sync + Send + 'static,
@@ -149,7 +150,7 @@ where
         ephemeral_dec_key: &UnifiedPrivateEncKey,
         ephemeral_enc_key: &UnifiedPublicEncKey,
         req: CustodianRecoveryRequest,
-    ) -> anyhow::Result<(HashMap<Role, BackupMaterial>, Operator)> {
+    ) -> anyhow::Result<(HashMap<Role, Zeroizing<BackupMaterial>>, Operator)> {
         let custodian_context_id = parse_optional_grpc_request_id(
             &req.custodian_context_id,
             RequestIdParsingErr::BackupRecovery,
@@ -393,7 +394,7 @@ where
                                 )
                             })?;
                         let backup_dec_key: UnifiedPrivateEncKey = safe_deserialize(
-                            std::io::Cursor::new(&serialized_dec_key),
+                            std::io::Cursor::new(&*serialized_dec_key),
                             SAFE_SER_SIZE_LIMIT,
                         )
                         .map_err(|e| {
@@ -537,10 +538,10 @@ async fn filter_custodian_data(
     recovery_material: &RecoveryValidationMaterial,
     ephemeral_dec_key: &UnifiedPrivateEncKey,
     ephemeral_enc_key: &UnifiedPublicEncKey,
-) -> anyhow::Result<HashMap<Role, BackupMaterial>> {
+) -> anyhow::Result<HashMap<Role, Zeroizing<BackupMaterial>>> {
     // Use the number of custodian nodes that was part of the context, not the amount we have received from
     let outputs_len = recovery_material.custodian_context().custodian_nodes.len();
-    let mut parsed_custodian_rec: HashMap<Role, BackupMaterial> = HashMap::new();
+    let mut parsed_custodian_rec: HashMap<Role, Zeroizing<BackupMaterial>> = HashMap::new();
     let mut skip_reasons: Vec<RecoverySkipReason> = Vec::new();
 
     for cur_recovery_output in &custodian_recovery_outputs {
@@ -1119,40 +1120,39 @@ mod tests {
     ) {
         let mut rng = AesRng::seed_from_u64(0);
         let (verf_key, sig_key) = gen_sig_keys(&mut rng);
-        let mut enc = Encryption::new(PkeSchemeType::MlKem512, &mut rng);
-        let (dec_key, enc_key) = enc.keygen().unwrap();
+        let (dec_key, enc_key) = {
+            let mut enc = Encryption::new(PkeSchemeType::MlKem512, &mut rng);
+            enc.keygen().unwrap()
+        };
         let backup_id = derive_request_id("test").unwrap();
         let mut commitments = BTreeMap::new();
         commitments.insert(Role::indexed_from_one(1), vec![1_u8; 32]);
         commitments.insert(Role::indexed_from_one(2), vec![2_u8; 32]);
         commitments.insert(Role::indexed_from_one(3), vec![3_u8; 32]);
-        // Dummy payload; but needs to be a properly serialized payload
-        let payload = CustodianSetupMessagePayload {
-            header: HEADER.to_string(),
-            random_value: [4_u8; 32],
-            timestamp: SystemTime::now(),
-            public_enc_key: enc_key.clone(),
-            verification_key: verf_key.clone(),
-        };
-        let mut payload_serial = Vec::new();
-        safe_serialize(&payload, &mut payload_serial, SAFE_SER_SIZE_LIMIT).unwrap();
-        let setup_msg1 = CustodianSetupMessage {
-            custodian_role: 1,
-            name: "Custodian-1".to_string(),
-            payload: payload_serial.clone(),
-        };
-        let setup_msg2 = CustodianSetupMessage {
-            custodian_role: 2,
-            name: "Custodian-2".to_string(),
-            payload: payload_serial.clone(),
-        };
-        let setup_msg3 = CustodianSetupMessage {
-            custodian_role: 3,
-            name: "Custodian-3".to_string(),
-            payload: payload_serial.clone(),
-        };
+        let mut custodian_nodes = Vec::new();
+        for role in 1..=3 {
+            let (_, custodian_enc_key) = {
+                let mut enc = Encryption::new(PkeSchemeType::MlKem512, &mut rng);
+                enc.keygen().unwrap()
+            };
+            let (custodian_verf_key, _) = gen_sig_keys(&mut rng);
+            let payload = CustodianSetupMessagePayload {
+                header: HEADER.to_string(),
+                random_value: [4_u8; 32],
+                timestamp: SystemTime::now(),
+                public_enc_key: custodian_enc_key,
+                verification_key: custodian_verf_key,
+            };
+            let mut payload_serial = Vec::new();
+            safe_serialize(&payload, &mut payload_serial, SAFE_SER_SIZE_LIMIT).unwrap();
+            custodian_nodes.push(CustodianSetupMessage {
+                custodian_role: role,
+                name: format!("Custodian-{role}"),
+                payload: payload_serial,
+            });
+        }
         let custodian_context = CustodianContext {
-            custodian_nodes: vec![setup_msg1, setup_msg2, setup_msg3],
+            custodian_nodes,
             custodian_context_id: Some(backup_id.into()),
             threshold,
         };

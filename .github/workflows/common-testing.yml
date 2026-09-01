@@ -210,9 +210,9 @@ jobs:
           cat ~/.aws/config
           # Intentional word-splitting on CMD_ENV, CRATE_NAMES, and ARGS_TESTS.
           # shellcheck disable=SC2086
-          echo "EXECUTING: env ${CMD_ENV} cargo nextest run --profile ${NEXTEST_PROFILE} --no-fail-fast ${CRATE_NAMES} ${ARGS_TESTS:+$ARGS_TESTS}"
+          echo "EXECUTING: env ${CMD_ENV} cargo nextest run --profile ${NEXTEST_PROFILE} --no-fail-fast --no-tests=pass ${CRATE_NAMES} ${ARGS_TESTS:+$ARGS_TESTS}"
           # shellcheck disable=SC2086
-          env ${CMD_ENV} cargo nextest run --profile "${NEXTEST_PROFILE}" --no-fail-fast ${CRATE_NAMES} ${ARGS_TESTS:+$ARGS_TESTS}
+          env ${CMD_ENV} cargo nextest run --profile "${NEXTEST_PROFILE}" --no-fail-fast --no-tests=pass ${CRATE_NAMES} ${ARGS_TESTS:+$ARGS_TESTS}
 
       - name: Copy Test Results
         if: (!cancelled() || !failure() && github.event_name == 'pull_request')

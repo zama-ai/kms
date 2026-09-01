@@ -22,14 +22,15 @@ use kms_0_15_0::consts::SAFE_SER_SIZE_LIMIT;
 use kms_0_15_0::cryptography::{
     encryption::{Encryption, PkeScheme, PkeSchemeType, UnifiedCipher},
     hybrid_ml_kem::HybridKemCt,
-    signatures::{compute_eip712_signature, gen_sig_keys, SigningSchemeType},
+    signatures::{compute_eip712_signature, gen_sig_keys, SigningSchemeType, UnifiedPublicSigKey},
     signcryption::{
         Signcrypt, UnifiedSigncryption, UnifiedSigncryptionKeyOwned, UnifiedUnsigncryptionKeyOwned,
     },
 };
 use kms_0_15_0::engine::base::{
-    CrsGenMetadata, CrsSignedPayload, KeyGenMetadataInner, KeygenSignedPayload, KmsFheKeyHandles,
-    PrepKeygenSignedPayload, StoredTypedSignature,
+    CrsGenMetadata, CrsGenMetadataInner, CrsGenMetadataInnerV2, CrsSignedPayload,
+    KeyGenMetadataInner, KeygenSignedPayload, KmsFheKeyHandles, PrepKeygenSignedPayload,
+    StoredEip712Domain, StoredTypedSignature,
 };
 use kms_0_15_0::engine::centralized::central_kms::generate_client_fhe_key;
 use kms_0_15_0::engine::context::{
@@ -52,13 +53,14 @@ use rand::{RngCore, SeedableRng};
 use std::collections::BTreeMap;
 use std::num::Wrapping;
 use std::{borrow::Cow, collections::HashMap, fs::create_dir_all, path::PathBuf};
-use tfhe_1_6_2::safe_serialization::safe_serialize;
-use tfhe_1_6_2::shortint::parameters::{
+use strum::IntoEnumIterator;
+use tfhe_1_7_0::safe_serialization::safe_serialize;
+use tfhe_1_7_0::shortint::parameters::{
     AtomicPatternParameters, Backend, LweCiphertextCount, MetaNoiseSquashingParameters,
     MetaParameters, NoiseSquashingClassicParameters, NoiseSquashingCompressionParameters,
     PBSParameters,
 };
-use tfhe_1_6_2::{
+use tfhe_1_7_0::{
     core_crypto::commons::{
         ciphertext_modulus::CiphertextModulus,
         generators::DeterministicSeeder,
@@ -96,18 +98,19 @@ use backward_compatibility::parameters::{
 };
 use backward_compatibility::{
     AppKeyBlobTest, BackupCiphertextTest, ContextInfoTest, CrsGenMetadataTest,
-    CrsGenMetadataWithExtraDataTest, CrsSignedPayloadTest, EpochDataTest, HybridKemCtTest,
-    InternalCustodianContextTest, InternalCustodianRecoveryOutputTest,
+    CrsGenMetadataWithExtraDataTest, CrsSignedPayloadTest, Eip712DomainTest, EpochDataTest,
+    HybridKemCtTest, InternalCustodianContextTest, InternalCustodianRecoveryOutputTest,
     InternalCustodianSetupMessageTest, InternalRecoveryRequestTest, KeyGenMetadataTest,
     KeyGenMetadataWithExtraDataTest, KeygenSignedPayloadTest, KmsFheKeyHandlesTest, NodeInfoTest,
     OperatorBackupOutputTest, PRSSSetupTest, PrepKeygenSignedPayloadTest, PrfKeyTest,
     PrivDataTypeTest, PrivateSigKeyTest, PrssSetTest, PrssSetupCombinedTest, PubDataTypeTest,
     PublicSigKeyTest, RecoveryValidationMaterialTest, ReleasePCRValuesTest, SchemeDigestsTest,
     ShareTest, SigncryptionPayloadTest, SignedPubDataHandleInternalTest, SoftwareVersionTest,
-    StoredTypedSignatureTest, TestMetadataDD, TestMetadataKMS, TestMetadataKmsGrpc,
-    ThresholdFheKeysTest, TypedPlaintextTest, UnifiedCipherTest, UnifiedSigncryptionKeyTest,
-    UnifiedSigncryptionTest, UnifiedUnsigncryptionKeyTest, DISTRIBUTED_DECRYPTION_MODULE_NAME,
-    KMS_GRPC_MODULE_NAME, KMS_MODULE_NAME,
+    StoredEip712DomainTest, StoredTypedSignatureTest, TestMetadataDD, TestMetadataKMS,
+    TestMetadataKmsGrpc, ThresholdFheKeysTest, TypedPlaintextTest, UnifiedCipherTest,
+    UnifiedPublicSigKeyTest, UnifiedSigncryptionKeyTest, UnifiedSigncryptionTest,
+    UnifiedUnsigncryptionKeyTest, DISTRIBUTED_DECRYPTION_MODULE_NAME, KMS_GRPC_MODULE_NAME,
+    KMS_MODULE_NAME,
 };
 use hashing_0_15_0::hash_versioned;
 use kms_0_15_0::cryptography::signcryption::SigncryptionPayload;
@@ -189,7 +192,7 @@ fn convert_classic_pbs_parameters(value: ClassicPBSParametersTest) -> ClassicPBS
         },
         // no need to test this as it's from tfhe-rs
         modulus_switch_noise_reduction_params:
-            tfhe_1_6_2::shortint::prelude::ModulusSwitchType::Standard,
+            tfhe_1_7_0::shortint::prelude::ModulusSwitchType::Standard,
     }
 }
 
@@ -202,7 +205,7 @@ fn convert_sns_parameters(value: SwitchAndSquashParametersTest) -> NoiseSquashin
         decomp_level_count: DecompositionLevelCount(value.pbs_level),
         ciphertext_modulus: CiphertextModulus::<u128>::new_native(),
         modulus_switch_noise_reduction_params:
-            tfhe_1_6_2::shortint::prelude::ModulusSwitchType::Standard,
+            tfhe_1_7_0::shortint::prelude::ModulusSwitchType::Standard,
         message_modulus: MessageModulus(value.message_modulus),
         carry_modulus: CarryModulus(value.carry_modulus),
     })
@@ -323,6 +326,12 @@ const PUBLIC_SIG_KEY_TEST: PublicSigKeyTest = PublicSigKeyTest {
 };
 
 // KMS test
+const UNIFIED_PUBLIC_SIG_KEY_TEST: UnifiedPublicSigKeyTest = UnifiedPublicSigKeyTest {
+    test_filename: Cow::Borrowed("unified_public_sig_key"),
+    state: 100,
+};
+
+// KMS test
 // TODO: include eip712_domain parameter
 const KMS_FHE_KEY_HANDLES_TEST: KmsFheKeyHandlesTest = KmsFheKeyHandlesTest {
     test_filename: Cow::Borrowed("kms_fhe_key_handles"),
@@ -374,7 +383,22 @@ const KEY_GEN_METADATA_WITH_EXTRA_DATA_TEST: KeyGenMetadataWithExtraDataTest =
         test_filename: Cow::Borrowed("key_gen_metadata_with_extra_data"),
         state: 101,
         extra_data: Cow::Borrowed(&[0x02, 0xAA, 0xBB, 0xCC]),
+        eip712_domain: Some(KEY_GEN_METADATA_DOMAIN),
     };
+
+// KMS test — the domain of the keygen metadata fixture above. The values differ from
+// `dummy_domain`, so a loader that rebuilds the metadata must read the domain from
+// this entry. The salt is unset, because the KMS also stores domains without a salt.
+const KEY_GEN_METADATA_DOMAIN: Eip712DomainTest = Eip712DomainTest {
+    name: Cow::Borrowed("Keygen metadata domain"),
+    version: Cow::Borrowed("2"),
+    chain_id: 70001,
+    verifying_contract: [
+        0x1e, 0x2f, 0x3a, 0x4b, 0x5c, 0x6d, 0x7e, 0x8f, 0x90, 0xa1, 0xb2, 0xc3, 0xd4, 0xe5, 0xf6,
+        0x07, 0x18, 0x29, 0x3a, 0x4b,
+    ],
+    salt: None,
+};
 
 const CRS_GEN_METADATA_WITH_EXTRA_DATA_TEST: CrsGenMetadataWithExtraDataTest =
     CrsGenMetadataWithExtraDataTest {
@@ -383,6 +407,25 @@ const CRS_GEN_METADATA_WITH_EXTRA_DATA_TEST: CrsGenMetadataWithExtraDataTest =
         max_num_bits: 2048,
         extra_data: Cow::Borrowed(&[0x02, 0xDD, 0xEE, 0xFF]),
     };
+
+// KMS test — the EIP-712 domain retained in keygen and CRS metadata, with every
+// optional field set. The chain ID exceeds one byte so the fixture also pins the
+// big-endian widening to 32 bytes.
+const STORED_EIP712_DOMAIN_TEST: StoredEip712DomainTest = StoredEip712DomainTest {
+    test_filename: Cow::Borrowed("stored_eip712_domain"),
+    name: Cow::Borrowed("Authorization token"),
+    version: Cow::Borrowed("1"),
+    chain_id: 8006,
+    verifying_contract: [
+        0x66, 0xf9, 0x66, 0x4f, 0x97, 0xf2, 0xb5, 0x0f, 0x62, 0xd1, 0x3e, 0xa0, 0x64, 0x98, 0x2f,
+        0x93, 0x6d, 0xe7, 0x66, 0x57,
+    ],
+    salt: [
+        0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0a, 0x0b, 0x0c, 0x0d, 0x0e,
+        0x0f, 0x10, 0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17, 0x18, 0x19, 0x1a, 0x1b, 0x1c, 0x1d,
+        0x1e, 0x1f,
+    ],
+};
 
 // KMS test
 const APP_KEY_BLOB_TEST: AppKeyBlobTest = AppKeyBlobTest {
@@ -636,6 +679,19 @@ fn dummy_domain() -> alloy_sol_types_1_6_0::Eip712Domain {
     )
 }
 
+/// Rebuilds the EIP-712 domain that `test` describes.
+fn domain_from_test(test: &Eip712DomainTest) -> alloy_sol_types_1_6_0::Eip712Domain {
+    alloy_sol_types_1_6_0::Eip712Domain::new(
+        Some(test.name.to_string().into()),
+        Some(test.version.to_string().into()),
+        Some(alloy_primitives_1_6_0::U256::from(test.chain_id)),
+        Some(alloy_primitives_1_6_0::Address::from(
+            test.verifying_contract,
+        )),
+        test.salt.map(alloy_primitives_1_6_0::B256::from),
+    )
+}
+
 pub struct V0_15_0;
 
 struct KmsV0_15_0;
@@ -657,6 +713,31 @@ impl KmsV0_15_0 {
         store_versioned_test!(&public_sig_key, dir, &PUBLIC_SIG_KEY_TEST.test_filename);
 
         TestMetadataKMS::PublicSigKey(PUBLIC_SIG_KEY_TEST)
+    }
+
+    fn gen_unified_public_sig_key(dir: &PathBuf) -> TestMetadataKMS {
+        let mut rng = AesRng::seed_from_u64(UNIFIED_PUBLIC_SIG_KEY_TEST.state);
+        let (_public_sig_key, sig_key) = gen_sig_keys(&mut rng);
+
+        // Primary file: the ECDSA variant.
+        let ecdsa_vk: UnifiedPublicSigKey = sig_key
+            .unified_verifying_key(SigningSchemeType::Ecdsa256k1)
+            .unwrap();
+        store_versioned_test!(&ecdsa_vk, dir, &UNIFIED_PUBLIC_SIG_KEY_TEST.test_filename);
+
+        // Auxiliary files: one per non-ECDSA scheme.
+        for scheme in SigningSchemeType::iter().filter(|s| *s != SigningSchemeType::Ecdsa256k1) {
+            let vk: UnifiedPublicSigKey = sig_key.unified_verifying_key(scheme).unwrap();
+            let aux_filename = format!("{}_{scheme}", UNIFIED_PUBLIC_SIG_KEY_TEST.test_filename);
+            store_versioned_auxiliary!(
+                &vk,
+                dir,
+                &UNIFIED_PUBLIC_SIG_KEY_TEST.test_filename,
+                &aux_filename
+            );
+        }
+
+        TestMetadataKMS::UnifiedPublicSigKey(UNIFIED_PUBLIC_SIG_KEY_TEST)
     }
 
     fn gen_typed_plaintext(dir: &PathBuf) -> TestMetadataKMS {
@@ -733,6 +814,7 @@ impl KmsV0_15_0 {
             key_id,
             preprocessing_id,
             key_digest_map,
+            eip712_domain: None,
             external_signature,
             signatures: Vec::new(),
             extra_data: None,
@@ -757,14 +839,19 @@ impl KmsV0_15_0 {
         let sol_type = CrsgenVerificationQ126::new(&crs_id, max_num_bits as usize, digest.clone());
         let external_signature =
             compute_eip712_signature(&sig_key, &sol_type, &dummy_domain()).unwrap();
-        let current_crs_meta_data = CrsGenMetadata::new(
+        // Legacy layout (before the domain was stored), upgraded the way the KMS
+        // upgrades it on load.
+        let current_inner: CrsGenMetadataInner = CrsGenMetadataInnerV2 {
             crs_id,
-            digest,
+            crs_digest: digest,
             max_num_bits,
-            external_signature.clone(),
-            vec![], // Empty signatures to signal legacy
-            vec![], // Empty extra data to signal legacy
-        );
+            extra_data: None, // Empty extra data to signal legacy
+            external_signature: external_signature.clone(),
+            signatures: vec![], // Empty signatures to signal legacy
+        }
+        .upgrade()
+        .unwrap();
+        let current_crs_meta_data = CrsGenMetadata::Current(current_inner);
 
         let legacy_crs_meta_data = SignedPubDataHandleInternal::new(
             crs_id.to_string(),
@@ -787,7 +874,8 @@ impl KmsV0_15_0 {
         TestMetadataKMS::CrsGenMetadata(CRS_GEN_METADATA_TEST)
     }
 
-    /// Twin of `gen_key_gen_metadata` for version 15.0 (with extra_data).
+    /// Twin of `gen_key_gen_metadata` for version 15.0, with extra data and the
+    /// stored EIP-712 domain.
     fn gen_key_gen_metadata_with_extra_data(dir: &PathBuf) -> TestMetadataKMS {
         let mut rng = AesRng::seed_from_u64(KEY_GEN_METADATA_WITH_EXTRA_DATA_TEST.state);
         let (_verf_key, sig_key) = gen_sig_keys(&mut rng);
@@ -808,13 +896,14 @@ impl KmsV0_15_0 {
         );
         key_digest_map.insert(PubDataType::ServerKey, server_key_digest);
         key_digest_map.insert(PubDataType::PublicKey, pub_key_digest);
-        let external_signature =
-            compute_eip712_signature(&sig_key, &sol_type, &dummy_domain()).unwrap();
+        let domain = domain_from_test(&KEY_GEN_METADATA_DOMAIN);
+        let external_signature = compute_eip712_signature(&sig_key, &sol_type, &domain).unwrap();
 
         let current = KeyGenMetadataInner {
             key_id,
             preprocessing_id,
             key_digest_map,
+            eip712_domain: Some(StoredEip712Domain::from(&domain)),
             external_signature,
             signatures: Vec::new(), // Legacy (before multiple signing key support)
             extra_data: Some(extra_data),
@@ -844,14 +933,19 @@ impl KmsV0_15_0 {
         );
         let external_signature =
             compute_eip712_signature(&sig_key, &sol_type, &dummy_domain()).unwrap();
-        let current_crs_meta_data = CrsGenMetadata::new(
+        // Legacy layout (before the domain was stored), upgraded the way the KMS
+        // upgrades it on load.
+        let current_inner: CrsGenMetadataInner = CrsGenMetadataInnerV2 {
             crs_id,
-            digest,
+            crs_digest: digest,
             max_num_bits,
-            external_signature.clone(),
-            Vec::new(), // Legacy (before multiple signing key support)
-            extra_data,
-        );
+            extra_data: Some(extra_data),
+            external_signature: external_signature.clone(),
+            signatures: Vec::new(), // Legacy (before multiple signing key support)
+        }
+        .upgrade()
+        .unwrap();
+        let current_crs_meta_data = CrsGenMetadata::Current(current_inner);
 
         store_versioned_test!(
             &current_crs_meta_data,
@@ -860,6 +954,27 @@ impl KmsV0_15_0 {
         );
 
         TestMetadataKMS::CrsGenMetadataWithExtraData(CRS_GEN_METADATA_WITH_EXTRA_DATA_TEST)
+    }
+
+    fn gen_stored_eip712_domain(dir: &PathBuf) -> TestMetadataKMS {
+        let domain = alloy_sol_types_1_6_0::Eip712Domain::new(
+            Some(STORED_EIP712_DOMAIN_TEST.name.to_string().into()),
+            Some(STORED_EIP712_DOMAIN_TEST.version.to_string().into()),
+            Some(alloy_primitives_1_6_0::U256::from(
+                STORED_EIP712_DOMAIN_TEST.chain_id,
+            )),
+            Some(alloy_primitives_1_6_0::Address::from(
+                STORED_EIP712_DOMAIN_TEST.verifying_contract,
+            )),
+            Some(alloy_primitives_1_6_0::B256::from(
+                STORED_EIP712_DOMAIN_TEST.salt,
+            )),
+        );
+        let stored = StoredEip712Domain::from(&domain);
+
+        store_versioned_test!(&stored, dir, &STORED_EIP712_DOMAIN_TEST.test_filename);
+
+        TestMetadataKMS::StoredEip712Domain(STORED_EIP712_DOMAIN_TEST)
     }
 
     #[expect(clippy::ptr_arg)]
@@ -1913,11 +2028,13 @@ impl KMSCoreVersion for V0_15_0 {
         vec![
             KmsV0_15_0::gen_private_sig_key(&dir),
             KmsV0_15_0::gen_public_sig_key(&dir),
+            KmsV0_15_0::gen_unified_public_sig_key(&dir),
             KmsV0_15_0::gen_app_key_blob(&dir),
             KmsV0_15_0::gen_key_gen_metadata(&dir),
             KmsV0_15_0::gen_crs_metadata(&dir),
             KmsV0_15_0::gen_key_gen_metadata_with_extra_data(&dir),
             KmsV0_15_0::gen_crs_metadata_with_extra_data(&dir),
+            KmsV0_15_0::gen_stored_eip712_domain(&dir),
             KmsV0_15_0::gen_typed_plaintext(&dir),
             KmsV0_15_0::gen_signcryption_payload(&dir),
             KmsV0_15_0::gen_signcryption_key(&dir),

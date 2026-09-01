@@ -44,6 +44,7 @@ use std::{
 use tfhe::{named::Named, safe_serialization::safe_deserialize};
 use tfhe_versionable::{Versionize, VersionsDispatch};
 use threshold_types::role::Role;
+use zeroize::{Zeroize, Zeroizing};
 
 pub const DSEP_BACKUP_COMMITMENT: DomainSep = *b"BKUPCOMM";
 pub(crate) const DSEP_BACKUP_RECOVERY: DomainSep = *b"BKUPRECO";
@@ -413,6 +414,15 @@ impl Named for BackupMaterial {
     const NAME: &'static str = "backup::BackupShares";
 }
 
+// TODO(zama-ai/tfhe-rs-internal/issues/1535)
+// we should also have ZeroizeOnDrop but this requires some changes on tfhe-rs
+impl Zeroize for BackupMaterial {
+    fn zeroize(&mut self) {
+        // The remaining fields are public routing metadata.
+        self.shares.zeroize();
+    }
+}
+
 impl Operator {
     /// Construct a new Operator for creating backups.
     /// This requires a signing key.
@@ -602,13 +612,15 @@ impl Operator {
     /// equality against the operator-signed `RecoveryValidationMaterial`, custodian / operator key
     /// equality inside the decrypted payload, and the commitment match. Returns the precise
     /// `RecoverySkipReason` on the first failure.
+    ///
+    /// Returns decrypted key shares in a [`Zeroizing`] guard.
     pub(crate) fn validate_one_recovery_output(
         &self,
         output: &InternalCustodianRecoveryOutput,
         recovery_material: &RecoveryValidationMaterial,
         ephm_dec_key: &UnifiedPrivateEncKey,
         ephm_enc_key: &UnifiedPublicEncKey,
-    ) -> Result<BackupMaterial, RecoverySkipReason> {
+    ) -> Result<Zeroizing<BackupMaterial>, RecoverySkipReason> {
         let (_, custodian_verf_key) = self.custodian_keys.get(&output.custodian_role).ok_or({
             tracing::warn!("missing custodian key for role {}", output.custodian_role);
             RecoverySkipReason::MissingVerificationKey
@@ -620,15 +632,17 @@ impl Operator {
             custodian_verf_key,
             &operator_id,
         );
-        let backup_material: BackupMaterial = unsign_key
-            .unsigncrypt(&DSEP_BACKUP_RECOVERY, &output.signcryption)
-            .map_err(|e| {
-                tracing::warn!(
-                    "Could not unsigncrypt backup share for custodian role {} (wrong operator or tampered): {e}",
-                    output.custodian_role
-                );
-                RecoverySkipReason::InvalidSigncryption
-            })?;
+        let backup_material: Zeroizing<BackupMaterial> = Zeroizing::new(
+            unsign_key
+                .unsigncrypt(&DSEP_BACKUP_RECOVERY, &output.signcryption)
+                .map_err(|e| {
+                    tracing::warn!(
+                        "Could not unsigncrypt backup share for custodian role {} (wrong operator or tampered): {e}",
+                        output.custodian_role
+                    );
+                    RecoverySkipReason::InvalidSigncryption
+                })?,
+        );
         let expected_backup_id: RequestId = recovery_material.custodian_context().context_id;
         let expected_mpc_context_id = recovery_material.mpc_context();
         if !backup_material.backup_id.is_valid() {
@@ -676,8 +690,8 @@ impl Operator {
             );
             return Err(e);
         }
-        let actual_commitment =
-            hash_versioned(&DSEP_BACKUP_COMMITMENT, &backup_material).map_err(|e| {
+        let actual_commitment = hash_versioned(&DSEP_BACKUP_COMMITMENT, &*backup_material)
+            .map_err(|e| {
                 tracing::warn!(
                     "Could not hash BackupMaterial for commitment check (role {}): {e}",
                     output.custodian_role
@@ -708,8 +722,8 @@ impl Operator {
         recovery_material: &RecoveryValidationMaterial,
         ephm_dec_key: &UnifiedPrivateEncKey,
         ephm_enc_key: &UnifiedPublicEncKey,
-    ) -> Result<Vec<u8>, BackupError> {
-        let mut validated: HashMap<Role, BackupMaterial> = HashMap::new();
+    ) -> Result<Zeroizing<Vec<u8>>, BackupError> {
+        let mut validated: HashMap<Role, Zeroizing<BackupMaterial>> = HashMap::new();
         let mut skip_reasons: Vec<RecoverySkipReason> = Vec::new();
         for output in custodian_recovery_output {
             match self.validate_one_recovery_output(
@@ -754,10 +768,12 @@ impl Operator {
     }
 
     /// Reconstruct the operator's secret from already-validated per-role `BackupMaterial`s.
+    ///
+    /// Returns the reconstructed backup decryption key in a [`Zeroizing`] guard.
     pub fn recover_from_validated(
         &self,
-        validated: &HashMap<Role, BackupMaterial>,
-    ) -> Result<Vec<u8>, BackupError> {
+        validated: &HashMap<Role, Zeroizing<BackupMaterial>>,
+    ) -> Result<Zeroizing<Vec<u8>>, BackupError> {
         let decrypted_buf: Vec<&Vec<Share<ResiduePolyF4Z64>>> =
             validated.values().map(|bm| &bm.shares).collect();
 
@@ -767,15 +783,16 @@ impl Operator {
             return Err(BackupError::NoBlocksError);
         };
 
-        let mut all_sharings = vec![];
+        // `Share` is `Copy`; reserve capacity so copied shares do not leave unwiped reallocations.
+        let mut all_sharings = Zeroizing::new(Vec::with_capacity(num_blocks));
         for b in 0..num_blocks {
-            let mut shamir_sharing = ShamirSharings::new();
+            let mut shamir_sharing = ShamirSharings::with_capacity(decrypted_buf.len());
             for blocks in decrypted_buf.iter() {
                 shamir_sharing.add_share(blocks[b]);
             }
             all_sharings.push(shamir_sharing);
         }
-        let out = secretsharing::reconstruct(all_sharings, self.threshold)?;
+        let out = secretsharing::reconstruct(&all_sharings, self.threshold)?;
         Ok(out)
     }
 }
@@ -916,34 +933,33 @@ mod tests {
     fn validate_recovery_validation_material() {
         let mut rng = AesRng::seed_from_u64(0);
         let (verf_key, sig_key) = gen_sig_keys(&mut rng);
-        let mut encryption = Encryption::new(PkeSchemeType::MlKem512, &mut rng);
-        let (_dec_key, enc_key) = encryption.keygen().unwrap();
+        let (_dec_key, enc_key) = {
+            let mut encryption = Encryption::new(PkeSchemeType::MlKem512, &mut rng);
+            encryption.keygen().unwrap()
+        };
         let backup_id = derive_request_id("test").unwrap();
-        // Dummy payload; but needs to be a properly serialized payload
-        let payload = CustodianSetupMessagePayload {
-            header: HEADER.to_string(),
-            random_value: [4_u8; 32],
-            timestamp: SystemTime::now(),
-            public_enc_key: enc_key.clone(),
-            verification_key: verf_key.clone(),
-        };
-        let mut payload_serial = Vec::new();
-        safe_serialize(&payload, &mut payload_serial, SAFE_SER_SIZE_LIMIT).unwrap();
-        let setup_msg1 = CustodianSetupMessage {
-            custodian_role: 1,
-            name: "Custodian-1".to_string(),
-            payload: payload_serial.clone(),
-        };
-        let setup_msg2 = CustodianSetupMessage {
-            custodian_role: 2,
-            name: "Custodian-2".to_string(),
-            payload: payload_serial.clone(),
-        };
-        let setup_msg3 = CustodianSetupMessage {
-            custodian_role: 3,
-            name: "Custodian-3".to_string(),
-            payload: payload_serial.clone(),
-        };
+        let mut custodian_nodes = Vec::new();
+        for role in 1..=3 {
+            let (_, custodian_enc_key) = {
+                let mut encryption = Encryption::new(PkeSchemeType::MlKem512, &mut rng);
+                encryption.keygen().unwrap()
+            };
+            let (custodian_verf_key, _) = gen_sig_keys(&mut rng);
+            let payload = CustodianSetupMessagePayload {
+                header: HEADER.to_string(),
+                random_value: [4_u8; 32],
+                timestamp: SystemTime::now(),
+                public_enc_key: custodian_enc_key,
+                verification_key: custodian_verf_key,
+            };
+            let mut payload_serial = Vec::new();
+            safe_serialize(&payload, &mut payload_serial, SAFE_SER_SIZE_LIMIT).unwrap();
+            custodian_nodes.push(CustodianSetupMessage {
+                custodian_role: role,
+                name: format!("Custodian-{role}"),
+                payload: payload_serial,
+            });
+        }
         let mut commitments = BTreeMap::new();
         commitments.insert(Role::indexed_from_one(1), vec![1_u8; 32]);
         commitments.insert(Role::indexed_from_one(2), vec![2_u8; 32]);
@@ -960,7 +976,7 @@ mod tests {
         cts.insert(Role::indexed_from_one(2), cts_out.clone());
         cts.insert(Role::indexed_from_one(3), cts_out.clone());
         let custodian_context = CustodianContext {
-            custodian_nodes: vec![setup_msg1, setup_msg2, setup_msg3],
+            custodian_nodes,
             custodian_context_id: Some(backup_id.into()),
             threshold: 1,
         };

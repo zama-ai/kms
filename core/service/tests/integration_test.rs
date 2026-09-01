@@ -40,8 +40,8 @@ mod kms_init_binary_test {
 
 #[cfg(test)]
 mod kms_gen_keys_binary_test {
+    use kms_lib::{consts::signing_material_id, cryptography::signatures::SigningSchemeType};
     use std::path::{Path, PathBuf};
-
     use tempfile::tempdir;
 
     use super::*;
@@ -91,6 +91,33 @@ path = "{private_path}"
         config_path
     }
 
+    /// Runs `kms-gen-keys` once with `overwrite = true`, asserts it succeeds, and
+    /// returns its stdout log.
+    fn run_centralized_overwrite(
+        config_dir: &tempfile::TempDir,
+        temp_dir_priv: &tempfile::TempDir,
+        temp_dir_pub: &tempfile::TempDir,
+    ) -> String {
+        let config_path = write_file_storage_config(
+            config_dir,
+            temp_dir_priv.path(),
+            temp_dir_pub.path(),
+            "overwrite = true",
+            None,
+        );
+        let output = kms_gen_keys_command()
+            .arg("--config-file")
+            .arg(config_path)
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "stderr: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        String::from_utf8_lossy(&output.stdout).into_owned()
+    }
+
     #[test]
     #[integration_test]
     fn help() {
@@ -120,25 +147,11 @@ path = "{private_path}"
     #[test]
     #[integration_test]
     fn central_signing_keys_overwrite() {
-        // Both invocations must share storage so the second run sees the keys
-        // written by the first.
-        let temp_dir_priv = tempdir().unwrap();
-        let temp_dir_pub = tempdir().unwrap();
-        let config_dir = tempdir().unwrap();
-        let config_path = write_file_storage_config(
-            &config_dir,
-            temp_dir_priv.path(),
-            temp_dir_pub.path(),
-            "overwrite = true",
-            None,
-        );
-        let output = kms_gen_keys_command()
-            .arg("--config-file")
-            .arg(&config_path)
-            .output()
-            .unwrap();
-        let log = String::from_utf8_lossy(&output.stdout);
-        assert!(output.status.success());
+        // All invocations must share storage so each run sees the keys written
+        // by the previous one.
+        let (temp_dir_priv, temp_dir_pub, config_dir) =
+            (tempdir().unwrap(), tempdir().unwrap(), tempdir().unwrap());
+        let log = run_centralized_overwrite(&config_dir, &temp_dir_priv, &temp_dir_pub);
         assert!(log.contains("Deleting VerfKey under request ID"));
         assert!(log.contains("Deleting SigningKey under request ID "));
         assert!(log.contains(
@@ -160,14 +173,117 @@ path = "{private_path}"
         assert!(new_output.status.success());
         let new_log = String::from_utf8_lossy(&new_output.stdout);
         assert!(new_log.contains("Signing keys already exist, skipping generation"));
+
+        // A second `overwrite = true` run against the same, now-populated storage
+        // must also succeed: it has to purge the per-scheme material alongside
+        // the legacy VerfKey/VerfAddress/CACert/SigningKey handles before
+        // regenerating, or key generation would fail against its own leftovers.
+        let overwrite_again_log =
+            run_centralized_overwrite(&config_dir, &temp_dir_priv, &temp_dir_pub);
+        assert!(overwrite_again_log.contains("Deleting VerfKey under request ID"));
+        assert!(overwrite_again_log.contains(
+            "Successfully stored public centralized server signing key under the handle"
+        ));
+    }
+
+    /// `repopulate = true` restores verification material from the existing ECDSA
+    /// signing key without needing `overwrite`, covering the case where storage was
+    /// partially purged (e.g. public storage restored without the corresponding
+    /// private-storage snapshot).
+    #[test]
+    #[integration_test]
+    fn central_repopulate_after_partial_purge() {
+        let (temp_dir_priv, temp_dir_pub, config_dir) =
+            (tempdir().unwrap(), tempdir().unwrap(), tempdir().unwrap());
+        run_centralized_overwrite(&config_dir, &temp_dir_priv, &temp_dir_pub);
+
+        let signing_key_id = signing_material_id(SigningSchemeType::Ecdsa256k1);
+        let purged: Vec<PathBuf> = [
+            // A per-scheme object, keyed by the scheme's own handle.
+            temp_dir_pub
+                .path()
+                .join("PUB/TypedVerfKey")
+                .join(signing_material_id(SigningSchemeType::Ed25519).to_string()),
+            temp_dir_pub
+                .path()
+                .join("PUB/TypedVerfAddress")
+                .join(signing_material_id(SigningSchemeType::MlDsa65).to_string()),
+            // The deprecated ECDSA-only pair, keyed by the signing-key handle.
+            temp_dir_pub
+                .path()
+                .join("PUB/VerfKey")
+                .join(signing_key_id.to_string()),
+            temp_dir_pub
+                .path()
+                .join("PUB/VerfAddress")
+                .join(signing_key_id.to_string()),
+        ]
+        .into();
+        for path in &purged {
+            assert!(path.exists(), "{} was never written", path.display());
+            fs::remove_file(path).unwrap();
+        }
+
+        let config_path = write_file_storage_config(
+            &config_dir,
+            temp_dir_priv.path(),
+            temp_dir_pub.path(),
+            "repopulate = true",
+            None,
+        );
+        let output = kms_gen_keys_command()
+            .arg("--config-file")
+            .arg(config_path)
+            .output()
+            .unwrap();
+        let log = String::from_utf8_lossy(&output.stdout);
+        assert!(
+            output.status.success(),
+            "stderr: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert!(log.contains("Repopulated verification material"));
+        for path in &purged {
+            assert!(
+                path.exists(),
+                "{} was not restored by repopulate",
+                path.display()
+            );
+        }
+    }
+
+    /// `repopulate = true` has nothing to derive from without the ECDSA signing key,
+    /// so it must fail with a clear message rather than write partial material
+    #[test]
+    #[integration_test]
+    fn central_repopulate_without_signing_key_fails() {
+        let (temp_dir_priv, temp_dir_pub, config_dir) =
+            (tempdir().unwrap(), tempdir().unwrap(), tempdir().unwrap());
+        let config_path = write_file_storage_config(
+            &config_dir,
+            temp_dir_priv.path(),
+            temp_dir_pub.path(),
+            "repopulate = true",
+            None,
+        );
+        let output = kms_gen_keys_command()
+            .arg("--config-file")
+            .arg(config_path)
+            .output()
+            .unwrap();
+
+        assert!(!output.status.success());
+        assert!(
+            !temp_dir_pub.path().join("PUB/TypedVerfKey").exists(),
+            "verification material was written without a signing key to derive it from"
+        );
     }
 
     #[test]
     #[integration_test]
     fn central_signing_address_format() {
-        let temp_dir_priv = tempdir().unwrap();
-        let temp_dir_pub = tempdir().unwrap();
-        let config_dir = tempdir().unwrap();
+        let (temp_dir_priv, temp_dir_pub, config_dir) =
+            (tempdir().unwrap(), tempdir().unwrap(), tempdir().unwrap());
         let config_path = write_file_storage_config(
             &config_dir,
             temp_dir_priv.path(),
@@ -204,75 +320,59 @@ path = "{private_path}"
 
     #[test]
     #[integration_test]
-    fn threshold_party_id_zero_rejected() {
-        let temp_dir_priv = tempdir().unwrap();
-        let temp_dir_pub = tempdir().unwrap();
-
-        // party id 0 is invalid (parties are 1-indexed).
-        let config_dir = tempdir().unwrap();
-        let config_path = write_file_storage_config(
-            &config_dir,
-            temp_dir_priv.path(),
-            temp_dir_pub.path(),
-            "",
-            Some(
+    fn threshold_party_id_validation() {
+        for (case, threshold_config, expected_err) in [
+            (
+                "party id 0 is rejected, since parties are 1-indexed",
                 r#"
 [threshold]
 my_id = 0
 tls_subject = "kms-party"
 
 "#,
+                "invalid kms-gen-keys config",
             ),
-        );
-        let output = Command::cargo_bin(KMS_GEN_KEYS)
-            .unwrap()
-            .arg("--config-file")
-            .arg(config_path)
-            .output()
-            .unwrap();
-
-        assert!(!output.status.success());
-        assert!(String::from_utf8_lossy(&output.stderr).contains("invalid kms-gen-keys config"));
-    }
-
-    #[test]
-    #[integration_test]
-    fn threshold_party_id_required() {
-        let temp_dir_priv = tempdir().unwrap();
-        let temp_dir_pub = tempdir().unwrap();
-
-        let config_dir = tempdir().unwrap();
-        let config_path = write_file_storage_config(
-            &config_dir,
-            temp_dir_priv.path(),
-            temp_dir_pub.path(),
-            "",
-            Some(
+            (
+                "a [threshold] section without a party id is rejected",
                 r#"
 [threshold]
 tls_subject = "kms-party"
 
 "#,
+                "threshold.my_id",
             ),
-        );
-        let output = Command::cargo_bin(KMS_GEN_KEYS)
-            .unwrap()
-            .arg("--config-file")
-            .arg(config_path)
-            .output()
-            .unwrap();
+        ] {
+            let (temp_dir_priv, temp_dir_pub, config_dir) =
+                (tempdir().unwrap(), tempdir().unwrap(), tempdir().unwrap());
+            let config_path = write_file_storage_config(
+                &config_dir,
+                temp_dir_priv.path(),
+                temp_dir_pub.path(),
+                "",
+                Some(threshold_config),
+            );
+            let output = Command::cargo_bin(KMS_GEN_KEYS)
+                .unwrap()
+                .arg("--config-file")
+                .arg(config_path)
+                .output()
+                .unwrap();
 
-        assert!(!output.status.success());
-        assert!(String::from_utf8_lossy(&output.stderr).contains("threshold.my_id"));
+            assert!(!output.status.success(), "{case}: expected a failure");
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            assert!(
+                stderr.contains(expected_err),
+                "{case}: stderr did not mention {expected_err}: {stderr}"
+            );
+        }
     }
 
     #[test]
     #[integration_test]
     #[persistent_traces]
     fn threshold_signing_key() {
-        let temp_dir_priv = tempdir().unwrap();
-        let temp_dir_pub = tempdir().unwrap();
-        let config_dir = tempdir().unwrap();
+        let (temp_dir_priv, temp_dir_pub, config_dir) =
+            (tempdir().unwrap(), tempdir().unwrap(), tempdir().unwrap());
         let config_path = write_file_storage_config(
             &config_dir,
             temp_dir_priv.path(),
@@ -311,9 +411,8 @@ tls_subject = "kms-party"
     #[test]
     #[integration_test]
     fn central_deterministic_signing_keys() {
-        let temp_dir_priv = tempdir().unwrap();
-        let temp_dir_pub = tempdir().unwrap();
-        let config_dir = tempdir().unwrap();
+        let (temp_dir_priv, temp_dir_pub, config_dir) =
+            (tempdir().unwrap(), tempdir().unwrap(), tempdir().unwrap());
         let config_path = write_file_storage_config(
             &config_dir,
             temp_dir_priv.path(),
@@ -692,5 +791,6 @@ mod kms_custodian_binary_tests {
         operator
             .verify_and_recover(&outputs, recovery_material, ephem_dec_key, ephem_enc_key)
             .unwrap()
+            .to_vec()
     }
 }

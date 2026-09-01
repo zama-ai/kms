@@ -76,15 +76,15 @@ impl<
     ) -> anyhow::Result<InMemoryBasePreprocessing<Z>> {
         let mut base_preprocessing = InMemoryBasePreprocessing::<Z>::default();
 
-        //Init single sharing, we need 2 calls per triple and 1 call per randomness
+        //Jointly init single and double sharing in a single local-share protocol,
+        //matching the honest RealLargePreprocessing so all parties stay on the same round.
+        let single_l = 2 * batch_sizes.triples + batch_sizes.randoms;
+        let single_shares = self
+            .double_sharing
+            .init_joint_with_single(large_session, single_l, batch_sizes.triples)
+            .await?;
         self.single_sharing
-            .init(large_session, 2 * batch_sizes.triples + batch_sizes.randoms)
-            .await?;
-
-        //Init double sharing, we need 1 call per triple
-        self.double_sharing
-            .init(large_session, batch_sizes.triples)
-            .await?;
+            .load_local_single_shares(large_session, single_shares, single_l)?;
 
         if batch_sizes.triples > 0 {
             //Preprocess a batch of triples

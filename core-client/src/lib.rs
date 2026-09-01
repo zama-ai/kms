@@ -92,6 +92,7 @@ macro_rules! retry {
         retry!($f, 5, 100)
     };
 }
+pub(crate) use retry;
 
 #[derive(Serialize, Clone, Validate, Debug)]
 #[validate(schema(function = validate_core_client_conf))]

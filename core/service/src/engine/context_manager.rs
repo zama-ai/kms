@@ -72,6 +72,7 @@ where
     async fn verify_and_extract_new_mpc_context(
         &self,
         request: tonic::Request<NewMpcContextRequest>,
+        require_pcr_allowlist: bool,
     ) -> anyhow::Result<(Option<Role>, ContextInfo)> {
         // first verify that the context is valid
         let kms_grpc::kms::v1::NewMpcContextRequest { new_context } = request.into_inner();
@@ -79,15 +80,23 @@ where
         let new_context = new_context.ok_or_else(|| anyhow::anyhow!("new_context is required"))?;
         let new_context = ContextInfo::try_from(new_context)?;
         // verify new context
-        let my_role = self.extract_my_role_from_context(&new_context).await?;
+        let my_role = self
+            .verify_context_and_extract_my_role(&new_context, require_pcr_allowlist)
+            .await?;
 
         Ok((my_role, new_context))
     }
 
-    async fn extract_my_role_from_context(
+    async fn verify_context_and_extract_my_role(
         &self,
         context: &ContextInfo,
+        require_pcr_allowlist: bool,
     ) -> anyhow::Result<Option<Role>> {
+        anyhow::ensure!(
+            !require_pcr_allowlist || !context.pcr_values.is_empty(),
+            "PCR values are required for context {} in enclave deployments",
+            context.context_id()
+        );
         let storage_ref = self.crypto_storage.private_storage.clone();
         let guarded_priv_storage = storage_ref.lock().await;
         context.verify(&(*guarded_priv_storage)).await
@@ -198,6 +207,14 @@ where
             OP_NEW_CUSTODIAN_CONTEXT,
         )
         .await?;
+        InternalCustodianContext::validate_nodes(&custodian_context).map_err(|e| {
+            MetricedError::new(
+                OP_NEW_CUSTODIAN_CONTEXT,
+                Some(custodian_context_id),
+                anyhow::anyhow!("Invalid custodian context: {e}"),
+                tonic::Code::InvalidArgument,
+            )
+        })?;
         tracing::info!(
             "Custodian context addition under MPC context {:?} starting with context_id={:?}, threshold={} from {} custodians",
             mpc_context_id,
@@ -244,7 +261,8 @@ where
         // Ensure we are not destroying the only backup vault there exists.
         if meta_store_guard
             .get_successful_completed_request_ids()
-            .len()
+            .take(2)
+            .count()
             < 2
         {
             return Err(MetricedError::new(
@@ -723,7 +741,7 @@ where
     ) -> Result<Response<Empty>, MetricedError> {
         let (_my_role, new_context) = self
             .inner
-            .verify_and_extract_new_mpc_context(request)
+            .verify_and_extract_new_mpc_context(request, false)
             .await
             .map_err(|e| {
                 MetricedError::new(OP_NEW_MPC_CONTEXT, None, e, tonic::Code::InvalidArgument)
@@ -904,6 +922,7 @@ pub struct ThresholdContextManager<
 > {
     inner: SharedContextManager<PubS, PrivS>,
     session_maker: SessionMaker,
+    require_pcr_allowlist: bool,
 }
 
 impl<PubS, PrivS> ThresholdContextManager<PubS, PrivS>
@@ -916,6 +935,7 @@ where
         crypto_storage: CryptoMaterialStorage<PubS, PrivS>,
         custodian_meta_store: Arc<RwLock<CustodianMetaStore>>,
         session_maker: SessionMaker,
+        require_pcr_allowlist: bool,
     ) -> Self {
         Self {
             inner: SharedContextManager {
@@ -925,6 +945,7 @@ where
                 custodian_setup_lock: Mutex::new(()),
             },
             session_maker,
+            require_pcr_allowlist,
         }
     }
 
@@ -938,7 +959,11 @@ where
 
         let mut loaded_count = 0;
         for context in &contexts {
-            let my_role = match self.inner.extract_my_role_from_context(context).await {
+            let my_role = match self
+                .inner
+                .verify_context_and_extract_my_role(context, self.require_pcr_allowlist)
+                .await
+            {
                 Ok(role) => role,
                 Err(e) => {
                     tracing::warn!(
@@ -961,7 +986,7 @@ where
         }
         if loaded_count == 0 {
             tracing::warn!(
-                "Failed to load any of the MPC contexts from storage. Server is likely in recovery mode."
+                "Failed to load any MPC contexts from storage. Server may be in recovery mode or all stored contexts failed validation."
             );
         } else if loaded_count < contexts.len() {
             tracing::warn!(
@@ -998,13 +1023,20 @@ async fn atomic_update_context<
         (Ok(_), Ok(_)) => (),
         _ => {
             // Rollback if any operation failed
-            // first delete the context from storage
-            let storage_ref = crypto_storage.private_storage.clone();
-            let mut guarded_priv_storage = storage_ref.lock().await;
-            _ = delete_context_at_id(&mut *guarded_priv_storage, context_id).await;
+            // First delete the context from storage.
+            {
+                let storage_ref = crypto_storage.private_storage.clone();
+                let mut guarded_priv_storage = storage_ref.lock().await;
+                _ = delete_context_at_id(&mut *guarded_priv_storage, context_id).await;
+            }
 
-            // next delete the context from session maker
-            session_maker.remove_context(context_id).await;
+            // Then remove the context from the session maker and TLS verifier.
+            session_maker
+                .remove_context(context_id)
+                .await
+                .map_err(|e| {
+                    anyhow::anyhow!("Failed to remove context during atomic update rollback: {e}")
+                })?;
             return Err(anyhow::anyhow!("Failed to atomically update context"));
         }
     }
@@ -1024,7 +1056,7 @@ where
     ) -> Result<tonic::Response<Empty>, MetricedError> {
         let (my_role, new_context) = self
             .inner
-            .verify_and_extract_new_mpc_context(request)
+            .verify_and_extract_new_mpc_context(request, self.require_pcr_allowlist)
             .await
             .map_err(|e| {
                 MetricedError::new(OP_NEW_MPC_CONTEXT, None, e, tonic::Code::InvalidArgument)
@@ -1104,19 +1136,31 @@ where
             ));
         }
 
-        let storage_ref = self.inner.crypto_storage.private_storage.clone();
-        let mut guarded_priv_storage = storage_ref.lock().await;
-        self.session_maker.remove_context(&context_id).await;
+        // Delete persisted state first. This operation is idempotent, so a failure during the
+        // subsequent in-memory cleanup can be retried while the context is still live.
+        {
+            let storage_ref = self.inner.crypto_storage.private_storage.clone();
+            let mut guarded_priv_storage = storage_ref.lock().await;
+            delete_context_at_id(&mut *guarded_priv_storage, &context_id)
+                .await
+                .map_err(|e| {
+                    MetricedError::new(
+                        OP_DESTROY_MPC_CONTEXT,
+                        Some(context_id.into()),
+                        anyhow::anyhow!("Failed to delete context: {e}"),
+                        tonic::Code::Internal,
+                    )
+                })?;
+        }
 
-        // There is nothing we can do if deletion fails here.
-        // Note that it cannot fail if the context does not exist.
-        delete_context_at_id(&mut *guarded_priv_storage, &context_id)
+        self.session_maker
+            .remove_context(&context_id)
             .await
             .map_err(|e| {
                 MetricedError::new(
                     OP_DESTROY_MPC_CONTEXT,
                     Some(context_id.into()),
-                    anyhow::anyhow!("Failed to delete context: {e}"),
+                    e,
                     tonic::Code::Internal,
                 )
             })?;
@@ -1251,6 +1295,10 @@ mod tests {
     use tonic::Request;
 
     const DUMMY_SIGNING_KEY_REQ_ID: [u8; 32] = [1u8; 32];
+    const EXPECTED_ERR_DUPLICATE_CUSTODIAN_ENCRYPTION_KEY: &str =
+        "Duplicate custodian encryption key found in custodian context";
+    const EXPECTED_ERR_DUPLICATE_CUSTODIAN_VERIFICATION_KEY: &str =
+        "Duplicate custodian verification key found in custodian context";
 
     async fn setup_crypto_storage(
         make_default_context: bool,
@@ -1370,6 +1418,7 @@ mod tests {
             crypto_storage.clone(),
             MetaStore::new(100, 10),
             session_maker,
+            false,
         );
 
         let response = context_manager.new_mpc_context(request).await;
@@ -1495,6 +1544,84 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_new_mpc_context_requires_pcr_allowlist_for_enclave_deployment() {
+        let (verification_key, sig_key, crypto_storage) = setup_crypto_storage(false).await;
+        let base_kms = BaseKmsStruct::new(KMSType::Threshold, sig_key).unwrap();
+        let session_maker = SessionMaker::empty_dummy_session(base_kms.new_rng().await);
+        let context_manager = ThresholdContextManager::new(
+            base_kms,
+            crypto_storage.clone(),
+            MetaStore::new(100, 10),
+            session_maker,
+            true,
+        );
+        let make_context = |context_id, pcr_values| ContextInfo {
+            mpc_nodes: vec![NodeInfo {
+                mpc_identity: "Node1".to_string(),
+                party_id: 1,
+                external_url: "https://localhost:12345".to_string(),
+                ca_cert: None,
+                public_storage_url: "http://storage".to_string(),
+                public_storage_prefix: None,
+                extra_signer_addresses: vec![],
+                scheme_digests: SchemeDigests::from_ecdsa_verification_key(&verification_key),
+            }],
+            context_id,
+            software_version: SoftwareVersion {
+                major: 0,
+                minor: 1,
+                patch: 0,
+                tag: None,
+            },
+            threshold: 0,
+            pcr_values,
+        };
+
+        let rejected_context_id = ContextId::from_bytes([30u8; 32]);
+        let request = Request::new(NewMpcContextRequest {
+            new_context: Some(
+                make_context(rejected_context_id, vec![])
+                    .try_into()
+                    .unwrap(),
+            ),
+        });
+        let error = context_manager
+            .new_mpc_context(request)
+            .await
+            .expect_err("enclave contexts without PCR values must be rejected");
+        assert_eq!(error.code(), tonic::Code::InvalidArgument);
+        assert!(error.internal_err().to_string().contains(&format!(
+            "PCR values are required for context {rejected_context_id} in enclave deployments"
+        )));
+        assert_eq!(context_manager.session_maker.context_count().await, 0);
+        {
+            let guarded_priv_storage = crypto_storage.private_storage.lock().await;
+            assert!(
+                read_context_at_id(&*guarded_priv_storage, &rejected_context_id)
+                    .await
+                    .is_err(),
+                "rejected context must not be persisted"
+            );
+        }
+
+        let accepted_context_id = ContextId::from_bytes([31u8; 32]);
+        let pcr_values = vec![threshold_networking::tls::ReleasePCRValues {
+            pcr0: vec![0u8; 48],
+            pcr1: vec![1u8; 48],
+            pcr2: vec![2u8; 48],
+        }];
+        let request = Request::new(NewMpcContextRequest {
+            new_context: Some(
+                make_context(accepted_context_id, pcr_values)
+                    .try_into()
+                    .unwrap(),
+            ),
+        });
+        context_manager.new_mpc_context(request).await.unwrap();
+        assert_eq!(context_manager.session_maker.context_count().await, 1);
+    }
+
+    #[tokio::test]
     async fn test_kms_context_load_from_storage() {
         // Don't setup a default MPC context
         let (verification_key, sig_key, crypto_storage) = setup_crypto_storage(false).await;
@@ -1534,6 +1661,7 @@ mod tests {
                 crypto_storage.clone(),
                 MetaStore::new(100, 10),
                 session_maker,
+                false,
             );
             let response = context_manager.new_mpc_context(request).await;
             response.unwrap();
@@ -1571,6 +1699,7 @@ mod tests {
                 crypto_storage.clone(),
                 MetaStore::new(100, 10),
                 session_maker,
+                false,
             );
 
             // check that there are no contexts
@@ -1582,6 +1711,97 @@ mod tests {
                 .await
                 .unwrap();
             assert_eq!(1, context_manager.session_maker.context_count().await);
+        }
+    }
+
+    #[tokio::test]
+    async fn test_kms_context_load_requires_pcr_allowlist_for_enclave_deployment() {
+        let (verification_key, sig_key, crypto_storage) = setup_crypto_storage(false).await;
+        let context_without_pcr_id = ContextId::from_bytes([32u8; 32]);
+        let context_with_pcr_id = ContextId::from_bytes([33u8; 32]);
+        let make_context = |context_id, pcr_values| ContextInfo {
+            mpc_nodes: vec![NodeInfo {
+                mpc_identity: "Node1".to_string(),
+                party_id: 1,
+                external_url: "https://localhost:12345".to_string(),
+                ca_cert: None,
+                public_storage_url: "http://storage".to_string(),
+                public_storage_prefix: None,
+                extra_signer_addresses: vec![],
+                scheme_digests: SchemeDigests::from_ecdsa_verification_key(&verification_key),
+            }],
+            context_id,
+            software_version: SoftwareVersion {
+                major: 0,
+                minor: 1,
+                patch: 0,
+                tag: None,
+            },
+            threshold: 0,
+            pcr_values,
+        };
+
+        // Persist both contexts without enforcing enclave PCR policy, as could happen before an
+        // existing deployment enables automatic attested TLS.
+        {
+            let base_kms = BaseKmsStruct::new(KMSType::Threshold, sig_key.clone()).unwrap();
+            let session_maker = SessionMaker::empty_dummy_session(base_kms.new_rng().await);
+            let context_manager = ThresholdContextManager::new(
+                base_kms,
+                crypto_storage.clone(),
+                MetaStore::new(100, 10),
+                session_maker,
+                false,
+            );
+            let pcr_values = vec![threshold_networking::tls::ReleasePCRValues {
+                pcr0: vec![0u8; 48],
+                pcr1: vec![1u8; 48],
+                pcr2: vec![2u8; 48],
+            }];
+            for context in [
+                make_context(context_without_pcr_id, vec![]),
+                make_context(context_with_pcr_id, pcr_values),
+            ] {
+                let request = Request::new(NewMpcContextRequest {
+                    new_context: Some(context.try_into().unwrap()),
+                });
+                context_manager.new_mpc_context(request).await.unwrap();
+            }
+        }
+
+        let base_kms = BaseKmsStruct::new(KMSType::Threshold, sig_key).unwrap();
+        let session_maker = SessionMaker::empty_dummy_session(base_kms.new_rng().await);
+        let context_manager = ThresholdContextManager::new(
+            base_kms,
+            crypto_storage.clone(),
+            MetaStore::new(100, 10),
+            session_maker,
+            true,
+        );
+        context_manager
+            .load_mpc_context_from_storage()
+            .await
+            .unwrap();
+
+        assert_eq!(context_manager.session_maker.context_count().await, 1);
+        assert!(
+            !context_manager
+                .session_maker
+                .context_exists(&context_without_pcr_id)
+                .await
+        );
+        assert!(
+            context_manager
+                .session_maker
+                .context_exists(&context_with_pcr_id)
+                .await
+        );
+
+        let guarded_priv_storage = crypto_storage.private_storage.lock().await;
+        for context_id in [context_without_pcr_id, context_with_pcr_id] {
+            read_context_at_id(&*guarded_priv_storage, &context_id)
+                .await
+                .expect("loading must not delete stored contexts");
         }
     }
 
@@ -1603,6 +1823,7 @@ mod tests {
                 crypto_storage.clone(),
                 MetaStore::new(100, 10),
                 session_maker,
+                false,
             );
 
             for context_id in &context_ids {
@@ -1658,6 +1879,7 @@ mod tests {
                 crypto_storage.clone(),
                 MetaStore::new(100, 10),
                 session_maker,
+                false,
             );
 
             assert_eq!(0, context_manager.session_maker.context_count().await);
@@ -1688,6 +1910,7 @@ mod tests {
                 crypto_storage.clone(),
                 MetaStore::new(100, 10),
                 session_maker,
+                false,
             );
 
             for context_id in &context_ids {
@@ -1783,6 +2006,7 @@ mod tests {
                 crypto_storage.clone(),
                 MetaStore::new(100, 10),
                 session_maker,
+                false,
             );
 
             assert_eq!(0, context_manager.session_maker.context_count().await);
@@ -1833,6 +2057,7 @@ mod tests {
                 crypto_storage.clone(),
                 MetaStore::new(100, 10),
                 session_maker,
+                false,
             );
             let request = Request::new(NewMpcContextRequest {
                 new_context: Some(new_context.try_into().unwrap()),
@@ -1863,6 +2088,7 @@ mod tests {
                 crypto_storage.clone(),
                 MetaStore::new(100, 10),
                 session_maker,
+                false,
             );
 
             // load_mpc_context_from_storage should succeed (not panic or error)
@@ -1927,6 +2153,7 @@ mod tests {
                 crypto_storage.clone(),
                 MetaStore::new(100, 10),
                 session_maker,
+                false,
             );
 
             let response = context_manager.new_custodian_context(request).await;
@@ -2069,6 +2296,91 @@ mod tests {
         }
     }
 
+    #[tokio::test]
+    async fn test_new_custodian_context_rejects_duplicate_cryptographic_identities() {
+        let (_verification_key, sig_key, crypto_storage) = setup_crypto_storage(true).await;
+        let base_kms = BaseKmsStruct::new(KMSType::Threshold, sig_key).unwrap();
+        let custodian_meta_store = MetaStore::new(100, 10);
+        let session_maker = SessionMaker::empty_dummy_session(base_kms.new_rng().await);
+        let context_manager = ThresholdContextManager::new(
+            base_kms,
+            crypto_storage.clone(),
+            custodian_meta_store.clone(),
+            session_maker,
+            false,
+        );
+
+        let mut rng = AesRng::seed_from_u64(43);
+        let mut setup_messages = Vec::new();
+        for role in 1..=3 {
+            let mut enc = Encryption::new(PkeSchemeType::MlKem512, &mut rng);
+            let (_, public_enc_key) = enc.keygen().unwrap();
+            let (public_verf_key, _) = gen_sig_keys(&mut rng);
+            setup_messages.push(InternalCustodianSetupMessage {
+                header: HEADER.to_string(),
+                custodian_role: Role::indexed_from_one(role),
+                name: format!("Custodian-{role}"),
+                random_value: [role as u8; 32],
+                timestamp: SystemTime::now(),
+                public_enc_key,
+                public_verf_key,
+            });
+        }
+
+        let mut duplicate_encryption_key = setup_messages.clone();
+        duplicate_encryption_key[1].public_enc_key =
+            duplicate_encryption_key[0].public_enc_key.clone();
+        let mut duplicate_verification_key = setup_messages;
+        duplicate_verification_key[1].public_verf_key =
+            duplicate_verification_key[0].public_verf_key.clone();
+
+        for (context_id, messages, expected_error) in [
+            (
+                RequestId::from_bytes([23u8; 32]),
+                duplicate_encryption_key,
+                EXPECTED_ERR_DUPLICATE_CUSTODIAN_ENCRYPTION_KEY,
+            ),
+            (
+                RequestId::from_bytes([24u8; 32]),
+                duplicate_verification_key,
+                EXPECTED_ERR_DUPLICATE_CUSTODIAN_VERIFICATION_KEY,
+            ),
+        ] {
+            let context = CustodianContext {
+                custodian_nodes: messages
+                    .into_iter()
+                    .map(|message| message.try_into().unwrap())
+                    .collect(),
+                custodian_context_id: Some(context_id.into()),
+                threshold: 1,
+            };
+            let request = Request::new(NewCustodianContextRequest {
+                new_custodian_context: Some(context),
+                mpc_context_id: Some((*DEFAULT_MPC_CONTEXT).into()),
+            });
+
+            let error = context_manager
+                .new_custodian_context(request)
+                .await
+                .expect_err("duplicate custodian cryptographic identities must be rejected");
+            assert_eq!(error.code(), tonic::Code::InvalidArgument);
+            assert!(error.internal_err().to_string().contains(expected_error));
+            assert!(!custodian_meta_store.read().await.has_existed(&context_id));
+
+            let guarded_pub_storage = crypto_storage.public_storage.lock().await;
+            assert!(
+                read_versioned_at_request_id::<RamStorage, RecoveryValidationMaterial>(
+                    &*guarded_pub_storage,
+                    &context_id,
+                    &PubDataType::RecoveryMaterial.to_string(),
+                )
+                .await
+                .is_err(),
+                "rejected custodian context {context_id} must not create recovery material"
+            );
+        }
+    }
+
     // Test to sanity check the overall flow of construction of material needed for backup
     #[tokio::test]
     async fn test_gen_recovery_request_payloads() {
@@ -2077,13 +2389,15 @@ mod tests {
         let (server_verf_key, server_sig_key) = gen_sig_keys(&mut rng);
         let mut enc = Encryption::new(PkeSchemeType::MlKem512, &mut rng);
         let (backup_dec_key, backup_enc_key) = enc.keygen().unwrap();
-        let mnemonic = seed_phrase_from_rng(&mut rng).expect("Failed to generate seed phrase");
+        let mnemonic1 = seed_phrase_from_rng(&mut rng).expect("Failed to generate seed phrase");
+        let mnemonic2 = seed_phrase_from_rng(&mut rng).expect("Failed to generate seed phrase");
+        let mnemonic3 = seed_phrase_from_rng(&mut rng).expect("Failed to generate seed phrase");
         let custodian1: Custodian =
-            custodian_from_seed_phrase(&mnemonic, Role::indexed_from_one(1)).unwrap();
+            custodian_from_seed_phrase(&mnemonic1, Role::indexed_from_one(1)).unwrap();
         let custodian2: Custodian =
-            custodian_from_seed_phrase(&mnemonic, Role::indexed_from_one(2)).unwrap();
+            custodian_from_seed_phrase(&mnemonic2, Role::indexed_from_one(2)).unwrap();
         let custodian3: Custodian =
-            custodian_from_seed_phrase(&mnemonic, Role::indexed_from_one(3)).unwrap();
+            custodian_from_seed_phrase(&mnemonic3, Role::indexed_from_one(3)).unwrap();
         let setup_msg_1 = custodian1
             .generate_setup_message(&mut rng, "Custodian-1".to_string())
             .unwrap();
@@ -2207,6 +2521,7 @@ mod tests {
             crypto_storage,
             MetaStore::new(100, 10),
             session_maker,
+            false,
         );
 
         // The custodian context creation should fail because backup update fails
@@ -2322,6 +2637,7 @@ mod tests {
             crypto_storage,
             MetaStore::new(100, 10),
             session_maker,
+            false,
         );
 
         assert!(

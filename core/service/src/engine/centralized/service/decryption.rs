@@ -966,7 +966,7 @@ mod test_user_decryption {
         };
         let res = hybrid_ml_kem::dec::<ml_kem::MlKem512>(signcrypted_msg, &decap_key.0).unwrap();
         assert_eq!(
-            TestingPlaintext::from((res, tfhe::FheTypes::Bool)),
+            TestingPlaintext::from((res.to_vec(), tfhe::FheTypes::Bool)),
             expected
         );
     }
