@@ -229,6 +229,21 @@ impl PlaintextReceiver {
     }
 }
 
+impl crate::kms::v1::SigningMetadata {
+    /// The Solana envelope of one request: who the result is sealed to, and the host deployment
+    /// the response binding commits to.
+    pub fn solana(pubkey: impl Into<Vec<u8>>, verifying_program_id: impl Into<Vec<u8>>) -> Self {
+        Self {
+            metadata: Some(crate::kms::v1::signing_metadata::Metadata::Solana(
+                crate::kms::v1::SolanaMetadata {
+                    pubkey: pubkey.into(),
+                    verifying_program_id: verifying_program_id.into(),
+                },
+            )),
+        }
+    }
+}
+
 #[derive(
     Clone,
     Copy,
@@ -1442,8 +1457,7 @@ mod tests {
                 extra_data: vec![],
                 context_id: Some(context_id.into()),
                 epoch_id: None,
-                solana_pubkey: None,
-                solana_verifying_program_id: None,
+                signing_metadata: vec![],
             };
             assert!(
                 req.compute_link_checked()
@@ -1466,8 +1480,7 @@ mod tests {
                 extra_data: vec![],
                 context_id: Some(context_id.into()),
                 epoch_id: None,
-                solana_pubkey: None,
-                solana_verifying_program_id: None,
+                signing_metadata: vec![],
             };
             assert!(
                 req.compute_link_checked()
@@ -1493,8 +1506,7 @@ mod tests {
                 extra_data: vec![],
                 context_id: Some(context_id.into()),
                 epoch_id: None,
-                solana_pubkey: None,
-                solana_verifying_program_id: None,
+                signing_metadata: vec![],
             };
 
             assert!(
@@ -1518,8 +1530,7 @@ mod tests {
                 extra_data: vec![],
                 context_id: Some(context_id.into()),
                 epoch_id: None,
-                solana_pubkey: None,
-                solana_verifying_program_id: None,
+                signing_metadata: vec![],
             };
             assert!(req.compute_link_checked().is_ok());
         }

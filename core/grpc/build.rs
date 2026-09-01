@@ -13,6 +13,10 @@ fn default_builder() -> Builder {
         .type_attribute("PublicDecryptionResponsePayload", DERIVES)
         .type_attribute("ExternalDecryptionResult", DERIVES)
         .type_attribute("UserDecryptionRequest", DERIVES)
+        .type_attribute("SigningMetadata", DERIVES)
+        .type_attribute("SigningMetadata.metadata", DERIVES)
+        .type_attribute("EthereumMetadata", DERIVES)
+        .type_attribute("SolanaMetadata", DERIVES)
         .type_attribute("UserDecryptionResponse", DERIVES)
         .type_attribute("UserDecryptionResponsePayload", DERIVES)
         .type_attribute("Eip712DomainMsg", DERIVES)
@@ -55,14 +59,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             "UserDecryptionRequest",
             "#[wasm_bindgen::prelude::wasm_bindgen(getter_with_clone)]",
         )
-        // Solana request routing is server-side; do not expose the optional byte vector through
-        // the EVM-oriented WASM request type.
+        // Solana request routing is server-side; do not expose the envelope list through the
+        // EVM-oriented WASM request type (wasm_bindgen could not carry a message list anyway).
         .field_attribute(
-            "UserDecryptionRequest.solana_pubkey",
-            "#[wasm_bindgen(skip)]",
-        )
-        .field_attribute(
-            "UserDecryptionRequest.solana_verifying_program_id",
+            "UserDecryptionRequest.signing_metadata",
             "#[wasm_bindgen(skip)]",
         )
         .type_attribute(
