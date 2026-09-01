@@ -1623,12 +1623,10 @@ mod tests {
     }
 
     #[test]
-    fn solana_link_binds_kms_selected_context_and_epoch() {
-        // The Solana adapter parses `context_id`/`epoch_id` — including their defaults — a second
-        // time, separately from the parse a few lines above its call site. Today the two agree;
-        // this pins that the link is computed over the values the returned tuple actually carries,
-        // the ones the KMS selects keys by, so one copy of the defaulting logic cannot drift from
-        // the other silently.
+    fn solana_link_binds_the_tuple_own_extra_data() {
+        // Pins that the link is computed over the values the returned tuple actually carries —
+        // the same handles, transport key and extra_data the rest of the engine goes on to use —
+        // so the adapter cannot quietly bind a second parse of the request.
         let mut rng = AesRng::from_random_seed();
         let mut encryption = Encryption::new(PkeSchemeType::MlKem512, &mut rng);
         let (_enc_sk, enc_pk) = encryption.keygen().unwrap();
@@ -1643,8 +1641,6 @@ mod tests {
         let mut handle = [0xabu8; 32];
         handle[22..30].copy_from_slice(&((1u64 << 63) | 12_345).to_be_bytes());
 
-        // Context and epoch deliberately omitted: the defaulting is exactly the duplicated logic
-        // under test.
         let req = UserDecryptionRequest {
             request_id: Some(derive_request_id("request_id").unwrap().into()),
             typed_ciphertexts: vec![TypedCiphertext {
@@ -1657,7 +1653,7 @@ mod tests {
             domain: Some(alloy_to_protobuf_domain(&dummy_domain()).unwrap()),
             client_address: String::new(),
             enc_key: enc_pk_buf,
-            extra_data: vec![],
+            extra_data: vec![0x77; 4],
             context_id: None,
             epoch_id: None,
             solana_pubkey: Some(vec![0x11; 32]),
@@ -1672,27 +1668,26 @@ mod tests {
             _receiver,
             _req_id,
             _key_id,
-            context_id,
-            epoch_id,
+            _context_id,
+            _epoch_id,
             _domain,
-            _extra,
+            extra_data,
             _signing_schemes,
         ) = unpack_user_decrypt_req(&req).unwrap();
 
         let binding = SolanaUserDecryptBinding::new(
             &[0x22; 32],
             &[0x11; 32],
-            context_id.as_bytes(),
-            epoch_id.as_bytes(),
             cts.iter().map(|ct| ct.external_handle.as_slice()),
             &enc_key,
+            &extra_data,
         )
         .unwrap();
 
         assert_eq!(
             link,
             binding.compute_link(),
-            "the link must bind the context and epoch the tuple carries, not a second parse",
+            "the link must bind the extra_data the tuple carries, not a second parse",
         );
     }
 

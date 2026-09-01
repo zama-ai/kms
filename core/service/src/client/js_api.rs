@@ -502,15 +502,11 @@ struct SolanaRequestFieldsJs {
     host_chain_id: String,
     /// The on-chain verifying program, 32 bytes, hex.
     verifying_program_id: String,
-    /// The KMS context id, 32 bytes, hex.
-    kms_context_id: String,
-    /// The KMS epoch id, 32 bytes, hex.
-    kms_epoch_id: String,
 }
 
 /// Solana variant of [process_user_decryption_resp_from_js]. The signed link is the Solana
 /// user-decryption binding over the deployment pair (`verifying_program_id`, host chain id), the
-/// recipient, the KMS context and epoch, the handles and the transport key, not the EVM EIP-712
+/// recipient, the handles, the transport key and the request's `extra_data`, not the EVM EIP-712
 /// `UserDecryptionLinker`; de-signcryption is otherwise identical to the EVM path.
 ///
 /// * `client` - the client built with [new_solana_client] from trusted configuration: the
@@ -522,7 +518,7 @@ struct SolanaRequestFieldsJs {
 /// recipient is the 32-byte ed25519 key below.
 ///
 /// * `solana_request` - the Solana-owned request fields, as one named object:
-/// `{ user_pubkey, host_chain_id, verifying_program_id, kms_context_id, kms_epoch_id }`.
+/// `{ user_pubkey, host_chain_id, verifying_program_id }`.
 /// Identities are 32-byte hex strings; `host_chain_id` is a decimal string, the vector-set
 /// convention, because a Solana chain id sets bit 63 and does not fit a JS number.
 ///
@@ -568,8 +564,6 @@ pub fn process_user_decryption_resp_solana_from_js(
             &fields.verifying_program_id,
             "verifying_program_id",
         )?,
-        kms_context_id: solana_identity(&fields.kms_context_id, "kms_context_id")?,
-        kms_epoch_id: solana_identity(&fields.kms_epoch_id, "kms_epoch_id")?,
         handles: parsed.ciphertext_handle_bytes(),
         enc_key: parsed.enc_key().to_vec(),
         response_domain,
