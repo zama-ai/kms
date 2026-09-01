@@ -345,6 +345,12 @@ pub struct KeyGenMetadataWithExtraDataTest {
     pub test_filename: Cow<'static, str>,
     pub state: u64,
     pub extra_data: Cow<'static, [u8]>,
+    /// The EIP-712 domain that the metadata keeps, and that signs the external
+    /// signature in the same metadata. The versions that predate the stored
+    /// domain leave the field out of their manifest entry, so it defaults to
+    /// `None`.
+    #[serde(default)]
+    pub eip712_domain: Option<Eip712DomainTest>,
 }
 
 impl TestType for KeyGenMetadataWithExtraDataTest {
@@ -377,6 +383,53 @@ impl TestType for CrsGenMetadataWithExtraDataTest {
 
     fn target_type(&self) -> String {
         "CrsGenMetadataWithExtraData".to_string()
+    }
+
+    fn test_filename(&self) -> String {
+        self.test_filename.to_string()
+    }
+}
+
+// KMS test — an EIP-712 domain that another fixture embeds. The type has no
+// fixture file of its own, so it has no filename.
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct Eip712DomainTest {
+    /// EIP-712 domain name.
+    pub name: Cow<'static, str>,
+    /// EIP-712 domain version.
+    pub version: Cow<'static, str>,
+    /// Chain ID. The stored form widens it to a 32-byte big-endian integer.
+    pub chain_id: u64,
+    /// Address of the verifying contract.
+    pub verifying_contract: [u8; 20],
+    /// Domain salt, if the domain has one.
+    pub salt: Option<[u8; 32]>,
+}
+
+// KMS test — the EIP-712 domain that keygen and CRS metadata retain. Every optional
+// field of the domain is set, so one fixture pins the byte layout of all of them.
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct StoredEip712DomainTest {
+    pub test_filename: Cow<'static, str>,
+    /// EIP-712 domain name.
+    pub name: Cow<'static, str>,
+    /// EIP-712 domain version.
+    pub version: Cow<'static, str>,
+    /// Chain ID. The stored form widens it to a 32-byte big-endian integer.
+    pub chain_id: u64,
+    /// Address of the verifying contract.
+    pub verifying_contract: [u8; 20],
+    /// Domain salt.
+    pub salt: [u8; 32],
+}
+
+impl TestType for StoredEip712DomainTest {
+    fn module(&self) -> String {
+        KMS_MODULE_NAME.to_string()
+    }
+
+    fn target_type(&self) -> String {
+        "StoredEip712Domain".to_string()
     }
 
     fn test_filename(&self) -> String {
@@ -1141,6 +1194,7 @@ pub enum TestMetadataKMS {
     KeyGenMetadata(KeyGenMetadataTest),
     CrsGenMetadataWithExtraData(CrsGenMetadataWithExtraDataTest),
     KeyGenMetadataWithExtraData(KeyGenMetadataWithExtraDataTest),
+    StoredEip712Domain(StoredEip712DomainTest),
     SigncryptionPayload(SigncryptionPayloadTest),
     PrssSetupCombined(PrssSetupCombinedTest),
     EpochData(EpochDataTest),

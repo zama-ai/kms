@@ -73,7 +73,7 @@ use crate::{
         },
         context_manager::{ThresholdContextManager, ensure_default_threshold_context_in_storage},
         prepare_shutdown_signals,
-        public_material_verification::verify_public_storage_material,
+        storage_material_verification::verify_storage_material,
         threshold::{
             service::{
                 public_decryptor::SecureNoiseFloodDecryptor,
@@ -525,6 +525,7 @@ where
     PrivS: StorageExt + Send + Sync + 'static,
     F: std::future::Future<Output = ()> + Send + 'static,
 {
+    let require_pcr_allowlist = config.requires_pcr_allowlist();
     let threshold_config = config.threshold.as_ref().ok_or_else(|| {
         anyhow_error_and_log("Threshold party configuration is required for threshold KMS")
     })?;
@@ -573,7 +574,7 @@ where
     // Private storage is the reference; extra material in public storage is ignored.
     match base_kms.sig_key() {
         Ok(signing_key) => {
-            verify_public_storage_material(
+            verify_storage_material(
                 &public_storage,
                 &key_info,
                 &crs_info,
@@ -754,6 +755,7 @@ where
         crypto_storage.inner.clone(),
         custodian_meta_store,
         session_maker.clone(),
+        require_pcr_allowlist,
     );
     if let Err(e) = context_manager.load_mpc_context_from_storage().await {
         tracing::warn!(
@@ -1025,6 +1027,7 @@ mod tests {
         }
 
         #[derive(Clone, Serialize, Deserialize, VersionsDispatch)]
+        #[expect(clippy::large_enum_variant)]
         pub enum ThresholdFheKeysVersions {
             V0(PlaceholderV0),
             V1(PlaceholderV1),
@@ -1092,6 +1095,7 @@ mod tests {
                     RequestId::zeros(),
                     RequestId::zeros(),
                     BTreeMap::new(),
+                    &crate::dummy_domain(),
                     vec![],
                     vec![],
                     vec![],
@@ -1141,6 +1145,7 @@ mod tests {
                 RequestId::zeros(),
                 RequestId::zeros(),
                 BTreeMap::new(),
+                &crate::dummy_domain(),
                 vec![],
                 vec![],
                 vec![],
@@ -1216,6 +1221,7 @@ mod tests {
                 RequestId::zeros(),
                 RequestId::zeros(),
                 BTreeMap::new(),
+                &crate::dummy_domain(),
                 vec![],
                 vec![],
                 vec![],

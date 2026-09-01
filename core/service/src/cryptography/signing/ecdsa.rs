@@ -288,9 +288,16 @@ impl HasSigningScheme for PrivateSigKey {
 // (this is why the zeroizing `Drop` lives on the `WrappedSigningKey` newtype).
 impl ZeroizeOnDrop for PrivateSigKey {}
 
-#[derive(Clone, PartialEq, Eq, Debug, ZeroizeOnDrop)]
+#[derive(Clone, PartialEq, Eq, ZeroizeOnDrop)]
 struct WrappedSigningKey(k256::ecdsa::SigningKey);
 impl_generic_versionize!(WrappedSigningKey);
+
+// Deliberately never render secret-key material to avoid it accidentally leaking in logs or debug output.
+impl std::fmt::Debug for WrappedSigningKey {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("WrappedSigningKey(REDACTED)")
+    }
+}
 
 impl Zeroize for WrappedSigningKey {
     fn zeroize(&mut self) {

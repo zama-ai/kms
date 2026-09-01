@@ -169,7 +169,7 @@ sequenceDiagram
 
 Corresponds to [`kms-custodian generate`](#custodian-setup). A future custodian boots the air-gapped machine and runs the command. Keys are derived from system entropy mixed with a user-supplied `--randomness` string; the matching BIP39 seed phrase is printed to stdout **once** and must be copied onto paper.
 
-The seed phrase is the only durable secret the custodian holds. `sk^{E_j}` and `sk^{S_j}` are re-derived from it whenever the custodian participates in a recovery.
+The seed phrase is the only durable secret the custodian holds. `sk^{E_j}` and `sk^{S_j}` are re-derived from it whenever the custodian participates in a recovery. Seed phrases must never be reused between custodians: every encryption key and every verification key must be unique within a custodian context.
 
 ### Phase 2 — Custodian context creation (online, one-time per context)
 
@@ -177,6 +177,7 @@ The core-client gathers `n` `CustodianSetupMessage`s (each custodian's base64 se
 
 Notes:
 - The Shamir threshold encoded inside `RecoveryValidationMaterial.custodian_context.threshold` is the **recovery** threshold (`t + 1` shares needed). `Operator::new_for_sharing` enforces `t < n/2`.
+- Before generating the backup, the operator rejects a context if any custodian encryption key or verification key is assigned to more than one role.
 - `sk^{B}` is **only** held in memory during this RPC. After secret-sharing it, the operator drops it.
 - The commitment `c_j = H(BackupMaterial_j)` is what the recovering operator later checks against the decrypted material — it lets a single signature on `RecoveryValidationMaterial` authenticate every share at once, without making the encrypted plaintext public.
 

@@ -57,7 +57,7 @@ impl ReceiverState {
     /// Buffer a strictly-future-round message, enforcing the reordering-buffer
     /// bounds. Returns `true` if the message was buffered, `false` if it was
     /// dropped for being outside the `max_future_rounds` look-ahead window or
-    /// over the per-sender `max_buffered` cap.
+    /// over the per-sender `max_buffered_msgs` cap.
     ///
     /// At most one value is kept per round: a duplicate for an already-buffered
     /// round is discarded (first one wins) so a malicious peer cannot clobber a
@@ -67,17 +67,19 @@ impl ReceiverState {
         round: usize,
         value: Vec<u8>,
         current: usize,
-        max_buffered: usize,
+        max_future_rounds: usize,
+        max_buffered_msgs: usize,
     ) -> bool {
-        if round > current
-            && round <= current.saturating_add(max_buffered)
-            && self.future.len() < max_buffered
+        if round <= current
+            || round > current.saturating_add(max_future_rounds)
+            || self.future.len() >= max_buffered_msgs
+            || self.future.contains_key(&round)
         {
-            self.future.entry(round).or_insert(value);
-            true
-        } else {
-            false
+            return false;
         }
+
+        self.future.insert(round, value);
+        true
     }
 }
 
@@ -233,7 +235,13 @@ mod tests {
         let mut current_round = 2;
         let window_size = 5;
         for i in 0..10 {
-            let res = receiver_state.buffer_future(i, vec![i as u8], current_round, window_size);
+            let res = receiver_state.buffer_future(
+                i,
+                vec![i as u8],
+                current_round,
+                window_size,
+                window_size,
+            );
 
             // Check that messages for rounds outside the window are dropped, and those within the window are buffered.
             if i <= current_round || i > current_round + 5 {
@@ -255,5 +263,32 @@ mod tests {
             );
             current_round += 1;
         }
+    }
+
+    #[test]
+    fn test_buffer_future_enforces_independent_bounds() {
+        let (_, rx) = channel::<NetworkRoundValue>(10);
+        let mut receiver_state = ReceiverState::new(rx);
+
+        assert!(receiver_state.buffer_future(1, vec![1], 0, 2, 10));
+        assert!(receiver_state.buffer_future(2, vec![2], 0, 2, 10));
+        assert!(!receiver_state.buffer_future(3, vec![3], 0, 2, 10));
+
+        let (_, rx) = channel::<NetworkRoundValue>(10);
+        let mut receiver_state = ReceiverState::new(rx);
+
+        assert!(receiver_state.buffer_future(1, vec![1], 0, 10, 2));
+        assert!(receiver_state.buffer_future(2, vec![2], 0, 10, 2));
+        assert!(!receiver_state.buffer_future(3, vec![3], 0, 10, 2));
+    }
+
+    #[test]
+    fn test_buffer_future_rejects_duplicate_round() {
+        let (_, rx) = channel::<NetworkRoundValue>(10);
+        let mut receiver_state = ReceiverState::new(rx);
+
+        assert!(receiver_state.buffer_future(1, vec![1], 0, 10, 10));
+        assert!(!receiver_state.buffer_future(1, vec![2], 0, 10, 10));
+        assert_eq!(receiver_state.future.get(&1), Some(&vec![1]));
     }
 }

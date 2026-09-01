@@ -21,6 +21,15 @@ use threshold_types::role::Role;
 const REPEATS: usize = 10;
 const SEED: u64 = 0xdeadbeef;
 
+fn dummy_domain() -> alloy_sol_types::Eip712Domain {
+    alloy_sol_types::eip712_domain!(
+        name: "Authorization token",
+        version: "1",
+        chain_id: 8006,
+        verifying_contract: alloy_primitives::address!("66f9664f97F2b50F62D13eA064982f936dE76657"),
+    )
+}
+
 fn encode_versioned<T: Versionize>(value: &T) -> Vec<u8> {
     // Mirror backward-compatibility/generate-vX.Y.Z/src/generate.rs::save_bcode.
     let versioned = value.versionize();
@@ -58,6 +67,7 @@ fn build_key_gen_metadata_inner() -> KeyGenMetadataInner {
         key_id,
         preprocessing_id,
         digest_map,
+        &dummy_domain(),
         vec![0xEE; 64],
         Vec::new(),
         b"extra".to_vec(),

@@ -1802,7 +1802,7 @@ checksum = "2af50177e190e07a26ab74f8b1efbfe2ef87da2116221318cb1c2e82baf7de06"
 [[package]]
 name = "bc2wrap"
 version = "2.0.1"
-source = "git+https://github.com/zama-ai/kms.git?rev=e73a8e56df5e6555c87728787d76ff5fbc51f820#e73a8e56df5e6555c87728787d76ff5fbc51f820"
+source = "git+https://github.com/zama-ai/kms.git?rev=1a16d5fc37f629f51bf7a3a2729a9d0ac428570a#1a16d5fc37f629f51bf7a3a2729a9d0ac428570a"
 dependencies = [
  "bincode 2.0.1",
  "serde",
@@ -2969,7 +2969,7 @@ dependencies = [
 [[package]]
 name = "error-utils"
 version = "0.15.0-0"
-source = "git+https://github.com/zama-ai/kms.git?rev=e73a8e56df5e6555c87728787d76ff5fbc51f820#e73a8e56df5e6555c87728787d76ff5fbc51f820"
+source = "git+https://github.com/zama-ai/kms.git?rev=1a16d5fc37f629f51bf7a3a2729a9d0ac428570a#1a16d5fc37f629f51bf7a3a2729a9d0ac428570a"
 dependencies = [
  "anyhow",
  "tracing",
@@ -3958,7 +3958,7 @@ dependencies = [
 [[package]]
 name = "kms"
 version = "0.15.0-0"
-source = "git+https://github.com/zama-ai/kms.git?rev=e73a8e56df5e6555c87728787d76ff5fbc51f820#e73a8e56df5e6555c87728787d76ff5fbc51f820"
+source = "git+https://github.com/zama-ai/kms.git?rev=1a16d5fc37f629f51bf7a3a2729a9d0ac428570a#1a16d5fc37f629f51bf7a3a2729a9d0ac428570a"
 dependencies = [
  "aes 0.8.4",
  "aes-gcm",
@@ -4043,7 +4043,7 @@ dependencies = [
 [[package]]
 name = "kms-grpc"
 version = "0.15.0-0"
-source = "git+https://github.com/zama-ai/kms.git?rev=e73a8e56df5e6555c87728787d76ff5fbc51f820#e73a8e56df5e6555c87728787d76ff5fbc51f820"
+source = "git+https://github.com/zama-ai/kms.git?rev=1a16d5fc37f629f51bf7a3a2729a9d0ac428570a#1a16d5fc37f629f51bf7a3a2729a9d0ac428570a"
 dependencies = [
  "alloy-dyn-abi",
  "alloy-primitives",
@@ -4483,7 +4483,7 @@ dependencies = [
 [[package]]
 name = "observability"
 version = "0.15.0-0"
-source = "git+https://github.com/zama-ai/kms.git?rev=e73a8e56df5e6555c87728787d76ff5fbc51f820#e73a8e56df5e6555c87728787d76ff5fbc51f820"
+source = "git+https://github.com/zama-ai/kms.git?rev=1a16d5fc37f629f51bf7a3a2729a9d0ac428570a#1a16d5fc37f629f51bf7a3a2729a9d0ac428570a"
 dependencies = [
  "anyhow",
  "axum",
@@ -5763,8 +5763,8 @@ dependencies = [
 
 [[package]]
 name = "rustls"
-version = "0.23.37"
-source = "git+https://github.com/zama-ai/rustls.git?branch=rel-0.23#49aa4091eae6a73f575bebeae28d370acd74f8b6"
+version = "0.23.43"
+source = "git+https://github.com/zama-ai/rustls.git?branch=rel-0.23#0af4c54c15d5955d268079989afaf031e0008509"
 dependencies = [
  "aws-lc-rs",
  "log",
@@ -6591,7 +6591,7 @@ checksum = "8f50febec83f5ee1df3015341d8bd429f2d1cc62bcba7ea2076759d315084683"
 [[package]]
 name = "test-utils"
 version = "0.15.0-0"
-source = "git+https://github.com/zama-ai/kms.git?rev=e73a8e56df5e6555c87728787d76ff5fbc51f820#e73a8e56df5e6555c87728787d76ff5fbc51f820"
+source = "git+https://github.com/zama-ai/kms.git?rev=1a16d5fc37f629f51bf7a3a2729a9d0ac428570a#1a16d5fc37f629f51bf7a3a2729a9d0ac428570a"
 dependencies = [
  "anyhow",
  "bc2wrap",
@@ -6766,7 +6766,7 @@ dependencies = [
 [[package]]
 name = "thread-handles"
 version = "0.15.0-0"
-source = "git+https://github.com/zama-ai/kms.git?rev=e73a8e56df5e6555c87728787d76ff5fbc51f820#e73a8e56df5e6555c87728787d76ff5fbc51f820"
+source = "git+https://github.com/zama-ai/kms.git?rev=1a16d5fc37f629f51bf7a3a2729a9d0ac428570a#1a16d5fc37f629f51bf7a3a2729a9d0ac428570a"
 dependencies = [
  "anyhow",
  "error-utils",
@@ -6797,7 +6797,7 @@ dependencies = [
 [[package]]
 name = "threshold-algebra"
 version = "0.15.0-0"
-source = "git+https://github.com/zama-ai/kms.git?rev=e73a8e56df5e6555c87728787d76ff5fbc51f820#e73a8e56df5e6555c87728787d76ff5fbc51f820"
+source = "git+https://github.com/zama-ai/kms.git?rev=1a16d5fc37f629f51bf7a3a2729a9d0ac428570a#1a16d5fc37f629f51bf7a3a2729a9d0ac428570a"
 dependencies = [
  "anyhow",
  "error-utils",
@@ -6818,7 +6818,7 @@ dependencies = [
 [[package]]
 name = "threshold-execution"
 version = "0.15.0-0"
-source = "git+https://github.com/zama-ai/kms.git?rev=e73a8e56df5e6555c87728787d76ff5fbc51f820#e73a8e56df5e6555c87728787d76ff5fbc51f820"
+source = "git+https://github.com/zama-ai/kms.git?rev=1a16d5fc37f629f51bf7a3a2729a9d0ac428570a#1a16d5fc37f629f51bf7a3a2729a9d0ac428570a"
 dependencies = [
  "aes 0.9.1",
  "aes-prng",
@@ -6861,7 +6861,7 @@ dependencies = [
 [[package]]
 name = "threshold-hashing"
 version = "0.15.0-0"
-source = "git+https://github.com/zama-ai/kms.git?rev=e73a8e56df5e6555c87728787d76ff5fbc51f820#e73a8e56df5e6555c87728787d76ff5fbc51f820"
+source = "git+https://github.com/zama-ai/kms.git?rev=1a16d5fc37f629f51bf7a3a2729a9d0ac428570a#1a16d5fc37f629f51bf7a3a2729a9d0ac428570a"
 dependencies = [
  "anyhow",
  "bc2wrap",
@@ -6874,7 +6874,7 @@ dependencies = [
 [[package]]
 name = "threshold-networking"
 version = "0.15.0-0"
-source = "git+https://github.com/zama-ai/kms.git?rev=e73a8e56df5e6555c87728787d76ff5fbc51f820#e73a8e56df5e6555c87728787d76ff5fbc51f820"
+source = "git+https://github.com/zama-ai/kms.git?rev=1a16d5fc37f629f51bf7a3a2729a9d0ac428570a#1a16d5fc37f629f51bf7a3a2729a9d0ac428570a"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -6911,7 +6911,7 @@ dependencies = [
 [[package]]
 name = "threshold-types"
 version = "0.15.0-0"
-source = "git+https://github.com/zama-ai/kms.git?rev=e73a8e56df5e6555c87728787d76ff5fbc51f820#e73a8e56df5e6555c87728787d76ff5fbc51f820"
+source = "git+https://github.com/zama-ai/kms.git?rev=1a16d5fc37f629f51bf7a3a2729a9d0ac428570a#1a16d5fc37f629f51bf7a3a2729a9d0ac428570a"
 dependencies = [
  "anyhow",
  "async-trait",
