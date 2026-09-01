@@ -730,6 +730,7 @@ mod tests {
         store_versioned_at_request_id,
     };
     use kms_grpc::RequestId;
+    use std::collections::HashSet;
     use std::str::FromStr;
 
     /// Test migration of threshold FHE keys (FheKeyInfo)
@@ -2459,6 +2460,61 @@ mod tests {
             storage.load_bytes(&data_id, &key_type).await.unwrap(),
             key_data
         );
+    }
+
+    /// The server startup loader enumerates CRS through `all_epoch_ids_for_data` +
+    /// `all_data_ids_at_epoch` (see `read_all_data_from_all_epochs_versioned`), which only ever
+    /// looks at epoch-scoped entries. A flat entry is therefore invisible to it; the migration is
+    /// what makes the CRS reachable at boot.
+    pub async fn test_migrate_crs_makes_crs_visible_to_startup_loader<
+        S: StorageExt + Sync + Send,
+    >(
+        storage: &mut S,
+    ) {
+        let crs_id = crs_test_id("cb");
+        let data_type = PrivDataType::CrsInfo.to_string();
+        let target_epoch_id: EpochId = *DEFAULT_EPOCH_ID;
+
+        storage
+            .store_bytes(&[1, 2, 3], &crs_id, &data_type)
+            .await
+            .unwrap();
+
+        // Before: the loader's enumeration finds nothing, even though the entry exists.
+        assert!(
+            storage
+                .all_epoch_ids_for_data(&data_type)
+                .await
+                .unwrap()
+                .is_empty()
+        );
+
+        assert_eq!(migrate_crs_to_0_14_2(storage).await.unwrap(), 1);
+
+        // After: the entry is enumerated under the default epoch.
+        assert_eq!(
+            storage.all_epoch_ids_for_data(&data_type).await.unwrap(),
+            HashSet::from([target_epoch_id])
+        );
+        assert_eq!(
+            storage
+                .all_data_ids_at_epoch(&target_epoch_id, &data_type)
+                .await
+                .unwrap(),
+            HashSet::from([crs_id])
+        );
+    }
+
+    #[tokio::test]
+    async fn test_migrate_crs_makes_crs_visible_to_startup_loader_ram() {
+        test_migrate_crs_makes_crs_visible_to_startup_loader(&mut RamStorage::new()).await;
+    }
+
+    #[tokio::test]
+    async fn test_migrate_crs_makes_crs_visible_to_startup_loader_file() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let mut storage = FileStorage::new(Some(temp_dir.path()), StorageType::PRIV, None).unwrap();
+        test_migrate_crs_makes_crs_visible_to_startup_loader(&mut storage).await;
     }
 
     #[tokio::test]
