@@ -316,7 +316,7 @@ pub enum PrivDataType {
     PrssSetupCombined,
     ContextInfo,
     EpochData,
-    /// The root secret every non-ECDSA signing key of a KMS node is derived from.
+    /// The root secret signing keys (may or may not include ECDSA) of a KMS node are derived from.
     SigningSeed,
 }
 

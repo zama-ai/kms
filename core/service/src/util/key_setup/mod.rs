@@ -182,8 +182,8 @@ where
             .await
             .map_err(|e| anyhow::anyhow!("Failed to read existing server signing keys: {e}"))?;
 
-    // Reject a storage that still holds material derived from a previous signing
-    // key. We already checked no signing key exists so if verification material
+    // Reject a storage that still holds verification material.
+    // We already checked that no signing key exists so if verification material
     // exist it means inconsistent storage.
     ensure_no_verification_material(pub_storage).await?;
     ensure_no_root_signing_seed(priv_storage).await?;
@@ -1063,8 +1063,8 @@ where
     PubS: Storage,
     PrivS: Storage,
 {
-    // Reject a storage that still holds material derived from a previous signing
-    // key. We already checked no signing key exists so if verification material
+    // Reject a storage that still holds verification material.
+    // We already checked that no signing key exists so if verification material
     // exist it means inconsistent storage.
     ensure_no_verification_material(pub_storage)
         .await

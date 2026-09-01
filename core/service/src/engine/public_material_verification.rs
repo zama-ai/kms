@@ -297,7 +297,7 @@ where
                 // ServerKey and CompressedXofKeySet are checked by verify_keysets above.
                 // CACert is done during certificate loading.
                 // DecompressionKey is not used in production at the moment and it does not have a private component.
-                // TypedVerfAddress is checked by validate_scheme_verification_material above.
+                // TypedVerfAddress is checked by validate_slots above.
             }
             #[allow(deprecated)]
             PubDataType::VerfAddress | PubDataType::PublicKeyMetadata => {
