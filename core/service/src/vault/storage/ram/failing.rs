@@ -30,7 +30,7 @@ use tfhe::{Unversionize, Versionize, named::Named};
 pub struct FailingRamStorage {
     fail_store_at: Option<(StorageEntry, FaultPhase)>,
     fail_delete_at: Option<(StorageEntry, FaultPhase)>,
-    /// Entry whose delete returns success without changing the wrapped storage, like S3's idempotent `DeleteObject`..
+    /// Intended entry left in place when an S3 delete is sent to the wrong, nonexistent key.
     noop_delete_at: Option<StorageEntry>,
     events: Vec<StorageEvent>,
     inner: RamStorage,
@@ -63,7 +63,7 @@ impl FailingRamStorage {
         self.fail_delete_at = Some((entry, FaultPhase::AfterMutation));
     }
 
-    /// Make deletion of `entry` succeed without changing the wrapped storage, like S3's idempotent `DeleteObject`..
+    /// Model an S3 delete sent to the wrong, nonexistent key: return success and keep `entry`.
     pub(crate) fn set_noop_delete_at(&mut self, entry: StorageEntry) {
         self.fail_delete_at = None;
         self.noop_delete_at = Some(entry);
@@ -495,7 +495,7 @@ mod tests {
         );
     }
 
-    /// An S3 delete addressed to a nonexistent key records success while the intended entry remains.
+    /// An S3 delete sent to the wrong, nonexistent key records success while the intended entry remains.
     #[tokio::test]
     async fn delete_can_succeed_without_mutating_storage() {
         let (data_id, entry) = fault_test_entry("noop_delete");
