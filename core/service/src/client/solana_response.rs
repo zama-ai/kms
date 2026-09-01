@@ -850,8 +850,8 @@ mod tests {
             external_signature,
             payload: Some(payload),
             extra_data: extra_data.to_vec(),
-            // Main's multi-scheme `signatures` list; the Solana path authenticates the legacy
-            // scalar signature fields, so a share carries an empty list.
+            // Main's multi-scheme `signatures` list, left empty so these fixtures exercise the
+            // deprecated-field fallback; the typed-list branch has its own tests.
             signatures: vec![],
         }
     }
@@ -1180,10 +1180,11 @@ mod tests {
     // ---------------------------------------------------------------------------------------
     // Whichever node signature the share carries is verified, before its link is read.
     //
-    // The rule mirrors the EVM branch exactly (see
-    // `engine::validation_wasm::validate_user_decrypt_meta_data_and_signature`): a non-empty
-    // internal `signature` is checked as ECDSA over the serialized payload, an empty one falls back
-    // to the EIP-712 `external_signature`, and neither means unauthenticated.
+    // The rule is the EVM one, shared through `engine::validation_wasm`'s
+    // `authenticate_user_decrypt_share`: a non-empty typed `signatures` list is the
+    // authentication; otherwise a non-empty internal `signature` is checked as ECDSA over the
+    // serialized payload, an empty one falls back to the EIP-712 `external_signature`, and
+    // neither means unauthenticated.
     // ---------------------------------------------------------------------------------------
 
     #[test]
@@ -1232,6 +1233,62 @@ mod tests {
             .expect("an externally signed share is authenticated");
 
         assert_eq!(party_ids(&verified), vec![1]);
+    }
+
+    #[test]
+    fn typed_signatures_list_authenticates_share() {
+        // Main's multi-scheme wire shape: the authentication travels in the typed `signatures`
+        // list and both deprecated scalar fields are empty. The ECDSA entry carries the same
+        // EIP-712 signature the external field would, so moving the bytes across is exactly the
+        // migration a node performs when the deprecated fields go away.
+        let (pks, sks) = node_keys(1);
+        let request = canonical_request();
+        let link = request.expected_link().expect("a canonical request");
+        let mut response = external_signed_response(
+            &request,
+            payload(1, &pks[&1], link, 0, dummy_signcrypted()),
+            &sks[0],
+        );
+        response.signatures =
+            kms_grpc::rpc_types::ecdsa_signatures(std::mem::take(&mut response.external_signature));
+        let agg_resp = vec![response];
+
+        let verified = verify_solana_user_decryption_response(&request, &trusted(&pks), &agg_resp)
+            .expect("a share authenticated by its typed ECDSA signature is accepted");
+
+        assert_eq!(party_ids(&verified), vec![1]);
+    }
+
+    #[test]
+    fn typed_list_without_a_verifiable_scheme_rejects_share() {
+        // An ed25519-only list is addressed to verifiers that hold per-scheme keys; this client's
+        // registered identities are secp256k1 addresses, so the share fails the signature rule —
+        // and the valid external signature sitting beside the list must not rescue it.
+        let (pks, sks) = node_keys(1);
+        let request = canonical_request();
+        let link = request.expected_link().expect("a canonical request");
+        let mut response = external_signed_response(
+            &request,
+            payload(1, &pks[&1], link, 0, dummy_signcrypted()),
+            &sks[0],
+        );
+        response.signatures = vec![kms_grpc::kms::v1::TypedSignature {
+            scheme: kms_grpc::kms::v1::SigningSchemeType::Ed25519 as i32,
+            signature: vec![1; 64],
+        }];
+        assert!(
+            !response.external_signature.is_empty(),
+            "this fixture must offer a valid legacy signature the list must not fall back to",
+        );
+        let agg_resp = vec![response];
+
+        let err = verify_solana_user_decryption_response(&request, &trusted(&pks), &agg_resp)
+            .expect_err("a list without a verifiable scheme authenticates nothing");
+
+        assert!(matches!(
+            err,
+            SolanaUserDecryptionResponseError::NodeSignature { party_id: 1 }
+        ));
     }
 
     #[test]
