@@ -2,7 +2,8 @@ use crate::consts::{DEFAULT_EPOCH_ID, DEFAULT_MPC_CONTEXT};
 use crate::engine::base::derive_request_id;
 use crate::engine::threshold::service::session::PRSSSetupCombined;
 use crate::vault::storage::{
-    StorageExt, read_context_at_id, read_versioned_at_request_id, store_versioned_at_request_id,
+    StorageExt, StoreWriteOutcome, read_context_at_id, read_versioned_at_request_id,
+    store_versioned_at_request_id,
 };
 use algebra::galois_rings::degree_4::{ResiduePolyF4Z64, ResiduePolyF4Z128};
 use kms_grpc::ContextId;
@@ -234,12 +235,23 @@ conflict needs manual resolution.",
             continue;
         }
 
-        priv_storage
+        let outcome = priv_storage
             .store_bytes_at_epoch(&legacy_data, &crs_id, &target_epoch_id, &data_type_str)
             .await?;
+        if outcome != StoreWriteOutcome::Created {
+            // The store declines to overwrite and reports `SkippedExisting` instead of failing, so
+            // an entry must have appeared between the existence check above and this write. Bail
+            // before the read-back: the rollback below deletes the epoch-scoped entry, and it must
+            // never delete one that this migration did not write.
+            anyhow::bail!(
+                "Storing {data_type_str} {crs_id} at epoch {target_epoch_id} reported {outcome:?} \
+instead of writing the data, so another entry appeared concurrently. Nothing was modified."
+            );
+        }
 
-        // Verify the copy by reading it back before removing anything. A silent short write here
-        // would otherwise destroy the only copy of the CRS metadata.
+        // Verify the copy by reading it back before removing anything. Guards against a write that
+        // reports success without persisting the expected bytes, which would otherwise leave the
+        // CRS metadata with no intact copy once the flat entry is deleted.
         let written_data = priv_storage
             .load_bytes_at_epoch(&crs_id, &target_epoch_id, &data_type_str)
             .await?;
@@ -2583,9 +2595,10 @@ mod tests {
         test_migrate_crs_aborts_on_conflict(&mut storage).await;
     }
 
-    /// The copy must be verified before the flat entry is deleted. A silent short write on the
-    /// epoch-aware path must abort the migration, leave the legacy entry intact, and remove the
-    /// unverified copy so the next start does not read corrupt CRS metadata.
+    /// The copy must be verified before the flat entry is deleted. An epoch-aware write that
+    /// reports success without persisting the expected bytes must abort the migration, leave the
+    /// legacy entry intact, and remove the unverified copy so the next start does not read corrupt
+    /// CRS metadata.
     #[tokio::test]
     async fn test_migrate_crs_rejects_corrupted_copy() {
         let crs_id = crs_test_id("c7");
@@ -2645,6 +2658,43 @@ mod tests {
                 .await
                 .unwrap(),
             crs_data
+        );
+    }
+
+    /// The store declines to overwrite and reports `SkippedExisting` rather than failing, meaning
+    /// an entry raced in after the existence check. The migration must abort without deleting the
+    /// flat entry, and without rolling back an epoch-scoped entry it did not write.
+    #[tokio::test]
+    async fn test_migrate_crs_aborts_when_write_is_skipped() {
+        let crs_id = crs_test_id("cc");
+        let data_type = PrivDataType::CrsInfo.to_string();
+        let target_epoch_id: EpochId = *DEFAULT_EPOCH_ID;
+        let crs_data = vec![1, 6, 1, 8];
+
+        let mut storage = FailingRamStorage::new(100);
+        storage
+            .store_bytes(&crs_data, &crs_id, &data_type)
+            .await
+            .unwrap();
+        storage.set_skip_epoch_writes(true);
+
+        let err = migrate_crs_to_0_14_2(&mut storage)
+            .await
+            .expect_err("a skipped write must abort the migration");
+        assert!(
+            err.to_string().contains("Nothing was modified"),
+            "unexpected error: {err}"
+        );
+
+        assert_eq!(
+            storage.load_bytes(&crs_id, &data_type).await.unwrap(),
+            crs_data
+        );
+        assert!(
+            !storage
+                .data_exists_at_epoch(&crs_id, &target_epoch_id, &data_type)
+                .await
+                .unwrap()
         );
     }
 
