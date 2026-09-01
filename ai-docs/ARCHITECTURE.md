@@ -276,9 +276,13 @@ step fails: the keychain is restored to its pre-setup `(context_id, backup_enc_k
 vault entries written under the failed id are purged
 (`rollback_failed_custodian_setup` in
 [context_manager.rs](core/service/src/engine/context_manager.rs) and
-`Vault::purge_backup`). Without that, the node would keep encrypting backups under a key
-whose recovery material was never written, making them unrecoverable. Setups are serialized
-against each other for the same reason.
+`Vault::purge_backup`). Cleanup checks that no backup entries remain under the failed context ID. If
+the storage backend reports a successful deletion but entries remain, rollback emits a
+`tracing::error!` and preserves the original setup or write error. Rollback cannot repair a backend
+that did not apply the deletion, so these leftover entries require operator attention. During
+custodian-context destruction, the same check must pass before recovery material and lifecycle
+state are removed. Setups are serialized against each other so the active backup context cannot
+change mid-operation.
 
 Implementation code lives in [core/service/src/backup/](core/service/src/backup/);
 end-to-end tests live at
