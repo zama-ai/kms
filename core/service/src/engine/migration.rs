@@ -2301,7 +2301,7 @@ mod tests {
         .unwrap()
     }
 
-    /// Two legacy CRS entries are copied to the default epoch and their flat copies removed.
+    /// Two legacy CRS entries are copied to the default epoch and their flat copies remain.
     pub async fn test_migrate_crs_flat_to_epoch<S: StorageExt + Sync + Send>(storage: &mut S) {
         let crs_id_1 = crs_test_id("c1");
         let crs_id_2 = crs_test_id("c2");
@@ -2553,7 +2553,7 @@ mod tests {
         test_migrate_crs_aborts_on_conflict(&mut storage).await;
     }
 
-    /// The copy must be verified before the flat entry is deleted. An epoch-aware write that
+    /// The copy must be verified after migration. An epoch-aware write that
     /// reports success without persisting the expected bytes must abort the migration, leave the
     /// legacy entry intact, and remove the unverified copy so the next start does not read corrupt
     /// CRS metadata.
