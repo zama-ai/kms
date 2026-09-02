@@ -18,7 +18,7 @@
 //!    bucket. Some of it is not: a write that failed half-way, a corrupted store, or an entry
 //!    planted by someone with write access to the storage. The node cannot tell these apart, so
 //!    once the integrity checks pass, [`report_unexpected_public_material`] lists public storage
-//!    and warns about every entry that private storage does not account for.
+//!    and logs an error for every entry that private storage does not account for.
 //! 3. **Read-only.** Nothing here writes to, repairs, or re-fetches public storage.
 //!
 //! Startup verification operates on raw stored bytes. It never deserializes stored keys or
@@ -55,9 +55,9 @@ pub(crate) const ERR_VERF_KEY_MISMATCH: &str =
     "Verification key in public storage does not match the private signing key";
 pub(crate) const ERR_VERF_ADDRESS_MISMATCH: &str =
     "Verification address in public storage does not match the private signing key";
-const WARN_UNEXPECTED_PUBLIC_MATERIAL: &str = "Unexpected public material";
-const WARN_UNKNOWN_PUBLIC_DATA_TYPE: &str = "Unexpected data type in public storage";
-const WARN_UNLISTABLE_PUBLIC_MATERIAL: &str = "Could not list public material";
+const ERR_UNEXPECTED_PUBLIC_MATERIAL: &str = "Unexpected public material";
+const ERR_UNKNOWN_PUBLIC_DATA_TYPE: &str = "Unexpected data type in public storage";
+const ERR_UNLISTABLE_PUBLIC_MATERIAL: &str = "Could not list public material";
 
 fn validate_legacy_public_material_shape<T>(
     public_materials: &HashMap<PubDataType, T>,
@@ -228,7 +228,11 @@ fn verify_recovery_material(
 /// material.
 ///
 /// Once every check passes, public storage is swept for material that private storage does not
-/// account for. The sweep only warns; see [`report_unexpected_public_material`].
+/// account for. The sweep logs errors but never fails; see [`report_unexpected_public_material`].
+///
+/// `key_entries` is a slice rather than a map because the callers list a keyset once per epoch
+/// it is stored under. One key ID can therefore appear more than once, and every occurrence is
+/// checked.
 ///
 /// Returns the sweep report so callers and tests can inspect the same single scan that startup
 /// performs.
@@ -571,7 +575,8 @@ where
 pub(crate) struct UnexpectedPublicMaterial {
     /// Entries under a known data type whose ID nothing in private storage explains.
     unexpected_id: BTreeMap<PubDataType, BTreeSet<RequestId>>,
-    /// Top-level names in public storage that are not a [`PubDataType`].
+    /// Top-level names in public storage that are not a [`PubDataType`] folder: a folder with an
+    /// unknown name, or an object at the root whatever its name.
     unknown_data_types: BTreeSet<String>,
     /// Data types whose folder could not be listed, with the listing error. A filename that is
     /// not a request ID lands here. The `None` key means the root listing itself failed.
@@ -597,57 +602,51 @@ impl UnexpectedPublicMaterial {
 /// `PublicKeyMetadata` is accounted for under every keyset ID, because deployments upgraded from
 /// before 0.14 still hold one per keyset. Signing material lives at fixed IDs. Decompression keys
 /// have no private counterpart, so none is accounted for.
+///
+/// The match over [`PubDataType`] is exhaustive, so a new variant does not compile until it has
+/// a rule here. Only data types with at least one accounted ID appear in the result.
 fn expected_public_material(
     key_entries: &[(RequestId, KeyGenMetadata)],
     crs_entries: &HashMap<RequestId, CrsGenMetadata>,
     recovery_material: &HashMap<RequestId, RecoveryValidationMaterial>,
 ) -> BTreeMap<PubDataType, BTreeSet<RequestId>> {
-    let mut expected: BTreeMap<PubDataType, BTreeSet<RequestId>> = BTreeMap::new();
-    for (key_id, metadata) in key_entries {
-        let data_types: Vec<PubDataType> = match metadata {
-            KeyGenMetadata::Current(inner) => inner.key_digest_map.keys().copied().collect(),
-            KeyGenMetadata::LegacyV0(hash_map) => hash_map.keys().copied().collect(),
+    let mut expected = BTreeMap::new();
+    for data_type in PubDataType::iter() {
+        let ids: BTreeSet<RequestId> = match data_type {
+            PubDataType::PublicKey | PubDataType::ServerKey | PubDataType::CompressedXofKeySet => {
+                key_entries
+                    .iter()
+                    .filter(|(_, metadata)| match metadata {
+                        KeyGenMetadata::Current(inner) => {
+                            inner.key_digest_map.contains_key(&data_type)
+                        }
+                        KeyGenMetadata::LegacyV0(hash_map) => hash_map.contains_key(&data_type),
+                    })
+                    .map(|(key_id, _)| *key_id)
+                    .collect()
+            }
+            // `PublicKeyMetadata` is deprecated because 0.14 and later do not write it. A
+            // deployment upgraded from an earlier version still holds one entry per keyset, so
+            // the sweep must account for it.
+            #[expect(deprecated)]
+            PubDataType::PublicKeyMetadata => {
+                key_entries.iter().map(|(key_id, _)| *key_id).collect()
+            }
+            PubDataType::CRS => crs_entries.keys().copied().collect(),
+            // The recovery material map is itself read by listing this folder, so this set always
+            // matches what the folder holds. It is kept so that every data type has exactly one
+            // rule.
+            PubDataType::RecoveryMaterial => recovery_material.keys().copied().collect(),
+            PubDataType::VerfKey | PubDataType::VerfAddress | PubDataType::CACert => {
+                BTreeSet::from([*SIGNING_KEY_ID])
+            }
+            PubDataType::TypedVerfKey | PubDataType::TypedVerfAddress => {
+                SigningSchemeType::iter().map(signing_material_id).collect()
+            }
+            PubDataType::DecompressionKey => BTreeSet::new(),
         };
-        for data_type in data_types {
-            expected.entry(data_type).or_default().insert(*key_id);
-        }
-        // `PublicKeyMetadata` is deprecated because 0.14 and later do not write it. A deployment
-        // upgraded from an earlier version still holds one entry per keyset, so the sweep must
-        // account for it.
-        #[expect(deprecated)]
-        expected
-            .entry(PubDataType::PublicKeyMetadata)
-            .or_default()
-            .insert(*key_id);
-    }
-    for crs_id in crs_entries.keys() {
-        expected
-            .entry(PubDataType::CRS)
-            .or_default()
-            .insert(*crs_id);
-    }
-    // The recovery material map is itself read by listing this folder, so this set always
-    // matches what the folder holds. It is kept so that every data type has exactly one rule.
-    for context_id in recovery_material.keys() {
-        expected
-            .entry(PubDataType::RecoveryMaterial)
-            .or_default()
-            .insert(*context_id);
-    }
-    for data_type in [
-        PubDataType::VerfKey,
-        PubDataType::VerfAddress,
-        PubDataType::CACert,
-    ] {
-        expected
-            .entry(data_type)
-            .or_default()
-            .insert(*SIGNING_KEY_ID);
-    }
-    for scheme in SigningSchemeType::iter() {
-        let id = signing_material_id(scheme);
-        for data_type in [PubDataType::TypedVerfKey, PubDataType::TypedVerfAddress] {
-            expected.entry(data_type).or_default().insert(id);
+        if !ids.is_empty() {
+            expected.insert(data_type, ids);
         }
     }
     expected
@@ -655,9 +654,10 @@ fn expected_public_material(
 
 /// Report public material that private storage does not account for.
 ///
-/// Lists public storage and warns about every top-level name that is not a known data type and
-/// every entry whose ID is not explained by private keyset or CRS metadata, by the node's signing
-/// material at its fixed IDs, or by the recovery material already loaded from public storage.
+/// Lists public storage and logs an error for every top-level name that is not a data type
+/// folder, including every object directly under the root. It also logs an error for every entry
+/// whose ID is not explained by private keyset or CRS metadata, by the node's signing material at
+/// its fixed IDs, or by the recovery material already loaded from public storage.
 /// Nothing here fails boot: some of it is legitimate (a retired keyset, a previous deployment
 /// sharing the bucket) and the node cannot tell that apart from a corrupted or tampered store, so
 /// the operator is told and left to decide. Read-only; never deserializes anything.
@@ -682,19 +682,27 @@ where
     // backends are not, so a folder that differs only in case holds no keyset.
     let known_data_types: BTreeSet<String> = PubDataType::iter().map(|t| t.to_string()).collect();
     match public_storage.all_data_types().await {
-        Ok(names) => {
-            for name in names {
+        Ok(entries) => {
+            for name in entries.folders {
                 if !known_data_types.contains(&name) {
-                    tracing::warn!(
-                        "{WARN_UNKNOWN_PUBLIC_DATA_TYPE} \"{storage_info}\": \"{name}\" is not a known data type"
+                    tracing::error!(
+                        "{ERR_UNKNOWN_PUBLIC_DATA_TYPE} \"{storage_info}\": \"{name}\" is not a known data type"
                     );
                     report.unknown_data_types.insert(name);
                 }
             }
+            // A data type stores its entries inside its folder only, so an object at the root is
+            // a stray even when it carries a data type's name.
+            for name in entries.objects {
+                tracing::error!(
+                    "{ERR_UNKNOWN_PUBLIC_DATA_TYPE} \"{storage_info}\": \"{name}\" is an object where only data type folders belong"
+                );
+                report.unknown_data_types.insert(name);
+            }
         }
         Err(e) => {
-            tracing::warn!(
-                "{WARN_UNLISTABLE_PUBLIC_MATERIAL} in storage \"{storage_info}\", so unknown data types were not detected: {e}"
+            tracing::error!(
+                "{ERR_UNLISTABLE_PUBLIC_MATERIAL} in storage \"{storage_info}\", so unknown data types were not detected: {e}"
             );
             report.unlistable.insert(None, e.to_string());
         }
@@ -704,8 +712,8 @@ where
         let found = match public_storage.all_data_ids(&data_type.to_string()).await {
             Ok(found) => found,
             Err(e) => {
-                tracing::warn!(
-                    "{WARN_UNLISTABLE_PUBLIC_MATERIAL} {data_type} in storage \"{storage_info}\", so its entries were not reconciled: {e}"
+                tracing::error!(
+                    "{ERR_UNLISTABLE_PUBLIC_MATERIAL} {data_type} in storage \"{storage_info}\", so its entries were not reconciled: {e}"
                 );
                 report.unlistable.insert(Some(data_type), e.to_string());
                 continue;
@@ -717,8 +725,8 @@ where
             .filter(|id| !expected_ids.is_some_and(|ids| ids.contains(id)))
             .collect();
         for id in &unexpected {
-            tracing::warn!(
-                "{WARN_UNEXPECTED_PUBLIC_MATERIAL} {data_type} for id={id} in storage \"{storage_info}\": private storage holds no counterpart"
+            tracing::error!(
+                "{ERR_UNEXPECTED_PUBLIC_MATERIAL} {data_type} for id={id} in storage \"{storage_info}\": private storage holds no counterpart"
             );
         }
         if !unexpected.is_empty() {
@@ -1435,6 +1443,23 @@ mod tests {
         );
         assert!(report.unexpected_id.is_empty());
         assert_eq!(report.unexpected_count(), 2);
+    }
+
+    #[tokio::test]
+    async fn root_object_named_like_a_data_type_is_reported() {
+        use crate::vault::storage::{StorageType, file::FileStorage};
+
+        let temp_dir = tempfile::tempdir().unwrap();
+        let storage = FileStorage::new(Some(temp_dir.path()), StorageType::PUB, None).unwrap();
+        // No data type stores anything directly under the root, so the name does not excuse it.
+        let name = PubDataType::PublicKey.to_string();
+        std::fs::write(storage.root_dir().join(&name), b"x").unwrap();
+
+        let report =
+            report_unexpected_public_material(&storage, &[], &HashMap::new(), &HashMap::new())
+                .await;
+        assert_eq!(report.unknown_data_types, BTreeSet::from([name]));
+        assert!(report.unexpected_id.is_empty());
     }
 
     #[tokio::test]

@@ -3,7 +3,7 @@ use keychain::{EnvelopeLoad, EnvelopeStore, Keychain, KeychainProxy};
 use kms_grpc::{RequestId, identifiers::EpochId, rpc_types::PrivDataType};
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use std::{collections::HashSet, fmt, path::MAIN_SEPARATOR};
-use storage::{Storage, StorageProxy, StorageReader, StoreWriteOutcome};
+use storage::{RootEntries, Storage, StorageProxy, StorageReader, StoreWriteOutcome};
 use strum::IntoEnumIterator;
 use strum_macros::EnumIter;
 use tfhe::{Unversionize, Versionize, named::Named};
@@ -286,10 +286,10 @@ impl StorageReader for Vault {
             .map_err(|e| anyhow!("Getting all ids failed: {e}"))
     }
 
-    /// Returns the top-level names of the wrapped storage. For a custodian backup vault these
-    /// are backup IDs rather than data types, because [`VaultDataType::CustodianBackupData`]
-    /// nests each data type under its backup ID.
-    async fn all_data_types(&self) -> anyhow::Result<HashSet<String>> {
+    /// Returns the top-level entries of the wrapped storage. For a custodian backup vault the
+    /// folders are backup IDs rather than data types, because
+    /// [`VaultDataType::CustodianBackupData`] nests each data type under its backup ID.
+    async fn all_data_types(&self) -> anyhow::Result<RootEntries> {
         self.storage
             .all_data_types()
             .await

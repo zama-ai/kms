@@ -1,4 +1,4 @@
-use super::{Storage, StorageReader, StorageType, StoreWriteOutcome};
+use super::{RootEntries, Storage, StorageReader, StorageType, StoreWriteOutcome};
 use crate::vault::storage::{StorageExt, StorageReaderExt, all_data_ids_from_all_epochs_impl};
 use crate::{consts::SAFE_SER_SIZE_LIMIT, vault::storage_prefix_safety};
 use aws_config::{self, Region, SdkConfig};
@@ -64,7 +64,7 @@ impl StorageReader for ReadOnlyS3Storage {
         self.inner.all_data_ids(data_type).await
     }
 
-    async fn all_data_types(&self) -> anyhow::Result<HashSet<String>> {
+    async fn all_data_types(&self) -> anyhow::Result<RootEntries> {
         self.inner.all_data_types().await
     }
 
@@ -269,17 +269,17 @@ impl StorageReader for S3Storage {
         Ok(ids)
     }
 
-    async fn all_data_types(&self) -> anyhow::Result<HashSet<String>> {
+    async fn all_data_types(&self) -> anyhow::Result<RootEntries> {
         // The trailing "/" keeps a prefix such as "PUB-p1" from matching "PUB-p10".
         let root = format!("{}/", self.prefix);
         let (keys, common_prefixes) = self.list_all(&root).await?;
-        let mut names = HashSet::new();
-        // Folders arrive as common prefixes, stray objects directly under the root as keys.
+        let mut res = RootEntries::default();
+        // Folders arrive as common prefixes, objects directly under the root as keys.
         for folder in common_prefixes {
             if let Some(name) = folder.strip_prefix(&root) {
                 let name = name.trim_end_matches('/');
                 if !name.is_empty() {
-                    names.insert(name.to_string());
+                    res.folders.insert(name.to_string());
                 }
             }
         }
@@ -287,10 +287,10 @@ impl StorageReader for S3Storage {
             if let Some(name) = key.strip_prefix(&root)
                 && !name.is_empty()
             {
-                names.insert(name.to_string());
+                res.objects.insert(name.to_string());
             }
         }
-        Ok(names)
+        Ok(res)
     }
 
     fn info(&self) -> String {
@@ -903,10 +903,43 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_all_data_types_s3() {
-        let mut pub_storage =
-            create_s3_storage(StorageType::PUB, std::stringify!(test_all_data_types_s3)).await;
-        crate::vault::storage::tests::test_all_data_types(&mut pub_storage).await;
+    async fn test_crs_public_key_data_types_s3() {
+        let mut pub_storage = create_s3_storage(
+            StorageType::PUB,
+            std::stringify!(test_crs_public_key_data_types_s3),
+        )
+        .await;
+        crate::vault::storage::tests::test_crs_public_key_data_types(&mut pub_storage).await;
+    }
+
+    /// An object directly under the prefix belongs to no data type, so it is listed apart from
+    /// the folders even when its name is one.
+    #[tokio::test]
+    async fn all_data_types_lists_root_objects_apart_from_folders() {
+        let store = mock_s3::new_store();
+        let mut storage = S3Storage::new(
+            mock_s3::build_mock_s3_client(store.clone()),
+            MOCK_BUCKET.to_string(),
+            StorageType::PUB,
+            None,
+        )
+        .unwrap();
+        let id = crate::engine::base::derive_request_id("root-object").unwrap();
+        let pk_type = kms_grpc::rpc_types::PubDataType::PublicKey.to_string();
+        let crs_type = kms_grpc::rpc_types::PubDataType::CRS.to_string();
+        storage.store_bytes(b"crs", &id, &crs_type).await.unwrap();
+        store
+            .lock()
+            .unwrap()
+            .insert(format!("{}/{pk_type}", storage.prefix), b"x".to_vec());
+
+        assert_eq!(
+            storage.all_data_types().await.unwrap(),
+            RootEntries {
+                folders: HashSet::from([crs_type]),
+                objects: HashSet::from([pk_type]),
+            }
+        );
     }
 
     /// Several parties share one bucket, each under its own prefix. A party's listing must stay
@@ -933,14 +966,14 @@ mod tests {
         p2.store_bytes(b"crs", &id, &crs_type).await.unwrap();
         p10.store_bytes(b"pk", &id, &pk_type).await.unwrap();
 
-        assert!(own.all_data_types().await.unwrap().is_empty());
+        assert_eq!(own.all_data_types().await.unwrap(), RootEntries::default());
         assert!(own.all_data_ids(&pk_type).await.unwrap().is_empty());
         assert_eq!(
-            p10.all_data_types().await.unwrap(),
+            p10.all_data_types().await.unwrap().folders,
             HashSet::from([pk_type])
         );
         assert_eq!(
-            p2.all_data_types().await.unwrap(),
+            p2.all_data_types().await.unwrap().folders,
             HashSet::from([crs_type])
         );
     }
@@ -1198,7 +1231,7 @@ impl StorageReader for DummyReadOnlyS3Storage {
         self.ram_storage.all_data_ids(data_type).await
     }
 
-    async fn all_data_types(&self) -> anyhow::Result<HashSet<String>> {
+    async fn all_data_types(&self) -> anyhow::Result<RootEntries> {
         self.ram_storage.all_data_types().await
     }
 

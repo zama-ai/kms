@@ -956,7 +956,7 @@ impl<
 
         // Verify that public storage holds exactly what private storage says it should, and
         // that it is intact. Private storage is the reference; extra material in public
-        // storage is reported as a warning.
+        // storage is logged as an error but does not stop boot.
         verify_storage_material(
             &public_storage,
             &key_info,

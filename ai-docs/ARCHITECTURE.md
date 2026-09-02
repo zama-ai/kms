@@ -316,8 +316,8 @@ The checks follow three rules:
    a retired keyset, or leftovers from a previous deployment that shares the bucket. Some of it
    is not: a write that failed half-way, a corrupted store, or an entry planted by someone with
    write access. The node cannot tell these apart, so once the integrity checks pass,
-   `report_unexpected_public_material` lists public storage and warns about every entry that
-   private storage does not account for.
+   `report_unexpected_public_material` lists public storage and logs an error for every entry
+   that private storage does not account for. Boot continues regardless.
 3. **Read-only.** Nothing is written, repaired, or fetched from peers.
 
 What it verifies, and how failures are treated:
@@ -327,8 +327,8 @@ What it verifies, and how failures are treated:
 | Published keysets and CRSes are present, and their raw stored bytes hash to the digests in `KeyGenMetadata` / `CrsGenMetadata` | boot fails |
 | Current private keygen and CRS metadata with a stored domain reconstruct a valid EIP-712 signature from the node's signing key | boot fails |
 | `VerfKey` and `VerfAddress` at `SIGNING_KEY_ID` match the key derived from the private `SigningKey` | boot fails |
-| Every entry in a `PubDataType` folder is accounted for by private storage or by a fixed-ID convention | warning, boot continues |
-| Every top-level name in public storage is a `PubDataType`, and every folder can be listed | warning, boot continues |
+| Every entry in a `PubDataType` folder is accounted for by private storage or by a fixed-ID convention | error logged, boot continues |
+| Every top-level name in public storage is a `PubDataType` folder, and every folder can be listed | error logged, boot continues |
 
 Custodian backup readiness is deliberately *not* part of this. It is a property of the vault's
 keychain rather than of the published material, and the backup path already reports it:
@@ -353,13 +353,15 @@ verified at startup, and the sweep reports every one of them. The deprecated
 `PubDataType::PublicKeyMetadata` is the opposite case: deployments upgraded from before 0.14 hold
 one per keyset, so the sweep accounts for it under every keyset ID and reports only the rest.
 
-The sweep enumerates through `StorageReader::all_data_types` (the top-level names under the
-storage root) and `all_data_ids` (the entries of each `PubDataType` folder). It is bounded by the
-storage root the node is configured with — `PUB` for a centralized node, `PUB-pX` for party X — so
-other parties' prefixes in a shared bucket are never listed. It does not descend into sub-folders
-beneath a data type: public data is never epoched, and both `all_data_ids` implementations skip
-such folders. A name that does not parse as a request ID makes the folder listing fail; that
-failure is reported as a warning too, and boot continues.
+The sweep enumerates through `StorageReader::all_data_types` (the top-level folders and objects
+under the storage root) and `all_data_ids` (the entries of each `PubDataType` folder). An object
+directly under the root is reported whatever its name, because a data type stores its entries
+inside its folder only. The sweep is bounded by the storage root the node is configured with —
+`PUB` for a centralized node, `PUB-pX` for party X — so other parties' prefixes in a shared bucket
+are never listed. It does not descend into sub-folders beneath a data type: public data is never
+epoched, and both `all_data_ids` implementations skip such folders. A name that does not parse as
+a request ID makes the folder listing fail; that failure is logged as an error too, and boot
+continues.
 
 ## Backward compatibility
 

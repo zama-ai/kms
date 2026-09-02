@@ -1,4 +1,4 @@
-use super::{Storage, StorageReader, StorageType, StoreWriteOutcome};
+use super::{RootEntries, Storage, StorageReader, StorageType, StoreWriteOutcome};
 use crate::consts::KEY_PATH_PREFIX;
 use crate::util::file_handling::{
     safe_read_element_versioned, safe_write_element_versioned, sweep_stale_partials, write_bytes,
@@ -173,7 +173,7 @@ impl StorageReader for FileStorage {
         self.all_data_from_path(path.as_path(), true).await
     }
 
-    async fn all_data_types(&self) -> anyhow::Result<HashSet<String>> {
+    async fn all_data_types(&self) -> anyhow::Result<RootEntries> {
         let root = self.root_dir();
         let mut entries = tokio::fs::read_dir(root).await.map_err(|e| {
             anyhow::anyhow!(
@@ -182,18 +182,19 @@ impl StorageReader for FileStorage {
                 e
             )
         })?;
-        let mut res = HashSet::new();
+        let mut res = RootEntries::default();
         while let Some(entry) = entries.next_entry().await? {
             let name = entry.file_name();
             let name = some_or_err(
                 name.to_str(),
                 "Could not convert OsStr to string".to_string(),
-            )?;
-            // Dot-prefixed names are partial-write temp files, see `sweep_stale_partials`.
-            if name.starts_with('.') {
-                continue;
+            )?
+            .to_string();
+            if entry.path().is_dir() {
+                res.folders.insert(name);
+            } else {
+                res.objects.insert(name);
             }
-            res.insert(name.to_string());
         }
         Ok(res)
     }
@@ -579,21 +580,29 @@ pub mod tests {
     }
 
     #[tokio::test]
-    async fn test_all_data_types_file() {
+    async fn test_crs_public_key_data_types_file() {
         let temp_dir = tempfile::tempdir().unwrap();
         let mut storage = FileStorage::new(Some(temp_dir.path()), StorageType::PUB, None).unwrap();
-        test_all_data_types(&mut storage).await;
+        test_crs_public_key_data_types(&mut storage).await;
     }
 
+    /// A dot-prefixed name at the root is listed like any other object: partial-write temp files
+    /// live inside the data type folders, so nothing at the root is one.
     #[tokio::test]
-    async fn all_data_types_lists_stray_files_and_skips_hidden_ones() {
+    async fn all_data_types_separates_folders_from_objects() {
         let temp_dir = tempfile::tempdir().unwrap();
-        let storage = FileStorage::new(Some(temp_dir.path()), StorageType::PUB, None).unwrap();
+        let mut storage = FileStorage::new(Some(temp_dir.path()), StorageType::PUB, None).unwrap();
+        let id = derive_request_id("folders-and-objects").unwrap();
+        let pk_type = PubDataType::PublicKey.to_string();
+        storage.store_bytes(b"pk", &id, &pk_type).await.unwrap();
         fs::write(storage.root_dir().join("stray"), b"x").unwrap();
-        fs::write(storage.root_dir().join(".partial"), b"x").unwrap();
+        fs::write(storage.root_dir().join(".hidden"), b"x").unwrap();
         assert_eq!(
             storage.all_data_types().await.unwrap(),
-            HashSet::from(["stray".to_string()])
+            RootEntries {
+                folders: HashSet::from([pk_type]),
+                objects: HashSet::from(["stray".to_string(), ".hidden".to_string()]),
+            }
         );
     }
 
@@ -610,10 +619,10 @@ pub mod tests {
         let pk_type = PubDataType::PublicKey.to_string();
         other.store_bytes(b"pk", &id, &pk_type).await.unwrap();
 
-        assert!(own.all_data_types().await.unwrap().is_empty());
+        assert_eq!(own.all_data_types().await.unwrap(), RootEntries::default());
         assert!(own.all_data_ids(&pk_type).await.unwrap().is_empty());
         assert_eq!(
-            other.all_data_types().await.unwrap(),
+            other.all_data_types().await.unwrap().folders,
             HashSet::from([pk_type])
         );
     }

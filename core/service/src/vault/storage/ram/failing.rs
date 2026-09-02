@@ -1,6 +1,6 @@
 use super::RamStorage;
 use crate::vault::storage::{
-    Storage, StorageExt, StorageReader, StorageReaderExt, StoreWriteOutcome,
+    RootEntries, Storage, StorageExt, StorageReader, StorageReaderExt, StoreWriteOutcome,
     test_support::{
         FaultPhase, StorageEntry, StorageEvent, StorageOp, StorageOutcome, StorageState,
         digest_entry,
@@ -190,7 +190,7 @@ impl StorageReader for FailingRamStorage {
         self.inner.all_data_ids(data_type).await
     }
 
-    async fn all_data_types(&self) -> anyhow::Result<HashSet<String>> {
+    async fn all_data_types(&self) -> anyhow::Result<RootEntries> {
         self.inner.all_data_types().await
     }
 
