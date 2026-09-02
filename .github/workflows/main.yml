@@ -42,7 +42,7 @@ jobs:
     outputs:
       # Each output indicates if files in a specific component were modified.
       # Only outputs consumed by jobs in *this* workflow are exported here.
-      # NOTE: the per-package test matrix in `parallel-testing.yml` does NOT
+      # NOTE: the per-package test matrix in `rust-testing.yml` does NOT
       # consume these outputs - it currently runs unconditionally (no change
       # filter) so every PR exercises and warms the shared rust cache. Wire a
       # filter back in once the caching approach is validated.
@@ -105,14 +105,14 @@ jobs:
               - 'docs/**'
 
   ############################################################################
-  # Parallel testing pipeline
+  # Rust testing pipeline
   # Runs UNCONDITIONALLY on every PR/push (no change filter, no `needs`): this
   # is intentional while we validate the shared rust cache, so every run
   # exercises and warms it. Tighten with a change filter once that's settled.
   ############################################################################
-  parallel-testing:
-    name: main/parallel-testing
-    uses: ./.github/workflows/parallel-testing.yml
+  rust-testing:
+    name: main/rust-testing
+    uses: ./.github/workflows/rust-testing.yml
     permissions:
       checks: write # Required to write to the GitHub Actions check suite
       packages: read # Required to read from the GitHub Packages registry
@@ -120,7 +120,13 @@ jobs:
       pull-requests: write # Required to write to the GitHub Pull Requests API
       actions: read # Required to read the GitHub Actions API
       contents: read # Required to read the GitHub Contents API
-    secrets: inherit
+    secrets:
+      BLOCKCHAIN_ACTIONS_TOKEN: ${{ secrets.BLOCKCHAIN_ACTIONS_TOKEN }}
+      SLACK_CHANNEL: ${{ secrets.SLACK_CHANNEL }}
+      BOT_USERNAME: ${{ secrets.BOT_USERNAME }}
+      SLACK_WEBHOOK: ${{ secrets.SLACK_WEBHOOK }}
+      CGR_USERNAME: ${{ secrets.CGR_USERNAME }}
+      CGR_PASSWORD: ${{ secrets.CGR_PASSWORD }}
 
   ############################################################################
   # Docker build pipeline
@@ -170,10 +176,9 @@ jobs:
 
   ############################################################################
   # Core Client nightly pipeline
-  # Note: regular per-partition core-client/core-service/core-grpc/core-threshold
-  # test jobs live in `.github/workflows/parallel-testing.yml` (see the `test-matrix`
-  # job in that file). This workflow only keeps the schedule-driven nightly
-  # job for `kms-core-client`.
+  # Regular per-partition tests and the schedule-driven KMS service nightly
+  # tests live in `.github/workflows/rust-testing.yml`. This section keeps
+  # the schedule-driven nightly job for `kms-core-client`.
   ############################################################################
   # Core client nightly tests (runs ALL tests including nightly and full_gen_tests).
   # Triggered by scheduled runs, or by PRs touching core-client/tests/{kind-testing,integration}/**.
@@ -196,12 +201,10 @@ jobs:
       crate-names: '-p kms-core-client'
       # Run ALL tests except k8s_* (cluster-only), isolated_test_example (demo),
       # and the docker-tls test which has its own dedicated job.
-      # nightly_* and nightly_full_gen_tests_* are intentionally included here
-      # (they're skipped only in the regular-CI profile via --skip).
+      # nightly_* and nightly_full_gen_tests_* are intentionally included here.
       args-tests: >-
         --features slow_tests -- --skip k8s_ --skip isolated_test_example
         --skip test_threshold_mpc_context_switch_6_docker
-      nextest-profile: 'ci-nightly'
       runs-on: '64cpu-linux-x64'
       nextest-test-threads: "10"
     secrets: inherit
@@ -296,7 +299,7 @@ jobs:
 
   # Test reporting job that runs after all tests complete.
   # Only runs on pull requests to generate test reports.
-  # Note: per-package test jobs that moved to `parallel-testing.yml` are reported by
+  # Note: per-package test jobs that moved to `rust-testing.yml` are reported by
   # that workflow's own `test-reporter` job. This reporter only covers the
   # jobs that still live in this workflow.
   test-reporter:

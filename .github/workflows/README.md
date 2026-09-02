@@ -160,6 +160,19 @@ Most test jobs depend on pre-generated FHE / signing material under `./test-mate
 
 ## Reusable Workflows
 
+### `rust-testing.yml`
+
+Calls `common-testing.yml` for the main sharded Rust test matrix and shares one
+EFS-backed test-material set across its jobs. On scheduled runs, it also runs the
+slow `kms` library tests whose names contain `nightly` in five shards and sends
+one aggregate Slack notification.
+
+### `kms-nightly.yml`
+
+Provides a manually dispatchable version of the same five-shard `kms` nightly
+suite for validation and test-timing investigations.
+
+
 ### `common-testing.yml`
 
 Steps (subset):
@@ -172,7 +185,7 @@ Steps (subset):
 | Swatinem rust-cache | Saves only on `main` |
 | Generate Test Material | Unless `skip-test-material: true` |
 | Build `kms-custodian` binary | Required by integration tests |
-| Run Tests | `cargo nextest --profile <ci\|ci-nightly> run …` |
+| Run Tests | `cargo nextest --profile ci run …` |
 | Upload JUnit + integration logs | On PR runs |
 | Slack notification | Scheduled runs only |
 
@@ -180,7 +193,7 @@ Inputs of note:
 - `crate-names` — `-p <crate> [-p …]` forwarded to cargo
 - `args-tests` — extra cargo / nextest args
 - `nextest-test-threads` — parallelism cap (empty = nextest default ≈ num-CPUs)
-- `nextest-profile` — `ci` (default) or `ci-nightly`
+- `notify-slack` — post the result for a scheduled caller, defaulting to `true`
 - `lfs` — pull Git-LFS objects on checkout
 - `skip-test-material` — skip material generation + custodian build
 - `runs-on`, `runner-volume` — runs-on slab selector

@@ -46,17 +46,15 @@ on:
         type: boolean
         required: false
         default: false
-      nextest-profile:
-        type: string
-        required: false
-        default: 'ci'  # Use 'ci-nightly' for nightly builds that run all tests
       nextest-test-threads:
         type: string
         required: false
         default: ''  # Empty = use nextest's default (~ num-CPUs).
+      notify-slack:
+        type: boolean
+        required: false
+        default: true
     secrets:
-      GHCR_READ_TOKEN:
-        required: true
       SLACK_CHANNEL:
         required: true
       BOT_USERNAME:
@@ -181,7 +179,6 @@ jobs:
         env:
           CRATE_NAMES: ${{ inputs.crate-names }}
           ARGS_TESTS: ${{inputs.args-tests}}
-          NEXTEST_PROFILE: ${{ inputs.nextest-profile }}
           NEXTEST_TEST_THREADS_INPUT: ${{ inputs.nextest-test-threads }}
           EVENT_NAME: ${{ github.event_name }}
           RUST_LOG: ${{ inputs.rust-log-level }}
@@ -210,16 +207,14 @@ jobs:
           cat ~/.aws/config
           # Intentional word-splitting on CMD_ENV, CRATE_NAMES, and ARGS_TESTS.
           # shellcheck disable=SC2086
-          echo "EXECUTING: env ${CMD_ENV} cargo nextest run --profile ${NEXTEST_PROFILE} --no-fail-fast --no-tests=pass ${CRATE_NAMES} ${ARGS_TESTS:+$ARGS_TESTS}"
+          echo "EXECUTING: env ${CMD_ENV} cargo nextest run --profile ci --no-fail-fast --no-tests=pass ${CRATE_NAMES} ${ARGS_TESTS:+$ARGS_TESTS}"
           # shellcheck disable=SC2086
-          env ${CMD_ENV} cargo nextest run --profile "${NEXTEST_PROFILE}" --no-fail-fast --no-tests=pass ${CRATE_NAMES} ${ARGS_TESTS:+$ARGS_TESTS}
+          env ${CMD_ENV} cargo nextest run --profile ci --no-fail-fast --no-tests=pass ${CRATE_NAMES} ${ARGS_TESTS:+$ARGS_TESTS}
 
       - name: Copy Test Results
         if: (!cancelled() || !failure() && github.event_name == 'pull_request')
-        env:
-          NEXTEST_PROFILE: ${{ inputs.nextest-profile }}
         run: |
-          NEXTEST_OUT="${GITHUB_WORKSPACE}/target/nextest/${NEXTEST_PROFILE}"
+          NEXTEST_OUT="${GITHUB_WORKSPACE}/target/nextest/ci"
           if find "${NEXTEST_OUT}" -mindepth 1 -type f -print -quit 2>/dev/null | grep -q .; then
             echo "Files found in ${NEXTEST_OUT}"
             ls -R "${NEXTEST_OUT}"
@@ -240,19 +235,8 @@ jobs:
           name: junit-test-report-${{ env.TIMESTAMP }}
           path: /tmp/junit.xml
 
-      - name: Set Slack color
-        id: slack_color
-        env:
-          JOB_RESULT: ${{ steps.tests.outcome }}
-        run: |
-          if [ "${JOB_RESULT}" = "success" ]; then
-            echo "color=good" >> "$GITHUB_OUTPUT"
-          else
-            echo "color=danger" >> "$GITHUB_OUTPUT"
-          fi
-
       - name: Post nightly tests results in a channel
-        if: always() && github.event_name == 'schedule'
+        if: always() && github.event_name == 'schedule' && inputs.notify-slack
         uses: rtCamp/action-slack-notify@e31e87e03dd19038e411e38ae27cbad084a90661 # v2.3.3
         env:
           ACTION_RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
@@ -261,8 +245,8 @@ jobs:
           SLACK_WEBHOOK: ${{ secrets.SLACK_WEBHOOK }}
           SLACK_ICON_EMOJI: ':github-octocat:'
           SLACK_TITLE: 'Nightly Tests Result'
-          SLACK_COLOR: ${{ steps.slack_color.outputs.color }}
-          SLACK_MESSAGE: "${{ steps.tests.outcome }} \nFor args: ${{ inputs.args-tests }}"
+          SLACK_COLOR: ${{ steps.tests.outcome || job.status }}
+          SLACK_MESSAGE: "${{ steps.tests.outcome || job.status }} \nFor args: ${{ inputs.args-tests }}"
 
       - name: Generate unique ID
         if: always()

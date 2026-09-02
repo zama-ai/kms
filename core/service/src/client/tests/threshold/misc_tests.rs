@@ -391,9 +391,9 @@ async fn test_ratelimiter() -> Result<()> {
 /// 4. Verifies the other 3 parties complete successfully
 /// 5. Waits for session timeout, then sends the request to party 3
 /// 6. Verifies party 3 gets an Internal error (session already completed by others)
-#[tokio::test(flavor = "current_thread")]
+#[tokio::test(flavor = "multi_thread")]
 #[cfg(feature = "slow_tests")]
-async fn nightly_test_complete_session_notification() -> Result<()> {
+async fn test_complete_session_notification() -> Result<()> {
     use crate::consts::{PUBLIC_STORAGE_PREFIX_THRESHOLD_ALL, TEST_PARAM};
     use crate::dummy_domain;
     use crate::engine::base::derive_request_id;
