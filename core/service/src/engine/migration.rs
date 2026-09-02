@@ -3,7 +3,7 @@ use crate::consts::{DEFAULT_EPOCH_ID, DEFAULT_MPC_CONTEXT, SIGNING_KEY_ID};
 use crate::engine::base::derive_request_id;
 use crate::engine::threshold::service::epoch_manager::EpochData;
 use crate::engine::threshold::service::session::PRSSSetupCombined;
-use crate::util::key_setup::ensure_published_verification_material;
+use crate::util::key_setup::ensure_all_verification_material;
 use crate::vault::storage::crypto_material::get_core_signing_key;
 use crate::vault::storage::{
     Storage, StorageExt, StorageReader, read_context_at_id, read_versioned_at_request_id,
@@ -192,7 +192,7 @@ where
         );
         return Ok(());
     }
-    ensure_published_verification_material(pub_storage, &sk).await
+    ensure_all_verification_material(pub_storage, &sk).await
 }
 
 async fn migrate_prss_to_epoch<PrivS>(
@@ -870,7 +870,7 @@ mod tests {
     use crate::engine::context::{ContextInfo, NodeInfo, SchemeDigests, SoftwareVersion};
     use crate::util::key_setup::{
         CURRENT_VERF_MATERIAL_TYPES, LEGACY_VERF_MATERIAL_TYPES,
-        delete_scheme_verification_material, ensure_central_server_signing_keys_exist,
+        delete_non_legacy_verification_material, ensure_central_server_signing_keys_exist,
     };
     use crate::vault::storage::crypto_material::{get_core_signing_key, read_verification_key_at};
     use crate::vault::storage::file::FileStorage;
@@ -3133,7 +3133,7 @@ mod tests {
         ensure_central_server_signing_keys_exist(&mut pub_storage, &mut priv_storage, true)
             .await
             .unwrap();
-        delete_scheme_verification_material(&mut pub_storage)
+        delete_non_legacy_verification_material(&mut pub_storage)
             .await
             .unwrap();
         (pub_storage, priv_storage)
