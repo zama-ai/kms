@@ -1,4 +1,4 @@
-# 01-ghsa-dashboard — GHSA dashboard + cross-reference validation caller.
+# ghsa-dashboard — GHSA dashboard + cross-reference validation caller.
 #
 # NOTE FOR kms MAINTAINERS: this file exists in public kms ONLY so it survives the
 # one-way `git push -f` sync (sync-on-push.yml) into the private mirror
@@ -12,7 +12,7 @@
 # via ${{ github.repository }} (never named here), matching how the sync itself keeps
 # the destination in a secret. Owned by the DevOps/Security group (see CODEOWNERS).
 
-name: 01-ghsa-dashboard
+name: ghsa-dashboard
 
 on:
   schedule:
