@@ -869,8 +869,8 @@ mod tests {
     use crate::cryptography::signing::SigningSchemeType;
     use crate::engine::context::{ContextInfo, NodeInfo, SchemeDigests, SoftwareVersion};
     use crate::util::key_setup::{
-        LEGACY_VERF_MATERIAL_TYPES, NON_LEGACY_VERF_MATERIAL_TYPES, delete_non_legacy_verf_material,
-        ensure_central_server_signing_keys_exist,
+        LEGACY_VERF_MATERIAL_TYPES, NON_LEGACY_VERF_MATERIAL_TYPES,
+        delete_non_legacy_verf_material, ensure_central_server_signing_keys_exist,
     };
     use crate::vault::storage::crypto_material::{get_core_signing_key, read_verf_key_at};
     use crate::vault::storage::file::FileStorage;

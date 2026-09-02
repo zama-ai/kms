@@ -1628,9 +1628,10 @@ pub fn max_threshold(amount_parties: usize) -> usize {
 #[cfg(test)]
 mod tests {
     use super::{
-        LEGACY_VERF_MATERIAL_TYPES, NON_LEGACY_VERF_MATERIAL_TYPES, delete_non_legacy_verf_material,
-        ensure_all_verf_material, ensure_central_server_signing_keys_exist,
-        ensure_no_verf_material, ensure_threshold_server_signing_key_exists,
+        LEGACY_VERF_MATERIAL_TYPES, NON_LEGACY_VERF_MATERIAL_TYPES,
+        delete_non_legacy_verf_material, ensure_all_verf_material,
+        ensure_central_server_signing_keys_exist, ensure_no_verf_material,
+        ensure_threshold_server_signing_key_exists,
     };
     use crate::consts::{SIGNING_KEY_ID, signing_material_id};
     use crate::cryptography::signatures::{PrivateSigKey, PublicSigKey, gen_sig_keys};
