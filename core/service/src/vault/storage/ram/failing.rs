@@ -37,6 +37,7 @@ impl FailingRamStorage {
     }
 
     /// Write `entry` to the wrapped storage and then return an error.
+    #[allow(dead_code, reason = "used in the next stacked PR")]
     pub(crate) fn set_fail_store_after_mutation_at(&mut self, entry: StorageEntry) {
         self.fail_store_at = Some((entry, FaultPhase::AfterMutation));
     }
@@ -47,6 +48,7 @@ impl FailingRamStorage {
     }
 
     /// Remove `entry` from the wrapped storage and then return an error.
+    #[allow(dead_code, reason = "used in the next stacked PR")]
     pub(crate) fn set_fail_delete_after_mutation_at(&mut self, entry: StorageEntry) {
         self.fail_delete_at = Some((entry, FaultPhase::AfterMutation));
     }
@@ -66,6 +68,7 @@ impl FailingRamStorage {
     }
 
     /// The events that changed stored data, including those that mutated and then failed.
+    #[allow(dead_code, reason = "used in the next stacked PR")]
     pub(crate) fn mutations(&self) -> Vec<&StorageEvent> {
         self.events
             .iter()
@@ -74,6 +77,7 @@ impl FailingRamStorage {
     }
 
     /// The events that returned an error, whatever they did to storage.
+    #[allow(dead_code, reason = "used in the next stacked PR")]
     pub(crate) fn faults(&self) -> Vec<&StorageEvent> {
         self.events
             .iter()
@@ -94,22 +98,20 @@ impl FailingRamStorage {
             .collect()
     }
 
-    fn store_fault_phase(&self, entry: &StorageEntry) -> Option<FaultPhase> {
-        Self::fault_phase(&self.fail_store_at, entry)
-    }
-
-    fn delete_fault_phase(&self, entry: &StorageEntry) -> Option<FaultPhase> {
-        Self::fault_phase(&self.fail_delete_at, entry)
-    }
-
-    fn fault_phase(
-        fail_point: &Option<(StorageEntry, FaultPhase)>,
+    // Checks if a [`StorageEntry`] fails at the specified operation and at the specified phase (before/after a write).
+    fn matches_fail_point(
+        &self,
+        (op, phase): (StorageOp, FaultPhase),
         entry: &StorageEntry,
-    ) -> Option<FaultPhase> {
-        fail_point
-            .as_ref()
-            .filter(|(target, _)| target == entry)
-            .map(|(_, phase)| *phase)
+    ) -> bool {
+        let fail_point = match op {
+            StorageOp::Store => &self.fail_store_at,
+            StorageOp::Delete => &self.fail_delete_at,
+        };
+        matches!(
+            fail_point,
+            Some((target, target_phase)) if target == entry && *target_phase == phase
+        )
     }
 
     fn record_store_result(
@@ -117,26 +119,23 @@ impl FailingRamStorage {
         entry: StorageEntry,
         result: anyhow::Result<StoreWriteOutcome>,
     ) -> anyhow::Result<StoreWriteOutcome> {
+        use StorageOp::Store;
         match result {
             Ok(StoreWriteOutcome::Created) => {
                 // An after-mutation fault point only applies once the data is in.
-                if self.store_fault_phase(&entry) == Some(FaultPhase::AfterMutation) {
-                    self.record(entry, StorageOp::Store, StorageOutcome::FailedAfterMutation);
+                if self.matches_fail_point((Store, FaultPhase::AfterMutation), &entry) {
+                    self.record(entry, Store, StorageOutcome::FailedAfterMutation);
                     anyhow::bail!("storage failed after writing the data!")
                 }
-                self.record(entry, StorageOp::Store, StorageOutcome::Created);
+                self.record(entry, Store, StorageOutcome::Created);
                 Ok(StoreWriteOutcome::Created)
             }
             Ok(StoreWriteOutcome::SkippedExisting) => {
-                self.record(entry, StorageOp::Store, StorageOutcome::SkippedExisting);
+                self.record(entry, Store, StorageOutcome::SkippedExisting);
                 Ok(StoreWriteOutcome::SkippedExisting)
             }
             Err(error) => {
-                self.record(
-                    entry,
-                    StorageOp::Store,
-                    StorageOutcome::FailedBeforeMutation,
-                );
+                self.record(entry, Store, StorageOutcome::FailedBeforeMutation);
                 Err(error)
             }
         }
@@ -147,25 +146,18 @@ impl FailingRamStorage {
         entry: StorageEntry,
         result: anyhow::Result<()>,
     ) -> anyhow::Result<()> {
+        use StorageOp::Delete;
         match result {
             Ok(()) => {
-                if self.delete_fault_phase(&entry) == Some(FaultPhase::AfterMutation) {
-                    self.record(
-                        entry,
-                        StorageOp::Delete,
-                        StorageOutcome::FailedAfterMutation,
-                    );
+                if self.matches_fail_point((Delete, FaultPhase::AfterMutation), &entry) {
+                    self.record(entry, Delete, StorageOutcome::FailedAfterMutation);
                     anyhow::bail!("storage delete failed after removing the data!")
                 }
-                self.record(entry, StorageOp::Delete, StorageOutcome::Deleted);
+                self.record(entry, Delete, StorageOutcome::Deleted);
                 Ok(())
             }
             Err(error) => {
-                self.record(
-                    entry,
-                    StorageOp::Delete,
-                    StorageOutcome::FailedBeforeMutation,
-                );
+                self.record(entry, Delete, StorageOutcome::FailedBeforeMutation);
                 Err(error)
             }
         }
@@ -211,7 +203,7 @@ impl Storage for FailingRamStorage {
         data_type: &str,
     ) -> anyhow::Result<StoreWriteOutcome> {
         let entry = StorageEntry::new(*data_id, None, data_type);
-        if self.store_fault_phase(&entry) == Some(FaultPhase::BeforeMutation) {
+        if self.matches_fail_point((StorageOp::Store, FaultPhase::BeforeMutation), &entry) {
             self.record(
                 entry,
                 StorageOp::Store,
@@ -230,7 +222,7 @@ impl Storage for FailingRamStorage {
         data_type: &str,
     ) -> anyhow::Result<StoreWriteOutcome> {
         let entry = StorageEntry::new(*data_id, None, data_type);
-        if self.store_fault_phase(&entry) == Some(FaultPhase::BeforeMutation) {
+        if self.matches_fail_point((StorageOp::Store, FaultPhase::BeforeMutation), &entry) {
             self.record(
                 entry,
                 StorageOp::Store,
@@ -244,7 +236,7 @@ impl Storage for FailingRamStorage {
 
     async fn delete_data(&mut self, data_id: &RequestId, data_type: &str) -> anyhow::Result<()> {
         let entry = StorageEntry::new(*data_id, None, data_type);
-        if self.delete_fault_phase(&entry) == Some(FaultPhase::BeforeMutation) {
+        if self.matches_fail_point((StorageOp::Delete, FaultPhase::BeforeMutation), &entry) {
             self.record(
                 entry,
                 StorageOp::Delete,
@@ -320,7 +312,7 @@ impl StorageExt for FailingRamStorage {
         data_type: &str,
     ) -> anyhow::Result<StoreWriteOutcome> {
         let entry = StorageEntry::new(*data_id, Some(*epoch_id), data_type);
-        if self.store_fault_phase(&entry) == Some(FaultPhase::BeforeMutation) {
+        if self.matches_fail_point((StorageOp::Store, FaultPhase::BeforeMutation), &entry) {
             self.record(
                 entry,
                 StorageOp::Store,
@@ -343,7 +335,7 @@ impl StorageExt for FailingRamStorage {
         data_type: &str,
     ) -> anyhow::Result<StoreWriteOutcome> {
         let entry = StorageEntry::new(*data_id, Some(*epoch_id), data_type);
-        if self.store_fault_phase(&entry) == Some(FaultPhase::BeforeMutation) {
+        if self.matches_fail_point((StorageOp::Store, FaultPhase::BeforeMutation), &entry) {
             self.record(
                 entry,
                 StorageOp::Store,
@@ -365,7 +357,7 @@ impl StorageExt for FailingRamStorage {
         data_type: &str,
     ) -> anyhow::Result<()> {
         let entry = StorageEntry::new(*data_id, Some(*epoch_id), data_type);
-        if self.delete_fault_phase(&entry) == Some(FaultPhase::BeforeMutation) {
+        if self.matches_fail_point((StorageOp::Delete, FaultPhase::BeforeMutation), &entry) {
             self.record(
                 entry,
                 StorageOp::Delete,
