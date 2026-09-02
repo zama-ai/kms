@@ -105,7 +105,7 @@ The service crate is the main surface area. Key subdirectories under
   (`ecdsa`, the legacy default and EIP-712 home), EdDSA/ed25519 (`eddsa`), and
   ML-DSA/FIPS-204 (`mldsa`) — behind the `SigningScheme` trait and the
   `unified_sign`/`unified_verify` entry points. The historic
-  `cryptography::signatures` path is now a re-export facade. A node persists two
+  `cryptography::signatures` path is a re-export facade. A node persists two
   private objects: its ECDSA signing key (`PrivDataType::SigningKey`, the
   authoritative on-chain identity) and an independent, CSPRNG-generated
   `RootSigningSeed` (`PrivDataType::SigningSeed`), both under `SIGNING_KEY_ID`.
