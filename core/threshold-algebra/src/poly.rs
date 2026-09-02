@@ -587,6 +587,7 @@ fn quo_rem_assign<F: Field>(remainder: &mut Poly<F>, divisor: &Poly<F>, quotient
     quotient.coefs.fill(F::ZERO);
     if remainder_len == 1 && remainder.coef(0) == F::ZERO {
         quotient.coefs.clear();
+        remainder.coefs.clear();
         return;
     }
 
