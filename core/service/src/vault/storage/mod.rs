@@ -32,6 +32,8 @@ pub mod crypto_material;
 pub mod file;
 pub mod ram;
 pub mod s3;
+#[cfg(test)]
+pub(crate) mod test_support;
 
 /// Trait for KMS storage reading.
 ///
