@@ -70,6 +70,11 @@ where
         coefs.len()
     );
 
+    debug_assert!(
+        EXTENSION_DEGREE <= u8::BITS as usize,
+        "bitwise_eval_coefficients requires EXTENSION_DEGREE <= 8 (coefficients are stored in a u8)"
+    );
+
     let mut result = [Z::ZERO; PRODUCT_LENGTH];
     for (coef, power) in coefs.iter().zip(powers) {
         // Bit b of this byte is the lifted ring coefficient of X^b; bits >= D are always clear.
