@@ -574,7 +574,7 @@ where
 ///
 /// The deprecated ECDSA-only pair is deliberately *not* touched, which lets a test
 /// purge the per-scheme layout alone and check that it is rebuilt. Production code
-/// wipes the whole identity with [`delete_published_verification_material`].
+/// wipes the whole identity with [`delete_all_verf_material`].
 #[cfg(test)]
 pub async fn delete_non_legacy_verf_material<PubS>(pub_storage: &mut PubS) -> anyhow::Result<()>
 where

@@ -125,7 +125,7 @@ The service crate is the main surface area. Key subdirectories under
   `PubDataType::TypedVerfKey` holds the scheme's *own* verification key type
   (`PublicSigKey`, `Ed25519VerfKey`, `MlDsaVerfKey<P>`), and `TypedVerfAddress` its
   `address_text()` (`0x`-prefixed hex; for ECDSA the EIP-55 address).
-  ECDSA's material is *additionally* written to the deprecated `key_setup::LEGACY_ECDSA_MATERIAL_TYPES`
+  ECDSA's material is *additionally* written to the deprecated `key_setup::LEGACY_VERF_MATERIAL_TYPES`
   (`PubDataType::VerfKey`/`VerfAddress`, a bare `PublicSigKey` and the same
   address text) for existing external consumers; those two are scheduled for
   removal and nothing new should read them. Both copies are validated against the
@@ -151,13 +151,14 @@ All under [core/service/src/bin/](core/service/src/bin/):
   every other scheme's from the seed. Reads a keygen TOML with
   `--config-file`; `[keygen] repopulate = true` backfills the per-scheme
   verification material from the signing identity already in private storage
-  instead of generating keys (the same backfill runs automatically on server 
-  start via `migration::migrate_public_verification_material`, which warns and 
-  skips when the seed is absent), and `[keygen] overwrite = true` deletes the signing key
-  and the seed together with the verification material derived from them, since
-  generating an identity alongside another identity's derived material is
-  rejected. Supports `mock_enclave` in config for local dev when compiled with
-  the `insecure` feature.
+  instead of generating keys (the same backfill runs automatically on server
+  start via `migration::migrate_public_verification_material`, which warns and
+  skips when the seed is absent), `[keygen] show_existing = true` prints the
+  existing signing-material handles and exits, and `[keygen] overwrite = true`
+  deletes the signing key and the seed together with the verification material
+  derived from them, since generating an identity alongside another identity's
+  derived material is rejected. Supports `mock_enclave` in config for local dev
+  when compiled with the `insecure` feature.
 - [kms-custodian.rs](core/service/src/bin/kms-custodian.rs) — custodian-side
   tool for producing and recovering backup shares.
 - [kms-gen-tls-certs.rs](core/service/src/bin/kms-gen-tls-certs.rs) — TLS
