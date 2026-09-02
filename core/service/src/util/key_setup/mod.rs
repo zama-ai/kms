@@ -207,7 +207,7 @@ where
     // Reject a storage that still holds verification material.
     // We already checked that no signing key exists so if verification material
     // exist it means inconsistent storage.
-    ensure_no_verif_material(pub_storage).await?;
+    ensure_no_verf_material(pub_storage).await?;
     ensure_no_root_signing_seed(priv_storage).await?;
 
     if !signing_keys_map.is_empty() {
@@ -298,7 +298,7 @@ where
         return Ok(seed);
     }
 
-    if non_legacy_verf_material_exists(pub_storage).await? {
+    if non_ecdsa_verf_material_exists(pub_storage).await? {
         return Err(anyhow_error_and_log(format!(
             "public storage already holds non-ECDSA verification material, but the {} object \
              under the handle {} is missing.",
@@ -547,7 +547,7 @@ where
 }
 
 /// Validate that no verification material (including legacy ECDSA) is present.
-pub async fn ensure_no_verif_material<PubS>(pub_storage: &PubS) -> anyhow::Result<()>
+pub async fn ensure_no_verf_material<PubS>(pub_storage: &PubS) -> anyhow::Result<()>
 where
     PubS: StorageReader,
 {
@@ -561,7 +561,7 @@ where
 
 /// Checks whether public storage holds verification material for any scheme other than
 /// ECDSA.
-async fn non_legacy_verf_material_exists<PubS>(pub_storage: &PubS) -> anyhow::Result<bool>
+async fn non_ecdsa_verf_material_exists<PubS>(pub_storage: &PubS) -> anyhow::Result<bool>
 where
     PubS: StorageReader,
 {
@@ -1111,7 +1111,7 @@ where
     // Reject a storage that still holds verification material.
     // We already checked that no signing key exists so if verification material
     // exist it means inconsistent storage.
-    ensure_no_verif_material(pub_storage)
+    ensure_no_verf_material(pub_storage)
         .await
         .map_err(|e| anyhow::anyhow!("Party {party_id}: {e}"))?;
     ensure_no_root_signing_seed(priv_storage)
@@ -1630,7 +1630,7 @@ mod tests {
     use super::{
         CURRENT_VERF_MATERIAL_TYPES, LEGACY_VERF_MATERIAL_TYPES, delete_non_legacy_verf_material,
         ensure_all_verf_material, ensure_central_server_signing_keys_exist,
-        ensure_no_verif_material, ensure_threshold_server_signing_key_exists,
+        ensure_no_verf_material, ensure_threshold_server_signing_key_exists,
     };
     use crate::consts::{SIGNING_KEY_ID, signing_material_id};
     use crate::cryptography::signatures::{PrivateSigKey, PublicSigKey, gen_sig_keys};
@@ -1791,7 +1791,7 @@ mod tests {
         let mut pub_storage = RamStorage::new();
 
         // Empty storage: nothing to detect, and deleting is a no-op.
-        ensure_no_verif_material(&pub_storage).await.unwrap();
+        ensure_no_verf_material(&pub_storage).await.unwrap();
         delete_non_legacy_verf_material(&mut pub_storage)
             .await
             .unwrap();
@@ -1807,7 +1807,7 @@ mod tests {
         assert_non_legacy_verf_material_matches(&pub_storage, &sk_old).await;
 
         // Ensure that the verification material exists before attempting deletion.
-        assert!(ensure_no_verif_material(&pub_storage).await.is_err());
+        assert!(ensure_no_verf_material(&pub_storage).await.is_err());
 
         // First delete non-legacy verification material.
         delete_non_legacy_verf_material(&mut pub_storage)
@@ -1822,7 +1822,7 @@ mod tests {
             "per-scheme verification material survived the deletion"
         );
         // ...but this deletion deliberately spares the legacy ECDSA pair.
-        assert!(ensure_no_verif_material(&pub_storage).await.is_err());
+        assert!(ensure_no_verf_material(&pub_storage).await.is_err());
 
         // The deprecated pair still describes the old key, and a different key must
         // not be published beside it. `kms-gen-keys --overwrite` deletes it together
