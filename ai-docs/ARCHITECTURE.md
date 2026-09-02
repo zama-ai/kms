@@ -121,7 +121,7 @@ The service crate is the main surface area. Key subdirectories under
   can only do ECDSA and errors with `SigningError::MissingRootSeed` for anything
   else. Every scheme's public verification material — ECDSA's included —
   is stored under the handle `consts::signing_material_id(scheme)` gives, in the
-  data types `key_setup::CURRENT_VERF_MATERIAL_TYPES` names:
+  data types `key_setup::NON_LEGACY_VERF_MATERIAL_TYPES` names:
   `PubDataType::TypedVerfKey` holds the scheme's *own* verification key type
   (`PublicSigKey`, `Ed25519VerfKey`, `MlDsaVerfKey<P>`), and `TypedVerfAddress` its
   `address_text()` (`0x`-prefixed hex; for ECDSA the EIP-55 address).

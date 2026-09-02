@@ -694,7 +694,7 @@ where
 async fn test_purge() {
     use crate::consts::signing_material_id;
     use crate::cryptography::signatures::SigningSchemeType;
-    use crate::util::key_setup::CURRENT_VERF_MATERIAL_TYPES;
+    use crate::util::key_setup::NON_LEGACY_VERF_MATERIAL_TYPES;
     use kms_grpc::rpc_types::PrivDataType;
     use strum::IntoEnumIterator;
 
@@ -731,7 +731,7 @@ async fn test_purge() {
     // Validate the keys were made
     for scheme in SigningSchemeType::iter() {
         let id = signing_material_id(scheme);
-        for data_type in CURRENT_VERF_MATERIAL_TYPES.map(|t| t.to_string()) {
+        for data_type in NON_LEGACY_VERF_MATERIAL_TYPES.map(|t| t.to_string()) {
             assert!(
                 central_pub_storage
                     .all_data_ids(&data_type)
@@ -758,7 +758,7 @@ async fn test_purge() {
         .await;
     }
     // Check the keys were deleted
-    for data_type in CURRENT_VERF_MATERIAL_TYPES.map(|t| t.to_string()) {
+    for data_type in NON_LEGACY_VERF_MATERIAL_TYPES.map(|t| t.to_string()) {
         assert!(
             central_pub_storage
                 .all_data_ids(&data_type)

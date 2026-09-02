@@ -869,7 +869,7 @@ mod tests {
     use crate::cryptography::signing::SigningSchemeType;
     use crate::engine::context::{ContextInfo, NodeInfo, SchemeDigests, SoftwareVersion};
     use crate::util::key_setup::{
-        CURRENT_VERF_MATERIAL_TYPES, LEGACY_VERF_MATERIAL_TYPES, delete_non_legacy_verf_material,
+        LEGACY_VERF_MATERIAL_TYPES, NON_LEGACY_VERF_MATERIAL_TYPES, delete_non_legacy_verf_material,
         ensure_central_server_signing_keys_exist,
     };
     use crate::vault::storage::crypto_material::{get_core_signing_key, read_verf_key_at};
@@ -2939,7 +2939,7 @@ mod tests {
     ) {
         for scheme in SigningSchemeType::iter() {
             let id = signing_material_id(scheme);
-            for data_type in CURRENT_VERF_MATERIAL_TYPES.map(|t| t.to_string()) {
+            for data_type in NON_LEGACY_VERF_MATERIAL_TYPES.map(|t| t.to_string()) {
                 assert_eq!(
                     pub_storage.data_exists(&id, &data_type).await.unwrap(),
                     expected,
@@ -3194,7 +3194,7 @@ mod tests {
         let (mut pub_storage, priv_storage) = pre_multi_scheme_node().await;
         let legacy_before = snapshot(&pub_storage, &LEGACY_VERF_MATERIAL_TYPES).await;
         assert!(
-            snapshot(&pub_storage, &CURRENT_VERF_MATERIAL_TYPES)
+            snapshot(&pub_storage, &NON_LEGACY_VERF_MATERIAL_TYPES)
                 .await
                 .is_empty(),
             "the fixture is not a pre-multi-scheme node"
@@ -3226,7 +3226,7 @@ mod tests {
             .unwrap();
 
         assert!(
-            snapshot(&pub_storage, &CURRENT_VERF_MATERIAL_TYPES)
+            snapshot(&pub_storage, &NON_LEGACY_VERF_MATERIAL_TYPES)
                 .await
                 .is_empty(),
             "material was written without a signing key to derive it from"
@@ -3242,14 +3242,14 @@ mod tests {
         migrate_public_verification_material(&priv_storage, &mut pub_storage)
             .await
             .unwrap();
-        let after_first_run = snapshot(&pub_storage, &CURRENT_VERF_MATERIAL_TYPES).await;
+        let after_first_run = snapshot(&pub_storage, &NON_LEGACY_VERF_MATERIAL_TYPES).await;
 
         migrate_public_verification_material(&priv_storage, &mut pub_storage)
             .await
             .unwrap();
 
         assert_eq!(
-            snapshot(&pub_storage, &CURRENT_VERF_MATERIAL_TYPES).await,
+            snapshot(&pub_storage, &NON_LEGACY_VERF_MATERIAL_TYPES).await,
             after_first_run
         );
     }

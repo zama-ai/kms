@@ -430,7 +430,7 @@ impl std::fmt::Display for MaterialSlot {
 }
 
 /// The public data types holding a scheme's verification material.
-pub const CURRENT_VERF_MATERIAL_TYPES: [PubDataType; 2] =
+pub const NON_LEGACY_VERF_MATERIAL_TYPES: [PubDataType; 2] =
     [PubDataType::TypedVerfKey, PubDataType::TypedVerfAddress];
 
 /// The deprecated ECDSA-only location of a node's published identity: a bare
@@ -442,7 +442,7 @@ pub const LEGACY_VERF_MATERIAL_TYPES: [PubDataType; 2] =
 /// the deprecated ECDSA-only pair under [`SIGNING_KEY_ID`].
 pub(crate) fn non_legacy_verf_material_slots() -> impl Iterator<Item = MaterialSlot> {
     SigningSchemeType::iter().flat_map(|scheme| {
-        CURRENT_VERF_MATERIAL_TYPES.map(move |folder| MaterialSlot {
+        NON_LEGACY_VERF_MATERIAL_TYPES.map(move |folder| MaterialSlot {
             scheme,
             req_id: signing_material_id(scheme),
             folder,
@@ -1628,7 +1628,7 @@ pub fn max_threshold(amount_parties: usize) -> usize {
 #[cfg(test)]
 mod tests {
     use super::{
-        CURRENT_VERF_MATERIAL_TYPES, LEGACY_VERF_MATERIAL_TYPES, delete_non_legacy_verf_material,
+        LEGACY_VERF_MATERIAL_TYPES, NON_LEGACY_VERF_MATERIAL_TYPES, delete_non_legacy_verf_material,
         ensure_all_verf_material, ensure_central_server_signing_keys_exist,
         ensure_no_verf_material, ensure_threshold_server_signing_key_exists,
     };
@@ -1764,7 +1764,7 @@ mod tests {
         // canonical ECDSA pair under a different handle and folder.
         for (legacy, canonical) in LEGACY_VERF_MATERIAL_TYPES
             .iter()
-            .zip(CURRENT_VERF_MATERIAL_TYPES.iter())
+            .zip(NON_LEGACY_VERF_MATERIAL_TYPES.iter())
         {
             assert_eq!(
                 pub_storage
@@ -2046,7 +2046,7 @@ mod tests {
     /// Whether public storage holds any non-ECDSA verification material.
     async fn non_ecdsa_material_exists<S: StorageReader>(pub_storage: &S) -> bool {
         for scheme in SigningSchemeType::iter().filter(|s| *s != SigningSchemeType::Ecdsa256k1) {
-            for data_type in CURRENT_VERF_MATERIAL_TYPES.map(|t| t.to_string()) {
+            for data_type in NON_LEGACY_VERF_MATERIAL_TYPES.map(|t| t.to_string()) {
                 if pub_storage
                     .data_exists(&signing_material_id(scheme), &data_type)
                     .await
@@ -2155,7 +2155,7 @@ mod tests {
         // Backfill each scheme in turn, and both of its objects: whichever one is missing
         // has to come back.
         for scheme in [SigningSchemeType::Ecdsa256k1, SigningSchemeType::MlDsa87] {
-            for data_type in CURRENT_VERF_MATERIAL_TYPES.map(|t| t.to_string()) {
+            for data_type in NON_LEGACY_VERF_MATERIAL_TYPES.map(|t| t.to_string()) {
                 let req_id = signing_material_id(scheme);
                 let expected = pub_storage.load_bytes(&req_id, &data_type).await.unwrap();
                 delete_at_request_id(&mut pub_storage, &req_id, &data_type)
