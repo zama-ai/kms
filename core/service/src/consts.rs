@@ -166,8 +166,9 @@ pub fn signing_material_id(scheme: SigningSchemeType) -> RequestId {
     }
 }
 
-// TODO(zama-ai/kms-internal/issues/2758)
+/// The default MPC context. Note that it must start with 0x07 to match what is on fhevm.
 // In the future we will remove the default context.
+// TODO(zama-ai/kms-internal/issues/2758)
 #[cfg(feature = "non-wasm")]
 pub static DEFAULT_MPC_CONTEXT: LazyLock<ContextId> = LazyLock::new(|| {
     ContextId::from_bytes([
@@ -176,6 +177,7 @@ pub static DEFAULT_MPC_CONTEXT: LazyLock<ContextId> = LazyLock::new(|| {
     ])
 });
 
+/// The default epoch ID. Note that it must start with 0x08 to match what is on fhevm.
 // The default epoch ID used for initial PRSS setup and as fallback when no epoch is specified.
 #[cfg(feature = "non-wasm")]
 pub static DEFAULT_EPOCH_ID: LazyLock<EpochId> = LazyLock::new(|| {
