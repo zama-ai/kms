@@ -279,12 +279,10 @@ async fn run_failed_reshare_storage_test(fail_rollback: bool) {
     );
 }
 
+#[rstest::rstest]
+#[case::only_removes_new_epoch_private_material(false)]
+#[case::cleanup_failure_keeps_retry_state(true)]
 #[tokio::test]
-async fn failed_reshare_only_removes_new_epoch_private_material() {
-    run_failed_reshare_storage_test(false).await;
-}
-
-#[tokio::test]
-async fn failed_reshare_cleanup_keeps_retry_state() {
-    run_failed_reshare_storage_test(true).await;
+async fn failed_reshare(#[case] fail_rollback: bool) {
+    run_failed_reshare_storage_test(fail_rollback).await;
 }
