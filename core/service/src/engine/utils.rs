@@ -329,9 +329,10 @@ where
             })?,
     };
 
-    // Query CRS IDs
+    // Query CRS IDs. Must span all epochs, like the FHE keys above: CRS metadata is stored
+    // epoch-scoped, and `all_data_ids` deliberately excludes epoch-scoped entries.
     let crs_ids_set = priv_storage
-        .all_data_ids(&PrivDataType::CrsInfo.to_string())
+        .all_data_ids_from_all_epochs(&PrivDataType::CrsInfo.to_string())
         .await
         .map_err(|e| {
             MetricedError::new(
@@ -686,7 +687,7 @@ mod tests {
     use crate::engine::base::KeyGenMetadataInner;
     use crate::engine::centralized::central_kms::gen_centralized_crs;
     use crate::vault::storage::ram::RamStorage;
-    use crate::vault::storage::{delete_at_request_id, store_versioned_at_request_id};
+    use crate::vault::storage::{Storage, delete_at_request_id, store_versioned_at_request_id};
 
     use aes_prng::AesRng;
     use hashing::hash_versioned;
@@ -1440,5 +1441,74 @@ mod tests {
             .unwrap();
 
         (crs, digest)
+    }
+
+    /// CRS metadata is stored epoch-scoped, so the availability query must span all epochs.
+    /// Regression test: querying with `all_data_ids` made migrated CRS entries disappear.
+    #[tokio::test]
+    async fn query_key_material_availability_reports_epoch_scoped_crs() {
+        use crate::consts::DEFAULT_EPOCH_ID;
+        use std::str::FromStr;
+
+        let crs_id = RequestId::from_str(
+            "0x00000000000000000000000000000000000000000000000000000000000005a1",
+        )
+        .unwrap();
+        let key_id = RequestId::from_str(
+            "0x00000000000000000000000000000000000000000000000000000000000004a1",
+        )
+        .unwrap();
+        let epoch_id: EpochId = *DEFAULT_EPOCH_ID;
+
+        let mut storage = RamStorage::new();
+        storage
+            .store_bytes_at_epoch(
+                &[1u8, 2, 3],
+                &crs_id,
+                &epoch_id,
+                &PrivDataType::CrsInfo.to_string(),
+            )
+            .await
+            .unwrap();
+        storage
+            .store_bytes_at_epoch(
+                &[4u8, 5, 6],
+                &key_id,
+                &epoch_id,
+                &PrivDataType::FheKeyInfo.to_string(),
+            )
+            .await
+            .unwrap();
+
+        let response = query_key_material_availability(&storage, KMSType::Threshold, vec![])
+            .await
+            .unwrap();
+
+        assert_eq!(response.crs_ids, vec![crs_id.to_string()]);
+        assert_eq!(response.fhe_key_ids, vec![key_id.to_string()]);
+    }
+
+    /// A pre-migration (flat) CRS entry must still be reported, so availability does not regress
+    /// on a storage that has not been migrated yet.
+    #[tokio::test]
+    async fn query_key_material_availability_reports_flat_crs() {
+        use std::str::FromStr;
+
+        let crs_id = RequestId::from_str(
+            "0x00000000000000000000000000000000000000000000000000000000000005b1",
+        )
+        .unwrap();
+
+        let mut storage = RamStorage::new();
+        storage
+            .store_bytes(&[1u8, 2, 3], &crs_id, &PrivDataType::CrsInfo.to_string())
+            .await
+            .unwrap();
+
+        let response = query_key_material_availability(&storage, KMSType::Threshold, vec![])
+            .await
+            .unwrap();
+
+        assert_eq!(response.crs_ids, vec![crs_id.to_string()]);
     }
 }

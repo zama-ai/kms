@@ -321,6 +321,9 @@ impl StorageExt for RamStorage {
 #[cfg(test)]
 pub struct FailingRamStorage {
     available_writes: usize,
+    available_epoch_writes: Option<usize>,
+    corrupt_epoch_writes: bool,
+    skip_epoch_writes: bool,
     inner: RamStorage,
 }
 
@@ -329,12 +332,46 @@ impl FailingRamStorage {
     pub fn new(writes_before_failure: usize) -> Self {
         Self {
             available_writes: writes_before_failure,
+            available_epoch_writes: None,
+            corrupt_epoch_writes: false,
+            skip_epoch_writes: false,
             inner: RamStorage::new(),
         }
     }
 
     pub fn set_available_writes(&mut self, available_writes: usize) {
         self.available_writes = available_writes
+    }
+
+    /// Limits how many epoch-aware writes succeed before they start returning an error.
+    /// `None` (the default) leaves epoch-aware writes unlimited.
+    pub fn set_available_epoch_writes(&mut self, available_epoch_writes: Option<usize>) {
+        self.available_epoch_writes = available_epoch_writes
+    }
+
+    /// When set, epoch-aware byte writes report `Created` but persist truncated data — a write
+    /// that loses bytes silently, detectable only by reading it back.
+    pub fn set_corrupt_epoch_writes(&mut self, corrupt_epoch_writes: bool) {
+        self.corrupt_epoch_writes = corrupt_epoch_writes
+    }
+
+    /// When set, epoch-aware byte writes persist nothing and report
+    /// [`StoreWriteOutcome::SkippedExisting`], as the real backends do when an entry appeared
+    /// after the caller's existence check.
+    pub fn set_skip_epoch_writes(&mut self, skip_epoch_writes: bool) {
+        self.skip_epoch_writes = skip_epoch_writes
+    }
+
+    /// Consumes one epoch-write budget unit, or returns an error if the budget is exhausted.
+    /// A budget of `None` is unlimited and consumes nothing.
+    fn consume_epoch_write(&mut self) -> anyhow::Result<()> {
+        if let Some(remaining) = self.available_epoch_writes.as_mut() {
+            if *remaining < 1 {
+                anyhow::bail!("epoch storage failed!")
+            }
+            *remaining -= 1;
+        }
+        Ok(())
     }
 }
 
@@ -392,6 +429,112 @@ impl Storage for FailingRamStorage {
 
     async fn delete_data(&mut self, data_id: &RequestId, data_type: &str) -> anyhow::Result<()> {
         self.inner.delete_data(data_id, data_type).await
+    }
+}
+
+#[cfg(test)]
+impl StorageReaderExt for FailingRamStorage {
+    async fn read_data_at_epoch<T: DeserializeOwned + Unversionize + Named + Send>(
+        &self,
+        data_id: &RequestId,
+        epoch_id: &EpochId,
+        data_type: &str,
+    ) -> anyhow::Result<T> {
+        self.inner
+            .read_data_at_epoch(data_id, epoch_id, data_type)
+            .await
+    }
+
+    async fn all_epoch_ids_for_data(&self, data_type: &str) -> anyhow::Result<HashSet<EpochId>> {
+        self.inner.all_epoch_ids_for_data(data_type).await
+    }
+
+    async fn data_exists_at_epoch(
+        &self,
+        data_id: &RequestId,
+        epoch_id: &EpochId,
+        data_type: &str,
+    ) -> anyhow::Result<bool> {
+        self.inner
+            .data_exists_at_epoch(data_id, epoch_id, data_type)
+            .await
+    }
+
+    async fn all_data_ids_at_epoch(
+        &self,
+        epoch_id: &EpochId,
+        data_type: &str,
+    ) -> anyhow::Result<HashSet<RequestId>> {
+        self.inner.all_data_ids_at_epoch(epoch_id, data_type).await
+    }
+
+    async fn all_data_ids_from_all_epochs(
+        &self,
+        data_type: &str,
+    ) -> anyhow::Result<HashSet<RequestId>> {
+        all_data_ids_from_all_epochs_impl(self, data_type)
+            .await
+            .map(|(ids, _)| ids)
+    }
+
+    async fn load_bytes_at_epoch(
+        &self,
+        data_id: &RequestId,
+        epoch_id: &EpochId,
+        data_type: &str,
+    ) -> anyhow::Result<Vec<u8>> {
+        self.inner
+            .load_bytes_at_epoch(data_id, epoch_id, data_type)
+            .await
+    }
+}
+
+#[cfg(test)]
+impl StorageExt for FailingRamStorage {
+    async fn store_data_at_epoch<T: Serialize + Versionize + Named + Send + Sync>(
+        &mut self,
+        data: &T,
+        data_id: &RequestId,
+        epoch_id: &EpochId,
+        data_type: &str,
+    ) -> anyhow::Result<StoreWriteOutcome> {
+        self.consume_epoch_write()?;
+        self.inner
+            .store_data_at_epoch(data, data_id, epoch_id, data_type)
+            .await
+    }
+
+    async fn store_bytes_at_epoch(
+        &mut self,
+        bytes: &[u8],
+        data_id: &RequestId,
+        epoch_id: &EpochId,
+        data_type: &str,
+    ) -> anyhow::Result<StoreWriteOutcome> {
+        self.consume_epoch_write()?;
+        if self.skip_epoch_writes {
+            return Ok(StoreWriteOutcome::SkippedExisting);
+        }
+        // Drop the last byte rather than writing nothing, so only a read-back can tell it apart.
+        let to_store = if self.corrupt_epoch_writes {
+            &bytes[..bytes.len().saturating_sub(1)]
+        } else {
+            bytes
+        };
+        self.inner
+            .store_bytes_at_epoch(to_store, data_id, epoch_id, data_type)
+            .await
+    }
+
+    async fn delete_data_at_epoch(
+        &mut self,
+        data_id: &RequestId,
+        epoch_id: &EpochId,
+        data_type: &str,
+    ) -> anyhow::Result<()> {
+        self.inner
+            .delete_data_at_epoch(data_id, epoch_id, data_type)
+            .await
     }
 }
 

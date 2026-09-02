@@ -2,7 +2,8 @@ use crate::consts::{DEFAULT_EPOCH_ID, DEFAULT_MPC_CONTEXT};
 use crate::engine::base::derive_request_id;
 use crate::engine::threshold::service::session::PRSSSetupCombined;
 use crate::vault::storage::{
-    StorageExt, read_context_at_id, read_versioned_at_request_id, store_versioned_at_request_id,
+    StorageExt, StoreWriteOutcome, read_context_at_id, read_versioned_at_request_id,
+    store_versioned_at_request_id,
 };
 use algebra::galois_rings::degree_4::{ResiduePolyF4Z64, ResiduePolyF4Z128};
 use kms_grpc::ContextId;
@@ -119,6 +120,154 @@ where
     // Remove old keys with legacy epoch id.
     remove_old_keys_for_0_13_20(priv_storage, kms_type).await?;
     Ok(())
+}
+
+/// Migrate to 0.14.2
+///
+/// This moves the private CRS metadata to the epoch-aware storage layout, which the 0.13
+/// migrations never covered. See [`migrate_crs_to_0_14_2`] for why this is required.
+pub async fn migrate_to_0_14_2<PrivS>(
+    priv_storage: &mut PrivS,
+    kms_type: KMSType,
+) -> anyhow::Result<()>
+where
+    PrivS: StorageExt + Sync + Send,
+{
+    // Ensure old migration is done
+    migrate_to_0_13_20(priv_storage, kms_type).await?;
+    migrate_crs_to_0_14_2(priv_storage).await?;
+    Ok(())
+}
+
+/// Copy private CRS metadata from the legacy flat path to the epoch-aware path.
+///
+/// Before v0.13, private CRS metadata was stored at `<prefix>/CrsInfo/<crs_id>` with no epoch
+/// component. The 0.13 migrations moved every other private data type to
+/// `<prefix>/<data_type>/<epoch_id>/<data_id>` but never covered [`PrivDataType::CrsInfo`], leaving
+/// pre-0.13 storages with a CRS that the startup loader and `purge_epoch_material` cannot see,
+/// since both enumerate epochs only. Copies go under [`DEFAULT_EPOCH_ID`], where the 0.13
+/// migrations put the FHE key material. Storages created on v0.13 or later have nothing to copy.
+///
+/// **The legacy entry is deliberately kept**, so the node can be downgraded to a release that
+/// reads the flat path; that release then sees the CRS frozen as of this migration. This is only
+/// safe because `write_all` scopes its duplicate check to the path being written, so the retained
+/// entry does not block later epoch-scoped writes such as resharing.
+///
+/// Runs at boot, so it fails loudly rather than leaving the node in an ambiguous state. The copy is
+/// read back byte-for-byte and rolled back if it does not match, since readers resolve CRS metadata
+/// from the epoch-scoped path. An entry already at the target epoch that *differs* from the legacy
+/// one aborts without touching either copy — there is no way to tell which is authoritative. An
+/// identical entry means an earlier run already copied it, and is a no-op.
+///
+/// Public CRS material ([`kms_grpc::rpc_types::PubDataType::CRS`]) is left alone: public data is
+/// shared across epochs and is stored flat by design.
+///
+/// # Returns
+/// * `Ok(copied_count)` - Entries newly copied. Entries an earlier run already copied are not
+///   counted, so a repeat run on a migrated storage returns 0.
+/// * `Err(...)` - Read, write or verification failure, or a conflicting entry at the target epoch.
+///   The legacy entry is never modified.
+async fn migrate_crs_to_0_14_2<PrivS>(priv_storage: &mut PrivS) -> anyhow::Result<usize>
+where
+    PrivS: StorageExt + Sync + Send,
+{
+    let data_type_str = PrivDataType::CrsInfo.to_string();
+    let target_epoch_id: EpochId = *DEFAULT_EPOCH_ID;
+
+    // Only entries directly under the data type directory are legacy.
+    let legacy_crs_ids = priv_storage.all_data_ids(&data_type_str).await?;
+
+    if legacy_crs_ids.is_empty() {
+        tracing::info!("No legacy {data_type_str} entries found to migrate");
+        return Ok(0);
+    }
+
+    tracing::info!(
+        "Found {} legacy {data_type_str} entries to migrate to epoch {target_epoch_id}",
+        legacy_crs_ids.len(),
+    );
+
+    let mut migrated_count = 0;
+
+    for crs_id in legacy_crs_ids {
+        // Raw bytes, to avoid type-specific deserialization issues, as the FHE key migration does.
+        let legacy_data: Vec<u8> = priv_storage.load_bytes(&crs_id, &data_type_str).await?;
+
+        if priv_storage
+            .data_exists_at_epoch(&crs_id, &target_epoch_id, &data_type_str)
+            .await?
+        {
+            // An earlier run, or something else, already wrote here.
+            let existing_data = priv_storage
+                .load_bytes_at_epoch(&crs_id, &target_epoch_id, &data_type_str)
+                .await?;
+            if existing_data != legacy_data {
+                // No way to tell which is authoritative, so abort instead of picking one and
+                // leave both for the operator to inspect.
+                anyhow::bail!(
+                    "Legacy {data_type_str} {crs_id} ({} bytes) differs from the entry already \
+stored at epoch {target_epoch_id} ({} bytes). Refusing to start: this conflict needs manual \
+resolution.",
+                    legacy_data.len(),
+                    existing_data.len(),
+                );
+            }
+            tracing::debug!(
+                "{data_type_str} {crs_id} is already present at epoch {target_epoch_id}, nothing to copy"
+            );
+            continue;
+        }
+
+        let outcome = priv_storage
+            .store_bytes_at_epoch(&legacy_data, &crs_id, &target_epoch_id, &data_type_str)
+            .await?;
+        if outcome != StoreWriteOutcome::Created {
+            // An entry raced in after the check above. Bail before the read-back: its rollback
+            // must never delete an entry this migration did not write.
+            anyhow::bail!(
+                "Storing {data_type_str} {crs_id} at epoch {target_epoch_id} reported {outcome:?} \
+instead of writing the data, so another entry appeared concurrently. Nothing was modified."
+            );
+        }
+
+        // Guards against a write that reports success without persisting the expected bytes.
+        let written_data = priv_storage
+            .load_bytes_at_epoch(&crs_id, &target_epoch_id, &data_type_str)
+            .await?;
+        if written_data != legacy_data {
+            // Leaving the bad copy would poison the storage and make every later run abort on
+            // the conflict branch, so roll it back and fail on this attempt instead.
+            priv_storage
+                .delete_data_at_epoch(&crs_id, &target_epoch_id, &data_type_str)
+                .await
+                .inspect_err(|e| {
+                    tracing::error!(
+                        "Could not remove the unverified copy of {data_type_str} {crs_id} at epoch \
+{target_epoch_id} ({e}). Storage now holds a corrupt epoch-scoped entry alongside the intact \
+legacy entry and needs manual repair."
+                    )
+                })?;
+            anyhow::bail!(
+                "Verification of copied {data_type_str} {crs_id} at epoch {target_epoch_id} \
+failed: read back {} bytes, expected {}. The unverified copy was removed.",
+                written_data.len(),
+                legacy_data.len(),
+            );
+        }
+
+        migrated_count += 1;
+
+        tracing::info!(
+            "Copied {data_type_str} {crs_id} from the legacy flat path to epoch {target_epoch_id}, \
+keeping the legacy entry"
+        );
+    }
+
+    tracing::info!(
+        "Successfully copied {migrated_count} {data_type_str} entries to the epoch-aware format"
+    );
+
+    Ok(migrated_count)
 }
 
 /// Migrate FHE key material from legacy storage format to epoch-aware format.
@@ -573,14 +722,17 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::engine::base::CrsGenMetadata;
     use crate::engine::context::{ContextInfo, NodeInfo, SoftwareVersion};
     use crate::vault::storage::file::FileStorage;
-    use crate::vault::storage::ram::{self, RamStorage};
+    use crate::vault::storage::ram::{self, FailingRamStorage, RamStorage};
     use crate::vault::storage::{
-        Storage, StorageExt, StorageReader, StorageReaderExt, StorageType, store_context_at_id,
+        Storage, StorageExt, StorageReader, StorageReaderExt, StorageType,
+        read_all_data_from_all_epochs_versioned, store_context_at_id,
         store_versioned_at_request_id,
     };
     use kms_grpc::RequestId;
+    use std::collections::HashMap;
     use std::str::FromStr;
 
     /// Test migration of threshold FHE keys (FheKeyInfo)
@@ -2139,6 +2291,447 @@ mod tests {
             .unwrap();
     }
 
+    // ── Tests for migrate_crs_to_0_14_2 ──
+
+    /// CRS id that does not collide with any epoch id, to avoid path conflicts.
+    fn crs_test_id(last_byte: &str) -> RequestId {
+        RequestId::from_str(&format!(
+            "0x00000000000000000000000000000000000000000000000000000000000000{last_byte}"
+        ))
+        .unwrap()
+    }
+
+    /// Two legacy CRS entries are copied to the default epoch and their flat copies remain.
+    pub async fn test_migrate_crs_flat_to_epoch<S: StorageExt + Sync + Send>(storage: &mut S) {
+        let crs_id_1 = crs_test_id("c1");
+        let crs_id_2 = crs_test_id("c2");
+        let data_type = PrivDataType::CrsInfo.to_string();
+        let target_epoch_id: EpochId = *DEFAULT_EPOCH_ID;
+
+        let crs_data_1 = vec![1, 2, 3, 4];
+        let crs_data_2 = vec![5, 6, 7];
+
+        storage
+            .store_bytes(&crs_data_1, &crs_id_1, &data_type)
+            .await
+            .unwrap();
+        storage
+            .store_bytes(&crs_data_2, &crs_id_2, &data_type)
+            .await
+            .unwrap();
+
+        let migrated_count = migrate_crs_to_0_14_2(storage).await.unwrap();
+        assert_eq!(migrated_count, 2);
+
+        for (crs_id, expected) in [(crs_id_1, crs_data_1), (crs_id_2, crs_data_2)] {
+            // The copy is present at the epoch-aware path and byte-identical.
+            assert!(
+                storage
+                    .data_exists_at_epoch(&crs_id, &target_epoch_id, &data_type)
+                    .await
+                    .unwrap()
+            );
+            assert_eq!(
+                storage
+                    .load_bytes_at_epoch(&crs_id, &target_epoch_id, &data_type)
+                    .await
+                    .unwrap(),
+                expected
+            );
+            // The legacy entry is deliberately retained so the node stays downgradable.
+            assert_eq!(
+                storage.load_bytes(&crs_id, &data_type).await.unwrap(),
+                expected
+            );
+        }
+    }
+
+    /// A storage with no legacy CRS entries is left untouched.
+    pub async fn test_migrate_crs_no_legacy_data<S: StorageExt + Sync + Send>(storage: &mut S) {
+        let migrated_count = migrate_crs_to_0_14_2(storage).await.unwrap();
+        assert_eq!(migrated_count, 0);
+    }
+
+    /// Running the migration twice is a no-op the second time.
+    pub async fn test_migrate_crs_idempotent<S: StorageExt + Sync + Send>(storage: &mut S) {
+        let crs_id = crs_test_id("c3");
+        let data_type = PrivDataType::CrsInfo.to_string();
+        let target_epoch_id: EpochId = *DEFAULT_EPOCH_ID;
+        let crs_data = vec![9, 9, 9];
+
+        storage
+            .store_bytes(&crs_data, &crs_id, &data_type)
+            .await
+            .unwrap();
+
+        assert_eq!(migrate_crs_to_0_14_2(storage).await.unwrap(), 1);
+        // The legacy entry is still there, so the second run sees it again and must recognise the
+        // copy it made rather than counting or rewriting it.
+        assert_eq!(migrate_crs_to_0_14_2(storage).await.unwrap(), 0);
+
+        assert_eq!(
+            storage
+                .load_bytes_at_epoch(&crs_id, &target_epoch_id, &data_type)
+                .await
+                .unwrap(),
+            crs_data
+        );
+        assert_eq!(
+            storage.load_bytes(&crs_id, &data_type).await.unwrap(),
+            crs_data
+        );
+    }
+
+    /// A *different* entry already sits at the epoch path. The migration must abort so the node
+    /// does not boot in an undefined state, and neither copy may be touched.
+    pub async fn test_migrate_crs_aborts_on_conflict<S: StorageExt + Sync + Send>(storage: &mut S) {
+        let crs_id = crs_test_id("c5");
+        let data_type = PrivDataType::CrsInfo.to_string();
+        let target_epoch_id: EpochId = *DEFAULT_EPOCH_ID;
+        let legacy_data = vec![1, 1, 1];
+        let conflicting_data = vec![2, 2, 2];
+
+        storage
+            .store_bytes(&legacy_data, &crs_id, &data_type)
+            .await
+            .unwrap();
+        storage
+            .store_bytes_at_epoch(&conflicting_data, &crs_id, &target_epoch_id, &data_type)
+            .await
+            .unwrap();
+
+        let err = migrate_crs_to_0_14_2(storage)
+            .await
+            .expect_err("a conflicting epoch entry must abort the migration");
+        assert!(
+            err.to_string().contains("needs manual resolution"),
+            "unexpected error: {err}"
+        );
+
+        // Both copies survive untouched so a human can resolve the conflict.
+        assert_eq!(
+            storage.load_bytes(&crs_id, &data_type).await.unwrap(),
+            legacy_data
+        );
+        assert_eq!(
+            storage
+                .load_bytes_at_epoch(&crs_id, &target_epoch_id, &data_type)
+                .await
+                .unwrap(),
+            conflicting_data
+        );
+    }
+
+    /// Other private data types are not touched by the CRS migration.
+    pub async fn test_migrate_crs_leaves_other_types_alone<S: StorageExt + Sync + Send>(
+        storage: &mut S,
+    ) {
+        let data_id = crs_test_id("c6");
+        let key_type = PrivDataType::FheKeyInfo.to_string();
+        let key_data = vec![7, 7];
+
+        storage
+            .store_bytes(&key_data, &data_id, &key_type)
+            .await
+            .unwrap();
+
+        assert_eq!(migrate_crs_to_0_14_2(storage).await.unwrap(), 0);
+
+        assert_eq!(
+            storage.load_bytes(&data_id, &key_type).await.unwrap(),
+            key_data
+        );
+    }
+
+    /// The server startup loader enumerates CRS through `all_epoch_ids_for_data` +
+    /// `all_data_ids_at_epoch` (see `read_all_data_from_all_epochs_versioned`), which only ever
+    /// looks at epoch-scoped entries. A flat entry is therefore invisible to it; the migration is
+    /// what makes the CRS reachable at boot.
+    pub async fn test_migrate_crs_makes_crs_visible_to_startup_loader<
+        S: StorageExt + Sync + Send,
+    >(
+        storage: &mut S,
+    ) {
+        let crs_id = crs_test_id("cb");
+        let data_type = PrivDataType::CrsInfo.to_string();
+        let target_epoch_id: EpochId = *DEFAULT_EPOCH_ID;
+        // A real, versioned `CrsGenMetadata`, so the assertions below cover deserialization and
+        // not just the presence of some bytes at the right path.
+        let crs_meta = CrsGenMetadata::new(
+            crs_id,
+            vec![7u8; 32],
+            128,
+            vec![9u8; 8],
+            b"startup-loader-fixture".to_vec(),
+        );
+
+        // Pre-0.13 layout: metadata directly under the data type, with no epoch component.
+        store_versioned_at_request_id(storage, &crs_id, &crs_meta, &data_type)
+            .await
+            .unwrap();
+
+        // Before: the loader reads nothing at all, even though the entry exists on disk.
+        let before: HashMap<(RequestId, EpochId), CrsGenMetadata> =
+            read_all_data_from_all_epochs_versioned(storage, &data_type)
+                .await
+                .unwrap();
+        assert!(
+            before.is_empty(),
+            "the flat entry must be invisible to the startup loader before migrating"
+        );
+
+        assert_eq!(migrate_crs_to_0_14_2(storage).await.unwrap(), 1);
+
+        // After: the loader finds it under the default epoch and deserializes it unchanged.
+        let after: HashMap<(RequestId, EpochId), CrsGenMetadata> =
+            read_all_data_from_all_epochs_versioned(storage, &data_type)
+                .await
+                .unwrap();
+        assert_eq!(after.len(), 1);
+        assert_eq!(
+            after.get(&(crs_id, target_epoch_id)),
+            Some(&crs_meta),
+            "migrated CRS metadata must round-trip byte-for-byte through the loader"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_migrate_crs_makes_crs_visible_to_startup_loader_ram() {
+        test_migrate_crs_makes_crs_visible_to_startup_loader(&mut RamStorage::new()).await;
+    }
+
+    #[tokio::test]
+    async fn test_migrate_crs_makes_crs_visible_to_startup_loader_file() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let mut storage = FileStorage::new(Some(temp_dir.path()), StorageType::PRIV, None).unwrap();
+        test_migrate_crs_makes_crs_visible_to_startup_loader(&mut storage).await;
+    }
+
+    #[tokio::test]
+    async fn test_migrate_crs_flat_to_epoch_ram() {
+        test_migrate_crs_flat_to_epoch(&mut RamStorage::new()).await;
+    }
+
+    #[tokio::test]
+    async fn test_migrate_crs_no_legacy_data_ram() {
+        test_migrate_crs_no_legacy_data(&mut RamStorage::new()).await;
+    }
+
+    #[tokio::test]
+    async fn test_migrate_crs_idempotent_ram() {
+        test_migrate_crs_idempotent(&mut RamStorage::new()).await;
+    }
+
+    #[tokio::test]
+    async fn test_migrate_crs_aborts_on_conflict_ram() {
+        test_migrate_crs_aborts_on_conflict(&mut RamStorage::new()).await;
+    }
+
+    #[tokio::test]
+    async fn test_migrate_crs_leaves_other_types_alone_ram() {
+        test_migrate_crs_leaves_other_types_alone(&mut RamStorage::new()).await;
+    }
+
+    #[tokio::test]
+    async fn test_migrate_crs_flat_to_epoch_file() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let mut storage = FileStorage::new(Some(temp_dir.path()), StorageType::PRIV, None).unwrap();
+        test_migrate_crs_flat_to_epoch(&mut storage).await;
+    }
+
+    #[tokio::test]
+    async fn test_migrate_crs_idempotent_file() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let mut storage = FileStorage::new(Some(temp_dir.path()), StorageType::PRIV, None).unwrap();
+        test_migrate_crs_idempotent(&mut storage).await;
+    }
+
+    #[tokio::test]
+    async fn test_migrate_crs_aborts_on_conflict_file() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let mut storage = FileStorage::new(Some(temp_dir.path()), StorageType::PRIV, None).unwrap();
+        test_migrate_crs_aborts_on_conflict(&mut storage).await;
+    }
+
+    /// The copy must be verified after migration. An epoch-aware write that
+    /// reports success without persisting the expected bytes must abort the migration, leave the
+    /// legacy entry intact, and remove the unverified copy so the next start does not read corrupt
+    /// CRS metadata.
+    #[tokio::test]
+    async fn test_migrate_crs_rejects_corrupted_copy() {
+        let crs_id = crs_test_id("c7");
+        let data_type = PrivDataType::CrsInfo.to_string();
+        let target_epoch_id: EpochId = *DEFAULT_EPOCH_ID;
+        let crs_data = vec![3, 1, 4, 1, 5];
+
+        let mut storage = FailingRamStorage::new(100);
+        storage
+            .store_bytes(&crs_data, &crs_id, &data_type)
+            .await
+            .unwrap();
+        storage.set_corrupt_epoch_writes(true);
+
+        assert!(migrate_crs_to_0_14_2(&mut storage).await.is_err());
+
+        // The legacy entry survives, so nothing was lost.
+        assert_eq!(
+            storage.load_bytes(&crs_id, &data_type).await.unwrap(),
+            crs_data
+        );
+        // The corrupt copy is gone, so readers cannot pick it up and a retry starts from a clean
+        // state rather than hitting the conflict branch.
+        assert!(
+            !storage
+                .data_exists_at_epoch(&crs_id, &target_epoch_id, &data_type)
+                .await
+                .unwrap()
+        );
+    }
+
+    /// After a rejected copy has been rolled back, a retry against healthy storage succeeds.
+    #[tokio::test]
+    async fn test_migrate_crs_retry_succeeds_after_rejected_copy() {
+        let crs_id = crs_test_id("ca");
+        let data_type = PrivDataType::CrsInfo.to_string();
+        let target_epoch_id: EpochId = *DEFAULT_EPOCH_ID;
+        let crs_data = vec![8, 6, 7, 5, 3, 0, 9];
+
+        let mut storage = FailingRamStorage::new(100);
+        storage
+            .store_bytes(&crs_data, &crs_id, &data_type)
+            .await
+            .unwrap();
+
+        storage.set_corrupt_epoch_writes(true);
+        assert!(migrate_crs_to_0_14_2(&mut storage).await.is_err());
+
+        // Storage recovers; the retry must not be blocked by leftovers from the failed attempt.
+        storage.set_corrupt_epoch_writes(false);
+        assert_eq!(migrate_crs_to_0_14_2(&mut storage).await.unwrap(), 1);
+
+        assert_eq!(
+            storage.load_bytes(&crs_id, &data_type).await.unwrap(),
+            crs_data
+        );
+        assert_eq!(
+            storage
+                .load_bytes_at_epoch(&crs_id, &target_epoch_id, &data_type)
+                .await
+                .unwrap(),
+            crs_data
+        );
+    }
+
+    /// The store declines to overwrite and reports `SkippedExisting` rather than failing, meaning
+    /// an entry raced in after the existence check. The migration must abort without touching the
+    /// legacy entry, and without rolling back an epoch-scoped entry it did not write.
+    #[tokio::test]
+    async fn test_migrate_crs_aborts_when_write_is_skipped() {
+        let crs_id = crs_test_id("cc");
+        let data_type = PrivDataType::CrsInfo.to_string();
+        let target_epoch_id: EpochId = *DEFAULT_EPOCH_ID;
+        let crs_data = vec![1, 6, 1, 8];
+
+        let mut storage = FailingRamStorage::new(100);
+        storage
+            .store_bytes(&crs_data, &crs_id, &data_type)
+            .await
+            .unwrap();
+        storage.set_skip_epoch_writes(true);
+
+        let err = migrate_crs_to_0_14_2(&mut storage)
+            .await
+            .expect_err("a skipped write must abort the migration");
+        assert!(
+            err.to_string().contains("Nothing was modified"),
+            "unexpected error: {err}"
+        );
+
+        assert_eq!(
+            storage.load_bytes(&crs_id, &data_type).await.unwrap(),
+            crs_data
+        );
+        assert!(
+            !storage
+                .data_exists_at_epoch(&crs_id, &target_epoch_id, &data_type)
+                .await
+                .unwrap()
+        );
+    }
+
+    /// A hard failure on the epoch-aware write aborts the migration without deleting anything.
+    #[tokio::test]
+    async fn test_migrate_crs_keeps_flat_when_copy_write_fails() {
+        let crs_id = crs_test_id("c8");
+        let data_type = PrivDataType::CrsInfo.to_string();
+        let target_epoch_id: EpochId = *DEFAULT_EPOCH_ID;
+        let crs_data = vec![2, 7, 1, 8];
+
+        let mut storage = FailingRamStorage::new(100);
+        storage
+            .store_bytes(&crs_data, &crs_id, &data_type)
+            .await
+            .unwrap();
+        storage.set_available_epoch_writes(Some(0));
+
+        assert!(migrate_crs_to_0_14_2(&mut storage).await.is_err());
+
+        // The legacy entry survives and no epoch-aware entry was created.
+        assert_eq!(
+            storage.load_bytes(&crs_id, &data_type).await.unwrap(),
+            crs_data
+        );
+        assert!(
+            !storage
+                .data_exists_at_epoch(&crs_id, &target_epoch_id, &data_type)
+                .await
+                .unwrap()
+        );
+    }
+
+    // ── Tests for migrate_to_0_14_2 (orchestrator) ──
+
+    #[tokio::test]
+    async fn test_migrate_to_0_14_2_migrates_crs() {
+        let crs_id = crs_test_id("c9");
+        let data_type = PrivDataType::CrsInfo.to_string();
+        let target_epoch_id: EpochId = *DEFAULT_EPOCH_ID;
+        let crs_data = vec![1, 4, 1, 4];
+
+        let mut storage = RamStorage::new();
+        storage
+            .store_bytes(&crs_data, &crs_id, &data_type)
+            .await
+            .unwrap();
+
+        migrate_to_0_14_2(&mut storage, KMSType::Threshold)
+            .await
+            .unwrap();
+
+        assert_eq!(
+            storage.load_bytes(&crs_id, &data_type).await.unwrap(),
+            crs_data
+        );
+        assert_eq!(
+            storage
+                .load_bytes_at_epoch(&crs_id, &target_epoch_id, &data_type)
+                .await
+                .unwrap(),
+            crs_data
+        );
+    }
+
+    #[tokio::test]
+    async fn test_migrate_to_0_14_2_empty_storage() {
+        let mut storage = RamStorage::new();
+        migrate_to_0_14_2(&mut storage, KMSType::Threshold)
+            .await
+            .unwrap();
+        migrate_to_0_14_2(&mut storage, KMSType::Centralized)
+            .await
+            .unwrap();
+    }
+
     // S3 storage tests
     #[cfg(feature = "s3_tests")]
     mod s3_tests {
@@ -2153,6 +2746,26 @@ mod tests {
             )
             .await;
             test_migrate_legacy_fhe_keys_threshold(&mut storage).await;
+        }
+
+        #[tokio::test]
+        async fn test_migrate_crs_flat_to_epoch_s3() {
+            let mut storage = create_s3_storage(
+                StorageType::PRIV,
+                std::stringify!(test_migrate_crs_flat_to_epoch_s3),
+            )
+            .await;
+            test_migrate_crs_flat_to_epoch(&mut storage).await;
+        }
+
+        #[tokio::test]
+        async fn test_migrate_crs_aborts_on_conflict_s3() {
+            let mut storage = create_s3_storage(
+                StorageType::PRIV,
+                std::stringify!(test_migrate_crs_aborts_on_conflict_s3),
+            )
+            .await;
+            test_migrate_crs_aborts_on_conflict(&mut storage).await;
         }
 
         #[tokio::test]

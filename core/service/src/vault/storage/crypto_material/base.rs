@@ -322,6 +322,11 @@ where
     }
 
     /// General method for handling the storage of both public and private material along with the backup.
+    ///
+    /// Existing data is never overwritten: the call returns [`StorageError::Duplicate`] instead.
+    /// The check is scoped to the path being written — an epoch-scoped write only conflicts with
+    /// data at that same epoch, so a legacy entry at the flat path (kept for downgrades) does not
+    /// block it. A write with no epoch checks the flat path as before.
     pub(in crate::vault::storage::crypto_material) async fn write_all<
         'a,
         PubData: Serialize + Versionize + Named + Send + Sync,
@@ -355,10 +360,13 @@ where
         {
             return Err(StorageError::Duplicate);
         }
-        if self
-            .data_exists(req_id, &pub_type, &priv_type)
-            .await
-            .map_err(|e| StorageError::Other(e.to_string()))?
+        // Only guard the flat path for writes that target it; epoch-scoped writes are covered
+        // above and must not be blocked by a retained legacy entry.
+        if epoch_id.is_none()
+            && self
+                .data_exists(req_id, &pub_type, &priv_type)
+                .await
+                .map_err(|e| StorageError::Other(e.to_string()))?
         {
             return Err(StorageError::Duplicate);
         }
