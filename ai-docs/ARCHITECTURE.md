@@ -28,7 +28,7 @@ A single deployment mode is chosen at startup via the server configuration
 (centralized vs. threshold). The gRPC surface is shared between modes; a few
 RPCs (preprocessing, reshare) are only meaningful in threshold mode.
 
-The configuration of the set of servers is handled through MPC contexts, which are also managed by the FHEVM.
+The configuration of the set of servers is handled through MPC contexts, which are also managed by the FHEVM. Threshold KMS deployments using Nitro Enclave remote attestation reject both new and stored contexts whose PCR allowlist is empty; stored contexts that fail validation are skipped during startup. Non-enclave and mocked-enclave deployments permit an empty allowlist.
 
 The system supports automatic backup, facilitated either through AWS KMS, or through a custom threshold protocol where Custodians hold keys that can be used to help KMS nodes decrypt encrypted backups. The settings and administration for this is also managed through gRPC calls with the notion of Custodian contexts.
 
@@ -83,7 +83,7 @@ The service crate is the main surface area. Key subdirectories under
   [material_integrity.rs](core/service/src/engine/material_integrity.rs) (digest
   primitives over raw stored bytes, depended on by both the storage layer and the
   startup checks) and
-  [public_material_verification.rs](core/service/src/engine/public_material_verification.rs)
+  [storage_material_verification.rs](core/service/src/engine/storage_material_verification.rs)
   (the startup orchestration built on top of them — see
   [Boot-time storage verification](#boot-time-storage-verification)),
   [validation_non_wasm.rs](core/service/src/engine/validation_non_wasm.rs) and
@@ -196,7 +196,9 @@ The primary service is `CoreServiceEndpoint`. Its RPCs group into:
   If cleanup succeeds, it forgets the epoch; otherwise, it keeps the epoch registered so that deletion can be retried. 
   `DestroyMpcContext` carries
   the context's epoch IDs and erases their secret shares (cascading to the
-  existing per-epoch deletion) before forgetting the context, so retiring a
+  existing per-epoch deletion) before forgetting the context and removing its
+  TLS trust-root references. Trust roots shared with another live context are
+  retained. This ensures retiring a
   party set leaves no usable key shares behind; the kms-connector is the source
   of truth for which epochs belong to a context. In-memory lifecycle leases
   serialize creation against destruction: `NewMpcEpoch` holds shared leases for
@@ -257,7 +259,8 @@ in server config and unified behind `KeychainProxy`
   seed phrase. A custodian context must already be installed before a node
   can be switched to this mode; the usual flow is to boot on the AWS KMS
   keychain, provision custodians, then restart against the secret-sharing
-  keychain.
+  keychain. New custodian contexts are rejected unless every custodian
+  encryption key and every custodian verification key is unique.
 
 Custodian workflows are driven through the
 [kms-custodian](core/service/src/bin/kms-custodian.rs) CLI and the
@@ -305,6 +308,9 @@ backup failure does not purge the primary material.
 
 Every node checks its storage during service construction, before it serves any request.
 Two independent things happen.
+Boot-time verification lets us ensure the public and private storage are
+consistent, and detect any malicious behaviour and/or misconfiguration before
+the KMS party boots up.
 
 **The backup vault is repaired.** `update_backup_vault(false, OP_BOOT)` copies anything
 present in private storage but missing from the backup vault, so a vault that moved or lost
@@ -319,8 +325,8 @@ so it is the reference.
 The code is split by level. [material_integrity.rs](core/service/src/engine/material_integrity.rs)
 holds the digest primitives — pure functions over raw stored bytes, with no storage or
 orchestration — so the vault layer can reuse them without depending on startup logic.
-[public_material_verification.rs](core/service/src/engine/public_material_verification.rs)
-sits above it and owns the startup orchestration, entered through `verify_public_material`.
+[storage_material_verification.rs](core/service/src/engine/storage_material_verification.rs)
+sits above it and owns the startup orchestration, entered through `verify_storage_material`.
 The checks follow three rules:
 
 1. **Private storage is the reference.** Iteration is always "for each entry in private
@@ -338,6 +344,7 @@ What it verifies, and how failures are treated:
 | Check | On failure |
 |---|---|
 | Published keysets and CRSes are present, and their raw stored bytes hash to the digests in `KeyGenMetadata` / `CrsGenMetadata` | boot fails |
+| Current private keygen and CRS metadata with a stored domain reconstruct a valid EIP-712 signature from the node's signing key | boot fails |
 | `VerfKey` and `VerfAddress` at `SIGNING_KEY_ID` match the key derived from the private `SigningKey` | boot fails |
 
 Custodian backup readiness is deliberately *not* part of this. It is a property of the vault's
@@ -352,13 +359,14 @@ the **raw stored bytes**, never over a serialization of a decoded value: a tfhe 
 since the material was generated would alter the bytes and report intact material as corrupt.
 Legacy metadata has no digest, so its public objects receive a raw presence check only.
 
-Two limits are worth knowing. `external_signature`, and the ECDSA entry of `signatures`, sign
-an EIP-712 hash whose `Eip712Domain` arrives on the originating gRPC request and is never
-persisted, so those signatures cannot be reconstructed at boot and are skipped — and since
-`signatures` defaults to empty, the signature check is a no-op for material generated without
-an explicitly requested post-quantum or Ed25519 scheme. And `PubDataType::DecompressionKey`
-has no private-storage counterpart at all (`write_decompression_key` persists no private
-data), so a published decompression key cannot be verified.
+`external_signature` and the ECDSA entry of `signatures` sign an EIP-712 hash built from an
+`Eip712Domain` that arrives from a gRPC request. At boot, current private keygen and CRS metadata
+with a stored domain reconstruct their signed Solidity payload and must recover the node's
+signing address. Older metadata versions upgrade with no domain and stay unverifiable.
+
+`PubDataType::DecompressionKey` has no private-storage counterpart at all
+(`write_decompression_key` persists no private data), so a published decompression key cannot be
+verified at startup.
 
 ## Backward compatibility
 

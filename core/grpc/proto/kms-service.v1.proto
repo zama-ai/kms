@@ -463,8 +463,9 @@ service CoreServiceEndpoint {
   // ## Pre-condition:
   // * The KMS _must_ be setup to use the custodian-based backup mechanism.
   // * `context_id` in `new_context` must be present, valid, fresh and unique [`RequestId`].
-  // * `custodian_nodes` in `new_context` must be present and contain at least 2*`threshold` valid `CustodianSetupMessage`s.
-  // * `threshold` in `new_context` must be a positive integer less than the amount of entries in `custodian_nodes`
+  // * `custodian_nodes` in `new_context` must be present and contain at least 2*`threshold` + 1 valid `CustodianSetupMessage`s.
+  // * Every custodian encryption key and every custodian verification key must be unique within `new_context`.
+  // * `threshold` in `new_context` must be a positive integer satisfying 2*`threshold` < the amount of entries in `custodian_nodes`.
   // ## Post-condition:
   // * The `context_id` in `request` now represents a new custodian context.
   // * A backup of all private data has been constructed, and secret shared recovery information is persisted in the public storage.

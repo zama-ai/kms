@@ -82,6 +82,7 @@ pub(crate) enum StorageOutcome {
     FailedAfterMutation,
 }
 
+#[allow(dead_code, reason = "used in the next stacked PR")]
 impl StorageOutcome {
     /// Whether the operation left the stored bytes different from how it found them.
     pub(crate) fn changed_storage(&self) -> bool {
