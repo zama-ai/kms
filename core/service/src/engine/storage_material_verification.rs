@@ -19,7 +19,10 @@
 //!    planted by someone with write access to the storage. The node cannot tell these apart, so
 //!    once the integrity checks pass, [`report_unexpected_public_material`] lists public storage
 //!    and warns about every entry that private storage does not account for.
-//! 3. **Read-only.** Nothing here writes to, repairs, or re-fetches either storage.
+//! 3. **Read-only.** Nothing here writes to, repairs, or re-fetches either storage. Repair
+//!    happens before these checks run: on threshold nodes,
+//!    [`crate::engine::public_material_sync`] fetches missing or digest-mismatched keysets and
+//!    CRSes from peers, and everything it writes is re-verified here from scratch.
 //!
 //! Private storage gets its own checks in [`verify_private_storage_layout`]. It belongs to this
 //! node alone, so nothing legitimate lands there by accident. Three states fail boot: key material
@@ -262,18 +265,7 @@ pub async fn verify_storage_material<S>(
 where
     S: StorageReader + Sync,
 {
-    // Every metadata entry must declare the ID it is stored under before anything else uses it.
-    // Otherwise metadata filed under the wrong ID could pass whenever the bytes published under
-    // that ID happen to match its digests.
-    for (key_id, metadata) in key_entries {
-        ensure_keygen_metadata_id_matches(key_id, metadata)?;
-    }
-    for (crs_id, metadata) in crs_entries {
-        ensure_crs_metadata_id_matches(crs_id, metadata)?;
-    }
-
-    let expected_address = PublicSigKey::from_sk(signing_key).address();
-    verify_private_metadata(key_entries, crs_entries, expected_address)?;
+    verify_private_metadata(key_entries, crs_entries, signing_key)?;
 
     for data_type in PubDataType::iter() {
         match data_type {
@@ -332,6 +324,28 @@ where
     Ok(unexpected)
 }
 
+/// Verify the IDs and signatures that authenticate private metadata.
+///
+/// Call this before using private metadata as the source of truth for public-storage repair.
+pub(crate) fn verify_private_metadata(
+    key_entries: &[(RequestId, KeyGenMetadata)],
+    crs_entries: &HashMap<RequestId, CrsGenMetadata>,
+    signing_key: &PrivateSigKey,
+) -> anyhow::Result<()> {
+    // Every metadata entry must declare the ID it is stored under before anything else uses it.
+    // Otherwise metadata filed under the wrong ID could pass whenever the bytes published under
+    // that ID happen to match its digests.
+    for (key_id, metadata) in key_entries {
+        ensure_keygen_metadata_id_matches(key_id, metadata)?;
+    }
+    for (crs_id, metadata) in crs_entries {
+        ensure_crs_metadata_id_matches(crs_id, metadata)?;
+    }
+
+    let expected_address = PublicSigKey::from_sk(signing_key).address();
+    verify_metadata_signatures(key_entries, crs_entries, expected_address)
+}
+
 /// Verify the signatures that authenticate current metadata in private storage.
 ///
 /// We cannot authenticate the signatures for older metadata since the EIP-712
@@ -341,7 +355,7 @@ where
 ///
 /// Assumes every entry has already been checked against the ID it is stored under; see
 /// [`verify_keygen_metadata_signature`] for why that ordering matters.
-fn verify_private_metadata(
+fn verify_metadata_signatures(
     key_entries: &[(RequestId, KeyGenMetadata)],
     crs_entries: &HashMap<RequestId, CrsGenMetadata>,
     expected_address: Address,

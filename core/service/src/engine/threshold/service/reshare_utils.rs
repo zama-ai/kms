@@ -5,24 +5,19 @@ use crate::{
             verify_compressed_key_digest_from_bytes, verify_crs_digest_from_bytes,
             verify_key_digest_from_bytes,
         },
+        public_material_sync::fetch_verified_public_bytes_from_peers,
         utils::MetricedError,
     },
     vault::storage::{
-        Storage, StorageExt, StorageReader, StorageType,
-        crypto_material::ThresholdCryptoMaterialStorage,
-        read_context_at_id,
-        s3::{
-            ReadOnlyS3StorageGetter, build_anonymous_s3_client, find_region_from_s3_url, split_url,
-        },
+        Storage, StorageExt, StorageReader, crypto_material::ThresholdCryptoMaterialStorage,
+        read_context_at_id, s3::ReadOnlyS3StorageGetter,
     },
 };
 use kms_grpc::{ContextId, RequestId, rpc_types::PubDataType};
 use observability::metrics_names::OP_NEW_EPOCH;
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use tfhe::{ServerKey, xof_key_set::CompressedXofKeySet, zk::CompactPkeCrs};
 use threshold_execution::tfhe_internals::public_keysets::FhePubKeySet;
-
-const ERR_FAILED_TO_FETCH_PUBLIC_MATERIALS: &str = "Failed to fetch public materials";
 
 /// Enum to represent verified public materials that can be either uncompressed or compressed.
 /// This allows resharing to work with both standard keys (ServerKey + PublicKey) and
@@ -92,162 +87,66 @@ async fn fetch_public_fhe_materials_from_peers<
     // fetch the context info
     let context = fetch_context_from_storage(crypto_storage, context_id).await?;
 
-    let mut errors = Vec::new();
-    for node in context.mpc_nodes {
-        // so simplify logic, it's ok to iterate over myself too
-        //
-        // the public storage URL consists of the bucket name and the URL
-        // we need to parse this information accordingly
-        let (protocol, domain, bucket) = split_url(&node.public_storage_url)?;
-        let url = format!("{protocol}{domain}");
-        let region = find_region_from_s3_url(&node.public_storage_url)?;
-
-        // this is not an operation that is frequently used, so we can create a new s3 client each time
-        let s3_client = build_anonymous_s3_client(&url, region).await?;
-        let pub_storage = ro_storage_getter.get_storage(
-            s3_client,
-            bucket,
-            StorageType::PUB,
-            node.public_storage_prefix.as_deref(),
-        )?;
-
-        if is_compressed {
-            // Handle compressed keys
-            let expected_compressed_digest = key_digests
-                .get(&PubDataType::CompressedXofKeySet)
-                .ok_or_else(|| anyhow::anyhow!("missing digest for compressed xof keyset"))?;
-
-            let compressed_keyset_bytes = pub_storage
-                .load_bytes(key_id, &PubDataType::CompressedXofKeySet.to_string())
-                .await;
-
-            match compressed_keyset_bytes {
-                Ok(compressed_keyset_bytes) => {
-                    match verify_compressed_key_digest_from_bytes(
-                        &compressed_keyset_bytes,
-                        expected_compressed_digest,
-                    ) {
-                        Ok(()) => {
-                            let compressed_keyset: CompressedXofKeySet =
-                                tfhe::safe_serialization::safe_deserialize(
-                                    std::io::Cursor::new(&compressed_keyset_bytes),
-                                    crate::consts::SAFE_SER_SIZE_LIMIT,
-                                )
-                                .map_err(|e| {
-                                    anyhow::anyhow!(
-                                        "Failed to deserialize compressed xof keyset: {}",
-                                        e
-                                    )
-                                })?;
-
-                            return Ok(VerifiedPublicMaterial::Compressed(compressed_keyset));
-                        }
-                        Err(e) => {
-                            let msg =
-                                format!("Verification failed from peer {}: {}", node.party_id, e);
-                            tracing::warn!(msg);
-                            errors.push(msg);
-                            continue;
-                        }
-                    }
-                }
-                Err(e) => {
-                    let msg = format!(
-                        "{} from peer {}: {e:?}",
-                        ERR_FAILED_TO_FETCH_PUBLIC_MATERIALS, node.party_id
-                    );
-                    tracing::warn!(msg);
-                    errors.push(msg);
-                }
-            }
-        } else {
-            // Handle uncompressed keys
-            let expected_public_key_digest = key_digests
-                .get(&PubDataType::PublicKey)
-                .ok_or_else(|| anyhow::anyhow!("missing digest for public key"))?;
-
-            let expected_server_key_digest = key_digests
-                .get(&PubDataType::ServerKey)
-                .ok_or_else(|| anyhow::anyhow!("missing digest for server key"))?;
-
-            // Load raw bytes from storage to verify digests before deserializing.
-            // This avoids issues with version upgrades where re-serialization produces different bytes.
-            let public_key_bytes = pub_storage
-                .load_bytes(key_id, &PubDataType::PublicKey.to_string())
-                .await;
-
-            let server_key_bytes = pub_storage
-                .load_bytes(key_id, &PubDataType::ServerKey.to_string())
-                .await;
-
-            match (public_key_bytes, server_key_bytes) {
-                (Ok(public_key_bytes), Ok(server_key_bytes)) => {
-                    // Verify digests using raw bytes
-                    match verify_key_digest_from_bytes(
-                        &server_key_bytes,
-                        &public_key_bytes,
-                        expected_server_key_digest,
-                        expected_public_key_digest,
-                    ) {
-                        Ok(()) => {
-                            // Only deserialize after digest verification passes
-                            let public_key: tfhe::CompactPublicKey =
-                                tfhe::safe_serialization::safe_deserialize(
-                                    std::io::Cursor::new(&public_key_bytes),
-                                    crate::consts::SAFE_SER_SIZE_LIMIT,
-                                )
-                                .map_err(|e| {
-                                    anyhow::anyhow!("Failed to deserialize public key: {}", e)
-                                })?;
-
-                            let server_key: ServerKey = tfhe::safe_serialization::safe_deserialize(
-                                std::io::Cursor::new(&server_key_bytes),
-                                crate::consts::SAFE_SER_SIZE_LIMIT,
-                            )
-                            .map_err(|e| {
-                                anyhow::anyhow!("Failed to deserialize server key: {}", e)
-                            })?;
-
-                            return Ok(VerifiedPublicMaterial::Uncompressed(FhePubKeySet {
-                                public_key,
-                                server_key,
-                            }));
-                        }
-                        Err(e) => {
-                            let msg =
-                                format!("Verification failed from peer {}: {}", node.party_id, e);
-                            tracing::warn!(msg);
-                            errors.push(msg);
-                            continue;
-                        }
-                    }
-                }
-                (Err(e), _) => {
-                    let msg = format!(
-                        "{} from peer {}: {e:?}",
-                        ERR_FAILED_TO_FETCH_PUBLIC_MATERIALS, node.party_id
-                    );
-                    tracing::warn!(msg);
-                    errors.push(msg);
-                }
-                (_, Err(e)) => {
-                    let msg = format!(
-                        "{} from peer {}: {e:?}",
-                        ERR_FAILED_TO_FETCH_PUBLIC_MATERIALS, node.party_id
-                    );
-                    tracing::warn!(msg);
-                    errors.push(msg);
-                }
-            }
-        }
+    let wanted_types: &[PubDataType] = if is_compressed {
+        &[PubDataType::CompressedXofKeySet]
+    } else {
+        &[PubDataType::PublicKey, PubDataType::ServerKey]
+    };
+    let mut expected_digests = BTreeMap::new();
+    for data_type in wanted_types {
+        let digest = key_digests
+            .get(data_type)
+            .ok_or_else(|| anyhow::anyhow!("missing digest for {data_type}"))?;
+        expected_digests.insert(*data_type, digest.clone());
     }
 
-    anyhow::bail!(
-        "Failed to fetch valid public materials from any peer, error count: {}, first error: {:?}, last error: {:?}",
-        errors.len(),
-        errors[0],
-        errors[errors.len() - 1],
-    );
+    let mut verified = fetch_verified_public_bytes_from_peers(
+        &context.mpc_nodes,
+        key_id,
+        &expected_digests,
+        ro_storage_getter,
+    )
+    .await?;
+
+    // Only deserialize bytes whose digest already verified. Assumes that if the digest matches,
+    // deserialization will either succeed or fail for all peers, so it's ok to error out here.
+    // The expect calls cannot fire: the fetcher returns exactly the requested entries.
+    if is_compressed {
+        let compressed_keyset_bytes = verified
+            .remove(&PubDataType::CompressedXofKeySet)
+            .expect("fetcher returns every requested entry");
+        let compressed_keyset: CompressedXofKeySet = tfhe::safe_serialization::safe_deserialize(
+            std::io::Cursor::new(&compressed_keyset_bytes),
+            crate::consts::SAFE_SER_SIZE_LIMIT,
+        )
+        .map_err(|e| anyhow::anyhow!("Failed to deserialize compressed xof keyset: {}", e))?;
+
+        Ok(VerifiedPublicMaterial::Compressed(compressed_keyset))
+    } else {
+        let public_key_bytes = verified
+            .remove(&PubDataType::PublicKey)
+            .expect("fetcher returns every requested entry");
+        let server_key_bytes = verified
+            .remove(&PubDataType::ServerKey)
+            .expect("fetcher returns every requested entry");
+
+        let public_key: tfhe::CompactPublicKey = tfhe::safe_serialization::safe_deserialize(
+            std::io::Cursor::new(&public_key_bytes),
+            crate::consts::SAFE_SER_SIZE_LIMIT,
+        )
+        .map_err(|e| anyhow::anyhow!("Failed to deserialize public key: {}", e))?;
+
+        let server_key: ServerKey = tfhe::safe_serialization::safe_deserialize(
+            std::io::Cursor::new(&server_key_bytes),
+            crate::consts::SAFE_SER_SIZE_LIMIT,
+        )
+        .map_err(|e| anyhow::anyhow!("Failed to deserialize server key: {}", e))?;
+
+        Ok(VerifiedPublicMaterial::Uncompressed(FhePubKeySet {
+            public_key,
+            server_key,
+        }))
+    }
 }
 
 /// Attempt to get and verify the public materials needed for resharing.
@@ -472,65 +371,26 @@ async fn fetch_public_crs_materials_from_peers<
     // fetch the context info
     let context = fetch_context_from_storage(crypto_storage, context_id).await?;
 
-    let mut errors = Vec::new();
-    for node in context.mpc_nodes {
-        // to simplify logic, it's ok to iterate over myself too
-        //
-        // the public storage URL consists of the bucket name and the URL
-        // we need to parse this information accordingly
-        let (protocol, domain, bucket) = split_url(&node.public_storage_url)?;
-        let url = format!("{protocol}{domain}");
-        let region = find_region_from_s3_url(&node.public_storage_url)?;
+    let expected_digests = BTreeMap::from([(PubDataType::CRS, crs_digests.to_vec())]);
+    let mut verified = fetch_verified_public_bytes_from_peers(
+        &context.mpc_nodes,
+        crs_id,
+        &expected_digests,
+        ro_storage_getter,
+    )
+    .await?;
 
-        // this is not an operation that is frequently used, so we can create a new s3 client each time
-        let s3_client = build_anonymous_s3_client(&url, region).await?;
-        let pub_storage = ro_storage_getter.get_storage(
-            s3_client,
-            bucket,
-            StorageType::PUB,
-            node.public_storage_prefix.as_deref(),
-        )?;
-
-        let crs_bytes = pub_storage
-            .load_bytes(crs_id, &PubDataType::CRS.to_string())
-            .await;
-        match crs_bytes {
-            Ok(crs_bytes) => match verify_crs_digest_from_bytes(&crs_bytes, crs_digests) {
-                Ok(()) => {
-                    // Assumes that if the digest match deserialize will either succeed or fail for all peers,
-                    // so it's ok to error out if this fails
-                    return tfhe::safe_serialization::safe_deserialize(
-                        std::io::Cursor::new(&crs_bytes),
-                        crate::consts::SAFE_SER_SIZE_LIMIT,
-                    )
-                    .map_err(|e| anyhow::anyhow!("Failed to deserialize CRS: {}", e));
-                }
-                Err(e) => {
-                    let msg = format!(
-                        "CRS digest verification failed from peer {}: {}",
-                        node.party_id, e
-                    );
-                    tracing::warn!(msg);
-                    errors.push(msg);
-                }
-            },
-            Err(e) => {
-                let msg = format!(
-                    "{} from peer {}: {e:?}",
-                    ERR_FAILED_TO_FETCH_PUBLIC_MATERIALS, node.party_id
-                );
-                tracing::error!(msg);
-                errors.push(msg);
-            }
-        }
-    }
-
-    anyhow::bail!(
-        "Failed to fetch valid crs materials from any peer, error count: {}, first error: {:?}, last error: {:?}",
-        errors.len(),
-        errors[0],
-        errors[errors.len() - 1],
-    );
+    // Assumes that if the digest match deserialize will either succeed or fail for all peers,
+    // so it's ok to error out if this fails. The expect cannot fire: the fetcher returns
+    // exactly the requested entries.
+    let crs_bytes = verified
+        .remove(&PubDataType::CRS)
+        .expect("fetcher returns every requested entry");
+    tfhe::safe_serialization::safe_deserialize(
+        std::io::Cursor::new(&crs_bytes),
+        crate::consts::SAFE_SER_SIZE_LIMIT,
+    )
+    .map_err(|e| anyhow::anyhow!("Failed to deserialize CRS: {}", e))
 }
 
 pub(crate) async fn get_verified_crs_material<
@@ -607,7 +467,7 @@ mod tests {
     use crate::engine::context::SoftwareVersion;
     use crate::engine::context::{NodeInfo, SchemeDigests};
     use crate::engine::material_integrity::ERR_SERVER_KEY_DIGEST_MISMATCH;
-    use crate::engine::threshold::service::reshare_utils::ERR_FAILED_TO_FETCH_PUBLIC_MATERIALS;
+    use crate::engine::public_material_sync::ERR_FAILED_TO_FETCH_PUBLIC_MATERIALS;
     use crate::engine::threshold::service::reshare_utils::fetch_public_fhe_materials_from_peers;
     use crate::engine::threshold::service::reshare_utils::get_verified_fhe_public_materials;
     use crate::vault::storage::crypto_material::ThresholdCryptoMaterialStorage;
@@ -627,43 +487,43 @@ mod tests {
     use tfhe::ServerKey;
     use tfhe::shortint::ClassicPBSParameters;
 
+    use crate::vault::storage::s3::split_url;
+
     #[test]
     fn test_split_url() {
         // Virtual-hosted style: bucket is a subdomain
-        let (protocol, domain, bucket) = super::split_url(
-            &"https://zama-zws-dev-tkms-b6q87.s3.eu-west-1.amazonaws.com/".to_string(),
-        )
-        .unwrap();
+        let (protocol, domain, bucket) =
+            split_url(&"https://zama-zws-dev-tkms-b6q87.s3.eu-west-1.amazonaws.com/".to_string())
+                .unwrap();
         assert_eq!(protocol.as_str(), "https://");
         assert_eq!(domain.as_str(), "s3.eu-west-1.amazonaws.com");
         assert_eq!(bucket.as_str(), "zama-zws-dev-tkms-b6q87");
 
         // Path-style: bucket is in the URL path
         let (protocol, domain, bucket) =
-            super::split_url(&"http://localhost:9000/kms".to_string()).unwrap();
+            split_url(&"http://localhost:9000/kms".to_string()).unwrap();
         assert_eq!(protocol.as_str(), "http://");
         assert_eq!(domain.as_str(), "localhost:9000");
         assert_eq!(bucket.as_str(), "kms");
 
         // MinIO mock endpoint with path bucket
         let (protocol, domain, bucket) =
-            super::split_url(&"http://dev-s3-mock:9000/kms".to_string()).unwrap();
+            split_url(&"http://dev-s3-mock:9000/kms".to_string()).unwrap();
         assert_eq!(protocol.as_str(), "http://");
         assert_eq!(domain.as_str(), "dev-s3-mock:9000");
         assert_eq!(bucket.as_str(), "kms");
 
         // file:// URL (used in isolated tests)
         let (protocol, domain, bucket) =
-            super::split_url(&"file:///tmp/test-material".to_string()).unwrap();
+            split_url(&"file:///tmp/test-material".to_string()).unwrap();
         assert_eq!(protocol.as_str(), "file://");
         assert_eq!(domain.as_str(), "");
         assert_eq!(bucket.as_str(), "/tmp/test-material");
 
         // Path-style S3 with region
-        let (protocol, domain, bucket) = super::split_url(
-            &"https://s3.us-west-1.amazonaws.com/zama-zws-dev-tkms-b6q87/".to_string(),
-        )
-        .unwrap();
+        let (protocol, domain, bucket) =
+            split_url(&"https://s3.us-west-1.amazonaws.com/zama-zws-dev-tkms-b6q87/".to_string())
+                .unwrap();
         assert_eq!(protocol.as_str(), "https://");
         assert_eq!(domain.as_str(), "s3.us-west-1.amazonaws.com");
         assert_eq!(bucket.as_str(), "zama-zws-dev-tkms-b6q87");

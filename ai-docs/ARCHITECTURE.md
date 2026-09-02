@@ -82,9 +82,12 @@ The service crate is the main surface area. Key subdirectories under
   [keyset_configuration.rs](core/service/src/engine/keyset_configuration.rs),
   [material_integrity.rs](core/service/src/engine/material_integrity.rs) (digest
   primitives over raw stored bytes, depended on by both the storage layer and the
-  startup checks) and
+  startup checks),
+  [public_material_sync.rs](core/service/src/engine/public_material_sync.rs) (the
+  digest-verified peer fetcher shared with resharing, and the boot-time repair of public
+  storage built on it) and
   [storage_material_verification.rs](core/service/src/engine/storage_material_verification.rs)
-  (the startup orchestration built on top of them — see
+  (the read-only startup checks on top of both — see
   [Boot-time storage verification](#boot-time-storage-verification)),
   [validation_non_wasm.rs](core/service/src/engine/validation_non_wasm.rs) and
   [validation_wasm.rs](core/service/src/engine/validation_wasm.rs) (the
@@ -293,7 +296,7 @@ and
 ## Boot-time storage verification
 
 Every node checks its storage during service construction, before it serves any request.
-Three independent things happen.
+Four independent things happen.
 Boot-time verification lets us ensure the public and private storage are
 consistent, and detect any malicious behaviour and/or misconfiguration before
 the KMS party boots up.
@@ -317,11 +320,26 @@ before the checks, and then handed to `SessionMaker::new_initialized`. In recove
 signing key) the private checks are skipped, like the public ones: that mode exists to repair
 storage.
 
-**Public storage is verified but never touched.** Public storage can drift out of a
-consistent state: a misconfigured bucket or prefix can point a node at the wrong material, and
-writes are not atomic, so a crash mid-operation can leave an entry missing, truncated, or
-stale. Private storage holds the digests and signatures describing what should be published,
-so it is the reference.
+**Missing or corrupt public material is repaired from peers (threshold nodes only).** Public
+storage can drift out of a consistent state: a misconfigured bucket or prefix can point a node
+at the wrong material, and writes are not atomic, so a crash mid-operation can leave an entry
+missing, truncated, or stale. Private storage holds the digests and signatures describing what
+should be published, so it is the reference. Every party in an MPC context publishes the same
+keysets and CRSes, so after private metadata validation and before the public checks run,
+`sync_public_material_from_peers`
+([public_material_sync.rs](core/service/src/engine/public_material_sync.rs)) compares every
+digest that current private metadata records against the raw bytes in public storage and
+downloads any missing or mismatched entry from the public storage of the peers in the
+material's epoch context (URLs from the `ContextInfo` in private storage, tried in random
+order). Downloaded bytes are accepted only when they hash to the recorded digest and are stored
+verbatim, so the verification that follows re-checks them independently. Material that cannot
+be validated is never fetched: legacy metadata (no digest), decompression keys (no private
+counterpart), and node-specific material (a peer publishes its own verification keys, CA
+certificate, and recovery material, not this node's). A needed entry that no peer can supply
+fails boot. Centralized nodes skip the sync — no peer publishes their material — and recovery
+mode skips it along with the other checks.
+
+**Public storage is then verified, and the verification itself never touches it.**
 
 The code is split by level. [material_integrity.rs](core/service/src/engine/material_integrity.rs)
 holds the digest primitives — pure functions over raw stored bytes, with no storage or
@@ -338,13 +356,14 @@ and `verify_storage_material`. The checks follow three rules:
    write access. The node cannot tell these apart, so once the integrity checks pass,
    `report_unexpected_public_material` lists public storage and warns about every entry that
    private storage does not account for.
-3. **Read-only.** Nothing is written, repaired, or fetched from peers.
+3. **Read-only.** The verification writes nothing; every repair happens in the peer-sync step
+   above, and whatever that step wrote is re-checked here from scratch.
 
 What it verifies, and how failures are treated:
 
 | Check | On failure |
 |---|---|
-| Published keysets and CRSes are present, and their raw stored bytes hash to the digests in `KeyGenMetadata` / `CrsGenMetadata` | boot fails |
+| Published keysets and CRSes are present, and their raw stored bytes hash to the digests in `KeyGenMetadata` / `CrsGenMetadata` | repaired from peers before verification when possible (threshold only); otherwise boot fails |
 | Current private keygen and CRS metadata with a stored domain reconstruct a valid EIP-712 signature from the node's signing key | boot fails |
 | `VerfKey` and `VerfAddress` at `SIGNING_KEY_ID` match the key derived from the private `SigningKey` | boot fails |
 | Every entry in a `PubDataType` folder is accounted for by private storage or by a fixed-ID convention | warning, boot continues |

@@ -13,6 +13,7 @@
 
 use crate::engine::base::{DSEP_PUBDATA_CRS, DSEP_PUBDATA_KEY};
 use hashing::hash_element;
+use kms_grpc::rpc_types::PubDataType;
 
 pub(crate) const ERR_SERVER_KEY_DIGEST_MISMATCH: &str = "Server key digest mismatch";
 pub(crate) const ERR_PUBLIC_KEY_DIGEST_MISMATCH: &str = "Public key digest mismatch";
@@ -71,6 +72,39 @@ pub(crate) fn verify_compressed_key_digest_from_bytes(
         anyhow::bail!(ERR_COMPRESSED_KEYSET_DIGEST_MISMATCH);
     }
     Ok(())
+}
+
+/// Verify raw public-material bytes against an expected digest, dispatching on the data type.
+///
+/// Keyset material (`PublicKey`, `ServerKey`, `CompressedXofKeySet`) hashes under
+/// `DSEP_PUBDATA_KEY` and the CRS under `DSEP_PUBDATA_CRS`. Every other [`PubDataType`] has no
+/// digest recorded in private storage, so its bytes cannot be validated and the call fails.
+/// The match is exhaustive on purpose: a new data type must decide here whether it is
+/// digest-validatable.
+pub(crate) fn verify_public_material_digest_from_bytes(
+    data_type: PubDataType,
+    bytes: &[u8],
+    expected_digest: &[u8],
+) -> anyhow::Result<()> {
+    #[allow(deprecated)]
+    match data_type {
+        PubDataType::PublicKey => verify_public_key_digest_from_bytes(bytes, expected_digest),
+        PubDataType::ServerKey => verify_server_key_digest_from_bytes(bytes, expected_digest),
+        PubDataType::CompressedXofKeySet => {
+            verify_compressed_key_digest_from_bytes(bytes, expected_digest)
+        }
+        PubDataType::CRS => verify_crs_digest_from_bytes(bytes, expected_digest),
+        PubDataType::PublicKeyMetadata
+        | PubDataType::VerfKey
+        | PubDataType::VerfAddress
+        | PubDataType::DecompressionKey
+        | PubDataType::CACert
+        | PubDataType::RecoveryMaterial
+        | PubDataType::TypedVerfKey
+        | PubDataType::TypedVerfAddress => {
+            anyhow::bail!("public material of type {data_type} is not digest-validatable")
+        }
+    }
 }
 
 /// Verify CRS digest using raw bytes from storage.
@@ -191,6 +225,57 @@ mod tests {
 
         assert!(verify_public_key_digest_from_bytes(bytes, &crs_digest(bytes)).is_err());
         assert!(verify_crs_digest_from_bytes(bytes, &key_digest(bytes)).is_err());
+    }
+
+    #[test]
+    fn material_digest_dispatch_accepts_every_validatable_type() {
+        let bytes = b"some public material";
+        for data_type in [
+            PubDataType::PublicKey,
+            PubDataType::ServerKey,
+            PubDataType::CompressedXofKeySet,
+        ] {
+            verify_public_material_digest_from_bytes(data_type, bytes, &key_digest(bytes))
+                .expect("key-domain digest must match");
+        }
+        verify_public_material_digest_from_bytes(PubDataType::CRS, bytes, &crs_digest(bytes))
+            .expect("CRS-domain digest must match");
+    }
+
+    #[test]
+    fn material_digest_dispatch_rejects_altered_bytes() {
+        let bytes = b"some public material";
+        let err = verify_public_material_digest_from_bytes(
+            PubDataType::ServerKey,
+            b"altered",
+            &key_digest(bytes),
+        )
+        .unwrap_err();
+        assert!(
+            err.to_string().contains(ERR_SERVER_KEY_DIGEST_MISMATCH),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn material_digest_dispatch_rejects_non_validatable_types() {
+        // These types have no digest in private storage; asking to validate them is a bug in
+        // the caller and must fail even when the digest would match under some domain.
+        let bytes = b"some public material";
+        for data_type in [
+            PubDataType::DecompressionKey,
+            PubDataType::CACert,
+            PubDataType::RecoveryMaterial,
+            PubDataType::TypedVerfKey,
+        ] {
+            let err =
+                verify_public_material_digest_from_bytes(data_type, bytes, &key_digest(bytes))
+                    .unwrap_err();
+            assert!(
+                err.to_string().contains("not digest-validatable"),
+                "unexpected error for {data_type}: {err}"
+            );
+        }
     }
 
     #[test]

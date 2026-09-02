@@ -73,8 +73,10 @@ use crate::{
         },
         context_manager::{ThresholdContextManager, ensure_default_threshold_context_in_storage},
         prepare_shutdown_signals,
+        public_material_sync::sync_public_material_from_peers,
         storage_material_verification::{
-            PrivateLayout, verify_private_storage_layout, verify_storage_material,
+            PrivateLayout, verify_private_metadata, verify_private_storage_layout,
+            verify_storage_material,
         },
         threshold::{
             service::{
@@ -93,7 +95,7 @@ use crate::{
         storage::{
             Storage, StorageExt, crypto_material::ThresholdCryptoMaterialStorage,
             read_all_data_from_all_epochs_versioned, read_all_data_versioned,
-            select_data_from_max_epoch,
+            s3::RealReadOnlyS3StorageGetter, select_data_from_max_epoch,
         },
     },
 };
@@ -508,7 +510,7 @@ pub type RealThresholdKms<PubS, PrivS> = ThresholdKms<
 #[expect(clippy::too_many_arguments)]
 pub async fn new_real_threshold_kms<PubS, PrivS, F>(
     config: CoreConfig,
-    public_storage: PubS,
+    mut public_storage: PubS,
     mut private_storage: PrivS,
     backup_storage: Option<Vault>,
     security_module: Option<Arc<SecurityModuleProxy>>,
@@ -562,12 +564,16 @@ where
         .collect();
 
     // load crs_info (roughly hashes of CRS) from storage
-    let crs_info: HashMap<RequestId, CrsGenMetadata> = select_data_from_max_epoch(
+    let crs_info_versioned: HashMap<(RequestId, EpochId), CrsGenMetadata> =
         read_all_data_from_all_epochs_versioned(
             &private_storage,
             &PrivDataType::CrsInfo.to_string(),
         )
-        .await?,
+        .await?;
+    let crs_info: HashMap<RequestId, CrsGenMetadata> = select_data_from_max_epoch(
+        crs_info_versioned
+            .iter()
+            .map(|((id, epoch_id), metadata)| ((*id, *epoch_id), metadata.clone())),
     );
 
     // The epoch registry: every epoch this node serves, keyed by the ID it is stored under. It is
@@ -585,9 +591,10 @@ where
         .map(|(epoch_id, epoch_data)| (*epoch_id, epoch_data.context_id))
         .collect();
 
-    // Verify the private layout, then public material and recovery validation material, when the
-    // signing key is available. Recovery mode only supports backup recovery operations, so it
-    // skips every startup check. Private storage is the reference; extra material in public
+    // Verify the private layout and metadata, then sync missing or digest-mismatched public
+    // material from peers, then verify public material and recovery validation material, when
+    // the signing key is available. Recovery mode only supports backup recovery operations, so
+    // it skips every startup check. Private storage is the reference; extra material in public
     // storage is reported as a warning.
     match base_kms.sig_key() {
         Ok(signing_key) => {
@@ -598,6 +605,25 @@ where
                 },
             )
             .await?;
+            // Validate the metadata before it becomes the authority for public-storage repair.
+            let key_metadata_versioned: HashMap<(RequestId, EpochId), KeyGenMetadata> =
+                key_info_versioned
+                    .iter()
+                    .map(|((id, epoch_id), info)| ((*id, *epoch_id), info.meta_data.clone()))
+                    .collect();
+            verify_private_metadata(&key_info, &crs_info, signing_key.as_ref())?;
+            // The sync runs before verification so that the read-only verification
+            // independently re-checks anything written here.
+            let sync_report = sync_public_material_from_peers(
+                &mut public_storage,
+                &private_storage,
+                &key_metadata_versioned,
+                &crs_info_versioned,
+                &epoch_contexts,
+                &RealReadOnlyS3StorageGetter {},
+            )
+            .await?;
+            tracing::info!("Synced public material against peers at boot: {sync_report}");
             verify_storage_material(
                 &public_storage,
                 &key_info,
@@ -609,8 +635,9 @@ where
         }
         Err(_) => {
             tracing::warn!(
-                "No signing key available (recovery mode): skipping private storage, public \
-                 material and recovery validation material verification"
+                "No signing key available (recovery mode): skipping private storage \
+                 verification, the public material sync from peers, and public material and \
+                 recovery validation material verification"
             );
         }
     }
