@@ -7,7 +7,13 @@ set -uo pipefail
 namespace="${1:-kms-ci}"
 interval="${2:-5}"
 tmp_root="$(mktemp -d)"
-trap 'rm -rf "${tmp_root}"' EXIT
+
+cleanup() {
+  trap - EXIT INT TERM
+  rm -rf "${tmp_root}"
+}
+trap cleanup EXIT
+trap 'exit 0' INT TERM
 
 printf 'timestamp\tpod\tworkflow_node\tnode\tzone\tinstance_type\tnodepool\n'
 for _attempt in {1..180}; do

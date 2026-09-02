@@ -28,7 +28,7 @@ A single deployment mode is chosen at startup via the server configuration
 (centralized vs. threshold). The gRPC surface is shared between modes; a few
 RPCs (preprocessing, reshare) are only meaningful in threshold mode.
 
-The configuration of the set of servers is handled through MPC contexts, which are also managed by the FHEVM.
+The configuration of the set of servers is handled through MPC contexts, which are also managed by the FHEVM. Threshold KMS deployments using Nitro Enclave remote attestation reject both new and stored contexts whose PCR allowlist is empty; stored contexts that fail validation are skipped during startup. Non-enclave and mocked-enclave deployments permit an empty allowlist.
 
 The system supports automatic backup, facilitated either through AWS KMS, or through a custom threshold protocol where Custodians hold keys that can be used to help KMS nodes decrypt encrypted backups. The settings and administration for this is also managed through gRPC calls with the notion of Custodian contexts.
 
@@ -196,7 +196,9 @@ The primary service is `CoreServiceEndpoint`. Its RPCs group into:
   If cleanup succeeds, it forgets the epoch; otherwise, it keeps the epoch registered so that deletion can be retried. 
   `DestroyMpcContext` carries
   the context's epoch IDs and erases their secret shares (cascading to the
-  existing per-epoch deletion) before forgetting the context, so retiring a
+  existing per-epoch deletion) before forgetting the context and removing its
+  TLS trust-root references. Trust roots shared with another live context are
+  retained. This ensures retiring a
   party set leaves no usable key shares behind; the kms-connector is the source
   of truth for which epochs belong to a context. In-memory lifecycle leases
   serialize creation against destruction: `NewMpcEpoch` holds shared leases for
@@ -257,7 +259,8 @@ in server config and unified behind `KeychainProxy`
   seed phrase. A custodian context must already be installed before a node
   can be switched to this mode; the usual flow is to boot on the AWS KMS
   keychain, provision custodians, then restart against the secret-sharing
-  keychain.
+  keychain. New custodian contexts are rejected unless every custodian
+  encryption key and every custodian verification key is unique.
 
 Custodian workflows are driven through the
 [kms-custodian](core/service/src/bin/kms-custodian.rs) CLI and the
