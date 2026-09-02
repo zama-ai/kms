@@ -445,7 +445,7 @@ pub async fn get_client_verification_key<S: Storage>(storage: &S) -> anyhow::Res
 
 /// Persist `verf_key` under an explicit handle and folder, in whichever concrete
 /// verification-key type its scheme uses.
-pub async fn store_verification_key_at<S: Storage>(
+pub async fn store_verf_key_at<S: Storage>(
     storage: &mut S,
     req_id: &RequestId,
     folder: PubDataType,
@@ -473,7 +473,7 @@ pub async fn store_verification_key_at<S: Storage>(
 
 /// Read a signing `scheme` verification key from a handle and folder, and tag it
 /// back up into a [`UnifiedPublicSigKey`].
-pub async fn read_verification_key_at<S: StorageReader>(
+pub async fn read_verf_key_at<S: StorageReader>(
     storage: &S,
     req_id: &RequestId,
     folder: PubDataType,

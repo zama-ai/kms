@@ -40,8 +40,8 @@ use crate::cryptography::signing::UnifiedPublicSigKey;
 use crate::cryptography::signing::seed::RootSigningSeed;
 use crate::engine::base::compute_handle;
 use crate::vault::storage::crypto_material::{
-    get_core_root_signing_seed, get_rng, log_data_exists, log_storage_success,
-    read_verification_key_at, store_verification_key_at,
+    get_core_root_signing_seed, get_rng, log_data_exists, log_storage_success, read_verf_key_at,
+    store_verf_key_at,
 };
 use crate::vault::storage::{
     Storage, StorageReader, StorageType, delete_at_request_id, file::FileStorage,
@@ -200,14 +200,14 @@ where
         // may still be missing is the root the *other* schemes derive from.
         let seed = ensure_root_signing_seed(pub_storage, priv_storage, &mut rng).await?;
         let sk = sk.clone().with_root_seed(seed);
-        ensure_all_verification_material(pub_storage, &sk).await?;
+        ensure_all_verf_material(pub_storage, &sk).await?;
 
         return Ok(false);
     }
     // Reject a storage that still holds verification material.
     // We already checked that no signing key exists so if verification material
     // exist it means inconsistent storage.
-    ensure_no_verification_material(pub_storage).await?;
+    ensure_no_verif_material(pub_storage).await?;
     ensure_no_root_signing_seed(priv_storage).await?;
 
     if !signing_keys_map.is_empty() {
@@ -220,7 +220,7 @@ where
     let sk = generate_and_store_signing_key_material(priv_storage, &mut rng, false).await?;
 
     // Persist every scheme's verification material, ECDSA's included.
-    ensure_all_verification_material(pub_storage, &sk)
+    ensure_all_verf_material(pub_storage, &sk)
         .await
         .map_err(|e| anyhow::anyhow!("Failed to store scheme verification material: {e}"))?;
 
@@ -298,7 +298,7 @@ where
         return Ok(seed);
     }
 
-    if non_ecdsa_scheme_material_exists(pub_storage).await? {
+    if non_legacy_verf_material_exists(pub_storage).await? {
         return Err(anyhow_error_and_log(format!(
             "public storage already holds non-ECDSA verification material, but the {} object \
              under the handle {} is missing.",
@@ -384,8 +384,7 @@ impl MaterialSlot {
         verf_key: &UnifiedPublicSigKey,
     ) -> anyhow::Result<bool> {
         if self.holds_key() {
-            let stored =
-                read_verification_key_at(storage, &self.req_id, self.folder, self.scheme).await?;
+            let stored = read_verf_key_at(storage, &self.req_id, self.folder, self.scheme).await?;
             Ok(&stored == verf_key)
         } else {
             let stored = read_text_at_request_id(storage, &self.req_id, &self.data_type()).await?;
@@ -400,7 +399,7 @@ impl MaterialSlot {
         verf_key: &UnifiedPublicSigKey,
     ) -> anyhow::Result<()> {
         if self.holds_key() {
-            store_verification_key_at(storage, &self.req_id, self.folder, verf_key).await
+            store_verf_key_at(storage, &self.req_id, self.folder, verf_key).await
         } else {
             store_text_at_request_id(
                 storage,
@@ -516,7 +515,7 @@ where
 /// Nothing is ever overwritten. Anything already published has to agree with `sk`,
 /// and *every* slot is checked before *any* is written, so a mismatch leaves
 /// storage exactly as it was rather than half-updated.
-pub async fn ensure_all_verification_material<PubS>(
+pub async fn ensure_all_verf_material<PubS>(
     pub_storage: &mut PubS,
     sk: &PrivateSigKey,
 ) -> anyhow::Result<()>
@@ -548,7 +547,7 @@ where
 }
 
 /// Validate that no verification material (including legacy ECDSA) is present.
-pub async fn ensure_no_verification_material<PubS>(pub_storage: &PubS) -> anyhow::Result<()>
+pub async fn ensure_no_verif_material<PubS>(pub_storage: &PubS) -> anyhow::Result<()>
 where
     PubS: StorageReader,
 {
@@ -562,7 +561,7 @@ where
 
 /// Checks whether public storage holds verification material for any scheme other than
 /// ECDSA.
-async fn non_ecdsa_scheme_material_exists<PubS>(pub_storage: &PubS) -> anyhow::Result<bool>
+async fn non_legacy_verf_material_exists<PubS>(pub_storage: &PubS) -> anyhow::Result<bool>
 where
     PubS: StorageReader,
 {
@@ -577,9 +576,7 @@ where
 /// purge the per-scheme layout alone and check that it is rebuilt. Production code
 /// wipes the whole identity with [`delete_published_verification_material`].
 #[cfg(test)]
-pub async fn delete_non_legacy_verification_material<PubS>(
-    pub_storage: &mut PubS,
-) -> anyhow::Result<()>
+pub async fn delete_non_legacy_verf_material<PubS>(pub_storage: &mut PubS) -> anyhow::Result<()>
 where
     PubS: Storage,
 {
@@ -590,7 +587,7 @@ where
 }
 
 /// Delete every verification object a node publishes, legacy ECDSA-only pair included.
-pub async fn delete_all_verification_material<PubS>(pub_storage: &mut PubS) -> anyhow::Result<()>
+pub async fn delete_all_verf_material<PubS>(pub_storage: &mut PubS) -> anyhow::Result<()>
 where
     PubS: Storage,
 {
@@ -1096,7 +1093,7 @@ where
         let sk = sk.clone().with_root_seed(seed);
 
         // Even if the signing key exists, its verification material might not
-        ensure_all_verification_material(pub_storage, &sk)
+        ensure_all_verf_material(pub_storage, &sk)
             .await
             .map_err(|e| anyhow::anyhow!("Party {party_id}: {e}"))?;
 
@@ -1114,7 +1111,7 @@ where
     // Reject a storage that still holds verification material.
     // We already checked that no signing key exists so if verification material
     // exist it means inconsistent storage.
-    ensure_no_verification_material(pub_storage)
+    ensure_no_verif_material(pub_storage)
         .await
         .map_err(|e| anyhow::anyhow!("Party {party_id}: {e}"))?;
     ensure_no_root_signing_seed(priv_storage)
@@ -1135,7 +1132,7 @@ where
 
     // Generate CA certificate
     ensure_ca_cert_exists(pub_storage, &sk, subject, tls_wildcard).await?;
-    ensure_all_verification_material(pub_storage, &sk)
+    ensure_all_verf_material(pub_storage, &sk)
         .await
         .map_err(|e| {
             anyhow::anyhow!(
@@ -1631,21 +1628,19 @@ pub fn max_threshold(amount_parties: usize) -> usize {
 #[cfg(test)]
 mod tests {
     use super::{
-        CURRENT_VERF_MATERIAL_TYPES, LEGACY_VERF_MATERIAL_TYPES,
-        delete_non_legacy_verification_material, ensure_all_verification_material,
-        ensure_central_server_signing_keys_exist, ensure_no_verification_material,
-        ensure_threshold_server_signing_key_exists,
+        CURRENT_VERF_MATERIAL_TYPES, LEGACY_VERF_MATERIAL_TYPES, delete_non_legacy_verf_material,
+        ensure_all_verf_material, ensure_central_server_signing_keys_exist,
+        ensure_no_verif_material, ensure_threshold_server_signing_key_exists,
     };
     use crate::consts::{SIGNING_KEY_ID, signing_material_id};
     use crate::cryptography::signatures::{PrivateSigKey, PublicSigKey, gen_sig_keys};
     use crate::cryptography::signing::seed::RootSigningSeed;
     use crate::cryptography::signing::{HasSigningScheme, SigningSchemeType, unified_verify};
     use crate::util::key_setup::{
-        all_verf_material_slots, delete_all_verification_material, non_legacy_verf_material_slots,
+        all_verf_material_slots, delete_all_verf_material, non_legacy_verf_material_slots,
     };
     use crate::vault::storage::crypto_material::{
-        get_core_root_signing_seed, get_core_signing_key, read_verification_key_at,
-        store_verification_key_at,
+        get_core_root_signing_seed, get_core_signing_key, read_verf_key_at, store_verf_key_at,
     };
     use crate::vault::storage::ram::RamStorage;
     use crate::vault::storage::{
@@ -1694,9 +1689,9 @@ mod tests {
         sk.with_root_seed(RootSigningSeed::random(rng))
     }
 
-    /// Asserts every scheme's canonical verification key and address, ECDSA's
-    /// included, match `sk`.
-    async fn assert_scheme_material_matches<PubS: StorageReader>(
+    /// Asserts every scheme's canonical verification key and address match `sk`,
+    /// excluding the legacy ECDSA material.
+    async fn assert_non_legacy_verf_material_matches<PubS: StorageReader>(
         pub_storage: &PubS,
         sk: &PrivateSigKey,
     ) {
@@ -1705,7 +1700,7 @@ mod tests {
             let id = signing_material_id(scheme);
             let expected = sk.unified_verifying_key(scheme).unwrap();
 
-            let stored_vk = read_verification_key_at(
+            let stored_vk = read_verf_key_at(
                 pub_storage,
                 &signing_material_id(scheme),
                 PubDataType::TypedVerfKey,
@@ -1740,11 +1735,11 @@ mod tests {
         let sk = seeded_identity(&mut rng);
         let mut pub_storage = RamStorage::new();
 
-        ensure_all_verification_material(&mut pub_storage, &sk)
+        ensure_all_verf_material(&mut pub_storage, &sk)
             .await
             .unwrap();
 
-        assert_scheme_material_matches(&pub_storage, &sk).await;
+        assert_non_legacy_verf_material_matches(&pub_storage, &sk).await;
 
         // ECDSA's entry is the scheme-tagged key, and its text is the very same
         // Ethereum address the deprecated location holds.
@@ -1796,26 +1791,26 @@ mod tests {
         let mut pub_storage = RamStorage::new();
 
         // Empty storage: nothing to detect, and deleting is a no-op.
-        ensure_no_verification_material(&pub_storage).await.unwrap();
-        delete_non_legacy_verification_material(&mut pub_storage)
+        ensure_no_verif_material(&pub_storage).await.unwrap();
+        delete_non_legacy_verf_material(&mut pub_storage)
             .await
             .unwrap();
 
         // Regenerate verification material based on the old signing key.
-        ensure_all_verification_material(&mut pub_storage, &sk_old)
+        ensure_all_verf_material(&mut pub_storage, &sk_old)
             .await
             .unwrap();
         // Re-running against the material it just wrote changes nothing.
-        ensure_all_verification_material(&mut pub_storage, &sk_old)
+        ensure_all_verf_material(&mut pub_storage, &sk_old)
             .await
             .unwrap();
-        assert_scheme_material_matches(&pub_storage, &sk_old).await;
+        assert_non_legacy_verf_material_matches(&pub_storage, &sk_old).await;
 
         // Ensure that the verification material exists before attempting deletion.
-        assert!(ensure_no_verification_material(&pub_storage).await.is_err());
+        assert!(ensure_no_verif_material(&pub_storage).await.is_err());
 
         // First delete non-legacy verification material.
-        delete_non_legacy_verification_material(&mut pub_storage)
+        delete_non_legacy_verf_material(&mut pub_storage)
             .await
             .unwrap();
         // The per-scheme canonical data is gone...
@@ -1827,13 +1822,13 @@ mod tests {
             "per-scheme verification material survived the deletion"
         );
         // ...but this deletion deliberately spares the legacy ECDSA pair.
-        assert!(ensure_no_verification_material(&pub_storage).await.is_err());
+        assert!(ensure_no_verif_material(&pub_storage).await.is_err());
 
         // The deprecated pair still describes the old key, and a different key must
         // not be published beside it. `kms-gen-keys --overwrite` deletes it together
         // with the signing key for exactly this reason.
         assert!(
-            ensure_all_verification_material(&mut pub_storage, &sk_new)
+            ensure_all_verf_material(&mut pub_storage, &sk_new)
                 .await
                 .is_err(),
             "a new identity was published over the old deprecated ECDSA material"
@@ -1841,9 +1836,7 @@ mod tests {
 
         // Deletion is the exact inverse of writing: one call clears the deprecated
         // pair too, so nothing the old identity left behind blocks the new one.
-        delete_all_verification_material(&mut pub_storage)
-            .await
-            .unwrap();
+        delete_all_verf_material(&mut pub_storage).await.unwrap();
         for slot in all_verf_material_slots() {
             assert!(
                 !pub_storage
@@ -1855,10 +1848,10 @@ mod tests {
             );
         }
 
-        ensure_all_verification_material(&mut pub_storage, &sk_new)
+        ensure_all_verf_material(&mut pub_storage, &sk_new)
             .await
             .unwrap();
-        assert_scheme_material_matches(&pub_storage, &sk_new).await;
+        assert_non_legacy_verf_material_matches(&pub_storage, &sk_new).await;
     }
 
     /// The canonical folders hold exactly one handle per scheme, and each object is
@@ -1908,7 +1901,7 @@ mod tests {
         );
 
         let sk = get_core_signing_key(&priv_storage).await.unwrap();
-        assert_scheme_material_matches(&pub_storage, &sk).await;
+        assert_non_legacy_verf_material_matches(&pub_storage, &sk).await;
 
         // Both locations describe the same ECDSA identity, and the canonical one holds
         // the bare `PublicSigKey` the deprecated one holds — not a tagged wrapper.
@@ -1943,7 +1936,7 @@ mod tests {
         .unwrap();
 
         assert!(
-            ensure_all_verification_material(&mut pub_storage, &sk_a)
+            ensure_all_verf_material(&mut pub_storage, &sk_a)
                 .await
                 .is_err()
         );
@@ -1961,7 +1954,7 @@ mod tests {
 
             let vk_b = &sk_b.unified_verifying_key(scheme).unwrap();
             // Publish this scheme's key as derived from a *different* signing key.
-            store_verification_key_at(
+            store_verf_key_at(
                 &mut pub_storage,
                 &signing_material_id(vk_b.signing_scheme_type()),
                 PubDataType::TypedVerfKey,
@@ -1971,7 +1964,7 @@ mod tests {
             .unwrap();
 
             assert!(
-                ensure_all_verification_material(&mut pub_storage, &sk_a)
+                ensure_all_verf_material(&mut pub_storage, &sk_a)
                     .await
                     .is_err(),
                 "a stale {scheme} verification key was accepted"
@@ -2001,7 +1994,7 @@ mod tests {
             .unwrap();
 
             assert!(
-                ensure_all_verification_material(&mut pub_storage, &sk)
+                ensure_all_verf_material(&mut pub_storage, &sk)
                     .await
                     .is_err(),
                 "a {scheme} digest in the old encoding was accepted"
@@ -2085,7 +2078,7 @@ mod tests {
         let msg = b"signed by the identity the server boots with";
         for scheme in SigningSchemeType::iter() {
             let sig = sk.unified_sign_with(scheme, DSEP, msg).unwrap();
-            let published = read_verification_key_at(
+            let published = read_verf_key_at(
                 &pub_storage,
                 &signing_material_id(scheme),
                 PubDataType::TypedVerfKey,
@@ -2237,7 +2230,7 @@ mod tests {
         let sk = get_core_signing_key(&priv_storage).await.unwrap();
         for scheme in SigningSchemeType::iter() {
             assert_eq!(
-                read_verification_key_at(
+                read_verf_key_at(
                     &pub_storage,
                     &signing_material_id(scheme),
                     PubDataType::TypedVerfKey,
@@ -2250,7 +2243,7 @@ mod tests {
             );
         }
         assert_eq!(
-            read_verification_key_at(
+            read_verf_key_at(
                 &pub_storage,
                 &signing_material_id(SigningSchemeType::Ecdsa256k1),
                 PubDataType::TypedVerfKey,
@@ -2385,7 +2378,7 @@ mod tests {
             .unwrap()
             .expect("the first run must write a root seed");
 
-        super::delete_all_verification_material(&mut pub_storage)
+        super::delete_all_verf_material(&mut pub_storage)
             .await
             .unwrap();
         for data_type in [PrivDataType::SigningKey, PrivDataType::SigningSeed] {
@@ -2420,7 +2413,7 @@ mod tests {
         );
         for scheme in SigningSchemeType::iter() {
             assert_eq!(
-                read_verification_key_at(
+                read_verf_key_at(
                     &pub_storage,
                     &signing_material_id(scheme),
                     PubDataType::TypedVerfKey,
@@ -2483,7 +2476,7 @@ mod tests {
                 .unified_verifying_key(SigningSchemeType::Ecdsa256k1)
                 .unwrap();
             if slot_is_key {
-                store_verification_key_at(&mut pub_storage, &SIGNING_KEY_ID, data_type, &vk)
+                store_verf_key_at(&mut pub_storage, &SIGNING_KEY_ID, data_type, &vk)
                     .await
                     .unwrap();
             } else {

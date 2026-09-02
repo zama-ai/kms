@@ -12,7 +12,7 @@ use kms_lib::{
     consts::SIGNING_KEY_ID,
     cryptography::attestation::make_security_module,
     util::key_setup::{
-        delete_all_verification_material, ensure_all_verification_material,
+        delete_all_verf_material, ensure_all_verf_material,
         ensure_central_server_signing_keys_exist, ensure_threshold_server_signing_key_exists,
     },
     vault::{
@@ -500,7 +500,7 @@ async fn handle_repopulate_cmd<PubS: Storage, PrivS: Storage>(
             SigningSchemeType::Ecdsa256k1
         ));
     }
-    ensure_all_verification_material(pub_storage, &sk).await?;
+    ensure_all_verf_material(pub_storage, &sk).await?;
     tracing::info!("Repopulated verification material from the existing signing identity");
     Ok(())
 }
@@ -539,7 +539,7 @@ async fn delete_signing_key_material<PubS: Storage, PrivS: Storage>(
 ) -> anyhow::Result<()> {
     let req_id = &*SIGNING_KEY_ID;
     tracing::info!("Deleting published verification material from public storage...");
-    delete_all_verification_material(pub_storage).await?;
+    delete_all_verf_material(pub_storage).await?;
     // Not verification material, but signed by the key being deleted.
     tracing::info!(
         "Deleting {:?} under request ID {req_id:?} from public storage...",
