@@ -292,13 +292,18 @@ where
             }
         }
         let num_new_bot = initial_length - xs.len();
+        let remaining_max_errors = max_errorsors.checked_sub(num_new_bot).ok_or_else(|| {
+            anyhow_error_and_log(format!(
+                "Too many shares evicted during error correction: {num_new_bot} evicted at iteration {bit_idx} exceeds the maximum of {max_errorsors} correctable errors"
+            ))
+        })?;
 
         // fi(X) = a0 + ... a_t * X^t where a0 is the secret bit corresponding to position i.
         let fi_mod2 = gao_decoding_from_values(
             &xs,
             binary_share_values(&shares_with_validity, bit_idx),
             degree + 1,
-            max_errorsors - num_new_bot,
+            remaining_max_errors,
         )?;
 
         let _evicted = apply_bit_correction(
@@ -388,6 +393,11 @@ where
             .filter(|(_, is_valid)| *is_valid)
             .count();
         let num_new_bot = initial_length - num_valid;
+        let remaining_max_errors = max_errorsors.checked_sub(num_new_bot).ok_or_else(|| {
+            anyhow_error_and_log(format!(
+                "Too many shares evicted during error correction: {num_new_bot} evicted at iteration {bit_idx} exceeds the maximum of {max_errorsors} correctable errors"
+            ))
+        })?;
 
         let fi_mod2 = if !validity_changed {
             // All parties still valid — use the precomputed field hints.
@@ -395,7 +405,7 @@ where
                 &hints.field_hints.embedded_points,
                 binary_share_values(&shares_with_validity, bit_idx),
                 degree + 1,
-                max_errorsors - num_new_bot,
+                remaining_max_errors,
                 &hints.field_hints.lagrange_polys,
                 &hints.field_hints.vanishing_poly,
             )?
@@ -414,7 +424,7 @@ where
                 &fallback_field_hints.embedded_points,
                 binary_share_values(&shares_with_validity, bit_idx),
                 degree + 1,
-                max_errorsors - num_new_bot,
+                remaining_max_errors,
                 &fallback_field_hints.lagrange_polys,
                 &fallback_field_hints.vanishing_poly,
             )?
