@@ -1465,7 +1465,7 @@ mod tests {
         num_secrets: usize,
     ) -> Vec<ResiduePoly<Z, EXTENSION_DEGREE>>
     where ResiduePoly<Z, EXTENSION_DEGREE>: ErrorCorrect + Invert + QuotientMaximalIdeal
-    {
+{
         let (my_shares, inner_secrets) = if let Some(set_1_session) = set_1_session {
             let (inner_secrets, shares) =
                 deterministically_compute_my_shares::<ResiduePoly<Z, EXTENSION_DEGREE>>(
