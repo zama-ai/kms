@@ -261,7 +261,10 @@ where
 
             // Log at most once, when the share becomes invalid
             if !*is_valid {
-                tracing::warn!("Share at index {j} is invalid after iteration {bit_idx}");
+                tracing::warn!(
+                    "Share of party {} (at index {j}) is invalid after iteration {bit_idx}",
+                    share.owner()
+                );
                 evicted.push(share.owner());
             }
         }
