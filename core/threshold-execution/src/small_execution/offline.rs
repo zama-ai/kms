@@ -256,17 +256,33 @@ where
                         session.my_role().one_based(),
                         cur_role.one_based()
                     );
-                    session.add_corrupt(cur_role);
+                    session.add_corrupt_with_reason(
+                        cur_role,
+                        &format!(
+                            "broadcast d-values had wrong length: expected {amount}, got {}",
+                            cur_values.len()
+                        ),
+                    );
                     continue;
                 }
                 party_vectors.push((cur_role, cur_values));
             }
-            _ => {
+            other => {
                 tracing::warn!(
                     "Party {:?} did not broadcast the correct type and is thus malicious",
                     cur_role.one_based()
                 );
-                session.add_corrupt(cur_role);
+                // `Bot` is the common case and means "the broadcast reached no agreement on this party's value".
+                let got = match other {
+                    BroadcastValue::Bot => {
+                        "Bot (no agreement reached in the broadcast)".to_string()
+                    }
+                    other => other.type_name(),
+                };
+                session.add_corrupt_with_reason(
+                    cur_role,
+                    &format!("broadcast d-values had wrong type: expected RingVector, got {got}"),
+                );
                 continue;
             }
         };
@@ -275,10 +291,25 @@ where
     // Check if there are enough honest parties to correct the errors
     if session.num_parties() - session.corrupt_roles().len() < 2 * session.threshold() as usize + 1
     {
+        // Why each party was deemed corrupt: actually misbehaved or merely missed a round deadline. Enumerate
+        // `corrupt_roles()` rather than `corrupt_reasons()` so that roles marked via `add_corrupt` are named too.
+        let reasons = session.corrupt_reasons();
+        let mut corrupt = session
+            .corrupt_roles()
+            .iter()
+            .map(|role| match reasons.get(role) {
+                Some(why) if !why.is_empty() => format!("{role}: {}", why.join("; ")),
+                _ => format!("{role}: <no reason recorded>"),
+            })
+            .collect::<Vec<_>>();
+        corrupt.sort();
         return Err(anyhow::anyhow!(
-            "BUG: Not enough honest parties to correct the errors: {} honest parties, threshold={}",
+            "Not enough honest parties to correct the errors: {} honest parties, threshold={}. \
+             Corrupt set ({} parties): [{}]",
             session.num_parties() - session.corrupt_roles().len(),
-            session.threshold()
+            session.threshold(),
+            session.corrupt_roles().len(),
+            corrupt.join(", "),
         ));
     }
 
