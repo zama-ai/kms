@@ -1,21 +1,21 @@
 use std::cmp::min;
 use std::collections::HashSet;
 use std::sync::Arc;
-use std::sync::OnceLock;
 use std::time::{Duration, Instant};
 
 use error_utils::anyhow_error_and_log;
 
 use super::*;
+use crate::clock::AtomicInstant;
 use constants::{
     NETWORK_TIMEOUT, NETWORK_TIMEOUT_ASYNC, NETWORK_TIMEOUT_BK, NETWORK_TIMEOUT_BK_SNS,
 };
-use threshold_types::network::{NetworkMode, Networking};
+use threshold_types::network::{NetworkMode, Networking, RoundClock};
 use threshold_types::role::RoleTrait;
 
 use async_trait::async_trait;
 use dashmap::DashMap;
-use futures_util::future::{join, join4};
+use futures_util::future::{join, join3, join4};
 use tokio::sync::{
     Mutex,
     mpsc::{UnboundedReceiver, UnboundedSender, unbounded_channel},
@@ -36,7 +36,9 @@ pub struct LocalNetworking<R: RoleTrait> {
     pub send_counter: DashMap<R, usize>,
     pub network_round: Arc<Mutex<usize>>,
     already_sent: Arc<Mutex<HashSet<(R, usize)>>>,
-    pub init_time: OnceLock<Instant>,
+    /// Anchor of the round clock, stamped at session creation. Stored lock-free
+    /// (an [`AtomicInstant`]) so `synchronize_from` can overwrite it from `&self`.
+    pub(crate) init_time: AtomicInstant,
     network_mode: NetworkMode,
     //If set, the party will sleep for the given duration at the start of each round
     delayed_party: Option<Duration>,
@@ -53,7 +55,7 @@ impl<R: RoleTrait> Default for LocalNetworking<R> {
             send_counter: Default::default(),
             network_round: Default::default(),
             already_sent: Default::default(),
-            init_time: OnceLock::new(), // init_time will be initialized on first access
+            init_time: AtomicInstant::now(),
             network_mode: NetworkMode::Sync,
             delayed_party: None,
         }
@@ -221,20 +223,51 @@ impl<R: RoleTrait> Networking<R> for LocalNetworking<R> {
     }
 
     async fn get_timeout_current_round(&self) -> Instant {
-        // initialize init_time on first access
-        // this avoids running into timeouts when large computations happen after the test runtime is set up and before the first message is received.
-        let init_time = self.init_time.get_or_init(Instant::now);
-
         let (max_elapsed_time, network_timeout) = join(
             self.max_elapsed_time.lock(),
             self.current_network_timeout.lock(),
         )
         .await;
-        *init_time + *network_timeout + *max_elapsed_time
+        self.init_time.load() + *network_timeout + *max_elapsed_time
     }
 
     async fn get_current_round(&self) -> usize {
         *self.network_round.lock().await
+    }
+
+    async fn round_clock_snapshot(&self) -> RoundClock {
+        let (round, max_elapsed_time, current_network_timeout) = join3(
+            self.network_round.lock(),
+            self.max_elapsed_time.lock(),
+            self.current_network_timeout.lock(),
+        )
+        .await;
+        RoundClock {
+            init_time: self.init_time.load(),
+            round: *round,
+            max_elapsed_time: *max_elapsed_time,
+            current_network_timeout: *current_network_timeout,
+        }
+    }
+
+    async fn restore_round_clock(&self, clock: RoundClock) {
+        let (mut round, mut max_elapsed_time, mut current_network_timeout) = join3(
+            self.network_round.lock(),
+            self.max_elapsed_time.lock(),
+            self.current_network_timeout.lock(),
+        )
+        .await;
+        // A round clock only ever moves forward.
+        assert!(
+            clock.round >= *round,
+            "restore_round_clock: refusing to move round backwards from {} to {}",
+            *round,
+            clock.round
+        );
+        self.init_time.store(clock.init_time);
+        *round = clock.round;
+        *max_elapsed_time = clock.max_elapsed_time;
+        *current_network_timeout = clock.current_network_timeout;
     }
 
     async fn set_timeout_for_next_round(&self, timeout: Duration) {
