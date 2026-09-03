@@ -168,7 +168,7 @@ async fn run_failed_reshare_storage_test(fail_rollback: bool) {
         crs_digest: vec![],
     });
 
-    let sk = epoch_manager.base_kms.sig_key().unwrap();
+    let sk = epoch_manager.base_kms.signing_identity().unwrap();
     let res = RealThresholdEpochManager::<
         FailingRamStorage,
         FailingRamStorage,

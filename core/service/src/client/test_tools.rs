@@ -13,7 +13,9 @@ use crate::grpc::MetaStoreStatusServiceImpl;
 use crate::util::rate_limiter::RateLimiterConfig;
 use crate::vault::Vault;
 use crate::vault::storage::StorageExt;
-use crate::vault::storage::{Storage, crypto_material::get_core_signing_key, file::FileStorage};
+use crate::vault::storage::{
+    Storage, crypto_material::get_core_signing_identity, file::FileStorage,
+};
 use futures_util::FutureExt;
 use itertools::Itertools;
 use kms_grpc::kms_service::v1::core_service_endpoint_client::CoreServiceEndpointClient;
@@ -135,7 +137,7 @@ pub async fn setup_threshold_no_client<
         core_config.rate_limiter_conf = rate_limiter_conf.clone();
 
         handles.spawn(async move {
-            let sk = get_core_signing_key(&cur_priv_storage).await.unwrap();
+            let sk = get_core_signing_identity(&cur_priv_storage).await.unwrap();
             let base_kms = BaseKmsStruct::new(KMSType::Threshold, sk).unwrap();
 
             // TODO pass in cert_paths for testing TLS
@@ -363,7 +365,7 @@ pub async fn setup_threshold_with_custom_peers<
         let my_id_copy = *my_id;
         let server_idx = idx; // Track the physical server index
         handles.push(tokio::spawn(async move {
-            let sk = get_core_signing_key(&cur_priv_storage).await.unwrap();
+            let sk = get_core_signing_identity(&cur_priv_storage).await.unwrap();
             let base_kms = BaseKmsStruct::new(KMSType::Threshold, sk).unwrap();
 
             // Note: explicit some of the types to avoid clippy complaining
@@ -718,9 +720,9 @@ pub async fn setup_centralized_no_client<
         .pop()
         .unwrap();
     let (tx, rx) = tokio::sync::oneshot::channel();
-    let sk = get_core_signing_key(&priv_storage).await.unwrap();
+    let sk = get_core_signing_identity(&priv_storage).await.unwrap();
 
-    create_default_centralized_context_in_storage(&mut priv_storage, &sk)
+    create_default_centralized_context_in_storage(&mut priv_storage, sk.ecdsa())
         .await
         .unwrap();
     let config_path = format!("{}/config/default_centralized", env!("CARGO_MANIFEST_DIR"));

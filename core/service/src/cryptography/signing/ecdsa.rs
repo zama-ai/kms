@@ -1,6 +1,5 @@
 //! ECDSA over secp256k1 signing backend.
 
-use super::seed::RootSigningSeed;
 use super::{HasSigningScheme, Signature, SigningError, SigningScheme, SigningSchemeType};
 use crate::anyhow_tracked;
 use crate::cryptography::error::CryptographyError;
@@ -186,26 +185,6 @@ pub enum PrivateSigKeyVersions {
 #[versionize(PrivateSigKeyVersions)]
 pub struct PrivateSigKey {
     sk: WrappedSigningKey,
-    /// The root seed this identity's derived signing keys come from.
-    ///
-    /// The seed may be used for *every* scheme, including ECDSA.
-    /// However if a legacy ECDSA key already exists, that should take presidence.
-    ///
-    /// Skipped from (de)serialization and versioning to ensure backward
-    /// compatibility: the seed is persisted as its own object
-    /// (`PrivDataType::SigningSeed`) instead.
-    ///
-    /// # Equality
-    ///
-    /// The derived [`PartialEq`] **covers this field**, deliberately: two values
-    /// that hold the same secp256k1 scalar but different roots are different
-    /// identities, since they derive different post-quantum keys. Note the
-    /// consequence, which is easy to trip over — a key read back from storage is
-    /// seedless, so it does *not* compare equal to the same key with a seed
-    /// attached by [`Self::with_root_seed`].
-    #[serde(skip)]
-    #[versionize(skip)]
-    seed: Option<RootSigningSeed>,
 }
 
 impl Named for PrivateSigKey {
@@ -213,34 +192,11 @@ impl Named for PrivateSigKey {
 }
 
 impl PrivateSigKey {
-    /// A bare ECDSA signing key, with no root seed attached.
+    /// An ECDSA signing key.
     pub fn new(sk: k256::ecdsa::SigningKey) -> Self {
         Self {
             sk: WrappedSigningKey(sk),
-            seed: None,
         }
-    }
-
-    /// Attach `seed` as the root this identity's derived keys come from.
-    pub fn with_root_seed(mut self, seed: RootSigningSeed) -> Self {
-        self.seed = Some(seed);
-        self
-    }
-
-    /// Whether a root seed is attached, i.e. whether this identity can derive
-    /// keys at all. Without one it is limited to ECDSA.
-    pub fn has_root_seed(&self) -> bool {
-        self.seed.is_some()
-    }
-
-    /// The attached root seed, or an error naming what is missing and why.
-    pub(super) fn require_root_seed(
-        &self,
-        scheme: SigningSchemeType,
-    ) -> Result<&RootSigningSeed, SigningError> {
-        self.seed
-            .as_ref()
-            .ok_or(SigningError::MissingRootSeed(scheme))
     }
 
     /// TODO(#2781) DEPRECATED: code should be refactored to not use this outside on this class
@@ -636,58 +592,27 @@ mod tests {
         assert!(verf_id == signing_id);
     }
 
-    /// The root seed stays out of the persisted key
+    /// The persisted key is exactly the secp256k1 scalar.
+    ///
+    /// Persisting anything beside the scalar would make every key stored by an
+    /// earlier release unreadable, so this pins the size of the serialized form:
+    /// the safe-serialization header, then the 32 secret bytes.
     #[test]
-    fn the_persisted_key_carries_no_root_seed() {
+    fn the_persisted_key_holds_the_scalar_alone() {
         let mut rng = AesRng::seed_from_u64(3078);
-        let (_pk, seedless) = gen_sig_keys(&mut rng);
-        let seeded = seedless
-            .clone()
-            .with_root_seed(RootSigningSeed::random(&mut rng));
-        assert!(!seedless.has_root_seed());
-        assert!(seeded.has_root_seed());
+        let (_pk, sk) = gen_sig_keys(&mut rng);
+        let bytes = persisted_bytes(&sk);
 
+        let restored: PrivateSigKey =
+            safe_deserialize(std::io::Cursor::new(&bytes), SAFE_SER_SIZE_LIMIT).unwrap();
+        assert_eq!(restored, sk);
+        assert_eq!(persisted_bytes(&restored), bytes);
+
+        let (_other_pk, other_sk) = gen_sig_keys(&mut rng);
         assert_eq!(
-            persisted_bytes(&seedless),
-            persisted_bytes(&seeded),
-            "the root seed leaked into the persisted signing key"
-        );
-
-        let restored: PrivateSigKey = safe_deserialize(
-            std::io::Cursor::new(persisted_bytes(&seeded)),
-            SAFE_SER_SIZE_LIMIT,
-        )
-        .unwrap();
-        assert!(
-            !restored.has_root_seed(),
-            "a seed was read back out of the persisted key"
-        );
-        assert_eq!(restored.verf_key(), seedless.verf_key());
-    }
-
-    /// Equality covers the root seed, deliberately
-    #[test]
-    fn equality_covers_the_root_seed() {
-        let mut rng = AesRng::seed_from_u64(3079);
-        let (_pk, seedless) = gen_sig_keys(&mut rng);
-        let root = RootSigningSeed::random(&mut rng);
-        let seeded = seedless.clone().with_root_seed(root.clone());
-
-        assert_ne!(
-            seedless, seeded,
-            "a seedless key compared equal to the same scalar with a seed attached"
-        );
-        assert_eq!(
-            seeded,
-            seedless.clone().with_root_seed(root),
-            "the same scalar under the same root compared unequal"
-        );
-        assert_ne!(
-            seeded,
-            seedless
-                .clone()
-                .with_root_seed(RootSigningSeed::random(&mut rng)),
-            "the same scalar under two different roots compared equal"
+            bytes.len(),
+            persisted_bytes(&other_sk).len(),
+            "the persisted size depends on the key material"
         );
     }
 

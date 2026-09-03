@@ -14,7 +14,7 @@ use crate::{
     cryptography::{signatures::PublicSigKey, signing::SigningSchemeType},
     engine::validation::{RequestIdParsingErr, parse_optional_grpc_request_id},
     impl_generic_versionize,
-    vault::storage::{StorageReader, crypto_material::get_core_signing_key},
+    vault::storage::{StorageReader, crypto_material::get_core_signing_identity},
 };
 
 const ERR_DUPLICATE_PARTY_IDS: &str = "Duplicate party_ids found in context";
@@ -488,8 +488,8 @@ impl ContextInfo {
     /// before the context passed to the KMS, it should have been validated on the gateway.
     pub async fn verify<S: StorageReader>(&self, storage: &S) -> anyhow::Result<Option<Role>> {
         // Check the signing key is consistent with the private key in storage.
-        let signing_key = get_core_signing_key(storage).await?;
-        let core_address = signing_key.verf_key().verf_key_id();
+        let identity = get_core_signing_identity(storage).await?;
+        let core_address = identity.verf_key().verf_key_id();
 
         let my_node = self.mpc_nodes.iter().find(|node| {
             node.scheme_digests.get(&SigningSchemeType::Ecdsa256k1) == Some(core_address.as_slice())

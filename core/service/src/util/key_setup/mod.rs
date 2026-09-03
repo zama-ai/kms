@@ -12,7 +12,7 @@ cfg_if::cfg_if! {
         use crate::engine::centralized::central_kms::{gen_centralized_crs, generate_fhe_keys};
         use crate::engine::threshold::service::{PublicKeyMaterial, ThresholdFheKeys};
         use crate::vault::storage::crypto_material::{
-            calculate_max_num_bits,  data_exists, get_core_signing_key,
+            calculate_max_num_bits,  data_exists, get_core_signing_identity,
         };
         use crate::vault::storage::crypto_material::check_data_exists_at_epoch;
         use crate::vault::storage::{delete_at_request_and_epoch_id, store_versioned_at_request_and_epoch_id, StorageExt};
@@ -37,6 +37,7 @@ use crate::client::client_non_wasm::ClientDataType;
 use crate::consts::{SIGNING_KEY_ID, signing_material_id};
 use crate::cryptography::signatures::{PrivateSigKey, SigningSchemeType, gen_sig_keys};
 use crate::cryptography::signing::UnifiedPublicSigKey;
+use crate::cryptography::signing::identity::NodeSigningIdentity;
 use crate::cryptography::signing::seed::RootSigningSeed;
 use crate::engine::base::compute_handle;
 use crate::vault::storage::crypto_material::{
@@ -199,8 +200,8 @@ where
         // An upgraded node keeps the ECDSA key it is registered under; all it
         // may still be missing is the root the *other* schemes derive from.
         let seed = ensure_root_signing_seed(pub_storage, priv_storage, &mut rng).await?;
-        let sk = sk.clone().with_root_seed(seed);
-        ensure_all_verf_material(pub_storage, &sk).await?;
+        let identity = NodeSigningIdentity::new(sk.clone(), seed);
+        ensure_all_verf_material(pub_storage, &identity).await?;
 
         return Ok(false);
     }
@@ -217,10 +218,10 @@ where
         );
     }
 
-    let sk = generate_and_store_signing_key_material(priv_storage, &mut rng, false).await?;
+    let identity = generate_and_store_signing_key_material(priv_storage, &mut rng, false).await?;
 
     // Persist every scheme's verification material, ECDSA's included.
-    ensure_all_verf_material(pub_storage, &sk)
+    ensure_all_verf_material(pub_storage, &identity)
         .await
         .map_err(|e| anyhow::anyhow!("Failed to store scheme verification material: {e}"))?;
 
@@ -233,7 +234,7 @@ async fn generate_and_store_signing_key_material<PrivS, R>(
     priv_storage: &mut PrivS,
     rng: &mut R,
     is_threshold: bool,
-) -> anyhow::Result<PrivateSigKey>
+) -> anyhow::Result<NodeSigningIdentity>
 where
     PrivS: Storage,
     R: rand::CryptoRng + rand::Rng,
@@ -271,7 +272,7 @@ where
         is_threshold,
     );
 
-    Ok(sk.with_root_seed(seed))
+    Ok(NodeSigningIdentity::new(sk, seed))
 }
 
 /// The node's root signing seed, generating and persisting one if it has none.
@@ -474,10 +475,10 @@ where
     Ok(None)
 }
 
-/// Check each slot of `slots` that holds something against `sk`.
+/// Check each slot of `slots` that holds something against `identity`.
 pub(crate) async fn validate_slots<PubS, I>(
     pub_storage: &PubS,
-    sk: &PrivateSigKey,
+    identity: &NodeSigningIdentity,
     slots: I,
 ) -> anyhow::Result<()>
 where
@@ -491,7 +492,7 @@ where
             continue;
         }
         if let std::collections::btree_map::Entry::Vacant(e) = verf_keys.entry(slot.scheme) {
-            let verf_key = sk.unified_verifying_key(slot.scheme).map_err(|e| {
+            let verf_key = identity.unified_verifying_key(slot.scheme).map_err(|e| {
                 anyhow_error_and_log(format!(
                     "the {slot} is published, but this node cannot derive the {} verification \
                       key to check it against: {e}",
@@ -509,26 +510,26 @@ where
     Ok(())
 }
 
-/// Publish every verification object (including legacy ECDSA) the signing identity
-/// `sk` implies, and check every one already published against it.
+/// Publish every verification object (including legacy ECDSA) the signing
+/// `identity` implies, and check every one already published against it.
 ///
-/// Nothing is ever overwritten. Anything already published has to agree with `sk`,
-/// and *every* slot is checked before *any* is written, so a mismatch leaves
-/// storage exactly as it was rather than half-updated.
+/// Nothing is ever overwritten. Anything already published has to agree with
+/// `identity`, and *every* slot is checked before *any* is written, so a mismatch
+/// leaves storage exactly as it was rather than half-updated.
 pub async fn ensure_all_verf_material<PubS>(
     pub_storage: &mut PubS,
-    sk: &PrivateSigKey,
+    identity: &NodeSigningIdentity,
 ) -> anyhow::Result<()>
 where
     PubS: Storage,
 {
-    validate_slots(pub_storage, sk, all_verf_material_slots()).await?;
+    validate_slots(pub_storage, identity, all_verf_material_slots()).await?;
 
     // Derived once per scheme rather than once per slot. Unlike the validation
     // pass this covers every scheme, because every scheme is about to be written.
     let mut verf_keys = BTreeMap::new();
     for scheme in SigningSchemeType::iter() {
-        let verf_key = sk.unified_verifying_key(scheme).map_err(|e| {
+        let verf_key = identity.unified_verifying_key(scheme).map_err(|e| {
             anyhow_error_and_log(format!("could not derive {scheme} verification key: {e}"))
         })?;
         verf_keys.insert(scheme, verf_key);
@@ -683,7 +684,7 @@ where
     }
 
     // Get signing key with proper error handling
-    let sk = match get_core_signing_key(priv_storage).await {
+    let sk = match get_core_signing_identity(priv_storage).await {
         Ok(key) => key,
         Err(e) => {
             tracing::error!("Failed to get signing key: {}", e);
@@ -819,7 +820,7 @@ where
     .await;
 
     // Get signing key with proper error handling
-    let sk = match get_core_signing_key(priv_storage).await {
+    let sk = match get_core_signing_identity(priv_storage).await {
         Ok(key) => key,
         Err(e) => {
             tracing::error!("Failed to get signing key: {}", e);
@@ -1090,10 +1091,10 @@ where
         let seed = ensure_root_signing_seed(pub_storage, priv_storage, &mut rng)
             .await
             .map_err(|e| anyhow::anyhow!("Party {party_id}: {e}"))?;
-        let sk = sk.clone().with_root_seed(seed);
+        let identity = NodeSigningIdentity::new(sk.clone(), seed);
 
         // Even if the signing key exists, its verification material might not
-        ensure_all_verf_material(pub_storage, &sk)
+        ensure_all_verf_material(pub_storage, &identity)
             .await
             .map_err(|e| anyhow::anyhow!("Party {party_id}: {e}"))?;
 
@@ -1102,7 +1103,7 @@ where
             .data_exists(&SIGNING_KEY_ID, &PubDataType::CACert.to_string())
             .await?
         {
-            ensure_ca_cert_exists(pub_storage, &sk, subject, tls_wildcard).await?;
+            ensure_ca_cert_exists(pub_storage, identity.ecdsa(), subject, tls_wildcard).await?;
         }
 
         return Ok(false);
@@ -1126,13 +1127,13 @@ where
         );
     }
 
-    let sk = generate_and_store_signing_key_material(priv_storage, &mut rng, true)
+    let identity = generate_and_store_signing_key_material(priv_storage, &mut rng, true)
         .await
         .map_err(|e| anyhow::anyhow!("Party {party_id}: {e}"))?;
 
     // Generate CA certificate
-    ensure_ca_cert_exists(pub_storage, &sk, subject, tls_wildcard).await?;
-    ensure_all_verf_material(pub_storage, &sk)
+    ensure_ca_cert_exists(pub_storage, identity.ecdsa(), subject, tls_wildcard).await?;
+    ensure_all_verf_material(pub_storage, &identity)
         .await
         .map_err(|e| {
             anyhow::anyhow!(
@@ -1282,7 +1283,7 @@ where
     // Collect signing keys from all private storages with proper error handling
     let mut signing_keys = Vec::new();
     for (i, cur_storage) in priv_storages.iter().enumerate() {
-        match get_core_signing_key(cur_storage).await {
+        match get_core_signing_identity(cur_storage).await {
             Ok(key) => signing_keys.push(key),
             Err(e) => {
                 tracing::error!("Failed to get signing key for party {}: {}", i + 1, e);
@@ -1518,7 +1519,7 @@ where
     let signing_keys: Vec<_> = future::join_all(
         priv_storages
             .iter()
-            .map(|storage| get_core_signing_key(storage)),
+            .map(|storage| get_core_signing_identity(storage)),
     )
     .await
     .into_iter()
@@ -1635,13 +1636,14 @@ mod tests {
     };
     use crate::consts::{SIGNING_KEY_ID, signing_material_id};
     use crate::cryptography::signatures::{PrivateSigKey, PublicSigKey, gen_sig_keys};
+    use crate::cryptography::signing::identity::NodeSigningIdentity;
     use crate::cryptography::signing::seed::RootSigningSeed;
     use crate::cryptography::signing::{HasSigningScheme, SigningSchemeType, unified_verify};
     use crate::util::key_setup::{
         all_verf_material_slots, delete_all_verf_material, non_legacy_verf_material_slots,
     };
     use crate::vault::storage::crypto_material::{
-        get_core_root_signing_seed, get_core_signing_key, read_verf_key_at, store_verf_key_at,
+        get_core_root_signing_seed, get_core_signing_identity, read_verf_key_at, store_verf_key_at,
     };
     use crate::vault::storage::ram::RamStorage;
     use crate::vault::storage::{
@@ -1671,7 +1673,7 @@ mod tests {
         let eip712_domain = dummy_domain();
         for max_num_bits in [64, 128, 256, 1024, 2048] {
             let (crs, _) = gen_centralized_crs(
-                &sk,
+                &NodeSigningIdentity::ecdsa_only(sk.clone()),
                 &[crate::cryptography::signing::SigningSchemeType::Ecdsa256k1],
                 params,
                 Some(max_num_bits),
@@ -1685,16 +1687,16 @@ mod tests {
         }
     }
 
-    fn seeded_identity(rng: &mut AesRng) -> PrivateSigKey {
+    fn seeded_identity(rng: &mut AesRng) -> NodeSigningIdentity {
         let (_pk, sk) = gen_sig_keys(rng);
-        sk.with_root_seed(RootSigningSeed::random(rng))
+        NodeSigningIdentity::new(sk, RootSigningSeed::random(rng))
     }
 
     /// Asserts every scheme's canonical verification key and address match `sk`,
     /// excluding the legacy ECDSA material.
     async fn assert_non_legacy_verf_material_matches<PubS: StorageReader>(
         pub_storage: &PubS,
-        sk: &PrivateSigKey,
+        sk: &NodeSigningIdentity,
     ) {
         let addr_type = PubDataType::TypedVerfAddress.to_string();
         for scheme in SigningSchemeType::iter() {
@@ -1901,7 +1903,7 @@ mod tests {
             "the digests are not exactly one per scheme"
         );
 
-        let sk = get_core_signing_key(&priv_storage).await.unwrap();
+        let sk = get_core_signing_identity(&priv_storage).await.unwrap();
         assert_non_legacy_verf_material_matches(&pub_storage, &sk).await;
 
         // Both locations describe the same ECDSA identity, and the canonical one holds
@@ -2073,7 +2075,7 @@ mod tests {
                 .unwrap()
         );
 
-        let sk = get_core_signing_key(&priv_storage).await.unwrap();
+        let sk = get_core_signing_identity(&priv_storage).await.unwrap();
         assert!(sk.has_root_seed(), "the loaded identity lost its root seed");
 
         let msg = b"signed by the identity the server boots with";
@@ -2109,7 +2111,7 @@ mod tests {
             .await
             .unwrap()
             .expect("a fresh node must have a root seed");
-        let sk = get_core_signing_key(&priv_storage).await.unwrap();
+        let sk = get_core_signing_identity(&priv_storage).await.unwrap();
         assert_eq!(
             sk.verf_key(),
             seed.derive_ecdsa_signing_key().unwrap().verf_key(),
@@ -2228,7 +2230,7 @@ mod tests {
 
         // Published material describes the persisted key for ECDSA and the
         // seed-derived keys for everything else.
-        let sk = get_core_signing_key(&priv_storage).await.unwrap();
+        let sk = get_core_signing_identity(&priv_storage).await.unwrap();
         for scheme in SigningSchemeType::iter() {
             assert_eq!(
                 read_verf_key_at(
@@ -2252,7 +2254,7 @@ mod tests {
             )
             .await
             .unwrap(),
-            legacy_sk
+            NodeSigningIdentity::ecdsa_only(legacy_sk.clone())
                 .unified_verifying_key(SigningSchemeType::Ecdsa256k1)
                 .unwrap(),
         );
@@ -2326,7 +2328,7 @@ mod tests {
         );
         // ...and the whole identity is refused, rather than degraded to ECDSA-only.
         assert!(
-            get_core_signing_key(&priv_storage).await.is_err(),
+            get_core_signing_identity(&priv_storage).await.is_err(),
             "a node with an unreadable seed loaded an ECDSA-only identity"
         );
         assert_eq!(persisted_signing_key_bytes(&priv_storage).await, key_before);
@@ -2406,7 +2408,7 @@ mod tests {
             "the ECDSA key survived the overwrite"
         );
         assert_ne!(seed, first_seed, "the root seed survived the overwrite");
-        let sk = get_core_signing_key(&priv_storage).await.unwrap();
+        let sk = get_core_signing_identity(&priv_storage).await.unwrap();
         assert_eq!(
             sk.verf_key(),
             seed.derive_ecdsa_signing_key().unwrap().verf_key(),
@@ -2453,7 +2455,7 @@ mod tests {
                 .await
                 .unwrap()
                 .expect("a fresh threshold party must have a root seed");
-            let sk: PrivateSigKey = get_core_signing_key(&priv_storage).await.unwrap();
+            let sk = get_core_signing_identity(&priv_storage).await.unwrap();
             assert_eq!(
                 sk.verf_key(),
                 seed.derive_ecdsa_signing_key().unwrap().verf_key()
@@ -2469,11 +2471,12 @@ mod tests {
     async fn validation_accepts_a_seedless_ecdsa_only_node() {
         let mut rng = AesRng::seed_from_u64(42);
         let (_pk, legacy_sk) = gen_sig_keys(&mut rng);
+        let legacy_identity = NodeSigningIdentity::ecdsa_only(legacy_sk);
         let mut pub_storage = RamStorage::new();
 
         for data_type in LEGACY_VERF_MATERIAL_TYPES {
             let slot_is_key = data_type == PubDataType::VerfKey;
-            let vk = legacy_sk
+            let vk = legacy_identity
                 .unified_verifying_key(SigningSchemeType::Ecdsa256k1)
                 .unwrap();
             if slot_is_key {
@@ -2492,8 +2495,8 @@ mod tests {
             }
         }
 
-        assert!(!legacy_sk.has_root_seed());
-        super::validate_slots(&pub_storage, &legacy_sk, all_verf_material_slots())
+        assert!(!legacy_identity.has_root_seed());
+        super::validate_slots(&pub_storage, &legacy_identity, all_verf_material_slots())
             .await
             .unwrap();
     }
@@ -2510,12 +2513,13 @@ mod tests {
             .unwrap();
 
         // Same ECDSA scalar, seed gone: reading the `SigningKey` object on its own
-        // is exactly how a node ends up seedless, since the seed is a separate
-        // object that `#[serde(skip)]` keeps out of this one.
-        let seedless: PrivateSigKey = priv_storage
+        // is exactly how a node ends up seedless, since the seed is persisted as a
+        // separate object.
+        let ecdsa: PrivateSigKey = priv_storage
             .read_data(&SIGNING_KEY_ID, &PrivDataType::SigningKey.to_string())
             .await
             .unwrap();
+        let seedless = NodeSigningIdentity::ecdsa_only(ecdsa);
         assert!(!seedless.has_root_seed());
 
         assert!(

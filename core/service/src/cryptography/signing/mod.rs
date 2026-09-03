@@ -5,6 +5,7 @@
 
 pub mod ecdsa;
 mod eddsa;
+pub mod identity;
 mod mldsa;
 pub mod seed;
 
@@ -409,47 +410,6 @@ impl HasSigningScheme for UnifiedPublicSigKey {
     }
 }
 
-/// The multi-scheme surface of a node's signing identity.
-///
-/// - **ECDSA** uses this key itself. That is a property of the transition rather
-///   than of the design.
-/// - **Every other scheme** is derived from the attached [`seed::RootSigningSeed`],
-///   and errors with [`SigningError::MissingRootSeed`] if none is attached.
-impl PrivateSigKey {
-    /// Sign `msg` (domain-separated by `dsep`) under `scheme`.
-    #[cfg(feature = "non-wasm")]
-    pub(crate) fn unified_sign_with(
-        &self,
-        scheme: SigningSchemeType,
-        dsep: &DomainSep,
-        msg: &[u8],
-    ) -> Result<Signature, SigningError> {
-        match scheme {
-            SigningSchemeType::Ecdsa256k1 => {
-                Ok(Signature::new(scheme, Ecdsa256k1::sign(dsep, msg, self)?))
-            }
-            _ => {
-                let seed = self.require_root_seed(scheme)?;
-                unified_sign(dsep, msg, seed.derive_signing_key(scheme)?)
-            }
-        }
-    }
-
-    /// The verification key that [`Self::unified_sign_with`] signatures under
-    /// `scheme` verify against.
-    pub fn unified_verifying_key(
-        &self,
-        scheme: SigningSchemeType,
-    ) -> Result<UnifiedPublicSigKey, SigningError> {
-        match scheme {
-            SigningSchemeType::Ecdsa256k1 => Ok(UnifiedPublicSigKey::Ecdsa256k1(self.verf_key())),
-            _ => self
-                .require_root_seed(scheme)?
-                .unified_verifying_key(scheme),
-        }
-    }
-}
-
 /// Sign `msg` (domain-separated by `dsep`) under the scheme of `sk`.
 #[cfg(feature = "non-wasm")]
 pub fn unified_sign(
@@ -504,6 +464,7 @@ mod tests {
     use super::*;
     use crate::consts::SAFE_SER_SIZE_LIMIT;
     use crate::cryptography::signatures::gen_sig_keys;
+    use crate::cryptography::signing::identity::NodeSigningIdentity;
     use crate::cryptography::signing::seed::RootSigningSeed;
     use aes_prng::AesRng;
     use rand::{RngCore, SeedableRng};
@@ -519,10 +480,9 @@ mod tests {
     }
 
     /// A complete node signing identity: an ECDSA key with a root seed attached.
-    fn seeded_identity<R: rand::CryptoRng + RngCore>(rng: &mut R) -> PrivateSigKey {
+    fn seeded_identity<R: rand::CryptoRng + RngCore>(rng: &mut R) -> NodeSigningIdentity {
         let (_pk, sk) = gen_sig_keys(rng);
-        let root = RootSigningSeed::random(rng);
-        sk.with_root_seed(root)
+        NodeSigningIdentity::new(sk, RootSigningSeed::random(rng))
     }
 
     fn all_private_keys<R: rand::CryptoRng + RngCore>(rng: &mut R) -> Vec<UnifiedPrivateSigKey> {
@@ -599,26 +559,6 @@ mod tests {
         }
     }
 
-    /// Every scheme signs and verifies through the per-scheme key of a seeded
-    /// identity, and a tampered message fails.
-    #[test]
-    fn derived_keys_sign_and_verify() {
-        let mut rng = AesRng::seed_from_u64(101);
-        let sk = seeded_identity(&mut rng);
-        let msg = b"a message signed under a derived scheme key";
-
-        for scheme in SigningSchemeType::iter() {
-            let derived_vk = sk.unified_verifying_key(scheme).unwrap();
-            assert_eq!(derived_vk.signing_scheme_type(), scheme);
-
-            let sig = sk.unified_sign_with(scheme, DSEP, msg).unwrap();
-            assert_eq!(sig.scheme(), scheme);
-            unified_verify(DSEP, msg, &sig, &derived_vk)
-                .unwrap_or_else(|e| panic!("{scheme:?} derived key should verify: {e}"));
-            assert!(unified_verify(DSEP, b"tampered", &sig, &derived_vk).is_err());
-        }
-    }
-
     /// Every scheme's unified verification key survives a safe-serialization
     /// round-trip (the persisted form used for `VerfKey`), keeping equality,
     /// scheme tag and digest — exercising the hand-written `Versionize`/serde
@@ -639,104 +579,6 @@ mod tests {
             assert_eq!(vk, back, "{scheme:?} verf key did not survive round-trip");
             assert_eq!(back.signing_scheme_type(), scheme);
             assert_eq!(vk.digest(), back.digest(), "{scheme:?} digest changed");
-        }
-    }
-
-    /// Deriving the same scheme from the same identity twice yields identical
-    /// keys
-    #[test]
-    fn derivation_is_deterministic() {
-        let mut rng = AesRng::seed_from_u64(202);
-        let sk = seeded_identity(&mut rng);
-        let msg = b"deriving twice must give the same key";
-
-        for scheme in SigningSchemeType::iter() {
-            let sig = sk.unified_sign_with(scheme, DSEP, msg).unwrap();
-            let vk = sk.clone().unified_verifying_key(scheme).unwrap();
-            unified_verify(DSEP, msg, &sig, &vk)
-                .unwrap_or_else(|e| panic!("{scheme:?} derivation was not deterministic: {e}"));
-        }
-    }
-
-    /// Extract the Ethereum address from an ECDSA unified verification key,
-    /// panicking on any other scheme.
-    fn ecdsa_address(vk: UnifiedPublicSigKey) -> alloy_primitives::Address {
-        match vk {
-            UnifiedPublicSigKey::Ecdsa256k1(pk) => pk.address(),
-            other => panic!(
-                "expected an ECDSA verification key, got {:?}",
-                other.signing_scheme_type()
-            ),
-        }
-    }
-
-    /// For ECDSA, the per-scheme key is the persisted identity unchanged — with
-    /// or without a root seed attached.
-    #[test]
-    fn ecdsa_signing_key_is_the_identity() {
-        let mut rng = AesRng::seed_from_u64(303);
-        let (pk, sk) = gen_sig_keys(&mut rng);
-
-        let vk = sk
-            .unified_verifying_key(SigningSchemeType::Ecdsa256k1)
-            .unwrap();
-        assert_eq!(ecdsa_address(vk), pk.address());
-
-        let seeded = sk.with_root_seed(RootSigningSeed::random(&mut rng));
-        let vk = seeded
-            .unified_verifying_key(SigningSchemeType::Ecdsa256k1)
-            .unwrap();
-        assert_eq!(ecdsa_address(vk), pk.address());
-    }
-
-    /// The transition invariant: attaching a root seed does **not** move the
-    /// node's ECDSA identity.
-    #[test]
-    fn ecdsa_identity_is_never_the_seed_derived_key() {
-        let mut rng = AesRng::seed_from_u64(305);
-        let (pk, sk) = gen_sig_keys(&mut rng);
-        let sk = sk.with_root_seed(RootSigningSeed::random(&mut rng));
-
-        // What the identity publishes is the persisted key...
-        let vk = sk
-            .unified_verifying_key(SigningSchemeType::Ecdsa256k1)
-            .unwrap();
-        assert_eq!(ecdsa_address(vk.clone()), pk.address());
-
-        // ...and what it signs with verifies against exactly that key.
-        let msg = b"signed by the node's ECDSA identity";
-        let sig = sk
-            .unified_sign_with(SigningSchemeType::Ecdsa256k1, DSEP, msg)
-            .unwrap();
-        unified_verify(DSEP, msg, &sig, &vk).unwrap();
-    }
-
-    /// Without a root seed an identity can still do everything ECDSA, and fails
-    /// loudly for every other scheme.
-    #[test]
-    fn non_ecdsa_requires_a_root_seed() {
-        let mut rng = AesRng::seed_from_u64(707);
-        let (_pk, sk) = gen_sig_keys(&mut rng);
-        assert!(!sk.has_root_seed());
-        let msg = b"a seedless identity is ECDSA-only";
-
-        let vk = sk
-            .unified_verifying_key(SigningSchemeType::Ecdsa256k1)
-            .unwrap();
-        let sig = sk
-            .unified_sign_with(SigningSchemeType::Ecdsa256k1, DSEP, msg)
-            .unwrap();
-        unified_verify(DSEP, msg, &sig, &vk).unwrap();
-
-        for scheme in SigningSchemeType::iter().filter(|s| *s != SigningSchemeType::Ecdsa256k1) {
-            assert!(matches!(
-                sk.unified_verifying_key(scheme),
-                Err(SigningError::MissingRootSeed(s)) if s == scheme
-            ));
-            assert!(matches!(
-                sk.unified_sign_with(scheme, DSEP, msg),
-                Err(SigningError::MissingRootSeed(s)) if s == scheme
-            ));
         }
     }
 

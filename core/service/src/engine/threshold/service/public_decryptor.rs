@@ -329,7 +329,7 @@ impl<
             .collect::<Vec<_>>();
 
         let meta_store = Arc::clone(&self.pub_dec_meta_store);
-        let sigkey = self.base_kms.sig_key().map_err(|e| {
+        let sigkey = self.base_kms.signing_identity().map_err(|e| {
             MetricedError::new(
                 OP_PUBLIC_DECRYPT_REQUEST,
                 Some(req_id),
@@ -735,6 +735,7 @@ mod tests {
     use crate::{
         consts::{DEFAULT_MPC_CONTEXT, TEST_PARAM},
         cryptography::signatures::gen_sig_keys,
+        cryptography::signing::identity::NodeSigningIdentity,
         dummy_domain,
         engine::threshold::service::session::SessionMaker,
         util::meta_store::EntryState,
@@ -875,7 +876,11 @@ mod tests {
         RealPublicDecryptor<ram::RamStorage, ram::RamStorage, DummyNoisefloodDecryptor>,
     ) {
         let (_pk, sk) = gen_sig_keys(rng);
-        let base_kms = BaseKmsStruct::new(KMSType::Threshold, sk.clone()).unwrap();
+        let base_kms = BaseKmsStruct::new(
+            KMSType::Threshold,
+            NodeSigningIdentity::ecdsa_only(sk.clone()),
+        )
+        .unwrap();
         let param = TEST_PARAM;
         let epoch_id = EpochId::new_random(rng);
 

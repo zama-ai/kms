@@ -9,7 +9,7 @@ use kms_lib::{
         AWSConfig, EnclaveBootstrapConfig, Keychain, Storage as StorageConfig, VaultConfig,
         init_conf, threshold::PeerConf,
     },
-    consts::SIGNING_KEY_ID,
+    consts::{SIGNING_KEY_ID, signing_material_id},
     cryptography::attestation::make_security_module,
     util::key_setup::{
         delete_all_verf_material, ensure_all_verf_material,
@@ -20,7 +20,7 @@ use kms_lib::{
         aws::build_aws_sdk_config,
         keychain::{awskms::build_aws_kms_client, make_keychain_proxy},
         storage::{
-            Storage, StorageType, crypto_material::get_core_signing_key, delete_at_request_id,
+            Storage, StorageType, crypto_material::get_core_signing_identity, delete_at_request_id,
             make_storage, read_text_at_request_id, s3::build_s3_client,
         },
     },
@@ -28,7 +28,8 @@ use kms_lib::{
 use observability::conf::TelemetryConfig;
 use observability::telemetry::init_tracing;
 use serde::{Deserialize, Serialize};
-use std::{num::NonZeroUsize, sync::Arc};
+use std::{collections::HashMap, num::NonZeroUsize, sync::Arc};
+use strum::IntoEnumIterator;
 use validator::Validate;
 
 #[derive(Parser)]
@@ -490,8 +491,8 @@ async fn handle_repopulate_cmd<PubS: Storage, PrivS: Storage>(
     pub_storage: &mut PubS,
     priv_storage: &PrivS,
 ) -> anyhow::Result<()> {
-    let sk = get_core_signing_key(priv_storage).await?;
-    if !sk.has_root_seed() {
+    let identity = get_core_signing_identity(priv_storage).await?;
+    if !identity.has_root_seed() {
         return Err(anyhow::anyhow!(
             "no {} object is present under the handle {}, so this node can only sign under {}; \
          run kms-gen-keys to generate one",
@@ -500,20 +501,38 @@ async fn handle_repopulate_cmd<PubS: Storage, PrivS: Storage>(
             SigningSchemeType::Ecdsa256k1
         ));
     }
-    ensure_all_verf_material(pub_storage, &sk).await?;
+    ensure_all_verf_material(pub_storage, &identity).await?;
     tracing::info!("Repopulated verification material from the existing signing identity");
     Ok(())
 }
 
+/// The signing scheme each per-scheme material handle belongs to.
+fn scheme_by_handle() -> HashMap<RequestId, SigningSchemeType> {
+    SigningSchemeType::iter()
+        .map(|scheme| (signing_material_id(scheme), scheme))
+        .collect()
+}
+
 /// Print every signing-material handle the node holds, spelling out the ECDSA
 /// address and each scheme's digest.
+///
+/// An operator reads this output to learn what to register for a node, so every
+/// per-scheme line names its scheme.
 async fn show_signing_key_material<PubS: Storage, PrivS: Storage>(
     pub_storage: &PubS,
     priv_storage: &PrivS,
 ) -> anyhow::Result<()> {
+    let schemes = scheme_by_handle();
+    for data_type in [PubDataType::TypedVerfKey, PubDataType::TypedVerfAddress] {
+        show_key(
+            pub_storage,
+            &data_type.to_string(),
+            data_type == PubDataType::TypedVerfAddress,
+            Some(&schemes),
+        )
+        .await?;
+    }
     for data_type in [
-        PubDataType::TypedVerfKey,
-        PubDataType::TypedVerfAddress,
         PubDataType::VerfKey,
         PubDataType::VerfAddress,
         PubDataType::CACert,
@@ -521,12 +540,13 @@ async fn show_signing_key_material<PubS: Storage, PrivS: Storage>(
         show_key(
             pub_storage,
             &data_type.to_string(),
-            data_type == PubDataType::VerfAddress || data_type == PubDataType::TypedVerfAddress,
+            data_type == PubDataType::VerfAddress,
+            None,
         )
         .await?;
     }
     for data_type in [PrivDataType::SigningKey, PrivDataType::SigningSeed] {
-        show_key(priv_storage, &data_type.to_string(), false).await?;
+        show_key(priv_storage, &data_type.to_string(), false, None).await?;
     }
     Ok(())
 }
@@ -558,21 +578,27 @@ async fn delete_signing_key_material<PubS: Storage, PrivS: Storage>(
     Ok(())
 }
 
-/// Print one line per handle stored under `data_type`, appending the stored text
-/// when `print_value` is set.
+/// Print one line per handle stored under `data_type`, naming the scheme a
+/// handle belongs to when `schemes` maps it, and appending the stored text when
+/// `print_value` is set.
 async fn show_key<S: Storage>(
     storage: &S,
     data_type: &str,
     print_value: bool,
+    schemes: Option<&HashMap<RequestId, SigningSchemeType>>,
 ) -> anyhow::Result<()> {
     let mut ids: Vec<RequestId> = storage.all_data_ids(data_type).await?.into_iter().collect();
     ids.sort_by_key(|id| id.to_string());
     for id in ids {
+        let scheme = schemes
+            .and_then(|by_handle| by_handle.get(&id))
+            .map(|scheme| format!(", {scheme}"))
+            .unwrap_or_default();
         if print_value {
             let value = read_text_at_request_id(storage, &id, data_type).await?;
-            println!("{data_type}, {id}, {value}");
+            println!("{data_type}, {id}{scheme}, {value}");
         } else {
-            println!("{data_type}, {id}");
+            println!("{data_type}, {id}{scheme}");
         }
     }
     Ok(())
@@ -930,5 +956,21 @@ root_key_spec = "symm"
                 prefix: Some("PRIV-p2".to_string()),
             }))
         );
+    }
+
+    /// Every scheme has its own handle, and ECDSA keeps the historic one, so the
+    /// printed lines label each handle with exactly one scheme.
+    #[test]
+    fn scheme_handles_are_distinct_and_labelled() {
+        let by_handle = scheme_by_handle();
+
+        assert_eq!(by_handle.len(), SigningSchemeType::iter().count());
+        assert_eq!(
+            by_handle.get(&SIGNING_KEY_ID),
+            Some(&SigningSchemeType::Ecdsa256k1)
+        );
+        for scheme in SigningSchemeType::iter() {
+            assert_eq!(by_handle.get(&signing_material_id(scheme)), Some(&scheme));
+        }
     }
 }

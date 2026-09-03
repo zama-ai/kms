@@ -17,7 +17,7 @@ use kms_lib::{
             AutoRefreshCertResolver, CertResolver, SecurityModuleProxy, make_security_module,
             validate_ca_cert,
         },
-        signatures::PrivateSigKey,
+        signatures::NodeSigningIdentity,
     },
     engine::{
         base::BaseKmsStruct, centralized::central_kms::RealCentralizedKms,
@@ -32,7 +32,7 @@ use kms_lib::{
             Keychain, RootKeyMeasurements, awskms::build_aws_kms_client, make_keychain_proxy,
         },
         storage::{
-            StorageReader, StorageType, crypto_material::get_core_signing_key, make_storage,
+            StorageReader, StorageType, crypto_material::get_core_signing_identity, make_storage,
             read_text_at_request_id, s3::build_s3_client,
         },
     },
@@ -136,10 +136,10 @@ async fn build_tls_config(
     security_module: Option<Arc<SecurityModuleProxy>>,
     private_vault_root_key_measurements: Option<Arc<RootKeyMeasurements>>,
     public_vault: &Vault,
-    sk: Arc<PrivateSigKey>,
+    identity: Arc<NodeSigningIdentity>,
     #[cfg(feature = "insecure")] mock_enclave: bool,
 ) -> anyhow::Result<(ServerConfig, ClientConfig, Arc<AttestedVerifier>)> {
-    let verf_key = sk.verf_key();
+    let verf_key = identity.verf_key();
     aws_lc_rs_default_provider()
         .install_default()
         .unwrap_or_else(|_| {
@@ -242,8 +242,8 @@ async fn build_tls_config(
                     .await?;
                     // CACert is only required for this onboard-CA TLS path. TLS-less threshold
                     // nodes and TLS configurations with an external certificate do not load it.
-                    let ca_cert = validate_ca_cert(ca_cert_bytes.as_bytes(), sk.as_ref())?;
-                    (Some(sk), ca_cert)
+                    let ca_cert = validate_ca_cert(ca_cert_bytes.as_bytes(), identity.ecdsa())?;
+                    (Some(Arc::clone(identity.ecdsa_handle())), ca_cert)
                 }
             };
 
@@ -599,7 +599,7 @@ async fn main_exec() -> anyhow::Result<()> {
         .unwrap_or_else(|e| panic!("Could not bind to {service_socket_addr} \n {e:?}"));
 
     // load key
-    let (base_kms, able_to_use_tls) = match get_core_signing_key(&private_vault).await {
+    let (base_kms, able_to_use_tls) = match get_core_signing_identity(&private_vault).await {
         Ok(sk) => (BaseKmsStruct::new(kms_type, sk)?, true), // The signing key is present, so we can use TLS if configured
         Err(e) => {
             tracing::warn!("Error loading signing key: {e:?}");
@@ -618,7 +618,7 @@ async fn main_exec() -> anyhow::Result<()> {
     // Validate keychain recovery material at startup only when the private signing key is
     // available. In recovery mode the verification key came from public storage; the recovery
     // operation validates its selected material when it is used instead.
-    if let Ok(signing_key) = base_kms.sig_key() {
+    if let Ok(signing_key) = base_kms.signing_identity() {
         let verf_key = signing_key.verf_key();
         if let Some(ref keychain) = private_vault.keychain {
             keychain.validate_recovery_material(&verf_key)?;
@@ -657,7 +657,7 @@ async fn main_exec() -> anyhow::Result<()> {
                             .as_ref()
                             .map(|x| x.root_key_measurements()),
                         &public_vault,
-                        base_kms.sig_key()?,
+                        base_kms.signing_identity()?,
                         #[cfg(feature = "insecure")]
                         core_config.mock_enclave.is_some_and(|m| m),
                     )
@@ -705,16 +705,17 @@ async fn main_exec() -> anyhow::Result<()> {
                 SoftwareVersion::current()?
             );
             // create the default context if it does not exist
-            let sk = (*base_kms.sig_key()?).clone();
+            let identity = (*base_kms.signing_identity()?).clone();
             let service_config = core_config.service.clone();
-            create_default_centralized_context_in_storage(&mut private_vault, &sk).await?;
+            create_default_centralized_context_in_storage(&mut private_vault, identity.ecdsa())
+                .await?;
             let (kms, (health_reporter, health_service)) = RealCentralizedKms::new(
                 core_config,
                 public_vault,
                 private_vault,
                 backup_vault,
                 security_module,
-                sk,
+                identity,
             )
             .await?;
             let meta_store_status_service = Arc::new(MetaStoreStatusServiceImpl::new(

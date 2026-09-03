@@ -39,7 +39,7 @@ use tracing::Instrument;
 use crate::{
     anyhow_error_and_log,
     consts::DURATION_WAITING_ON_PREPROC_RESULT_SECONDS,
-    cryptography::{signatures::PrivateSigKey, signing::SigningSchemeType},
+    cryptography::{signing::SigningSchemeType, signing::identity::NodeSigningIdentity},
     engine::{
         base::{
             BaseKmsStruct, compute_preprocessing_signatures, stored_scheme_signatures_to_proto,
@@ -133,7 +133,7 @@ impl<P: ProducerFactory<ResiduePolyF4Z128, SmallSession<ResiduePolyF4Z128>>> Rea
         }
         let ongoing = Arc::clone(&self.ongoing);
 
-        let sk = self.base_kms.sig_key()?;
+        let sk = self.base_kms.signing_identity()?;
         let domain_clone = domain.clone();
         self.tracker.spawn(
             async move {
@@ -167,7 +167,7 @@ impl<P: ProducerFactory<ResiduePolyF4Z128, SmallSession<ResiduePolyF4Z128>>> Rea
 
     #[expect(clippy::too_many_arguments)]
     async fn preprocessing_background(
-        sk: Arc<PrivateSigKey>,
+        sk: Arc<NodeSigningIdentity>,
         req_id: &RequestId,
         domain: &alloy_sol_types::Eip712Domain,
         signing_schemes: Vec<SigningSchemeType>,
@@ -479,7 +479,7 @@ impl<P: ProducerFactory<ResiduePolyF4Z128, SmallSession<ResiduePolyF4Z128>>> Rea
 
         tracing::info!("Starting preproc generation for Request ID {}", request_id);
 
-        let sk = self.base_kms.sig_key().map_err(|e| {
+        let sk = self.base_kms.signing_identity().map_err(|e| {
             MetricedError::new(
                 OP_INSECURE_KEYGEN_PREPROC_REQUEST,
                 Some(request_id),
@@ -759,7 +759,11 @@ mod tests {
     ) -> RealPreprocessor<P> {
         let epoch_id = *DEFAULT_EPOCH_ID;
         let (_pk, sk) = gen_sig_keys(rng);
-        let base_kms = BaseKmsStruct::new(KMSType::Threshold, sk.clone()).unwrap();
+        let base_kms = BaseKmsStruct::new(
+            KMSType::Threshold,
+            NodeSigningIdentity::ecdsa_only(sk.clone()),
+        )
+        .unwrap();
         let prss_setup_z128 = if use_prss {
             Some(PRSSSetup::new_testing_prss(vec![], vec![]))
         } else {

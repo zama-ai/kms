@@ -8,7 +8,7 @@ cfg_if::cfg_if! {
         read_versioned_at_request_and_epoch_id, read_versioned_at_request_id,
         store_versioned_at_request_and_epoch_id, store_versioned_at_request_id,
     };
-    use crate::vault::storage::crypto_material::get_core_signing_key;
+    use crate::vault::storage::crypto_material::get_core_signing_identity;
     use crate::testing::helpers::domain_to_msg;
     use kms_grpc::rpc_types::PrivDataType;
     use crate::testing::material::MaterialType;
@@ -2135,7 +2135,7 @@ async fn remove_oprf_from_existing_keyset(
             priv_prefix.as_deref(),
         )?;
 
-        let signing_key = get_core_signing_key(&priv_storage).await?;
+        let signing_key = get_core_signing_identity(&priv_storage).await?;
         let public_key: tfhe::CompactPublicKey =
             read_versioned_at_request_id(&pub_storage, key_id, &PubDataType::PublicKey.to_string())
                 .await?;

@@ -109,17 +109,20 @@ The service crate is the main surface area. Key subdirectories under
   private objects: its ECDSA signing key (`PrivDataType::SigningKey`, the
   authoritative on-chain identity) and an independent, CSPRNG-generated
   `RootSigningSeed` (`PrivDataType::SigningSeed`), both under `SIGNING_KEY_ID`.
-  The seed will eventuall be the root of *every* signing key of the node, ECDSA 
-  included: keys are derived on demand from the *seed*. However to ensure backward
-  compatibility and avoid requiring nodes to roll their ECDSA keys, legacy ECDSA 
-  are derived and stored seperately, and the seed is only used to derive every 
-  non-ECDSA key. That is, if a legacy ECDSA key is stored, then the seed will *not* 
-  be used to derive ECDSA material. 
-  The seed is carried in memory on `PrivateSigKey` (a `#[serde(skip)]` field, so
-  the persisted format is unchanged) and attached by `get_core_signing_key`; a key
-  without it — a client wallet key, or a node that has not yet run `kms-gen-keys` —
-  can only do ECDSA and errors with `SigningError::MissingRootSeed` for anything
-  else. Every scheme's public verification material — ECDSA's included —
+  The seed will eventually be the root of *every* signing key of the node, ECDSA
+  included: keys are derived on demand from the *seed*. To keep backward
+  compatibility, and to avoid making nodes roll their ECDSA keys, an ECDSA key is
+  also stored on its own, and the seed serves every non-ECDSA scheme. That is, if
+  a stored ECDSA key exists, then the seed does *not* derive the ECDSA material.
+  The two halves come together in memory as `signing::identity::NodeSigningIdentity`,
+  which `get_core_signing_identity` assembles and `BaseKmsStruct::signing_identity`
+  hands out. `NodeSigningIdentity` is never persisted, and it is the only type with
+  the multi-scheme `unified_sign_with` / `unified_verifying_key` methods:
+  `PrivateSigKey` is the ECDSA leaf type, which client wallets and the WASM
+  surface also use. An identity with no seed — a node that has not yet run
+  `kms-gen-keys` — can only do ECDSA, and errors with
+  `SigningError::MissingRootSeed` for anything else. Every scheme's public
+  verification material — ECDSA's included —
   is stored under the handle `consts::signing_material_id(scheme)` gives, in the
   data types `key_setup::NON_LEGACY_VERF_MATERIAL_TYPES` names:
   `PubDataType::TypedVerfKey` holds the scheme's *own* verification key type

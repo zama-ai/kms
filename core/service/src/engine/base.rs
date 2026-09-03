@@ -4,8 +4,9 @@ use crate::consts::SAFE_SER_SIZE_LIMIT;
 use crate::cryptography::decompression;
 use crate::cryptography::internal_crypto_types::WrappedDKGParams;
 use crate::cryptography::signatures::internal_sign;
-use crate::cryptography::signatures::{PrivateSigKey, PublicSigKey, Signature};
+use crate::cryptography::signatures::{PublicSigKey, Signature};
 use crate::cryptography::signing::SigningSchemeType;
+use crate::cryptography::signing::identity::NodeSigningIdentity;
 use crate::engine::traits::PrivateKeyMaterialMetadata;
 use crate::util::key_setup::FhePrivateKey;
 use aes_prng::AesRng;
@@ -133,7 +134,7 @@ impl KmsFheKeyHandles {
     /// Signatures are computed over versionized keys to ensure consistency.
     #[expect(clippy::too_many_arguments)]
     pub fn new(
-        sig_key: &PrivateSigKey,
+        sig_key: &NodeSigningIdentity,
         schemes: &[SigningSchemeType],
         client_key: FhePrivateKey,
         key_id: &RequestId,
@@ -172,7 +173,7 @@ impl KmsFheKeyHandles {
     /// - Version upgrades will invalidate signatures
     #[expect(clippy::too_many_arguments)]
     pub fn new_compressed(
-        sig_key: &PrivateSigKey,
+        sig_key: &NodeSigningIdentity,
         schemes: &[SigningSchemeType],
         client_key: FhePrivateKey,
         key_id: &RequestId,
@@ -495,7 +496,7 @@ struct SchemeSigningJob {
 /// Sign a result under each requested `(scheme, message)` job, returning the
 /// per-scheme signatures to persist in result metadata.
 fn compute_result_signatures(
-    sk: &PrivateSigKey,
+    identity: &NodeSigningIdentity,
     dsep: &DomainSep,
     jobs: &[SchemeSigningJob],
 ) -> anyhow::Result<Vec<StoredTypedSignature>> {
@@ -510,15 +511,15 @@ fn compute_result_signatures(
                                 job.message.len()
                             )
                         })?;
-                    crate::cryptography::signatures::eip712_sign_hash(sk, &hash)?
+                    crate::cryptography::signatures::eip712_sign_hash(identity.ecdsa(), &hash)?
                 }
                 // Raw primitive signature over `dsep ‖ message`.
                 scheme @ (SigningSchemeType::Ed25519
                 | SigningSchemeType::MlDsa44
                 | SigningSchemeType::MlDsa65
-                | SigningSchemeType::MlDsa87) => {
-                    sk.unified_sign_with(scheme, dsep, &job.message)?.to_bytes()
-                }
+                | SigningSchemeType::MlDsa87) => identity
+                    .unified_sign_with(scheme, dsep, &job.message)?
+                    .to_bytes(),
             };
             Ok(StoredTypedSignature {
                 scheme: job.scheme,
@@ -562,7 +563,7 @@ fn scheme_signing_jobs(
 /// independently — the per-scheme `signatures` for exactly the schemes the
 /// client requested.
 fn sign_result<D: SolStruct>(
-    sk: &PrivateSigKey,
+    identity: &NodeSigningIdentity,
     schemes: &[SigningSchemeType],
     payload_bytes: &[u8],
     sol_type: &D,
@@ -570,14 +571,15 @@ fn sign_result<D: SolStruct>(
     dsep: &DomainSep,
 ) -> anyhow::Result<(Vec<u8>, Vec<StoredTypedSignature>)> {
     let eip712_hash = sol_type.eip712_signing_hash(domain);
-    let external_signature = crate::cryptography::signatures::eip712_sign_hash(sk, &eip712_hash)?;
+    let external_signature =
+        crate::cryptography::signatures::eip712_sign_hash(identity.ecdsa(), &eip712_hash)?;
     let jobs = scheme_signing_jobs(schemes, eip712_hash.as_slice(), payload_bytes);
-    let signatures = compute_result_signatures(sk, dsep, &jobs)?;
+    let signatures = compute_result_signatures(identity, dsep, &jobs)?;
     Ok((external_signature, signatures))
 }
 
 pub(crate) fn compute_info_crs(
-    sk: &PrivateSigKey,
+    identity: &NodeSigningIdentity,
     schemes: &[SigningSchemeType],
     domain_separator: &DomainSep,
     crs_id: &RequestId,
@@ -588,7 +590,7 @@ pub(crate) fn compute_info_crs(
     let crs_digest = hash_versioned(domain_separator, pp)?;
     let max_num_bits = max_num_bits_from_crs(pp);
     compute_info_crs_from_digest(
-        sk,
+        identity,
         schemes,
         crs_id,
         crs_digest,
@@ -600,7 +602,7 @@ pub(crate) fn compute_info_crs(
 
 /// Sign a CRS using a precomputed digest, under each requested scheme.
 pub(crate) fn compute_info_crs_from_digest(
-    sk: &PrivateSigKey,
+    identity: &NodeSigningIdentity,
     schemes: &[SigningSchemeType],
     crs_id: &RequestId,
     crs_digest: Vec<u8>,
@@ -611,7 +613,7 @@ pub(crate) fn compute_info_crs_from_digest(
     let sol_type = crs_sol_type(crs_id, &crs_digest, max_num_bits as u32, &extra_data);
     let payload_bytes = crs_payload_bytes(crs_id, max_num_bits as u32, &crs_digest, &extra_data)?;
     let (external_signature, signatures) = sign_result(
-        sk,
+        identity,
         schemes,
         &payload_bytes,
         &sol_type,
@@ -634,7 +636,7 @@ pub(crate) fn compute_info_crs_from_digest(
 /// `external_signature`, plus the per-scheme `signatures` for exactly the
 /// requested schemes.
 pub(crate) fn compute_preprocessing_signatures(
-    sk: &PrivateSigKey,
+    identity: &NodeSigningIdentity,
     schemes: &[SigningSchemeType],
     prep_id: &RequestId,
     domain: &alloy_sol_types::Eip712Domain,
@@ -646,7 +648,7 @@ pub(crate) fn compute_preprocessing_signatures(
     })?;
     let sol_type = PrepKeygenVerification::new(prep_id, extra_data);
     sign_result(
-        sk,
+        identity,
         schemes,
         &payload_bytes,
         &sol_type,
@@ -657,7 +659,7 @@ pub(crate) fn compute_preprocessing_signatures(
 
 #[expect(clippy::too_many_arguments)]
 pub(crate) fn compute_info_uncompressed_keygen(
-    sk: &PrivateSigKey,
+    identity: &NodeSigningIdentity,
     schemes: &[SigningSchemeType],
     domain_separator: &DomainSep,
     prep_id: &RequestId,
@@ -668,7 +670,7 @@ pub(crate) fn compute_info_uncompressed_keygen(
 ) -> anyhow::Result<KeyGenMetadata> {
     let (server_key_digest, public_key_digest) = compute_keygen_digests(domain_separator, keyset)?;
     compute_info_standard_keygen_from_digests(
-        sk,
+        identity,
         schemes,
         prep_id,
         key_id,
@@ -699,7 +701,7 @@ pub(crate) fn compute_keygen_digests(
 /// Sign an uncompressed keygen using precomputed digests.
 #[expect(clippy::too_many_arguments)]
 pub(crate) fn compute_info_standard_keygen_from_digests(
-    sk: &PrivateSigKey,
+    identity: &NodeSigningIdentity,
     schemes: &[SigningSchemeType],
     prep_id: &RequestId,
     key_id: &RequestId,
@@ -721,7 +723,7 @@ pub(crate) fn compute_info_standard_keygen_from_digests(
     )?;
     let payload_bytes = keygen_payload_bytes(prep_id, key_id, &key_digests, &extra_data)?;
     let (external_signature, signatures) = sign_result(
-        sk,
+        identity,
         schemes,
         &payload_bytes,
         &sol_type,
@@ -742,7 +744,7 @@ pub(crate) fn compute_info_standard_keygen_from_digests(
 
 #[expect(clippy::too_many_arguments)]
 pub(crate) fn compute_info_decompression_keygen(
-    sk: &PrivateSigKey,
+    identity: &NodeSigningIdentity,
     schemes: &[SigningSchemeType],
     domain_separator: &DomainSep,
     prep_id: &RequestId,
@@ -760,7 +762,7 @@ pub(crate) fn compute_info_decompression_keygen(
     let key_digests = BTreeMap::from([(PubDataType::DecompressionKey, key_digest)]);
     let payload_bytes = keygen_payload_bytes(prep_id, key_id, &key_digests, &extra_data)?;
     let (external_signature, signatures) = sign_result(
-        sk,
+        identity,
         schemes,
         &payload_bytes,
         &sol_type,
@@ -783,7 +785,7 @@ pub(crate) fn compute_info_decompression_keygen(
 /// This is similar to compute_info_standard_keygen but for CompressedXofKeySet.
 #[expect(clippy::too_many_arguments)]
 pub(crate) fn compute_info_compressed_keygen(
-    sk: &PrivateSigKey,
+    identity: &NodeSigningIdentity,
     schemes: &[SigningSchemeType],
     domain_separator: &DomainSep,
     prep_id: &RequestId,
@@ -796,7 +798,7 @@ pub(crate) fn compute_info_compressed_keygen(
     let compressed_keyset_digest = hash_versioned(domain_separator, compressed_keyset)?;
     let public_key_digest = hash_versioned(domain_separator, compact_public_key)?;
     compute_info_compressed_keygen_from_digests(
-        sk,
+        identity,
         schemes,
         prep_id,
         key_id,
@@ -810,7 +812,7 @@ pub(crate) fn compute_info_compressed_keygen(
 /// Sign a compressed keygen using precomputed digests.
 #[expect(clippy::too_many_arguments)]
 pub(crate) fn compute_info_compressed_keygen_from_digests(
-    sk: &PrivateSigKey,
+    identity: &NodeSigningIdentity,
     schemes: &[SigningSchemeType],
     prep_id: &RequestId,
     key_id: &RequestId,
@@ -838,7 +840,7 @@ pub(crate) fn compute_info_compressed_keygen_from_digests(
     )?;
     let payload_bytes = keygen_payload_bytes(prep_id, key_id, &key_digests, &extra_data)?;
     let (external_signature, signatures) = sign_result(
-        sk,
+        identity,
         schemes,
         &payload_bytes,
         &sol_type,
@@ -1077,7 +1079,7 @@ pub fn deserialize_to_low_level(
 
 /// Sign a public decryption result under every requested scheme.
 pub(crate) fn sign_public_decryption_result(
-    server_sk: &PrivateSigKey,
+    server_sk: &NodeSigningIdentity,
     schemes: &[SigningSchemeType],
     payload: PublicDecryptionResponsePayload,
     ext_handles_bytes: &[Vec<u8>],
@@ -1104,7 +1106,7 @@ pub(crate) fn sign_public_decryption_result(
 
 /// Sign a user decryption result under every requested scheme.
 pub(crate) fn sign_user_decryption_result(
-    server_sk: &PrivateSigKey,
+    server_sk: &NodeSigningIdentity,
     schemes: &[SigningSchemeType],
     payload: UserDecryptionResponsePayload,
     user_pk_buf: &[u8],
@@ -1134,7 +1136,7 @@ pub(crate) fn sign_user_decryption_result(
 /// the released wire contract. TODO(0.16): once the deprecated fields are gone,
 /// this can use [`signed_payload_bytes`] like every other result.
 fn sign_decryption_result<P: Serialize, D: SolStruct>(
-    server_sk: &PrivateSigKey,
+    server_sk: &NodeSigningIdentity,
     schemes: &[SigningSchemeType],
     payload: P,
     extra_data: Vec<u8>,
@@ -1143,7 +1145,7 @@ fn sign_decryption_result<P: Serialize, D: SolStruct>(
     dsep: &DomainSep,
 ) -> anyhow::Result<DecryptionCallValues<P>> {
     let payload_bytes = bc2wrap::serialize(&payload)?;
-    let signature = internal_sign(dsep, &payload_bytes, server_sk)?.to_bytes();
+    let signature = internal_sign(dsep, &payload_bytes, server_sk.ecdsa())?.to_bytes();
     let (external_signature, stored) = sign_result(
         server_sk,
         schemes,
@@ -1163,17 +1165,17 @@ fn sign_decryption_result<P: Serialize, D: SolStruct>(
 
 pub struct BaseKmsStruct {
     kms_type: KMSType,
-    sig_key: Option<Arc<PrivateSigKey>>,
+    signing_identity: Option<Arc<NodeSigningIdentity>>,
     verf_key: Arc<PublicSigKey>,
     rng: Arc<Mutex<AesRng>>,
 }
 
 impl BaseKmsStruct {
-    pub fn new(kms_type: KMSType, sig_key: PrivateSigKey) -> anyhow::Result<Self> {
+    pub fn new(kms_type: KMSType, signing_identity: NodeSigningIdentity) -> anyhow::Result<Self> {
         Ok(BaseKmsStruct {
             kms_type,
-            verf_key: Arc::new(sig_key.verf_key()),
-            sig_key: Some(Arc::new(sig_key)),
+            verf_key: Arc::new(signing_identity.verf_key()),
+            signing_identity: Some(Arc::new(signing_identity)),
             rng: Arc::new(Mutex::new(AesRng::from_entropy())),
         })
     }
@@ -1184,7 +1186,7 @@ impl BaseKmsStruct {
         );
         BaseKmsStruct {
             kms_type,
-            sig_key: None,
+            signing_identity: None,
             verf_key: Arc::new(verf_key),
             rng: Arc::new(Mutex::new(AesRng::from_entropy())),
         }
@@ -1194,9 +1196,11 @@ impl BaseKmsStruct {
         self.kms_type
     }
 
-    pub fn sig_key(&self) -> anyhow::Result<Arc<PrivateSigKey>> {
-        match &self.sig_key {
-            Some(sk) => Ok(Arc::clone(sk)),
+    /// The identity this KMS signs with, or an error in recovery mode, where it
+    /// runs without one.
+    pub fn signing_identity(&self) -> anyhow::Result<Arc<NodeSigningIdentity>> {
+        match &self.signing_identity {
+            Some(identity) => Ok(Arc::clone(identity)),
             None => anyhow::bail!("No signing key available"),
         }
     }
@@ -1207,14 +1211,10 @@ impl BaseKmsStruct {
 
     /// Make a clone of this struct with a newly initialized RNG s.t. that both the new and old struct are safe to use.
     pub async fn new_instance(&self) -> Self {
-        let sig_key = match &self.sig_key {
-            Some(sk) => Some(Arc::clone(sk)),
-            None => None,
-        };
         Self {
             kms_type: self.kms_type,
             verf_key: Arc::clone(&self.verf_key),
-            sig_key,
+            signing_identity: self.signing_identity.as_ref().map(Arc::clone),
             rng: Arc::new(Mutex::new(self.new_rng().await)),
         }
     }
@@ -1236,9 +1236,9 @@ impl BaseKms for BaseKmsStruct {
     where
         T: Serialize + AsRef<[u8]>,
     {
-        match self.sig_key.as_ref() {
+        match self.signing_identity.as_ref() {
             None => anyhow::bail!("KMS has no signing key"),
-            Some(sk) => internal_sign(dsep, msg, sk),
+            Some(identity) => internal_sign(dsep, msg, identity.ecdsa()),
         }
     }
 
@@ -1856,6 +1856,7 @@ pub(crate) mod tests {
     use super::{TypedPlaintext, deserialize_to_low_level};
     use crate::cryptography::signatures::compute_eip712_signature;
     use crate::cryptography::signatures::internal_sign;
+    use crate::cryptography::signing::identity::NodeSigningIdentity;
     use crate::cryptography::signing::seed::RootSigningSeed;
     use crate::cryptography::signing::{Signature, SigningSchemeType, unified_verify};
     use crate::{
@@ -1935,7 +1936,7 @@ pub(crate) mod tests {
 
         let mut rng = AesRng::seed_from_u64(0xABCD);
         let (pk, sk) = gen_sig_keys(&mut rng);
-        let sk = sk.with_root_seed(RootSigningSeed::random(&mut rng));
+        let sk = NodeSigningIdentity::new(sk, RootSigningSeed::random(&mut rng));
         let domain = dummy_domain();
         let handles = vec![vec![0xAAu8; 32]];
         let extra_data = b"extra";
@@ -1978,7 +1979,8 @@ pub(crate) mod tests {
             assert_eq!(sigs.extra_data, extra_data);
 
             // The deprecated scalar field is the raw signature over the payload.
-            let legacy = internal_sign(&DSEP_PUBLIC_DECRYPTION, &payload_bytes, &sk).unwrap();
+            let legacy =
+                internal_sign(&DSEP_PUBLIC_DECRYPTION, &payload_bytes, sk.ecdsa()).unwrap();
             assert_eq!(sigs.signature, legacy.as_bytes());
 
             // `external_signature` recovers to the signer on-chain.
@@ -2025,7 +2027,7 @@ pub(crate) mod tests {
 
         let mut rng = AesRng::seed_from_u64(0x9E11);
         let (_pk, sk) = gen_sig_keys(&mut rng);
-        let sk = sk.with_root_seed(RootSigningSeed::random(&mut rng));
+        let sk = NodeSigningIdentity::new(sk, RootSigningSeed::random(&mut rng));
         let dsep = b"PERSCHEM";
 
         let ed_msg = b"serialization chosen for ed25519".to_vec();
@@ -2071,7 +2073,7 @@ pub(crate) mod tests {
     fn crs_result_signatures_multi_scheme() {
         let mut rng = AesRng::seed_from_u64(0x5C15);
         let (_pk, sk) = gen_sig_keys(&mut rng);
-        let sk = sk.with_root_seed(RootSigningSeed::random(&mut rng));
+        let sk = NodeSigningIdentity::new(sk, RootSigningSeed::random(&mut rng));
         let domain = dummy_domain();
 
         let crs_id = RequestId::new_random(&mut rng);
@@ -2084,7 +2086,7 @@ pub(crate) mod tests {
             crs_digest.clone(),
             extra_data.clone(),
         );
-        let expected_external = compute_eip712_signature(&sk, &sol_type, &domain).unwrap();
+        let expected_external = compute_eip712_signature(sk.ecdsa(), &sol_type, &domain).unwrap();
         let eip712_hash = sol_type.eip712_signing_hash(&domain);
         let payload_bytes = super::signed_payload_bytes(&super::CrsSignedPayload {
             crs_id,
@@ -2165,7 +2167,7 @@ pub(crate) mod tests {
     fn keygen_result_signatures_sign_the_payload() {
         let mut rng = AesRng::seed_from_u64(0x4E67);
         let (_pk, sk) = gen_sig_keys(&mut rng);
-        let sk = sk.with_root_seed(RootSigningSeed::random(&mut rng));
+        let sk = NodeSigningIdentity::new(sk, RootSigningSeed::random(&mut rng));
         let domain = dummy_domain();
 
         let prep_id = RequestId::new_random(&mut rng);
@@ -2225,6 +2227,7 @@ pub(crate) mod tests {
     fn seedless_node_rejects_pq_schemes_and_still_serves_ecdsa() {
         let mut rng = AesRng::seed_from_u64(0x5EED1E55);
         let (_pk, sk) = gen_sig_keys(&mut rng);
+        let sk = NodeSigningIdentity::ecdsa_only(sk);
         assert!(!sk.has_root_seed(), "this node is meant to be seedless");
         let domain = dummy_domain();
         let prep_id = RequestId::new_random(&mut rng);
@@ -2434,7 +2437,7 @@ pub(crate) mod tests {
         let key_id = RequestId::new_random(&mut rng);
         let preproc_id = RequestId::new_random(&mut rng);
         let (pubkeyset, _sk) = generate_uncompressed_fhe_keys(
-            &sig_sk,
+            &NodeSigningIdentity::ecdsa_only(sig_sk),
             &[crate::cryptography::signing::SigningSchemeType::Ecdsa256k1],
             TEST_PARAM,
             StandardKeySetConfig::default().secret_key_config,
@@ -2484,7 +2487,7 @@ pub(crate) mod tests {
         let key_id = RequestId::new_random(&mut rng);
         let preproc_id = RequestId::new_random(&mut rng);
         let (pubkeyset, _sk) = generate_uncompressed_fhe_keys(
-            &sig_sk,
+            &NodeSigningIdentity::ecdsa_only(sig_sk),
             &[crate::cryptography::signing::SigningSchemeType::Ecdsa256k1],
             TEST_PARAM,
             StandardKeySetConfig::default().secret_key_config,
@@ -2561,7 +2564,7 @@ pub(crate) mod tests {
         let key_id = RequestId::new_random(&mut rng);
         let preproc_id = RequestId::new_random(&mut rng);
         let (pubkeyset, _sk) = generate_uncompressed_fhe_keys(
-            &sig_sk,
+            &NodeSigningIdentity::ecdsa_only(sig_sk),
             &[crate::cryptography::signing::SigningSchemeType::Ecdsa256k1],
             TEST_PARAM,
             StandardKeySetConfig::default().secret_key_config,
@@ -2641,7 +2644,7 @@ pub(crate) mod tests {
         let domain = dummy_domain();
         let extra_data = vec![0x01u8, 0x02, 0x03, 0x04];
         let meta_data = compute_info_uncompressed_keygen(
-            &sk,
+            &NodeSigningIdentity::ecdsa_only(sk.clone()),
             &[crate::cryptography::signing::SigningSchemeType::Ecdsa256k1],
             &crate::engine::base::DSEP_PUBDATA_KEY,
             &prep_id,
@@ -2764,7 +2767,7 @@ pub(crate) mod tests {
 
             let (_, bad_sk) = gen_sig_keys(&mut rng);
             let meta_data = compute_info_uncompressed_keygen(
-                &bad_sk,
+                &NodeSigningIdentity::ecdsa_only(bad_sk.clone()),
                 &[crate::cryptography::signing::SigningSchemeType::Ecdsa256k1],
                 &crate::engine::base::DSEP_PUBDATA_KEY,
                 &prep_id,
@@ -2821,7 +2824,7 @@ pub(crate) mod tests {
         let extra_data = vec![0x10u8, 0x20, 0x30];
 
         let (crs, meta_data) = gen_centralized_crs(
-            &sk,
+            &NodeSigningIdentity::ecdsa_only(sk.clone()),
             &[SigningSchemeType::Ecdsa256k1],
             &params,
             Some(max_num_bits),
@@ -2942,7 +2945,7 @@ pub(crate) mod tests {
             // shold fail if we use the wrong signature
             let (_, bad_sk) = gen_sig_keys(&mut rng);
             let (crs, meta_data) = gen_centralized_crs(
-                &bad_sk, // using bad_sk
+                &NodeSigningIdentity::ecdsa_only(bad_sk.clone()), // using bad_sk
                 &[SigningSchemeType::Ecdsa256k1],
                 &params,
                 Some(max_num_bits),
@@ -3082,9 +3085,14 @@ pub(crate) mod tests {
         let domain = dummy_domain();
         let extra_data = vec![0x0Au8, 0x0B, 0x0C];
         // `external_signature` is always produced regardless of requested schemes.
-        let (sig, _signatures) =
-            compute_preprocessing_signatures(&sk, &[], &preproc_id, &domain, extra_data.clone())
-                .unwrap();
+        let (sig, _signatures) = compute_preprocessing_signatures(
+            &NodeSigningIdentity::ecdsa_only(sk.clone()),
+            &[],
+            &preproc_id,
+            &domain,
+            extra_data.clone(),
+        )
+        .unwrap();
 
         {
             // happy path
@@ -3121,7 +3129,7 @@ pub(crate) mod tests {
             // wrong signature
             let (_, bad_sk) = gen_sig_keys(&mut rng);
             let (sig, _signatures) = compute_preprocessing_signatures(
-                &bad_sk,
+                &NodeSigningIdentity::ecdsa_only(bad_sk.clone()),
                 &[],
                 &preproc_id,
                 &domain,

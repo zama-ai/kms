@@ -581,8 +581,8 @@ mod tests {
         cryptography::{
             encryption::{Encryption, PkeScheme, PkeSchemeType},
             signatures::{
-                ERR_EXT_USER_DECRYPTION_SIG_BAD_LENGTH, PrivateSigKey, PublicSigKey, gen_sig_keys,
-                internal_sign,
+                ERR_EXT_USER_DECRYPTION_SIG_BAD_LENGTH, NodeSigningIdentity, PrivateSigKey,
+                PublicSigKey, gen_sig_keys, internal_sign,
             },
         },
         dummy_domain,
@@ -615,7 +615,7 @@ mod tests {
         extra_data: &[u8],
     ) -> anyhow::Result<Vec<u8>> {
         Ok(sign_user_decryption_result(
-            server_sk,
+            &NodeSigningIdentity::ecdsa_only(server_sk.clone()),
             &[],
             payload.clone(),
             user_pk_buf,

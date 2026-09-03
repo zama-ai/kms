@@ -66,7 +66,7 @@ use tokio_util::task::TaskTracker;
 use tonic::{Request, Response};
 
 use crate::{
-    cryptography::{signatures::PrivateSigKey, signing::SigningSchemeType},
+    cryptography::{signing::SigningSchemeType, signing::identity::NodeSigningIdentity},
     engine::{
         base::{
             CrsGenMetadata, DSEP_PUBDATA_CRS, DSEP_PUBDATA_KEY, KeyGenMetadata,
@@ -657,7 +657,7 @@ impl<
     async fn store_reshared_keys(
         crypto_storage: &ThresholdCryptoMaterialStorage<PubS, PrivS>,
         session_maker: &SessionMaker,
-        sk: &PrivateSigKey,
+        sk: &NodeSigningIdentity,
         signing_schemes: &[SigningSchemeType],
         new_epoch_id: EpochId,
         new_extra_data: Vec<u8>,
@@ -871,7 +871,7 @@ impl<
 
         let immutable_session_maker = self.session_maker.make_immutable();
 
-        let sk = self.base_kms.sig_key().map_err(|e| {
+        let sk = self.base_kms.signing_identity().map_err(|e| {
             MetricedError::new(
                 OP_NEW_EPOCH,
                 Some(epoch_id_as_request_id),
@@ -992,7 +992,7 @@ impl<
             .await?;
 
         let immutable_session_maker = self.session_maker.make_immutable();
-        let sk = self.base_kms.sig_key().map_err(|e| {
+        let sk = self.base_kms.signing_identity().map_err(|e| {
             MetricedError::new(
                 OP_NEW_EPOCH,
                 Some(epoch_id_as_request_id),
@@ -2022,7 +2022,8 @@ pub(crate) mod tests {
     ) -> RealThresholdEpochManager<ram::RamStorage, ram::RamStorage, I, SecureReshareSecretKeys>
     {
         let (_pk, sk) = gen_sig_keys(rng);
-        let base_kms = BaseKmsStruct::new(KMSType::Threshold, sk).unwrap();
+        let base_kms =
+            BaseKmsStruct::new(KMSType::Threshold, NodeSigningIdentity::ecdsa_only(sk)).unwrap();
         let epoch_id = *DEFAULT_EPOCH_ID;
         let session_maker =
             SessionMaker::four_party_dummy_session(None, None, &epoch_id, base_kms.new_rng().await);

@@ -1,5 +1,5 @@
-use crate::cryptography::signatures::PrivateSigKey;
 use crate::cryptography::signing::SigningSchemeType;
+use crate::cryptography::signing::identity::NodeSigningIdentity;
 use crate::engine::base::{
     DSEP_PUBDATA_KEY, KeyGenMetadata, compute_info_decompression_keygen,
     stored_scheme_signatures_to_proto,
@@ -165,7 +165,7 @@ pub async fn key_gen_impl<
     let meta_store = Arc::clone(&service.key_meta_map);
     let sk = service
             .base_kms
-            .sig_key()
+            .signing_identity()
             .map_err(|e| {
         MetricedError::new(
             op_tag,
@@ -393,7 +393,7 @@ pub(crate) async fn key_gen_background<
     epoch_id: &EpochId,
     meta_store: Arc<RwLock<MetaStore<KeyGenMetadata>>>,
     crypto_storage: CentralizedCryptoMaterialStorage<PubS, PrivS>,
-    sk: Arc<PrivateSigKey>,
+    sk: Arc<NodeSigningIdentity>,
     schemes: Vec<SigningSchemeType>,
     params: DKGParams,
     internal_keyset_config: InternalKeySetConfig,

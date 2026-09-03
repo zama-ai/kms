@@ -48,8 +48,8 @@ use kms_lib::{
         encryption::{Encryption, PkeScheme, PkeSchemeType, UnifiedCipher, UnifiedPublicEncKey},
         hybrid_ml_kem::HybridKemCt,
         signatures::{
-            PrivateSigKey, PublicSigKey, RootSigningSeed, SigningSchemeType, UnifiedPublicSigKey,
-            compute_eip712_signature, gen_sig_keys,
+            NodeSigningIdentity, PrivateSigKey, PublicSigKey, RootSigningSeed, SigningSchemeType,
+            UnifiedPublicSigKey, compute_eip712_signature, gen_sig_keys,
         },
         signcryption::{
             Signcrypt, SigncryptionPayload, UnifiedSigncryption, UnifiedSigncryptionKeyOwned,
@@ -127,19 +127,9 @@ fn test_private_sig_key(
         ));
     }
 
-    // The persisted key holds the ECDSA scalar and nothing else: the root seed is a
-    // separate object (`PrivDataType::SigningSeed`, pinned by `test_root_signing_seed`).
-    // A key read back from storage must therefore come up seedless — if it ever does
-    // not, the seed has leaked into this format and every older stored key is missing a
-    // field the current code expects.
-    if original_versionized.has_root_seed() {
-        return Err(test.failure(
-            "the stored private signing key carries a root signing seed; the seed must be \
-             persisted on its own",
-            format,
-        ));
-    }
-
+    // The persisted key holds the ECDSA scalar and nothing else. The root seed is a
+    // separate object (`PrivDataType::SigningSeed`, pinned by `test_root_signing_seed`),
+    // and the two are only brought together in memory, by `NodeSigningIdentity`.
     Ok(test.success(format))
 }
 
@@ -598,11 +588,11 @@ fn test_unified_public_sig_key(
 ) -> Result<TestSuccess, TestFailure> {
     let mut rng = AesRng::seed_from_u64(test.state);
     let (_pk, sk) = gen_sig_keys(&mut rng);
-    let sk = sk.with_root_seed(RootSigningSeed::random(&mut rng));
+    let identity = NodeSigningIdentity::new(sk, RootSigningSeed::random(&mut rng));
 
     // Primary file: the ECDSA variant.
     let original: UnifiedPublicSigKey = load_and_unversionize(dir, test, format)?;
-    let expected_ecdsa = sk
+    let expected_ecdsa = identity
         .unified_verifying_key(SigningSchemeType::Ecdsa256k1)
         .map_err(|e| {
             test.failure(
@@ -624,7 +614,7 @@ fn test_unified_public_sig_key(
         let aux_filename = format!("{}_{scheme}", test.test_filename());
         let stored: UnifiedPublicSigKey =
             load_and_unversionize_auxiliary(dir, test, &aux_filename, format)?;
-        let expected = sk.unified_verifying_key(scheme).map_err(|e| {
+        let expected = identity.unified_verifying_key(scheme).map_err(|e| {
             test.failure(
                 format!("could not derive {scheme} verification key: {e}"),
                 format,
@@ -1238,7 +1228,7 @@ fn test_kms_fhe_key_handles(
     let key_id = RequestId::zeros();
     let preproc_id = RequestId::zeros();
     let new_versionized = KmsFheKeyHandles::new(
-        &private_sig_key,
+        &NodeSigningIdentity::ecdsa_only(private_sig_key),
         &[SigningSchemeType::Ecdsa256k1],
         client_key,
         &key_id,

@@ -67,7 +67,7 @@ pub async fn preprocessing_impl<
         signing_schemes,
     ) = validate_preproc_request(inner)?;
 
-    let sk = service.base_kms.sig_key().map_err(|e| {
+    let sk = service.base_kms.signing_identity().map_err(|e| {
         MetricedError::new(
             OP_KEYGEN_PREPROC_REQUEST,
             Some(req_id),

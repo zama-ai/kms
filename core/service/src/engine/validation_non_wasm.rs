@@ -1215,7 +1215,9 @@ mod tests {
     use crate::{
         cryptography::{
             encryption::{Encryption, PkeScheme, PkeSchemeType, UnifiedPublicEncKey},
-            signatures::{PrivateSigKey, PublicSigKey, gen_sig_keys, internal_sign},
+            signatures::{
+                NodeSigningIdentity, PrivateSigKey, PublicSigKey, gen_sig_keys, internal_sign,
+            },
             signing::SigningSchemeType,
         },
         dummy_domain,
@@ -1248,7 +1250,7 @@ mod tests {
         eip712_domain: &Eip712Domain,
     ) -> PubDecCallValues {
         sign_public_decryption_result(
-            server_sk,
+            &NodeSigningIdentity::ecdsa_only(server_sk.clone()),
             &[SigningSchemeType::Ecdsa256k1],
             payload,
             ext_handles_bytes,

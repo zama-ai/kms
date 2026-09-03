@@ -87,7 +87,7 @@ pub async fn user_decrypt_impl<
                 tonic::Code::NotFound,
             )
         })?;
-    let sig_key = service.base_kms.sig_key().map_err(|e| {
+    let sig_key = service.base_kms.signing_identity().map_err(|e| {
         MetricedError::new(
             OP_USER_DECRYPT_REQUEST,
             Some(request_id),
@@ -291,7 +291,7 @@ pub async fn public_decrypt_impl<
                 tonic::Code::NotFound,
             )
         })?;
-    let sig_key = service.base_kms.sig_key().map_err(|e| {
+    let sig_key = service.base_kms.signing_identity().map_err(|e| {
         MetricedError::new(
             OP_PUBLIC_DECRYPT_REQUEST,
             Some(request_id),
