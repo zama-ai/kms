@@ -245,6 +245,8 @@ impl<const EXTENSION_DEGREE: usize> PrivateKeySet<EXTENSION_DEGREE> {
     }
 
     /// Lift the keys from Z64 to Z128 by performing secure bit lifting using the provided correlated randomness.
+    ///
+    /// NOTE: Could be batched to avoid spending so many rounds
     async fn lift_to_z128_online<
         Ses: BaseSessionHandles,
         P: BitPreprocessing<ResiduePoly<Z128, EXTENSION_DEGREE>>
