@@ -105,15 +105,27 @@ The service crate is the main surface area. Key subdirectories under
   (`ecdsa`, the legacy default and EIP-712 home), EdDSA/ed25519 (`eddsa`), and
   ML-DSA/FIPS-204 (`mldsa`) — behind the `SigningScheme` trait and the
   `unified_sign`/`unified_verify` entry points. The historic
-  `cryptography::signatures` path is now a re-export facade. A node still
-  persists a single ECDSA signing key; the other schemes' keys are derived from
-  it on demand. Every scheme's public verification material — ECDSA's included —
+  `cryptography::signatures` path is a re-export facade. A node persists two
+  private objects: its ECDSA signing key (`PrivDataType::SigningKey`, the
+  authoritative on-chain identity) and an independent, CSPRNG-generated
+  `RootSigningSeed` (`PrivDataType::SigningSeed`), both under `SIGNING_KEY_ID`.
+  The seed will eventuall be the root of *every* signing key of the node, ECDSA 
+  included: keys are derived on demand from the *seed*. However to ensure backward
+  compatibility and avoid requiring nodes to roll their ECDSA keys, legacy ECDSA 
+  are derived and stored seperately, and the seed is only used to derive every 
+  non-ECDSA key. That is, if a legacy ECDSA key is stored, then the seed will *not* 
+  be used to derive ECDSA material. 
+  The seed is carried in memory on `PrivateSigKey` (a `#[serde(skip)]` field, so
+  the persisted format is unchanged) and attached by `get_core_signing_key`; a key
+  without it — a client wallet key, or a node that has not yet run `kms-gen-keys` —
+  can only do ECDSA and errors with `SigningError::MissingRootSeed` for anything
+  else. Every scheme's public verification material — ECDSA's included —
   is stored under the handle `consts::signing_material_id(scheme)` gives, in the
-  data types `key_setup::SCHEME_MATERIAL_TYPES` names:
+  data types `key_setup::NON_LEGACY_VERF_MATERIAL_TYPES` names:
   `PubDataType::TypedVerfKey` holds the scheme's *own* verification key type
   (`PublicSigKey`, `Ed25519VerfKey`, `MlDsaVerfKey<P>`), and `TypedVerfAddress` its
-  `address_text()` (`0x`-prefixed hex; for ECDSA the EIP-55 address). 
-  ECDSA's material is *additionally* written to the deprecated `key_setup::LEGACY_ECDSA_MATERIAL_TYPES`
+  `address_text()` (`0x`-prefixed hex; for ECDSA the EIP-55 address).
+  ECDSA's material is *additionally* written to the deprecated `key_setup::LEGACY_VERF_MATERIAL_TYPES`
   (`PubDataType::VerfKey`/`VerfAddress`, a bare `PublicSigKey` and the same
   address text) for existing external consumers; those two are scheduled for
   removal and nothing new should read them. Both copies are validated against the
@@ -131,17 +143,22 @@ All under [core/service/src/bin/](core/service/src/bin/):
 - [kms-init.rs](core/service/src/bin/kms-init.rs) — post-deployment cluster
   initialization.
 - [kms-gen-keys.rs](core/service/src/bin/kms-gen-keys.rs) — generate the server
-  signing keys (and, in threshold mode, per-party self-signed CA certificates
-  for mTLS). Also derives and persists every non-ECDSA scheme's public
-  verification material from the ECDSA key. Reads a keygen TOML with
+  signing identity — the `RootSigningSeed` plus the ECDSA signing key, derived
+  from the seed on a fresh node and left untouched on an upgraded one — and, in
+  threshold mode, per-party self-signed CA certificates for mTLS. It is the
+  **only** thing that ever creates a seed. Also derives and persists every
+  scheme's public verification material: ECDSA's from the persisted signing key,
+  every other scheme's from the seed. Reads a keygen TOML with
   `--config-file`; `[keygen] repopulate = true` backfills the per-scheme
-  verification material from an existing ECDSA signing key instead of
-  generating keys (the same backfill runs automatically on server start via
-  `migration::migrate_public_verification_material`), and `[keygen] overwrite =
-  true` deletes the signing key together with the verification material derived
-  from it, since generating a key alongside another key's derived material is
-  rejected. Supports `mock_enclave` in config for local dev when compiled with
-  the `insecure` feature.
+  verification material from the signing identity already in private storage
+  instead of generating keys (the same backfill runs automatically on server
+  start via `migration::migrate_public_verification_material`, which warns and
+  skips when the seed is absent), `[keygen] show_existing = true` prints the
+  existing signing-material handles and exits, and `[keygen] overwrite = true`
+  deletes the signing key and the seed together with the verification material
+  derived from them, since generating an identity alongside another identity's
+  derived material is rejected. Supports `mock_enclave` in config for local dev
+  when compiled with the `insecure` feature.
 - [kms-custodian.rs](core/service/src/bin/kms-custodian.rs) — custodian-side
   tool for producing and recovering backup shares.
 - [kms-gen-tls-certs.rs](core/service/src/bin/kms-gen-tls-certs.rs) — TLS

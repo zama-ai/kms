@@ -14,10 +14,10 @@ use backward_compatibility::{
     InternalCustodianSetupMessageTest, InternalRecoveryRequestTest, KeyGenMetadataTest,
     KeyGenMetadataWithExtraDataTest, KeygenSignedPayloadTest, KmsFheKeyHandlesTest, NodeInfoTest,
     OperatorBackupOutputTest, PrepKeygenSignedPayloadTest, PrivateSigKeyTest,
-    PrssSetupCombinedTest, PublicSigKeyTest, RecoveryValidationMaterialTest, SchemeDigestsTest,
-    SigncryptionPayloadTest, SoftwareVersionTest, StoredEip712DomainTest, StoredTypedSignatureTest,
-    TestMetadataKMS, TestType, Testcase, ThresholdFheKeysTest, TypedPlaintextTest,
-    UnifiedCipherTest, UnifiedPublicSigKeyTest, UnifiedSigncryptionKeyTest,
+    PrssSetupCombinedTest, PublicSigKeyTest, RecoveryValidationMaterialTest, RootSigningSeedTest,
+    SchemeDigestsTest, SigncryptionPayloadTest, SoftwareVersionTest, StoredEip712DomainTest,
+    StoredTypedSignatureTest, TestMetadataKMS, TestType, Testcase, ThresholdFheKeysTest,
+    TypedPlaintextTest, UnifiedCipherTest, UnifiedPublicSigKeyTest, UnifiedSigncryptionKeyTest,
     UnifiedSigncryptionTest, UnifiedUnsigncryptionKeyTest, data_dir,
     load::{DataFormat, TestFailure, TestResult, TestSuccess},
     tests::{TestedModule, run_all_tests},
@@ -48,7 +48,7 @@ use kms_lib::{
         encryption::{Encryption, PkeScheme, PkeSchemeType, UnifiedCipher, UnifiedPublicEncKey},
         hybrid_ml_kem::HybridKemCt,
         signatures::{
-            PrivateSigKey, PublicSigKey, SigningSchemeType, UnifiedPublicSigKey,
+            PrivateSigKey, PublicSigKey, RootSigningSeed, SigningSchemeType, UnifiedPublicSigKey,
             compute_eip712_signature, gen_sig_keys,
         },
         signcryption::{
@@ -119,15 +119,51 @@ fn test_private_sig_key(
     let (_, new_versionized) = gen_sig_keys(&mut rng);
 
     if original_versionized != new_versionized {
-        Err(test.failure(
+        return Err(test.failure(
             format!(
                 "Invalid private sig key:\n Expected :\n{original_versionized:?}\nGot:\n{new_versionized:?}"
             ),
             format,
-        ))
-    } else {
-        Ok(test.success(format))
+        ));
     }
+
+    // The persisted key holds the ECDSA scalar and nothing else: the root seed is a
+    // separate object (`PrivDataType::SigningSeed`, pinned by `test_root_signing_seed`).
+    // A key read back from storage must therefore come up seedless — if it ever does
+    // not, the seed has leaked into this format and every older stored key is missing a
+    // field the current code expects.
+    if original_versionized.has_root_seed() {
+        return Err(test.failure(
+            "the stored private signing key carries a root signing seed; the seed must be \
+             persisted on its own",
+            format,
+        ));
+    }
+
+    Ok(test.success(format))
+}
+
+/// The root signing seed's stored format must never drift: it is the only copy of
+/// every non-ECDSA identity a node holds, so a node that cannot read back the seed
+/// it wrote has permanently lost those identities.
+fn test_root_signing_seed(
+    dir: &Path,
+    test: &RootSigningSeedTest,
+    format: DataFormat,
+) -> Result<TestSuccess, TestFailure> {
+    let original: RootSigningSeed = load_and_unversionize(dir, test, format)?;
+
+    let mut rng = AesRng::seed_from_u64(test.state);
+    let expected = RootSigningSeed::random(&mut rng);
+
+    if original != expected {
+        return Err(test.failure(
+            "the stored root signing seed does not match the one the current code derives",
+            format,
+        ));
+    }
+
+    Ok(test.success(format))
 }
 
 fn test_typed_plaintext(
@@ -562,6 +598,7 @@ fn test_unified_public_sig_key(
 ) -> Result<TestSuccess, TestFailure> {
     let mut rng = AesRng::seed_from_u64(test.state);
     let (_pk, sk) = gen_sig_keys(&mut rng);
+    let sk = sk.with_root_seed(RootSigningSeed::random(&mut rng));
 
     // Primary file: the ECDSA variant.
     let original: UnifiedPublicSigKey = load_and_unversionize(dir, test, format)?;
@@ -1577,6 +1614,9 @@ impl TestedModule for KMS {
             }
             Self::Metadata::PrivateSigKey(test) => {
                 test_private_sig_key(test_dir.as_ref(), test, format).into()
+            }
+            Self::Metadata::RootSigningSeed(test) => {
+                test_root_signing_seed(test_dir.as_ref(), test, format).into()
             }
             Self::Metadata::TypedPlaintext(test) => {
                 test_typed_plaintext(test_dir.as_ref(), test, format).into()

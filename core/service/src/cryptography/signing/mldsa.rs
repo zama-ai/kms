@@ -6,9 +6,10 @@ use core::marker::PhantomData;
 use hashing::{DIGEST_BYTES, DomainSep, unsafe_hash_list_w_size};
 use ml_dsa::{
     B32, EncodedVerifyingKey, KeyExport, Keypair, MlDsaParams, Signature as MlDsaSignature,
-    SignatureEncoding, Signer, SigningKey as MlDsaSigningKey, Verifier,
-    VerifyingKey as MlDsaVerifyingKey,
+    SigningKey as MlDsaSigningKey, Verifier, VerifyingKey as MlDsaVerifyingKey,
 };
+#[cfg(feature = "non-wasm")]
+use ml_dsa::{SignatureEncoding, Signer};
 use serde::{Deserialize, Serialize, de::Visitor};
 use tfhe::named::Named;
 
@@ -22,6 +23,7 @@ impl<P: MlDsaParams> SigningScheme for MlDsa<P> {
     type SigningKey = MlDsaSigningKey<P>;
     type VerificationKey = MlDsaVerifyingKey<P>;
 
+    #[cfg(feature = "non-wasm")]
     fn sign(
         dsep: &DomainSep,
         msg: &[u8],

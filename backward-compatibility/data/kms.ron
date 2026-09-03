@@ -1750,6 +1750,14 @@
     (
         kms_core_version_min: "0.15.0",
         kms_core_module: "kms",
+        metadata: RootSigningSeed((
+            test_filename: "root_signing_seed",
+            state: 100,
+        )),
+    ),
+    (
+        kms_core_version_min: "0.15.0",
+        kms_core_module: "kms",
         metadata: PublicSigKey((
             test_filename: "public_sig_key",
             state: 100,
