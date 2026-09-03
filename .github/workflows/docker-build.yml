@@ -222,7 +222,7 @@ jobs:
     if: |
       (github.event_name != 'workflow_dispatch' || inputs.build-golden-image) &&
       needs.golden-image-tag.outputs.cache_hit != 'true'
-    uses: zama-ai/ci-templates/.github/workflows/common-docker.yml@cc49b4b7f41819757c6b3999c9cadb8e27be8ab3 # v1.0.11
+    uses: zama-ai/ci-templates/.github/workflows/common-docker.yml@d13c806c229167a30eab20c228b87467d0e2e470 # v1.0.12
     permissions:
       actions: read # Required to read workflow run information
       contents: read # Required to checkout repository code
@@ -334,7 +334,7 @@ jobs:
         inputs.build-core-client ||
         inputs.build-core-service
       )
-    uses: zama-ai/ci-templates/.github/workflows/common-docker.yml@cc49b4b7f41819757c6b3999c9cadb8e27be8ab3 # v1.0.11
+    uses: zama-ai/ci-templates/.github/workflows/common-docker.yml@d13c806c229167a30eab20c228b87467d0e2e470 # v1.0.12
     permissions:
       actions: read # Required to read workflow run information
       contents: read # Required to checkout repository code
@@ -422,7 +422,7 @@ jobs:
       !cancelled() &&
       needs.kms-binaries-latest.result == 'success' &&
       (github.event_name != 'workflow_dispatch' || inputs.build-core-client)
-    uses: zama-ai/ci-templates/.github/workflows/common-docker.yml@cc49b4b7f41819757c6b3999c9cadb8e27be8ab3 # v1.0.11
+    uses: zama-ai/ci-templates/.github/workflows/common-docker.yml@d13c806c229167a30eab20c228b87467d0e2e470 # v1.0.12
     permissions:
       actions: read # Required to read workflow run information
       contents: read # Required to checkout repository code
@@ -459,7 +459,7 @@ jobs:
       !cancelled() &&
       needs.kms-binaries-latest.result == 'success' &&
       (github.event_name != 'workflow_dispatch' || inputs.build-core-service)
-    uses: zama-ai/ci-templates/.github/workflows/common-docker.yml@cc49b4b7f41819757c6b3999c9cadb8e27be8ab3 # v1.0.11
+    uses: zama-ai/ci-templates/.github/workflows/common-docker.yml@d13c806c229167a30eab20c228b87467d0e2e470 # v1.0.12
     permissions:
       actions: read # Required to read workflow run information
       contents: read # Required to checkout repository code
