@@ -48,6 +48,11 @@ where
 }
 
 /// Generic implementation of [BitWiseEval::lazy_eval].
+///
+/// Each coefficient is a `GF(2^EXTENSION_DEGREE)` element packed into a `u8`, so `EXTENSION_DEGREE`
+/// is at most 8. The result is the unreduced product of two polynomials with `EXTENSION_DEGREE`
+/// coefficients each, so `PRODUCT_LENGTH` is at least `2 * EXTENSION_DEGREE - 1`. Both bounds are
+/// checked at compile time.
 pub(crate) fn bitwise_eval_coefficients<
     Z,
     F,
@@ -70,10 +75,18 @@ where
         coefs.len()
     );
 
-    debug_assert!(
-        EXTENSION_DEGREE <= u8::BITS as usize,
-        "bitwise_eval_coefficients requires EXTENSION_DEGREE <= 8 (coefficients are stored in a u8)"
-    );
+    const {
+        assert!(
+            EXTENSION_DEGREE <= u8::BITS as usize,
+            "bitwise_eval_coefficients requires EXTENSION_DEGREE <= 8 (coefficients are stored in a u8)"
+        );
+        // `result[power_idx + bit_idx]` below reaches index `2 * EXTENSION_DEGREE - 2` at most,
+        // because both `power_idx` and `bit_idx` are below `EXTENSION_DEGREE`.
+        assert!(
+            PRODUCT_LENGTH >= 2 * EXTENSION_DEGREE - 1,
+            "bitwise_eval_coefficients requires PRODUCT_LENGTH >= 2 * EXTENSION_DEGREE - 1"
+        );
+    }
 
     let mut result = [Z::ZERO; PRODUCT_LENGTH];
     for (coef, power) in coefs.iter().zip(powers) {
@@ -298,6 +311,16 @@ where
         Poly {
             // an empty polynomial is considered zero
             coefs: vec![],
+        }
+    }
+
+    /// Returns the zero polynomial with space reserved for `capacity` coefficients.
+    ///
+    /// Unlike [`Poly::zeros`], the result is compressed. The reserved space lets in-place updates
+    /// grow the polynomial up to `capacity` coefficients without a reallocation.
+    pub(crate) fn zero_with_capacity(capacity: usize) -> Self {
+        Poly {
+            coefs: Vec::with_capacity(capacity),
         }
     }
 
@@ -574,33 +597,36 @@ fn quo_rem<F: Field>(a: Poly<F>, b: &Poly<F>) -> (Poly<F>, Poly<F>) {
 
 /// Replace `remainder` with `remainder mod divisor` and write the corresponding quotient into
 /// `quotient`, reusing both allocations.
+///
+/// Panics when `divisor` is zero, which is a bug in the caller.
 fn quo_rem_assign<F: Field>(remainder: &mut Poly<F>, divisor: &Poly<F>, quotient: &mut Poly<F>) {
+    assert!(!divisor.is_zero(), "division by 0 in quo_rem");
+
     let remainder_len = remainder.deg() + 1;
     let divisor_len = divisor.deg() + 1;
 
-    if divisor_len == 1 && divisor.coef(0) == F::ZERO {
-        panic!("division by 0 in quo_rem");
-    }
-
-    // Clear every previously live quotient coefficient before changing its logical length. This
-    // also ensures stale coefficients cannot affect a shorter quotient in a later EEA round.
-    quotient.coefs.fill(F::ZERO);
-    if remainder_len == 1 && remainder.coef(0) == F::ZERO {
+    // A zero remainder, or one of lower degree than the divisor, is already reduced and has a zero
+    // quotient. The zero remainder needs its own check because its `coefs` can be empty, which the
+    // loop below cannot index.
+    let remainder_is_zero = remainder_len == 1 && remainder.coef(0) == F::ZERO;
+    if remainder_is_zero || remainder_len < divisor_len {
         quotient.coefs.clear();
-        remainder.coefs.clear();
+        remainder.compress();
         return;
     }
 
-    let quotient_len = remainder_len.saturating_sub(divisor_len) + 1;
+    // Schoolbook long division, from the highest quotient coefficient down. In round `i` the leading
+    // term of the remainder is `remainder[i + deg(divisor)] * X^(i + deg(divisor))`. Dividing that
+    // coefficient by the leading coefficient of the divisor gives `quotient[i]`, and subtracting
+    // `quotient[i] * X^i * divisor` cancels the leading term. Every quotient coefficient is written,
+    // so no stale value from a previous call survives.
+    let quotient_len = remainder_len - divisor_len + 1;
     quotient.coefs.resize(quotient_len, F::ZERO);
-
-    if remainder_len >= divisor_len {
-        let inverse_leading = divisor.highest_coefficient().invert();
-        for i in (0..=(remainder_len - divisor_len)).rev() {
-            quotient.coefs[i] = remainder.coefs[i + divisor_len - 1] * inverse_leading;
-            for j in 0..divisor_len {
-                remainder.coefs[i + j] -= quotient.coefs[i] * divisor.coefs[j];
-            }
+    let inverse_leading = divisor.highest_coefficient().invert();
+    for i in (0..quotient_len).rev() {
+        quotient.coefs[i] = remainder.coefs[i + divisor_len - 1] * inverse_leading;
+        for j in 0..divisor_len {
+            remainder.coefs[i + j] -= quotient.coefs[i] * divisor.coefs[j];
         }
     }
     quotient.compress();
@@ -723,44 +749,28 @@ mod lagrange_basis_tests {
     }
 }
 
-/// interpolate a polynomial through coordinates where points holds the x-coordinates and values holds the y-coordinates
-pub fn lagrange_interpolation<F: Field>(points: &[F], values: &[F]) -> anyhow::Result<Poly<F>> {
-    lagrange_interpolation_from_values(points, values.iter().copied())
-}
-
-/// Like [`lagrange_interpolation`] but with the y-coordinates streamed instead of materialized.
+/// Interpolates the polynomial through the x-coordinates `points` and the y-coordinates `values`.
 ///
-/// Uses the memoized Lagrange basis for `points` when one is available, otherwise builds it.
-pub(crate) fn lagrange_interpolation_from_values<F, I>(
-    points: &[F],
-    values: I,
-) -> anyhow::Result<Poly<F>>
+/// `values` is consumed as a stream and must yield exactly one value per point. Uses the memoized
+/// Lagrange basis for `points` when one is available, otherwise builds it.
+pub fn lagrange_interpolation<F, I>(points: &[F], values: I) -> anyhow::Result<Poly<F>>
 where
     F: Field,
     I: IntoIterator<Item = F>,
 {
     if let Some(cached) = F::cached_lagrange_polys(points) {
-        lagrange_interpolation_with_polys_from_values(cached, values)
+        lagrange_interpolation_with_polys(cached, values)
     } else {
-        lagrange_interpolation_with_polys_from_values(lagrange_polynomials(points), values)
+        lagrange_interpolation_with_polys(lagrange_polynomials(points), values)
     }
 }
 
-/// interpolate a polynomial using pre-computed Lagrange basis polynomials and y-coordinates
-pub fn lagrange_interpolation_with_polys<F: Field>(
-    lagrange_polys: impl AsRef<[Poly<F>]>,
-    values: &[F],
-) -> anyhow::Result<Poly<F>> {
-    lagrange_interpolation_with_polys_from_values(lagrange_polys, values.iter().copied())
-}
-
-/// Interpolate a polynomial using pre-computed Lagrange basis polynomials and a stream of
-/// y-coordinates.
+/// Interpolates a polynomial from pre-computed Lagrange basis polynomials and the y-coordinates
+/// `values`.
 ///
-/// Unlike [`lagrange_interpolation_with_polys`], this does not require the y-coordinates to be
-/// materialized in a separate buffer. The iterator must yield exactly one value per basis
-/// polynomial.
-pub(crate) fn lagrange_interpolation_with_polys_from_values<F, I>(
+/// `values` is consumed as a stream, so callers do not need to collect the y-coordinates into a
+/// buffer. It must yield exactly one value per basis polynomial.
+pub fn lagrange_interpolation_with_polys<F, I>(
     lagrange_polys: impl AsRef<[Poly<F>]>,
     values: I,
 ) -> anyhow::Result<Poly<F>>
@@ -799,8 +809,9 @@ where
 
 /// Runs the extended Euclidean algorithm for `a` and `b` until `deg(r1) < stop`.
 ///
-/// Precondition: `deg(b) >= stop`. Callers ensure this code runs the loop at least once, and `a`
-/// is always read — hence `a` is cloned up front.
+/// Precondition: `deg(b) >= stop`. The loop then runs at least once and reads `a`, which is why
+/// `a` is cloned up front. When `deg(b) < stop` the result is `(b, 1)`, and the caller returns
+/// that without calling this function.
 ///
 /// Returns the low-degree remainder `r1` and its Bézout cofactor `t1` with
 /// respect to the original `b`.
@@ -808,18 +819,14 @@ fn partial_xgcd<F: Field>(a: &Poly<F>, b: Poly<F>, stop: usize) -> (Poly<F>, Pol
     let mut r0 = a.clone();
     let mut r1 = b;
 
-    // Invariant: each remainder is `a * s + b * t`; we only track `t`.
+    // Invariant: each remainder is `a * s + b * t`; we only track `t`. The cofactors and the
+    // quotient are updated in place, so they are allocated once with room for `deg(a) + 1`
+    // coefficients.
     let capacity = a.coefs.len();
-    let mut t0 = Poly {
-        coefs: Vec::with_capacity(capacity),
-    };
-    let mut t1 = Poly {
-        coefs: Vec::with_capacity(capacity),
-    };
+    let mut t0 = Poly::zero_with_capacity(capacity);
+    let mut t1 = Poly::zero_with_capacity(capacity);
     t1.coefs.push(F::ONE);
-    let mut q = Poly {
-        coefs: Vec::with_capacity(capacity),
-    };
+    let mut q = Poly::zero_with_capacity(capacity);
 
     while r1.deg() >= stop {
         // Turn r0 into the next remainder and reuse q's allocation across every EEA round.
@@ -920,36 +927,13 @@ fn gao_decoding_common<F: Field>(
 /// Runs Gao decoding algorithm.
 ///
 /// - `points` holds the x-coordinates
-/// - `values` holds the y-coordinates
+/// - `values` yields the y-coordinates, exactly one per point
 /// - `k` such that we apply error correction to a polynomial of degree < k
 ///   (usually degree = threshold in our scheme, but it can be 2*threshold in some cases)
 /// - `max_errors` is the maximum number of errors we try to correct for (most often threshold - len(corrupt_set), but can be less than this if degree is 2*threshold)
 ///
 /// __NOTE__ : We assume values already identified as errors have been excluded by the caller (i.e. values denoted Bot in NIST doc)
-pub fn gao_decoding<F: Field>(
-    points: &[F],
-    values: &[F],
-    k: usize,
-    max_errors: usize,
-) -> anyhow::Result<Poly<F>> {
-    // in the literature we find (n, k, d) codes
-    // parameter k is called v in the NIST doc (the RS dimension)
-    // this means that n is the number of points xi for which we have some values yi
-    // yi ~= G(xi)), where deg(G) <= k-1
-    // sanity check for parameter sizes
-    if values.len() != points.len() {
-        return Err(anyhow_error_and_log(
-            "Gao decoding failure: mismatch between number of values and points".to_string(),
-        ));
-    }
-
-    gao_decoding_from_values(points, values.iter().copied(), k, max_errors)
-}
-
-/// Run Gao decoding with streamed y-coordinates, avoiding a separate values buffer.
-///
-/// The iterator must yield exactly one value per point.
-pub(crate) fn gao_decoding_from_values<F, I>(
+pub fn gao_decoding<F, I>(
     points: &[F],
     values: I,
     k: usize,
@@ -959,10 +943,15 @@ where
     F: Field,
     I: IntoIterator<Item = F>,
 {
+    // in the literature we find (n, k, d) codes
+    // parameter k is called v in the NIST doc (the RS dimension)
+    // this means that n is the number of points xi for which we have some values yi
+    // yi ~= G(xi)), where deg(G) <= k-1
     let n = points.len();
 
     // R \in F[X] such that R(xi) = yi. Called g_1(x) in the Gao paper.
-    let r = lagrange_interpolation_from_values(points, values)?;
+    // The interpolation fails when `values` does not yield exactly one value per point.
+    let r = lagrange_interpolation(points, values)?;
 
     // G = prod(X - xi) where xi is party i's index. Called g_0(x) in the Gao paper.
     // note that deg(G) >= deg(R)
@@ -975,35 +964,8 @@ where
 /// from [`FieldHints`](crate::error_correction::FieldHints).
 ///
 /// The caller must ensure that `lagrange_polys` and `vanishing_poly` were built from the same
-/// `points` slice passed here.
-pub fn gao_decoding_with_field_hints<F: Field>(
-    points: &[F],
-    values: &[F],
-    k: usize,
-    max_errors: usize,
-    lagrange_polys: &[Poly<F>],
-    vanishing_poly: &Poly<F>,
-) -> anyhow::Result<Poly<F>> {
-    if values.len() != points.len() {
-        return Err(anyhow_error_and_log(
-            "Gao decoding failure: mismatch between number of values and points".to_string(),
-        ));
-    }
-
-    gao_decoding_with_field_hints_from_values(
-        points,
-        values.iter().copied(),
-        k,
-        max_errors,
-        lagrange_polys,
-        vanishing_poly,
-    )
-}
-
-/// Run Gao decoding with precomputed field hints and streamed y-coordinates.
-///
-/// The iterator must yield exactly one value per point and basis polynomial.
-pub(crate) fn gao_decoding_with_field_hints_from_values<F, I>(
+/// `points` slice passed here. `values` must yield exactly one value per point.
+pub fn gao_decoding_with_field_hints<F, I>(
     points: &[F],
     values: I,
     k: usize,
@@ -1018,7 +980,8 @@ where
     let n = points.len();
 
     // R = interpolation polynomial through (points, values), using the precomputed Lagrange basis.
-    let r = lagrange_interpolation_with_polys_from_values(lagrange_polys, values)?;
+    // The interpolation fails when `values` does not yield exactly one value per basis polynomial.
+    let r = lagrange_interpolation_with_polys(lagrange_polys, values)?;
 
     // partial_xgcd only clones "G" if the EEA loop actually runs, which is quite rare.
     gao_decoding_common(n, k, max_errors, r, vanishing_poly)
@@ -1057,17 +1020,15 @@ mod tests {
         assert!(xs.len() > poly.deg());
 
         let ys: Vec<_> = xs.iter().map(|x| poly.eval(x)).collect();
-        let interpolated = lagrange_interpolation(&xs, &ys);
+        let interpolated = lagrange_interpolation(&xs, ys.iter().copied());
         assert_eq!(poly, interpolated.unwrap());
 
-        let streamed = lagrange_interpolation_with_polys_from_values(
-            lagrange_polynomials(&xs),
-            ys.iter().copied(),
-        )
-        .unwrap();
-        assert_eq!(poly, streamed);
+        let with_polys =
+            lagrange_interpolation_with_polys(lagrange_polynomials(&xs), ys.iter().copied())
+                .unwrap();
+        assert_eq!(poly, with_polys);
 
-        let mismatch = lagrange_interpolation_with_polys_from_values(
+        let mismatch = lagrange_interpolation_with_polys(
             lagrange_polynomials(&xs),
             ys.iter().copied().take(ys.len() - 1),
         )
@@ -1200,13 +1161,13 @@ mod tests {
         // add an error
         ys[0] += GF16::from(3);
         ys[1] += GF16::from(4);
-        let polynomial = gao_decoding(&xs, &ys, f.coefs.len(), 2).unwrap();
+        let polynomial = gao_decoding(&xs, ys.iter().copied(), f.coefs.len(), 2).unwrap();
         assert_eq!(polynomial.eval(&GF16::from(0)), GF16::from(7));
 
         let field_hint = FieldHints::new(&roles).unwrap();
         let polynomial_with_hint = gao_decoding_with_field_hints(
             &xs,
-            &ys,
+            ys.iter().copied(),
             f.coefs.len(),
             2,
             &field_hint.lagrange_polys,
@@ -1239,7 +1200,9 @@ mod tests {
         // adding two errors
         ys[0] += GF16::from(2);
         ys[1] += GF16::from(5);
-        let r = gao_decoding(&xs, &ys, 3, 1).unwrap_err().to_string();
+        let r = gao_decoding(&xs, ys.iter().copied(), 3, 1)
+            .unwrap_err()
+            .to_string();
         assert!(r.contains(
             "Gao decoding failure: Allowed at most 1 errors but xgcd factor degree indicates 2."
         ));
@@ -1247,7 +1210,7 @@ mod tests {
         let field_hint = FieldHints::new(&roles).unwrap();
         let r_with_hint = gao_decoding_with_field_hints(
             &xs,
-            &ys,
+            ys.iter().copied(),
             3,
             1,
             &field_hint.lagrange_polys,

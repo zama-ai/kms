@@ -41,13 +41,13 @@ fn bench_gao_decoding(c: &mut Criterion) {
         }
 
         assert_eq!(
-            gao_decoding(&points, &values, K, MAX_ERRORS).unwrap(),
+            gao_decoding(&points, values.iter().copied(), K, MAX_ERRORS).unwrap(),
             message
         );
         assert_eq!(
             gao_decoding_with_field_hints(
                 &points,
-                &values,
+                values.iter().copied(),
                 K,
                 MAX_ERRORS,
                 &lagrange_polys,
@@ -62,8 +62,13 @@ fn bench_gao_decoding(c: &mut Criterion) {
             |b| {
                 b.iter(|| {
                     black_box(
-                        gao_decoding(black_box(&points), black_box(&values), K, MAX_ERRORS)
-                            .unwrap(),
+                        gao_decoding(
+                            black_box(&points),
+                            black_box(&values).iter().copied(),
+                            K,
+                            MAX_ERRORS,
+                        )
+                        .unwrap(),
                     )
                 });
             },
@@ -75,7 +80,7 @@ fn bench_gao_decoding(c: &mut Criterion) {
                     black_box(
                         gao_decoding_with_field_hints(
                             black_box(&points),
-                            black_box(&values),
+                            black_box(&values).iter().copied(),
                             K,
                             MAX_ERRORS,
                             black_box(&lagrange_polys),

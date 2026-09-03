@@ -1,8 +1,8 @@
 use super::{
     galois_rings::common::{LutMulReduction, ResiduePoly},
     poly::{
-        BitWiseEval, BitWisePoly, Poly, gao_decoding_from_values,
-        gao_decoding_with_field_hints_from_values, lagrange_polynomials, vanishing_poly,
+        BitWiseEval, BitWisePoly, Poly, gao_decoding, gao_decoding_with_field_hints,
+        lagrange_polynomials, vanishing_poly,
     },
     structure_traits::{
         BaseRing, ErrorCorrect, Field, QuotientMaximalIdeal, RingWithExceptionalSequence,
@@ -299,7 +299,7 @@ where
         })?;
 
         // fi(X) = a0 + ... a_t * X^t where a0 is the secret bit corresponding to position i.
-        let fi_mod2 = gao_decoding_from_values(
+        let fi_mod2 = gao_decoding(
             &xs,
             binary_share_values(&shares_with_validity, bit_idx),
             degree + 1,
@@ -401,7 +401,7 @@ where
 
         let fi_mod2 = if !validity_changed {
             // All parties still valid — use the precomputed field hints.
-            gao_decoding_with_field_hints_from_values(
+            gao_decoding_with_field_hints(
                 &hints.field_hints.embedded_points,
                 binary_share_values(&shares_with_validity, bit_idx),
                 degree + 1,
@@ -420,7 +420,7 @@ where
                 fallback_field_hints = Some(FieldHints::new(&valid_parties)?);
             }
             let fallback_field_hints = fallback_field_hints.as_ref().unwrap();
-            gao_decoding_with_field_hints_from_values(
+            gao_decoding_with_field_hints(
                 &fallback_field_hints.embedded_points,
                 binary_share_values(&shares_with_validity, bit_idx),
                 degree + 1,
@@ -502,7 +502,7 @@ pub fn error_correction<F: Field>(
         .map(|s| F::embed_role_to_exceptional_sequence(&s.owner()))
         .try_collect()?;
     // call Gao decoding with the shares as points/values, set Gao parameter k = v = degree+1
-    gao_decoding_from_values(
+    gao_decoding(
         &xs,
         shares.into_iter().map(Share::take_value),
         degree + 1,
@@ -520,7 +520,7 @@ pub fn error_correction_with_field_hints<F: Field>(
     max_errorsors: usize,
     field_hints: &FieldHints<F>,
 ) -> anyhow::Result<ShamirFieldPoly<F>> {
-    gao_decoding_with_field_hints_from_values(
+    gao_decoding_with_field_hints(
         &field_hints.embedded_points,
         shares.iter().map(Share::value),
         degree + 1,
