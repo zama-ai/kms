@@ -7,7 +7,7 @@ use crate::{
         },
         online::preprocessing::BasePreprocessing,
         runtime::sessions::base_session::{
-            BaseSession, BaseSessionHandles, GenericBaseSessionHandles,
+            BaseSession, BaseSessionHandles, GenericBaseSessionHandles, advance_session_by_rounds,
         },
         sharing::open::{RobustOpen, SecureRobustOpen},
     },
@@ -559,9 +559,27 @@ impl<
     }
 }
 
-// Note: Can't really split into 2 functions one for sender one for receiver
-// because we have parties in both sets.
-// We __ALWAYS__ reshare from set1 to set2
+/// Number of synchronous rounds the two-sets resharing runs on the cross-set
+/// session before its within-set-2 broadcast: the mask open
+/// ([`RobustOpen::num_rounds`]) plus one masked-share exchange round.
+pub(crate) fn reshare_cross_set_num_rounds<OpenProtocol: RobustOpen>(num_parties: usize) -> usize {
+    OpenProtocol::num_rounds(num_parties) + 1
+}
+
+/// Number of synchronous rounds the two-sets resharing runs on the within-set-2
+/// session *after* the cross-set open+exchange: the within-set-2 broadcast
+/// ([`Broadcast::num_rounds`]) plus the final syndrome open
+/// ([`RobustOpen::num_rounds`]).
+pub(crate) fn reshare_set2_only_num_rounds<
+    OpenProtocol: RobustOpen,
+    BroadcastProtocol: Broadcast,
+>(
+    num_parties: usize,
+    threshold: usize,
+) -> usize {
+    BroadcastProtocol::num_rounds(num_parties, threshold) + OpenProtocol::num_rounds(num_parties)
+}
+
 pub async fn reshare_two_sets<
     TwoSetsSession: GenericBaseSessionHandles<TwoSetsRole>,
     OneSetSession: BaseSessionHandles,
@@ -675,7 +693,7 @@ where
 
     // Parties in set 2 receive the masked shares from parties in set 1
     // and finish the resharing
-    if two_sets_session.my_role().is_set2() {
+    let output = if two_sets_session.my_role().is_set2() {
         let my_set_session = if let Some(s) = set_2_session {
             s
         } else {
@@ -768,6 +786,17 @@ where
                 .or_insert_with(Vec::new);
         }
 
+        // The mask open and masked-share exchange above ran on `two_sets_session`;
+        // `my_set_session` sat idle during those rounds. Advance it before this
+        // broadcast (its first use) so the broadcast's timeout budgets for that
+        // session-switch gap. Every set-2 party runs the same open + exchange, so
+        // they all advance by the same amount and round-tags stay aligned.
+        advance_session_by_rounds(
+            my_set_session,
+            reshare_cross_set_num_rounds::<OpenProtocol>(two_sets_session.num_parties()),
+        )
+        .await;
+
         // Broadcast those received values within set 2
         let broadcast_results = broadcast_protocol
             .broadcast_from_all(
@@ -798,7 +827,7 @@ where
             )?;
 
             // Everything below this should be similar as if we were resharing to same set
-            return Ok(Some(
+            Some(
                 open_syndromes_and_correct_errors(
                     my_set_session,
                     unmasked_reshared_shares,
@@ -808,15 +837,33 @@ where
                     open_protocol,
                 )
                 .await?,
-            ));
+            )
         } else {
             return Err(anyhow_error_and_log(
                 "Masks from set 2 are required for parties in set 2 during resharing.",
             ));
-        };
-    }
+        }
+    } else {
+        None
+    };
 
-    Ok(None)
+    // End-of-protocol coherence: while set-2 ran the broadcast + syndrome open on
+    // the (set-2-only) `my_set_session`, `two_sets_session` sat idle. Advance it by
+    // that many rounds so both sessions are returned at the same round — the
+    // symmetric counterpart of the pre-broadcast advance above. This can't be a
+    // `synchronize_sessions` against `my_set_session`: set-1 parties have no such
+    // session. Every party (set-1 included) applies the same relative advance, so
+    // the shared cross-set session stays consistent across the committee.
+    advance_session_by_rounds(
+        two_sets_session,
+        reshare_set2_only_num_rounds::<OpenProtocol, BroadcastProtocol>(
+            two_sets_session.num_parties(),
+            two_sets_session.threshold().threshold_set_2 as usize,
+        ),
+    )
+    .await;
+
+    Ok(output)
 }
 
 pub async fn reshare_same_sets<

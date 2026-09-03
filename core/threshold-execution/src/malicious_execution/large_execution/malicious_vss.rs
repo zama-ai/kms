@@ -7,8 +7,8 @@ use tonic::async_trait;
 use crate::{
     communication::broadcast::Broadcast,
     large_execution::vss::{
-        DoublePoly, MapRoleDoublePoly, Round1VSSOutput, Vss, round_1, round_2, round_3, round_4,
-        sample_secret_polys,
+        DoublePoly, MapRoleDoublePoly, Round1VSSOutput, SecureVss, Vss, round_1, round_2, round_3,
+        round_4, sample_secret_polys,
     },
     runtime::sessions::base_session::BaseSessionHandles,
 };
@@ -33,6 +33,10 @@ impl ProtocolDescription for DroppingVssFromStart {
 
 #[async_trait]
 impl Vss for DroppingVssFromStart {
+    fn num_rounds(num_parties: usize, threshold: usize) -> usize {
+        SecureVss::num_rounds(num_parties, threshold)
+    }
+
     //Do nothing, and output an empty Vec
     async fn execute_many<Z: Ring, S: BaseSessionHandles>(
         &self,
@@ -64,6 +68,10 @@ impl ProtocolDescription for DroppingVssAfterR1 {
 
 #[async_trait]
 impl Vss for DroppingVssAfterR1 {
+    fn num_rounds(num_parties: usize, threshold: usize) -> usize {
+        SecureVss::num_rounds(num_parties, threshold)
+    }
+
     //Do round1, and output an empty Vec
     async fn execute_many<Z: RingWithExceptionalSequence, S: BaseSessionHandles>(
         &self,
@@ -112,6 +120,10 @@ impl<BCast: Broadcast> DroppingVssAfterR2<BCast> {
 
 #[async_trait]
 impl<BCast: Broadcast> Vss for DroppingVssAfterR2<BCast> {
+    fn num_rounds(num_parties: usize, threshold: usize) -> usize {
+        SecureVss::num_rounds(num_parties, threshold)
+    }
+
     //Do round1 and round2, and output an empty Vec
     async fn execute_many<Z: RingWithExceptionalSequence, S: BaseSessionHandles>(
         &self,
@@ -166,6 +178,10 @@ impl<BCast: Broadcast> MaliciousVssR1<BCast> {
 
 #[async_trait]
 impl<BCast: Broadcast> Vss for MaliciousVssR1<BCast> {
+    fn num_rounds(num_parties: usize, threshold: usize) -> usize {
+        SecureVss::num_rounds(num_parties, threshold)
+    }
+
     async fn execute_many<Z: RingWithExceptionalSequence, S: BaseSessionHandles>(
         &self,
         session: &mut S,
@@ -257,6 +273,10 @@ impl<BCast: Broadcast> WrongSecretLenVss<BCast> {
 
 #[async_trait]
 impl<BCast: Broadcast> Vss for WrongSecretLenVss<BCast> {
+    fn num_rounds(num_parties: usize, threshold: usize) -> usize {
+        SecureVss::num_rounds(num_parties, threshold)
+    }
+
     // The adversary will halve the number of secrets
     async fn execute_many<Z: RingWithExceptionalSequence, S: BaseSessionHandles>(
         &self,
@@ -340,6 +360,10 @@ impl<BCast: Broadcast> WrongDegreeSharingVss<BCast> {
 
 #[async_trait]
 impl<BCast: Broadcast> Vss for WrongDegreeSharingVss<BCast> {
+    fn num_rounds(num_parties: usize, threshold: usize) -> usize {
+        SecureVss::num_rounds(num_parties, threshold)
+    }
+
     async fn execute_many<Z: RingWithExceptionalSequence, S: BaseSessionHandles>(
         &self,
         session: &mut S,

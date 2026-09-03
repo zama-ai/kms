@@ -28,6 +28,10 @@ impl ProtocolDescription for BitLiftDrop {
 
 #[async_trait]
 impl BitLift for BitLiftDrop {
+    fn num_rounds() -> usize {
+        SecureBitLift::num_rounds()
+    }
+
     async fn execute<
         const EXTENSION_DEGREE: usize,
         Ses: BaseSessionHandles,
@@ -61,6 +65,10 @@ impl ProtocolDescription for BitLiftAddError {
 
 #[async_trait]
 impl BitLift for BitLiftAddError {
+    fn num_rounds() -> usize {
+        SecureBitLift::num_rounds()
+    }
+
     async fn execute<
         const EXTENSION_DEGREE: usize,
         Ses: BaseSessionHandles,
@@ -102,6 +110,10 @@ impl ProtocolDescription for BitLiftWrongAmountTooMany {
 
 #[async_trait]
 impl BitLift for BitLiftWrongAmountTooMany {
+    fn num_rounds() -> usize {
+        SecureBitLift::num_rounds()
+    }
+
     async fn execute<
         const EXTENSION_DEGREE: usize,
         Ses: BaseSessionHandles,
@@ -141,6 +153,10 @@ impl ProtocolDescription for BitLiftWrongAmountTooFew {
 
 #[async_trait]
 impl BitLift for BitLiftWrongAmountTooFew {
+    fn num_rounds() -> usize {
+        SecureBitLift::num_rounds()
+    }
+
     async fn execute<
         const EXTENSION_DEGREE: usize,
         Ses: BaseSessionHandles,
