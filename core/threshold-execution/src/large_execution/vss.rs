@@ -31,6 +31,11 @@ pub type SecureVss = RealVss<SyncReliableBroadcast>;
 
 #[async_trait]
 pub trait Vss: Send + Sync + Clone + ProtocolDescription {
+    /// Worst-case number of synchronous network rounds one VSS takes.
+    /// Implemented per concrete object composing its broadcast sub-protocol;
+    /// used to budget the first-round timeout of protocols that run after a VSS.
+    fn num_rounds(num_parties: usize, threshold: usize) -> usize;
+
     /// Executes a Verifiable Secret Sharing
     /// where every party inputs one secret.
     /// The trait provides a default implementation for [execute]
@@ -168,6 +173,11 @@ impl ProtocolDescription for DummyVss {
 
 #[async_trait]
 impl Vss for DummyVss {
+    fn num_rounds(_num_parties: usize, _threshold: usize) -> usize {
+        // Dummy VSS fabricates shares locally, no network rounds.
+        0
+    }
+
     async fn execute_many<Z: RingWithExceptionalSequence, S: BaseSessionHandles>(
         &self,
         session: &mut S,
@@ -243,6 +253,13 @@ impl<BCast: Broadcast> RealVss<BCast> {
 
 #[async_trait]
 impl<BCast: Broadcast> Vss for RealVss<BCast> {
+    fn num_rounds(num_parties: usize, threshold: usize) -> usize {
+        // One dealing round (p2p) plus, in the worst case, the three broadcast
+        // rounds of the dispute resolution (round 2 always, rounds 3-4 under
+        // faults).
+        1 + 3 * BCast::num_rounds(num_parties, threshold)
+    }
+
     #[instrument(name="VSS", skip(self,session, secrets),fields(sid = ?session.session_id(),my_role = ?session.my_role()), batch_size= ?secrets.len())]
     async fn execute_many<Z: RingWithExceptionalSequence, S: BaseSessionHandles>(
         &self,

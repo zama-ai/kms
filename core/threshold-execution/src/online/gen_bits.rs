@@ -16,6 +16,13 @@ use tracing::instrument;
 
 #[async_trait]
 pub trait BitGenEven {
+    /// Worst-case number of synchronous network rounds a `gen_bits_even` takes.
+    ///
+    /// Implemented per concrete object; composed by protocols built on top of
+    /// bit generation to budget their first-round timeout (see resharing session
+    /// advancement).
+    fn num_rounds() -> usize;
+
     async fn gen_bits_even<
         Z: Solve + Invert + ErrorCorrect,
         Ses: BaseSessionHandles,
@@ -36,6 +43,12 @@ pub struct SecureBitGenEven {}
 /// BitGen for even modulus
 #[async_trait]
 impl BitGenEven for SecureBitGenEven {
+    /// One multiplication opening plus one output opening. Independent of the
+    /// number of bits generated (the openings are batched).
+    fn num_rounds() -> usize {
+        2
+    }
+
     /// Generates a vector of secret shared random bits using a preprocessing functionality and a session.
     /// The code only works when the modulo of the ring used is even.
     #[instrument(name="MPC.GenBits", skip(amount, preproc, session), fields(sid = ?session.session_id(), my_role = ?session.my_role(),batch_size=?amount))]

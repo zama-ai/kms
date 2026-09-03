@@ -58,6 +58,22 @@ impl<BCast: Broadcast> RealSmallPreprocessing<BCast> {
     pub fn new(broadcast: BCast) -> Self {
         Self { broadcast }
     }
+
+    /// Worst-case number of synchronous network rounds
+    /// [`RealSmallPreprocessing::execute`] takes to produce `batch` on a session
+    /// of `num_parties` parties with the given `threshold`.
+    ///
+    /// Random values are produced non-interactively via PRSS (0 rounds). Triples
+    /// each require one robust broadcast (`BCast::num_rounds`), and under active
+    /// faults the batch is retried, evicting at least one corrupt party per pass
+    /// — at most `threshold + 1` passes. Independent of the batch *size*.
+    pub fn num_rounds(batch: BatchParams, num_parties: usize, threshold: usize) -> usize {
+        if batch.triples == 0 {
+            0
+        } else {
+            (threshold + 1) * BCast::num_rounds(num_parties, threshold)
+        }
+    }
 }
 
 impl<BCast: Broadcast + Default> Default for RealSmallPreprocessing<BCast> {

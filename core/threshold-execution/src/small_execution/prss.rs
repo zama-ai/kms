@@ -119,6 +119,16 @@ pub trait PRSSInit<Z>: ProtocolDescription + Send + Sync + Sized {
         &self,
         session: &mut S,
     ) -> anyhow::Result<Self::OutputType>;
+
+    /// Worst-case number of synchronous network rounds one [`Self::init`] call
+    /// takes for a session of `num_parties` parties with the given `threshold`.
+    ///
+    /// Declared here but implemented by each concrete init object, which knows
+    /// the sub-protocols it relies on (VSS, AgreeRandom — themselves built on a
+    /// broadcast / robust-open) and composes their round counts. Exposed so
+    /// protocols that run *after* PRSS init (on the parties that perform it) can
+    /// budget their first-round timeout — see resharing session advancement.
+    fn num_rounds(num_parties: usize, threshold: usize) -> usize;
 }
 
 #[derive(Clone)]
@@ -205,6 +215,12 @@ impl<Z: ErrorCorrect + Invert + PRSSConversions, A: AgreeRandom> PRSSInit<Z>
     for AbortRealPrssInit<A>
 {
     type OutputType = PRSSSetup<Z>;
+
+    fn num_rounds(num_parties: usize, threshold: usize) -> usize {
+        // Abort init runs the AgreeRandom sub-protocol.
+        A::num_rounds(num_parties, threshold)
+    }
+
     /// initialize the PRSS setup for this epoch and a given party
     ///
     /// __NOTE__: Needs to be instantiated with [`RealAgreeRandomWithAbort`] to match the spec
@@ -264,6 +280,12 @@ impl<Z: ErrorCorrect + Invert + PRSSConversions, A: AgreeRandomFromShare, V: Vss
     for RobustRealPrssInit<A, V>
 {
     type OutputType = PRSSSetup<Z>;
+
+    fn num_rounds(num_parties: usize, threshold: usize) -> usize {
+        // Robust init runs a VSS, then an AgreeRandom-from-share over its output.
+        V::num_rounds(num_parties, threshold) + A::num_rounds(num_parties)
+    }
+
     /// initialize the PRSS setup for this epoch and a given party
     ///
     /// __NOTE__: Needs to be instantiated with [`RealAgreeRandomWithAbort`] to match the spec

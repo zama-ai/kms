@@ -21,6 +21,14 @@ type GenericEchoVoteJob<T> = JoinSet<Result<(Role, anyhow::Result<HashMap<Role, 
 
 #[async_trait]
 pub trait Broadcast: ProtocolDescription + Send + Sync + Clone {
+    /// Worst-case number of synchronous network rounds a `broadcast_from_all`
+    /// takes for a session of `num_parties` parties with the given `threshold`.
+    ///
+    /// Implemented per concrete broadcast object; composed by protocols built on
+    /// top of a broadcast to budget their first-round timeout (see resharing
+    /// session advancement).
+    fn num_rounds(num_parties: usize, threshold: usize) -> usize;
+
     /// Execution of the _regular_ protocol, must be defined for all structs implementing this trait.
     ///
     /// Takes an `sender_list`, an explicit list of all the senders
@@ -441,6 +449,13 @@ pub(crate) async fn gather_votes<Z: Ring, B: BaseSessionHandles>(
 
 #[async_trait]
 impl Broadcast for SyncReliableBroadcast {
+    /// One send round, one echo round, one initial vote round, and `threshold`
+    /// vote-gathering rounds. This is a fixed-round robust broadcast, so active
+    /// faults do not add rounds.
+    fn num_rounds(_num_parties: usize, threshold: usize) -> usize {
+        3 + threshold
+    }
+
     #[instrument(name= "Syn-Bcast",skip(self,session,senders,my_message),fields(sid = ?session.session_id(), my_role = ?session.my_role()))]
     async fn execute<Z: Ring, B: BaseSessionHandles>(
         &self,

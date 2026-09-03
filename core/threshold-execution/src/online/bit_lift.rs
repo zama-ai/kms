@@ -20,6 +20,14 @@ use threshold_types::protocol::ProtocolDescription;
 
 #[async_trait]
 pub trait BitLift: Send + Sync + Clone + ProtocolDescription {
+    /// Worst-case number of synchronous network rounds a single [`BitLift::execute`]
+    /// (one sub-key) takes.
+    ///
+    /// Implemented per concrete object; composed by protocols built on top of the
+    /// bit-lift to budget their first-round timeout (see resharing session
+    /// advancement).
+    fn num_rounds() -> usize;
+
     /// Lifts a vector of bits shared over a galois extension of Z64 into a vector of bits shared over a galois estension of Z128
     /// # Arguments
     /// * `secret_bit_vector` - Vector of bits shared over a galois extension of Z64
@@ -58,6 +66,11 @@ impl ProtocolDescription for SecureBitLift {
 
 #[async_trait]
 impl BitLift for SecureBitLift {
+    /// One AND/multiplication opening plus one output opening.
+    fn num_rounds() -> usize {
+        2
+    }
+
     async fn execute<
         const EXTENSION_DEGREE: usize,
         Ses: BaseSessionHandles,
