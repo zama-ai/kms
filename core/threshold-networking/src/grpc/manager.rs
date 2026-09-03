@@ -7,9 +7,7 @@ use crate::grpc::{
     TlsExtensionGetter,
 };
 use crate::health_check::HealthCheckSession;
-use crate::sending_service::{
-    GrpcSendingService, NetworkSession, SendingService, now_activity_millis,
-};
+use crate::sending_service::{GrpcSendingService, NetworkSession, SendingService};
 use dashmap::DashMap;
 use observability::metrics::{self, NetworkDebugEvent};
 use std::collections::HashMap;
@@ -115,13 +113,8 @@ impl GrpcNetworkingManager {
                         }
                         SessionStatus::Active(session) => match session.upgrade() {
                             Some(network_session) => {
-                                let time_since_last_rec = Duration::from_millis(
-                                    now_activity_millis().saturating_sub(
-                                        network_session
-                                            .last_rec_activity_time
-                                            .load(Ordering::Relaxed),
-                                    ),
-                                );
+                                let time_since_last_rec =
+                                    network_session.last_rec_activity_time.load().elapsed();
                                 if time_since_last_rec > discard_inactive_interval {
                                     metrics::METRICS.increment_network_event(
                                         NetworkDebugEvent::SessionActiveDiscarded,

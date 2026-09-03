@@ -2,17 +2,18 @@
 //! stamps/sends tagged messages and performs the round-aware `receive`.
 
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
-use std::sync::{Arc, OnceLock};
+use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::{Duration, Instant};
 
-use super::{ArcSendValueRequest, AtomicDuration, now_activity_millis};
+use super::ArcSendValueRequest;
+use crate::clock::{AtomicDuration, AtomicInstant};
 use crate::grpc::NETWORK_RECEIVED_MEASUREMENT;
 use crate::grpc::{CoreToCoreNetworkConfig, MessageQueueStore, NetworkRoundValue, Tag};
 use dashmap::DashSet;
 use error_utils::anyhow_error_and_log;
 use observability::metrics::{self, NetworkDebugEvent};
-use threshold_types::network::{NetworkMode, Networking};
+use threshold_types::network::{NetworkMode, Networking, RoundClock};
 use threshold_types::party::Identity;
 use threshold_types::role::{RoleKind, RoleTrait};
 use threshold_types::session_id::SessionId;
@@ -49,13 +50,16 @@ pub struct NetworkSession {
     // If Network mode is sync, we need to keep track of the values below to make sure
     // we are within time bound
     pub(crate) conf: CoreToCoreNetworkConfig,
-    pub(crate) init_time: OnceLock<Instant>,
-    /// Milliseconds since the activity epoch when the last message was received,
-    /// or when the session was made active if no message has been received yet.
-    /// Used to discard inactive sessions. Stored as an atomic (not a lock) so it
-    /// can be read and written without awaiting — in particular from the session
-    /// cleanup task while it holds a `DashMap` shard guard.
-    pub(crate) last_rec_activity_time: AtomicU64,
+    /// Anchor of the round clock, stamped at session creation. Stored lock-free
+    /// (an [`AtomicInstant`]) so `synchronize_from` can overwrite it from `&self`,
+    /// like the other atomic time fields below.
+    pub(crate) init_time: AtomicInstant,
+    /// When the last message was received, or when the session was made active if
+    /// no message has been received yet. Used to discard inactive sessions. Stored
+    /// lock-free (an [`AtomicInstant`]) so it can be read and written without
+    /// awaiting — in particular from the session cleanup task while it holds a
+    /// `DashMap` shard guard.
+    pub(crate) last_rec_activity_time: AtomicInstant,
     /// Current round's network timeout. Backed by an [`AtomicDuration`] rather
     /// than a lock so the round-transition update in
     /// [`Networking::increase_round_counter`] only needs to hold the
@@ -169,8 +173,7 @@ impl<R: RoleTrait> Networking<R> for NetworkSession {
         // on `ReceiverState` (see `take_current`) so the buffer discipline stays
         // unit-testable without a running session.
         if let Some(value) = state.take_current(network_round) {
-            self.last_rec_activity_time
-                .store(now_activity_millis(), Ordering::Relaxed);
+            self.last_rec_activity_time.store(Instant::now());
             return Ok(value);
         }
 
@@ -206,8 +209,7 @@ impl<R: RoleTrait> Networking<R> for NetworkSession {
                 }
             };
             // Update the time we received a message
-            self.last_rec_activity_time
-                .store(now_activity_millis(), Ordering::Relaxed);
+            self.last_rec_activity_time.store(Instant::now());
 
             // Classify the packet against the current round. The round counter
             // is peer-controlled and unauthenticated, so a packet is only
@@ -281,15 +283,39 @@ impl<R: RoleTrait> Networking<R> for NetworkSession {
 
     ///Used to compute the timeout in network functions
     async fn get_timeout_current_round(&self) -> Instant {
-        let init_time = self.init_time.get_or_init(Instant::now);
         let max_elapsed_time = self.max_elapsed_time.load();
         let network_timeout = self.current_network_timeout.load();
 
-        *init_time + network_timeout + max_elapsed_time
+        self.init_time.load() + network_timeout + max_elapsed_time
     }
 
     async fn get_current_round(&self) -> usize {
         *self.round_counter.read().await
+    }
+
+    async fn round_clock_snapshot(&self) -> RoundClock {
+        RoundClock {
+            round: *self.round_counter.read().await,
+            max_elapsed_time: self.max_elapsed_time.load(),
+            current_network_timeout: self.current_network_timeout.load(),
+            init_time: self.init_time.load(),
+        }
+    }
+
+    async fn restore_round_clock(&self, clock: RoundClock) {
+        let mut round_counter = self.round_counter.write().await;
+        // A round clock only ever moves forward.
+        assert!(
+            clock.round >= *round_counter,
+            "restore_round_clock: refusing to move round backwards from {} to {}",
+            *round_counter,
+            clock.round
+        );
+        self.init_time.store(clock.init_time);
+        *round_counter = clock.round;
+        self.max_elapsed_time.store(clock.max_elapsed_time);
+        self.current_network_timeout
+            .store(clock.current_network_timeout);
     }
 
     /// Method to set a different timeout than the one set at construction, effective for the next round.
@@ -368,8 +394,8 @@ impl NetworkSession {
             num_byte_sent: AtomicUsize::new(0),
             network_mode,
             conf,
-            init_time: OnceLock::new(),
-            last_rec_activity_time: AtomicU64::new(now_activity_millis()),
+            init_time: AtomicInstant::now(),
+            last_rec_activity_time: AtomicInstant::now(),
             current_network_timeout: AtomicDuration::new(timeout),
             next_network_timeout: AtomicDuration::new(timeout),
             max_elapsed_time: AtomicDuration::new(Duration::ZERO),
@@ -443,16 +469,17 @@ mod tests {
     use tokio::sync::mpsc::channel;
     use tokio::task::JoinSet;
 
+    use crate::clock::{AtomicDuration, AtomicInstant};
     use crate::grpc::GrpcNetworkingManager;
     use crate::grpc::{
         ChannelPair, CoreToCoreNetworkConfig, MessageQueueStore, NetworkRoundValue, ReceiverState,
         TlsExtensionGetter,
     };
-    use crate::sending_service::{AtomicDuration, NetworkSession, now_activity_millis};
+    use crate::sending_service::NetworkSession;
     use std::collections::HashMap;
     use std::net::IpAddr;
-    use std::sync::atomic::{AtomicU64, AtomicUsize};
-    use std::sync::{Arc, OnceLock};
+    use std::sync::Arc;
+    use std::sync::atomic::AtomicUsize;
     use std::time::Duration;
     use test_utils::random_free_port::get_listeners_random_free_ports;
     use threshold_types::network::{NetworkMode, Networking};
@@ -722,8 +749,8 @@ mod tests {
             num_byte_sent: AtomicUsize::new(0),
             network_mode: NetworkMode::Async,
             conf: CoreToCoreNetworkConfig::default(),
-            init_time: OnceLock::new(),
-            last_rec_activity_time: AtomicU64::new(now_activity_millis()),
+            init_time: AtomicInstant::now(),
+            last_rec_activity_time: AtomicInstant::now(),
             current_network_timeout: AtomicDuration::new(Duration::from_secs(10)),
             next_network_timeout: AtomicDuration::new(Duration::from_secs(10)),
             max_elapsed_time: AtomicDuration::new(Duration::ZERO),
@@ -868,8 +895,8 @@ mod tests {
             num_byte_sent: AtomicUsize::new(0),
             network_mode: NetworkMode::Async,
             conf,
-            init_time: OnceLock::new(),
-            last_rec_activity_time: AtomicU64::new(now_activity_millis()),
+            init_time: AtomicInstant::now(),
+            last_rec_activity_time: AtomicInstant::now(),
             current_network_timeout: AtomicDuration::new(Duration::from_secs(10)),
             next_network_timeout: AtomicDuration::new(Duration::from_secs(10)),
             max_elapsed_time: AtomicDuration::new(Duration::ZERO),
@@ -1329,8 +1356,8 @@ mod tests {
             num_byte_sent: AtomicUsize::new(0),
             network_mode: NetworkMode::Async,
             conf: test_config(1),
-            init_time: OnceLock::new(),
-            last_rec_activity_time: AtomicU64::new(now_activity_millis()),
+            init_time: AtomicInstant::now(),
+            last_rec_activity_time: AtomicInstant::now(),
             current_network_timeout: AtomicDuration::new(wait),
             next_network_timeout: AtomicDuration::new(wait),
             max_elapsed_time: AtomicDuration::new(Duration::ZERO),
