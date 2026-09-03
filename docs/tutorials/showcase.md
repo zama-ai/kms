@@ -15,7 +15,7 @@ This tutorial shows you a subset of the options of the `core-client`. For more d
 ### Running the threshold cores locally
 The threshold KMS in its default configuration consists of 4 KMS cores that interact with each other to run the secure MPC protocols for all operations.
 To run these cores locally, you can use the docker-compose file at the root of this repository: [docker-compose-core-threshold.yml](../../docker-compose-core-threshold.yml).
-To start the threshold KMS components, run `docker compose -vvv -f docker-compose-core-base.yml -f docker-compose-core-threshold.yml up` at the root of the repository. This will fetch the latest images from `ghcr.io`. Optionally you can also build the images yourself with the `build` command. This will take a couple of minutes and is not required if you're fine with the pre-built ones from `ghcr.io`.
+Build the threshold KMS components with `make build-compose-threshold`, then start them with `make start-compose-threshold` at the root of the repository. The Compose services use development images that are not published to `ghcr.io`, and the build can take several minutes.
 The KMS cores are running when no more logs show up (and if there are no errors). Typically the last log you see is
 ```
 dev-kms-core-init-1   | Exiting core service init...

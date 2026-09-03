@@ -41,16 +41,18 @@ USER kms
 
 
 ################################################################
-# Production image with secure binaries
-FROM runtime AS prod
-
-RUN test "$(cat ./kms-build-flavor)" = "secure"
-LABEL org.zama.kms.flavor="secure"
-
-
-################################################################
 # Development image with insecure binaries
 FROM runtime AS dev
 
 RUN test "$(cat ./kms-build-flavor)" = "insecure"
 LABEL org.zama.kms.flavor="insecure"
+
+
+################################################################
+# Published image with a workflow-selected binary flavor
+FROM runtime AS prod
+
+ARG EXPECTED_KMS_FLAVOR=secure
+RUN case "${EXPECTED_KMS_FLAVOR}" in secure|insecure) ;; *) exit 1 ;; esac && \
+    test "$(cat ./kms-build-flavor)" = "${EXPECTED_KMS_FLAVOR}"
+LABEL org.zama.kms.flavor="${EXPECTED_KMS_FLAVOR}"

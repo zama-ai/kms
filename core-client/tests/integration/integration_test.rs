@@ -6,10 +6,10 @@ use anyhow::{Context, Result};
 #[cfg(any(feature = "slow_tests", feature = "insecure"))]
 use futures::future::join_all;
 use kms_core_client::*;
-#[cfg(feature = "insecure")]
+#[cfg(any(feature = "slow_tests", feature = "insecure"))]
 use kms_grpc::KeyId;
 use kms_grpc::kms::v1::FheParameter;
-#[cfg(all(feature = "insecure", feature = "slow_tests"))]
+#[cfg(feature = "slow_tests")]
 use kms_grpc::rpc_types::PubDataType;
 use kms_lib::DecryptionMode;
 use kms_lib::client::test_tools::ServerHandle;
@@ -25,7 +25,7 @@ use std::str::FromStr;
 use std::string::String;
 use tempfile::TempDir;
 use test_utils::test_logging::init_test_logging as init_logging;
-#[cfg(all(feature = "insecure", feature = "slow_tests"))]
+#[cfg(feature = "slow_tests")]
 use tfhe::{xof_key_set::CompressedXofKeySet, zk::CompactPkeCrs};
 use threshold_networking::grpc::CoreToCoreNetworkConfig;
 use tracing::info;
@@ -41,11 +41,11 @@ use std::process::{Command, Output};
 use tfhe::safe_serialization::safe_serialize;
 
 // Additional imports for reshare test
-#[cfg(all(feature = "insecure", feature = "slow_tests"))]
+#[cfg(feature = "slow_tests")]
 use hashing::hash_versioned;
-#[cfg(all(feature = "insecure", feature = "slow_tests"))]
+#[cfg(feature = "slow_tests")]
 use kms_lib::engine::base::{DSEP_PUBDATA_CRS, DSEP_PUBDATA_KEY};
-#[cfg(all(feature = "insecure", feature = "slow_tests"))]
+#[cfg(feature = "slow_tests")]
 use kms_lib::util::key_setup::test_tools::load_material_from_pub_storage;
 
 // ============================================================================
@@ -1017,7 +1017,7 @@ fn cipher_params(
 }
 
 /// Build a `DecryptParameters` with sensible defaults, overriding only what varies per test case.
-#[cfg(feature = "insecure")]
+#[cfg(any(feature = "slow_tests", feature = "insecure"))]
 fn public_decrypt_params(
     to_encrypt: &str,
     data_type: FheType,
@@ -2785,7 +2785,7 @@ async fn test_threshold_custodian_backup() -> Result<()> {
 // Extremely heavy test — requires dedicated infra and multi-hour runtime budget.
 // Do NOT run in regular CI or local dev.
 // Only execute when a fully prepared full-generation environment is available.
-#[cfg(feature = "slow_tests")]
+#[cfg(all(feature = "insecure", feature = "slow_tests"))]
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 #[ignore]
 async fn nightly_full_gen_tests_default_threshold_sequential_preproc_keygen() -> Result<()> {
@@ -2974,7 +2974,7 @@ async fn test_threshold_mpc_context_switch_6() -> Result<()> {
     let crs_id_str = crs_gen_with_params(
         &config_path_1234,
         test_path,
-        true,
+        false,
         2048,
         SLOW_OP_MAX_ITER,
         epoch_1_id,

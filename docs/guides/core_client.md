@@ -16,14 +16,14 @@ The core client library is also used for running tests.
     - The threshold KMS in its default configuration consists of 4 KMS cores that interact with each other to run the secure MPC protocols for all operations.
       The configuration can be extended to more than 4 parties, by adding configurations to [`core/service/config`](../../core/service/config/) and referencing them in [docker-compose-core-threshold.yml](../../docker-compose-core-threshold.yml), analogous to the first 4 parties.
     - Both cases are managed via the docker-compose files at the root of this repository: [docker-compose-core-centralized.yml](../../docker-compose-core-centralized.yml) or [docker-compose-core-threshold.yml](../../docker-compose-core-threshold.yml).
-    - Optional: If you want to build the docker images locally, run from the root of the repository `docker compose -vvv -f docker-compose-core-base.yml -f docker-compose-core-centralized.yml build` for the centralized case and `docker compose -vvv -f docker-compose-core-base.yml -f docker-compose-core-threshold.yml build` for the threshold case. Building all images usually takes several minutes. If you simply want to use the latest images from `ghcr.io` you can skip this step.
+    - Build the development Docker images from the root of the repository with `make build-compose-centralized` for the centralized case or `make build-compose-threshold` for the threshold case. Building all images usually takes several minutes. The Compose services use development images that are not published to `ghcr.io`.
     - Ensure that the following is present in an `.env` file at the root of the repository:
         ```
         MINIO_ROOT_USER=admin
         MINIO_ROOT_PASSWORD=strongadminpassword
         ```
       This ensures that all entities can share public key material via minio, which emulates S3 storage locally.
-    - Then, to start the KMS components, run `docker compose -vvv -f docker-compose-core-base.yml -f docker-compose-core-centralized.yml up` for the centralized case and `docker compose -vvv -f docker-compose-core-base.yml -f docker-compose-core-threshold.yml up` for the threshold case, at the root of the repository.
+    - Then, to start the KMS components, run `make start-compose-centralized` for the centralized case or `make start-compose-threshold` for the threshold case at the root of the repository.
     - Alternatively, bind the proper ports from a Kubernetes threshold namespace to your local host
     by running `bash ./bind_k8_threshold.sh` in this folder.
     You will also need to download the proper keys from S3.
@@ -81,12 +81,12 @@ docker run -v ./core-client/config:/config \
 # Example: Generate insecure keys
 PREPROC_ID=$(docker run -v ./core-client/config:/config \
   --network host \
-  ghcr.io/zama-ai/kms/core-client-dev:latest \
+  ghcr.io/zama-ai/kms/core-client-insecure:latest \
   kms-core-client -f /config/client_local_threshold.toml insecure-preproc-key-gen \
   | grep request_id | cut -d'"' -f4)
 docker run -v ./core-client/config:/config \
   --network host \
-  ghcr.io/zama-ai/kms/core-client-dev:latest \
+  ghcr.io/zama-ai/kms/core-client-insecure:latest \
   kms-core-client -f /config/client_local_threshold.toml insecure-key-gen --preproc-id "$PREPROC_ID"
 ```
 
@@ -312,8 +312,8 @@ To further make this a manual test, make sure a [key is generated](#Key-generati
   Ensure the latest code is compiled and start the custodian-based Docker-setup images:
   ```{bash}
   cargo build
-  docker compose -vvv -f docker-compose-core-base.yml -f docker-compose-core-threshold.yml build
-  KMS_DOCKER_BACKUP_SECRET_SHARING=true docker compose -vvv -f docker-compose-core-base.yml -f docker-compose-core-threshold.yml up
+  make build-compose-threshold
+  KMS_DOCKER_BACKUP_SECRET_SHARING=true make start-compose-threshold
   ```
   Note: In case you have already been running this, old data might be present in MinIO. Hence use the [MinIO web interface](http://localhost:9001/login) to clean all old data and reboot. Use username `admin` and password `strongadminpassword`. If you don't do this, then the process might fail.
 1. Set up custodians:

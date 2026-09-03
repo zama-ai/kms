@@ -202,25 +202,33 @@ Coordinated build of all KMS images.
 ```mermaid
 graph LR
     A[golden-image] --> B[kms-binaries]
+    A --> F[kms-binaries-insecure]
     B --> C[core-client]
     B --> D[core-service]
-    D --> E[enclave]
+    D --> E[core-service-enclave]
+    F --> G[core-client-insecure]
+    F --> H[core-service-insecure]
+    H --> I[core-service-enclave-insecure]
 ```
 
 | Job | Image | Runner |
 |-----|-------|--------|
 | `golden-image` | `kms/rust-golden-image` | 64cpu AMD64 |
 | `kms-binaries` | `kms/kms-binaries` | 64cpu AMD64 |
+| `kms-binaries-insecure` | `kms/kms-binaries-insecure` | 64cpu AMD64 |
 | `core-client` | `kms/core-client` | 64cpu AMD64 |
+| `core-client-insecure` | `kms/core-client-insecure` | 64cpu AMD64 |
 | `core-service` | `kms/core-service` | 64cpu AMD64 |
+| `core-service-insecure` | `kms/core-service-insecure` | 64cpu AMD64 |
 | `enclave` | `kms/core-service-enclave` | AMD64 only |
+| `enclave-insecure` | `kms/core-service-enclave-insecure` | AMD64 only |
 
-`kms-binaries` performs the single Rust compilation pass for the deployable
-service/client images; the downstream jobs only assemble runtime layers around
-those binaries. This publishing workflow builds only secure `prod` targets;
-release tags use fat LTO and other builds use thin LTO. Builds use OIDC auth,
-GHCR + CGR publishing, and an S3-backed cache. Outputs `image_tag` plus enclave
-PCR values.
+The two binaries jobs compile the secure production flavor and the insecure test
+flavor. The downstream jobs only assemble runtime layers around the matching
+binaries. All published service and client jobs build the `prod` target. Release
+tags use fat LTO and other builds use thin LTO. Builds use OIDC auth, GHCR + CGR
+publishing, and an S3-backed cache. The workflow outputs `image_tag` and the
+insecure test enclave PCR values.
 
 ---
 
@@ -301,7 +309,7 @@ Two jobs: optional `docker-build`, then performance test execution against `aws-
 
 ## Rolling Upgrade Testing (`rolling-upgrade-testing.yml`)
 
-End-to-end test of partial rolling upgrades for `thresholdWithEnclave`: deploy 13 parties on an old image, upgrade two configurable batches to a new image, run Argo perf workflows in mixed-version states. Validates per-party AWS KMS policies, dual `trustedReleases` PCRs for TLS, and selective Helm upgrades via [`ci/scripts/rolling_upgrade.sh`](../../ci/scripts/rolling_upgrade.sh).
+End-to-end test of partial rolling upgrades for `thresholdWithEnclave`: deploy 13 parties from the legacy, pre-split repositories, upgrade two configurable batches to images from the insecure repositories, and run Argo perf workflows in mixed-version states. Validates per-party AWS KMS policies, dual `trustedReleases` PCRs for TLS, and selective Helm upgrades via [`ci/scripts/rolling_upgrade.sh`](../../ci/scripts/rolling_upgrade.sh).
 
 Manual dispatch only.
 

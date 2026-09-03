@@ -1,6 +1,8 @@
 # syntax=docker/dockerfile:1
 
-FROM --platform=$BUILDPLATFORM ghcr.io/zama-ai/kms/rust-golden-image:latest AS builder
+ARG RUST_GOLDEN_IMAGE=ghcr.io/zama-ai/kms/rust-golden-image:latest
+
+FROM --platform=$BUILDPLATFORM ${RUST_GOLDEN_IMAGE} AS builder
 
 # Cargo profile to build with.
 # Use --build-arg LTO_RELEASE=release-lto-off for faster local linking.
@@ -47,7 +49,7 @@ RUN --mount=type=cache,target=/root/.cargo/registry,sharing=locked \
 ARG KMS_FLAVOR=secure
 ARG TARGETARCH
 RUN --mount=type=cache,target=/root/.cargo/registry,sharing=locked \
-    --mount=type=cache,id=kms-binaries-target-${TARGETARCH},target=/app/kms-binaries/target,sharing=locked \
+    --mount=type=cache,id=kms-binaries-target-${TARGETARCH}-${KMS_FLAVOR},target=/app/kms-binaries/target,sharing=locked \
     --mount=type=secret,id=sccache_aws_access_key_id \
     --mount=type=secret,id=sccache_aws_secret_access_key \
     set -eu && \

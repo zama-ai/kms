@@ -1,6 +1,7 @@
 # syntax=docker/dockerfile:1
 
 ARG KMS_BINARIES_IMAGE=ghcr.io/zama-ai/kms/kms-binaries:latest
+ARG RUST_GOLDEN_IMAGE=ghcr.io/zama-ai/kms/rust-golden-image:latest
 
 ################################################################
 ## Resolve the prebuilt shared binaries image
@@ -10,7 +11,7 @@ ARG KMS_BINARIES_IMAGE=ghcr.io/zama-ai/kms/kms-binaries:latest
 FROM --platform=$BUILDPLATFORM ${KMS_BINARIES_IMAGE} AS kms-binaries-source
 
 # Second stage: build raw IP proxies for enclave
-FROM --platform=$BUILDPLATFORM ghcr.io/zama-ai/kms/rust-golden-image:latest AS enclave-utils
+FROM --platform=$BUILDPLATFORM ${RUST_GOLDEN_IMAGE} AS enclave-utils
 
 RUN mkdir -p /out/enclave-utils/bin
 
@@ -79,14 +80,6 @@ CMD ["/bin/bash", "/app/kms/core/service/bin/init_enclave.sh"]
 
 
 ################################################################
-## Production image with secure binaries
-FROM runtime AS prod
-
-RUN test "$(cat ./kms-build-flavor)" = "secure"
-LABEL org.zama.kms.flavor="secure"
-
-
-################################################################
 # Build the grpc-health-probe binary for development
 FROM cgr.dev/zama.ai/golang:1.25 AS go-builder
 
@@ -106,3 +99,13 @@ FROM runtime AS dev
 RUN test "$(cat ./kms-build-flavor)" = "insecure"
 COPY --chown=kms:kms --from=go-builder /out/grpc_health_probe /bin/grpc_health_probe
 LABEL org.zama.kms.flavor="insecure"
+
+
+################################################################
+## Published image with a workflow-selected binary flavor
+FROM runtime AS prod
+
+ARG EXPECTED_KMS_FLAVOR=secure
+RUN case "${EXPECTED_KMS_FLAVOR}" in secure|insecure) ;; *) exit 1 ;; esac && \
+    test "$(cat ./kms-build-flavor)" = "${EXPECTED_KMS_FLAVOR}"
+LABEL org.zama.kms.flavor="${EXPECTED_KMS_FLAVOR}"

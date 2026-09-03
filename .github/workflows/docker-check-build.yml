@@ -24,26 +24,60 @@ jobs:
             image_ref: 'base:latest'
             build_args: |
               TARGETARCH=amd64
-          - name: kms-binaries
+          - name: kms-binaries-secure
             dockerfile: 'docker/kms-binaries/Dockerfile'
-            image_ref: 'kms-binaries:latest'
+            image_ref: 'kms-binaries-secure:latest'
             build_args: |
               TARGETARCH=amd64
               APP_CACHE_DIR=kms-binaries
-          - name: core-service
+              KMS_FLAVOR=secure
+          - name: kms-binaries-insecure
+            dockerfile: 'docker/kms-binaries/Dockerfile'
+            image_ref: 'kms-binaries-insecure:latest'
+            build_args: |
+              TARGETARCH=amd64
+              APP_CACHE_DIR=kms-binaries-insecure
+              KMS_FLAVOR=insecure
+          - name: core-service-secure
             dockerfile: 'docker/core/service/Dockerfile'
-            image_ref: 'core-service:latest'
+            image_ref: 'core-service-secure:latest'
             prebuild_kms_binaries: true
+            kms_flavor: secure
+            kms_binaries_ref: 'kms-binaries-secure:latest'
             build_args: |
               TARGETARCH=amd64
-              KMS_BINARIES_IMAGE=kms-binaries:latest
-          - name: core-client
+              KMS_BINARIES_IMAGE=kms-binaries-secure:latest
+              EXPECTED_KMS_FLAVOR=secure
+          - name: core-service-insecure
+            dockerfile: 'docker/core/service/Dockerfile'
+            image_ref: 'core-service-insecure:latest'
+            prebuild_kms_binaries: true
+            kms_flavor: insecure
+            kms_binaries_ref: 'kms-binaries-insecure:latest'
+            build_args: |
+              TARGETARCH=amd64
+              KMS_BINARIES_IMAGE=kms-binaries-insecure:latest
+              EXPECTED_KMS_FLAVOR=insecure
+          - name: core-client-secure
             dockerfile: 'docker/core-client/Dockerfile'
-            image_ref: 'core-client:latest'
+            image_ref: 'core-client-secure:latest'
             prebuild_kms_binaries: true
+            kms_flavor: secure
+            kms_binaries_ref: 'kms-binaries-secure:latest'
             build_args: |
               TARGETARCH=amd64
-              KMS_BINARIES_IMAGE=kms-binaries:latest
+              KMS_BINARIES_IMAGE=kms-binaries-secure:latest
+              EXPECTED_KMS_FLAVOR=secure
+          - name: core-client-insecure
+            dockerfile: 'docker/core-client/Dockerfile'
+            image_ref: 'core-client-insecure:latest'
+            prebuild_kms_binaries: true
+            kms_flavor: insecure
+            kms_binaries_ref: 'kms-binaries-insecure:latest'
+            build_args: |
+              TARGETARCH=amd64
+              KMS_BINARIES_IMAGE=kms-binaries-insecure:latest
+              EXPECTED_KMS_FLAVOR=insecure
 
     steps:
       # TODO: remove once GitHub runner images ship the CVE-2026-31431 kernel fix
@@ -73,6 +107,7 @@ jobs:
       - name: Set up Docker Buildx
         uses: ./.github/actions/docker-setup-buildx
         with:
+          driver: docker
           platforms: linux/amd64
 
       - name: Login to GitHub Container Registry
@@ -137,7 +172,7 @@ jobs:
             RUST_IMAGE_VERSION=${{ env.RUST_IMAGE_VERSION }}
             TARGETARCH=amd64
             APP_CACHE_DIR=kms-binaries
-            KMS_FLAVOR=secure
+            KMS_FLAVOR=${{ matrix.kms_flavor }}
           context: '.'
           secrets: BLOCKCHAIN_ACTIONS_TOKEN=${{ secrets.BLOCKCHAIN_ACTIONS_TOKEN }}
           file: docker/kms-binaries/Dockerfile
@@ -149,7 +184,7 @@ jobs:
           sbom: false
           target: binaries
           tags: |
-            kms-binaries:latest
+            ${{ matrix.kms_binaries_ref }}
 
       - name: Build image using local kms-binaries dependency
         if: matrix.prebuild_kms_binaries == true

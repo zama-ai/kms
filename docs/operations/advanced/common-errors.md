@@ -243,7 +243,10 @@ docker compose -f docker-compose-core-base.yml -f docker-compose-core-centralize
 If you were using the docker files directly it would be:
 
 ```bash
-docker build -f docker/core/service/Dockerfile --target dev -t ghcr.io/zama-ai/kms/core-service:latest-dev .
+make build-compose-kms-binaries
+docker build -f docker/core/service/Dockerfile --target dev \
+  --build-arg KMS_BINARIES_IMAGE=ghcr.io/zama-ai/kms/kms-binaries-insecure:latest-dev \
+  -t ghcr.io/zama-ai/kms/core-service-insecure:latest-dev .
 ```
 
 ## “MODE is  which is neither 'threshold' nor 'centralized’”
