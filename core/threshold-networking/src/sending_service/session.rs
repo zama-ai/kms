@@ -294,8 +294,9 @@ impl<R: RoleTrait> Networking<R> for NetworkSession {
     }
 
     async fn round_clock_snapshot(&self) -> RoundClock {
+        let round_counter = self.round_counter.read().await;
         RoundClock {
-            round: *self.round_counter.read().await,
+            round: *round_counter,
             max_elapsed_time: self.max_elapsed_time.load(),
             current_network_timeout: self.current_network_timeout.load(),
             init_time: self.init_time.load(),
