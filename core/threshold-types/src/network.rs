@@ -45,10 +45,8 @@ pub trait Networking<R: RoleTrait> {
     /// [`Networking::synchronize_from`]; not usually called directly.
     async fn round_clock_snapshot(&self) -> RoundClock;
 
-    /// Overwrite this network's round-clock *progress* (round counter, accumulated
-    /// timeout budget and current-round timeout) with `clock`, leaving its anchor
-    /// (`init_time`) untouched. Used to implement [`Networking::synchronize_from`];
-    /// not usually called directly.
+    /// Overwrite this network's round-clock *progress* (init_time, round counter, accumulated
+    /// timeout budget and current-round timeout).
     ///
     /// Panics if `clock.round` is behind the current round: a round clock only ever
     /// moves forward, and rewinding it would reuse round tags and corrupt message
