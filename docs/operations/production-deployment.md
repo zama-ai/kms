@@ -454,6 +454,17 @@ kubectl exec -n kms-threshold kms-core-1 -- \
 # - Storage backend information
 ```
 
+### Signing identities
+
+Each party signs its responses under one or more signature schemes, from a signing
+identity rooted in a per-node secret seed. See
+[KMS Core Service Binaries](../guides/kms-server-bin.md#kms-key-generation) for what
+that identity consists of, which objects hold it, and why the seed has to reach the
+backup vault before a node is registered. A party that upgraded from a release
+without the seed keeps its original ECDSA key; moving it onto a fully seed-rooted
+identity is done at an MPC context switch, described under
+[Moving a cluster onto seed-rooted identities](../guides/kms-server-bin.md#moving-a-cluster-onto-seed-rooted-identities).
+
 ---
 
 ## Monitoring & Operations
