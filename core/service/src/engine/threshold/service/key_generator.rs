@@ -1978,7 +1978,9 @@ mod tests {
         use crate::cryptography::signatures::gen_sig_keys;
         let mut rng = AesRng::seed_from_u64(13371);
         let (_pk, sk) = gen_sig_keys(&mut rng);
-        let base_kms = BaseKmsStruct::new(KMSType::Threshold, sk).unwrap();
+        let base_kms = BaseKmsStruct::new(KMSType::Threshold, sk, None)
+            .await
+            .unwrap();
         let epoch_id = *DEFAULT_EPOCH_ID;
         let prss_setup_z128 = Some(PRSSSetup::new_testing_prss(vec![], vec![]));
         let prss_setup_z64 = Some(PRSSSetup::new_testing_prss(vec![], vec![]));
@@ -1986,7 +1988,7 @@ mod tests {
             prss_setup_z128,
             prss_setup_z64,
             &epoch_id,
-            base_kms.new_rng().await,
+            base_kms.fork_rng().await,
         );
         let kg = RealKeyGenerator::<ram::RamStorage, ram::RamStorage, KG>::init_ram_keygen(
             base_kms,

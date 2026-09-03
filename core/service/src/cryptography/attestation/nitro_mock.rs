@@ -20,7 +20,7 @@ impl SecurityModule for DevNitro {
     }
 
     async fn get_random(&self, num_bytes: usize) -> anyhow::Result<Vec<u8>> {
-        let mut vec = Vec::with_capacity(num_bytes);
+        let mut vec = vec![0u8; num_bytes];
         OsRng.try_fill_bytes(&mut vec)?;
         Ok(vec)
     }

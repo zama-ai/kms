@@ -1,11 +1,13 @@
 use super::traits::BaseKms;
 use crate::consts::ID_LENGTH;
 use crate::consts::SAFE_SER_SIZE_LIMIT;
+use crate::cryptography::attestation::SecurityModuleProxy;
 use crate::cryptography::decompression;
 use crate::cryptography::internal_crypto_types::WrappedDKGParams;
 use crate::cryptography::signatures::internal_sign;
 use crate::cryptography::signatures::{PrivateSigKey, PublicSigKey, Signature};
 use crate::cryptography::signing::SigningSchemeType;
+use crate::engine::rng_registry::RngRegistry;
 use crate::engine::traits::PrivateKeyMaterialMetadata;
 use crate::util::key_setup::FhePrivateKey;
 use aes_prng::AesRng;
@@ -1161,36 +1163,55 @@ fn sign_decryption_result<P: Serialize, D: SolStruct>(
     })
 }
 
+/// A base struct for KMS implementations, containing common fields and methods.
+///
+/// In particular, it contains a rng_registry that allows for refreshing all RNGs in the registry with new RNGs seeded from the OS and optionally the security module.
+/// A call to [`BaseKmsStruct::new_instance`] or [`BaseKmsStruct::fresh_registered_rng`]
+/// will add a new RNG to the registry, and a call to [`BaseKmsStruct::refresh_all_rngs_in_registry`]
+/// will refresh all RNGs in the registry.
 pub struct BaseKmsStruct {
     kms_type: KMSType,
     sig_key: Option<Arc<PrivateSigKey>>,
     verf_key: Arc<PublicSigKey>,
     rng: Arc<Mutex<AesRng>>,
+    security_module: Option<Arc<SecurityModuleProxy>>,
 }
 
 impl BaseKmsStruct {
-    pub fn new(kms_type: KMSType, sig_key: PrivateSigKey) -> anyhow::Result<Self> {
+    pub async fn new(
+        kms_type: KMSType,
+        sig_key: PrivateSigKey,
+        security_module: Option<Arc<SecurityModuleProxy>>,
+    ) -> anyhow::Result<Self> {
+        let rng = RngRegistry::fresh_registered_rng(None, security_module.clone()).await;
         Ok(BaseKmsStruct {
             kms_type,
             verf_key: Arc::new(sig_key.verf_key()),
             sig_key: Some(Arc::new(sig_key)),
-            rng: Arc::new(Mutex::new(AesRng::from_entropy())),
+            security_module,
+            rng,
         })
     }
 
-    pub fn new_no_signing_key(kms_type: KMSType, verf_key: PublicSigKey) -> Self {
+    pub async fn new_no_signing_key(
+        kms_type: KMSType,
+        verf_key: PublicSigKey,
+        security_module: Option<Arc<SecurityModuleProxy>>,
+    ) -> Self {
         tracing::warn!(
             "Initializing KMS without a signing key. ONLY BACKUP RECOVERY OPERATIONS WILL BE POSSIBLE."
         );
+        let rng = RngRegistry::fresh_registered_rng(None, security_module.clone()).await;
         BaseKmsStruct {
             kms_type,
             sig_key: None,
             verf_key: Arc::new(verf_key),
-            rng: Arc::new(Mutex::new(AesRng::from_entropy())),
+            security_module,
+            rng,
         }
     }
 
-    pub fn kms_type(&self) -> KMSType {
+    pub(crate) fn kms_type(&self) -> KMSType {
         self.kms_type
     }
 
@@ -1205,21 +1226,28 @@ impl BaseKmsStruct {
         Arc::clone(&self.verf_key)
     }
 
-    /// Make a clone of this struct with a newly initialized RNG s.t. that both the new and old struct are safe to use.
-    pub async fn new_instance(&self) -> Self {
+    /// Make a clone of this struct with a newly initialized RNG s.t. that both the new and old struct are safe to use (the RNG is pushed into the shared registry).
+    pub(crate) async fn new_instance(&self) -> Self {
         let sig_key = match &self.sig_key {
             Some(sk) => Some(Arc::clone(sk)),
             None => None,
         };
+        let rng = self.fresh_registered_rng().await;
         Self {
             kms_type: self.kms_type,
             verf_key: Arc::clone(&self.verf_key),
             sig_key,
-            rng: Arc::new(Mutex::new(self.new_rng().await)),
+            security_module: self.security_module.clone(),
+            rng,
         }
     }
 
-    pub async fn new_rng(&self) -> AesRng {
+    /// Forks a new RNG from the base RNG, ensuring that the new RNG is independent of the base RNG.
+    /// Useful for creating a new RNG for a ask that can run in parallel.
+    ///
+    /// __NOTE__: If the goal is to refresh entropy for the base RNG, use [`refresh_rng`] instead.
+    /// Forked rngs are not registered (and thus not refreshed) as they are meant to be short-lived
+    pub(crate) async fn fork_rng(&self) -> AesRng {
         let mut seed = [0u8; crate::consts::RND_SIZE];
         // Make a seperate scope for the rng so that it is dropped before the lock is released
         {
@@ -1227,6 +1255,12 @@ impl BaseKmsStruct {
             base_rng.fill_bytes(seed.as_mut());
         }
         AesRng::from_seed(seed)
+    }
+
+    /// Calls [`Self::fresh_rng`] and registers it in the rng_registry (so it gets refreshed upon [`Self::refresh_all_rngs_in_registry`]).
+    pub(crate) async fn fresh_registered_rng(&self) -> Arc<Mutex<AesRng>> {
+        RngRegistry::fresh_registered_rng(Some(Arc::clone(&self.rng)), self.security_module.clone())
+            .await
     }
 }
 
@@ -3251,5 +3285,128 @@ pub(crate) mod tests {
             deserialized_upgraded.external_signature,
             q126.external_signature
         );
+    }
+
+    /// Tests for the RNG lifecycle on [`super::BaseKmsStruct`]: forking (which is
+    /// deterministic in the base state and intentionally left unregistered),
+    /// spawning independent per-instance RNGs, and the in-place reseed performed
+    /// by the process-wide [`RngRegistry`] refresh.
+    ///
+    /// Registry bookkeeping (entry counts, pruning) is covered in isolation in
+    /// `rng_registry`'s own tests, since the registry is a process-global
+    /// singleton shared by the whole crate's test suite and so cannot be counted
+    /// reliably from here.
+    ///
+    /// These reach into the private `rng` field (allowed from this descendant
+    /// module) to pin RNGs to deterministic seeds and observe the plumbing. The
+    /// security module is left as `None`, so seeding draws from OS entropy only.
+    mod rng_lifecycle {
+        use super::super::BaseKmsStruct;
+        use crate::cryptography::signatures::gen_sig_keys;
+        use crate::engine::rng_registry::RngRegistry;
+        use aes_prng::AesRng;
+        use kms_grpc::rpc_types::KMSType;
+        use rand::{RngCore, SeedableRng};
+        use std::sync::Arc;
+        use tokio::sync::Mutex;
+
+        async fn test_base_kms() -> BaseKmsStruct {
+            let mut rng = AesRng::seed_from_u64(0xDEAD_BEEF);
+            let (_pk, sk) = gen_sig_keys(&mut rng);
+            BaseKmsStruct::new(KMSType::Threshold, sk, None)
+                .await
+                .expect("building a BaseKmsStruct with a signing key must succeed")
+        }
+
+        /// Draw 16 bytes from an RNG handle, advancing its state.
+        async fn draw(rng: &Arc<Mutex<AesRng>>) -> [u8; 16] {
+            let mut out = [0u8; 16];
+            let mut guard = rng.lock().await;
+            guard.fill_bytes(&mut out);
+            out
+        }
+
+        /// Pin an RNG handle to a deterministic seed so its output is reproducible.
+        async fn set_seed(rng: &Arc<Mutex<AesRng>>, seed: u64) {
+            let mut guard = rng.lock().await;
+            *guard = AesRng::seed_from_u64(seed);
+        }
+
+        #[tokio::test]
+        async fn fork_rng_is_deterministic_in_base_state_and_advances_it() {
+            let base = test_base_kms().await;
+
+            // Two consecutive forks observe different base states (each fork
+            // consumes entropy from the base), so their streams differ.
+            let mut f1 = base.fork_rng().await;
+            let mut f2 = base.fork_rng().await;
+            let (mut a, mut b) = ([0u8; 16], [0u8; 16]);
+            f1.fill_bytes(&mut a);
+            f2.fill_bytes(&mut b);
+            assert_ne!(a, b, "consecutive forks must not share a stream");
+
+            // Forking is a pure function of the base RNG state: from an identical
+            // base seed the fork output is reproducible.
+            set_seed(&base.rng, 42).await;
+            let mut g1 = base.fork_rng().await;
+            set_seed(&base.rng, 42).await;
+            let mut g2 = base.fork_rng().await;
+            let (mut c, mut d) = ([0u8; 16], [0u8; 16]);
+            g1.fill_bytes(&mut c);
+            g2.fill_bytes(&mut d);
+            assert_eq!(c, d, "fork from an identical base state must reproduce");
+        }
+
+        #[tokio::test]
+        async fn new_instance_has_an_independent_rng() {
+            let base = test_base_kms().await;
+            let child = base.new_instance().await;
+
+            // Each instance owns a distinct RNG allocation.
+            assert!(!Arc::ptr_eq(&base.rng, &child.rng));
+
+            // Independent state: seed both identically, advance the base twice but
+            // the child once — the child's first draw still matches the base's
+            // first draw, proving draws on one do not disturb the other.
+            set_seed(&base.rng, 99).await;
+            set_seed(&child.rng, 99).await;
+            let base_first = draw(&base.rng).await;
+            let _ = draw(&base.rng).await; // advance base only
+            let child_first = draw(&child.rng).await;
+            assert_eq!(
+                base_first, child_first,
+                "child RNG must be unaffected by draws on the base RNG"
+            );
+        }
+
+        #[tokio::test]
+        async fn registry_refresh_reseeds_a_base_kms_rng_in_place() {
+            let base = test_base_kms().await;
+
+            // Pin to a known state and remember both the stream and the backing
+            // allocation. (`new` has already registered this RNG in the global
+            // registry.)
+            set_seed(&base.rng, 555).await;
+            let before = draw(&base.rng).await;
+            set_seed(&base.rng, 555).await;
+            let ptr_before = Arc::as_ptr(&base.rng);
+
+            // The process-wide refresh (invoked on epoch init) must reseed this
+            // instance's RNG too, in place. Other RNGs registered by concurrently
+            // running tests are refreshed as well, which does not affect the
+            // assertions below about *this* handle.
+            RngRegistry::refresh_all_rngs_in_registry().await;
+
+            assert_ne!(
+                draw(&base.rng).await,
+                before,
+                "registry refresh must reseed the BaseKmsStruct RNG"
+            );
+            assert_eq!(
+                Arc::as_ptr(&base.rng),
+                ptr_before,
+                "refresh must reseed in place so the registry Weak stays valid"
+            );
+        }
     }
 }

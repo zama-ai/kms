@@ -600,7 +600,10 @@ async fn main_exec() -> anyhow::Result<()> {
 
     // load key
     let (base_kms, able_to_use_tls) = match get_core_signing_key(&private_vault).await {
-        Ok(sk) => (BaseKmsStruct::new(kms_type, sk)?, true), // The signing key is present, so we can use TLS if configured
+        Ok(sk) => (
+            BaseKmsStruct::new(kms_type, sk, security_module.clone()).await?,
+            true,
+        ), // The signing key is present, so we can use TLS if configured
         Err(e) => {
             tracing::warn!("Error loading signing key: {e:?}");
             tracing::warn!(
@@ -611,7 +614,11 @@ async fn main_exec() -> anyhow::Result<()> {
             let verf_key = public_storage
                 .read_data(&SIGNING_KEY_ID, &PubDataType::VerfKey.to_string())
                 .await?;
-            (BaseKmsStruct::new_no_signing_key(kms_type, verf_key), false) // No signing key, so we cannot use TLS even if configured
+            (
+                BaseKmsStruct::new_no_signing_key(kms_type, verf_key, security_module.clone())
+                    .await,
+                false,
+            ) // No signing key, so we cannot use TLS even if configured
         }
     };
 

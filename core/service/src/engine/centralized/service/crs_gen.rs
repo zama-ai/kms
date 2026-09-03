@@ -91,7 +91,7 @@ pub async fn crs_gen_impl<
     // all validation must be done before inserting the request ID.
     let meta_permit =
         add_req_to_meta_store(&service.crs_meta_map, &verified.req_id, op_tag).await?;
-    let rng = service.base_kms.new_rng().await;
+    let rng = service.base_kms.fork_rng().await;
 
     let req_id = verified.req_id;
     let epoch_id = verified.epoch_id;

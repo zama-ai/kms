@@ -51,8 +51,7 @@ impl SecurityModule for Nitro {
         Ok(document)
     }
 
-    /// Request random bytes from the Nitro security module. Only used for generating initialization
-    /// vectors in symmetric encryption and attestation document nonces at the moment.
+    /// Request random bytes from the Nitro security module.
     async fn get_random(&self, num_bytes: usize) -> anyhow::Result<Vec<u8>> {
         let nsm_request = NSMRequest::GetRandom;
         let guarded_nsm_fd = self.nsm_fd.lock().await;

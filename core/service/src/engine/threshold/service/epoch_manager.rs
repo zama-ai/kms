@@ -73,6 +73,7 @@ use crate::{
             compute_info_compressed_keygen, compute_info_crs, compute_info_uncompressed_keygen,
             retrieve_parameters, stored_scheme_signatures_to_proto,
         },
+        rng_registry::RngRegistry,
         threshold::service::{
             PublicKeyMaterial, ThresholdFheKeys,
             reshare_utils::{
@@ -1516,6 +1517,9 @@ impl<
             ));
         }
 
+        // Refreshes all rngs that were derived from the same base_kms as this one.
+        RngRegistry::refresh_all_rngs_in_registry().await;
+
         let resharing_task = match resharing_params {
             Some(ResharingParams {
                 previous_epoch,
@@ -2022,10 +2026,16 @@ pub(crate) mod tests {
     ) -> RealThresholdEpochManager<ram::RamStorage, ram::RamStorage, I, SecureReshareSecretKeys>
     {
         let (_pk, sk) = gen_sig_keys(rng);
-        let base_kms = BaseKmsStruct::new(KMSType::Threshold, sk).unwrap();
+        let base_kms = BaseKmsStruct::new(KMSType::Threshold, sk, None)
+            .await
+            .unwrap();
         let epoch_id = *DEFAULT_EPOCH_ID;
-        let session_maker =
-            SessionMaker::four_party_dummy_session(None, None, &epoch_id, base_kms.new_rng().await);
+        let session_maker = SessionMaker::four_party_dummy_session(
+            None,
+            None,
+            &epoch_id,
+            base_kms.fork_rng().await,
+        );
 
         RealThresholdEpochManager::<ram::RamStorage, ram::RamStorage, I, SecureReshareSecretKeys>::init_test(
             base_kms,

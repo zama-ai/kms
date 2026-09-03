@@ -524,7 +524,7 @@ impl<
 
         let meta_store = Arc::clone(&self.user_decrypt_meta_store);
         let crypto_storage = self.crypto_storage.clone();
-        let rng = self.base_kms.new_rng().await;
+        let rng = self.base_kms.fork_rng().await;
 
         let sk = (*self.base_kms.sig_key().map_err(|e| {
             MetricedError::new(
@@ -803,7 +803,9 @@ mod tests {
     ) {
         let (_pk, sk) = gen_sig_keys(rng);
         let param = TEST_PARAM;
-        let base_kms = BaseKmsStruct::new(KMSType::Threshold, sk.clone()).unwrap();
+        let base_kms = BaseKmsStruct::new(KMSType::Threshold, sk.clone(), None)
+            .await
+            .unwrap();
 
         let epoch_id = EpochId::new_random(rng);
         let prss_setup_z128 = Some(PRSSSetup::new_testing_prss(vec![], vec![]));
@@ -813,7 +815,7 @@ mod tests {
             prss_setup_z128,
             prss_setup_z64,
             &epoch_id,
-            base_kms.new_rng().await,
+            base_kms.fork_rng().await,
         );
 
         let key_id = RequestId::new_random(rng);

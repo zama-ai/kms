@@ -22,6 +22,8 @@ pub mod migration;
 #[cfg(feature = "non-wasm")]
 pub(crate) mod storage_material_verification;
 #[cfg(feature = "non-wasm")]
+pub mod rng_registry;
+#[cfg(feature = "non-wasm")]
 pub mod threshold;
 #[cfg(feature = "non-wasm")]
 pub mod traits;
