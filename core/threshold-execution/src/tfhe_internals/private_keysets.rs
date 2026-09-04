@@ -3,7 +3,7 @@ use crate::online::bit_lift::{BitLift, SecureBitLift};
 use crate::online::gen_bits::{BitGenEven, SecureBitGenEven};
 use crate::online::preprocessing::memory::bit_lift::InMemoryBitLiftPreprocessing;
 use crate::online::preprocessing::{BasePreprocessing, BitPreprocessing};
-use crate::runtime::sessions::base_session::BaseSessionHandles;
+use crate::runtime::sessions::base_session::{BaseSessionHandles, synchronize_sessions};
 use crate::runtime::sessions::small_session::SmallSessionHandles;
 use crate::small_execution::offline::{Preprocessing, SecureSmallPreprocessing};
 use crate::tfhe_internals::compression_decompression_key::CompressionPrivateKeyShares;
@@ -107,6 +107,18 @@ impl<const EXTENSION_DEGREE: usize> PrivateKeySet<EXTENSION_DEGREE> {
         count
     }
 
+    /// Worst-case number of Z64 sub-keys a [`Self::lift_to_z128_integrated`] would
+    /// bit-lift for a keyset with the given `parameters`.
+    pub fn num_liftable_subkeys(parameters: DKGParams) -> usize {
+        // LWE-encryption, LWE-compute and GLWE are always present. The SnS
+        // keys are always shared over Z128 and are never bit-lifted.
+        let base = 3;
+        let compression = usize::from(parameters.compression().is_some());
+        // Counted conservatively: OPRF presence is not encoded in `parameters`.
+        let oprf_upper_bound = 1;
+        base + compression + oprf_upper_bound
+    }
+
     pub fn lift_to_z64(self) -> Self
     where
         ResiduePoly<Z64, EXTENSION_DEGREE>: Ring,
@@ -132,6 +144,39 @@ impl<const EXTENSION_DEGREE: usize> PrivateKeySet<EXTENSION_DEGREE> {
             glwe_sns_compression_key_as_lwe: self.glwe_sns_compression_key_as_lwe,
             parameters: self.parameters,
         }
+    }
+
+    /// Worst-case number of synchronous network rounds
+    /// [`Self::lift_to_z128_integrated`] takes on a session of `num_parties`
+    /// parties with the given `threshold`, summed across the z64 and z128 sessions
+    /// (they run sequentially): two triple-preprocessing batches, one even-bit
+    /// generation, and one bit-lift per liftable sub-key. Each sub-protocol
+    /// contributes its own [`num_rounds`](SecureBitLift::num_rounds).
+    ///
+    /// Exposed so sessions that run *after* the lift can budget their first-round
+    /// timeout (see resharing session advancement). `num_liftable_subkeys` is an
+    /// upper bound on the Z64 sub-keys that get bit-lifted.
+    pub fn lift_to_z128_num_rounds(
+        num_parties: usize,
+        threshold: usize,
+        num_liftable_subkeys: usize,
+    ) -> usize {
+        // Nothing to lift (`num_liftable_subkeys == 0`, e.g. a Z64-mode keyset,
+        // which is converted with the local `lift_to_z64`): the preprocessing
+        // batches are empty and no bit-lift runs, so the whole interactive lift is
+        // 0 rounds. Guard here so the budget is exact rather than counting the
+        // (never-run) preprocessing/bit-gen.
+        if num_liftable_subkeys == 0 {
+            return 0;
+        }
+        // Both preprocessing batches request triples, so each is interactive.
+        let triple_batch = BatchParams {
+            triples: 1, // Note: `num_rounds` is independent of the batch size, so 1 suffices to count rounds.
+            randoms: 0,
+        };
+        2 * SecureSmallPreprocessing::num_rounds(triple_batch, num_parties, threshold)
+            + SecureBitGenEven::num_rounds()
+            + num_liftable_subkeys * SecureBitLift::num_rounds()
     }
 
     /// Perform the required offline phase to lift the keys from Z64 to Z128,
@@ -160,6 +205,12 @@ impl<const EXTENSION_DEGREE: usize> PrivateKeySet<EXTENSION_DEGREE> {
             )
             .await?;
 
+        // The z64 preprocessing above ran on session_z64 while session_z128 sat
+        // idle. Synchronize the z128 session's round clock to the z64 one so this
+        // (first) z128 round budgets its timeout for that gap instead of starting a
+        // fresh clock.
+        synchronize_sessions(session_z128, session_z64).await;
+
         let mut triples_randoms_z128 = SecureSmallPreprocessing::default()
             .execute(
                 session_z128,
@@ -179,10 +230,22 @@ impl<const EXTENSION_DEGREE: usize> PrivateKeySet<EXTENSION_DEGREE> {
 
         let mut preproc = InMemoryBitLiftPreprocessing::new(bits_z128, triples_z64);
 
-        Self::lift_to_z128_online(self, session_z128, &mut preproc).await
+        let lifted = Self::lift_to_z128_online(self, session_z128, &mut preproc).await?;
+
+        // All of the z128 work above (preprocessing, bit generation, bit lift) ran
+        // on session_z128 while session_z64 sat idle, so z128 now leads z64. Bring
+        // z64 back up to z128 so both sessions are returned at the same round. The
+        // lift sessions are reused across keys, and the next key's z128 catch-up
+        // synchronizes z128 *to* z64 — which would move z128 backwards (colliding
+        // with already-sent round tags) if z64 were left behind here.
+        synchronize_sessions(session_z64, session_z128).await;
+
+        Ok(lifted)
     }
 
     /// Lift the keys from Z64 to Z128 by performing secure bit lifting using the provided correlated randomness.
+    ///
+    /// NOTE: Could be batched to avoid spending so many rounds
     async fn lift_to_z128_online<
         Ses: BaseSessionHandles,
         P: BitPreprocessing<ResiduePoly<Z128, EXTENSION_DEGREE>>
@@ -812,7 +875,7 @@ mod test {
             test_runtime::{DistributedTestRuntime, generate_fixed_roles},
         },
         tfhe_internals::{
-            parameters::BC_PARAMS_SNS,
+            parameters::{BC_PARAMS_SNS, DkgMode, PARAMS_TEST_RESHARE},
             private_keysets::{
                 CompressionPrivateKeySharesEnum, GlweSecretKeyShareEnum, LweSecretKeyShareEnum,
                 PrivateKeySet,
@@ -831,6 +894,46 @@ mod test {
     };
     use threshold_types::network::NetworkMode;
     use threshold_types::session_id::SessionId;
+
+    // The resharing round-budget is degree-independent; F4 is what resharing uses.
+    const E: usize = ResiduePolyF4Z128::EXTENSION_DEGREE;
+
+    /// [`PrivateKeySet::num_liftable_subkeys`] must be derivable from the public
+    /// parameters alone (every party, including new-committee ones, computes the
+    /// same value) and must be a safe upper bound on the sub-keys actually lifted.
+    #[test]
+    fn num_liftable_subkeys_from_params() {
+        // Every shipped parameter set is Z128. A Z128 keyset may still carry Z64
+        // sub-key shares if it was upgraded from a Z64 keyset, and Set-2 parties
+        // can't tell — so they budget for the worst case: every present sub-key.
+        for params in [BC_PARAMS_SNS, PARAMS_TEST_RESHARE] {
+            assert_eq!(params.dkg_mode(), DkgMode::Z128);
+            let n = PrivateKeySet::<E>::num_liftable_subkeys(params);
+            // 3 always-present base sub-keys + optional compression + conservative OPRF.
+            assert_eq!(n, 3 + usize::from(params.compression_sk_num_bits() > 0) + 1);
+            assert!(
+                (4..=5).contains(&n),
+                "a Z128 keyset lifts at most 4-5 sub-keys, got {n}"
+            );
+        }
+    }
+
+    /// [`PrivateKeySet::lift_to_z128_num_rounds`] composes the preprocessing,
+    /// even-bit-gen and per-sub-key bit-lift round counts, and is exactly 0 when
+    /// there is nothing to lift.
+    #[test]
+    fn lift_to_z128_num_rounds_composition() {
+        // Nothing to lift (Z128 keyset) — no preprocessing/bit-gen runs either.
+        assert_eq!(PrivateKeySet::<E>::lift_to_z128_num_rounds(4, 1, 0), 0);
+        assert_eq!(PrivateKeySet::<E>::lift_to_z128_num_rounds(7, 2, 0), 0);
+
+        // 2 * preproc + gen_bits(2) + k * bit_lift(2), with
+        // preproc = (t+1) * broadcast(t) = (t+1) * (3 + t).
+        // (4,1): preproc = 2*4 = 8 -> 2*8 + 2 + 3*2 = 24.
+        assert_eq!(PrivateKeySet::<E>::lift_to_z128_num_rounds(4, 1, 3), 24);
+        // (7,2): preproc = 3*5 = 15 -> 2*15 + 2 + 5*2 = 42.
+        assert_eq!(PrivateKeySet::<E>::lift_to_z128_num_rounds(7, 2, 5), 42);
+    }
 
     // Note this fn is very much tailored for the test below
     // We first push all the Z64 keys in the same vector and all the Z128 keys in another vector, then we open them separately and concatenate the results.
@@ -1006,6 +1109,158 @@ mod test {
 
         assert_eq!(res.len(), num_parties);
         assert!(res.into_iter().all(|x| x));
+    }
+
+    /// Number of sub-keys of `key` that [`PrivateKeySet::lift_to_z128_integrated`]
+    /// bit-lifts, i.e. the ones shared over Z64.
+    fn count_z64_subkeys<const EXTENSION_DEGREE: usize>(
+        key: &PrivateKeySet<EXTENSION_DEGREE>,
+    ) -> usize {
+        usize::from(matches!(
+            key.lwe_encryption_secret_key_share,
+            LweSecretKeyShareEnum::Z64(_)
+        )) + usize::from(matches!(
+            key.lwe_compute_secret_key_share,
+            LweSecretKeyShareEnum::Z64(_)
+        )) + usize::from(matches!(
+            key.oprf_secret_key_share,
+            Some(LweSecretKeyShareEnum::Z64(_))
+        )) + usize::from(matches!(
+            key.glwe_secret_key_share,
+            GlweSecretKeyShareEnum::Z64(_)
+        )) + usize::from(matches!(
+            key.glwe_secret_key_share_compression,
+            Some(CompressionPrivateKeySharesEnum::Z64(_))
+        ))
+    }
+
+    /// The round budget of the lift is consistent with the lift itself:
+    /// - `num_liftable_subkeys` bounds the sub-keys a keyset bit-lifts, and a
+    ///   keyset with nothing to lift spends no network round;
+    /// - a fault-free lift spends exactly two preprocessing broadcasts, one bit
+    ///   generation and one bit lift per Z64 sub-key, which stays within
+    ///   [`PrivateKeySet::lift_to_z128_num_rounds`] for the bound derived from the
+    ///   public parameters;
+    /// - both sessions are returned at the same round, so a later lift on the same
+    ///   session pair (the next key) starts from a consistent clock.
+    #[tokio::test]
+    async fn lift_to_z128_round_accounting() {
+        use crate::communication::broadcast::{Broadcast, SyncReliableBroadcast};
+        use crate::online::bit_lift::{BitLift, SecureBitLift};
+        use crate::online::gen_bits::{BitGenEven, SecureBitGenEven};
+        use crate::runtime::sessions::base_session::GenericBaseSessionHandles;
+        use crate::runtime::sessions::session_parameters::GenericParameterHandles;
+
+        // Small keys: the round accounting does not depend on the key sizes, and
+        // three lifts of a production-size keyset would be slow.
+        let params = PARAMS_TEST_RESHARE;
+        let task = move |mut session_z64: SmallSession64<4>,
+                         mut session_z128: SmallSession128<4>| async move {
+            let (_, my_keys) = insecure_initialize_key_material::<_, 4>(
+                &mut session_z64,
+                params,
+                tfhe::Tag::default(),
+            )
+            .await
+            .unwrap();
+            let num_parties = session_z64.num_parties();
+            let threshold = session_z64.threshold() as usize;
+            let liftable_bound = PrivateKeySet::<4>::num_liftable_subkeys(params);
+            let declared =
+                PrivateKeySet::<4>::lift_to_z128_num_rounds(num_parties, threshold, liftable_bound);
+            let broadcast_rounds = SyncReliableBroadcast::num_rounds(num_parties, threshold);
+            // Rounds of a fault-free lift of `liftable` Z64 sub-keys: two
+            // preprocessing broadcasts, one bit generation and one bit lift per
+            // sub-key; none at all when there is nothing to lift.
+            let fault_free_rounds = |liftable: usize| {
+                if liftable == 0 {
+                    0
+                } else {
+                    2 * broadcast_rounds
+                        + SecureBitGenEven::num_rounds()
+                        + liftable * SecureBitLift::num_rounds()
+                }
+            };
+
+            // Lifts, in turn: the keyset as the DKG produced it, the lifted keyset
+            // (nothing left to lift) and the keyset with every sub-key over Z64.
+            let mut keys = my_keys;
+            let mut rounds = std::cmp::max(
+                session_z64.network().get_current_round().await,
+                session_z128.network().get_current_round().await,
+            );
+            let mut liftable_seen = Vec::new();
+            for step in 0..3 {
+                if step == 2 {
+                    keys = keys.lift_to_z64();
+                }
+                let liftable = count_z64_subkeys(&keys);
+                liftable_seen.push(liftable);
+                assert!(
+                    liftable <= liftable_bound,
+                    "{liftable} Z64 sub-keys exceed the bound {liftable_bound} derived from the parameters"
+                );
+
+                keys = keys
+                    .lift_to_z128_integrated(&mut session_z64, &mut session_z128)
+                    .await
+                    .unwrap();
+                assert_eq!(count_z64_subkeys(&keys), 0);
+
+                let rounds_z64 = session_z64.network().get_current_round().await;
+                let rounds_z128 = session_z128.network().get_current_round().await;
+                assert_eq!(
+                    rounds_z64, rounds_z128,
+                    "the lift sessions must end at the same round"
+                );
+                let spent = rounds_z128 - rounds;
+                rounds = rounds_z128;
+                assert_eq!(spent, fault_free_rounds(liftable));
+                assert!(
+                    spent <= declared,
+                    "the lift spent {spent} rounds but {declared} were budgeted"
+                );
+            }
+            // The second lift had nothing to do, the third lifted at least the three
+            // sub-keys every keyset has.
+            assert_eq!(liftable_seen[1], 0);
+            assert!(liftable_seen[2] >= 3);
+        };
+
+        let num_parties = 4;
+        let threshold = 1;
+        let roles = generate_fixed_roles(num_parties);
+        let test_runtime_z64 = DistributedTestRuntime::<
+            ResiduePolyF4Z64,
+            _,
+            { ResiduePolyF4Z64::EXTENSION_DEGREE },
+        >::new(roles.clone(), threshold, NetworkMode::Sync, None);
+        let test_runtime_z128 = DistributedTestRuntime::<
+            ResiduePolyF4Z128,
+            _,
+            { ResiduePolyF4Z128::EXTENSION_DEGREE },
+        >::new(roles.clone(), threshold, NetworkMode::Sync, None);
+
+        let mut tasks = JoinSet::new();
+        for party in roles {
+            let session_z64 = test_runtime_z64
+                .small_session_for_party(
+                    SessionId::from(1),
+                    party,
+                    Some(AesRng::seed_from_u64(party.one_based() as u64 + 64)),
+                )
+                .await;
+            let session_z128 = test_runtime_z128
+                .small_session_for_party(
+                    SessionId::from(2),
+                    party,
+                    Some(AesRng::seed_from_u64(party.one_based() as u64 + 128)),
+                )
+                .await;
+            tasks.spawn(task(session_z64, session_z128));
+        }
+        let results = tasks.join_all().await;
+        assert_eq!(results.len(), num_parties);
     }
 
     mod test_definalizable {

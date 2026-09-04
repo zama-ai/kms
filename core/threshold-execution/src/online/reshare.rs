@@ -7,7 +7,7 @@ use crate::{
         },
         online::preprocessing::BasePreprocessing,
         runtime::sessions::base_session::{
-            BaseSession, BaseSessionHandles, GenericBaseSessionHandles,
+            BaseSession, BaseSessionHandles, GenericBaseSessionHandles, advance_session_by_rounds,
         },
         sharing::open::{RobustOpen, SecureRobustOpen},
     },
@@ -559,9 +559,27 @@ impl<
     }
 }
 
-// Note: Can't really split into 2 functions one for sender one for receiver
-// because we have parties in both sets.
-// We __ALWAYS__ reshare from set1 to set2
+/// Number of synchronous rounds the two-sets resharing runs on the cross-set
+/// session before its within-set-2 broadcast: the mask open
+/// ([`RobustOpen::num_rounds`]) plus one masked-share exchange round.
+pub(crate) fn reshare_cross_set_num_rounds<OpenProtocol: RobustOpen>(num_parties: usize) -> usize {
+    OpenProtocol::num_rounds(num_parties) + 1
+}
+
+/// Number of synchronous rounds the two-sets resharing runs on the within-set-2
+/// session *after* the cross-set open+exchange: the within-set-2 broadcast
+/// ([`Broadcast::num_rounds`]) plus the final syndrome open
+/// ([`RobustOpen::num_rounds`]).
+pub(crate) fn reshare_set2_only_num_rounds<
+    OpenProtocol: RobustOpen,
+    BroadcastProtocol: Broadcast,
+>(
+    num_parties: usize,
+    threshold: usize,
+) -> usize {
+    BroadcastProtocol::num_rounds(num_parties, threshold) + OpenProtocol::num_rounds(num_parties)
+}
+
 pub async fn reshare_two_sets<
     TwoSetsSession: GenericBaseSessionHandles<TwoSetsRole>,
     OneSetSession: BaseSessionHandles,
@@ -675,7 +693,7 @@ where
 
     // Parties in set 2 receive the masked shares from parties in set 1
     // and finish the resharing
-    if two_sets_session.my_role().is_set2() {
+    let output = if two_sets_session.my_role().is_set2() {
         let my_set_session = if let Some(s) = set_2_session {
             s
         } else {
@@ -768,6 +786,17 @@ where
                 .or_insert_with(Vec::new);
         }
 
+        // The mask open and masked-share exchange above ran on `two_sets_session`;
+        // `my_set_session` sat idle during those rounds. Advance it before this
+        // broadcast (its first use) so the broadcast's timeout budgets for that
+        // session-switch gap. Every set-2 party runs the same open + exchange, so
+        // they all advance by the same amount and round-tags stay aligned.
+        advance_session_by_rounds(
+            my_set_session,
+            reshare_cross_set_num_rounds::<OpenProtocol>(two_sets_session.num_parties()),
+        )
+        .await;
+
         // Broadcast those received values within set 2
         let broadcast_results = broadcast_protocol
             .broadcast_from_all(
@@ -798,7 +827,7 @@ where
             )?;
 
             // Everything below this should be similar as if we were resharing to same set
-            return Ok(Some(
+            Some(
                 open_syndromes_and_correct_errors(
                     my_set_session,
                     unmasked_reshared_shares,
@@ -808,15 +837,33 @@ where
                     open_protocol,
                 )
                 .await?,
-            ));
+            )
         } else {
             return Err(anyhow_error_and_log(
                 "Masks from set 2 are required for parties in set 2 during resharing.",
             ));
-        };
-    }
+        }
+    } else {
+        None
+    };
 
-    Ok(None)
+    // End-of-protocol coherence: while set-2 ran the broadcast + syndrome open on
+    // the (set-2-only) `my_set_session`, `two_sets_session` sat idle. Advance it by
+    // that many rounds so both sessions are returned at the same round — the
+    // symmetric counterpart of the pre-broadcast advance above. This can't be a
+    // `synchronize_sessions` against `my_set_session`: set-1 parties have no such
+    // session. Every party (set-1 included) applies the same relative advance, so
+    // the shared cross-set session stays consistent across the committee.
+    advance_session_by_rounds(
+        two_sets_session,
+        reshare_set2_only_num_rounds::<OpenProtocol, BroadcastProtocol>(
+            two_sets_session.num_parties(),
+            two_sets_session.threshold().threshold_set_2 as usize,
+        ),
+    )
+    .await;
+
+    Ok(output)
 }
 
 pub async fn reshare_same_sets<
@@ -1182,8 +1229,12 @@ mod tests {
     use crate::runtime::sessions::base_session::{
         BaseSession, GenericBaseSession, TwoSetsBaseSession,
     };
+    use crate::runtime::test_runtime::generate_fixed_roles_two_sets_with_intersection;
     use crate::sharing::open::test::deterministically_compute_my_shares;
     use crate::tests::helper::tests::execute_protocol_two_sets_w_malicious;
+    use crate::tests::helper::tests_and_benches::{
+        TwoSetsExpectedRounds, execute_protocol_two_sets,
+    };
     use crate::{
         online::preprocessing::dummy::DummyPreprocessing,
         runtime::sessions::session_parameters::GenericParameterHandles,
@@ -1195,6 +1246,7 @@ mod tests {
     use threshold_types::role::{DualRole, Role, TwoSetsRole, TwoSetsThreshold};
 
     use std::collections::HashMap;
+    use std::time::Duration;
 
     #[tokio::test(flavor = "multi_thread")]
     async fn test_reshare_two_sets_honest() {
@@ -1544,6 +1596,346 @@ mod tests {
             assert!(reshare_result.unwrap().is_none());
             inner_secrets.unwrap()
         }
+    }
+
+    /// Honest two-sets resharing of `num_secrets` deterministic secrets, without
+    /// panicking on protocol errors. Set-2 parties return the opened reshared
+    /// secrets and the corrupt set of their set-2 session; set-1-only parties return
+    /// the secrets they reshared and an empty set.
+    async fn honest_reshare_task(
+        mut two_sets_session: TwoSetsBaseSession,
+        set_1_session: Option<BaseSession>,
+        set_2_session: Option<BaseSession>,
+        num_secrets: usize,
+    ) -> anyhow::Result<(Vec<ResiduePolyF4Z128>, HashSet<Role>)> {
+        let (my_shares, inner_secrets) = match set_1_session {
+            Some(set_1_session) => {
+                let (inner_secrets, shares) =
+                    deterministically_compute_my_shares::<ResiduePolyF4Z128>(
+                        num_secrets,
+                        set_1_session.my_role(),
+                        set_1_session.num_parties(),
+                        set_1_session.threshold() as usize,
+                        42,
+                    );
+                let my_shares = shares
+                    .into_iter()
+                    .map(|v| Share::new(set_1_session.my_role(), v))
+                    .collect_vec();
+                (Some(my_shares), Some(inner_secrets))
+            }
+            None => (None, None),
+        };
+        let mut preproc = set_2_session
+            .as_ref()
+            .map(|set_2_session| DummyPreprocessing::new(42, set_2_session));
+
+        match two_sets_session.my_role() {
+            TwoSetsRole::OnlySet1(_) => {
+                SecureTwoSetsReshareAsSet1::default()
+                    .execute(
+                        &mut two_sets_session,
+                        &mut NotExpected::<&mut InMemoryBasePreprocessing<_>>::default(),
+                        &mut Expected(&mut my_shares.unwrap()),
+                        num_secrets,
+                    )
+                    .await?;
+                Ok((inner_secrets.unwrap(), HashSet::new()))
+            }
+            TwoSetsRole::OnlySet2(_) => {
+                let mut sessions = (two_sets_session, set_2_session.unwrap());
+                let reshared = SecureTwoSetsReshareAsSet2::default()
+                    .execute(
+                        &mut sessions,
+                        &mut Expected(preproc.as_mut().unwrap()),
+                        &mut NotExpected::default(),
+                        num_secrets,
+                    )
+                    .await?;
+                let opened = open_list(&reshared.0, &sessions.1).await?;
+                Ok((opened, sessions.1.corrupt_roles().clone()))
+            }
+            TwoSetsRole::Both(_) => {
+                let mut sessions = (two_sets_session, set_2_session.unwrap());
+                let reshared = SecureTwoSetsReshareAsBothSets::default()
+                    .execute(
+                        &mut sessions,
+                        &mut Expected(preproc.as_mut().unwrap()),
+                        &mut Expected(&mut my_shares.unwrap()),
+                        num_secrets,
+                    )
+                    .await?;
+                let opened = open_list(&reshared.0, &sessions.1).await?;
+                Ok((opened, sessions.1.corrupt_roles().clone()))
+            }
+        }
+    }
+
+    /// Which parties enter the resharing late in [`reshare_two_sets_with_skew`].
+    #[derive(Clone, Copy, Debug)]
+    enum LateParties {
+        /// Every party of set 2 (the case of a new committee that first runs a
+        /// long PRSS init while the old committee already waits for it).
+        Set2,
+        /// One party that is only in set 2.
+        OneOfSet2,
+    }
+
+    impl LateParties {
+        fn is_late(self, role: &TwoSetsRole) -> bool {
+            match self {
+                LateParties::Set2 => role.is_set2(),
+                LateParties::OneOfSet2 => *role == TwoSetsRole::OnlySet2(Role::indexed_from_one(4)),
+            }
+        }
+    }
+
+    /// Advances the sessions of one party by `pre_advance` rounds, sleeps
+    /// `late_rounds` round timeouts plus one second when `late`, then runs the
+    /// honest resharing.
+    async fn skewed_reshare_task(
+        two_sets_session: TwoSetsBaseSession,
+        set_1_session: Option<BaseSession>,
+        set_2_session: Option<BaseSession>,
+        late: bool,
+        late_rounds: u32,
+        pre_advance: usize,
+    ) -> anyhow::Result<(Vec<ResiduePolyF4Z128>, HashSet<Role>)> {
+        let round_timeout = two_sets_session
+            .network()
+            .round_clock_snapshot()
+            .await
+            .current_network_timeout;
+        advance_session_by_rounds(&two_sets_session, pre_advance).await;
+        if let Some(set_2_session) = set_2_session.as_ref() {
+            advance_session_by_rounds(set_2_session, pre_advance).await;
+        }
+        if late {
+            tokio::time::sleep(round_timeout * late_rounds + Duration::from_secs(1)).await;
+        }
+        honest_reshare_task(two_sets_session, set_1_session, set_2_session, 5).await
+    }
+
+    /// Runs the honest two-sets resharing (7 parties in set 1, 4 in set 2, 2 in
+    /// both) where the `late` parties sleep `late_rounds` round timeouts plus one
+    /// second before they start. Every party first advances its cross-set and set-2
+    /// sessions by `pre_advance` rounds, as the epoch manager does for phases the
+    /// session does not take part in.
+    ///
+    /// The mask opening is the first round of the cross-set session and the
+    /// masked-share exchange the second, so without an advance a set-1 party
+    /// tolerates a set-2 delay below two round timeouts, and a set-2 party a set-1
+    /// delay below three.
+    ///
+    /// Returns the results of the on-time parties and, separately, of the late
+    /// parties, which run in their own tasks so that a panic on their side is
+    /// reported instead of aborting the test.
+    async fn reshare_two_sets_with_skew(
+        late: LateParties,
+        late_rounds: u32,
+        pre_advance: usize,
+    ) -> (
+        HashMap<TwoSetsRole, ReshareOutcome>,
+        HashMap<TwoSetsRole, Result<ReshareOutcome, tokio::task::JoinError>>,
+    ) {
+        let (num_parties_s1, num_parties_s2, intersection) = (7, 4, 2);
+        let late_roles = generate_fixed_roles_two_sets_with_intersection(
+            num_parties_s1,
+            num_parties_s2,
+            intersection,
+        )
+        .into_iter()
+        .filter(|role| late.is_late(role))
+        .collect::<HashSet<_>>();
+        let mut task_on_time =
+            move |two_sets_session: TwoSetsBaseSession,
+                  set_1_session: Option<BaseSession>,
+                  set_2_session: Option<BaseSession>| {
+                skewed_reshare_task(
+                    two_sets_session,
+                    set_1_session,
+                    set_2_session,
+                    false,
+                    late_rounds,
+                    pre_advance,
+                )
+            };
+        let mut task_late = move |two_sets_session: TwoSetsBaseSession,
+                                  set_1_session: Option<BaseSession>,
+                                  set_2_session: Option<BaseSession>,
+                                  _: ()| {
+            skewed_reshare_task(
+                two_sets_session,
+                set_1_session,
+                set_2_session,
+                true,
+                late_rounds,
+                pre_advance,
+            )
+        };
+        execute_protocol_two_sets_w_malicious::<_, _, _, _, _, ResiduePolyF4Z128, 4>(
+            num_parties_s1,
+            num_parties_s2,
+            intersection,
+            TwoSetsThreshold {
+                threshold_set_1: 2,
+                threshold_set_2: 1,
+            },
+            late_roles,
+            (),
+            NetworkMode::Sync,
+            &mut task_on_time,
+            &mut task_late,
+        )
+        .await
+    }
+
+    /// Result of one party in [`reshare_two_sets_with_skew`]: the secrets it ends
+    /// up with and the corrupt set of its set-2 session.
+    type ReshareOutcome = anyhow::Result<(Vec<ResiduePolyF4Z128>, HashSet<Role>)>;
+
+    /// Asserts that every party succeeded, that all of them agree on the secrets and
+    /// that no set-2 party marked another one corrupt: a party that misses a
+    /// deadline only because its session was not budgeted for the skew shows up
+    /// here, even though the robust broadcast lets the protocol complete without it.
+    fn assert_reshare_agreement(
+        on_time: HashMap<TwoSetsRole, ReshareOutcome>,
+        late: HashMap<TwoSetsRole, Result<ReshareOutcome, tokio::task::JoinError>>,
+    ) {
+        let mut outcomes = on_time
+            .into_iter()
+            .chain(late.into_iter().map(|(role, result)| {
+                (
+                    role,
+                    result.unwrap_or_else(|e| panic!("resharing panicked for {role}: {e}")),
+                )
+            }))
+            .map(|(role, result)| {
+                let (secrets, corrupt) =
+                    result.unwrap_or_else(|e| panic!("resharing failed for {role}: {e}"));
+                assert!(
+                    corrupt.is_empty(),
+                    "{role} marked {corrupt:?} corrupt in its set-2 session"
+                );
+                (role, secrets)
+            });
+        let (pivot_role, pivot) = outcomes.next().unwrap();
+        for (role, inner_secrets) in outcomes {
+            assert_eq!(
+                inner_secrets, pivot,
+                "mismatch between pivot role {pivot_role} and role {role}"
+            );
+        }
+    }
+
+    /// Both sessions of a set-2 party are returned at the same round after a
+    /// resharing, and that round is the declared cross-set plus set-2-only count;
+    /// set-1-only parties advance their cross-set session by the same amount even
+    /// though they leave the protocol after the exchange. The set-1 session is never
+    /// used.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn test_reshare_two_sets_sessions_end_at_same_round() {
+        let (num_parties_s1, num_parties_s2, intersection) = (7, 4, 2);
+        let threshold = TwoSetsThreshold {
+            threshold_set_1: 2,
+            threshold_set_2: 1,
+        };
+        let num_parties = num_parties_s1 + num_parties_s2 - intersection;
+        let cross_set_rounds = reshare_cross_set_num_rounds::<SecureRobustOpen>(num_parties);
+        let set_2_only_rounds = reshare_set2_only_num_rounds::<
+            SecureRobustOpen,
+            SyncReliableBroadcast,
+        >(num_parties, threshold.threshold_set_2 as usize);
+        assert_eq!(cross_set_rounds, 2);
+        assert_eq!(set_2_only_rounds, 3 + 1 + 1);
+
+        let num_secrets = 5;
+        let mut task = move |mut two_sets_session: TwoSetsBaseSession,
+                             set_1_session: Option<BaseSession>,
+                             mut set_2_session: Option<BaseSession>| async move {
+            // Run the reshare only: the opening in `honest_reshare_task` would add a
+            // round on the set-2 session.
+            let mut my_shares = set_1_session.as_ref().map(|set_1_session| {
+                deterministically_compute_my_shares::<ResiduePolyF4Z128>(
+                    num_secrets,
+                    set_1_session.my_role(),
+                    set_1_session.num_parties(),
+                    set_1_session.threshold() as usize,
+                    42,
+                )
+                .1
+                .into_iter()
+                .map(|v| Share::new(set_1_session.my_role(), v))
+                .collect_vec()
+            });
+            let mut preproc = set_2_session
+                .as_ref()
+                .map(|set_2_session| DummyPreprocessing::new(42, set_2_session));
+            reshare_two_sets::<_, BaseSession, _, _, DummyPreprocessing, Z128, 4>(
+                &mut two_sets_session,
+                set_2_session.as_mut(),
+                preproc.as_mut(),
+                my_shares.as_mut(),
+                num_secrets,
+                &SecureRobustOpen::default(),
+                &SyncReliableBroadcast::default(),
+            )
+            .await
+            .unwrap();
+        };
+        execute_protocol_two_sets::<_, _, ResiduePolyF4Z128, 4>(
+            num_parties_s1,
+            num_parties_s2,
+            intersection,
+            threshold,
+            Some(TwoSetsExpectedRounds {
+                num_rounds_within_s1: 0,
+                num_rounds_within_s2: cross_set_rounds + set_2_only_rounds,
+                num_rounds_across_sets: cross_set_rounds + set_2_only_rounds,
+            }),
+            NetworkMode::Sync,
+            &mut task,
+        )
+        .await;
+    }
+
+    /// The old committee (set 1) starts the resharing right away while the new
+    /// committee (set 2) first spends more than two round timeouts elsewhere, as it
+    /// does on its PRSS init. With every party's cross-set session advanced by one
+    /// round beforehand, the accumulated budget covers the skew and the resharing
+    /// succeeds.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn test_reshare_two_sets_survives_late_set_2_with_advance() {
+        let (on_time, late) = reshare_two_sets_with_skew(LateParties::Set2, 2, 1).await;
+        assert_reshare_agreement(on_time, late);
+    }
+
+    /// Without the advance, the same skew makes the set-1 parties time out on the
+    /// mask opening, whose deadline is two timeouts after session creation. This is
+    /// the failure the session-skew compensation in the epoch manager prevents.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn test_reshare_two_sets_fails_on_late_set_2_without_advance() {
+        let (on_time, _late) = reshare_two_sets_with_skew(LateParties::Set2, 2, 0).await;
+        assert!(!on_time.is_empty());
+        for (role, result) in on_time {
+            assert!(matches!(role, TwoSetsRole::OnlySet1(_)));
+            assert!(
+                result.is_err(),
+                "set-1 party {role} must time out on the mask opening without a budget"
+            );
+        }
+    }
+
+    /// One set-2 party starts more than two round timeouts late. The other set-2
+    /// parties enter their within-set-2 broadcast on a session that was idle during
+    /// the cross-set rounds and receive that party's broadcast messages only once it
+    /// catches up: [`reshare_two_sets`] advances the set-2 session by the cross-set
+    /// rounds first, so the broadcast's deadline covers the wait and nobody is
+    /// marked corrupt.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn test_reshare_two_sets_survives_late_set_2_party() {
+        let (on_time, late) = reshare_two_sets_with_skew(LateParties::OneOfSet2, 2, 0).await;
+        assert_reshare_agreement(on_time, late);
     }
 
     #[test]

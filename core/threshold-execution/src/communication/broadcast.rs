@@ -21,6 +21,14 @@ type GenericEchoVoteJob<T> = JoinSet<Result<(Role, anyhow::Result<HashMap<Role, 
 
 #[async_trait]
 pub trait Broadcast: ProtocolDescription + Send + Sync + Clone {
+    /// Worst-case number of synchronous network rounds a `broadcast_from_all`
+    /// takes for a session of `num_parties` parties with the given `threshold`.
+    ///
+    /// Implemented per concrete broadcast object; composed by protocols built on
+    /// top of a broadcast to budget their first-round timeout (see resharing
+    /// session advancement).
+    fn num_rounds(num_parties: usize, threshold: usize) -> usize;
+
     /// Execution of the _regular_ protocol, must be defined for all structs implementing this trait.
     ///
     /// Takes an `sender_list`, an explicit list of all the senders
@@ -441,6 +449,13 @@ pub(crate) async fn gather_votes<Z: Ring, B: BaseSessionHandles>(
 
 #[async_trait]
 impl Broadcast for SyncReliableBroadcast {
+    /// One send round, one echo round, one initial vote round, and `threshold`
+    /// vote-gathering rounds. This is a fixed-round robust broadcast, so active
+    /// faults do not add rounds.
+    fn num_rounds(_num_parties: usize, threshold: usize) -> usize {
+        3 + threshold
+    }
+
     #[instrument(name= "Syn-Bcast",skip(self,session,senders,my_message),fields(sid = ?session.session_id(), my_role = ?session.my_role()))]
     async fn execute<Z: Ring, B: BaseSessionHandles>(
         &self,
@@ -864,6 +879,50 @@ mod tests {
             _,
         >(params, malicious_strategy)
         .await;
+    }
+
+    /// [`SyncReliableBroadcast::num_rounds`] is the exact number of rounds an honest
+    /// party spends in a broadcast, with or without faulty senders. Protocols that
+    /// budget the round clock of an idle session with it rely on this equality: a
+    /// declared count below the real one would make the budgeted session time out.
+    #[tokio::test]
+    #[rstest::rstest]
+    #[case(4, 1, &[])]
+    #[case(4, 1, &[0])]
+    #[case(7, 2, &[])]
+    #[case(7, 2, &[1, 5])]
+    #[case(10, 3, &[0, 4, 8])]
+    async fn test_num_rounds_matches_execution(
+        #[case] num_parties: usize,
+        #[case] threshold: usize,
+        #[case] dropping_parties: &[usize],
+    ) {
+        let declared = SyncReliableBroadcast::num_rounds(num_parties, threshold);
+        assert_eq!(declared, 3 + threshold);
+        let params = TestingParameters::init(
+            num_parties,
+            threshold,
+            dropping_parties,
+            &[],
+            &[],
+            !dropping_parties.is_empty(),
+            Some(declared),
+        );
+        if dropping_parties.is_empty() {
+            test_broadcast_from_all_w_corrupt_set_update_strategies::<
+                ResiduePolyF4Z128,
+                { ResiduePolyF4Z128::EXTENSION_DEGREE },
+                _,
+            >(params, SyncReliableBroadcast::default())
+            .await;
+        } else {
+            test_broadcast_from_all_w_corrupt_set_update_strategies::<
+                ResiduePolyF4Z128,
+                { ResiduePolyF4Z128::EXTENSION_DEGREE },
+                _,
+            >(params, MaliciousBroadcastDrop::default())
+            .await;
+        }
     }
 
     /// Regression test

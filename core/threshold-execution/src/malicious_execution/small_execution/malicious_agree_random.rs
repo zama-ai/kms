@@ -25,6 +25,10 @@ impl ProtocolDescription for MaliciousAgreeRandomDrop {
 
 #[async_trait]
 impl AgreeRandom for MaliciousAgreeRandomDrop {
+    fn num_rounds(_num_parties: usize, _threshold: usize) -> usize {
+        1
+    }
+
     async fn execute<S: BaseSessionHandles>(
         &self,
         _session: &mut S,
@@ -35,6 +39,10 @@ impl AgreeRandom for MaliciousAgreeRandomDrop {
 
 #[async_trait]
 impl AgreeRandomFromShare for MaliciousAgreeRandomDrop {
+    fn num_rounds(_num_parties: usize) -> usize {
+        1
+    }
+
     async fn execute<Z: ErrorCorrect, S: BaseSessionHandles>(
         &self,
         _session: &mut S,

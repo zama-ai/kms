@@ -34,6 +34,11 @@ pub(crate) const DSEP_AR: DomainSep = *b"AGREERND";
 /// with no secret input
 #[async_trait]
 pub trait AgreeRandom: ProtocolDescription + Clone + Send + Sync {
+    /// Number of synchronous network rounds the protocol takes. Implemented per
+    /// concrete object; used to budget the first-round timeout of protocols
+    /// built on top of AgreeRandom.
+    fn num_rounds(num_parties: usize, threshold: usize) -> usize;
+
     /// Perform a batched version of Agree Random on all subsets of size n-t
     ///
     /// This follows the AgreeRandom and AgreeRandom-w-Abort protocols in the NIST document.
@@ -44,6 +49,10 @@ pub trait AgreeRandom: ProtocolDescription + Clone + Send + Sync {
 /// with a secret input
 #[async_trait]
 pub trait AgreeRandomFromShare: ProtocolDescription + Clone + Send + Sync {
+    /// Number of synchronous network rounds the protocol takes. Implemented per
+    /// concrete object composing its robust-open sub-protocol.
+    fn num_rounds(num_parties: usize) -> usize;
+
     /// Perform a batched version of Agree Random on all subsets of size n-t
     /// where parties agree on the hash of the reconstructed value.
     ///
@@ -138,6 +147,11 @@ impl ProtocolDescription for DummyAgreeRandomFromShare {
 
 #[async_trait]
 impl<RO: RobustOpen> AgreeRandomFromShare for RobustRealAgreeRandom<RO> {
+    fn num_rounds(num_parties: usize) -> usize {
+        // A single robust open of the reconstructed values.
+        RO::num_rounds(num_parties)
+    }
+
     ///Perform Agree Random Robust among all sets of size n - t with hardcoded output length of [`KEY_BYTE_LEN`] bytes.
     ///
     /// n and t are dictated by the [`BaseSessionHandles`] parameters num_parties and threshold.
@@ -189,6 +203,12 @@ impl<RO: RobustOpen> AgreeRandomFromShare for RobustRealAgreeRandom<RO> {
 
 #[async_trait]
 impl AgreeRandom for PassiveSecureAgreeRandom {
+    fn num_rounds(_num_parties: usize, _threshold: usize) -> usize {
+        // Two communication rounds: the commitments, then the keys and openings
+        // (see `agree_random_communication`).
+        2
+    }
+
     ///Perform Agree Random among all sets of size n - t with hardcoded output length of [`KEY_BYTE_LEN`] bytes.
     ///
     /// n and t are dictated by the [`BaseSessionHandles`] parameters num_parties and threshold.
@@ -243,6 +263,11 @@ impl AgreeRandom for PassiveSecureAgreeRandom {
 
 #[async_trait]
 impl AgreeRandom for AbortSecureAgreeRandom {
+    fn num_rounds(num_parties: usize, threshold: usize) -> usize {
+        // Runs the passive AgreeRandom, then one extra key-exchange round.
+        PassiveSecureAgreeRandom::num_rounds(num_parties, threshold) + 1
+    }
+
     ///Perform Agree Random with Abort among all sets of size n - t with hardcoded output length of [`KEY_BYTE_LEN`] bytes.
     ///
     /// n and t are dictated by the [`BaseSessionHandles`] parameters num_parties and threshold.
@@ -307,6 +332,11 @@ impl AgreeRandom for AbortSecureAgreeRandom {
 
 #[async_trait]
 impl AgreeRandom for DummyAgreeRandom {
+    fn num_rounds(_num_parties: usize, _threshold: usize) -> usize {
+        // Dummy fabricates keys locally, no network rounds.
+        0
+    }
+
     async fn execute<S: BaseSessionHandles>(&self, session: &mut S) -> anyhow::Result<Vec<PrfKey>> {
         let party_sets = compute_party_sets(
             session.my_role(),
@@ -336,6 +366,11 @@ impl AgreeRandom for DummyAgreeRandom {
 
 #[async_trait]
 impl AgreeRandomFromShare for DummyAgreeRandomFromShare {
+    fn num_rounds(_num_parties: usize) -> usize {
+        // Dummy fabricates keys locally, no network rounds.
+        0
+    }
+
     // Just runs dummy agree random, ignoring shares and all_party_sets
     async fn execute<Z: ErrorCorrect, S: BaseSessionHandles>(
         &self,
@@ -630,6 +665,7 @@ mod tests {
         PassiveSecureAgreeRandom, RobustRealAgreeRandom, RobustSecureAgreeRandom,
         check_and_unpack_coms, check_rcv_len, verify_and_xor_keys,
     };
+    use crate::sharing::open::{RobustOpen, SecureRobustOpen};
     use crate::tests::helper::testing::get_networkless_base_session_for_parties;
     use crate::tests::helper::tests::{TestingParameters, execute_protocol_small_w_malicious};
     use algebra::commitment::commitment_inner_hash;
@@ -759,6 +795,44 @@ mod tests {
         test_agree_random_strategies::<AbortSecureAgreeRandom, _>(
             testing_parameters,
             AbortSecureAgreeRandom::default(),
+        )
+        .await;
+    }
+
+    /// The declared [`AgreeRandom::num_rounds`] / [`AgreeRandomFromShare::num_rounds`]
+    /// of each variant is the number of rounds a fault-free execution spends. PRSS
+    /// init composes these counts to budget the resharing sessions of the parties
+    /// that do not take part in it, so an under-count would make those sessions
+    /// time out.
+    #[tokio::test]
+    async fn test_num_rounds_matches_execution() {
+        let (num_parties, threshold) = (7, 2);
+
+        let declared_passive = PassiveSecureAgreeRandom::num_rounds(num_parties, threshold);
+        assert_eq!(declared_passive, 2);
+        test_agree_random_strategies::<PassiveSecureAgreeRandom, _>(
+            TestingParameters::init_honest(num_parties, threshold, Some(declared_passive)),
+            PassiveSecureAgreeRandom::default(),
+        )
+        .await;
+
+        let declared_abort = AbortSecureAgreeRandom::num_rounds(num_parties, threshold);
+        assert_eq!(declared_abort, declared_passive + 1);
+        test_agree_random_strategies::<AbortSecureAgreeRandom, _>(
+            TestingParameters::init_honest(num_parties, threshold, Some(declared_abort)),
+            AbortSecureAgreeRandom::default(),
+        )
+        .await;
+
+        let declared_robust = RobustSecureAgreeRandom::num_rounds(num_parties);
+        assert_eq!(declared_robust, SecureRobustOpen::num_rounds(num_parties));
+        test_agree_random_from_share_strategies::<
+            ResiduePolyF4Z128,
+            { ResiduePolyF4Z128::EXTENSION_DEGREE },
+            _,
+        >(
+            TestingParameters::init_honest(num_parties, threshold, Some(declared_robust)),
+            RobustSecureAgreeRandom::default(),
         )
         .await;
     }

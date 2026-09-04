@@ -26,6 +26,34 @@ pub trait GenericBaseSessionHandles<R: RoleTrait>: GenericParameterHandles<R> {
     fn network(&self) -> &NetworkingImpl<R>;
 }
 
+/// Advance a session's round counter *by* `num_rounds`, accumulating the timeout
+/// budget (`max_elapsed_time`) by one round-timeout per step.
+pub async fn advance_session_by_rounds<R: RoleTrait, S: GenericBaseSessionHandles<R>>(
+    session: &S,
+    num_rounds: usize,
+) {
+    for _ in 0..num_rounds {
+        session.network().increase_round_counter().await;
+    }
+}
+
+/// Synchronize `target`'s round-clock progress to `source`'s, so `target` — a
+/// session that only starts at a later stage of the same computation — budgets
+/// its first-round timeout, as if it had been advancing in
+/// lockstep with `source` all along. Thin wrapper over
+/// [`Networking::synchronize_from`].
+pub async fn synchronize_sessions<R, Target, Source>(target: &Target, source: &Source)
+where
+    R: RoleTrait,
+    Target: GenericBaseSessionHandles<R>,
+    Source: GenericBaseSessionHandles<R>,
+{
+    target
+        .network()
+        .synchronize_from(source.network().as_ref())
+        .await;
+}
+
 pub trait ToBaseSession {
     fn to_base_session(self) -> BaseSession;
     fn get_mut_base_session(&mut self) -> &mut BaseSession;

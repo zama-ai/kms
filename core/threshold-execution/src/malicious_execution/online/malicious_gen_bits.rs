@@ -11,6 +11,11 @@ pub struct DummyBitGenEven;
 
 #[tonic::async_trait]
 impl BitGenEven for DummyBitGenEven {
+    // Does no network openings (returns the shares directly).
+    fn num_rounds() -> usize {
+        0
+    }
+
     async fn gen_bits_even<
         Z: Solve + Invert + ErrorCorrect,
         Ses: BaseSessionHandles,
