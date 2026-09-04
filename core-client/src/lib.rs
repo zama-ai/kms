@@ -1694,7 +1694,7 @@ pub async fn encrypt(
         keys_folder
     );
 
-    let (cipher, ct_format, _) = compute_cipher_from_stored_key(
+    let (mut cipher, ct_format, _) = compute_cipher_from_stored_key(
         Some(keys_folder),
         typed_to_encrypt,
         &cipher_params.key_id.into(),
@@ -1708,11 +1708,12 @@ pub async fn encrypt(
 
     if let Some(path) = cipher_params.ciphertext_output_path.clone() {
         let cipher_w_params = CipherWithParams {
-            cipher: cipher.clone(),
+            cipher,
             params: cipher_params.clone(),
             ct_format: ct_format.as_str_name().to_string(),
         };
         write_element(path, &cipher_w_params).await?;
+        cipher = cipher_w_params.cipher;
     }
 
     Ok(EncryptionResult::new(
