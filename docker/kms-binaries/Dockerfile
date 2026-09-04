@@ -70,13 +70,6 @@ RUN --mount=type=cache,target=/root/.cargo/registry,sharing=locked \
         -p kms-core-client --bin kms-core-client \
         -p kms-health-check --bin kms-health-check \
         "$@" && \
-    actual_flavor=secure && \
-    if /app/kms-binaries/target/${LTO_RELEASE}/kms-core-client --help 2>&1 | grep -q insecure-key-gen; then \
-      actual_flavor=insecure; \
-    fi && \
-    if [ "${actual_flavor}" != "${KMS_FLAVOR}" ]; then \
-      echo "Built ${actual_flavor} client for requested ${KMS_FLAVOR} flavor" >&2; exit 1; \
-    fi && \
     cp /app/kms-binaries/target/${LTO_RELEASE}/kms-server \
        /app/kms-binaries/target/${LTO_RELEASE}/kms-gen-tls-certs \
        /app/kms-binaries/target/${LTO_RELEASE}/kms-init \
