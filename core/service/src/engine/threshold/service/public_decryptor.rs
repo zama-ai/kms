@@ -55,7 +55,7 @@ use crate::{
             traits::PublicDecryptor,
         },
         traits::BaseKms,
-        utils::MetricedError,
+        utils::{MetricedError, format_handle, format_unvalidated_id},
         validation::{
             DSEP_PUBLIC_DECRYPTION, RequestIdParsingErr, parse_grpc_request_id,
             validate_public_decrypt_req,
@@ -261,8 +261,11 @@ impl<
     // `context_id`/`epoch_id` are only known after request validation, so they start empty and are
     // recorded below. Every event and error in this request — including the ones emitted by the
     // spawned decryption task, which inherits this span — then carries both without extra log lines.
+    // `request_id` is still unvalidated when the span is created, so it is size-bounded: a span
+    // field is repeated on every event in the request, so an unbounded one is worse than a single
+    // oversized line.
     #[tracing::instrument(skip_all, fields(
-        request_id = ?request.get_ref().request_id,
+        request_id = %format_unvalidated_id(&request.get_ref().request_id),
         operation = "decrypt",
         context_id = tracing::field::Empty,
         epoch_id = tracing::field::Empty
@@ -312,25 +315,24 @@ impl<
         ];
         timer.tags(metric_tags.clone());
 
-        let ext_handles_bytes = ciphertexts
-            .iter()
-            .map(|c| c.external_handle.to_owned())
-            .collect::<Vec<_>>();
-
         // The external handles are how the caller refers to these ciphertexts, so they are the join
-        // key between a KMS log and a gateway request. Logged once per request, in batch order, so
-        // the `ctr` reported by a failing inner decryption below identifies the handle.
-        let ext_handles_hex = ext_handles_bytes
-            .iter()
-            .map(hex::encode)
-            .collect::<Vec<_>>();
+        // key between a KMS log and a gateway request. Logged in batch order, so the `ctr` reported
+        // by a failing inner decryption below identifies the handle. Bounded in both handle size
+        // and count because handles are unvalidated and the batch is only bounded by the gRPC
+        // message limit; `ciphertexts_count` still reports the true total. Called from inside the
+        // macro so nothing is formatted while debug logging is off.
         tracing::debug!(
             request_id = ?req_id,
             key_id = ?key_id,
             ciphertexts_count = ciphertexts.len(),
-            handles = ?ext_handles_hex,
+            handles = ?format_logged_handles(&ciphertexts),
             "Starting decryption process"
         );
+
+        let ext_handles_bytes = ciphertexts
+            .iter()
+            .map(|c| c.external_handle.to_owned())
+            .collect::<Vec<_>>();
 
         let meta_store = Arc::clone(&self.pub_dec_meta_store);
         let sigkey = self.base_kms.sig_key().map_err(|e| {
@@ -383,8 +385,9 @@ impl<
             let decrypt_future = || async move {
                 let internal_sid = req_id.derive_session_id_with_counter(ctr as u64)?;
                 // Taken before `typed_ciphertext` is partially moved below, so that every failure
-                // in this task can name the handle the caller asked about.
-                let external_handle = hex::encode(&typed_ciphertext.external_handle);
+                // in this task can name the handle the caller asked about. Bounded: the handle is
+                // caller-supplied and this runs for every ciphertext, error or not.
+                let external_handle = format_handle(&typed_ciphertext.external_handle);
                 let fhe_type_string = typed_ciphertext.fhe_type_string();
                 let fhe_type = if let Ok(f) = typed_ciphertext.fhe_type() {
                     f
@@ -715,14 +718,28 @@ impl<
     }
 }
 
-// We want most of the metadata but not the actual ciphertexts
+/// Number of handles from a batch that are logged. The count of a well-formed batch is bounded by
+/// how many ciphertexts fit in a gRPC message, which is not a bound worth writing to a log line.
+const MAX_LOGGED_HANDLES: usize = 16;
+
+/// Bounded, hex-encoded prefix of the batch's external handles, for a single log line per request.
+fn format_logged_handles(ciphertexts: &[v1::TypedCiphertext]) -> Vec<String> {
+    ciphertexts
+        .iter()
+        .take(MAX_LOGGED_HANDLES)
+        .map(|c| format_handle(&c.external_handle))
+        .collect()
+}
+
+// We want most of the metadata but not the actual ciphertexts. The IDs are unvalidated when this
+// runs, so they go through `format_unvalidated_id` rather than being printed verbatim.
 fn format_public_request(request: &PublicDecryptionRequest) -> String {
     format!(
-        "PublicDecryptionRequest {{ request_id: {:?}, key_id: {:?}, context_id: {:?}, epoch_id: {:?}, ciphertext_count: {:?} }}",
-        request.request_id,
-        request.key_id,
-        request.context_id,
-        request.epoch_id,
+        "PublicDecryptionRequest {{ request_id: {}, key_id: {}, context_id: {}, epoch_id: {}, ciphertext_count: {} }}",
+        format_unvalidated_id(&request.request_id),
+        format_unvalidated_id(&request.key_id),
+        format_unvalidated_id(&request.context_id),
+        format_unvalidated_id(&request.epoch_id),
         request.ciphertexts.len()
     )
 }

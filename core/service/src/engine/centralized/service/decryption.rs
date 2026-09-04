@@ -5,7 +5,7 @@ use crate::engine::centralized::central_kms::{
     CentralizedKms, async_user_decrypt, central_public_decrypt,
 };
 use crate::engine::traits::{BackupOperator, BaseKms, ContextManager};
-use crate::engine::utils::MetricedError;
+use crate::engine::utils::{MetricedError, format_unvalidated_id};
 use crate::engine::validation::{
     DSEP_PUBLIC_DECRYPTION, DSEP_USER_DECRYPTION, RequestIdParsingErr, parse_grpc_request_id,
     validate_public_decrypt_req, validate_user_decrypt_req,
@@ -32,7 +32,7 @@ use tracing::Instrument;
 // `context_id`/`epoch_id` are only known after request validation, so they start empty and are
 // recorded below; the spawned decryption task inherits this span.
 #[tracing::instrument(skip_all, fields(
-    request_id = ?request.get_ref().request_id,
+    request_id = %format_unvalidated_id(&request.get_ref().request_id),
     operation = "user_decrypt",
     context_id = tracing::field::Empty,
     epoch_id = tracing::field::Empty
@@ -224,7 +224,7 @@ pub async fn get_user_decryption_result_impl<
 // `context_id`/`epoch_id` are only known after request validation, so they start empty and are
 // recorded below; the spawned decryption task inherits this span.
 #[tracing::instrument(skip_all, fields(
-    request_id = ?request.get_ref().request_id,
+    request_id = %format_unvalidated_id(&request.get_ref().request_id),
     operation = "decrypt",
     context_id = tracing::field::Empty,
     epoch_id = tracing::field::Empty
