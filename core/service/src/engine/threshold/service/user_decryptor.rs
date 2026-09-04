@@ -219,10 +219,11 @@ impl<
             let decimal_req_id = U256::try_from_be_slice(req_id.as_bytes())
                 .unwrap_or(U256::ZERO)
                 .to_string();
+            // The context and epoch come from the request span; only the per-value session ID is new here.
             tracing::debug!(
                 request_id = hex_req_id,
                 request_id_decimal = decimal_req_id,
-                "User Decrypt Request: Decrypting ciphertext #{ctr} with internal session ID: {session_id} and context ID: {context_id}. Handle: {}",
+                "User Decrypt Request: Decrypting ciphertext #{ctr}. sid: {session_id}, handle: {}",
                 hex::encode(&typed_ciphertext.external_handle)
             );
 
@@ -476,6 +477,15 @@ impl<
         > + 'static,
 > UserDecryptor for RealUserDecryptor<PubS, PrivS, Dec>
 {
+    // Mirrors the public decryption span: `context_id`/`epoch_id` are only known after request
+    // validation, so they start empty and are recorded below. The spawned decryption task inherits
+    // this span, so its events carry both without extra log lines.
+    #[tracing::instrument(skip_all, fields(
+        request_id = ?request.get_ref().request_id,
+        operation = "user_decrypt",
+        context_id = tracing::field::Empty,
+        epoch_id = tracing::field::Empty
+    ))]
     async fn user_decrypt(
         &self,
         request: Request<UserDecryptionRequest>,
@@ -506,7 +516,22 @@ impl<
             domain,
             extra_data,
             signing_schemes,
-        ) = validate_user_decrypt_req(inner.as_ref())?;
+        ) = validate_user_decrypt_req(inner.as_ref()).inspect_err(|_| {
+            // As in public decryption: the unvalidated ids are the only record of what the caller
+            // sent once validation rejects the request, and nothing else logs them on that path.
+            tracing::warn!(
+                "Rejected UserDecryptionRequest {{ request_id: {:?}, key_id: {:?}, context_id: {:?}, epoch_id: {:?}, ciphertext_count: {} }}",
+                inner.request_id,
+                inner.key_id,
+                inner.context_id,
+                inner.epoch_id,
+                inner.typed_ciphertexts.len()
+            );
+        })?;
+        // Recorded before the context/epoch check so that a rejection there is attributed too.
+        let span = tracing::Span::current();
+        span.record("context_id", tracing::field::display(&context_id));
+        span.record("epoch_id", tracing::field::display(&epoch_id));
         let my_role = validate_context_and_epoch(
             OP_USER_DECRYPT_REQUEST,
             &self.session_maker,
