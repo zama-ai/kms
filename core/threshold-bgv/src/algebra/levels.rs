@@ -1548,7 +1548,7 @@ mod tests {
         assert!(xs.len() > poly.deg());
 
         let ys: Vec<_> = xs.iter().map(|x| poly.eval(x)).collect();
-        let interpolated = lagrange_interpolation(&xs, &ys);
+        let interpolated = lagrange_interpolation(&xs, ys.iter().copied());
         assert_eq!(poly, interpolated.unwrap());
     }
 

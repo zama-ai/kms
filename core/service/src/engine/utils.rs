@@ -59,9 +59,10 @@ where
             })?,
     };
 
-    // Query CRS IDs
+    // Query CRS IDs. Must span all epochs, like the FHE keys above: CRS metadata is stored
+    // epoch-scoped, and `all_data_ids` deliberately excludes epoch-scoped entries.
     let crs_ids_set = priv_storage
-        .all_data_ids(&PrivDataType::CrsInfo.to_string())
+        .all_data_ids_from_all_epochs(&PrivDataType::CrsInfo.to_string())
         .await
         .map_err(|e| {
             MetricedError::new(
@@ -439,9 +440,52 @@ where
 mod tests {
     use super::*;
     use crate::cryptography::signatures::{PublicSigKey, gen_sig_keys};
+    use crate::vault::storage::{Storage, ram::RamStorage};
 
     use aes_prng::AesRng;
     use rand::SeedableRng;
+
+    /// The availability response includes CRS metadata stored under an epoch.
+    #[tokio::test]
+    async fn reports_epoch_scoped_crs() {
+        let crs_id = RequestId::from_bytes([0x51; 32]);
+        let epoch_id = EpochId::from_bytes([0x52; 32]);
+        let mut storage = RamStorage::new();
+
+        storage
+            .store_bytes_at_epoch(
+                &[1, 2, 3],
+                &crs_id,
+                &epoch_id,
+                &PrivDataType::CrsInfo.to_string(),
+            )
+            .await
+            .unwrap();
+
+        let response = query_key_material_availability(&storage, KMSType::Threshold, vec![])
+            .await
+            .unwrap();
+
+        assert_eq!(response.crs_ids, vec![crs_id.to_string()]);
+    }
+
+    /// The availability response continues to include CRS metadata in the legacy flat layout.
+    #[tokio::test]
+    async fn reports_legacy_flat_crs() {
+        let crs_id = RequestId::from_bytes([0x53; 32]);
+        let mut storage = RamStorage::new();
+
+        storage
+            .store_bytes(&[1, 2, 3], &crs_id, &PrivDataType::CrsInfo.to_string())
+            .await
+            .unwrap();
+
+        let response = query_key_material_availability(&storage, KMSType::Threshold, vec![])
+            .await
+            .unwrap();
+
+        assert_eq!(response.crs_ids, vec![crs_id.to_string()]);
+    }
 
     #[test]
     fn test_metriced_error_creation() {
