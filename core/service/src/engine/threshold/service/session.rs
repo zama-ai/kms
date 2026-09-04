@@ -553,6 +553,11 @@ impl SessionMaker {
         epoch_map.contains_key(epoch_id)
     }
 
+    /// Every epoch this node currently holds PRSS material for.
+    pub(crate) async fn known_epoch_ids(&self) -> Vec<EpochId> {
+        self.epoch_map.read().await.keys().copied().collect()
+    }
+
     pub(crate) async fn context_exists(&self, context_id: &ContextId) -> bool {
         let context_map = self.context_map.read().await;
         context_map.contains_key(context_id)
@@ -941,6 +946,10 @@ impl ImmutableSessionMaker {
         self.inner.epoch_exists(epoch_id).await
     }
 
+    pub(crate) async fn known_epoch_ids(&self) -> Vec<EpochId> {
+        self.inner.known_epoch_ids().await
+    }
+
     pub(crate) async fn make_base_session(
         &self,
         session_id: SessionId,
@@ -1070,10 +1079,23 @@ pub(crate) async fn validate_context_and_epoch(
         .map_err(|e| MetricedError::new(op_tag, req_id, e, Code::NotFound))?;
 
     if !session_maker.epoch_exists(epoch_id).await {
+        // Name the epochs this node does have: the usual cause is a request still pointing at an
+        // epoch that a completed epoch change replaced. Epochs are not context-scoped in this
+        // release, so the list is not filtered by `context_id`. `EpochId`'s `Debug` is the raw
+        // byte array, so format through `Display` to keep the list readable.
+        let known_epochs = session_maker
+            .known_epoch_ids()
+            .await
+            .iter()
+            .map(|epoch| epoch.to_string())
+            .collect::<Vec<_>>()
+            .join(", ");
         return Err(MetricedError::new(
             op_tag,
             req_id,
-            anyhow::anyhow!("Epoch {epoch_id} not found"),
+            anyhow::anyhow!(
+                "Epoch {epoch_id} not found for context {context_id}; known epochs are [{known_epochs}]"
+            ),
             Code::NotFound,
         ));
     }
