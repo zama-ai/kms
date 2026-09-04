@@ -1,0 +1,914 @@
+{
+  "$schema": "https://json-schema.org/draft-07/schema#",
+  "$id": "https://github.com/zama-ai/kms/charts/kms-core/values.schema.json",
+  "title": "kms-core Helm values",
+  "type": "object",
+  "description": "Values for the kms-core chart (release/v0.13.20). Extra properties are allowed on most objects so existing CI and GitOps overlays still install. kmsCore.thresholdMode.tls is closed so misplaced keys such as legacyPrssMask fail install.",
+  "properties": {
+    "kmsPeers": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "$ref": "#/definitions/nullableInteger"
+        },
+        "count": {
+          "type": "integer",
+          "minimum": 1
+        }
+      }
+    },
+    "kmsCore": {
+      "$ref": "#/definitions/kmsCore"
+    },
+    "mtls": {
+      "type": "object",
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        }
+      }
+    },
+    "kmsCoreClient": {
+      "$ref": "#/definitions/kmsCoreClient"
+    },
+    "kmsInit": {
+      "type": "object",
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        },
+        "timeoutSeconds": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "nameOverride": {
+          "$ref": "#/definitions/nullableString"
+        },
+        "nodeSelector": {
+          "$ref": "#/definitions/nullableObject"
+        },
+        "affinity": {
+          "$ref": "#/definitions/nullableObject"
+        },
+        "tolerations": {
+          "$ref": "#/definitions/nullableArray"
+        }
+      }
+    },
+    "kmsGenCertAndKeys": {
+      "type": "object",
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        },
+        "nameOverride": {
+          "$ref": "#/definitions/nullableString"
+        }
+      }
+    },
+    "kmsGenKeys": {
+      "type": "object",
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        },
+        "nameOverride": {
+          "$ref": "#/definitions/nullableString"
+        },
+        "keyGenArgs": {
+          "type": "string"
+        },
+        "crsGenArgs": {
+          "type": "string"
+        },
+        "forceRecreate": {
+          "type": "boolean"
+        },
+        "configmap": {
+          "type": "object",
+          "properties": {
+            "name": {
+              "$ref": "#/definitions/nullableString"
+            },
+            "annotations": {
+              "$ref": "#/definitions/nullableObject"
+            }
+          }
+        },
+        "resources": {
+          "$ref": "#/definitions/nullableObject"
+        },
+        "nodeSelector": {
+          "$ref": "#/definitions/nullableObject"
+        },
+        "affinity": {
+          "$ref": "#/definitions/nullableObject"
+        },
+        "tolerations": {
+          "$ref": "#/definitions/nullableArray"
+        }
+      }
+    },
+    "runMode": {
+      "type": "string"
+    },
+    "tracing": {
+      "type": "object",
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        },
+        "endpoint": {
+          "$ref": "#/definitions/nullableString"
+        },
+        "otlp_timeout_ms": {
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    },
+    "minio": {
+      "type": "object",
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        },
+        "endpoint": {
+          "$ref": "#/definitions/nullableString"
+        },
+        "username": {
+          "$ref": "#/definitions/nullableString"
+        },
+        "password": {
+          "$ref": "#/definitions/nullableString"
+        }
+      }
+    },
+    "rustLog": {
+      "type": "string"
+    },
+    "podAnnotations": {
+      "$ref": "#/definitions/nullableObject"
+    },
+    "podSecurityContext": {
+      "$ref": "#/definitions/nullableObject"
+    },
+    "containerSecurityContext": {
+      "$ref": "#/definitions/nullableObject"
+    },
+    "podSecurityContextForEnclave": {
+      "$ref": "#/definitions/nullableObject"
+    },
+    "kyverno": {
+      "type": "object",
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        }
+      }
+    },
+    "kmsCoreClientTesting": {
+      "type": "object",
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        },
+        "nameOverride": {
+          "$ref": "#/definitions/nullableString"
+        },
+        "schedule": {
+          "type": "string"
+        },
+        "resources": {
+          "$ref": "#/definitions/k8sResources"
+        },
+        "shell_command": {
+          "$ref": "#/definitions/nullableString"
+        },
+        "storage": {
+          "$ref": "#/definitions/storage"
+        }
+      }
+    },
+    "environment": {
+      "$ref": "#/definitions/nullableString"
+    },
+    "kmsConnector": {
+      "type": "object",
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        }
+      }
+    },
+    "kubeUtils": {
+      "type": "object",
+      "properties": {
+        "image": {
+          "$ref": "#/definitions/image"
+        }
+      }
+    },
+    "redis": {
+      "type": "object",
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        },
+        "host": {
+          "$ref": "#/definitions/nullableString"
+        }
+      }
+    }
+  },
+  "definitions": {
+    "nullableString": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "nullableInteger": {
+      "type": [
+        "integer",
+        "null"
+      ]
+    },
+    "nullableObject": {
+      "type": [
+        "object",
+        "null"
+      ]
+    },
+    "nullableArray": {
+      "type": [
+        "array",
+        "null"
+      ]
+    },
+    "quantity": {
+      "description": "Kubernetes resource quantity (e.g. 1, \"500m\", \"1Gi\")",
+      "oneOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "number"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "port": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 65535
+    },
+    "pullPolicy": {
+      "type": "string",
+      "enum": [
+        "Always",
+        "IfNotPresent",
+        "Never"
+      ]
+    },
+    "image": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "tag": {
+          "$ref": "#/definitions/nullableString"
+        },
+        "pullPolicy": {
+          "$ref": "#/definitions/pullPolicy"
+        }
+      }
+    },
+    "decryptionMode": {
+      "type": "string",
+      "enum": [
+        "NoiseFloodSmall",
+        "BitDecSmall"
+      ]
+    },
+    "fheParameter": {
+      "type": "string",
+      "enum": [
+        "Default",
+        "Test"
+      ]
+    },
+    "probe": {
+      "type": "object",
+      "properties": {
+        "failureThreshold": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "initialDelaySeconds": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "periodSeconds": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "timeoutSeconds": {
+          "type": "integer",
+          "minimum": 1
+        }
+      }
+    },
+    "storage": {
+      "type": "object",
+      "properties": {
+        "storageClassName": {
+          "$ref": "#/definitions/nullableString"
+        },
+        "capacity": {
+          "type": "string"
+        }
+      }
+    },
+    "s3Vault": {
+      "type": "object",
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        },
+        "bucket": {
+          "$ref": "#/definitions/nullableString"
+        },
+        "prefix": {
+          "$ref": "#/definitions/nullableString"
+        },
+        "path": {
+          "$ref": "#/definitions/nullableString"
+        }
+      }
+    },
+    "awsKmsVault": {
+      "type": "object",
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        },
+        "rootKeyId": {
+          "$ref": "#/definitions/nullableString"
+        },
+        "rootKeySpec": {
+          "$ref": "#/definitions/nullableString"
+        }
+      }
+    },
+    "k8sResources": {
+      "type": [
+        "object",
+        "null"
+      ],
+      "properties": {
+        "requests": {
+          "type": [
+            "object",
+            "null"
+          ],
+          "properties": {
+            "cpu": {
+              "$ref": "#/definitions/quantity"
+            },
+            "memory": {
+              "$ref": "#/definitions/quantity"
+            },
+            "ephemeral-storage": {
+              "$ref": "#/definitions/quantity"
+            }
+          }
+        },
+        "limits": {
+          "type": [
+            "object",
+            "null"
+          ],
+          "properties": {
+            "cpu": {
+              "$ref": "#/definitions/quantity"
+            },
+            "memory": {
+              "$ref": "#/definitions/quantity"
+            },
+            "ephemeral-storage": {
+              "$ref": "#/definitions/quantity"
+            },
+            "ephemeralStorage": {
+              "$ref": "#/definitions/quantity"
+            },
+            "grpcTimeout": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "grpcMaxMessageSize": {
+              "type": "integer",
+              "minimum": 0
+            }
+          }
+        }
+      }
+    },
+    "pemOrPath": {
+      "type": "object",
+      "properties": {
+        "path": {
+          "$ref": "#/definitions/nullableString"
+        },
+        "pem": {
+          "$ref": "#/definitions/nullableString"
+        }
+      }
+    },
+    "kmsCore": {
+      "type": "object",
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        },
+        "metricsLabels": {
+          "$ref": "#/definitions/nullableString"
+        },
+        "nameOverride": {
+          "$ref": "#/definitions/nullableString"
+        },
+        "addressOverride": {
+          "$ref": "#/definitions/nullableString"
+        },
+        "image": {
+          "$ref": "#/definitions/image"
+        },
+        "serviceAccountName": {
+          "$ref": "#/definitions/nullableString"
+        },
+        "envFrom": {
+          "type": "object",
+          "properties": {
+            "configmap": {
+              "type": "object",
+              "properties": {
+                "name": {
+                  "$ref": "#/definitions/nullableString"
+                },
+                "key": {
+                  "type": "object",
+                  "additionalProperties": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "rateLimiter": {
+          "type": "object",
+          "properties": {
+            "bucketSize": {
+              "type": "integer",
+              "minimum": 0
+            }
+          }
+        },
+        "migration": {
+          "type": "object",
+          "properties": {
+            "contextAssociations": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "required": [
+                  "contextId",
+                  "epochIds"
+                ],
+                "properties": {
+                  "contextId": {
+                    "type": "string"
+                  },
+                  "epochIds": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "thresholdMode": {
+          "$ref": "#/definitions/thresholdMode"
+        },
+        "nitroEnclave": {
+          "$ref": "#/definitions/nitroEnclave"
+        },
+        "publicVault": {
+          "type": "object",
+          "properties": {
+            "s3": {
+              "$ref": "#/definitions/s3Vault"
+            }
+          }
+        },
+        "privateVault": {
+          "type": "object",
+          "properties": {
+            "s3": {
+              "$ref": "#/definitions/s3Vault"
+            },
+            "awskms": {
+              "$ref": "#/definitions/awsKmsVault"
+            }
+          }
+        },
+        "custodianBackup": {
+          "type": "boolean"
+        },
+        "backupVault": {
+          "type": "object",
+          "properties": {
+            "s3": {
+              "$ref": "#/definitions/s3Vault"
+            },
+            "awskms": {
+              "$ref": "#/definitions/awsKmsVault"
+            }
+          }
+        },
+        "aws": {
+          "type": "object",
+          "properties": {
+            "roleArn": {
+              "$ref": "#/definitions/nullableString"
+            },
+            "region": {
+              "$ref": "#/definitions/nullableString"
+            }
+          }
+        },
+        "storage": {
+          "$ref": "#/definitions/storage"
+        },
+        "ports": {
+          "type": "object",
+          "properties": {
+            "client": {
+              "$ref": "#/definitions/port"
+            },
+            "peer": {
+              "$ref": "#/definitions/port"
+            },
+            "metrics": {
+              "$ref": "#/definitions/port"
+            }
+          }
+        },
+        "readinessProbe": {
+          "$ref": "#/definitions/probe"
+        },
+        "startupProbe": {
+          "$ref": "#/definitions/probe"
+        },
+        "livenessProbe": {
+          "$ref": "#/definitions/probe"
+        },
+        "workdir": {
+          "type": "string"
+        },
+        "serviceMonitor": {
+          "type": "object",
+          "properties": {
+            "enabled": {
+              "type": "boolean"
+            },
+            "metricNamePrefix": {
+              "$ref": "#/definitions/nullableString"
+            }
+          }
+        },
+        "resources": {
+          "$ref": "#/definitions/k8sResources"
+        },
+        "nodeSelector": {
+          "$ref": "#/definitions/nullableObject"
+        },
+        "affinity": {
+          "$ref": "#/definitions/nullableObject"
+        },
+        "tolerations": {
+          "$ref": "#/definitions/nullableArray"
+        }
+      },
+      "not": {
+        "required": [
+          "legacyPrssMask"
+        ]
+      }
+    },
+    "thresholdMode": {
+      "type": "object",
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        },
+        "peersList": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "integer"
+              },
+              "host": {
+                "type": "string"
+              },
+              "port": {
+                "$ref": "#/definitions/port"
+              },
+              "ca_certificate": {
+                "$ref": "#/definitions/pemOrPath"
+              }
+            }
+          }
+        },
+        "tls": {
+          "type": "object",
+          "properties": {
+            "enabled": {
+              "type": "boolean"
+            },
+            "ca_certificate": {
+              "$ref": "#/definitions/pemOrPath"
+            },
+            "certificate": {
+              "$ref": "#/definitions/pemOrPath"
+            },
+            "privateKey": {
+              "$ref": "#/definitions/pemOrPath"
+            },
+            "trustedReleases": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "pcr0": {
+                    "type": "string"
+                  },
+                  "pcr1": {
+                    "type": "string"
+                  },
+                  "pcr2": {
+                    "type": "string"
+                  }
+                }
+              }
+            },
+            "attestPrivateVaultRootKey": {
+              "type": "boolean"
+            },
+            "ignoreAwsCaChain": {
+              "type": "boolean"
+            }
+          },
+          "additionalProperties": false
+        },
+        "multiplier": {
+          "type": "number"
+        },
+        "maxInterval": {
+          "type": "number"
+        },
+        "maxElapsedTime": {
+          "type": "number"
+        },
+        "networkTimeout": {
+          "type": "number"
+        },
+        "initialIntervalMs": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "maxOpenedInactiveSessionsPerParty": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "enableSysMetrics": {
+          "type": "boolean"
+        },
+        "refreshIntervalMs": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "tokioWorkerThreads": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "rayonNumThreads": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "thresholdValue": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "decCapacity": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "minDecCache": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "numSessionsPreproc": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "decryptionMode": {
+          "$ref": "#/definitions/decryptionMode"
+        },
+        "initializationScript": {
+          "type": "object",
+          "properties": {
+            "enabled": {
+              "type": "boolean"
+            }
+          }
+        },
+        "cleanupIntervalSecs": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "legacyPrssMask": {
+          "type": [
+            "object",
+            "null"
+          ],
+          "properties": {
+            "beforePublicDecryptId": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "beforeUserDecryptId": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          }
+        }
+      }
+    },
+    "nitroEnclave": {
+      "type": "object",
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        },
+        "signed": {
+          "type": "boolean"
+        },
+        "socat": {
+          "type": "object",
+          "properties": {
+            "timeout": {
+              "type": "integer",
+              "minimum": 0
+            }
+          }
+        },
+        "cpuCount": {
+          "type": "integer",
+          "minimum": 2,
+          "multipleOf": 2
+        },
+        "memoryGiB": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "grpcPeerProxy": {
+          "type": "object",
+          "properties": {
+            "resources": {
+              "$ref": "#/definitions/k8sResources"
+            }
+          }
+        },
+        "enclavePeerProxy": {
+          "type": "object",
+          "properties": {
+            "resources": {
+              "$ref": "#/definitions/k8sResources"
+            }
+          }
+        },
+        "cid": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "eifPath": {
+          "type": "string"
+        },
+        "eifSignKey": {
+          "$ref": "#/definitions/nullableString"
+        },
+        "userId": {
+          "type": "integer"
+        },
+        "groupId": {
+          "type": "integer"
+        },
+        "ports": {
+          "type": "object",
+          "properties": {
+            "tracing": {
+              "$ref": "#/definitions/port"
+            },
+            "imds": {
+              "$ref": "#/definitions/port"
+            },
+            "sts": {
+              "$ref": "#/definitions/port"
+            },
+            "s3": {
+              "$ref": "#/definitions/port"
+            },
+            "awskms": {
+              "$ref": "#/definitions/port"
+            },
+            "peer": {
+              "$ref": "#/definitions/port"
+            }
+          }
+        }
+      }
+    },
+    "kmsCoreClient": {
+      "type": "object",
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        },
+        "nameOverride": {
+          "$ref": "#/definitions/nullableString"
+        },
+        "image": {
+          "$ref": "#/definitions/image"
+        },
+        "envFrom": {
+          "type": "object",
+          "properties": {
+            "configmap": {
+              "type": "object",
+              "properties": {
+                "name": {
+                  "$ref": "#/definitions/nullableString"
+                },
+                "privateVaultStorageKey": {
+                  "$ref": "#/definitions/nullableString"
+                },
+                "publicVaultStorageKey": {
+                  "$ref": "#/definitions/nullableString"
+                }
+              }
+            }
+          }
+        },
+        "num_majority": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "num_reconstruct": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "decryption_mode": {
+          "$ref": "#/definitions/decryptionMode"
+        },
+        "fhe_parameter": {
+          "$ref": "#/definitions/fheParameter"
+        },
+        "resources": {
+          "$ref": "#/definitions/k8sResources"
+        },
+        "nodeSelector": {
+          "$ref": "#/definitions/nullableObject"
+        },
+        "affinity": {
+          "$ref": "#/definitions/nullableObject"
+        },
+        "tolerations": {
+          "$ref": "#/definitions/nullableArray"
+        }
+      }
+    }
+  }
+}
