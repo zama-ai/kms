@@ -268,41 +268,50 @@ The primary service is `CoreServiceEndpoint`. Its RPCs group into:
   variants.
 - **CRS** — `CrsGen` for ZK-proof common reference strings.
 - **Resharing** — `NewMpcEpoch` with `previous_epoch` set rotates parties /
-  refreshes secret shares as part of epoch creation; the outcome is fetched
-  via `GetEpochResult`. The `preproc_id` supplied per key in `previous_epoch` is
+  refreshes secret shares as part of epoch creation; the outcome is fetched via
+  `GetEpochResult`. The `preproc_id` supplied per key in `previous_epoch` is
   caller-controlled but ends up in the EIP-712 struct signed for the new epoch,
   so before any resharing protocol runs each party checks it against the
   preprocessing ID stored in that key's `KeyGenMetadata` and rejects a mismatch.
   What a missing keyset means depends on the party's `TwoSetsRole`: set 1 and
   both sets must hold the key material, so failing to read it rejects the
-  request, whereas a pure set 2 party (a node joining the new context) never held
-  the key and logs a warning instead. When resharing legacy key material that
-  has no dedicated OPRF/transciphering secret-key share, the OPRF/transciphering
-  sub-protocol is skipped and the reshared private keyset keeps that field
-  absent. Which of these optional shares to reshare is decided from the input
-  keyset, and every party must agree. A storage failure during
+  request, whereas a pure set 2 party (a node joining the new context) never
+  held the key and logs a warning instead. When resharing legacy key material
+  that has no dedicated OPRF/transciphering secret-key share, the
+  OPRF/transciphering sub-protocol is skipped and the reshared private keyset
+  keeps that field absent. Which of these optional shares to reshare is decided
+  from the input keyset, and every party must agree. A storage failure during
   resharing rolls the new epoch back on the party that fails. That party deletes
   the key shares and the CRS metadata that its own resharing wrote under the new
-  epoch. The party deletes the epoch data and forgets the epoch only once
-  the epoch holds no key share and no CRS metadata. Public data remains because
-  an epoch change does not affect it. A failed deletion keeps the epoch
-  registered so that deletion can be retried. `DestroyMpcEpoch` erases a whole
-  epoch instead, and covers the material of every request.
-  `DestroyMpcContext` takes a stable
-  snapshot of the context's registered epochs and erases their secret shares
-  before it forgets the context and removes its TLS trust-root references. A trust
-  root remains if another live context uses it. This order leaves no usable key
-  shares after the party set retires. Its response lists the deleted epoch IDs. In-memory
-  lifecycle leases serialize creation against destruction: `NewMpcEpoch` holds
-  shared leases for its target context and epoch. A reshare also holds shared
-  leases for its source context and epoch through all PRSS, resharing, and persistence work.
-  `DestroyMpcEpoch` and `DestroyMpcContext` require exclusive leases before
-  taking snapshots or deleting data. A conflicting destruction is refused with
-  `FailedPrecondition`, including while PRSS is still running and the new epoch
-  has not yet been registered in the session maker; callers retry once creation
-  has settled. MPC context updates serialize the existence check with storage and
-  cache or session updates. A failed deletion keeps the in-memory context if its
-  persistent entry remains, which permits a retry before or after restart.
+  epoch. The party deletes the epoch data and forgets the epoch only once the
+  epoch holds no key share and no CRS metadata. Public data remains because an
+  epoch change does not affect it. A failed deletion keeps the epoch registered
+  so that deletion can be retried. `DestroyMpcEpoch` erases a whole epoch
+  instead, and covers the material of every request.  `DestroyMpcContext` takes
+  a stable snapshot of the context's registered epochs and erases their secret
+  shares before it forgets the context and removes its TLS trust-root
+  references.
+  
+  The TLS verifier stores one trust root per context and MPC identity. Different
+  trust roots for one identity coexist while their contexts remain active. Each
+  root is evaluated with only its context's PCR allowlist, and a handshake
+  succeeds when one complete root and PCR check succeeds. Removing a context
+  removes its roots, while another context's copy of the same root remains
+  trusted. A trust root remains if another live context uses it. This oredr
+  leaves no usable key shares after the party set retires. Its response lists
+  the deleted epoch IDs
+  
+  In-memory lifecycle leases serialize creation against destruction:
+  `NewMpcEpoch` holds shared leases for its target context and epoch. A reshare
+  also holds shared leases for its source context and epoch through all PRSS,
+  resharing and persistence work.  DestroyMpcEpoch` and `DestroyMpcContext`
+  require exclusive leases before taking snapshots or deleting data. A
+  conflicting destruction is refused with `FailedPrecondition`, including while
+  PRSS is still running and the new epoch has not yet been registered in the
+  session maker; callers retry once creation has settled. MPC context updates
+  serialize the existence check with storage and cache or session updates. A
+  failed deletion keeps the in-memory context if its persistent entry remains,
+  which permits a retry before or after restart.
 - **Session management** — creation, result retrieval, and cleanup for
   long-running threshold sessions.
 
