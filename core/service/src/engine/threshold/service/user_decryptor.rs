@@ -68,7 +68,7 @@ use crate::{
             service::session::{ImmutableSessionMaker, validate_context_and_epoch},
             traits::UserDecryptor,
         },
-        utils::MetricedError,
+        utils::{MetricedError, format_handle, format_unvalidated_id},
         validation::{
             DSEP_USER_DECRYPTION, RequestIdParsingErr, parse_grpc_request_id,
             parse_optional_grpc_request_id, validate_user_decrypt_req,
@@ -224,7 +224,7 @@ impl<
                 request_id = hex_req_id,
                 request_id_decimal = decimal_req_id,
                 "User Decrypt Request: Decrypting ciphertext #{ctr}. sid: {session_id}, handle: {}",
-                hex::encode(&typed_ciphertext.external_handle)
+                format_handle(&typed_ciphertext.external_handle)
             );
 
             // Only the SmallCompressed format needs the decompression key to deserialize.
@@ -481,7 +481,7 @@ impl<
     // validation, so they start empty and are recorded below. The spawned decryption task inherits
     // this span, so its events carry both without extra log lines.
     #[tracing::instrument(skip_all, fields(
-        request_id = ?request.get_ref().request_id,
+        request_id = %format_unvalidated_id(&request.get_ref().request_id),
         operation = "user_decrypt",
         context_id = tracing::field::Empty,
         epoch_id = tracing::field::Empty
@@ -519,12 +519,13 @@ impl<
         ) = validate_user_decrypt_req(inner.as_ref()).inspect_err(|_| {
             // As in public decryption: the unvalidated ids are the only record of what the caller
             // sent once validation rejects the request, and nothing else logs them on that path.
+            // The IDs are unvalidated here, so they are size-bounded rather than printed verbatim.
             tracing::warn!(
-                "Rejected UserDecryptionRequest {{ request_id: {:?}, key_id: {:?}, context_id: {:?}, epoch_id: {:?}, ciphertext_count: {} }}",
-                inner.request_id,
-                inner.key_id,
-                inner.context_id,
-                inner.epoch_id,
+                "Rejected UserDecryptionRequest {{ request_id: {}, key_id: {}, context_id: {}, epoch_id: {}, ciphertext_count: {} }}",
+                format_unvalidated_id(&inner.request_id),
+                format_unvalidated_id(&inner.key_id),
+                format_unvalidated_id(&inner.context_id),
+                format_unvalidated_id(&inner.epoch_id),
                 inner.typed_ciphertexts.len()
             );
         })?;
