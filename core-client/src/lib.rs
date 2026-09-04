@@ -42,7 +42,6 @@ use kms_lib::backup::custodian::InternalCustodianSetupMessage;
 use kms_lib::client::{
     client_wasm::Client,
     local_crypto::{EncryptionConfig, TestingPlaintext, compute_cipher_from_stored_key},
-    local_files::{read_element, write_element_owned},
 };
 use kms_lib::consts::{
     DEFAULT_EPOCH_ID, DEFAULT_MPC_CONTEXT, DEFAULT_PARAM, SIGNING_KEY_ID, TEST_PARAM,
@@ -62,6 +61,7 @@ use std::str::FromStr;
 use std::sync::Arc;
 use std::time::Duration;
 use strum_macros::{Display, EnumString};
+use test_utils::{read_element_async as read_element, write_element_owned};
 use tfhe::FheTypes as TfheFheType;
 use tokio::sync::RwLock;
 use tracing_appender::rolling::{RollingFileAppender, Rotation};

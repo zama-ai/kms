@@ -282,7 +282,7 @@ pub async fn safe_read_element_versioned<
 /// Keeping this behind the testing gate ensures production service code keeps
 /// using the explicit safe/versioned helpers above.
 #[cfg(any(test, feature = "testing", feature = "insecure"))]
-pub use crate::client::local_files::{read_element, write_element};
+pub use test_utils::{read_element, write_element};
 
 #[cfg(test)]
 mod tests {
@@ -322,10 +322,8 @@ mod tests {
     async fn read_write_element() {
         let msg = "I am a teacup!".to_owned();
         let file_name = "temp/test_element.bin".to_string();
-        write_element(file_name.clone(), &msg.clone())
-            .await
-            .unwrap();
-        let read_element: String = read_element(file_name.clone()).await.unwrap();
+        write_element(file_name.clone(), &msg.clone()).unwrap();
+        let read_element: String = read_element(file_name.clone()).unwrap();
         assert_eq!(read_element, msg);
         remove_file(file_name).await.unwrap();
     }

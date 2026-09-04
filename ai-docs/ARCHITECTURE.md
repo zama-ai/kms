@@ -64,7 +64,8 @@ The repository is a Cargo workspace. The members are declared in
 
 Auxiliary tools live under [tools/](tools/): `kms-health-check` is a gRPC
 health probe and `generate-test-material` produces reproducible crypto test
-vectors. Shared test fixtures are in [core/test-utils/](core/test-utils/).
+vectors. Shared test fixtures and generic local file helpers are in
+[core/test-utils/](core/test-utils/).
 The [backward-compatibility/](backward-compatibility/) crate is a separate
 Cargo workspace — see [Backward compatibility](#backward-compatibility).
 
