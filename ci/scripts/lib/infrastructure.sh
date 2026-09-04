@@ -68,8 +68,7 @@ fetch_pcrs_from_image() {
         return
     fi
 
-    local IMAGE_REPO="hub.zama.org/ghcr/zama-ai/kms"
-    local FULL_IMAGE="${IMAGE_REPO}/core-service-enclave:${KMS_CORE_TAG}"
+    local FULL_IMAGE="${KMS_CORE_ENCLAVE_IMAGE_NAME:-hub.zama.org/ghcr/zama-ai/kms/core-service-enclave-insecure}:${KMS_CORE_TAG}"
 
     log_info "Pulling ${FULL_IMAGE}..."
     docker pull "${FULL_IMAGE}" > /dev/null 2>&1 || log_warn "Failed to pull image to check PCRs"

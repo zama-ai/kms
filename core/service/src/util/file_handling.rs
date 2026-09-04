@@ -277,28 +277,12 @@ pub async fn safe_read_element_versioned<
     safe_deserialize(&mut buf, SAFE_SER_SIZE_LIMIT).map_err(|e| anyhow::anyhow!(e))
 }
 
-/// Write a generic element to a file by serializing it. This is hidden behind the testing flag to ensure only the
-/// versioned writing method is used in production code.
+/// Legacy compatibility path for generic file IO used by tests.
 ///
-/// Thin async wrapper around [`test_utils::write_element`] (blocking IO, fine under the testing flag).
-#[cfg(any(test, feature = "testing"))]
-pub async fn write_element<T: serde::Serialize, P: AsRef<Path>>(
-    file_path: P,
-    element: &T,
-) -> anyhow::Result<()> {
-    test_utils::write_element(file_path, element)
-}
-
-/// Read a generic element from a file. This is hidden behind the testing flag to ensure only the versioned reading
-/// method is used in production code.
-///
-/// Thin async wrapper around [`test_utils::read_element`] (blocking IO, fine under the testing flag).
-#[cfg(any(test, feature = "testing"))]
-pub async fn read_element<T: DeserializeOwned + Serialize, P: AsRef<Path>>(
-    file_path: P,
-) -> anyhow::Result<T> {
-    test_utils::read_element(file_path)
-}
+/// Keeping this behind the testing gate ensures production service code keeps
+/// using the explicit safe/versioned helpers above.
+#[cfg(any(test, feature = "testing", feature = "insecure"))]
+pub use test_utils::{read_element, write_element};
 
 #[cfg(test)]
 mod tests {
@@ -338,10 +322,8 @@ mod tests {
     async fn read_write_element() {
         let msg = "I am a teacup!".to_owned();
         let file_name = "temp/test_element.bin".to_string();
-        write_element(file_name.clone(), &msg.clone())
-            .await
-            .unwrap();
-        let read_element: String = read_element(file_name.clone()).await.unwrap();
+        write_element(file_name.clone(), &msg.clone()).unwrap();
+        let read_element: String = read_element(file_name.clone()).unwrap();
         assert_eq!(read_element, msg);
         remove_file(file_name).await.unwrap();
     }

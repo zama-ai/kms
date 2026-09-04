@@ -16,19 +16,38 @@ build_container() {
 
     # Use RUST_IMAGE_VERSION from environment, or the version pinned in rust-toolchain.toml
     local RUST_IMAGE_VERSION="${RUST_IMAGE_VERSION:-$(grep 'channel' "${REPO_ROOT}/rust-toolchain.toml" | awk -F' = ' '{print $2}' | tr -d '"')}"
+    local KMS_LOCAL_TAG
+    KMS_LOCAL_TAG="$(git -C "${REPO_ROOT}" rev-parse --short=7 HEAD)"
+    local KMS_BINARIES_IMAGE="hub.zama.org/ghcr/zama-ai/kms/kms-binaries-insecure:${KMS_LOCAL_TAG}"
+    local KMS_SERVICE_IMAGE="${KMS_CORE_IMAGE_NAME}:${KMS_CORE_TAG}"
+    local KMS_CLIENT_IMAGE="${KMS_CORE_CLIENT_IMAGE_NAME}:${KMS_CLIENT_TAG}"
+
+    #-------------------------------------------------------------------------
+    # Build shared kms-binaries once so service/client can reuse it
+    #-------------------------------------------------------------------------
+    log_info "Building shared kms-binaries image..."
+    docker buildx build -t "${KMS_BINARIES_IMAGE}" \
+        -f "${REPO_ROOT}/docker/kms-binaries/Dockerfile" \
+        --build-arg RUST_IMAGE_VERSION="${RUST_IMAGE_VERSION}" \
+        --build-arg KMS_FLAVOR=insecure \
+        "${REPO_ROOT}/" \
+        --load
 
     #-------------------------------------------------------------------------
     # Build and load core-service
     #-------------------------------------------------------------------------
     log_info "Building container for core-service..."
-    docker buildx build -t "hub.zama.org/ghcr/zama-ai/kms/core-service:latest-dev" \
+    docker buildx build -t "${KMS_SERVICE_IMAGE}" \
         -f "${REPO_ROOT}/docker/core/service/Dockerfile" \
+        --target prod \
         --build-arg RUST_IMAGE_VERSION="${RUST_IMAGE_VERSION}" \
+        --build-arg KMS_BINARIES_IMAGE="${KMS_BINARIES_IMAGE}" \
+        --build-arg EXPECTED_KMS_FLAVOR=insecure \
         "${REPO_ROOT}/" \
         --load
 
     log_info "Loading core-service container into Kind cluster '${NAMESPACE}'..."
-    kind load docker-image "hub.zama.org/ghcr/zama-ai/kms/core-service:latest-dev" \
+    kind load docker-image "${KMS_SERVICE_IMAGE}" \
         -n "${NAMESPACE}" \
         --nodes "${NAMESPACE}-worker"
 
@@ -36,14 +55,17 @@ build_container() {
     # Build and load core-client
     #-------------------------------------------------------------------------
     log_info "Building container for core-client..."
-    docker buildx build -t "hub.zama.org/ghcr/zama-ai/kms/core-client:latest-dev" \
+    docker buildx build -t "${KMS_CLIENT_IMAGE}" \
         -f "${REPO_ROOT}/docker/core-client/Dockerfile" \
+        --target prod \
         --build-arg RUST_IMAGE_VERSION="${RUST_IMAGE_VERSION}" \
+        --build-arg KMS_BINARIES_IMAGE="${KMS_BINARIES_IMAGE}" \
+        --build-arg EXPECTED_KMS_FLAVOR=insecure \
         "${REPO_ROOT}/" \
         --load
 
     log_info "Loading core-client container into Kind cluster '${NAMESPACE}'..."
-    kind load docker-image "hub.zama.org/ghcr/zama-ai/kms/core-client:latest-dev" \
+    kind load docker-image "${KMS_CLIENT_IMAGE}" \
         -n "${NAMESPACE}" \
         --nodes "${NAMESPACE}-worker"
 

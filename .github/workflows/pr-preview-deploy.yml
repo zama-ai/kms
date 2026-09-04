@@ -63,9 +63,9 @@ jobs:
       NAMESPACE: 'kms-ci-${{ github.actor }}-${{ inputs.pr_number }}'
       TKMS_INFRA_CHART_VERSION: '0.3.2'
       SYNC_SECRETS_CHART_VERSION: '0.2.1'
-      KMS_CORE_ENCLAVE_IMAGE_NAME: 'hub.zama.org/ghcr/zama-ai/kms/core-service-enclave'
-      KMS_CORE_IMAGE_NAME: 'hub.zama.org/ghcr/zama-ai/kms/core-service'
-      KMS_CORE_CLIENT_IMAGE_NAME: 'hub.zama.org/ghcr/zama-ai/kms/core-client'
+      KMS_CORE_ENCLAVE_IMAGE_NAME: 'hub.zama.org/ghcr/zama-ai/kms/core-service-enclave-insecure'
+      KMS_CORE_IMAGE_NAME: 'hub.zama.org/ghcr/zama-ai/kms/core-service-insecure'
+      KMS_CORE_CLIENT_IMAGE_NAME: 'hub.zama.org/ghcr/zama-ai/kms/core-client-insecure'
       KMS_CORE_IMAGE_TAG: ${{ inputs.image_tag }}
       KMS_CORE_CLIENT_IMAGE_TAG: ${{ inputs.image_tag }}
       IMAGE_REPO: 'hub.zama.org/ghcr/zama-ai/kms'
@@ -138,10 +138,10 @@ jobs:
             sudo chmod +x /usr/local/bin/jq
             echo "JQ version: $(jq --version)"
 
-            docker pull "${IMAGE_REPO}"/core-service-enclave:"${KMS_CORE_IMAGE_TAG}"
-            PCR0=$(docker inspect "${IMAGE_REPO}"/core-service-enclave:"${KMS_CORE_IMAGE_TAG}" | jq -r '.[0].Config.Labels["zama.kms.eif_pcr0"]')
-            PCR1=$(docker inspect "${IMAGE_REPO}"/core-service-enclave:"${KMS_CORE_IMAGE_TAG}" | jq -r '.[0].Config.Labels["zama.kms.eif_pcr1"]')
-            PCR2=$(docker inspect "${IMAGE_REPO}"/core-service-enclave:"${KMS_CORE_IMAGE_TAG}" | jq -r '.[0].Config.Labels["zama.kms.eif_pcr2"]')
+            docker pull "${IMAGE_REPO}"/core-service-enclave-insecure:"${KMS_CORE_IMAGE_TAG}"
+            PCR0=$(docker inspect "${IMAGE_REPO}"/core-service-enclave-insecure:"${KMS_CORE_IMAGE_TAG}" | jq -r '.[0].Config.Labels["zama.kms.eif_pcr0"]')
+            PCR1=$(docker inspect "${IMAGE_REPO}"/core-service-enclave-insecure:"${KMS_CORE_IMAGE_TAG}" | jq -r '.[0].Config.Labels["zama.kms.eif_pcr1"]')
+            PCR2=$(docker inspect "${IMAGE_REPO}"/core-service-enclave-insecure:"${KMS_CORE_IMAGE_TAG}" | jq -r '.[0].Config.Labels["zama.kms.eif_pcr2"]')
             {
               echo "PCR0=${PCR0}"
               echo "PCR1=${PCR1}"

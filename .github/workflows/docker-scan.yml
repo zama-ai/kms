@@ -15,9 +15,8 @@ jobs:
       pull-requests: read # Required to read pull request information
     runs-on: ubuntu-latest
     outputs:
-      # Each output indicates if files in a specific component were modified
-      changed-dockerfile: ${{ steps.filter.outputs.dockerfile_files }}
       changed: ${{ steps.filter.outputs.dockerfile }}
+      matrix: ${{ steps.matrix.outputs.value }}
     steps:
       # TODO: remove once GitHub runner images ship the CVE-2026-31431 kernel fix
       - name: Workaround CVE-2026-31431 (copy.fail)
@@ -41,6 +40,38 @@ jobs:
           filters: |
             dockerfile:
               - 'docker/**/Dockerfile'
+            base:
+              - 'docker/base/Dockerfile'
+            kms-binaries:
+              - 'docker/kms-binaries/Dockerfile'
+            core-service:
+              - 'docker/core/service/Dockerfile'
+            core-client:
+              - 'docker/core-client/Dockerfile'
+
+      - name: Build scan matrix
+        id: matrix
+        env:
+          BASE_CHANGED: ${{ steps.filter.outputs.base }}
+          KMS_BINARIES_CHANGED: ${{ steps.filter.outputs.kms-binaries }}
+          CORE_SERVICE_CHANGED: ${{ steps.filter.outputs.core-service }}
+          CORE_CLIENT_CHANGED: ${{ steps.filter.outputs.core-client }}
+        run: |
+          matrix='[]'
+          if [[ "${BASE_CHANGED}" == "true" ]]; then
+            matrix=$(jq -c '. + [{"name":"base","dockerfile":"docker/base/Dockerfile","image_ref":"docker-scan-base:latest","kms_flavor":"secure","prebuild_kms_binaries":false,"kms_binaries_ref":""}]' <<< "${matrix}")
+          fi
+          if [[ "${KMS_BINARIES_CHANGED}" == "true" ]]; then
+            matrix=$(jq -c '. + [{"name":"kms-binaries-secure","dockerfile":"docker/kms-binaries/Dockerfile","image_ref":"docker-scan-kms-binaries-secure:latest","kms_flavor":"secure","prebuild_kms_binaries":false,"kms_binaries_ref":""},{"name":"kms-binaries-insecure","dockerfile":"docker/kms-binaries/Dockerfile","image_ref":"docker-scan-kms-binaries-insecure:latest","kms_flavor":"insecure","prebuild_kms_binaries":false,"kms_binaries_ref":""}]' <<< "${matrix}")
+          fi
+          if [[ "${CORE_SERVICE_CHANGED}" == "true" ]]; then
+            matrix=$(jq -c '. + [{"name":"core-service-secure","dockerfile":"docker/core/service/Dockerfile","image_ref":"docker-scan-core-service-secure:latest","kms_flavor":"secure","prebuild_kms_binaries":true,"kms_binaries_ref":"docker-scan-kms-binaries-secure:latest"},{"name":"core-service-insecure","dockerfile":"docker/core/service/Dockerfile","image_ref":"docker-scan-core-service-insecure:latest","kms_flavor":"insecure","prebuild_kms_binaries":true,"kms_binaries_ref":"docker-scan-kms-binaries-insecure:latest"}]' <<< "${matrix}")
+          fi
+          if [[ "${CORE_CLIENT_CHANGED}" == "true" ]]; then
+            matrix=$(jq -c '. + [{"name":"core-client-secure","dockerfile":"docker/core-client/Dockerfile","image_ref":"docker-scan-core-client-secure:latest","kms_flavor":"secure","prebuild_kms_binaries":true,"kms_binaries_ref":"docker-scan-kms-binaries-secure:latest"},{"name":"core-client-insecure","dockerfile":"docker/core-client/Dockerfile","image_ref":"docker-scan-core-client-insecure:latest","kms_flavor":"insecure","prebuild_kms_binaries":true,"kms_binaries_ref":"docker-scan-kms-binaries-insecure:latest"}]' <<< "${matrix}")
+          fi
+          matrix_json=$(jq -cn --argjson include "${matrix}" '{include: $include}')
+          echo "value=${matrix_json}" >> "$GITHUB_OUTPUT"
 
   scan-and-comment:
     name: docker-scan/scan-and-comment
@@ -52,8 +83,9 @@ jobs:
     needs: check-changes
     if: needs.check-changes.outputs.changed == 'true'
     strategy:
+      fail-fast: false
       matrix:
-        dockerfile: ${{fromJson(needs.check-changes.outputs.changed-dockerfile)}}
+        include: ${{ fromJson(needs.check-changes.outputs.matrix).include }}
     steps:
       # TODO: remove once GitHub runner images ship the CVE-2026-31431 kernel fix
       - name: Workaround CVE-2026-31431 (copy.fail)
@@ -69,7 +101,6 @@ jobs:
         uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
           submodules: true
-          token: ${{ secrets.BLOCKCHAIN_ACTIONS_TOKEN }}
           persist-credentials: false
 
       - name: Get Rust version
@@ -82,6 +113,7 @@ jobs:
       - name: Set up Docker Buildx
         uses: ./.github/actions/docker-setup-buildx
         with:
+          driver: docker
           platforms: linux/amd64
 
       - name: Login to GitHub Container Registry
@@ -99,6 +131,7 @@ jobs:
           password: ${{ secrets.CGR_PASSWORD }}
 
       - name: Docker Build and Push with Platform Tag
+        if: matrix.prebuild_kms_binaries != true
         id: build
         uses: ./.github/actions/docker-build-push
         env:
@@ -112,16 +145,14 @@ jobs:
             SCCACHE_BUCKET=${{ env.RUNS_ON_S3_BUCKET_CACHE }}
             SCCACHE_REGION=${{ env.RUNS_ON_AWS_REGION }}
             SCCACHE_S3_PREFIX=sccache/${{ github.repository }}/docker-scan/amd64
+            KMS_FLAVOR=${{ matrix.kms_flavor }}
           context: '.'
           # Secret IDs MUST match what the Dockerfiles `--mount=type=secret,id=…`
           # expects (lowercase). Mismatched names = silently missing files in
           # /run/secrets and sccache fails to authenticate to S3.
           secrets: |
-            BLOCKCHAIN_ACTIONS_TOKEN=${{ secrets.BLOCKCHAIN_ACTIONS_TOKEN }}
             sccache_aws_access_key_id=${{ secrets.AWS_ACCESS_KEY_S3_USER }}
             sccache_aws_secret_access_key=${{ secrets.AWS_SECRET_KEY_S3_USER }}
-            CGR_USERNAME=${{ secrets.CGR_USERNAME }}
-            CGR_PASSWORD=${{ secrets.CGR_PASSWORD }}
           file: ${{ matrix.dockerfile }}
           platforms: linux/amd64
           push: false
@@ -131,12 +162,61 @@ jobs:
           sbom: false
           target: prod
           tags: |
-            base:latest
+            ${{ matrix.image_ref }}
+
+      - name: Build local kms-binaries dependency
+        if: matrix.prebuild_kms_binaries == true
+        uses: ./.github/actions/docker-build-push
+        env:
+          RUNS_ON_S3_BUCKET_CACHE: gh-actions-cache-eu-west-3
+          RUNS_ON_AWS_REGION: eu-west-3
+        with:
+          build-args: |
+            RUST_IMAGE_VERSION=${{ env.RUST_IMAGE_VERSION }}
+            TARGETARCH=amd64
+            KMS_FLAVOR=${{ matrix.kms_flavor }}
+            SCCACHE_BUCKET=${{ env.RUNS_ON_S3_BUCKET_CACHE }}
+            SCCACHE_REGION=${{ env.RUNS_ON_AWS_REGION }}
+            SCCACHE_S3_PREFIX=sccache/${{ github.repository }}/docker-scan/amd64/${{ matrix.kms_flavor }}
+          context: '.'
+          secrets: |
+            sccache_aws_access_key_id=${{ secrets.AWS_ACCESS_KEY_S3_USER }}
+            sccache_aws_secret_access_key=${{ secrets.AWS_SECRET_KEY_S3_USER }}
+          file: docker/kms-binaries/Dockerfile
+          platforms: linux/amd64
+          push: false
+          pull: false
+          load: true
+          provenance: false
+          sbom: false
+          target: binaries
+          tags: |
+            ${{ matrix.kms_binaries_ref }}
+
+      - name: Build image using local kms-binaries dependency
+        if: matrix.prebuild_kms_binaries == true
+        uses: ./.github/actions/docker-build-push
+        with:
+          build-args: |
+            TARGETARCH=amd64
+            KMS_BINARIES_IMAGE=${{ matrix.kms_binaries_ref }}
+            EXPECTED_KMS_FLAVOR=${{ matrix.kms_flavor }}
+          context: '.'
+          file: ${{ matrix.dockerfile }}
+          platforms: linux/amd64
+          push: false
+          pull: false
+          load: true
+          provenance: false
+          sbom: false
+          target: prod
+          tags: |
+            ${{ matrix.image_ref }}
 
       - name: Scan image with Trivy
         uses: aquasecurity/trivy-action@57a97c7e7821a5776cebc9bb87c984fa69cba8f1 # v0.35.0
         with:
-          image-ref: base:latest
+          image-ref: ${{ matrix.image_ref }}
           format: 'table'
           severity: 'CRITICAL,HIGH'
           output: trivy-result.txt
@@ -145,18 +225,21 @@ jobs:
         run: cat trivy-result.txt
 
       - name: Format Trivy Scan Result
+        env:
+          SCAN_NAME: ${{ matrix.name }}
         run: |
           if [ -s trivy-result.txt ]; then
-            echo -e "## Vulnerability Scan Results\n<details><summary>Details</summary>\n\n\`\`\`\n$(cat trivy-result.txt)\n\`\`\`\n</details>" > formatted-trivy-result.md
+            echo -e "## Vulnerability Scan Results: ${SCAN_NAME}\n<details><summary>Details</summary>\n\n\`\`\`\n$(cat trivy-result.txt)\n\`\`\`\n</details>" > formatted-trivy-result.md
           else
-            echo -e "## Vulnerability Scan Results\nNo vulnerabilities were detected." > formatted-trivy-result.md
+            echo -e "## Vulnerability Scan Results: ${SCAN_NAME}\nNo vulnerabilities were detected." > formatted-trivy-result.md
           fi
 
       - name: Comment PR with Trivy scan results
         uses: marocchino/sticky-pull-request-comment@773744901bac0e8cbb5a0dc842800d45e9b2b405 # v2.9.4
         env:
-          GITHUB_TOKEN: ${{ secrets.BLOCKCHAIN_ACTIONS_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
+          header: docker-scan-${{ matrix.name }}
           path: formatted-trivy-result.md
 
       - name: Clean up Trivy result file

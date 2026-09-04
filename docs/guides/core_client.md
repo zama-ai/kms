@@ -16,14 +16,14 @@ The core client library is also used for running tests.
     - The threshold KMS in its default configuration consists of 4 KMS cores that interact with each other to run the secure MPC protocols for all operations.
       The configuration can be extended to more than 4 parties, by adding configurations to [`core/service/config`](../../core/service/config/) and referencing them in [docker-compose-core-threshold.yml](../../docker-compose-core-threshold.yml), analogous to the first 4 parties.
     - Both cases are managed via the docker-compose files at the root of this repository: [docker-compose-core-centralized.yml](../../docker-compose-core-centralized.yml) or [docker-compose-core-threshold.yml](../../docker-compose-core-threshold.yml).
-    - Optional: If you want to build the docker images locally, run from the root of the repository `docker compose -vvv -f docker-compose-core-base.yml -f docker-compose-core-centralized.yml build` for the centralized case and `docker compose -vvv -f docker-compose-core-base.yml -f docker-compose-core-threshold.yml build` for the threshold case. Building all images usually takes several minutes. If you simply want to use the latest images from `ghcr.io` you can skip this step.
+    - Build the development Docker images from the root of the repository with `make build-compose-centralized` for the centralized case or `make build-compose-threshold` for the threshold case. Building all images usually takes several minutes. The Compose services use development images that are not published to `ghcr.io`.
     - Ensure that the following is present in an `.env` file at the root of the repository:
         ```
         MINIO_ROOT_USER=admin
         MINIO_ROOT_PASSWORD=strongadminpassword
         ```
       This ensures that all entities can share public key material via minio, which emulates S3 storage locally.
-    - Then, to start the KMS components, run `docker compose -vvv -f docker-compose-core-base.yml -f docker-compose-core-centralized.yml up` for the centralized case and `docker compose -vvv -f docker-compose-core-base.yml -f docker-compose-core-threshold.yml up` for the threshold case, at the root of the repository.
+    - Then, to start the KMS components, run `make start-compose-centralized` for the centralized case or `make start-compose-threshold` for the threshold case at the root of the repository.
     - Alternatively, bind the proper ports from a Kubernetes threshold namespace to your local host
     by running `bash ./bind_k8_threshold.sh` in this folder.
     You will also need to download the proper keys from S3.
@@ -81,12 +81,12 @@ docker run -v ./core-client/config:/config \
 # Example: Generate insecure keys
 PREPROC_ID=$(docker run -v ./core-client/config:/config \
   --network host \
-  ghcr.io/zama-ai/kms/core-client:latest \
+  ghcr.io/zama-ai/kms/core-client-insecure:latest \
   kms-core-client -f /config/client_local_threshold.toml insecure-preproc-key-gen \
   | grep request_id | cut -d'"' -f4)
 docker run -v ./core-client/config:/config \
   --network host \
-  ghcr.io/zama-ai/kms/core-client:latest \
+  ghcr.io/zama-ai/kms/core-client-insecure:latest \
   kms-core-client -f /config/client_local_threshold.toml insecure-key-gen --preproc-id "$PREPROC_ID"
 ```
 
@@ -312,8 +312,8 @@ To further make this a manual test, make sure a [key is generated](#Key-generati
   Ensure the latest code is compiled and start the custodian-based Docker-setup images:
   ```{bash}
   cargo build
-  docker compose -vvv -f docker-compose-core-base.yml -f docker-compose-core-threshold.yml build
-  KMS_DOCKER_BACKUP_SECRET_SHARING=true docker compose -vvv -f docker-compose-core-base.yml -f docker-compose-core-threshold.yml up
+  make build-compose-threshold
+  KMS_DOCKER_BACKUP_SECRET_SHARING=true make start-compose-threshold
   ```
   Note: In case you have already been running this, old data might be present in MinIO. Hence use the [MinIO web interface](http://localhost:9001/login) to clean all old data and reboot. Use username `admin` and password `strongadminpassword`. If you don't do this, then the process might fail.
 1. Set up custodians:
@@ -359,10 +359,12 @@ These commands generate a set of private and public FHE keys. It will return a `
 
 #### Insecure Key-Generation
 
+These commands are only compiled when `kms-core-client` is built with the `insecure` feature.
+
 _Insecure_ key-generation can be done using the following command:
 
 ```{bash}
-$ cargo run --bin kms-core-client -- -f <path-to-toml-config-file> insecure-key-gen --preproc-id <REQUEST_ID> [--uncompressed]
+$ cargo run --bin kms-core-client -F insecure -- -f <path-to-toml-config-file> insecure-key-gen --preproc-id <REQUEST_ID> [--uncompressed]
 ```
 
 Required arguments:
@@ -377,7 +379,7 @@ Note that this operation does *NOT* run a secure distributed keygen protocol, an
 
 It is also possible to fetch the result of an insecure key generation through its `REQUEST_ID` using the following command:
 ```{bash}
-$ cargo run --bin kms-core-client -- -f <path-to-toml-config-file> insecure-key-gen-result --request-id <REQUEST_ID> [--uncompressed] [--context-id <CONTEXT_ID>] [--epoch-id <EPOCH_ID>] [--no-verify]
+$ cargo run --bin kms-core-client -F insecure -- -f <path-to-toml-config-file> insecure-key-gen-result --request-id <REQUEST_ID> [--uncompressed] [--context-id <CONTEXT_ID>] [--epoch-id <EPOCH_ID>] [--no-verify]
 ```
 
 Optional arguments:
@@ -393,7 +395,7 @@ Upon success, both the command to request to generate a key _and_ the command to
 Like the secure flow, an insecure key-generation consumes a preprocessing entry, but the insecure preprocessing is a dummy: no correlated randomness is generated and only metadata such as the request ID, parameters, and external signature is recorded, so the call completes almost instantly. It can be triggered explicitly via:
 
 ```{bash}
-$ cargo run --bin kms-core-client -- -f <path-to-toml-config-file> insecure-preproc-key-gen [--context-id <CONTEXT_ID>] [--epoch-id <EPOCH_ID>]
+$ cargo run --bin kms-core-client -F insecure -- -f <path-to-toml-config-file> insecure-preproc-key-gen [--context-id <CONTEXT_ID>] [--epoch-id <EPOCH_ID>]
 ```
 
 Optional arguments:
@@ -406,7 +408,7 @@ Note that in the threshold setting an insecure preprocessing entry can only be c
 
 It is also possible to fetch the status of an insecure preprocessing through its `REQUEST_ID` using the following command:
 ```{bash}
-$ cargo run --bin kms-core-client -- -f <path-to-toml-config-file> insecure-preproc-key-gen-result --request-id <REQUEST_ID>
+$ cargo run --bin kms-core-client -F insecure -- -f <path-to-toml-config-file> insecure-preproc-key-gen-result --request-id <REQUEST_ID>
 ```
 
 #### Preprocessing for Secure Key-Generation
@@ -432,12 +434,15 @@ $ cargo run --bin kms-core-client f-- -f <path-to-toml-config-file> preproc-key-
 Upon success, both the command to request to generate preprocessing material _and_ the command to fetch the result, will print the following: `preproc done - <REQUEST_ID>`.
 
 #### Partial (Insecure) Preprocessing
+
+This command is only compiled when `kms-core-client` is built with the `insecure` feature.
+
 Due to how long the preprocessing phase can take, we also provide a way to perform only partially the preprocessing phase.
 One can thus specify the percentage of the offline phase that should run, as well as whether at the end of this partial preprocessing we want to store a _dummy_ (__insecure__) preprocessing to be able to run the Key-Generaiton phase nonetheless.
 Partial preprocessing can be triggered via the following command:
 
 ```{bash}
-$ cargo run --bin kms-core-client -- -f <path-to-toml-config-file> partial-preproc-key-gen --percentage-offline <percentage_to_run> [--store-dummy-preprocessing] [--context-id <CONTEXT_ID>] [--epoch-id <EPOCH_ID>]
+$ cargo run --bin kms-core-client -F insecure -- -f <path-to-toml-config-file> partial-preproc-key-gen --percentage-offline <percentage_to_run> [--store-dummy-preprocessing] [--context-id <CONTEXT_ID>] [--epoch-id <EPOCH_ID>]
 ```
 
 Optional arguments:
@@ -493,17 +498,19 @@ These commands compute a CRS that is used in proving and verifying ZK proofs. It
 
 #### Insecure CRS-generation
 
+These commands are only compiled when `kms-core-client` is built with the `insecure` feature.
+
 A CRS can _insecurely_ be created using the following command, where `<max-num-bits>` is the number of bits that one can prove with the CRS:
 
 ```{bash}
-$ cargo run --bin kms-core-client -- -f <path-to-toml-config-file> insecure-crs-gen --max-num-bits <max-num-bits>
+$ cargo run --bin kms-core-client -F insecure -- -f <path-to-toml-config-file> insecure-crs-gen --max-num-bits <max-num-bits>
 ```
 
 Note that this operation does *NOT* run a secure distributed CRS generation protocol, and therefore must *NOT* be used in production, as the security of the CRS cannot be guaranteed. This function is intended only for testing and debugging, to quickly generate a CRS, as the full distributed version is more expensive and time-consuming.
 
 It is also possible to fetch the result of an insecure CRS generation through its `REQUEST_ID` using the following command:
 ```{bash}
-$ cargo run --bin kms-core-client -- -f <path-to-toml-config-file> insecure-crs-gen-result --request-id <REQUEST_ID> [--context-id <CONTEXT_ID>] [--epoch-id <EPOCH_ID>] [--no-verify]
+$ cargo run --bin kms-core-client -F insecure -- -f <path-to-toml-config-file> insecure-crs-gen-result --request-id <REQUEST_ID> [--context-id <CONTEXT_ID>] [--epoch-id <EPOCH_ID>] [--no-verify]
 ```
 
 Optional arguments:
@@ -747,7 +754,7 @@ This prints the public key for each configured core.
 
 - Generate a set of private and public FHE keys for testing in a threshold KMS using the default threshold config. This command will expect all responses (`-a`) and will output logs (`-l`).
     ```{bash}
-    $ PREPROC_ID=$(cargo run --bin kms-core-client -- -f core-client/config/client_local_threshold.toml -a -l insecure-preproc-key-gen | grep request_id | cut -d'"' -f4)
+    $ PREPROC_ID=$(cargo run --bin kms-core-client -F insecure -- -f core-client/config/client_local_threshold.toml -a -l insecure-preproc-key-gen | grep request_id | cut -d'"' -f4)
     $ cargo run --bin kms-core-client -- -f core-client/config/client_local_threshold.toml -a -l insecure-key-gen --preproc-id "$PREPROC_ID"
     ```
 - Generate an encryption of `0x2342` of type `euint16` and ask for one user decryption from the threshold KMS using the default threshold config. This command assumes that previously an FHE key with key id `948ddb338f9279d5b06a45911be7c93dd7f45c8d6bc66c36140470432bce7e06` was created. This command will continue once the request has enough responses (the `-a` flag is not provided) and will write logs (`-l`).

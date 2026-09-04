@@ -19,14 +19,26 @@ Following Chainguard best practices:
 ## Building the Image
 
 ```bash
+# Build the secure shared binaries image
+docker build -t ghcr.io/zama-ai/kms/kms-binaries:latest \
+  -f docker/kms-binaries/Dockerfile .
+
 # Build production image
 docker build -t kms-core-client:latest \
   --target prod \
+  --build-arg EXPECTED_KMS_FLAVOR=secure \
+  --build-arg KMS_BINARIES_IMAGE=ghcr.io/zama-ai/kms/kms-binaries:latest \
   -f docker/core-client/Dockerfile .
 
-# Build development image with additional tools
+# Build the insecure shared binaries image
+docker build -t ghcr.io/zama-ai/kms/kms-binaries-insecure:latest-dev \
+  --build-arg KMS_FLAVOR=insecure \
+  -f docker/kms-binaries/Dockerfile .
+
+# Build the development image for Compose tests
 docker build -t kms-core-client:dev \
   --target dev \
+  --build-arg KMS_BINARIES_IMAGE=ghcr.io/zama-ai/kms/kms-binaries-insecure:latest-dev \
   -f docker/core-client/Dockerfile .
 ```
 

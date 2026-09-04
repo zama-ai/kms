@@ -287,8 +287,8 @@ kmsGenKeys:
   enabled: false
   nameOverride:
   # command line arguments passed to kms-core-client
-  keyGenArgs: "insecure-key-gen"
-  crsGenArgs: "insecure-crs-gen --max-num-bits 1024"
+  keyGenArgs: "key-gen"
+  crsGenArgs: "crs-gen --max-num-bits 1024"
   configmap:
     name: kms-keys
     annotations:
