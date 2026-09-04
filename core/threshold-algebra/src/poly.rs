@@ -595,8 +595,8 @@ fn quo_rem<F: Field>(a: Poly<F>, b: &Poly<F>) -> (Poly<F>, Poly<F>) {
     (q, r)
 }
 
-/// Replace `remainder` with `remainder mod divisor` and write the corresponding quotient into
-/// `quotient`, reusing both allocations.
+/// Computes `(quotient, remainder) = remainder / divisor`, reusing the `quotient` and `remainder`
+/// allocations.
 ///
 /// Panics when `divisor` is zero, which is a bug in the caller.
 fn quo_rem_assign<F: Field>(remainder: &mut Poly<F>, divisor: &Poly<F>, quotient: &mut Poly<F>) {
