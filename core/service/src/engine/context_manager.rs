@@ -789,6 +789,15 @@ where
             )
         })?;
 
+        // Context creation is rare and changes which parties we run with, so record the resulting
+        // configuration once.
+        tracing::info!(
+            context_id = %new_context.context_id,
+            num_parties = new_context.mpc_nodes.len(),
+            threshold = new_context.threshold,
+            "Created MPC context"
+        );
+
         Ok(Response::new(Empty {}))
     }
 
@@ -864,7 +873,7 @@ where
                 )
             })?;
 
-        {
+        let remaining_contexts = {
             let mut write_guard = self.cache.write().await;
             let was_present = (*write_guard).remove(&context_id);
             if !was_present {
@@ -873,7 +882,14 @@ where
                     context_id,
                 )
             }
-        }
+            write_guard.len()
+        };
+
+        tracing::info!(
+            context_id = %context_id,
+            remaining_contexts,
+            "Destroyed MPC context"
+        );
 
         Ok(())
     }
@@ -1021,13 +1037,35 @@ async fn atomic_update_context<
 
     match (res1, res2) {
         (Ok(_), Ok(_)) => (),
-        _ => {
+        (storage_res, session_res) => {
+            // Say which half failed and why; both errors are otherwise lost to the rollback.
+            let cause = match (storage_res.err(), session_res.err()) {
+                (Some(e1), Some(e2)) => {
+                    format!("storage write failed ({e1}); session maker update failed ({e2})")
+                }
+                (Some(e1), None) => format!("storage write failed ({e1})"),
+                (None, Some(e2)) => format!("session maker update failed ({e2})"),
+                // Unreachable: the (Ok, Ok) case is handled by the arm above.
+                (None, None) => "no error reported".to_string(),
+            };
+            tracing::error!(
+                context_id = %context_id,
+                "Rolling back context creation: {cause}"
+            );
+
             // Rollback if any operation failed
             // First delete the context from storage.
             {
                 let storage_ref = crypto_storage.private_storage.clone();
                 let mut guarded_priv_storage = storage_ref.lock().await;
-                _ = delete_context_at_id(&mut *guarded_priv_storage, context_id).await;
+                if let Err(e) = delete_context_at_id(&mut *guarded_priv_storage, context_id).await {
+                    // Best-effort: the context may never have reached storage. Worth surfacing
+                    // because it can leave the persisted state ahead of the in-memory state.
+                    tracing::warn!(
+                        context_id = %context_id,
+                        "Could not delete context from storage during rollback: {e}"
+                    );
+                }
             }
 
             // Then remove the context from the session maker and TLS verifier.
@@ -1037,7 +1075,9 @@ async fn atomic_update_context<
                 .map_err(|e| {
                     anyhow::anyhow!("Failed to remove context during atomic update rollback: {e}")
                 })?;
-            return Err(anyhow::anyhow!("Failed to atomically update context"));
+            return Err(anyhow::anyhow!(
+                "Failed to atomically update context {context_id}: {cause}"
+            ));
         }
     }
 
@@ -1096,6 +1136,16 @@ where
                 tonic::Code::Internal,
             )
         })?;
+
+        // Context creation is rare and changes which parties we run with, so record the resulting
+        // configuration once.
+        tracing::info!(
+            context_id = %new_context.context_id,
+            my_role = ?my_role,
+            num_parties = new_context.mpc_nodes.len(),
+            threshold = new_context.threshold,
+            "Created MPC context"
+        );
 
         Ok(Response::new(Empty {}))
     }
@@ -1164,6 +1214,12 @@ where
                     tonic::Code::Internal,
                 )
             })?;
+        let remaining_contexts = self.session_maker.context_count().await;
+        tracing::info!(
+            context_id = %context_id,
+            remaining_contexts,
+            "Destroyed MPC context"
+        );
         Ok(())
     }
 
