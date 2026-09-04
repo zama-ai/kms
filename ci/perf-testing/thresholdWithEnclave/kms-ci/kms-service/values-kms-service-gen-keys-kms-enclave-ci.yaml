@@ -5,6 +5,9 @@ kmsCore:
       name: kms-enclave-ci-1
   thresholdMode:
     enabled: true
+    legacyPrssMask:
+      beforePublicDecryptId: ""
+      beforeUserDecryptId: ""
 
 kmsCoreClient:
   enabled: false

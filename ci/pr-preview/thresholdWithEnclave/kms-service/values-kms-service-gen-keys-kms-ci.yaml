@@ -5,6 +5,9 @@ kmsCore:
       name: kms-enclave-ci-1
   thresholdMode:
     enabled: true
+    legacyPrssMask:
+      beforePublicDecryptId: ""
+      beforeUserDecryptId: ""
     # peersList is generated dynamically by deploy.sh and should not be set here
 
 kmsCoreClient:

@@ -1,0 +1,9 @@
+# legacyPrssMask must be a sibling of tls, not nested under it.
+kmsCore:
+  thresholdMode:
+    enabled: true
+    tls:
+      enabled: true
+      legacyPrssMask:
+        beforePublicDecryptId: "0x01000000000000000000000000000000000000000000000000000000000c1cd1"
+        beforeUserDecryptId: "0x0200000000000000000000000000000000000000000000000000000000171249"

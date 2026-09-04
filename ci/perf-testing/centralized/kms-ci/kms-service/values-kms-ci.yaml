@@ -11,6 +11,9 @@ kmsCore:
     tag: <version>
   thresholdMode:
     enabled: false
+    legacyPrssMask:
+      beforePublicDecryptId: ""
+      beforeUserDecryptId: ""
   envFrom:
     configmap:
       name: kms-ci-1

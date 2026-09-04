@@ -1,0 +1,8 @@
+# Fixture used by helm-lint CI: merged values must fail JSON Schema validation.
+kmsPeers:
+  count: "not-a-number"
+kmsCore:
+  thresholdMode:
+    legacyPrssMask:
+      beforePublicDecryptId: ""
+      beforeUserDecryptId: ""

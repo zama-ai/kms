@@ -1,0 +1,7 @@
+# Used by helm lint / chart-testing so default values.yaml (which omits this
+# required overlay block) can still be linted.
+kmsCore:
+  thresholdMode:
+    legacyPrssMask:
+      beforePublicDecryptId: ""
+      beforeUserDecryptId: ""

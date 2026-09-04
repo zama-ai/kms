@@ -1,0 +1,6 @@
+# Correct placement: legacyPrssMask is a sibling of tls.
+kmsCore:
+  thresholdMode:
+    legacyPrssMask:
+      beforePublicDecryptId: "0x01000000000000000000000000000000000000000000000000000000000c1cd1"
+      beforeUserDecryptId: "0x0200000000000000000000000000000000000000000000000000000000171249"

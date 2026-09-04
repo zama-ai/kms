@@ -5,6 +5,9 @@ kmsPeers:
 kmsCore:
   thresholdMode:
     enabled: true
+    legacyPrssMask:
+      beforePublicDecryptId: ""
+      beforeUserDecryptId: ""
     # peersList is generated dynamically by deploy.sh and should not be set here
     tls:
       enabled: true
