@@ -43,18 +43,30 @@ async fn write_all_does_not_overwrite_existing_halves(
 
     let expected_public = match fixture.initial_state {
         PairState::Complete => vec![],
-        PairState::Empty => vec![store_event(&fixture.public_entry, StorageOutcome::Created)],
-        PairState::PublicOnly => vec![store_event(
+        PairState::Empty => vec![expected_store_event(
+            &fixture.public_entry,
+            StorageOutcome::Created,
+        )],
+        PairState::PublicOnly => vec![expected_store_event(
             &fixture.public_entry,
             StorageOutcome::SkippedExisting,
         )],
-        PairState::PrivateOnly => vec![store_event(&fixture.public_entry, StorageOutcome::Created)],
+        PairState::PrivateOnly => vec![expected_store_event(
+            &fixture.public_entry,
+            StorageOutcome::Created,
+        )],
     };
     let expected_private = match fixture.initial_state {
         PairState::Complete => vec![],
-        PairState::Empty => vec![store_event(&fixture.private_entry, StorageOutcome::Created)],
-        PairState::PublicOnly => vec![store_event(&fixture.private_entry, StorageOutcome::Created)],
-        PairState::PrivateOnly => vec![store_event(
+        PairState::Empty => vec![expected_store_event(
+            &fixture.private_entry,
+            StorageOutcome::Created,
+        )],
+        PairState::PublicOnly => vec![expected_store_event(
+            &fixture.private_entry,
+            StorageOutcome::Created,
+        )],
+        PairState::PrivateOnly => vec![expected_store_event(
             &fixture.private_entry,
             StorageOutcome::SkippedExisting,
         )],
@@ -92,8 +104,8 @@ async fn empty_pair_remains_empty_when_public_store_fails(
     assert_same_events(
         &private_events,
         &[
-            store_event(&fixture.private_entry, StorageOutcome::Created),
-            deleted_event(&fixture.private_entry),
+            expected_store_event(&fixture.private_entry, StorageOutcome::Created),
+            expected_delete_event(&fixture.private_entry),
         ],
     );
 }
@@ -122,8 +134,8 @@ async fn empty_pair_remains_empty_when_private_store_fails(
     assert_same_events(
         &public_events,
         &[
-            store_event(&fixture.public_entry, StorageOutcome::Created),
-            deleted_event(&fixture.public_entry),
+            expected_store_event(&fixture.public_entry, StorageOutcome::Created),
+            expected_delete_event(&fixture.public_entry),
         ],
     );
     assert_same_events(
@@ -155,7 +167,7 @@ async fn existing_public_half_survives_private_store_failure(
     let (public_events, private_events) = fixture.events().await;
     assert_same_events(
         &public_events,
-        &[store_event(
+        &[expected_store_event(
             &fixture.public_entry,
             StorageOutcome::SkippedExisting,
         )],
@@ -193,7 +205,7 @@ async fn existing_private_half_survives_public_store_failure(
     );
     assert_same_events(
         &private_events,
-        &[store_event(
+        &[expected_store_event(
             &fixture.private_entry,
             StorageOutcome::SkippedExisting,
         )],
@@ -218,7 +230,7 @@ async fn new_private_half_is_removed_when_existing_public_store_fails(#[case] pa
     let (public_events, private_events) = fixture.events().await;
     assert_same_events(
         &public_events,
-        &[store_event(
+        &[expected_store_event(
             &fixture.public_entry,
             StorageOutcome::FailedBeforeMutation,
         )],
@@ -226,8 +238,8 @@ async fn new_private_half_is_removed_when_existing_public_store_fails(#[case] pa
     assert_same_events(
         &private_events,
         &[
-            store_event(&fixture.private_entry, StorageOutcome::Created),
-            deleted_event(&fixture.private_entry),
+            expected_store_event(&fixture.private_entry, StorageOutcome::Created),
+            expected_delete_event(&fixture.private_entry),
         ],
     );
 }
@@ -251,13 +263,13 @@ async fn new_public_half_is_removed_when_existing_private_store_fails(#[case] pa
     assert_same_events(
         &public_events,
         &[
-            store_event(&fixture.public_entry, StorageOutcome::Created),
-            deleted_event(&fixture.public_entry),
+            expected_store_event(&fixture.public_entry, StorageOutcome::Created),
+            expected_delete_event(&fixture.public_entry),
         ],
     );
     assert_same_events(
         &private_events,
-        &[store_event(
+        &[expected_store_event(
             &fixture.private_entry,
             StorageOutcome::FailedBeforeMutation,
         )],

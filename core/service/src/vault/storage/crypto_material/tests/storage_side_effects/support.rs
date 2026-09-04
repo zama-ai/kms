@@ -312,22 +312,28 @@ pub(super) fn assert_preserved(pub_or_priv: &str, before: &StorageState, after: 
     }
 }
 
-pub(super) fn store_event(entry: &StorageEntry, outcome: StorageOutcome) -> StorageEvent {
+pub(super) fn expected_store_event(
+    entry: &StorageEntry,
+    outcome: StorageOutcome,
+) -> StorageEvent {
     StorageEvent::new(entry.clone(), StorageOp::Store, outcome)
 }
 
-pub(super) fn deleted_event(entry: &StorageEntry) -> StorageEvent {
+pub(super) fn expected_delete_event(entry: &StorageEntry) -> StorageEvent {
     StorageEvent::new(entry.clone(), StorageOp::Delete, StorageOutcome::Deleted)
 }
 
 pub(super) fn failed_store_events(entry: &StorageEntry, phase: FaultPhase) -> Vec<StorageEvent> {
     match phase {
         FaultPhase::BeforeMutation => {
-            vec![store_event(entry, StorageOutcome::FailedBeforeMutation)]
+            vec![expected_store_event(
+                entry,
+                StorageOutcome::FailedBeforeMutation,
+            )]
         }
         FaultPhase::AfterMutation => vec![
-            store_event(entry, StorageOutcome::FailedAfterMutation),
-            deleted_event(entry),
+            expected_store_event(entry, StorageOutcome::FailedAfterMutation),
+            expected_delete_event(entry),
         ],
     }
 }
