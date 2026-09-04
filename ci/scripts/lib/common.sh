@@ -48,9 +48,15 @@ Options:
   --collect-logs           Only collect logs from pods and exit
   --enable-tls             Explicitly enable TLS (default for threshold mode)
   --disable-tls            Explicitly disable TLS (overrides default for threshold mode)
-  --enable-metrics         Install kube-prometheus-stack and remote-write KMS metrics
-                           to Grafana Cloud (kind targets only; reads
-                           GRAFANA_CLOUD_PROM_* from env)
+  --enable-metrics         Expose KMS metrics to Prometheus. On kind, installs
+                           kube-prometheus-stack, prefixes metric names with ci_,
+                           and remote-writes to Grafana Cloud (reads
+                           GRAFANA_CLOUD_PROM_* from env). On aws targets, only
+                           enables the kms-core ServiceMonitor (unprefixed names;
+                           distinguish by namespace) and lets the cluster's own
+                           Prometheus scrape it.
+  --tracing-endpoint <url> Enable kms-core tracing and send OTLP traces to <url>
+                           (e.g. http://jaeger:4317; default: disabled)
   --debug                  Enable debug logging (port-forward logs to ./logs/port-forward/)
   --help                   Show this help
 EOF
@@ -81,6 +87,7 @@ parse_args() {
             --enable-tls) ENABLE_TLS="true"; shift ;;
             --disable-tls) ENABLE_TLS="false"; shift ;;
             --enable-metrics) ENABLE_METRICS="true"; shift ;;
+            --tracing-endpoint) TRACING_ENDPOINT="$2"; shift 2 ;;
             --debug) DEBUG="true"; shift ;;
             --help) usage; exit 0 ;;
             *) log_error "Unknown argument: $1"; usage; exit 1 ;;

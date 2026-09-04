@@ -287,7 +287,7 @@ fn check_preproc_id_matches(
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub enum EpochOutput {
     PRSSInitOnly,
     Reshare((Vec<KeyGenMetadata>, Vec<CrsGenMetadata>)),
@@ -491,8 +491,8 @@ impl<
         SmallSession<ResiduePolyF4Z64>,
     )> {
         let session_z128 =
-            // Note that we need to use the new epoch ID when deriving the session ID, otherwise we would not be able to create multiple 
-            // new epochs from the same previous epoch, in case an epoch creation failed, as the session ID would be the same and the 
+            // Note that we need to use the new epoch ID when deriving the session ID, otherwise we would not be able to create multiple
+            // new epochs from the same previous epoch, in case an epoch creation failed, as the session ID would be the same and the
             // session maker would return an error.
             async { new_epoch_id.derive_session_id_with_counter(LIFT_Z128_SESSION_COUNTER) }
                 .and_then(|id| {
@@ -656,6 +656,7 @@ impl<
     #[expect(clippy::too_many_arguments)]
     async fn store_reshared_keys(
         crypto_storage: &ThresholdCryptoMaterialStorage<PubS, PrivS>,
+        session_maker: &SessionMaker,
         sk: &PrivateSigKey,
         signing_schemes: &[SigningSchemeType],
         new_epoch_id: EpochId,
@@ -809,31 +810,19 @@ impl<
 
             // Roll back any partial successes in case something fails during the resharing,
             // to not leave the storage in a partial state.
-            for key_info in verified_previous_epoch.keys_info.iter() {
-                if !crypto_storage
-                    .purge_fhe_keys(&key_info.key_id, &new_epoch_id)
-                    .await
-                {
-                    tracing::warn!(
-                        "Best-effort rollback failed to purge threshold key material for key_id={} new_epoch_id={}",
-                        key_info.key_id,
-                        new_epoch_id
-                    );
-                }
+            let priv_storage = crypto_storage.get_private_storage();
+            match Self::purge_epoch_material(&new_epoch_id, &priv_storage).await {
+                Ok(()) => session_maker.remove_epoch(&new_epoch_id).await,
+                Err(e) => tracing::error!(
+                    "Rollback of epoch {new_epoch_id} failed to delete its private material: {e:?}. The \
+                 epoch remains registered so that the deletion can be retried."
+                ),
             }
-            for crs_info in verified_previous_epoch.crs_info.iter() {
-                if !crypto_storage
-                    .inner
-                    .purge_crs_material(&crs_info.crs_id, &new_epoch_id)
-                    .await
-                {
-                    tracing::warn!(
-                        "Best-effort rollback failed to purge CRS material for crs_id={} new_epoch_id={}",
-                        crs_info.crs_id,
-                        new_epoch_id
-                    );
-                }
-            }
+            // Remove regardless of whether the rollback succeeded or not, to avoid leaving the in-memory cache in a partial state.
+            let removed = crypto_storage.purge_epoch_from_cache(&new_epoch_id).await;
+            tracing::info!(
+                "Freed {removed} in-memory FHE key cache entries for rolled back epoch {new_epoch_id}"
+            );
 
             return Err(anyhow::anyhow!(storage_err_msg));
         }
@@ -892,6 +881,7 @@ impl<
         })?;
 
         let crypto_storage = self.crypto_storage.clone();
+        let session_maker = self.session_maker.clone();
 
         let task = async move {
             let (mut session_z128, mut session_z64, session_online) =
@@ -946,6 +936,7 @@ impl<
 
             Self::store_reshared_keys(
                 &crypto_storage,
+                &session_maker,
                 &sk,
                 &signing_schemes,
                 new_epoch_id,
@@ -1011,6 +1002,7 @@ impl<
         })?;
 
         let crypto_storage = self.crypto_storage.clone();
+        let session_maker = self.session_maker.clone();
 
         let task = async move {
             let (mut session_z128_set_1, mut session_z64_set_1) = Self::create_set1_sessions(
@@ -1082,6 +1074,7 @@ impl<
 
             Self::store_reshared_keys(
                 &crypto_storage,
+                &session_maker,
                 &sk,
                 &signing_schemes,
                 new_epoch_id,
@@ -1098,38 +1091,16 @@ impl<
         Ok(task)
     }
 
-    /// Destroys an epoch by removing all private data stored under the given epoch for each of the
-    /// given data types, then removing the PRSS setup data, and finally removing the epoch from the
-    /// session maker.
+    /// Deletes every piece of private material that belongs to `epoch_id`: the FHE key shares and
+    /// the CRS metadata stored under the epoch, followed by the epoch data itself.
     ///
-    /// In case of any error during the deletion of private data, the epoch will not be removed from the session maker,
-    /// and an error will be returned. This allows the caller to retry the operation until it succeeds.
-    async fn destroy_epoch(
+    /// The deletion continues past a failure and the first error is returned.
+    /// However, only if all deletions succeed is the epoch data itself deleted, so that a restarted
+    /// node can still see the epoch and hence finish the deletion.
+    async fn purge_epoch_material(
         epoch_id: &EpochId,
         priv_storage: &tokio::sync::Mutex<PrivS>,
-        session_maker: &SessionMaker,
-    ) -> Result<Response<Empty>, MetricedError> {
-        if !session_maker.epoch_exists(epoch_id).await {
-            return Err(MetricedError::new(
-                OP_DESTROY_EPOCH,
-                Some((*epoch_id).into()),
-                anyhow::anyhow!("Epoch ID {} does not exist", epoch_id),
-                tonic::Code::NotFound,
-            ));
-        }
-
-        if session_maker.epoch_count().await < 2 {
-            return Err(MetricedError::new(
-                OP_DESTROY_EPOCH,
-                Some((*epoch_id).into()),
-                anyhow::anyhow!(
-                    "Cannot destroy epoch ID {} because it is the only epoch remaining",
-                    epoch_id
-                ),
-                tonic::Code::FailedPrecondition,
-            ));
-        }
-
+    ) -> anyhow::Result<()> {
         let mut priv_storage_guard = priv_storage.lock().await;
 
         // At this point we're committed to deleting the epoch, so do not return if there's an error,
@@ -1175,48 +1146,97 @@ impl<
             }
         }
 
+        // Delete legacy data to avoid it coming back on migration at restart.
+        #[expect(deprecated)]
+        let legacy_prss_type = PrivDataType::PrssSetupCombined.to_string();
+        if first_error.is_none()
+            && let Err(e) = delete_at_request_id(
+                &mut (*priv_storage_guard),
+                &epoch_id.into(),
+                &legacy_prss_type,
+            )
+            .await
+        {
+            tracing::error!("Error deleting PrssSetupCombined on epoch ID {epoch_id}: {e:?}");
+            first_error = Some(e);
+        }
+
         // Delete the epoch data (stored under epoch_id as a request_id) only once every key/CRS
         // meta data deletion above has succeeded. The epoch data (which holds the PRSS setup) is what
         // resurrects the epoch after a restart — the session maker is rebuilt from epoch-data
         // storage on startup — hence keeping the epoch data for last guarantees a restarted node still
         // sees the epoch and can finish the deletion.
-        if let Err(e) = delete_at_request_id(
-            &mut (*priv_storage_guard),
-            &epoch_id.into(),
-            &PrivDataType::EpochData.to_string(),
-        )
-        .await
+        if first_error.is_none()
+            && let Err(e) = delete_at_request_id(
+                &mut (*priv_storage_guard),
+                &epoch_id.into(),
+                &PrivDataType::EpochData.to_string(),
+            )
+            .await
         {
             tracing::error!("Error deleting EpochData epoch ID {epoch_id}: {e:?}");
-            if first_error.is_none() {
-                first_error = Some(e);
-            }
-        }
-        // Also delete legacy data to avoid it coming back on migration at restart.
-        if let Err(e) = delete_at_request_id(
-            &mut (*priv_storage_guard),
-            &epoch_id.into(),
-            #[expect(deprecated)]
-            &PrivDataType::PrssSetupCombined.to_string(),
-        )
-        .await
-        {
-            tracing::error!("Error deleting PrssSetupCombined on epoch ID {epoch_id}: {e:?}");
-            if first_error.is_none() {
-                first_error = Some(e);
-            }
+            first_error = Some(e);
         }
 
-        if let Some(e) = first_error {
-            // If there was a problem, stop and signal error here so that the operation can be retried. We must never
-            // end up in a situation where the epoch is gone, but data lingers on disk.
+        match first_error {
+            // If there was a problem, stop and signal the error here so that the operation can be
+            // retried.
+            Some(e) => Err(e),
+            None => Ok(()),
+        }
+    }
+
+    /// Destroys an epoch by removing all private data stored under the given epoch, dropping its
+    /// entries from the key cache, and then removing the epoch from the session maker.
+    ///
+    /// The epoch must exist and must not be the last epoch on the node. A rejected precondition
+    /// leaves the epoch untouched, cache included.
+    ///
+    /// In case of any error during the deletion of private data, the epoch will not be removed from the session maker,
+    /// and an error will be returned. This allows the caller to retry the operation until it succeeds.
+    async fn destroy_epoch(
+        epoch_id: &EpochId,
+        crypto_storage: &ThresholdCryptoMaterialStorage<PubS, PrivS>,
+        session_maker: &SessionMaker,
+    ) -> Result<Response<Empty>, MetricedError> {
+        if !session_maker.epoch_exists(epoch_id).await {
             return Err(MetricedError::new(
+                OP_DESTROY_EPOCH,
+                Some((*epoch_id).into()),
+                anyhow::anyhow!("Epoch ID {} does not exist", epoch_id),
+                tonic::Code::NotFound,
+            ));
+        }
+
+        if session_maker.epoch_count().await < 2 {
+            return Err(MetricedError::new(
+                OP_DESTROY_EPOCH,
+                Some((*epoch_id).into()),
+                anyhow::anyhow!(
+                    "Cannot destroy epoch ID {} because it is the only epoch remaining",
+                    epoch_id
+                ),
+                tonic::Code::FailedPrecondition,
+            ));
+        }
+
+        let priv_storage = crypto_storage.get_private_storage();
+        let purge_res = Self::purge_epoch_material(epoch_id, &priv_storage).await;
+
+        // The cache is dropped whatever the outcome of the deletion to avoid orphaned data in RAM.
+        let removed = crypto_storage.purge_epoch_from_cache(epoch_id).await;
+        tracing::info!(
+            "Freed {removed} in-memory FHE key cache entries for destroyed epoch {epoch_id}"
+        );
+
+        purge_res.map_err(|e| {
+            MetricedError::new(
                 OP_DESTROY_EPOCH,
                 Some((*epoch_id).into()),
                 e,
                 tonic::Code::Internal,
-            ));
-        }
+            )
+        })?;
 
         // Only forget the epoch once every piece of its private data has been deleted.
         session_maker.remove_epoch(epoch_id).await;
@@ -1225,18 +1245,12 @@ impl<
         Ok(Response::new(Empty {}))
     }
 
-    /// Fully erase a single epoch: delete its on-disk private key shares, CRS and PRSS setup, then drop the in-memory
-    /// decompressed-key cache for that epoch.
+    /// Takes the exclusive lifecycle lease of the epoch and then erases it through
+    /// [`Self::destroy_epoch`].
     ///
     /// In case anything goes wrong, an error will be returned and epoch meta-data will remain in the RAM despite being deleted from disk.
     /// This is to allow the caller to retry the operation until it succeeds.
-    ///
-    /// [`Self::destroy_epoch`] only touches storage, so the cache must be cleared here as well or the decompressed keys
-    /// stay resident until restart. The cache is purged regardless of the deletion outcome.
-    ///
-    /// An exclusive lifecycle lease prevents creation of the same epoch from starting or completing
-    /// concurrently with deletion.
-    async fn destroy_epoch_and_purge_cache(
+    async fn destroy_epoch_with_lease(
         &self,
         epoch_id: &EpochId,
     ) -> Result<Response<Empty>, MetricedError> {
@@ -1256,17 +1270,8 @@ impl<
                 )
             })?;
 
-        let priv_storage = Arc::clone(&self.crypto_storage.inner.private_storage);
-
         // NOTE: destroy_epoch will also destroy PRSS data
-        let res = Self::destroy_epoch(epoch_id, &priv_storage, &self.session_maker).await;
-
-        let removed = self.crypto_storage.purge_epoch_from_cache(epoch_id).await;
-        tracing::info!(
-            "Freed {removed} in-memory FHE key cache entries for destroyed epoch {epoch_id}"
-        );
-
-        res
+        Self::destroy_epoch(epoch_id, &self.crypto_storage, &self.session_maker).await
     }
 
     /// Rejects the request unless every `preproc_id` supplied in [`PreviousEpochInfo`] matches the
@@ -1607,7 +1612,7 @@ impl<
                 |e| MetricedError::new(OP_DESTROY_EPOCH, None, e, tonic::Code::InvalidArgument),
             )?;
 
-        self.destroy_epoch_and_purge_cache(&epoch_id).await
+        self.destroy_epoch_with_lease(&epoch_id).await
     }
 
     async fn destroy_epochs_for_context(
@@ -1635,7 +1640,7 @@ impl<
             // Attempt to destroy every epoch even if an earlier one fails, but keep the first failure to return so the
             // caller learns that some shares may remain and can retry. Later failures are logged via their own
             // `MetricedError` drop handling.
-            if let Err(e) = self.destroy_epoch_and_purge_cache(epoch_id).await {
+            if let Err(e) = self.destroy_epoch_with_lease(epoch_id).await {
                 if first_error.is_none() {
                     first_error = Some(e);
                 }
@@ -1770,7 +1775,7 @@ pub(crate) mod tests {
         client::test_tools::{self},
         consts::{
             DEFAULT_EPOCH_ID, DEFAULT_MPC_CONTEXT, PRIVATE_STORAGE_PREFIX_THRESHOLD_ALL,
-            PUBLIC_STORAGE_PREFIX_THRESHOLD_ALL, SIGNING_KEY_ID, default_extra_data,
+            PUBLIC_STORAGE_PREFIX_THRESHOLD_ALL, default_extra_data,
         },
         cryptography::signatures::gen_sig_keys,
         dummy_domain,
@@ -1793,6 +1798,7 @@ pub(crate) mod tests {
             ram::{self, RamStorage},
             read_all_data_versioned, store_versioned_at_request_and_epoch_id,
             store_versioned_at_request_id,
+            test_support::StorageEntry,
             tests::TestType,
         },
     };
@@ -1803,12 +1809,15 @@ pub(crate) mod tests {
         rpc_types::{KMSType, PrivDataType, alloy_to_protobuf_domain},
     };
     use rand::SeedableRng;
+    use strum::IntoEnumIterator;
     use threshold_execution::{
         endpoints::reshare_sk::SecureReshareSecretKeys,
         malicious_execution::small_execution::malicious_prss::EmptyPrss,
         tfhe_internals::test_feature::gen_key_set,
     };
     use threshold_types::role::Role;
+
+    mod failed_reshare;
 
     impl<
         Init: PRSSInit<ResiduePolyF4Z64, OutputType = PRSSSetup<ResiduePolyF4Z64>>
@@ -1899,7 +1908,7 @@ pub(crate) mod tests {
         )
         .await
         .unwrap();
-        ensure_client_keys_exist(Some(material_path), &SIGNING_KEY_ID, true).await;
+        ensure_client_keys_exist(Some(material_path), true).await;
 
         // create parties and run PrssSetup
         let server_handles = test_tools::setup_threshold_no_client(
@@ -2494,6 +2503,7 @@ pub(crate) mod tests {
                 *key_id,
                 *preproc_id,
                 std::collections::BTreeMap::new(),
+                &crate::dummy_domain(),
                 vec![],
                 vec![],
                 vec![],
@@ -2806,7 +2816,11 @@ pub(crate) mod tests {
             ram::RamStorage,
             EmptyPrss,
             SecureReshareSecretKeys,
-        >::destroy_epoch(&epoch_id, &priv_storage, &epoch_manager.session_maker)
+        >::destroy_epoch(
+            &epoch_id,
+            &epoch_manager.crypto_storage,
+            &epoch_manager.session_maker,
+        )
         .await
         .unwrap();
 
@@ -2882,7 +2896,11 @@ pub(crate) mod tests {
             ram::RamStorage,
             EmptyPrss,
             SecureReshareSecretKeys,
-        >::destroy_epoch(&epoch_id, &priv_storage, &epoch_manager.session_maker)
+        >::destroy_epoch(
+            &epoch_id,
+            &epoch_manager.crypto_storage,
+            &epoch_manager.session_maker,
+        )
         .await
         .unwrap();
 
@@ -2918,7 +2936,6 @@ pub(crate) mod tests {
 
         let nonexistent_epoch_id = EpochId::new_random(&mut rng);
 
-        let priv_storage = epoch_manager.crypto_storage.get_private_storage();
         let err = RealThresholdEpochManager::<
             ram::RamStorage,
             ram::RamStorage,
@@ -2926,7 +2943,7 @@ pub(crate) mod tests {
             SecureReshareSecretKeys,
         >::destroy_epoch(
             &nonexistent_epoch_id,
-            &priv_storage,
+            &epoch_manager.crypto_storage,
             &epoch_manager.session_maker,
         )
         .await
@@ -2957,7 +2974,7 @@ pub(crate) mod tests {
             .unwrap();
 
         let err = epoch_manager
-            .destroy_epoch_and_purge_cache(&epoch_id)
+            .destroy_epoch_with_lease(&epoch_id)
             .await
             .unwrap_err();
         assert_eq!(err.code(), tonic::Code::FailedPrecondition);
@@ -2978,7 +2995,7 @@ pub(crate) mod tests {
         // Success, failure, panic and task cancellation all drop this owned lease, allowing cleanup.
         drop(creation_lease);
         epoch_manager
-            .destroy_epoch_and_purge_cache(&epoch_id)
+            .destroy_epoch_with_lease(&epoch_id)
             .await
             .unwrap();
 
@@ -3022,8 +3039,14 @@ pub(crate) mod tests {
             .add_epoch(keeper_epoch_id, epoch.clone())
             .await;
 
-        // Fault-injecting private storage that we can flip between failing and succeeding on delete.
-        let priv_storage = tokio::sync::Mutex::new(FailingRamStorage::new(100));
+        // Fault-injecting private storage that can fail the key-share deletion once.
+        let crypto_storage = ThresholdCryptoMaterialStorage::new(
+            RamStorage::new(),
+            FailingRamStorage::new(),
+            None,
+            HashMap::new(),
+        );
+        let priv_storage = crypto_storage.get_private_storage();
 
         let data_type = PrivDataType::FheKeyInfo;
         let data = TestType { i: 42 };
@@ -3050,8 +3073,11 @@ pub(crate) mod tests {
             )
             .await
             .unwrap();
-            // Make every delete fail to simulate a partial failure mid-destruction.
-            guard.set_fail_deletes(true);
+            guard.set_fail_delete_at(StorageEntry::new(
+                data_id,
+                Some(epoch_id),
+                data_type.to_string(),
+            ));
         }
 
         // First attempt: deletion fails, so the whole operation must fail.
@@ -3060,7 +3086,7 @@ pub(crate) mod tests {
             FailingRamStorage,
             EmptyPrss,
             SecureReshareSecretKeys,
-        >::destroy_epoch(&epoch_id, &priv_storage, session_maker)
+        >::destroy_epoch(&epoch_id, &crypto_storage, session_maker)
         .await
         .unwrap_err();
         assert_eq!(err.code(), tonic::Code::Internal);
@@ -3093,13 +3119,13 @@ pub(crate) mod tests {
         }
 
         // Now let deletes succeed and retry: the operation must now complete and clean everything up.
-        priv_storage.lock().await.set_fail_deletes(false);
+        priv_storage.lock().await.clear_fail_points();
         RealThresholdEpochManager::<
             ram::RamStorage,
             FailingRamStorage,
             EmptyPrss,
             SecureReshareSecretKeys,
-        >::destroy_epoch(&epoch_id, &priv_storage, session_maker)
+        >::destroy_epoch(&epoch_id, &crypto_storage, session_maker)
         .await
         .unwrap();
 

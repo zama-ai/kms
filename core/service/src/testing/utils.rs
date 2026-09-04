@@ -434,7 +434,7 @@ pub mod setup {
     use crate::{
         consts::{
             DEFAULT_CENTRAL_CRS_ID, DEFAULT_CENTRAL_KEY_ID, DEFAULT_PARAM, KEY_PATH_PREFIX,
-            OTHER_CENTRAL_DEFAULT_ID, OTHER_CENTRAL_TEST_ID, SIGNING_KEY_ID, TEST_CENTRAL_CRS_ID,
+            OTHER_CENTRAL_DEFAULT_ID, OTHER_CENTRAL_TEST_ID, TEST_CENTRAL_CRS_ID,
             TEST_CENTRAL_KEY_ID, TEST_PARAM, TMP_PATH_PREFIX,
         },
         util::key_setup::ensure_central_server_signing_keys_exist,
@@ -477,7 +477,7 @@ pub mod setup {
     ) -> Result<()> {
         let epoch_id = *DEFAULT_EPOCH_ID;
         ensure_dir_exist(path).await;
-        ensure_client_keys_exist(path, &SIGNING_KEY_ID, true).await;
+        ensure_client_keys_exist(path, true).await;
         match material_type {
             MaterialType::Testing => {
                 central_material(
@@ -694,7 +694,7 @@ where
 async fn test_purge() {
     use crate::consts::signing_material_id;
     use crate::cryptography::signatures::SigningSchemeType;
-    use crate::util::key_setup::SCHEME_MATERIAL_TYPES;
+    use crate::util::key_setup::NON_LEGACY_VERF_MATERIAL_TYPES;
     use kms_grpc::rpc_types::PrivDataType;
     use strum::IntoEnumIterator;
 
@@ -731,7 +731,7 @@ async fn test_purge() {
     // Validate the keys were made
     for scheme in SigningSchemeType::iter() {
         let id = signing_material_id(scheme);
-        for data_type in SCHEME_MATERIAL_TYPES.map(|t| t.to_string()) {
+        for data_type in NON_LEGACY_VERF_MATERIAL_TYPES.map(|t| t.to_string()) {
             assert!(
                 central_pub_storage
                     .all_data_ids(&data_type)
@@ -758,7 +758,7 @@ async fn test_purge() {
         .await;
     }
     // Check the keys were deleted
-    for data_type in SCHEME_MATERIAL_TYPES.map(|t| t.to_string()) {
+    for data_type in NON_LEGACY_VERF_MATERIAL_TYPES.map(|t| t.to_string()) {
         assert!(
             central_pub_storage
                 .all_data_ids(&data_type)

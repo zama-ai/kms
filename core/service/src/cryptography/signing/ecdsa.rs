@@ -1,9 +1,7 @@
 //! ECDSA over secp256k1 signing backend.
 
-use super::{
-    HasSigningScheme, Signature, SigningError, SigningScheme, SigningSchemeType,
-    UnifiedPrivateSigKey,
-};
+use super::seed::RootSigningSeed;
+use super::{HasSigningScheme, Signature, SigningError, SigningScheme, SigningSchemeType};
 use crate::anyhow_tracked;
 use crate::cryptography::error::CryptographyError;
 use crate::cryptography::internal_crypto_types::LegacySerialization;
@@ -15,8 +13,7 @@ use alloy_sol_types::{Eip712Domain, SolStruct};
 use hashing::DomainSep;
 use k256::ecdsa::{SigningKey, VerifyingKey};
 use serde::{Deserialize, Serialize, de::Visitor};
-use std::sync::{Arc, OnceLock};
-use strum::EnumCount;
+use std::sync::Arc;
 use tfhe::named::Named;
 use tfhe_versionable::{Versionize, VersionsDispatch};
 use wasm_bindgen::prelude::wasm_bindgen;
@@ -189,12 +186,26 @@ pub enum PrivateSigKeyVersions {
 #[versionize(PrivateSigKeyVersions)]
 pub struct PrivateSigKey {
     sk: WrappedSigningKey,
-    /// Memoized per-scheme signing keys derived from `sk`.
-    /// Skipped from (de)serialization and versioning, so the persisted format is unchanged and old
-    /// data deserializes with an empty (cold) cache.
+    /// The root seed this identity's derived signing keys come from.
+    ///
+    /// The seed may be used for *every* scheme, including ECDSA.
+    /// However if a legacy ECDSA key already exists, that should take presidence.
+    ///
+    /// Skipped from (de)serialization and versioning to ensure backward
+    /// compatibility: the seed is persisted as its own object
+    /// (`PrivDataType::SigningSeed`) instead.
+    ///
+    /// # Equality
+    ///
+    /// The derived [`PartialEq`] **covers this field**, deliberately: two values
+    /// that hold the same secp256k1 scalar but different roots are different
+    /// identities, since they derive different post-quantum keys. Note the
+    /// consequence, which is easy to trip over — a key read back from storage is
+    /// seedless, so it does *not* compare equal to the same key with a seed
+    /// attached by [`Self::with_root_seed`].
     #[serde(skip)]
     #[versionize(skip)]
-    cache: DerivedKeyCache,
+    seed: Option<RootSigningSeed>,
 }
 
 impl Named for PrivateSigKey {
@@ -202,18 +213,34 @@ impl Named for PrivateSigKey {
 }
 
 impl PrivateSigKey {
+    /// A bare ECDSA signing key, with no root seed attached.
     pub fn new(sk: k256::ecdsa::SigningKey) -> Self {
         Self {
             sk: WrappedSigningKey(sk),
-            cache: DerivedKeyCache::default(),
+            seed: None,
         }
     }
 
-    pub(super) fn derived_key_slot(
+    /// Attach `seed` as the root this identity's derived keys come from.
+    pub fn with_root_seed(mut self, seed: RootSigningSeed) -> Self {
+        self.seed = Some(seed);
+        self
+    }
+
+    /// Whether a root seed is attached, i.e. whether this identity can derive
+    /// keys at all. Without one it is limited to ECDSA.
+    pub fn has_root_seed(&self) -> bool {
+        self.seed.is_some()
+    }
+
+    /// The attached root seed, or an error naming what is missing and why.
+    pub(super) fn require_root_seed(
         &self,
         scheme: SigningSchemeType,
-    ) -> &OnceLock<UnifiedPrivateSigKey> {
-        self.cache.slot(scheme)
+    ) -> Result<&RootSigningSeed, SigningError> {
+        self.seed
+            .as_ref()
+            .ok_or(SigningError::MissingRootSeed(scheme))
     }
 
     /// TODO(#2781) DEPRECATED: code should be refactored to not use this outside on this class
@@ -264,69 +291,14 @@ impl HasSigningScheme for PrivateSigKey {
 // (this is why the zeroizing `Drop` lives on the `WrappedSigningKey` newtype).
 impl ZeroizeOnDrop for PrivateSigKey {}
 
-#[derive(Clone, PartialEq, Eq, Debug, ZeroizeOnDrop)]
+#[derive(Clone, PartialEq, Eq, ZeroizeOnDrop)]
 struct WrappedSigningKey(k256::ecdsa::SigningKey);
 impl_generic_versionize!(WrappedSigningKey);
 
-/// Per-scheme cache of signing keys derived from a [`PrivateSigKey`].
-///
-/// Deriving a non-ECDSA key runs a KDF plus a (for ML-DSA, non-trivial) key
-/// expansion, so each scheme's key is derived once and memoized here.
-struct DerivedKeyCache {
-    /// One slot per [`SigningSchemeType`], indexed by `scheme as usize`. The
-    /// [`SigningSchemeType::Ecdsa256k1`] slot always stays empty: that scheme
-    /// signs with the [`PrivateSigKey`] itself, so there is nothing to derive.
-    slots: Arc<[OnceLock<UnifiedPrivateSigKey>; SigningSchemeType::COUNT]>,
-}
-
-impl DerivedKeyCache {
-    fn slot(&self, scheme: SigningSchemeType) -> &OnceLock<UnifiedPrivateSigKey> {
-        &self.slots[scheme as usize]
-    }
-}
-
-impl Default for DerivedKeyCache {
-    fn default() -> Self {
-        Self {
-            slots: Arc::new(std::array::from_fn(|_| OnceLock::new())),
-        }
-    }
-}
-
-// Warm clone: sharing the `Arc` is deliberate, so clones of a signing key share
-// one warmed cache rather than each re-deriving.
-impl Clone for DerivedKeyCache {
-    fn clone(&self) -> Self {
-        Self {
-            slots: Arc::clone(&self.slots),
-        }
-    }
-}
-
-// Ignore the key cache when doing equality comparision.
-// Instead we only care about the underlying `sk` in `PrivateSigKey` when comparing.
-impl PartialEq for DerivedKeyCache {
-    fn eq(&self, _other: &Self) -> bool {
-        true
-    }
-}
-impl Eq for DerivedKeyCache {}
-
-// Never render cached secret-key material.
-impl std::fmt::Debug for DerivedKeyCache {
+// Deliberately never render secret-key material to avoid it accidentally leaking in logs or debug output.
+impl std::fmt::Debug for WrappedSigningKey {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str("DerivedKeyCache(..)")
-    }
-}
-
-impl Zeroize for DerivedKeyCache {
-    fn zeroize(&mut self) {
-        // Drop this handle to the shared cache. If it is the last one, the slots
-        // drop and each cached key wipes itself in place
-        // (`UnifiedPrivateSigKey: ZeroizeOnDrop`); if other clones still share
-        // the cache, the derived keys are wiped once the final clone drops. The
-        // root secret in `PrivateSigKey::sk` is wiped in place regardless.
-        *self = Self::default();
+        f.write_str("WrappedSigningKey(REDACTED)")
     }
 }
 
@@ -550,6 +522,7 @@ impl SigningScheme for Ecdsa256k1 {
     type SigningKey = PrivateSigKey;
     type VerificationKey = PublicSigKey;
 
+    #[cfg(feature = "non-wasm")]
     fn sign(dsep: &DomainSep, msg: &[u8], sk: &PrivateSigKey) -> Result<Vec<u8>, SigningError> {
         internal_sign(dsep, msg, sk)
             .map(|s| s.to_bytes())
@@ -575,8 +548,18 @@ impl SigningScheme for Ecdsa256k1 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::consts::SAFE_SER_SIZE_LIMIT;
     use aes_prng::AesRng;
     use rand::SeedableRng;
+    use tfhe::safe_serialization::{safe_deserialize, safe_serialize};
+
+    /// The bytes this key is persisted as, in the format storage and the backup
+    /// vault hold.
+    fn persisted_bytes(sk: &PrivateSigKey) -> Vec<u8> {
+        let mut buf = Vec::new();
+        safe_serialize(sk, &mut buf, SAFE_SER_SIZE_LIMIT).unwrap();
+        buf
+    }
 
     #[test]
     fn plain_signing() {
@@ -651,6 +634,61 @@ mod tests {
         let verf_id = verf_key.verf_key_id();
         let signing_id = sig_key.signing_key_id();
         assert!(verf_id == signing_id);
+    }
+
+    /// The root seed stays out of the persisted key
+    #[test]
+    fn the_persisted_key_carries_no_root_seed() {
+        let mut rng = AesRng::seed_from_u64(3078);
+        let (_pk, seedless) = gen_sig_keys(&mut rng);
+        let seeded = seedless
+            .clone()
+            .with_root_seed(RootSigningSeed::random(&mut rng));
+        assert!(!seedless.has_root_seed());
+        assert!(seeded.has_root_seed());
+
+        assert_eq!(
+            persisted_bytes(&seedless),
+            persisted_bytes(&seeded),
+            "the root seed leaked into the persisted signing key"
+        );
+
+        let restored: PrivateSigKey = safe_deserialize(
+            std::io::Cursor::new(persisted_bytes(&seeded)),
+            SAFE_SER_SIZE_LIMIT,
+        )
+        .unwrap();
+        assert!(
+            !restored.has_root_seed(),
+            "a seed was read back out of the persisted key"
+        );
+        assert_eq!(restored.verf_key(), seedless.verf_key());
+    }
+
+    /// Equality covers the root seed, deliberately
+    #[test]
+    fn equality_covers_the_root_seed() {
+        let mut rng = AesRng::seed_from_u64(3079);
+        let (_pk, seedless) = gen_sig_keys(&mut rng);
+        let root = RootSigningSeed::random(&mut rng);
+        let seeded = seedless.clone().with_root_seed(root.clone());
+
+        assert_ne!(
+            seedless, seeded,
+            "a seedless key compared equal to the same scalar with a seed attached"
+        );
+        assert_eq!(
+            seeded,
+            seedless.clone().with_root_seed(root),
+            "the same scalar under the same root compared unequal"
+        );
+        assert_ne!(
+            seeded,
+            seedless
+                .clone()
+                .with_root_seed(RootSigningSeed::random(&mut rng)),
+            "the same scalar under two different roots compared equal"
+        );
     }
 
     #[test]

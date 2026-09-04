@@ -91,6 +91,7 @@ macro_rules! retry {
         retry!($f, 5, 100)
     };
 }
+pub(crate) use retry;
 
 #[derive(Serialize, Clone, Validate, Debug)]
 #[validate(schema(function = validate_core_client_conf))]
@@ -1823,7 +1824,7 @@ pub async fn execute_cmd(
     // the number of cores the core-client will talk to, as specified in `[[cores]]` sections of the config file
     let num_cores = cc_conf.cores.len();
 
-    ensure_client_keys_exist(Some(destination_prefix), &SIGNING_KEY_ID, true).await;
+    ensure_client_keys_exist(Some(destination_prefix), true).await;
 
     let mut pub_storage: HashMap<u32, FileStorage> = HashMap::with_capacity(num_parties);
     let client_storage: FileStorage =

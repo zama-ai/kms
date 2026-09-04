@@ -32,6 +32,8 @@ pub mod crypto_material;
 pub mod file;
 pub mod ram;
 pub mod s3;
+#[cfg(test)]
+pub(crate) mod test_support;
 
 /// Trait for KMS storage reading.
 ///
@@ -67,8 +69,28 @@ pub trait StorageReader {
     /// [StorageReaderExt::all_data_ids_from_all_epochs] instead.
     async fn all_data_ids(&self, data_type: &str) -> anyhow::Result<HashSet<RequestId>>;
 
+    /// Return every top-level entry under the storage root, unparsed and split into folders and
+    /// objects.
+    ///
+    /// Normally the folders are the data-type folders. A stray folder or object that belongs to
+    /// no data type is returned too, so callers can detect names they do not recognise. An
+    /// object is listed apart from the folders even when its name is a data type, because a data
+    /// type stores its entries inside its folder only.
+    async fn all_data_types(&self) -> anyhow::Result<RootEntries>;
+
     /// Output some information on the storage instance.
     fn info(&self) -> String;
+}
+
+/// The top-level entries under a storage root, as listed by [`StorageReader::all_data_types`].
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
+pub struct RootEntries {
+    /// Names of the folders directly under the root. A data type keeps its entries in a folder
+    /// of its own name, so these are the data-type names unless something else was written.
+    pub folders: HashSet<String>,
+    /// Names of the objects directly under the root. No data type stores anything here, so every
+    /// one is a stray, whatever its name.
+    pub objects: HashSet<String>,
 }
 
 /// Return all data IDs stored for a specific data type.
@@ -411,23 +433,6 @@ pub async fn delete_at_request_and_epoch_id<S: StorageExt>(
         );
         Ok(())
     }
-}
-
-/// Helper method to remove public key given a request ID.
-pub async fn delete_pk_at_request_id<S: Storage>(
-    storage: &mut S,
-    request_id: &RequestId,
-) -> anyhow::Result<()> {
-    delete_at_request_id(storage, request_id, &PubDataType::PublicKey.to_string()).await?;
-    // Best-effort delete of legacy PublicKeyMetadata (ignore errors if not found)
-    #[allow(deprecated)]
-    let _ = delete_at_request_id(
-        storage,
-        request_id,
-        &PubDataType::PublicKeyMetadata.to_string(),
-    )
-    .await;
-    Ok(())
 }
 
 /// Read some data stored in a location defined by `request_id` and `data_type`.
@@ -918,6 +923,35 @@ pub mod tests {
                 .await
                 .unwrap();
         assert!(pks.is_empty());
+    }
+
+    /// Exercise [`StorageReader::all_data_types`] with a public key and a CRS: nothing before the
+    /// first write, exactly the two folders afterwards, and no other names after a delete. A file
+    /// or S3 backend may keep an empty folder around, so the final check is a subset check.
+    pub async fn test_crs_public_key_data_types<S: Storage>(storage: &mut S) {
+        let req_id = derive_request_id("all_data_types").unwrap();
+        let pk_type = PubDataType::PublicKey.to_string();
+        let crs_type = PubDataType::CRS.to_string();
+        assert_eq!(
+            storage.all_data_types().await.unwrap(),
+            RootEntries::default()
+        );
+
+        storage.store_bytes(b"pk", &req_id, &pk_type).await.unwrap();
+        storage
+            .store_bytes(b"crs", &req_id, &crs_type)
+            .await
+            .unwrap();
+        let expected = HashSet::from([pk_type.clone(), crs_type.clone()]);
+        let entries = storage.all_data_types().await.unwrap();
+        assert_eq!(entries.folders, expected);
+        assert!(entries.objects.is_empty());
+
+        storage.delete_data(&req_id, &crs_type).await.unwrap();
+        let after_delete = storage.all_data_types().await.unwrap();
+        assert!(after_delete.folders.contains(&pk_type));
+        assert!(after_delete.folders.is_subset(&expected));
+        assert!(after_delete.objects.is_empty());
     }
 
     pub(crate) async fn test_store_bytes_does_not_overwrite_existing_bytes<S: Storage>(

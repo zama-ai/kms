@@ -4,6 +4,7 @@ use crate::backup::operator::BackupMaterial;
 use crate::consts::DEFAULT_EPOCH_ID;
 use crate::cryptography::internal_crypto_types::LegacySerialization;
 use crate::cryptography::signcryption::UnifiedSigncryption;
+use crate::cryptography::signing::seed::RootSigningSeed;
 use crate::engine::base::{CrsGenMetadata, KmsFheKeyHandles, derive_request_id};
 use crate::engine::context::ContextInfo;
 use crate::engine::threshold::service::epoch_manager::EpochData;
@@ -779,6 +780,10 @@ where
                 restore_data_type::<PrivS, PrivateSigKey>(priv_storage, backup_vault, cur_type)
                     .await?;
             }
+            PrivDataType::SigningSeed => {
+                restore_data_type::<PrivS, RootSigningSeed>(priv_storage, backup_vault, cur_type)
+                    .await?;
+            }
             PrivDataType::CrsInfo => {
                 restore_data_type_for_all_epochs::<PrivS, CrsGenMetadata>(
                     priv_storage,
@@ -1087,7 +1092,7 @@ pub(crate) async fn keychain_initialized(
 mod tests {
     use super::*;
     use crate::backup::error::{BackupError, RecoverySkipReason};
-    use crate::consts::DEFAULT_MPC_CONTEXT;
+    use crate::consts::{DEFAULT_MPC_CONTEXT, SIGNING_KEY_ID};
     use crate::vault::storage::{StorageProxy, ram::RamStorage, tests::TestType};
     use crate::{
         backup::custodian::{CustodianSetupMessagePayload, HEADER, InternalCustodianContext},
@@ -1120,40 +1125,39 @@ mod tests {
     ) {
         let mut rng = AesRng::seed_from_u64(0);
         let (verf_key, sig_key) = gen_sig_keys(&mut rng);
-        let mut enc = Encryption::new(PkeSchemeType::MlKem512, &mut rng);
-        let (dec_key, enc_key) = enc.keygen().unwrap();
+        let (dec_key, enc_key) = {
+            let mut enc = Encryption::new(PkeSchemeType::MlKem512, &mut rng);
+            enc.keygen().unwrap()
+        };
         let backup_id = derive_request_id("test").unwrap();
         let mut commitments = BTreeMap::new();
         commitments.insert(Role::indexed_from_one(1), vec![1_u8; 32]);
         commitments.insert(Role::indexed_from_one(2), vec![2_u8; 32]);
         commitments.insert(Role::indexed_from_one(3), vec![3_u8; 32]);
-        // Dummy payload; but needs to be a properly serialized payload
-        let payload = CustodianSetupMessagePayload {
-            header: HEADER.to_string(),
-            random_value: [4_u8; 32],
-            timestamp: SystemTime::now(),
-            public_enc_key: enc_key.clone(),
-            verification_key: verf_key.clone(),
-        };
-        let mut payload_serial = Vec::new();
-        safe_serialize(&payload, &mut payload_serial, SAFE_SER_SIZE_LIMIT).unwrap();
-        let setup_msg1 = CustodianSetupMessage {
-            custodian_role: 1,
-            name: "Custodian-1".to_string(),
-            payload: payload_serial.clone(),
-        };
-        let setup_msg2 = CustodianSetupMessage {
-            custodian_role: 2,
-            name: "Custodian-2".to_string(),
-            payload: payload_serial.clone(),
-        };
-        let setup_msg3 = CustodianSetupMessage {
-            custodian_role: 3,
-            name: "Custodian-3".to_string(),
-            payload: payload_serial.clone(),
-        };
+        let mut custodian_nodes = Vec::new();
+        for role in 1..=3 {
+            let (_, custodian_enc_key) = {
+                let mut enc = Encryption::new(PkeSchemeType::MlKem512, &mut rng);
+                enc.keygen().unwrap()
+            };
+            let (custodian_verf_key, _) = gen_sig_keys(&mut rng);
+            let payload = CustodianSetupMessagePayload {
+                header: HEADER.to_string(),
+                random_value: [4_u8; 32],
+                timestamp: SystemTime::now(),
+                public_enc_key: custodian_enc_key,
+                verification_key: custodian_verf_key,
+            };
+            let mut payload_serial = Vec::new();
+            safe_serialize(&payload, &mut payload_serial, SAFE_SER_SIZE_LIMIT).unwrap();
+            custodian_nodes.push(CustodianSetupMessage {
+                custodian_role: role,
+                name: format!("Custodian-{role}"),
+                payload: payload_serial,
+            });
+        }
         let custodian_context = CustodianContext {
-            custodian_nodes: vec![setup_msg1, setup_msg2, setup_msg3],
+            custodian_nodes,
             custodian_context_id: Some(backup_id.into()),
             threshold,
         };
@@ -1442,6 +1446,52 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(restored.i, 99);
+    }
+
+    /// The root signing seed survives a full trip through the backup vault and
+    /// back into private storage, and the restored seed derives the same
+    /// post-quantum keys as the original.
+    #[tokio::test]
+    async fn root_signing_seed_round_trips_through_the_backup_vault() {
+        let mut rng = AesRng::seed_from_u64(4711);
+        let mut priv_storage = RamStorage::new();
+        let mut backup_vault = make_unencrypted_vault();
+        let data_type = PrivDataType::SigningSeed;
+        let seed = RootSigningSeed::random(&mut rng);
+
+        store_versioned_at_request_id(
+            &mut priv_storage,
+            &SIGNING_KEY_ID,
+            &seed,
+            &data_type.to_string(),
+        )
+        .await
+        .unwrap();
+
+        update_specific_backup_vault::<RamStorage, RootSigningSeed>(
+            &priv_storage,
+            &mut backup_vault,
+            data_type,
+            false,
+        )
+        .await
+        .unwrap();
+
+        // Lose private storage entirely, as a node rebuilt from backup would.
+        let mut restored_storage = RamStorage::new();
+        restore_data_type::<RamStorage, RootSigningSeed>(
+            &mut restored_storage,
+            &backup_vault,
+            data_type,
+        )
+        .await
+        .unwrap();
+
+        let restored: RootSigningSeed = restored_storage
+            .read_data(&SIGNING_KEY_ID, &data_type.to_string())
+            .await
+            .unwrap();
+        assert_eq!(restored, seed, "the root seed did not survive the vault");
     }
 
     #[tokio::test]
