@@ -1,5 +1,5 @@
 build-compose-kms-binaries:
-	docker buildx build -t ghcr.io/zama-ai/kms/kms-binaries-insecure:latest-dev -f docker/kms-binaries/Dockerfile --target binaries --build-arg KMS_FLAVOR=insecure . --load
+	docker buildx build -t ghcr.io/zama-ai/kms/kms-binaries-insecure:latest-dev -f docker/kms-binaries/Dockerfile --target binaries --build-arg KMS_FLAVOR=insecure --build-arg LTO_RELEASE="$${LTO_RELEASE:-release-lto-thin}" . --load
 
 build-compose-base:
 	docker compose -vvv -f docker-compose-core-base.yml build

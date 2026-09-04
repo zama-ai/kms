@@ -395,7 +395,7 @@ Upon success, both the command to request to generate a key _and_ the command to
 Like the secure flow, an insecure key-generation consumes a preprocessing entry, but the insecure preprocessing is a dummy: no correlated randomness is generated and only metadata such as the request ID, parameters, and external signature is recorded, so the call completes almost instantly. It can be triggered explicitly via:
 
 ```{bash}
-$ cargo run --bin kms-core-client -- -f <path-to-toml-config-file> insecure-preproc-key-gen [--context-id <CONTEXT_ID>] [--epoch-id <EPOCH_ID>]
+$ cargo run --bin kms-core-client -F insecure -- -f <path-to-toml-config-file> insecure-preproc-key-gen [--context-id <CONTEXT_ID>] [--epoch-id <EPOCH_ID>]
 ```
 
 Optional arguments:
@@ -408,7 +408,7 @@ Note that in the threshold setting an insecure preprocessing entry can only be c
 
 It is also possible to fetch the status of an insecure preprocessing through its `REQUEST_ID` using the following command:
 ```{bash}
-$ cargo run --bin kms-core-client -- -f <path-to-toml-config-file> insecure-preproc-key-gen-result --request-id <REQUEST_ID>
+$ cargo run --bin kms-core-client -F insecure -- -f <path-to-toml-config-file> insecure-preproc-key-gen-result --request-id <REQUEST_ID>
 ```
 
 #### Preprocessing for Secure Key-Generation

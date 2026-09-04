@@ -57,7 +57,7 @@ cargo test -p kms-core-client -F e2e
 Threshold-heavy `kms-core-client` e2e coverage (PRSS + preprocessing + insecure fast paths):
 
 ```
-cargo test -p kms-core-client -F e2e,threshold_tests
+cargo test -p kms-core-client -F e2e,slow_tests
 ```
 
 Skip the integration tests that need Redis (unit tests only):
