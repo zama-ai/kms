@@ -42,7 +42,7 @@ use kms_lib::backup::custodian::InternalCustodianSetupMessage;
 use kms_lib::client::{
     client_wasm::Client,
     local_crypto::{EncryptionConfig, TestingPlaintext, compute_cipher_from_stored_key},
-    local_files::{read_element, write_element},
+    local_files::{read_element, write_element_owned},
 };
 use kms_lib::consts::{
     DEFAULT_EPOCH_ID, DEFAULT_MPC_CONTEXT, DEFAULT_PARAM, SIGNING_KEY_ID, TEST_PARAM,
@@ -1712,7 +1712,7 @@ pub async fn encrypt(
             params: cipher_params.clone(),
             ct_format: ct_format.as_str_name().to_string(),
         };
-        write_element(path, &cipher_w_params).await?;
+        let cipher_w_params = write_element_owned(path, cipher_w_params).await?;
         cipher = cipher_w_params.cipher;
     }
 
