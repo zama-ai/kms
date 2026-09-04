@@ -5,7 +5,7 @@ use crate::engine::centralized::central_kms::{
     CentralizedKms, async_user_decrypt, central_public_decrypt,
 };
 use crate::engine::traits::{BackupOperator, ContextManager};
-use crate::engine::utils::MetricedError;
+use crate::engine::utils::{MetricedError, format_unvalidated_id};
 use crate::engine::validation::{
     RequestIdParsingErr, parse_grpc_request_id, parse_optional_grpc_request_id,
     validate_public_decrypt_req, validate_user_decrypt_req,
@@ -31,6 +31,14 @@ use tonic::{Code, Request, Response};
 use tracing::Instrument;
 
 /// Implementation of the user_decrypt endpoint
+// `context_id`/`epoch_id` are only known after request validation, so they start empty and are
+// recorded below; the spawned decryption task inherits this span.
+#[tracing::instrument(skip_all, fields(
+    request_id = %format_unvalidated_id(&request.get_ref().request_id),
+    operation = "user_decrypt",
+    context_id = tracing::field::Empty,
+    epoch_id = tracing::field::Empty
+))]
 pub async fn user_decrypt_impl<
     PubS: Storage + Sync + Send + 'static,
     PrivS: StorageExt + Sync + Send + 'static,
@@ -62,6 +70,10 @@ pub async fn user_decrypt_impl<
         extra_data,
         signing_schemes,
     ) = validate_user_decrypt_req(&inner)?;
+    // Recorded before the context check so that a rejection there is attributed too.
+    let span = tracing::Span::current();
+    span.record("context_id", tracing::field::display(&context_id));
+    span.record("epoch_id", tracing::field::display(&epoch_id));
     if !service
         .context_manager
         .mpc_context_exists_in_cache(&context_id)
@@ -228,6 +240,14 @@ pub async fn get_user_decryption_result_impl<
 }
 
 /// Implementation of the public_decrypt endpoint
+// `context_id`/`epoch_id` are only known after request validation, so they start empty and are
+// recorded below; the spawned decryption task inherits this span.
+#[tracing::instrument(skip_all, fields(
+    request_id = %format_unvalidated_id(&request.get_ref().request_id),
+    operation = "decrypt",
+    context_id = tracing::field::Empty,
+    epoch_id = tracing::field::Empty
+))]
 pub async fn public_decrypt_impl<
     PubS: Storage + Sync + Send + 'static,
     PrivS: StorageExt + Sync + Send + 'static,
@@ -256,6 +276,10 @@ pub async fn public_decrypt_impl<
         extra_data,
         signing_schemes,
     ) = validate_public_decrypt_req(&inner)?;
+    // Recorded before the context check so that a rejection there is attributed too.
+    let span = tracing::Span::current();
+    span.record("context_id", tracing::field::display(&context_id));
+    span.record("epoch_id", tracing::field::display(&epoch_id));
 
     if !service
         .context_manager

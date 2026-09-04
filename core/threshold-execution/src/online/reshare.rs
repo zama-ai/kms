@@ -923,7 +923,10 @@ where
             } else {
                 // Any other variant is malicious behavior
                 // since it's broadcast we can add it to malicious parties
-                session.add_corrupt(role);
+                session.add_corrupt_with_reason(
+                    role,
+                    "broadcast a value that was neither a RingVector nor Bot during resharing",
+                );
                 tracing::error!(
                     "During resharing, unexpected broadcast. Adding {} to corrupt parties",
                     role
@@ -1046,7 +1049,10 @@ fn take_majority_vote_on_broadcasts<
             tracing::warn!(
                 "During resharing, unexpected broadcast. Adding party {sender_in_s2:?} to corrupt parties"
             );
-            my_set_session.add_corrupt(sender_in_s2);
+            my_set_session.add_corrupt_with_reason(
+                sender_in_s2,
+                "broadcast an unexpected value type while resharing to set 1",
+            );
         }
     }
 
