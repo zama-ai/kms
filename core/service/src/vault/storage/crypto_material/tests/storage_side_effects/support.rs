@@ -20,26 +20,24 @@ pub(super) enum PairState {
 }
 
 impl PairState {
+    // Does this pair of stored items have a public part?
     pub(super) fn has_public(self) -> bool {
         match self {
-            Self::Empty => false,
-            Self::PublicOnly => true,
-            Self::PrivateOnly => false,
-            Self::Complete => true,
+            Self::Empty | Self::PrivateOnly => false,
+            Self::PublicOnly | Self::Complete => true,
         }
     }
 
+    // Does this pair of stored items have a private part?
     pub(super) fn has_private(self) -> bool {
         match self {
-            Self::Empty => false,
-            Self::PublicOnly => false,
-            Self::PrivateOnly => true,
-            Self::Complete => true,
+            Self::Empty | Self::PublicOnly => false,
+            Self::PrivateOnly | Self::Complete => true,
         }
     }
 }
 
-/// Selects one of the two public/private pairs stored by the threshold KMS.
+/// Selects the FHE-key pair or CRS pair passed to [`CryptoMaterialStorage::write_all`].
 #[derive(Clone, Copy, Debug)]
 pub(super) enum PairKind {
     FheKey,
@@ -168,15 +166,7 @@ impl PairFixture {
             )
             .await
             .unwrap();
-            store_versioned_at_request_and_epoch_id(
-                &mut *private,
-                &data_id,
-                &other_epoch_id,
-                &control,
-                &pair_kind.private_type().to_string(),
-            )
-            .await
-            .unwrap();
+            store_private(&mut private, &data_id, &other_epoch_id, pair_kind, &control).await;
             private.clear_events();
         }
 
@@ -198,7 +188,7 @@ impl PairFixture {
         }
     }
 
-    pub(super) async fn write(&self) -> Result<(), StorageError> {
+    pub(super) async fn write_all(&self) -> Result<(), StorageError> {
         self.storage
             .write_all(
                 &self.data_id,
