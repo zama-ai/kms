@@ -105,15 +105,27 @@ The service crate is the main surface area. Key subdirectories under
   (`ecdsa`, the legacy default and EIP-712 home), EdDSA/ed25519 (`eddsa`), and
   ML-DSA/FIPS-204 (`mldsa`) — behind the `SigningScheme` trait and the
   `unified_sign`/`unified_verify` entry points. The historic
-  `cryptography::signatures` path is now a re-export facade. A node still
-  persists a single ECDSA signing key; the other schemes' keys are derived from
-  it on demand. Every scheme's public verification material — ECDSA's included —
+  `cryptography::signatures` path is a re-export facade. A node persists two
+  private objects: its ECDSA signing key (`PrivDataType::SigningKey`, the
+  authoritative on-chain identity) and an independent, CSPRNG-generated
+  `RootSigningSeed` (`PrivDataType::SigningSeed`), both under `SIGNING_KEY_ID`.
+  The seed will eventuall be the root of *every* signing key of the node, ECDSA 
+  included: keys are derived on demand from the *seed*. However to ensure backward
+  compatibility and avoid requiring nodes to roll their ECDSA keys, legacy ECDSA 
+  are derived and stored seperately, and the seed is only used to derive every 
+  non-ECDSA key. That is, if a legacy ECDSA key is stored, then the seed will *not* 
+  be used to derive ECDSA material. 
+  The seed is carried in memory on `PrivateSigKey` (a `#[serde(skip)]` field, so
+  the persisted format is unchanged) and attached by `get_core_signing_key`; a key
+  without it — a client wallet key, or a node that has not yet run `kms-gen-keys` —
+  can only do ECDSA and errors with `SigningError::MissingRootSeed` for anything
+  else. Every scheme's public verification material — ECDSA's included —
   is stored under the handle `consts::signing_material_id(scheme)` gives, in the
-  data types `key_setup::SCHEME_MATERIAL_TYPES` names:
+  data types `key_setup::NON_LEGACY_VERF_MATERIAL_TYPES` names:
   `PubDataType::TypedVerfKey` holds the scheme's *own* verification key type
   (`PublicSigKey`, `Ed25519VerfKey`, `MlDsaVerfKey<P>`), and `TypedVerfAddress` its
-  `address_text()` (`0x`-prefixed hex; for ECDSA the EIP-55 address). 
-  ECDSA's material is *additionally* written to the deprecated `key_setup::LEGACY_ECDSA_MATERIAL_TYPES`
+  `address_text()` (`0x`-prefixed hex; for ECDSA the EIP-55 address).
+  ECDSA's material is *additionally* written to the deprecated `key_setup::LEGACY_VERF_MATERIAL_TYPES`
   (`PubDataType::VerfKey`/`VerfAddress`, a bare `PublicSigKey` and the same
   address text) for existing external consumers; those two are scheduled for
   removal and nothing new should read them. Both copies are validated against the
@@ -131,17 +143,22 @@ All under [core/service/src/bin/](core/service/src/bin/):
 - [kms-init.rs](core/service/src/bin/kms-init.rs) — post-deployment cluster
   initialization.
 - [kms-gen-keys.rs](core/service/src/bin/kms-gen-keys.rs) — generate the server
-  signing keys (and, in threshold mode, per-party self-signed CA certificates
-  for mTLS). Also derives and persists every non-ECDSA scheme's public
-  verification material from the ECDSA key. Reads a keygen TOML with
+  signing identity — the `RootSigningSeed` plus the ECDSA signing key, derived
+  from the seed on a fresh node and left untouched on an upgraded one — and, in
+  threshold mode, per-party self-signed CA certificates for mTLS. It is the
+  **only** thing that ever creates a seed. Also derives and persists every
+  scheme's public verification material: ECDSA's from the persisted signing key,
+  every other scheme's from the seed. Reads a keygen TOML with
   `--config-file`; `[keygen] repopulate = true` backfills the per-scheme
-  verification material from an existing ECDSA signing key instead of
-  generating keys (the same backfill runs automatically on server start via
-  `migration::migrate_public_verification_material`), and `[keygen] overwrite =
-  true` deletes the signing key together with the verification material derived
-  from it, since generating a key alongside another key's derived material is
-  rejected. Supports `mock_enclave` in config for local dev when compiled with
-  the `insecure` feature.
+  verification material from the signing identity already in private storage
+  instead of generating keys (the same backfill runs automatically on server
+  start via `migration::migrate_public_verification_material`, which warns and
+  skips when the seed is absent), `[keygen] show_existing = true` prints the
+  existing signing-material handles and exits, and `[keygen] overwrite = true`
+  deletes the signing key and the seed together with the verification material
+  derived from them, since generating an identity alongside another identity's
+  derived material is rejected. Supports `mock_enclave` in config for local dev
+  when compiled with the `insecure` feature.
 - [kms-custodian.rs](core/service/src/bin/kms-custodian.rs) — custodian-side
   tool for producing and recovering backup shares.
 - [kms-gen-tls-certs.rs](core/service/src/bin/kms-gen-tls-certs.rs) — TLS
@@ -329,14 +346,14 @@ orchestration — so the vault layer can reuse them without depending on startup
 sits above it and owns the startup orchestration, entered through `verify_storage_material`.
 The checks follow three rules:
 
-1. **Private storage is the reference.** Iteration is always "for each entry in private
-   storage, look up its counterpart in public storage" — never the reverse.
-2. **Extra material in public storage is ignored,** with no error and no warning. Much of it
-   is deliberate: a node may periodically replicate other parties' public material into its
-   own public storage, so entries it never generated and holds no private counterpart for are
-   expected. Retired keysets and leftovers from a previous deployment sharing the bucket land
-   there too. This is why the verification key is read at `SIGNING_KEY_ID` specifically rather
-   than by enumerating the folder.
+1. **Private storage is the reference.** Every integrity check takes an expected value from
+   private storage and looks up its counterpart in public storage — never the reverse.
+2. **Extra material in public storage is reported, never rejected.** Some of it is legitimate:
+   a retired keyset, or leftovers from a previous deployment that shares the bucket. Some of it
+   is not: a write that failed half-way, a corrupted store, or an entry planted by someone with
+   write access. The node cannot tell these apart, so once the integrity checks pass,
+   `report_unexpected_public_material` lists public storage and logs an error for every entry
+   that private storage does not account for. Boot continues regardless.
 3. **Read-only.** Nothing is written, repaired, or fetched from peers.
 
 What it verifies, and how failures are treated:
@@ -346,6 +363,8 @@ What it verifies, and how failures are treated:
 | Published keysets and CRSes are present, and their raw stored bytes hash to the digests in `KeyGenMetadata` / `CrsGenMetadata` | boot fails |
 | Current private keygen and CRS metadata with a stored domain reconstruct a valid EIP-712 signature from the node's signing key | boot fails |
 | `VerfKey` and `VerfAddress` at `SIGNING_KEY_ID` match the key derived from the private `SigningKey` | boot fails |
+| Every entry in a `PubDataType` folder is accounted for by private storage or by a fixed-ID convention | error logged, boot continues |
+| Every top-level name in public storage is a `PubDataType` folder, and every folder can be listed | error logged, boot continues |
 
 Custodian backup readiness is deliberately *not* part of this. It is a property of the vault's
 keychain rather than of the published material, and the backup path already reports it:
@@ -366,7 +385,19 @@ signing address. Older metadata versions upgrade with no domain and stay unverif
 
 `PubDataType::DecompressionKey` has no private-storage counterpart at all
 (`write_decompression_key` persists no private data), so a published decompression key cannot be
-verified at startup.
+verified at startup, and the sweep reports every one of them. The deprecated
+`PubDataType::PublicKeyMetadata` is the opposite case: deployments upgraded from before 0.14 hold
+one per keyset, so the sweep accounts for it under every keyset ID and reports only the rest.
+
+The sweep enumerates through `StorageReader::all_data_types` (the top-level folders and objects
+under the storage root) and `all_data_ids` (the entries of each `PubDataType` folder). An object
+directly under the root is reported whatever its name, because a data type stores its entries
+inside its folder only. The sweep is bounded by the storage root the node is configured with —
+`PUB` for a centralized node, `PUB-pX` for party X — so other parties' prefixes in a shared bucket
+are never listed. It does not descend into sub-folders beneath a data type: public data is never
+epoched, and both `all_data_ids` implementations skip such folders. A name that does not parse as
+a request ID makes the folder listing fail; that failure is logged as an error too, and boot
+continues.
 
 ## Backward compatibility
 

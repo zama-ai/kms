@@ -14,6 +14,7 @@ pub use crate::cryptography::signing::ecdsa::{
     PublicSigKeyVersions, SIG_SIZE, compute_eip712_signature, eip712_sign_hash, gen_sig_keys,
     recover_address_from_ext_signature,
 };
+pub use crate::cryptography::signing::seed::{RootSigningSeed, RootSigningSeedVersions};
 pub use crate::cryptography::signing::{
     HasSigningScheme, Signature, SigningError, SigningSchemeType, SigningSchemeTypeVersions,
     UnifiedPublicSigKey, UnifiedPublicSigKeyVersions,

@@ -3,14 +3,10 @@
 //! Every backend signs `dsep ‖ msg` and applies its own normalization/encoding
 //! internally.
 
-// The module is `pub(crate)` and its callers have not landed yet, so every
-// scheme's API currently looks dead to the crate.
-// TODO(#3078): remove this once the unified signing API is used by the KMS and other consumers.
-#![allow(dead_code)]
-
 pub mod ecdsa;
 mod eddsa;
 mod mldsa;
+pub mod seed;
 
 use alloy_primitives::Address;
 use ecdsa::Ecdsa256k1;
@@ -18,7 +14,7 @@ use ecdsa::{PrivateSigKey, PublicSigKey};
 use ed25519_dalek::{PUBLIC_KEY_LENGTH, SigningKey as Ed25519SigningKey};
 use eddsa::Ed25519;
 pub use eddsa::Ed25519VerfKey;
-use hashing::{DIGEST_BYTES, DomainSep, hash_element};
+use hashing::{DIGEST_BYTES, DomainSep};
 use ml_dsa::{MlDsa44, MlDsa65, MlDsa87, SigningKey as MlDsaSigningKey};
 use mldsa::MlDsa;
 pub use mldsa::MlDsaVerfKey;
@@ -28,10 +24,10 @@ use strum_macros::Display;
 use tfhe::named::Named;
 use tfhe_versionable::{Versionize, VersionsDispatch};
 use thiserror::Error;
-use zeroize::{Zeroize, ZeroizeOnDrop, Zeroizing};
+use zeroize::{Zeroize, ZeroizeOnDrop};
 
-/// Domain separator for deriving per-scheme signing keys from the persisted
-/// ECDSA [`PrivateSigKey`].
+/// Domain separator for deriving per-scheme signing keys from a
+/// [`seed::RootSigningSeed`].
 const DSEP_SIGKEY_DERIVE: DomainSep = *b"SIGKDERV";
 
 /// Domain separator for the digests that identify a verification key.
@@ -74,6 +70,10 @@ pub enum SigningError {
     /// Deriving a verification key from a signing key failed.
     #[error("could not derive verification key: {0}")]
     KeyDerivation(String),
+    /// A key that has to be derived from the root seed was requested, but the
+    /// signing key carries none.
+    #[error("no root signing seed is attached to this signing key, so no {0} key can be derived")]
+    MissingRootSeed(SigningSchemeType),
     /// An integer discriminant did not correspond to any known signing scheme.
     #[error("unsupported signing scheme discriminant: {0}")]
     UnknownScheme(i32),
@@ -180,6 +180,7 @@ pub trait SigningScheme {
     type VerificationKey;
 
     /// Sign `dsep ‖ msg`, returning the scheme's standard signature encoding.
+    #[cfg(feature = "non-wasm")]
     fn sign(dsep: &DomainSep, msg: &[u8], sk: &Self::SigningKey) -> Result<Vec<u8>, SigningError>;
 
     /// Verify a signature over `dsep ‖ msg`.
@@ -378,7 +379,8 @@ impl UnifiedPublicSigKey {
     pub fn digest(&self) -> Vec<u8> {
         match self {
             UnifiedPublicSigKey::Ecdsa256k1(vk) => vk.verf_key_id(),
-            UnifiedPublicSigKey::Ed25519(vk) => Ed25519::digest(&vk.0),
+            // The raw public key, which is also its Solana address.
+            UnifiedPublicSigKey::Ed25519(vk) => vk.0.as_bytes().to_vec(),
             UnifiedPublicSigKey::MlDsa44(vk) => MlDsa::digest(SigningSchemeType::MlDsa44, &vk.0),
             UnifiedPublicSigKey::MlDsa65(vk) => MlDsa::digest(SigningSchemeType::MlDsa65, &vk.0),
             UnifiedPublicSigKey::MlDsa87(vk) => MlDsa::digest(SigningSchemeType::MlDsa87, &vk.0),
@@ -407,8 +409,15 @@ impl HasSigningScheme for UnifiedPublicSigKey {
     }
 }
 
+/// The multi-scheme surface of a node's signing identity.
+///
+/// - **ECDSA** uses this key itself. That is a property of the transition rather
+///   than of the design.
+/// - **Every other scheme** is derived from the attached [`seed::RootSigningSeed`],
+///   and errors with [`SigningError::MissingRootSeed`] if none is attached.
 impl PrivateSigKey {
     /// Sign `msg` (domain-separated by `dsep`) under `scheme`.
+    #[cfg(feature = "non-wasm")]
     pub(crate) fn unified_sign_with(
         &self,
         scheme: SigningSchemeType,
@@ -419,7 +428,10 @@ impl PrivateSigKey {
             SigningSchemeType::Ecdsa256k1 => {
                 Ok(Signature::new(scheme, Ecdsa256k1::sign(dsep, msg, self)?))
             }
-            _ => unified_sign(dsep, msg, self.derive_signing_key(scheme)?),
+            _ => {
+                let seed = self.require_root_seed(scheme)?;
+                unified_sign(dsep, msg, seed.derive_signing_key(scheme)?)
+            }
         }
     }
 
@@ -431,88 +443,15 @@ impl PrivateSigKey {
     ) -> Result<UnifiedPublicSigKey, SigningError> {
         match scheme {
             SigningSchemeType::Ecdsa256k1 => Ok(UnifiedPublicSigKey::Ecdsa256k1(self.verf_key())),
-            _ => self.derive_signing_key(scheme)?.verifying_key(),
+            _ => self
+                .require_root_seed(scheme)?
+                .unified_verifying_key(scheme),
         }
-    }
-
-    /// The memoized signing key derived from this key for `scheme`.
-    ///
-    /// Errors for [`SigningSchemeType::Ecdsa256k1`]: that scheme signs with the
-    /// persisted key itself, so it has no derived key,
-    fn derive_signing_key(
-        &self,
-        scheme: SigningSchemeType,
-    ) -> Result<&UnifiedPrivateSigKey, SigningError> {
-        if scheme == SigningSchemeType::Ecdsa256k1 {
-            return Err(SigningError::KeyDerivation(
-                "ECDSA signs with the persisted key itself and has no derived key".to_string(),
-            ));
-        }
-        let slot = self.derived_key_slot(scheme);
-        if let Some(key) = slot.get() {
-            return Ok(key);
-        }
-        // Cache miss: derive once and memoize.
-        let derived = self.derive_independent_signing_key(scheme)?;
-        let _ = slot.set(derived);
-        Ok(slot
-            .get()
-            .expect("cache slot was populated by this call or a concurrent one"))
-    }
-
-    /// Deterministically derive a fresh, *independent* signing key for `scheme`
-    /// from this key's KDF seed.
-    fn derive_independent_signing_key(
-        &self,
-        scheme: SigningSchemeType,
-    ) -> Result<UnifiedPrivateSigKey, SigningError> {
-        Ok(match scheme {
-            SigningSchemeType::Ecdsa256k1 => UnifiedPrivateSigKey::Ecdsa256k1(
-                PrivateSigKey::keygen_from_seed(&self.derived_seed(scheme))?,
-            ),
-            SigningSchemeType::Ed25519 => {
-                UnifiedPrivateSigKey::Ed25519(Ed25519::keygen_from_seed(&self.derived_seed(scheme)))
-            }
-            SigningSchemeType::MlDsa44 => UnifiedPrivateSigKey::MlDsa44(Box::new(
-                MlDsa::<MlDsa44>::keygen_from_seed(&self.derived_seed(scheme)),
-            )),
-            SigningSchemeType::MlDsa65 => UnifiedPrivateSigKey::MlDsa65(Box::new(
-                MlDsa::<MlDsa65>::keygen_from_seed(&self.derived_seed(scheme)),
-            )),
-            SigningSchemeType::MlDsa87 => UnifiedPrivateSigKey::MlDsa87(Box::new(
-                MlDsa::<MlDsa87>::keygen_from_seed(&self.derived_seed(scheme)),
-            )),
-        })
-    }
-
-    /// Derive a deterministic 32-byte seed for `scheme` from the raw ECDSA
-    /// signing-key bytes `sk_bytes`.
-    ///
-    /// The seed is
-    /// `SHAKE256(DSEP_SIGKEY_DERIVE ‖ scheme_tag ‖ version ‖ sk_bytes)`, where `scheme_tag`
-    /// is [`SigningSchemeType::tag`] and `version` is [`SIGKEY_DERIVATION_VERSION`].
-    fn derived_seed(&self, scheme: SigningSchemeType) -> Zeroizing<[u8; DIGEST_BYTES]> {
-        let mut sk_bytes = self.raw_signing_key().to_bytes();
-        // Use Zeroizing to ensure that the `msg` gets wiped at dropping
-        let mut msg = Zeroizing::new(Vec::with_capacity(4 + 1 + sk_bytes.len()));
-        msg.extend_from_slice(&scheme.tag());
-        msg.push(SIGKEY_DERIVATION_VERSION);
-        // Notice this is the only variable length value, hence the concatenation is unambiguous.
-        msg.extend_from_slice(&sk_bytes);
-        sk_bytes.zeroize(); // Wipe the copy of the secret scalar
-        // Use Zeroizing to ensure that the `msg` gets wiped at dropping
-        let digest = Zeroizing::new(hash_element(&DSEP_SIGKEY_DERIVE, msg.as_slice()));
-
-        Zeroizing::new(
-            digest
-                .as_slice()
-                .try_into()
-                .expect("SHAKE256 output is exactly DIGEST_BYTES bytes"),
-        )
     }
 }
 
 /// Sign `msg` (domain-separated by `dsep`) under the scheme of `sk`.
+#[cfg(feature = "non-wasm")]
 pub fn unified_sign(
     dsep: &DomainSep,
     msg: &[u8],
@@ -533,6 +472,10 @@ pub fn unified_sign(
 ///
 /// Errors if the signature's scheme does not match the verification key, if the
 /// bytes are malformed for that scheme, or if verification fails.
+///
+/// TODO(#3078): call this from client-side response validation, which checks only
+/// the legacy ECDSA/EIP-712 signature.
+#[allow(dead_code)]
 pub fn unified_verify(
     dsep: &DomainSep,
     msg: &[u8],
@@ -561,6 +504,7 @@ mod tests {
     use super::*;
     use crate::consts::SAFE_SER_SIZE_LIMIT;
     use crate::cryptography::signatures::gen_sig_keys;
+    use crate::cryptography::signing::seed::RootSigningSeed;
     use aes_prng::AesRng;
     use rand::{RngCore, SeedableRng};
     use strum::IntoEnumIterator;
@@ -572,6 +516,13 @@ mod tests {
         let mut s = [0u8; 32];
         rng.fill_bytes(&mut s);
         s
+    }
+
+    /// A complete node signing identity: an ECDSA key with a root seed attached.
+    fn seeded_identity<R: rand::CryptoRng + RngCore>(rng: &mut R) -> PrivateSigKey {
+        let (_pk, sk) = gen_sig_keys(rng);
+        let root = RootSigningSeed::random(rng);
+        sk.with_root_seed(root)
     }
 
     fn all_private_keys<R: rand::CryptoRng + RngCore>(rng: &mut R) -> Vec<UnifiedPrivateSigKey> {
@@ -648,12 +599,12 @@ mod tests {
         }
     }
 
-    /// Every scheme signs and verifies through the per-scheme key of an ECDSA
+    /// Every scheme signs and verifies through the per-scheme key of a seeded
     /// identity, and a tampered message fails.
     #[test]
     fn derived_keys_sign_and_verify() {
         let mut rng = AesRng::seed_from_u64(101);
-        let (_pk, sk) = gen_sig_keys(&mut rng);
+        let sk = seeded_identity(&mut rng);
         let msg = b"a message signed under a derived scheme key";
 
         for scheme in SigningSchemeType::iter() {
@@ -675,7 +626,7 @@ mod tests {
     #[test]
     fn unified_public_sig_key_safe_serialization_round_trip() {
         let mut rng = AesRng::seed_from_u64(4242);
-        let (_pk, sk) = gen_sig_keys(&mut rng);
+        let sk = seeded_identity(&mut rng);
 
         for scheme in SigningSchemeType::iter() {
             let vk = sk.unified_verifying_key(scheme).unwrap();
@@ -691,12 +642,12 @@ mod tests {
         }
     }
 
-    /// Deriving the same scheme from the same ECDSA key twice yields identical
+    /// Deriving the same scheme from the same identity twice yields identical
     /// keys
     #[test]
     fn derivation_is_deterministic() {
         let mut rng = AesRng::seed_from_u64(202);
-        let (_pk, sk) = gen_sig_keys(&mut rng);
+        let sk = seeded_identity(&mut rng);
         let msg = b"deriving twice must give the same key";
 
         for scheme in SigningSchemeType::iter() {
@@ -704,34 +655,6 @@ mod tests {
             let vk = sk.clone().unified_verifying_key(scheme).unwrap();
             unified_verify(DSEP, msg, &sig, &vk)
                 .unwrap_or_else(|e| panic!("{scheme:?} derivation was not deterministic: {e}"));
-        }
-    }
-
-    /// `derive_signing_key` memoizes: repeated calls return the same cached
-    /// instance, and a (warm) clone shares that cache rather than re-deriving.
-    #[test]
-    fn derived_keys_are_cached_and_shared_across_clones() {
-        let mut rng = AesRng::seed_from_u64(909);
-        let (_pk, sk) = gen_sig_keys(&mut rng);
-
-        // ECDSA is excluded: it has no derived key to cache.
-        for scheme in SigningSchemeType::iter().filter(|s| *s != SigningSchemeType::Ecdsa256k1) {
-            let first = sk.derive_signing_key(scheme).unwrap();
-            let second = sk.derive_signing_key(scheme).unwrap();
-            // A second call is served from the cache, not re-derived.
-            assert!(
-                std::ptr::eq(first, second),
-                "{scheme:?} was re-derived instead of served from the cache"
-            );
-
-            // A clone shares the same `Arc`-backed warm cache, so it serves the
-            // identical already-derived instance.
-            let clone = sk.clone();
-            let from_clone = clone.derive_signing_key(scheme).unwrap();
-            assert!(
-                std::ptr::eq(first, from_clone),
-                "{scheme:?} clone did not share the warmed cache"
-            );
         }
     }
 
@@ -747,7 +670,8 @@ mod tests {
         }
     }
 
-    /// For ECDSA, the per-scheme key is the persisted identity unchanged
+    /// For ECDSA, the per-scheme key is the persisted identity unchanged — with
+    /// or without a root seed attached.
     #[test]
     fn ecdsa_signing_key_is_the_identity() {
         let mut rng = AesRng::seed_from_u64(303);
@@ -757,82 +681,63 @@ mod tests {
             .unified_verifying_key(SigningSchemeType::Ecdsa256k1)
             .unwrap();
         assert_eq!(ecdsa_address(vk), pk.address());
+
+        let seeded = sk.with_root_seed(RootSigningSeed::random(&mut rng));
+        let vk = seeded
+            .unified_verifying_key(SigningSchemeType::Ecdsa256k1)
+            .unwrap();
+        assert_eq!(ecdsa_address(vk), pk.address());
     }
 
-    /// `derive_independent_signing_key` produces a fresh ECDSA key that is
-    /// deterministic yet distinct from the persisted identity (a different
-    /// Ethereum address).
+    /// The transition invariant: attaching a root seed does **not** move the
+    /// node's ECDSA identity.
     #[test]
-    fn independent_ecdsa_derivation_differs_from_identity() {
+    fn ecdsa_identity_is_never_the_seed_derived_key() {
         let mut rng = AesRng::seed_from_u64(305);
         let (pk, sk) = gen_sig_keys(&mut rng);
+        let sk = sk.with_root_seed(RootSigningSeed::random(&mut rng));
 
-        let fresh = sk
-            .derive_independent_signing_key(SigningSchemeType::Ecdsa256k1)
+        // What the identity publishes is the persisted key...
+        let vk = sk
+            .unified_verifying_key(SigningSchemeType::Ecdsa256k1)
             .unwrap();
-        let again = sk
-            .derive_independent_signing_key(SigningSchemeType::Ecdsa256k1)
+        assert_eq!(ecdsa_address(vk.clone()), pk.address());
+
+        // ...and what it signs with verifies against exactly that key.
+        let msg = b"signed by the node's ECDSA identity";
+        let sig = sk
+            .unified_sign_with(SigningSchemeType::Ecdsa256k1, DSEP, msg)
             .unwrap();
-        let fresh_address = ecdsa_address(fresh.verifying_key().unwrap());
-        let again_address = ecdsa_address(again.verifying_key().unwrap());
-
-        assert_eq!(
-            fresh_address, again_address,
-            "independent ECDSA derivation must be deterministic"
-        );
-        assert_ne!(
-            fresh_address,
-            pk.address(),
-            "independent ECDSA key must differ from the persisted identity"
-        );
-
-        // The fresh key is a fully usable ECDSA key.
-        let msg = b"signed by a freshly derived ECDSA key";
-        let sig = unified_sign(DSEP, msg, &fresh).unwrap();
-        unified_verify(DSEP, msg, &sig, &fresh.verifying_key().unwrap()).unwrap();
+        unified_verify(DSEP, msg, &sig, &vk).unwrap();
     }
 
-    /// Distinct schemes derive distinct seeds from the same ECDSA key (the
-    /// scheme tag is bound into the KDF), so the per-scheme keys built from
-    /// those seeds never share seed material.
+    /// Without a root seed an identity can still do everything ECDSA, and fails
+    /// loudly for every other scheme.
     #[test]
-    fn distinct_schemes_have_distinct_seeds() {
-        let mut rng = AesRng::seed_from_u64(404);
+    fn non_ecdsa_requires_a_root_seed() {
+        let mut rng = AesRng::seed_from_u64(707);
         let (_pk, sk) = gen_sig_keys(&mut rng);
+        assert!(!sk.has_root_seed());
+        let msg = b"a seedless identity is ECDSA-only";
 
-        let schemes: Vec<_> = SigningSchemeType::iter().collect();
-        let seeds: Vec<_> = schemes.iter().map(|s| sk.derived_seed(*s)).collect();
-        for i in 0..seeds.len() {
-            for j in (i + 1)..seeds.len() {
-                assert_ne!(
-                    *seeds[i], *seeds[j],
-                    "{:?} and {:?} share a derived seed",
-                    schemes[i], schemes[j]
-                );
-            }
+        let vk = sk
+            .unified_verifying_key(SigningSchemeType::Ecdsa256k1)
+            .unwrap();
+        let sig = sk
+            .unified_sign_with(SigningSchemeType::Ecdsa256k1, DSEP, msg)
+            .unwrap();
+        unified_verify(DSEP, msg, &sig, &vk).unwrap();
+
+        for scheme in SigningSchemeType::iter().filter(|s| *s != SigningSchemeType::Ecdsa256k1) {
+            assert!(matches!(
+                sk.unified_verifying_key(scheme),
+                Err(SigningError::MissingRootSeed(s)) if s == scheme
+            ));
+            assert!(matches!(
+                sk.unified_sign_with(scheme, DSEP, msg),
+                Err(SigningError::MissingRootSeed(s)) if s == scheme
+            ));
         }
-    }
-
-    /// Frozen derivation vector: for a fixed ECDSA key the derived seeds are
-    /// stable across releases. A change here means the KDF (domain separator,
-    /// version, tag encoding, or hash) changed and every derived key rotated.
-    #[test]
-    fn frozen_derivation_vector() {
-        // A fixed, valid secp256k1 scalar (0x1111…11 ≪ curve order).
-        let sk = PrivateSigKey::new(k256::ecdsa::SigningKey::from_slice(&[0x11u8; 32]).unwrap());
-
-        assert_eq!(
-            hex::encode(sk.derived_seed(SigningSchemeType::Ecdsa256k1)),
-            "02b4a490833ab18b4f54dca95e0fd4544bf8b18185c951dd4ea378c9551319dd",
-        );
-        assert_eq!(
-            hex::encode(sk.derived_seed(SigningSchemeType::Ed25519)),
-            "a60e72eaf5ae0855565e2223b4a271e577098051d4b951fa5f23aa7988cd3931",
-        );
-        assert_eq!(
-            hex::encode(sk.derived_seed(SigningSchemeType::MlDsa65)),
-            "7e9124fb558344ffd57b55aeedefb1526e4cbbd708fc913d9b26e270165e1261",
-        );
     }
 
     /// The ECDSA arm must produce the same bytes as the legacy `internal_sign`.

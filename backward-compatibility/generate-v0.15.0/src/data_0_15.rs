@@ -22,7 +22,10 @@ use kms_0_15_0::consts::SAFE_SER_SIZE_LIMIT;
 use kms_0_15_0::cryptography::{
     encryption::{Encryption, PkeScheme, PkeSchemeType, UnifiedCipher},
     hybrid_ml_kem::HybridKemCt,
-    signatures::{compute_eip712_signature, gen_sig_keys, SigningSchemeType, UnifiedPublicSigKey},
+    signatures::{
+        compute_eip712_signature, gen_sig_keys, RootSigningSeed, SigningSchemeType,
+        UnifiedPublicSigKey,
+    },
     signcryption::{
         Signcrypt, UnifiedSigncryption, UnifiedSigncryptionKeyOwned, UnifiedUnsigncryptionKeyOwned,
     },
@@ -104,13 +107,13 @@ use backward_compatibility::{
     KeyGenMetadataWithExtraDataTest, KeygenSignedPayloadTest, KmsFheKeyHandlesTest, NodeInfoTest,
     OperatorBackupOutputTest, PRSSSetupTest, PrepKeygenSignedPayloadTest, PrfKeyTest,
     PrivDataTypeTest, PrivateSigKeyTest, PrssSetTest, PrssSetupCombinedTest, PubDataTypeTest,
-    PublicSigKeyTest, RecoveryValidationMaterialTest, ReleasePCRValuesTest, SchemeDigestsTest,
-    ShareTest, SigncryptionPayloadTest, SignedPubDataHandleInternalTest, SoftwareVersionTest,
-    StoredEip712DomainTest, StoredTypedSignatureTest, TestMetadataDD, TestMetadataKMS,
-    TestMetadataKmsGrpc, ThresholdFheKeysTest, TypedPlaintextTest, UnifiedCipherTest,
-    UnifiedPublicSigKeyTest, UnifiedSigncryptionKeyTest, UnifiedSigncryptionTest,
-    UnifiedUnsigncryptionKeyTest, DISTRIBUTED_DECRYPTION_MODULE_NAME, KMS_GRPC_MODULE_NAME,
-    KMS_MODULE_NAME,
+    PublicSigKeyTest, RecoveryValidationMaterialTest, ReleasePCRValuesTest, RootSigningSeedTest,
+    SchemeDigestsTest, ShareTest, SigncryptionPayloadTest, SignedPubDataHandleInternalTest,
+    SoftwareVersionTest, StoredEip712DomainTest, StoredTypedSignatureTest, TestMetadataDD,
+    TestMetadataKMS, TestMetadataKmsGrpc, ThresholdFheKeysTest, TypedPlaintextTest,
+    UnifiedCipherTest, UnifiedPublicSigKeyTest, UnifiedSigncryptionKeyTest,
+    UnifiedSigncryptionTest, UnifiedUnsigncryptionKeyTest, DISTRIBUTED_DECRYPTION_MODULE_NAME,
+    KMS_GRPC_MODULE_NAME, KMS_MODULE_NAME,
 };
 use hashing_0_15_0::hash_versioned;
 use kms_0_15_0::cryptography::signcryption::SigncryptionPayload;
@@ -298,6 +301,12 @@ const RELEASE_PCR_VALUES_TEST: ReleasePCRValuesTest = ReleasePCRValuesTest {
 // KMS test
 const PRIVATE_SIG_KEY_TEST: PrivateSigKeyTest = PrivateSigKeyTest {
     test_filename: Cow::Borrowed("private_sig_key"),
+    state: 100,
+};
+
+// KMS test
+const ROOT_SIGNING_SEED_TEST: RootSigningSeedTest = RootSigningSeedTest {
+    test_filename: Cow::Borrowed("root_signing_seed"),
     state: 100,
 };
 
@@ -670,25 +679,25 @@ fn scheme_from_name(name: &str) -> SigningSchemeType {
     }
 }
 
-fn dummy_domain() -> alloy_sol_types_1_6_0::Eip712Domain {
-    alloy_sol_types_1_6_0::eip712_domain!(
+fn dummy_domain() -> alloy_sol_types_1_7_1::Eip712Domain {
+    alloy_sol_types_1_7_1::eip712_domain!(
         name: "Authorization token",
         version: "1",
         chain_id: 8006,
-        verifying_contract: alloy_primitives_1_6_0::address!("66f9664f97F2b50F62D13eA064982f936dE76657"),
+        verifying_contract: alloy_primitives_1_7_1::address!("66f9664f97F2b50F62D13eA064982f936dE76657"),
     )
 }
 
 /// Rebuilds the EIP-712 domain that `test` describes.
-fn domain_from_test(test: &Eip712DomainTest) -> alloy_sol_types_1_6_0::Eip712Domain {
-    alloy_sol_types_1_6_0::Eip712Domain::new(
+fn domain_from_test(test: &Eip712DomainTest) -> alloy_sol_types_1_7_1::Eip712Domain {
+    alloy_sol_types_1_7_1::Eip712Domain::new(
         Some(test.name.to_string().into()),
         Some(test.version.to_string().into()),
-        Some(alloy_primitives_1_6_0::U256::from(test.chain_id)),
-        Some(alloy_primitives_1_6_0::Address::from(
+        Some(alloy_primitives_1_7_1::U256::from(test.chain_id)),
+        Some(alloy_primitives_1_7_1::Address::from(
             test.verifying_contract,
         )),
-        test.salt.map(alloy_primitives_1_6_0::B256::from),
+        test.salt.map(alloy_primitives_1_7_1::B256::from),
     )
 }
 
@@ -706,6 +715,19 @@ impl KmsV0_15_0 {
         TestMetadataKMS::PrivateSigKey(PRIVATE_SIG_KEY_TEST)
     }
 
+    fn gen_root_signing_seed(dir: &PathBuf) -> TestMetadataKMS {
+        let mut rng = AesRng::seed_from_u64(ROOT_SIGNING_SEED_TEST.state);
+        let root_signing_seed = RootSigningSeed::random(&mut rng);
+
+        store_versioned_test!(
+            &root_signing_seed,
+            dir,
+            &ROOT_SIGNING_SEED_TEST.test_filename
+        );
+
+        TestMetadataKMS::RootSigningSeed(ROOT_SIGNING_SEED_TEST)
+    }
+
     fn gen_public_sig_key(dir: &PathBuf) -> TestMetadataKMS {
         let mut rng = AesRng::seed_from_u64(PUBLIC_SIG_KEY_TEST.state);
         let (public_sig_key, _) = gen_sig_keys(&mut rng);
@@ -718,6 +740,7 @@ impl KmsV0_15_0 {
     fn gen_unified_public_sig_key(dir: &PathBuf) -> TestMetadataKMS {
         let mut rng = AesRng::seed_from_u64(UNIFIED_PUBLIC_SIG_KEY_TEST.state);
         let (_public_sig_key, sig_key) = gen_sig_keys(&mut rng);
+        let sig_key = sig_key.with_root_seed(RootSigningSeed::random(&mut rng));
 
         // Primary file: the ECDSA variant.
         let ecdsa_vk: UnifiedPublicSigKey = sig_key
@@ -957,16 +980,16 @@ impl KmsV0_15_0 {
     }
 
     fn gen_stored_eip712_domain(dir: &PathBuf) -> TestMetadataKMS {
-        let domain = alloy_sol_types_1_6_0::Eip712Domain::new(
+        let domain = alloy_sol_types_1_7_1::Eip712Domain::new(
             Some(STORED_EIP712_DOMAIN_TEST.name.to_string().into()),
             Some(STORED_EIP712_DOMAIN_TEST.version.to_string().into()),
-            Some(alloy_primitives_1_6_0::U256::from(
+            Some(alloy_primitives_1_7_1::U256::from(
                 STORED_EIP712_DOMAIN_TEST.chain_id,
             )),
-            Some(alloy_primitives_1_6_0::Address::from(
+            Some(alloy_primitives_1_7_1::Address::from(
                 STORED_EIP712_DOMAIN_TEST.verifying_contract,
             )),
-            Some(alloy_primitives_1_6_0::B256::from(
+            Some(alloy_primitives_1_7_1::B256::from(
                 STORED_EIP712_DOMAIN_TEST.salt,
             )),
         );
@@ -1327,20 +1350,22 @@ impl KmsV0_15_0 {
         // Dummy payload; but needs to be a properly serialized payload
         // This must be generated after the commitment stuff, since the test will regenerate the commitment stuff,
         // but read the custodian context from disk
-        let mut encryption = Encryption::new(PkeSchemeType::MlKem512, &mut rng);
-        let (_dec_key, enc_key) = encryption.keygen().unwrap();
-        let (cus_pk, _) = gen_sig_keys(&mut rng);
-        let payload = CustodianSetupMessagePayload {
-            header: "header".to_string(),
-            random_value: [4_u8; 32],
-            timestamp: fixed_fixture_timestamp(),
-            public_enc_key: enc_key.clone(),
-            verification_key: cus_pk.clone(),
-        };
-        let mut payload_serial = Vec::new();
-        safe_serialize(&payload, &mut payload_serial, SAFE_SER_SIZE_LIMIT).unwrap();
+        let mut outer_encryption = Encryption::new(PkeSchemeType::MlKem512, &mut rng);
+        let (_dec_key, outer_enc_key) = outer_encryption.keygen().unwrap();
         let mut custodian_nodes = Vec::new();
         for role_j in 1..=RECOVERY_MATERIAL_TEST.custodian_count {
+            let mut encryption = Encryption::new(PkeSchemeType::MlKem512, &mut rng);
+            let (_dec_key, enc_key) = encryption.keygen().unwrap();
+            let (cus_pk, _) = gen_sig_keys(&mut rng);
+            let payload = CustodianSetupMessagePayload {
+                header: "header".to_string(),
+                random_value: [role_j as u8; 32],
+                timestamp: fixed_fixture_timestamp(),
+                public_enc_key: enc_key.clone(),
+                verification_key: cus_pk.clone(),
+            };
+            let mut payload_serial = Vec::new();
+            safe_serialize(&payload, &mut payload_serial, SAFE_SER_SIZE_LIMIT).unwrap();
             let setup_msg = CustodianSetupMessage {
                 custodian_role: role_j as u64,
                 name: format!("Custodian-{role_j}"),
@@ -1354,7 +1379,7 @@ impl KmsV0_15_0 {
             threshold: 1,
         };
         let internal_custodian_context =
-            InternalCustodianContext::new(custodian_context, enc_key).unwrap();
+            InternalCustodianContext::new(custodian_context, outer_enc_key).unwrap();
         store_versioned_auxiliary!(
             &internal_custodian_context,
             dir,
@@ -2027,6 +2052,7 @@ impl KMSCoreVersion for V0_15_0 {
 
         vec![
             KmsV0_15_0::gen_private_sig_key(&dir),
+            KmsV0_15_0::gen_root_signing_seed(&dir),
             KmsV0_15_0::gen_public_sig_key(&dir),
             KmsV0_15_0::gen_unified_public_sig_key(&dir),
             KmsV0_15_0::gen_app_key_blob(&dir),

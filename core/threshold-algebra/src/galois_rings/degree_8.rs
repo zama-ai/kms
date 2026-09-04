@@ -1,6 +1,4 @@
 use anyhow::anyhow;
-use itertools::EitherOrBoth::{Both, Left, Right};
-use itertools::Itertools;
 use std::{
     collections::HashMap,
     num::Wrapping,
@@ -14,7 +12,7 @@ use crate::{
     error_correction::MemoizedExceptionals,
     galois_fields::gf256::{GF256, GF256_FROM_GENERATOR, GF256_NEWTON_INNER_LOOP, two_powers},
     matrix::compute_powers,
-    poly::{BitWiseEval, BitwisePoly},
+    poly::{BitWiseEval, BitWisePoly, bitwise_eval_coefficients},
     structure_traits::{
         BaseRing, One, QuotientMaximalIdeal, Ring, RingWithExceptionalSequence, Solve1, ZConsts,
         Zero,
@@ -360,38 +358,14 @@ impl MemoizedExceptionals for ResiduePolyF8Z128 {
     }
 }
 
-impl<Z> BitWiseEval<Z, 8> for BitwisePoly
+impl<Z, F> BitWiseEval<Z, 8> for BitWisePoly<'_, F>
 where
     Z: Zero + for<'a> AddAssign<&'a Z> + Copy + Clone,
+    F: Copy + Into<u8>,
     ResiduePoly<Z, 8>: LutMulReduction<Z>,
 {
     fn lazy_eval(&self, powers: &[ResiduePolyF8<Z>]) -> ResiduePolyF8<Z> {
-        let mut res_coefs = [Z::ZERO; 15];
-        // now we go through each
-        for pair in self.coefs().iter().zip_longest(powers) {
-            match pair {
-                Both(coef_2, coef_r) => {
-                    for bit_idx in 0..8 {
-                        if ((coef_2 >> bit_idx) & 1) == 1 {
-                            for (j, cr) in coef_r.coefs.iter().enumerate() {
-                                res_coefs[j + bit_idx] += cr;
-                            }
-                        }
-                    }
-                }
-                Right(_coef_r) => {
-                    // The coefficient is 0 so the result will not change
-                }
-                Left(_coef_2) => {
-                    // There are not enough powers supplied in the call, this can only happen in case of a bug
-                    panic!(
-                        "Not enough powers supplied for bitwise evaluation. Only {:?} are supplied but {:?} are needed.",
-                        powers.len(),
-                        self.coefs().len()
-                    );
-                }
-            }
-        }
+        let res_coefs = bitwise_eval_coefficients::<Z, _, 8, 15>(self.coefs(), powers);
         ResiduePolyF8::<Z>::reduce_mul(&res_coefs)
     }
 }

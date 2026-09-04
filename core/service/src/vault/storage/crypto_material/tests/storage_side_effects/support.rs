@@ -312,10 +312,7 @@ pub(super) fn assert_preserved(pub_or_priv: &str, before: &StorageState, after: 
     }
 }
 
-pub(super) fn expected_store_event(
-    entry: &StorageEntry,
-    outcome: StorageOutcome,
-) -> StorageEvent {
+pub(super) fn expected_store_event(entry: &StorageEntry, outcome: StorageOutcome) -> StorageEvent {
     StorageEvent::new(entry.clone(), StorageOp::Store, outcome)
 }
 

@@ -4,19 +4,21 @@
 //! point a node at the wrong material, and writes are not atomic, so a crash part-way through
 //! an operation can leave an entry missing, truncated, or stale. Private storage holds the
 //! digests and signatures that say what the published material should be, so it is the
-//! reference, and every check here runs in that direction — an expected value is taken from
-//! private storage and compared against what public storage holds, never the other way around.
+//! reference, and every integrity check here runs in that direction — an expected value is
+//! taken from private storage and compared against what public storage holds, never the other
+//! way around.
 //!
 //! Three rules govern everything here:
 //!
-//! 1. **Private storage is the reference.** Iteration is always "for each entry in private
-//!    storage, look up its counterpart in public storage".
-//! 2. **Extra material in public storage is legitimate and silently ignored.** Most of it is
-//!    there on purpose: a node may periodically replicate other parties' public material into
-//!    its own public storage, so entries this node never generated — and holds no private
-//!    counterpart for — are expected. Retired keysets and leftovers from a previous deployment
-//!    sharing the bucket land there too. Verification therefore never asks "is there anything
-//!    here I do not recognise", and orphans produce neither errors nor warnings.
+//! 1. **Private storage is the reference.** Every integrity check takes an expected value from
+//!    private storage and looks up its counterpart in public storage, never the other way
+//!    around.
+//! 2. **Extra material in public storage is reported, never rejected.** Some of it is
+//!    legitimate: a retired keyset, or leftovers from a previous deployment that shares the
+//!    bucket. Some of it is not: a write that failed half-way, a corrupted store, or an entry
+//!    planted by someone with write access to the storage. The node cannot tell these apart, so
+//!    once the integrity checks pass, [`report_unexpected_public_material`] lists public storage
+//!    and logs an error for every entry that private storage does not account for.
 //! 3. **Read-only.** Nothing here writes to, repairs, or re-fetches public storage.
 //!
 //! Startup verification operates on raw stored bytes. It never deserializes stored keys or
@@ -24,8 +26,9 @@
 //! no digest) is checked for presence only.
 
 use crate::backup::operator::RecoveryValidationMaterial;
-use crate::consts::SIGNING_KEY_ID;
+use crate::consts::{SIGNING_KEY_ID, signing_material_id};
 use crate::cryptography::signatures::recover_address_from_ext_signature;
+use crate::cryptography::signing::SigningSchemeType;
 use crate::cryptography::signing::ecdsa::{PrivateSigKey, PublicSigKey};
 use crate::engine::base::{
     CrsGenMetadata, CrsGenMetadataInner, CurrentPublicMaterialLayout, DSEP_PUBDATA_KEY,
@@ -36,12 +39,13 @@ use crate::engine::material_integrity::{
     verify_compressed_key_digest_from_bytes, verify_crs_digest_from_bytes,
     verify_public_key_digest_from_bytes, verify_server_key_digest_from_bytes,
 };
+use crate::util::key_setup::{non_legacy_verf_material_slots, validate_slots};
 use crate::vault::storage::{StorageReader, read_text_at_request_id};
 use alloy_primitives::Address;
 use alloy_sol_types::{Eip712Domain, SolStruct};
 use kms_grpc::RequestId;
 use kms_grpc::rpc_types::PubDataType;
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::str::FromStr;
 use strum::IntoEnumIterator;
 
@@ -52,6 +56,9 @@ pub(crate) const ERR_VERF_KEY_MISMATCH: &str =
     "Verification key in public storage does not match the private signing key";
 pub(crate) const ERR_VERF_ADDRESS_MISMATCH: &str =
     "Verification address in public storage does not match the private signing key";
+const ERR_UNEXPECTED_PUBLIC_MATERIAL: &str = "Unexpected public material";
+const ERR_UNKNOWN_PUBLIC_DATA_TYPE: &str = "Unexpected data type in public storage";
+const ERR_UNLISTABLE_PUBLIC_MATERIAL: &str = "Could not list public material";
 
 fn validate_legacy_public_material_shape<T>(
     public_materials: &HashMap<PubDataType, T>,
@@ -220,13 +227,23 @@ fn verify_recovery_material(
 /// Verify the consistency of private storage and then verify the public storage
 /// material against private storage, as well as the recovery validation
 /// material.
+///
+/// Once every check passes, public storage is swept for material that private storage does not
+/// account for. The sweep logs errors but never fails; see [`report_unexpected_public_material`].
+///
+/// `key_entries` is a slice rather than a map because the callers list a keyset once per epoch
+/// it is stored under. One key ID can therefore appear more than once, and every occurrence is
+/// checked.
+///
+/// Returns the sweep report so callers and tests can inspect the same single scan that startup
+/// performs.
 pub async fn verify_storage_material<S>(
     public_storage: &S,
     key_entries: &[(RequestId, KeyGenMetadata)],
     crs_entries: &HashMap<RequestId, CrsGenMetadata>,
     recovery_material: &HashMap<RequestId, RecoveryValidationMaterial>,
     signing_key: &PrivateSigKey,
-) -> anyhow::Result<()>
+) -> anyhow::Result<UnexpectedPublicMaterial>
 where
     S: StorageReader + Sync,
 {
@@ -260,18 +277,23 @@ where
             PubDataType::RecoveryMaterial => {
                 verify_recovery_material(recovery_material, signing_key)?;
             }
+            PubDataType::TypedVerfKey => {
+                validate_slots(
+                    public_storage,
+                    signing_key,
+                    non_legacy_verf_material_slots(),
+                )
+                .await?;
+            }
             PubDataType::ServerKey
             | PubDataType::DecompressionKey
             | PubDataType::CACert
             | PubDataType::CompressedXofKeySet
-            | PubDataType::TypedVerfKey
             | PubDataType::TypedVerfAddress => {
                 // ServerKey and CompressedXofKeySet are checked by verify_keysets above.
                 // CACert is done during certificate loading.
                 // DecompressionKey is not used in production at the moment and it does not have a private component.
-                //
-                // TODO(https://github.com/zama-ai/kms-internal/issues/3078)
-                // The remaining types (TypedVerfKey, TypedVerfAddress) will be done later
+                // TypedVerfAddress is checked by validate_slots above.
             }
             #[allow(deprecated)]
             PubDataType::VerfAddress | PubDataType::PublicKeyMetadata => {
@@ -281,14 +303,23 @@ where
         }
     }
 
+    let unexpected = report_unexpected_public_material(
+        public_storage,
+        key_entries,
+        crs_entries,
+        recovery_material,
+    )
+    .await;
+
     tracing::info!(
-        "Verified storage material in storage \"{}\": {} keyset(s), {} CRS(es), {} recovery validation material item(s)",
+        "Verified storage material in storage \"{}\": {} keyset(s), {} CRS(es), {} recovery validation material item(s), {} unexpected public entry(ies)",
         public_storage.info(),
         key_entries.len(),
         crs_entries.len(),
-        recovery_material.len()
+        recovery_material.len(),
+        unexpected.unexpected_count()
     );
-    Ok(())
+    Ok(unexpected)
 }
 
 /// Verify the signatures that authenticate current metadata in private storage.
@@ -485,9 +516,10 @@ fn ensure_crs_metadata_id_matches(
 /// ones derived from the private signing key.
 ///
 /// Both entries are read at [`SIGNING_KEY_ID`] specifically rather than by enumerating the
-/// folder, so an unrelated leftover entry under a different ID is ignored. In particular this
-/// must not go through `get_core_verification_key`, which fails unless public storage holds
-/// exactly one verification key.
+/// folder, so an unrelated leftover entry under a different ID does not fail this check;
+/// [`report_unexpected_public_material`] reports it instead. In particular this must not go
+/// through `get_core_verification_key`, which fails unless public storage holds exactly one
+/// verification key.
 pub async fn verify_signing_key_material<S>(
     public_storage: &S,
     sk: &PrivateSigKey,
@@ -543,6 +575,173 @@ where
     Ok(())
 }
 
+/// Public material that private storage does not account for, built by
+/// [`report_unexpected_public_material`].
+#[derive(Debug, Default, PartialEq, Eq)]
+pub(crate) struct UnexpectedPublicMaterial {
+    /// Entries under a known data type whose ID nothing in private storage explains.
+    unexpected_id: BTreeMap<PubDataType, BTreeSet<RequestId>>,
+    /// Top-level names in public storage that are not a [`PubDataType`] folder: a folder with an
+    /// unknown name, or an object at the root whatever its name.
+    unknown_data_types: BTreeSet<String>,
+    /// Data types whose folder could not be listed, with the listing error. A filename that is
+    /// not a request ID lands here. The `None` key means the root listing itself failed.
+    unlistable: BTreeMap<Option<PubDataType>, String>,
+}
+
+impl UnexpectedPublicMaterial {
+    /// Returns the number of reported items across all three categories.
+    pub(crate) fn unexpected_count(&self) -> usize {
+        self.unexpected_id
+            .values()
+            .map(BTreeSet::len)
+            .sum::<usize>()
+            + self.unknown_data_types.len()
+            + self.unlistable.len()
+    }
+}
+
+/// Return, per public data type, every ID that private storage or a fixed convention accounts
+/// for.
+///
+/// A keyset contributes its ID under each type its metadata lists. The deprecated
+/// `PublicKeyMetadata` is accounted for under every keyset ID, because deployments upgraded from
+/// before 0.14 still hold one per keyset. Signing material lives at fixed IDs. Decompression keys
+/// have no private counterpart, so none is accounted for.
+///
+/// The match over [`PubDataType`] is exhaustive, so a new variant does not compile until it has
+/// a rule here. Only data types with at least one accounted ID appear in the result.
+fn expected_public_material(
+    key_entries: &[(RequestId, KeyGenMetadata)],
+    crs_entries: &HashMap<RequestId, CrsGenMetadata>,
+    recovery_material: &HashMap<RequestId, RecoveryValidationMaterial>,
+) -> BTreeMap<PubDataType, BTreeSet<RequestId>> {
+    let mut expected = BTreeMap::new();
+    for data_type in PubDataType::iter() {
+        let ids: BTreeSet<RequestId> = match data_type {
+            PubDataType::PublicKey | PubDataType::ServerKey | PubDataType::CompressedXofKeySet => {
+                key_entries
+                    .iter()
+                    .filter(|(_, metadata)| match metadata {
+                        KeyGenMetadata::Current(inner) => {
+                            inner.key_digest_map.contains_key(&data_type)
+                        }
+                        KeyGenMetadata::LegacyV0(hash_map) => hash_map.contains_key(&data_type),
+                    })
+                    .map(|(key_id, _)| *key_id)
+                    .collect()
+            }
+            // `PublicKeyMetadata` is deprecated because 0.14 and later do not write it. A
+            // deployment upgraded from an earlier version still holds one entry per keyset, so
+            // the sweep must account for it.
+            #[expect(deprecated)]
+            PubDataType::PublicKeyMetadata => {
+                key_entries.iter().map(|(key_id, _)| *key_id).collect()
+            }
+            PubDataType::CRS => crs_entries.keys().copied().collect(),
+            // The recovery material map is itself read by listing this folder, so this set always
+            // matches what the folder holds. It is kept so that every data type has exactly one
+            // rule.
+            PubDataType::RecoveryMaterial => recovery_material.keys().copied().collect(),
+            PubDataType::VerfKey | PubDataType::VerfAddress | PubDataType::CACert => {
+                BTreeSet::from([*SIGNING_KEY_ID])
+            }
+            PubDataType::TypedVerfKey | PubDataType::TypedVerfAddress => {
+                SigningSchemeType::iter().map(signing_material_id).collect()
+            }
+            PubDataType::DecompressionKey => BTreeSet::new(),
+        };
+        if !ids.is_empty() {
+            expected.insert(data_type, ids);
+        }
+    }
+    expected
+}
+
+/// Report public material that private storage does not account for.
+///
+/// Lists public storage and logs an error for every top-level name that is not a data type
+/// folder, including every object directly under the root. It also logs an error for every entry
+/// whose ID is not explained by private keyset or CRS metadata, by the node's signing material at
+/// its fixed IDs, or by the recovery material already loaded from public storage.
+/// Nothing here fails boot: some of it is legitimate (a retired keyset, a previous deployment
+/// sharing the bucket) and the node cannot tell that apart from a corrupted or tampered store, so
+/// the operator is told and left to decide. Read-only; never deserializes anything.
+///
+/// Bounded by the storage root the node is configured with (`PUB`, or `PUB-pX` for party X):
+/// material under other parties' prefixes in a shared bucket is never listed. Sub-folders
+/// beneath a data type are not descended into, since public data is never epoched.
+pub(crate) async fn report_unexpected_public_material<S>(
+    public_storage: &S,
+    key_entries: &[(RequestId, KeyGenMetadata)],
+    crs_entries: &HashMap<RequestId, CrsGenMetadata>,
+    recovery_material: &HashMap<RequestId, RecoveryValidationMaterial>,
+) -> UnexpectedPublicMaterial
+where
+    S: StorageReader + Sync,
+{
+    let expected = expected_public_material(key_entries, crs_entries, recovery_material);
+    let mut report = UnexpectedPublicMaterial::default();
+    let storage_info = public_storage.info();
+
+    // Compared as exact strings: `PubDataType::from_str` is case-insensitive, but the storage
+    // backends are not, so a folder that differs only in case holds no keyset.
+    let known_data_types: BTreeSet<String> = PubDataType::iter().map(|t| t.to_string()).collect();
+    match public_storage.all_data_types().await {
+        Ok(entries) => {
+            for name in entries.folders {
+                if !known_data_types.contains(&name) {
+                    tracing::error!(
+                        "{ERR_UNKNOWN_PUBLIC_DATA_TYPE} \"{storage_info}\": \"{name}\" is not a known data type"
+                    );
+                    report.unknown_data_types.insert(name);
+                }
+            }
+            // A data type stores its entries inside its folder only, so an object at the root is
+            // a stray even when it carries a data type's name.
+            for name in entries.objects {
+                tracing::error!(
+                    "{ERR_UNKNOWN_PUBLIC_DATA_TYPE} \"{storage_info}\": \"{name}\" is an object where only data type folders belong"
+                );
+                report.unknown_data_types.insert(name);
+            }
+        }
+        Err(e) => {
+            tracing::error!(
+                "{ERR_UNLISTABLE_PUBLIC_MATERIAL} in storage \"{storage_info}\", so unknown data types were not detected: {e}"
+            );
+            report.unlistable.insert(None, e.to_string());
+        }
+    }
+
+    for data_type in PubDataType::iter() {
+        let found = match public_storage.all_data_ids(&data_type.to_string()).await {
+            Ok(found) => found,
+            Err(e) => {
+                tracing::error!(
+                    "{ERR_UNLISTABLE_PUBLIC_MATERIAL} {data_type} in storage \"{storage_info}\", so its entries were not reconciled: {e}"
+                );
+                report.unlistable.insert(Some(data_type), e.to_string());
+                continue;
+            }
+        };
+        let expected_ids = expected.get(&data_type);
+        let unexpected: BTreeSet<RequestId> = found
+            .into_iter()
+            .filter(|id| !expected_ids.is_some_and(|ids| ids.contains(id)))
+            .collect();
+        for id in &unexpected {
+            tracing::error!(
+                "{ERR_UNEXPECTED_PUBLIC_MATERIAL} {data_type} for id={id} in storage \"{storage_info}\": private storage holds no counterpart"
+            );
+        }
+        if !unexpected.is_empty() {
+            report.unexpected_id.insert(data_type, unexpected);
+        }
+    }
+    report
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -581,31 +780,13 @@ mod tests {
 
     impl TestStoredMaterial {
         fn current_metadata(&self) -> KeyGenMetadata {
-            KeyGenMetadata::Current(KeyGenMetadataInner {
-                signatures: vec![],
-                key_id: self.key_id,
-                preprocessing_id: self.preproc_id,
-                key_digest_map: self.key_digest_map.clone(),
-                eip712_domain: None,
-                external_signature: vec![],
-                extra_data: None,
-            })
+            self.current_metadata_with_key_digests(self.key_digest_map.clone())
         }
 
-        fn legacy_standard_metadata(&self) -> KeyGenMetadata {
-            legacy_keyset_metadata(&[PubDataType::PublicKey, PubDataType::ServerKey])
-        }
-
-        fn current_metadata_with_types(&self, pub_data_types: &[PubDataType]) -> KeyGenMetadata {
-            let key_digest_map = pub_data_types
-                .iter()
-                .filter_map(|data_type| {
-                    self.key_digest_map
-                        .get(data_type)
-                        .cloned()
-                        .map(|digest| (*data_type, digest))
-                })
-                .collect();
+        fn current_metadata_with_key_digests(
+            &self,
+            key_digest_map: BTreeMap<PubDataType, Vec<u8>>,
+        ) -> KeyGenMetadata {
             KeyGenMetadata::Current(KeyGenMetadataInner {
                 signatures: vec![],
                 key_id: self.key_id,
@@ -711,7 +892,9 @@ mod tests {
     async fn sanity_check_current_compressed_keyset_without_public_key_fails_as_inconsistent() {
         let mut storage = RamStorage::new();
         let material = setup_compressed_keys(&mut storage, 48).await;
-        let metadata = material.current_metadata_with_types(&[PubDataType::CompressedXofKeySet]);
+        let mut key_digest_map = material.key_digest_map.clone();
+        key_digest_map.remove(&PubDataType::PublicKey);
+        let metadata = material.current_metadata_with_key_digests(key_digest_map);
 
         let entries = vec![(material.key_id, metadata)];
         let err = verify_keysets(&storage, &entries).await.unwrap_err();
@@ -727,7 +910,10 @@ mod tests {
         let mut storage = RamStorage::new();
         let material = setup_standard_keys(&mut storage, 49).await;
 
-        let entries = vec![(material.key_id, material.legacy_standard_metadata())];
+        let entries = vec![(
+            material.key_id,
+            legacy_keyset_metadata(&[PubDataType::PublicKey, PubDataType::ServerKey]),
+        )];
         verify_keysets(&storage, &entries)
             .await
             .expect("legacy raw objects only need to be present");
@@ -1046,10 +1232,10 @@ mod tests {
         );
     }
 
-    // === Extra material in public storage must be ignored ===
+    // === Extra material in public storage is reported but never fails boot ===
 
     #[tokio::test]
-    async fn extra_verf_key_under_another_id_is_ignored() {
+    async fn extra_verf_key_under_another_id_does_not_fail_but_is_reported() {
         let mut storage = RamStorage::new();
         let mut rng = AesRng::seed_from_u64(140);
         let (_pk, sk) = gen_sig_keys(&mut rng);
@@ -1070,25 +1256,303 @@ mod tests {
 
         verify_signing_key_material(&storage, &sk)
             .await
-            .expect("an unrelated extra verification key must be ignored");
+            .expect("an unrelated extra verification key must not fail the check");
+
+        let report =
+            report_unexpected_public_material(&storage, &[], &HashMap::new(), &HashMap::new())
+                .await;
+        assert_eq!(
+            report.unexpected_id,
+            BTreeMap::from([(PubDataType::VerfKey, BTreeSet::from([other_id]))])
+        );
     }
 
     #[tokio::test]
-    async fn orphan_public_material_is_ignored() {
+    async fn unexpected_public_material_is_reported_and_boot_succeeds() {
         let mut storage = RamStorage::new();
         let mut rng = AesRng::seed_from_u64(141);
         let (_pk, sk) = gen_sig_keys(&mut rng);
         store_signing_key_material(&mut storage, &sk, None).await;
 
         // Keysets and a CRS that private storage knows nothing about.
-        let _orphan_standard = setup_standard_keys(&mut storage, 142).await;
-        let _orphan_compressed = setup_compressed_keys(&mut storage, 143).await;
-        let orphan_crs_id = RequestId::new_random(&mut rng);
-        let _orphan_crs = setup_crs(&mut storage, &orphan_crs_id).await;
+        let standard = setup_standard_keys(&mut storage, 142).await;
+        let compressed = setup_compressed_keys(&mut storage, 143).await;
+        let crs_id = RequestId::new_random(&mut rng);
+        let _crs_digest = setup_crs(&mut storage, &crs_id).await;
 
-        verify_storage_material(&storage, &[], &HashMap::new(), &HashMap::new(), &sk)
+        let report = verify_storage_material(&storage, &[], &HashMap::new(), &HashMap::new(), &sk)
             .await
-            .expect("material with no private counterpart must be ignored");
+            .expect("material with no private counterpart must not fail boot");
+        let expected = BTreeMap::from([
+            (
+                PubDataType::PublicKey,
+                BTreeSet::from([standard.key_id, compressed.key_id]),
+            ),
+            (PubDataType::ServerKey, BTreeSet::from([standard.key_id])),
+            (
+                PubDataType::CompressedXofKeySet,
+                BTreeSet::from([compressed.key_id]),
+            ),
+            (PubDataType::CRS, BTreeSet::from([crs_id])),
+        ]);
+        assert_eq!(report.unexpected_id, expected);
+        assert!(report.unknown_data_types.is_empty());
+        assert!(report.unlistable.is_empty());
+    }
+
+    #[tokio::test]
+    async fn unexpected_public_material_is_empty_for_consistent_storage() {
+        let mut storage = RamStorage::new();
+        let mut rng = AesRng::seed_from_u64(180);
+        let standard = setup_standard_keys(&mut storage, 181).await;
+        let compressed = setup_compressed_keys(&mut storage, 182).await;
+        let crs_id = RequestId::new_random(&mut rng);
+        let crs_digest = setup_crs(&mut storage, &crs_id).await;
+        let (_pk, sk) = gen_sig_keys(&mut rng);
+        store_signing_key_material(&mut storage, &sk, None).await;
+        store_fixed_id_material(&mut storage).await;
+        let recovery_material = test_recovery_material(&sk);
+        let context_id = recovery_material.custodian_context().context_id;
+        storage
+            .store_bytes(
+                b"recovery material",
+                &context_id,
+                &PubDataType::RecoveryMaterial.to_string(),
+            )
+            .await
+            .unwrap();
+
+        let entries = vec![
+            (standard.key_id, standard.current_metadata()),
+            (compressed.key_id, compressed.current_metadata()),
+        ];
+        let crs_entries = HashMap::from([(crs_id, current_crs_metadata(crs_id, crs_digest))]);
+        let recovery = HashMap::from([(context_id, recovery_material)]);
+
+        let report =
+            report_unexpected_public_material(&storage, &entries, &crs_entries, &recovery).await;
+        assert_eq!(
+            report,
+            UnexpectedPublicMaterial::default(),
+            "consistent storage must report nothing"
+        );
+        assert_eq!(report.unexpected_count(), 0);
+    }
+
+    #[tokio::test]
+    async fn stray_server_key_for_compressed_keyset_is_reported() {
+        let mut storage = RamStorage::new();
+        let compressed = setup_compressed_keys(&mut storage, 183).await;
+        // A compressed keyset publishes no server key, so one under its own ID is a stray.
+        store_raw_material(
+            &mut storage,
+            &compressed.key_id,
+            PubDataType::ServerKey,
+            RAW_SERVER_KEY,
+            &DSEP_PUBDATA_KEY,
+        )
+        .await;
+
+        let entries = vec![(compressed.key_id, compressed.current_metadata())];
+        let report =
+            report_unexpected_public_material(&storage, &entries, &HashMap::new(), &HashMap::new())
+                .await;
+        assert_eq!(
+            report.unexpected_id,
+            BTreeMap::from([(PubDataType::ServerKey, BTreeSet::from([compressed.key_id]))])
+        );
+    }
+
+    #[tokio::test]
+    #[allow(deprecated)]
+    async fn public_key_metadata_is_reported_only_under_unknown_ids() {
+        let mut storage = RamStorage::new();
+        let material = setup_standard_keys(&mut storage, 184).await;
+        let unknown_id = RequestId::new_random(&mut AesRng::seed_from_u64(185));
+        let metadata_type = PubDataType::PublicKeyMetadata.to_string();
+        // Deployments upgraded from before 0.14 keep one legacy metadata entry per keyset.
+        storage
+            .store_bytes(b"legacy metadata", &material.key_id, &metadata_type)
+            .await
+            .unwrap();
+        storage
+            .store_bytes(b"legacy metadata", &unknown_id, &metadata_type)
+            .await
+            .unwrap();
+
+        let entries = vec![(material.key_id, material.current_metadata())];
+        let report =
+            report_unexpected_public_material(&storage, &entries, &HashMap::new(), &HashMap::new())
+                .await;
+        assert_eq!(
+            report.unexpected_id,
+            BTreeMap::from([(PubDataType::PublicKeyMetadata, BTreeSet::from([unknown_id]))])
+        );
+    }
+
+    #[tokio::test]
+    async fn decompression_key_entries_are_reported() {
+        let mut storage = RamStorage::new();
+        let material = setup_standard_keys(&mut storage, 186).await;
+        // No private record accounts for a decompression key, not even under a known keyset ID.
+        storage
+            .store_bytes(
+                b"decompression key",
+                &material.key_id,
+                &PubDataType::DecompressionKey.to_string(),
+            )
+            .await
+            .unwrap();
+
+        let entries = vec![(material.key_id, material.current_metadata())];
+        let report =
+            report_unexpected_public_material(&storage, &entries, &HashMap::new(), &HashMap::new())
+                .await;
+        assert_eq!(
+            report.unexpected_id,
+            BTreeMap::from([(
+                PubDataType::DecompressionKey,
+                BTreeSet::from([material.key_id])
+            )])
+        );
+    }
+
+    #[tokio::test]
+    async fn duplicate_key_entries_across_epochs_report_nothing() {
+        let mut storage = RamStorage::new();
+        let material = setup_standard_keys(&mut storage, 187).await;
+        // The threshold caller lists a reshared keyset once per epoch.
+        let entries = vec![
+            (material.key_id, material.current_metadata()),
+            (material.key_id, material.current_metadata()),
+        ];
+        let report =
+            report_unexpected_public_material(&storage, &entries, &HashMap::new(), &HashMap::new())
+                .await;
+        assert_eq!(report.unexpected_count(), 0, "got: {report:?}");
+    }
+
+    #[tokio::test]
+    async fn unknown_data_type_folder_is_reported() {
+        let mut storage = RamStorage::new();
+        let id = RequestId::new_random(&mut AesRng::seed_from_u64(188));
+        storage.store_bytes(b"?", &id, "Garbage").await.unwrap();
+        // Case matters: the backends are case-sensitive, so this folder holds no keyset.
+        storage.store_bytes(b"?", &id, "publickey").await.unwrap();
+
+        let report =
+            report_unexpected_public_material(&storage, &[], &HashMap::new(), &HashMap::new())
+                .await;
+        assert_eq!(
+            report.unknown_data_types,
+            BTreeSet::from(["Garbage".to_string(), "publickey".to_string()])
+        );
+        assert!(report.unexpected_id.is_empty());
+        assert_eq!(report.unexpected_count(), 2);
+    }
+
+    #[tokio::test]
+    async fn root_object_named_like_a_data_type_is_reported() {
+        use crate::vault::storage::{StorageType, file::FileStorage};
+
+        let temp_dir = tempfile::tempdir().unwrap();
+        let storage = FileStorage::new(Some(temp_dir.path()), StorageType::PUB, None).unwrap();
+        // No data type stores anything directly under the root, so the name does not excuse it.
+        let name = PubDataType::PublicKey.to_string();
+        std::fs::write(storage.root_dir().join(&name), b"x").unwrap();
+
+        let report =
+            report_unexpected_public_material(&storage, &[], &HashMap::new(), &HashMap::new())
+                .await;
+        assert_eq!(report.unknown_data_types, BTreeSet::from([name]));
+        assert!(report.unexpected_id.is_empty());
+    }
+
+    #[tokio::test]
+    async fn unlistable_folder_is_reported_and_boot_succeeds() {
+        use crate::vault::storage::{StorageType, file::FileStorage};
+
+        let temp_dir = tempfile::tempdir().unwrap();
+        let mut storage = FileStorage::new(Some(temp_dir.path()), StorageType::PUB, None).unwrap();
+        let (_pk, sk) = gen_sig_keys(&mut AesRng::seed_from_u64(192));
+        store_signing_key_material(&mut storage, &sk, None).await;
+        // A name that is not a request ID makes the folder listing fail.
+        let public_key_dir = storage.root_dir().join(PubDataType::PublicKey.to_string());
+        std::fs::create_dir_all(&public_key_dir).unwrap();
+        std::fs::write(public_key_dir.join("not-a-request-id"), b"x").unwrap();
+
+        let report = verify_storage_material(&storage, &[], &HashMap::new(), &HashMap::new(), &sk)
+            .await
+            .expect("an unlistable folder must not fail boot");
+        assert!(
+            report
+                .unlistable
+                .contains_key(&Some(PubDataType::PublicKey)),
+            "got: {report:?}"
+        );
+        assert!(report.unexpected_id.is_empty());
+    }
+
+    #[test]
+    fn expected_public_material_covers_fixed_id_signing_material() {
+        let expected = expected_public_material(&[], &HashMap::new(), &HashMap::new());
+        for data_type in [
+            PubDataType::VerfKey,
+            PubDataType::VerfAddress,
+            PubDataType::CACert,
+        ] {
+            assert_eq!(
+                expected.get(&data_type),
+                Some(&BTreeSet::from([*SIGNING_KEY_ID])),
+                "{data_type}"
+            );
+        }
+        let typed: BTreeSet<RequestId> =
+            SigningSchemeType::iter().map(signing_material_id).collect();
+        for data_type in [PubDataType::TypedVerfKey, PubDataType::TypedVerfAddress] {
+            assert_eq!(expected.get(&data_type), Some(&typed), "{data_type}");
+        }
+        // Nothing is accounted for without private records.
+        for data_type in [
+            PubDataType::PublicKey,
+            PubDataType::ServerKey,
+            PubDataType::CompressedXofKeySet,
+            PubDataType::CRS,
+            PubDataType::DecompressionKey,
+            PubDataType::RecoveryMaterial,
+        ] {
+            assert!(!expected.contains_key(&data_type), "{data_type}");
+        }
+    }
+
+    #[tokio::test]
+    #[allow(deprecated)]
+    async fn expected_public_material_follows_keyset_layout() {
+        let mut storage = RamStorage::new();
+        let standard = setup_standard_keys(&mut storage, 189).await;
+        let compressed = setup_compressed_keys(&mut storage, 190).await;
+        let legacy_id = RequestId::new_random(&mut AesRng::seed_from_u64(191));
+        let entries = vec![
+            (standard.key_id, standard.current_metadata()),
+            (compressed.key_id, compressed.current_metadata()),
+            (
+                legacy_id,
+                legacy_keyset_metadata(&[PubDataType::PublicKey, PubDataType::ServerKey]),
+            ),
+        ];
+
+        let expected = expected_public_material(&entries, &HashMap::new(), &HashMap::new());
+        let all_ids = BTreeSet::from([standard.key_id, compressed.key_id, legacy_id]);
+        assert_eq!(expected[&PubDataType::PublicKey], all_ids);
+        assert_eq!(
+            expected[&PubDataType::ServerKey],
+            BTreeSet::from([standard.key_id, legacy_id])
+        );
+        assert_eq!(
+            expected[&PubDataType::CompressedXofKeySet],
+            BTreeSet::from([compressed.key_id])
+        );
+        assert_eq!(expected[&PubDataType::PublicKeyMetadata], all_ids);
     }
 
     #[test]
@@ -1422,10 +1886,32 @@ mod tests {
         .expect("test recovery material construction must succeed")
     }
 
+    /// Store `CACert` and every scheme's typed verification material at their fixed IDs, so
+    /// the expected sets for those types are fully populated.
+    async fn store_fixed_id_material(storage: &mut RamStorage) {
+        storage
+            .store_bytes(
+                b"ca cert",
+                &SIGNING_KEY_ID,
+                &PubDataType::CACert.to_string(),
+            )
+            .await
+            .unwrap();
+        for scheme in SigningSchemeType::iter() {
+            let id = signing_material_id(scheme);
+            for data_type in [PubDataType::TypedVerfKey, PubDataType::TypedVerfAddress] {
+                storage
+                    .store_bytes(b"typed material", &id, &data_type.to_string())
+                    .await
+                    .unwrap();
+            }
+        }
+    }
+
     /// Write the `VerfKey` and `VerfAddress` a node publishes for its signing key.
     /// `address_override` lets a test store an address that does not match `sk`.
-    async fn store_signing_key_material(
-        storage: &mut RamStorage,
+    async fn store_signing_key_material<S: Storage>(
+        storage: &mut S,
         sk: &PrivateSigKey,
         address_override: Option<String>,
     ) {
@@ -1489,7 +1975,12 @@ mod tests {
         hash_element(domain_separator, bytes)
     }
 
-    async fn setup_standard_keys(storage: &mut RamStorage, seed: u64) -> TestStoredMaterial {
+    async fn setup_keyset(
+        storage: &mut RamStorage,
+        seed: u64,
+        additional_data_type: PubDataType,
+        additional_bytes: &[u8],
+    ) -> TestStoredMaterial {
         let mut rng = AesRng::seed_from_u64(seed);
         let key_id = RequestId::new_random(&mut rng);
         let preproc_id = RequestId::new_random(&mut rng);
@@ -1501,11 +1992,11 @@ mod tests {
             &DSEP_PUBDATA_KEY,
         )
         .await;
-        let server_key_digest = store_raw_material(
+        let additional_digest = store_raw_material(
             storage,
             &key_id,
-            PubDataType::ServerKey,
-            RAW_SERVER_KEY,
+            additional_data_type,
+            additional_bytes,
             &DSEP_PUBDATA_KEY,
         )
         .await;
@@ -1514,41 +2005,24 @@ mod tests {
             key_id,
             preproc_id,
             key_digest_map: BTreeMap::from_iter([
-                (PubDataType::ServerKey, server_key_digest),
+                (additional_data_type, additional_digest),
                 (PubDataType::PublicKey, public_key_digest),
             ]),
         }
     }
 
+    async fn setup_standard_keys(storage: &mut RamStorage, seed: u64) -> TestStoredMaterial {
+        setup_keyset(storage, seed, PubDataType::ServerKey, RAW_SERVER_KEY).await
+    }
+
     async fn setup_compressed_keys(storage: &mut RamStorage, seed: u64) -> TestStoredMaterial {
-        let mut rng = AesRng::seed_from_u64(seed);
-        let key_id = RequestId::new_random(&mut rng);
-        let preproc_id = RequestId::new_random(&mut rng);
-        let public_key_digest = store_raw_material(
+        setup_keyset(
             storage,
-            &key_id,
-            PubDataType::PublicKey,
-            RAW_PUBLIC_KEY,
-            &DSEP_PUBDATA_KEY,
-        )
-        .await;
-        let compressed_keyset_digest = store_raw_material(
-            storage,
-            &key_id,
+            seed,
             PubDataType::CompressedXofKeySet,
             RAW_COMPRESSED_KEYSET,
-            &DSEP_PUBDATA_KEY,
         )
-        .await;
-
-        TestStoredMaterial {
-            key_id,
-            preproc_id,
-            key_digest_map: BTreeMap::from_iter([
-                (PubDataType::CompressedXofKeySet, compressed_keyset_digest),
-                (PubDataType::PublicKey, public_key_digest),
-            ]),
-        }
+        .await
     }
 
     async fn delete_data(storage: &mut RamStorage, key_id: &RequestId, data_type: PubDataType) {

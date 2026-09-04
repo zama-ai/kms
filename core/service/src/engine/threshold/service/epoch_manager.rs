@@ -1775,7 +1775,7 @@ pub(crate) mod tests {
         client::test_tools::{self},
         consts::{
             DEFAULT_EPOCH_ID, DEFAULT_MPC_CONTEXT, PRIVATE_STORAGE_PREFIX_THRESHOLD_ALL,
-            PUBLIC_STORAGE_PREFIX_THRESHOLD_ALL, SIGNING_KEY_ID, default_extra_data,
+            PUBLIC_STORAGE_PREFIX_THRESHOLD_ALL, default_extra_data,
         },
         cryptography::signatures::gen_sig_keys,
         dummy_domain,
@@ -1908,7 +1908,7 @@ pub(crate) mod tests {
         )
         .await
         .unwrap();
-        ensure_client_keys_exist(Some(material_path), &SIGNING_KEY_ID, true).await;
+        ensure_client_keys_exist(Some(material_path), true).await;
 
         // create parties and run PrssSetup
         let server_handles = test_tools::setup_threshold_no_client(
