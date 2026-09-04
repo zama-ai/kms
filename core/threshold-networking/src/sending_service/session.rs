@@ -11,6 +11,7 @@ use crate::grpc::NETWORK_RECEIVED_MEASUREMENT;
 use crate::grpc::{CoreToCoreNetworkConfig, MessageQueueStore, NetworkRoundValue, Tag};
 use dashmap::DashSet;
 use error_utils::anyhow_error_and_log;
+use observability::metrics::{self, NetworkDebugEvent};
 use threshold_types::network::{NetworkMode, Networking};
 use threshold_types::party::Identity;
 use threshold_types::role::{RoleKind, RoleTrait};
@@ -236,18 +237,14 @@ impl<R: RoleTrait> Networking<R> for NetworkSession {
                         round,
                         packet.value,
                         network_round,
+                        self.conf.get_max_future_rounds(),
                         self.conf.get_max_buffered_future_msgs(),
                     ) {
                         // Note that the sender is never warned of this failure, so a honest party
                         // won't try and re-send the message. But, this is a DoS mitigation: a malicious peer could
                         // otherwise flood us with future-round messages and exhaust memory.
-                        tracing::warn!(
-                            "@ round {} - dropping out-of-window/over-cap future-round message for round {} from {:?} (buffered: {})",
-                            network_round,
-                            round,
-                            sender,
-                            state.future.len()
-                        );
+                        metrics::METRICS
+                            .increment_network_event(NetworkDebugEvent::FutureMessageDropped);
                     }
                     continue;
                 }
@@ -403,11 +400,8 @@ impl NetworkSession {
     ) -> RecvOutcome {
         tokio::select! {
             _ = tick_interval.tick() => {
-                tracing::warn!(
-                    "Still waiting to receive from party {:?} for session {:?}",
-                    sender,
-                    self.session_id
-                );
+                metrics::METRICS
+                    .increment_network_event(NetworkDebugEvent::ReceiveWaitTimeout);
                 if self.completed_parties.contains(&sender.get_role_kind()) {
                     // The sender has said the session is complete: wait one more
                     // grace period for any lingering in-flight message, but still
@@ -1027,6 +1021,8 @@ mod tests {
                 .unwrap()
                 .unwrap();
             let state = rx.lock().await;
+
+            // Keep the round 2 message, but drop round 5's: it is outside the configured window.
             assert!(
                 state.future.contains_key(&2),
                 "round 2 is within the configured window and must be buffered"

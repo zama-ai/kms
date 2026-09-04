@@ -19,7 +19,7 @@ async fn write_all_does_not_overwrite_existing_halves(
 ) {
     let fixture = PairFixture::new(initial_state, pair_kind).await;
 
-    let result = fixture.write().await;
+    let result = fixture.write_all().await;
 
     match fixture.initial_state {
         PairState::Complete => assert_eq!(result, Err(StorageError::Duplicate)),
@@ -43,24 +43,32 @@ async fn write_all_does_not_overwrite_existing_halves(
 
     let expected_public = match fixture.initial_state {
         PairState::Complete => vec![],
-        PairState::Empty | PairState::PublicOnly | PairState::PrivateOnly => vec![store_event(
+        PairState::Empty => vec![expected_store_event(
             &fixture.public_entry,
-            if fixture.initial_state.has_public() {
-                StorageOutcome::SkippedExisting
-            } else {
-                StorageOutcome::Created
-            },
+            StorageOutcome::Created,
+        )],
+        PairState::PublicOnly => vec![expected_store_event(
+            &fixture.public_entry,
+            StorageOutcome::SkippedExisting,
+        )],
+        PairState::PrivateOnly => vec![expected_store_event(
+            &fixture.public_entry,
+            StorageOutcome::Created,
         )],
     };
     let expected_private = match fixture.initial_state {
         PairState::Complete => vec![],
-        PairState::Empty | PairState::PublicOnly | PairState::PrivateOnly => vec![store_event(
+        PairState::Empty => vec![expected_store_event(
             &fixture.private_entry,
-            if fixture.initial_state.has_private() {
-                StorageOutcome::SkippedExisting
-            } else {
-                StorageOutcome::Created
-            },
+            StorageOutcome::Created,
+        )],
+        PairState::PublicOnly => vec![expected_store_event(
+            &fixture.private_entry,
+            StorageOutcome::Created,
+        )],
+        PairState::PrivateOnly => vec![expected_store_event(
+            &fixture.private_entry,
+            StorageOutcome::SkippedExisting,
         )],
     };
     let (public_events, private_events) = fixture.events().await;
@@ -68,21 +76,22 @@ async fn write_all_does_not_overwrite_existing_halves(
     assert_same_events(&private_events, &expected_private);
 }
 
-/// A failed `PublicKey` or `CRS` write restores an empty pair, even after mutation.
+/// With no existing material, a failed public-half write also rolls back the private half created
+/// concurrently.
 #[rstest::rstest]
 #[case::fhe_key_before(PairKind::FheKey, FaultPhase::BeforeMutation)]
 #[case::fhe_key_after(PairKind::FheKey, FaultPhase::AfterMutation)]
 #[case::crs_before(PairKind::Crs, FaultPhase::BeforeMutation)]
 #[case::crs_after(PairKind::Crs, FaultPhase::AfterMutation)]
 #[tokio::test]
-async fn write_all_rolls_back_new_entries_when_public_store_fails(
+async fn empty_pair_remains_empty_when_public_store_fails(
     #[case] pair_kind: PairKind,
     #[case] fault_phase: FaultPhase,
 ) {
     let fixture = PairFixture::new(PairState::Empty, pair_kind).await;
     fixture.fail_public_store(fault_phase).await;
 
-    assert_eq!(fixture.write().await, Err(StorageError::Writing));
+    assert_eq!(fixture.write_all().await, Err(StorageError::Writing));
     let (public_after, private_after) = fixture.states().await;
     assert_eq!(public_after, fixture.public_before);
     assert_eq!(private_after, fixture.private_before);
@@ -95,27 +104,28 @@ async fn write_all_rolls_back_new_entries_when_public_store_fails(
     assert_same_events(
         &private_events,
         &[
-            store_event(&fixture.private_entry, StorageOutcome::Created),
-            deleted_event(&fixture.private_entry),
+            expected_store_event(&fixture.private_entry, StorageOutcome::Created),
+            expected_delete_event(&fixture.private_entry),
         ],
     );
 }
 
-/// A failed `FheKeyInfo` or `CrsInfo` write restores an empty pair, even after mutation.
+/// With no existing material, a failed private-half write also rolls back the public half created
+/// concurrently.
 #[rstest::rstest]
 #[case::fhe_key_before(PairKind::FheKey, FaultPhase::BeforeMutation)]
 #[case::fhe_key_after(PairKind::FheKey, FaultPhase::AfterMutation)]
 #[case::crs_before(PairKind::Crs, FaultPhase::BeforeMutation)]
 #[case::crs_after(PairKind::Crs, FaultPhase::AfterMutation)]
 #[tokio::test]
-async fn write_all_rolls_back_new_entries_when_private_store_fails(
+async fn empty_pair_remains_empty_when_private_store_fails(
     #[case] pair_kind: PairKind,
     #[case] fault_phase: FaultPhase,
 ) {
     let fixture = PairFixture::new(PairState::Empty, pair_kind).await;
     fixture.fail_private_store(fault_phase).await;
 
-    assert_eq!(fixture.write().await, Err(StorageError::Writing));
+    assert_eq!(fixture.write_all().await, Err(StorageError::Writing));
     let (public_after, private_after) = fixture.states().await;
     assert_eq!(public_after, fixture.public_before);
     assert_eq!(private_after, fixture.private_before);
@@ -124,8 +134,8 @@ async fn write_all_rolls_back_new_entries_when_private_store_fails(
     assert_same_events(
         &public_events,
         &[
-            store_event(&fixture.public_entry, StorageOutcome::Created),
-            deleted_event(&fixture.public_entry),
+            expected_store_event(&fixture.public_entry, StorageOutcome::Created),
+            expected_delete_event(&fixture.public_entry),
         ],
     );
     assert_same_events(
@@ -134,21 +144,22 @@ async fn write_all_rolls_back_new_entries_when_private_store_fails(
     );
 }
 
-/// A failed private-half write must not delete its shared `PublicKey` or `CRS`.
+/// With only the public half present, a failed private-half write leaves the existing public
+/// material untouched.
 #[rstest::rstest]
 #[case::fhe_key_before(PairKind::FheKey, FaultPhase::BeforeMutation)]
 #[case::fhe_key_after(PairKind::FheKey, FaultPhase::AfterMutation)]
 #[case::crs_before(PairKind::Crs, FaultPhase::BeforeMutation)]
 #[case::crs_after(PairKind::Crs, FaultPhase::AfterMutation)]
 #[tokio::test]
-async fn failed_private_store_keeps_existing_public_entry(
+async fn existing_public_half_survives_private_store_failure(
     #[case] pair_kind: PairKind,
     #[case] fault_phase: FaultPhase,
 ) {
     let fixture = PairFixture::new(PairState::PublicOnly, pair_kind).await;
     fixture.fail_private_store(fault_phase).await;
 
-    assert_eq!(fixture.write().await, Err(StorageError::Writing));
+    assert_eq!(fixture.write_all().await, Err(StorageError::Writing));
     let (public_after, private_after) = fixture.states().await;
     assert_eq!(public_after, fixture.public_before);
     assert_eq!(private_after, fixture.private_before);
@@ -156,7 +167,7 @@ async fn failed_private_store_keeps_existing_public_entry(
     let (public_events, private_events) = fixture.events().await;
     assert_same_events(
         &public_events,
-        &[store_event(
+        &[expected_store_event(
             &fixture.public_entry,
             StorageOutcome::SkippedExisting,
         )],
@@ -167,21 +178,22 @@ async fn failed_private_store_keeps_existing_public_entry(
     );
 }
 
-/// A failed public-half write must not delete existing `FheKeyInfo` or `CrsInfo`.
+/// With only the private half present, a failed public-half write leaves the existing private
+/// material untouched.
 #[rstest::rstest]
 #[case::fhe_key_before(PairKind::FheKey, FaultPhase::BeforeMutation)]
 #[case::fhe_key_after(PairKind::FheKey, FaultPhase::AfterMutation)]
 #[case::crs_before(PairKind::Crs, FaultPhase::BeforeMutation)]
 #[case::crs_after(PairKind::Crs, FaultPhase::AfterMutation)]
 #[tokio::test]
-async fn failed_public_store_keeps_existing_private_entry(
+async fn existing_private_half_survives_public_store_failure(
     #[case] pair_kind: PairKind,
     #[case] fault_phase: FaultPhase,
 ) {
     let fixture = PairFixture::new(PairState::PrivateOnly, pair_kind).await;
     fixture.fail_public_store(fault_phase).await;
 
-    assert_eq!(fixture.write().await, Err(StorageError::Writing));
+    assert_eq!(fixture.write_all().await, Err(StorageError::Writing));
     let (public_after, private_after) = fixture.states().await;
     assert_eq!(public_after, fixture.public_before);
     assert_eq!(private_after, fixture.private_before);
@@ -193,24 +205,24 @@ async fn failed_public_store_keeps_existing_private_entry(
     );
     assert_same_events(
         &private_events,
-        &[store_event(
+        &[expected_store_event(
             &fixture.private_entry,
             StorageOutcome::SkippedExisting,
         )],
     );
 }
 
-/// An error on an existing `PublicKey` or `CRS` rolls back only the new private half.
-/// Only a before-mutation fault applies because an after-mutation fault requires a new public entry.
+/// A rejected store of the existing public half rolls back the private half created during the
+/// same `write_all` call.
 #[rstest::rstest]
 #[case::fhe_key(PairKind::FheKey)]
 #[case::crs(PairKind::Crs)]
 #[tokio::test]
-async fn failed_existing_public_store_rolls_back_new_private_entry(#[case] pair_kind: PairKind) {
+async fn new_private_half_is_removed_when_existing_public_store_fails(#[case] pair_kind: PairKind) {
     let fixture = PairFixture::new(PairState::PublicOnly, pair_kind).await;
     fixture.fail_public_store(FaultPhase::BeforeMutation).await;
 
-    assert_eq!(fixture.write().await, Err(StorageError::Writing));
+    assert_eq!(fixture.write_all().await, Err(StorageError::Writing));
     let (public_after, private_after) = fixture.states().await;
     assert_eq!(public_after, fixture.public_before);
     assert_eq!(private_after, fixture.private_before);
@@ -218,7 +230,7 @@ async fn failed_existing_public_store_rolls_back_new_private_entry(#[case] pair_
     let (public_events, private_events) = fixture.events().await;
     assert_same_events(
         &public_events,
-        &[store_event(
+        &[expected_store_event(
             &fixture.public_entry,
             StorageOutcome::FailedBeforeMutation,
         )],
@@ -226,23 +238,23 @@ async fn failed_existing_public_store_rolls_back_new_private_entry(#[case] pair_
     assert_same_events(
         &private_events,
         &[
-            store_event(&fixture.private_entry, StorageOutcome::Created),
-            deleted_event(&fixture.private_entry),
+            expected_store_event(&fixture.private_entry, StorageOutcome::Created),
+            expected_delete_event(&fixture.private_entry),
         ],
     );
 }
 
-/// An error on existing `FheKeyInfo` or `CrsInfo` rolls back only the new public half.
-/// Only a before-mutation fault applies because an after-mutation fault requires a new private entry.
+/// A rejected store of the existing private half rolls back the public half created during the
+/// same `write_all` call.
 #[rstest::rstest]
 #[case::fhe_key(PairKind::FheKey)]
 #[case::crs(PairKind::Crs)]
 #[tokio::test]
-async fn failed_existing_private_store_rolls_back_new_public_entry(#[case] pair_kind: PairKind) {
+async fn new_public_half_is_removed_when_existing_private_store_fails(#[case] pair_kind: PairKind) {
     let fixture = PairFixture::new(PairState::PrivateOnly, pair_kind).await;
     fixture.fail_private_store(FaultPhase::BeforeMutation).await;
 
-    assert_eq!(fixture.write().await, Err(StorageError::Writing));
+    assert_eq!(fixture.write_all().await, Err(StorageError::Writing));
     let (public_after, private_after) = fixture.states().await;
     assert_eq!(public_after, fixture.public_before);
     assert_eq!(private_after, fixture.private_before);
@@ -251,13 +263,13 @@ async fn failed_existing_private_store_rolls_back_new_public_entry(#[case] pair_
     assert_same_events(
         &public_events,
         &[
-            store_event(&fixture.public_entry, StorageOutcome::Created),
-            deleted_event(&fixture.public_entry),
+            expected_store_event(&fixture.public_entry, StorageOutcome::Created),
+            expected_delete_event(&fixture.public_entry),
         ],
     );
     assert_same_events(
         &private_events,
-        &[store_event(
+        &[expected_store_event(
             &fixture.private_entry,
             StorageOutcome::FailedBeforeMutation,
         )],

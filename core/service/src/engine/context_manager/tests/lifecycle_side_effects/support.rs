@@ -178,6 +178,7 @@ impl ContextFixture {
                     self.storage.clone(),
                     MetaStore::new(100, 10),
                     session_maker,
+                    false,
                 );
                 manager.load_mpc_context_from_storage().await.unwrap();
                 TestContextManager::Threshold(manager)

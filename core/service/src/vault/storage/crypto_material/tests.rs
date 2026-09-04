@@ -78,7 +78,15 @@ where
 
 fn dummy_info() -> KeyGenMetadata {
     let req_id = derive_request_id("dummy_info").unwrap();
-    KeyGenMetadata::new(req_id, req_id, BTreeMap::new(), vec![], vec![], vec![])
+    KeyGenMetadata::new(
+        req_id,
+        req_id,
+        BTreeMap::new(),
+        &crate::dummy_domain(),
+        vec![],
+        vec![],
+        vec![],
+    )
 }
 
 fn ram_threshold_storage(
@@ -873,6 +881,7 @@ fn dummy_crs_metadata(seed: u8) -> CrsGenMetadata {
         crs_id,
         vec![seed; 32],
         128,
+        &crate::dummy_domain(),
         vec![seed; 8],
         vec![],
         format!("extra-{seed}").into_bytes(),
@@ -883,9 +892,11 @@ fn dummy_crs_metadata(seed: u8) -> CrsGenMetadata {
 /// Mirrors the dummy fixture in `engine/backup_operator.rs` tests.
 fn dummy_recovery_material(caller_name: &str) -> RecoveryValidationMaterial {
     let mut rng = AesRng::seed_from_u64(0);
-    let (verf_key, sig_key) = gen_sig_keys(&mut rng);
-    let mut enc = Encryption::new(PkeSchemeType::MlKem512, &mut rng);
-    let (_dec_key, enc_key) = enc.keygen().unwrap();
+    let (_verf_key, sig_key) = gen_sig_keys(&mut rng);
+    let (_dec_key, enc_key) = {
+        let mut enc = Encryption::new(PkeSchemeType::MlKem512, &mut rng);
+        enc.keygen().unwrap()
+    };
     let backup_id = derive_request_id(caller_name).unwrap();
 
     let mut commitments = BTreeMap::new();
@@ -893,22 +904,28 @@ fn dummy_recovery_material(caller_name: &str) -> RecoveryValidationMaterial {
     commitments.insert(Role::indexed_from_one(2), vec![2_u8; 32]);
     commitments.insert(Role::indexed_from_one(3), vec![3_u8; 32]);
 
-    let payload = CustodianSetupMessagePayload {
-        header: HEADER.to_string(),
-        random_value: [4_u8; 32],
-        timestamp: SystemTime::now(),
-        public_enc_key: enc_key.clone(),
-        verification_key: verf_key,
-    };
-    let mut payload_serial = Vec::new();
-    safe_serialize(&payload, &mut payload_serial, SAFE_SER_SIZE_LIMIT).unwrap();
-    let custodian_nodes: Vec<_> = (1..=3)
-        .map(|i| CustodianSetupMessage {
-            custodian_role: i,
-            name: format!("Custodian-{i}"),
-            payload: payload_serial.clone(),
-        })
-        .collect();
+    let mut custodian_nodes = Vec::new();
+    for role in 1..=3 {
+        let (_, custodian_enc_key) = {
+            let mut enc = Encryption::new(PkeSchemeType::MlKem512, &mut rng);
+            enc.keygen().unwrap()
+        };
+        let (custodian_verf_key, _) = gen_sig_keys(&mut rng);
+        let payload = CustodianSetupMessagePayload {
+            header: HEADER.to_string(),
+            random_value: [4_u8; 32],
+            timestamp: SystemTime::now(),
+            public_enc_key: custodian_enc_key,
+            verification_key: custodian_verf_key,
+        };
+        let mut payload_serial = Vec::new();
+        safe_serialize(&payload, &mut payload_serial, SAFE_SER_SIZE_LIMIT).unwrap();
+        custodian_nodes.push(CustodianSetupMessage {
+            custodian_role: role,
+            name: format!("Custodian-{role}"),
+            payload: payload_serial,
+        });
+    }
     let custodian_context = CustodianContext {
         custodian_nodes,
         custodian_context_id: Some(backup_id.into()),
@@ -1819,6 +1836,68 @@ async fn inner_update_backup_vault_paths() {
         .await
         .unwrap();
     assert_eq!(restored, sk);
+}
+
+/// The upgrade case: a node whose signing key is *already* in the vault later
+/// gains a root signing seed, and the ordinary boot pass without overwriting
+/// anything.
+#[tokio::test]
+async fn inner_update_backup_vault_mirrors_a_seed_added_after_the_signing_key() {
+    use crate::consts::SIGNING_KEY_ID;
+    use crate::cryptography::signatures::RootSigningSeed;
+
+    let storage = CryptoMaterialStorage::from(
+        RamStorage::new(),
+        RamStorage::new(),
+        Some(make_unencrypted_backup_vault()),
+    );
+    let mut rng = AesRng::seed_from_u64(8);
+    let (_pk, sk) = gen_sig_keys(&mut rng);
+
+    // A node from before the seed existed: signing key only, already backed up.
+    {
+        let mut priv_s = storage.private_storage.lock().await;
+        store_versioned_at_request_id(
+            &mut *priv_s,
+            &SIGNING_KEY_ID,
+            &sk,
+            &PrivDataType::SigningKey.to_string(),
+        )
+        .await
+        .unwrap();
+    }
+    storage.inner_update_backup_vault(false).await.unwrap();
+
+    // `kms-gen-keys` then adds the seed beside the untouched signing key.
+    let seed = RootSigningSeed::random(&mut rng);
+    {
+        let mut priv_s = storage.private_storage.lock().await;
+        store_versioned_at_request_id(
+            &mut *priv_s,
+            &SIGNING_KEY_ID,
+            &seed,
+            &PrivDataType::SigningSeed.to_string(),
+        )
+        .await
+        .unwrap();
+    }
+
+    // The next boot pass, still non-overwriting, has to pick it up.
+    storage.inner_update_backup_vault(false).await.unwrap();
+
+    let vault = storage.get_backup_vault().unwrap();
+    let vault_g = vault.lock().await;
+    let backed_up: RootSigningSeed = vault_g
+        .read_data(&SIGNING_KEY_ID, &PrivDataType::SigningSeed.to_string())
+        .await
+        .expect("the root signing seed never reached the backup vault");
+    assert_eq!(backed_up, seed);
+    // The pre-existing signing key is still there and untouched.
+    let signing_key: PrivateSigKey = vault_g
+        .read_data(&SIGNING_KEY_ID, &PrivDataType::SigningKey.to_string())
+        .await
+        .unwrap();
+    assert_eq!(signing_key, sk);
 }
 
 #[tokio::test]

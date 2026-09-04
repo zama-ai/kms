@@ -12,6 +12,7 @@ use crate::{
     anyhow_error_and_warn_log,
     backup::operator::RecoveryValidationMaterial,
     cryptography::signatures::PrivateSigKey,
+    cryptography::signing::seed::RootSigningSeed,
     engine::{
         base::{CrsGenMetadata, KeyGenMetadata, KmsFheKeyHandles},
         context::ContextInfo,
@@ -119,6 +120,7 @@ fn private_data_is_epoch_scoped(data_type: PrivDataType) -> bool {
         PrivDataType::FheKeyInfo | PrivDataType::FhePrivateKey | PrivDataType::CrsInfo => true,
         #[expect(deprecated)]
         PrivDataType::SigningKey
+        | PrivDataType::SigningSeed
         | PrivDataType::PrssSetup
         | PrivDataType::PrssSetupCombined
         | PrivDataType::ContextInfo
@@ -1173,6 +1175,15 @@ where
                             crate::engine::backup_operator::update_specific_backup_vault::<
                                 PrivS,
                                 PrivateSigKey,
+                            >(
+                                &private_storage, &mut backup_vault, cur_type, overwrite
+                            )
+                            .await?;
+                        }
+                        PrivDataType::SigningSeed => {
+                            crate::engine::backup_operator::update_specific_backup_vault::<
+                                PrivS,
+                                RootSigningSeed,
                             >(
                                 &private_storage, &mut backup_vault, cur_type, overwrite
                             )

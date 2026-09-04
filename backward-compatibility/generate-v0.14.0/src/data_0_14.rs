@@ -367,6 +367,7 @@ const KEY_GEN_METADATA_WITH_EXTRA_DATA_TEST: KeyGenMetadataWithExtraDataTest =
         test_filename: Cow::Borrowed("key_gen_metadata_with_extra_data"),
         state: 101,
         extra_data: Cow::Borrowed(&[0x02, 0xAA, 0xBB, 0xCC]),
+        eip712_domain: None,
     };
 
 const CRS_GEN_METADATA_WITH_EXTRA_DATA_TEST: CrsGenMetadataWithExtraDataTest =

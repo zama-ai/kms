@@ -1,8 +1,8 @@
 use super::{
     galois_rings::common::{LutMulReduction, ResiduePoly},
     poly::{
-        BitWiseEval, Poly, gao_decoding, gao_decoding_with_field_hints, lagrange_polynomials,
-        vanishing_poly,
+        BitWiseEval, BitWisePoly, Poly, gao_decoding, gao_decoding_with_field_hints,
+        lagrange_polynomials, vanishing_poly,
     },
     structure_traits::{
         BaseRing, ErrorCorrect, Field, QuotientMaximalIdeal, RingWithExceptionalSequence,
@@ -13,7 +13,7 @@ use error_utils::anyhow_error_and_log;
 use super::sharing::shamir::ShamirFieldPoly;
 use super::sharing::shamir::ShamirSharings;
 use super::sharing::share::Share;
-use crate::{matrix::compute_powers_list, poly::BitwisePoly};
+use crate::matrix::compute_powers_list;
 use itertools::Itertools;
 use std::collections::HashMap;
 use std::sync::RwLock;
@@ -155,31 +155,6 @@ impl<Z: ErrorCorrect> ReconstructionHints<Z> {
     }
 }
 
-/// Per-value scratch buffers reused across the Hensel-lift bit-loop of `shamir_error_correct*`.
-///
-/// The loop runs `Z::BIT_LENGTH` (64/128) iterations per reconstructed value, each rebuilding the
-/// same-shaped temporaries. Allocating these once per value and `clear`ing (not freeing) between
-/// bits keeps each buffer's capacity warm, turning per-bit allocations into per-value ones.
-struct ReconScratch<F: Field> {
-    /// `compute_binary_shares` output: the bit-`i` projection of every still-valid share.
-    binary_shares: Vec<Share<F>>,
-    /// `error_correction_with_field_hints` y-values (share values fed to Gao decoding).
-    ys: Vec<F>,
-    /// `apply_bit_correction` byte view of the error-corrected bit polynomial.
-    bitwise: BitwisePoly,
-}
-
-impl<F: Field> ReconScratch<F> {
-    /// Empty buffers; each grows to its working size on the first bit and is reused thereafter.
-    fn new() -> Self {
-        Self {
-            binary_shares: Vec::new(),
-            ys: Vec::new(),
-            bitwise: BitwisePoly::default(),
-        }
-    }
-}
-
 /// Lifts binary polynomial p to the big ring and accumulates 2^amount * p into res
 fn accumulate_and_lift_bitwise_poly<Z: BaseRing, const EXTENSION_DEGREE: usize>(
     res: &mut Poly<ResiduePoly<Z, EXTENSION_DEGREE>>,
@@ -199,26 +174,23 @@ fn accumulate_and_lift_bitwise_poly<Z: BaseRing, const EXTENSION_DEGREE: usize>(
     }
 }
 
-/// Compose the `bit_idx`-th bit of every still-valid share into the reconstruction
-/// (quotient) field, writing the result into `out` (cleared first, capacity reused).
-/// Shared by the hinted and non-hinted Hensel lift.
-fn compute_binary_shares<Z: BaseRing, const EXTENSION_DEGREE: usize>(
-    shares_with_validity: &[(Share<ResiduePoly<Z, EXTENSION_DEGREE>>, bool)],
+/// Stream the `bit_idx`-th bit of every still-valid share into the quotient field.
+fn binary_share_values<'a, Z: BaseRing, const EXTENSION_DEGREE: usize>(
+    shares_with_validity: &'a [(Share<ResiduePoly<Z, EXTENSION_DEGREE>>, bool)],
     bit_idx: usize,
-    out: &mut Vec<
-        Share<<ResiduePoly<Z, EXTENSION_DEGREE> as QuotientMaximalIdeal>::QuotientOutput>,
-    >,
-) where
+) -> impl Iterator<Item = <ResiduePoly<Z, EXTENSION_DEGREE> as QuotientMaximalIdeal>::QuotientOutput> + 'a
+where
     ResiduePoly<Z, EXTENSION_DEGREE>: QuotientMaximalIdeal,
 {
-    out.clear();
-    out.extend(shares_with_validity.iter().filter_map(|(sh, is_valid)| {
-        if *is_valid {
-            Some(Share::new(sh.owner(), sh.value().bit_compose(bit_idx)))
-        } else {
-            None
-        }
-    }));
+    shares_with_validity
+        .iter()
+        .filter_map(move |(sh, is_valid)| {
+            if *is_valid {
+                Some(sh.value().bit_compose(bit_idx))
+            } else {
+                None
+            }
+        })
 }
 
 /// One Hensel-lift correction step shared by the hinted and non-hinted reconstruction:
@@ -232,17 +204,16 @@ fn apply_bit_correction<Z: BaseRing, const EXTENSION_DEGREE: usize>(
     fi_mod2: &Poly<<ResiduePoly<Z, EXTENSION_DEGREE> as QuotientMaximalIdeal>::QuotientOutput>,
     bit_idx: usize,
     res: &mut Poly<ResiduePoly<Z, EXTENSION_DEGREE>>,
-    bitwise: &mut BitwisePoly,
 ) -> Vec<Role>
 where
     ResiduePoly<Z, EXTENSION_DEGREE>: MemoizedExceptionals,
     ResiduePoly<Z, EXTENSION_DEGREE>: RingWithExceptionalSequence,
     ResiduePoly<Z, EXTENSION_DEGREE>: QuotientMaximalIdeal,
     ResiduePoly<Z, EXTENSION_DEGREE>: LutMulReduction<Z>,
-    BitwisePoly: BitWiseEval<Z, EXTENSION_DEGREE>,
+    for<'a> BitWisePoly<'a, <ResiduePoly<Z, EXTENSION_DEGREE> as QuotientMaximalIdeal>::QuotientOutput>:
+        BitWiseEval<Z, EXTENSION_DEGREE>,
 {
-    // Reuse the caller's scratch buffer
-    bitwise.overwrite_from_poly(fi_mod2);
+    let bitwise = BitWisePoly::from(fi_mod2);
     let mut evicted = Vec::new();
     // remove the LSBs computed from error correction in the quotient field
     for (j, (share, is_valid)) in shares_with_validity.iter_mut().enumerate() {
@@ -276,7 +247,8 @@ where
     ResiduePoly<Z, EXTENSION_DEGREE>: RingWithExceptionalSequence,
     ResiduePoly<Z, EXTENSION_DEGREE>: QuotientMaximalIdeal,
     ResiduePoly<Z, EXTENSION_DEGREE>: LutMulReduction<Z>,
-    BitwisePoly: BitWiseEval<Z, EXTENSION_DEGREE>,
+    for<'a> BitWisePoly<'a, <ResiduePoly<Z, EXTENSION_DEGREE> as QuotientMaximalIdeal>::QuotientOutput>:
+        BitWiseEval<Z, EXTENSION_DEGREE>,
 {
     let ring_size: usize = Z::BIT_LENGTH;
 
@@ -284,16 +256,15 @@ where
     let mut shares_with_validity = sharing
         .shares
         .iter()
-        .map(|x| (*x, true))
+        .map(|share| (*share, true))
         .collect::<Vec<_>>();
 
     let initial_length = shares_with_validity.len();
 
     // Exceptional powers fetched (per party) from the memoized store.
-    let parties: Vec<_> = sharing
-        .shares
+    let parties: Vec<_> = shares_with_validity
         .iter()
-        .map(|x| x.owner().one_based())
+        .map(|(share, _)| share.owner().one_based())
         .collect();
     let ordered_powers: Vec<Vec<ResiduePoly<Z, EXTENSION_DEGREE>>> = parties
         .iter()
@@ -305,21 +276,34 @@ where
     #[cfg(test)]
     let mut all_evicted: Vec<(Role, usize)> = Vec::new();
 
-    // Buffers reused across every bit of this reconstruction (see `ReconScratch`). The
-    // non-hinted path doesn't use `scratch.ys` (it calls the owned-`Vec` `error_correction`).
-    let mut scratch = ReconScratch::new();
+    // Only the public evaluation points are materialized. Secret bit projections stream directly
+    // from the residual shares into interpolation.
+    let mut xs = Vec::with_capacity(initial_length);
 
     for bit_idx in 0..ring_size {
-        // z = pi(y/2^i), Bots filtered out
-        compute_binary_shares(&shares_with_validity, bit_idx, &mut scratch.binary_shares);
-        let num_new_bot = initial_length - scratch.binary_shares.len();
+        xs.clear();
+        for (share, is_valid) in &shares_with_validity {
+            if *is_valid {
+                xs.push(
+                    <ResiduePoly<Z, EXTENSION_DEGREE> as QuotientMaximalIdeal>::QuotientOutput::embed_role_to_exceptional_sequence(
+                        &share.owner(),
+                    )?,
+                );
+            }
+        }
+        let num_new_bot = initial_length - xs.len();
+        let remaining_max_errors = max_errorsors.checked_sub(num_new_bot).ok_or_else(|| {
+            anyhow_error_and_log(format!(
+                "Too many shares evicted during error correction: {num_new_bot} evicted at iteration {bit_idx} exceeds the maximum of {max_errorsors} correctable errors"
+            ))
+        })?;
 
         // fi(X) = a0 + ... a_t * X^t where a0 is the secret bit corresponding to position i.
-        // Cold path: `error_correction` consumes an owned `Vec`, so we clone the scratch buffer.
-        let fi_mod2 = error_correction(
-            scratch.binary_shares.clone(),
-            degree,
-            max_errorsors - num_new_bot,
+        let fi_mod2 = gao_decoding(
+            &xs,
+            binary_share_values(&shares_with_validity, bit_idx),
+            degree + 1,
+            remaining_max_errors,
         )?;
 
         let _evicted = apply_bit_correction(
@@ -328,7 +312,6 @@ where
             &fi_mod2,
             bit_idx,
             &mut res,
-            &mut scratch.bitwise,
         );
         #[cfg(test)]
         all_evicted.extend(_evicted.into_iter().map(|owner| (owner, bit_idx)));
@@ -360,7 +343,10 @@ where
     ResiduePoly<Z, EXTENSION_DEGREE>: RingWithExceptionalSequence,
     ResiduePoly<Z, EXTENSION_DEGREE>: QuotientMaximalIdeal,
     ResiduePoly<Z, EXTENSION_DEGREE>: LutMulReduction<Z>,
-    BitwisePoly: BitWiseEval<Z, EXTENSION_DEGREE>,
+    for<'a> BitWisePoly<
+        'a,
+        <ResiduePoly<Z, EXTENSION_DEGREE> as QuotientMaximalIdeal>::QuotientOutput,
+    >: BitWiseEval<Z, EXTENSION_DEGREE>,
 {
     if hints.degree != degree {
         return Err(anyhow_error_and_log(format!(
@@ -382,7 +368,7 @@ where
     let mut shares_with_validity = sharing
         .shares
         .iter()
-        .map(|x| (*x, true))
+        .map(|share| (*share, true))
         .collect::<Vec<_>>();
 
     let initial_length = shares_with_validity.len();
@@ -400,22 +386,28 @@ where
         FieldHints<<ResiduePoly<Z, EXTENSION_DEGREE> as QuotientMaximalIdeal>::QuotientOutput>,
     > = None;
 
-    // Buffers reused across every bit of this reconstruction (see `ReconScratch`).
-    let mut scratch = ReconScratch::new();
-
     // Loop over each bit (64 or 128, depending on the Ring)
     for bit_idx in 0..ring_size {
-        compute_binary_shares(&shares_with_validity, bit_idx, &mut scratch.binary_shares);
-        let num_new_bot = initial_length - scratch.binary_shares.len();
+        let num_valid = shares_with_validity
+            .iter()
+            .filter(|(_, is_valid)| *is_valid)
+            .count();
+        let num_new_bot = initial_length - num_valid;
+        let remaining_max_errors = max_errorsors.checked_sub(num_new_bot).ok_or_else(|| {
+            anyhow_error_and_log(format!(
+                "Too many shares evicted during error correction: {num_new_bot} evicted at iteration {bit_idx} exceeds the maximum of {max_errorsors} correctable errors"
+            ))
+        })?;
 
         let fi_mod2 = if !validity_changed {
             // All parties still valid — use the precomputed field hints.
-            error_correction_with_field_hints(
-                &scratch.binary_shares,
-                degree,
-                max_errorsors - num_new_bot,
-                &hints.field_hints,
-                &mut scratch.ys,
+            gao_decoding_with_field_hints(
+                &hints.field_hints.embedded_points,
+                binary_share_values(&shares_with_validity, bit_idx),
+                degree + 1,
+                remaining_max_errors,
+                &hints.field_hints.lagrange_polys,
+                &hints.field_hints.vanishing_poly,
             )?
         } else {
             // Some parties were evicted — recompute field hints for the new valid set
@@ -427,12 +419,14 @@ where
                     .collect();
                 fallback_field_hints = Some(FieldHints::new(&valid_parties)?);
             }
-            error_correction_with_field_hints(
-                &scratch.binary_shares,
-                degree,
-                max_errorsors - num_new_bot,
-                fallback_field_hints.as_ref().unwrap(),
-                &mut scratch.ys,
+            let fallback_field_hints = fallback_field_hints.as_ref().unwrap();
+            gao_decoding_with_field_hints(
+                &fallback_field_hints.embedded_points,
+                binary_share_values(&shares_with_validity, bit_idx),
+                degree + 1,
+                remaining_max_errors,
+                &fallback_field_hints.lagrange_polys,
+                &fallback_field_hints.vanishing_poly,
             )?
         };
 
@@ -442,7 +436,6 @@ where
             &fi_mod2,
             bit_idx,
             &mut res,
-            &mut scratch.bitwise,
         );
         if !evicted.is_empty() {
             validity_changed = true;
@@ -460,7 +453,8 @@ where
     ResiduePoly<Z, EXTENSION_DEGREE>: RingWithExceptionalSequence,
     ResiduePoly<Z, EXTENSION_DEGREE>: QuotientMaximalIdeal,
     ResiduePoly<Z, EXTENSION_DEGREE>: LutMulReduction<Z>,
-    BitwisePoly: BitWiseEval<Z, EXTENSION_DEGREE>,
+    for<'a> BitWisePoly<'a, <ResiduePoly<Z, EXTENSION_DEGREE> as QuotientMaximalIdeal>::QuotientOutput>:
+        BitWiseEval<Z, EXTENSION_DEGREE>,
 {
     type ReconstructionField =
         <ResiduePoly<Z, EXTENSION_DEGREE> as QuotientMaximalIdeal>::QuotientOutput;
@@ -507,32 +501,28 @@ pub fn error_correction<F: Field>(
         .iter()
         .map(|s| F::embed_role_to_exceptional_sequence(&s.owner()))
         .try_collect()?;
-    let ys: Vec<F> = shares.into_iter().map(|s| s.take_value()).collect();
-
     // call Gao decoding with the shares as points/values, set Gao parameter k = v = degree+1
-    gao_decoding(&xs, &ys, degree + 1, max_errorsors)
+    gao_decoding(
+        &xs,
+        shares.into_iter().map(Share::take_value),
+        degree + 1,
+        max_errorsors,
+    )
 }
 
 /// Like [`error_correction`] but reuses precomputed [`FieldHints`] to avoid redundant
 /// embedding, Lagrange polynomial, and vanishing polynomial computations.
 ///
 /// `field_hints` must have been built from the same __ordered list__ of parties that own the `shares`.
-// `ys` is a scratch buffer only. If decoding fails, callers must not rely on its contents.
-#[allow(unknown_lints)] // `non_local_effect_before_error_return` is a dylint-only lint
-#[allow(non_local_effect_before_error_return)]
 pub fn error_correction_with_field_hints<F: Field>(
     shares: &[Share<F>],
     degree: usize,
     max_errorsors: usize,
     field_hints: &FieldHints<F>,
-    ys: &mut Vec<F>,
 ) -> anyhow::Result<ShamirFieldPoly<F>> {
-    ys.clear();
-    ys.extend(shares.iter().map(|s| s.value()));
-
     gao_decoding_with_field_hints(
         &field_hints.embedded_points,
-        ys,
+        shares.iter().map(Share::value),
         degree + 1,
         max_errorsors,
         &field_hints.lagrange_polys,
@@ -564,7 +554,7 @@ mod tests {
         error_correction::{error_correction, shamir_error_correct},
         galois_fields::gf16::GF16,
         galois_rings::common::{LutMulReduction, ResiduePoly},
-        poly::{BitWiseEval, BitwisePoly},
+        poly::{BitWiseEval, BitWisePoly},
         sharing::{
             shamir::{InputOp, ShamirFieldPoly, ShamirSharings},
             share::Share,
@@ -612,7 +602,10 @@ mod tests {
         ResiduePoly<Z64, EXTENSION_DEGREE>: RingWithExceptionalSequence,
         ResiduePoly<Z64, EXTENSION_DEGREE>: QuotientMaximalIdeal,
         ResiduePoly<Z64, EXTENSION_DEGREE>: LutMulReduction<Z64>,
-        BitwisePoly: BitWiseEval<Z64, EXTENSION_DEGREE>,
+        for<'a> BitWisePoly<
+            'a,
+            <ResiduePoly<Z64, EXTENSION_DEGREE> as QuotientMaximalIdeal>::QuotientOutput,
+        >: BitWiseEval<Z64, EXTENSION_DEGREE>,
     {
         let num_parties = 4;
         let threshold = 1;
@@ -709,10 +702,8 @@ mod tests {
 
         let parties = shares.iter().map(|s| s.owner()).collect::<Vec<_>>();
         let hints = FieldHints::new(&parties).unwrap();
-        let mut ys = Vec::new();
         let secret_poly_with_hints =
-            error_correction_with_field_hints(&shares, threshold, max_errors, &hints, &mut ys)
-                .unwrap();
+            error_correction_with_field_hints(&shares, threshold, max_errors, &hints).unwrap();
         assert_eq!(secret_poly_with_hints, f);
     }
 

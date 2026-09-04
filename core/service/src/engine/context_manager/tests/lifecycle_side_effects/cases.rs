@@ -373,6 +373,7 @@ async fn backup_failure_keeps_the_stored_context_registered(#[case] manager_kind
                 storage.clone(),
                 MetaStore::new(100, 10),
                 session_maker,
+                false,
             );
             assert_backup_failure(&manager, &storage, &context).await;
         }
