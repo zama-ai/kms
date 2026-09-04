@@ -468,14 +468,15 @@ message UserDecryptionRequest {
   // used for key generation
   RequestId key_id = 3;
 
-  // The client's (blockchain wallet) address, encoded using EIP-55. I.e. including `0x`.
+  // The EVM client's (blockchain wallet) address, encoded using EIP-55, including `0x`.
+  // Solana requests MUST leave this empty and carry their identity in `signing_metadata`.
   string client_address = 4;
 
   // Encoding of the user's public encryption key for this request.
   // This must be a bincode (v.1) encoded ML-KEM 512 key.
   bytes enc_key = 5;
 
-  // The user's EIP712 domain. This MUST be present. Furthermore, the `verifying_contract` MUST be set and be distinct from `client_address`.
+  // The user's EIP712 domain. This MUST be present. Furthermore, the `verifying_contract` MUST be set and, for EVM requests, be distinct from `client_address`.
   Eip712DomainMsg domain = 6;
 
   // Extra data used in the EIP712 signature - external_signature.
@@ -493,6 +494,58 @@ message UserDecryptionRequest {
   // If empty, the response `signatures` list is empty; legacy ECDSA signatures
   // remain available via the deprecated scalar fields for backward compatibility.
   repeated SigningSchemeType signing_schemes = 10;
+
+  // 11 and 12 briefly carried the Solana identity and program id as two loose bytes fields, on
+  // this branch only — never in a release. Reserved so the numbers cannot come back as another
+  // type: bytes and messages share a wire type, and an old party would read a reused number as
+  // whatever it expected there.
+  reserved 11, 12;
+  reserved "solana_pubkey", "solana_verifying_program_id";
+
+  // Host-chain verification metadata: which host family this request comes from, and the values
+  // the response is produced against for it. EVM requests leave the list empty — their inputs
+  // still travel in `client_address` and `domain` — and Solana requests carry exactly one entry
+  // with the `solana` variant set.
+  //
+  // Repeated because one KMS decryption may some day settle a batch of host requests; the wire
+  // shape carries that future so admitting it later is a validation change, not a proto change.
+  // Until then, more than one entry is rejected.
+  //
+  // Additive with a fresh field number: existing fields keep their numbers and types, so a party
+  // that predates this field parses the request and rejects it safely rather than answering it
+  // differently.
+  repeated SigningMetadata signing_metadata = 13;
+}
+
+// Host-chain verification metadata of one host request: who the result is sealed to and which
+// deployment the response binding commits to, in the host family's own vocabulary.
+//
+// The dispatch is a closed oneof on purpose: a request names its host family explicitly, and a
+// consumer that does not know the named variant refuses the request rather than guessing.
+message SigningMetadata {
+  oneof metadata {
+    EthereumMetadata ethereum = 1;
+    SolanaMetadata solana = 2;
+  }
+}
+
+// Deliberately empty: EVM verification inputs still travel in the request's top-level fields
+// (`client_address`, `domain`, `extra_data`), and moving them under this envelope is the EVM
+// path's own migration to make. The variant exists now so the dispatch covers both host
+// families from the start; an EVM request today leaves `signing_metadata` empty rather than
+// carrying this variant.
+message EthereumMetadata {}
+
+message SolanaMetadata {
+  // The Solana user's 32-byte ed25519 public key: who the result is sealed to. A Solana request
+  // MUST set this and leave `client_address` empty.
+  bytes pubkey = 1;
+
+  // The 32-byte Solana program id of the host deployment this request belongs to.
+  //
+  // Half of the deployment domain the response binding commits to; the other half, the chain id,
+  // is read from the chain id the ciphertext handles embed.
+  bytes verifying_program_id = 2;
 }
 
 message UserDecryptionResponse {

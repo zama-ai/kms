@@ -4658,6 +4658,7 @@ dependencies = [
  "assert_cmd",
  "attestation-doc-validation",
  "bc2wrap",
+ "bs58",
  "bytes",
  "clap",
  "futures",

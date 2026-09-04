@@ -149,6 +149,7 @@ escargot = "=0.5.15" # Interact with cargo without spawning external processes. 
 futures = "=0.3.32"  # Async futures - LOW RISK: rust-lang team
 futures-util = "=0.3.32"  # Futures utilities - LOW RISK: rust-lang team
 g2p = "=1.2.2"  # Galois field arithmetic (GF(2^p)) - LOW RISK: Essential for threshold cryptography, finite field operations
+bs58 = "=0.5.1"
 hex = "=0.4.3"  # Hex encoding/decoding - HIGH RISK: Individual maintainer (KokaKiwi), despite 284M downloads
 http = "=1.3.1"  # HTTP types - LOW RISK: hyperium team, 100M+ downloads
 hybrid-array = { version = "=0.2.3", features = ["zeroize"] }  # Transitive dependency of ml-kem for zeroizing shared secrets - MEDIUM RISK: follows ml-kem risk profile

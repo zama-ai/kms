@@ -30,6 +30,8 @@ pub mod utils;
 
 #[cfg(feature = "non-wasm")]
 mod validation_non_wasm;
+#[cfg(feature = "non-wasm")]
+mod validation_solana;
 mod validation_wasm;
 
 /// Client-side validation of aggregated decryption responses.

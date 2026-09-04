@@ -4,13 +4,14 @@ use crate::cryptography::signatures::PrivateSigKey;
 use crate::cryptography::signcryption::insecure_decrypt_ignoring_signature;
 use crate::cryptography::{
     encryption::{UnifiedPrivateEncKey, UnifiedPublicEncKey},
-    signatures::{PublicSigKey, Signature, internal_verify_sig},
+    signatures::PublicSigKey,
     signcryption::{UnifiedUnsigncryptionKey, UnsigncryptFHEPlaintext},
 };
 use crate::engine::validation::{
-    DSEP_USER_DECRYPTION, ERR_VALIDATE_USER_DECRYPTION_MISMATCH_EXTRA_DATA,
-    RejectedUserDecResponse, UserDecRejectReason, UserDecTrustedValidationContext,
-    UserDecryptionInvariants, check_ext_user_decryption_signature, validate_user_decrypt_responses,
+    AuthenticatedUserDecResponse, DSEP_USER_DECRYPTION,
+    ERR_VALIDATE_USER_DECRYPTION_MISMATCH_EXTRA_DATA, RejectedUserDecResponse,
+    ShareAuthenticationError, UserDecRejectReason, UserDecTrustedValidationContext,
+    UserDecryptionInvariants, authenticate_user_decrypt_share, validate_user_decrypt_responses,
 };
 use crate::{anyhow_error_and_log, some_or_err};
 use algebra::error_correction::ReconstructionHints;
@@ -24,8 +25,10 @@ use algebra::{
 use alloy_sol_types::Eip712Domain;
 use alloy_sol_types::SolStruct;
 use itertools::Itertools;
-use kms_grpc::kms::v1::{TypedPlaintext, UserDecryptionRequest, UserDecryptionResponse};
-use kms_grpc::rpc_types::fhe_types_to_num_blocks;
+use kms_grpc::kms::v1::{
+    TypedPlaintext, UserDecryptionRequest, UserDecryptionResponse, UserDecryptionResponsePayload,
+};
+use kms_grpc::rpc_types::{PlaintextReceiver, fhe_types_to_num_blocks};
 use kms_grpc::solidity_types::UserDecryptionLinker;
 use std::num::Wrapping;
 use tfhe::FheTypes;
@@ -238,62 +241,42 @@ impl Client {
             return Err(anyhow_error_and_log("incorrect length for addresses"));
         }
 
-        let cur_verf_key: PublicSigKey = bc2wrap::deserialize_slice(&payload.verification_key)?;
-
         // NOTE: ID starts at 1
-        let expected_server_addr = if let Some(server_addr) = stored_server_addrs.get(&1) {
-            if *server_addr != cur_verf_key.address() {
-                return Err(anyhow_error_and_log("server address is not consistent"));
-            }
-            server_addr
-        } else {
-            return Err(anyhow_error_and_log("missing server address at ID 1"));
-        };
+        let expected_server_addr = some_or_err(
+            stored_server_addrs.get(&1),
+            "missing server address at ID 1".to_owned(),
+        )?;
 
-        // The response must echo the request's extra data whichever signature we go
-        // on to verify below. The EIP-712 signature covers `extraData`, but the raw
-        // ECDSA one does not, so this check has to happen outside the branch.
+        // The response must echo the request's extra data whichever signature the authenticator
+        // goes on to verify. The EIP-712 signature covers `extraData`, but the raw ECDSA one does
+        // not, so this check has to happen outside the authenticator's branch.
         if resp.extra_data != request.extra_data() {
             return Err(anyhow_error_and_log(
                 ERR_VALIDATE_USER_DECRYPTION_MISMATCH_EXTRA_DATA,
             ));
         }
 
-        // Prefer the normal ECDSA verification over the EIP712 one.
-        // The deprecated scalar `signature` field carries the raw internal ECDSA
-        // signature over the serialized payload.
-        // TODO(0.16) verify `signatures` and drop the two deprecated fields.
-        if resp.signature.is_empty() {
-            // we only consider the external signature in wasm
-            let eip712_signature = &resp.external_signature;
-
-            // check signature
-            if eip712_signature.is_empty() {
-                return Err(anyhow_error_and_log("empty signature"));
+        let cur_verf_key = authenticate_user_decrypt_share(
+            &payload,
+            expected_server_addr,
+            &resp.signatures,
+            &resp.signature,
+            &resp.external_signature,
+            &resp.extra_data,
+            request.enc_key(),
+            request.extra_data(),
+            eip712_domain,
+        )
+        .map_err(|reason| match reason {
+            ShareAuthenticationError::WrongAddress => {
+                anyhow_error_and_log("server address is not consistent")
             }
-
-            check_ext_user_decryption_signature(
-                eip712_signature,
-                &payload,
-                request,
-                eip712_domain,
-                expected_server_addr,
-            )
-            .inspect_err(|e| {
-                tracing::warn!("signature on received response is not valid ({})", e)
-            })?;
-        } else {
-            let sig = Signature::from_ecdsa(k256::ecdsa::Signature::from_slice(&resp.signature)?);
-            internal_verify_sig(
-                &DSEP_USER_DECRYPTION,
-                &bc2wrap::serialize(&payload)?,
-                &sig,
-                &cur_verf_key,
-            )
-            .inspect_err(|e| {
-                tracing::warn!("signature on received response is not valid ({})", e)
-            })?;
-        }
+            ShareAuthenticationError::MissingSignature => anyhow_error_and_log("empty signature"),
+            reason => {
+                tracing::warn!("signature on received response is not valid ({reason:?})");
+                anyhow_error_and_log("signature on received response is not valid")
+            }
+        })?;
         let receiver_id = self.client_address.to_vec();
         let unsign_key =
             UnifiedUnsigncryptionKey::new(dec_key, enc_key, &cur_verf_key, &receiver_id);
@@ -352,7 +335,9 @@ impl Client {
             eip712_domain,
             threshold,
         )?;
-        let pbs_params = self.params.classic_pbs();
+        // The EVM path opens shares signcrypted to the client's wallet address; the Solana
+        // path enters below through `reconstruct_validated_user_decryption` with its own receiver.
+        let receiver = PlaintextReceiver::Evm(self.client_address);
 
         tracing::debug!(
             "User decryption response reconstruction with mode: {:?}",
@@ -364,80 +349,187 @@ impl Client {
         // `accepted` or `rejected` — there is no partially-verified in-between state. All consensus
         // values used below (degree, link, per-slot fhe_type / packing factor / slot count) come
         // from `partitioned.invariants`, never from an individual contribution.
-        let res = match self.decryption_mode {
+        match self.decryption_mode {
             DecryptionMode::BitDecSmall => {
-                // Note: We will create way too many shares here, if we use BitDec kind of decryption we can actually fit 4*64 bits of actual data in a single share.
-                //For now we don't use intra share packing for BitDecSmall
-                let partitioned =
-                    self.partition_user_decrypt_responses::<Z64>(&ctx, agg_resp, enc_key, dec_key)?;
-                let per_slot = match partitioned.reconstruct_all_slots(&pbs_params, 1)? {
-                    Some(per_slot) => per_slot,
-                    None => return Ok(Vec::new()),
-                };
-
-                let mut out = vec![];
-                for (fhe_type, packing_factor, decrypted_blocks) in per_slot {
-                    // extract plaintexts from decrypted blocks
-                    let mut ptxts64 = Zeroizing::new(Vec::new());
-                    for block in decrypted_blocks.iter() {
-                        let scalar = block.to_scalar()?;
-                        ptxts64.push(scalar);
-                    }
-
-                    // convert to Z128
-                    out.push((
-                        fhe_type,
-                        packing_factor,
-                        Zeroizing::new(
-                            ptxts64
-                                .iter()
-                                .map(|ptxt| Wrapping(ptxt.0 as u128))
-                                .collect_vec(),
-                        ),
-                    ));
-                }
-                out
+                let partitioned = self.partition_user_decrypt_responses::<Z64>(
+                    &ctx, &receiver, agg_resp, enc_key, dec_key,
+                )?;
+                self.finish_bitdec_reconstruction(partitioned)
             }
             DecryptionMode::NoiseFloodSmall => {
-                let intra_share_packing = ResiduePolyF4::<Z128>::EXTENSION_DEGREE;
-                let partitioned = self
-                    .partition_user_decrypt_responses::<Z128>(&ctx, agg_resp, enc_key, dec_key)?;
-                let per_slot =
-                    match partitioned.reconstruct_all_slots(&pbs_params, intra_share_packing)? {
-                        Some(per_slot) => per_slot,
-                        None => return Ok(Vec::new()),
-                    };
+                let partitioned = self.partition_user_decrypt_responses::<Z128>(
+                    &ctx, &receiver, agg_resp, enc_key, dec_key,
+                )?;
+                self.finish_noiseflood_reconstruction(partitioned)
+            }
+            e => Err(anyhow_error_and_log(format!(
+                "Unsupported decryption mode: {e}"
+            ))),
+        }
+    }
 
-                let mut out = vec![];
-                for (fhe_type, packing_factor, decrypted_blocks) in per_slot {
-                    out.push((
-                        fhe_type,
-                        packing_factor,
-                        Zeroizing::new(reconstruct_packed_message(
-                            Some(&decrypted_blocks),
-                            &pbs_params,
-                            fhe_types_to_num_blocks(
-                                fhe_type,
-                                &self.params.classic_pbs(),
-                                packing_factor,
-                            )?,
-                        )?),
-                    ));
-                }
-                out
-            }
-            e => {
-                return Err(anyhow_error_and_log(format!(
-                    "Unsupported decryption mode: {e}"
-                )));
-            }
+    /// The BitDecSmall tail of a user-decryption reconstruction: Shamir-reconstruct every slot of
+    /// the partitioned responses and decode the blocks to plaintexts. Shared by the EVM threshold
+    /// path and [`Client::reconstruct_validated_user_decryption`].
+    fn finish_bitdec_reconstruction(
+        &self,
+        partitioned: PartitionedUserDecResponses<Z64>,
+    ) -> anyhow::Result<Vec<TypedPlaintext>> {
+        let pbs_params = self.params.classic_pbs();
+        // Note: We will create way too many shares here, if we use BitDec kind of decryption we
+        // can actually fit 4*64 bits of actual data in a single share.
+        // For now we don't use intra share packing for BitDecSmall
+        let per_slot = match partitioned.reconstruct_all_slots(&pbs_params, 1)? {
+            Some(per_slot) => per_slot,
+            None => return Ok(Vec::new()),
         };
 
-        res.into_iter()
+        let mut out = vec![];
+        for (fhe_type, packing_factor, decrypted_blocks) in per_slot {
+            // extract plaintexts from decrypted blocks
+            let mut ptxts64 = Zeroizing::new(Vec::new());
+            for block in decrypted_blocks.iter() {
+                let scalar = block.to_scalar()?;
+                ptxts64.push(scalar);
+            }
+
+            // convert to Z128
+            out.push((
+                fhe_type,
+                packing_factor,
+                Zeroizing::new(
+                    ptxts64
+                        .iter()
+                        .map(|ptxt| Wrapping(ptxt.0 as u128))
+                        .collect_vec(),
+                ),
+            ));
+        }
+        out.into_iter()
             .map(|(fhe_type, packing_factor, blocks)| {
                 decrypted_blocks_to_plaintext(&pbs_params, fhe_type, packing_factor, &blocks)
             })
             .collect()
+    }
+
+    /// The NoiseFloodSmall tail of a user-decryption reconstruction — see
+    /// [`Client::finish_bitdec_reconstruction`].
+    fn finish_noiseflood_reconstruction(
+        &self,
+        partitioned: PartitionedUserDecResponses<Z128>,
+    ) -> anyhow::Result<Vec<TypedPlaintext>> {
+        let pbs_params = self.params.classic_pbs();
+        let intra_share_packing = ResiduePolyF4::<Z128>::EXTENSION_DEGREE;
+        let per_slot = match partitioned.reconstruct_all_slots(&pbs_params, intra_share_packing)? {
+            Some(per_slot) => per_slot,
+            None => return Ok(Vec::new()),
+        };
+
+        let mut out = vec![];
+        for (fhe_type, packing_factor, decrypted_blocks) in per_slot {
+            out.push((
+                fhe_type,
+                packing_factor,
+                Zeroizing::new(reconstruct_packed_message(
+                    Some(&decrypted_blocks),
+                    &pbs_params,
+                    fhe_types_to_num_blocks(fhe_type, &pbs_params, packing_factor)?,
+                )?),
+            ));
+        }
+        out.into_iter()
+            .map(|(fhe_type, packing_factor, blocks)| {
+                decrypted_blocks_to_plaintext(&pbs_params, fhe_type, packing_factor, &blocks)
+            })
+            .collect()
+    }
+
+    /// Reconstructs plaintexts from already-validated threshold response payloads — the recovery
+    /// and reconstruction half of a threshold user decryption, shared by the EVM and Solana paths.
+    ///
+    /// The caller has already decided which payloads are trustworthy (the EVM path in
+    /// [`validate_user_decrypt_responses`], the Solana path in its verify-then-release rules) and
+    /// passes the receiver the shares were signcrypted to. The two paths differ only in that
+    /// decision and in the receiver; share recovery and reconstruction exist exactly once, in the
+    /// partition machinery above.
+    pub(crate) fn reconstruct_validated_user_decryption(
+        &self,
+        receiver: PlaintextReceiver,
+        validated_resps: &[UserDecryptionResponsePayload],
+        enc_key: &UnifiedPublicEncKey,
+        dec_key: &UnifiedPrivateEncKey,
+    ) -> anyhow::Result<Vec<TypedPlaintext>> {
+        let first = some_or_err(
+            validated_resps.first(),
+            "No valid responses parsed".to_string(),
+        )?;
+        // The caller validated agreement across the payloads, so the consensus invariants are the
+        // first payload's — the same fields every other payload was accepted for carrying.
+        let invariants = UserDecryptionInvariants::try_from(first.clone())?;
+        // TODO: in general this is not true, degree isn't a perfect proxy for num_parties
+        let num_parties = 3 * invariants.degree + 1;
+        if validated_resps.len() > num_parties {
+            return Err(anyhow_error_and_log(format!(
+                "Received more shares than expected for number of parties. n={num_parties}, #shares={}",
+                validated_resps.len()
+            )));
+        }
+
+        let mut authenticated = Vec::with_capacity(validated_resps.len());
+        for payload in validated_resps {
+            // The caller already verified the advertised key against its trusted signer set;
+            // parsing it again here is deserialization, not re-authentication.
+            let verification_key: PublicSigKey =
+                bc2wrap::deserialize_slice(&payload.verification_key)?;
+            authenticated.push(AuthenticatedUserDecResponse {
+                verification_key,
+                role: Role::indexed_from_one(payload.party_id as usize),
+                signcrypted_ciphertexts: payload
+                    .signcrypted_ciphertexts
+                    .iter()
+                    .map(|ct| ct.signcrypted_ciphertext.clone())
+                    .collect(),
+            });
+        }
+
+        tracing::debug!(
+            "User decryption response reconstruction with mode: {:?}, deg={}, #shares={}",
+            self.decryption_mode,
+            invariants.degree,
+            validated_resps.len()
+        );
+
+        match self.decryption_mode {
+            DecryptionMode::BitDecSmall => {
+                let partitioned = Self::recover_authenticated_responses::<Z64>(
+                    invariants,
+                    authenticated,
+                    Vec::new(),
+                    num_parties,
+                    &receiver,
+                    enc_key,
+                    dec_key,
+                    validated_resps.len(),
+                );
+                self.finish_bitdec_reconstruction(partitioned)
+            }
+            DecryptionMode::NoiseFloodSmall => {
+                let partitioned = Self::recover_authenticated_responses::<Z128>(
+                    invariants,
+                    authenticated,
+                    Vec::new(),
+                    num_parties,
+                    &receiver,
+                    enc_key,
+                    dec_key,
+                    validated_resps.len(),
+                );
+                self.finish_noiseflood_reconstruction(partitioned)
+            }
+            e => Err(anyhow_error_and_log(format!(
+                "Unsupported decryption mode: {e}"
+            ))),
+        }
     }
 
     fn insecure_threshold_user_decryption_resp(
@@ -668,6 +760,7 @@ impl Client {
     fn partition_user_decrypt_responses<Z: BaseRing + Zeroize>(
         &self,
         trusted_ctx: &UserDecTrustedValidationContext,
+        receiver: &PlaintextReceiver,
         agg_resp: &[UserDecryptionResponse],
         enc_key: &UnifiedPublicEncKey,
         dec_key: &UnifiedPrivateEncKey,
@@ -677,21 +770,44 @@ impl Client {
         // verification key. No client key is used here.
         // The validator already reports the authenticity failures it dropped, so we start the
         // rejected bucket from those and only append recovery failures below
-        let (invariants, authenticated, mut rejected) =
+        let (invariants, authenticated, rejected) =
             match validate_user_decrypt_responses(trusted_ctx, agg_resp) {
                 Ok(v) => v.into_parts(),
                 Err(e) => {
                     anyhow::bail!("User decryption responses unrecoverably invalid: {e}.",)
                 }
             };
-        let num_parties = trusted_ctx.num_parties();
+        Ok(Self::recover_authenticated_responses(
+            invariants,
+            authenticated,
+            rejected,
+            trusted_ctx.num_parties(),
+            receiver,
+            enc_key,
+            dec_key,
+            agg_resp.len(),
+        ))
+    }
 
-        let client_id = self.client_address.to_vec();
-
+    /// Recover (un-signcrypt + decode) each authenticated response under `receiver` — the second
+    /// half of [`Client::partition_user_decrypt_responses`], shared with
+    /// [`Client::reconstruct_validated_user_decryption`] whose caller authenticates the responses
+    /// itself. Recovery failures append to the passed-in `rejected` bucket as one tolerated fault
+    /// each; nothing here aborts on a single (untrusted) response and nothing half-accepts one.
+    #[allow(clippy::too_many_arguments)]
+    fn recover_authenticated_responses<Z: BaseRing + Zeroize>(
+        invariants: UserDecryptionInvariants,
+        authenticated: Vec<AuthenticatedUserDecResponse>,
+        mut rejected: Vec<RejectedUserDecResponse>,
+        num_parties: usize,
+        receiver: &PlaintextReceiver,
+        enc_key: &UnifiedPublicEncKey,
+        dec_key: &UnifiedPrivateEncKey,
+        total_responses: usize,
+    ) -> PartitionedUserDecResponses<Z> {
         let mut accepted = Vec::with_capacity(authenticated.len());
 
-        // Recover (un-signcrypt + decode) each authenticated response, reusing the verification key
-        // that was already deserialized during authentication.
+        // Reuse the verification key that was already deserialized during authentication.
         for authenticated_resp in &authenticated {
             let signcrypted_ciphertexts = &authenticated_resp.signcrypted_ciphertexts;
             let role = authenticated_resp.role;
@@ -699,7 +815,7 @@ impl Client {
                 dec_key,
                 enc_key,
                 &authenticated_resp.verification_key,
-                &client_id,
+                receiver.as_bytes(),
             );
             let mut shares_per_slot = Vec::with_capacity(signcrypted_ciphertexts.len());
             let mut recovered_ok = true;
@@ -755,7 +871,7 @@ impl Client {
                 partitioned.accepted.len(),
                 authenticated.len(),
                 partitioned.rejected.len(),
-                agg_resp.len(),
+                total_responses,
                 partitioned
                     .rejected
                     .iter()
@@ -763,7 +879,7 @@ impl Client {
                     .collect::<Vec<_>>(),
             );
         }
-        Ok(partitioned)
+        partitioned
     }
 
     /// Reconstruct every block of one slot from its Shamir sharings
@@ -1056,6 +1172,17 @@ impl ParsedUserDecryptionRequest {
 
     pub fn extra_data(&self) -> &[u8] {
         &self.extra_data
+    }
+
+    /// The ciphertext handles, in request order and with duplicates preserved, as plain bytes.
+    ///
+    /// Order and multiplicity are what a linker binds, so this must stay a faithful copy of the
+    /// request's list — never deduplicated, never sorted.
+    pub fn ciphertext_handle_bytes(&self) -> Vec<Vec<u8>> {
+        self.ciphertext_handles
+            .iter()
+            .map(|handle| handle.0.clone())
+            .collect()
     }
 }
 

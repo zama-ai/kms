@@ -53,7 +53,7 @@ pub async fn user_decrypt_impl<
         typed_ciphertexts,
         link,
         client_enc_key_bytes,
-        client_address,
+        receiver,
         request_id,
         key_id,
         context_id,
@@ -132,7 +132,7 @@ pub async fn user_decrypt_impl<
                 &typed_ciphertexts,
                 &link,
                 &client_enc_key_bytes,
-                &client_address,
+                &receiver,
                 server_verf_key,
                 &domain,
                 extra_data,
@@ -943,6 +943,9 @@ mod test_user_decryption {
             extra_data: vec![],
             context_id: None,
             epoch_id: None,
+            // This is the EVM test path; the Solana fields are exercised by
+            // `validation_solana` and the Solana response tests.
+            signing_metadata: vec![],
         }
     }
 

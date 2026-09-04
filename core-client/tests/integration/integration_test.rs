@@ -1185,6 +1185,16 @@ async fn integration_test_commands(
             sync: true,
             ..ucp("0x1", FheType::Ebool, 1, false, true)
         })),
+        // The same decryption sealed to a Solana wallet: the request travels with the
+        // SigningMetadata envelope and Solana-shaped handles, and the response comes back through
+        // the real Solana verifier (link recompute, node signatures, threshold) instead of the
+        // EVM one. Batch size 2 so the one-chain-id-per-request handle rule is exercised.
+        CCCommand::SolanaUserDecrypt(SolanaDecryptParameters {
+            decrypt: ucp("0x2a", FheType::Euint8, 2, false, true),
+            user_pubkey: [0x11; 32],
+            verifying_program_id: [0x22; 32],
+            host_chain_id: (1 << 63) | 12_345,
+        }),
         // Same public decryption through the synchronous endpoint (single round trip)
         CCCommand::PublicDecrypt(DecryptArguments::FromArgs(DecryptParameters {
             sync: true,
