@@ -204,8 +204,9 @@ impl<RO: RobustOpen> AgreeRandomFromShare for RobustRealAgreeRandom<RO> {
 #[async_trait]
 impl AgreeRandom for PassiveSecureAgreeRandom {
     fn num_rounds(_num_parties: usize, _threshold: usize) -> usize {
-        // One communication round: send commitments/keys, then receive.
-        1
+        // Two communication rounds: the commitments, then the keys and openings
+        // (see `agree_random_communication`).
+        2
     }
 
     ///Perform Agree Random among all sets of size n - t with hardcoded output length of [`KEY_BYTE_LEN`] bytes.
@@ -664,6 +665,7 @@ mod tests {
         PassiveSecureAgreeRandom, RobustRealAgreeRandom, RobustSecureAgreeRandom,
         check_and_unpack_coms, check_rcv_len, verify_and_xor_keys,
     };
+    use crate::sharing::open::{RobustOpen, SecureRobustOpen};
     use crate::tests::helper::testing::get_networkless_base_session_for_parties;
     use crate::tests::helper::tests::{TestingParameters, execute_protocol_small_w_malicious};
     use algebra::commitment::commitment_inner_hash;
@@ -793,6 +795,44 @@ mod tests {
         test_agree_random_strategies::<AbortSecureAgreeRandom, _>(
             testing_parameters,
             AbortSecureAgreeRandom::default(),
+        )
+        .await;
+    }
+
+    /// The declared [`AgreeRandom::num_rounds`] / [`AgreeRandomFromShare::num_rounds`]
+    /// of each variant is the number of rounds a fault-free execution spends. PRSS
+    /// init composes these counts to budget the resharing sessions of the parties
+    /// that do not take part in it, so an under-count would make those sessions
+    /// time out.
+    #[tokio::test]
+    async fn test_num_rounds_matches_execution() {
+        let (num_parties, threshold) = (7, 2);
+
+        let declared_passive = PassiveSecureAgreeRandom::num_rounds(num_parties, threshold);
+        assert_eq!(declared_passive, 2);
+        test_agree_random_strategies::<PassiveSecureAgreeRandom, _>(
+            TestingParameters::init_honest(num_parties, threshold, Some(declared_passive)),
+            PassiveSecureAgreeRandom::default(),
+        )
+        .await;
+
+        let declared_abort = AbortSecureAgreeRandom::num_rounds(num_parties, threshold);
+        assert_eq!(declared_abort, declared_passive + 1);
+        test_agree_random_strategies::<AbortSecureAgreeRandom, _>(
+            TestingParameters::init_honest(num_parties, threshold, Some(declared_abort)),
+            AbortSecureAgreeRandom::default(),
+        )
+        .await;
+
+        let declared_robust = RobustSecureAgreeRandom::num_rounds(num_parties);
+        assert_eq!(declared_robust, SecureRobustOpen::num_rounds(num_parties));
+        test_agree_random_from_share_strategies::<
+            ResiduePolyF4Z128,
+            { ResiduePolyF4Z128::EXTENSION_DEGREE },
+            _,
+        >(
+            TestingParameters::init_honest(num_parties, threshold, Some(declared_robust)),
+            RobustSecureAgreeRandom::default(),
         )
         .await;
     }

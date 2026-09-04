@@ -268,6 +268,33 @@ mod tests {
         test_bit_lift::<4, _>(params, 10, SecureBitLift).await;
     }
 
+    /// [`SecureBitLift::num_rounds`] is the exact number of rounds one bit lift
+    /// spends, whatever the number of bits (the openings are batched). The lift
+    /// budget of the resharing sessions composes this count once per sub-key.
+    #[tokio::test]
+    async fn test_num_rounds_matches_execution() {
+        use crate::tests::helper::tests_and_benches::execute_protocol_large;
+
+        let mut task = |mut session: LargeSession| async move {
+            let mut prep = DummyPreprocessing::new(42, &session);
+            let bits_to_lift: Vec<Share<ResiduePoly<Z64, 4>>> = prep.next_bit_vec(37).unwrap();
+            SecureBitLift::execute(bits_to_lift, &mut prep, &mut session)
+                .await
+                .unwrap();
+        };
+        assert_eq!(SecureBitLift::num_rounds(), 2);
+        // Async because the preprocessing is dummy.
+        execute_protocol_large::<_, _, ResiduePoly<Z64, 4>, 4>(
+            4,
+            1,
+            Some(SecureBitLift::num_rounds()),
+            NetworkMode::Async,
+            None,
+            &mut task,
+        )
+        .await;
+    }
+
     #[tokio::test]
     #[rstest::rstest]
     async fn malicious_lift<B: BitLift + 'static>(

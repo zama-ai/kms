@@ -129,6 +129,35 @@ mod tests {
     use threshold_types::network::NetworkMode;
     use threshold_types::role::Role;
 
+    /// [`SecureBitGenEven::num_rounds`] is the exact number of rounds a bit
+    /// generation spends, whatever the amount of bits (the openings are batched).
+    /// The lift budget of the resharing sessions composes this count.
+    #[tokio::test]
+    async fn test_num_rounds_matches_execution() {
+        async fn task(mut session: SmallSession<ResiduePolyF4Z128>, _bot: Option<String>) {
+            let mut preprocessing = DummyPreprocessing::new(42, &session);
+            SecureBitGenEven::gen_bits_even::<ResiduePolyF4Z128, _, _>(
+                37,
+                &mut preprocessing,
+                &mut session,
+            )
+            .await
+            .unwrap();
+        }
+        assert_eq!(SecureBitGenEven::num_rounds(), 2);
+        // Async because the triple gen is dummy.
+        execute_protocol_small::<_, _, ResiduePolyF4Z128, { ResiduePolyF4Z128::EXTENSION_DEGREE }>(
+            4,
+            1,
+            Some(SecureBitGenEven::num_rounds()),
+            NetworkMode::Async,
+            None,
+            &mut task,
+            None,
+        )
+        .await;
+    }
+
     macro_rules! test_bitgen {
         ($z:ty, $u:ty) => {
             paste! {

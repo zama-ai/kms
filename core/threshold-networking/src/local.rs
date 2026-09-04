@@ -418,4 +418,196 @@ mod tests {
             )
         );
     }
+
+    /// Advancing a session by `n` rounds moves the round counter to `n` and the
+    /// deadline of the current round to `init_time + (n + 1) * timeout`: every
+    /// skipped round contributes its full timeout to the accumulated budget.
+    #[tokio::test]
+    async fn test_round_clock_deadline_grows_by_one_timeout_per_round() {
+        let alice = Role::indexed_from_one(1);
+        let net_producer = LocalNetworkingProducer::from_roles(&HashSet::from([alice]));
+        let net = net_producer.user_net(alice, NetworkMode::Sync, None);
+        let init_time = net.init_time.load();
+
+        assert_eq!(net.get_current_round().await, 0);
+        assert_eq!(
+            net.get_timeout_current_round().await,
+            init_time + NETWORK_TIMEOUT
+        );
+
+        for round in 1..=7 {
+            net.increase_round_counter().await;
+            assert_eq!(net.get_current_round().await, round);
+            assert_eq!(
+                net.get_timeout_current_round().await,
+                init_time + NETWORK_TIMEOUT * (round as u32 + 1),
+                "deadline after {round} rounds must be init_time + (round + 1) * timeout"
+            );
+        }
+    }
+
+    /// The round-clock anchor is stamped at construction, not at first use. Two
+    /// sessions created together share the same round-0 deadline even if one of
+    /// them is only used much later, so a party that idles before its first message
+    /// does not silently get a later deadline than its peers.
+    #[tokio::test]
+    async fn test_init_time_is_stamped_at_construction() {
+        let alice = Role::indexed_from_one(1);
+        let bob = Role::indexed_from_one(2);
+        let net_producer = LocalNetworkingProducer::from_roles(&HashSet::from([alice, bob]));
+        let used_immediately = net_producer.user_net(alice, NetworkMode::Sync, None);
+        let used_later = net_producer.user_net(bob, NetworkMode::Sync, None);
+
+        let deadline_immediate = used_immediately.get_timeout_current_round().await;
+
+        let idle = Duration::from_millis(300);
+        tokio::time::sleep(idle).await;
+        let deadline_later = used_later.get_timeout_current_round().await;
+
+        // Construction of the two sessions is a few microseconds apart; the idle
+        // time must not show up in the deadline.
+        let skew = deadline_later.saturating_duration_since(deadline_immediate);
+        assert!(
+            skew < idle / 2,
+            "first use {idle:?} after construction moved the deadline by {skew:?}"
+        );
+    }
+
+    /// A deterministic advance shifts every party's deadline by the same amount, so
+    /// it does not absorb a difference in session *creation* time: two parties whose
+    /// sessions were created `stagger` apart keep deadlines `stagger` apart at every
+    /// round. Parties must therefore create a shared session within one round
+    /// timeout of each other for the earliest party not to time out on round 0.
+    #[tokio::test]
+    async fn test_creation_stagger_is_not_absorbed_by_advance() {
+        let alice = Role::indexed_from_one(1);
+        let bob = Role::indexed_from_one(2);
+        let net_producer = LocalNetworkingProducer::from_roles(&HashSet::from([alice, bob]));
+        let early = net_producer.user_net(alice, NetworkMode::Sync, None);
+        let stagger = Duration::from_millis(300);
+        tokio::time::sleep(stagger).await;
+        let late = net_producer.user_net(bob, NetworkMode::Sync, None);
+
+        for _ in 0..4 {
+            early.increase_round_counter().await;
+            late.increase_round_counter().await;
+        }
+
+        let deadline_gap = late
+            .get_timeout_current_round()
+            .await
+            .saturating_duration_since(early.get_timeout_current_round().await);
+        let tolerance = Duration::from_millis(100);
+        assert!(
+            deadline_gap > stagger - tolerance && deadline_gap < stagger + tolerance,
+            "creation stagger of {stagger:?} must carry over 1:1 to the deadlines, got {deadline_gap:?}"
+        );
+    }
+
+    /// `synchronize_from` copies the whole round clock: anchor, round counter,
+    /// accumulated budget and current-round timeout. Afterwards both sessions
+    /// report the same round and the same deadline.
+    #[tokio::test]
+    async fn test_synchronize_from_copies_round_clock() {
+        let alice = Role::indexed_from_one(1);
+        let bob = Role::indexed_from_one(2);
+        let net_producer = LocalNetworkingProducer::from_roles(&HashSet::from([alice, bob]));
+        let source = net_producer.user_net(alice, NetworkMode::Sync, None);
+
+        // Give the source a non-trivial clock: three rounds, the last one with a
+        // custom timeout.
+        source.increase_round_counter().await;
+        source.increase_round_counter().await;
+        source
+            .set_timeout_for_next_round(Duration::from_secs(42))
+            .await;
+        source.increase_round_counter().await;
+
+        // Create the target later so that its anchor differs from the source's.
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        let target = net_producer.user_net(bob, NetworkMode::Sync, None);
+        assert_ne!(target.init_time.load(), source.init_time.load());
+
+        target.synchronize_from(&source).await;
+
+        let source_clock = source.round_clock_snapshot().await;
+        let target_clock = target.round_clock_snapshot().await;
+        assert_eq!(target_clock.init_time, source_clock.init_time);
+        assert_eq!(target_clock.round, source_clock.round);
+        assert_eq!(target_clock.round, 3);
+        assert_eq!(target_clock.max_elapsed_time, source_clock.max_elapsed_time);
+        assert_eq!(target_clock.max_elapsed_time, NETWORK_TIMEOUT * 3);
+        assert_eq!(
+            target_clock.current_network_timeout,
+            source_clock.current_network_timeout
+        );
+        assert_eq!(
+            target_clock.current_network_timeout,
+            Duration::from_secs(42)
+        );
+        assert_eq!(
+            target.get_timeout_current_round().await,
+            source.get_timeout_current_round().await
+        );
+
+        // Synchronizing to the same round is allowed (idempotent).
+        target.synchronize_from(&source).await;
+        assert_eq!(target.get_current_round().await, 3);
+    }
+
+    /// A round clock never moves backwards: synchronizing to a session that is
+    /// behind would reuse round tags that were already sent.
+    #[tokio::test]
+    #[should_panic(expected = "refusing to move round backwards")]
+    async fn test_synchronize_from_refuses_to_rewind() {
+        let alice = Role::indexed_from_one(1);
+        let bob = Role::indexed_from_one(2);
+        let net_producer = LocalNetworkingProducer::from_roles(&HashSet::from([alice, bob]));
+        let ahead = net_producer.user_net(alice, NetworkMode::Sync, None);
+        let behind = net_producer.user_net(bob, NetworkMode::Sync, None);
+        ahead.increase_round_counter().await;
+        ahead.increase_round_counter().await;
+
+        ahead.synchronize_from(&behind).await;
+    }
+
+    /// Two parties that advance their session by the same number of rounds keep
+    /// their round tags aligned, so a value sent after the advance is delivered.
+    /// A receiver that is one round ahead treats the value as stale and drops it.
+    /// This is what makes a deterministic, identical advance on every party a
+    /// requirement for the session-skew compensation.
+    #[tokio::test]
+    async fn test_round_tags_after_identical_advance() {
+        let alice = Role::indexed_from_one(1);
+        let bob = Role::indexed_from_one(2);
+        let net_producer = LocalNetworkingProducer::from_roles(&HashSet::from([alice, bob]));
+        let net_alice = net_producer.user_net(alice, NetworkMode::Sync, None);
+        let net_bob = net_producer.user_net(bob, NetworkMode::Sync, None);
+        let payload = Arc::new(vec![7u8; 4]);
+
+        let advance = 5;
+        for _ in 0..advance {
+            net_alice.increase_round_counter().await;
+        }
+
+        // Same advance on the receiver: delivered.
+        for _ in 0..advance {
+            net_bob.increase_round_counter().await;
+        }
+        net_alice.send(payload.clone(), &bob).await.unwrap();
+        assert_eq!(net_bob.receive(&alice).await.unwrap(), *payload);
+
+        // Receiver one round ahead: the value is stale and is dropped, so the
+        // receive does not complete.
+        net_alice.increase_round_counter().await;
+        net_bob.increase_round_counter().await;
+        net_bob.increase_round_counter().await;
+        net_alice.send(payload.clone(), &bob).await.unwrap();
+        let dropped =
+            tokio::time::timeout(Duration::from_millis(200), net_bob.receive(&alice)).await;
+        assert!(
+            dropped.is_err(),
+            "a value tagged with an older round must not be delivered"
+        );
+    }
 }

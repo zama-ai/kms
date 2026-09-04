@@ -54,7 +54,7 @@ pub trait Networking<R: RoleTrait> {
     async fn restore_round_clock(&self, clock: RoundClock);
 
     /// Synchronize this network's round-clock progress to `other`'s: adopt its
-    /// round counter, accumulated timeout budget and current-round timeout.
+    /// init time, round counter, accumulated timeout budget and current-round timeout.
     ///
     /// Blanket implementation provided by [`Networking::round_clock_snapshot`] and
     /// [`Networking::restore_round_clock`].
