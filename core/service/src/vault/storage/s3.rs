@@ -148,7 +148,8 @@ impl S3Storage {
             &self.bucket,
             key
         );
-        // Size up front: `Vec::new()` doubles, so the last growth holds both buffers (~3x).
+        // Exact capacity: a growing buffer reallocates and peaks well above a GiB-scale payload.
+        // `safe_serialize` runs the same size walk internally, so this costs one extra walk.
         let mut buf = match safe_serialized_size(data) {
             Ok(size) if size <= SAFE_SER_SIZE_LIMIT => Vec::with_capacity(size as usize),
             Ok(_) => Vec::new(),
@@ -660,14 +661,19 @@ pub(crate) async fn s3_get_blob(
         .key(path)
         .send()
         .await?;
-    let reserve = match blob_response.content_length() {
-        Some(len) if (0..=SAFE_SER_SIZE_LIMIT as i64).contains(&len) => len as usize,
-        Some(len) if len > SAFE_SER_SIZE_LIMIT as i64 => anyhow::bail!(
+    // Server hint of type `Option<i64>`: `try_from` folds a negative value into the absent case.
+    let reserve = match blob_response
+        .content_length()
+        .and_then(|len| u64::try_from(len).ok())
+    {
+        Some(len) if len > SAFE_SER_SIZE_LIMIT => anyhow::bail!(
             "S3 object {path} in bucket {bucket} declares {len} B, over the {SAFE_SER_SIZE_LIMIT} B limit"
         ),
-        _ => PREALLOCATED_BLOB_SIZE,
+        Some(len) => len as usize,
+        None => PREALLOCATED_BLOB_SIZE,
     };
     let mut blob_bytes: Vec<u8> = Vec::with_capacity(reserve);
+    // One byte past the limit, so an oversized object errors instead of truncating silently.
     let mut blob_bytestream = blob_response
         .body
         .into_async_read()
@@ -813,6 +819,7 @@ pub(crate) mod mock_s3 {
             match get_store.lock().unwrap().get(key) {
                 Some(bytes) => MockResponse::Output(
                     GetObjectOutput::builder()
+                        .content_length(bytes.len() as i64)
                         .body(ByteStream::from(bytes.clone()))
                         .build(),
                 ),
@@ -890,6 +897,7 @@ mod tests {
     use super::*;
     use aws_sdk_s3::error::ErrorMetadata;
     use aws_sdk_s3::operation::{
+        get_object::GetObjectOutput,
         head_object::{HeadObjectError, HeadObjectOutput},
         list_objects_v2::ListObjectsV2Output,
     };
@@ -1128,6 +1136,43 @@ mod tests {
                 .load_bytes(&RequestId::default(), "PublicKey")
                 .await
                 .is_err()
+        );
+    }
+
+    /// `s3_get_blob` sizes its buffer from the declared object length: a length over the limit
+    /// fails before the allocation, and a negative one falls back to the default reserve.
+    #[tokio::test]
+    async fn get_blob_reserve_follows_declared_length() {
+        const KEY: &str = "PUB/PublicKey/some-object";
+
+        let over = mock!(aws_sdk_s3::Client::get_object).then_output(|| {
+            GetObjectOutput::builder()
+                .content_length(SAFE_SER_SIZE_LIMIT as i64 + 1)
+                .body(ByteStream::from_static(b"x"))
+                .build()
+        });
+        let negative = mock!(aws_sdk_s3::Client::get_object).then_output(|| {
+            GetObjectOutput::builder()
+                .content_length(-1)
+                .body(ByteStream::from_static(b"payload"))
+                .build()
+        });
+
+        let client_for = |rule: &Rule| {
+            mock_client!(aws_sdk_s3, RuleMode::MatchAny, [rule], |c| c
+                .force_path_style(true))
+        };
+
+        assert!(
+            s3_get_blob(&client_for(&over), MOCK_BUCKET, KEY)
+                .await
+                .is_err()
+        );
+        assert_eq!(
+            s3_get_blob(&client_for(&negative), MOCK_BUCKET, KEY)
+                .await
+                .unwrap(),
+            b"payload"
         );
     }
 
