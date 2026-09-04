@@ -44,16 +44,16 @@ pub trait MemoizedExceptionals: Sized + Clone + 'static {
                         lock_exceptional_set_store.insert((index, degree), powers.clone());
                         Ok(powers)
                     } else {
-                        Err(anyhow_error_and_log(
-                            "Error writing exceptional store 64".to_string(),
-                        ))
+                        Err(anyhow_error_and_log(format!(
+                            "Error writing exceptional store for index {index}, degree {degree}"
+                        )))
                     }
                 }
             }
         } else {
-            Err(anyhow_error_and_log(
-                "Error reading exceptional store".to_string(),
-            ))
+            Err(anyhow_error_and_log(format!(
+                "Error reading exceptional store for index {index}, degree {degree}"
+            )))
         }
     }
 }

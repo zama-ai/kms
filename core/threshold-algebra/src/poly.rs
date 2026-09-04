@@ -706,10 +706,11 @@ pub fn lagrange_interpolation_with_polys<F: Field>(
 ) -> anyhow::Result<Poly<F>> {
     let lagrange_polys = lagrange_polys.as_ref();
     if lagrange_polys.len() != values.len() {
-        return Err(anyhow_error_and_log(
-            "Lagrange interpolation failure: mismatch between number of points and values"
-                .to_string(),
-        ));
+        return Err(anyhow_error_and_log(format!(
+            "Lagrange interpolation failure: mismatch between number of points ({}) and values ({})",
+            lagrange_polys.len(),
+            values.len()
+        )));
     }
 
     // res = Σ_i lagrange_polys[i] * values[i], accumulated coefficient-wise into a single buffer. This function runs
@@ -769,16 +770,19 @@ fn gao_decoding_common<F: Field>(
     g: &Poly<F>,
 ) -> anyhow::Result<Poly<F>> {
     // d = n - k + 1
-    let d = (n + 1)
-        .checked_sub(k)
-        .ok_or_else(|| anyhow_error_and_log("Gao decoding failure: overflow computing d"))?;
+    let d = (n + 1).checked_sub(k).ok_or_else(|| {
+        anyhow_error_and_log(format!(
+            "Gao decoding failure: overflow computing d with n={n} points and dimension k={k}"
+        ))
+    })?;
 
     // We are expecting to correct more than what can be done:
     // Gao can only correct up to (d-1)/2 errors
     if 2 * max_errors >= d {
-        return Err(anyhow_error_and_log(
-            "Gao decoding failure: expected max number of errors is too large for given code parameters".to_string(),
-        ));
+        return Err(anyhow_error_and_log(format!(
+            "Gao decoding failure: expected max number of errors ({max_errors}) is too large for given code parameters n={n}, k={k}, d={d}: can correct at most {} errors",
+            d.saturating_sub(1) / 2
+        )));
     }
 
     // apply EEA to compute q0, q1 such that
@@ -861,9 +865,10 @@ pub fn gao_decoding<F: Field>(
 
     // sanity check for parameter sizes
     if values.len() != points.len() {
-        return Err(anyhow_error_and_log(
-            "Gao decoding failure: mismatch between number of values and points".to_string(),
-        ));
+        return Err(anyhow_error_and_log(format!(
+            "Gao decoding failure: mismatch between number of values ({}) and points ({n})",
+            values.len()
+        )));
     }
 
     // R \in F[X] such that R(xi) = yi. Called g_1(x) in the Gao paper.
@@ -892,9 +897,10 @@ pub fn gao_decoding_with_field_hints<F: Field>(
     let n = points.len();
 
     if values.len() != points.len() {
-        return Err(anyhow_error_and_log(
-            "Gao decoding failure: mismatch between number of values and points".to_string(),
-        ));
+        return Err(anyhow_error_and_log(format!(
+            "Gao decoding failure: mismatch between number of values ({}) and points ({n})",
+            values.len()
+        )));
     }
 
     // R = interpolation polynomial through (points, values), using the precomputed Lagrange basis.
