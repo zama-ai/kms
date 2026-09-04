@@ -32,7 +32,7 @@ jobs:
           helm template test charts/kms-core -f charts/kms-core/values-example-local.yaml >/dev/null
           helm template test charts/kms-core -f ci/pr-preview/centralized/kms-service/values-kms-ci.yaml >/dev/null
           helm template test charts/kms-core -f charts/kms-core/ci/values-schema-valid-legacy-prss-mask.yaml >/dev/null
-          for invalid in charts/kms-core/ci/values-schema-invalid.yaml charts/kms-core/ci/values-schema-invalid-legacy-prss-mask.yaml; do
+          for invalid in charts/kms-core/ci/values-schema-invalid.yaml charts/kms-core/ci/values-schema-invalid-legacy-prss-mask.yaml charts/kms-core/ci/values-schema-invalid-missing-legacy-prss-mask.yaml; do
             if helm template test charts/kms-core -f "$invalid" >/dev/null 2>&1; then
               echo "expected schema validation to fail for $invalid" >&2
               exit 1

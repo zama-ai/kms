@@ -3,7 +3,7 @@
   "$id": "https://github.com/zama-ai/kms/charts/kms-core/values.schema.json",
   "title": "kms-core Helm values",
   "type": "object",
-  "description": "Values for the kms-core chart (release/v0.13.20). Extra properties are allowed on most objects so existing CI and GitOps overlays still install. kmsCore.thresholdMode.tls is closed so misplaced keys such as legacyPrssMask fail install.",
+  "description": "Values for the kms-core chart (release/v0.13.20). kmsCore.thresholdMode.legacyPrssMask is required. Extra properties are allowed on most objects so existing CI and GitOps overlays still install. kmsCore.thresholdMode.tls is closed so misplaced keys such as legacyPrssMask fail install.",
   "properties": {
     "kmsPeers": {
       "type": "object",
@@ -610,7 +610,10 @@
         "required": [
           "legacyPrssMask"
         ]
-      }
+      },
+      "required": [
+        "thresholdMode"
+      ]
     },
     "thresholdMode": {
       "type": "object",
@@ -746,26 +749,25 @@
           "minimum": 0
         },
         "legacyPrssMask": {
-          "type": [
-            "object",
-            "null"
+          "type": "object",
+          "required": [
+            "beforePublicDecryptId",
+            "beforeUserDecryptId"
           ],
           "properties": {
             "beforePublicDecryptId": {
-              "type": [
-                "string",
-                "null"
-              ]
+              "type": "string"
             },
             "beforeUserDecryptId": {
-              "type": [
-                "string",
-                "null"
-              ]
+              "type": "string"
             }
-          }
+          },
+          "additionalProperties": false
         }
-      }
+      },
+      "required": [
+        "legacyPrssMask"
+      ]
     },
     "nitroEnclave": {
       "type": "object",

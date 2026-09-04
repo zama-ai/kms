@@ -1,0 +1,4 @@
+# Nulling the required block must fail schema validation.
+kmsCore:
+  thresholdMode:
+    legacyPrssMask: null
