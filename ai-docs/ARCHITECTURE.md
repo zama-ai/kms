@@ -214,8 +214,12 @@ The primary service is `CoreServiceEndpoint`. Its RPCs group into:
   `DestroyMpcContext` carries
   the context's epoch IDs and erases their secret shares (cascading to the
   existing per-epoch deletion) before forgetting the context and removing its
-  TLS trust-root references. Trust roots shared with another live context are
-  retained. This ensures retiring a
+  TLS trust-root references. The TLS verifier stores one trust root per context
+  and MPC identity. Different trust roots for one identity coexist while their
+  contexts remain active. Each root is evaluated with only its context's PCR
+  allowlist, and a handshake succeeds when one complete root and PCR check
+  succeeds. Removing a context removes its roots, while another context's copy
+  of the same root remains trusted. This ensures retiring a
   party set leaves no usable key shares behind; the kms-connector is the source
   of truth for which epochs belong to a context. In-memory lifecycle leases
   serialize creation against destruction: `NewMpcEpoch` holds shared leases for
