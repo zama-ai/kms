@@ -15,6 +15,7 @@ ci/scripts/
 ├── backward_snapshot.sh           # Generate and compare backward-compatibility snapshots
 ├── collect_network_diagnostics.sh # Capture per-pod network interface counters
 ├── deploy.sh                      # Main deployment entry point
+├── frozen_paths.sh                # Fail the build if a byte-frozen reference asset changes
 ├── local_docs_link_check.py       # Check Markdown links to local files
 ├── manage_lifecycle.sh            # Lifecycle management
 ├── rolling_upgrade.sh             # Partially upgrade enclave KMS parties
@@ -90,6 +91,7 @@ The build process will:
 |------------------|----------------|
 | **Logging or argument parsing** | `lib/common.sh` |
 | **Backward-compatibility snapshots** | `backward_snapshot.sh` |
+| **Byte-frozen reference assets** | `frozen_paths.sh` |
 | **Benchmark network diagnostics** | `collect_network_diagnostics.sh` |
 | **Kind cluster setup** | `lib/context.sh` |
 | **AWS/Tailscale config** | `lib/context.sh` |

@@ -87,6 +87,13 @@ the response call takes that client plus the request-side values the link commit
   convention, because a Solana chain id sets bit 63 and does not fit a JS number. Its trailing
   **`eip712_domain`** argument is the EIP-712 domain KMS nodes produced the response's
   `external_signature` under, in the same JS shape the EVM wrapper takes.
+- **`compute_solana_user_decrypt_link_from_js(solana_request, handles, enc_key, extra_data)`**
+  is the request half of the same contract: from the fields the client already holds — the same
+  named `solana_request` object, the handles as hex strings in request order, the serialized
+  transport key and the request's `extra_data` — it returns the 32-byte link a response must be
+  bound to, or throws when the fields are not a valid request. It is marshalling over the one
+  canonical construction, not a second linker; an SDK uses it to compute the request-side link
+  and to replay the shared vector set against the wasm build.
 
 Both arguments are required, and both fail closed: omitting the domain leaves an empty domain
 under which no real external signature verifies, and a client holding an empty signer set leaves
@@ -123,9 +130,9 @@ must consume the same bytes. Each repository holding a copy commits the same two
 compares digests: an edited copy and a stale copy are both caught. In this repository the set is
 consumed by the Rust runner `core/grpc/tests/solana_linker_vectors.rs`, and
 `make generate-solana-linker-vectors` regenerates it; the WASM build's agreement is pinned end to
-end by
-`core/service/tests/js/test.js`, whose stable transcripts fail to decrypt if the wasm-compiled
-linker diverges.
+end twice: `core/service/tests/js/linker_vectors.test.js` replays every record of the set through
+`compute_solana_user_decrypt_link_from_js`, and `core/service/tests/js/test.js`'s stable
+transcripts fail to decrypt if the wasm-compiled linker diverges.
 
 The scheme tag `SolanaUserDecryptionLinker:v1`, the call separator `SOLLNK01` and the element
 layout are pinned by `core/grpc/tests/solana_frozen_constants.rs`. A change to any of those bytes
