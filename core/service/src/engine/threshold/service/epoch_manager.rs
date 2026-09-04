@@ -2140,6 +2140,66 @@ pub(crate) mod tests {
         );
     }
 
+    /// The inputs [`RealThresholdEpochManager::initiate_resharing_and_crs_resign`]
+    /// feeds into [`reshare_session_skews`] come from the round counts the production
+    /// protocols declare. Pins the composed skews for two four-party committees, so a
+    /// change in any protocol's declared count shows up here.
+    #[test]
+    fn reshare_session_skews_from_production_protocols() {
+        use threshold_execution::small_execution::prss::RobustSecurePrssInit;
+
+        let (num_parties_set1, set1_threshold) = (4, 1);
+        let (num_parties_set2, set2_threshold) = (4, 1);
+        let num_parties = num_parties_set1 + num_parties_set2;
+        let broadcast_rounds = |threshold: usize| 3 + threshold;
+
+        // Robust PRSS init: a VSS (dealing round plus, at worst, three broadcasts)
+        // and one robust open.
+        let prss_init_rounds = <RobustSecurePrssInit as PRSSInit<ResiduePolyF4Z128>>::num_rounds(
+            num_parties_set2,
+            set2_threshold,
+        );
+        assert_eq!(
+            prss_init_rounds,
+            1 + 3 * broadcast_rounds(set2_threshold) + 1
+        );
+
+        // Two-sets online phase, budgeted for two batches: mask open, masked-share
+        // exchange, within-set-2 broadcast and syndrome open.
+        let reshare_online_rounds =
+            SecureReshareSecretKeys::num_rounds(num_parties, set2_threshold);
+        assert_eq!(
+            reshare_online_rounds,
+            2 * (1 + 1 + broadcast_rounds(set2_threshold) + 1)
+        );
+
+        let num_liftable_subkeys =
+            PrivateKeySet::<{ ResiduePolyF4Z128::EXTENSION_DEGREE }>::num_liftable_subkeys(
+                crate::consts::TEST_PARAM,
+            );
+        // Two triple preprocessings of (t + 1) broadcasts each, one bit generation
+        // and one bit lift per liftable sub-key.
+        let lift_rounds = 2 * (set1_threshold + 1) * broadcast_rounds(set1_threshold)
+            + 2
+            + 2 * num_liftable_subkeys;
+
+        assert_eq!(
+            reshare_session_skews(
+                prss_init_rounds,
+                num_parties_set1,
+                set1_threshold,
+                num_liftable_subkeys,
+                reshare_online_rounds,
+            ),
+            ReshareSessionSkews {
+                skew_prss: 2 * prss_init_rounds,
+                per_key_lift_rounds: lift_rounds,
+                per_key_reshare_preproc_rounds: 0,
+                per_key_reshare_online_rounds: reshare_online_rounds,
+            }
+        );
+    }
+
     mod failed_reshare;
 
     impl<

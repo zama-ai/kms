@@ -681,6 +681,129 @@ mod test {
         );
     }
 
+    /// Runs the (robust) PRSS init and then one preprocessing `batch` with
+    /// `malicious_offline` on the malicious parties. Returns, per honest party, the
+    /// rounds spent in the preprocessing alone.
+    async fn preprocessing_rounds_spent<
+        PreprocMalicious: Preprocessing<ResiduePolyF4Z128, SmallSession<ResiduePolyF4Z128>> + Clone + 'static,
+    >(
+        params: &TestingParameters,
+        batch: BatchParams,
+        malicious_offline: PreprocMalicious,
+    ) -> Vec<usize> {
+        let mut task_honest = |session: SmallSession<ResiduePolyF4Z128>| async move {
+            let mut session = SmallSession::<ResiduePolyF4Z128>::new_and_init_prss_state(
+                session.to_base_session(),
+            )
+            .await
+            .unwrap();
+            let rounds_before = session.network().get_current_round().await;
+            SecureSmallPreprocessing::default()
+                .execute(&mut session, batch)
+                .await
+                .unwrap();
+            session.network().get_current_round().await - rounds_before
+        };
+        let mut task_malicious =
+            |session: SmallSession<ResiduePolyF4Z128>, mut malicious_offline: PreprocMalicious| async move {
+                let mut session = SmallSession::<ResiduePolyF4Z128>::new_and_init_prss_state(
+                    session.to_base_session(),
+                )
+                .await
+                .unwrap();
+                let _ = malicious_offline.execute(&mut session, batch).await;
+            };
+        let (results_honest, _) = execute_protocol_small_w_malicious::<
+            _,
+            _,
+            _,
+            _,
+            _,
+            ResiduePolyF4Z128,
+            { ResiduePolyF4Z128::EXTENSION_DEGREE },
+        >(
+            params,
+            &params.malicious_roles,
+            malicious_offline,
+            NetworkMode::Sync,
+            None,
+            &mut task_honest,
+            &mut task_malicious,
+        )
+        .await;
+        results_honest.into_values().collect()
+    }
+
+    /// [`RealSmallPreprocessing::num_rounds`] bounds the rounds an honest party
+    /// spends in one preprocessing batch: a fault-free batch is a single broadcast,
+    /// a faulty party costs at most one extra pass, and a batch without triples is
+    /// non-interactive. Protocols that budget the round clock of an idle session
+    /// with the declared count rely on this bound.
+    #[tokio::test]
+    #[rstest]
+    #[case(4, 1)]
+    #[case(7, 2)]
+    async fn test_num_rounds_bounds_execution(
+        #[case] num_parties: usize,
+        #[case] threshold: usize,
+    ) {
+        use crate::communication::broadcast::Broadcast;
+
+        let triples = BatchParams {
+            triples: 4,
+            randoms: 4,
+        };
+        let declared = SecureSmallPreprocessing::num_rounds(triples, num_parties, threshold);
+        let broadcast_rounds = SyncReliableBroadcast::num_rounds(num_parties, threshold);
+        assert_eq!(declared, (threshold + 1) * broadcast_rounds);
+
+        // Fault-free: one broadcast.
+        let honest = TestingParameters::init_honest(num_parties, threshold, None);
+        for rounds in
+            preprocessing_rounds_spent(&honest, triples, SecureSmallPreprocessing::default()).await
+        {
+            assert_eq!(rounds, broadcast_rounds);
+        }
+
+        // Randoms come from the PRSS: no network round at all.
+        let randoms_only = BatchParams {
+            triples: 0,
+            randoms: 4,
+        };
+        assert_eq!(
+            SecureSmallPreprocessing::num_rounds(randoms_only, num_parties, threshold),
+            0
+        );
+        for rounds in
+            preprocessing_rounds_spent(&honest, randoms_only, SecureSmallPreprocessing::default())
+                .await
+        {
+            assert_eq!(rounds, 0);
+        }
+
+        // A party that broadcasts a wrong amount is evicted, at the cost of at most
+        // one retry pass; the honest parties spend one broadcast per pass and stay
+        // within the declared worst case.
+        let one_faulty =
+            TestingParameters::init(num_parties, threshold, &[0], &[], &[], true, None);
+        for rounds in preprocessing_rounds_spent(
+            &one_faulty,
+            triples,
+            MaliciousOfflineWrongAmount::new(SyncReliableBroadcast::default()),
+        )
+        .await
+        {
+            assert!(
+                rounds >= broadcast_rounds && rounds.is_multiple_of(broadcast_rounds),
+                "{rounds} rounds is not a whole number of broadcasts"
+            );
+            assert!(
+                rounds <= declared,
+                "{rounds} rounds exceed the declared {declared}"
+            );
+        }
+    }
+
     // Test small offline generation with no malicious parties
     // Expected number of rounds is:
     // - 5 + t for robust PRSS init

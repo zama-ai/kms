@@ -815,7 +815,7 @@ mod tests {
     use crate::runtime::sessions::small_session::SmallSession;
     use crate::tests::helper::tests::generate_keys_deterministically;
     use crate::tests::helper::tests_and_benches::{
-        execute_protocol_small, execute_protocol_two_sets,
+        TwoSetsExpectedRounds, execute_protocol_small, execute_protocol_two_sets,
     };
     use crate::tfhe_internals::parameters::PARAMS_TEST_RESHARE;
     use crate::tfhe_internals::test_feature::{
@@ -934,6 +934,55 @@ mod tests {
             num_parties_s2,
             intersection_size,
             threshold,
+            None,
+        )
+        .await
+    }
+
+    /// One keyset is reshared in a single batch per ring, so the two-sets session
+    /// and the set-2 session both end one cross-set plus one set-2-only round count
+    /// further per non-empty ring, at the same round; the set-1 session is never
+    /// used. [`ReshareSecretKeys::num_rounds`] budgets two batches and so bounds
+    /// the actual count. The epoch manager compensates the lift and preprocessing
+    /// sessions of a party with the declared count while its online sessions run.
+    #[tokio::test(flavor = "multi_thread")]
+    #[rstest::rstest]
+    async fn reshare_two_sets_round_accounting(
+        #[values(0, 2)] intersection_size: usize,
+    ) -> anyhow::Result<()> {
+        let num_parties_s1 = 7;
+        let num_parties_s2 = 4;
+        let threshold = TwoSetsThreshold {
+            threshold_set_1: 2,
+            threshold_set_2: 1,
+        };
+        let num_parties = num_parties_s1 + num_parties_s2 - intersection_size;
+        let rounds_per_batch = reshare_cross_set_num_rounds::<SecureRobustOpen>(num_parties)
+            + reshare_set2_only_num_rounds::<SecureRobustOpen, SyncReliableBroadcast>(
+                num_parties,
+                threshold.threshold_set_2 as usize,
+            );
+        // `PARAMS_TEST_RESHARE` is a Z128 keyset: every component lives in the
+        // Z128 batch and the Z64 batch is empty.
+        assert_eq!(PARAMS_TEST_RESHARE.dkg_mode(), DkgMode::Z128);
+        let num_batches = 1;
+        let declared =
+            SecureReshareSecretKeys::num_rounds(num_parties, threshold.threshold_set_2 as usize);
+        assert!(
+            num_batches * rounds_per_batch <= declared,
+            "declared {declared} rounds do not cover {num_batches} batch(es) of {rounds_per_batch} rounds"
+        );
+        simulate_reshare_two_sets::<4>(
+            false,
+            num_parties_s1,
+            num_parties_s2,
+            intersection_size,
+            threshold,
+            Some(TwoSetsExpectedRounds {
+                num_rounds_within_s1: 0,
+                num_rounds_within_s2: num_batches * rounds_per_batch,
+                num_rounds_across_sets: num_batches * rounds_per_batch,
+            }),
         )
         .await
     }
@@ -955,6 +1004,7 @@ mod tests {
             num_parties_s2,
             intersection_size,
             threshold,
+            None,
         )
         .await
     }
@@ -1153,6 +1203,7 @@ mod tests {
         num_parties_s2: usize,
         intersection_size: usize,
         threshold: TwoSetsThreshold,
+        expected_rounds: Option<TwoSetsExpectedRounds>,
     ) -> anyhow::Result<()>
     where
         ResiduePoly<Z128, EXTENSION_DEGREE>: ErrorCorrect + Invert + QuotientMaximalIdeal,
@@ -1277,7 +1328,7 @@ mod tests {
             num_parties_s2,
             intersection_size,
             threshold,
-            None,
+            expected_rounds,
             NetworkMode::Sync,
             &mut task,
         )

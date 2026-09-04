@@ -881,6 +881,50 @@ mod tests {
         .await;
     }
 
+    /// [`SyncReliableBroadcast::num_rounds`] is the exact number of rounds an honest
+    /// party spends in a broadcast, with or without faulty senders. Protocols that
+    /// budget the round clock of an idle session with it rely on this equality: a
+    /// declared count below the real one would make the budgeted session time out.
+    #[tokio::test]
+    #[rstest::rstest]
+    #[case(4, 1, &[])]
+    #[case(4, 1, &[0])]
+    #[case(7, 2, &[])]
+    #[case(7, 2, &[1, 5])]
+    #[case(10, 3, &[0, 4, 8])]
+    async fn test_num_rounds_matches_execution(
+        #[case] num_parties: usize,
+        #[case] threshold: usize,
+        #[case] dropping_parties: &[usize],
+    ) {
+        let declared = SyncReliableBroadcast::num_rounds(num_parties, threshold);
+        assert_eq!(declared, 3 + threshold);
+        let params = TestingParameters::init(
+            num_parties,
+            threshold,
+            dropping_parties,
+            &[],
+            &[],
+            !dropping_parties.is_empty(),
+            Some(declared),
+        );
+        if dropping_parties.is_empty() {
+            test_broadcast_from_all_w_corrupt_set_update_strategies::<
+                ResiduePolyF4Z128,
+                { ResiduePolyF4Z128::EXTENSION_DEGREE },
+                _,
+            >(params, SyncReliableBroadcast::default())
+            .await;
+        } else {
+            test_broadcast_from_all_w_corrupt_set_update_strategies::<
+                ResiduePolyF4Z128,
+                { ResiduePolyF4Z128::EXTENSION_DEGREE },
+                _,
+            >(params, MaliciousBroadcastDrop::default())
+            .await;
+        }
+    }
+
     /// Regression test
     /// Two colluding parties (P6, P7) equivocate on their own
     /// slots and re-send a vote for a phantom value in every voting round. With
