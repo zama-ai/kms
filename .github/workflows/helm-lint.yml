@@ -17,7 +17,7 @@ jobs:
       - name: Lint
         uses: WyriHaximus/github-action-helm3@fc4ba26e75cf5d08182c6ce3b72623c8bfd7272b # v3.1.0
         with:
-          exec: helm lint charts/*
+          exec: helm lint charts/kms-core -f charts/kms-core/ci/schema-lint-values.yaml
 
       - name: Install Helm
         uses: azure/setup-helm@fe7b79cd5ee1e45176fcad797de68ecaf3ca4814 #v4.2.0
@@ -27,11 +27,15 @@ jobs:
       - name: Validate values.schema.json
         run: |
           set -euo pipefail
-          helm lint charts/kms-core
-          helm template test charts/kms-core >/dev/null
+          helm lint charts/kms-core -f charts/kms-core/ci/schema-lint-values.yaml
+          helm template test charts/kms-core -f charts/kms-core/ci/schema-lint-values.yaml >/dev/null
           helm template test charts/kms-core -f charts/kms-core/values-example-local.yaml >/dev/null
           helm template test charts/kms-core -f ci/pr-preview/centralized/kms-service/values-kms-ci.yaml >/dev/null
           helm template test charts/kms-core -f charts/kms-core/ci/values-schema-valid-legacy-prss-mask.yaml >/dev/null
+          if helm template test charts/kms-core >/dev/null 2>&1; then
+            echo "expected chart defaults without overlay to fail (legacyPrssMask is required)" >&2
+            exit 1
+          fi
           for invalid in charts/kms-core/ci/values-schema-invalid.yaml charts/kms-core/ci/values-schema-invalid-legacy-prss-mask.yaml charts/kms-core/ci/values-schema-invalid-missing-legacy-prss-mask.yaml; do
             if helm template test charts/kms-core -f "$invalid" >/dev/null 2>&1; then
               echo "expected schema validation to fail for $invalid" >&2

@@ -120,21 +120,23 @@ kmsCore:
     # path used by chart <=1.6.1 — Helm ignores them without error and the party silently runs the
     # fixed schedule against legacy-schedule peers. The chart hard-fails on that old path.
     #
-    # Left EMPTY by default so the rendered config omits the fields entirely: pre-#663 binaries
-    # reject unknown config keys, so during a rolling upgrade these must stay unset until every
-    # party runs the new binary, then be enabled in a second pass (see
-    # ci/scripts/rolling_upgrade.sh). Omitted => the new binary defaults to "0", i.e. always the
-    # fixed schedule.
+    # Chart defaults do NOT set this block. values.schema.json requires every install overlay
+    # to define kmsCore.thresholdMode.legacyPrssMask (Helm schema sees merged values, so empty
+    # chart defaults would make a missing overlay still pass).
     #
-    # ALL MPC parties MUST configure identical values, chosen with enough margin for the slowest
-    # party to upgrade before the counters reach them. ALWAYS quote the values (they are 256-bit
-    # integers, decimal or 0x-prefixed hex; unquoted large YAML numbers get mangled). After each
+    # For rolling-upgrade pass 1, set both IDs to "" so the rendered config omits the fields:
+    # pre-#663 binaries reject unknown config keys. After every party runs the new binary,
+    # set identical quoted hex/decimal IDs (see ci/scripts/rolling_upgrade.sh). Omitted IDs
+    # in the rendered config => the new binary defaults to "0" (always the fixed schedule).
+    #
+    # ALWAYS quote the values (256-bit integers; unquoted YAML numbers get mangled). After each
     # party restarts, confirm the "PRSS-Mask legacy schedule activation thresholds configured"
-    # startup line in its log — that line is the only signal the value took effect. Remove this
-    # whole block once the migration is complete.
-    legacyPrssMask:
-      beforePublicDecryptId: ""
-      beforeUserDecryptId: ""
+    # startup line in its log. Remove this whole block once the migration is complete.
+    #
+    # Example (required in partner/GitOps values):
+    # legacyPrssMask:
+    #   beforePublicDecryptId: ""
+    #   beforeUserDecryptId: ""
   # Add the following to enable nitro enclave:
   # Nitro enclave needs specific instance types
   nitroEnclave:

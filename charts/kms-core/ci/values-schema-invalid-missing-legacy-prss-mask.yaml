@@ -1,4 +1,5 @@
-# Nulling the required block must fail schema validation.
+# Partner overlay that never sets the required block. Chart defaults no longer
+# supply empty strings, so merged values must fail schema validation.
 kmsCore:
   thresholdMode:
-    legacyPrssMask: null
+    enabled: true
