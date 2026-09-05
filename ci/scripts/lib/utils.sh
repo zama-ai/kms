@@ -180,14 +180,14 @@ collect_logs() {
         log_info "Collecting logs from ${NUM_PARTIES} KMS Core parties..."
 
         for i in $(seq 1 "${NUM_PARTIES}"); do
-            # Find pod by label (more reliable than hardcoded names)
+            # The chart labels pods app.kubernetes.io/name=<release>-core.
             local POD_NAME=$(kubectl get pods -n "${NAMESPACE}" \
-                -l "app.kubernetes.io/instance=kms-core-${i},app.kubernetes.io/name=kms-core-service" \
+                -l "app.kubernetes.io/name=kms-core-${i}-core" \
                 -o jsonpath="{.items[0].metadata.name}" 2>/dev/null)
 
             if [[ -n "${POD_NAME}" ]]; then
                 log_info "  Collecting logs from party ${i}: ${POD_NAME}"
-                kubectl logs "${POD_NAME}" -n "${NAMESPACE}" > "logs/${POD_NAME}.log" 2>&1 || true
+                kubectl logs "${POD_NAME}" -n "${NAMESPACE}" --all-containers --prefix > "logs/${POD_NAME}.log" 2>&1 || true
             else
                 log_warn "  No pod found for party ${i}"
             fi
@@ -201,12 +201,12 @@ collect_logs() {
         log_info "Collecting logs from centralized KMS Core..."
 
         local POD_NAME=$(kubectl get pods -n "${NAMESPACE}" \
-            -l "app.kubernetes.io/instance=kms-core" \
+            -l "app.kubernetes.io/name=kms-core-core" \
             -o jsonpath="{.items[0].metadata.name}" 2>/dev/null)
 
         if [[ -n "${POD_NAME}" ]]; then
              log_info "  Collecting logs: ${POD_NAME}"
-             kubectl logs "${POD_NAME}" -n "${NAMESPACE}" > "logs/${POD_NAME}.log" 2>&1 || true
+             kubectl logs "${POD_NAME}" -n "${NAMESPACE}" --all-containers --prefix > "logs/${POD_NAME}.log" 2>&1 || true
              log_info "Log saved to ./logs/${POD_NAME}.log"
         else
              log_warn "  No centralized pod found"

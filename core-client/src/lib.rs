@@ -1018,6 +1018,10 @@ pub struct RecoveryInitParameters {
     /// If false, the call will be indempotent, if true, this will not be the case
     #[clap(long, short = 'o', default_value_t = false)]
     pub overwrite_ephemeral_key: bool,
+    /// Which custodian context to recover under. Needed when the node has none installed and its
+    /// backup vault holds more than one, as it does after a context rotation.
+    #[clap(long, short = 'i')]
+    pub custodian_context_id: Option<RequestId>,
 }
 
 #[derive(Debug, Parser, Clone)]
@@ -2701,14 +2705,19 @@ pub async fn execute_cmd(
         }
         CCCommand::CustodianRecoveryInit(RecoveryInitParameters {
             overwrite_ephemeral_key,
+            custodian_context_id,
         }) => {
             // TODO(#3042) - currently we require backup operations to be done with a single core.
             // This issue streamlines this and requires an update in this section
             if num_cores != 1 {
                 return Err("Custodian recovery init is only supported for a single core".into());
             }
-            let res =
-                do_custodian_recovery_init(&core_endpoints_req, *overwrite_ephemeral_key).await?;
+            let res = do_custodian_recovery_init(
+                &core_endpoints_req,
+                *overwrite_ephemeral_key,
+                custodian_context_id.as_ref().map(|id| (*id).into()),
+            )
+            .await?;
 
             let serialized_res = base64_serialize(
                 res.first()

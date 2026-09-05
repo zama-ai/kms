@@ -133,7 +133,7 @@ Briefly the different backup modes are the following:
 - Import/export based.
   Backups are stored on a separate file system, which may or may not, be encrypted by a key managed in AWS KMS.
 - Custodian-based.
-  Backups can be stored in public but the keys used to decrypt the backups are secret shared between a set of custodians. Thus the custodians need to participate in order to recover. However, the custodians do not need to participate to construct a backup, since each KMS node will have a public key which they can use to encrypt the backed up data.
+  The backed up data is encrypted under a key that is secret shared between a set of custodians, so the custodians need to participate in order to recover. They do not need to participate to construct a backup, since each KMS node has a public key it can encrypt under. The backup storage needs no confidentiality, but it does need integrity: it holds the recovery material describing the custodian context, so anyone who can write it can offer the node a context to recover under.
 
 Of these modes the custodian-based one is preferred.
 WARNING: If using the import/export based approach _without_ AWS KMS, then the backup WILL NOT be encrypted. This option is only allowed temporarily and should _never_ be used as an actual backup solution, but instead only as a means to support import and export of keys in case they need to be moved from one operator to another.
@@ -187,7 +187,7 @@ See [Backup restoring](#backup-restoring) below for the full command reference, 
 
 #### Configuration
 
-To configure custodian-based approach. A backup storage must be set up similar to the import/export approach above. However, even though this is done without additional encryption, it is safe to keep this unencrypted. For example as follows, using the local file system:
+To configure custodian-based approach. A backup storage must be set up similar to the import/export approach above. It needs no encryption, since everything in it is either already encrypted under the custodians' key or authenticated by the node's signature, but only the node itself may be able to write to it. For example as follows, using the local file system:
 ```{toml}
 [backup_vault.storage.file]
 path = "./backup_vault"
@@ -224,7 +224,7 @@ More specifically the following steps must be done:
 2. Add a new custodian context.
   After the custodians have executed their setup locally, the KMS must be made aware of those custodians. This will be done using the CLI tool as detailed in [this section](#Custodian-context).
 
-NOTE: You may have multiple custodian contexts. However, the system will only make backups for a single custodian context. This will always be the most recent custodian context.
+NOTE: You may have multiple custodian contexts. However, the system only makes backups for a single one: the context it was last set up with, which each node records in its own private storage. Restarting never changes it.
 
 #### Recovery
 
@@ -244,6 +244,8 @@ The steps needed are as follows:
   ```
   The optional boolean expresses whether to allow overwriting any potential existing ephemeral key (default is false, expanded parameter `overwrite-ephemeral-key`). The command prints a base64 recovery request (prefixed with `Serialized custodian result:`) which must then be communicated to the custodians to proceed with the recovery.
 
+  A node that has lost its private storage no longer knows which custodian context it used. Name the one to recover under with `-i <custodian context id>` (expanded parameter `custodian-context-id`) unless its backup vault holds exactly one; the command fails and lists the candidate IDs otherwise. A node upgrading from a release that kept recovery material in public storage always needs the flag, since that store is modifiable and so cannot be allowed to pick. A node that still knows its context refuses any other.
+
   As a concrete example:
   ```{bash}
   $ cargo run --bin kms-core-client -- -f core-client/config/client_local_threshold_custodian_backup.toml custodian-recovery-init
@@ -258,7 +260,7 @@ The steps needed are as follows:
   ```{bash}
   $ cargo run --bin kms-core-client -- -f <single-core-config-file> custodian-backup-recovery -i <custodian context ID> -r "<recovery output from custodian 1>" -r "<recovery output from custodian 2>" ..
   ```
-  That is, `-i` expresses the custodian context ID, which is given as output from `custodian-recovery-init` above. The `-r` arguments are the base64 partially decrypted outputs from the custodians for this KMS node (at least `t + 1` of them).
+  That is, `-i` is the custodian context ID the recovery is for, as printed by `new-custodian-context`. The `-r` arguments are the base64 partially decrypted outputs from the custodians for this KMS node (at least `t + 1` of them).
   As a concrete example:
   ```{bash}
   $ cargo run --bin kms-core-client -- -f  core-client/config/client_local_threshold_custodian_backup.toml custodian-backup-recovery -i bca56548a3913ac0067b0b84f1544cd53880eb553a71e3a29444dbf10209aba8 -r "<recovery output 1>" -r "<recovery output 2>" -r "<recovery output 3>"
@@ -270,18 +272,19 @@ The steps needed are as follows:
 
 ##### If recovery fails
 
-- **Fewer than `t + 1` valid custodian outputs.** Reconstruction needs at least `t + 1` custodian outputs that validate against the `RecoveryValidationMaterial` in public storage. If the command rejects too many outputs (e.g. an output came from the wrong custodian role, was generated against a different recovery request, or was corrupted in transit), collect a fresh output from another custodian and re-run `custodian-backup-recovery` with the full set. Outputs are validated individually, so adding more is safe.
+- **Fewer than `t + 1` valid custodian outputs.** Reconstruction needs at least `t + 1` custodian outputs that validate against the `RecoveryValidationMaterial` in the backup vault. If the command rejects too many outputs (e.g. an output came from the wrong custodian role, was generated against a different recovery request, or was corrupted in transit), collect a fresh output from another custodian and re-run `custodian-backup-recovery` with the full set. Outputs are validated individually, so adding more is safe.
 - **A `BackupCiphertext` fails to decrypt mid-restore.** Because the restore is non-destructive, the private storage is only ever added to, never overwritten. Remove any partially written private-storage entries, double-check that the `VerfKey` validation at the top of this section still holds, and re-run the command — already-restored entries will be skipped and the remaining ones retried.
 - **Re-initiating a stuck recovery.** If recovery cannot complete, re-run `custodian-recovery-init` with `-o true` (`--overwrite-ephemeral-key`) to discard the previous in-memory ephemeral key and start a fresh recovery session, then redistribute the new recovery request to the custodians.
 
 #### Destroy context
 
-Destroying a custodian context permanently removes that context **and all of its backups** — both the recovery material in the operators' public storage and the `BackupCiphertext`s in the backup vault — from memory and disk. This is driven through the KMS core's `DestroyCustodianContext` endpoint (`DestroyCustodianContextRequest`, defined in [kms.v1.proto](../../core/grpc/proto/kms.v1.proto)), which takes a single argument:
+Destroying a custodian context permanently removes that context **and all of its backups** — both the recovery material and the `BackupCiphertext`s in the operators' backup vaults — from memory and disk. This is driven through the KMS core's `DestroyCustodianContext` endpoint (`DestroyCustodianContextRequest`, defined in [kms.v1.proto](../../core/grpc/proto/kms.v1.proto)), which takes a single argument:
 - `context_id`: the custodian context ID to destroy (as returned by `new-custodian-context` when the context was created).
 
 Two conditions must hold before destroying a context:
 1. The context must be a valid custodian context that was previously created with `new-custodian-context`.
 2. There must be two custodian contexts in the system to be able to remove one. Recovery is only ever possible against a non-destroyed context.
+3. The context must not be the one the node currently backs up under; the request fails with `FailedPrecondition` otherwise. Create and adopt its replacement first.
 
 WARNING: This operation is irreversible and purges _all backups_ tied to the context. Only destroy a context once its replacement has been created and confirmed to work as intended (see [Rotating the custodian context](#rotating-the-custodian-context) below); otherwise you may be left with no usable backup.
 
@@ -336,7 +339,7 @@ To further make this a manual test, make sure a [key is generated](#Key-generati
   ```{bash}
   cargo run --bin kms-core-client -- -f core-client/config/client_local_threshold_custodian_backup.toml custodian-recovery-init
   ```
-  This prints a base64 recovery request to the CLI (prefixed with `Serialized custodian result:`) and the custodian-context ID. Take note of both.
+  This prints a base64 recovery request to the CLI (prefixed with `Serialized custodian result:`). Take note of it, and of the custodian-context ID you used when setting the context up: the next step needs it.
 4. Custodians do partial decryption.
   Each custodian decrypts the base64 recovery request from step 3 and prints a base64 recovery output (prefixed with `The custodian recovery output is: `). The recovery request already carries the operator's verification key, so it no longer needs to be supplied separately. Execute the following in the root of the KMS project, replacing the seed phrases with the ones from step 1 and `<recovery request>` with the base64 string from step 3:
   ```{bash}

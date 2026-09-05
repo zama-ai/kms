@@ -1,15 +1,16 @@
 use self::threshold::{ThresholdPartyConf, TlsConf};
 use crate::util::rate_limiter::RateLimiterConfig;
 use clap::ValueEnum;
+use kms_grpc::RequestId;
 use observability::{
     conf::{Settings, TelemetryConfig},
     telemetry::{ConfigTracing, SdkTracerProvider, init_telemetry},
 };
 use serde::{Deserialize, Serialize};
-use std::{cmp, path::PathBuf};
+use std::{cmp, path::PathBuf, str::FromStr};
 use strum_macros::EnumIs;
 use url::Url;
-use validator::{Validate, ValidationErrors};
+use validator::{Validate, ValidationError, ValidationErrors};
 
 pub mod threshold;
 
@@ -29,7 +30,7 @@ pub struct CoreConfig {
     pub aws: Option<AWSConfig>,
     #[validate(nested)]
     pub public_vault: Option<VaultConfig>,
-    #[validate(nested)]
+    #[validate(nested, custom(function = reject_secret_sharing))]
     pub private_vault: Option<VaultConfig>,
     #[validate(nested)]
     pub backup_vault: Option<VaultConfig>,
@@ -84,6 +85,10 @@ pub struct MigrationConfig {
     #[serde(default)]
     #[validate(nested)]
     pub context_associations: Vec<ContextEpochAssociation>,
+    /// Hex-encoded custodian context to import from public storage on the first boot after the
+    /// upgrade that moved recovery material into the backup vault. Remove it once imported.
+    #[validate(custom(function = reject_malformed_request_id))]
+    pub custodian_context_id: Option<String>,
 }
 
 /// A single context together with the epochs associated with it.
@@ -237,6 +242,22 @@ pub struct VaultConfig {
     pub keychain: Option<Keychain>,
 }
 
+fn reject_malformed_request_id(id: &str) -> Result<(), ValidationError> {
+    RequestId::from_str(id)
+        .map(drop)
+        .map_err(|_| ValidationError::new("malformed_request_id"))
+}
+
+/// A secret-sharing keychain decrypts only once custodians have reconstructed its key, so it
+/// cannot guard the private vault: that content must be readable at boot.
+pub fn reject_secret_sharing(vault: &VaultConfig) -> Result<(), ValidationError> {
+    if matches!(vault.keychain, Some(Keychain::SecretSharing(_))) {
+        return Err(ValidationError::new("secret_sharing_private_vault")
+            .with_message("private storage must be readable at boot".into()));
+    }
+    Ok(())
+}
+
 /// How to store the key material
 /// WARNING: this may be printed for debugging and hence should NOT contain any secrets, such as private keys.
 /// If minor secrets needs to be added, then ensure fields are annotated with `#[serde(skip_serializing)]` to avoid accidentally diclosing them.
@@ -356,6 +377,46 @@ mod tests {
         conf::threshold::{TlsCert, TlsConf, TlsKey},
         util::rate_limiter::RateLimiterConfig,
     };
+
+    fn vault_with(keychain: Option<Keychain>) -> VaultConfig {
+        VaultConfig {
+            storage: Storage::Ram(RamStorage {}),
+            keychain,
+        }
+    }
+
+    #[test]
+    fn private_vault_rejects_a_secret_sharing_keychain() {
+        assert!(
+            reject_secret_sharing(&vault_with(Some(Keychain::SecretSharing(
+                SecretSharingKeychain {}
+            ))))
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn private_vault_accepts_other_keychains() {
+        assert!(reject_secret_sharing(&vault_with(None)).is_ok());
+        assert!(
+            reject_secret_sharing(&vault_with(Some(Keychain::AwsKms(AwsKmsKeychain {
+                root_key_id: "key".to_string(),
+                root_key_spec: AwsKmsKeySpec::Symm,
+            }))))
+            .is_ok()
+        );
+    }
+
+    /// The rule is enforced by `validate()`, so every entry point that loads a config gets it.
+    #[test]
+    fn config_validation_rejects_a_secret_sharing_private_vault() {
+        let mut config: CoreConfig =
+            init_conf("config/default_centralized.toml").expect("config must parse");
+        config.private_vault = Some(vault_with(Some(Keychain::SecretSharing(
+            SecretSharingKeychain {},
+        ))));
+        assert!(config.validate().is_err());
+    }
 
     #[test]
     fn test_threshold_config() {

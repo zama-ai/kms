@@ -7,7 +7,7 @@ use kms_lib::cryptography::signatures::SigningSchemeType;
 use kms_lib::{
     conf::{
         AWSConfig, EnclaveBootstrapConfig, Keychain, Storage as StorageConfig, VaultConfig,
-        init_conf, threshold::PeerConf,
+        init_conf, reject_secret_sharing, threshold::PeerConf,
     },
     consts::SIGNING_KEY_ID,
     cryptography::attestation::make_security_module,
@@ -86,7 +86,7 @@ struct KmsGenKeysConfig {
     #[validate(nested)]
     public_vault: Option<VaultConfig>,
     /// Private vault where server signing keys are stored.
-    #[validate(nested)]
+    #[validate(nested, custom(function = reject_secret_sharing))]
     private_vault: Option<VaultConfig>,
     /// Backup vault settings accepted for consistency with server configs but unused by key generation.
     #[validate(nested)]
@@ -310,7 +310,6 @@ async fn main() -> anyhow::Result<()> {
     }
     let private_storage = private_vault.map(|vault| vault.storage.clone());
     let private_keychain_config = private_vault.and_then(|vault| vault.keychain.clone());
-
     // AWS S3 client
     let need_s3_client = public_storage.as_ref().is_some_and(StorageConfig::is_s_3)
         || private_storage.as_ref().is_some_and(StorageConfig::is_s_3);
@@ -381,7 +380,6 @@ async fn main() -> anyhow::Result<()> {
             k,
             awskms_client.clone(),
             security_module.as_ref().map(Arc::clone),
-            Some(&pub_storage),
             false,
         )
     }))

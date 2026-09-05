@@ -230,7 +230,9 @@ pub enum PubDataType {
     VerfAddress, // DEPRECATED (superseded by [`PubDataType::TypedVerfAddress`]): The ethereum address of the KMS core, needed for KMS signature verification
     DecompressionKey,
     CACert, // Certificate that signs TLS certificates used by MPC nodes // TODO will change in connection with #2491, also see #2723
-    RecoveryMaterial, // Recovery material for the backup vault
+    /// Custodian recovery material. Lives in the backup vault, unencrypted, and is authenticated
+    /// by the operator signature it carries.
+    RecoveryMaterial,
     CompressedXofKeySet, // Compressed xof keyset
     /// A signature scheme's public verification key, holding one object per scheme.
     TypedVerfKey,
@@ -318,6 +320,8 @@ pub enum PrivDataType {
     EpochData,
     /// The root secret signing keys (may or may not include ECDSA) of a KMS node are derived from.
     SigningSeed,
+    /// Names the custodian context this node backs up under.
+    CustodianContextAnchor,
 }
 
 #[derive(Clone, Copy, Debug, Hash, PartialEq, Eq, Serialize, Deserialize, EnumIter, Version)]
@@ -388,6 +392,7 @@ impl fmt::Display for PrivDataType {
             PrivDataType::ContextInfo => write!(f, "Context"),
             PrivDataType::EpochData => write!(f, "EpochData"),
             PrivDataType::SigningSeed => write!(f, "SigningSeed"),
+            PrivDataType::CustodianContextAnchor => write!(f, "CustodianContextAnchor"),
         }
     }
 }

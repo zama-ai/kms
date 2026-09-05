@@ -208,7 +208,7 @@ where
     Ok(())
 }
 
-/// Verify all recovery validation material loaded from public storage against the node's private
+/// Verify all recovery validation material loaded from the backup vault against the node's private
 /// signing key. Recovery mode deliberately does not call this helper: its verification key came
 /// from public storage and would not provide an independent trust root.
 fn verify_recovery_material(
@@ -303,13 +303,8 @@ where
         }
     }
 
-    let unexpected = report_unexpected_public_material(
-        public_storage,
-        key_entries,
-        crs_entries,
-        recovery_material,
-    )
-    .await;
+    let unexpected =
+        report_unexpected_public_material(public_storage, key_entries, crs_entries).await;
 
     tracing::info!(
         "Verified storage material in storage \"{}\": {} keyset(s), {} CRS(es), {} recovery validation material item(s), {} unexpected public entry(ies)",
@@ -614,7 +609,6 @@ impl UnexpectedPublicMaterial {
 fn expected_public_material(
     key_entries: &[(RequestId, KeyGenMetadata)],
     crs_entries: &HashMap<RequestId, CrsGenMetadata>,
-    recovery_material: &HashMap<RequestId, RecoveryValidationMaterial>,
 ) -> BTreeMap<PubDataType, BTreeSet<RequestId>> {
     let mut expected = BTreeMap::new();
     for data_type in PubDataType::iter() {
@@ -639,10 +633,9 @@ fn expected_public_material(
                 key_entries.iter().map(|(key_id, _)| *key_id).collect()
             }
             PubDataType::CRS => crs_entries.keys().copied().collect(),
-            // The recovery material map is itself read by listing this folder, so this set always
-            // matches what the folder holds. It is kept so that every data type has exactly one
-            // rule.
-            PubDataType::RecoveryMaterial => recovery_material.keys().copied().collect(),
+            // Recovery material lives in the backup vault. Anything left here is a leftover of
+            // the move, or was planted, and either way is only ever reported.
+            PubDataType::RecoveryMaterial => BTreeSet::new(),
             PubDataType::VerfKey | PubDataType::VerfAddress | PubDataType::CACert => {
                 BTreeSet::from([*SIGNING_KEY_ID])
             }
@@ -662,8 +655,8 @@ fn expected_public_material(
 ///
 /// Lists public storage and logs an error for every top-level name that is not a data type
 /// folder, including every object directly under the root. It also logs an error for every entry
-/// whose ID is not explained by private keyset or CRS metadata, by the node's signing material at
-/// its fixed IDs, or by the recovery material already loaded from public storage.
+/// whose ID is not explained by private keyset or CRS metadata, or by the node's signing material
+/// at its fixed IDs. Recovery material lives in the backup vault, so any left here is reported.
 /// Nothing here fails boot: some of it is legitimate (a retired keyset, a previous deployment
 /// sharing the bucket) and the node cannot tell that apart from a corrupted or tampered store, so
 /// the operator is told and left to decide. Read-only; never deserializes anything.
@@ -675,12 +668,11 @@ pub(crate) async fn report_unexpected_public_material<S>(
     public_storage: &S,
     key_entries: &[(RequestId, KeyGenMetadata)],
     crs_entries: &HashMap<RequestId, CrsGenMetadata>,
-    recovery_material: &HashMap<RequestId, RecoveryValidationMaterial>,
 ) -> UnexpectedPublicMaterial
 where
     S: StorageReader + Sync,
 {
-    let expected = expected_public_material(key_entries, crs_entries, recovery_material);
+    let expected = expected_public_material(key_entries, crs_entries);
     let mut report = UnexpectedPublicMaterial::default();
     let storage_info = public_storage.info();
 
@@ -1258,9 +1250,7 @@ mod tests {
             .await
             .expect("an unrelated extra verification key must not fail the check");
 
-        let report =
-            report_unexpected_public_material(&storage, &[], &HashMap::new(), &HashMap::new())
-                .await;
+        let report = report_unexpected_public_material(&storage, &[], &HashMap::new()).await;
         assert_eq!(
             report.unexpected_id,
             BTreeMap::from([(PubDataType::VerfKey, BTreeSet::from([other_id]))])
@@ -1311,26 +1301,12 @@ mod tests {
         let (_pk, sk) = gen_sig_keys(&mut rng);
         store_signing_key_material(&mut storage, &sk, None).await;
         store_fixed_id_material(&mut storage).await;
-        let recovery_material = test_recovery_material(&sk);
-        let context_id = recovery_material.custodian_context().context_id;
-        storage
-            .store_bytes(
-                b"recovery material",
-                &context_id,
-                &PubDataType::RecoveryMaterial.to_string(),
-            )
-            .await
-            .unwrap();
-
         let entries = vec![
             (standard.key_id, standard.current_metadata()),
             (compressed.key_id, compressed.current_metadata()),
         ];
         let crs_entries = HashMap::from([(crs_id, current_crs_metadata(crs_id, crs_digest))]);
-        let recovery = HashMap::from([(context_id, recovery_material)]);
-
-        let report =
-            report_unexpected_public_material(&storage, &entries, &crs_entries, &recovery).await;
+        let report = report_unexpected_public_material(&storage, &entries, &crs_entries).await;
         assert_eq!(
             report,
             UnexpectedPublicMaterial::default(),
@@ -1354,9 +1330,7 @@ mod tests {
         .await;
 
         let entries = vec![(compressed.key_id, compressed.current_metadata())];
-        let report =
-            report_unexpected_public_material(&storage, &entries, &HashMap::new(), &HashMap::new())
-                .await;
+        let report = report_unexpected_public_material(&storage, &entries, &HashMap::new()).await;
         assert_eq!(
             report.unexpected_id,
             BTreeMap::from([(PubDataType::ServerKey, BTreeSet::from([compressed.key_id]))])
@@ -1381,9 +1355,7 @@ mod tests {
             .unwrap();
 
         let entries = vec![(material.key_id, material.current_metadata())];
-        let report =
-            report_unexpected_public_material(&storage, &entries, &HashMap::new(), &HashMap::new())
-                .await;
+        let report = report_unexpected_public_material(&storage, &entries, &HashMap::new()).await;
         assert_eq!(
             report.unexpected_id,
             BTreeMap::from([(PubDataType::PublicKeyMetadata, BTreeSet::from([unknown_id]))])
@@ -1405,9 +1377,7 @@ mod tests {
             .unwrap();
 
         let entries = vec![(material.key_id, material.current_metadata())];
-        let report =
-            report_unexpected_public_material(&storage, &entries, &HashMap::new(), &HashMap::new())
-                .await;
+        let report = report_unexpected_public_material(&storage, &entries, &HashMap::new()).await;
         assert_eq!(
             report.unexpected_id,
             BTreeMap::from([(
@@ -1426,9 +1396,7 @@ mod tests {
             (material.key_id, material.current_metadata()),
             (material.key_id, material.current_metadata()),
         ];
-        let report =
-            report_unexpected_public_material(&storage, &entries, &HashMap::new(), &HashMap::new())
-                .await;
+        let report = report_unexpected_public_material(&storage, &entries, &HashMap::new()).await;
         assert_eq!(report.unexpected_count(), 0, "got: {report:?}");
     }
 
@@ -1440,9 +1408,7 @@ mod tests {
         // Case matters: the backends are case-sensitive, so this folder holds no keyset.
         storage.store_bytes(b"?", &id, "publickey").await.unwrap();
 
-        let report =
-            report_unexpected_public_material(&storage, &[], &HashMap::new(), &HashMap::new())
-                .await;
+        let report = report_unexpected_public_material(&storage, &[], &HashMap::new()).await;
         assert_eq!(
             report.unknown_data_types,
             BTreeSet::from(["Garbage".to_string(), "publickey".to_string()])
@@ -1461,9 +1427,7 @@ mod tests {
         let name = PubDataType::PublicKey.to_string();
         std::fs::write(storage.root_dir().join(&name), b"x").unwrap();
 
-        let report =
-            report_unexpected_public_material(&storage, &[], &HashMap::new(), &HashMap::new())
-                .await;
+        let report = report_unexpected_public_material(&storage, &[], &HashMap::new()).await;
         assert_eq!(report.unknown_data_types, BTreeSet::from([name]));
         assert!(report.unexpected_id.is_empty());
     }
@@ -1495,7 +1459,7 @@ mod tests {
 
     #[test]
     fn expected_public_material_covers_fixed_id_signing_material() {
-        let expected = expected_public_material(&[], &HashMap::new(), &HashMap::new());
+        let expected = expected_public_material(&[], &HashMap::new());
         for data_type in [
             PubDataType::VerfKey,
             PubDataType::VerfAddress,
@@ -1541,7 +1505,7 @@ mod tests {
             ),
         ];
 
-        let expected = expected_public_material(&entries, &HashMap::new(), &HashMap::new());
+        let expected = expected_public_material(&entries, &HashMap::new());
         let all_ids = BTreeSet::from([standard.key_id, compressed.key_id, legacy_id]);
         assert_eq!(expected[&PubDataType::PublicKey], all_ids);
         assert_eq!(
