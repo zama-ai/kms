@@ -106,6 +106,10 @@ const ALLOW_UNCOVERED: &[&str] = &[
     // Field of PrivateKeySet.glwe_secret_key_share_compression.
     // Covered via PrivateKeySetTest.
     "CompressionPrivateKeySharesEnum",
+    // New in 0.15.0-0. Every generator builds against a published git rev, none
+    // of which contains this type, so it can only be fixtured once a release
+    // carrying it exists. Add a CustodianContextAnchorTest then.
+    "CustodianContextAnchor",
 ];
 
 fn cargo_metadata() -> Metadata {

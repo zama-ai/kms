@@ -2,8 +2,7 @@ use crate::{
     anyhow_error_and_log,
     backup::BackupCiphertext,
     conf::{AwsKmsKeySpec, AwsKmsKeychain, Keychain as KeychainConf, SecretSharingKeychain},
-    cryptography::{attestation::SecurityModuleProxy, signatures::PublicSigKey},
-    vault::storage::StorageReader,
+    cryptography::attestation::SecurityModuleProxy,
 };
 use aes_gcm_siv::{AeadInPlace, Aes256GcmSiv, KeyInit, Nonce};
 use aes_prng::AesRng;
@@ -68,16 +67,6 @@ pub enum KeychainProxy {
     SecretSharing(secretsharing::SecretShareKeychain<AesRng>),
 }
 
-impl KeychainProxy {
-    /// Validate recovery material loaded from public storage, if this is a SecretSharing keychain.
-    pub fn validate_recovery_material(&self, verf_key: &PublicSigKey) -> anyhow::Result<()> {
-        if let KeychainProxy::SecretSharing(ssk) = self {
-            ssk.validate_recovery_material(verf_key)?;
-        }
-        Ok(())
-    }
-}
-
 #[derive(EnumTryAs, Clone)]
 pub enum EnvelopeLoad {
     AppKeyBlob(AppKeyBlob),
@@ -133,11 +122,11 @@ pub fn verify_root_key_measurements(
     }
 }
 
+/// Build the configured keychain.
 pub async fn make_keychain_proxy(
     keychain_conf: &KeychainConf,
     awskms_client: Option<AWSKMSClient>,
     security_module: Option<Arc<SecurityModuleProxy>>,
-    pub_storage: Option<&impl StorageReader>,
     attest_key_policy: bool,
 ) -> anyhow::Result<KeychainProxy> {
     let rng = AesRng::from_entropy();
@@ -165,12 +154,10 @@ pub async fn make_keychain_proxy(
                 )?),
             }
         }
-        // Note that it is only possible to use the secret share keychain if there is already a context present.
-        // This presents a bootstrapping issue hence the system needs to initially NOT use the secret share keychain but once a custodian context is set up,
-        // it can switch to it by rebooting.
+        // Starts uninitialized and can only encrypt once `NewCustodianContext` has installed a
+        // context, which in turn requires the vault to be configured with this keychain already.
         KeychainConf::SecretSharing(SecretSharingKeychain {}) => {
-            let ssk = secretsharing::SecretShareKeychain::new(rng, pub_storage).await?;
-            KeychainProxy::from(ssk)
+            KeychainProxy::from(secretsharing::SecretShareKeychain::new(rng))
         }
     };
     Ok(keychain)

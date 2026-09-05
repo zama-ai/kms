@@ -12,11 +12,12 @@ use crate::engine::threshold::service::session::PRSSSetupCombined;
 use crate::engine::utils::{MetricedError, query_key_material_availability};
 use crate::engine::validation::parse_optional_grpc_request_id;
 use crate::vault::storage::{
-    StorageExt, StorageReaderExt, delete_at_request_and_epoch_id, delete_at_request_id,
-    read_versioned_at_request_id, store_versioned_at_request_and_epoch_id,
+    StorageExt, StorageReaderExt, crypto_material::get_core_signing_key,
+    delete_at_request_and_epoch_id, delete_at_request_id, read_custodian_context_anchor,
+    read_recovery_material_at_id, read_versioned_at_request_id, store_custodian_context_anchor,
+    store_recovery_material, store_versioned_at_request_and_epoch_id,
 };
 use crate::{
-    anyhow_error_and_log,
     backup::operator::{InnerOperatorBackupOutput, Operator, RecoveryValidationMaterial},
     consts::SAFE_SER_SIZE_LIMIT,
     cryptography::{
@@ -46,11 +47,10 @@ use kms_grpc::kms::v1::{CustodianRecoveryInitRequest, CustodianRecoveryOutput};
 use kms_grpc::{
     RequestId,
     kms::v1::{CustodianRecoveryRequest, RecoveryRequest},
-    rpc_types::PubDataType,
 };
 use kms_grpc::{
     kms::v1::{Empty, KeyMaterialAvailabilityResponse, OperatorPublicKey},
-    rpc_types::PrivDataType,
+    rpc_types::{PrivDataType, PubDataType},
 };
 use observability::metrics_names::{
     OP_CUSTODIAN_BACKUP_RECOVERY, OP_CUSTODIAN_RECOVERY_INIT, OP_FETCH_PK, OP_RESTORE_FROM_BACKUP,
@@ -84,6 +84,103 @@ where
     PubS: Storage + Sync + Send + 'static,
     PrivS: StorageExt + Sync + Send + 'static,
 {
+    /// Public storage, but only for a node whose signing key is gone.
+    ///
+    /// That is the one case the legacy location exists for: a node upgrading from a release that
+    /// kept recovery material there, whose private storage went before it ever booted the new one.
+    /// A node that still has its key imports through the migration, which the operator names a
+    /// context for; letting it read public storage here would let whoever writes that store offer
+    /// it a context instead.
+    async fn legacy_public_storage(&self) -> Option<tokio::sync::MutexGuard<'_, PubS>> {
+        match self.base_kms.sig_key() {
+            Err(_) => Some(self.crypto_storage.public_storage.lock().await),
+            Ok(_) => None,
+        }
+    }
+
+    /// The custodian context this node is installed with, as private storage records it.
+    ///
+    /// The keychain is only a cache of it and is empty whenever boot could not adopt — a node
+    /// whose anchored material is missing from the vault, say. Asking the keychain instead would
+    /// let such a node be steered onto whatever context another store happens to offer.
+    async fn installed_context(&self) -> anyhow::Result<Option<RequestId>> {
+        read_custodian_context_anchor(&*self.crypto_storage.private_storage.lock().await).await
+    }
+
+    /// Adopt the context a recovery just restored under: put its material in the backup vault if
+    /// that is not where it came from, and anchor it so the next boot uses the same one.
+    ///
+    /// The material is re-checked against the signing key the restore put back, which is the first
+    /// point at which this node can judge it: in recovery mode the key it was validated against
+    /// came from public storage and is only as good as the operator's check against the gateway.
+    async fn install_recovered_context(
+        &self,
+        material: &RecoveryValidationMaterial,
+    ) -> Result<(), MetricedError> {
+        let fail = |e: anyhow::Error| {
+            MetricedError::new(
+                OP_CUSTODIAN_BACKUP_RECOVERY,
+                None,
+                anyhow::anyhow!(
+                    "Restore succeeded but the custodian context could not be installed, so no \
+                     backups will be made until it is: {e}"
+                ),
+                tonic::Code::Internal,
+            )
+        };
+        let context_id = material.custodian_context().context_id;
+        let mut private_storage = self.crypto_storage.private_storage.lock().await;
+        // Re-read the anchor under the same lock that writes it. The decision to adopt was taken
+        // before the restore, and a NewCustodianContext that finished since has already installed
+        // its own context; writing this one would supersede it and send the node back.
+        match read_custodian_context_anchor(&*private_storage)
+            .await
+            .map_err(fail)?
+        {
+            Some(installed) if installed != context_id => {
+                return Err(MetricedError::new(
+                    OP_CUSTODIAN_BACKUP_RECOVERY,
+                    None,
+                    anyhow::anyhow!(
+                        "This node installed custodian context {installed} while the recovery for \
+                         {context_id} was in flight; the restore completed but the context was \
+                         not installed"
+                    ),
+                    tonic::Code::Aborted,
+                ));
+            }
+            Some(_) => return Ok(()),
+            None => {}
+        }
+        let signing_key = get_core_signing_key(&*private_storage)
+            .await
+            .map_err(fail)?;
+        if !material.validate(&PublicSigKey::from_sk(&signing_key)) {
+            return Err(fail(anyhow::anyhow!(
+                "recovery material for {context_id} is not signed by the restored key"
+            )));
+        }
+        if let Some(ref backup_vault) = self.crypto_storage.backup_vault {
+            let mut guarded_vault = backup_vault.lock().await;
+            store_recovery_material(&mut guarded_vault.storage, material)
+                .await
+                .map_err(fail)?;
+            // Storage never overwrites, so whatever already sat at this id is what the next boot
+            // will read; anchor it only if that is this material.
+            let stored = read_recovery_material_at_id(&guarded_vault.storage, &context_id)
+                .await
+                .map_err(fail)?;
+            if stored != *material {
+                return Err(fail(anyhow::anyhow!(
+                    "the backup vault already holds different recovery material for {context_id}"
+                )));
+            }
+        }
+        store_custodian_context_anchor(&mut *private_storage, &context_id)
+            .await
+            .map_err(fail)
+    }
+
     pub fn new(
         base_kms: BaseKmsStruct,
         crypto_storage: CryptoMaterialStorage<PubS, PrivS>,
@@ -151,19 +248,29 @@ where
         ephemeral_dec_key: &UnifiedPrivateEncKey,
         ephemeral_enc_key: &UnifiedPublicEncKey,
         req: CustodianRecoveryRequest,
-    ) -> anyhow::Result<(HashMap<Role, Zeroizing<BackupMaterial>>, Operator)> {
+    ) -> anyhow::Result<(
+        HashMap<Role, Zeroizing<BackupMaterial>>,
+        Operator,
+        RecoveryValidationMaterial,
+    )> {
         let custodian_context_id = parse_optional_grpc_request_id(
             &req.custodian_context_id,
             RequestIdParsingErr::BackupRecovery,
         )?;
-        let recovery_material = {
-            load_recovery_validation_material(
-                &self.crypto_storage.get_public_storage(),
-                &custodian_context_id,
-                &self.base_kms.verf_key(),
-            )
-            .await?
-        };
+        let backup_vault = self
+            .crypto_storage
+            .backup_vault
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("Backup vault is not configured"))?;
+        let legacy_public = self.legacy_public_storage().await;
+        let recovery_material = load_recovery_validation_material(
+            backup_vault,
+            legacy_public.as_deref(),
+            self.installed_context().await?,
+            &custodian_context_id,
+            &self.base_kms.verf_key(),
+        )
+        .await?;
         // The MPC context to validate against is taken from the operator-signed `RecoveryValidationMaterial`
         // stored at backup time. `filter_custodian_data` enforces the per-share equality.
         let mpc_context_id = recovery_material.mpc_context();
@@ -194,7 +301,7 @@ where
             ephemeral_enc_key,
         )
         .await?;
-        Ok((validated_rec, operator))
+        Ok((validated_rec, operator, recovery_material))
     }
 }
 
@@ -284,27 +391,47 @@ where
                 }
             }
         }
-        let backup_id = get_latest_backup_id(&self.crypto_storage.backup_vault)
-            .await
-            .map_err(|e| {
-                MetricedError::new(
-                    OP_CUSTODIAN_RECOVERY_INIT,
-                    None,
-                    anyhow::anyhow!("Failed to get latest backup id: {e}"),
-                    tonic::Code::Internal,
-                )
-            })?;
-        let recovery_material: RecoveryValidationMaterial = {
-            let pub_storage = self.crypto_storage.get_public_storage();
-            let guarded_pub_storage = pub_storage.lock().await;
-            guarded_pub_storage
-                .read_data(&backup_id, &PubDataType::RecoveryMaterial.to_string())
+        // Checked before reading the backup id, which reports a missing vault as an internal
+        // error rather than the unavailability it is.
+        let backup_vault = self.crypto_storage.backup_vault.as_ref().ok_or_else(|| {
+            MetricedError::new(
+                OP_CUSTODIAN_RECOVERY_INIT,
+                None,
+                anyhow::anyhow!("Backup vault is not configured"),
+                tonic::Code::Unavailable,
+            )
+        })?;
+        let installed = self.installed_context().await.map_err(|e| {
+            MetricedError::new(
+                OP_CUSTODIAN_RECOVERY_INIT,
+                None,
+                anyhow::anyhow!("Could not read the custodian context anchor: {e}"),
+                tonic::Code::Internal,
+            )
+        })?;
+        let (backup_id, recovery_material) = {
+            let legacy_public = self.legacy_public_storage().await;
+            let requested = inner
+                .custodian_context_id
+                .as_ref()
+                .map(|id| {
+                    RequestId::try_from(id.clone()).map_err(|e| {
+                        MetricedError::new(
+                            OP_CUSTODIAN_RECOVERY_INIT,
+                            None,
+                            anyhow::anyhow!("Invalid custodian_context_id: {e}"),
+                            tonic::Code::InvalidArgument,
+                        )
+                    })
+                })
+                .transpose()?;
+            recovery_context(backup_vault, legacy_public.as_deref(), installed, requested)
                 .await
                 .map_err(|e| {
                     MetricedError::new(
                         OP_CUSTODIAN_RECOVERY_INIT,
                         None,
-                        anyhow::anyhow!("Failed to read inner recovery request: {e}"),
+                        anyhow::anyhow!("Failed to select the custodian context to recover: {e}"),
                         tonic::Code::Internal,
                     )
                 })?
@@ -361,7 +488,7 @@ where
             }
         };
         let inner = request.into_inner();
-        let (parsed_custodian_rec, operator) = self
+        let (parsed_custodian_rec, operator, recovery_material) = self
             .validate_custodian_backup_recovery_request(
                 &ephemeral_dec_key,
                 &ephemeral_enc_key,
@@ -376,6 +503,21 @@ where
                     tonic::Code::InvalidArgument,
                 )
             })?;
+        // Only a node with nothing installed adopts the recovered context, so a recovery cannot
+        // re-point one that is already working, and a retry after a failed attempt still adopts.
+        // The anchor decides, not the keychain this RPC may itself have written.
+        let adopting = self
+            .installed_context()
+            .await
+            .map_err(|e| {
+                MetricedError::new(
+                    OP_CUSTODIAN_BACKUP_RECOVERY,
+                    None,
+                    anyhow::anyhow!("Could not read the custodian context anchor: {e}"),
+                    tonic::Code::Internal,
+                )
+            })?
+            .is_none();
         match self.crypto_storage.backup_vault {
             Some(ref backup_vault) => {
                 let mut backup_vault: tokio::sync::MutexGuard<'_, Vault> =
@@ -406,6 +548,34 @@ where
                                 tonic::Code::Internal,
                             )
                         })?;
+                        // The restore addresses the vault under this context, so the keychain
+                        // must name it when boot could not. Reading and writing it in one
+                        // critical section is what makes that safe: a NewCustodianContext that
+                        // completed since the material was loaded has already moved the keychain,
+                        // and overwriting it here would send later backups to the context this
+                        // recovery is for while the anchor names the new one. One landing after
+                        // this section cannot corrupt the restore either: that holds the vault
+                        // lock throughout, and under the other context's key every read fails
+                        // before anything is written.
+                        let recovered = recovery_material.custodian_context().context_id;
+                        match keychain.get_current_backup_id() {
+                            Ok(current) if current != recovered => {
+                                return Err(MetricedError::new(
+                                    OP_CUSTODIAN_BACKUP_RECOVERY,
+                                    None,
+                                    anyhow::anyhow!(
+                                        "This node moved to custodian context {current} while the \
+                                         recovery for {recovered} was in flight; start it again"
+                                    ),
+                                    tonic::Code::Aborted,
+                                ));
+                            }
+                            Ok(_) => {}
+                            Err(_) => keychain.set_backup_enc_key(
+                                recovered,
+                                recovery_material.custodian_context().backup_enc_key.clone(),
+                            ),
+                        }
                         keychain.set_dec_key(Some(backup_dec_key));
                     }
                     _ => {
@@ -433,6 +603,19 @@ where
         let res = self
             .restore_from_backup(tonic::Request::new(Empty {}))
             .await;
+        let installed = match (&res, adopting) {
+            (Ok(_), true) => self.install_recovered_context(&recovery_material).await,
+            _ => Ok(()),
+        };
+        // The reconstructed backup decryption key has done its job, whatever the outcome; keeping
+        // it would leave the node able to read its own backups for the rest of the process's life.
+        if let Some(ref backup_vault) = self.crypto_storage.backup_vault
+            && let Some(KeychainProxy::SecretSharing(ref mut keychain)) =
+                backup_vault.lock().await.keychain
+        {
+            keychain.set_dec_key(None);
+        }
+        installed?;
         // Only clear the ephemeral keys after a successful restore so operators can retry on failure.
         if res.is_ok() {
             let mut ephemeral_keys = self.ephemeral_keys.lock().await;
@@ -506,25 +689,35 @@ where
     }
 }
 
-/// Load and validate the recovery validation material associated with the provided context ID
-async fn load_recovery_validation_material<S>(
-    public_storage: &Mutex<S>,
+/// Load and validate the recovery validation material associated with the provided context ID.
+///
+/// Falls back to public storage for a node upgrading from a release that kept it there and whose
+/// private storage is gone, so nothing has imported it yet. Either way the operator signature is
+/// what authenticates it.
+async fn load_recovery_validation_material<PubS: StorageReader>(
+    backup_vault: &Mutex<Vault>,
+    legacy_public: Option<&PubS>,
+    installed: Option<RequestId>,
     custodian_context_id: &ContextId,
     verf_key: &PublicSigKey,
-) -> anyhow::Result<RecoveryValidationMaterial>
-where
-    S: StorageReader + Send,
-{
-    let public_storage_guard = public_storage.lock().await;
-    let recovery_material: RecoveryValidationMaterial = public_storage_guard
-        .read_data(
-            &custodian_context_id.into(),
-            &PubDataType::RecoveryMaterial.to_string(),
-        )
-        .await?;
-    if recovery_material.custodian_context().context_id != (*custodian_context_id).into() {
-        anyhow::bail!("The custodian context associated with the provided context ID is invalid",);
-    }
+) -> anyhow::Result<RecoveryValidationMaterial> {
+    let id = &custodian_context_id.into();
+    let recovery_material = {
+        let guarded_vault = backup_vault.lock().await;
+        if let Some(installed) = installed {
+            // The node has a context, so it recovers under that one; a request naming another must
+            // not be able to move it, least of all onto a retired one an attacker replayed.
+            if installed != *id {
+                anyhow::bail!(
+                    "This node backs up under custodian context {installed}; refusing to recover \
+                     under {id}"
+                );
+            }
+            read_recovery_material_at_id(&guarded_vault.storage, id).await?
+        } else {
+            read_vault_or_legacy(&guarded_vault.storage, legacy_public, id).await?
+        }
+    };
     if !recovery_material.validate(verf_key) {
         anyhow::bail!("Could not verify the signature on the recovery material",);
     }
@@ -559,7 +752,19 @@ async fn filter_custodian_data(
         let role = Role::indexed_from_one(cur_recovery_output.custodian_role as usize);
 
         let cur_signcryption: UnifiedSigncryption = match &cur_recovery_output.backup_output {
-            Some(cur_op_out) => cur_op_out.try_into()?,
+            // Skipped like every other unusable output: one custodian sending a malformed scheme
+            // must not be able to fail a recovery the other t+1 could complete.
+            Some(cur_op_out) => match cur_op_out.try_into() {
+                Ok(signcryption) => signcryption,
+                Err(e) => {
+                    tracing::warn!(
+                        "Could not parse the recovery output of custodian role {}: {e}",
+                        cur_recovery_output.custodian_role
+                    );
+                    skip_reasons.push(RecoverySkipReason::InvalidSigncryption);
+                    continue;
+                }
+            },
             None => {
                 tracing::warn!(
                     "Could not find signcryption for custodian role {}",
@@ -615,24 +820,91 @@ async fn filter_custodian_data(
     Ok(parsed_custodian_rec)
 }
 
-async fn get_latest_backup_id(
-    backup_vault: &Option<Arc<Mutex<Vault>>>,
-) -> anyhow::Result<RequestId> {
-    match backup_vault {
-        None => Err(anyhow_error_and_log(
-            "Backup vault is not configured".to_string(),
-        )),
-        Some(backup_vault) => {
-            let guarded_vault_storage = backup_vault.lock().await;
-            if let Some(KeychainProxy::SecretSharing(ssk)) = guarded_vault_storage.keychain.as_ref()
-            {
-                ssk.get_current_backup_id()
-            } else {
-                anyhow::bail!(
-                    "Backup vault is not setup with a keychain for custodian-based backup recovery"
-                );
-            }
+/// The custodian context to recover under, and the material describing it.
+///
+/// The anchored one wins. A node recovering with empty private storage has no anchor, so the
+/// operator names the context, or, when the vault holds exactly one, that one is taken. Public
+/// storage is never selected from: a node upgrading from a release that kept the material there
+/// must name the context.
+async fn recovery_context<PubS: StorageReader>(
+    backup_vault: &Arc<Mutex<Vault>>,
+    legacy_public: Option<&PubS>,
+    installed: Option<RequestId>,
+    requested: Option<RequestId>,
+) -> anyhow::Result<(RequestId, RecoveryValidationMaterial)> {
+    let data_type = PubDataType::RecoveryMaterial.to_string();
+    let guarded_vault = backup_vault.lock().await;
+    if !matches!(
+        guarded_vault.keychain.as_ref(),
+        Some(KeychainProxy::SecretSharing(_))
+    ) {
+        anyhow::bail!(
+            "Backup vault is not setup with a keychain for custodian-based backup recovery"
+        );
+    }
+    // A node with a context recovers under that one and reads nothing else: recovery is not a
+    // way to move a working node onto another context.
+    if let Some(id) = installed {
+        if let Some(other) = requested.filter(|r| *r != id) {
+            anyhow::bail!(
+                "This node backs up under custodian context {id}; refusing to recover under {other}"
+            );
         }
+        let material = read_recovery_material_at_id(&guarded_vault.storage, &id).await?;
+        return Ok((id, material));
+    }
+    // With nothing installed the operator says which context to recover under; a node that only
+    // ever had one is unambiguous, so it need not be asked.
+    if let Some(id) = requested {
+        let material = read_vault_or_legacy(&guarded_vault.storage, legacy_public, &id).await?;
+        return Ok((id, material));
+    }
+    let vault_ids = guarded_vault.storage.all_data_ids(&data_type).await?;
+    if let Some(id) = sole_context(vault_ids)? {
+        let material = read_recovery_material_at_id(&guarded_vault.storage, &id).await?;
+        return Ok((id, material));
+    }
+    // The vault holds nothing, so the only material left is in the legacy public location, which
+    // is modifiable: whoever writes it also chooses how many objects are there, so "the only one"
+    // is their choice, not a fact. The operator names it, as they must for the recovery itself.
+    anyhow::bail!(
+        "No custodian context to recover: the backup vault holds none. If this node predates the \
+         move of recovery material into the vault, name the context with custodian_context_id."
+    )
+}
+
+/// The vault copy, or the legacy public one where a node without its signing key is allowed it.
+async fn read_vault_or_legacy<V: StorageReader, PubS: StorageReader>(
+    vault: &V,
+    legacy_public: Option<&PubS>,
+    id: &RequestId,
+) -> anyhow::Result<RecoveryValidationMaterial> {
+    match read_recovery_material_at_id(vault, id).await {
+        Ok(material) => Ok(material),
+        Err(e) => match legacy_public {
+            Some(public) => read_recovery_material_at_id(public, id)
+                .await
+                .map_err(|_| e),
+            None => Err(e),
+        },
+    }
+}
+
+fn sole_context(ids: std::collections::HashSet<RequestId>) -> anyhow::Result<Option<RequestId>> {
+    let mut ids: Vec<_> = ids.into_iter().collect();
+    ids.sort();
+    match ids.len() {
+        0 => Ok(None),
+        1 => Ok(Some(ids.remove(0))),
+        n => anyhow::bail!(
+            "No custodian context is installed and the backup vault holds {n}: {ids}. Name the one \
+             to recover under with custodian_context_id",
+            ids = ids
+                .iter()
+                .map(|id| id.to_string())
+                .collect::<Vec<_>>()
+                .join(", ")
+        ),
     }
 }
 
@@ -799,6 +1071,8 @@ where
             PrivDataType::EpochData => {
                 restore_data_type::<PrivS, EpochData>(priv_storage, backup_vault, cur_type).await?;
             }
+            // Never backed up, see `inner_update_backup_vault`.
+            PrivDataType::CustodianContextAnchor => {}
         }
     }
     Ok(())
@@ -1093,7 +1367,11 @@ mod tests {
     use super::*;
     use crate::backup::error::{BackupError, RecoverySkipReason};
     use crate::consts::{DEFAULT_MPC_CONTEXT, SIGNING_KEY_ID};
-    use crate::vault::storage::{StorageProxy, ram::RamStorage, tests::TestType};
+    use crate::vault::storage::{
+        StorageProxy,
+        ram::RamStorage,
+        tests::{TestType, store_dummy_recovery_material},
+    };
     use crate::{
         backup::custodian::{CustodianSetupMessagePayload, HEADER, InternalCustodianContext},
         cryptography::{
@@ -1107,6 +1385,266 @@ mod tests {
     use kms_grpc::kms::v1::{CustodianContext, CustodianSetupMessage, OperatorBackupOutput};
     use rand::SeedableRng;
     use std::{collections::BTreeMap, time::SystemTime};
+
+    /// A vault with an uninitialized secret-sharing keychain, as a node whose private storage is
+    /// gone has at boot.
+    fn uninstalled_vault() -> Arc<Mutex<Vault>> {
+        Arc::new(Mutex::new(Vault {
+            storage: StorageProxy::Ram(RamStorage::new()),
+            keychain: Some(KeychainProxy::SecretSharing(
+                crate::vault::keychain::secretsharing::SecretShareKeychain::new(
+                    AesRng::seed_from_u64(1),
+                ),
+            )),
+        }))
+    }
+
+    /// A node with nothing installed and one context recovers under it without being told.
+    #[tokio::test]
+    async fn recovery_context_takes_the_sole_context() {
+        let (_verf, sk) = gen_sig_keys(&mut AesRng::seed_from_u64(0));
+        let id = RequestId::from_bytes([1; 32]);
+        let vault = uninstalled_vault();
+        store_dummy_recovery_material(&mut vault.lock().await.storage, &id, &sk).await;
+
+        let (selected, _) = recovery_context(&vault, None::<&RamStorage>, None, None)
+            .await
+            .unwrap();
+        assert_eq!(selected, id);
+    }
+
+    /// After a rotation the vault holds several, so the operator must say which — and refusing to
+    /// guess must not mean refusing to recover.
+    #[tokio::test]
+    async fn recovery_context_requires_a_choice_between_several() {
+        let (_verf, sk) = gen_sig_keys(&mut AesRng::seed_from_u64(0));
+        let (first, second) = (
+            RequestId::from_bytes([1; 32]),
+            RequestId::from_bytes([2; 32]),
+        );
+        let vault = uninstalled_vault();
+        {
+            let mut guard = vault.lock().await;
+            store_dummy_recovery_material(&mut guard.storage, &first, &sk).await;
+            store_dummy_recovery_material(&mut guard.storage, &second, &sk).await;
+        }
+
+        assert!(
+            recovery_context(&vault, None::<&RamStorage>, None, None)
+                .await
+                .is_err()
+        );
+        let (selected, _) = recovery_context(&vault, None::<&RamStorage>, None, Some(second))
+            .await
+            .unwrap();
+        assert_eq!(selected, second);
+    }
+
+    /// A node upgrading from a release that kept the material in public storage, whose private
+    /// storage went before it ever booted the new one, still recovers — but only under a context
+    /// the operator names: whoever writes that store also decides what is "the only one" there.
+    #[tokio::test]
+    async fn recovery_context_uses_public_storage_only_when_named() {
+        let (_verf, sk) = gen_sig_keys(&mut AesRng::seed_from_u64(0));
+        let id = RequestId::from_bytes([1; 32]);
+        let vault = uninstalled_vault();
+        let mut public_storage = RamStorage::new();
+        store_dummy_recovery_material(&mut public_storage, &id, &sk).await;
+
+        assert!(
+            recovery_context(&vault, Some(&public_storage), None, None)
+                .await
+                .is_err(),
+            "the sole object in public storage must not select itself"
+        );
+        let (selected, _) = recovery_context(&vault, Some(&public_storage), None, Some(id))
+            .await
+            .unwrap();
+        assert_eq!(selected, id);
+    }
+
+    /// A node that has a context recovers under that one: a request naming another is refused, so
+    /// a replayed retired context cannot move it.
+    #[tokio::test]
+    async fn recovery_context_refuses_to_move_an_installed_node() {
+        let (_verf, sk) = gen_sig_keys(&mut AesRng::seed_from_u64(0));
+        let (installed, rogue) = (
+            RequestId::from_bytes([1; 32]),
+            RequestId::from_bytes([9; 32]),
+        );
+        let vault = uninstalled_vault();
+        let mut public_storage = RamStorage::new();
+        store_dummy_recovery_material(&mut public_storage, &rogue, &sk).await;
+        {
+            let mut guard = vault.lock().await;
+            store_dummy_recovery_material(&mut guard.storage, &installed, &sk).await;
+            store_dummy_recovery_material(&mut guard.storage, &rogue, &sk).await;
+        }
+
+        recovery_context(&vault, Some(&public_storage), Some(installed), Some(rogue))
+            .await
+            .expect_err("a request naming another context must not move an installed node");
+        let (selected, _) = recovery_context(&vault, Some(&public_storage), Some(installed), None)
+            .await
+            .unwrap();
+        assert_eq!(selected, installed);
+    }
+
+    /// A node that still holds its signing key must never take the legacy public location: only
+    /// one whose key is gone may, and only then can public storage offer it a context.
+    #[tokio::test]
+    async fn recovery_context_ignores_public_storage_without_the_legacy_opt_in() {
+        let (_verf, sk) = gen_sig_keys(&mut AesRng::seed_from_u64(0));
+        let id = RequestId::from_bytes([9; 32]);
+        let vault = uninstalled_vault();
+        let mut public_storage = RamStorage::new();
+        store_dummy_recovery_material(&mut public_storage, &id, &sk).await;
+
+        assert!(
+            recovery_context(&vault, None::<&RamStorage>, None, None)
+                .await
+                .is_err(),
+            "the vault holds nothing, so with no legacy opt-in there is nothing to recover"
+        );
+        assert!(
+            recovery_context(&vault, None::<&RamStorage>, None, Some(id))
+                .await
+                .is_err(),
+            "naming an id must not reach public storage either"
+        );
+        let (selected, _) = recovery_context(&vault, Some(&public_storage), None, Some(id))
+            .await
+            .unwrap();
+        assert_eq!(selected, id);
+    }
+
+    /// An operator as a node has it once a restore has put its signing key back.
+    async fn operator_after_restore(
+        sig_key: &PrivateSigKey,
+        anchored: Option<RequestId>,
+    ) -> RealBackupOperator<RamStorage, RamStorage> {
+        let mut priv_storage = RamStorage::new();
+        store_versioned_at_request_id(
+            &mut priv_storage,
+            &SIGNING_KEY_ID,
+            sig_key,
+            &PrivDataType::SigningKey.to_string(),
+        )
+        .await
+        .unwrap();
+        if let Some(id) = anchored {
+            store_custodian_context_anchor(&mut priv_storage, &id)
+                .await
+                .unwrap();
+        }
+        RealBackupOperator::new(
+            BaseKmsStruct::new(kms_grpc::rpc_types::KMSType::Centralized, sig_key.clone()).unwrap(),
+            CryptoMaterialStorage::from(
+                RamStorage::new(),
+                priv_storage,
+                Some(make_unencrypted_vault()),
+            ),
+            None,
+        )
+    }
+
+    #[tokio::test]
+    async fn install_recovered_context_anchors_and_stores_the_material() {
+        let id = RequestId::from_bytes([3; 32]);
+        let (_vk, sk) = gen_sig_keys(&mut AesRng::seed_from_u64(9));
+        let operator = operator_after_restore(&sk, None).await;
+        let material = crate::vault::storage::tests::dummy_recovery_material_at_id(&id, &sk);
+
+        operator.install_recovered_context(&material).await.unwrap();
+
+        assert_eq!(
+            read_custodian_context_anchor(&*operator.crypto_storage.private_storage.lock().await)
+                .await
+                .unwrap(),
+            Some(id)
+        );
+        let vault = operator.crypto_storage.backup_vault.as_ref().unwrap();
+        read_recovery_material_at_id(&vault.lock().await.storage, &id)
+            .await
+            .expect("the material should be in the vault");
+    }
+
+    /// A `NewCustodianContext` that lands while a recovery is in flight must not be undone by it.
+    #[tokio::test]
+    async fn install_recovered_context_aborts_when_another_context_arrived_meanwhile() {
+        let recovering = RequestId::from_bytes([3; 32]);
+        let installed = RequestId::from_bytes([4; 32]);
+        let (_vk, sk) = gen_sig_keys(&mut AesRng::seed_from_u64(9));
+        let operator = operator_after_restore(&sk, Some(installed)).await;
+        let material =
+            crate::vault::storage::tests::dummy_recovery_material_at_id(&recovering, &sk);
+
+        let err = operator
+            .install_recovered_context(&material)
+            .await
+            .expect_err("installing over a newer context must fail");
+        assert_eq!(err.code(), tonic::Code::Aborted);
+        assert_eq!(
+            read_custodian_context_anchor(&*operator.crypto_storage.private_storage.lock().await)
+                .await
+                .unwrap(),
+            Some(installed),
+            "the anchor must still name the context that won the race"
+        );
+    }
+
+    /// Storage never overwrites, so an object already at this id — a hand-placed or truncated copy —
+    /// is what the next boot would read; it must not be anchored.
+    #[tokio::test]
+    async fn install_recovered_context_refuses_a_vault_object_that_is_not_the_material() {
+        let id = RequestId::from_bytes([3; 32]);
+        let (_vk, sk) = gen_sig_keys(&mut AesRng::seed_from_u64(9));
+        let operator = operator_after_restore(&sk, None).await;
+        let vault = operator.crypto_storage.backup_vault.as_ref().unwrap();
+        vault
+            .lock()
+            .await
+            .storage
+            .store_data(
+                &crate::vault::storage::tests::dummy_recovery_material_at_id(
+                    &RequestId::from_bytes([4; 32]),
+                    &sk,
+                ),
+                &id,
+                &PubDataType::RecoveryMaterial.to_string(),
+            )
+            .await
+            .unwrap();
+        let material = crate::vault::storage::tests::dummy_recovery_material_at_id(&id, &sk);
+
+        operator
+            .install_recovered_context(&material)
+            .await
+            .expect_err("a vault object that is not this material must not be anchored");
+        assert_eq!(
+            read_custodian_context_anchor(&*operator.crypto_storage.private_storage.lock().await)
+                .await
+                .unwrap(),
+            None
+        );
+    }
+
+    #[tokio::test]
+    async fn install_recovered_context_accepts_the_context_already_anchored() {
+        let id = RequestId::from_bytes([3; 32]);
+        let (_vk, sk) = gen_sig_keys(&mut AesRng::seed_from_u64(9));
+        let operator = operator_after_restore(&sk, Some(id)).await;
+        let material = crate::vault::storage::tests::dummy_recovery_material_at_id(&id, &sk);
+
+        operator.install_recovered_context(&material).await.unwrap();
+
+        assert_eq!(
+            read_custodian_context_anchor(&*operator.crypto_storage.private_storage.lock().await)
+                .await
+                .unwrap(),
+            Some(id)
+        );
+    }
 
     fn make_unencrypted_vault() -> Vault {
         Vault {

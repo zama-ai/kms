@@ -57,6 +57,10 @@ kmsCore:
     #    epochIds:
     #      - "0x0800000000000000000000000000000000000000000000000000000000000001" # Default Epoch ID
     #      - "0x0800000000000000000000000000000000000000000000000000000000000002" # ID of the first new epoch created
+    # Custodian context to import from public storage on the first boot after upgrading from a
+    # release that kept recovery material there. Remove it once the node reports the context as
+    # anchored; without it the node runs but makes no new backups.
+    custodianContextId: ""
   # Add the following to enable threshold mode:
   thresholdMode:
     enabled: false

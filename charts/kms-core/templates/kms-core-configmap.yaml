@@ -211,6 +211,11 @@ data:
     num_rayon_threads = {{ .Values.kmsCore.thresholdMode.rayonNumThreads }}
     num_tokio_threads = {{ .Values.kmsCore.thresholdMode.tokioWorkerThreads }}
 
+    {{- if .Values.kmsCore.migration.custodianContextId }}
+    [migration]
+    custodian_context_id = {{ .Values.kmsCore.migration.custodianContextId | quote }}
+    {{- end }}
+
     {{- if .Values.kmsCore.migration.contextAssociations }}
       {{- range .Values.kmsCore.migration.contextAssociations }}
     [[migration.context_associations]]

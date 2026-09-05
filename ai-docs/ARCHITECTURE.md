@@ -274,10 +274,10 @@ in server config and unified behind `KeychainProxy`
 - **`AwsKms`** — wrapping key is an AWS KMS CMK. Default and bootstrap path.
 - **`SecretSharing`** — wrapping key is Shamir-shared across a set of
   **custodians**, offline entities who each hold a key share plus a BIP39
-  seed phrase. A custodian context must already be installed before a node
-  can be switched to this mode; the usual flow is to boot on the AWS KMS
-  keychain, provision custodians, then restart against the secret-sharing
-  keychain. New custodian contexts are rejected unless every custodian
+  seed phrase. `NewCustodianContext` requires the backup vault to be configured
+  with this keychain already, and the keychain can only encrypt once that call
+  has installed a context, so a node configured for it makes no backups until
+  its first context exists. New custodian contexts are rejected unless every custodian
   encryption key and every custodian verification key is unique.
 
 Custodian workflows are driven through the
@@ -287,6 +287,35 @@ Custodian workflows are driven through the
 [kms-service.v1.proto](core/grpc/proto/kms-service.v1.proto).
 A separate `RestoreFromBackup` RPC completes restoration on the node for the non-custodian AWS-KMS path.
 
+The `RecoveryValidationMaterial` describing a custodian context — the custodian-signcrypted
+shares of the backup decryption key, plus the commitments and the context itself — lives in the
+**backup vault**, as the one object there that the keychain does not encrypt: it is what recovery
+needs in order to reconstruct that very key, so encrypting it under the key would be circular. Its
+integrity comes from the operator signature it carries, checked at startup once the signing key is
+available, together with a check — applied on every load — that the object is stored under the
+context id its payload names. It sits outside the `<backup_id>/<PrivDataType>/`
+namespace the vault's backup entries use, at `RecoveryMaterial/<context_id>`, so purging a
+context's backups never touches it and vice versa; `vault/storage/mod.rs` holds the accessors.
+
+Which context is current is not decided by the vault. A `CustodianContextAnchor` in **private
+storage** names it, written by `NewCustodianContext` once the material is in the vault and by
+recovery once the private store is back. At boot `adopt_custodian_context`
+([vault/mod.rs](core/service/src/vault/mod.rs)) reads the anchor and points the keychain at that
+one context. Nothing is sorted or listed to make the choice, so a retired context that is still in
+the vault — or was replayed into it — is inert, and a new context whose id happens to sort low is
+not abandoned on the next restart. A node with no anchor makes no backups and says so; it never
+guesses.
+
+Deployments upgrading from a release that kept the material in public storage import it once, with
+`import_configured_legacy_context` ([migration.rs](core/service/src/engine/migration.rs)), which
+reads the single context named by `[migration] custodian_context_id`, checks it against the node's
+own signing key, stores it in the vault, writes the anchor and deletes the public copy. The
+operator names it because public storage is modifiable: were the node to take whatever it found,
+deleting the current object would be enough to leave a retired one as the only candidate. The
+anchor is what stops the import running again, and nothing else at boot reads that folder, so its
+content can neither steer the node nor stall it; the startup sweep lists it only to report
+leftovers.
+
 `NewCustodianContext` points the keychain at the new context and re-encrypts the whole
 vault under it *before* persisting the recovery material, so it is rolled back if any later
 step fails: the keychain is restored to its pre-setup `(context_id, backup_enc_key)` and the
@@ -295,7 +324,8 @@ vault entries written under the failed id are purged
 [context_manager.rs](core/service/src/engine/context_manager.rs) and
 `Vault::purge_backup`). Without that, the node would keep encrypting backups under a key
 whose recovery material was never written, making them unrecoverable. Setups are serialized
-against each other for the same reason.
+against each other for the same reason. The anchor is written last, after the material, so a crash
+anywhere before it leaves the previous context anchored rather than a half-installed one.
 
 Implementation code lives in [core/service/src/backup/](core/service/src/backup/);
 end-to-end tests live at
@@ -371,8 +401,13 @@ Custodian backup readiness is deliberately *not* part of this. It is a property 
 keychain rather than of the published material, and the backup path already reports it:
 `keychain_initialized` ([backup_operator.rs](core/service/src/engine/backup_operator.rs)) asks
 the keychain directly whether a backup encryption key is set, and `inner_update_backup_vault`
-warns and skips the update when it is not — during the same boot, from
-`update_backup_vault(false, OP_BOOT)`.
+skips the update when it is not — during the same boot, from
+`update_backup_vault(false, OP_BOOT)`. That skip logs at error level once the node holds a signing
+key, since from then on it means no backups are being made: the recovery material lives in the
+backup vault, so losing that vault also loses the custodian context, and the node needs a new one.
+
+The recovery-material signature check is part of the same startup pass, but its input comes from
+the backup vault rather than from public storage.
 
 Startup verification never deserializes stored keys or CRSes. Digests are always computed over
 the **raw stored bytes**, never over a serialization of a decoded value: a tfhe format change

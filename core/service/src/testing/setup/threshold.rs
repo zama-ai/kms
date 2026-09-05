@@ -427,10 +427,9 @@ async fn build_threshold_vaults(
     party_count: usize,
     with_custodian_keychain: bool,
 ) -> Result<Vec<Option<Vault>>> {
-    let pub_prefixes = &PUBLIC_STORAGE_PREFIX_THRESHOLD_ALL[0..party_count];
     let backup_prefixes = &BACKUP_STORAGE_PREFIX_THRESHOLD_ALL[0..party_count];
     let mut vaults = Vec::with_capacity(party_count);
-    for (backup_prefix, pub_prefix) in backup_prefixes.iter().zip(pub_prefixes) {
+    for backup_prefix in backup_prefixes.iter() {
         let backup_dir = material_path.join(backup_prefix.as_deref().unwrap());
         std::fs::create_dir_all(&backup_dir)?;
 
@@ -441,17 +440,11 @@ async fn build_threshold_vaults(
         )?);
 
         let keychain = if with_custodian_keychain {
-            let pub_proxy = StorageProxy::from(FileStorage::new(
-                Some(material_path),
-                StorageType::PUB,
-                pub_prefix.as_deref(),
-            )?);
             Some(
                 make_keychain_proxy(
                     &Keychain::SecretSharing(SecretSharingKeychain {}),
                     None,
                     None,
-                    Some(&pub_proxy),
                     false,
                 )
                 .await?,

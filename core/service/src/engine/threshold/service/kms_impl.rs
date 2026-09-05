@@ -66,6 +66,7 @@ use crate::{
     conf::CoreConfig,
     consts::{DEFAULT_EPOCH_ID, DEFAULT_MPC_CONTEXT, MINIMUM_SESSIONS_PREPROC},
     cryptography::attestation::SecurityModuleProxy,
+    engine::migration::import_configured_legacy_context,
     engine::{
         backup_operator::RealBackupOperator,
         base::{
@@ -87,10 +88,10 @@ use crate::{
     grpc::metastore_status_service::MetaStoreStatusServiceImpl,
     util::{meta_store::MetaStore, rate_limiter::RateLimiter},
     vault::{
-        Vault,
+        Vault, adopt_custodian_context,
         storage::{
             Storage, StorageExt, crypto_material::ThresholdCryptoMaterialStorage,
-            read_all_data_from_all_epochs_versioned, read_all_data_versioned,
+            read_all_data_from_all_epochs_versioned, read_all_recovery_material,
             select_data_from_max_epoch,
         },
     },
@@ -506,9 +507,9 @@ pub type RealThresholdKms<PubS, PrivS> = ThresholdKms<
 #[expect(clippy::too_many_arguments)]
 pub async fn new_real_threshold_kms<PubS, PrivS, F>(
     config: CoreConfig,
-    public_storage: PubS,
+    mut public_storage: PubS,
     mut private_storage: PrivS,
-    backup_storage: Option<Vault>,
+    mut backup_storage: Option<Vault>,
     security_module: Option<Arc<SecurityModuleProxy>>,
     mpc_listener: TcpListener,
     base_kms: BaseKmsStruct,
@@ -542,9 +543,23 @@ where
         )
         .await?;
 
+    // Recovery mode has no signing key to check the imported material against, and no private
+    // storage to anchor it in; the recovery RPC reads what it needs from where it still lives.
+    if let (Ok(signing_key), Some(vault)) = (base_kms.sig_key(), backup_storage.as_mut()) {
+        import_configured_legacy_context(
+            &mut public_storage,
+            &mut private_storage,
+            &mut vault.storage,
+            config.migration.as_ref(),
+            &signing_key.verf_key(),
+        )
+        .await?;
+    }
     let recovery_validation_material: HashMap<RequestId, RecoveryValidationMaterial> =
-        read_all_data_versioned(&public_storage, &PubDataType::RecoveryMaterial.to_string())
-            .await?;
+        match backup_storage.as_ref() {
+            Some(vault) => read_all_recovery_material(&vault.storage).await?,
+            None => HashMap::new(),
+        };
 
     // Build public_key_info map using the chronologically latest epoch for each key ID.
     // Epoch IDs are ordered chronologically by comparing their raw bytes as a
@@ -590,6 +605,13 @@ where
                  validation material verification"
             );
         }
+    }
+
+    // Recovery mode has no private storage to anchor from; the recovery RPC picks the context.
+    if base_kms.sig_key().is_ok()
+        && let Some(vault) = backup_storage.as_mut()
+    {
+        adopt_custodian_context(&private_storage, vault, &recovery_validation_material).await?;
     }
 
     let networking_manager = Arc::new(RwLock::new(GrpcNetworkingManager::new(
@@ -879,7 +901,6 @@ where
     {
         anyhow::bail!("Failed to update backup vault when booting");
     }
-    tracing::info!("Successfully updated backup vault when booting");
     // Start updating system metrics
     update_threshold_kms_system_metrics(
         rate_limiter.clone(),

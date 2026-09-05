@@ -204,6 +204,30 @@ impl Named for InternalCustodianContext {
     const NAME: &'static str = "backup::InternalCustodianContext";
 }
 
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize, VersionsDispatch)]
+pub enum CustodianContextAnchorVersions {
+    V0(CustodianContextAnchor),
+}
+
+/// Names the custodian context the node backs up under.
+///
+/// The backup vault also holds material for retired contexts and public storage is modifiable, so
+/// neither can be asked which one is current. Only private storage can.
+///
+/// `sequence` orders anchors written by this node, so replacing one can add the new record before
+/// removing the old and never leave the node with none. It orders trusted local writes only, and
+/// is not a defence against anything.
+#[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize, Versionize)]
+#[versionize(CustodianContextAnchorVersions)]
+pub struct CustodianContextAnchor {
+    pub context_id: RequestId,
+    pub sequence: u64,
+}
+
+impl Named for CustodianContextAnchor {
+    const NAME: &'static str = "backup::CustodianContextAnchor";
+}
+
 impl InternalCustodianContext {
     /// Validate the threshold, roles, payloads, and cryptographic identities of custodian nodes.
     pub(crate) fn validate_nodes(custodian_context: &CustodianContext) -> anyhow::Result<()> {

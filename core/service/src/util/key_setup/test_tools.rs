@@ -6,16 +6,13 @@ pub use crate::client::local_crypto::{
     EncryptionConfig, TestingPlaintext, compute_cipher, compute_cipher_from_stored_key,
     load_material_from_pub_storage, load_pk_from_pub_storage,
 };
-use crate::conf::{self, Keychain};
 use crate::util::file_handling::safe_read_element_versioned;
-use crate::vault::keychain::make_keychain_proxy;
+use crate::vault::VaultDataType;
 use crate::vault::storage::file::FileStorage;
 use crate::vault::storage::{
     StorageReaderExt, StorageType, delete_all_at_request_id, delete_at_request_and_epoch_id,
-    make_storage,
 };
-use crate::vault::{Vault, VaultDataType};
-use kms_grpc::rpc_types::PrivDataType;
+use kms_grpc::rpc_types::{PrivDataType, PubDataType};
 use kms_grpc::{EpochId, RequestId};
 use std::path::Path;
 
@@ -87,78 +84,45 @@ pub async fn purge_pub(pub_path: Option<&Path>, storage_prefixes: &[Option<Strin
 }
 
 /// Purge _all_ backed up data. Both custodian and non-custodian based backups.
-/// Note however that this method does _not_ purge anything in the private or public storage.
+/// Note however that this method does _not_ purge anything in the private or public storage,
+/// nor the recovery material, which describes the custodian context rather than being backed up
+/// under it, and without which a rebooted node could not restore its backups at all.
 pub async fn purge_backup(backup_path: Option<&Path>, storage_prefixes: &[Option<String>]) {
     for storage_prefix in storage_prefixes.iter() {
         let storage =
             FileStorage::new(backup_path, StorageType::BACKUP, storage_prefix.as_deref()).unwrap();
-        // Ignore if the dir does not exist
-        let _ = tokio::fs::remove_dir_all(&storage.root_dir()).await;
+        let Ok(mut entries) = tokio::fs::read_dir(storage.root_dir()).await else {
+            continue;
+        };
+        while let Some(entry) = entries.next_entry().await.unwrap() {
+            if entry.file_name() != *PubDataType::RecoveryMaterial.to_string() {
+                let _ = tokio::fs::remove_dir_all(entry.path()).await;
+            }
+        }
     }
 }
 
-/// Validate that a backup exists
+/// Validate that a backup exists, i.e. that backed-up data is present, ignoring the recovery
+/// material, which exists whenever a custodian context does.
 pub async fn backup_exists(
     backup_path: Option<&Path>,
     storage_prefixes: &[Option<String>],
 ) -> bool {
-    let mut backup_exists = true;
     for storage_prefix in storage_prefixes.iter() {
         let storage =
             FileStorage::new(backup_path, StorageType::BACKUP, storage_prefix.as_deref()).unwrap();
-        let base_path = storage.root_dir();
-        let mut files = tokio::fs::read_dir(base_path).await.unwrap();
-        if files.next_entry().await.unwrap().is_none() {
-            backup_exists = false;
+        let mut entries = tokio::fs::read_dir(storage.root_dir()).await.unwrap();
+        let mut has_backup = false;
+        while let Some(entry) = entries.next_entry().await.unwrap() {
+            if entry.file_name() != *PubDataType::RecoveryMaterial.to_string() {
+                has_backup = true;
+            }
+        }
+        if !has_backup {
+            return false;
         }
     }
-    backup_exists
-}
-
-/// Helper method to construct a backup vault for testing. That is either without encryption (no `Keychain`) or using custodians.
-pub async fn file_backup_vault(
-    keychain_conf: Option<&Keychain>,
-    pub_path: Option<&Path>,
-    backup_path: Option<&Path>,
-    pub_storage_prefix: Option<&str>,
-    backup_storage_prefix: Option<&str>,
-) -> Vault {
-    let create_storage_conf =
-        |path: Option<&Path>, storage_prefix: Option<&str>| match (path, storage_prefix) {
-            (None, None) => None,
-            (None, Some(prefix)) => Some(conf::Storage::File(conf::FileStorage {
-                path: std::env::current_dir()
-                    .unwrap()
-                    .join(crate::consts::KEY_PATH_PREFIX),
-                prefix: Some(prefix.to_string()),
-            })),
-            (Some(path), None) => Some(conf::Storage::File(conf::FileStorage {
-                path: path.to_path_buf(),
-                prefix: None,
-            })),
-            (Some(path), Some(prefix)) => Some(conf::Storage::File(conf::FileStorage {
-                path: path.to_path_buf(),
-                prefix: Some(prefix.to_string()),
-            })),
-        };
-    let backup_storage_conf = create_storage_conf(backup_path, backup_storage_prefix);
-    let pub_storage_conf = create_storage_conf(pub_path, pub_storage_prefix);
-
-    let pub_proxy_storage = make_storage(pub_storage_conf, StorageType::PUB, None).unwrap();
-    let backup_proxy_storage =
-        make_storage(backup_storage_conf, StorageType::BACKUP, None).unwrap();
-    let keychain = match keychain_conf {
-        Some(conf) => Some(
-            make_keychain_proxy(conf, None, None, Some(&pub_proxy_storage), false)
-                .await
-                .unwrap(),
-        ),
-        None => None,
-    };
-    Vault {
-        storage: backup_proxy_storage,
-        keychain,
-    }
+    true
 }
 
 /// Helper method for tests to read the plain custodian backup files without going through the Vault API, and hence decryption.
