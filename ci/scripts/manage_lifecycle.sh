@@ -24,6 +24,22 @@ KUBE_CONFIG="${HOME}/.kube/kind_config_${DEPLOYMENT_TYPE:-threshold}"
 #=============================================================================
 # Start Setup
 #=============================================================================
+# The setup log stops at "helm --wait" when a pod never becomes Ready and never says why; the
+# cluster does.
+dump_cluster_state() {
+    echo "### Pods in ${NAMESPACE}"
+    kubectl get pods -n "${NAMESPACE}" -o wide 2>&1 || true
+    echo "### Recent events"
+    kubectl get events -n "${NAMESPACE}" --sort-by=.lastTimestamp 2>&1 | tail -n 60 || true
+    echo "### Pod descriptions"
+    kubectl describe pods -n "${NAMESPACE}" 2>&1 | tail -n 400 || true
+    echo "### Container logs, previous instance first where one exists"
+    for pod in $(kubectl get pods -n "${NAMESPACE}" -o name 2>/dev/null); do
+        kubectl logs "${pod}" -n "${NAMESPACE}" --all-containers --prefix --previous --tail=100 2>/dev/null || true
+        kubectl logs "${pod}" -n "${NAMESPACE}" --all-containers --prefix --tail=200 2>&1 || true
+    done
+}
+
 start_setup() {
     echo "Starting KMS setup in background..."
 
@@ -86,6 +102,7 @@ start_setup() {
         if ! kill -0 ${SETUP_PID} 2>/dev/null; then
             echo "Setup script terminated unexpectedly!"
             cat "${SETUP_LOG}"
+            dump_cluster_state
             return 1
         fi
 
@@ -96,6 +113,7 @@ start_setup() {
     # Timeout reached
     echo "Timeout waiting for KMS setup to complete"
     cat "${SETUP_LOG}"
+    dump_cluster_state
     kill -TERM ${SETUP_PID} 2>/dev/null || true
     return 1
 }
