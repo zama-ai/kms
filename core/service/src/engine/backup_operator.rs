@@ -79,6 +79,50 @@ pub struct RealBackupOperator<
     ephemeral_keys: Arc<Mutex<Option<(UnifiedPrivateEncKey, UnifiedPublicEncKey)>>>,
 }
 
+/// The reconstructed backup decryption key, released when the recovery ends however it ends — a
+/// cancelled RPC included — since keeping it would leave the node able to read its own backups for
+/// the rest of the process's life. The context the keychain names goes with it unless
+/// `keep_context` is set: the anchor already named it, or the recovery anchored it. Otherwise later
+/// backups would be made under a context no restart would find. The context lock rides along so
+/// the clear runs before any other lifecycle operation can start.
+struct RecoveredKeys {
+    vault: Arc<Mutex<Vault>>,
+    context: RequestId,
+    keep_context: bool,
+    context_guard: Option<tokio::sync::OwnedMutexGuard<()>>,
+    released: bool,
+}
+
+impl RecoveredKeys {
+    async fn release(mut self) {
+        Self::clear(&self.vault, self.context, self.keep_context).await;
+        self.released = true;
+    }
+
+    async fn clear(vault: &Mutex<Vault>, context: RequestId, keep_context: bool) {
+        if let Some(KeychainProxy::SecretSharing(ref mut keychain)) = vault.lock().await.keychain {
+            keychain.set_dec_key(None);
+            // Only the context this recovery set: a setup that ran meanwhile owns the keychain.
+            if !keep_context && keychain.get_current_backup_id().ok() == Some(context) {
+                keychain.restore_backup_enc_key(None);
+            }
+        }
+    }
+}
+
+impl Drop for RecoveredKeys {
+    fn drop(&mut self) {
+        if !self.released {
+            let (vault, context, keep) = (Arc::clone(&self.vault), self.context, self.keep_context);
+            let context_guard = self.context_guard.take();
+            tokio::spawn(async move {
+                RecoveredKeys::clear(&vault, context, keep).await;
+                drop(context_guard);
+            });
+        }
+    }
+}
+
 impl<PubS, PrivS> RealBackupOperator<PubS, PrivS>
 where
     PubS: Storage + Sync + Send + 'static,
@@ -130,9 +174,8 @@ where
         };
         let context_id = material.custodian_context().context_id;
         let mut private_storage = self.crypto_storage.private_storage.lock().await;
-        // Re-read the anchor under the same lock that writes it. The decision to adopt was taken
-        // before the restore, and a NewCustodianContext that finished since has already installed
-        // its own context; writing this one would supersede it and send the node back.
+        // Under the context lock this is still the anchor read before the restore. Re-read so a
+        // dropped lock fails loudly instead of superseding a newer context.
         match read_custodian_context_anchor(&*private_storage)
             .await
             .map_err(fail)?
@@ -487,6 +530,11 @@ where
                 }
             }
         };
+        // Setup and destruction hold this too, so the context chosen below still exists, and is
+        // still the one the keychain and anchor describe, when the restore completes.
+        let context_guard = Arc::clone(&self.crypto_storage.custodian_context_lock)
+            .lock_owned()
+            .await;
         let inner = request.into_inner();
         let (parsed_custodian_rec, operator, recovery_material) = self
             .validate_custodian_backup_recovery_request(
@@ -505,7 +553,7 @@ where
             })?;
         // Only a node with nothing installed adopts the recovered context, so a recovery cannot
         // re-point one that is already working, and a retry after a failed attempt still adopts.
-        // The anchor decides, not the keychain this RPC may itself have written.
+        // The anchor decides, not the keychain.
         let adopting = self
             .installed_context()
             .await
@@ -518,87 +566,90 @@ where
                 )
             })?
             .is_none();
-        match self.crypto_storage.backup_vault {
-            Some(ref backup_vault) => {
-                let mut backup_vault: tokio::sync::MutexGuard<'_, Vault> =
-                    backup_vault.lock().await;
-                match backup_vault.keychain {
-                    Some(KeychainProxy::SecretSharing(ref mut keychain)) => {
-                        let serialized_dec_key = operator
-                            .recover_from_validated(&parsed_custodian_rec)
-                            .map_err(|e| {
-                                MetricedError::new(
-                                    OP_CUSTODIAN_BACKUP_RECOVERY,
-                                    None,
-                                    anyhow::anyhow!(
-                                        "Failed to reconstruct the backup decryption key: {e}"
-                                    ),
-                                    tonic::Code::Internal,
-                                )
-                            })?;
-                        let backup_dec_key: UnifiedPrivateEncKey = safe_deserialize(
-                            std::io::Cursor::new(&*serialized_dec_key),
-                            SAFE_SER_SIZE_LIMIT,
-                        )
+        let Some(backup_vault) = self.crypto_storage.backup_vault.as_ref() else {
+            return Err(MetricedError::new(
+                OP_CUSTODIAN_BACKUP_RECOVERY,
+                None,
+                anyhow::anyhow!("Backup vault is not configured"),
+                tonic::Code::Unavailable,
+            ));
+        };
+        let recovered = recovery_material.custodian_context().context_id;
+        let mut adopted = false;
+        {
+            let mut guarded_vault = backup_vault.lock().await;
+            match guarded_vault.keychain {
+                Some(KeychainProxy::SecretSharing(ref mut keychain)) => {
+                    let serialized_dec_key = operator
+                        .recover_from_validated(&parsed_custodian_rec)
                         .map_err(|e| {
                             MetricedError::new(
                                 OP_CUSTODIAN_BACKUP_RECOVERY,
                                 None,
-                                anyhow::anyhow!("Failed to deserialize backup decryption key: {e}"),
+                                anyhow::anyhow!(
+                                    "Failed to reconstruct the backup decryption key: {e}"
+                                ),
                                 tonic::Code::Internal,
                             )
                         })?;
-                        // The restore addresses the vault under this context, so the keychain
-                        // must name it when boot could not. Reading and writing it in one
-                        // critical section is what makes that safe: a NewCustodianContext that
-                        // completed since the material was loaded has already moved the keychain,
-                        // and overwriting it here would send later backups to the context this
-                        // recovery is for while the anchor names the new one. One landing after
-                        // this section cannot corrupt the restore either: that holds the vault
-                        // lock throughout, and under the other context's key every read fails
-                        // before anything is written.
-                        let recovered = recovery_material.custodian_context().context_id;
-                        match keychain.get_current_backup_id() {
-                            Ok(current) if current != recovered => {
-                                return Err(MetricedError::new(
-                                    OP_CUSTODIAN_BACKUP_RECOVERY,
-                                    None,
-                                    anyhow::anyhow!(
-                                        "This node moved to custodian context {current} while the \
-                                         recovery for {recovered} was in flight; start it again"
-                                    ),
-                                    tonic::Code::Aborted,
-                                ));
-                            }
-                            Ok(_) => {}
-                            Err(_) => keychain.set_backup_enc_key(
-                                recovered,
-                                recovery_material.custodian_context().backup_enc_key.clone(),
-                            ),
-                        }
-                        keychain.set_dec_key(Some(backup_dec_key));
-                    }
-                    _ => {
-                        return Err(MetricedError::new(
+                    let backup_dec_key: UnifiedPrivateEncKey = safe_deserialize(
+                        std::io::Cursor::new(&*serialized_dec_key),
+                        SAFE_SER_SIZE_LIMIT,
+                    )
+                    .map_err(|e| {
+                        MetricedError::new(
                             OP_CUSTODIAN_BACKUP_RECOVERY,
                             None,
-                            anyhow::anyhow!(
-                                "Backup vault is not setup with a keychain for custodian-based backup recovery"
-                            ),
-                            tonic::Code::Unavailable,
-                        ));
+                            anyhow::anyhow!("Failed to deserialize backup decryption key: {e}"),
+                            tonic::Code::Internal,
+                        )
+                    })?;
+                    // The restore addresses the vault under the keychain's context, so a node
+                    // whose boot could not set it takes the recovered one here. Under the
+                    // context lock nothing can have moved it meanwhile; the check stays so a
+                    // dropped lock fails loudly instead of re-pointing later backups.
+                    match keychain.get_current_backup_id() {
+                        Ok(current) if current != recovered => {
+                            return Err(MetricedError::new(
+                                OP_CUSTODIAN_BACKUP_RECOVERY,
+                                None,
+                                anyhow::anyhow!(
+                                    "This node moved to custodian context {current} while the \
+                                 recovery for {recovered} was in flight; start it again"
+                                ),
+                                tonic::Code::Aborted,
+                            ));
+                        }
+                        Ok(_) => {}
+                        Err(_) => {
+                            keychain.set_backup_enc_key(
+                                recovered,
+                                recovery_material.custodian_context().backup_enc_key.clone(),
+                            );
+                            adopted = true;
+                        }
                     }
+                    keychain.set_dec_key(Some(backup_dec_key));
+                }
+                _ => {
+                    return Err(MetricedError::new(
+                        OP_CUSTODIAN_BACKUP_RECOVERY,
+                        None,
+                        anyhow::anyhow!(
+                            "Backup vault is not setup with a keychain for custodian-based backup recovery"
+                        ),
+                        tonic::Code::Unavailable,
+                    ));
                 }
             }
-            None => {
-                return Err(MetricedError::new(
-                    OP_CUSTODIAN_BACKUP_RECOVERY,
-                    None,
-                    anyhow::anyhow!("Backup vault is not configured"),
-                    tonic::Code::Unavailable,
-                ));
-            }
         }
+        let mut keys = RecoveredKeys {
+            vault: Arc::clone(backup_vault),
+            context: recovered,
+            keep_context: !(adopted && adopting),
+            context_guard: Some(context_guard),
+            released: false,
+        };
         // Finally restore the backup data
         let res = self
             .restore_from_backup(tonic::Request::new(Empty {}))
@@ -607,14 +658,8 @@ where
             (Ok(_), true) => self.install_recovered_context(&recovery_material).await,
             _ => Ok(()),
         };
-        // The reconstructed backup decryption key has done its job, whatever the outcome; keeping
-        // it would leave the node able to read its own backups for the rest of the process's life.
-        if let Some(ref backup_vault) = self.crypto_storage.backup_vault
-            && let Some(KeychainProxy::SecretSharing(ref mut keychain)) =
-                backup_vault.lock().await.keychain
-        {
-            keychain.set_dec_key(None);
-        }
+        keys.keep_context |= res.is_ok() && installed.is_ok();
+        keys.release().await;
         installed?;
         // Only clear the ephemeral keys after a successful restore so operators can retry on failure.
         if res.is_ok() {
@@ -1548,6 +1593,49 @@ mod tests {
         )
     }
 
+    /// A context the keychain took on for a recovery that failed must not outlive it, whether the
+    /// recovery ends or is cancelled; one it held already, or one a setup put there since, must.
+    #[tokio::test]
+    async fn recovered_keys_forget_only_the_context_they_adopted() {
+        async fn context_of(vault: &Mutex<Vault>) -> Option<RequestId> {
+            match vault.lock().await.keychain {
+                Some(KeychainProxy::SecretSharing(ref k)) => k.get_current_backup_id().ok(),
+                _ => panic!("expected a secret-sharing keychain"),
+            }
+        }
+        let (id, other) = (
+            RequestId::from_bytes([3; 32]),
+            RequestId::from_bytes([4; 32]),
+        );
+        let vault = Arc::new(Mutex::new(Vault {
+            storage: StorageProxy::Ram(RamStorage::new()),
+            keychain: Some(crate::vault::tests::make_secret_share_keychain(id)),
+        }));
+        let keys = |context, keep_context| RecoveredKeys {
+            vault: Arc::clone(&vault),
+            context,
+            keep_context,
+            context_guard: None,
+            released: false,
+        };
+
+        keys(id, true).release().await;
+        assert_eq!(context_of(&vault).await, Some(id), "a kept context stays");
+        keys(other, false).release().await;
+        assert_eq!(
+            context_of(&vault).await,
+            Some(id),
+            "another context is not ours to forget"
+        );
+        drop(keys(id, false)); // as a cancelled RPC would
+        tokio::task::yield_now().await;
+        assert_eq!(
+            context_of(&vault).await,
+            None,
+            "an adopted context goes with its recovery"
+        );
+    }
+
     #[tokio::test]
     async fn install_recovered_context_anchors_and_stores_the_material() {
         let id = RequestId::from_bytes([3; 32]);
@@ -1569,7 +1657,8 @@ mod tests {
             .expect("the material should be in the vault");
     }
 
-    /// A `NewCustodianContext` that lands while a recovery is in flight must not be undone by it.
+    /// The anchor re-read is the guard against a dropped context lock: a context installed in
+    /// between must abort the install, not be superseded.
     #[tokio::test]
     async fn install_recovered_context_aborts_when_another_context_arrived_meanwhile() {
         let recovering = RequestId::from_bytes([3; 32]);

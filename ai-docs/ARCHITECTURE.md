@@ -300,14 +300,14 @@ context's backups never touches it and vice versa; `vault/storage/mod.rs` holds 
 Which context is current is not decided by the vault. A `CustodianContextAnchor` in **private
 storage** names it, written by `NewCustodianContext` once the material is in the vault and by
 recovery once the private store is back. At boot `adopt_custodian_context`
-([vault/mod.rs](core/service/src/vault/mod.rs)) reads the anchor and points the keychain at that
+([vault/mod.rs](../core/service/src/vault/mod.rs)) reads the anchor and points the keychain at that
 one context. Nothing is sorted or listed to make the choice, so a retired context that is still in
 the vault — or was replayed into it — is inert, and a new context whose id happens to sort low is
 not abandoned on the next restart. A node with no anchor makes no backups and says so; it never
 guesses.
 
 Deployments upgrading from a release that kept the material in public storage import it once, with
-`import_configured_legacy_context` ([migration.rs](core/service/src/engine/migration.rs)), which
+`import_configured_legacy_context` ([migration.rs](../core/service/src/engine/migration.rs)), which
 reads the single context named by `[migration] custodian_context_id`, checks it against the node's
 own signing key, stores it in the vault, writes the anchor and deletes the public copy. The
 operator names it because public storage is modifiable: were the node to take whatever it found,
@@ -323,9 +323,12 @@ vault entries written under the failed id are purged
 (`rollback_failed_custodian_setup` in
 [context_manager.rs](core/service/src/engine/context_manager.rs) and
 `Vault::purge_backup`). Without that, the node would keep encrypting backups under a key
-whose recovery material was never written, making them unrecoverable. Setups are serialized
-against each other for the same reason. The anchor is written last, after the material, so a crash
-anywhere before it leaves the previous context anchored rather than a half-installed one.
+whose recovery material was never written, making them unrecoverable. One failure is judged by the
+anchor instead: a write that reports an error is read back, and if the anchor names the new context
+the setup succeeded; if it cannot be read, the material is kept for whichever anchor wins. Setup,
+destruction and recovery are serialized by `custodian_context_lock` for the same reason. The anchor
+is written last, after the material, so a crash anywhere before it leaves the previous context
+anchored rather than a half-installed one.
 
 Implementation code lives in [core/service/src/backup/](core/service/src/backup/);
 end-to-end tests live at

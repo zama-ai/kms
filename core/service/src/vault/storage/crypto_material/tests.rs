@@ -49,9 +49,9 @@ use crate::{
         },
         delete_at_request_id,
         ram::{FailingRamStorage, RamStorage},
-        read_custodian_context_anchor, read_versioned_at_request_and_epoch_id,
-        read_versioned_at_request_id, store_versioned_at_request_and_epoch_id,
-        store_versioned_at_request_id,
+        read_custodian_context_anchor, read_recovery_material_at_id,
+        read_versioned_at_request_and_epoch_id, read_versioned_at_request_id,
+        store_versioned_at_request_and_epoch_id, store_versioned_at_request_id,
         test_support::StorageEntry,
         tests::TestType,
     },
@@ -136,11 +136,11 @@ async fn write_crs() {
     // write the CRS, first try with storage that are functional
     // then try to write into a failing storage and expect an error
     let pub_storage = Arc::new(Mutex::new(FailingRamStorage::new()));
-    let crypto_storage = CryptoMaterialStorage {
-        public_storage: pub_storage.clone(),
-        private_storage: Arc::new(Mutex::new(RamStorage::new())),
-        backup_vault: None,
-    };
+    let crypto_storage = CryptoMaterialStorage::new(
+        pub_storage.clone(),
+        Arc::new(Mutex::new(RamStorage::new())),
+        None,
+    );
 
     let mut rng = AesRng::seed_from_u64(100);
     let crs_id = RequestId::new_random(&mut rng);
@@ -1336,92 +1336,102 @@ async fn write_backup_keys_no_vault() {
 }
 
 #[tokio::test]
-async fn write_backup_keys_write_failure() {
-    // The anchor write fails, so the context is never installed. The purge must delete exactly the
-    // failed context's entries, which a custodian vault files under `<context_id>/<data_type>/`
-    // (the generic per-request deletion cannot parse those), keep other contexts' entries, and not
-    // mask the failure: the meta store has to record the request as failed.
-    let recovery = dummy_recovery_material("write_backup_keys_write_failure");
-    let req_id = recovery.custodian_context().context_id;
-    let mut vault = Vault {
-        storage: StorageProxy::Ram(RamStorage::new()),
-        keychain: Some(crate::vault::tests::make_secret_share_keychain(req_id)),
-    };
-    // Plant a backup entry for the new context (as the re-encryption preceding
-    // write_backup_keys does) and one for an older context that must survive.
-    let data_id = derive_request_id("write_backup_keys_write_failure_data").unwrap();
-    let planted_path =
-        VaultDataType::CustodianBackupData(req_id, PrivDataType::SigningKey).to_string();
-    let other_id = derive_request_id("write_backup_keys_write_failure_old").unwrap();
-    let other_path =
-        VaultDataType::CustodianBackupData(other_id, PrivDataType::SigningKey).to_string();
-    vault
-        .storage
-        .store_bytes(&[1, 2, 3], &data_id, &planted_path)
-        .await
-        .unwrap();
-    vault
-        .storage
-        .store_bytes(&[4, 5, 6], &data_id, &other_path)
-        .await
-        .unwrap();
+async fn write_backup_keys_anchor_failure_lets_the_anchor_decide() {
+    // The anchor write fails once the material is in the vault. Storage may still have applied it,
+    // so the anchor is read back and decides. Naming the context: the setup succeeded and nothing
+    // is purged. Naming none: exactly the failed context's entries go and the request is recorded
+    // as failed. Unreadable: the material stays for whichever anchor wins. Another context's
+    // entries survive in every case.
+    for case in ["not_applied", "applied", "unreadable"] {
+        let recovery = dummy_recovery_material("write_backup_keys_anchor_failure");
+        let req_id = recovery.custodian_context().context_id;
+        let mut vault = Vault {
+            storage: StorageProxy::Ram(RamStorage::new()),
+            keychain: Some(crate::vault::tests::make_secret_share_keychain(req_id)),
+        };
+        let data_id = derive_request_id("write_backup_keys_anchor_failure_data").unwrap();
+        let planted_path =
+            VaultDataType::CustodianBackupData(req_id, PrivDataType::SigningKey).to_string();
+        let other_id = derive_request_id("write_backup_keys_anchor_failure_old").unwrap();
+        let other_path =
+            VaultDataType::CustodianBackupData(other_id, PrivDataType::SigningKey).to_string();
+        for (bytes, path) in [([1, 2, 3], &planted_path), ([4, 5, 6], &other_path)] {
+            vault
+                .storage
+                .store_bytes(&bytes, &data_id, path)
+                .await
+                .unwrap();
+        }
+        let mut private_storage = FailingRamStorage::new();
+        let anchor_type = PrivDataType::CustodianContextAnchor.to_string();
+        let anchor = StorageEntry::new(req_id, None, anchor_type.as_str());
+        match case {
+            "applied" => private_storage.set_fail_store_after_mutation_at(anchor),
+            "not_applied" => private_storage.set_fail_store_at(anchor),
+            // A corrupt anchor fails every anchor read, the one inside the store included.
+            _ => {
+                private_storage
+                    .store_bytes(&[0xff; 8], &other_id, &anchor_type)
+                    .await
+                    .unwrap();
+            }
+        }
+        let storage = CryptoMaterialStorage::from(RamStorage::new(), private_storage, Some(vault));
+        let meta_store = MetaStore::new_unlimited();
+        let permit = add_req_to_meta_store(&meta_store, &req_id, TEST_METRIC)
+            .await
+            .unwrap();
 
-    let mut private_storage = FailingRamStorage::new();
-    private_storage.set_fail_store_at(StorageEntry::new(
-        req_id,
-        None,
-        PrivDataType::CustodianContextAnchor.to_string(),
-    ));
-    let storage = CryptoMaterialStorage::from(RamStorage::new(), private_storage, Some(vault));
-    let meta_store = MetaStore::new_unlimited();
-    let permit = add_req_to_meta_store(&meta_store, &req_id, TEST_METRIC)
-        .await
-        .unwrap();
-
-    assert_eq!(
-        storage
+        let res = storage
             .write_backup_keys(recovery, Arc::clone(&meta_store), permit)
-            .await,
-        Err(StorageError::Writing)
-    );
-    assert!(matches!(
-        meta_store
-            .read()
-            .await
-            .retrieve(&req_id)
-            .expect("request should remain tracked in meta store"),
-        EntryState::Done(Err(_))
-    ));
-    // No context is installed, and the failed one's entries are purged while others survive.
-    assert!(
-        read_custodian_context_anchor(&*storage.private_storage.lock().await)
-            .await
-            .unwrap()
-            .is_none()
-    );
-    let vault = storage.get_backup_vault().unwrap();
-    let vault = vault.lock().await;
-    assert!(
-        !vault
-            .storage
-            .data_exists(&req_id, &PubDataType::RecoveryMaterial.to_string())
-            .await
-            .unwrap()
-    );
-    assert!(
-        !vault
+            .await;
+        let recorded = meta_store.read().await.retrieve(&req_id).unwrap().clone();
+        let anchored = read_custodian_context_anchor(&*storage.private_storage.lock().await).await;
+        let vault = storage.get_backup_vault().unwrap();
+        let vault = vault.lock().await;
+        let material = read_recovery_material_at_id(&vault.storage, &req_id).await;
+        let planted = vault
             .storage
             .data_exists(&data_id, &planted_path)
             .await
-            .unwrap()
-    );
-    assert!(
-        vault
-            .storage
-            .data_exists(&data_id, &other_path)
-            .await
-            .unwrap()
-    );
+            .unwrap();
+        match case {
+            "applied" => {
+                assert_eq!(res, Ok(()));
+                assert!(matches!(recorded, EntryState::Done(Ok(_))));
+                assert_eq!(anchored.unwrap(), Some(req_id));
+                assert!(
+                    material.is_ok() && planted,
+                    "an anchored context keeps its entries"
+                );
+            }
+            "not_applied" => {
+                assert_eq!(res, Err(StorageError::Writing));
+                assert!(matches!(recorded, EntryState::Done(Err(_))));
+                assert_eq!(anchored.unwrap(), None);
+                assert!(
+                    material.is_err() && !planted,
+                    "an unanchored failure is purged"
+                );
+            }
+            _ => {
+                assert_eq!(res, Err(StorageError::Writing));
+                assert!(matches!(recorded, EntryState::Done(Err(_))));
+                assert!(anchored.is_err());
+                assert!(
+                    material.is_ok() && planted,
+                    "an undecidable anchor keeps the material"
+                );
+            }
+        }
+        assert!(
+            vault
+                .storage
+                .data_exists(&data_id, &other_path)
+                .await
+                .unwrap()
+        );
+    }
 }
 
 #[tokio::test]
@@ -1489,79 +1499,93 @@ async fn write_backup_keys_duplicate_keeps_existing_backup() {
 
 #[cfg(unix)]
 #[tokio::test]
-async fn write_backup_keys_purge_failure_keeps_write_error() {
-    // Even when the backup-vault purge itself fails after a failed setup, the meta
-    // store and the caller must still see the root-cause error, not a purging one.
+async fn write_backup_keys_material_failure_purges_the_context() {
+    // The material write fails, so the entries re-encrypted under the new context are purged.
+    // When the purge itself fails too, the meta store and the caller still see the root cause.
     use crate::vault::storage::{StorageType, file::FileStorage};
     use std::os::unix::fs::PermissionsExt;
 
-    let recovery = dummy_recovery_material("write_backup_keys_purge_failure");
-    let req_id = recovery.custodian_context().context_id;
-    let temp_dir = tempfile::tempdir().unwrap();
-    let backup_storage =
-        FileStorage::new(Some(temp_dir.path()), StorageType::BACKUP, None).unwrap();
-    let backup_root = backup_storage.root_dir().to_path_buf();
-    let mut vault = Vault {
-        storage: StorageProxy::from(backup_storage),
-        keychain: Some(crate::vault::tests::make_secret_share_keychain(req_id)),
-    };
-    let data_id = derive_request_id("write_backup_keys_purge_failure_data").unwrap();
-    vault
-        .store_bytes(&[1, 2, 3], &data_id, &PrivDataType::SigningKey.to_string())
-        .await
-        .unwrap();
-
-    // Read-only directories: the entry's so the purge cannot delete it, the material's so the
-    // write fails in the first place.
-    let entry_dir = backup_root
-        .join(req_id.to_string())
-        .join(PrivDataType::SigningKey.to_string());
-    let material_dir = backup_root.join(PubDataType::RecoveryMaterial.to_string());
-    std::fs::create_dir_all(&material_dir).unwrap();
-    let saved = std::fs::metadata(&entry_dir).unwrap().permissions();
-    let mut read_only = saved.clone();
-    read_only.set_mode(0o555);
-    for dir in [&entry_dir, &material_dir] {
-        std::fs::set_permissions(dir, read_only.clone()).unwrap();
-    }
-    // Root ignores directory permissions; skip the assertions if the purge
-    // failure cannot be induced.
-    let probe = entry_dir.join(".probe");
-    let perms_enforced = std::fs::File::create(&probe).is_err();
-    let _ = std::fs::remove_file(&probe);
-
-    let outcome = if perms_enforced {
-        let storage =
-            CryptoMaterialStorage::from(RamStorage::new(), RamStorage::new(), Some(vault));
-        let meta_store = MetaStore::new_unlimited();
-        let permit = add_req_to_meta_store(&meta_store, &req_id, TEST_METRIC)
+    for purge_blocked in [false, true] {
+        let recovery = dummy_recovery_material("write_backup_keys_purge_failure");
+        let req_id = recovery.custodian_context().context_id;
+        let temp_dir = tempfile::tempdir().unwrap();
+        let backup_storage =
+            FileStorage::new(Some(temp_dir.path()), StorageType::BACKUP, None).unwrap();
+        let backup_root = backup_storage.root_dir().to_path_buf();
+        let mut vault = Vault {
+            storage: StorageProxy::from(backup_storage),
+            keychain: Some(crate::vault::tests::make_secret_share_keychain(req_id)),
+        };
+        let data_id = derive_request_id("write_backup_keys_purge_failure_data").unwrap();
+        vault
+            .store_bytes(&[1, 2, 3], &data_id, &PrivDataType::SigningKey.to_string())
             .await
             .unwrap();
-        Some((
-            storage
-                .write_backup_keys(recovery, Arc::clone(&meta_store), permit)
-                .await,
-            meta_store,
-        ))
-    } else {
-        None
-    };
+        let planted_path =
+            VaultDataType::CustodianBackupData(req_id, PrivDataType::SigningKey).to_string();
 
-    // Always restore permissions so the tempdir can be cleaned up.
-    for dir in [&entry_dir, &material_dir] {
-        std::fs::set_permissions(dir, saved.clone()).unwrap();
-    }
+        // Read-only directories: the material's so the write fails, the entry's so the purge cannot
+        // delete it either.
+        let entry_dir = backup_root
+            .join(req_id.to_string())
+            .join(PrivDataType::SigningKey.to_string());
+        let material_dir = backup_root.join(PubDataType::RecoveryMaterial.to_string());
+        std::fs::create_dir_all(&material_dir).unwrap();
+        let locked = if purge_blocked {
+            vec![&material_dir, &entry_dir]
+        } else {
+            vec![&material_dir]
+        };
+        let saved = std::fs::metadata(&entry_dir).unwrap().permissions();
+        let mut read_only = saved.clone();
+        read_only.set_mode(0o555);
+        for dir in &locked {
+            std::fs::set_permissions(dir, read_only.clone()).unwrap();
+        }
+        // Root ignores directory permissions; skip the assertions if the failure cannot be induced.
+        let probe = material_dir.join(".probe");
+        let perms_enforced = std::fs::File::create(&probe).is_err();
+        let _ = std::fs::remove_file(&probe);
 
-    if let Some((res, meta_store)) = outcome {
-        assert_eq!(res, Err(StorageError::Writing));
-        assert!(matches!(
-            meta_store
-                .read()
+        let outcome = if perms_enforced {
+            let storage =
+                CryptoMaterialStorage::from(RamStorage::new(), RamStorage::new(), Some(vault));
+            let meta_store = MetaStore::new_unlimited();
+            let permit = add_req_to_meta_store(&meta_store, &req_id, TEST_METRIC)
                 .await
-                .retrieve(&req_id)
-                .expect("request should remain tracked in meta store"),
-            EntryState::Done(Err(_))
-        ));
+                .unwrap();
+            let res = storage
+                .write_backup_keys(recovery, Arc::clone(&meta_store), permit)
+                .await;
+            Some((res, meta_store, storage))
+        } else {
+            None
+        };
+
+        // Always restore permissions so the tempdir can be cleaned up.
+        for dir in &locked {
+            std::fs::set_permissions(dir, saved.clone()).unwrap();
+        }
+
+        if let Some((res, meta_store, storage)) = outcome {
+            assert_eq!(res, Err(StorageError::Writing));
+            assert!(matches!(
+                meta_store.read().await.retrieve(&req_id).unwrap(),
+                EntryState::Done(Err(_))
+            ));
+            let vault = storage.get_backup_vault().unwrap();
+            let planted = vault
+                .lock()
+                .await
+                .storage
+                .data_exists(&data_id, &planted_path)
+                .await
+                .unwrap();
+            assert_eq!(
+                planted, purge_blocked,
+                "the failed context's entry is purged when it can be"
+            );
+        }
     }
 }
 

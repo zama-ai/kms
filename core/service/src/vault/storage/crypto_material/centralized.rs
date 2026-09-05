@@ -4,7 +4,7 @@
 //! used in the centralized KMS variant.
 
 use std::{collections::HashMap, sync::Arc};
-use tokio::sync::{Mutex, OwnedRwLockReadGuard, RwLock};
+use tokio::sync::{OwnedRwLockReadGuard, RwLock};
 
 use kms_grpc::{
     RequestId,
@@ -50,11 +50,7 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: StorageExt + Send + Sync + 's
         fhe_keys: HashMap<(RequestId, EpochId), KmsFheKeyHandles>,
     ) -> Self {
         Self {
-            inner: CryptoMaterialStorage {
-                public_storage: Arc::new(Mutex::new(public_storage)),
-                private_storage: Arc::new(Mutex::new(private_storage)),
-                backup_vault: backup_vault.map(|x| Arc::new(Mutex::new(x))),
-            },
+            inner: CryptoMaterialStorage::from(public_storage, private_storage, backup_vault),
             fhe_keys: Arc::new(RwLock::new(fhe_keys)),
         }
     }

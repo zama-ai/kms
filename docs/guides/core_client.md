@@ -260,7 +260,7 @@ The steps needed are as follows:
   ```{bash}
   $ cargo run --bin kms-core-client -- -f <single-core-config-file> custodian-backup-recovery -i <custodian context ID> -r "<recovery output from custodian 1>" -r "<recovery output from custodian 2>" ..
   ```
-  That is, `-i` expresses the custodian context ID, which is given as output from `custodian-recovery-init` above. The `-r` arguments are the base64 partially decrypted outputs from the custodians for this KMS node (at least `t + 1` of them).
+  That is, `-i` is the custodian context ID the recovery is for, as printed by `new-custodian-context`. The `-r` arguments are the base64 partially decrypted outputs from the custodians for this KMS node (at least `t + 1` of them).
   As a concrete example:
   ```{bash}
   $ cargo run --bin kms-core-client -- -f  core-client/config/client_local_threshold_custodian_backup.toml custodian-backup-recovery -i bca56548a3913ac0067b0b84f1544cd53880eb553a71e3a29444dbf10209aba8 -r "<recovery output 1>" -r "<recovery output 2>" -r "<recovery output 3>"
