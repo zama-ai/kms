@@ -1,18 +1,20 @@
 use crate::conf::MigrationConfig;
 use crate::consts::{DEFAULT_EPOCH_ID, DEFAULT_MPC_CONTEXT, SIGNING_KEY_ID};
+use crate::cryptography::signatures::PublicSigKey;
 use crate::engine::base::derive_request_id;
 use crate::engine::threshold::service::epoch_manager::EpochData;
 use crate::engine::threshold::service::session::PRSSSetupCombined;
 use crate::util::key_setup::ensure_all_verf_material;
 use crate::vault::storage::crypto_material::get_core_signing_key;
 use crate::vault::storage::{
-    Storage, StorageExt, StorageReader, read_context_at_id, read_versioned_at_request_id,
-    store_versioned_at_request_id,
+    Storage, StorageExt, StorageReader, delete_at_request_id, read_context_at_id,
+    read_custodian_context_anchor, read_recovery_material_at_id, read_versioned_at_request_id,
+    store_custodian_context_anchor, store_recovery_material, store_versioned_at_request_id,
 };
 use algebra::galois_rings::degree_4::{ResiduePolyF4Z64, ResiduePolyF4Z128};
-use kms_grpc::ContextId;
 use kms_grpc::identifiers::EpochId;
-use kms_grpc::rpc_types::{KMSType, PrivDataType};
+use kms_grpc::rpc_types::{KMSType, PrivDataType, PubDataType};
+use kms_grpc::{ContextId, RequestId};
 use std::collections::{HashMap, HashSet};
 use std::str::FromStr;
 use std::sync::LazyLock;
@@ -145,6 +147,93 @@ where
     migrate_public_verification_material(priv_storage, pub_storage).await
 }
 
+/// Import the recovery material of `context_id` from public storage, where releases before the
+/// move kept it, and anchor that context.
+///
+/// The operator names the context: public storage is modifiable, so deleting the current object
+/// would otherwise be enough to leave a retired one as the node's only candidate. Nothing else
+/// there is read, listed or trusted, and the anchor this writes is what stops the import running
+/// again.
+pub async fn import_configured_legacy_context<PubS, PrivS, BackS>(
+    pub_storage: &mut PubS,
+    priv_storage: &mut PrivS,
+    backup_storage: &mut BackS,
+    migration: Option<&MigrationConfig>,
+    verf_key: &PublicSigKey,
+) -> anyhow::Result<()>
+where
+    PubS: Storage + Sync + Send,
+    PrivS: Storage + Sync + Send,
+    BackS: Storage + Sync + Send,
+{
+    let Some(configured) = migration.and_then(|m| m.custodian_context_id.as_deref()) else {
+        return Ok(());
+    };
+    if read_custodian_context_anchor(priv_storage).await?.is_some() {
+        tracing::warn!(
+            "A custodian context is already anchored; remove [migration] custodian_context_id, \
+             which would otherwise be applied again if the anchor is ever lost"
+        );
+        return Ok(());
+    }
+    let context_id = &RequestId::from_str(configured).map_err(|e| {
+        anyhow::anyhow!("Invalid [migration] custodian_context_id {configured}: {e}")
+    })?;
+    // Material for any other context means this node has installed one since, so the configured id
+    // is stale and applying it would move the node backwards. Only the operator can resolve that.
+    let data_type = PubDataType::RecoveryMaterial.to_string();
+    let vault_ids = backup_storage.all_data_ids(&data_type).await?;
+    if vault_ids.iter().any(|id| id != context_id) {
+        tracing::error!(
+            "[migration] custodian_context_id names {context_id} but the backup vault already \
+             holds other custodian contexts, so this node has moved on and the setting was not \
+             applied. Remove it."
+        );
+        return Ok(());
+    }
+    if backup_storage.data_exists(context_id, &data_type).await? {
+        tracing::info!("Custodian recovery material {context_id} is already in the backup vault");
+    } else {
+        let Ok(material) = read_recovery_material_at_id(pub_storage, context_id).await else {
+            // Public storage is modifiable, so a missing or corrupt object here is not a reason to
+            // stop: the node runs without backups until an operator sorts it out.
+            tracing::error!(
+                "Could not read custodian recovery material {context_id} from public storage, so \
+                 no context is installed and no backups will be made. Copy it into the backup \
+                 vault by hand, or correct [migration] custodian_context_id."
+            );
+            return Ok(());
+        };
+        if !material.validate(verf_key) {
+            tracing::error!(
+                "Custodian recovery material {context_id} in public storage is not signed by this \
+                 node, so it was not imported and no backups will be made."
+            );
+            return Ok(());
+        }
+        store_recovery_material(backup_storage, &material).await?;
+        tracing::info!("Imported custodian recovery material {context_id} into the backup vault");
+    }
+    // Both branches land here, so a hand-placed or truncated vault object cannot cost the node the
+    // public copy it was told to replace.
+    if let Err(e) = read_recovery_material_at_id(backup_storage, context_id).await {
+        tracing::error!(
+            "Custodian recovery material {context_id} in the backup vault is unreadable ({e}), so \
+             no context is installed and no backups will be made. Replace it, or correct \
+             [migration] custodian_context_id."
+        );
+        return Ok(());
+    }
+    store_custodian_context_anchor(priv_storage, context_id).await?;
+    // A failed delete leaves the object for the startup sweep to report; nothing reads it.
+    if let Err(e) = delete_at_request_id(pub_storage, context_id, &data_type).await {
+        tracing::warn!(
+            "Could not delete custodian recovery material {context_id} from public storage: {e}"
+        );
+    }
+    Ok(())
+}
+
 /// TODO Placeholder method to ensure we remember to clean up upgraded material at the next version (0.16.0)
 #[allow(dead_code)]
 pub async fn migrate_to_0_16_x<PrivS>(
@@ -207,7 +296,8 @@ where
         tracing::info!("No migration needed for centralized KMS");
         return Ok(());
     }
-    let inner_migration_conf = match migration_config {
+    let inner_migration_conf = match migration_config.filter(|c| !c.context_associations.is_empty())
+    {
         Some(inner_migration_conf) => inner_migration_conf,
         None => {
             // This should only be allowed on a fresh system, and not an upgraded system
@@ -2469,6 +2559,7 @@ mod tests {
                     epoch_ids,
                 })
                 .collect(),
+            custodian_context_id: None,
         }
     }
 
@@ -3252,6 +3343,230 @@ mod tests {
             snapshot(&pub_storage, &NON_LEGACY_VERF_MATERIAL_TYPES).await,
             after_first_run
         );
+    }
+
+    mod recovery_material {
+        use super::*;
+        use crate::conf::MigrationConfig;
+        use crate::cryptography::signatures::gen_sig_keys;
+        use crate::vault::storage::tests::{
+            dummy_recovery_material_at_id, store_dummy_recovery_material,
+        };
+        use crate::vault::storage::{
+            read_all_recovery_material, read_custodian_context_anchor, read_recovery_material_at_id,
+        };
+        use aes_prng::AesRng;
+        use rand::SeedableRng;
+
+        fn config_for(id: &RequestId) -> MigrationConfig {
+            MigrationConfig {
+                context_associations: Vec::new(),
+                custodian_context_id: Some(id.to_string()),
+            }
+        }
+
+        /// Public storage holding recovery material for `id`, and the key it is signed with.
+        async fn legacy_node(id: &RequestId) -> (RamStorage, PrivateSigKey) {
+            let (_verf_key, sig_key) = gen_sig_keys(&mut AesRng::seed_from_u64(0));
+            let mut pub_storage = RamStorage::new();
+            store_dummy_recovery_material(&mut pub_storage, id, &sig_key).await;
+            (pub_storage, sig_key)
+        }
+
+        #[tokio::test]
+        async fn imports_the_configured_context_and_anchors_it() {
+            let id = RequestId::from_bytes([1; 32]);
+            let (mut pub_storage, sig_key) = legacy_node(&id).await;
+            let (mut priv_storage, mut backup_storage) = (RamStorage::new(), RamStorage::new());
+
+            import_configured_legacy_context(
+                &mut pub_storage,
+                &mut priv_storage,
+                &mut backup_storage,
+                Some(&config_for(&id)),
+                &PublicSigKey::from_sk(&sig_key),
+            )
+            .await
+            .unwrap();
+
+            assert!(
+                read_recovery_material_at_id(&backup_storage, &id)
+                    .await
+                    .is_ok()
+            );
+            assert_eq!(
+                read_custodian_context_anchor(&priv_storage).await.unwrap(),
+                Some(id)
+            );
+            assert!(
+                pub_storage
+                    .all_data_ids(&PubDataType::RecoveryMaterial.to_string())
+                    .await
+                    .unwrap()
+                    .is_empty()
+            );
+        }
+
+        /// The anchor is what stops the import, so public storage is never read again — the one
+        /// boot that reads it is the only one an attacker could aim at.
+        #[tokio::test]
+        async fn does_nothing_once_a_context_is_anchored() {
+            let id = RequestId::from_bytes([1; 32]);
+            let (mut pub_storage, sig_key) = legacy_node(&id).await;
+            let (mut priv_storage, mut backup_storage) = (RamStorage::new(), RamStorage::new());
+            store_custodian_context_anchor(&mut priv_storage, &RequestId::from_bytes([2; 32]))
+                .await
+                .unwrap();
+
+            import_configured_legacy_context(
+                &mut pub_storage,
+                &mut priv_storage,
+                &mut backup_storage,
+                Some(&config_for(&id)),
+                &PublicSigKey::from_sk(&sig_key),
+            )
+            .await
+            .unwrap();
+
+            assert!(
+                read_all_recovery_material(&backup_storage)
+                    .await
+                    .unwrap()
+                    .is_empty()
+            );
+            assert_eq!(
+                read_custodian_context_anchor(&priv_storage).await.unwrap(),
+                Some(RequestId::from_bytes([2; 32]))
+            );
+        }
+
+        #[tokio::test]
+        async fn does_nothing_without_configuration() {
+            let id = RequestId::from_bytes([1; 32]);
+            let (mut pub_storage, sig_key) = legacy_node(&id).await;
+            let (mut priv_storage, mut backup_storage) = (RamStorage::new(), RamStorage::new());
+
+            import_configured_legacy_context(
+                &mut pub_storage,
+                &mut priv_storage,
+                &mut backup_storage,
+                None,
+                &PublicSigKey::from_sk(&sig_key),
+            )
+            .await
+            .unwrap();
+
+            assert!(
+                read_custodian_context_anchor(&priv_storage)
+                    .await
+                    .unwrap()
+                    .is_none()
+            );
+            assert!(
+                read_recovery_material_at_id(&pub_storage, &id)
+                    .await
+                    .is_ok(),
+                "the public copy must be left for the operator"
+            );
+        }
+
+        /// Material another node signed must not reach the vault, however it got into public storage.
+        #[tokio::test]
+        async fn refuses_material_this_node_did_not_sign() {
+            let id = RequestId::from_bytes([1; 32]);
+            let (mut pub_storage, _sig_key) = legacy_node(&id).await;
+            let (_other_verf_key, other_sig_key) = gen_sig_keys(&mut AesRng::seed_from_u64(7));
+            let (mut priv_storage, mut backup_storage) = (RamStorage::new(), RamStorage::new());
+
+            // Reported, not fatal: public storage is modifiable, so its content must never be
+            // able to stop the boot.
+            import_configured_legacy_context(
+                &mut pub_storage,
+                &mut priv_storage,
+                &mut backup_storage,
+                Some(&config_for(&id)),
+                &PublicSigKey::from_sk(&other_sig_key),
+            )
+            .await
+            .unwrap();
+            assert!(
+                read_all_recovery_material(&backup_storage)
+                    .await
+                    .unwrap()
+                    .is_empty()
+            );
+            assert!(
+                read_custodian_context_anchor(&priv_storage)
+                    .await
+                    .unwrap()
+                    .is_none()
+            );
+        }
+
+        #[tokio::test]
+        async fn anchors_material_already_in_the_vault() {
+            let id = RequestId::from_bytes([1; 32]);
+            let (_verf_key, sig_key) = gen_sig_keys(&mut AesRng::seed_from_u64(0));
+            let (mut pub_storage, mut priv_storage) = (RamStorage::new(), RamStorage::new());
+            let mut backup_storage = RamStorage::new();
+            store_dummy_recovery_material(&mut backup_storage, &id, &sig_key).await;
+
+            import_configured_legacy_context(
+                &mut pub_storage,
+                &mut priv_storage,
+                &mut backup_storage,
+                Some(&config_for(&id)),
+                &PublicSigKey::from_sk(&sig_key),
+            )
+            .await
+            .unwrap();
+
+            assert_eq!(
+                read_custodian_context_anchor(&priv_storage).await.unwrap(),
+                Some(id)
+            );
+        }
+
+        /// An operator told to hand-copy the material can leave a truncated or foreign object in the
+        /// vault; the public copy is the only other one, so it must survive.
+        #[tokio::test]
+        async fn keeps_public_material_when_the_vault_copy_is_unreadable() {
+            let id = RequestId::from_bytes([1; 32]);
+            let (_verf_key, sig_key) = gen_sig_keys(&mut AesRng::seed_from_u64(0));
+            let (mut pub_storage, mut priv_storage) = (RamStorage::new(), RamStorage::new());
+            let mut backup_storage = RamStorage::new();
+            let data_type = PubDataType::RecoveryMaterial.to_string();
+            store_dummy_recovery_material(&mut pub_storage, &id, &sig_key).await;
+            // Exists at `id`, but names another context, so it fails the payload-id check.
+            backup_storage
+                .store_data(
+                    &dummy_recovery_material_at_id(&RequestId::from_bytes([2; 32]), &sig_key),
+                    &id,
+                    &data_type,
+                )
+                .await
+                .unwrap();
+
+            import_configured_legacy_context(
+                &mut pub_storage,
+                &mut priv_storage,
+                &mut backup_storage,
+                Some(&config_for(&id)),
+                &PublicSigKey::from_sk(&sig_key),
+            )
+            .await
+            .unwrap();
+
+            assert_eq!(
+                read_custodian_context_anchor(&priv_storage).await.unwrap(),
+                None,
+                "an unreadable vault copy must not be anchored"
+            );
+            assert!(
+                pub_storage.data_exists(&id, &data_type).await.unwrap(),
+                "the public copy must survive an unreadable vault copy"
+            );
+        }
     }
 
     // S3 storage tests, run against an in-process mock S3 (no MinIO) via `create_s3_storage`.

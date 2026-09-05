@@ -169,6 +169,7 @@ fn build_test_core_config(
                 context_id: DEFAULT_MPC_CONTEXT.to_string(),
                 epoch_ids: vec![DEFAULT_EPOCH_ID.to_string()],
             }],
+            custodian_context_id: None,
         }),
     }
 }
@@ -2082,6 +2083,7 @@ async fn custodian_backup_init(config_path: &Path, test_path: &Path) -> Vec<Stri
         config_path,
         CCCommand::CustodianRecoveryInit(RecoveryInitParameters {
             overwrite_ephemeral_key: false,
+            custodian_context_id: None,
         }),
         200,
     );

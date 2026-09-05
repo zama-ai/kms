@@ -64,6 +64,8 @@ prefix = "PRIV-p1"
 # policy for this root key should have only allow its use to known and attested
 # versions of the Core. (Unset by default)
 #
+# secret_sharing is not accepted here: it only decrypts once the custodians have reconstructed
+# its key, and private storage must be readable at boot.
 # [private_vault.keychain.aws_kms]
 # root_key_id = "root_key_id"
 
@@ -97,6 +99,12 @@ prefix = "BACKUP-p1"
 # [backup_vault.keychain.aws_kms]
 # root_key_id = "zama_kms_backup_root_key"
 # root_key_spec = "asymm"
+
+# On the first boot after upgrading from a release that kept custodian recovery material in
+# public storage, name the context to import; remove the line once the node reports it as
+# anchored. Without it the node runs but makes no new backups.
+# [migration]
+# custodian_context_id = "<hex context id>"
 
 # Configuration for communicating with other KMS nodes.
 # Not needed when running in centralized mode.

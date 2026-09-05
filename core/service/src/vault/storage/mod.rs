@@ -1,5 +1,6 @@
 use crate::{
     anyhow_error_and_log,
+    backup::{custodian::CustodianContextAnchor, operator::RecoveryValidationMaterial},
     conf::{FileStorage, RamStorage, S3Storage, Storage as StorageConf},
     engine::context,
     vault::Vault,
@@ -512,6 +513,150 @@ pub async fn delete_context_at_id<S: Storage>(
     .await
 }
 
+/// Store the recovery material for a custodian context in the backup vault's storage.
+///
+/// The keychain does not wrap this object: it carries the custodian-signcrypted shares of the
+/// backup decryption key, so it must be readable before that key exists. Its operator signature
+/// authenticates it instead.
+///
+/// Takes the raw storage: the [`Vault`] addresses only [`PrivDataType`]s under the current backup
+/// id, which this material determines at startup. It therefore lives at
+/// `RecoveryMaterial/<context_id>`, outside the namespace [`Vault::purge_backup`] walks.
+pub async fn store_recovery_material<S: Storage>(
+    backup_storage: &mut S,
+    material: &RecoveryValidationMaterial,
+) -> anyhow::Result<StoreWriteOutcome> {
+    let context_id = material.custodian_context().context_id;
+    backup_storage
+        .store_data(
+            material,
+            &context_id,
+            &PubDataType::RecoveryMaterial.to_string(),
+        )
+        .await
+        .map_err(|e| {
+            anyhow_error_and_log(format!(
+                "Could not store recovery material {context_id}: {e}"
+            ))
+        })
+}
+
+/// Store the anchor naming the custodian context the node backs up under.
+///
+/// The new record is written before the superseded ones are removed, so an interrupted replacement
+/// leaves both and the higher sequence decides; it never leaves the node with no anchor while one
+/// existed. The record for `context_id` is rewritten because storage never overwrites, and losing
+/// only that one still leaves the previous context anchored.
+pub async fn store_custodian_context_anchor<S: Storage>(
+    priv_storage: &mut S,
+    context_id: &RequestId,
+) -> anyhow::Result<()> {
+    let data_type = PrivDataType::CustodianContextAnchor.to_string();
+    let superseded: Vec<CustodianContextAnchor> =
+        read_all_data_versioned::<_, CustodianContextAnchor>(priv_storage, &data_type)
+            .await?
+            .into_values()
+            .filter(|anchor| anchor.context_id != *context_id)
+            .collect();
+    if superseded.is_empty() && priv_storage.data_exists(context_id, &data_type).await? {
+        // Already the only anchor, so rewriting it would only open a window with none.
+        return Ok(());
+    }
+    let sequence = superseded.iter().map(|a| a.sequence).max().unwrap_or(0) + 1;
+    delete_at_request_id(priv_storage, context_id, &data_type).await?;
+    store_versioned_at_request_id(
+        priv_storage,
+        context_id,
+        &CustodianContextAnchor {
+            context_id: *context_id,
+            sequence,
+        },
+        &data_type,
+    )
+    .await?;
+    for anchor in superseded {
+        if let Err(e) = delete_at_request_id(priv_storage, &anchor.context_id, &data_type).await {
+            tracing::warn!(
+                "Could not remove the superseded custodian context anchor {}: {e}",
+                anchor.context_id
+            );
+        }
+    }
+    Ok(())
+}
+
+/// Read the anchor, see [`store_custodian_context_anchor`]. `None` means no context is installed.
+pub async fn read_custodian_context_anchor<S: StorageReader>(
+    priv_storage: &S,
+) -> anyhow::Result<Option<RequestId>> {
+    Ok(read_all_data_versioned::<_, CustodianContextAnchor>(
+        priv_storage,
+        &PrivDataType::CustodianContextAnchor.to_string(),
+    )
+    .await?
+    .into_values()
+    .max_by_key(|anchor| anchor.sequence)
+    .map(|anchor| anchor.context_id))
+}
+
+/// Read the recovery material stored at `id`, see [`store_recovery_material`].
+///
+/// Rejects material whose payload names a different context, so a copy under another id cannot
+/// desynchronize the backup id from the key adopted with it. The signature is checked separately.
+pub async fn read_recovery_material_at_id<S: StorageReader>(
+    backup_storage: &S,
+    id: &RequestId,
+) -> anyhow::Result<RecoveryValidationMaterial> {
+    let material: RecoveryValidationMaterial = read_versioned_at_request_id(
+        backup_storage,
+        id,
+        &PubDataType::RecoveryMaterial.to_string(),
+    )
+    .await?;
+    let payload_id = material.custodian_context().context_id;
+    if payload_id != *id {
+        return Err(anyhow_error_and_log(format!(
+            "Recovery material stored at {id} belongs to custodian context {payload_id}"
+        )));
+    }
+    Ok(material)
+}
+
+/// Read all recovery material in the backup vault's storage, see [`store_recovery_material`].
+pub async fn read_all_recovery_material<S: StorageReader>(
+    backup_storage: &S,
+) -> anyhow::Result<HashMap<RequestId, RecoveryValidationMaterial>> {
+    let id_set = backup_storage
+        .all_data_ids(&PubDataType::RecoveryMaterial.to_string())
+        .await?;
+    let mut res = HashMap::with_capacity(id_set.len());
+    for id in id_set.iter() {
+        if !id.is_valid() {
+            return Err(anyhow_error_and_log(format!(
+                "Recovery material stored under invalid request ID {id}"
+            )));
+        }
+        res.insert(*id, read_recovery_material_at_id(backup_storage, id).await?);
+    }
+    Ok(res)
+}
+
+/// Delete the recovery material stored at `id`, see [`store_recovery_material`].
+pub async fn delete_recovery_material_at_id<S: Storage>(
+    backup_storage: &mut S,
+    id: &RequestId,
+) -> anyhow::Result<()> {
+    delete_at_request_id(
+        backup_storage,
+        id,
+        &PubDataType::RecoveryMaterial.to_string(),
+    )
+    .await
+}
+
+/// Erase a custodian context: its backed-up private material and its recovery material.
+///
+/// `pub_storage` is cleared of any legacy copy; the backup vault is authoritative.
 pub async fn delete_custodian_context_at_id<PubS: Storage>(
     pub_storage: &mut PubS,
     backup_storage: &mut Vault,
@@ -521,7 +666,9 @@ pub async fn delete_custodian_context_at_id<PubS: Storage>(
     // Note that this method will fail if backup_id is the current backup id
     backup_storage.remove_old_backup(backup_id).await?;
 
-    // If the vault allows the backup deletion, then also delete the public data
+    // Only once the backup data is gone may the recovery material describing it be dropped.
+    delete_recovery_material_at_id(&mut backup_storage.storage, backup_id).await?;
+
     delete_at_request_id(
         pub_storage,
         backup_id,
@@ -670,11 +817,28 @@ pub mod tests {
     use crate::engine::base::derive_request_id;
 
     use super::*;
+    use crate::{
+        backup::{
+            custodian::{CustodianSetupMessagePayload, HEADER, InternalCustodianContext},
+            operator::InnerOperatorBackupOutput,
+        },
+        consts::{DEFAULT_MPC_CONTEXT, SAFE_SER_SIZE_LIMIT},
+        cryptography::{
+            encryption::{Encryption, PkeScheme, PkeSchemeType, UnifiedPublicEncKey},
+            signatures::{PrivateSigKey, SigningSchemeType, gen_sig_keys},
+            signcryption::UnifiedSigncryption,
+        },
+    };
     use aes_prng::AesRng;
+    use kms_grpc::kms::v1::{CustodianContext, CustodianSetupMessage};
     use kms_grpc::rpc_types::PubDataType;
     use rand::SeedableRng;
     use serde::{Deserialize, Serialize};
+    use std::collections::BTreeMap;
+    use std::time::SystemTime;
+    use tfhe::safe_serialization::safe_serialize;
     use tfhe_versionable::VersionsDispatch;
+    use threshold_types::role::Role;
 
     #[derive(Serialize, Deserialize, Eq, PartialEq, Debug, VersionsDispatch)]
     pub enum TestTypeVersions {
@@ -689,6 +853,149 @@ pub mod tests {
     #[versionize(TestTypeVersions)]
     pub struct TestType {
         pub i: u32,
+    }
+
+    pub async fn store_dummy_recovery_material(
+        storage: &mut impl Storage,
+        id: &RequestId,
+        sig_key: &PrivateSigKey,
+    ) {
+        store_recovery_material(storage, &dummy_recovery_material_at_id(id, sig_key))
+            .await
+            .unwrap();
+    }
+
+    /// Build recovery material for the custodian context `context_id`, signed by `sig_key`.
+    pub fn dummy_recovery_material_at_id(
+        context_id: &RequestId,
+        sig_key: &PrivateSigKey,
+    ) -> RecoveryValidationMaterial {
+        fn enc_key(rng: &mut AesRng) -> UnifiedPublicEncKey {
+            Encryption::new(PkeSchemeType::MlKem512, rng)
+                .keygen()
+                .unwrap()
+                .1
+        }
+        let mut rng = AesRng::seed_from_u64(0);
+        // Each custodian needs its own keys: the context rejects duplicates.
+        let custodian_nodes = (1..=3)
+            .map(|i| {
+                let payload = CustodianSetupMessagePayload {
+                    header: HEADER.to_string(),
+                    random_value: [4_u8; 32],
+                    timestamp: SystemTime::now(),
+                    public_enc_key: enc_key(&mut rng),
+                    verification_key: gen_sig_keys(&mut rng).0,
+                };
+                let mut payload_serial = Vec::new();
+                safe_serialize(&payload, &mut payload_serial, SAFE_SER_SIZE_LIMIT).unwrap();
+                CustodianSetupMessage {
+                    custodian_role: i,
+                    name: format!("Custodian-{i}"),
+                    payload: payload_serial,
+                }
+            })
+            .collect();
+        let custodian_context = CustodianContext {
+            custodian_nodes,
+            custodian_context_id: Some((*context_id).into()),
+            threshold: 1,
+        };
+
+        let cts_out = InnerOperatorBackupOutput {
+            signcryption: UnifiedSigncryption {
+                payload: vec![1, 2, 3],
+                pke_type: PkeSchemeType::MlKem512,
+                signing_type: SigningSchemeType::Ecdsa256k1,
+            },
+        };
+        let mut cts = BTreeMap::new();
+        let mut commitments = BTreeMap::new();
+        for i in 1..=3 {
+            let role = Role::indexed_from_one(i);
+            cts.insert(role, cts_out.clone());
+            commitments.insert(role, vec![i as u8; 32]);
+        }
+
+        RecoveryValidationMaterial::new(
+            cts,
+            commitments,
+            InternalCustodianContext::new(custodian_context, enc_key(&mut rng)).unwrap(),
+            sig_key,
+            *DEFAULT_MPC_CONTEXT,
+        )
+        .unwrap()
+    }
+
+    /// Build recovery material under a context id derived from `caller_name`, signed by a
+    /// throw-away key.
+    pub fn dummy_recovery_material(caller_name: &str) -> RecoveryValidationMaterial {
+        let (_verf_key, sig_key) = gen_sig_keys(&mut AesRng::seed_from_u64(0));
+        dummy_recovery_material_at_id(&derive_request_id(caller_name).unwrap(), &sig_key)
+    }
+
+    #[tokio::test]
+    async fn recovery_material_round_trip() {
+        let mut storage = ram::RamStorage::new();
+        let material = dummy_recovery_material("recovery_material_round_trip");
+        let id = material.custodian_context().context_id;
+
+        store_recovery_material(&mut storage, &material)
+            .await
+            .unwrap();
+        assert_eq!(
+            read_recovery_material_at_id(&storage, &id).await.unwrap(),
+            material
+        );
+        assert_eq!(
+            read_all_recovery_material(&storage).await.unwrap(),
+            HashMap::from([(id, material)])
+        );
+
+        delete_recovery_material_at_id(&mut storage, &id)
+            .await
+            .unwrap();
+        assert!(read_recovery_material_at_id(&storage, &id).await.is_err());
+        assert!(
+            read_all_recovery_material(&storage)
+                .await
+                .unwrap()
+                .is_empty()
+        );
+    }
+
+    #[tokio::test]
+    async fn read_recovery_material_rejects_foreign_context() {
+        let mut storage = ram::RamStorage::new();
+        let material = dummy_recovery_material("read_recovery_material_rejects_foreign_context");
+        // Store validly signed material under an id that is not its own context, as replaying it
+        // under a fresh id would.
+        let foreign_id = RequestId::from_bytes([0xff; 32]);
+        store_versioned_at_request_id(
+            &mut storage,
+            &foreign_id,
+            &material,
+            &PubDataType::RecoveryMaterial.to_string(),
+        )
+        .await
+        .unwrap();
+
+        assert!(
+            read_recovery_material_at_id(&storage, &foreign_id)
+                .await
+                .is_err()
+        );
+        assert!(read_all_recovery_material(&storage).await.is_err());
+    }
+
+    #[tokio::test]
+    async fn read_recovery_material_at_missing_id_fails() {
+        let storage = ram::RamStorage::new();
+        assert!(
+            read_recovery_material_at_id(&storage, &RequestId::from_bytes([1; 32]))
+                .await
+                .is_err()
+        );
     }
 
     pub async fn test_storage_read_store_methods<S: Storage>(storage: &mut S) {

@@ -1,9 +1,13 @@
+use crate::backup::operator::RecoveryValidationMaterial;
 use anyhow::anyhow;
 use keychain::{EnvelopeLoad, EnvelopeStore, Keychain, KeychainProxy};
 use kms_grpc::{RequestId, identifiers::EpochId, rpc_types::PrivDataType};
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use std::{collections::HashSet, fmt, path::MAIN_SEPARATOR};
-use storage::{RootEntries, Storage, StorageProxy, StorageReader, StoreWriteOutcome};
+use storage::{
+    RootEntries, Storage, StorageProxy, StorageReader, StoreWriteOutcome,
+    read_custodian_context_anchor,
+};
 use strum::IntoEnumIterator;
 use strum_macros::EnumIter;
 use tfhe::{Unversionize, Versionize, named::Named};
@@ -218,6 +222,43 @@ impl Vault {
 }
 
 #[cfg(feature = "non-wasm")]
+/// Point the backup vault's keychain at the custodian context that private storage anchors.
+///
+/// The vault also holds material for retired contexts and public storage is modifiable, so the
+/// anchor is the only input; nothing here reads either store to decide. A node with no anchor, or
+/// whose anchored material is gone from the vault, keeps an uninitialized keychain: it serves but
+/// makes no new backups and says so.
+///
+/// `material` is the vault's recovery material, already checked against the node's signing key by
+/// [`crate::engine::storage_material_verification::verify_storage_material`].
+pub async fn adopt_custodian_context<PrivS: StorageReader>(
+    priv_storage: &PrivS,
+    backup_vault: &mut Vault,
+    material: &std::collections::HashMap<RequestId, RecoveryValidationMaterial>,
+) -> anyhow::Result<()> {
+    let Some(KeychainProxy::SecretSharing(keychain)) = backup_vault.keychain.as_mut() else {
+        return Ok(());
+    };
+    let Some(context_id) = read_custodian_context_anchor(priv_storage).await? else {
+        tracing::info!("No custodian context anchored; no backups will be made");
+        return Ok(());
+    };
+    match material.get(&context_id) {
+        Some(material) => {
+            keychain.set_backup_enc_key(
+                context_id,
+                material.custodian_context().backup_enc_key.clone(),
+            );
+            tracing::info!("Backing up under custodian context {context_id}");
+        }
+        None => tracing::error!(
+            "Custodian context {context_id} is anchored but its recovery material is missing from \
+             the backup vault; no backups will be made. Restore the vault or create a new context."
+        ),
+    }
+    Ok(())
+}
+
 impl StorageReader for Vault {
     async fn read_data<T: DeserializeOwned + Unversionize + Named + Send>(
         &self,
@@ -603,8 +644,9 @@ pub(crate) fn storage_prefix_safety(
 
 #[cfg(test)]
 pub mod tests {
-    use super::{Vault, VaultDataType};
+    use super::{Vault, VaultDataType, adopt_custodian_context};
     use crate::cryptography::encryption::{Encryption, PkeScheme, PkeSchemeType};
+    use crate::cryptography::signatures::{PrivateSigKey, gen_sig_keys};
     use crate::engine::base::derive_request_id;
     use crate::vault::keychain::KeychainProxy;
     use crate::vault::keychain::secretsharing::SecretShareKeychain;
@@ -612,19 +654,154 @@ pub mod tests {
     use crate::vault::storage::ram::RamStorage;
     use crate::vault::storage::{
         Storage, StorageExt, StorageProxy, StorageReader, StorageReaderExt, StorageType,
+        read_custodian_context_anchor, store_custodian_context_anchor,
+        tests::dummy_recovery_material_at_id,
     };
     use aes_prng::AesRng;
     use kms_grpc::{EpochId, RequestId, rpc_types::PrivDataType};
     use rand::SeedableRng;
+    use std::collections::HashMap;
+
+    /// An uninitialized secret-sharing vault, an empty private storage and a signing key.
+    fn unanchored_fixture() -> (RamStorage, Vault, PrivateSigKey) {
+        let (_verf_key, sig_key) = gen_sig_keys(&mut AesRng::seed_from_u64(7));
+        let vault = Vault {
+            storage: StorageProxy::from(RamStorage::new()),
+            keychain: Some(KeychainProxy::SecretSharing(SecretShareKeychain::new(
+                AesRng::seed_from_u64(42),
+            ))),
+        };
+        (RamStorage::new(), vault, sig_key)
+    }
+
+    fn keychain_backup_id(vault: &Vault) -> anyhow::Result<RequestId> {
+        match vault.keychain.as_ref() {
+            Some(KeychainProxy::SecretSharing(k)) => k.get_current_backup_id(),
+            _ => panic!("expected a secret-sharing keychain"),
+        }
+    }
+
+    /// The anchored context is adopted, whatever else the vault holds.
+    #[tokio::test]
+    async fn adopts_the_anchored_context() {
+        let (mut priv_storage, mut vault, sig_key) = unanchored_fixture();
+        let anchored = RequestId::from_bytes([1; 32]);
+        let material = HashMap::from([
+            (anchored, dummy_recovery_material_at_id(&anchored, &sig_key)),
+            // Sorts above the anchored one, and is just as validly signed.
+            (
+                RequestId::from_bytes([9; 32]),
+                dummy_recovery_material_at_id(&RequestId::from_bytes([9; 32]), &sig_key),
+            ),
+        ]);
+        store_custodian_context_anchor(&mut priv_storage, &anchored)
+            .await
+            .unwrap();
+
+        adopt_custodian_context(&priv_storage, &mut vault, &material)
+            .await
+            .unwrap();
+
+        assert_eq!(keychain_backup_id(&vault).unwrap(), anchored);
+    }
+
+    /// Without an anchor nothing in the vault may be adopted, so no backup can be written under a
+    /// context the node never installed.
+    #[tokio::test]
+    async fn adopts_nothing_without_an_anchor() {
+        let (priv_storage, mut vault, sig_key) = unanchored_fixture();
+        let id = RequestId::from_bytes([9; 32]);
+        let material = HashMap::from([(id, dummy_recovery_material_at_id(&id, &sig_key))]);
+
+        adopt_custodian_context(&priv_storage, &mut vault, &material)
+            .await
+            .unwrap();
+
+        assert!(keychain_backup_id(&vault).is_err());
+    }
+
+    /// An anchor whose material is gone leaves the node without a backup key rather than falling
+    /// back to another context.
+    #[tokio::test]
+    async fn adopts_nothing_when_the_anchored_material_is_missing() {
+        let (mut priv_storage, mut vault, sig_key) = unanchored_fixture();
+        let other = RequestId::from_bytes([9; 32]);
+        let material = HashMap::from([(other, dummy_recovery_material_at_id(&other, &sig_key))]);
+        store_custodian_context_anchor(&mut priv_storage, &RequestId::from_bytes([1; 32]))
+            .await
+            .unwrap();
+
+        adopt_custodian_context(&priv_storage, &mut vault, &material)
+            .await
+            .unwrap();
+
+        assert!(keychain_backup_id(&vault).is_err());
+    }
+
+    /// Replacing an anchor adds the new record before removing the old, so an interruption leaves
+    /// the previous context anchored rather than none.
+    #[tokio::test]
+    async fn a_failed_anchor_replacement_keeps_the_previous_context() {
+        use crate::vault::storage::ram::FailingRamStorage;
+        use crate::vault::storage::test_support::StorageEntry;
+        let first = RequestId::from_bytes([1; 32]);
+        let second = RequestId::from_bytes([2; 32]);
+        let mut storage = FailingRamStorage::new();
+        store_custodian_context_anchor(&mut storage, &first)
+            .await
+            .unwrap();
+        storage.set_fail_store_at(StorageEntry::new(
+            second,
+            None,
+            PrivDataType::CustodianContextAnchor.to_string(),
+        ));
+
+        assert!(
+            store_custodian_context_anchor(&mut storage, &second)
+                .await
+                .is_err()
+        );
+        assert_eq!(
+            read_custodian_context_anchor(&storage).await.unwrap(),
+            Some(first)
+        );
+    }
+
+    #[tokio::test]
+    async fn anchor_round_trips_and_is_replaced() {
+        let mut storage = RamStorage::new();
+        assert!(
+            read_custodian_context_anchor(&storage)
+                .await
+                .unwrap()
+                .is_none()
+        );
+
+        let first = RequestId::from_bytes([1; 32]);
+        store_custodian_context_anchor(&mut storage, &first)
+            .await
+            .unwrap();
+        assert_eq!(
+            read_custodian_context_anchor(&storage).await.unwrap(),
+            Some(first)
+        );
+
+        let second = RequestId::from_bytes([2; 32]);
+        store_custodian_context_anchor(&mut storage, &second)
+            .await
+            .unwrap();
+        assert_eq!(
+            read_custodian_context_anchor(&storage).await.unwrap(),
+            Some(second)
+        );
+    }
 
     /// Build a secret-sharing keychain whose current backup id is `current_backup_id`.
-    pub(crate) async fn make_secret_share_keychain(current_backup_id: RequestId) -> KeychainProxy {
+    pub(crate) fn make_secret_share_keychain(current_backup_id: RequestId) -> KeychainProxy {
         let mut rng = AesRng::seed_from_u64(42);
         let mut enc = Encryption::new(PkeSchemeType::MlKem512, &mut rng);
         let (_dec_key, enc_key) = enc.keygen().unwrap();
-        let mut keychain = SecretShareKeychain::<AesRng>::new::<FileStorage>(rng, None)
-            .await
-            .unwrap();
+        let mut keychain = SecretShareKeychain::new(rng);
         keychain.set_backup_enc_key(current_backup_id, enc_key);
         KeychainProxy::SecretSharing(keychain)
     }
@@ -664,7 +841,7 @@ pub mod tests {
         let custodian_context_id = derive_request_id("test_custodian_context").unwrap();
         let mut vault = Vault {
             storage: StorageProxy::from(backup_storage),
-            keychain: Some(make_secret_share_keychain(custodian_context_id).await),
+            keychain: Some(make_secret_share_keychain(custodian_context_id)),
         };
 
         // Store some data through the vault
@@ -703,7 +880,7 @@ pub mod tests {
         let old_id = derive_request_id("purge_backup_old").unwrap();
         let mut vault = Vault {
             storage: StorageProxy::from(RamStorage::new()),
-            keychain: Some(make_secret_share_keychain(current_id).await),
+            keychain: Some(make_secret_share_keychain(current_id)),
         };
 
         let data_id = derive_request_id("purge_backup_data").unwrap();
@@ -819,7 +996,7 @@ pub mod tests {
         let old_backup_id = derive_request_id("old_custodian_context").unwrap();
         let mut vault = Vault {
             storage,
-            keychain: Some(make_secret_share_keychain(old_backup_id).await),
+            keychain: Some(make_secret_share_keychain(old_backup_id)),
         };
 
         // Store a non-epoched and an epoched entry under the old backup id.
@@ -950,9 +1127,7 @@ pub mod tests {
         let mut rng = AesRng::seed_from_u64(42);
         let mut enc = Encryption::new(PkeSchemeType::MlKem512, &mut rng);
         let (_dec_key, enc_key) = enc.keygen().unwrap();
-        let keychain = SecretShareKeychain::<AesRng>::new::<FileStorage>(rng, None)
-            .await
-            .unwrap();
+        let keychain = SecretShareKeychain::new(rng);
         let mut vault = Vault {
             storage: crate::vault::storage::StorageProxy::from(backup_storage),
             keychain: Some(KeychainProxy::SecretSharing(keychain)),

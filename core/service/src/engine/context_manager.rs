@@ -21,7 +21,8 @@ use crate::util::meta_store::{
 use crate::vault::keychain::KeychainProxy;
 use crate::vault::storage::crypto_material::{CryptoMaterialStorage, data_exists};
 use crate::vault::storage::{
-    StorageExt, delete_context_at_id, delete_custodian_context_at_id, store_context_at_id,
+    StorageExt, delete_context_at_id, delete_custodian_context_at_id,
+    read_custodian_context_anchor, store_context_at_id,
 };
 use crate::{
     engine::base::BaseKmsStruct, grpc::metastore_status_service::CustodianMetaStore,
@@ -256,6 +257,33 @@ where
             OP_DESTROY_CUSTODIAN_CONTEXT,
         )
         .await?;
+        // Held for the same reason `inner_new_custodian_context` holds it: without it a setup in
+        // flight has already moved the keychain to its new context while the anchor still names
+        // the old one, and the guards below would read a state that belongs to neither.
+        let _setup_guard = self.custodian_setup_lock.lock().await;
+        // Refuse to destroy the context this node backs up under. Private storage is the authority
+        // on that; the keychain is a cache a setup in flight may already have moved.
+        if read_custodian_context_anchor(&*self.crypto_storage.private_storage.lock().await)
+            .await
+            .map_err(|e| {
+                MetricedError::new(
+                    OP_DESTROY_CUSTODIAN_CONTEXT,
+                    Some(context_id),
+                    anyhow::anyhow!("Could not read the custodian context anchor: {e}"),
+                    tonic::Code::Internal,
+                )
+            })?
+            == Some(context_id)
+        {
+            return Err(MetricedError::new(
+                OP_DESTROY_CUSTODIAN_CONTEXT,
+                Some(context_id),
+                anyhow::anyhow!(
+                    "Cannot destroy custodian context {context_id}: it is the one this node backs up under"
+                ),
+                tonic::Code::FailedPrecondition,
+            ));
+        }
         // Take a write-lock to ensure that no other operations can concurrency modify the meta store during destruction
         let meta_store_guard = self.custodian_meta_store.write().await;
         // Ensure we are not destroying the only backup vault there exists.
@@ -1330,7 +1358,7 @@ mod tests {
                 crypto_material::get_core_signing_key,
                 delete_context_at_id,
                 ram::{self, RamStorage},
-                read_context_at_id, read_versioned_at_request_id, store_context_at_id,
+                read_context_at_id, read_recovery_material_at_id, store_context_at_id,
                 store_versioned_at_request_and_epoch_id, store_versioned_at_request_id,
                 tests::TestType,
             },
@@ -1365,20 +1393,14 @@ mod tests {
     ) {
         let priv_storage = Arc::new(Mutex::new(RamStorage::new()));
         let pub_storage = Arc::new(Mutex::new(RamStorage::new()));
-        let guarded_pub_storage = pub_storage.lock().await;
         let backup_proxy = StorageProxy::from(ram::RamStorage::new());
-        let ssk = secretsharing::SecretShareKeychain::new(
+        let keychain_proxy = KeychainProxy::from(secretsharing::SecretShareKeychain::new(
             AesRng::seed_from_u64(1244),
-            Some(&*guarded_pub_storage),
-        )
-        .await
-        .unwrap();
-        let keychain_proxy = KeychainProxy::from(ssk);
+        ));
         let backup_vault = Arc::new(Mutex::new(Vault {
             storage: backup_proxy,
             keychain: Some(keychain_proxy),
         }));
-        drop(guarded_pub_storage);
 
         let crypto_storage =
             CryptoMaterialStorage::<_, _>::new(priv_storage, pub_storage, Some(backup_vault));
@@ -2219,15 +2241,12 @@ mod tests {
 
         // check that the context is stored
         {
-            let pub_storage = Arc::clone(&crypto_storage.public_storage);
-            let guarded_pub_storage = pub_storage.lock().await;
-            let stored_context: RecoveryValidationMaterial = read_versioned_at_request_id(
-                &*guarded_pub_storage,
-                &first_context_id,
-                &PubDataType::RecoveryMaterial.to_string(),
-            )
-            .await
-            .unwrap();
+            let backup_vault = crypto_storage.get_backup_vault().unwrap();
+            let guarded_backup_vault = backup_vault.lock().await;
+            let stored_context =
+                read_recovery_material_at_id(&guarded_backup_vault.storage, &first_context_id)
+                    .await
+                    .unwrap();
 
             assert!(stored_context.validate(&verification_key));
             assert_eq!(
@@ -2312,16 +2331,12 @@ mod tests {
         }
         // check that the context is deleted
         {
-            let pub_storage = Arc::clone(&crypto_storage.public_storage);
-            let guarded_pub_storage = pub_storage.lock().await;
+            let backup_vault = crypto_storage.get_backup_vault().unwrap();
+            let guarded_backup_vault = backup_vault.lock().await;
             assert!(
-                read_versioned_at_request_id::<RamStorage, RecoveryValidationMaterial>(
-                    &*guarded_pub_storage,
-                    &first_context_id,
-                    &PubDataType::RecoveryMaterial.to_string(),
-                )
-                .await
-                .is_err(),
+                read_recovery_material_at_id(&guarded_backup_vault.storage, &first_context_id)
+                    .await
+                    .is_err(),
                 "Custodian context was not deleted"
             );
         }
@@ -2337,16 +2352,12 @@ mod tests {
             assert!(response.is_err());
 
             // and the last context should still be present in storage
-            let pub_storage = Arc::clone(&crypto_storage.public_storage);
-            let guarded_pub_storage = pub_storage.lock().await;
+            let backup_vault = crypto_storage.get_backup_vault().unwrap();
+            let guarded_backup_vault = backup_vault.lock().await;
             assert!(
-                read_versioned_at_request_id::<RamStorage, RecoveryValidationMaterial>(
-                    &*guarded_pub_storage,
-                    &second_context_id,
-                    &PubDataType::RecoveryMaterial.to_string(),
-                )
-                .await
-                .is_ok(),
+                read_recovery_material_at_id(&guarded_backup_vault.storage, &second_context_id)
+                    .await
+                    .is_ok(),
                 "Last remaining custodian context should not have been deleted"
             );
         }
@@ -2423,15 +2434,12 @@ mod tests {
             assert!(error.internal_err().to_string().contains(expected_error));
             assert!(!custodian_meta_store.read().await.has_existed(&context_id));
 
-            let guarded_pub_storage = crypto_storage.public_storage.lock().await;
+            let backup_vault = crypto_storage.get_backup_vault().unwrap();
+            let guarded_backup_vault = backup_vault.lock().await;
             assert!(
-                read_versioned_at_request_id::<RamStorage, RecoveryValidationMaterial>(
-                    &*guarded_pub_storage,
-                    &context_id,
-                    &PubDataType::RecoveryMaterial.to_string(),
-                )
-                .await
-                .is_err(),
+                read_recovery_material_at_id(&guarded_backup_vault.storage, &context_id)
+                    .await
+                    .is_err(),
                 "rejected custodian context {context_id} must not create recovery material"
             );
         }
@@ -2641,10 +2649,12 @@ mod tests {
         let base_kms = BaseKmsStruct::new(KMSType::Threshold, sig_key).unwrap();
         let context_id = RequestId::from_bytes([7u8; 32]);
 
-        // Make `write_all` inside `write_backup_keys` report a duplicate.
+        // Make `write_backup_keys` report a duplicate.
         {
-            let mut pub_storage = crypto_storage.public_storage.lock().await;
-            pub_storage
+            let backup_vault = crypto_storage.get_backup_vault().unwrap();
+            let mut guarded_backup_vault = backup_vault.lock().await;
+            guarded_backup_vault
+                .storage
                 .store_bytes(
                     b"pre-existing recovery material",
                     &context_id,
