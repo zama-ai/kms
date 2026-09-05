@@ -35,73 +35,73 @@ The system supports automatic backup, facilitated either through AWS KMS, or thr
 ## Workspace layout
 
 The repository is a Cargo workspace. The members are declared in
-[Cargo.toml](Cargo.toml).
+[Cargo.toml](../Cargo.toml).
 
 ### Core cryptography / MPC
 
 | Crate | Path | Responsibility |
 |---|---|---|
-| `threshold-algebra` | [core/threshold-algebra/](core/threshold-algebra/) | Finite-field and group primitives used by the MPC protocols |
-| `threshold-execution` | [core/threshold-execution/](core/threshold-execution/) | Threshold FHE protocol execution: DKG, preprocessing, online protocols |
-| `threshold-bgv` | [core/threshold-bgv/](core/threshold-bgv/) | Experimental BGV/BFV schemes with distributed keygen and threshold decryption |
-| `threshold-networking` | [core/threshold-networking/](core/threshold-networking/) | Inter-party gRPC transport and choreography |
-| `threshold-hashing` | [core/threshold-hashing/](core/threshold-hashing/) | Hashing primitives used across the MPC stack |
-| `threshold-types` | [core/threshold-types/](core/threshold-types/) | Shared types and constants |
-| `experiments` | [core/experiments/](core/experiments/) | Benchmark and experiment harnesses (see [docs/guides/threshold-benchmark.md](docs/guides/threshold-benchmark.md)) |
+| `threshold-algebra` | [core/threshold-algebra/](../core/threshold-algebra/) | Finite-field and group primitives used by the MPC protocols |
+| `threshold-execution` | [core/threshold-execution/](../core/threshold-execution/) | Threshold FHE protocol execution: DKG, preprocessing, online protocols |
+| `threshold-bgv` | [core/threshold-bgv/](../core/threshold-bgv/) | Experimental BGV/BFV schemes with distributed keygen and threshold decryption |
+| `threshold-networking` | [core/threshold-networking/](../core/threshold-networking/) | Inter-party gRPC transport and choreography |
+| `threshold-hashing` | [core/threshold-hashing/](../core/threshold-hashing/) | Hashing primitives used across the MPC stack |
+| `threshold-types` | [core/threshold-types/](../core/threshold-types/) | Shared types and constants |
+| `experiments` | [core/experiments/](../core/experiments/) | Benchmark and experiment harnesses (see [docs/guides/threshold-benchmark.md](../docs/guides/threshold-benchmark.md)) |
 
 ### Service layer
 
 | Crate | Path | Responsibility |
 |---|---|---|
-| `kms` | [core/service/](core/service/) | KMS service library and binaries — the packaging around the core crypto |
-| `kms-grpc` | [core/grpc/](core/grpc/) | Protobuf definitions + generated types and client stubs |
-| `core-client` | [core-client/](core-client/) | CLI client that drives the gRPC API |
-| `observability` | [observability/](observability/) | OpenTelemetry / Prometheus wiring |
+| `kms` | [core/service/](../core/service/) | KMS service library and binaries — the packaging around the core crypto |
+| `kms-grpc` | [core/grpc/](../core/grpc/) | Protobuf definitions + generated types and client stubs |
+| `core-client` | [core-client/](../core-client/) | CLI client that drives the gRPC API |
+| `observability` | [observability/](../observability/) | OpenTelemetry / Prometheus wiring |
 | `vsocktun` | [vsocktun/](vsocktun/) | Multi-queue, offload-aware TUN-to-VSOCK relay used by Nitro enclave deployment scripts to preserve end-to-end peer TCP while bridging enclave IP traffic through the parent, including raw virtio-net TUN frames when both ends support offload metadata; the parent side also bootstraps the enclave-side tunnel CIDR, MTU, shard count, and rewritten resolver config over the same VSOCK control port |
-| `bc2wrap` | [bc2wrap/](bc2wrap/) | Version-pinned `bincode` wrapper used for on-disk and on-wire encoding |
-| `error-utils` | [core/error-utils/](core/error-utils/) | Shared error types and helpers |
-| `thread-handles` | [core/thread-handles/](core/thread-handles/) | Rayon thread-pool management |
+| `bc2wrap` | [bc2wrap/](../bc2wrap/) | Version-pinned `bincode` wrapper used for on-disk and on-wire encoding |
+| `error-utils` | [core/error-utils/](../core/error-utils/) | Shared error types and helpers |
+| `thread-handles` | [core/thread-handles/](../core/thread-handles/) | Rayon thread-pool management |
 
-Auxiliary tools live under [tools/](tools/): `kms-health-check` is a gRPC
+Auxiliary tools live under [tools/](../tools/): `kms-health-check` is a gRPC
 health probe and `generate-test-material` produces reproducible crypto test
 vectors. Shared test fixtures and generic local file helpers are in
-[core/test-utils/](core/test-utils/).
-The [backward-compatibility/](backward-compatibility/) crate is a separate
+[core/test-utils/](../core/test-utils/).
+The [backward-compatibility/](../backward-compatibility/) crate is a separate
 Cargo workspace — see [Backward compatibility](#backward-compatibility).
 
 ## The service crate (`core/service`)
 
 The service crate is the main surface area. Key subdirectories under
-[core/service/src/](core/service/src/):
+[core/service/src/](../core/service/src/):
 
-- [engine/](core/service/src/engine/) — RPC handlers and KMS state machines.
-  Split into [centralized/](core/service/src/engine/centralized/) and
-  [threshold/](core/service/src/engine/threshold/) submodules. Other notable
-  files: [base.rs](core/service/src/engine/base.rs),
-  [context.rs](core/service/src/engine/context.rs),
-  [backup_operator.rs](core/service/src/engine/backup_operator.rs),
-  [keyset_configuration.rs](core/service/src/engine/keyset_configuration.rs),
-  [material_integrity.rs](core/service/src/engine/material_integrity.rs) (digest
+- [engine/](../core/service/src/engine/) — RPC handlers and KMS state machines.
+  Split into [centralized/](../core/service/src/engine/centralized/) and
+  [threshold/](../core/service/src/engine/threshold/) submodules. Other notable
+  files: [base.rs](../core/service/src/engine/base.rs),
+  [context.rs](../core/service/src/engine/context.rs),
+  [backup_operator.rs](../core/service/src/engine/backup_operator.rs),
+  [keyset_configuration.rs](../core/service/src/engine/keyset_configuration.rs),
+  [material_integrity.rs](../core/service/src/engine/material_integrity.rs) (digest
   primitives over raw stored bytes, depended on by both the storage layer and the
   startup checks) and
-  [storage_material_verification.rs](core/service/src/engine/storage_material_verification.rs)
+  [storage_material_verification.rs](../core/service/src/engine/storage_material_verification.rs)
   (the startup orchestration built on top of them — see
   [Boot-time storage verification](#boot-time-storage-verification)),
-  [validation_non_wasm.rs](core/service/src/engine/validation_non_wasm.rs) and
-  [validation_wasm.rs](core/service/src/engine/validation_wasm.rs) (the
+  [validation_non_wasm.rs](../core/service/src/engine/validation_non_wasm.rs) and
+  [validation_wasm.rs](../core/service/src/engine/validation_wasm.rs) (the
   validation logic is compiled for both native and WASM so that clients can
   verify user-decryption responses in the browser).
-- [vault/](core/service/src/vault/) — pluggable storage for key material.
+- [vault/](../core/service/src/vault/) — pluggable storage for key material.
   Backends include AWS S3, local file, AWS KMS, and AWS Nitro Enclaves. Root
   keys and key-encryption logic live in
-  [vault/keychain/](core/service/src/vault/keychain/).
-- [backup/](core/service/src/backup/) — custodian-based secret-sharing backup
+  [vault/keychain/](../core/service/src/vault/keychain/).
+- [backup/](../core/service/src/backup/) — custodian-based secret-sharing backup
   of long-term signing / root keys, used for disaster recovery. See
   [Backup and recovery](#backup-and-recovery) below.
-- [cryptography/](core/service/src/cryptography/) — AES-GCM-SIV, signcryption,
+- [cryptography/](../core/service/src/cryptography/) — AES-GCM-SIV, signcryption,
   hybrid ML-KEM (post-quantum), and attestation (Nitro NSM + certificate
   chain verification). Signing lives under
-  [cryptography/signing/](core/service/src/cryptography/signing/): a
+  [cryptography/signing/](../core/service/src/cryptography/signing/): a
   scheme-tagged `Signature` plus one backend per scheme — ECDSA/secp256k1
   (`ecdsa`, the legacy default and EIP-712 home), EdDSA/ed25519 (`eddsa`), and
   ML-DSA/FIPS-204 (`mldsa`) — behind the `SigningScheme` trait and the
@@ -131,19 +131,19 @@ The service crate is the main surface area. Key subdirectories under
   address text) for existing external consumers; those two are scheduled for
   removal and nothing new should read them. Both copies are validated against the
   signing key when backfilling.
-- [client/](core/service/src/client/) and
-  [testing/](core/service/src/testing/) — client-side helpers (including
+- [client/](../core/service/src/client/) and
+  [testing/](../core/service/src/testing/) — client-side helpers (including
   local key-material utilities used by `core-client`) and test-only wiring.
-- [bin/](core/service/src/bin/) — entry points (see below).
+- [bin/](../core/service/src/bin/) — entry points (see below).
 
 ### Binaries
 
-All under [core/service/src/bin/](core/service/src/bin/):
+All under [core/service/src/bin/](../core/service/src/bin/):
 
-- [kms-server.rs](core/service/src/bin/kms-server.rs) — main service process.
-- [kms-init.rs](core/service/src/bin/kms-init.rs) — post-deployment cluster
+- [kms-server.rs](../core/service/src/bin/kms-server.rs) — main service process.
+- [kms-init.rs](../core/service/src/bin/kms-init.rs) — post-deployment cluster
   initialization.
-- [kms-gen-keys.rs](core/service/src/bin/kms-gen-keys.rs) — generate the server
+- [kms-gen-keys.rs](../core/service/src/bin/kms-gen-keys.rs) — generate the server
   signing identity — the `RootSigningSeed` plus the ECDSA signing key, derived
   from the seed on a fresh node and left untouched on an upgraded one — and, in
   threshold mode, per-party self-signed CA certificates for mTLS. It is the
@@ -160,21 +160,21 @@ All under [core/service/src/bin/](core/service/src/bin/):
   derived from them, since generating an identity alongside another identity's
   derived material is rejected. Supports `mock_enclave` in config for local dev
   when compiled with the `insecure` feature.
-- [kms-custodian.rs](core/service/src/bin/kms-custodian.rs) — custodian-side
+- [kms-custodian.rs](../core/service/src/bin/kms-custodian.rs) — custodian-side
   tool for producing and recovering backup shares.
-- [kms-gen-tls-certs.rs](core/service/src/bin/kms-gen-tls-certs.rs) — TLS
+- [kms-gen-tls-certs.rs](../core/service/src/bin/kms-gen-tls-certs.rs) — TLS
   certificate generation for inter-party mTLS.
 
 ## gRPC surface
 
-Protobuf definitions live in [core/grpc/proto/](core/grpc/proto/). The main
+Protobuf definitions live in [core/grpc/proto/](../core/grpc/proto/). The main
 service definition is
-[kms-service.v1.proto](core/grpc/proto/kms-service.v1.proto); shared messages
-are in [kms.v1.proto](core/grpc/proto/kms.v1.proto); an insecure transport
+[kms-service.v1.proto](../core/grpc/proto/kms-service.v1.proto); shared messages
+are in [kms.v1.proto](../core/grpc/proto/kms.v1.proto); an insecure transport
 variant is in
-[kms-service-insecure.v1.proto](core/grpc/proto/kms-service-insecure.v1.proto);
+[kms-service-insecure.v1.proto](../core/grpc/proto/kms-service-insecure.v1.proto);
 metastore status types in
-[metastore-status.v1.proto](core/grpc/proto/metastore-status.v1.proto).
+[metastore-status.v1.proto](../core/grpc/proto/metastore-status.v1.proto).
 
 The primary service is `CoreServiceEndpoint`. Its RPCs group into:
 
@@ -269,7 +269,7 @@ backup vault, typically S3.
 
 The payload-wrapping key is protected by one of two **keychains**, selected
 in server config and unified behind `KeychainProxy`
-([core/service/src/vault/keychain/](core/service/src/vault/keychain/)):
+([core/service/src/vault/keychain/](../core/service/src/vault/keychain/)):
 
 - **`AwsKms`** — wrapping key is an AWS KMS CMK. Default and bootstrap path.
 - **`SecretSharing`** — wrapping key is Shamir-shared across a set of
@@ -281,10 +281,10 @@ in server config and unified behind `KeychainProxy`
   encryption key and every custodian verification key is unique.
 
 Custodian workflows are driven through the
-[kms-custodian](core/service/src/bin/kms-custodian.rs) CLI and the
+[kms-custodian](../core/service/src/bin/kms-custodian.rs) CLI and the
 `NewCustodianContext` / `DestroyCustodianContext` / `CustodianRecoveryInit`
 / `CustodianBackupRecovery` RPCs defined in
-[kms-service.v1.proto](core/grpc/proto/kms-service.v1.proto).
+[kms-service.v1.proto](../core/grpc/proto/kms-service.v1.proto).
 A separate `RestoreFromBackup` RPC completes restoration on the node for the non-custodian AWS-KMS path.
 
 The `RecoveryValidationMaterial` describing a custodian context — the custodian-signcrypted
@@ -321,7 +321,7 @@ vault under it *before* persisting the recovery material, so it is rolled back i
 step fails: the keychain is restored to its pre-setup `(context_id, backup_enc_key)` and the
 vault entries written under the failed id are purged
 (`rollback_failed_custodian_setup` in
-[context_manager.rs](core/service/src/engine/context_manager.rs) and
+[context_manager.rs](../core/service/src/engine/context_manager.rs) and
 `Vault::purge_backup`). Without that, the node would keep encrypting backups under a key
 whose recovery material was never written, making them unrecoverable. One failure is judged by the
 anchor instead: a write that reports an error is read back, and if the anchor names the new context
@@ -330,11 +330,11 @@ destruction and recovery are serialized by `custodian_context_lock` for the same
 is written last, after the material, so a crash anywhere before it leaves the previous context
 anchored rather than a half-installed one.
 
-Implementation code lives in [core/service/src/backup/](core/service/src/backup/);
+Implementation code lives in [core/service/src/backup/](../core/service/src/backup/);
 end-to-end tests live at
-[core/service/src/client/tests/centralized/custodian_backup_tests.rs](core/service/src/client/tests/centralized/custodian_backup_tests.rs)
+[core/service/src/client/tests/centralized/custodian_backup_tests.rs](../core/service/src/client/tests/centralized/custodian_backup_tests.rs)
 and
-[core/service/src/client/tests/threshold/custodian_backup_tests.rs](core/service/src/client/tests/threshold/custodian_backup_tests.rs).
+[core/service/src/client/tests/threshold/custodian_backup_tests.rs](../core/service/src/client/tests/threshold/custodian_backup_tests.rs).
 
 ## Paired material writes
 
@@ -373,10 +373,10 @@ writes are not atomic, so a crash mid-operation can leave an entry missing, trun
 stale. Private storage holds the digests and signatures describing what should be published,
 so it is the reference.
 
-The code is split by level. [material_integrity.rs](core/service/src/engine/material_integrity.rs)
+The code is split by level. [material_integrity.rs](../core/service/src/engine/material_integrity.rs)
 holds the digest primitives — pure functions over raw stored bytes, with no storage or
 orchestration — so the vault layer can reuse them without depending on startup logic.
-[storage_material_verification.rs](core/service/src/engine/storage_material_verification.rs)
+[storage_material_verification.rs](../core/service/src/engine/storage_material_verification.rs)
 sits above it and owns the startup orchestration, entered through `verify_storage_material`.
 The checks follow three rules:
 
@@ -402,7 +402,7 @@ What it verifies, and how failures are treated:
 
 Custodian backup readiness is deliberately *not* part of this. It is a property of the vault's
 keychain rather than of the published material, and the backup path already reports it:
-`keychain_initialized` ([backup_operator.rs](core/service/src/engine/backup_operator.rs)) asks
+`keychain_initialized` ([backup_operator.rs](../core/service/src/engine/backup_operator.rs)) asks
 the keychain directly whether a backup encryption key is set, and `inner_update_backup_vault`
 skips the update when it is not — during the same boot, from
 `update_backup_vault(false, OP_BOOT)`. That skip logs at error level once the node holds a signing
@@ -450,24 +450,24 @@ Compatibility is enforced at two levels.
 enum whose variants are its historical layouts (`V0`, `V1`, …).
 `Unversionize` dispatches to the right variant by tag on read. On-disk and
 on-wire encoding goes through the pinned-`bincode` wrapper
-[bc2wrap](bc2wrap/) so the binary layout is deterministic. Examples of
+[bc2wrap](../bc2wrap/) so the binary layout is deterministic. Examples of
 versioned types: `BackupCiphertextVersions`,
 `InternalCustodianContextVersions`, `AppKeyBlobVersions`.
 
-**Freeze-and-replay harness.** [backward-compatibility/](backward-compatibility/)
-is a separate Cargo workspace (excluded from the root — see [Cargo.toml](Cargo.toml)
+**Freeze-and-replay harness.** [backward-compatibility/](../backward-compatibility/)
+is a separate Cargo workspace (excluded from the root — see [Cargo.toml](../Cargo.toml)
 — because each pinned historical version drags in a conflicting dependency
 graph). Per-version `generate-vX.Y.Z/` crates serialize a catalogue of types
 using that release's dependencies; the artifacts land under
-[backward-compatibility/data/](backward-compatibility/data/) (Git-LFS-tracked)
+[backward-compatibility/data/](../backward-compatibility/data/) (Git-LFS-tracked)
 indexed by per-module `.ron` manifests. The loader in
-[backward-compatibility/src/](backward-compatibility/src/) replays every
+[backward-compatibility/src/](../backward-compatibility/src/) replays every
 entry through the current-version `Unversionize` and asserts the expected
 metadata.
 
 To add support for a new release, follow
-[backward-compatibility/ADDING_NEW_VERSIONS.md](backward-compatibility/ADDING_NEW_VERSIONS.md).
-The top-level [Makefile](Makefile) exposes `test-backward-compatibility`
+[backward-compatibility/ADDING_NEW_VERSIONS.md](../backward-compatibility/ADDING_NEW_VERSIONS.md).
+The top-level [Makefile](../Makefile) exposes `test-backward-compatibility`
 (run the loader against stored LFS vectors),
 `test-backward-compatibility-local` (against locally regenerated vectors),
 and `generate-backward-compatibility-*` targets to refresh vectors.
@@ -482,11 +482,11 @@ The [Cargo.toml](../Cargo.toml) should be considered the ground truth.
 - **Integration tests** live in each crate's `tests/` directory, notably
   `core/service/tests/`.
 - **Backward-compatibility tests** live under
-  [backward-compatibility/](backward-compatibility/); per-version generator
+  [backward-compatibility/](../backward-compatibility/); per-version generator
   crates produce frozen test vectors that current-version loaders must
   accept. See [Backward compatibility](#backward-compatibility) for the full
   picture.
-- **Docker-compose harness** — see [docker-compose.md](docker-compose.md) and
+- **Docker-compose harness** — see [docker-compose.md](../docker-compose.md) and
   the compose files at the repo root
   (`docker-compose-core-base.yml`, `docker-compose-core-threshold.yml`,
   `docker-compose-core-centralized.yml`) for a local multi-party network
@@ -494,28 +494,28 @@ The [Cargo.toml](../Cargo.toml) should be considered the ground truth.
 - **Cargo feature flags** — `testing` enables test-only APIs; `slow_tests`
   enables the long-running suite.
 
-See the "Building and testing" section of [README.md](README.md) for the
+See the "Building and testing" section of [README.md](../README.md) for the
 exact commands.
 
 ## Build and deployment
 
-- **Toolchain** — Rust pinned via [rust-toolchain.toml](rust-toolchain.toml) along with Protobuf (`protoc`). Docker is also required for the test harness for some integration tests.
-- **Makefile** — [Makefile](Makefile) provides compose orchestration,
+- **Toolchain** — Rust pinned via [rust-toolchain.toml](../rust-toolchain.toml) along with Protobuf (`protoc`). Docker is also required for the test harness for some integration tests.
+- **Makefile** — [Makefile](../Makefile) provides compose orchestration,
   backward-compat vector generation, test-material generation, and lint
   targets.
 - **Container images** — local developer builds still use
-  [docker/core/service/Dockerfile](docker/core/service/Dockerfile) and
-  [docker/core-client/Dockerfile](docker/core-client/Dockerfile). Both package
+  [docker/core/service/Dockerfile](../docker/core/service/Dockerfile) and
+  [docker/core-client/Dockerfile](../docker/core-client/Dockerfile). Both package
   Dockerfiles always consume a shared `kms-binaries` image via
   `KMS_BINARIES_IMAGE`. Local scripts/compose targets build that image with
-  [docker/kms-binaries/Dockerfile](docker/kms-binaries/Dockerfile) and pass the
+  [docker/kms-binaries/Dockerfile](../docker/kms-binaries/Dockerfile) and pass the
   desired tag explicitly; production CI builds its secure `prod` target and
   retags it as `:latest` before packaging the `prod` targets of `core-service`
   and `core-client`. Release compilation uses fat LTO, while other CI builds use
   thin LTO. The published runtime image for the service remains
   `ghcr.io/zama-ai/kms/core-service`.
 - **Kubernetes** — a Helm chart is provided at
-  [charts/kms-core/](charts/kms-core/) for both centralized and threshold
+  [charts/kms-core/](../charts/kms-core/) for both centralized and threshold
   deployments, including Nitro Enclaves when configured.
 
 ## Further reading
@@ -523,7 +523,7 @@ exact commands.
 - Cryptographic specification:
   [CryptographicDocumentation.pdf](https://github.com/zama-ai/threshold-fhe/blob/main/docs/CryptographicDocumentation.pdf).
 - Protocol paper: [Noah's Ark, eprint 2023/815](https://eprint.iacr.org/2023/815).
-- User documentation: [docs/](docs/) and the "Using the KMS" section of
-  [README.md](README.md).
-- Contribution workflow: [CONTRIBUTING.md](CONTRIBUTING.md).
-- Security policy: [SECURITY.md](SECURITY.md).
+- User documentation: [docs/](../docs/) and the "Using the KMS" section of
+  [README.md](../README.md).
+- Contribution workflow: [CONTRIBUTING.md](../CONTRIBUTING.md).
+- Security policy: [SECURITY.md](../SECURITY.md).
