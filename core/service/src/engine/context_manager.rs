@@ -46,7 +46,7 @@ use std::collections::HashSet;
 use std::sync::Arc;
 use tfhe::safe_serialization::safe_serialize;
 use threshold_types::role::Role;
-use tokio::sync::{Mutex, RwLock};
+use tokio::sync::RwLock;
 use tonic::Response;
 
 const CENTRALIZED_MPC_IDENTITY: &str = "centralized-zama-kms";
@@ -61,8 +61,6 @@ struct SharedContextManager<
     base_kms: BaseKmsStruct,
     crypto_storage: CryptoMaterialStorage<PubS, PrivS>,
     custodian_meta_store: Arc<RwLock<CustodianMetaStore>>,
-    /// Serializes whole custodian-context setups; see `inner_new_custodian_context`.
-    custodian_setup_lock: Mutex<()>,
 }
 
 impl<PubS, PrivS> SharedContextManager<PubS, PrivS>
@@ -260,7 +258,7 @@ where
         // Held for the same reason `inner_new_custodian_context` holds it: without it a setup in
         // flight has already moved the keychain to its new context while the anchor still names
         // the old one, and the guards below would read a state that belongs to neither.
-        let _setup_guard = self.custodian_setup_lock.lock().await;
+        let _context_guard = self.crypto_storage.custodian_context_lock.lock().await;
         // Refuse to destroy the context this node backs up under. Private storage is the authority
         // on that; the keychain is a cache a setup in flight may already have moved.
         if read_custodian_context_anchor(&*self.crypto_storage.private_storage.lock().await)
@@ -357,9 +355,9 @@ where
         // context id, so two setups for *different* ids would otherwise interleave: the second
         // one's pre-setup snapshot could capture the first one's half-applied keychain state and
         // its rollback would then restore that over the first one's result. Held across
-        // `update_backup_vault`, which is the expensive part, but only custodian setups contend
-        // for it and they must not run concurrently anyway.
-        let _setup_guard = self.custodian_setup_lock.lock().await;
+        // `update_backup_vault`, which is the expensive part, but only custodian lifecycle
+        // operations contend for it and none may overlap.
+        let _context_guard = self.crypto_storage.custodian_context_lock.lock().await;
         let mut rng = self.base_kms.new_rng().await;
         // Generate asymmetric keys for the operator to use to encrypt the backup
         let mut enc = Encryption::new(PkeSchemeType::MlKem512, &mut rng);
@@ -723,7 +721,6 @@ where
                 base_kms,
                 crypto_storage,
                 custodian_meta_store,
-                custodian_setup_lock: Mutex::new(()),
             },
             cache: Arc::new(RwLock::new(HashSet::new())),
         }
@@ -986,7 +983,6 @@ where
                 base_kms,
                 crypto_storage,
                 custodian_meta_store,
-                custodian_setup_lock: Mutex::new(()),
             },
             session_maker,
             require_pcr_allowlist,

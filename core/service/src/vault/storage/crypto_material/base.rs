@@ -29,8 +29,8 @@ use crate::{
                 log_storage_success_optional_variant, traits::PrivateCryptoMaterialReader,
             },
             delete_at_request_and_epoch_id, delete_at_request_id, delete_recovery_material_at_id,
-            read_all_data_versioned, read_context_at_id, store_custodian_context_anchor,
-            store_recovery_material,
+            read_all_data_versioned, read_context_at_id, read_custodian_context_anchor,
+            store_custodian_context_anchor, store_recovery_material,
         },
     },
 };
@@ -187,6 +187,10 @@ pub struct CryptoMaterialStorage<
 
     /// Optional backup vault for recovery purposes
     pub(crate) backup_vault: Option<Arc<Mutex<Vault>>>,
+
+    /// Serializes setup, destruction and recovery of the custodian context: each reads the anchor,
+    /// the keychain and the vault, then rewrites some of them.
+    pub(crate) custodian_context_lock: Arc<Mutex<()>>,
 }
 
 impl<PubS, PrivS> CryptoMaterialStorage<PubS, PrivS>
@@ -210,6 +214,7 @@ where
             public_storage,
             private_storage,
             backup_vault,
+            custodian_context_lock: Arc::new(Mutex::new(())),
         }
     }
 
@@ -907,9 +912,11 @@ where
     ///
     /// NOTE: Unlike most other storage methods, this one WILL fail if there is no backup vault,
     /// since the goal of this method is exactly to setup a backup. On failure the material of the
-    /// failed setup is purged, except on a duplicate, where nothing was written and what is stored
-    /// under `req_id` pre-existed this call. Callers that also need the keychain rolled back must
-    /// do that themselves; see `rollback_failed_custodian_setup`.
+    /// failed setup is purged. Two cases keep it. On a duplicate nothing was written, so what is
+    /// stored under `req_id` pre-existed this call. When a failed anchor write cannot be read back,
+    /// the anchor may name this context. An anchor write that reports an error but took effect is
+    /// a success. Callers that also need the keychain rolled back must do that themselves; see
+    /// `rollback_failed_custodian_setup`.
     pub async fn write_backup_keys(
         &self,
         recovery_material: RecoveryValidationMaterial,
@@ -927,24 +934,49 @@ where
                 return Err(StorageError::Backup);
             }
         };
-        let mut res = self
+        let (res, purge) = match self
             .write_recovery_material(vault, &req_id, &recovery_material)
-            .await;
-        if res.is_ok() {
-            res = store_custodian_context_anchor(&mut *self.private_storage.lock().await, &req_id)
-                .await
-                .map_err(|e| {
-                    tracing::error!("Failed to anchor custodian context {req_id}: {e}");
-                    StorageError::Writing
-                });
-        }
-        // A duplicate means nothing was written and what is stored under `req_id` pre-existed
-        // (possibly a live backup), so it must be kept. Otherwise roll back both the entries the
-        // caller re-encrypted under `req_id` and any recovery material this call managed to write.
-        // Purge failures are only logged: they must not mask the root cause in the meta store.
-        if let Err(write_err) = &res
-            && !matches!(write_err, StorageError::Duplicate)
+            .await
         {
+            Ok(()) => {
+                let mut private_storage = self.private_storage.lock().await;
+                match store_custodian_context_anchor(&mut *private_storage, &req_id).await {
+                    Ok(()) => (Ok(()), false),
+                    // Storage may apply a write and still report an error, so the anchor decides.
+                    // If it names this context, the setup succeeded. If it names another, the
+                    // material can go. If it cannot be read, the material stays so whichever anchor
+                    // wins still resolves.
+                    Err(e) => match read_custodian_context_anchor(&*private_storage).await {
+                        Ok(Some(anchored)) if anchored == req_id => {
+                            tracing::warn!(
+                                "Anchoring custodian context {req_id} reported an error but took effect: {e}"
+                            );
+                            (Ok(()), false)
+                        }
+                        Ok(_) => {
+                            tracing::error!("Failed to anchor custodian context {req_id}: {e}");
+                            (Err(StorageError::Writing), true)
+                        }
+                        Err(read_err) => {
+                            tracing::error!(
+                                "Failed to anchor custodian context {req_id} ({e}) and to read the anchor back ({read_err}); its material is kept"
+                            );
+                            (Err(StorageError::Writing), false)
+                        }
+                    },
+                }
+            }
+            // A duplicate means nothing was written and what is stored under `req_id` pre-existed
+            // (possibly a live backup), so it must be kept.
+            Err(write_err) => {
+                let purge = !matches!(write_err, StorageError::Duplicate);
+                (Err(write_err), purge)
+            }
+        };
+        // Roll back both the entries the caller re-encrypted under `req_id` and any recovery
+        // material this call wrote. Purge failures are only logged: they must not mask the root
+        // cause in the meta store.
+        if purge {
             let mut guarded_vault = vault.lock().await;
             if let Err(e) = guarded_vault.purge_backup(&req_id).await {
                 tracing::error!(
@@ -1323,6 +1355,7 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: StorageExt + Send + Sync + 's
             public_storage: Arc::clone(&self.public_storage),
             private_storage: Arc::clone(&self.private_storage),
             backup_vault: self.backup_vault.as_ref().map(Arc::clone),
+            custodian_context_lock: Arc::clone(&self.custodian_context_lock),
         }
     }
 }
