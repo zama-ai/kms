@@ -244,8 +244,10 @@ pub struct VaultConfig {
 
 fn reject_malformed_request_id(id: &str) -> Result<(), ValidationError> {
     RequestId::from_str(id)
+        .ok()
+        .filter(RequestId::is_valid)
         .map(drop)
-        .map_err(|_| ValidationError::new("malformed_request_id"))
+        .ok_or_else(|| ValidationError::new("malformed_request_id"))
 }
 
 /// A secret-sharing keychain decrypts only once custodians have reconstructed its key, so it
@@ -405,6 +407,14 @@ mod tests {
             }))))
             .is_ok()
         );
+    }
+
+    /// `from_str` accepts the all-zero id that `is_valid` forbids everywhere else.
+    #[test]
+    fn migration_context_id_must_be_a_valid_request_id() {
+        assert!(reject_malformed_request_id(&"1".repeat(64)).is_ok());
+        assert!(reject_malformed_request_id(&"0".repeat(64)).is_err());
+        assert!(reject_malformed_request_id("not-hex").is_err());
     }
 
     /// The rule is enforced by `validate()`, so every entry point that loads a config gets it.
