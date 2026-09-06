@@ -475,7 +475,7 @@ where
                         OP_CUSTODIAN_RECOVERY_INIT,
                         None,
                         anyhow::anyhow!("Failed to select the custodian context to recover: {e}"),
-                        tonic::Code::Internal,
+                        e.code(),
                     )
                 })?
         };
@@ -865,6 +865,57 @@ async fn filter_custodian_data(
     Ok(parsed_custodian_rec)
 }
 
+/// Why no custodian context could be selected for recovery.
+#[derive(Debug, thiserror::Error)]
+enum RecoveryContextError {
+    #[error("Backup vault is not setup with a keychain for custodian-based backup recovery")]
+    NoKeychain,
+    #[error(
+        "This node backs up under custodian context {installed}; refusing to recover under {requested}"
+    )]
+    Conflict {
+        installed: RequestId,
+        requested: RequestId,
+    },
+    #[error(
+        "No custodian context is installed and the backup vault holds {}: {}. Name the one to \
+         recover under with custodian_context_id",
+        .0.len(),
+        join_ids(.0)
+    )]
+    Ambiguous(Vec<RequestId>),
+    #[error("No custodian recovery material {0} to recover under")]
+    Unknown(RequestId),
+    #[error(
+        "No custodian context to recover: the backup vault holds none. If this node predates the \
+         move of recovery material into the vault, name the context with custodian_context_id."
+    )]
+    NoContext,
+    #[error(transparent)]
+    Storage(#[from] anyhow::Error),
+}
+
+impl RecoveryContextError {
+    /// Only a storage failure is the node's own; the rest the operator can act on.
+    fn code(&self) -> tonic::Code {
+        match self {
+            Self::Storage(_) => tonic::Code::Internal,
+            Self::NoKeychain => tonic::Code::Unavailable,
+            Self::Unknown(_) => tonic::Code::NotFound,
+            Self::Conflict { .. } | Self::Ambiguous(_) | Self::NoContext => {
+                tonic::Code::FailedPrecondition
+            }
+        }
+    }
+}
+
+fn join_ids(ids: &[RequestId]) -> String {
+    ids.iter()
+        .map(|id| id.to_string())
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
 /// The custodian context to recover under, and the material describing it.
 ///
 /// The anchored one wins. A node recovering with empty private storage has no anchor, so the
@@ -876,24 +927,23 @@ async fn recovery_context<PubS: StorageReader>(
     legacy_public: Option<&PubS>,
     installed: Option<RequestId>,
     requested: Option<RequestId>,
-) -> anyhow::Result<(RequestId, RecoveryValidationMaterial)> {
+) -> Result<(RequestId, RecoveryValidationMaterial), RecoveryContextError> {
     let data_type = PubDataType::RecoveryMaterial.to_string();
     let guarded_vault = backup_vault.lock().await;
     if !matches!(
         guarded_vault.keychain.as_ref(),
         Some(KeychainProxy::SecretSharing(_))
     ) {
-        anyhow::bail!(
-            "Backup vault is not setup with a keychain for custodian-based backup recovery"
-        );
+        return Err(RecoveryContextError::NoKeychain);
     }
     // A node with a context recovers under that one and reads nothing else: recovery is not a
     // way to move a working node onto another context.
     if let Some(id) = installed {
         if let Some(other) = requested.filter(|r| *r != id) {
-            anyhow::bail!(
-                "This node backs up under custodian context {id}; refusing to recover under {other}"
-            );
+            return Err(RecoveryContextError::Conflict {
+                installed: id,
+                requested: other,
+            });
         }
         let material = read_recovery_material_at_id(&guarded_vault.storage, &id).await?;
         return Ok((id, material));
@@ -912,10 +962,7 @@ async fn recovery_context<PubS: StorageReader>(
     // The vault holds nothing, so the only material left is in the legacy public location, which
     // is modifiable: whoever writes it also chooses how many objects are there, so "the only one"
     // is their choice, not a fact. The operator names it, as they must for the recovery itself.
-    anyhow::bail!(
-        "No custodian context to recover: the backup vault holds none. If this node predates the \
-         move of recovery material into the vault, name the context with custodian_context_id."
-    )
+    Err(RecoveryContextError::NoContext)
 }
 
 /// The vault copy, or the legacy public one where a node without its signing key is allowed it.
@@ -923,33 +970,28 @@ async fn read_vault_or_legacy<V: StorageReader, PubS: StorageReader>(
     vault: &V,
     legacy_public: Option<&PubS>,
     id: &RequestId,
-) -> anyhow::Result<RecoveryValidationMaterial> {
-    match read_recovery_material_at_id(vault, id).await {
-        Ok(material) => Ok(material),
-        Err(e) => match legacy_public {
-            Some(public) => read_recovery_material_at_id(public, id)
-                .await
-                .map_err(|_| e),
-            None => Err(e),
-        },
+) -> Result<RecoveryValidationMaterial, RecoveryContextError> {
+    let data_type = PubDataType::RecoveryMaterial.to_string();
+    if vault.data_exists(id, &data_type).await? {
+        return Ok(read_recovery_material_at_id(vault, id).await?);
     }
+    if let Some(public) = legacy_public
+        && public.data_exists(id, &data_type).await?
+    {
+        return Ok(read_recovery_material_at_id(public, id).await?);
+    }
+    Err(RecoveryContextError::Unknown(*id))
 }
 
-fn sole_context(ids: std::collections::HashSet<RequestId>) -> anyhow::Result<Option<RequestId>> {
+fn sole_context(
+    ids: std::collections::HashSet<RequestId>,
+) -> Result<Option<RequestId>, RecoveryContextError> {
     let mut ids: Vec<_> = ids.into_iter().collect();
     ids.sort();
     match ids.len() {
         0 => Ok(None),
         1 => Ok(Some(ids.remove(0))),
-        n => anyhow::bail!(
-            "No custodian context is installed and the backup vault holds {n}: {ids}. Name the one \
-             to recover under with custodian_context_id",
-            ids = ids
-                .iter()
-                .map(|id| id.to_string())
-                .collect::<Vec<_>>()
-                .join(", ")
-        ),
+        _ => Err(RecoveryContextError::Ambiguous(ids)),
     }
 }
 
@@ -1474,10 +1516,12 @@ mod tests {
             store_dummy_recovery_material(&mut guard.storage, &second, &sk).await;
         }
 
-        assert!(
+        assert_eq!(
             recovery_context(&vault, None::<&RamStorage>, None, None)
                 .await
-                .is_err()
+                .unwrap_err()
+                .code(),
+            tonic::Code::FailedPrecondition
         );
         let (selected, _) = recovery_context(&vault, None::<&RamStorage>, None, Some(second))
             .await
@@ -1496,10 +1540,12 @@ mod tests {
         let mut public_storage = RamStorage::new();
         store_dummy_recovery_material(&mut public_storage, &id, &sk).await;
 
-        assert!(
+        assert_eq!(
             recovery_context(&vault, Some(&public_storage), None, None)
                 .await
-                .is_err(),
+                .unwrap_err()
+                .code(),
+            tonic::Code::FailedPrecondition,
             "the sole object in public storage must not select itself"
         );
         let (selected, _) = recovery_context(&vault, Some(&public_storage), None, Some(id))
@@ -1526,9 +1572,10 @@ mod tests {
             store_dummy_recovery_material(&mut guard.storage, &rogue, &sk).await;
         }
 
-        recovery_context(&vault, Some(&public_storage), Some(installed), Some(rogue))
+        let refused = recovery_context(&vault, Some(&public_storage), Some(installed), Some(rogue))
             .await
             .expect_err("a request naming another context must not move an installed node");
+        assert_eq!(refused.code(), tonic::Code::FailedPrecondition);
         let (selected, _) = recovery_context(&vault, Some(&public_storage), Some(installed), None)
             .await
             .unwrap();
@@ -1545,16 +1592,20 @@ mod tests {
         let mut public_storage = RamStorage::new();
         store_dummy_recovery_material(&mut public_storage, &id, &sk).await;
 
-        assert!(
+        assert_eq!(
             recovery_context(&vault, None::<&RamStorage>, None, None)
                 .await
-                .is_err(),
+                .unwrap_err()
+                .code(),
+            tonic::Code::FailedPrecondition,
             "the vault holds nothing, so with no legacy opt-in there is nothing to recover"
         );
-        assert!(
+        assert_eq!(
             recovery_context(&vault, None::<&RamStorage>, None, Some(id))
                 .await
-                .is_err(),
+                .unwrap_err()
+                .code(),
+            tonic::Code::NotFound,
             "naming an id must not reach public storage either"
         );
         let (selected, _) = recovery_context(&vault, Some(&public_storage), None, Some(id))
