@@ -476,13 +476,69 @@ pub fn unified_verify(
     }
 }
 
+/// Scaffolding shared by the test modules of this module and its backends.
 #[cfg(test)]
-mod tests {
+pub(crate) mod test_support {
     use super::*;
-    use crate::consts::SAFE_SER_SIZE_LIMIT;
     use crate::cryptography::signatures::gen_sig_keys;
     use crate::cryptography::signing::identity::NodeSigningIdentity;
     use crate::cryptography::signing::seed::RootSigningSeed;
+    use rand::RngCore;
+
+    pub(crate) fn random_seed<R: RngCore>(rng: &mut R) -> [u8; 32] {
+        let mut s = [0u8; 32];
+        rng.fill_bytes(&mut s);
+        s
+    }
+
+    /// A complete node signing identity: an ECDSA key with a root seed attached.
+    pub(crate) fn seeded_identity<R: rand::CryptoRng + RngCore>(
+        rng: &mut R,
+    ) -> NodeSigningIdentity {
+        let (_pk, sk) = gen_sig_keys(rng);
+        NodeSigningIdentity::new(sk, RootSigningSeed::random(rng))
+    }
+
+    /// The contract every [`SigningScheme`] backend owes, checked in one place so that a new
+    /// backend gets the same coverage by writing a single call.
+    ///
+    /// A freshly produced signature verifies, and a tampered message, a different domain
+    /// separator, a tampered signature and a truncated signature all reject. Key generation is
+    /// not part of the trait, so the caller supplies the signing key.
+    pub(crate) fn exercise_backend<S: SigningScheme>(dsep: &DomainSep, sk: &S::SigningKey) {
+        let vk = S::verifying_key(sk).expect("the backend must derive its verification key");
+        let sig = S::sign(dsep, b"hello", sk).expect("the backend must sign");
+        S::verify(dsep, b"hello", &sig, &vk).expect("a fresh signature must verify");
+
+        assert!(
+            S::verify(dsep, b"HELLO", &sig, &vk).is_err(),
+            "a tampered message verified"
+        );
+        assert!(
+            S::verify(b"OTHERDSP", b"hello", &sig, &vk).is_err(),
+            "a different domain separator verified"
+        );
+
+        let mut tampered = sig.clone();
+        tampered[0] ^= 0x01;
+        assert!(
+            S::verify(dsep, b"hello", &tampered, &vk).is_err(),
+            "a tampered signature verified"
+        );
+
+        assert!(
+            S::verify(dsep, b"hello", &[0u8; 10], &vk).is_err(),
+            "a truncated signature verified"
+        );
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::test_support::{random_seed, seeded_identity};
+    use super::*;
+    use crate::consts::SAFE_SER_SIZE_LIMIT;
+    use crate::cryptography::signatures::gen_sig_keys;
     use aes_prng::AesRng;
     use rand::{RngCore, SeedableRng};
     use strum::IntoEnumIterator;
@@ -490,25 +546,19 @@ mod tests {
 
     const DSEP: &DomainSep = b"SCHMTEST";
 
-    fn seed<R: RngCore>(rng: &mut R) -> [u8; 32] {
-        let mut s = [0u8; 32];
-        rng.fill_bytes(&mut s);
-        s
-    }
-
-    /// A complete node signing identity: an ECDSA key with a root seed attached.
-    fn seeded_identity<R: rand::CryptoRng + RngCore>(rng: &mut R) -> NodeSigningIdentity {
-        let (_pk, sk) = gen_sig_keys(rng);
-        NodeSigningIdentity::new(sk, RootSigningSeed::random(rng))
-    }
-
     fn all_private_keys<R: rand::CryptoRng + RngCore>(rng: &mut R) -> Vec<UnifiedPrivateSigKey> {
         let keys = vec![
             UnifiedPrivateSigKey::Ecdsa256k1(gen_sig_keys(rng).1),
-            UnifiedPrivateSigKey::Ed25519(Ed25519::keygen_from_seed(&seed(rng))),
-            UnifiedPrivateSigKey::MlDsa44(Box::new(MlDsa::<MlDsa44>::keygen_from_seed(&seed(rng)))),
-            UnifiedPrivateSigKey::MlDsa65(Box::new(MlDsa::<MlDsa65>::keygen_from_seed(&seed(rng)))),
-            UnifiedPrivateSigKey::MlDsa87(Box::new(MlDsa::<MlDsa87>::keygen_from_seed(&seed(rng)))),
+            UnifiedPrivateSigKey::Ed25519(Ed25519::keygen_from_seed(&random_seed(rng))),
+            UnifiedPrivateSigKey::MlDsa44(Box::new(MlDsa::<MlDsa44>::keygen_from_seed(
+                &random_seed(rng),
+            ))),
+            UnifiedPrivateSigKey::MlDsa65(Box::new(MlDsa::<MlDsa65>::keygen_from_seed(
+                &random_seed(rng),
+            ))),
+            UnifiedPrivateSigKey::MlDsa87(Box::new(MlDsa::<MlDsa87>::keygen_from_seed(
+                &random_seed(rng),
+            ))),
         ];
         // This list is written out by hand, so pin it to the enum: a scheme added without a key
         // here would be skipped in silence by every test below rather than failing one.
@@ -551,7 +601,7 @@ mod tests {
         let mut rng = AesRng::seed_from_u64(7);
         let ecdsa_key = UnifiedPrivateSigKey::Ecdsa256k1(gen_sig_keys(&mut rng).1);
         let mldsa_key = UnifiedPrivateSigKey::MlDsa65(Box::new(
-            MlDsa::<MlDsa65>::keygen_from_seed(&seed(&mut rng)),
+            MlDsa::<MlDsa65>::keygen_from_seed(&random_seed(&mut rng)),
         ));
         let msg = b"hybrid classic + post-quantum message";
 

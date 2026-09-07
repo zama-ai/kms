@@ -140,18 +140,13 @@ impl NodeSigningIdentity {
 mod tests {
     use super::*;
     use crate::cryptography::signatures::gen_sig_keys;
+    use crate::cryptography::signing::test_support::seeded_identity;
     use crate::cryptography::signing::{HasSigningScheme, unified_verify};
     use aes_prng::AesRng;
     use rand::SeedableRng;
     use strum::IntoEnumIterator;
 
     const DSEP: &DomainSep = b"IDNTTEST";
-
-    /// A complete node identity: an ECDSA key and a root seed.
-    fn seeded_identity<R: rand::CryptoRng + rand::RngCore>(rng: &mut R) -> NodeSigningIdentity {
-        let (_pk, sk) = gen_sig_keys(rng);
-        NodeSigningIdentity::new(sk, RootSigningSeed::random(rng))
-    }
 
     /// Extract the Ethereum address from an ECDSA unified verification key,
     /// panicking on any other scheme.
