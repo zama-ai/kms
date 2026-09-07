@@ -185,10 +185,11 @@ threshold deployment) or at a deletion that stopped half-way.
 
 | Log line | Meaning |
 |---|---|
-| `Foreign FHE key material in private storage` | A threshold node found `FhePrivateKey` entries, or a centralized node found `FheKeyInfo` entries. Only a node of the other mode writes that type. |
+| `Foreign material in private storage` | A threshold node found `FhePrivateKey`, or a centralized node found `FheKeyInfo`, `PrssSetup`, or `PrssSetupCombined`. Only a node of the other mode writes that type. |
 | `EpochData on centralized node` | A centralized node found `EpochData` entries, which only threshold nodes use. |
 | `Dangling epoch in private storage` | Keysets or CRS metadata sit under an epoch that has no `EpochData`, so the node can neither serve nor delete them. Usually an epoch destruction that failed half-way. |
 | `Epoch without context in private storage` | An `EpochData` entry names a context that has no `Context` entry. |
+| `Context is stored under a different ID than it declares` | A `Context` entry uses a storage handle that differs from its declared context ID. |
 | `Invalid signing key layout in private storage` | `SigningKey` holds an entry that is not the single flat entry at `SIGNING_KEY_ID`, or holds an entry under an epoch. |
 | `Invalid signing seed layout in private storage` | `SigningSeed` holds an entry that is not the single flat entry at `SIGNING_KEY_ID`, or holds an entry under an epoch. |
 
@@ -198,13 +199,10 @@ threshold deployment) or at a deletion that stopped half-way.
   have confirmed that the epoch was meant to be destroyed.
 - Seek the Zama team before you delete anything you cannot account for.
 
-**Warnings that do not stop the node:** `Legacy non-epoched private material`,
-`Unexpected data type in private storage`, `Could not list private material`,
-`Epoch folder under a legacy PRSS type` (no release writes a PRSS setup under an epoch, so the
-folder is most likely a leftover of an older layout), `Default epoch is not initialized` (keys are
-staged but `init` has not run yet), and `Default context is missing` (startup rewrites it from the
-peer list). Flat `PrssSetup` and `PrssSetupCombined` entries are not reported: the 0.15 migration
-leaves them in place, and their removal is deferred to the 0.16 migration.
+**Errors that do not stop the node:** `Unexpected flat private material`, `Unexpected epoched
+private material`, `Unexpected data type in private storage`, and `Could not list private
+material`. On a threshold node, the 0.15 migration leaves flat `PrssSetupCombined` entries in
+place. The 0.16 migration removes them.
 
 ---
 

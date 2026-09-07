@@ -297,7 +297,7 @@ whose recovery material was never written, making them unrecoverable. Setups are
 against each other for the same reason.
 
 Restoration writes the private data types back in a fixed order (`RESTORE_ORDER` in
-[backup_operator.rs](core/service/src/engine/backup_operator.rs)): contexts and `EpochData`
+[backup_operator.rs](../core/service/src/engine/backup_operator.rs)): contexts and `EpochData`
 first, then PRSS setups, keysets and CRS metadata, and the signing key last. A restore can stop
 half-way and can be run again (entries that already exist are skipped), so the order keeps every
 intermediate state bootable: keysets never sit under an epoch the node does not know, which the
@@ -324,20 +324,12 @@ entries is brought back up to date. Existing entries are not re-read or re-verif
 
 **Private storage is verified for internal consistency.** Private storage belongs to the node
 alone, so nothing legitimate lands there by accident. `verify_private_storage_layout` lists it
-(it deserializes nothing) and fails verification on five states: missing or misplaced signing
-material, key
-material of the other deployment mode (`FhePrivateKey` on a threshold node, `FheKeyInfo` on a
-centralized one), `EpochData` on a centralized node, keysets or CRS metadata under an epoch that has no `EpochData`, and an epoch
-whose context has no `Context` entry. The last two each have a variant that only warns, because the
-node repairs it itself:
-keysets under `DEFAULT_EPOCH_ID` before `init` created its PRSS setup (the supported
-keyed-but-uninitialized state), and epochs of `DEFAULT_MPC_CONTEXT` while
-`ensure_default_threshold_context_in_storage` rewrites that context from the peer list, which it
-does on every boot after the checks. Everything else the current layout does not account for is a
-warning; see the table below. On a threshold node the epoch registry (`EpochData`) is read once,
-before the checks, and then handed to `SessionMaker::new_initialized`. In recovery mode (no
-signing key) the private checks are skipped, like the public ones: that mode exists to repair
-storage.
+and fails verification on inconsistent layouts. It deserializes contexts to verify that each
+context uses its declared ID as its storage handle. A threshold node with peer configuration
+writes its default context before these checks. Everything else the current layout does not
+account for is logged as an error without stopping boot. On a threshold node the epoch registry
+(`EpochData`) is read once before the checks, then handed to `SessionMaker::new_initialized`. In
+recovery mode, the private and public checks are skipped so that the node can repair storage.
 
 **Public storage is verified but never touched.** Public storage can drift out of a
 consistent state: a misconfigured bucket or prefix can point a node at the wrong material, and
@@ -371,14 +363,14 @@ What it verifies, and how failures are treated:
 | `VerfKey` and `VerfAddress` at `SIGNING_KEY_ID` match the key derived from the private `SigningKey` | boot fails |
 | Every entry in a `PubDataType` folder is accounted for by private storage or by a fixed-ID convention | error logged, boot continues |
 | Every top-level name in public storage is a `PubDataType` folder, and every folder can be listed | error logged, boot continues |
-| The node has no foreign FHE material (`FhePrivateKey` on a threshold node, `FheKeyInfo` on a centralized node); zero FHE keysets are valid | boot fails if foreign FHE material exists |
-| Every `FheKeyInfo` and `CrsInfo` epoch folder other than `DEFAULT_EPOCH_ID` has an `EpochData` entry | boot fails |
-| Every `EpochData` whose context is not `DEFAULT_MPC_CONTEXT` has a `Context` entry | boot fails |
-| `FheKeyInfo` or `CrsInfo` under `DEFAULT_EPOCH_ID` with no `EpochData`; `EpochData` of `DEFAULT_MPC_CONTEXT` with no `Context` entry | warning, boot continues |
-| No flat files under `FheKeyInfo`, `FhePrivateKey` or `CrsInfo` (pre-0.13 layout) | warning, boot continues |
+| The node has no foreign material (`FhePrivateKey` on a threshold node; `FheKeyInfo`, `PrssSetup`, or `PrssSetupCombined` on a centralized node) | boot fails if foreign material exists |
+| Every `FheKeyInfo` and `CrsInfo` epoch folder has an `EpochData` entry | boot fails |
+| Every `EpochData` has a `Context` entry | boot fails |
+| Every `Context` entry uses its declared context ID as its storage handle | boot fails |
+| No unexpected non-epoched files exist | error logged, boot continues |
 | A centralized node has no `EpochData` entries | boot fails if `EpochData` exists |
-| No epoch folder under `PrssSetup` or `PrssSetupCombined` | warning, boot continues |
-| Every top-level name in private storage is a `PrivDataType` folder, and every inspected folder can be listed | warning, boot continues |
+| No epoch folder exists under `Context` or `EpochData` | error logged, boot continues |
+| Every top-level name in private storage is a `PrivDataType` folder, and every inspected folder can be listed | error logged, boot continues |
 | `SigningKey` and `SigningSeed` each hold nothing or exactly one flat entry at `SIGNING_KEY_ID`, and at least one of them holds an entry | serving boot fails; recovery mode remains available |
 
 The signing material lives at `SIGNING_KEY_ID` as the ECDSA `SigningKey`, the root `SigningSeed`,
@@ -387,10 +379,9 @@ holds a second entry. The layout check accepts every combination with at least o
 The current loader requires the ECDSA key and attaches the seed when one is present. Future
 seed-derived ECDSA support can use the accepted seed-only layout.
 
-Flat `PrssSetup` and `PrssSetupCombined` entries are not inspected. The 0.15 migration leaves them
-next to the `EpochData` it produced, and their removal is deferred to the 0.16 migration. No
-release writes a PRSS setup under an epoch folder, so the sweep warns that such a folder could be
-a legacy folder.
+On a threshold node, a flat `PrssSetup` entry is unexpected and produces an error log. The 0.15
+migration leaves flat `PrssSetupCombined` entries next to their `EpochData`. The 0.16 migration
+removes those entries. A centralized node rejects both PRSS types.
 
 Custodian backup readiness is deliberately *not* part of this. It is a property of the vault's
 keychain rather than of the published material, and the backup path already reports it:

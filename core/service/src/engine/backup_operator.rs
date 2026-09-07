@@ -1149,6 +1149,7 @@ mod tests {
                 .position(|cur| *cur == data_type)
                 .expect("checked above to be present")
         };
+        assert!(position(PrivDataType::ContextInfo) < position(PrivDataType::EpochData));
         assert!(position(PrivDataType::EpochData) < position(PrivDataType::FheKeyInfo));
         assert!(position(PrivDataType::EpochData) < position(PrivDataType::CrsInfo));
         assert!(position(PrivDataType::SigningSeed) < position(PrivDataType::SigningKey));

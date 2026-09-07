@@ -536,6 +536,15 @@ where
         .telemetry
         .unwrap_or_else(|| TelemetryConfig::builder().build());
 
+    // TODO(zama-ai/kms-internal/issues/2758)
+    // Peer configuration defines the default context until context management replaces it.
+    ensure_default_threshold_context_in_storage(
+        &mut private_storage,
+        threshold_config,
+        &base_kms.verf_key(),
+    )
+    .await?;
+
     // load keys from storage
     let key_info_versioned: HashMap<(RequestId, EpochId), ThresholdFheKeys> =
         read_all_data_from_all_epochs_versioned(
@@ -586,10 +595,7 @@ where
         .map(|(epoch_id, epoch_data)| (*epoch_id, epoch_data.context_id))
         .collect();
 
-    // Verify the private layout, then public material and recovery validation material, when the
-    // signing key is available. Recovery mode only supports backup recovery operations, so it
-    // skips every startup check. Private storage is the reference; extra material in public
-    // storage is logged as an error but does not stop boot.
+    // Recovery mode skips storage verification.
     match base_kms.sig_key() {
         Ok(signing_key) => {
             verify_private_storage_layout(
@@ -724,16 +730,6 @@ where
         threshold_config.min_dec_cache,
     );
     let custodian_meta_store = MetaStore::new_from_map(recovery_validation_material);
-
-    // TODO(zama-ai/kms-internal/issues/2758)
-    // If we're still using peer config, we need to manually write the default context into storage.
-    // This way we can load it into SessionMaker later when creating the ThresholdContextManager.
-    ensure_default_threshold_context_in_storage(
-        &mut private_storage,
-        threshold_config,
-        &base_kms.verf_key(),
-    )
-    .await?;
 
     let private_storage_info = private_storage.info();
 
