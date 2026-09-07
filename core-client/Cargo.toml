@@ -48,11 +48,7 @@ threshold-execution = { workspace = true, features = ["non-wasm"] }
 hashing.workspace = true
 hex.workspace = true
 k256.workspace = true
-kms = { workspace = true, features = [
-    "default",
-    "testing",
-    "insecure",
-] }
+kms = { workspace = true, features = ["default"] }
 kms-grpc.workspace = true
 observability.workspace = true
 prost.workspace = true
@@ -64,6 +60,7 @@ serde_json.workspace = true
 strum.workspace = true
 strum_macros.workspace = true
 tempfile.workspace = true
+test-utils.workspace = true
 tfhe.workspace = true
 threshold-networking.workspace = true
 tokio = { workspace = true, features = ["rt-multi-thread"] }
@@ -79,9 +76,9 @@ validator.workspace = true
 # Use .workspace = true to reference workspace dependencies
 # Maintain alphabetical order
 assert_cmd.workspace = true
-test-utils.workspace = true
 test-utils-cc = { path = "./test-utils-cc" }
 futures.workspace = true
+kms = { workspace = true, features = ["insecure", "testing"] }
 # Self-import for integration tests
 kms-core-client = { workspace = true, features = ["testing"] }
 test-context.workspace = true
@@ -94,6 +91,10 @@ tonic-prost-build.workspace = true
 ignored = ["kms", "strum"]
 
 [features]
+# Enable CLI commands that call the insecure keygen/CRS RPCs.
+insecure = ["kms-grpc/insecure", "kms/insecure"]
+# Bundle test helpers plus insecure-only CLI commands for e2e coverage.
+e2e = ["testing", "insecure"]
 # Compiles + runs the handful of threshold integration tests that are too slow
 # to run locally by default (full preproc+keygen, 6-party MPC context switch,
 # nightly preproc-keygen). Follows the workspace-wide `slow_tests` convention
@@ -107,5 +108,5 @@ ignored = ["kms", "strum"]
 # Does NOT enable Kind/Kubernetes tests (use `kind_tests` for those).
 slow_tests = ["testing"]
 # Enable tests that require a running Kind/Kubernetes cluster.
-kind_tests = ["testing"]
-testing = ["threshold-execution/testing"]
+kind_tests = ["e2e"]
+testing = ["threshold-execution/testing", "kms/testing"]

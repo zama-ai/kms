@@ -1,6 +1,4 @@
-use crate::engine::base::derive_request_id;
 use alloy_primitives::Address;
-use kms_grpc::RequestId;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use strum_macros::EnumIs;
@@ -184,7 +182,7 @@ impl TlsCert {
     }
 }
 
-#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+#[derive(Serialize, Deserialize, Clone, PartialEq)]
 #[serde(deny_unknown_fields, rename_all = "lowercase")]
 pub enum TlsKey {
     Path(PathBuf),
@@ -197,16 +195,20 @@ impl Default for TlsKey {
     }
 }
 
+// Deliberately never render secret-key material to avoid it accidentally leaking in logs or debug output.
+impl std::fmt::Debug for TlsKey {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            TlsKey::Path(path) => write!(f, "TlsKey::Path({})", path.display()),
+            TlsKey::Pem(_) => write!(f, "TlsKey::Pem(REDACTED)"),
+        }
+    }
+}
+
 impl TlsKey {
     pub fn into_pem(&self) -> anyhow::Result<Pem> {
         let key_bytes = self.to_string()?;
         Ok(parse_x509_pem(key_bytes.as_ref())?.1)
-    }
-
-    pub fn into_request_id(&self) -> anyhow::Result<RequestId> {
-        let key_bytes = self.to_string()?;
-        derive_request_id(key_bytes.as_ref())
-            .map_err(|e| anyhow::anyhow!("Failed to derive request ID from TLS key: {}", e))
     }
 
     fn to_string(&self) -> anyhow::Result<String> {

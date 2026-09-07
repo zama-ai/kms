@@ -7,13 +7,58 @@ use kms_grpc::utils::tonic_result::top_1k_chars;
 use kms_grpc::{ContextId, EpochId, RequestId};
 use observability::metrics::METRICS;
 use observability::metrics_names::{
-    ERR_ASYNC, OP_KEY_MATERIAL_AVAILABILITY, map_tonic_code_to_metric_err_tag,
+    ERR_ASYNC, OP_KEY_MATERIAL_AVAILABILITY, OP_PUBLIC_DECRYPT_REQUEST, OP_PUBLIC_DECRYPT_RESULT,
+    OP_USER_DECRYPT_REQUEST, OP_USER_DECRYPT_RESULT, map_tonic_code_to_metric_err_tag,
 };
 use serde::Serialize;
 use serde::de::DeserializeOwned;
 use std::fmt::Display;
 use tfhe::safe_serialization::{safe_deserialize, safe_serialize};
 use tonic::Status;
+
+/// Characters kept from a caller-supplied identifier when logging it. A well-formed request, key,
+/// context, or epoch ID is 64 hex characters, so every valid ID survives intact.
+const MAX_LOGGED_ID_CHARS: usize = 64;
+
+/// Leading bytes kept from a caller-supplied external handle when logging it. Handles are 32-byte
+/// identifiers in practice, so a valid handle survives intact.
+const MAX_LOGGED_HANDLE_BYTES: usize = 32;
+
+/// Format an identifier taken straight off the wire for logging.
+///
+/// Before validation an ID is an arbitrary string, bounded only by the gRPC message size limit, so
+/// logging it verbatim lets one malformed request write that much into persistent logs. Keep a
+/// bounded prefix and report the original size instead.
+///
+/// Truncation counts `chars`, not bytes: `String::truncate` would panic on a caller-chosen
+/// multi-byte sequence straddling the cut.
+pub(crate) fn format_unvalidated_id(id: &Option<kms_grpc::kms::v1::RequestId>) -> String {
+    let Some(id) = id else {
+        return "<missing>".to_string();
+    };
+    let kept: String = id.request_id.chars().take(MAX_LOGGED_ID_CHARS).collect();
+    if kept.len() == id.request_id.len() {
+        kept
+    } else {
+        format!("{kept}...(truncated from {} bytes)", id.request_id.len())
+    }
+}
+
+/// Hex-encode an external ciphertext handle for logging, bounded in size.
+///
+/// Handles are caller-supplied and unvalidated, so hex-encoding one in full can allocate twice the
+/// gRPC message limit. A prefix is enough to correlate a KMS log line with a gateway request.
+pub(crate) fn format_handle(handle: &[u8]) -> String {
+    if handle.len() <= MAX_LOGGED_HANDLE_BYTES {
+        hex::encode(handle)
+    } else {
+        format!(
+            "{}...(+{} bytes)",
+            hex::encode(&handle[..MAX_LOGGED_HANDLE_BYTES]),
+            handle.len() - MAX_LOGGED_HANDLE_BYTES
+        )
+    }
+}
 
 /// Query key material availability from private storage
 ///
@@ -58,9 +103,10 @@ where
             })?,
     };
 
-    // Query CRS IDs
+    // Query CRS IDs. Must span all epochs, like the FHE keys above: CRS metadata is stored
+    // epoch-scoped, and `all_data_ids` deliberately excludes epoch-scoped entries.
     let crs_ids_set = priv_storage
-        .all_data_ids(&PrivDataType::CrsInfo.to_string())
+        .all_data_ids_from_all_epochs(&PrivDataType::CrsInfo.to_string())
         .await
         .map_err(|e| {
             MetricedError::new(
@@ -247,6 +293,18 @@ pub struct MetricedError {
     returned: bool,
 }
 
+fn is_expected_grpc_outcome(operation: &str, code: tonic::Code) -> bool {
+    match operation {
+        OP_PUBLIC_DECRYPT_RESULT | OP_USER_DECRYPT_RESULT => {
+            code == tonic::Code::Unavailable || code == tonic::Code::NotFound
+        }
+        OP_PUBLIC_DECRYPT_REQUEST | OP_USER_DECRYPT_REQUEST => {
+            code == tonic::Code::AlreadyExists || code == tonic::Code::ResourceExhausted
+        }
+        _ => false,
+    }
+}
+
 impl MetricedError {
     /// Create a new MetricedError wrapping the given MetricedError and gRPC error code.
     ///
@@ -301,14 +359,12 @@ impl MetricedError {
         internal_error: E,
     ) {
         let error = internal_error.into(); // converts anyhow::Error or any other error
-        let error_string = format!(
-            "Failure on requestID {} with metric {}. Error: {}",
-            request_id.unwrap_or_default(),
-            op_metric,
-            error
+        tracing::error!(
+            request_id = %request_id.unwrap_or_default(),
+            operation = op_metric,
+            error = %error,
+            "asynchronous request failed"
         );
-
-        tracing::error!(error_string);
 
         // Increment the method specific metric
         METRICS.increment_error_counter(op_metric, ERR_ASYNC);
@@ -325,15 +381,15 @@ impl MetricedError {
                 self.op_metric,
                 map_tonic_code_to_metric_err_tag(self.error_code),
             );
-            let error_string = format!(
-                "Grpc failure on requestID {} with metric {} and error code {}. Error message: {}",
-                self.request_id.unwrap_or_default(),
-                self.op_metric,
-                self.error_code,
-                self.internal_error
-            );
-
-            tracing::error!(error_string);
+            if !is_expected_grpc_outcome(self.op_metric, self.error_code) {
+                tracing::error!(
+                    request_id = %self.request_id.unwrap_or_default(),
+                    operation = self.op_metric,
+                    code = %self.error_code,
+                    error = %self.internal_error,
+                    "gRPC request failed"
+                );
+            }
         }
     }
 }
@@ -428,9 +484,52 @@ where
 mod tests {
     use super::*;
     use crate::cryptography::signatures::{PublicSigKey, gen_sig_keys};
+    use crate::vault::storage::{Storage, ram::RamStorage};
 
     use aes_prng::AesRng;
     use rand::SeedableRng;
+
+    /// The availability response includes CRS metadata stored under an epoch.
+    #[tokio::test]
+    async fn reports_epoch_scoped_crs() {
+        let crs_id = RequestId::from_bytes([0x51; 32]);
+        let epoch_id = EpochId::from_bytes([0x52; 32]);
+        let mut storage = RamStorage::new();
+
+        storage
+            .store_bytes_at_epoch(
+                &[1, 2, 3],
+                &crs_id,
+                &epoch_id,
+                &PrivDataType::CrsInfo.to_string(),
+            )
+            .await
+            .unwrap();
+
+        let response = query_key_material_availability(&storage, KMSType::Threshold, vec![])
+            .await
+            .unwrap();
+
+        assert_eq!(response.crs_ids, vec![crs_id.to_string()]);
+    }
+
+    /// The availability response continues to include CRS metadata in the legacy flat layout.
+    #[tokio::test]
+    async fn reports_legacy_flat_crs() {
+        let crs_id = RequestId::from_bytes([0x53; 32]);
+        let mut storage = RamStorage::new();
+
+        storage
+            .store_bytes(&[1, 2, 3], &crs_id, &PrivDataType::CrsInfo.to_string())
+            .await
+            .unwrap();
+
+        let response = query_key_material_availability(&storage, KMSType::Threshold, vec![])
+            .await
+            .unwrap();
+
+        assert_eq!(response.crs_ids, vec![crs_id.to_string()]);
+    }
 
     #[test]
     fn test_metriced_error_creation() {
@@ -446,6 +545,35 @@ mod tests {
         let status: Status = error.into();
         assert!(status.message().contains("test_op"));
         assert!(!status.message().contains("test error"));
+    }
+
+    #[test]
+    fn classifies_expected_decrypt_outcomes() {
+        assert!(is_expected_grpc_outcome(
+            OP_USER_DECRYPT_RESULT,
+            tonic::Code::Unavailable
+        ));
+        assert!(is_expected_grpc_outcome(
+            OP_PUBLIC_DECRYPT_RESULT,
+            tonic::Code::NotFound
+        ));
+        assert!(is_expected_grpc_outcome(
+            OP_USER_DECRYPT_REQUEST,
+            tonic::Code::ResourceExhausted
+        ));
+        assert!(is_expected_grpc_outcome(
+            OP_PUBLIC_DECRYPT_REQUEST,
+            tonic::Code::AlreadyExists
+        ));
+
+        assert!(!is_expected_grpc_outcome(
+            OP_USER_DECRYPT_RESULT,
+            tonic::Code::Internal
+        ));
+        assert!(!is_expected_grpc_outcome(
+            OP_KEY_MATERIAL_AVAILABILITY,
+            tonic::Code::ResourceExhausted
+        ));
     }
 
     #[test]

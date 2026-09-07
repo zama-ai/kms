@@ -56,6 +56,11 @@ pub struct CoreMetrics {
     backup_error_counter: IntCounterVec, // Keeps track of errors when making a backup. These MUST be handled as it means some party may not have everything backed up properly
     network_rx_counter: IntCounter, // Note: Because we use counter we need to increment from last seen value.
     network_tx_counter: IntCounter, // Note: Because we use counter we need to increment from last seen value.
+    network_debug_event_counters: [IntCounter; NetworkDebugEvent::COUNT],
+    user_decrypt_stage_duration_counters: [IntCounter; UserDecryptStage::COUNT],
+    user_decrypt_stage_observation_counters: [IntCounter; UserDecryptStage::COUNT],
+    network_sender_tasks_spawned_counter: IntCounter,
+    network_sender_tasks_completed_counter: IntCounter,
 
     // Histograms
     duration_histogram: HistogramVec,
@@ -66,12 +71,17 @@ pub struct CoreMetrics {
     socat_file_descriptor_gauge: IntGauge, // Number of socat file descriptors
     socat_task_gauge: IntGauge,      // Number of socat tasks
     task_gauge: IntGauge,            // Numbers active child processes of the KMS
+    tokio_alive_tasks_gauge: IntGauge,
+    tokio_global_queue_depth_gauge: IntGauge,
+    user_decrypt_background_tasks_gauge: IntGauge,
+    network_sender_tasks_gauge: IntGauge,
 
     // Internal system gauges
     // TODO rate limiter, session gauge and meta store should actually be counters but we need to add decorators to ensure it is always updated
     rate_limiter_gauge: IntGauge, // Number tokens used in the rate limiter
     active_session_gauge: IntGauge, // Number of active sessions
     inactive_session_gauge: IntGauge, // Number of inactive sessions
+    completed_session_gauge: IntGauge,
     meta_storage_pub_dec_gauge: IntGauge, // Number of ongoing public decryptions in meta storage
     meta_storage_user_dec_gauge: IntGauge, // Number of ongoing user decryptions in meta storage
     meta_storage_pub_dec_total_gauge: IntGauge, // Total number of public decryptions in meta storage
@@ -92,6 +102,142 @@ pub struct CoreMetrics {
 
     // Trace guard for file-based logging
     trace_guard: Arc<Mutex<Option<Box<dyn std::any::Any + Send + Sync>>>>,
+}
+
+/// Diagnostic events exposed by the threshold MPC transport.
+#[derive(Clone, Copy)]
+#[repr(usize)]
+pub enum NetworkDebugEvent {
+    /// A peer message arrived before its local MPC session existed.
+    SessionInactiveCreated,
+    /// A local protocol activated a session created by an earlier peer message.
+    SessionActivated,
+    /// A local MPC session started before any peer message arrived.
+    SessionActiveCreated,
+    /// An active session ended and entered the completed-session grace period.
+    SessionCompleted,
+    /// An inbound-only session expired before it was started locally.
+    SessionInactiveDiscarded,
+    /// An active session was discarded after its receive activity timed out.
+    SessionActiveDiscarded,
+    /// A completed session was removed after its grace period expired.
+    SessionCompletedRemoved,
+    /// An inbound peer message was added to its session queue.
+    MessageEnqueued,
+    /// An inbound peer message targeted a session not yet started locally.
+    MessageToInactive,
+    /// An inbound peer message targeted a session that had already completed.
+    MessageToCompleted,
+    /// An inbound peer message targeted an active session whose owner had exited.
+    MessageToDroppedActive,
+    /// An inbound peer message could not be queued before the queue timeout.
+    QueueFull,
+    /// A peer accepted an outbound message for an active session.
+    SendActive,
+    /// A peer reported that the outbound message's session was inactive.
+    SendInactive,
+    /// A peer reported that the outbound message's session had completed.
+    SendCompleted,
+    /// An outbound message send failed and was scheduled for another attempt.
+    SendRetry,
+    /// An outbound message still failed after all retry attempts.
+    SendFailed,
+    /// An outbound message was skipped after the peer reported completion.
+    SendSkippedAfterCompleted,
+    /// A receive operation reached its periodic wait timeout without a message.
+    ReceiveWaitTimeout,
+    /// A future-round message exceeded the configured window or buffer capacity.
+    FutureMessageDropped,
+}
+
+impl NetworkDebugEvent {
+    const COUNT: usize = 20;
+    const LABELS: [&'static str; Self::COUNT] = [
+        "session_inactive_created",
+        "session_activated",
+        "session_active_created",
+        "session_completed",
+        "session_inactive_discarded",
+        "session_active_discarded",
+        "session_completed_removed",
+        "message_enqueued",
+        "message_to_inactive",
+        "message_to_completed",
+        "message_to_dropped_active",
+        "queue_full",
+        "send_active",
+        "send_inactive",
+        "send_completed",
+        "send_retry",
+        "send_failed",
+        "send_skipped_after_completed",
+        "receive_wait_timeout",
+        "future_message_dropped",
+    ];
+}
+
+/// Measured stages of threshold user decryption.
+#[derive(Clone, Copy)]
+#[repr(usize)]
+pub enum UserDecryptStage {
+    /// Validate and admit a request before scheduling its background work.
+    Admission,
+    /// Wait between admission and the background task starting to run.
+    ScheduleDelay,
+    /// Convert one ciphertext from its wire format into its low-level representation.
+    Deserialize,
+    /// Create the MPC session used to decrypt one ciphertext.
+    SessionCreate,
+    /// Compute this KMS party's partial decryption of one ciphertext.
+    PartialDecrypt,
+    /// Encrypt and authenticate one partial decryption for the client.
+    Signcrypt,
+    /// Sign the assembled user-decryption response.
+    ResultSign,
+    /// Publish the background task's result to the meta store.
+    MetaStoreUpdate,
+}
+
+impl UserDecryptStage {
+    const COUNT: usize = 8;
+    const LABELS: [&'static str; Self::COUNT] = [
+        "admission",
+        "schedule_delay",
+        "deserialize",
+        "session_create",
+        "partial_decrypt",
+        "signcrypt",
+        "result_sign",
+        "meta_store_update",
+    ];
+}
+
+/// Decrements an active-task gauge when its task exits, including cancellation or panic.
+struct ActiveTaskGuard {
+    active: IntGauge,
+    completed: Option<IntCounter>,
+}
+
+struct UserDecryptStageGuard<'a> {
+    metrics: &'a CoreMetrics,
+    stage: UserDecryptStage,
+    start: Instant,
+}
+
+impl Drop for UserDecryptStageGuard<'_> {
+    fn drop(&mut self) {
+        self.metrics
+            .observe_user_decrypt_stage(self.stage, self.start.elapsed());
+    }
+}
+
+impl Drop for ActiveTaskGuard {
+    fn drop(&mut self) {
+        self.active.dec();
+        if let Some(completed) = &self.completed {
+            completed.inc();
+        }
+    }
 }
 
 impl Default for CoreMetrics {
@@ -194,6 +340,73 @@ impl CoreMetrics {
             .register(Box::new(network_tx_counter.clone()))
             .expect("failed to register network tx counter");
 
+        // Threshold-path diagnostics: transport events, cumulative UDEC stage timings and sample
+        // counts, and sender-task lifecycle totals.
+        let network_debug_event_counter = IntCounterVec::new(
+            opts(
+                format!("{prefix}_network_debug_events_total"),
+                "Diagnostic events in the threshold MPC transport",
+            ),
+            &["event"],
+        )
+        .expect("failed to create network debug event counter");
+        registry
+            .register(Box::new(network_debug_event_counter.clone()))
+            .expect("failed to register network debug event counter");
+        let network_debug_event_counters = std::array::from_fn(|index| {
+            network_debug_event_counter.with_label_values(&[NetworkDebugEvent::LABELS[index]])
+        });
+
+        let user_decrypt_stage_duration_counter = IntCounterVec::new(
+            opts(
+                format!("{prefix}_user_decrypt_stage_duration_microseconds_total"),
+                "Cumulative wall-clock time spent in threshold user-decryption stages",
+            ),
+            &["stage"],
+        )
+        .expect("failed to create user decrypt stage duration counter");
+        registry
+            .register(Box::new(user_decrypt_stage_duration_counter.clone()))
+            .expect("failed to register user decrypt stage duration counter");
+        let user_decrypt_stage_duration_counters = std::array::from_fn(|index| {
+            user_decrypt_stage_duration_counter
+                .with_label_values(&[UserDecryptStage::LABELS[index]])
+        });
+
+        let user_decrypt_stage_observation_counter = IntCounterVec::new(
+            opts(
+                format!("{prefix}_user_decrypt_stage_observations_total"),
+                "Number of observed threshold user-decryption stage executions",
+            ),
+            &["stage"],
+        )
+        .expect("failed to create user decrypt stage observation counter");
+        registry
+            .register(Box::new(user_decrypt_stage_observation_counter.clone()))
+            .expect("failed to register user decrypt stage observation counter");
+        let user_decrypt_stage_observation_counters = std::array::from_fn(|index| {
+            user_decrypt_stage_observation_counter
+                .with_label_values(&[UserDecryptStage::LABELS[index]])
+        });
+
+        let network_sender_tasks_spawned_counter = IntCounter::with_opts(opts(
+            format!("{prefix}_network_sender_tasks_spawned_total"),
+            "Threshold-network sender tasks spawned",
+        ))
+        .expect("failed to create network sender tasks spawned counter");
+        registry
+            .register(Box::new(network_sender_tasks_spawned_counter.clone()))
+            .expect("failed to register network sender tasks spawned counter");
+
+        let network_sender_tasks_completed_counter = IntCounter::with_opts(opts(
+            format!("{prefix}_network_sender_tasks_completed_total"),
+            "Threshold-network sender tasks completed",
+        ))
+        .expect("failed to create network sender tasks completed counter");
+        registry
+            .register(Box::new(network_sender_tasks_completed_counter.clone()))
+            .expect("failed to register network sender tasks completed counter");
+
         // Histograms
         let duration_histogram = HistogramVec::new(
             hist_opts(
@@ -258,6 +471,42 @@ impl CoreMetrics {
             .register(Box::new(task_gauge.clone()))
             .expect("failed to register task gauge");
 
+        let tokio_alive_tasks_gauge = IntGauge::with_opts(opts(
+            format!("{prefix}_tokio_alive_tasks"),
+            "Number of currently alive Tokio tasks",
+        ))
+        .expect("failed to create Tokio alive tasks gauge");
+        registry
+            .register(Box::new(tokio_alive_tasks_gauge.clone()))
+            .expect("failed to register Tokio alive tasks gauge");
+
+        let tokio_global_queue_depth_gauge = IntGauge::with_opts(opts(
+            format!("{prefix}_tokio_global_queue_depth"),
+            "Number of Tokio tasks currently queued in the runtime global queue",
+        ))
+        .expect("failed to create Tokio global queue depth gauge");
+        registry
+            .register(Box::new(tokio_global_queue_depth_gauge.clone()))
+            .expect("failed to register Tokio global queue depth gauge");
+
+        let user_decrypt_background_tasks_gauge = IntGauge::with_opts(opts(
+            format!("{prefix}_user_decrypt_background_tasks"),
+            "Number of unfinished threshold user-decryption background tasks",
+        ))
+        .expect("failed to create user decrypt background tasks gauge");
+        registry
+            .register(Box::new(user_decrypt_background_tasks_gauge.clone()))
+            .expect("failed to register user decrypt background tasks gauge");
+
+        let network_sender_tasks_gauge = IntGauge::with_opts(opts(
+            format!("{prefix}_network_sender_tasks"),
+            "Number of active threshold-network sender tasks",
+        ))
+        .expect("failed to create network sender tasks gauge");
+        registry
+            .register(Box::new(network_sender_tasks_gauge.clone()))
+            .expect("failed to register network sender tasks gauge");
+
         let rate_limiter_gauge = IntGauge::with_opts(opts(
             format!("{prefix}_rate_limiter_usage"),
             "Rate limiter usage for the KMS",
@@ -293,6 +542,15 @@ impl CoreMetrics {
         registry
             .register(Box::new(inactive_session_gauge.clone()))
             .expect("failed to register inactive session gauge");
+
+        let completed_session_gauge = IntGauge::with_opts(opts(
+            format!("{prefix}_completed_sessions"),
+            "Number of completed MPC sessions retained for late messages",
+        ))
+        .expect("failed to create completed session gauge");
+        registry
+            .register(Box::new(completed_session_gauge.clone()))
+            .expect("failed to register completed session gauge");
 
         let meta_storage_user_dec_gauge = IntGauge::with_opts(opts(
             format!("{prefix}_meta_storage_user_decryptions"),
@@ -391,6 +649,11 @@ impl CoreMetrics {
             backup_error_counter,
             network_rx_counter,
             network_tx_counter,
+            network_debug_event_counters,
+            user_decrypt_stage_duration_counters,
+            user_decrypt_stage_observation_counters,
+            network_sender_tasks_spawned_counter,
+            network_sender_tasks_completed_counter,
             duration_histogram,
             size_histogram,
             cpu_load_gauge,
@@ -399,10 +662,15 @@ impl CoreMetrics {
             socat_file_descriptor_gauge,
             socat_task_gauge,
             task_gauge,
+            tokio_alive_tasks_gauge,
+            tokio_global_queue_depth_gauge,
+            user_decrypt_background_tasks_gauge,
+            network_sender_tasks_gauge,
             rate_limiter_gauge,
             fhe_key_cache_size_gauge,
             active_session_gauge,
             inactive_session_gauge,
+            completed_session_gauge,
             meta_storage_pub_dec_gauge,
             meta_storage_user_dec_gauge,
             meta_storage_pub_dec_total_gauge,
@@ -465,6 +733,45 @@ impl CoreMetrics {
 
     pub fn increment_network_tx_counter(&self, bytes: u64) {
         self.network_tx_counter.inc_by(bytes);
+    }
+
+    /// Increment a diagnostic event in the threshold MPC transport.
+    pub fn increment_network_event(&self, event: NetworkDebugEvent) {
+        self.network_debug_event_counters[event as usize].inc();
+    }
+
+    fn observe_user_decrypt_stage(&self, stage: UserDecryptStage, duration: Duration) {
+        let duration_micros = u64::try_from(duration.as_micros()).unwrap_or(u64::MAX);
+        self.user_decrypt_stage_duration_counters[stage as usize].inc_by(duration_micros);
+        self.user_decrypt_stage_observation_counters[stage as usize].inc();
+    }
+
+    /// Time a threshold user-decryption stage until the returned guard is dropped.
+    pub fn time_user_decrypt_stage(&self, stage: UserDecryptStage) -> impl Drop + Send + '_ {
+        UserDecryptStageGuard {
+            metrics: self,
+            stage,
+            start: Instant::now(),
+        }
+    }
+
+    /// Track one active threshold-network sender task until the returned guard is dropped.
+    pub fn track_network_sender_task(&self) -> impl Drop + Send {
+        self.network_sender_tasks_spawned_counter.inc();
+        self.network_sender_tasks_gauge.inc();
+        ActiveTaskGuard {
+            active: self.network_sender_tasks_gauge.clone(),
+            completed: Some(self.network_sender_tasks_completed_counter.clone()),
+        }
+    }
+
+    /// Track one unfinished threshold UDEC background task until the returned guard is dropped.
+    pub fn track_user_decrypt_background_task(&self) -> impl Drop + Send {
+        self.user_decrypt_background_tasks_gauge.inc();
+        ActiveTaskGuard {
+            active: self.user_decrypt_background_tasks_gauge.clone(),
+            completed: None,
+        }
     }
 
     // Histogram methods
@@ -546,6 +853,18 @@ impl CoreMetrics {
         self.task_gauge.set(count as i64);
     }
 
+    /// Record the number of currently alive tasks in the Tokio runtime.
+    pub fn record_tokio_alive_tasks(&self, count: usize) {
+        self.tokio_alive_tasks_gauge
+            .set(i64::try_from(count).unwrap_or(i64::MAX));
+    }
+
+    /// Record the current depth of the Tokio runtime's global task queue.
+    pub fn record_tokio_global_queue_depth(&self, count: usize) {
+        self.tokio_global_queue_depth_gauge
+            .set(i64::try_from(count).unwrap_or(i64::MAX));
+    }
+
     /// Record the current number of open file descriptors into the gauge
     pub fn record_open_file_descriptors(&self, count: u64) {
         // Should never be 0
@@ -586,12 +905,17 @@ impl CoreMetrics {
         self.inactive_session_gauge.set(count as i64);
     }
 
-    /// Record the current number of ongoing public decryptions into the gauge
+    /// Record the number of completed MPC sessions retained for late messages.
+    pub fn record_completed_sessions(&self, count: u64) {
+        self.completed_session_gauge.set(count as i64);
+    }
+
+    /// Record the current number of ongoing user decryptions into the gauge.
     pub fn record_meta_storage_user_decryptions(&self, count: u64) {
         self.meta_storage_user_dec_gauge.set(count as i64);
     }
 
-    /// Record the current number of ongoing user decryptions into the gauge
+    /// Record the current number of ongoing public decryptions into the gauge.
     pub fn record_meta_storage_public_decryptions(&self, count: u64) {
         self.meta_storage_pub_dec_gauge.set(count as i64);
     }
@@ -857,7 +1181,7 @@ fn is_valid_label_name(name: &str) -> bool {
 /// configured const-label colliding with any of these would make Prometheus reject the metric at
 /// registration (panicking the `.expect`), so it is skipped instead.
 fn is_reserved_label_name(name: &str) -> bool {
-    const EXTRA_RESERVED: &[&str] = &["operation", "error", "version", "le"];
+    const EXTRA_RESERVED: &[&str] = &["operation", "error", "event", "stage", "version", "le"];
     DURATION_LABEL_KEYS.contains(&name) || EXTRA_RESERVED.contains(&name)
 }
 
@@ -887,6 +1211,7 @@ mod tests {
         let mut expected_metrics = vec![
             "kms_active_sessions",
             "kms_backup_errors_total",
+            "kms_completed_sessions",
             "kms_cpu_load",
             "kms_fhe_key_cache_size",
             "kms_file_descriptors",
@@ -896,7 +1221,11 @@ mod tests {
             "kms_meta_storage_pub_decryptions_in_store",
             "kms_meta_storage_user_decryptions",
             "kms_meta_storage_user_decryptions_in_store",
+            "kms_network_debug_events_total",
             "kms_network_rx_bytes_total",
+            "kms_network_sender_tasks",
+            "kms_network_sender_tasks_completed_total",
+            "kms_network_sender_tasks_spawned_total",
             "kms_network_tx_bytes_total",
             "kms_operation_duration_ms",
             "kms_operation_errors_total",
@@ -908,8 +1237,13 @@ mod tests {
             "kms_socat_file_descriptors",
             "kms_socat_tasks",
             "kms_tasks",
+            "kms_tokio_alive_tasks",
+            "kms_tokio_global_queue_depth",
             "kms_total_cpus",
             "kms_total_memory",
+            "kms_user_decrypt_background_tasks",
+            "kms_user_decrypt_stage_duration_microseconds_total",
+            "kms_user_decrypt_stage_observations_total",
             "kms_version",
         ];
         // process_* metrics come from the prometheus crate's `process` feature (linux only),
@@ -940,6 +1274,83 @@ mod tests {
 
         METRICS.record_fhe_key_cache_size(0);
         assert_eq!(METRICS.fhe_key_cache_size_gauge.get(), 0);
+    }
+
+    #[test]
+    fn diagnostic_task_guards_track_task_lifetimes() {
+        let registry = prometheus::Registry::new();
+        let metrics = CoreMetrics::with_config_in_registry(MetricsConfig::default(), &registry);
+
+        {
+            let _sender = metrics.track_network_sender_task();
+            assert_eq!(metrics.network_sender_tasks_gauge.get(), 1);
+            assert_eq!(metrics.network_sender_tasks_spawned_counter.get(), 1);
+            assert_eq!(metrics.network_sender_tasks_completed_counter.get(), 0);
+        }
+        assert_eq!(metrics.network_sender_tasks_gauge.get(), 0);
+        assert_eq!(metrics.network_sender_tasks_completed_counter.get(), 1);
+
+        {
+            let _udec = metrics.track_user_decrypt_background_task();
+            assert_eq!(metrics.user_decrypt_background_tasks_gauge.get(), 1);
+        }
+        assert_eq!(metrics.user_decrypt_background_tasks_gauge.get(), 0);
+    }
+
+    #[test]
+    fn diagnostic_metrics_record_events_stages_and_runtime_state() {
+        let registry = prometheus::Registry::new();
+        let metrics = CoreMetrics::with_config_in_registry(MetricsConfig::default(), &registry);
+
+        metrics.increment_network_event(NetworkDebugEvent::QueueFull);
+        assert_eq!(
+            metrics.network_debug_event_counters[NetworkDebugEvent::QueueFull as usize].get(),
+            1
+        );
+
+        let stage = UserDecryptStage::PartialDecrypt as usize;
+        {
+            let _timer = metrics.time_user_decrypt_stage(UserDecryptStage::PartialDecrypt);
+            std::thread::sleep(Duration::from_millis(1));
+        }
+        assert!(metrics.user_decrypt_stage_duration_counters[stage].get() > 0);
+        assert_eq!(
+            metrics.user_decrypt_stage_observation_counters[stage].get(),
+            1
+        );
+
+        metrics.record_tokio_alive_tasks(13);
+        metrics.record_tokio_global_queue_depth(7);
+        metrics.record_completed_sessions(5);
+        assert_eq!(metrics.tokio_alive_tasks_gauge.get(), 13);
+        assert_eq!(metrics.tokio_global_queue_depth_gauge.get(), 7);
+        assert_eq!(metrics.completed_session_gauge.get(), 5);
+    }
+
+    #[test]
+    fn diagnostic_labels_cover_each_enum_variant_once() {
+        assert_eq!(
+            NetworkDebugEvent::FutureMessageDropped as usize + 1,
+            NetworkDebugEvent::COUNT
+        );
+        assert_eq!(
+            NetworkDebugEvent::LABELS
+                .iter()
+                .collect::<BTreeSet<_>>()
+                .len(),
+            NetworkDebugEvent::COUNT
+        );
+        assert_eq!(
+            UserDecryptStage::MetaStoreUpdate as usize + 1,
+            UserDecryptStage::COUNT
+        );
+        assert_eq!(
+            UserDecryptStage::LABELS
+                .iter()
+                .collect::<BTreeSet<_>>()
+                .len(),
+            UserDecryptStage::COUNT
+        );
     }
 
     #[test]

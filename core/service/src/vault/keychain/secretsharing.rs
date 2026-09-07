@@ -210,13 +210,15 @@ impl<R: Rng + CryptoRng> Keychain for SecretShareKeychain<R> {
             .as_ref()
             .ok_or_else(|| anyhow_error_and_log("Operator not set"))?;
         match backup_ct.priv_data_type {
-            PrivDataType::SigningKey => {
-                unwrapped_dec_key
-                    .decrypt(&backup_ct.ciphertext)
-                    .map_err(|e| {
-                        anyhow::anyhow!("Could not decrypt backed up secret shared signing key {e}")
-                    })
-            }
+            // Both halves of the node's signing identity, handled alike.
+            PrivDataType::SigningKey | PrivDataType::SigningSeed => unwrapped_dec_key
+                .decrypt(&backup_ct.ciphertext)
+                .map_err(|e| {
+                    anyhow::anyhow!(
+                        "Could not decrypt backed up secret shared {} {e}",
+                        backup_ct.priv_data_type
+                    )
+                }),
             PrivDataType::FheKeyInfo => {
                 unwrapped_dec_key
                     .decrypt(&backup_ct.ciphertext)
@@ -425,27 +427,35 @@ mod tests {
         let mut rng = AesRng::seed_from_u64(0);
         let (verf_key, sig_key) = gen_sig_keys(&mut rng);
         let (wrong_verf_key, _wrong_sig_key) = gen_sig_keys(&mut rng);
-        let mut enc = Encryption::new(PkeSchemeType::MlKem512, &mut rng);
-        let (_dec_key, enc_key) = enc.keygen().unwrap();
+        let (_dec_key, enc_key) = {
+            let mut enc = Encryption::new(PkeSchemeType::MlKem512, &mut rng);
+            enc.keygen().unwrap()
+        };
         let backup_id = derive_request_id("test-backup").unwrap();
 
         // Build custodian setup messages
-        let payload = CustodianSetupMessagePayload {
-            header: HEADER.to_string(),
-            random_value: [4_u8; 32],
-            timestamp: SystemTime::now(),
-            public_enc_key: enc_key.clone(),
-            verification_key: verf_key.clone(),
-        };
-        let mut payload_serial = Vec::new();
-        safe_serialize(&payload, &mut payload_serial, SAFE_SER_SIZE_LIMIT).unwrap();
-        let setup_msgs: Vec<_> = (1..=3)
-            .map(|i| CustodianSetupMessage {
-                custodian_role: i,
-                name: format!("Custodian-{i}"),
-                payload: payload_serial.clone(),
-            })
-            .collect();
+        let mut setup_msgs = Vec::new();
+        for role in 1..=3 {
+            let (_, custodian_enc_key) = {
+                let mut enc = Encryption::new(PkeSchemeType::MlKem512, &mut rng);
+                enc.keygen().unwrap()
+            };
+            let (custodian_verf_key, _) = gen_sig_keys(&mut rng);
+            let payload = CustodianSetupMessagePayload {
+                header: HEADER.to_string(),
+                random_value: [4_u8; 32],
+                timestamp: SystemTime::now(),
+                public_enc_key: custodian_enc_key,
+                verification_key: custodian_verf_key,
+            };
+            let mut payload_serial = Vec::new();
+            safe_serialize(&payload, &mut payload_serial, SAFE_SER_SIZE_LIMIT).unwrap();
+            setup_msgs.push(CustodianSetupMessage {
+                custodian_role: role,
+                name: format!("Custodian-{role}"),
+                payload: payload_serial,
+            });
+        }
         let custodian_context = CustodianContext {
             custodian_nodes: setup_msgs,
             custodian_context_id: Some(backup_id.into()),

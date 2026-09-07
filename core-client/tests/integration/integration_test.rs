@@ -3,10 +3,13 @@
 //! Verifies kms-core-client CLI tool functionality using isolated native KMS servers.
 
 use anyhow::{Context, Result};
+#[cfg(any(feature = "slow_tests", feature = "insecure"))]
 use futures::future::join_all;
 use kms_core_client::*;
+#[cfg(any(feature = "slow_tests", feature = "insecure"))]
 use kms_grpc::KeyId;
 use kms_grpc::kms::v1::FheParameter;
+#[cfg(feature = "slow_tests")]
 use kms_grpc::rpc_types::PubDataType;
 use kms_lib::DecryptionMode;
 use kms_lib::client::test_tools::ServerHandle;
@@ -22,6 +25,7 @@ use std::str::FromStr;
 use std::string::String;
 use tempfile::TempDir;
 use test_utils::test_logging::init_test_logging as init_logging;
+#[cfg(feature = "slow_tests")]
 use tfhe::{xof_key_set::CompressedXofKeySet, zk::CompactPkeCrs};
 use threshold_networking::grpc::CoreToCoreNetworkConfig;
 use tracing::info;
@@ -37,8 +41,11 @@ use std::process::{Command, Output};
 use tfhe::safe_serialization::safe_serialize;
 
 // Additional imports for reshare test
+#[cfg(feature = "slow_tests")]
 use hashing::hash_versioned;
+#[cfg(feature = "slow_tests")]
 use kms_lib::engine::base::{DSEP_PUBDATA_CRS, DSEP_PUBDATA_KEY};
+#[cfg(feature = "slow_tests")]
 use kms_lib::util::key_setup::test_tools::load_material_from_pub_storage;
 
 // ============================================================================
@@ -176,6 +183,7 @@ fn write_core_config_toml(path: &Path, cfg: &kms_lib::conf::CoreConfig) -> Resul
     Ok(())
 }
 
+#[cfg(any(feature = "slow_tests", feature = "insecure"))]
 fn copy_dir_recursive(src: &Path, dst: &Path) -> std::io::Result<()> {
     std::fs::create_dir_all(dst)?;
     for entry in std::fs::read_dir(src)? {
@@ -217,6 +225,7 @@ async fn setup_isolated_centralized_cli_test(
 }
 
 /// Helper to setup isolated centralized KMS for CLI testing with backup vault
+#[cfg(feature = "insecure")]
 async fn setup_isolated_centralized_cli_test_with_backup(
     test_name: &str,
 ) -> Result<(TempDir, ServerHandle, PathBuf)> {
@@ -347,6 +356,7 @@ async fn setup_isolated_threshold_cli_test_signing_only(
 ///     Ok(())
 /// }
 /// ```
+#[cfg(feature = "slow_tests")]
 async fn setup_isolated_threshold_cli_test_with_prss(
     test_name: &str,
     party_count: usize,
@@ -364,6 +374,7 @@ async fn setup_isolated_threshold_cli_test_with_prss(
 }
 
 /// Helper to setup isolated threshold KMS for CLI testing with backup vault
+#[cfg(feature = "insecure")]
 async fn setup_isolated_threshold_cli_test_with_backup(
     test_name: &str,
     party_count: usize,
@@ -441,7 +452,7 @@ async fn setup_isolated_threshold_cli_test_default(
 /// PRSS is ensured at server startup: if the default epoch is missing, startup initializes it;
 /// otherwise existing PRSS is reused. Default threshold context and key material still come
 /// from `test-material/default`, but `PrssSetupCombined` is not copied up front.
-#[cfg(feature = "slow_tests")]
+#[cfg(all(feature = "insecure", feature = "slow_tests"))]
 async fn setup_isolated_threshold_cli_test_with_prss_default(
     test_name: &str,
     party_count: usize,
@@ -982,6 +993,7 @@ fn cmd_config(config_path: &Path, command: CCCommand, max_iter: usize) -> CmdCon
 }
 
 /// Build a `CipherParameters` with sensible defaults, overriding only what varies per test case.
+#[cfg(feature = "insecure")]
 fn cipher_params(
     to_encrypt: &str,
     data_type: FheType,
@@ -1005,6 +1017,7 @@ fn cipher_params(
 }
 
 /// Build a `DecryptParameters` with sensible defaults, overriding only what varies per test case.
+#[cfg(any(feature = "slow_tests", feature = "insecure"))]
 fn public_decrypt_params(
     to_encrypt: &str,
     data_type: FheType,
@@ -1030,6 +1043,7 @@ fn public_decrypt_params(
 }
 
 /// Build `DecryptParameters` for a single non-rate user decrypt.
+#[cfg(feature = "insecure")]
 fn user_decrypt_params(
     to_encrypt: &str,
     data_type: FheType,
@@ -1053,6 +1067,7 @@ fn user_decrypt_params(
     }
 }
 
+#[cfg(feature = "insecure")]
 fn user_decrypt_file(input_path: PathBuf, batch_size: usize) -> DecryptFile {
     DecryptFile {
         input_path,
@@ -1064,6 +1079,7 @@ fn user_decrypt_file(input_path: PathBuf, batch_size: usize) -> DecryptFile {
 
 /// Helper to run the insecure (dummy) preprocessing and insecure key generation
 /// via CLI (isolated version), exercising the explicit `--preproc-id` flow.
+#[cfg(feature = "insecure")]
 async fn insecure_preproc_and_keygen(
     config_path: &Path,
     test_path: &Path,
@@ -1130,7 +1146,14 @@ async fn crs_gen_with_params(
         context_id: Some(context_id),
     };
     let command = if insecure_crs_gen {
-        CCCommand::InsecureCrsGen(crs_params)
+        #[cfg(feature = "insecure")]
+        {
+            CCCommand::InsecureCrsGen(crs_params)
+        }
+        #[cfg(not(feature = "insecure"))]
+        {
+            unreachable!("insecure CRS generation requires the kms-core-client insecure feature");
+        }
     } else {
         CCCommand::CrsGen(crs_params)
     };
@@ -1146,6 +1169,7 @@ async fn crs_gen_with_params(
 /// - PublicDecrypt/UserDecrypt across ebool, euint8 (compressed/uncompressed), euint16, euint256
 /// - Encrypt to file + PublicDecrypt/UserDecrypt from file
 /// - SnS precompute variants (no_precompute_sns=false)
+#[cfg(feature = "insecure")]
 async fn integration_test_commands(
     config_path: &Path,
     keys_folder: &Path,
@@ -1375,6 +1399,7 @@ async fn integration_test_commands(
                     no_verify: false,
                 })
             }
+            #[cfg(feature = "insecure")]
             CCCommand::InsecureKeyGen(ref key_gen_parameters) => {
                 CCCommand::InsecureKeyGenResult(KeyGenResultParameters {
                     request_id: req_id.unwrap(),
@@ -1406,6 +1431,7 @@ async fn integration_test_commands(
                 epoch_id: None,
                 no_verify: false,
             }),
+            #[cfg(feature = "insecure")]
             CCCommand::InsecureCrsGen(_) => {
                 CCCommand::InsecureCrsGenResult(CrsGenResultParameters {
                     request_id: req_id.unwrap(),
@@ -1497,6 +1523,7 @@ async fn abort_crs_gen(
 }
 
 /// Helper to run backup restore via CLI (isolated version)
+#[cfg(feature = "insecure")]
 async fn restore_from_backup(config_path: &Path, test_path: &Path) -> Result<()> {
     let config = cmd_config(config_path, CCCommand::BackupRestore(NoParameters {}), 200);
 
@@ -1514,6 +1541,7 @@ async fn restore_from_backup(config_path: &Path, test_path: &Path) -> Result<()>
 
 /// Helper to run preprocessing and keygen via CLI (isolated version).
 /// Used by PRSS-based keygen tests (some run per-PR, some gated by `slow_tests`).
+#[cfg(feature = "slow_tests")]
 async fn real_preproc_and_keygen(
     config_path: &Path,
     test_path: &Path,
@@ -1562,7 +1590,7 @@ async fn real_preproc_and_keygen(
 /// Uses `PartialPreprocKeyGen` with reduced offline generation to keep runtime
 /// manageable for Default FHE parameters in CI while still exercising the
 /// keygen flow.
-#[cfg(feature = "slow_tests")]
+#[cfg(all(feature = "insecure", feature = "slow_tests"))]
 async fn real_partial_preproc_and_keygen(
     config_path: &Path,
     test_path: &Path,
@@ -1731,6 +1759,7 @@ async fn real_preproc_and_keygen_with_context(
 }
 
 /// Helper to run reshare operation via CLI (isolated version)
+#[cfg(all(feature = "insecure", feature = "slow_tests"))]
 async fn reshare(
     config_path: &Path,
     test_path: &Path,
@@ -2243,6 +2272,7 @@ fn config_conformance_client_local_threshold() {
 // ============================================================================
 
 /// Test centralized insecure key generation via CLI
+#[cfg(feature = "insecure")]
 #[tokio::test]
 async fn test_centralized_insecure() -> Result<()> {
     init_logging();
@@ -2320,6 +2350,7 @@ async fn test_centralized_abort_crs_gen() -> Result<()> {
 ///
 /// Note: This test mainly validates the CLI endpoints and content returned from KMS.
 /// Full restore validation is done in service/client tests.
+#[cfg(feature = "insecure")]
 #[tokio::test]
 async fn test_centralized_restore_from_backup() -> Result<()> {
     init_logging();
@@ -2378,7 +2409,7 @@ async fn test_centralized_custodian_backup() -> Result<()> {
 }
 
 /// Test threshold insecure key generation via CLI (Default FHE params, with PRSS).
-#[cfg(feature = "slow_tests")]
+#[cfg(all(feature = "insecure", feature = "slow_tests"))]
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn test_threshold_insecure() -> Result<()> {
     init_logging();
@@ -2418,6 +2449,7 @@ async fn nightly_tests_threshold_sequential_preproc_keygen() -> Result<()> {
 }
 
 /// Test threshold concurrent preprocessing and keygen operations
+#[cfg(feature = "slow_tests")]
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn test_threshold_concurrent_preproc_keygen() -> Result<()> {
     init_logging();
@@ -2498,6 +2530,7 @@ async fn nightly_tests_threshold_sequential_crs() -> Result<()> {
 /// Uses insecure CRS generation because the multi-party ZK ceremony cannot handle
 /// concurrent sessions — the first ceremony completes but subsequent ones get stuck
 /// with networking timeouts between parties.
+#[cfg(feature = "insecure")]
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn test_threshold_concurrent_crs() -> Result<()> {
     init_logging();
@@ -2579,6 +2612,7 @@ async fn test_threshold_default_preproc_keygen() -> Result<()> {
 /// NOTE: This test is actually only validating a weird artifact of the current KMS design we do not expect in production.
 /// More specifically it validates that there is a segregation between epochs and contexts s.t. an epoch that is NOT
 /// associated with a given context can still be used together. However, this is not supported at the smart contract level.
+#[cfg(all(feature = "insecure", feature = "slow_tests"))]
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn test_threshold_mpc_context_switch() -> Result<()> {
     init_logging();
@@ -2666,6 +2700,7 @@ async fn test_threshold_abort_crs_gen() -> Result<()> {
 ///
 /// Note: This test mainly validates the CLI endpoints and content returned from KMS.
 /// Full restore validation is done in service/client tests.
+#[cfg(feature = "insecure")]
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn test_threshold_restore_from_backup() -> Result<()> {
     init_logging();
@@ -2750,7 +2785,7 @@ async fn test_threshold_custodian_backup() -> Result<()> {
 // Extremely heavy test — requires dedicated infra and multi-hour runtime budget.
 // Do NOT run in regular CI or local dev.
 // Only execute when a fully prepared full-generation environment is available.
-#[cfg(feature = "slow_tests")]
+#[cfg(all(feature = "insecure", feature = "slow_tests"))]
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 #[ignore]
 async fn nightly_full_gen_tests_default_threshold_sequential_preproc_keygen() -> Result<()> {
@@ -2939,7 +2974,7 @@ async fn test_threshold_mpc_context_switch_6() -> Result<()> {
     let crs_id_str = crs_gen_with_params(
         &config_path_1234,
         test_path,
-        true,
+        false,
         2048,
         SLOW_OP_MAX_ITER,
         epoch_1_id,
@@ -3234,6 +3269,7 @@ mod docker_harness {
 /// 5. Run Crs generation
 /// 6. Compute digests of the key materials
 /// 7. Execute resharing command
+#[cfg(all(feature = "insecure", feature = "slow_tests"))]
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn test_threshold_reshare() -> Result<()> {
     init_logging();

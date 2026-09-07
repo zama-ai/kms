@@ -93,8 +93,8 @@ We give an overview below.
 To run the KMS locally, for development and testing purposes, run
 
 ```bash
-docker compose -vvv -f docker-compose-core-base.yml -f docker-compose-core-threshold.yml build
-docker compose -vvv -f docker-compose-core-base.yml -f docker-compose-core-threshold.yml up
+make build-compose-threshold
+make start-compose-threshold
 ```
 
 This will start 4 KMS servers that interact with each other
@@ -102,10 +102,10 @@ to perform threshold operations.
 Note: The yml files above do NOT use custodian-based backup! If this is needed, you need to pass in the environment variable `KMS_DOCKER_BACKUP_SECRET_SHARING` to `docker compose up`, that is
 
 ```sh
-KMS_DOCKER_BACKUP_SECRET_SHARING=true docker compose -vvv -f docker-compose-core-base.yml -f docker-compose-core-threshold.yml up
+KMS_DOCKER_BACKUP_SECRET_SHARING=true make start-compose-threshold
 ```
 
-It is possible to run the centralized version by replacing `docker-compose-core-threshold.yml` with `docker-compose-core-centralized.yml`.
+It is possible to run the centralized version with `make build-compose-centralized` followed by `make start-compose-centralized`.
 
 Then navigate to the `core-client` directory.
 This is the client that interacts with the KMS service to perform various key management tasks. For example to securely generate a CRS for the zero knowledge proofs the command would be:
@@ -197,4 +197,3 @@ This software is distributed under the **BSD-3-Clause-Clear** license. Read [thi
 </a>
 
 🌟 If you find this project helpful or interesting, please consider giving it a star on GitHub! Your support helps to grow the community and motivates further development.
-

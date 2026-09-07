@@ -113,7 +113,7 @@ impl SoftwareVersion {
 ///
 /// This newtype exists solely to implement [`tfhe_versionable::Versionize`] for
 /// [`alloy_primitives::Address`].
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct SignerAddress(pub Address);
 impl_generic_versionize!(SignerAddress);
 
