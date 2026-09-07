@@ -46,6 +46,7 @@ pub struct Client {
     pub(crate) client_sk: Option<PrivateSigKey>,
     pub(crate) params: DKGParams,
     pub(crate) decryption_mode: DecryptionMode,
+    pub(crate) signing_schemes: Vec<SigningSchemeType>,
 }
 
 impl std::fmt::Debug for Client {
@@ -89,7 +90,16 @@ impl Client {
             client_sk,
             params,
             decryption_mode,
+            signing_schemes: vec![SigningSchemeType::Ecdsa256k1],
         }
+    }
+
+    /// The schemes this client requests, in the gRPC representation.
+    pub fn signing_schemes_proto(&self) -> Vec<i32> {
+        self.signing_schemes
+            .iter()
+            .map(|scheme| kms_grpc::kms::v1::SigningSchemeType::from(*scheme) as i32)
+            .collect()
     }
 
     pub fn get_server_pks(&self) -> anyhow::Result<&HashMap<u32, PublicSigKey>> {

@@ -7,18 +7,38 @@ use super::{material_subdir, threshold_crs_id_name, threshold_key_id_name};
 use crate::consts::{
     DEFAULT_CENTRAL_CRS_ID, DEFAULT_CENTRAL_KEY_ID, KEY_PATH_PREFIX, OTHER_CENTRAL_DEFAULT_ID,
     OTHER_CENTRAL_TEST_ID, SIGNING_KEY_ID, TEST_CENTRAL_CRS_ID, TEST_CENTRAL_KEY_ID,
-    TMP_PATH_PREFIX,
+    TMP_PATH_PREFIX, signing_material_id,
 };
+use crate::cryptography::signing::SigningSchemeType;
 use crate::engine::base::derive_request_id;
+use crate::util::key_setup::{LEGACY_VERF_MATERIAL_TYPES, NON_LEGACY_VERF_MATERIAL_TYPES};
 use crate::vault::storage::StorageType;
 use anyhow::{Context, Result, anyhow};
 use futures_util::future::{Either, ready};
 use kms_grpc::rpc_types::{PrivDataType, PubDataType};
 use std::path::{Path, PathBuf};
+use strum::IntoEnumIterator;
 #[cfg(any(test, feature = "testing"))]
 use tempfile::TempDir;
 use threshold_types::role::Role;
 use tokio::fs;
+
+/// Every `(data_type, request_id)` pair of published verification material a
+/// node holds: the deprecated ECDSA-only pair under [`SIGNING_KEY_ID`], plus
+/// each scheme's typed key and digest under its own handle.
+fn public_signing_material_handles() -> Vec<(String, String)> {
+    let mut handles: Vec<(String, String)> = LEGACY_VERF_MATERIAL_TYPES
+        .iter()
+        .map(|folder| (folder.to_string(), SIGNING_KEY_ID.to_string()))
+        .collect();
+    for scheme in SigningSchemeType::iter() {
+        let id = signing_material_id(scheme).to_string();
+        for folder in NON_LEGACY_VERF_MATERIAL_TYPES {
+            handles.push((folder.to_string(), id.clone()));
+        }
+    }
+    handles
+}
 
 fn generation_hint(material_type: MaterialType) -> &'static str {
     match material_type {
@@ -231,73 +251,43 @@ impl TestMaterialManager {
             .await
     }
 
-    /// Copy signing keys
+    /// Copy the whole signing identity of each node.
     async fn copy_signing_keys(
         &self,
         source_base: Option<&Path>,
         dest_base: &Path,
         spec: &TestMaterialSpec,
     ) -> Result<()> {
-        let signing_key_id = SIGNING_KEY_ID.to_string();
-        let verification_key_type = PubDataType::VerfKey.to_string();
-        let verification_address_type = PubDataType::VerfAddress.to_string();
-        let signing_key_type = PrivDataType::SigningKey.to_string();
-
-        if spec.is_threshold() {
-            for i in 1..=spec.party_count() {
-                let role = Role::indexed_from_one(i);
-
-                let source_pub = compute_storage_path(source_base, StorageType::PUB, Some(role));
-                let source_priv = compute_storage_path(source_base, StorageType::PRIV, Some(role));
-                let dest_pub = compute_storage_path(Some(dest_base), StorageType::PUB, Some(role));
-                let dest_priv =
-                    compute_storage_path(Some(dest_base), StorageType::PRIV, Some(role));
-
-                fs::create_dir_all(&dest_pub).await?;
-                fs::create_dir_all(&dest_priv).await?;
-
-                self.copy_key_files(
-                    &source_pub,
-                    &dest_pub,
-                    &verification_key_type,
-                    &signing_key_id,
-                )
-                .await?;
-                self.copy_key_files(
-                    &source_pub,
-                    &dest_pub,
-                    &verification_address_type,
-                    &signing_key_id,
-                )
-                .await?;
-                self.copy_key_files(&source_priv, &dest_priv, &signing_key_type, &signing_key_id)
-                    .await?;
-            }
+        let roles: Vec<Option<Role>> = if spec.is_threshold() {
+            (1..=spec.party_count())
+                .map(|i| Some(Role::indexed_from_one(i)))
+                .collect()
         } else {
-            let source_pub = compute_storage_path(source_base, StorageType::PUB, None);
-            let source_priv = compute_storage_path(source_base, StorageType::PRIV, None);
-            let dest_pub = compute_storage_path(Some(dest_base), StorageType::PUB, None);
-            let dest_priv = compute_storage_path(Some(dest_base), StorageType::PRIV, None);
+            vec![None]
+        };
+
+        for role in roles {
+            let source_pub = compute_storage_path(source_base, StorageType::PUB, role);
+            let source_priv = compute_storage_path(source_base, StorageType::PRIV, role);
+            let dest_pub = compute_storage_path(Some(dest_base), StorageType::PUB, role);
+            let dest_priv = compute_storage_path(Some(dest_base), StorageType::PRIV, role);
 
             fs::create_dir_all(&dest_pub).await?;
             fs::create_dir_all(&dest_priv).await?;
 
-            self.copy_key_files(
-                &source_pub,
-                &dest_pub,
-                &verification_key_type,
-                &signing_key_id,
-            )
-            .await?;
-            self.copy_key_files(
-                &source_pub,
-                &dest_pub,
-                &verification_address_type,
-                &signing_key_id,
-            )
-            .await?;
-            self.copy_key_files(&source_priv, &dest_priv, &signing_key_type, &signing_key_id)
+            for (data_type, id) in public_signing_material_handles() {
+                self.copy_key_files(&source_pub, &dest_pub, &data_type, &id)
+                    .await?;
+            }
+            for data_type in [PrivDataType::SigningKey, PrivDataType::SigningSeed] {
+                self.copy_key_files(
+                    &source_priv,
+                    &dest_priv,
+                    &data_type.to_string(),
+                    &SIGNING_KEY_ID.to_string(),
+                )
                 .await?;
+            }
         }
 
         Ok(())

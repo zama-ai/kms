@@ -2232,7 +2232,6 @@ pub async fn execute_cmd(
                 &cc_conf,
                 cmd_config,
                 num_parties,
-                &kms_addrs,
                 fhe_params,
                 *preproc_id,
                 false,
@@ -2259,7 +2258,6 @@ pub async fn execute_cmd(
                 &cc_conf,
                 cmd_config,
                 num_parties,
-                &kms_addrs,
                 fhe_params,
                 *preproc_id,
                 true,
@@ -2296,7 +2294,6 @@ pub async fn execute_cmd(
                 &cc_conf,
                 cmd_config,
                 num_parties,
-                &kms_addrs,
                 Some(*max_num_bits),
                 fhe_params,
                 false,
@@ -2325,7 +2322,6 @@ pub async fn execute_cmd(
                 &cc_conf,
                 cmd_config,
                 num_parties,
-                &kms_addrs,
                 Some(*max_num_bits),
                 fhe_params,
                 true,
@@ -2496,7 +2492,9 @@ pub async fn execute_cmd(
             fetch_and_check_keygen(
                 num_expected_responses,
                 &cc_conf,
-                &kms_addrs,
+                internal_client
+                    .as_ref()
+                    .ok_or_else(|| anyhow::anyhow!("a keygen result needs a KMS client"))?,
                 destination_prefix,
                 req_id,
                 verify,
@@ -2532,7 +2530,9 @@ pub async fn execute_cmd(
             fetch_and_check_keygen(
                 num_expected_responses,
                 &cc_conf,
-                &kms_addrs,
+                internal_client
+                    .as_ref()
+                    .ok_or_else(|| anyhow::anyhow!("a keygen result needs a KMS client"))?,
                 destination_prefix,
                 req_id,
                 verify,
@@ -2628,7 +2628,9 @@ pub async fn execute_cmd(
             fetch_and_check_crsgen(
                 num_expected_responses,
                 &cc_conf,
-                &kms_addrs,
+                internal_client
+                    .as_ref()
+                    .ok_or_else(|| anyhow::anyhow!("a CRS gen result needs a KMS client"))?,
                 destination_prefix,
                 req_id,
                 verify,
@@ -2663,7 +2665,9 @@ pub async fn execute_cmd(
             fetch_and_check_crsgen(
                 num_expected_responses,
                 &cc_conf,
-                &kms_addrs,
+                internal_client
+                    .as_ref()
+                    .ok_or_else(|| anyhow::anyhow!("a CRS gen result needs a KMS client"))?,
                 destination_prefix,
                 req_id,
                 verify,
@@ -2749,7 +2753,6 @@ pub async fn execute_cmd(
                 cmd_config,
                 &cc_conf,
                 destination_prefix,
-                &kms_addrs,
                 fhe_params,
                 new_epoch_params.clone(),
             )

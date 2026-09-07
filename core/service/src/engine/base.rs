@@ -259,6 +259,17 @@ pub struct StoredTypedSignature {
     pub signature: Vec<u8>,
 }
 
+impl StoredTypedSignature {
+    /// The `signatures` list of a result that carries nothing but its
+    /// ECDSA/EIP-712 signature.
+    pub fn ecdsa_only(external_signature: Vec<u8>) -> Vec<Self> {
+        vec![StoredTypedSignature {
+            scheme: SigningSchemeType::Ecdsa256k1,
+            signature: external_signature,
+        }]
+    }
+}
+
 impl From<&StoredTypedSignature> for TypedSignature {
     fn from(value: &StoredTypedSignature) -> Self {
         TypedSignature {
@@ -348,7 +359,7 @@ where
 /// Shared between signing and after-the-fact verification (see
 /// [`crate::engine::storage_material_verification`]) so there is exactly one definition of
 /// what was signed.
-pub(crate) fn keygen_payload_bytes(
+pub fn keygen_payload_bytes(
     prep_id: &RequestId,
     key_id: &RequestId,
     key_digests: &BTreeMap<PubDataType, Vec<u8>>,
@@ -442,7 +453,7 @@ pub(crate) fn preproc_payload_bytes(
 /// Shared between signing and after-the-fact verification (see
 /// [`crate::engine::storage_material_verification`]) so there is exactly one definition of
 /// what was signed.
-pub(crate) fn crs_payload_bytes(
+pub fn crs_payload_bytes(
     crs_id: &RequestId,
     max_num_bits: u32,
     crs_digest: &[u8],
@@ -631,9 +642,12 @@ fn scheme_signing_jobs(
         .collect()
 }
 
-/// Sign a public result: the canonical ECDSA/EIP-712 `external_signature`, and —
+/// Sign a public result: the deprecated ECDSA/EIP-712 `external_signature`, and —
 /// independently — the per-scheme `signatures` for exactly the schemes the
 /// client requested.
+///
+/// `external_signature` is produced whether or not ECDSA was requested, because
+/// it is part of the released wire contract until it goes away in 0.16.å
 fn sign_result<D: SolStruct>(
     identity: &NodeSigningIdentity,
     schemes: &[SigningSchemeType],
@@ -704,9 +718,7 @@ pub(crate) fn compute_info_crs_from_digest(
     ))
 }
 
-/// Sign a preprocessing result: the always-present ECDSA/EIP-712
-/// `external_signature`, plus the per-scheme `signatures` for exactly the
-/// requested schemes.
+/// Sign a preprocessing result; see [`sign_result`] for what each field carries.
 pub(crate) fn compute_preprocessing_signatures(
     identity: &NodeSigningIdentity,
     schemes: &[SigningSchemeType],
@@ -1615,10 +1627,8 @@ impl Upgrade<KeyGenMetadataInnerV3> for KeyGenMetadataInnerV2 {
             preprocessing_id: self.preprocessing_id,
             key_digest_map: self.key_digest_map,
             extra_data: self.extra_data,
-            // The ECDSA/EIP-712 signature is preserved in `external_signature`;
-            // `signatures` is an opt-in per-scheme, so stays empty here.
+            signatures: StoredTypedSignature::ecdsa_only(self.external_signature.clone()),
             external_signature: self.external_signature,
-            signatures: Vec::new(),
         })
     }
 }
@@ -1750,6 +1760,18 @@ pub struct CrsGenMetadataInner {
     pub(crate) signatures: Vec<StoredTypedSignature>,
 }
 
+impl CrsGenMetadataInner {
+    /// The deprecated ECDSA/EIP-712 signature over the CRS metadata.
+    pub fn external_signature(&self) -> &[u8] {
+        &self.external_signature
+    }
+
+    /// The per-scheme signatures over the CRS metadata.
+    pub fn scheme_signatures(&self) -> &[StoredTypedSignature] {
+        &self.signatures
+    }
+}
+
 #[derive(Clone, Serialize, Deserialize, Version)]
 /// Previous current CRS metadata layout, before retaining the EIP-712 domain.
 pub struct CrsGenMetadataInnerV2 {
@@ -1793,11 +1815,10 @@ impl Upgrade<CrsGenMetadataInnerV2> for CrsGenMetadataInnerV1 {
             crs_digest: self.crs_digest,
             max_num_bits: self.max_num_bits,
             extra_data: self.extra_data,
-            // The ECDSA/EIP-712 signature is preserved in `external_signature`;
-            // `signatures` is an opt-in per-scheme set that pre-#3078 data never
-            // populated, so it upgrades to empty.
+            // See the keygen upgrade above: the ECDSA entry is rebuilt from
+            // `external_signature`, which holds the same bytes.
+            signatures: StoredTypedSignature::ecdsa_only(self.external_signature.clone()),
             external_signature: self.external_signature,
-            signatures: Vec::new(),
         })
     }
 }
@@ -1924,6 +1945,7 @@ pub(crate) mod tests {
     use super::{
         CrsGenMetadata, CrsGenMetadataInner, CrsGenMetadataInnerV0, KeyGenMetadata,
         KeyGenMetadataInner, KeyGenMetadataInnerV0, KeyGenMetadataInnerV1, StoredEip712Domain,
+        StoredTypedSignature,
     };
     use super::{TypedPlaintext, deserialize_to_low_level};
     use crate::cryptography::signatures::compute_eip712_signature;
@@ -2229,9 +2251,9 @@ pub(crate) mod tests {
     }
 
     /// `external_signature` is always the EIP-712 signature, independent of the
-    /// requested schemes, while `signatures` is opt-in on exactly the schemes
-    /// requested: ECDSA carries the EIP-712 signature verbatim and every other
-    /// scheme signs the serialized CRS payload — the same split decryption uses.
+    /// requested schemes, while `signatures` holds exactly the schemes requested:
+    /// ECDSA carries the EIP-712 signature verbatim and every other scheme signs
+    /// the serialized CRS payload — the same split decryption uses.
     #[test]
     fn crs_result_signatures_multi_scheme() {
         let mut rng = AesRng::seed_from_u64(0x5C15);
@@ -3388,7 +3410,13 @@ pub(crate) mod tests {
                 .collect::<BTreeMap<_, _>>(),
         );
         assert_eq!(upgraded_v4.external_signature, q126.external_signature);
-        assert!(upgraded_v4.signatures.is_empty());
+        // The upgrade rebuilds the ECDSA entry of `signatures` from
+        // `external_signature`, so a client that asked for the default scheme
+        // finds the entry it requires on a result this old.
+        assert_eq!(
+            upgraded_v4.signatures,
+            StoredTypedSignature::ecdsa_only(q126.external_signature.clone())
+        );
         assert_eq!(upgraded_v4.eip712_domain, None);
     }
 
@@ -3447,8 +3475,9 @@ pub(crate) mod tests {
             external_signature: external_signature.clone(),
         };
 
-        // Verify upgrade (V0 -> V1 -> V2 -> V3) sets extra_data as None; `signatures`
-        // is opt-in, so it upgrades to empty, and the EIP-712 domain is unavailable.
+        // Verify upgrade (V0 -> V1 -> V2 -> V3) sets extra_data as None, rebuilds
+        // the ECDSA entry of `signatures` from `external_signature`, and leaves
+        // the EIP-712 domain unavailable.
         let upgraded: CrsGenMetadataInner = q126
             .clone()
             .upgrade()
@@ -3458,7 +3487,10 @@ pub(crate) mod tests {
             .upgrade()
             .unwrap();
         assert_eq!(upgraded.extra_data, None);
-        assert!(upgraded.signatures.is_empty());
+        assert_eq!(
+            upgraded.signatures,
+            StoredTypedSignature::ecdsa_only(q126.external_signature.clone())
+        );
         assert_eq!(upgraded.eip712_domain, None);
         // Upgraded serialization
         let upgraded_bytes = bc2wrap::serialize(&upgraded).unwrap();

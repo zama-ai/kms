@@ -123,9 +123,9 @@ impl Client {
     /// # Errors
     ///
     /// Fails when `signatures` is empty, when an entry names a scheme this client holds no
-    /// key for, and when an entry does not verify; and when the entries do not agree
-    /// on one party.
-    pub(crate) fn verify_result_signatures<T: SolStruct>(
+    /// key for, when an entry does not verify, when the entries do not agree
+    /// on one party, and when a requested scheme is missing from the list.
+    pub fn verify_result_signatures<T: SolStruct>(
         &self,
         signatures: &[TypedSignature],
         sol_type: &T,
@@ -138,6 +138,7 @@ impl Client {
                 "the response carries no signatures".to_string(),
             ));
         }
+        Self::ensure_requested_schemes_present(signatures, &self.signing_schemes)?;
 
         let mut signer: Option<(u32, alloy_primitives::Address)> = None;
         for typed in signatures {
@@ -309,6 +310,16 @@ mod tests {
         )
     }
 
+    fn client_requesting(
+        identity: &NodeSigningIdentity,
+        with_scheme_keys: bool,
+        schemes: &[SigningSchemeType],
+    ) -> Client {
+        let mut client = client_for(identity, with_scheme_keys);
+        client.signing_schemes = schemes.to_vec();
+        client
+    }
+
     /// The signatures `identity` produces for `schemes` over `payload`, in the
     /// forms `engine::base::scheme_signing_jobs` defines.
     fn signatures_for(
@@ -374,24 +385,44 @@ mod tests {
         );
     }
 
-    /// A MlDsa65 signature is attributed to the correct signing party.
+    /// A MlDsa65 signature is attributed to the correct signing party, provided
+    /// MlDsa65 is what the client asked for.
     #[test]
     fn a_result_without_an_ecdsa_entry_is_attributed() {
         let identity = seeded_identity(3);
-        let client = client_for(&identity, true);
+        let client = client_requesting(&identity, true, &[SigningSchemeType::MlDsa65]);
         let signatures = signatures_for(&identity, &[SigningSchemeType::MlDsa65], PAYLOAD);
 
         let (party_id, _address) = verify(&client, &signatures, PAYLOAD).unwrap();
         assert_eq!(party_id, PARTY);
     }
 
+    /// The same list is rejected by a client that asked for ECDSA: a server may
+    /// not answer with a scheme of its own choosing.
+    #[test]
+    fn a_result_missing_the_requested_ecdsa_entry_is_rejected() {
+        let identity = seeded_identity(3);
+        let client = client_for(&identity, true);
+        let signatures = signatures_for(&identity, &[SigningSchemeType::MlDsa65], PAYLOAD);
+
+        let err = verify(&client, &signatures, PAYLOAD)
+            .unwrap_err()
+            .to_string();
+        assert!(
+            err.contains("was requested"),
+            "the error does not name the missing scheme: {err}"
+        );
+    }
+
     /// Each entry covers the payload it was signed over, and nothing else.
     #[test]
     fn a_tampered_payload_is_rejected() {
         let identity = seeded_identity(4);
-        let client = client_for(&identity, true);
 
         for scheme in SigningSchemeType::iter().filter(|s| *s != SigningSchemeType::Ecdsa256k1) {
+            // Ask for exactly the scheme under test, so the rejection can only
+            // come from the signature check and not from the presence check.
+            let client = client_requesting(&identity, true, &[scheme]);
             let signatures = signatures_for(&identity, &[scheme], PAYLOAD);
             assert!(
                 verify(&client, &signatures, b"a different payload").is_err(),
@@ -450,6 +481,28 @@ mod tests {
         ));
 
         assert!(verify(&client, &signatures, PAYLOAD).is_err());
+    }
+
+    /// A hybrid request answered with its ECDSA half alone is rejected, even though that half verifies.
+    #[test]
+    fn a_hybrid_request_answered_with_ecdsa_alone_is_rejected() {
+        let identity = seeded_identity(11);
+        let requested = [SigningSchemeType::Ecdsa256k1, SigningSchemeType::MlDsa65];
+        let client = client_requesting(&identity, true, &requested);
+        let ecdsa_only = signatures_for(&identity, &[SigningSchemeType::Ecdsa256k1], PAYLOAD);
+
+        let err = verify(&client, &ecdsa_only, PAYLOAD)
+            .unwrap_err()
+            .to_string();
+        assert!(
+            err.contains("MlDsa65") && err.contains("was requested"),
+            "the error does not name the dropped post-quantum scheme: {err}"
+        );
+
+        // The full list, by contrast, passes.
+        let both = signatures_for(&identity, &requested, PAYLOAD);
+        let (party_id, _address) = verify(&client, &both, PAYLOAD).unwrap();
+        assert_eq!(party_id, PARTY);
     }
 
     /// A response that drops a requested scheme is caught, while the always

@@ -1,7 +1,7 @@
 use crate::{
     CmdConfig, CoreClientConfig, CoreConf, DigestKeySet, NewEpochParameters,
     PreviousEpochParameters, SLEEP_TIME_BETWEEN_REQUESTS_MS,
-    keygen::check_uncompressed_keyset_ext_signature, s3_operations::fetch_public_elements,
+    keygen::check_uncompressed_keyset_signatures, s3_operations::fetch_public_elements,
 };
 use kms_grpc::{
     RequestId,
@@ -96,7 +96,6 @@ impl PreviousEpochParameters {
     }
 }
 
-#[expect(clippy::too_many_arguments)]
 // NOTE: The new context must already exist !
 pub(crate) async fn do_new_epoch(
     internal_client: &mut Client,
@@ -104,7 +103,6 @@ pub(crate) async fn do_new_epoch(
     cmd_conf: &CmdConfig,
     cc_conf: &CoreClientConfig,
     destination_prefix: &Path,
-    kms_addrs: &[alloy_primitives::Address],
     fhe_params: FheParameter,
     new_epoch_params: NewEpochParameters,
 ) -> anyhow::Result<EpochId> {
@@ -367,26 +365,25 @@ pub(crate) async fn do_new_epoch(
                             preproc_id
                         )
                     })?;
-                let signature = crate::ecdsa_signature(&reshared.signatures)?.to_vec();
-
                 let verified = accepted_extra_data.iter().any(|extra_data| {
                     if let Some(keyset) = keyset.as_ref() {
                         let pk = compressed_public_key.as_ref().expect(
                             "compressed reshared key must have compact public key material",
                         );
-                        crate::keygen::check_compressed_keyset_ext_signature(
+                        crate::keygen::check_compressed_keyset_signatures(
+                            internal_client,
                             keyset,
                             pk,
                             &preproc_id,
                             &key_id,
-                            &signature,
+                            &reshared.signatures,
                             &default_domain,
                             extra_data.clone(),
-                            kms_addrs,
                         )
                         .is_ok()
                     } else {
-                        check_uncompressed_keyset_ext_signature(
+                        check_uncompressed_keyset_signatures(
+                            internal_client,
                             public_key
                                 .as_ref()
                                 .expect("legacy reshared key must have public key material"),
@@ -395,10 +392,9 @@ pub(crate) async fn do_new_epoch(
                                 .expect("legacy reshared key must have server key material"),
                             &preproc_id,
                             &key_id,
-                            &signature,
+                            &reshared.signatures,
                             &default_domain,
                             extra_data.clone(),
-                            kms_addrs,
                         )
                         .is_ok()
                     }
@@ -406,7 +402,7 @@ pub(crate) async fn do_new_epoch(
 
                 anyhow::ensure!(
                     verified,
-                    "External signature verification failed for the reshared key {key_id}"
+                    "Signature verification failed for the reshared key {key_id}"
                 );
             }
         }

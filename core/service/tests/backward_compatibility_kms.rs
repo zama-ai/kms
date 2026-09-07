@@ -97,6 +97,22 @@ fn dummy_domain() -> alloy_sol_types::Eip712Domain {
     )
 }
 
+/// Check the `signatures` list of a stored keygen/CRS metadata vector, and return
+/// it so the caller can compare the rest of the struct field by field.
+fn checked_scheme_signatures(
+    signatures: &[StoredTypedSignature],
+    external_signature: &[u8],
+) -> Result<Vec<StoredTypedSignature>, String> {
+    if signatures.is_empty()
+        || signatures == StoredTypedSignature::ecdsa_only(external_signature.to_vec())
+    {
+        return Ok(signatures.to_vec());
+    }
+    Err(format!(
+        "stored metadata carries unexpected per-scheme signatures: {signatures:?}"
+    ))
+}
+
 /// Rebuilds the EIP-712 domain that `test` describes.
 fn domain_from_test(test: &Eip712DomainTest) -> alloy_sol_types::Eip712Domain {
     alloy_sol_types::Eip712Domain::new(
@@ -274,8 +290,14 @@ fn test_key_gen_metadata(
         },
     );
 
+    let signatures = checked_scheme_signatures(
+        &original_versionized.signatures,
+        &original_versionized.external_signature,
+    )
+    .map_err(|e| test.failure(e, format))?;
+
     let new_versionized = KeyGenMetadataInner {
-        signatures: vec![],
+        signatures,
         key_id,
         preprocessing_id,
         key_digest_map,
@@ -331,13 +353,25 @@ fn test_crs_gen_metadata(
                 format,
             )
         })?;
+    let signatures = match &original_current {
+        CrsGenMetadata::Current(inner) => {
+            checked_scheme_signatures(inner.scheme_signatures(), inner.external_signature())
+                .map_err(|e| test.failure(e, format))?
+        }
+        CrsGenMetadata::LegacyV0(_) => {
+            return Err(test.failure(
+                "Expected current CrsGenMetadata, got legacy".to_string(),
+                format,
+            ));
+        }
+    };
     let new_inner: CrsGenMetadataInner = CrsGenMetadataInnerV2 {
         crs_id,
         crs_digest: digest,
         max_num_bits,
         extra_data: None,
         external_signature: external_signature.clone(),
-        signatures: vec![],
+        signatures,
     }
     .upgrade()
     .unwrap();
@@ -425,8 +459,14 @@ fn test_key_gen_metadata_with_extra_data(
     let external_signature =
         compute_eip712_signature(&sig_key, &sol_type, &signing_domain).unwrap();
 
+    let signatures = checked_scheme_signatures(
+        &original_versionized.signatures,
+        &original_versionized.external_signature,
+    )
+    .map_err(|e| test.failure(e, format))?;
+
     let new_versionized = KeyGenMetadataInner {
-        signatures: vec![],
+        signatures,
         key_id,
         preprocessing_id,
         key_digest_map,
@@ -474,13 +514,25 @@ fn test_crs_gen_metadata_with_extra_data(
                 format,
             )
         })?;
+    let signatures = match &original_current {
+        CrsGenMetadata::Current(inner) => {
+            checked_scheme_signatures(inner.scheme_signatures(), inner.external_signature())
+                .map_err(|e| test.failure(e, format))?
+        }
+        CrsGenMetadata::LegacyV0(_) => {
+            return Err(test.failure(
+                "Expected current CrsGenMetadata, got legacy".to_string(),
+                format,
+            ));
+        }
+    };
     let new_inner: CrsGenMetadataInner = CrsGenMetadataInnerV2 {
         crs_id,
         crs_digest: digest,
         max_num_bits,
         extra_data: Some(extra_data),
         external_signature: external_signature.clone(),
-        signatures: vec![],
+        signatures,
     }
     .upgrade()
     .unwrap();

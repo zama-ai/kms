@@ -121,9 +121,11 @@ The service crate is the main surface area. Key subdirectories under
   `PrivateSigKey` is the ECDSA leaf type, which client wallets and the WASM
   surface also use. An identity with no seed — a node that has not yet run
   `kms-gen-keys` — can only do ECDSA, and errors with
-  `SigningError::MissingRootSeed` for anything else. On the client side, `Client::verify_scheme_signatures` checks a result's
-  per-scheme `signatures` against the peers' published keys, which
-  `Client::new_client` reads from `PubDataType::TypedVerfKey`. Every scheme's public
+  `SigningError::MissingRootSeed` for anything else. On the client side,
+  `Client::verify_result_signatures` checks a result's per-scheme `signatures`
+  against the peers' published keys, which `Client::new_client` reads from
+  `PubDataType::TypedVerfKey`, and rejects a result that omits a scheme the
+  client asked for (`Client::signing_schemes`). Every scheme's public
   verification material — ECDSA's included —
   is stored under the handle `consts::signing_material_id(scheme)` gives, in the
   data types `key_setup::NON_LEGACY_VERF_MATERIAL_TYPES` names:

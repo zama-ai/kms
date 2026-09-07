@@ -62,13 +62,15 @@ flow add a post-quantum signature beside its ECDSA one.
 
 Rules a caller has to know:
 
-- **An empty list asks for no per-scheme signature.** The result still carries its
-  ECDSA/EIP-712 signature in `external_signature`, so a client that predates
-  `signing_schemes` keeps working unchanged.
+- **An empty list means `Ecdsa256k1`.** A client that predates `signing_schemes`
+  sends nothing and gets exactly the ECDSA signature it always got: in
+  `external_signature`, in the deprecated scalar `signature` of a decryption
+  response, and as the single entry of `signatures`.
+- **Naming schemes explicitly replaces that default**, it does not extend it.
 - **ECDSA is always available**; every other scheme requires the node to hold a
   root signing seed. A request naming a scheme the node cannot serve is rejected
   with `InvalidArgument`, before any work starts.
-- **A consumer picks the tuples it can verify**, and should reject a response that
+- **A consumer picks the tuples it can verify**, and must reject a response that
   omits a scheme the request asked for.
 - **Only the ECDSA tuple is bound to EIP-712.** Every other scheme signs the
   serialized payload, because EIP-712 is an EVM and secp256k1 construction. A

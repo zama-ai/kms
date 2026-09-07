@@ -6,14 +6,13 @@ use crate::{
 use aes_prng::AesRng;
 use alloy_sol_types::Eip712Domain;
 use hashing::hash_versioned;
-use kms_grpc::kms::v1::{CrsGenResult, FheParameter};
+use kms_grpc::kms::v1::{CrsGenResult, FheParameter, TypedSignature};
 use kms_grpc::kms_service::v1::core_service_endpoint_client::CoreServiceEndpointClient;
 use kms_grpc::rpc_types::PubDataType;
 use kms_grpc::solidity_types::CrsgenVerification;
 use kms_grpc::{ContextId, EpochId, RequestId};
 use kms_lib::client::client_wasm::Client;
-use kms_lib::cryptography::signatures::recover_address_from_ext_signature;
-use kms_lib::engine::base::DSEP_PUBDATA_CRS;
+use kms_lib::engine::base::{DSEP_PUBDATA_CRS, crs_payload_bytes};
 use kms_lib::util::key_setup::test_tools::load_material_from_pub_storage;
 use std::collections::HashMap;
 use std::path::Path;
@@ -31,7 +30,6 @@ pub(crate) async fn do_crsgen(
     cc_conf: &CoreClientConfig,
     cmd_conf: &CmdConfig,
     num_parties: usize,
-    kms_addrs: &[alloy_primitives::Address],
     max_num_bits: Option<u32>,
     param: FheParameter,
     insecure: bool,
@@ -113,7 +111,7 @@ pub(crate) async fn do_crsgen(
     fetch_and_check_crsgen(
         num_expected_responses,
         cc_conf,
-        kms_addrs,
+        internal_client,
         destination_prefix,
         req_id,
         Some(SigVerificationMaterial { domain, extra_data }),
@@ -129,7 +127,7 @@ pub(crate) async fn do_crsgen(
 pub(crate) async fn fetch_and_check_crsgen(
     num_expected_responses: usize,
     cc_conf: &CoreClientConfig,
-    kms_addrs: &[alloy_primitives::Address],
+    internal_client: &Client,
     destination_prefix: &Path,
     request_id: RequestId,
     // EIP-712 domain + extra_data to verify the external signature against. When
@@ -198,17 +196,17 @@ pub(crate) async fn fetch_and_check_crsgen(
 
         match verify.as_ref() {
             Some(material) => {
-                check_crsgen_ext_signature(
+                check_crsgen_signatures(
+                    internal_client,
                     &crs,
                     &request_id,
-                    crate::ecdsa_signature(&response.signatures)?,
+                    &response.signatures,
                     &material.domain,
                     material.extra_data.clone(),
-                    kms_addrs,
                 )
                 .inspect_err(|e| tracing::error!("CRS signature check failed: {}", e))?;
 
-                tracing::info!("EIP712 verification of CRS successful.");
+                tracing::info!("Verification of every requested CRS signature successful.");
             }
             None => {
                 tracing::error!(
@@ -315,35 +313,43 @@ pub(crate) async fn get_crsgen_responses(
     Ok(resp_response_vec)
 }
 
-/// check that the external signature on the CRS is valid, i.e. was made by one of the supplied addresses
-fn check_crsgen_ext_signature(
+/// Check every signature the CRS result carries, under every scheme the client
+/// requested, and that it was produced by one of the known KMS parties.
+fn check_crsgen_signatures(
+    internal_client: &Client,
     crs: &CompactPkeCrs,
     crs_id: &RequestId,
-    external_sig: &[u8],
+    signatures: &[TypedSignature],
     domain: &Eip712Domain,
     extra_data: Vec<u8>,
-    kms_addrs: &[alloy_primitives::Address],
 ) -> anyhow::Result<()> {
     let crs_digest = hash_versioned(&DSEP_PUBDATA_CRS, crs)?;
 
     tracing::info!(
-        "Checking external signature on CRS gen result. crs_id={},digest={}",
+        "Checking the signatures on a CRS gen result. crs_id={},digest={}",
         crs_id,
         hex::encode(&crs_digest),
     );
 
     let max_num_bits = max_num_bits_from_crs(crs);
-    let sol_type = CrsgenVerification::new(crs_id, max_num_bits, crs_digest, extra_data);
-    let addr = recover_address_from_ext_signature(&sol_type, domain, external_sig)?;
-
-    // check that the address is in the list of known KMS addresses
-    if kms_addrs.contains(&addr) {
-        Ok(())
-    } else {
-        Err(anyhow::anyhow!(
-            "External signature verification failed for crsgen as it does not contain the right address!"
-        ))
-    }
+    let sol_type = CrsgenVerification::new(crs_id, max_num_bits, crs_digest.clone(), extra_data);
+    let payload_bytes = crs_payload_bytes(
+        crs_id,
+        max_num_bits as u32,
+        &crs_digest,
+        sol_type.extraData.as_ref(),
+    )?;
+    internal_client
+        .verify_result_signatures(
+            signatures,
+            &sol_type,
+            domain,
+            &DSEP_PUBDATA_CRS,
+            &payload_bytes,
+        )
+        .map(|(party_id, _address)| {
+            tracing::info!("CRS gen result verified as produced by party {party_id}");
+        })
 }
 
 pub(crate) async fn do_abort_crs_gen(
@@ -421,18 +427,36 @@ pub(crate) async fn do_abort_crs_gen(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use kms_grpc::rpc_types::PrivDataType;
+    use kms_grpc::rpc_types::{PrivDataType, ecdsa_signatures};
     use kms_lib::{
         consts::{
             DEFAULT_EPOCH_ID, SIGNING_KEY_ID, TEST_CENTRAL_CRS_ID, TEST_PARAM, default_extra_data,
         },
-        cryptography::signatures::{PrivateSigKey, compute_eip712_signature},
+        cryptography::signatures::{
+            PrivateSigKey, PublicSigKey, compute_eip712_signature, gen_sig_keys,
+        },
         util::key_setup::{ensure_central_crs_exists, ensure_central_server_signing_keys_exist},
         vault::storage::{ram::RamStorage, read_versioned_at_request_id},
     };
+    use rand::SeedableRng;
     use std::str::FromStr;
     use tfhe::zk::CompactPkeCrs;
     use threshold_execution::zk::ceremony::max_num_bits_from_crs;
+
+    /// The error every failed ECDSA check now reports; see the keygen twin.
+    const UNKNOWN_PARTY: &str = "belongs to no known party";
+
+    fn client_knowing(pk: PublicSigKey) -> Client {
+        let address = pk.address();
+        Client::new(
+            HashMap::from([(1, pk)]),
+            HashMap::new(),
+            address,
+            None,
+            TEST_PARAM,
+            None,
+        )
+    }
 
     #[tokio::test]
     async fn test_eip712_sigs() {
@@ -471,7 +495,7 @@ mod tests {
         )
         .await
         .unwrap();
-        let addr = sk.address();
+        let client = client_knowing(sk.verf_key());
 
         // set up a dummy EIP 712 domain
         let domain = alloy_sol_types::eip712_domain!(
@@ -498,52 +522,76 @@ mod tests {
                 .expect("signature computation should succeed");
 
         // check that the signature verifies and unwraps without error
-        check_crsgen_ext_signature(&crs, crs_id, &external_sig, &domain, vec![], &[addr])
-            .expect("signature should be valid");
-        check_crsgen_ext_signature(
+        check_crsgen_signatures(
+            &client,
             &crs,
             crs_id,
-            &external_sig_extra_data,
+            &ecdsa_signatures(external_sig.clone()),
+            &domain,
+            vec![],
+        )
+        .expect("signature should be valid");
+        check_crsgen_signatures(
+            &client,
+            &crs,
+            crs_id,
+            &ecdsa_signatures(external_sig_extra_data),
             &domain,
             default_extra_data(),
-            &[addr],
         )
         .expect("signature should be valid");
 
-        // check that verification fails for a wrong address
-        let wrong_address = alloy_primitives::address!("0EdA6bf26964aF942Eed9e03e53442D37aa960EE");
+        // An empty list is rejected outright: a request that names no scheme
+        // still asks for ECDSA, so the entry has to be there.
         assert!(
-            check_crsgen_ext_signature(&crs, crs_id, &external_sig, &domain, vec![], &[wrong_address])
+            check_crsgen_signatures(&client, &crs, crs_id, &[], &domain, vec![])
                 .unwrap_err()
                 .to_string()
-                .contains("External signature verification failed for crsgen as it does not contain the right address")
+                .contains("carries no signatures")
         );
 
-        // check that verification fails for signature that is too short
-        let short_sig = [0_u8; 37];
+        // check that verification fails for a client that knows another party
+        let mut rng = AesRng::seed_from_u64(0xBEEF);
+        let stranger = client_knowing(gen_sig_keys(&mut rng).0);
         assert!(
-            check_crsgen_ext_signature(&crs, crs_id, &short_sig, &domain, vec![], &[addr])
-                .unwrap_err()
-                .to_string()
-                .contains("Expected external signature of length 65 Bytes, but got 37")
+            check_crsgen_signatures(
+                &stranger,
+                &crs,
+                crs_id,
+                &ecdsa_signatures(external_sig.clone()),
+                &domain,
+                vec![],
+            )
+            .unwrap_err()
+            .to_string()
+            .contains(UNKNOWN_PARTY)
         );
 
-        // check that verification fails for a byte string that is not a signature
-        let malformed_sig = [23_u8; 65];
-        assert!(
-            check_crsgen_ext_signature(&crs, crs_id, &malformed_sig, &domain, vec![], &[addr])
-                .unwrap_err()
-                .to_string()
-                .contains("signature error")
-        );
-
-        // check that verification fails for a signature that does not match the message
+        // A signature that is too short, is not a signature at all, or does not
+        // cover this message all fail the same way: no known party's address can
+        // be recovered from it.
+        let short_sig = [0_u8; 37].to_vec();
+        let malformed_sig = [23_u8; 65].to_vec();
         let wrong_sig = hex::decode("cf92fe4c0b7c72fd8571c9a6680f2cd7481ebed7a3c8c7c7a6e6eaf27f5654f36100c146e609e39950953602ed73a3c10c1672729295ed8b33009b375813e5801b").unwrap();
-        assert!(
-            check_crsgen_ext_signature(&crs, crs_id, &wrong_sig, &domain, vec![], &[addr])
-                .unwrap_err()
-                .to_string()
-                .contains("External signature verification failed for crsgen as it does not contain the right address")
-        );
+        for (label, bad_sig) in [
+            ("too short", short_sig),
+            ("malformed", malformed_sig),
+            ("wrong message", wrong_sig),
+        ] {
+            let err = check_crsgen_signatures(
+                &client,
+                &crs,
+                crs_id,
+                &ecdsa_signatures(bad_sig),
+                &domain,
+                vec![],
+            )
+            .unwrap_err()
+            .to_string();
+            assert!(
+                err.contains(UNKNOWN_PARTY),
+                "a {label} signature was not rejected as expected: {err}"
+            );
+        }
     }
 }

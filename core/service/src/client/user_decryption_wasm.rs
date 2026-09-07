@@ -296,8 +296,9 @@ impl Client {
             })?;
         }
 
-        // Every non-ECDSA entry has to verify, and an entry this client cannot check
-        // is a rejection rather than a skip
+        // Every entry has to verify, and an entry this client cannot check is a
+        // rejection rather than a skip. ECDSA starts out verified because one of
+        // the two deprecated fields was checked just above.
         let mut verified = vec![SigningSchemeType::Ecdsa256k1];
         for typed in &resp.signatures {
             let scheme = SigningSchemeType::try_from(typed.scheme).map_err(|e| {
@@ -306,6 +307,19 @@ impl Client {
                 ))
             })?;
             if scheme == SigningSchemeType::Ecdsa256k1 {
+                check_ext_user_decryption_signature(
+                    &typed.signature,
+                    &payload,
+                    request,
+                    eip712_domain,
+                    expected_server_addr,
+                )
+                .map_err(|e| {
+                    anyhow_error_and_log(format!(
+                        "the ECDSA entry of the `signatures` of party {} did not verify: {e}",
+                        payload.party_id
+                    ))
+                })?;
                 continue;
             }
             let verf_key = self
@@ -343,7 +357,7 @@ impl Client {
         // present: a party cannot drop the post-quantum entry of a hybrid request
         // and pass on ECDSA alone.
         if let Some(missing) = request
-            .signing_schemes()
+            .signing_schemes
             .iter()
             .find(|scheme| !verified.contains(scheme))
         {

@@ -5,7 +5,7 @@ use crate::engine::validation::validate_public_decrypt_responses;
 use alloy_sol_types::Eip712Domain;
 use kms_grpc::identifiers::ContextId;
 use kms_grpc::kms::v1::{PublicDecryptionRequest, PublicDecryptionResponse, TypedCiphertext};
-use kms_grpc::kms::v1::{SigningSchemeType, TypedPlaintext};
+use kms_grpc::kms::v1::TypedPlaintext;
 use kms_grpc::rpc_types::{alloy_to_protobuf_domain, optional_protobuf_to_alloy_domain};
 use kms_grpc::{EpochId, RequestId};
 
@@ -41,7 +41,7 @@ impl Client {
             extra_data: extra_data.to_vec(),
             context_id: context_id.map(|c| (*c).into()),
             epoch_id: epoch_id.map(|e| (*e).into()),
-            signing_schemes: vec![SigningSchemeType::Ecdsa256k1 as i32],
+            signing_schemes: self.signing_schemes_proto(),
         };
         Ok(req)
     }
