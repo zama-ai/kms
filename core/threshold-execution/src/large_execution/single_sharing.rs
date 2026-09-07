@@ -149,15 +149,11 @@ fn format_for_next<Z: Ring>(
     for i in 0..l {
         let mut vec = Vec::with_capacity(num_parties);
         for party_idx in 0..num_parties {
+            let role = Role::indexed_from_zero(party_idx);
             vec.push(
-                local_single_shares
-                    .get(&Role::indexed_from_zero(party_idx))
-                    .ok_or_else(|| {
-                        anyhow_error_and_log(format!(
-                            "Can not find shares for Party {}",
-                            party_idx + 1
-                        ))
-                    })?[i],
+                local_single_shares.get(&role).ok_or_else(|| {
+                    anyhow_error_and_log(format!("Can not find shares for Party {role}"))
+                })?[i],
             );
         }
         res.push(vec);

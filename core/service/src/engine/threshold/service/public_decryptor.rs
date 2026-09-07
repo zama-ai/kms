@@ -55,7 +55,7 @@ use crate::{
             traits::PublicDecryptor,
         },
         traits::BaseKms,
-        utils::MetricedError,
+        utils::{MetricedError, format_handle, format_unvalidated_id},
         validation::{
             DSEP_PUBLIC_DECRYPTION, RequestIdParsingErr, parse_grpc_request_id,
             validate_public_decrypt_req,
@@ -167,13 +167,6 @@ impl<
         T: tfhe::integer::block_decomposition::Recomposable
             + tfhe::core_crypto::commons::traits::CastFrom<u128>,
     {
-        let my_identity = session_maker.my_identity(&context_id).await?;
-        tracing::info!(
-            "{:?} started inner_decrypt with mode {:?} with session ID {session_id} and context ID {context_id}",
-            my_identity,
-            dec_mode
-        );
-
         let keys = fhe_keys;
         // Only the SmallCompressed format needs the decompression key to deserialize.
         // Fetching it would lazily decompress the (multi-GiB) keyset, so avoid it for
@@ -194,7 +187,7 @@ impl<
                     .await
                     .map_err(|e| {
                         anyhow::anyhow!(
-                            "Could not prepare ddec data for noiseflood decryption: {e}",
+                            "Could not prepare ddec data for noiseflood decryption in sid {session_id}: {e}",
                         )
                     })?;
                 let mut noiseflood_session = SmallOfflineNoiseFloodSession::new(session);
@@ -242,8 +235,7 @@ impl<
                     }
                 };
                 tracing::info!(
-                    "Public decryption in session {session_id} completed on {:?}. Inner thread took {:?} ms",
-                    my_identity,
+                    "Public decryption in session {session_id} completed. Inner thread took {:?} ms",
                     time.as_millis()
                 );
                 raw_decryption
@@ -266,9 +258,17 @@ impl<
         > + 'static,
 > PublicDecryptor for RealPublicDecryptor<PubS, PrivS, Dec>
 {
+    // `context_id`/`epoch_id` are only known after request validation, so they start empty and are
+    // recorded below. Every event and error in this request — including the ones emitted by the
+    // spawned decryption task, which inherits this span — then carries both without extra log lines.
+    // `request_id` is still unvalidated when the span is created, so it is size-bounded: a span
+    // field is repeated on every event in the request, so an unbounded one is worse than a single
+    // oversized line.
     #[tracing::instrument(skip_all, fields(
-        request_id = ?request.get_ref().request_id,
-        operation = "decrypt"
+        request_id = %format_unvalidated_id(&request.get_ref().request_id),
+        operation = "decrypt",
+        context_id = tracing::field::Empty,
+        epoch_id = tracing::field::Empty
     ))]
     async fn public_decrypt(
         &self,
@@ -283,11 +283,20 @@ impl<
             .start();
 
         let inner = Arc::new(request.into_inner());
-        tracing::info!("{}", format_public_request(&inner));
 
         // Check and extract the parameters from the request in a separate thread
         let (ciphertexts, req_id, key_id, context_id, epoch_id, eip712_domain, extra_data) =
-            validate_public_decrypt_req(&inner)?;
+            validate_public_decrypt_req(&inner).inspect_err(|_| {
+                // The unvalidated ids are worth logging only when validation rejects the request:
+                // they are then the sole record of what the caller actually sent. On success the
+                // span fields recorded below carry the parsed ids, and `unpack_public_decrypt_req`
+                // has already logged the request's arrival.
+                tracing::warn!("Rejected {}", format_public_request(&inner));
+            })?;
+        // Recorded before the context/epoch check so that a rejection there is attributed too.
+        let span = tracing::Span::current();
+        span.record("context_id", tracing::field::display(&context_id));
+        span.record("epoch_id", tracing::field::display(&epoch_id));
         let my_role = validate_context_and_epoch(
             OP_PUBLIC_DECRYPT_REQUEST,
             &self.session_maker,
@@ -306,10 +315,17 @@ impl<
         ];
         timer.tags(metric_tags.clone());
 
+        // The external handles are how the caller refers to these ciphertexts, so they are the join
+        // key between a KMS log and a gateway request. Logged in batch order, so the `ctr` reported
+        // by a failing inner decryption below identifies the handle. Bounded in both handle size
+        // and count because handles are unvalidated and the batch is only bounded by the gRPC
+        // message limit; `ciphertexts_count` still reports the true total. Called from inside the
+        // macro so nothing is formatted while debug logging is off.
         tracing::debug!(
             request_id = ?req_id,
             key_id = ?key_id,
             ciphertexts_count = ciphertexts.len(),
+            handles = ?format_logged_handles(&ciphertexts),
             "Starting decryption process"
         );
 
@@ -368,12 +384,16 @@ impl<
             let fhe_keys_rlock_clone = fhe_keys_rlock.clone();
             let decrypt_future = || async move {
                 let internal_sid = req_id.derive_session_id_with_counter(ctr as u64)?;
+                // Taken before `typed_ciphertext` is partially moved below, so that every failure
+                // in this task can name the handle the caller asked about. Bounded: the handle is
+                // caller-supplied and this runs for every ciphertext, error or not.
+                let external_handle = format_handle(&typed_ciphertext.external_handle);
                 let fhe_type_string = typed_ciphertext.fhe_type_string();
                 let fhe_type = if let Ok(f) = typed_ciphertext.fhe_type() {
                     f
                 } else {
                     return Err(anyhow::anyhow!(format!(
-                        "Threshold decryption failed due to wrong fhe type: {}",
+                        "Threshold decryption failed for handle {external_handle} due to wrong fhe type: {}",
                         typed_ciphertext.fhe_type
                     )));
                 };
@@ -520,7 +540,9 @@ impl<
                 // so we only update it once even if there are multiple decryption task that fail
                 match res_plaintext {
                     Ok(plaintext) => Ok((ctr, plaintext)),
-                    Result::Err(e) => Err(anyhow::anyhow!("Threshold decryption failed: {e}")),
+                    Result::Err(e) => Err(anyhow::anyhow!(
+                        "Threshold decryption failed for ciphertext #{ctr} (handle {external_handle}): {e}"
+                    )),
                 }
             };
             dec_tasks.push(
@@ -696,14 +718,28 @@ impl<
     }
 }
 
-// We want most of the metadata but not the actual ciphertexts
+/// Number of handles from a batch that are logged. The count of a well-formed batch is bounded by
+/// how many ciphertexts fit in a gRPC message, which is not a bound worth writing to a log line.
+const MAX_LOGGED_HANDLES: usize = 16;
+
+/// Bounded, hex-encoded prefix of the batch's external handles, for a single log line per request.
+fn format_logged_handles(ciphertexts: &[v1::TypedCiphertext]) -> Vec<String> {
+    ciphertexts
+        .iter()
+        .take(MAX_LOGGED_HANDLES)
+        .map(|c| format_handle(&c.external_handle))
+        .collect()
+}
+
+// We want most of the metadata but not the actual ciphertexts. The IDs are unvalidated when this
+// runs, so they go through `format_unvalidated_id` rather than being printed verbatim.
 fn format_public_request(request: &PublicDecryptionRequest) -> String {
     format!(
-        "PublicDecryptionRequest {{ request_id: {:?}, key_id: {:?}, context_id: {:?}, epoch_id: {:?}, ciphertext_count: {:?} }}",
-        request.request_id,
-        request.key_id,
-        request.context_id,
-        request.epoch_id,
+        "PublicDecryptionRequest {{ request_id: {}, key_id: {}, context_id: {}, epoch_id: {}, ciphertext_count: {} }}",
+        format_unvalidated_id(&request.request_id),
+        format_unvalidated_id(&request.key_id),
+        format_unvalidated_id(&request.context_id),
+        format_unvalidated_id(&request.epoch_id),
         request.ciphertexts.len()
     )
 }

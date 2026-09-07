@@ -178,11 +178,10 @@ fn format_for_next<Z: Ring>(
         let mut deg_t = Vec::with_capacity(num_parties);
         let mut deg_2t = Vec::with_capacity(num_parties);
         for party_idx in 0..num_parties {
-            let double_share_j = local_double_shares
-                .get(&Role::indexed_from_zero(party_idx))
-                .ok_or_else(|| {
-                    anyhow_error_and_log(format!("Can not find shares for Party {}", party_idx + 1))
-                })?;
+            let role = Role::indexed_from_zero(party_idx);
+            let double_share_j = local_double_shares.get(&role).ok_or_else(|| {
+                anyhow_error_and_log(format!("Can not find shares for Party {role}"))
+            })?;
             deg_t.push(double_share_j.share_t[i]);
             deg_2t.push(double_share_j.share_2t[i]);
         }
