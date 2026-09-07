@@ -273,7 +273,7 @@ impl StoredTypedSignature {
 impl From<&StoredTypedSignature> for TypedSignature {
     fn from(value: &StoredTypedSignature) -> Self {
         TypedSignature {
-            scheme: kms_grpc::kms::v1::SigningSchemeType::from(value.scheme) as i32,
+            scheme: value.scheme.as_wire(),
             signature: value.signature.clone(),
         }
     }
@@ -470,8 +470,9 @@ pub fn crs_payload_bytes(
 pub(crate) const ERR_INVALID_CURRENT_PUBLIC_KEY_SHAPE: &str =
     "Invalid current public key metadata shape";
 
+/// Which shape of public keygen material a result describes.
 #[derive(Clone, Copy)]
-pub(crate) enum CurrentPublicMaterialLayout {
+pub enum CurrentPublicMaterialLayout {
     Standard,
     Compressed,
 }
@@ -508,7 +509,7 @@ pub(crate) fn classify_current_public_material(
 /// `layout` decides which of the two messages is built. Signing sites pass the layout they are
 /// generating for, so the choice stays static there; verification has only the stored metadata
 /// to go on and derives it with [`classify_current_public_material`].
-pub(crate) fn keygen_sol_type(
+pub fn keygen_sol_type(
     layout: CurrentPublicMaterialLayout,
     prep_id: &RequestId,
     key_id: &RequestId,
@@ -545,7 +546,10 @@ pub(crate) fn keygen_sol_type(
 ///
 /// Shared between signing and after-the-fact verification so there is exactly one definition of
 /// the message represented by CRS metadata.
-pub(crate) fn crs_sol_type(
+///
+/// Public for the same reason as [`keygen_sol_type`]: an out-of-crate verifier
+/// rebuilds the struct the KMS signed rather than a second expression of it.
+pub fn crs_sol_type(
     crs_id: &RequestId,
     crs_digest: &[u8],
     max_num_bits: u32,
@@ -779,29 +783,19 @@ pub(crate) fn compute_keygen_digests(
     Ok((server_key_digest, public_key_digest))
 }
 
-/// Sign an uncompressed keygen using precomputed digests.
+/// Sign a keygen result of `layout` from its precomputed digests.
 #[expect(clippy::too_many_arguments)]
-pub(crate) fn compute_info_standard_keygen_from_digests(
+pub(crate) fn compute_info_keygen_from_digests(
     identity: &NodeSigningIdentity,
     schemes: &[SigningSchemeType],
+    layout: CurrentPublicMaterialLayout,
     prep_id: &RequestId,
     key_id: &RequestId,
-    server_key_digest: Vec<u8>,
-    public_key_digest: Vec<u8>,
+    key_digests: BTreeMap<PubDataType, Vec<u8>>,
     domain: &alloy_sol_types::Eip712Domain,
     extra_data: Vec<u8>,
 ) -> anyhow::Result<KeyGenMetadata> {
-    let key_digests = BTreeMap::from([
-        (PubDataType::ServerKey, server_key_digest),
-        (PubDataType::PublicKey, public_key_digest),
-    ]);
-    let sol_type = keygen_sol_type(
-        CurrentPublicMaterialLayout::Standard,
-        prep_id,
-        key_id,
-        &key_digests,
-        &extra_data,
-    )?;
+    let sol_type = keygen_sol_type(layout, prep_id, key_id, &key_digests, &extra_data)?;
     let payload_bytes = keygen_payload_bytes(prep_id, key_id, &key_digests, &extra_data)?;
     let (external_signature, signatures) = sign_result(
         identity,
@@ -821,6 +815,33 @@ pub(crate) fn compute_info_standard_keygen_from_digests(
         signatures,
         extra_data,
     ))
+}
+
+/// Sign an uncompressed keygen using precomputed digests.
+#[expect(clippy::too_many_arguments)]
+pub(crate) fn compute_info_standard_keygen_from_digests(
+    identity: &NodeSigningIdentity,
+    schemes: &[SigningSchemeType],
+    prep_id: &RequestId,
+    key_id: &RequestId,
+    server_key_digest: Vec<u8>,
+    public_key_digest: Vec<u8>,
+    domain: &alloy_sol_types::Eip712Domain,
+    extra_data: Vec<u8>,
+) -> anyhow::Result<KeyGenMetadata> {
+    compute_info_keygen_from_digests(
+        identity,
+        schemes,
+        CurrentPublicMaterialLayout::Standard,
+        prep_id,
+        key_id,
+        BTreeMap::from([
+            (PubDataType::ServerKey, server_key_digest),
+            (PubDataType::PublicKey, public_key_digest),
+        ]),
+        domain,
+        extra_data,
+    )
 }
 
 #[expect(clippy::too_many_arguments)]
@@ -908,36 +929,19 @@ pub(crate) fn compute_info_compressed_keygen_from_digests(
         hex::encode(&public_key_digest),
     );
 
-    let key_digests = BTreeMap::from([
-        (PubDataType::CompressedXofKeySet, compressed_keyset_digest),
-        (PubDataType::PublicKey, public_key_digest),
-    ]);
-    let sol_type = keygen_sol_type(
+    compute_info_keygen_from_digests(
+        identity,
+        schemes,
         CurrentPublicMaterialLayout::Compressed,
         prep_id,
         key_id,
-        &key_digests,
-        &extra_data,
-    )?;
-    let payload_bytes = keygen_payload_bytes(prep_id, key_id, &key_digests, &extra_data)?;
-    let (external_signature, signatures) = sign_result(
-        identity,
-        schemes,
-        &payload_bytes,
-        &sol_type,
+        BTreeMap::from([
+            (PubDataType::CompressedXofKeySet, compressed_keyset_digest),
+            (PubDataType::PublicKey, public_key_digest),
+        ]),
         domain,
-        &DSEP_PUBDATA_KEY,
-    )?;
-
-    Ok(KeyGenMetadata::new(
-        *key_id,
-        *prep_id,
-        key_digests,
-        domain,
-        external_signature,
-        signatures,
         extra_data,
-    ))
+    )
 }
 
 /// Computes a unique handle for an element using its hash digest.
@@ -2182,15 +2186,12 @@ pub(crate) mod tests {
             // And the ECDSA entry of `signatures` is the same bytes, so validation
             // reading the list sees what the legacy field carries.
             if schemes.contains(&SigningSchemeType::Ecdsa256k1) {
-                let ecdsa_entry = sigs
-                    .signatures
-                    .iter()
-                    .find(|typed| {
-                        SigningSchemeType::try_from(typed.scheme)
-                            .is_ok_and(|scheme| scheme == SigningSchemeType::Ecdsa256k1)
-                    })
-                    .expect("an ECDSA entry was requested");
-                assert_eq!(ecdsa_entry.signature, sigs.external_signature);
+                let ecdsa_entry = kms_grpc::rpc_types::scheme_signature(
+                    signatures,
+                    crate::kms::v1::SigningSchemeType::Ecdsa256k1,
+                )(&sigs.signatures)
+                .expect("an ECDSA entry was requested");
+                assert_eq!(ecdsa_entry, sigs.external_signature);
             }
 
             // The deprecated scalar signature also keeps its pre-feature meaning:

@@ -7,7 +7,7 @@ use crate::{
     cryptography::{
         encryption::UnifiedPublicEncKey,
         signatures::{PublicSigKey, Signature, recover_address_from_ext_signature},
-        signing::{SigningSchemeType, UnifiedPublicSigKey, unified_verify},
+        signing::{SchemeVerfKeys, SigningSchemeType, unified_verify, verf_key_for},
     },
     engine::base::{compute_public_decryption_message, public_dec_payload_bytes},
 };
@@ -51,7 +51,7 @@ pub(crate) struct PublicDecTrustedValidationContext<'a> {
     /// signer and comparing the address, which `server_pks` provides — and a
     /// client built without storage access, such as the browser, supplies an
     /// empty map and can then only check ECDSA.
-    scheme_verf_keys: &'a HashMap<u32, HashMap<SigningSchemeType, UnifiedPublicSigKey>>,
+    scheme_verf_keys: &'a SchemeVerfKeys,
     eip712_domain: Option<&'a Eip712Domain>,
     ext_handles_bytes: &'a [Vec<u8>],
     extra_data: Option<&'a [u8]>,
@@ -61,7 +61,7 @@ pub(crate) struct PublicDecTrustedValidationContext<'a> {
 impl<'a> PublicDecTrustedValidationContext<'a> {
     pub fn new(
         server_pks: &'a HashMap<u32, PublicSigKey>,
-        scheme_verf_keys: &'a HashMap<u32, HashMap<SigningSchemeType, UnifiedPublicSigKey>>,
+        scheme_verf_keys: &'a SchemeVerfKeys,
         eip712_domain: Option<&'a Eip712Domain>,
         ext_handles_bytes: &'a [Vec<u8>],
         extra_data: Option<&'a [u8]>,
@@ -519,11 +519,7 @@ fn verify_public_decrypt_signatures(
             continue;
         }
 
-        let Some(verf_key) = trusted_ctx
-            .scheme_verf_keys
-            .get(&party_id)
-            .and_then(|keys| keys.get(&scheme))
-        else {
+        let Some(verf_key) = verf_key_for(trusted_ctx.scheme_verf_keys, party_id, scheme) else {
             tracing::warn!(
                 "Party {party_id} signed a public decryption response under {scheme}, but no \
                  {scheme} verification key is known for it"

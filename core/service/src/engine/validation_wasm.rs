@@ -14,7 +14,7 @@ use crate::{
         signatures::{
             PublicSigKey, Signature, internal_verify_sig, recover_address_from_ext_signature,
         },
-        signing::{SigningSchemeType, UnifiedPublicSigKey, unified_verify},
+        signing::{SchemeVerfKeys, SigningSchemeType, unified_verify, verf_key_for},
     },
     engine::base::user_dec_payload_bytes,
 };
@@ -26,7 +26,7 @@ pub(crate) const DSEP_USER_DECRYPTION: DomainSep = *b"USER_DEC";
 /// All fields MUST originate from the client's own configuration or some trusted source.
 pub(crate) struct UserDecTrustedValidationContext<'a> {
     server_addresses: &'a HashMap<u32, Address>,
-    scheme_verf_keys: &'a HashMap<u32, HashMap<SigningSchemeType, UnifiedPublicSigKey>>,
+    scheme_verf_keys: &'a SchemeVerfKeys,
     client_request: &'a ParsedUserDecryptionRequest,
     eip712_domain: &'a Eip712Domain,
     threshold: usize,
@@ -45,7 +45,7 @@ impl<'a> UserDecTrustedValidationContext<'a> {
     /// Creates a new context and check sanity
     pub fn new(
         server_addresses: &'a HashMap<u32, Address>,
-        scheme_verf_keys: &'a HashMap<u32, HashMap<SigningSchemeType, UnifiedPublicSigKey>>,
+        scheme_verf_keys: &'a SchemeVerfKeys,
         client_request: &'a ParsedUserDecryptionRequest,
         eip712_domain: &'a Eip712Domain,
         threshold: Option<usize>,
@@ -290,10 +290,7 @@ fn authenticate_user_decrypt_and_check_meta_data(
             })?;
             continue;
         }
-        let verf_key = trusted_ctx
-            .scheme_verf_keys
-            .get(&response.party_id)
-            .and_then(|keys| keys.get(&scheme))
+        let verf_key = verf_key_for(trusted_ctx.scheme_verf_keys, response.party_id, scheme)
             .ok_or_else(|| {
                 anyhow_error_and_log(format!(
                     "party {} signed under {scheme}, but this client holds no {scheme} \

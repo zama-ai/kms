@@ -13,17 +13,11 @@ mod s3_operations;
 // reexport fetch_public_elements for integration test
 pub use crate::s3_operations::fetch_public_elements;
 
-/// The ECDSA signature of a result, taken from its per-scheme `signatures` list.
-///
-/// The deprecated `external_signature` field carries the same bytes, and goes away
-/// in 0.16, so validation reads the list instead.
+/// The ECDSA signature of a result, or an error naming what was missing.
 pub(crate) fn ecdsa_signature(
     signatures: &[kms_grpc::kms::v1::TypedSignature],
 ) -> anyhow::Result<&[u8]> {
-    signatures
-        .iter()
-        .find(|typed| typed.scheme == kms_grpc::kms::v1::SigningSchemeType::Ecdsa256k1 as i32)
-        .map(|typed| typed.signature.as_slice())
+    kms_grpc::rpc_types::scheme_signature(signatures, crate::kms::v1::SigningSchemeType::Ecdsa256k1)
         .ok_or_else(|| {
             anyhow::anyhow!("the response carries no ECDSA signature in its `signatures` list")
         })

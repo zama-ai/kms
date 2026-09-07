@@ -12,7 +12,7 @@ use kms_grpc::rpc_types::PubDataType;
 use kms_grpc::solidity_types::CrsgenVerification;
 use kms_grpc::{ContextId, EpochId, RequestId};
 use kms_lib::client::client_wasm::Client;
-use kms_lib::engine::base::{DSEP_PUBDATA_CRS, crs_payload_bytes};
+use kms_lib::engine::base::{DSEP_PUBDATA_CRS, crs_payload_bytes, crs_sol_type};
 use kms_lib::util::key_setup::test_tools::load_material_from_pub_storage;
 use std::collections::HashMap;
 use std::path::Path;
@@ -331,14 +331,9 @@ fn check_crsgen_signatures(
         hex::encode(&crs_digest),
     );
 
-    let max_num_bits = max_num_bits_from_crs(crs);
-    let sol_type = CrsgenVerification::new(crs_id, max_num_bits, crs_digest.clone(), extra_data);
-    let payload_bytes = crs_payload_bytes(
-        crs_id,
-        max_num_bits as u32,
-        &crs_digest,
-        sol_type.extraData.as_ref(),
-    )?;
+    let max_num_bits = max_num_bits_from_crs(crs) as u32;
+    let sol_type = crs_sol_type(crs_id, &crs_digest, max_num_bits, &extra_data);
+    let payload_bytes = crs_payload_bytes(crs_id, max_num_bits, &crs_digest, &extra_data)?;
     internal_client
         .verify_result_signatures(
             signatures,

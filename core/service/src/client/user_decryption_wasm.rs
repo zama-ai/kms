@@ -6,7 +6,7 @@ use crate::cryptography::{
     encryption::{UnifiedPrivateEncKey, UnifiedPublicEncKey},
     signatures::{PublicSigKey, Signature, internal_verify_sig},
     signcryption::{UnifiedUnsigncryptionKey, UnsigncryptFHEPlaintext},
-    signing::{SigningError, SigningSchemeType},
+    signing::{SigningError, SigningSchemeType, verf_key_for},
 };
 use crate::engine::validation::{
     DSEP_USER_DECRYPTION, ERR_VALIDATE_USER_DECRYPTION_MISMATCH_EXTRA_DATA,
@@ -322,10 +322,7 @@ impl Client {
                 })?;
                 continue;
             }
-            let verf_key = self
-                .scheme_verf_keys
-                .get(&payload.party_id)
-                .and_then(|keys| keys.get(&scheme))
+            let verf_key = verf_key_for(&self.scheme_verf_keys, payload.party_id, scheme)
                 .ok_or_else(|| {
                     anyhow_error_and_log(format!(
                         "party {} signed under {scheme}, but this client holds no {scheme} \
@@ -1270,17 +1267,13 @@ impl TryFrom<&UserDecryptionResponse> for UserDecryptionResponseHex {
     type Error = anyhow::Error;
 
     fn try_from(resp: &UserDecryptionResponse) -> Result<Self, Self::Error> {
-        let ecdsa_signature = resp
-            .signatures
-            .iter()
-            .find(|typed| {
-                SigningSchemeType::try_from(typed.scheme)
-                    .is_ok_and(|scheme| scheme == SigningSchemeType::Ecdsa256k1)
-            })
-            .map(|typed| typed.signature.clone())
-            .ok_or_else(|| anyhow::anyhow!("the response carries no ECDSA signature"))?;
+        let ecdsa_signature = kms_grpc::rpc_types::scheme_signature(
+            signatures,
+            crate::kms::v1::SigningSchemeType::Ecdsa256k1,
+        )(&resp.signatures)
+        .ok_or_else(|| anyhow::anyhow!("the response carries no ECDSA signature"))?;
         Ok(Self {
-            signature: hex::encode(&ecdsa_signature),
+            signature: hex::encode(ecdsa_signature),
             payload: resp
                 .payload
                 .as_ref()

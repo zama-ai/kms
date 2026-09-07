@@ -1,5 +1,5 @@
 use crate::cryptography::signatures::{PrivateSigKey, PublicSigKey};
-use crate::cryptography::signing::{SigningError, SigningSchemeType, UnifiedPublicSigKey};
+use crate::cryptography::signing::{SchemeVerfKeys, SigningError, SigningSchemeType};
 #[cfg(feature = "non-wasm")]
 use aes_prng::AesRng;
 #[cfg(feature = "non-wasm")]
@@ -41,7 +41,7 @@ pub struct Client {
     #[cfg(feature = "non-wasm")]
     pub(crate) rng: Box<AesRng>,
     pub(crate) server_identities: ServerIdentities,
-    pub(crate) scheme_verf_keys: HashMap<u32, HashMap<SigningSchemeType, UnifiedPublicSigKey>>,
+    pub(crate) scheme_verf_keys: SchemeVerfKeys,
     pub(crate) client_address: alloy_primitives::Address,
     pub(crate) client_sk: Option<PrivateSigKey>,
     pub(crate) params: DKGParams,
@@ -74,7 +74,7 @@ impl Client {
     ///   If set to none, DecryptionMode::default() is used.
     pub fn new(
         server_pks: HashMap<u32, PublicSigKey>,
-        scheme_verf_keys: HashMap<u32, HashMap<SigningSchemeType, UnifiedPublicSigKey>>,
+        scheme_verf_keys: SchemeVerfKeys,
         client_address: alloy_primitives::Address,
         client_sk: Option<PrivateSigKey>,
         params: DKGParams,
@@ -98,7 +98,7 @@ impl Client {
     pub fn signing_schemes_proto(&self) -> Vec<i32> {
         self.signing_schemes
             .iter()
-            .map(|scheme| kms_grpc::kms::v1::SigningSchemeType::from(*scheme) as i32)
+            .map(|scheme| scheme.as_wire())
             .collect()
     }
 
@@ -107,10 +107,7 @@ impl Client {
         &mut self,
         requested: &[SigningSchemeType],
     ) -> Result<(), SigningError> {
-        let raw: Vec<i32> = requested
-            .iter()
-            .map(|scheme| kms_grpc::kms::v1::SigningSchemeType::from(*scheme) as i32)
-            .collect();
+        let raw: Vec<i32> = requested.iter().map(|scheme| scheme.as_wire()).collect();
         self.signing_schemes = SigningSchemeType::resolve_requested(&raw)?;
         Ok(())
     }

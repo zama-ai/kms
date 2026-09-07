@@ -452,7 +452,7 @@ impl TryFrom<NodeInfo> for kms_grpc::kms::v1::MpcNode {
                 .scheme_digests
                 .iter()
                 .map(|(scheme, digest)| SchemeDigest {
-                    scheme: kms_grpc::kms::v1::SigningSchemeType::from(scheme) as i32,
+                    scheme: scheme.as_wire(),
                     digest: digest.to_vec(),
                 })
                 .collect(),
@@ -967,7 +967,7 @@ mod tests {
             for actual in [expected - 1, expected + 1] {
                 let (_node, mut proto) = node_proto_with_schemes(1, &[]);
                 proto.scheme_digests.push(SchemeDigest {
-                    scheme: kms_grpc::kms::v1::SigningSchemeType::from(scheme) as i32,
+                    scheme: scheme.as_wire(),
                     digest: vec![0xab; actual],
                 });
 

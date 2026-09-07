@@ -13,7 +13,9 @@ use kms_grpc::rpc_types::PubDataType;
 use kms_grpc::solidity_types::KeygenVerification;
 use kms_grpc::{ContextId, RequestId};
 use kms_lib::client::client_wasm::Client;
-use kms_lib::engine::base::{DSEP_PUBDATA_KEY, keygen_payload_bytes};
+use kms_lib::engine::base::{
+    CurrentPublicMaterialLayout, DSEP_PUBDATA_KEY, keygen_payload_bytes, keygen_sol_type,
+};
 use kms_lib::util::key_setup::test_tools::{
     load_material_from_pub_storage, load_pk_from_pub_storage,
 };
@@ -531,7 +533,34 @@ pub(crate) async fn do_abort_key_gen(
     Ok(resp_response_vec)
 }
 
-/// Check that the external signature on the keygen is valid, i.e. was made by one of the supplied addresses
+/// Verify every signature a keygen result carries, under every scheme the client
+/// requested, and that it was produced by one of the known KMS parties.
+fn check_keyset_signatures(
+    internal_client: &Client,
+    layout: CurrentPublicMaterialLayout,
+    prep_id: &RequestId,
+    key_id: &RequestId,
+    key_digests: BTreeMap<PubDataType, Vec<u8>>,
+    signatures: &[TypedSignature],
+    domain: &Eip712Domain,
+    extra_data: Vec<u8>,
+) -> anyhow::Result<()> {
+    let sol_type = keygen_sol_type(layout, prep_id, key_id, &key_digests, &extra_data)?;
+    let payload_bytes = keygen_payload_bytes(prep_id, key_id, &key_digests, &extra_data)?;
+    internal_client
+        .verify_result_signatures(
+            signatures,
+            &sol_type,
+            domain,
+            &DSEP_PUBDATA_KEY,
+            &payload_bytes,
+        )
+        .map(|(party_id, _address)| {
+            tracing::info!("Keygen result verified as produced by party {party_id}");
+        })
+}
+
+/// Check the signatures on an uncompressed keyset; see [`check_keyset_signatures`].
 #[expect(clippy::too_many_arguments)]
 pub(crate) fn check_uncompressed_keyset_signatures(
     internal_client: &Client,
@@ -554,55 +583,22 @@ pub(crate) fn check_uncompressed_keyset_signatures(
         hex::encode(&public_key_digest)
     );
 
-    let key_digests = BTreeMap::from([
-        (PubDataType::ServerKey, server_key_digest.clone()),
-        (PubDataType::PublicKey, public_key_digest.clone()),
-    ]);
-    let sol_type = KeygenVerification::new_uncompressed(
-        prep_id,
-        key_id,
-        server_key_digest,
-        public_key_digest,
-        extra_data,
-    );
-    verify_keyset_signatures(
+    check_keyset_signatures(
         internal_client,
+        CurrentPublicMaterialLayout::Standard,
         prep_id,
         key_id,
-        &key_digests,
+        BTreeMap::from([
+            (PubDataType::ServerKey, server_key_digest),
+            (PubDataType::PublicKey, public_key_digest),
+        ]),
         signatures,
-        &sol_type,
         domain,
+        extra_data,
     )
 }
 
-/// Verify every signature a keygen result carries against locally recomputed
-/// digests.
-fn verify_keyset_signatures(
-    internal_client: &Client,
-    prep_id: &RequestId,
-    key_id: &RequestId,
-    key_digests: &BTreeMap<PubDataType, Vec<u8>>,
-    signatures: &[TypedSignature],
-    sol_type: &KeygenVerification,
-    domain: &Eip712Domain,
-) -> anyhow::Result<()> {
-    let payload_bytes =
-        keygen_payload_bytes(prep_id, key_id, key_digests, sol_type.extraData.as_ref())?;
-    internal_client
-        .verify_result_signatures(
-            signatures,
-            sol_type,
-            domain,
-            &DSEP_PUBDATA_KEY,
-            &payload_bytes,
-        )
-        .map(|(party_id, _address)| {
-            tracing::info!("Keygen result verified as produced by party {party_id}");
-        })
-}
-
-/// Check external signature for compressed keyset
+/// Check the signatures on a compressed keyset; see [`check_keyset_signatures`].
 #[expect(clippy::too_many_arguments)]
 pub(crate) fn check_compressed_keyset_signatures(
     internal_client: &Client,
@@ -625,25 +621,18 @@ pub(crate) fn check_compressed_keyset_signatures(
         hex::encode(&public_key_digest)
     );
 
-    let key_digests = BTreeMap::from([
-        (PubDataType::CompressedXofKeySet, keyset_digest.clone()),
-        (PubDataType::PublicKey, public_key_digest.clone()),
-    ]);
-    let sol_type = KeygenVerification::new_compressed(
-        prep_id,
-        key_id,
-        keyset_digest,
-        public_key_digest,
-        extra_data,
-    );
-    verify_keyset_signatures(
+    check_keyset_signatures(
         internal_client,
+        CurrentPublicMaterialLayout::Compressed,
         prep_id,
         key_id,
-        &key_digests,
+        BTreeMap::from([
+            (PubDataType::CompressedXofKeySet, keyset_digest),
+            (PubDataType::PublicKey, public_key_digest),
+        ]),
         signatures,
-        &sol_type,
         domain,
+        extra_data,
     )
 }
 

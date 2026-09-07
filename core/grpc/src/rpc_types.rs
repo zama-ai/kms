@@ -549,6 +549,17 @@ pub fn ecdsa_signatures(signature: Vec<u8>) -> Vec<crate::kms::v1::TypedSignatur
     }]
 }
 
+/// The signature `signatures` carries for `scheme`, if it carries one.
+pub fn scheme_signature(
+    signatures: &[crate::kms::v1::TypedSignature],
+    scheme: crate::kms::v1::SigningSchemeType,
+) -> Option<&[u8]> {
+    signatures
+        .iter()
+        .find(|typed| typed.scheme == scheme as i32)
+        .map(|typed| typed.signature.as_slice())
+}
+
 #[cfg(feature = "non-wasm")]
 impl crate::kms::v1::UserDecryptionRequest {
     /// The only information we can use is userAddress, the handles and public key

@@ -20,8 +20,9 @@ use ml_dsa::{MlDsa44, MlDsa65, MlDsa87, SigningKey as MlDsaSigningKey};
 use mldsa::MlDsa;
 pub use mldsa::MlDsaVerfKey;
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::str::FromStr;
-use strum::{EnumCount, EnumIter, VariantNames as _};
+use strum::{EnumCount, EnumIter};
 use strum_macros::{Display, EnumString, VariantNames};
 use tfhe::named::Named;
 use tfhe_versionable::{Versionize, VersionsDispatch};
@@ -175,14 +176,20 @@ impl SigningSchemeType {
             let name = name.as_ref().trim();
             let scheme = SigningSchemeType::from_str(name)
                 .map_err(|_| SigningError::UnknownSchemeName(name.to_owned()))?;
-            raw.push(kms_grpc::kms::v1::SigningSchemeType::from(scheme) as i32);
+            raw.push(scheme.as_wire());
         }
         Self::resolve_requested(&raw)
     }
 
+    /// The discriminant this scheme travels as on the wire, as the gRPC
+    /// `SigningSchemeType` field holds it.
+    pub fn as_wire(self) -> i32 {
+        kms_grpc::kms::v1::SigningSchemeType::from(self) as i32
+    }
+
     /// The scheme's stable 4-byte tag, for binding a scheme into a hash input.
     fn tag(self) -> [u8; 4] {
-        (kms_grpc::kms::v1::SigningSchemeType::from(self) as i32).to_le_bytes()
+        self.as_wire().to_le_bytes()
     }
 }
 
@@ -456,6 +463,19 @@ impl HasSigningScheme for UnifiedPublicSigKey {
             UnifiedPublicSigKey::MlDsa87(_) => SigningSchemeType::MlDsa87,
         }
     }
+}
+
+/// The verification keys a client or validator holds for its peers: per party
+/// id, one key per scheme that party has published.
+pub type SchemeVerfKeys = HashMap<u32, HashMap<SigningSchemeType, UnifiedPublicSigKey>>;
+
+/// The verification key `party_id` published for `scheme`, if it published one.
+pub fn verf_key_for(
+    keys: &SchemeVerfKeys,
+    party_id: u32,
+    scheme: SigningSchemeType,
+) -> Option<&UnifiedPublicSigKey> {
+    keys.get(&party_id).and_then(|keys| keys.get(&scheme))
 }
 
 /// Sign `msg` (domain-separated by `dsep`) under the scheme of `sk`.
