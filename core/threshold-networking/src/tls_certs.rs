@@ -240,9 +240,6 @@ async fn write_certs_and_keys(
     keypair: &KeyPair,
     file_type: CertFileType,
 ) -> anyhow::Result<()> {
-    tracing::info!("{}", cert.pem());
-    tracing::info!("{}", keypair.serialize_pem());
-
     match file_type {
         CertFileType::Der => {
             let cert_dir = root_dir.join(format!("cert_{name}.der"));

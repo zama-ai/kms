@@ -303,7 +303,9 @@ Conventions:
   by `init_enclave.sh` from a config sent over vsock, so it never sees the parent container's
   `KMS_METRICS_LABELS`. Distinguish enclave deployments by their `namespace` label instead — that one
   is attached by Prometheus at scrape time. (The nightly `aws-perf` run does exactly this,
-  `namespace="kms-ci"`.)
+  `namespace="kms-ci"`. It does **not** apply the `ci_` metric-name prefix: the cluster
+  Prometheus remote-write keep list only matches `kms_.+`, so prefixed names would never
+  reach Grafana Cloud. Query the existing KMS dashboard with `namespace="kms-ci"`.)
 - The threshold and centralized matrices deploy to separate namespaces (`kms-test-threshold` /
   `kms-test-centralized`, from the CI `DEPLOYMENT_TYPE`), so their metrics are already told apart by
   Prometheus' `namespace` label — there is no `deployment_type` const-label. You could add one via

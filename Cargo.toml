@@ -101,11 +101,11 @@ aes08 = { package = "aes", version = "=0.8.4", features = ["zeroize"] }  # AES 0
 aes-gcm = { version = "=0.10.3", features = ["std", "zeroize"] }  # AES-GCM authenticated encryption - LOW RISK: RustCrypto org, 62M+ downloads
 aes-gcm-siv = "=0.11.1"  # AES-GCM-SIV authenticated encryption - LOW RISK: RustCrypto org, nonce misuse resistant, 9M+ downloads
 aes-prng = "=0.2.1"  # AES-based PRNG for deterministic randomness - LOW RISK: Maintained by @mortendahl (Zama) and Dragos (ex Zama)
-alloy-dyn-abi = "=1.6.0"  # Ethereum ABI encoding - LOW RISK: Alloy/Paradigm team, reputable, growing ecosystem
-alloy-primitives = "=1.6.0"  # Ethereum primitives - LOW RISK: Alloy/Paradigm team
+alloy-dyn-abi = "=1.7.1"  # Ethereum ABI encoding - LOW RISK: Alloy/Paradigm team, reputable, growing ecosystem
+alloy-primitives = "=1.7.1"  # Ethereum primitives - LOW RISK: Alloy/Paradigm team
 alloy-signer = "=1.8.3"  # Ethereum signing abstraction - LOW RISK: Alloy/Paradigm team
 alloy-signer-local = "=1.8.3"  # Local Ethereum signer - LOW RISK: Alloy/Paradigm team
-alloy-sol-types = "=1.6.0"  # Solidity types & EIP-712 - LOW RISK: Alloy/Paradigm team
+alloy-sol-types = "=1.7.1"  # Solidity types & EIP-712 - LOW RISK: Alloy/Paradigm team
 anyhow = "=1.0.102"  # Error handling - MEDIUM RISK: Reputable individual maintainer (dtolnay), 410M downloads
 assert_cmd = "=2.2.2"  # Assert command for testing - LOW RISK: assert-rs team, 1M+ downloads
 async-std = { version = "=1.13.2", features = ["attributes", "tokio1"] }  # Async runtime for testing - LOW RISK: async-rs team, 55M+ downloads
@@ -199,7 +199,7 @@ strum = "=0.27.2"  # Enum utilities - MEDIUM RISK: Reputable individual maintain
 strum_macros = "=0.27.2"  # Enum derive macros - MEDIUM RISK: Reputable individual maintainer (Peternator7)
 syn = { version = "2.0", features = ["full"] }  # Syn macro parsing - MEDIUM RISK: Reputable individual maintainer (dtolnay), 993M downloads
 sysinfo = "0.38.4"  # System information gathering - MEDIUM RISK: Reputable individual maintainer (GuillaumeGomez), 71M+ downloads
-tempfile = "=3.20.0"  # Temporary file handling - MEDIUM RISK: Individual maintainers (Stebalien, KodrAus), 345M+ downloads, test-only dependency
+tempfile = "=3.20.0"  # Temporary file handling - MEDIUM RISK: Individual maintainers (Stebalien, KodrAus), 345M+ downloads
 test-context = "=0.4.1"  # Test context utilities - MEDIUM RISK: Individual maintainers (markhildreth, JasperV), test-only dependency
 # NOTE: when changing the tfhe dependency, consider also updating the pinned version of dylint lints from tfhe (see dylint.toml)
 tfhe = "=1.7.0"  # Fully Homomorphic Encryption library - LOW RISK: Zama

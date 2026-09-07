@@ -108,7 +108,7 @@ All names below match the Rust/proto types so you can grep for them.
 | [`BackupMaterial`](../../core/service/src/backup/operator.rs) | Plaintext payload **inside** every operator→custodian signcryption | `{ backup_id (= custodian_context_id), mpc_context_id, custodian_pk = pk^{S_j}, custodian_role, operator_pk, shares: Vec<Share> }`. Authenticates the binding between operator, custodian, and context. |
 | [`OperatorBackupOutput`](../../core/grpc/proto/kms.v1.proto) | gRPC value | A signcryption `(payload, pke_type, signing_type)`. Plaintext is `BackupMaterial`. Created with `(sk^{P_i}, pk^{E_j})` and the custodian's verf-key ID as `receiver_id`. |
 | [`RecoveryValidationMaterial`](../../core/service/src/backup/operator.rs) | Operator's **public** storage at `custodian_context_id` | Operator-signed `{ cts: BTreeMap<Role, InnerOperatorBackupOutput>, commitments: BTreeMap<Role, H(BackupMaterial_j)>, custodian_context: InternalCustodianContext, mpc_context }`. Lets the recovering operator re-fetch the original signcryptions and verify them against the operator-signed commitments. |
-| `BackupCiphertext` | Backup vault | Long-term private material (signing key, threshold FHE keys, custodian context, …) encrypted under `pk^{B}` (`backup_enc_key`). Tagged with `RequestId` + `PrivDataType` — see [ARCHITECTURE.md](../../ai-docs/ARCHITECTURE.md#backup-and-recovery). |
+| `BackupCiphertext` | Backup vault | Long-term private material (signing key, root signing seed, threshold FHE keys, custodian context, …) encrypted under `pk^{B}` (`backup_enc_key`). Tagged with `RequestId` + `PrivDataType` — see [ARCHITECTURE.md](../../ai-docs/ARCHITECTURE.md#backup-and-recovery). |
 | [`RecoveryRequest`](../../core/grpc/proto/kms.v1.proto) | Result of `CustodianRecoveryInit` (operator → core-client → custodian's `--recovery-request` base64 arg) | `{ ephem_op_enc_key = pk^{e_i}, operator_verf_key = pk^{P_i}, cts: map<custodian_role, OperatorBackupOutput> }`. Carries (a) the operator's ephemeral encryption key for this recovery session, (b) the operator's long-term verification key (which the custodian must validate out-of-band), and (c) the same signcrypted shares the operator stored at backup time. |
 | [`InternalCustodianRecoveryOutput`](../../core/service/src/backup/custodian.rs) | Custodian's base64 stdout output → core-client | `{ signcryption, custodian_role }`. The signcryption is the **custodian → recovering-operator** envelope, made with `(sk^{S_j}, pk^{e_i})` over the same `BackupMaterial`. |
 | [`CustodianRecoveryOutput`](../../core/grpc/proto/kms.v1.proto) | gRPC payload | Wire form of `InternalCustodianRecoveryOutput`: `{ backup_output, custodian_role }`. |
@@ -169,7 +169,7 @@ sequenceDiagram
 
 Corresponds to [`kms-custodian generate`](#custodian-setup). A future custodian boots the air-gapped machine and runs the command. Keys are derived from system entropy mixed with a user-supplied `--randomness` string; the matching BIP39 seed phrase is printed to stdout **once** and must be copied onto paper.
 
-The seed phrase is the only durable secret the custodian holds. `sk^{E_j}` and `sk^{S_j}` are re-derived from it whenever the custodian participates in a recovery.
+The seed phrase is the only durable secret the custodian holds. `sk^{E_j}` and `sk^{S_j}` are re-derived from it whenever the custodian participates in a recovery. Seed phrases must never be reused between custodians: every encryption key and every verification key must be unique within a custodian context.
 
 ### Phase 2 — Custodian context creation (online, one-time per context)
 
@@ -177,12 +177,13 @@ The core-client gathers `n` `CustodianSetupMessage`s (each custodian's base64 se
 
 Notes:
 - The Shamir threshold encoded inside `RecoveryValidationMaterial.custodian_context.threshold` is the **recovery** threshold (`t + 1` shares needed). `Operator::new_for_sharing` enforces `t < n/2`.
+- Before generating the backup, the operator rejects a context if any custodian encryption key or verification key is assigned to more than one role.
 - `sk^{B}` is **only** held in memory during this RPC. After secret-sharing it, the operator drops it.
 - The commitment `c_j = H(BackupMaterial_j)` is what the recovering operator later checks against the decrypted material — it lets a single signature on `RecoveryValidationMaterial` authenticate every share at once, without making the encrypted plaintext public.
 
 ### Phase 3 — Ongoing backup (whenever the operator writes private material)
 
-When the operator writes any `PrivDataType` (signing key, threshold FHE keys, custodian context itself, etc.) to private storage, the `SecretSharing` keychain encrypts the data under `pk^{B}` and stores the resulting `BackupCiphertext` in the backup vault, tagged with the originating `RequestId` and `PrivDataType`. The custodians never see this material — only `pk^{B}` matters here.
+When the operator writes any `PrivDataType` (signing key, root signing seed, threshold FHE keys, custodian context itself, etc.) to private storage, the `SecretSharing` keychain encrypts the data under `pk^{B}` and stores the resulting `BackupCiphertext` in the backup vault, tagged with the originating `RequestId` and `PrivDataType`. The custodians never see this material — only `pk^{B}` matters here.
 
 This phase is invisible to custodians and to the core-client. It runs continuously for the life of the operator.
 

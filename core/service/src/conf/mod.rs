@@ -1,4 +1,4 @@
-use self::threshold::ThresholdPartyConf;
+use self::threshold::{ThresholdPartyConf, TlsConf};
 use crate::util::rate_limiter::RateLimiterConfig;
 use clap::ValueEnum;
 use observability::{
@@ -45,6 +45,24 @@ pub struct CoreConfig {
     pub migration: Option<MigrationConfig>,
     #[cfg(feature = "insecure")]
     pub mock_enclave: Option<bool>,
+}
+
+impl CoreConfig {
+    /// Whether MPC contexts must contain trusted PCR values.
+    pub(crate) fn requires_pcr_allowlist(&self) -> bool {
+        let uses_auto_tls = self
+            .threshold
+            .as_ref()
+            .and_then(|threshold| threshold.tls.as_ref())
+            .is_some_and(TlsConf::is_auto);
+
+        #[cfg(feature = "insecure")]
+        if self.mock_enclave.is_some_and(|mock_enclave| mock_enclave) {
+            return false;
+        }
+
+        uses_auto_tls
+    }
 }
 
 /// One-time migration input associating existing epochs with the context they belong to.
@@ -518,6 +536,27 @@ mod tests {
             core_config.threshold.is_none(),
             "threshold section should be absent in centralized config"
         );
+    }
+
+    #[test]
+    fn test_requires_pcr_allowlist() {
+        let mut core_config: CoreConfig = init_conf("config/default_2").unwrap();
+        assert!(!core_config.requires_pcr_allowlist());
+
+        core_config.threshold.as_mut().unwrap().tls = Some(TlsConf::Auto {
+            eif_signing_cert: None,
+            trusted_releases: vec![],
+            attest_private_vault_root_key: None,
+            renew_slack_after_expiration: None,
+            renew_fail_retry_timeout: None,
+        });
+        assert!(core_config.requires_pcr_allowlist());
+
+        #[cfg(feature = "insecure")]
+        {
+            core_config.mock_enclave = Some(true);
+            assert!(!core_config.requires_pcr_allowlist());
+        }
     }
 
     #[test]
