@@ -75,6 +75,7 @@ impl<'a> UserDecTrustedValidationContext<'a> {
 
         Ok(Self {
             server_addresses,
+            scheme_verf_keys,
             client_request,
             eip712_domain,
             threshold,
@@ -900,10 +901,10 @@ mod tests {
             &extra_data,
         )
         .unwrap();
-
+        let scheme_verf_keys = HashMap::new();
         let trusted_ctx = UserDecTrustedValidationContext::new(
             &server_addresses,
-            &HashMap::new(),
+            &scheme_verf_keys,
             &client_request,
             &dummy_domain,
             None,
@@ -1106,10 +1107,10 @@ mod tests {
             dummy_domain.verifying_contract.unwrap(),
             vec![],
         );
-
+        let scheme_verf_keys = HashMap::new();
         let trusted_ctx = UserDecTrustedValidationContext::new(
             &server_addresses,
-            &HashMap::new(),
+            &scheme_verf_keys,
             &client_request,
             &dummy_domain,
             None,
@@ -1466,7 +1467,6 @@ mod tests {
         );
 
         let digest = compute_link(&client_request, &dummy_domain).unwrap();
-
         let resp0 = {
             let payload0 = UserDecryptionResponsePayload {
                 verification_key: bc2wrap::serialize(&pks[&1]).unwrap(),
@@ -1556,7 +1556,7 @@ mod tests {
                 extra_data: vec![],
             }
         };
-
+        let scheme_verf_keys = HashMap::new();
         // wrong link
         // Note that we cannot change the domain or other parts of the response to cause the failure
         // because that would lead to other failures in [validate_user_decrypt_responses], which are already tested.
@@ -1575,7 +1575,7 @@ mod tests {
             );
             let bad_ctx = UserDecTrustedValidationContext::new(
                 &server_addresses,
-                &HashMap::new(),
+                &scheme_verf_keys,
                 &bad_client_request,
                 &dummy_domain,
                 None,
@@ -1589,7 +1589,7 @@ mod tests {
             let agg_resp = vec![resp0.clone(), resp1.clone(), resp2.clone()];
             let trusted_ctx = UserDecTrustedValidationContext::new(
                 &server_addresses,
-                &HashMap::new(),
+                &scheme_verf_keys,
                 &client_request,
                 &dummy_domain,
                 None,
@@ -1823,12 +1823,12 @@ mod tests {
             };
 
         let digest = compute_link(&client_request, &dummy_domain).unwrap();
-
+        let scheme_verf_keys = HashMap::new();
         // Test 1: happy path with threshold=Some(1), all 5 responses valid.
         {
             let trusted_ctx = UserDecTrustedValidationContext::new(
                 &server_addresses,
-                &HashMap::new(),
+                &scheme_verf_keys,
                 &client_request,
                 &dummy_domain,
                 Some(1),
@@ -1852,7 +1852,7 @@ mod tests {
         {
             let trusted_ctx = UserDecTrustedValidationContext::new(
                 &server_addresses,
-                &HashMap::new(),
+                &scheme_verf_keys,
                 &client_request,
                 &dummy_domain,
                 Some(1),
@@ -1909,13 +1909,14 @@ mod tests {
             vec![],
         );
 
+        let scheme_verf_keys = HashMap::new();
         // Positive control: 4 distinct servers, default threshold => Ok, threshold defaults to 1.
         {
             let servers: HashMap<u32, alloy_primitives::Address> =
                 (1u32..=4).map(|i| (i, addrs[i as usize - 1])).collect();
             let ctx = UserDecTrustedValidationContext::new(
                 &servers,
-                &HashMap::new(),
+                &scheme_verf_keys,
                 &client_request,
                 &dummy_domain,
                 None,
@@ -1931,7 +1932,7 @@ mod tests {
             assert!(
                 UserDecTrustedValidationContext::new(
                     &servers,
-                    &HashMap::new(),
+                    &scheme_verf_keys,
                     &client_request,
                     &dummy_domain,
                     None,
@@ -1947,7 +1948,7 @@ mod tests {
             assert!(
                 UserDecTrustedValidationContext::new(
                     &servers,
-                    &HashMap::new(),
+                    &scheme_verf_keys,
                     &client_request,
                     &dummy_domain,
                     Some(2),
@@ -1963,7 +1964,7 @@ mod tests {
             assert!(
                 UserDecTrustedValidationContext::new(
                     &servers,
-                    &HashMap::new(),
+                    &scheme_verf_keys,
                     &client_request,
                     &dummy_domain,
                     None,
@@ -1980,7 +1981,7 @@ mod tests {
             assert!(
                 UserDecTrustedValidationContext::new(
                     &servers,
-                    &HashMap::new(),
+                    &scheme_verf_keys,
                     &client_request,
                     &dummy_domain,
                     None,

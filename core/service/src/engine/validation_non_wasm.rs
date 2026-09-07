@@ -31,7 +31,6 @@ use observability::metrics_names::{
     OP_KEYGEN_PREPROC_REQUEST, OP_NEW_EPOCH, OP_PUBLIC_DECRYPT_REQUEST, OP_USER_DECRYPT_REQUEST,
 };
 use std::collections::{HashMap, HashSet};
-use strum::EnumCount;
 use threshold_execution::keyset_config::KeySetConfig;
 use threshold_execution::tfhe_internals::parameters::DKGParams;
 use threshold_execution::zk::ceremony::compute_witness_dim;
@@ -1261,7 +1260,7 @@ mod tests {
             encryption::{Encryption, PkeScheme, PkeSchemeType, UnifiedPublicEncKey},
             signatures::{
                 NodeSigningIdentity, PrivateSigKey, PublicSigKey, compute_eip712_signature,
-                gen_sig_keys,
+                gen_sig_keys, internal_sign,
             },
             signing::SigningSchemeType,
         },
@@ -1883,6 +1882,7 @@ mod tests {
             ext_handles_bytes: &ext_handles_bytes,
             extra_data: Some(&extra_data_0),
             request: None,
+            scheme_verf_keys: &HashMap::new(),
         };
 
         // NOTE: the pks map uses 1-based index while the others use 0-based index like sk0
@@ -2105,6 +2105,7 @@ mod tests {
             ext_handles_bytes: &ext_handles_bytes,
             extra_data: Some(&extra_data),
             request: Some(&request),
+            scheme_verf_keys: &HashMap::new(),
         };
 
         // invalid aggregate response, e.g., when there are none
@@ -2157,6 +2158,7 @@ mod tests {
                 ext_handles_bytes: &ext_handles_bytes,
                 extra_data: Some(&extra_data),
                 request: Some(&bad_request),
+                scheme_verf_keys: &HashMap::new(),
             };
             assert!(
                 validate_public_decrypt_responses(&bad_ctx, 2, &agg_resp)
@@ -2207,6 +2209,7 @@ mod tests {
                 ext_handles_bytes: &ext_handles_bytes,
                 extra_data: Some(&extra_data),
                 request: Some(&bad_request),
+                scheme_verf_keys: &HashMap::new(),
             };
             assert!(
                 validate_public_decrypt_responses(&bad_ctx, 2, &agg_resp)
@@ -2225,6 +2228,7 @@ mod tests {
                 ext_handles_bytes: &[],
                 extra_data: None,
                 request: None,
+                scheme_verf_keys: &HashMap::new(),
             };
             validate_public_decrypt_responses(&none_ctx, 2, &agg_resp).unwrap();
         }
@@ -2281,8 +2285,8 @@ mod tests {
         tampered[0].signature[0] ^= 1;
 
         let server_pks = HashMap::from([(1u32, vk_of(&pivot))]);
-        let scheme_verf_keys = HashMap::new();
         let ctx = |domain: Option<&Eip712Domain>| {
+            let scheme_verf_keys = HashMap::new();
             PublicDecTrustedValidationContext::new(
                 &server_pks,
                 &scheme_verf_keys,

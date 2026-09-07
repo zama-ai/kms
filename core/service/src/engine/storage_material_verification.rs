@@ -1281,9 +1281,6 @@ mod tests {
         let (_pk, sk) = gen_sig_keys(&mut rng);
         store_signing_key_material(&mut storage, &sk, None).await;
 
-        // Keysets and a CRS that private storage knows nothing about.
-        let standard = setup_standard_keys(&mut storage, 142).await;
-        let compressed = setup_compressed_keys(&mut storage, 143).await;
         let crs_id = RequestId::new_random(&mut rng);
         let _crs_digest = setup_crs(&mut storage, &crs_id).await;
 
