@@ -188,7 +188,9 @@ The primary service is `CoreServiceEndpoint`. Its RPCs group into:
   key in the generated TFHE server key. Legacy private keysets that predate this
   field are upgraded with the OPRF share absent; `UseExisting` keygen generates
   and persists a fresh OPRF share for such legacy material before regenerating
-  public keys.
+  public keys. Key generation and CRS generation write persistent material only
+  after generation completes. An abort updates request state but does not purge
+  storage.
 - **Decryption** — `PublicDecrypt` (returns plaintext) and `UserDecrypt`
   (user-initiated, EIP-712 authenticated). `PublicDecryptSync` / `UserDecryptSync`
   start a decryption and wait for its result in the same call, so the caller does
@@ -208,24 +210,25 @@ The primary service is `CoreServiceEndpoint`. Its RPCs group into:
   the key and logs a warning instead. When resharing legacy key material that
   has no dedicated OPRF secret-key share, the OPRF sub-protocol is skipped and
   the reshared private keyset keeps that field absent. A storage failure during
-  resharing rolls the new epoch back on the party that fails. 
-  That party attempts to delete the key shares, the CRS metadata and the epoch data of the new epoch. 
-  Observe that no public data is deleted as this is, and should be, unaffected by an epoch change. 
-  If cleanup succeeds, it forgets the epoch; otherwise, it keeps the epoch registered so that deletion can be retried. 
-  `DestroyMpcContext` carries
-  the context's epoch IDs and erases their secret shares (cascading to the
-  existing per-epoch deletion) before forgetting the context and removing its
-  TLS trust-root references. Trust roots shared with another live context are
-  retained. This ensures retiring a
-  party set leaves no usable key shares behind; the kms-connector is the source
-  of truth for which epochs belong to a context. In-memory lifecycle leases
-  serialize creation against destruction: `NewMpcEpoch` holds shared leases for
-  its target context and epoch through all PRSS, resharing and persistence work,
+  resharing rolls the new epoch back on the party that fails. That party attempts
+  to delete the key shares, the CRS metadata and the epoch data of the new epoch.
+  Public data remains because an epoch change does not affect it. If cleanup
+  succeeds, the party forgets the epoch. Otherwise, the party keeps the epoch
+  registered so that deletion can be retried. `DestroyMpcContext` takes a stable
+  snapshot of the context's registered epochs and erases their secret shares
+  before it forgets the context and removes its TLS trust-root references. A trust
+  root remains if another live context uses it. This order leaves no usable key
+  shares after the party set retires. Its response lists the deleted epoch IDs. In-memory
+  lifecycle leases serialize creation against destruction: `NewMpcEpoch` holds
+  shared leases for its target context and epoch through all PRSS, resharing and
+  persistence work,
   while `DestroyMpcEpoch` and `DestroyMpcContext` require exclusive leases before
   taking snapshots or deleting data. A conflicting destruction is refused with
   `FailedPrecondition`, including while PRSS is still running and the new epoch
   has not yet been registered in the session maker; callers retry once creation
-  has settled.
+  has settled. MPC context updates serialize the existence check with storage and
+  cache or session updates. A failed deletion keeps the in-memory context if its
+  persistent entry remains, which permits a retry before or after restart.
 - **Session management** — creation, result retrieval, and cleanup for
   long-running threshold sessions.
 
@@ -293,9 +296,13 @@ step fails: the keychain is restored to its pre-setup `(context_id, backup_enc_k
 vault entries written under the failed id are purged
 (`rollback_failed_custodian_setup` in
 [context_manager.rs](core/service/src/engine/context_manager.rs) and
-`Vault::purge_backup`). Without that, the node would keep encrypting backups under a key
-whose recovery material was never written, making them unrecoverable. Setups are serialized
-against each other for the same reason.
+`Vault::purge_backup`). Cleanup checks that no backup entries remain under the failed context ID. If
+the storage backend reports a successful deletion but entries remain, rollback emits a
+`tracing::error!` and preserves the original setup or write error. Rollback cannot repair a backend
+that did not apply the deletion, so these leftover entries require operator attention. During
+custodian-context destruction, the same check must pass before recovery material and lifecycle
+state are removed. Setups are serialized against each other so the active backup context cannot
+change mid-operation.
 
 Implementation code lives in [core/service/src/backup/](core/service/src/backup/);
 end-to-end tests live at
