@@ -207,31 +207,24 @@ Crypto provider should exist at this point"
             .write()
             .map_err(|e| anyhow::anyhow!("Failed to acquire write lock: {e}"))?;
 
-        let replaced = trust_roots
+        if trust_roots
             .values()
             .any(|roots| roots.contains_key(&context_id))
-            || release_pcrs_by_context.contains_key(&context_id);
-        trust_roots.retain(|_, roots| {
-            roots.remove(&context_id);
-            !roots.is_empty()
-        });
+            || release_pcrs_by_context.contains_key(&context_id)
+        {
+            tracing::error!(
+                "Refusing to replace TLS trust roots and PCR values for existing context {context_id}"
+            );
+            anyhow::bail!("TLS verifier context {context_id} already exists");
+        }
+
         for (mpc_identity, trust_root) in context_roots {
             trust_roots
                 .entry(mpc_identity)
                 .or_default()
                 .insert(context_id, trust_root);
         }
-        match release_pcrs {
-            Some(release_pcrs) => {
-                release_pcrs_by_context.insert(context_id, release_pcrs);
-            }
-            None => {
-                release_pcrs_by_context.remove(&context_id);
-            }
-        }
-        if replaced {
-            tracing::warn!("Replaced TLS trust roots and PCR values for context {context_id}");
-        }
+        release_pcrs_by_context.insert(context_id, release_pcrs.unwrap_or_default());
         Ok(())
     }
 
@@ -776,5 +769,83 @@ mod tests {
             .unwrap();
         assert_eq!(candidate_a.pcrs, HashSet::from([pcr_a]));
         assert_eq!(candidate_b.pcrs, HashSet::from([pcr_b]));
+    }
+
+    #[test]
+    fn duplicate_context_is_rejected_without_replacing_verifier_state() {
+        _ = default_provider().install_default();
+        let verifier = AttestedVerifier::new(
+            None,
+            false,
+            #[cfg(feature = "testing")]
+            true,
+        )
+        .unwrap();
+        let identity = "duplicate.example.com";
+        let (certificate_a, ca_a) = test_ca(identity);
+        let (certificate_b, ca_b) = test_ca(identity);
+        let context_id = SessionId::from(3u128);
+        let pcr_a = test_pcr(3);
+
+        verifier
+            .add_context(
+                context_id,
+                HashMap::from([(MpcIdentity(identity.to_string()), ca_a)]),
+                Some(HashSet::from([pcr_a.clone()])),
+            )
+            .unwrap();
+        let error = verifier
+            .add_context(
+                context_id,
+                HashMap::from([(MpcIdentity(identity.to_string()), ca_b)]),
+                Some(HashSet::from([test_pcr(4)])),
+            )
+            .unwrap_err();
+        assert!(error.to_string().contains("already exists"));
+
+        let (_, parsed_certificate) = parse_x509_certificate(certificate_a.der()).unwrap();
+        let verifiers = verifier
+            .get_verifiers_and_pcrs_for_x509_cert(&parsed_certificate)
+            .unwrap();
+        assert_eq!(verifiers.candidates.len(), 1);
+        assert_eq!(verifiers.candidates[0].pcrs, HashSet::from([pcr_a]));
+
+        let server_name = ServerName::try_from(identity).unwrap();
+        assert!(
+            verifiers.candidates[0]
+                .trust_root
+                .server
+                .verify_server_cert(certificate_a.der(), &[], &server_name, &[], UnixTime::now(),)
+                .is_ok()
+        );
+        assert!(
+            verifiers.candidates[0]
+                .trust_root
+                .server
+                .verify_server_cert(certificate_b.der(), &[], &server_name, &[], UnixTime::now(),)
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn duplicate_context_without_ca_or_pcrs_is_rejected() {
+        _ = default_provider().install_default();
+        let verifier = AttestedVerifier::new(
+            None,
+            false,
+            #[cfg(feature = "testing")]
+            true,
+        )
+        .unwrap();
+        let context_id = SessionId::from(4u128);
+
+        verifier
+            .add_context(context_id, HashMap::new(), None)
+            .unwrap();
+        let error = verifier
+            .add_context(context_id, HashMap::new(), None)
+            .unwrap_err();
+
+        assert!(error.to_string().contains("already exists"));
     }
 }

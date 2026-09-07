@@ -44,7 +44,6 @@ use threshold_networking::{
     tls::AttestedVerifier,
 };
 
-use threshold_types::role::Role;
 use tokio::{
     net::TcpListener,
     sync::{Mutex, RwLock},
@@ -703,7 +702,7 @@ where
 
     // TODO(zama-ai/kms-internal/issues/2758)
     // If we're still using peer config, we need to manually write the default context into storage.
-    // This way we can load it into SessionMaker later when creating the ThresholdContextManager.
+    // This way ThresholdContextManager can load it into SessionMaker.
     ensure_default_threshold_context_in_storage(
         &mut private_storage,
         threshold_config,
@@ -736,18 +735,22 @@ where
         .set_not_serving::<CoreServiceEndpointServer<RealThresholdKms<PubS, PrivS>>>()
         .await;
 
-    let session_maker = SessionMaker::new_initialized(
-        threshold_config.my_id.map(Role::indexed_from_one),
-        &crypto_storage,
-        networking_manager,
-        verifier,
-        base_kms.new_rng().await,
-    )
-    .await?;
-    let immutable_session_maker = session_maker.make_immutable();
+    let session_maker = SessionMaker::new(networking_manager, verifier, base_kms.new_rng().await);
 
     let tracker = Arc::new(TaskTracker::new());
     let rate_limiter = RateLimiter::new(rate_limiter_conf);
+
+    let epoch_manager = RealThresholdEpochManager {
+        crypto_storage: crypto_storage.clone(),
+        session_maker: session_maker.clone(),
+        base_kms: base_kms.new_instance().await,
+        reshare_pubinfo_meta_store: MetaStore::new_unlimited(),
+        tracker: Arc::clone(&tracker),
+        rate_limiter: rate_limiter.clone(),
+        _init: PhantomData,
+        _reshare: PhantomData,
+    };
+    epoch_manager.init_all_epochs_from_storage().await?;
 
     // NOTE: context must be loaded before attempting to automatically start the PRSS
     // since the PRSS requires a context to be present.
@@ -766,16 +769,6 @@ where
         );
     }
 
-    let epoch_manager = RealThresholdEpochManager {
-        crypto_storage: crypto_storage.clone(),
-        session_maker: session_maker.clone(),
-        base_kms: base_kms.new_instance().await,
-        reshare_pubinfo_meta_store: MetaStore::new_unlimited(),
-        tracker: Arc::clone(&tracker),
-        rate_limiter: rate_limiter.clone(),
-        _init: PhantomData,
-        _reshare: PhantomData,
-    };
     if ensure_default_prss {
         let epoch_id_prss = *DEFAULT_EPOCH_ID;
         let default_context_id = *DEFAULT_MPC_CONTEXT;
@@ -794,6 +787,7 @@ where
                 .await?;
         }
     }
+    let immutable_session_maker = session_maker.make_immutable();
 
     let slow_events = Arc::new(Mutex::new(HashMap::new()));
 

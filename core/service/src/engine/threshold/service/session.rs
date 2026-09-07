@@ -5,11 +5,8 @@ use std::{
     sync::{Arc, Weak},
 };
 
-use crate::{
-    engine::{
-        context::ContextInfo, threshold::service::epoch_manager::EpochData, utils::MetricedError,
-    },
-    vault::storage::{Storage, StorageExt, crypto_material::ThresholdCryptoMaterialStorage},
+use crate::engine::{
+    context::ContextInfo, threshold::service::epoch_manager::EpochData, utils::MetricedError,
 };
 
 // === External Crates ===
@@ -173,48 +170,7 @@ fn four_party_dummy_role_assignment() -> RoleAssignment<Role> {
 }
 
 impl SessionMaker {
-    pub(crate) async fn new_initialized<
-        PubS: Storage + Sync + Send + 'static,
-        PrivS: StorageExt + Sync + Send + 'static,
-    >(
-        my_id: Option<Role>,
-        crypto_storage: &ThresholdCryptoMaterialStorage<PubS, PrivS>,
-        networking_manager: Arc<RwLock<GrpcNetworkingManager>>,
-        verifier: Option<Arc<AttestedVerifier>>,
-        rng: AesRng,
-    ) -> anyhow::Result<Self> {
-        let session_maker: SessionMaker =
-            Self::new_uninitialized(networking_manager, verifier, rng);
-        let all_epochs = crypto_storage.read_all_epoch_data().await?;
-        if all_epochs.is_empty() {
-            tracing::warn!(
-                "No epoch data found in storage. You may need to call the init end-point later before you can use the KMS server"
-            );
-        }
-        for (epoch_id, prss) in all_epochs {
-            session_maker.add_epoch(epoch_id, prss).await;
-            tracing::info!(
-                "Loaded epoch data from storage for request ID {}.",
-                epoch_id
-            );
-        }
-        let mpc_contexts = crypto_storage.inner.read_all_context_info().await?;
-        if mpc_contexts.is_empty() {
-            tracing::warn!(
-                "No MPC context found in storage! There should at a minimum be a default context!"
-            );
-        }
-        for context_info in mpc_contexts {
-            session_maker.add_context_info(my_id, &context_info).await?;
-            tracing::info!(
-                "Loaded MPC context from storage for context ID {}.",
-                context_info.context_id()
-            );
-        }
-        Ok(session_maker)
-    }
-
-    pub(crate) fn new_uninitialized(
+    pub(crate) fn new(
         networking_manager: Arc<RwLock<GrpcNetworkingManager>>,
         verifier: Option<Arc<AttestedVerifier>>,
         rng: AesRng,
@@ -443,6 +399,7 @@ impl SessionMaker {
         }
     }
 
+    #[cfg(test)]
     async fn add_context(
         &self,
         context_id: ContextId,
@@ -520,15 +477,8 @@ impl SessionMaker {
             inner: role_assignment_map,
         };
 
-        self.add_context(
-            *info.context_id(),
-            my_role,
-            role_assignment,
-            info.threshold as u8,
-        )
-        .await;
-
-        match self.verifier.as_ref() {
+        let context_id = *info.context_id();
+        let verifier_context = match self.verifier.as_ref() {
             Some(verifier) => {
                 let context_id_as_session_id = info.context_id().derive_session_id()?;
                 let release_pcrs = if info.pcr_values.is_empty() {
@@ -540,12 +490,31 @@ impl SessionMaker {
                 } else {
                     Some(info.pcr_values.iter().cloned().collect())
                 };
-                verifier
-                    .add_context(context_id_as_session_id, ca_certs_map, release_pcrs)
-                    .map_err(|e| anyhow::anyhow!("Failed to add context to verifier: {}", e))?;
+                Some((verifier, context_id_as_session_id, release_pcrs))
             }
-            _ => { /* do nothing */ }
+            None => None,
+        };
+
+        let mut context_map = self.context_map.write().await;
+        if context_map.contains_key(&context_id) {
+            tracing::error!("Refusing to replace existing MPC context {context_id}");
+            anyhow::bail!("MPC context {context_id} already exists");
         }
+
+        if let Some((verifier, verifier_context_id, release_pcrs)) = verifier_context {
+            verifier
+                .add_context(verifier_context_id, ca_certs_map, release_pcrs)
+                .map_err(|e| anyhow::anyhow!("Failed to add context to verifier: {e}"))?;
+        }
+
+        context_map.insert(
+            context_id,
+            Context {
+                my_role,
+                role_assignment,
+                threshold: info.threshold as u8,
+            },
+        );
 
         Ok(())
     }
@@ -1303,7 +1272,7 @@ mod tests {
         let networking_manager = Arc::new(RwLock::new(
             GrpcNetworkingManager::new(None, CoreToCoreNetworkConfig::default()).unwrap(),
         ));
-        let session_maker = SessionMaker::new_uninitialized(
+        let session_maker = SessionMaker::new(
             networking_manager,
             Some(Arc::clone(&verifier)),
             AesRng::seed_from_u64(6),
@@ -1445,9 +1414,9 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn duplicate_context_replaces_its_attested_verifier_root() {
+    async fn duplicate_context_is_rejected_without_replacing_its_verifier_root() {
         let (session_maker, verifier) = session_maker_with_attested_verifier();
-        let identity = "replaced.example.com";
+        let identity = "duplicate.example.com";
         let certificate_a = self_signed_test_certificate(identity);
         let certificate_b = self_signed_test_certificate(identity);
         let mut rng = AesRng::seed_from_u64(11);
@@ -1466,18 +1435,19 @@ mod tests {
                 &context_with_ca(identity, certificate_b.pem().into_bytes(), context_id),
             )
             .await
-            .unwrap();
+            .unwrap_err();
 
         let server_name = ServerName::try_from(identity).unwrap();
         assert!(
             verifier
                 .verify_server_cert(certificate_a.der(), &[], &server_name, &[], UnixTime::now(),)
-                .is_err()
+                .is_ok()
         );
         assert!(
             verifier
                 .verify_server_cert(certificate_b.der(), &[], &server_name, &[], UnixTime::now(),)
-                .is_ok()
+                .is_err()
         );
+        assert_eq!(session_maker.context_count().await, 1);
     }
 }

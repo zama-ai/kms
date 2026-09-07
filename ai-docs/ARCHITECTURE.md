@@ -218,8 +218,9 @@ The primary service is `CoreServiceEndpoint`. Its RPCs group into:
   and MPC identity. Different trust roots for one identity coexist while their
   contexts remain active. Each root is evaluated with only its context's PCR
   allowlist, and a handshake succeeds when one complete root and PCR check
-  succeeds. Removing a context removes its roots, while another context's copy
-  of the same root remains trusted. This ensures retiring a
+  succeeds. The verifier rejects registration for an active context ID instead
+  of replacing its trust roots or PCR values. Removing a context removes its
+  roots, while another context's copy of the same root remains trusted. This ensures retiring a
   party set leaves no usable key shares behind; the kms-connector is the source
   of truth for which epochs belong to a context. In-memory lifecycle leases
   serialize creation against destruction: `NewMpcEpoch` holds shared leases for
