@@ -295,7 +295,7 @@ impl SessionMaker {
         reader_guard.inactive_session_count().await
     }
 
-    #[cfg(test)]
+    /// Returns the number of cached MPC contexts.
     pub(crate) async fn context_count(&self) -> usize {
         self.context_map.read().await.len()
     }
