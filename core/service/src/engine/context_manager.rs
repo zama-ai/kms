@@ -802,6 +802,15 @@ where
             )
         })?;
 
+        // Context creation is rare and changes which parties we run with, so record the resulting
+        // configuration once.
+        tracing::info!(
+            context_id = %new_context.context_id,
+            num_parties = new_context.mpc_nodes.len(),
+            threshold = new_context.threshold,
+            "Created MPC context"
+        );
+
         Ok(Response::new(Empty {}))
     }
 
@@ -878,7 +887,7 @@ where
                 )
             })?;
 
-        {
+        let remaining_contexts = {
             let mut write_guard = self.cache.write().await;
             let was_present = (*write_guard).remove(&context_id);
             if !was_present {
@@ -887,7 +896,14 @@ where
                     context_id,
                 )
             }
-        }
+            write_guard.len()
+        };
+
+        tracing::info!(
+            context_id = %context_id,
+            remaining_contexts,
+            "Destroyed MPC context"
+        );
 
         Ok(())
     }
@@ -1038,14 +1054,19 @@ async fn atomic_update_context<
         Err(error) => context_write_persisted(crypto_storage, new_context, error).await,
     };
     if !context_is_stored {
+        let storage_error = storage_result.unwrap_err();
         return Err(anyhow::anyhow!(
-            "Failed to store context: {}",
-            storage_result.unwrap_err()
+            "Failed to store context {}: {storage_error}",
+            new_context.context_id()
         ));
     }
 
     if let Err(session_error) = session_maker.add_context_info(my_role, new_context).await {
         let context_id = new_context.context_id();
+        tracing::error!(
+            context_id = %context_id,
+            "Rolling back context creation after the session maker update failed: {session_error}"
+        );
         let storage_ref = crypto_storage.private_storage.clone();
         let mut guarded_priv_storage = storage_ref.lock().await;
         let cleanup_result =
@@ -1177,6 +1198,16 @@ where
             )
         })?;
 
+        // Context creation is rare and changes which parties we run with, so record the resulting
+        // configuration once.
+        tracing::info!(
+            context_id = %new_context.context_id,
+            my_role = ?my_role,
+            num_parties = new_context.mpc_nodes.len(),
+            threshold = new_context.threshold,
+            "Created MPC context"
+        );
+
         Ok(Response::new(Empty {}))
     }
 
@@ -1241,6 +1272,12 @@ where
                     tonic::Code::Internal,
                 )
             })?;
+        let remaining_contexts = self.session_maker.context_count().await;
+        tracing::info!(
+            context_id = %context_id,
+            remaining_contexts,
+            "Destroyed MPC context"
+        );
         Ok(())
     }
 

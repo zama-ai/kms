@@ -482,7 +482,7 @@ generate_helm_overrides() {
     #=========================================================================
     if [[ "${DEPLOYMENT_TYPE}" == *"Enclave"* ]]; then
          IS_ENCLAVE="true"
-         KMS_IMAGE_NAME="hub.zama.org/ghcr/zama-ai/kms/core-service-enclave"
+         KMS_IMAGE_NAME="${KMS_CORE_ENCLAVE_IMAGE_NAME}"
          TOLERATION_KEY="app"         # Enclave uses app-based taints
          # For aws-perf, use PATH_SUFFIX for toleration value; otherwise use NAMESPACE
          if [[ "${TARGET}" == "aws-perf" ]]; then
@@ -1051,10 +1051,13 @@ upgrade_parties() {
 
     set_path_suffix
 
-    local kms_image_name="${KMS_CORE_IMAGE_NAME:-hub.zama.org/ghcr/zama-ai/kms/core-service}"
+    local old_kms_image_name="${OLD_KMS_CORE_IMAGE_NAME:-hub.zama.org/ghcr/zama-ai/kms/core-service}"
+    local new_kms_image_name="${NEW_KMS_CORE_IMAGE_NAME:-hub.zama.org/ghcr/zama-ai/kms/core-service-insecure}"
     if [[ "${DEPLOYMENT_TYPE}" == *"Enclave"* ]]; then
-        kms_image_name="hub.zama.org/ghcr/zama-ai/kms/core-service-enclave"
+        old_kms_image_name="${OLD_KMS_CORE_ENCLAVE_IMAGE_NAME:-hub.zama.org/ghcr/zama-ai/kms/core-service-enclave}"
+        new_kms_image_name="${NEW_KMS_CORE_ENCLAVE_IMAGE_NAME:-hub.zama.org/ghcr/zama-ai/kms/core-service-enclave-insecure}"
     fi
+    local new_kms_client_image_name="${NEW_KMS_CORE_CLIENT_IMAGE_NAME:-hub.zama.org/ghcr/zama-ai/kms/core-client-insecure}"
 
     local performance_values_dir="${REPO_ROOT}/ci/perf-testing/${DEPLOYMENT_TYPE}/kms-ci/kms-service"
 
@@ -1075,9 +1078,11 @@ upgrade_parties() {
     for i in $(seq 1 "${NUM_PARTIES}"); do
         local party_tag="${old_tag}"
         local party_chart_version="${old_chart_version}"
+        local party_image_name="${old_kms_image_name}"
         if [[ -n "${upgrade_set[${i}]+_}" ]]; then
             party_tag="${new_tag}"
             party_chart_version="${new_chart_version}"
+            party_image_name="${new_kms_image_name}"
         fi
 
         local helm_chart_location="${REPO_ROOT}/charts/kms-core"
@@ -1095,10 +1100,11 @@ upgrade_parties() {
             --values "${PEERS_VALUES}"
             --values "${performance_values_dir}/values-${PATH_SUFFIX}.yaml"
             --set kmsPeers.id="${i}"
+            --set kmsCoreClient.image.name="${new_kms_client_image_name}"
             --set kmsCoreClient.image.tag="${new_tag}"
             --set kmsCore.serviceAccountName="${PATH_SUFFIX}-${i}"
             --set kmsCore.envFrom.configmap.name="${PATH_SUFFIX}-${i}"
-            --set kmsCore.image.name="${kms_image_name}"
+            --set kmsCore.image.name="${party_image_name}"
             --set kmsCore.image.tag="${party_tag}"
             --set kmsCore.thresholdMode.thresholdValue="${threshold_value}"
             --set kmsCore.publicVault.s3.prefix="PUB-p${i}"
