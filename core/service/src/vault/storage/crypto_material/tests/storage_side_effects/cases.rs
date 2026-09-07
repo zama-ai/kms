@@ -329,3 +329,88 @@ async fn failed_context_info_store_restores_private_storage(#[case] fault_phase:
         &failed_store_events(&context_entry, fault_phase),
     );
 }
+
+/// Legacy flat CRS metadata does not block writing metadata for a new epoch.
+#[tokio::test]
+async fn legacy_crs_info_does_not_block_an_epoch_write() {
+    let data_id = derive_request_id("legacy_crs_info_epoch_write").unwrap();
+    let epoch_id: EpochId = derive_request_id("legacy_crs_info_epoch").unwrap().into();
+    let data_type = PrivDataType::CrsInfo.to_string();
+    let legacy = TestType { i: 1 };
+    let attempted = TestType { i: 2 };
+    let storage =
+        CryptoMaterialStorage::from(FailingRamStorage::new(), FailingRamStorage::new(), None);
+    {
+        let mut private = storage.private_storage.lock().await;
+        store_versioned_at_request_id(&mut *private, &data_id, &legacy, &data_type)
+            .await
+            .unwrap();
+        private.clear_events();
+    }
+
+    let result = storage
+        .write_all::<TestType, TestType>(
+            &data_id,
+            Some(&epoch_id),
+            None,
+            Some((&attempted, PrivDataType::CrsInfo)),
+            false,
+            TEST_METRIC,
+        )
+        .await;
+
+    assert_eq!(result, Ok(()));
+    let private = storage.private_storage.lock().await;
+    let stored_legacy: TestType = read_versioned_at_request_id(&*private, &data_id, &data_type)
+        .await
+        .unwrap();
+    let stored_at_epoch: TestType =
+        read_versioned_at_request_and_epoch_id(&*private, &data_id, &epoch_id, &data_type)
+            .await
+            .unwrap();
+    assert_eq!(stored_legacy, legacy);
+    assert_eq!(stored_at_epoch, attempted);
+    assert_same_events(
+        private.events(),
+        &[expected_store_event(
+            &StorageEntry::new(data_id, Some(epoch_id), data_type),
+            StorageOutcome::Created,
+        )],
+    );
+}
+
+/// A flat CRS metadata write still rejects an entry already stored at that path.
+#[tokio::test]
+async fn flat_crs_info_write_rejects_a_duplicate() {
+    let data_id = derive_request_id("duplicate_flat_crs_info").unwrap();
+    let data_type = PrivDataType::CrsInfo.to_string();
+    let existing = TestType { i: 1 };
+    let storage =
+        CryptoMaterialStorage::from(FailingRamStorage::new(), FailingRamStorage::new(), None);
+    {
+        let mut private = storage.private_storage.lock().await;
+        store_versioned_at_request_id(&mut *private, &data_id, &existing, &data_type)
+            .await
+            .unwrap();
+        private.clear_events();
+    }
+
+    let result = storage
+        .write_all::<TestType, TestType>(
+            &data_id,
+            None,
+            None,
+            Some((&TestType { i: 2 }, PrivDataType::CrsInfo)),
+            false,
+            TEST_METRIC,
+        )
+        .await;
+
+    assert_eq!(result, Err(StorageError::Duplicate));
+    let private = storage.private_storage.lock().await;
+    let stored: TestType = read_versioned_at_request_id(&*private, &data_id, &data_type)
+        .await
+        .unwrap();
+    assert_eq!(stored, existing);
+    assert!(private.events().is_empty());
+}

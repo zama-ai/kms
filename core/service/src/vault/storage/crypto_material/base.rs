@@ -404,6 +404,8 @@ where
     /// Threshold callers use this for `PublicKey`/`FheKeyInfo` and `CRS`/`CrsInfo` pairs.
     /// If one requested half exists, the method preserves it and stores the missing half. The
     /// caller must ensure that the two halves belong together.
+    /// Duplicate checks follow the target path, so legacy flat private data does not block a write
+    /// to a new epoch.
     /// Resharing passes only the new epoch's private half. If a store fails, cleanup preserves
     /// entries that existed before the call and removes entries created during the call.
     /// Callers must serialize calls that can write the same entries until this method returns.
@@ -440,10 +442,12 @@ where
         {
             return Err(StorageError::Duplicate);
         }
-        if self
-            .data_exists(req_id, &pub_type, &priv_type)
-            .await
-            .map_err(|e| StorageError::Other(e.to_string()))?
+        // An epoch-scoped write must not be blocked by legacy data at the flat path.
+        if epoch_id.is_none()
+            && self
+                .data_exists(req_id, &pub_type, &priv_type)
+                .await
+                .map_err(|e| StorageError::Other(e.to_string()))?
         {
             return Err(StorageError::Duplicate);
         }
