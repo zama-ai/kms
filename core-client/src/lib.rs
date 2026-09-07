@@ -17,10 +17,13 @@ pub use crate::s3_operations::fetch_public_elements;
 pub(crate) fn ecdsa_signature(
     signatures: &[kms_grpc::kms::v1::TypedSignature],
 ) -> anyhow::Result<&[u8]> {
-    kms_grpc::rpc_types::scheme_signature(signatures, crate::kms::v1::SigningSchemeType::Ecdsa256k1)
-        .ok_or_else(|| {
-            anyhow::anyhow!("the response carries no ECDSA signature in its `signatures` list")
-        })
+    kms_grpc::rpc_types::scheme_signature(
+        signatures,
+        kms_grpc::kms::v1::SigningSchemeType::Ecdsa256k1,
+    )
+    .ok_or_else(|| {
+        anyhow::anyhow!("the response carries no ECDSA signature in its `signatures` list")
+    })
 }
 
 use crate::backup::{

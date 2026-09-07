@@ -6,10 +6,11 @@ use crate::{
     anyhow_error_and_log,
     cryptography::{
         encryption::UnifiedPublicEncKey,
-        signatures::{PublicSigKey, Signature, recover_address_from_ext_signature},
-        signing::{SchemeVerfKeys, SigningSchemeType, unified_verify, verf_key_for},
+        signatures::{PublicSigKey, recover_address_from_ext_signature},
+        signing::{SchemeVerfKeys, SigningSchemeType},
     },
     engine::base::{compute_public_decryption_message, public_dec_payload_bytes},
+    engine::validation_wasm::{ensure_requested_verified, verify_scheme_entry},
 };
 use alloy_dyn_abi::Eip712Domain;
 use hashing::DomainSep;
@@ -519,21 +520,15 @@ fn verify_public_decrypt_signatures(
             continue;
         }
 
-        let Some(verf_key) = verf_key_for(trusted_ctx.scheme_verf_keys, party_id, scheme) else {
-            tracing::warn!(
-                "Party {party_id} signed a public decryption response under {scheme}, but no \
-                 {scheme} verification key is known for it"
-            );
-            return false;
-        };
-        let signature = Signature::new(scheme, typed.signature.clone());
-        if let Err(e) = unified_verify(
+        if let Err(e) = verify_scheme_entry(
+            trusted_ctx.scheme_verf_keys,
+            party_id,
+            scheme,
+            &typed.signature,
             &DSEP_PUBLIC_DECRYPTION,
             &payload_bytes,
-            &signature,
-            verf_key,
         ) {
-            tracing::warn!("The {scheme} signature of party {party_id} did not verify: {e}");
+            tracing::warn!("A public decryption response of party {party_id} is rejected: {e}");
             return false;
         }
         verified.push(scheme);
@@ -547,14 +542,9 @@ fn verify_public_decrypt_signatures(
                 return false;
             }
         };
-        for scheme in requested {
-            if !verified.contains(&scheme) {
-                tracing::warn!(
-                    "A public decryption response of party {party_id} carries no verified \
-                     {scheme} signature, but {scheme} was requested"
-                );
-                return false;
-            }
+        if let Err(e) = ensure_requested_verified(&verified, &requested, party_id) {
+            tracing::warn!("A public decryption response of party {party_id} is rejected: {e}");
+            return false;
         }
     }
 

@@ -6,12 +6,13 @@ use crate::cryptography::{
     encryption::{UnifiedPrivateEncKey, UnifiedPublicEncKey},
     signatures::{PublicSigKey, Signature, internal_verify_sig},
     signcryption::{UnifiedUnsigncryptionKey, UnsigncryptFHEPlaintext},
-    signing::{SigningError, SigningSchemeType, verf_key_for},
+    signing::{SigningError, SigningSchemeType},
 };
 use crate::engine::validation::{
     DSEP_USER_DECRYPTION, ERR_VALIDATE_USER_DECRYPTION_MISMATCH_EXTRA_DATA,
     RejectedUserDecResponse, UserDecRejectReason, UserDecTrustedValidationContext,
     UserDecryptionInvariants, check_ext_user_decryption_signature, validate_user_decrypt_responses,
+    verify_user_decrypt_scheme_signatures,
 };
 use crate::{anyhow_error_and_log, some_or_err};
 use algebra::error_correction::ReconstructionHints;
@@ -296,74 +297,18 @@ impl Client {
             })?;
         }
 
-        // Every entry has to verify, and an entry this client cannot check is a
-        // rejection rather than a skip. ECDSA starts out verified because one of
-        // the two deprecated fields was checked just above.
-        let mut verified = vec![SigningSchemeType::Ecdsa256k1];
-        for typed in &resp.signatures {
-            let scheme = SigningSchemeType::try_from(typed.scheme).map_err(|e| {
-                anyhow_error_and_log(format!(
-                    "the response carries a signature of an unknown scheme: {e}"
-                ))
-            })?;
-            if scheme == SigningSchemeType::Ecdsa256k1 {
-                check_ext_user_decryption_signature(
-                    &typed.signature,
-                    &payload,
-                    request,
-                    eip712_domain,
-                    expected_server_addr,
-                )
-                .map_err(|e| {
-                    anyhow_error_and_log(format!(
-                        "the ECDSA entry of the `signatures` of party {} did not verify: {e}",
-                        payload.party_id
-                    ))
-                })?;
-                continue;
-            }
-            let verf_key = verf_key_for(&self.scheme_verf_keys, payload.party_id, scheme)
-                .ok_or_else(|| {
-                    anyhow_error_and_log(format!(
-                        "party {} signed under {scheme}, but this client holds no {scheme} \
-                         verification key for it",
-                        payload.party_id
-                    ))
-                })?;
-            let payload_bytes = crate::engine::base::user_dec_payload_bytes(
-                &bc2wrap::serialize(&payload)?,
-                &resp.extra_data,
-            )?;
-            let signature = Signature::new(scheme, typed.signature.clone());
-            crate::cryptography::signing::unified_verify(
-                &DSEP_USER_DECRYPTION,
-                &payload_bytes,
-                &signature,
-                verf_key,
-            )
-            .map_err(|e| {
-                anyhow_error_and_log(format!(
-                    "the {scheme} signature of party {} did not verify: {e}",
-                    payload.party_id
-                ))
-            })?;
-            verified.push(scheme);
-        }
-
-        // A scheme the request asked for has to have been verified, not merely
-        // present: a party cannot drop the post-quantum entry of a hybrid request
-        // and pass on ECDSA alone.
-        if let Some(missing) = request
-            .signing_schemes
-            .iter()
-            .find(|scheme| !verified.contains(scheme))
-        {
-            return Err(anyhow_error_and_log(format!(
-                "the response of party {} carries no verified {missing} signature, but \
-                 {missing} was requested",
-                payload.party_id
-            )));
-        }
+        // One of the two deprecated scalar fields was checked just above, so
+        // ECDSA is already established whether or not the list repeats it.
+        verify_user_decrypt_scheme_signatures(
+            &self.scheme_verf_keys,
+            &payload,
+            &resp.signatures,
+            request,
+            eip712_domain,
+            expected_server_addr,
+            &resp.extra_data,
+            true,
+        )?;
 
         let receiver_id = self.client_address.to_vec();
         let unsign_key =
@@ -1268,9 +1213,9 @@ impl TryFrom<&UserDecryptionResponse> for UserDecryptionResponseHex {
 
     fn try_from(resp: &UserDecryptionResponse) -> Result<Self, Self::Error> {
         let ecdsa_signature = kms_grpc::rpc_types::scheme_signature(
-            signatures,
-            crate::kms::v1::SigningSchemeType::Ecdsa256k1,
-        )(&resp.signatures)
+            &resp.signatures,
+            kms_grpc::kms::v1::SigningSchemeType::Ecdsa256k1,
+        )
         .ok_or_else(|| anyhow::anyhow!("the response carries no ECDSA signature"))?;
         Ok(Self {
             signature: hex::encode(ecdsa_signature),

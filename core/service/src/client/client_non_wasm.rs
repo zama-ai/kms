@@ -3,8 +3,9 @@ use crate::client::client_wasm::Client;
 use crate::consts::{SIGNING_KEY_ID, signing_material_id};
 use crate::cryptography::signatures::recover_address_from_ext_signature;
 use crate::cryptography::signing::{
-    Signature, SigningSchemeType, UnifiedPublicSigKey, unified_verify, verf_key_for,
+    Signature, SigningSchemeType, UnifiedPublicSigKey, unified_verify,
 };
+use crate::engine::validation::verify_scheme_entry;
 use crate::vault::storage::{
     Storage, StorageReader,
     crypto_material::{get_client_signing_key, get_client_verification_key, read_verf_key_at},
@@ -188,19 +189,15 @@ impl Client {
         signer: Option<(u32, alloy_primitives::Address)>,
     ) -> anyhow::Result<(u32, alloy_primitives::Address)> {
         if let Some((party_id, address)) = signer {
-            let verf_key = verf_key_for(&self.scheme_verf_keys, party_id, scheme).ok_or_else(
-                || {
-                    anyhow_error_and_log(format!(
-                        "party {party_id} signed under {scheme}, but this client holds no \
-                         {scheme} verification key for it"
-                    ))
-                },
-            )?;
-            unified_verify(dsep, payload_bytes, signature, verf_key).map_err(|e| {
-                anyhow_error_and_log(format!(
-                    "the {scheme} signature of party {party_id} did not verify: {e}"
-                ))
-            })?;
+            verify_scheme_entry(
+                &self.scheme_verf_keys,
+                party_id,
+                scheme,
+                signature.as_bytes(),
+                dsep,
+                payload_bytes,
+            )
+            .inspect_err(|e| tracing::error!("{e}"))?;
             return Ok((party_id, address));
         }
 
