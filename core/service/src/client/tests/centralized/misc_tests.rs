@@ -196,6 +196,7 @@ async fn test_largecipher() -> Result<()> {
                 .enumerate()
                 .map(|(i, key)| (i as u32 + 1, key.clone())),
         ),
+        HashMap::new(),
         client_address,
         Some(keys.client_sk.clone()),
         keys.params,

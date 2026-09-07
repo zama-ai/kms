@@ -89,13 +89,12 @@ impl Client {
 
         Ok(Client::new(
             pks,
+            scheme_verf_keys,
             client_pk.address(),
             Some(client_sk),
             *params,
             decryption_mode,
-        )
-        .with_scheme_verf_keys(scheme_verf_keys))
-        // TODO let scheme_verf_keys be part of the constructor as long as it does not break backward compatibility with a legacy sdk issuing calls
+        ))
     }
 
     /// The party whose ECDSA identity produced `external_signature`, if it is one of
@@ -188,12 +187,16 @@ impl Client {
         signer: Option<(u32, alloy_primitives::Address)>,
     ) -> anyhow::Result<(u32, alloy_primitives::Address)> {
         if let Some((party_id, address)) = signer {
-            let verf_key = self.scheme_verf_key(party_id, scheme).ok_or_else(|| {
-                anyhow_error_and_log(format!(
-                    "party {party_id} signed under {scheme}, but this client holds no {scheme} \
-                     verification key for it"
-                ))
-            })?;
+            let verf_key = self
+                .scheme_verf_keys
+                .get(&party_id)
+                .and_then(|keys| keys.get(&scheme))
+                .ok_or_else(|| {
+                    anyhow_error_and_log(format!(
+                        "party {party_id} signed under {scheme}, but this client holds no \
+                         {scheme} verification key for it"
+                    ))
+                })?;
             unified_verify(dsep, payload_bytes, signature, verf_key).map_err(|e| {
                 anyhow_error_and_log(format!(
                     "the {scheme} signature of party {party_id} did not verify: {e}"
@@ -221,11 +224,6 @@ impl Client {
         requested: &[SigningSchemeType],
     ) -> anyhow::Result<()> {
         for &scheme in requested {
-            // TODO we should still ensure that it carries an ECDSA signature as well if requested
-            if scheme == SigningSchemeType::Ecdsa256k1 {
-                // Carried by `external_signature` on every result.
-                continue;
-            }
             let present = signatures.iter().any(|typed| {
                 SigningSchemeType::try_from(typed.scheme).is_ok_and(|found| found == scheme)
             });
@@ -238,32 +236,6 @@ impl Client {
         Ok(())
     }
 
-    // TODO I think this and find_verifying_address are only used in tests and in a single place, so should just inlined in the relevant test since these methods are tiny
-    pub(crate) fn verify_external_signature<T: SolStruct>(
-        &self,
-        data: &T,
-        domain: &Eip712Domain,
-        external_signature: &[u8],
-    ) -> anyhow::Result<()> {
-        if self
-            .find_verifying_address(data, domain, external_signature)
-            .is_some()
-        {
-            Ok(())
-        } else {
-            Err(anyhow::anyhow!("external signature verification failed"))
-        }
-    }
-
-    pub(crate) fn find_verifying_address<T: SolStruct>(
-        &self,
-        data: &T,
-        domain: &Eip712Domain,
-        external_signature: &[u8],
-    ) -> Option<alloy_primitives::Address> {
-        self.find_verifying_party(data, domain, external_signature)
-            .map(|(_party_id, addr)| addr)
-    }
 }
 
 /// Every scheme's verification key stored.
@@ -320,25 +292,26 @@ mod tests {
     /// A client that knows `identity` as party [`PARTY`], with or without that
     /// party's per-scheme verification keys.
     fn client_for(identity: &NodeSigningIdentity, with_scheme_keys: bool) -> Client {
-        let client = Client::new(
+        let scheme_verf_keys = if with_scheme_keys {
+            let keys = SigningSchemeType::iter()
+                .map(|scheme| (scheme, identity.unified_verifying_key(scheme).unwrap()))
+                .collect();
+            HashMap::from([(PARTY, keys)])
+        } else {
+            HashMap::new()
+        };
+        Client::new(
             HashMap::from([(PARTY, identity.verf_key())]),
+            scheme_verf_keys,
             identity.verf_key().address(),
             None,
             crate::consts::TEST_PARAM,
             None,
-        );
-        if !with_scheme_keys {
-            return client;
-        }
-        let keys = SigningSchemeType::iter()
-            .map(|scheme| (scheme, identity.unified_verifying_key(scheme).unwrap()))
-            .collect();
-        client.with_scheme_verf_keys(HashMap::from([(PARTY, keys)]))
+        )
     }
 
     /// The signatures `identity` produces for `schemes` over `payload`, in the
     /// forms `engine::base::scheme_signing_jobs` defines.
-    // TODO don't we already have a helper method for this somewhere else? It seems redundant.
     fn signatures_for(
         identity: &NodeSigningIdentity,
         schemes: &[SigningSchemeType],
@@ -365,12 +338,6 @@ mod tests {
             .collect()
     }
 
-    // TODO should just be inlined
-    fn every_scheme() -> Vec<SigningSchemeType> {
-        SigningSchemeType::iter().collect()
-    }
-
-    // TODO should also just be inlined
     fn verify(
         client: &Client,
         signatures: &[TypedSignature],
@@ -384,7 +351,7 @@ mod tests {
     fn every_scheme_of_a_result_verifies() {
         let identity = seeded_identity(1);
         let client = client_for(&identity, true);
-        let signatures = signatures_for(&identity, &every_scheme(), PAYLOAD);
+        let signatures = signatures_for(&identity, &SigningSchemeType::iter().collect::<Vec<_>>(), PAYLOAD);
 
         let (party_id, address) = verify(&client, &signatures, PAYLOAD).unwrap();
         assert_eq!(party_id, PARTY);
@@ -435,7 +402,7 @@ mod tests {
     fn another_partys_signatures_are_rejected() {
         let identity = seeded_identity(5);
         let client = client_for(&identity, true);
-        let signatures = signatures_for(&seeded_identity(6), &every_scheme(), PAYLOAD);
+        let signatures = signatures_for(&seeded_identity(6), &SigningSchemeType::iter().collect::<Vec<_>>(), PAYLOAD);
 
         assert!(verify(&client, &signatures, PAYLOAD).is_err());
     }
@@ -446,7 +413,7 @@ mod tests {
     fn an_entry_with_no_known_key_is_rejected() {
         let identity = seeded_identity(7);
         let client = client_for(&identity, false);
-        let signatures = signatures_for(&identity, &every_scheme(), PAYLOAD);
+        let signatures = signatures_for(&identity, &SigningSchemeType::iter().collect::<Vec<_>>(), PAYLOAD);
 
         let err = verify(&client, &signatures, PAYLOAD)
             .unwrap_err()
@@ -479,8 +446,8 @@ mod tests {
     #[test]
     fn a_stripped_scheme_is_caught() {
         let identity = seeded_identity(10);
-        let signatures = signatures_for(&identity, &every_scheme(), PAYLOAD);
-        let requested = every_scheme();
+        let signatures = signatures_for(&identity, &SigningSchemeType::iter().collect::<Vec<_>>(), PAYLOAD);
+        let requested: Vec<_> = SigningSchemeType::iter().collect();
 
         Client::ensure_requested_schemes_present(&signatures, &requested).unwrap();
 

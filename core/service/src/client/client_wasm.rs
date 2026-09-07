@@ -59,6 +59,10 @@ impl Client {
     /// from a [PublicStorage].
     ///
     /// * `server_pks` - a set of tkms core public keys.
+    /// * `scheme_verf_keys` - each server's verification key per signing scheme,
+    ///   keyed by party id, for verifying the per-scheme `signatures` of a
+    ///   response. A client that has no access to the servers' public storage
+    ///   passes an empty map, and can then only verify ECDSA.
     /// * `client_address` - the client wallet address.
     /// * `client_sk` - client private key.
     ///   This is optional because sometimes the private signing key is kept
@@ -69,6 +73,7 @@ impl Client {
     ///   If set to none, DecryptionMode::default() is used.
     pub fn new(
         server_pks: HashMap<u32, PublicSigKey>,
+        scheme_verf_keys: HashMap<u32, HashMap<SigningSchemeType, UnifiedPublicSigKey>>,
         client_address: alloy_primitives::Address,
         client_sk: Option<PrivateSigKey>,
         params: DKGParams,
@@ -79,35 +84,12 @@ impl Client {
             #[cfg(feature = "non-wasm")]
             rng: Box::new(AesRng::from_entropy()), // todo should be argument
             server_identities: ServerIdentities::Pks(server_pks),
-            scheme_verf_keys: HashMap::new(),
+            scheme_verf_keys,
             client_address,
             client_sk,
             params,
             decryption_mode,
         }
-    }
-
-    /// Attach the servers' per-scheme verification keys, so that the per-scheme
-    /// `signatures` of a response can be verified.
-    /// [`Self::new_client`]: Client::new_client
-    // TODO  this should be handled in the constructor or in-line in the tests
-    pub fn with_scheme_verf_keys(
-        mut self,
-        keys: HashMap<u32, HashMap<SigningSchemeType, UnifiedPublicSigKey>>,
-    ) -> Self {
-        self.scheme_verf_keys = keys;
-        self
-    }
-
-    /// The verification key `party_id` signs `scheme` responses with, if this
-    /// client knows it.
-    /// TODO this is only used in client_non_wasm, should be inlined
-    pub fn scheme_verf_key(
-        &self,
-        party_id: u32,
-        scheme: SigningSchemeType,
-    ) -> Option<&UnifiedPublicSigKey> {
-        self.scheme_verf_keys.get(&party_id)?.get(&scheme)
     }
 
     pub fn get_server_pks(&self) -> anyhow::Result<&HashMap<u32, PublicSigKey>> {

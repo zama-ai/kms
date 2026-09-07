@@ -192,6 +192,9 @@ pub fn new_client(
 
     Ok(Client {
         server_identities,
+        // The browser has no access to the servers' public storage, so it can only
+        // verify the ECDSA entry of a response's `signatures`.
+        scheme_verf_keys: HashMap::new(),
         client_address,
         client_sk: None,
         params,

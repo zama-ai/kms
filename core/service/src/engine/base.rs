@@ -334,12 +334,6 @@ impl Named for CrsSignedPayload {
 /// what gets signed: changing a payload's layout later produces a new version
 /// tag rather than silently making old signatures unverifiable against the new
 /// reconstruction.
-///
-/// Decryption is the exception — it signs `bc2wrap::serialize` of the gRPC
-/// response payload, because those exact bytes are also what the deprecated
-/// scalar `signature` field covers and are already part of the released wire
-/// contract. TODO(0.16): once that field is gone, decryption can move onto this
-/// helper too.
 fn signed_payload_bytes<T>(payload: &T) -> anyhow::Result<Vec<u8>>
 where
     T: Serialize + Versionize + Named,
@@ -364,6 +358,70 @@ pub(crate) fn keygen_payload_bytes(
         prep_id: *prep_id,
         key_id: *key_id,
         key_digests: key_digests.clone(),
+        extra_data: extra_data.to_vec(),
+    })
+}
+
+/// The result payload that every non-ECDSA scheme signs for a public decryption
+/// result.
+#[derive(Clone, Serialize, Deserialize, VersionsDispatch)]
+pub enum PublicDecSignedPayloadVersions {
+    V0(PublicDecSignedPayload),
+}
+
+/// The public decryption result, in the form non-ECDSA schemes sign it.
+///
+/// `response_bytes` are the serialized [`PublicDecryptionResponsePayload`].
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, Versionize)]
+#[versionize(PublicDecSignedPayloadVersions)]
+pub struct PublicDecSignedPayload {
+    pub response_bytes: Vec<u8>,
+    pub extra_data: Vec<u8>,
+}
+
+impl Named for PublicDecSignedPayload {
+    const NAME: &'static str = "PublicDecSignedPayload";
+}
+
+/// The result payload that every non-ECDSA scheme signs for a user decryption
+/// result.
+#[derive(Clone, Serialize, Deserialize, VersionsDispatch)]
+pub enum UserDecSignedPayloadVersions {
+    V0(UserDecSignedPayload),
+}
+
+/// The user decryption result, in the form non-ECDSA schemes sign it.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, Versionize)]
+#[versionize(UserDecSignedPayloadVersions)]
+pub struct UserDecSignedPayload {
+    pub response_bytes: Vec<u8>,
+    pub extra_data: Vec<u8>,
+}
+
+impl Named for UserDecSignedPayload {
+    const NAME: &'static str = "UserDecSignedPayload";
+}
+
+/// The canonical bytes a non-ECDSA scheme signs for a public decryption result.
+pub(crate) fn public_dec_payload_bytes(
+    response_bytes: &[u8],
+    extra_data: &[u8],
+) -> anyhow::Result<Vec<u8>> {
+    signed_payload_bytes(&PublicDecSignedPayload {
+        response_bytes: response_bytes.to_vec(),
+        extra_data: extra_data.to_vec(),
+    })
+}
+
+/// The canonical bytes a non-ECDSA scheme signs for a user decryption result.
+///
+/// See [`public_dec_payload_bytes`]; this is the user-decryption twin.
+pub(crate) fn user_dec_payload_bytes(
+    response_bytes: &[u8],
+    extra_data: &[u8],
+) -> anyhow::Result<Vec<u8>> {
+    signed_payload_bytes(&UserDecSignedPayload {
+        response_bytes: response_bytes.to_vec(),
         extra_data: extra_data.to_vec(),
     })
 }
@@ -1112,6 +1170,7 @@ pub(crate) fn sign_public_decryption_result(
         &sol_type,
         eip712_domain,
         &crate::engine::validation::DSEP_PUBLIC_DECRYPTION,
+        public_dec_payload_bytes,
     )
 }
 
@@ -1135,17 +1194,17 @@ pub(crate) fn sign_user_decryption_result(
         &sol_type,
         eip712_domain,
         &crate::engine::validation::DSEP_USER_DECRYPTION,
+        user_dec_payload_bytes,
     )
 }
 
 /// Shared body of [`sign_public_decryption_result`] and
 /// [`sign_user_decryption_result`].
 ///
-/// Adds the deprecated scalar `signature` to what [`sign_result`] produces. The
-/// payload bytes are `bc2wrap::serialize` rather than [`signed_payload_bytes`]
-/// because that scalar signature covers exactly these bytes and they are part of
-/// the released wire contract. TODO(0.16): once the deprecated fields are gone,
-/// this can use [`signed_payload_bytes`] like every other result.
+/// Adds the deprecated scalar `signature` to what [`sign_result`] produces. That
+/// signature covers `bc2wrap::serialize` of the response payload alone, because
+/// those exact bytes are part of the released wire contract.
+#[allow(clippy::too_many_arguments)]
 fn sign_decryption_result<P: Serialize, D: SolStruct>(
     server_sk: &NodeSigningIdentity,
     schemes: &[SigningSchemeType],
@@ -1154,9 +1213,11 @@ fn sign_decryption_result<P: Serialize, D: SolStruct>(
     sol_type: &D,
     eip712_domain: &Eip712Domain,
     dsep: &DomainSep,
+    signed_payload: fn(&[u8], &[u8]) -> anyhow::Result<Vec<u8>>,
 ) -> anyhow::Result<DecryptionCallValues<P>> {
-    let payload_bytes = bc2wrap::serialize(&payload)?;
-    let signature = internal_sign(dsep, &payload_bytes, server_sk.ecdsa())?.to_bytes();
+    let response_bytes = bc2wrap::serialize(&payload)?;
+    let signature = internal_sign(dsep, &response_bytes, server_sk.ecdsa())?.to_bytes();
+    let payload_bytes = signed_payload(&response_bytes, &extra_data)?;
     let (external_signature, stored) = sign_result(
         server_sk,
         schemes,

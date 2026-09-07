@@ -77,7 +77,6 @@ impl PublicSigKey {
 
     /// The SEC1 encoding of this key, which is the form Ethereum uses and the
     /// form the WASM client exchanges with JavaScript.
-    /// TODO looks like it is only used in a test, if so it should be inlined in the test and removed
     pub fn to_sec1_bytes(&self) -> Vec<u8> {
         self.pk.0.to_sec1_bytes().to_vec()
     }

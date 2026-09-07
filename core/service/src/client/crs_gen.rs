@@ -332,6 +332,7 @@ pub(crate) mod tests {
         // Setup
         let client = Client::new(
             HashMap::new(),
+            HashMap::new(),
             alloy_primitives::Address::new([1; 20]), // The all 1 address
             None,
             TEST_PARAM,

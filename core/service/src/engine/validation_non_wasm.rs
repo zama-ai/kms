@@ -9,7 +9,7 @@ use crate::{
         signatures::{PublicSigKey, Signature, recover_address_from_ext_signature},
         signing::{SigningSchemeType, UnifiedPublicSigKey, unified_verify},
     },
-    engine::base::compute_public_decryption_message,
+    engine::base::{compute_public_decryption_message, public_dec_payload_bytes},
 };
 use alloy_dyn_abi::Eip712Domain;
 use hashing::DomainSep;
@@ -44,9 +44,14 @@ pub(crate) const DSEP_PUBLIC_DECRYPTION: DomainSep = *b"PUBL_DEC";
 pub(crate) struct PublicDecTrustedValidationContext<'a> {
     server_pks: &'a HashMap<u32, PublicSigKey>,
     /// Each server's verification key per signing scheme, for the entries of a
-    /// response's `signatures` list that ECDSA recovery cannot check. Empty when
-    /// the caller only ever asks for ECDSA.
-    /// TODO I don't think it should be empty when just working for ecdsa. this should ideally combine all schemes
+    /// response's `signatures` list that ECDSA recovery cannot check.
+    ///
+    /// `Client::new_client` fills this from `PubDataType::TypedVerfKey`, which
+    /// publishes every scheme including ECDSA, so the map is not ECDSA-free. The
+    /// ECDSA entry is unused here — that signature is checked by recovering its
+    /// signer and comparing the address, which `server_pks` provides — and a
+    /// client built without storage access, such as the browser, supplies an
+    /// empty map and can then only check ECDSA.
     scheme_verf_keys: &'a HashMap<u32, HashMap<SigningSchemeType, UnifiedPublicSigKey>>,
     eip712_domain: Option<&'a Eip712Domain>,
     ext_handles_bytes: &'a [Vec<u8>],
@@ -450,10 +455,17 @@ pub(crate) fn verify_user_decrypt_eip712(
 /// `false`, never an error. This is what lets
 /// [`partition_public_decrypt_responses`] tolerate up to `t` Byzantine responses
 /// without a single one being able to abort the whole validation.
-
+///
+/// # What makes a response authentic
+///
+/// - Every entry that can be checked has to verify.
+/// - Every scheme the request asked for has to be present and verified. A party
+///   cannot drop the post-quantum entry of a hybrid request and pass on ECDSA
+///   alone.
+/// - At least one entry has to have been verified, so a response that nothing
+///   could check never passes for one that was checked.
 fn verify_public_decrypt_signatures(
     trusted_ctx: &PublicDecTrustedValidationContext,
-    // TODO we should use a similar approach as to KeygenSignedPayload, in that we need versioning, since we also need to ensure that extra_data is present in non-ecdsa signatures
     response: &PublicDecryptionResponsePayload,
     party_id: u32,
     verification_key: &PublicSigKey,
@@ -464,36 +476,25 @@ fn verify_public_decrypt_signatures(
         tracing::warn!("A public decryption response carries no signatures");
         return false;
     }
-    // TODO non ecdsa signatures should still pass when there is no eip712 domain
-    // TODO another piece of logic that should be ensure is that *all* a request MUST pass signature verification for all requested signature schemes
-    let Some(domain) = trusted_ctx.eip712_domain else {
-        tracing::warn!(
-            "A public decryption response cannot be authenticated without an EIP-712 domain"
-        );
-        return false;
-    };
 
     // NOTE that we cannot use `BaseKmsStruct::verify_sig`
     // because `BaseKmsStruct` cannot be compiled for wasm (it has an async mutex).
-    let payload = match bc2wrap::serialize(&response) {
+    let response_bytes = match bc2wrap::serialize(&response) {
         Ok(payload) => payload,
         Err(e) => {
             tracing::warn!("Could not serialize public decryption response: {e}");
             return false;
         }
     };
-    let message = match compute_public_decryption_message(
-        trusted_ctx.ext_handles_bytes,
-        &response.plaintexts,
-        response_extra_data,
-    ) {
-        Ok(msg) => msg,
+    let payload_bytes = match public_dec_payload_bytes(&response_bytes, response_extra_data) {
+        Ok(bytes) => bytes,
         Err(e) => {
-            tracing::warn!("Failed to compute public decryption message: {e}");
+            tracing::warn!("Could not build the signed public decryption payload: {e}");
             return false;
         }
     };
 
+    let mut verified: Vec<SigningSchemeType> = Vec::with_capacity(signatures.len());
     for typed in signatures {
         let scheme = match SigningSchemeType::try_from(typed.scheme) {
             Ok(scheme) => scheme,
@@ -505,6 +506,25 @@ fn verify_public_decrypt_signatures(
             }
         };
         if scheme == SigningSchemeType::Ecdsa256k1 {
+            // Only this entry needs the domain, because only it is an EIP-712 signature.
+            let Some(domain) = trusted_ctx.eip712_domain else {
+                tracing::warn!(
+                    "No EIP-712 domain is available, so the ECDSA signature of a public \
+                     decryption response cannot be checked"
+                );
+                continue;
+            };
+            let message = match compute_public_decryption_message(
+                trusted_ctx.ext_handles_bytes,
+                &response.plaintexts,
+                response_extra_data,
+            ) {
+                Ok(msg) => msg,
+                Err(e) => {
+                    tracing::warn!("Failed to compute public decryption message: {e}");
+                    return false;
+                }
+            };
             match recover_address_from_ext_signature(&message, domain, &typed.signature) {
                 Ok(recovered_addr) => {
                     let expected_addr = verification_key.address();
@@ -522,6 +542,7 @@ fn verify_public_decrypt_signatures(
                     return false;
                 }
             }
+            verified.push(scheme);
             continue;
         }
 
@@ -537,10 +558,42 @@ fn verify_public_decrypt_signatures(
             return false;
         };
         let signature = Signature::new(scheme, typed.signature.clone());
-        if let Err(e) = unified_verify(&DSEP_PUBLIC_DECRYPTION, &payload, &signature, verf_key) {
+        if let Err(e) = unified_verify(
+            &DSEP_PUBLIC_DECRYPTION,
+            &payload_bytes,
+            &signature,
+            verf_key,
+        ) {
             tracing::warn!("The {scheme} signature of party {party_id} did not verify: {e}");
             return false;
         }
+        verified.push(scheme);
+    }
+
+    if let Some(request) = trusted_ctx.request {
+        let requested = match resolve_signing_schemes(&request.signing_schemes) {
+            Ok(requested) => requested,
+            Err(e) => {
+                tracing::warn!("The request names a signing scheme that cannot be resolved: {e}");
+                return false;
+            }
+        };
+        for scheme in requested {
+            if !verified.contains(&scheme) {
+                tracing::warn!(
+                    "A public decryption response of party {party_id} carries no verified \
+                     {scheme} signature, but {scheme} was requested"
+                );
+                return false;
+            }
+        }
+    }
+
+    if verified.is_empty() {
+        tracing::warn!(
+            "No signature of a public decryption response could be checked, so it is rejected"
+        );
+        return false;
     }
 
     true
@@ -1241,7 +1294,8 @@ mod tests {
         engine::{
             base::{PubDecCallValues, derive_request_id, sign_public_decryption_result},
             validation::{
-                RequestIdParsingErr, parse_grpc_request_id, validate_new_mpc_epoch_request,
+                DSEP_PUBLIC_DECRYPTION, RequestIdParsingErr, parse_grpc_request_id,
+                validate_new_mpc_epoch_request,
             },
             validation_non_wasm::{
                 ERR_VALIDATE_PUBLIC_DECRYPTION_NO_RESP, find_most_common_invariants_pubdec,
@@ -2316,6 +2370,109 @@ mod tests {
         // happy path
         assert!(verify(&ctx(Some(&alloy_domain)), &signatures));
     }
+
+    /// The EIP-712 domain is a precondition of the ECDSA entry alone, so a
+    /// response signed under a post-quantum scheme authenticates without one, and
+    /// every scheme the request asked for has to be verified.
+    #[test]
+    fn test_public_decrypt_signatures_without_an_eip712_domain() {
+        use crate::cryptography::signatures::RootSigningSeed;
+
+        let mut rng = AesRng::seed_from_u64(77);
+        let (vk, sk) = gen_sig_keys(&mut rng);
+        let identity = NodeSigningIdentity::new(sk, RootSigningSeed::random(&mut rng));
+        let extra_data = vec![9u8; 4];
+
+        let payload = PublicDecryptionResponsePayload {
+            verification_key: bc2wrap::serialize(&vk).unwrap(),
+            plaintexts: vec![TypedPlaintext {
+                bytes: vec![3],
+                fhe_type: tfhe::FheTypes::Uint8 as i32,
+            }],
+            request_id: Some(
+                derive_request_id("pq_only_public_decryption")
+                    .unwrap()
+                    .into(),
+            ),
+        };
+
+        // The post-quantum entry signs the versioned payload, which carries the
+        // response bytes and the extra data.
+        let response_bytes = bc2wrap::serialize(&payload).unwrap();
+        let payload_bytes =
+            crate::engine::base::public_dec_payload_bytes(&response_bytes, &extra_data).unwrap();
+        let scheme = SigningSchemeType::MlDsa65;
+        let signatures = vec![TypedSignature {
+            scheme: kms_grpc::kms::v1::SigningSchemeType::Mldsa65 as i32,
+            signature: identity
+                .unified_sign_with(scheme, &DSEP_PUBLIC_DECRYPTION, &payload_bytes)
+                .unwrap()
+                .to_bytes(),
+        }];
+
+        let server_pks = HashMap::from([(1u32, vk.clone())]);
+        let scheme_verf_keys = HashMap::from([(
+            1u32,
+            HashMap::from([(scheme, identity.unified_verifying_key(scheme).unwrap())]),
+        )]);
+        let ctx = PublicDecTrustedValidationContext::new(
+            &server_pks,
+            &scheme_verf_keys,
+            None,
+            &[],
+            None,
+            None,
+        )
+        .unwrap();
+
+        // No domain, yet the post-quantum entry authenticates the response.
+        assert!(verify_public_decrypt_signatures(
+            &ctx,
+            &payload,
+            1,
+            &vk,
+            &signatures,
+            &extra_data
+        ));
+
+        // The extra data is part of what that entry covers.
+        assert!(!verify_public_decrypt_signatures(
+            &ctx,
+            &payload,
+            1,
+            &vk,
+            &signatures,
+            b"other extra data"
+        ));
+
+        // A request that also asked for ECDSA is not satisfied by the
+        // post-quantum entry alone.
+        let request = PublicDecryptionRequest {
+            signing_schemes: vec![
+                kms_grpc::kms::v1::SigningSchemeType::Mldsa65 as i32,
+                kms_grpc::kms::v1::SigningSchemeType::Ecdsa256k1 as i32,
+            ],
+            ..Default::default()
+        };
+        let strict_ctx = PublicDecTrustedValidationContext::new(
+            &server_pks,
+            &scheme_verf_keys,
+            None,
+            &[],
+            None,
+            Some(&request),
+        )
+        .unwrap();
+        assert!(!verify_public_decrypt_signatures(
+            &strict_ctx,
+            &payload,
+            1,
+            &vk,
+            &signatures,
+            &extra_data
+        ));
+    }
+
     #[test]
     fn test_validate_new_mpc_epoch_request() {
         // When previous_epoch is set but domain is None, optional_protobuf_to_alloy_domain

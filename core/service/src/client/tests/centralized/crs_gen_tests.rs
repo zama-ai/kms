@@ -133,16 +133,27 @@ async fn crs_gen_centralized_manual(
 
     // there should be exactly one server since we're in the centralized case
     assert_eq!(internal_client.server_identities.len(), 1);
+    // Every signature the result carries is verified, the ECDSA entry included.
+    let sol_type = CrsgenVerification {
+        crsId: alloy_primitives::U256::from_be_slice(request_id.as_bytes()),
+        maxBitLength: alloy_primitives::U256::from_be_slice(&max_num_bits.to_be_bytes()),
+        crsDigest: actual_digest.to_vec().into(),
+        extraData: ceremony_req.extra_data.clone().into(),
+    };
+    let payload_bytes = crate::engine::base::crs_payload_bytes(
+        request_id,
+        max_num_bits as u32,
+        &actual_digest,
+        &ceremony_req.extra_data,
+    )
+    .unwrap();
     internal_client
-        .verify_external_signature(
-            &CrsgenVerification {
-                crsId: alloy_primitives::U256::from_be_slice(request_id.as_bytes()),
-                maxBitLength: alloy_primitives::U256::from_be_slice(&max_num_bits.to_be_bytes()),
-                crsDigest: actual_digest.to_vec().into(),
-                extraData: ceremony_req.extra_data.clone().into(),
-            },
+        .verify_result_signatures(
+            &resp.signatures,
+            &sol_type,
             &domain,
-            &resp.external_signature,
+            &DSEP_PUBDATA_CRS,
+            &payload_bytes,
         )
         .unwrap();
 
