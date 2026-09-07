@@ -59,8 +59,10 @@ impl Client {
     ///
     /// * `request` — The original public decryption request constructed by this
     ///   client. Used to verify that the server responses match the request
-    ///   (digest, ciphertext handles, domain). Pass `None` to skip request-level
-    ///   checks (not recommended in production).
+    ///   (digest, ciphertext handles, domain). Passing `None` skips the
+    ///   request-level checks and **no response can be authenticated**
+    ///   and every one is rejected. It exists for callers that only want to
+    ///   inspect a result.
     /// * `min_agree_count` — Minimum number of server responses that must agree
     ///   on the same plaintext for the result to be accepted.
     ///
@@ -89,6 +91,7 @@ impl Client {
         let extra_data = request.as_ref().map(|req| req.extra_data.as_slice());
         let trusted_ctx = PublicDecTrustedValidationContext::new(
             self.get_server_pks()?,
+            &self.scheme_verf_keys,
             eip712_domain.as_ref(),
             &ext_handles_bytes,
             extra_data,

@@ -22,7 +22,11 @@ pub const SEED_LEN: usize = 32;
 pub struct Ed25519;
 
 impl SigningScheme for Ed25519 {
-    type SigningKey = Ed25519SigningKey; // TODO(#3078) Should this be a wrapped type? Consider in the last subissue.
+    // The dalek type is used directly, unlike the ECDSA key, which a newtype
+    // wraps. The wrapper exists for the three things this key does not need: a
+    // custom serde impl for the persisted format, a redacted `Debug`, and a
+    // zeroizing `Drop`.
+    type SigningKey = Ed25519SigningKey;
     type VerificationKey = Ed25519VerifyingKey;
 
     #[cfg(feature = "non-wasm")]

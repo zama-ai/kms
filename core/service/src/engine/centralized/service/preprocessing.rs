@@ -75,6 +75,14 @@ pub async fn preprocessing_impl<
             tonic::Code::FailedPrecondition,
         )
     })?;
+    sk.ensure_supported(&signing_schemes).map_err(|e| {
+        MetricedError::new(
+            OP_KEYGEN_PREPROC_REQUEST,
+            Some(req_id),
+            anyhow::anyhow!("{e}"),
+            tonic::Code::InvalidArgument,
+        )
+    })?;
     let permit = add_req_to_meta_store(
         &service.preprocessing_meta_store,
         &req_id,

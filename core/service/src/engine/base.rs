@@ -368,6 +368,17 @@ pub(crate) fn keygen_payload_bytes(
     })
 }
 
+/// The canonical bytes a non-ECDSA scheme signs for a preprocessing result.
+pub(crate) fn preproc_payload_bytes(
+    prep_id: &RequestId,
+    extra_data: &[u8],
+) -> anyhow::Result<Vec<u8>> {
+    signed_payload_bytes(&PrepKeygenSignedPayload {
+        prep_id: *prep_id,
+        extra_data: extra_data.to_vec(),
+    })
+}
+
 /// The canonical bytes a non-ECDSA scheme signs for a CRS result.
 ///
 /// Shared between signing and after-the-fact verification (see
@@ -531,16 +542,19 @@ fn compute_result_signatures(
 
 /// Build the per-scheme signing jobs for a result's `signatures` list.
 ///
-/// ECDSA signs `eip712_hash`, producing the same on-chain-verifiable signature
-/// the fhevm contracts verify — byte-identical to the result's
-/// `external_signature` — so that once the deprecated `external_signature` field
-/// goes away, `signatures` still carries it.
+/// **A scheme determines what its signature covers.** This mapping is the contract
+/// every verifier relies on, so it lives here alone:
 ///
-/// Every other scheme signs `payload_bytes`, the serialized result payload:
-/// EIP-712 is an EVM/secp256k1 construction, and a post-quantum scheme has no
-/// reason to be bound to it. Each job carries its own message, so a
-/// scheme-specific serialization can be introduced here without touching callers
-/// or [`compute_result_signatures`].
+/// - [`SigningSchemeType::Ecdsa256k1`] signs `eip712_hash`, producing the
+///   recoverable, on-chain-verifiable signature the fhevm contracts verify. It is
+///   byte-identical to the result's deprecated `external_signature`, so that
+///   `signatures` still carries it once that field goes away.
+/// - Every other scheme signs `payload_bytes`, the serialized result payload,
+///   because EIP-712 is an EVM and secp256k1 construction that a post-quantum
+///   scheme has no reason to be bound to.
+///
+/// Each job carries its own message, so such a scheme is added here without
+/// touching callers or [`compute_result_signatures`].
 fn scheme_signing_jobs(
     schemes: &[SigningSchemeType],
     eip712_hash: &[u8],
@@ -642,10 +656,7 @@ pub(crate) fn compute_preprocessing_signatures(
     domain: &alloy_sol_types::Eip712Domain,
     extra_data: Vec<u8>,
 ) -> anyhow::Result<(Vec<u8>, Vec<StoredTypedSignature>)> {
-    let payload_bytes = signed_payload_bytes(&PrepKeygenSignedPayload {
-        prep_id: *prep_id,
-        extra_data: extra_data.clone(),
-    })?;
+    let payload_bytes = preproc_payload_bytes(prep_id, &extra_data)?;
     let sol_type = PrepKeygenVerification::new(prep_id, extra_data);
     sign_result(
         identity,

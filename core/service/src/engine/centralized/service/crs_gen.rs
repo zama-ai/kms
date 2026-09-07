@@ -86,6 +86,14 @@ pub async fn crs_gen_impl<
             tonic::Code::FailedPrecondition,
         )
     })?;
+    sk.ensure_supported(&verified.signing_schemes).map_err(|e| {
+        MetricedError::new(
+            op_tag,
+            Some(verified.req_id),
+            anyhow::anyhow!("{e}"),
+            tonic::Code::InvalidArgument,
+        )
+    })?;
     // check that the request ID is not used yet
     // and then insert the request ID only if it's unused
     // all validation must be done before inserting the request ID.

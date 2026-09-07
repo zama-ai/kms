@@ -47,6 +47,37 @@ Still, observe that even hosting your own setup of the Zama KMS requires not onl
 ## Zama KMS abstract commands
 Below we go through the commands that can be executed at the Zama KMS gRPC endpoint. To access these using the gRPC endpoints we refer to the [API](../references/api/core_grpc.md) specification and for information on how try to run the server see [here on-perm installation](./on_prem_installation.md) and [here for SaaS usage](./saas_usage.md) and consult the [CLI Core Client README](../../core-client/README.md) for information on how to try to issue these commands locally.
 
+## Choosing the signature schemes of a response
+
+Every request that produces a signed result carries a `signing_schemes` list, and
+the result carries a matching `signatures` list of `(scheme, signature)` tuples.
+This is what lets one response be verified on more than one chain, and lets an EVM
+flow add a post-quantum signature beside its ECDSA one.
+
+| Scheme | Verified by | What the signature covers |
+| --- | --- | --- |
+| `Ecdsa256k1` | EVM, through `ecrecover` | The EIP-712 hash of the result, using the domain of the request |
+| `Ed25519` | Solana natively | The serialized result payload |
+| `MlDsa44`, `MlDsa65`, `MlDsa87` | A post-quantum verifier (FIPS 204) | The serialized result payload |
+
+Rules a caller has to know:
+
+- **An empty list asks for no per-scheme signature.** The result still carries its
+  ECDSA/EIP-712 signature in `external_signature`, so a client that predates
+  `signing_schemes` keeps working unchanged.
+- **ECDSA is always available**; every other scheme requires the node to hold a
+  root signing seed. A request naming a scheme the node cannot serve is rejected
+  with `InvalidArgument`, before any work starts.
+- **A consumer picks the tuples it can verify**, and should reject a response that
+  omits a scheme the request asked for.
+- **Only the ECDSA tuple is bound to EIP-712.** Every other scheme signs the
+  serialized payload, because EIP-712 is an EVM and secp256k1 construction. A
+  verifier therefore rebuilds the payload rather than the typed-data hash.
+- The `signatures` list is ordered as the request's `signing_schemes`, and the
+  ECDSA tuple repeats what `external_signature` holds. `external_signature` is
+  deprecated and is scheduled for removal in 0.16; after that the ECDSA entry of
+  `signatures` is the only copy.
+
 ### Preprocessing
 Preprocessing is needed to generate correlated randomness which is used later, when you generate a FHE key set, or a Key Switching Key (KSK). Preprocessed material can only be used _once_ and hence needs to be generated every time you wish to generate an FHE key set.
 Calls to preprocessing requires key parameters, the specification of a unique `RequestId`, which is a 32-byte hex string. In case of the generation of a KSK the `RequestId` of the existing keys which the switching key needs to be from and to.

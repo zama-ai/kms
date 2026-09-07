@@ -1,8 +1,9 @@
+use std::collections::BTreeMap;
 use std::io::Cursor;
 
 use crate::client::client_wasm::Client;
 use crate::consts::{DEFAULT_EPOCH_ID, DEFAULT_MPC_CONTEXT};
-use crate::engine::base::DSEP_PUBDATA_KEY;
+use crate::engine::base::{DSEP_PUBDATA_KEY, keygen_payload_bytes, preproc_payload_bytes};
 use crate::engine::utils::make_extra_data;
 use crate::engine::validation::RequestIdParsingErr;
 use crate::engine::validation::parse_optional_grpc_request_id;
@@ -179,7 +180,15 @@ impl Client {
             )));
         }
 
-        self.verify_external_signature(&sol_type, domain, &resp.external_signature)
+        let payload_bytes = preproc_payload_bytes(preproc_id, sol_type.extraData.as_ref())?;
+        self.verify_result_signatures(
+            &resp.signatures,
+            &sol_type,
+            domain,
+            &DSEP_PUBDATA_KEY,
+            &payload_bytes,
+        )
+        .map(|_signer| ())
     }
 
     // TODO(zama-ai/kms-internal#2727)
@@ -276,10 +285,17 @@ impl Client {
             key_id,
             server_key_digest,
             public_key_digest,
-            extra_data,
+            extra_data.clone(),
         );
 
-        self.verify_external_signature(&sol_type, domain, &key_gen_result.external_signature)?;
+        self.verify_keygen_signatures(
+            preproc_id,
+            key_id,
+            key_gen_result,
+            &sol_type,
+            domain,
+            &extra_data,
+        )?;
         let server_key = safe_deserialize(Cursor::new(&srvk_bytes), SAFE_SER_SIZE_LIMIT)
             .map_err(|e| anyhow::anyhow!(e.to_string()))?;
         let public_key = safe_deserialize(Cursor::new(&pblk_bytes), SAFE_SER_SIZE_LIMIT)
@@ -345,12 +361,46 @@ impl Client {
             key_id,
             compressed_keyset_digest,
             public_key_digest,
-            extra_data,
+            extra_data.clone(),
         );
 
-        self.verify_external_signature(&sol_type, domain, &key_gen_result.external_signature)?;
+        self.verify_keygen_signatures(
+            preproc_id,
+            key_id,
+            key_gen_result,
+            &sol_type,
+            domain,
+            &extra_data,
+        )?;
 
         Ok((compressed_keyset, compact_public_key))
+    }
+
+    /// Verify every signature a keygen result carries.
+    fn verify_keygen_signatures(
+        &self,
+        preproc_id: &RequestId,
+        key_id: &RequestId,
+        key_gen_result: &KeyGenResult,
+        sol_type: &KeygenVerification,
+        domain: &Eip712Domain,
+        extra_data: &[u8],
+    ) -> anyhow::Result<()> {
+        let mut key_digests: BTreeMap<PubDataType, Vec<u8>> = BTreeMap::new();
+        for digest in &key_gen_result.key_digests {
+            let key_type: PubDataType = digest.key_type.parse()?;
+            key_digests.insert(key_type, digest.digest.clone());
+        }
+        let payload_bytes = keygen_payload_bytes(preproc_id, key_id, &key_digests, extra_data)?;
+
+        self.verify_result_signatures(
+            &key_gen_result.signatures,
+            sol_type,
+            domain,
+            &DSEP_PUBDATA_KEY,
+            &payload_bytes,
+        )
+        .map(|_signer| ())
     }
 
     /// Retrieve and validate a decompression key based on the result from storage.

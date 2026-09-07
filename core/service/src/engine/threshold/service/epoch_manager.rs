@@ -879,6 +879,14 @@ impl<
                 tonic::Code::FailedPrecondition,
             )
         })?;
+        sk.ensure_supported(&signing_schemes).map_err(|e| {
+            MetricedError::new(
+                OP_NEW_EPOCH,
+                Some(epoch_id_as_request_id),
+                anyhow::anyhow!("{e}"),
+                tonic::Code::InvalidArgument,
+            )
+        })?;
 
         let crypto_storage = self.crypto_storage.clone();
         let session_maker = self.session_maker.clone();
@@ -998,6 +1006,14 @@ impl<
                 Some(epoch_id_as_request_id),
                 e,
                 tonic::Code::FailedPrecondition,
+            )
+        })?;
+        sk.ensure_supported(&signing_schemes).map_err(|e| {
+            MetricedError::new(
+                OP_NEW_EPOCH,
+                Some(epoch_id_as_request_id),
+                anyhow::anyhow!("{e}"),
+                tonic::Code::InvalidArgument,
             )
         })?;
 

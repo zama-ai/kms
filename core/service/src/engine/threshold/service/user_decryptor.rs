@@ -536,6 +536,14 @@ impl<
                 tonic::Code::FailedPrecondition,
             )
         })?;
+        identity.ensure_supported(&signing_schemes).map_err(|e| {
+            MetricedError::new(
+                OP_USER_DECRYPT_REQUEST,
+                Some(req_id),
+                anyhow::anyhow!("{e}"),
+                tonic::Code::InvalidArgument,
+            )
+        })?;
         let client_enc_key = UnifiedPublicEncKey::deserialize_and_validate(
             &client_enc_key_bytes_orig,
         )

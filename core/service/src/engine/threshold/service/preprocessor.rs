@@ -134,6 +134,7 @@ impl<P: ProducerFactory<ResiduePolyF4Z128, SmallSession<ResiduePolyF4Z128>>> Rea
         let ongoing = Arc::clone(&self.ongoing);
 
         let sk = self.base_kms.signing_identity()?;
+        sk.ensure_supported(&signing_schemes)?;
         let domain_clone = domain.clone();
         self.tracker.spawn(
             async move {
@@ -485,6 +486,14 @@ impl<P: ProducerFactory<ResiduePolyF4Z128, SmallSession<ResiduePolyF4Z128>>> Rea
                 Some(request_id),
                 e,
                 tonic::Code::FailedPrecondition,
+            )
+        })?;
+        sk.ensure_supported(&signing_schemes).map_err(|e| {
+            MetricedError::new(
+                OP_INSECURE_KEYGEN_PREPROC_REQUEST,
+                Some(request_id),
+                anyhow::anyhow!("{e}"),
+                tonic::Code::InvalidArgument,
             )
         })?;
 

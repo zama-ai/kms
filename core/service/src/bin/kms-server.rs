@@ -635,8 +635,7 @@ async fn main_exec() -> anyhow::Result<()> {
     }
 
     // compute corresponding public key and derive address from private sig key
-    #[allow(deprecated)]
-    let pk_bytes = base_kms.verf_key().pk().to_encoded_point(false).to_bytes();
+    let pk_bytes = base_kms.verf_key().to_uncompressed_bytes();
     tracing::info!("KMS verifying key is {}", hex::encode(pk_bytes));
     tracing::info!(
         "Public ethereum address is {}",

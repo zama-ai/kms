@@ -244,7 +244,7 @@ pub async fn verify_storage_material<S>(
     crs_entries: &HashMap<RequestId, CrsGenMetadata>,
     recovery_material: &HashMap<RequestId, RecoveryValidationMaterial>,
     identity: &NodeSigningIdentity,
-) -> anyhow::Result<()>
+) -> anyhow::Result<UnexpectedPublicMaterial>
 where
     S: StorageReader + Sync,
 {

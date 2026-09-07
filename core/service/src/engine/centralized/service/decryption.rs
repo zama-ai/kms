@@ -95,6 +95,14 @@ pub async fn user_decrypt_impl<
             tonic::Code::FailedPrecondition,
         )
     })?;
+    sig_key.ensure_supported(&signing_schemes).map_err(|e| {
+        MetricedError::new(
+            OP_USER_DECRYPT_REQUEST,
+            Some(request_id),
+            anyhow::anyhow!("{e}"),
+            tonic::Code::InvalidArgument,
+        )
+    })?;
 
     let server_verf_key = sig_key.verf_key().to_legacy_bytes().map_err(|e| {
         MetricedError::new(
@@ -297,6 +305,14 @@ pub async fn public_decrypt_impl<
             Some(request_id),
             anyhow::anyhow!("Signing key is not present. This should only happen when server is booted in recovery mode: {}", e),
             tonic::Code::FailedPrecondition,
+        )
+    })?;
+    sig_key.ensure_supported(&signing_schemes).map_err(|e| {
+        MetricedError::new(
+            OP_PUBLIC_DECRYPT_REQUEST,
+            Some(request_id),
+            anyhow::anyhow!("{e}"),
+            tonic::Code::InvalidArgument,
         )
     })?;
     let server_verf_key = service.base_kms.verf_key().to_legacy_bytes().map_err(|e| {

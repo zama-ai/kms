@@ -2,7 +2,7 @@ use std::collections::HashMap;
 
 use crate::client::client_wasm::Client;
 use crate::consts::{DEFAULT_EPOCH_ID, DEFAULT_MPC_CONTEXT};
-use crate::engine::base::DSEP_PUBDATA_CRS;
+use crate::engine::base::{DSEP_PUBDATA_CRS, crs_payload_bytes};
 use crate::engine::utils::make_extra_data;
 use crate::engine::validation::RequestIdParsingErr;
 use crate::engine::validation::parse_optional_grpc_request_id;
@@ -122,25 +122,29 @@ impl Client {
             let max_num_bits = max_num_bits_from_crs(&pp);
 
             // check the signature
-            match self.find_verifying_address(
-                &CrsgenVerification::new(
-                    request_id,
-                    max_num_bits,
-                    actual_digest.clone(),
-                    extra_data.clone(),
-                ),
+            let sol_type = CrsgenVerification::new(
+                request_id,
+                max_num_bits,
+                actual_digest.clone(),
+                extra_data.clone(),
+            );
+            let payload_bytes =
+                crs_payload_bytes(request_id, max_num_bits as u32, &actual_digest, &extra_data)?;
+            let (_party_id, signer) = match self.verify_result_signatures(
+                &result.signatures,
+                &sol_type,
                 domain,
-                &result.external_signature,
+                &DSEP_PUBDATA_CRS,
+                &payload_bytes,
             ) {
-                Some(pk) => {
-                    verifying_pks.insert(pk);
-                }
-                None => {
-                    tracing::warn!("Signature could not be verified for a CRS");
+                Ok(found) => found,
+                Err(e) => {
+                    tracing::warn!("Discarding a CRS result that did not verify: {e}");
                     // do not insert
                     continue;
                 }
-            }
+            };
+            verifying_pks.insert(signer);
 
             // put the result in a hash map so that we can check for majority
             match hash_counter_map.get_mut(&actual_digest) {
@@ -217,21 +221,27 @@ impl Client {
         }
 
         let max_num_bits = max_num_bits_from_crs(&pp);
-        if self
-            .verify_external_signature(
-                &CrsgenVerification::new(
-                    &request_id,
-                    max_num_bits,
-                    actual_digest.clone(),
-                    extra_data.clone(),
-                ),
-                domain,
-                &crs_gen_result.external_signature,
-            )
-            .is_err()
-        {
+        let sol_type = CrsgenVerification::new(
+            &request_id,
+            max_num_bits,
+            actual_digest.clone(),
+            extra_data.clone(),
+        );
+        let payload_bytes = crs_payload_bytes(
+            &request_id,
+            max_num_bits as u32,
+            &actual_digest,
+            &extra_data,
+        )?;
+        if let Err(e) = self.verify_result_signatures(
+            &crs_gen_result.signatures,
+            &sol_type,
+            domain,
+            &DSEP_PUBDATA_CRS,
+            &payload_bytes,
+        ) {
             tracing::warn!(
-                "Could not verify server signature for crs handle {}",
+                "Could not verify the signatures for crs handle {}: {e}",
                 hex::encode(&actual_digest),
             );
             return Ok(None);

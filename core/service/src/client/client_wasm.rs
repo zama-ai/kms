@@ -1,4 +1,5 @@
 use crate::cryptography::signatures::{PrivateSigKey, PublicSigKey};
+use crate::cryptography::signing::{SigningSchemeType, UnifiedPublicSigKey};
 #[cfg(feature = "non-wasm")]
 use aes_prng::AesRng;
 #[cfg(feature = "non-wasm")]
@@ -40,6 +41,7 @@ pub struct Client {
     #[cfg(feature = "non-wasm")]
     pub(crate) rng: Box<AesRng>,
     pub(crate) server_identities: ServerIdentities,
+    pub(crate) scheme_verf_keys: HashMap<u32, HashMap<SigningSchemeType, UnifiedPublicSigKey>>,
     pub(crate) client_address: alloy_primitives::Address,
     pub(crate) client_sk: Option<PrivateSigKey>,
     pub(crate) params: DKGParams,
@@ -77,11 +79,35 @@ impl Client {
             #[cfg(feature = "non-wasm")]
             rng: Box::new(AesRng::from_entropy()), // todo should be argument
             server_identities: ServerIdentities::Pks(server_pks),
+            scheme_verf_keys: HashMap::new(),
             client_address,
             client_sk,
             params,
             decryption_mode,
         }
+    }
+
+    /// Attach the servers' per-scheme verification keys, so that the per-scheme
+    /// `signatures` of a response can be verified.
+    /// [`Self::new_client`]: Client::new_client
+    // TODO  this should be handled in the constructor or in-line in the tests
+    pub fn with_scheme_verf_keys(
+        mut self,
+        keys: HashMap<u32, HashMap<SigningSchemeType, UnifiedPublicSigKey>>,
+    ) -> Self {
+        self.scheme_verf_keys = keys;
+        self
+    }
+
+    /// The verification key `party_id` signs `scheme` responses with, if this
+    /// client knows it.
+    /// TODO this is only used in client_non_wasm, should be inlined
+    pub fn scheme_verf_key(
+        &self,
+        party_id: u32,
+        scheme: SigningSchemeType,
+    ) -> Option<&UnifiedPublicSigKey> {
+        self.scheme_verf_keys.get(&party_id)?.get(&scheme)
     }
 
     pub fn get_server_pks(&self) -> anyhow::Result<&HashMap<u32, PublicSigKey>> {

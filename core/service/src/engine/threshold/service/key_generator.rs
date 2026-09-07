@@ -370,6 +370,14 @@ impl<
         let sk = self.base_kms.signing_identity().map_err(|e| {
             MetricedError::new(op_tag, Some(req_id), e, tonic::Code::FailedPrecondition)
         })?;
+        sk.ensure_supported(&signing_schemes).map_err(|e| {
+            MetricedError::new(
+                op_tag,
+                Some(req_id),
+                anyhow::anyhow!("{e}"),
+                tonic::Code::InvalidArgument,
+            )
+        })?;
         let crypto_storage = self.crypto_storage.clone();
         let eip712_domain_copy = eip712_domain.clone();
         let ongoing = Arc::clone(&self.ongoing);
@@ -828,7 +836,8 @@ impl<
                     // since no domain separation is used
                     key_digests: Vec::new(),
                     external_signature: vec![],
-                    // TODO(#3078): populate multi-scheme signatures (replication step).
+                    // A legacy result predates the per-scheme signatures, so it
+                    // has none to report.
                     signatures: vec![],
                 }))
             }

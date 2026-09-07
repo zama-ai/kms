@@ -49,7 +49,6 @@ use crate::vault::storage::{
     read_all_data_versioned, read_text_at_request_id, store_text_at_request_id,
     store_versioned_at_request_id,
 };
-use k256::pkcs8::EncodePrivateKey;
 use kms_grpc::RequestId;
 use kms_grpc::rpc_types::{PrivDataType, PubDataType};
 use std::collections::BTreeMap;
@@ -1156,14 +1155,9 @@ async fn ensure_ca_cert_exists<PubS: Storage>(
 ) -> anyhow::Result<()> {
     let req_id = &*SIGNING_KEY_ID;
     // self-sign a CA certificate with the private signing key
-    let sk_der = {
-        // Will be fixed as part of [#2781](https://github.com/zama-ai/kms-internal/issues/2781).
-        #[expect(deprecated)]
-        let ecdsa_sk = sk.sk();
-        ecdsa_sk.to_pkcs8_der()?
-    };
+    let sk_der = sk.to_pkcs8_der()?;
     let ca_keypair = rcgen::KeyPair::from_pkcs8_der_and_sign_algo(
-        &sk_der.as_bytes().into(),
+        &sk_der.as_slice().into(),
         &rcgen::PKCS_ECDSA_P256K1_SHA256,
     )?;
     let (ca_cert_ki, ca_cert, _ca_params) =

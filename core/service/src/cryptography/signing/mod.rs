@@ -90,6 +90,8 @@ pub enum SigningSchemeTypeVersions {
     V0(SigningSchemeType),
 }
 
+/// A signature profile: a key type together with the message convention it signs
+/// under.
 #[derive(
     Debug,
     Clone,
@@ -432,10 +434,6 @@ pub fn unified_sign(
 ///
 /// Errors if the signature's scheme does not match the verification key, if the
 /// bytes are malformed for that scheme, or if verification fails.
-///
-/// TODO(#3078): call this from client-side response validation, which checks only
-/// the legacy ECDSA/EIP-712 signature.
-#[allow(dead_code)]
 pub fn unified_verify(
     dsep: &DomainSep,
     msg: &[u8],

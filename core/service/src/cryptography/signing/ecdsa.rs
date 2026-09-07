@@ -11,12 +11,13 @@ use alloy_signer_local::PrivateKeySigner;
 use alloy_sol_types::{Eip712Domain, SolStruct};
 use hashing::DomainSep;
 use k256::ecdsa::{SigningKey, VerifyingKey};
+use k256::pkcs8::EncodePrivateKey;
 use serde::{Deserialize, Serialize, de::Visitor};
 use std::sync::Arc;
 use tfhe::named::Named;
 use tfhe_versionable::{Versionize, VersionsDispatch};
 use wasm_bindgen::prelude::wasm_bindgen;
-use zeroize::{Zeroize, ZeroizeOnDrop};
+use zeroize::{Zeroize, ZeroizeOnDrop, Zeroizing};
 
 pub const SIG_SIZE: usize = 64; // a 32 byte r value and a 32 byte s value
 
@@ -74,11 +75,16 @@ impl PublicSigKey {
         &self.pk.0
     }
 
-    #[deprecated(
-        note = "This is legacy code and should not be used for new development. Will be handled in #2781"
-    )]
-    pub fn pk(&self) -> &k256::ecdsa::VerifyingKey {
-        &self.pk.0
+    /// The SEC1 encoding of this key, which is the form Ethereum uses and the
+    /// form the WASM client exchanges with JavaScript.
+    /// TODO looks like it is only used in a test, if so it should be inlined in the test and removed
+    pub fn to_sec1_bytes(&self) -> Vec<u8> {
+        self.pk.0.to_sec1_bytes().to_vec()
+    }
+
+    /// The uncompressed SEC1 point of this key, for logging the node identity.
+    pub fn to_uncompressed_bytes(&self) -> Vec<u8> {
+        self.pk.0.to_encoded_point(false).as_bytes().to_vec()
     }
 }
 
@@ -171,8 +177,7 @@ impl Visitor<'_> for PublicSigKeyVisitor {
     }
 }
 
-// Drop manually implemented due to conflict with Versionize macro
-// TODO(#3078) Rename in the last subissue
+// Drop manually implemented due to conflict with Versionize macro.
 #[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize, Zeroize, VersionsDispatch)]
 pub enum PrivateSigKeyVersions {
     V0(PrivateSigKey),
@@ -199,12 +204,19 @@ impl PrivateSigKey {
         }
     }
 
-    /// TODO(#2781) DEPRECATED: code should be refactored to not use this outside on this class
-    #[deprecated(
-        note = "This is legacy code and should not be used for new development. Will be handled in #2781"
-    )]
-    pub fn sk(&self) -> &k256::ecdsa::SigningKey {
-        &self.sk.0
+    /// The PKCS#8 DER encoding of this key.
+    ///
+    /// This is what [`rcgen`] takes to build the key pair that issues a party's
+    /// mTLS certificates, and the only reason the raw scalar leaves this module.
+    ///
+    /// [`rcgen`]: https://docs.rs/rcgen
+    pub fn to_pkcs8_der(&self) -> Result<Zeroizing<Vec<u8>>, CryptographyError> {
+        let document = EncodePrivateKey::to_pkcs8_der(&self.sk.0).map_err(|e| {
+            CryptographyError::SerializationError(format!(
+                "Could not encode the signing key as PKCS#8: {e}"
+            ))
+        })?;
+        Ok(Zeroizing::new(document.as_bytes().to_vec()))
     }
 
     pub fn verf_key(&self) -> PublicSigKey {
@@ -623,5 +635,40 @@ mod tests {
         let serialized_key = verf_key.to_legacy_bytes().unwrap();
         let deserialized_key = PublicSigKey::from_legacy_bytes(&serialized_key).unwrap();
         assert_eq!(verf_key, deserialized_key);
+    }
+
+    /// The PKCS#8 encoding round-trips, which is what the mTLS certificate path
+    /// relies on.
+    #[test]
+    fn pkcs8_der_round_trips() {
+        use k256::pkcs8::DecodePrivateKey;
+
+        let mut rng = AesRng::seed_from_u64(11);
+        let (_pk, sk) = gen_sig_keys(&mut rng);
+
+        let der = sk.to_pkcs8_der().unwrap();
+        let restored = SigningKey::from_pkcs8_der(&der).expect("the DER encoding must parse back");
+        assert_eq!(PrivateSigKey::new(restored), sk);
+    }
+
+    /// Both SEC1 encodings of a verification key parse back to the same key.
+    #[test]
+    fn sec1_encodings_round_trip() {
+        let mut rng = AesRng::seed_from_u64(12);
+        let (pk, _sk) = gen_sig_keys(&mut rng);
+
+        let compressed = pk.to_sec1_bytes();
+        let uncompressed = pk.to_uncompressed_bytes();
+        assert_eq!(uncompressed.len(), 65, "an uncompressed point is 65 bytes");
+        assert_eq!(
+            uncompressed.first(),
+            Some(&0x04),
+            "an uncompressed point starts with the 0x04 tag"
+        );
+
+        for encoding in [compressed, uncompressed] {
+            let restored = PublicSigKey::new(VerifyingKey::from_sec1_bytes(&encoding).unwrap());
+            assert_eq!(restored, pk);
+        }
     }
 }

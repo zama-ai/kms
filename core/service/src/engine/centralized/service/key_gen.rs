@@ -174,6 +174,14 @@ pub async fn key_gen_impl<
             tonic::Code::FailedPrecondition,
         )
     })?;
+    sk.ensure_supported(&signing_schemes).map_err(|e| {
+        MetricedError::new(
+            op_tag,
+            Some(req_id),
+            anyhow::anyhow!("{e}"),
+            tonic::Code::InvalidArgument,
+        )
+    })?;
 
     let token = CancellationToken::new();
     {
@@ -340,7 +348,8 @@ pub async fn get_key_gen_result_impl<
                 // since no domain separation is used
                 key_digests: Vec::new(),
                 external_signature: vec![],
-                // TODO(#3078): populate multi-scheme signatures (replication step).
+                // A legacy result predates the per-scheme signatures, so it has
+                // none to report.
                 signatures: vec![],
             }))
         }

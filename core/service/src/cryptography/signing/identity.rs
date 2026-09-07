@@ -1,10 +1,11 @@
 //! The signing identity of a KMS node.
 
-use super::ecdsa::{Ecdsa256k1, PrivateSigKey, PublicSigKey};
+use super::ecdsa::{PrivateSigKey, PublicSigKey};
 use super::seed::RootSigningSeed;
-use super::{
-    Signature, SigningError, SigningScheme, SigningSchemeType, UnifiedPublicSigKey, unified_sign,
-};
+#[cfg(feature = "non-wasm")]
+use super::{Signature, SigningScheme, ecdsa::Ecdsa256k1, unified_sign};
+use super::{SigningError, SigningSchemeType, UnifiedPublicSigKey};
+#[cfg(feature = "non-wasm")]
 use hashing::DomainSep;
 use std::sync::Arc;
 use zeroize::ZeroizeOnDrop;
@@ -58,6 +59,11 @@ impl NodeSigningIdentity {
         &self.ecdsa
     }
 
+    /// The shared handle to the node's ECDSA signing key.
+    pub fn ecdsa_handle(&self) -> &Arc<PrivateSigKey> {
+        &self.ecdsa
+    }
+
     /// The node's ECDSA verification key, which is its identity in an MPC
     /// context.
     pub fn verf_key(&self) -> PublicSigKey {
@@ -68,6 +74,19 @@ impl NodeSigningIdentity {
     /// under anything but ECDSA.
     pub fn has_root_seed(&self) -> bool {
         self.seed.is_some()
+    }
+
+    /// Whether this identity can sign under `scheme`.
+    pub fn supports(&self, scheme: SigningSchemeType) -> bool {
+        scheme == SigningSchemeType::Ecdsa256k1 || self.has_root_seed()
+    }
+
+    /// Check that every scheme of `schemes` can be signed under.
+    pub fn ensure_supported(&self, schemes: &[SigningSchemeType]) -> Result<(), SigningError> {
+        match schemes.iter().find(|scheme| !self.supports(**scheme)) {
+            Some(&scheme) => Err(SigningError::MissingRootSeed(scheme)),
+            None => Ok(()),
+        }
     }
 
     /// Sign `msg` (domain-separated by `dsep`) under `scheme`.
@@ -260,5 +279,35 @@ mod tests {
                 "{scheme:?} was determined by the ECDSA key rather than by the seed"
             );
         }
+    }
+
+    /// The capability check mirrors what signing can actually do: ECDSA always,
+    /// every other scheme only with a seed.
+    #[test]
+    fn supported_schemes_follow_the_seed() {
+        let mut rng = AesRng::seed_from_u64(909);
+        let seeded = seeded_identity(&mut rng);
+        let seedless = NodeSigningIdentity::ecdsa_only(gen_sig_keys(&mut rng).1);
+        let every_scheme: Vec<_> = SigningSchemeType::iter().collect();
+
+        seeded.ensure_supported(&every_scheme).unwrap();
+        seedless
+            .ensure_supported(&[SigningSchemeType::Ecdsa256k1])
+            .unwrap();
+        seedless.ensure_supported(&[]).unwrap();
+
+        for scheme in SigningSchemeType::iter() {
+            assert!(seeded.supports(scheme));
+            assert_eq!(
+                seedless.supports(scheme),
+                scheme == SigningSchemeType::Ecdsa256k1
+            );
+        }
+
+        // The rejected scheme is named, so a caller can report which one failed.
+        assert!(matches!(
+            seedless.ensure_supported(&every_scheme),
+            Err(SigningError::MissingRootSeed(scheme)) if scheme != SigningSchemeType::Ecdsa256k1
+        ));
     }
 }

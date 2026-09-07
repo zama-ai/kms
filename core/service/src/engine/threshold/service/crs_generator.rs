@@ -146,6 +146,16 @@ impl<
                 tonic::Code::FailedPrecondition,
             )
         })?;
+        sigkey
+            .ensure_supported(&verified.signing_schemes)
+            .map_err(|e| {
+                MetricedError::new(
+                    op_tag,
+                    Some(verified.req_id),
+                    anyhow::anyhow!("{e}"),
+                    tonic::Code::InvalidArgument,
+                )
+            })?;
         let meta_permit =
             add_req_to_meta_store(&self.crs_meta_store, &verified.req_id, op_tag).await?;
         tracing::info!(

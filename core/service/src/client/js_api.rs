@@ -112,8 +112,7 @@ pub fn ml_kem_pke_sk_len() -> usize {
 
 #[wasm_bindgen]
 pub fn public_sig_key_to_u8vec(pk: &PublicSigKey) -> Vec<u8> {
-    #[allow(deprecated)]
-    pk.pk().to_sec1_bytes().to_vec()
+    pk.to_sec1_bytes()
 }
 
 #[wasm_bindgen]

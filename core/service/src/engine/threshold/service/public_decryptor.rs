@@ -337,6 +337,14 @@ impl<
                 tonic::Code::FailedPrecondition,
             )
         })?;
+        sigkey.ensure_supported(&signing_schemes).map_err(|e| {
+            MetricedError::new(
+                OP_PUBLIC_DECRYPT_REQUEST,
+                Some(req_id),
+                anyhow::anyhow!("{e}"),
+                tonic::Code::InvalidArgument,
+            )
+        })?;
         let server_verf_key = self.base_kms.verf_key().to_legacy_bytes().map_err(|e| {
             MetricedError::new(
                 OP_PUBLIC_DECRYPT_REQUEST,
