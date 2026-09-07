@@ -64,7 +64,7 @@ use crate::{
     anyhow_error_and_log,
     backup::operator::RecoveryValidationMaterial,
     conf::CoreConfig,
-    consts::{DEFAULT_EPOCH_ID, DEFAULT_MPC_CONTEXT, MINIMUM_SESSIONS_PREPROC},
+    consts::MINIMUM_SESSIONS_PREPROC,
     cryptography::attestation::SecurityModuleProxy,
     engine::{
         backup_operator::RealBackupOperator,
@@ -515,7 +515,6 @@ pub async fn new_real_threshold_kms<PubS, PrivS, F>(
     mpc_listener: TcpListener,
     base_kms: BaseKmsStruct,
     tls_config: Option<(ServerConfig, ClientConfig, Arc<AttestedVerifier>)>,
-    ensure_default_prss: bool,
     shutdown_signal: F,
 ) -> anyhow::Result<(
     RealThresholdKms<PubS, PrivS>,
@@ -731,8 +730,6 @@ where
     );
     let custodian_meta_store = MetaStore::new_from_map(recovery_validation_material);
 
-    let private_storage_info = private_storage.info();
-
     let crypto_storage = ThresholdCryptoMaterialStorage::new(
         public_storage,
         private_storage,
@@ -797,25 +794,6 @@ where
         _init: PhantomData,
         _reshare: PhantomData,
     };
-    if ensure_default_prss {
-        let epoch_id_prss = *DEFAULT_EPOCH_ID;
-        let default_context_id = *DEFAULT_MPC_CONTEXT;
-        if session_maker.epoch_exists(&epoch_id_prss).await {
-            tracing::warn!(
-                "Default epoch {} already exists. Skipping regeneration",
-                epoch_id_prss
-            );
-        } else {
-            tracing::info!(
-                "Initializing threshold KMS server and generating a new PRSS Setup for private storage {:?}",
-                private_storage_info
-            );
-            epoch_manager
-                .init_epoch(&default_context_id, &epoch_id_prss)
-                .await?;
-        }
-    }
-
     let slow_events = Arc::new(Mutex::new(HashMap::new()));
 
     let user_decryptor = RealUserDecryptor {

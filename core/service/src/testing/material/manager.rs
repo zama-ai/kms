@@ -5,9 +5,9 @@
 use super::spec::{KeyType, MaterialType, TestMaterialSpec};
 use super::{material_subdir, threshold_crs_id_name, threshold_key_id_name};
 use crate::consts::{
-    DEFAULT_CENTRAL_CRS_ID, DEFAULT_CENTRAL_KEY_ID, KEY_PATH_PREFIX, OTHER_CENTRAL_DEFAULT_ID,
-    OTHER_CENTRAL_TEST_ID, SIGNING_KEY_ID, TEST_CENTRAL_CRS_ID, TEST_CENTRAL_KEY_ID,
-    TMP_PATH_PREFIX,
+    DEFAULT_CENTRAL_CRS_ID, DEFAULT_CENTRAL_KEY_ID, DEFAULT_EPOCH_ID, KEY_PATH_PREFIX,
+    OTHER_CENTRAL_DEFAULT_ID, OTHER_CENTRAL_TEST_ID, SIGNING_KEY_ID, TEST_CENTRAL_CRS_ID,
+    TEST_CENTRAL_KEY_ID, TMP_PATH_PREFIX,
 };
 use crate::engine::base::derive_request_id;
 use crate::vault::storage::StorageType;
@@ -66,6 +66,14 @@ impl TestMaterialManager {
     /// Create a new test material manager
     pub fn new(source_path: Option<PathBuf>) -> Self {
         Self { source_path }
+    }
+
+    /// Returns the root of the pre-generated material, or `None` when no root is configured.
+    ///
+    /// The material of one [`MaterialType`] lives under `root/<material_subdir>`.
+    #[cfg(test)]
+    pub(crate) fn source_path(&self) -> Option<&Path> {
+        self.source_path.as_deref()
     }
 
     /// Setup test material in a temporary directory
@@ -211,12 +219,18 @@ impl TestMaterialManager {
             } else {
                 Either::Right(ready(Ok(())))
             };
+        let copy_default_epoch = if spec.requires_key_type(KeyType::DefaultEpoch) {
+            Either::Left(self.copy_default_epoch(source_base_ref, dest_base, spec))
+        } else {
+            Either::Right(ready(Ok(())))
+        };
 
         tokio::try_join!(
             copy_client_keys,
             copy_signing_keys,
             copy_fhe_keys,
             copy_crs_keys,
+            copy_default_epoch,
         )?;
 
         Ok(())
@@ -367,6 +381,29 @@ impl TestMaterialManager {
             }
         }
 
+        Ok(())
+    }
+
+    /// Copy the default epoch of every threshold party. A centralized spec holds no epochs, so
+    /// nothing is copied for it.
+    async fn copy_default_epoch(
+        &self,
+        source_base: Option<&Path>,
+        dest_base: &Path,
+        spec: &TestMaterialSpec,
+    ) -> Result<()> {
+        if !spec.is_threshold() {
+            return Ok(());
+        }
+        let epoch_data_type = PrivDataType::EpochData.to_string();
+        let epoch_id = DEFAULT_EPOCH_ID.to_string();
+        for i in 1..=spec.party_count() {
+            let role = Role::indexed_from_one(i);
+            let source_priv = compute_storage_path(source_base, StorageType::PRIV, Some(role));
+            let dest_priv = compute_storage_path(Some(dest_base), StorageType::PRIV, Some(role));
+            self.copy_key_files(&source_priv, &dest_priv, &epoch_data_type, &epoch_id)
+                .await?;
+        }
         Ok(())
     }
 
@@ -673,6 +710,13 @@ mod tests {
                     .join(&key_id)
                     .exists()
             );
+            assert!(
+                priv_path
+                    .join(PrivDataType::EpochData.to_string())
+                    .join(&epoch_id)
+                    .exists(),
+                "expected the default epoch for party {i}"
+            );
         }
 
         let key_id = derive_request_id(&threshold_key_id_name(MaterialType::Testing, 4))
@@ -686,5 +730,29 @@ mod tests {
                 .exists(),
             "expected copied threshold compressed keyset for key id {key_id}"
         );
+    }
+
+    #[tokio::test]
+    async fn signing_only_material_has_no_default_epoch() {
+        let manager = create_test_material_manager();
+        let spec = TestMaterialSpec::threshold_signing_only(4);
+
+        let temp_dir = manager
+            .setup_test_material_temp(&spec, "test_signing_only")
+            .await
+            .unwrap();
+
+        for i in 1..=4 {
+            let role = Role::indexed_from_one(i);
+            let priv_path =
+                compute_storage_path(Some(temp_dir.path()), StorageType::PRIV, Some(role));
+            assert!(priv_path.exists());
+            assert!(!priv_path.join(PrivDataType::EpochData.to_string()).exists());
+            assert!(
+                !priv_path
+                    .join(PrivDataType::FheKeyInfo.to_string())
+                    .exists()
+            );
+        }
     }
 }

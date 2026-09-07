@@ -45,7 +45,6 @@ pub async fn setup_threshold_no_client<
     pub_storage: Vec<PubS>,
     priv_storage: Vec<PrivS>,
     vaults: Vec<Option<Vault>>,
-    ensure_default_prss: bool,
     rate_limiter_conf: Option<RateLimiterConfig>,
     decryption_mode: Option<DecryptionMode>,
 ) -> HashMap<u32, ServerHandle> {
@@ -148,7 +147,6 @@ pub async fn setup_threshold_no_client<
                 mpc_listener,
                 base_kms,
                 None,
-                ensure_default_prss,
                 mpc_core_rx.map(drop),
             )
             .await;
@@ -230,7 +228,6 @@ pub async fn setup_threshold_no_client<
 /// * `pub_storage` - Public storage for each server
 /// * `priv_storage` - Private storage for each server
 /// * `vaults` - Optional backup vaults for each server
-/// * `ensure_default_prss` - Whether to run PRSS initialization for the default epoch if no PRSS info is found in storage
 /// * `rate_limiter_conf` - Optional rate limiter configuration
 /// * `decryption_mode` - Optional decryption mode
 ///
@@ -258,7 +255,6 @@ pub async fn setup_threshold_with_custom_peers<
     pub_storage: Vec<PubS>,
     priv_storage: Vec<PrivS>,
     vaults: Vec<Option<Vault>>,
-    ensure_default_prss: bool,
     rate_limiter_conf: Option<RateLimiterConfig>,
     decryption_mode: Option<DecryptionMode>,
 ) -> HashMap<u32, ServerHandle> {
@@ -380,7 +376,6 @@ pub async fn setup_threshold_with_custom_peers<
                 mpc_listener,
                 base_kms,
                 None,
-                ensure_default_prss,
                 mpc_core_rx.map(drop),
             )
             .await;
@@ -603,7 +598,6 @@ impl ServerHandle {
 ///
 /// Used by `setup_threshold_isolated` to configure the threshold test environment.
 pub struct ThresholdTestConfig<'a> {
-    pub ensure_default_prss: bool,
     pub rate_limiter_conf: Option<RateLimiterConfig>,
     pub decryption_mode: Option<DecryptionMode>,
     pub test_material_path: Option<&'a std::path::Path>,
@@ -634,7 +628,6 @@ pub async fn setup_threshold_isolated<
         pub_storage,
         priv_storage,
         vaults,
-        config.ensure_default_prss,
         config.rate_limiter_conf,
         config.decryption_mode,
     )
@@ -664,7 +657,6 @@ pub async fn setup_threshold<
     pub_storage: Vec<PubS>,
     priv_storage: Vec<PrivS>,
     vaults: Vec<Option<Vault>>,
-    ensure_default_prss: bool,
     rate_limiter_conf: Option<RateLimiterConfig>,
     decryption_mode: Option<DecryptionMode>,
 ) -> (
@@ -672,13 +664,12 @@ pub async fn setup_threshold<
     HashMap<u32, CoreServiceEndpointClient<Channel>>,
 ) {
     let num_parties = priv_storage.len();
-    // Setup the threshold scheme with lazy PRSS generation
+    // Setup the threshold scheme
     let server_handles = setup_threshold_no_client::<PubS, PrivS>(
         threshold,
         pub_storage,
         priv_storage,
         vaults,
-        ensure_default_prss,
         rate_limiter_conf,
         decryption_mode,
     )
