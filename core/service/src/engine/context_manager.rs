@@ -939,6 +939,8 @@ pub struct ThresholdContextManager<
     inner: SharedContextManager<PubS, PrivS>,
     session_maker: SessionMaker,
     require_pcr_allowlist: bool,
+    /// Serializes context creation across storage and in-memory registration.
+    context_creation_lock: Mutex<()>,
 }
 
 impl<PubS, PrivS> ThresholdContextManager<PubS, PrivS>
@@ -962,6 +964,7 @@ where
             },
             session_maker,
             require_pcr_allowlist,
+            context_creation_lock: Mutex::new(()),
         }
     }
 
@@ -1101,6 +1104,8 @@ where
             .map_err(|e| {
                 MetricedError::new(OP_NEW_MPC_CONTEXT, None, e, tonic::Code::InvalidArgument)
             })?;
+
+        let _creation_guard = self.context_creation_lock.lock().await;
 
         // First check if the context already exists
         if self
@@ -1675,6 +1680,69 @@ mod tests {
         });
         context_manager.new_mpc_context(request).await.unwrap();
         assert_eq!(context_manager.session_maker.context_count().await, 1);
+    }
+
+    #[tokio::test]
+    async fn concurrent_duplicate_context_creation_preserves_the_created_context() {
+        let (verification_key, sig_key, crypto_storage) = setup_crypto_storage(false).await;
+        let base_kms = BaseKmsStruct::new(KMSType::Threshold, sig_key).unwrap();
+        let context_id = ContextId::from_bytes([34u8; 32]);
+        let new_context = ContextInfo {
+            mpc_nodes: vec![NodeInfo {
+                mpc_identity: "Node1".to_string(),
+                party_id: 1,
+                external_url: "http://localhost:12345".to_string(),
+                ca_cert: None,
+                public_storage_url: "http://storage".to_string(),
+                public_storage_prefix: None,
+                extra_signer_addresses: vec![],
+                scheme_digests: SchemeDigests::from_ecdsa_verification_key(&verification_key),
+            }],
+            context_id,
+            software_version: SoftwareVersion {
+                major: 0,
+                minor: 1,
+                patch: 0,
+                tag: None,
+            },
+            threshold: 0,
+            pcr_values: vec![],
+        };
+        let session_maker = SessionMaker::empty_dummy_session(base_kms.new_rng().await);
+        let context_manager = ThresholdContextManager::new(
+            base_kms,
+            crypto_storage.clone(),
+            MetaStore::new(100, 10),
+            session_maker,
+            false,
+        );
+        let request_a = Request::new(NewMpcContextRequest {
+            new_context: Some(new_context.clone().try_into().unwrap()),
+        });
+        let request_b = Request::new(NewMpcContextRequest {
+            new_context: Some(new_context.try_into().unwrap()),
+        });
+
+        let (result_a, result_b) = tokio::join!(
+            context_manager.new_mpc_context(request_a),
+            context_manager.new_mpc_context(request_b)
+        );
+        let results = [result_a, result_b];
+        assert_eq!(results.iter().filter(|result| result.is_ok()).count(), 1);
+        let error = results.into_iter().find_map(Result::err).unwrap();
+        assert_eq!(error.code(), tonic::Code::AlreadyExists);
+        assert_eq!(context_manager.session_maker.context_count().await, 1);
+        assert!(
+            context_manager
+                .session_maker
+                .context_exists(&context_id)
+                .await
+        );
+
+        let guarded_priv_storage = crypto_storage.private_storage.lock().await;
+        read_context_at_id(&*guarded_priv_storage, &context_id)
+            .await
+            .expect("the successful request's context must remain in storage");
     }
 
     #[tokio::test]

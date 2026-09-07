@@ -5,9 +5,9 @@
 //! __PRSS__
 //!
 //! If the KMS core is started fresh, then the PRSS setups needs to be initialized
-//! via a protocol; this is done via the [`RealThresholdEpochManager::init_prss`] method.
+//! via a protocol; this is done via the [`RealThresholdEpochManager::init_epoch`] method.
 //! If the KMS core restarts, then the PRSS setups are loaded from storage,
-//! this is done via a call to [`RealThresholdEpochManager::init_all_prss_from_storage`];
+//! this is done via a call to [`RealThresholdEpochManager::init_all_epochs_from_storage`].
 //!
 //! __Resharing__
 //!
@@ -322,9 +322,14 @@ impl<
     Reshare: ReshareSecretKeys + Default + 'static,
 > RealThresholdEpochManager<PubS, PrivS, Init, Reshare>
 {
-    /// This will load all epochs from storage into session maker.
-    pub async fn init_all_epochs_from_storage(&self) -> anyhow::Result<()> {
+    /// Loads all stored epochs into the session maker.
+    pub(crate) async fn init_all_epochs_from_storage(&self) -> anyhow::Result<()> {
         let all_epochs = self.crypto_storage.read_all_epoch_data().await?;
+        if all_epochs.is_empty() {
+            tracing::warn!(
+                "No epoch data found in storage. Create an MPC epoch before using threshold operations"
+            );
+        }
 
         for (epoch_id, prss) in all_epochs {
             let context_id = prss.context_id;
