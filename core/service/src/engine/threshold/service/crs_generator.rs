@@ -29,7 +29,7 @@ use tonic::{Request, Response};
 use tracing::Instrument;
 
 // === Internal Crate ===
-use crate::engine::utils::MetricedError;
+use crate::engine::utils::{MetricedError, signing_identity_for};
 use crate::{
     cryptography::{signing::SigningSchemeType, signing::identity::NodeSigningIdentity},
     engine::{
@@ -138,24 +138,12 @@ impl<
                 tonic::Code::AlreadyExists,
             ));
         }
-        let sigkey = self.base_kms.signing_identity().map_err(|e| {
-            MetricedError::new(
-                op_tag,
-                Some(verified.req_id),
-                e,
-                tonic::Code::FailedPrecondition,
-            )
-        })?;
-        sigkey
-            .ensure_supported(&verified.signing_schemes)
-            .map_err(|e| {
-                MetricedError::new(
-                    op_tag,
-                    Some(verified.req_id),
-                    anyhow::anyhow!("{e}"),
-                    tonic::Code::InvalidArgument,
-                )
-            })?;
+        let sigkey = signing_identity_for(
+            &self.base_kms,
+            &verified.signing_schemes,
+            op_tag,
+            Some(verified.req_id),
+        )?;
         let meta_permit =
             add_req_to_meta_store(&self.crs_meta_store, &verified.req_id, op_tag).await?;
         tracing::info!(

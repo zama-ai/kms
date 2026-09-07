@@ -358,11 +358,13 @@ async fn run_new_epoch(
         .as_ref()
         .map_or(0, |r| r.previous_epoch.keys_info.len());
 
-    internal_client.signing_schemes = vec![
-        SigningSchemeType::Ecdsa256k1,
-        SigningSchemeType::Ed25519,
-        SigningSchemeType::MlDsa65,
-    ];
+    internal_client
+        .set_signing_schemes(&[
+            SigningSchemeType::Ecdsa256k1,
+            SigningSchemeType::Ed25519,
+            SigningSchemeType::MlDsa65,
+        ])
+        .unwrap();
     let requested_schemes = internal_client.signing_schemes_proto();
 
     let reshare_request = internal_client

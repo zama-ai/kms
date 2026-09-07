@@ -368,8 +368,13 @@ impl MaterialSlot {
     }
 
     /// The storage folder name this slot lives in.
-    fn data_type(self) -> String {
+    pub(crate) fn data_type(self) -> String {
         self.folder.to_string()
+    }
+
+    /// The handle this slot is published under.
+    pub(crate) fn handle(self) -> RequestId {
+        self.req_id
     }
 
     /// Whether anything is published in this slot.

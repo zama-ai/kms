@@ -21,7 +21,7 @@ use crate::cryptography::signing::identity::NodeSigningIdentity;
 use crate::engine::base::{CrsGenMetadata, stored_scheme_signatures_to_proto};
 use crate::engine::centralized::central_kms::{CentralizedKms, async_generate_crs};
 use crate::engine::traits::{BackupOperator, ContextManager};
-use crate::engine::utils::MetricedError;
+use crate::engine::utils::{MetricedError, signing_identity_for};
 use crate::engine::validation::{
     RequestIdParsingErr, parse_grpc_request_id, validate_crs_gen_request,
 };
@@ -75,26 +75,12 @@ pub async fn crs_gen_impl<
 
     let meta_store = Arc::clone(&service.crs_meta_map);
     let crypto_storage = service.crypto_storage.clone();
-    let sk = service
-            .base_kms
-            .signing_identity()
-            .map_err(|e| {
-        MetricedError::new(
-            op_tag,
-            Some(verified.req_id),
-            anyhow::anyhow!("Signing key is not present. This should only happen when server is booted in recovery mode: {}", e),
-            tonic::Code::FailedPrecondition,
-        )
-    })?;
-    sk.ensure_supported(&verified.signing_schemes)
-        .map_err(|e| {
-            MetricedError::new(
-                op_tag,
-                Some(verified.req_id),
-                anyhow::anyhow!("{e}"),
-                tonic::Code::InvalidArgument,
-            )
-        })?;
+    let sk = signing_identity_for(
+        &service.base_kms,
+        &verified.signing_schemes,
+        op_tag,
+        Some(verified.req_id),
+    )?;
     // check that the request ID is not used yet
     // and then insert the request ID only if it's unused
     // all validation must be done before inserting the request ID.

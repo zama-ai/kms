@@ -20,8 +20,9 @@ use ml_dsa::{MlDsa44, MlDsa65, MlDsa87, SigningKey as MlDsaSigningKey};
 use mldsa::MlDsa;
 pub use mldsa::MlDsaVerfKey;
 use serde::{Deserialize, Serialize};
-use strum::{EnumCount, EnumIter};
-use strum_macros::Display;
+use std::str::FromStr;
+use strum::{EnumCount, EnumIter, VariantNames as _};
+use strum_macros::{Display, EnumString, VariantNames};
 use tfhe::named::Named;
 use tfhe_versionable::{Versionize, VersionsDispatch};
 use thiserror::Error;
@@ -78,6 +79,12 @@ pub enum SigningError {
     /// An integer discriminant did not correspond to any known signing scheme.
     #[error("unsupported signing scheme discriminant: {0}")]
     UnknownScheme(i32),
+    /// A string did not name any known signing scheme.
+    #[error(
+        "unknown signing scheme {0:?}, expected one of: {}",
+        SigningSchemeType::VARIANTS.join(", ")
+    )]
+    UnknownSchemeName(String),
 }
 
 /// Trait for any value that is tied to a concrete signature scheme.
@@ -106,9 +113,12 @@ pub enum SigningSchemeTypeVersions {
     Display,
     EnumIter,
     EnumCount,
+    EnumString,
+    VariantNames,
     Versionize,
 )]
 #[versionize(SigningSchemeTypeVersions)]
+#[strum(ascii_case_insensitive)]
 pub enum SigningSchemeType {
     // WARNING: Do not reorder or remove variants; only append.
     Ecdsa256k1,
@@ -151,6 +161,23 @@ impl SigningSchemeType {
             }
         }
         Ok(resolved)
+    }
+
+    /// The schemes named by `requested`, for command-line and config input.
+    ///
+    /// An unrecognised name is an error that lists the accepted spellings.
+    ///
+    /// Only the parsing lives here: the resolution itself is
+    /// [`Self::resolve_requested`], so the two forms cannot drift apart.
+    pub fn parse_requested<S: AsRef<str>>(requested: &[S]) -> Result<Vec<Self>, SigningError> {
+        let mut raw = Vec::with_capacity(requested.len());
+        for name in requested {
+            let name = name.as_ref().trim();
+            let scheme = SigningSchemeType::from_str(name)
+                .map_err(|_| SigningError::UnknownSchemeName(name.to_owned()))?;
+            raw.push(kms_grpc::kms::v1::SigningSchemeType::from(scheme) as i32);
+        }
+        Self::resolve_requested(&raw)
     }
 
     /// The scheme's stable 4-byte tag, for binding a scheme into a hash input.
@@ -746,5 +773,55 @@ mod tests {
 
         // An unknown scheme is an error.
         assert!(SigningSchemeType::resolve_requested(&[9999]).is_err());
+    }
+
+    /// The string form a command line supplies follows the same rules as the
+    /// gRPC form, and every scheme name round-trips through it.
+    #[test]
+    fn parse_requested_matches_resolve_requested() {
+        // Naming nothing asks for ECDSA, exactly as an empty gRPC field does.
+        assert_eq!(
+            SigningSchemeType::parse_requested::<&str>(&[]).unwrap(),
+            SigningSchemeType::resolve_requested(&[]).unwrap()
+        );
+
+        // Every scheme's own name parses back to it, whatever the casing, and
+        // surrounding whitespace from a config value is ignored.
+        for scheme in SigningSchemeType::iter() {
+            let name = scheme.to_string();
+            for spelling in [
+                name.clone(),
+                name.to_lowercase(),
+                name.to_uppercase(),
+                format!("  {name} "),
+            ] {
+                assert_eq!(
+                    SigningSchemeType::parse_requested(&[spelling.clone()]).unwrap(),
+                    vec![scheme],
+                    "{spelling:?} did not parse as {scheme}"
+                );
+            }
+        }
+
+        // Order is kept and duplicates are dropped, as in the gRPC form.
+        assert_eq!(
+            SigningSchemeType::parse_requested(&["mldsa65", "ecdsa256k1", "MlDsa65"]).unwrap(),
+            vec![SigningSchemeType::MlDsa65, SigningSchemeType::Ecdsa256k1]
+        );
+
+        // A name that is not a scheme is an error naming the accepted spellings.
+        let err = SigningSchemeType::parse_requested(&["rsa"])
+            .unwrap_err()
+            .to_string();
+        assert!(
+            err.contains("rsa"),
+            "the error does not quote the input: {err}"
+        );
+        for scheme in SigningSchemeType::iter() {
+            assert!(
+                err.contains(&scheme.to_string()),
+                "the error does not list {scheme}: {err}"
+            );
+        }
     }
 }

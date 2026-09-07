@@ -316,7 +316,7 @@ mod tests {
         schemes: &[SigningSchemeType],
     ) -> Client {
         let mut client = client_for(identity, with_scheme_keys);
-        client.signing_schemes = schemes.to_vec();
+        client.set_signing_schemes(schemes).unwrap();
         client
     }
 

@@ -978,6 +978,8 @@ fn cmd_config(config_path: &Path, command: CCCommand, max_iter: usize) -> CmdCon
         max_iter,
         expect_all_responses: true,
         download_all: false,
+        // No scheme named, which asks for ECDSA — the default these tests assert.
+        signing_schemes: vec![],
     }
 }
 
@@ -1786,6 +1788,7 @@ fn cmd_config_multi(config_paths: &[&Path], command: CCCommand, max_iter: usize)
         max_iter,
         expect_all_responses: false,
         download_all: false,
+        signing_schemes: vec![],
     }
 }
 

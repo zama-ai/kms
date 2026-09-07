@@ -7,38 +7,19 @@ use super::{material_subdir, threshold_crs_id_name, threshold_key_id_name};
 use crate::consts::{
     DEFAULT_CENTRAL_CRS_ID, DEFAULT_CENTRAL_KEY_ID, KEY_PATH_PREFIX, OTHER_CENTRAL_DEFAULT_ID,
     OTHER_CENTRAL_TEST_ID, SIGNING_KEY_ID, TEST_CENTRAL_CRS_ID, TEST_CENTRAL_KEY_ID,
-    TMP_PATH_PREFIX, signing_material_id,
+    TMP_PATH_PREFIX,
 };
-use crate::cryptography::signing::SigningSchemeType;
 use crate::engine::base::derive_request_id;
-use crate::util::key_setup::{LEGACY_VERF_MATERIAL_TYPES, NON_LEGACY_VERF_MATERIAL_TYPES};
+use crate::util::key_setup::all_verf_material_slots;
 use crate::vault::storage::StorageType;
 use anyhow::{Context, Result, anyhow};
 use futures_util::future::{Either, ready};
 use kms_grpc::rpc_types::{PrivDataType, PubDataType};
 use std::path::{Path, PathBuf};
-use strum::IntoEnumIterator;
 #[cfg(any(test, feature = "testing"))]
 use tempfile::TempDir;
 use threshold_types::role::Role;
 use tokio::fs;
-
-/// Every `(data_type, request_id)` pair of published verification material a
-/// node holds: the deprecated ECDSA-only pair under [`SIGNING_KEY_ID`], plus
-/// each scheme's typed key and digest under its own handle.
-fn public_signing_material_handles() -> Vec<(String, String)> {
-    let mut handles: Vec<(String, String)> = LEGACY_VERF_MATERIAL_TYPES
-        .iter()
-        .map(|folder| (folder.to_string(), SIGNING_KEY_ID.to_string()))
-        .collect();
-    for scheme in SigningSchemeType::iter() {
-        let id = signing_material_id(scheme).to_string();
-        for folder in NON_LEGACY_VERF_MATERIAL_TYPES {
-            handles.push((folder.to_string(), id.clone()));
-        }
-    }
-    handles
-}
 
 fn generation_hint(material_type: MaterialType) -> &'static str {
     match material_type {
@@ -275,9 +256,15 @@ impl TestMaterialManager {
             fs::create_dir_all(&dest_pub).await?;
             fs::create_dir_all(&dest_priv).await?;
 
-            for (data_type, id) in public_signing_material_handles() {
-                self.copy_key_files(&source_pub, &dest_pub, &data_type, &id)
-                    .await?;
+            // `all_verf_material_slots` is what `kms-gen-keys` publishes.
+            for slot in all_verf_material_slots() {
+                self.copy_key_files(
+                    &source_pub,
+                    &dest_pub,
+                    &slot.data_type(),
+                    &slot.handle().to_string(),
+                )
+                .await?;
             }
             for data_type in [PrivDataType::SigningKey, PrivDataType::SigningSeed] {
                 self.copy_key_files(

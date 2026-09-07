@@ -10,7 +10,7 @@ use crate::engine::centralized::central_kms::{
 };
 use crate::engine::keyset_configuration::InternalKeySetConfig;
 use crate::engine::traits::{BackupOperator, ContextManager};
-use crate::engine::utils::MetricedError;
+use crate::engine::utils::{MetricedError, signing_identity_for};
 use crate::engine::validation::{
     RequestIdParsingErr, parse_grpc_request_id, validate_key_gen_request,
 };
@@ -163,25 +163,7 @@ pub async fn key_gen_impl<
     };
 
     let meta_store = Arc::clone(&service.key_meta_map);
-    let sk = service
-            .base_kms
-            .signing_identity()
-            .map_err(|e| {
-        MetricedError::new(
-            op_tag,
-            Some(req_id),
-            anyhow::anyhow!("Signing key is not present. This should only happen when server is booted in recovery mode: {}", e),
-            tonic::Code::FailedPrecondition,
-        )
-    })?;
-    sk.ensure_supported(&signing_schemes).map_err(|e| {
-        MetricedError::new(
-            op_tag,
-            Some(req_id),
-            anyhow::anyhow!("{e}"),
-            tonic::Code::InvalidArgument,
-        )
-    })?;
+    let sk = signing_identity_for(&service.base_kms, &signing_schemes, op_tag, Some(req_id))?;
 
     let token = CancellationToken::new();
     {

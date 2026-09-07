@@ -57,6 +57,7 @@ use kms_lib::client::client_wasm::Client;
 use kms_lib::consts::{
     DEFAULT_EPOCH_ID, DEFAULT_MPC_CONTEXT, DEFAULT_PARAM, SIGNING_KEY_ID, TEST_PARAM,
 };
+use kms_lib::cryptography::signatures::SigningSchemeType;
 use kms_lib::engine::utils::{base64_deserialize, base64_serialize, make_extra_data};
 use kms_lib::util::file_handling::{read_element, write_element};
 
@@ -1224,6 +1225,20 @@ pub struct CmdConfig {
     /// Set this if you want to download the generated keys/CRSes from all KMS cores
     #[clap(long, short = 'd', default_value_t = false)]
     pub download_all: bool,
+    /// The signature schemes to have the KMS sign its responses under, as a
+    /// repeated or comma-separated list of scheme names.
+    ///
+    /// Names are matched case-insensitively, so `--signing-schemes
+    /// ecdsa256k1,mldsa65` asks for a hybrid classic + post-quantum pair. Every
+    /// response is then required to carry a valid signature for each scheme
+    /// named. Leaving this out asks for `Ecdsa256k1` alone, which is what the
+    /// KMS defaults to.
+    ///
+    /// Every scheme other than `Ecdsa256k1` needs the KMS nodes to hold a root
+    /// signing seed; naming one they cannot serve is rejected before any work
+    /// starts.
+    #[clap(long, value_delimiter = ',', value_name = "SCHEME")]
+    pub signing_schemes: Vec<String>,
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone, PartialEq, Eq, EnumString, Display)]
@@ -1986,11 +2001,20 @@ pub async fn execute_cmd(
             }
         };
     }
+    let signing_schemes = SigningSchemeType::parse_requested(&cmd_config.signing_schemes)?;
+    if let Some(client) = internal_client.as_mut() {
+        client.set_signing_schemes(&signing_schemes)?;
+    }
     tracing::info!(
-        "Total #Parties: {}. #Cores to talk to: {}. FHE Parameters: {}",
+        "Total #Parties: {}. #Cores to talk to: {}. FHE Parameters: {}. Signing schemes: {}",
         num_parties,
         num_cores,
-        fhe_params.as_str_name()
+        fhe_params.as_str_name(),
+        signing_schemes
+            .iter()
+            .map(|scheme| scheme.to_string())
+            .collect::<Vec<_>>()
+            .join(", ")
     );
 
     let kms_addrs = Arc::new(addr_vec);

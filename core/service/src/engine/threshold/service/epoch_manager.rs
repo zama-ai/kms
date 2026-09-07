@@ -82,7 +82,7 @@ use crate::{
             session::{ImmutableSessionMaker, PRSSSetupCombined, SessionMaker},
         },
         traits::EpochManager,
-        utils::MetricedError,
+        utils::{MetricedError, signing_identity_for},
         validation::{
             RequestIdParsingErr, ResharingParams, VerifiedNewMpcEpochRequest,
             parse_grpc_request_id, parse_optional_grpc_request_id, validate_new_mpc_epoch_request,
@@ -871,22 +871,12 @@ impl<
 
         let immutable_session_maker = self.session_maker.make_immutable();
 
-        let sk = self.base_kms.signing_identity().map_err(|e| {
-            MetricedError::new(
-                OP_NEW_EPOCH,
-                Some(epoch_id_as_request_id),
-                e,
-                tonic::Code::FailedPrecondition,
-            )
-        })?;
-        sk.ensure_supported(&signing_schemes).map_err(|e| {
-            MetricedError::new(
-                OP_NEW_EPOCH,
-                Some(epoch_id_as_request_id),
-                anyhow::anyhow!("{e}"),
-                tonic::Code::InvalidArgument,
-            )
-        })?;
+        let sk = signing_identity_for(
+            &self.base_kms,
+            &signing_schemes,
+            OP_NEW_EPOCH,
+            Some(epoch_id_as_request_id),
+        )?;
 
         let crypto_storage = self.crypto_storage.clone();
         let session_maker = self.session_maker.clone();
@@ -1000,22 +990,12 @@ impl<
             .await?;
 
         let immutable_session_maker = self.session_maker.make_immutable();
-        let sk = self.base_kms.signing_identity().map_err(|e| {
-            MetricedError::new(
-                OP_NEW_EPOCH,
-                Some(epoch_id_as_request_id),
-                e,
-                tonic::Code::FailedPrecondition,
-            )
-        })?;
-        sk.ensure_supported(&signing_schemes).map_err(|e| {
-            MetricedError::new(
-                OP_NEW_EPOCH,
-                Some(epoch_id_as_request_id),
-                anyhow::anyhow!("{e}"),
-                tonic::Code::InvalidArgument,
-            )
-        })?;
+        let sk = signing_identity_for(
+            &self.base_kms,
+            &signing_schemes,
+            OP_NEW_EPOCH,
+            Some(epoch_id_as_request_id),
+        )?;
 
         let crypto_storage = self.crypto_storage.clone();
         let session_maker = self.session_maker.clone();

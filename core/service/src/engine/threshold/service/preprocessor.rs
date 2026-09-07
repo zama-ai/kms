@@ -48,7 +48,7 @@ use crate::{
             service::session::{ImmutableSessionMaker, validate_context_and_epoch},
             traits::KeyGenPreprocessor,
         },
-        utils::MetricedError,
+        utils::{MetricedError, signing_identity_for},
         validation::{RequestIdParsingErr, parse_grpc_request_id, validate_preproc_request},
     },
     util::{
@@ -480,22 +480,12 @@ impl<P: ProducerFactory<ResiduePolyF4Z128, SmallSession<ResiduePolyF4Z128>>> Rea
 
         tracing::info!("Starting preproc generation for Request ID {}", request_id);
 
-        let sk = self.base_kms.signing_identity().map_err(|e| {
-            MetricedError::new(
-                OP_INSECURE_KEYGEN_PREPROC_REQUEST,
-                Some(request_id),
-                e,
-                tonic::Code::FailedPrecondition,
-            )
-        })?;
-        sk.ensure_supported(&signing_schemes).map_err(|e| {
-            MetricedError::new(
-                OP_INSECURE_KEYGEN_PREPROC_REQUEST,
-                Some(request_id),
-                anyhow::anyhow!("{e}"),
-                tonic::Code::InvalidArgument,
-            )
-        })?;
+        let sk = signing_identity_for(
+            &self.base_kms,
+            &signing_schemes,
+            OP_INSECURE_KEYGEN_PREPROC_REQUEST,
+            Some(request_id),
+        )?;
 
         // Add preprocessing to metastore and fail in case it is already present.
         let meta_permit = add_req_to_meta_store(

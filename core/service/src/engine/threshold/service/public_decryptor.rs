@@ -55,7 +55,7 @@ use crate::{
             service::session::{ImmutableSessionMaker, validate_context_and_epoch},
             traits::PublicDecryptor,
         },
-        utils::MetricedError,
+        utils::{MetricedError, signing_identity_for},
         validation::{
             RequestIdParsingErr, parse_grpc_request_id, parse_optional_grpc_request_id,
             validate_public_decrypt_req,
@@ -329,22 +329,12 @@ impl<
             .collect::<Vec<_>>();
 
         let meta_store = Arc::clone(&self.pub_dec_meta_store);
-        let sigkey = self.base_kms.signing_identity().map_err(|e| {
-            MetricedError::new(
-                OP_PUBLIC_DECRYPT_REQUEST,
-                Some(req_id),
-                e,
-                tonic::Code::FailedPrecondition,
-            )
-        })?;
-        sigkey.ensure_supported(&signing_schemes).map_err(|e| {
-            MetricedError::new(
-                OP_PUBLIC_DECRYPT_REQUEST,
-                Some(req_id),
-                anyhow::anyhow!("{e}"),
-                tonic::Code::InvalidArgument,
-            )
-        })?;
+        let sigkey = signing_identity_for(
+            &self.base_kms,
+            &signing_schemes,
+            OP_PUBLIC_DECRYPT_REQUEST,
+            Some(req_id),
+        )?;
         let server_verf_key = self.base_kms.verf_key().to_legacy_bytes().map_err(|e| {
             MetricedError::new(
                 OP_PUBLIC_DECRYPT_REQUEST,

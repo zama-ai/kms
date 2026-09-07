@@ -1,4 +1,6 @@
 use crate::consts::SAFE_SER_SIZE_LIMIT;
+use crate::cryptography::signing::{SigningSchemeType, identity::NodeSigningIdentity};
+use crate::engine::base::BaseKmsStruct;
 use crate::vault::storage::StorageExt;
 use aws_smithy_types::base64;
 use kms_grpc::kms::v1::KeyMaterialAvailabilityResponse;
@@ -13,6 +15,7 @@ use observability::metrics_names::{
 use serde::Serialize;
 use serde::de::DeserializeOwned;
 use std::fmt::Display;
+use std::sync::Arc;
 use tfhe::safe_serialization::{safe_deserialize, safe_serialize};
 use tonic::Status;
 
@@ -95,6 +98,41 @@ where
 /// Highest `extra_data` version understood by [`make_extra_data`].
 /// Must stay in sync with `sanity_check_extra_data` in `engine::utils`.
 pub const MAX_EXTRA_DATA_VERSION: u8 = 2;
+
+/// The node's signing identity, checked to serve every scheme of `schemes`.
+///
+/// - No identity at all means the server booted in recovery mode, which is a
+///   state of the server rather than a fault of the request:
+///   [`tonic::Code::FailedPrecondition`].
+/// - A scheme the node holds no key for is the caller's mistake, and is refused
+///   before any work starts: [`tonic::Code::InvalidArgument`].
+pub(crate) fn signing_identity_for(
+    base_kms: &BaseKmsStruct,
+    schemes: &[SigningSchemeType],
+    op_metric: &'static str,
+    request_id: Option<RequestId>,
+) -> Result<Arc<NodeSigningIdentity>, MetricedError> {
+    let identity = base_kms.signing_identity().map_err(|e| {
+        MetricedError::new(
+            op_metric,
+            request_id,
+            anyhow::anyhow!(
+                "Signing key is not present. This should only happen when server is booted \
+                 in recovery mode: {e}"
+            ),
+            tonic::Code::FailedPrecondition,
+        )
+    })?;
+    identity.ensure_supported(schemes).map_err(|e| {
+        MetricedError::new(
+            op_metric,
+            request_id,
+            anyhow::anyhow!("{e}"),
+            tonic::Code::InvalidArgument,
+        )
+    })?;
+    Ok(identity)
+}
 
 /// Build an `extra_data` payload for a gRPC request, matching the format the KMS core expects
 /// (see `sanity_check_extra_data` in `engine::utils`). Layout:

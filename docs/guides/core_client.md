@@ -118,7 +118,14 @@ Other command line options are:
  - `--max-iter`: the maximum number of retries for retrieving a computation result from the KMS
  - `-a`/`--expect-all-responses`: if set, the tool waits for a response from all KMS cores. If not set, the tool continues once it has received the minimum amount of required responses, depending on the operation.
  - `-d`/`--download-all`: if set, the tool downloads the generated keys/CRSes from all KMS cores, rather than only from a single core.
+ - `--signing-schemes`: the signature schemes the KMS must sign its responses under, as a comma-separated list of scheme names (`Ecdsa256k1`, `Ed25519`, `MlDsa44`, `MlDsa65`, `MlDsa87`; matched case-insensitively). The tool then requires every response to carry a valid signature for each scheme named, so a missing one is an error rather than something to notice later. If the flag is left out, `Ecdsa256k1` alone is requested, which is what the KMS defaults to. Every scheme other than `Ecdsa256k1` requires the KMS nodes to hold a root signing seed — see [Choosing the signature schemes of a response](./entry_points.md#choosing-the-signature-schemes-of-a-response).
  - `-h`/`--help`: show the CLI help
+
+For example, to ask for a hybrid classic + post-quantum pair on a CRS generation:
+
+```bash
+$ cargo run --bin kms-core-client -- -f <path-to-toml-config-file> --signing-schemes ecdsa256k1,mldsa65 crs-gen --max-num-bits <max-num-bits>
+```
 
 ## Backup and recovery
 

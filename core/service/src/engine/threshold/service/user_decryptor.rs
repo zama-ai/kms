@@ -69,7 +69,7 @@ use crate::{
             service::session::{ImmutableSessionMaker, validate_context_and_epoch},
             traits::UserDecryptor,
         },
-        utils::MetricedError,
+        utils::{MetricedError, signing_identity_for},
         validation::{
             DSEP_USER_DECRYPTION, RequestIdParsingErr, parse_grpc_request_id,
             parse_optional_grpc_request_id, validate_user_decrypt_req,
@@ -528,22 +528,12 @@ impl<
         let crypto_storage = self.crypto_storage.clone();
         let rng = self.base_kms.new_rng().await;
 
-        let identity = self.base_kms.signing_identity().map_err(|e| {
-            MetricedError::new(
-                OP_USER_DECRYPT_REQUEST,
-                Some(req_id),
-                e,
-                tonic::Code::FailedPrecondition,
-            )
-        })?;
-        identity.ensure_supported(&signing_schemes).map_err(|e| {
-            MetricedError::new(
-                OP_USER_DECRYPT_REQUEST,
-                Some(req_id),
-                anyhow::anyhow!("{e}"),
-                tonic::Code::InvalidArgument,
-            )
-        })?;
+        let identity = signing_identity_for(
+            &self.base_kms,
+            &signing_schemes,
+            OP_USER_DECRYPT_REQUEST,
+            Some(req_id),
+        )?;
         let client_enc_key = UnifiedPublicEncKey::deserialize_and_validate(
             &client_enc_key_bytes_orig,
         )

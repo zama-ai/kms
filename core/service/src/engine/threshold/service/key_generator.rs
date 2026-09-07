@@ -65,7 +65,7 @@ use crate::{
             },
             traits::KeyGenerator,
         },
-        utils::MetricedError,
+        utils::{MetricedError, signing_identity_for},
         validation::{
             RequestIdParsingErr, parse_grpc_request_id, parse_optional_grpc_request_id,
             validate_key_gen_request,
@@ -367,17 +367,7 @@ impl<
 
         // Clone all the Arcs to give them to the tokio thread
         let meta_store = Arc::clone(&self.dkg_pubinfo_meta_store);
-        let sk = self.base_kms.signing_identity().map_err(|e| {
-            MetricedError::new(op_tag, Some(req_id), e, tonic::Code::FailedPrecondition)
-        })?;
-        sk.ensure_supported(&signing_schemes).map_err(|e| {
-            MetricedError::new(
-                op_tag,
-                Some(req_id),
-                anyhow::anyhow!("{e}"),
-                tonic::Code::InvalidArgument,
-            )
-        })?;
+        let sk = signing_identity_for(&self.base_kms, &signing_schemes, op_tag, Some(req_id))?;
         let crypto_storage = self.crypto_storage.clone();
         let eip712_domain_copy = eip712_domain.clone();
         let ongoing = Arc::clone(&self.ongoing);

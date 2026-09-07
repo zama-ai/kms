@@ -1,5 +1,5 @@
 use crate::cryptography::signatures::{PrivateSigKey, PublicSigKey};
-use crate::cryptography::signing::{SigningSchemeType, UnifiedPublicSigKey};
+use crate::cryptography::signing::{SigningError, SigningSchemeType, UnifiedPublicSigKey};
 #[cfg(feature = "non-wasm")]
 use aes_prng::AesRng;
 #[cfg(feature = "non-wasm")]
@@ -100,6 +100,19 @@ impl Client {
             .iter()
             .map(|scheme| kms_grpc::kms::v1::SigningSchemeType::from(*scheme) as i32)
             .collect()
+    }
+
+    /// Choose the schemes this client requests, and requires back.
+    pub fn set_signing_schemes(
+        &mut self,
+        requested: &[SigningSchemeType],
+    ) -> Result<(), SigningError> {
+        let raw: Vec<i32> = requested
+            .iter()
+            .map(|scheme| kms_grpc::kms::v1::SigningSchemeType::from(*scheme) as i32)
+            .collect();
+        self.signing_schemes = SigningSchemeType::resolve_requested(&raw)?;
+        Ok(())
     }
 
     pub fn get_server_pks(&self) -> anyhow::Result<&HashMap<u32, PublicSigKey>> {
