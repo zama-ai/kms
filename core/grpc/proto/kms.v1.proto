@@ -697,6 +697,13 @@ message NewMpcContextRequest {
 // Context information is removed and cannot be used anymore.
 message DestroyMpcContextRequest {
   RequestId context_id = 1;
+
+  // Field 2 was `repeated RequestId epoch_ids`, the set of epochs the caller wanted destroyed
+  // alongside the context. The KMS now derives that set itself and reports it in
+  // `DestroyMpcContextResponse`. A caller that predates the change still puts those bytes on the
+  // wire and the server ignores them, so the number must never be reused: a new field at 2 would
+  // silently inherit them and misread a list of request IDs as its own type.
+  reserved 2;
 }
 
 message DestroyMpcContextResponse {
