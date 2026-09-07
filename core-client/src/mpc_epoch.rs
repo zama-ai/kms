@@ -354,7 +354,7 @@ pub(crate) async fn do_new_epoch(
             let key_id_proto: Option<kms_grpc::kms::v1::RequestId> = Some(key_id.into());
             let preproc_id_proto: Option<kms_grpc::kms::v1::RequestId> = Some(preproc_id.into());
             for (_, response) in response_vec.iter() {
-                let signature = response
+                let reshared = response
                     .reshare_responses
                     .iter()
                     .find(|r| {
@@ -366,9 +366,8 @@ pub(crate) async fn do_new_epoch(
                             key_id,
                             preproc_id
                         )
-                    })?
-                    .external_signature
-                    .clone();
+                    })?;
+                let signature = crate::ecdsa_signature(&reshared.signatures)?.to_vec();
 
                 let verified = accepted_extra_data.iter().any(|extra_data| {
                     if let Some(keyset) = keyset.as_ref() {

@@ -271,7 +271,7 @@ pub(crate) async fn fetch_and_check_keygen(
 
             match verify.as_ref() {
                 Some(material) => {
-                    let external_signature = response.external_signature;
+                    let external_signature = crate::ecdsa_signature(&response.signatures)?.to_vec();
                     let prep_id = response.preprocessing_id.ok_or_else(|| {
                         anyhow::anyhow!(
                             "No preprocessing ID in keygen response, cannot verify external signature"
@@ -326,7 +326,7 @@ pub(crate) async fn fetch_and_check_keygen(
 
             match verify.as_ref() {
                 Some(material) => {
-                    let external_signature = response.external_signature;
+                    let external_signature = crate::ecdsa_signature(&response.signatures)?.to_vec();
                     let prep_id = response.preprocessing_id.ok_or_else(|| {
                         anyhow::anyhow!(
                             "No preprocessing ID in keygen response, cannot verify external signature"

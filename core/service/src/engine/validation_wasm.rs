@@ -1,7 +1,7 @@
 use alloy_dyn_abi::Eip712Domain;
 use alloy_primitives::Address;
 use hashing::DomainSep;
-use kms_grpc::kms::v1::{UserDecryptionResponse, UserDecryptionResponsePayload};
+use kms_grpc::kms::v1::{TypedSignature, UserDecryptionResponse, UserDecryptionResponsePayload};
 use std::collections::{HashMap, HashSet};
 use tfhe::FheTypes;
 use threshold_types::role::Role;
@@ -14,7 +14,9 @@ use crate::{
         signatures::{
             PublicSigKey, Signature, internal_verify_sig, recover_address_from_ext_signature,
         },
+        signing::{SigningSchemeType, UnifiedPublicSigKey, unified_verify},
     },
+    engine::base::user_dec_payload_bytes,
 };
 
 pub(crate) const DSEP_USER_DECRYPTION: DomainSep = *b"USER_DEC";
@@ -24,6 +26,7 @@ pub(crate) const DSEP_USER_DECRYPTION: DomainSep = *b"USER_DEC";
 /// All fields MUST originate from the client's own configuration or some trusted source.
 pub(crate) struct UserDecTrustedValidationContext<'a> {
     server_addresses: &'a HashMap<u32, Address>,
+    scheme_verf_keys: &'a HashMap<u32, HashMap<SigningSchemeType, UnifiedPublicSigKey>>,
     client_request: &'a ParsedUserDecryptionRequest,
     eip712_domain: &'a Eip712Domain,
     threshold: usize,
@@ -42,6 +45,7 @@ impl<'a> UserDecTrustedValidationContext<'a> {
     /// Creates a new context and check sanity
     pub fn new(
         server_addresses: &'a HashMap<u32, Address>,
+        scheme_verf_keys: &'a HashMap<u32, HashMap<SigningSchemeType, UnifiedPublicSigKey>>,
         client_request: &'a ParsedUserDecryptionRequest,
         eip712_domain: &'a Eip712Domain,
         threshold: Option<usize>,
@@ -199,6 +203,7 @@ fn authenticate_user_decrypt_and_check_meta_data(
     trusted_ctx: &UserDecTrustedValidationContext,
     response: &UserDecryptionResponsePayload,
     signature: &[u8],
+    signatures: &[TypedSignature],
     eip712_params: &Eip712VerificationParams,
 ) -> anyhow::Result<(PublicSigKey, Role)> {
     // TODO: Need to update this to a safer deserialization (which checks versions) with #2781 ?
@@ -224,8 +229,9 @@ fn authenticate_user_decrypt_and_check_meta_data(
     }
 
     // Prefer ECDSA signature over the eip712 one
+    // TODO(0.16): read the ECDSA entry of `signatures` when the two fields are
+    // removed, which is also the point at which no supported KMS lacks the list.
     if signature.is_empty() {
-        // check signature
         if eip712_params.response_external_signature.is_empty() {
             return Err(anyhow_error_and_log(
                 ERR_VALIDATE_USER_DECRYPTION_MISSING_SIGNATURE,
@@ -254,6 +260,61 @@ fn authenticate_user_decrypt_and_check_meta_data(
         {
             anyhow::bail!("Signature on received response is not valid!");
         }
+    }
+
+    // Every other entry has to verify, and an entry this client cannot check is a
+    // rejection rather than a skip.
+    let mut verified = vec![SigningSchemeType::Ecdsa256k1];
+    for typed in signatures {
+        let scheme = SigningSchemeType::try_from(typed.scheme).map_err(|e| {
+            anyhow_error_and_log(format!(
+                "the response carries a signature of an unknown scheme: {e}"
+            ))
+        })?;
+        if scheme == SigningSchemeType::Ecdsa256k1 {
+            // Verified above, from the deprecated fields that carry the same bytes.
+            continue;
+        }
+        let verf_key = trusted_ctx
+            .scheme_verf_keys
+            .get(&response.party_id)
+            .and_then(|keys| keys.get(&scheme))
+            .ok_or_else(|| {
+                anyhow_error_and_log(format!(
+                    "party {} signed under {scheme}, but this client holds no {scheme} \
+                     verification key for it",
+                    response.party_id
+                ))
+            })?;
+        let payload_bytes = user_dec_payload_bytes(
+            &bc2wrap::serialize(&response)?,
+            eip712_params.response_extra_data,
+        )?;
+        let signature = Signature::new(scheme, typed.signature.clone());
+        unified_verify(&DSEP_USER_DECRYPTION, &payload_bytes, &signature, verf_key).map_err(
+            |e| {
+                anyhow_error_and_log(format!(
+                    "the {scheme} signature of party {} did not verify: {e}",
+                    response.party_id
+                ))
+            },
+        )?;
+        verified.push(scheme);
+    }
+
+    // A scheme the request asked for has to have been verified, not merely
+    // present.
+    if let Some(missing) = trusted_ctx
+        .client_request
+        .signing_schemes()
+        .iter()
+        .find(|scheme| !verified.contains(scheme))
+    {
+        return Err(anyhow_error_and_log(format!(
+            "the response of party {} carries no verified {missing} signature, but {missing} \
+             was requested",
+            response.party_id
+        )));
     }
 
     Ok((
@@ -370,13 +431,11 @@ pub(crate) fn validate_user_decrypt_responses(
             response_extra_data: &cur_resp.extra_data,
             trusted_eip712_domain: trusted_ctx.eip712_domain,
         };
-        // The deprecated scalar `signature` field carries the raw internal ECDSA signature over the
-        // serialized payload.
-        // TODO(0.16) verify `signatures` and drop the two deprecated fields.
         let (verification_key, role) = match authenticate_user_decrypt_and_check_meta_data(
             trusted_ctx,
             payload,
             &cur_resp.signature,
+            &cur_resp.signatures,
             &eip712_params,
         ) {
             Ok(key) => key,
@@ -844,6 +903,7 @@ mod tests {
 
         let trusted_ctx = UserDecTrustedValidationContext::new(
             &server_addresses,
+            &HashMap::new(),
             &client_request,
             &dummy_domain,
             None,
@@ -866,6 +926,7 @@ mod tests {
                     &trusted_ctx,
                     &pivot_resp,
                     &[], // the ECDSA signature may be empty, thus we check the external one
+                    &[],
                     &params,
                 )
                 .unwrap_err()
@@ -888,6 +949,7 @@ mod tests {
                     &trusted_ctx,
                     &other_resp,
                     &[],
+                    &[],
                     &params,
                 )
                 .unwrap_err()
@@ -908,6 +970,7 @@ mod tests {
                     &trusted_ctx,
                     &pivot_resp,
                     &[], // the ECDSA signature may be empty, thus we check the external one
+                    &[],
                     &params,
                 )
                 .unwrap_err()
@@ -929,6 +992,7 @@ mod tests {
                 authenticate_user_decrypt_and_check_meta_data(
                     &trusted_ctx,
                     &other_resp,
+                    &[],
                     &[],
                     &params,
                 )
@@ -954,6 +1018,7 @@ mod tests {
                     &trusted_ctx,
                     &pivot_resp,
                     &signature_buf,
+                    &[],
                     &params,
                 )
                 .unwrap_err()
@@ -973,6 +1038,7 @@ mod tests {
                 &trusted_ctx,
                 &pivot_resp,
                 &[], // the ECDSA signature may be empty, thus we check the external one
+                &[],
                 &params,
             )
             .unwrap();
@@ -992,6 +1058,7 @@ mod tests {
                 &trusted_ctx,
                 &pivot_resp,
                 &signature_buf,
+                &[],
                 &params,
             )
             .unwrap();
@@ -1042,6 +1109,7 @@ mod tests {
 
         let trusted_ctx = UserDecTrustedValidationContext::new(
             &server_addresses,
+            &HashMap::new(),
             &client_request,
             &dummy_domain,
             None,
@@ -1089,7 +1157,7 @@ mod tests {
                 .unwrap();
                 UserDecryptionResponse {
                     signature: vec![],
-                    signatures: vec![],
+                    signatures: kms_grpc::rpc_types::ecdsa_signatures(external_signature.clone()),
                     external_signature,
                     payload: Some(payload),
                     extra_data: vec![],
@@ -1249,7 +1317,7 @@ mod tests {
                 .unwrap();
                 UserDecryptionResponse {
                     signature: vec![],
-                    signatures: vec![],
+                    signatures: kms_grpc::rpc_types::ecdsa_signatures(external_signature.clone()),
                     external_signature,
                     payload: Some(payload),
                     extra_data: vec![],
@@ -1422,7 +1490,7 @@ mod tests {
             .unwrap();
             UserDecryptionResponse {
                 signature: vec![],
-                signatures: vec![],
+                signatures: kms_grpc::rpc_types::ecdsa_signatures(external_signature.clone()),
                 external_signature,
                 payload: Some(payload0),
                 extra_data: vec![],
@@ -1452,7 +1520,7 @@ mod tests {
             .unwrap();
             UserDecryptionResponse {
                 signature: vec![],
-                signatures: vec![],
+                signatures: kms_grpc::rpc_types::ecdsa_signatures(external_signature.clone()),
                 external_signature,
                 payload: Some(payload),
                 extra_data: vec![],
@@ -1482,7 +1550,7 @@ mod tests {
             .unwrap();
             UserDecryptionResponse {
                 signature: vec![],
-                signatures: vec![],
+                signatures: kms_grpc::rpc_types::ecdsa_signatures(external_signature.clone()),
                 external_signature,
                 payload: Some(payload),
                 extra_data: vec![],
@@ -1507,6 +1575,7 @@ mod tests {
             );
             let bad_ctx = UserDecTrustedValidationContext::new(
                 &server_addresses,
+                &HashMap::new(),
                 &bad_client_request,
                 &dummy_domain,
                 None,
@@ -1520,6 +1589,7 @@ mod tests {
             let agg_resp = vec![resp0.clone(), resp1.clone(), resp2.clone()];
             let trusted_ctx = UserDecTrustedValidationContext::new(
                 &server_addresses,
+                &HashMap::new(),
                 &client_request,
                 &dummy_domain,
                 None,
@@ -1745,7 +1815,7 @@ mod tests {
                 .unwrap();
                 UserDecryptionResponse {
                     signature: vec![],
-                    signatures: vec![],
+                    signatures: kms_grpc::rpc_types::ecdsa_signatures(external_signature.clone()),
                     external_signature,
                     payload: Some(payload),
                     extra_data: vec![],
@@ -1758,6 +1828,7 @@ mod tests {
         {
             let trusted_ctx = UserDecTrustedValidationContext::new(
                 &server_addresses,
+                &HashMap::new(),
                 &client_request,
                 &dummy_domain,
                 Some(1),
@@ -1781,6 +1852,7 @@ mod tests {
         {
             let trusted_ctx = UserDecTrustedValidationContext::new(
                 &server_addresses,
+                &HashMap::new(),
                 &client_request,
                 &dummy_domain,
                 Some(1),
@@ -1843,6 +1915,7 @@ mod tests {
                 (1u32..=4).map(|i| (i, addrs[i as usize - 1])).collect();
             let ctx = UserDecTrustedValidationContext::new(
                 &servers,
+                &HashMap::new(),
                 &client_request,
                 &dummy_domain,
                 None,
@@ -1858,6 +1931,7 @@ mod tests {
             assert!(
                 UserDecTrustedValidationContext::new(
                     &servers,
+                    &HashMap::new(),
                     &client_request,
                     &dummy_domain,
                     None,
@@ -1873,6 +1947,7 @@ mod tests {
             assert!(
                 UserDecTrustedValidationContext::new(
                     &servers,
+                    &HashMap::new(),
                     &client_request,
                     &dummy_domain,
                     Some(2),
@@ -1888,6 +1963,7 @@ mod tests {
             assert!(
                 UserDecTrustedValidationContext::new(
                     &servers,
+                    &HashMap::new(),
                     &client_request,
                     &dummy_domain,
                     None,
@@ -1904,6 +1980,7 @@ mod tests {
             assert!(
                 UserDecTrustedValidationContext::new(
                     &servers,
+                    &HashMap::new(),
                     &client_request,
                     &dummy_domain,
                     None,

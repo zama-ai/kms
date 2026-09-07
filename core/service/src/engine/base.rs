@@ -2074,11 +2074,22 @@ pub(crate) mod tests {
                     assert_eq!(scheme_sig.signature, sigs.external_signature);
                     assert_ne!(scheme_sig.signature, sigs.signature);
                 } else {
-                    // Every other scheme signs the raw payload.
+                    // Every other scheme signs the versioned payload, which carries
+                    // the response bytes together with the extra data.
+                    let signed =
+                        super::public_dec_payload_bytes(&payload_bytes, extra_data).unwrap();
                     let vk = sk.unified_verifying_key(*scheme).unwrap();
                     let sig = Signature::new(*scheme, scheme_sig.signature.clone());
-                    unified_verify(&DSEP_PUBLIC_DECRYPTION, &payload_bytes, &sig, &vk)
+                    unified_verify(&DSEP_PUBLIC_DECRYPTION, &signed, &sig, &vk)
                         .unwrap_or_else(|e| panic!("{scheme:?} signature should verify: {e}"));
+
+                    // The extra data is part of what that entry covers.
+                    let other =
+                        super::public_dec_payload_bytes(&payload_bytes, b"other extra").unwrap();
+                    assert!(
+                        unified_verify(&DSEP_PUBLIC_DECRYPTION, &other, &sig, &vk).is_err(),
+                        "{scheme:?} signature did not cover the extra data"
+                    );
 
                     // A tampered message must fail.
                     assert!(
@@ -2086,6 +2097,86 @@ pub(crate) mod tests {
                     );
                 }
             }
+        }
+    }
+
+    /// `external_signature` keeps behaving exactly as it did before the
+    /// multi-scheme feature.
+    #[test]
+    fn external_signature_still_behaves_as_before_multi_scheme() {
+        use crate::engine::validation::DSEP_PUBLIC_DECRYPTION;
+        use kms_grpc::kms::v1::PublicDecryptionResponsePayload;
+
+        let mut rng = AesRng::seed_from_u64(0x0DDD);
+        let (pk, sk) = gen_sig_keys(&mut rng);
+        let identity = NodeSigningIdentity::new(sk, RootSigningSeed::random(&mut rng));
+        let domain = dummy_domain();
+        let handles = vec![vec![0x11u8; 32]];
+        let extra_data = b"legacy extra data";
+
+        let payload = PublicDecryptionResponsePayload {
+            verification_key: bc2wrap::serialize(&pk).unwrap(),
+            plaintexts: vec![TypedPlaintext::from_u32(7)],
+            request_id: Some(RequestId::new_random(&mut rng).into()),
+        };
+        let sol_type =
+            compute_public_decryption_message(&handles, &payload.plaintexts, extra_data).unwrap();
+        // What a pre-multi-scheme node produced, and a pre-multi-scheme client checks.
+        let expected = crate::cryptography::signatures::compute_eip712_signature(
+            identity.ecdsa(),
+            &sol_type,
+            &domain,
+        )
+        .unwrap();
+
+        for schemes in [
+            vec![SigningSchemeType::Ecdsa256k1],
+            vec![SigningSchemeType::Ed25519],
+            vec![SigningSchemeType::Ecdsa256k1, SigningSchemeType::MlDsa65],
+        ] {
+            let sigs = super::sign_public_decryption_result(
+                &identity,
+                &schemes,
+                payload.clone(),
+                &handles,
+                extra_data.to_vec(),
+                &domain,
+            )
+            .unwrap();
+
+            // Populated for every choice of schemes, the ed25519-only one included.
+            assert!(
+                !sigs.external_signature.is_empty(),
+                "external_signature must stay populated until 0.16"
+            );
+            assert_eq!(sigs.external_signature, expected);
+
+            // A legacy client verifies it exactly as it always did.
+            let recovered =
+                recover_address_from_ext_signature(&sol_type, &domain, &sigs.external_signature)
+                    .unwrap();
+            assert_eq!(recovered, identity.verf_key().address());
+
+            // And the ECDSA entry of `signatures` is the same bytes, so validation
+            // reading the list sees what the legacy field carries.
+            if schemes.contains(&SigningSchemeType::Ecdsa256k1) {
+                let ecdsa_entry = sigs
+                    .signatures
+                    .iter()
+                    .find(|typed| {
+                        SigningSchemeType::try_from(typed.scheme)
+                            .is_ok_and(|scheme| scheme == SigningSchemeType::Ecdsa256k1)
+                    })
+                    .expect("an ECDSA entry was requested");
+                assert_eq!(ecdsa_entry.signature, sigs.external_signature);
+            }
+
+            // The deprecated scalar signature also keeps its pre-feature meaning:
+            // the raw ECDSA signature over the serialized payload.
+            let payload_bytes = bc2wrap::serialize(&payload).unwrap();
+            let legacy =
+                internal_sign(&DSEP_PUBLIC_DECRYPTION, &payload_bytes, identity.ecdsa()).unwrap();
+            assert_eq!(sigs.signature, legacy.as_bytes());
         }
     }
 

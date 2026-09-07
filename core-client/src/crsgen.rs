@@ -185,7 +185,7 @@ pub(crate) async fn fetch_and_check_crsgen(
             "Received CrsGenResult with request ID {}. Signature:{}. Digest:{}",
             resp_req_id,
             hex::encode(&response.crs_digest),
-            hex::encode(&response.external_signature)
+            hex::encode(crate::ecdsa_signature(&response.signatures).unwrap_or_default())
         );
 
         if request_id != resp_req_id {
@@ -201,7 +201,7 @@ pub(crate) async fn fetch_and_check_crsgen(
                 check_crsgen_ext_signature(
                     &crs,
                     &request_id,
-                    &response.external_signature,
+                    crate::ecdsa_signature(&response.signatures)?,
                     &material.domain,
                     material.extra_data.clone(),
                     kms_addrs,

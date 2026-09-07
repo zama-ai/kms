@@ -214,32 +214,6 @@ pub(crate) fn parse_grpc_request_id<'a, O: TryFrom<&'a kms_grpc::kms::v1::Reques
     })
 }
 
-/// Resolve the per-scheme `signatures` a request asks the response to be signed
-/// under, validating and de-duplicating the requested schemes.
-///
-/// An explicit list is honoured as given, so a caller that wants only
-/// [`SigningSchemeType::Ed25519`] gets exactly that. An empty list resolves to
-/// [`SigningSchemeType::Ecdsa256k1`], because a client that predates the field
-/// sends nothing and expects the ECDSA signature it always got. Every response
-/// therefore carries at least one entry in `signatures`, and an empty
-/// `signatures` list on a response means the peer predates the field.
-pub(crate) fn resolve_signing_schemes(
-    requested: &[i32],
-) -> Result<Vec<SigningSchemeType>, Box<dyn std::error::Error + Send + Sync>> {
-    if requested.is_empty() {
-        return Ok(vec![SigningSchemeType::Ecdsa256k1]);
-    }
-    let mut resolved = Vec::with_capacity(SigningSchemeType::COUNT);
-    for &raw in requested {
-        let scheme = SigningSchemeType::try_from(raw)
-            .map_err(|e| anyhow::anyhow!("unsupported signing scheme requested: {e}"))?;
-        if !resolved.contains(&scheme) {
-            resolved.push(scheme);
-        }
-    }
-    Ok(resolved)
-}
-
 /// Validates and unpacks a user decryption request and returns ciphertext, FheType, request digest, client
 /// encryption key, client verification key, key_id and request_id if valid.
 ///
@@ -349,7 +323,7 @@ fn unpack_user_decrypt_req(
         epoch_id,
         domain,
         req.extra_data.clone(),
-        resolve_signing_schemes(&req.signing_schemes)?,
+        SigningSchemeType::resolve_requested(&req.signing_schemes)?,
     ))
 }
 
@@ -435,7 +409,7 @@ fn unpack_public_decrypt_req(
         epoch_id,
         eip712_domain,
         req.extra_data.clone(),
-        resolve_signing_schemes(&req.signing_schemes)?,
+        SigningSchemeType::resolve_requested(&req.signing_schemes)?,
     ))
 }
 
@@ -571,7 +545,7 @@ fn verify_public_decrypt_signatures(
     }
 
     if let Some(request) = trusted_ctx.request {
-        let requested = match resolve_signing_schemes(&request.signing_schemes) {
+        let requested = match SigningSchemeType::resolve_requested(&request.signing_schemes) {
             Ok(requested) => requested,
             Err(e) => {
                 tracing::warn!("The request names a signing scheme that cannot be resolved: {e}");
@@ -1025,7 +999,8 @@ fn unpack_preproc_request(
         keyset_config,
         eip712_domain,
         req.extra_data,
-        resolve_signing_schemes(&req.signing_schemes).map_err(|e| anyhow::anyhow!("{e}"))?,
+        SigningSchemeType::resolve_requested(&req.signing_schemes)
+            .map_err(|e| anyhow::anyhow!("{e}"))?,
     ))
 }
 
@@ -1117,7 +1092,8 @@ fn unpack_key_gen_request(
         internal_keyset_config,
         eip712_domain,
         req.extra_data,
-        resolve_signing_schemes(&req.signing_schemes).map_err(|e| anyhow::anyhow!("{e}"))?,
+        SigningSchemeType::resolve_requested(&req.signing_schemes)
+            .map_err(|e| anyhow::anyhow!("{e}"))?,
     ))
 }
 
@@ -1189,7 +1165,7 @@ fn unpack_crs_gen_request(req: CrsGenRequest) -> anyhow::Result<VerifiedCrsGenRe
         params,
         eip712_domain,
         extra_data: req.extra_data,
-        signing_schemes: resolve_signing_schemes(&req.signing_schemes)
+        signing_schemes: SigningSchemeType::resolve_requested(&req.signing_schemes)
             .map_err(|e| anyhow::anyhow!("{e}"))?,
     })
 }
@@ -1259,14 +1235,13 @@ fn unpack_new_mpc_epoch_req(req: NewMpcEpochRequest) -> anyhow::Result<VerifiedN
         epoch_id,
         resharing,
         extra_data: req.extra_data,
-        signing_schemes: resolve_signing_schemes(&req.signing_schemes)
+        signing_schemes: SigningSchemeType::resolve_requested(&req.signing_schemes)
             .map_err(|e| anyhow::anyhow!("{e}"))?,
     })
 }
 
 #[cfg(test)]
 mod tests {
-    use super::resolve_signing_schemes;
     use aes_prng::AesRng;
     use alloy_dyn_abi::Eip712Domain;
     use kms_grpc::{
@@ -1356,42 +1331,6 @@ mod tests {
             extra_data: signed.extra_data,
         }
     }
-
-    /// Empty signing schemes resolves to an empty list (opt-in), known schemes map through
-    #[test]
-    fn test_resolve_signing_schemes() {
-        // Empty ⇒ ECDSA: a client that predates the field sends nothing and
-        // expects the ECDSA signature it always got.
-        assert_eq!(
-            resolve_signing_schemes(&[]).unwrap(),
-            vec![SigningSchemeType::Ecdsa256k1]
-        );
-
-        // An explicit list is honoured as given; ECDSA is not added to it.
-        let ed25519 = kms_grpc::kms::v1::SigningSchemeType::Ed25519 as i32;
-        assert_eq!(
-            resolve_signing_schemes(&[ed25519]).unwrap(),
-            vec![SigningSchemeType::Ed25519]
-        );
-
-        // Known schemes map through, preserving order.
-        let ecdsa = kms_grpc::kms::v1::SigningSchemeType::Ecdsa256k1 as i32;
-        let mldsa65 = kms_grpc::kms::v1::SigningSchemeType::Mldsa65 as i32;
-        assert_eq!(
-            resolve_signing_schemes(&[ecdsa, mldsa65]).unwrap(),
-            vec![SigningSchemeType::Ecdsa256k1, SigningSchemeType::MlDsa65]
-        );
-
-        // Duplicates are removed while preserving first-seen order.
-        assert_eq!(
-            resolve_signing_schemes(&[mldsa65, ecdsa, mldsa65]).unwrap(),
-            vec![SigningSchemeType::MlDsa65, SigningSchemeType::Ecdsa256k1]
-        );
-
-        // An unknown scheme is an error.
-        assert!(resolve_signing_schemes(&[9999]).is_err());
-    }
-
     /// The verification key a response carries, deserialized — as `authenticate_public_decrypt_response`
     /// does before calling `verify_public_decrypt_signature`.
     fn vk_of(payload: &PublicDecryptionResponsePayload) -> PublicSigKey {

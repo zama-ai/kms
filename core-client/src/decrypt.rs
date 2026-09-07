@@ -264,7 +264,7 @@ fn check_external_decryption_signature(
             .as_ref()
             .ok_or_else(|| anyhow::anyhow!("missing payload in decryption response"))?;
         check_ext_pt_signature(
-            &response.external_signature,
+            crate::ecdsa_signature(&response.signatures)?,
             &payload.plaintexts,
             external_handles,
             domain.clone(),

@@ -134,6 +134,25 @@ impl SigningSchemeType {
         }
     }
 
+    /// The schemes a request asks its response to be signed under.
+    ///
+    /// An explicit list is honoured as given, so a caller that wants only
+    /// [`SigningSchemeType::Ed25519`] gets exactly that. An empty list resolves to
+    /// [`SigningSchemeType::Ecdsa256k1`].
+    pub fn resolve_requested(requested: &[i32]) -> Result<Vec<Self>, SigningError> {
+        if requested.is_empty() {
+            return Ok(vec![SigningSchemeType::Ecdsa256k1]);
+        }
+        let mut resolved = Vec::with_capacity(SigningSchemeType::COUNT);
+        for &raw in requested {
+            let scheme = SigningSchemeType::try_from(raw)?;
+            if !resolved.contains(&scheme) {
+                resolved.push(scheme);
+            }
+        }
+        Ok(resolved)
+    }
+
     /// The scheme's stable 4-byte tag, for binding a scheme into a hash input.
     fn tag(self) -> [u8; 4] {
         (kms_grpc::kms::v1::SigningSchemeType::from(self) as i32).to_le_bytes()
@@ -633,5 +652,40 @@ mod tests {
                 expected_len
             );
         }
+    }
+
+    /// Empty signing schemes resolves to an empty list (opt-in), known schemes map through
+    #[test]
+    fn test_resolve_signing_schemes() {
+        // Empty ⇒ ECDSA: a client that predates the field sends nothing and
+        // expects the ECDSA signature it always got.
+        assert_eq!(
+            SigningSchemeType::resolve_requested(&[]).unwrap(),
+            vec![SigningSchemeType::Ecdsa256k1]
+        );
+
+        // An explicit list is honoured as given; ECDSA is not added to it.
+        let ed25519 = kms_grpc::kms::v1::SigningSchemeType::Ed25519 as i32;
+        assert_eq!(
+            SigningSchemeType::resolve_requested(&[ed25519]).unwrap(),
+            vec![SigningSchemeType::Ed25519]
+        );
+
+        // Known schemes map through, preserving order.
+        let ecdsa = kms_grpc::kms::v1::SigningSchemeType::Ecdsa256k1 as i32;
+        let mldsa65 = kms_grpc::kms::v1::SigningSchemeType::Mldsa65 as i32;
+        assert_eq!(
+            SigningSchemeType::resolve_requested(&[ecdsa, mldsa65]).unwrap(),
+            vec![SigningSchemeType::Ecdsa256k1, SigningSchemeType::MlDsa65]
+        );
+
+        // Duplicates are removed while preserving first-seen order.
+        assert_eq!(
+            SigningSchemeType::resolve_requested(&[mldsa65, ecdsa, mldsa65]).unwrap(),
+            vec![SigningSchemeType::MlDsa65, SigningSchemeType::Ecdsa256k1]
+        );
+
+        // An unknown scheme is an error.
+        assert!(SigningSchemeType::resolve_requested(&[9999]).is_err());
     }
 }

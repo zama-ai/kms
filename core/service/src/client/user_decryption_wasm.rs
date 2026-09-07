@@ -6,6 +6,7 @@ use crate::cryptography::{
     encryption::{UnifiedPrivateEncKey, UnifiedPublicEncKey},
     signatures::{PublicSigKey, Signature, internal_verify_sig},
     signcryption::{UnifiedUnsigncryptionKey, UnsigncryptFHEPlaintext},
+    signing::{SigningError, SigningSchemeType},
 };
 use crate::engine::validation::{
     DSEP_USER_DECRYPTION, ERR_VALIDATE_USER_DECRYPTION_MISMATCH_EXTRA_DATA,
@@ -294,6 +295,65 @@ impl Client {
                 tracing::warn!("signature on received response is not valid ({})", e)
             })?;
         }
+
+        // Every non-ECDSA entry has to verify, and an entry this client cannot check
+        // is a rejection rather than a skip
+        let mut verified = vec![SigningSchemeType::Ecdsa256k1];
+        for typed in &resp.signatures {
+            let scheme = SigningSchemeType::try_from(typed.scheme).map_err(|e| {
+                anyhow_error_and_log(format!(
+                    "the response carries a signature of an unknown scheme: {e}"
+                ))
+            })?;
+            if scheme == SigningSchemeType::Ecdsa256k1 {
+                continue;
+            }
+            let verf_key = self
+                .scheme_verf_keys
+                .get(&payload.party_id)
+                .and_then(|keys| keys.get(&scheme))
+                .ok_or_else(|| {
+                    anyhow_error_and_log(format!(
+                        "party {} signed under {scheme}, but this client holds no {scheme} \
+                         verification key for it",
+                        payload.party_id
+                    ))
+                })?;
+            let payload_bytes = crate::engine::base::user_dec_payload_bytes(
+                &bc2wrap::serialize(&payload)?,
+                &resp.extra_data,
+            )?;
+            let signature = Signature::new(scheme, typed.signature.clone());
+            crate::cryptography::signing::unified_verify(
+                &DSEP_USER_DECRYPTION,
+                &payload_bytes,
+                &signature,
+                verf_key,
+            )
+            .map_err(|e| {
+                anyhow_error_and_log(format!(
+                    "the {scheme} signature of party {} did not verify: {e}",
+                    payload.party_id
+                ))
+            })?;
+            verified.push(scheme);
+        }
+
+        // A scheme the request asked for has to have been verified, not merely
+        // present: a party cannot drop the post-quantum entry of a hybrid request
+        // and pass on ECDSA alone.
+        if let Some(missing) = request
+            .signing_schemes()
+            .iter()
+            .find(|scheme| !verified.contains(scheme))
+        {
+            return Err(anyhow_error_and_log(format!(
+                "the response of party {} carries no verified {missing} signature, but \
+                 {missing} was requested",
+                payload.party_id
+            )));
+        }
+
         let receiver_id = self.client_address.to_vec();
         let unsign_key =
             UnifiedUnsigncryptionKey::new(dec_key, enc_key, &cur_verf_key, &receiver_id);
@@ -348,6 +408,7 @@ impl Client {
         let server_addresses = self.get_server_addrs();
         let ctx = UserDecTrustedValidationContext::new(
             &server_addresses,
+            &self.scheme_verf_keys,
             client_request,
             eip712_domain,
             threshold,
@@ -1029,9 +1090,21 @@ pub struct ParsedUserDecryptionRequest {
     ciphertext_handles: Vec<CiphertextHandle>,
     eip712_verifying_contract: alloy_primitives::Address,
     extra_data: Vec<u8>,
+    signing_schemes: Vec<SigningSchemeType>,
 }
 
 impl ParsedUserDecryptionRequest {
+    /// The schemes every response to this request has to be signed under.
+    pub fn signing_schemes(&self) -> &[SigningSchemeType] {
+        &self.signing_schemes
+    }
+
+    /// Record the schemes this request asks for, resolved by
+    /// [`SigningSchemeType::resolve_requested`].
+    pub fn with_signing_schemes(mut self, requested: &[i32]) -> Result<Self, SigningError> {
+        self.signing_schemes = SigningSchemeType::resolve_requested(requested)?;
+        Ok(self)
+    }
     pub fn new(
         signature: Option<alloy_primitives::Signature>,
         client_address: alloy_primitives::Address,
@@ -1047,6 +1120,7 @@ impl ParsedUserDecryptionRequest {
             ciphertext_handles,
             eip712_verifying_contract,
             extra_data,
+            signing_schemes: vec![SigningSchemeType::Ecdsa256k1],
         }
     }
 
@@ -1120,6 +1194,9 @@ impl TryFrom<&ParsedUserDecryptionRequestHex> for ParsedUserDecryptionRequest {
                 .collect::<Result<Vec<_>, JsError>>()?,
             eip712_verifying_contract,
             extra_data,
+            // The hex form of a request carries no scheme list, which on the wire
+            // means ECDSA.
+            signing_schemes: vec![SigningSchemeType::Ecdsa256k1],
         };
         Ok(out)
     }
@@ -1179,8 +1256,17 @@ impl TryFrom<&UserDecryptionResponse> for UserDecryptionResponseHex {
     type Error = anyhow::Error;
 
     fn try_from(resp: &UserDecryptionResponse) -> Result<Self, Self::Error> {
+        let ecdsa_signature = resp
+            .signatures
+            .iter()
+            .find(|typed| {
+                SigningSchemeType::try_from(typed.scheme)
+                    .is_ok_and(|scheme| scheme == SigningSchemeType::Ecdsa256k1)
+            })
+            .map(|typed| typed.signature.clone())
+            .ok_or_else(|| anyhow::anyhow!("the response carries no ECDSA signature"))?;
         Ok(Self {
-            signature: hex::encode(&resp.external_signature),
+            signature: hex::encode(&ecdsa_signature),
             payload: resp
                 .payload
                 .as_ref()
@@ -1219,6 +1305,7 @@ impl TryFrom<&UserDecryptionRequest> for ParsedUserDecryptionRequest {
             ciphertext_handles,
             eip712_verifying_contract,
             extra_data: value.extra_data.clone(),
+            signing_schemes: SigningSchemeType::resolve_requested(&value.signing_schemes)?,
         };
         Ok(out)
     }
