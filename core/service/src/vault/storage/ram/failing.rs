@@ -51,7 +51,6 @@ impl FailingRamStorage {
     }
 
     /// Remove `entry` from the wrapped storage and then return an error.
-    #[allow(dead_code, reason = "used in the next stacked PR")]
     pub(crate) fn set_fail_delete_after_mutation_at(&mut self, entry: StorageEntry) {
         self.fail_delete_at = Some((entry, FaultPhase::AfterMutation));
     }
@@ -68,24 +67,6 @@ impl FailingRamStorage {
     /// Every recorded store and delete, in the order the wrapper saw them.
     pub(crate) fn events(&self) -> &[StorageEvent] {
         &self.events
-    }
-
-    /// The events that changed stored data, including those that mutated and then failed.
-    #[allow(dead_code, reason = "used in the next stacked PR")]
-    pub(crate) fn mutations(&self) -> Vec<&StorageEvent> {
-        self.events
-            .iter()
-            .filter(|event| event.outcome.changed_storage())
-            .collect()
-    }
-
-    /// The events that returned an error, whatever they did to storage.
-    #[allow(dead_code, reason = "used in the next stacked PR")]
-    pub(crate) fn faults(&self) -> Vec<&StorageEvent> {
-        self.events
-            .iter()
-            .filter(|event| event.outcome.failed())
-            .collect()
     }
 
     pub(crate) fn state(&self) -> StorageState {

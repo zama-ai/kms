@@ -4,13 +4,7 @@ use crate::vault::storage::test_support::{
     FaultPhase, StorageEvent, StorageOp, StorageOutcome, assert_same_events,
 };
 use crate::vault::storage::{Storage, read_context_at_id};
-use std::{future::Future, sync::Arc, task::Poll};
-use threshold_networking::{
-    grpc::{CoreToCoreNetworkConfig, GrpcNetworkingManager},
-    tls::AttestedVerifier,
-};
-use tokio::sync::RwLock;
-use tokio_rustls::rustls::crypto::aws_lc_rs::default_provider;
+use std::{future::Future, task::Poll};
 
 /// A failed context store leaves persistent and in-memory state unchanged.
 #[rstest::rstest]
@@ -108,6 +102,7 @@ async fn failed_creation_cleanup_keeps_the_stored_context_retryable(
     );
 
     fixture.clear_faults().await;
+    fixture.clear_events().await;
     manager.destroy(*fixture.target.context_id()).await.unwrap();
 
     assert_eq!(fixture.state().await, fixture.before);
@@ -119,23 +114,11 @@ async fn failed_creation_cleanup_keeps_the_stored_context_retryable(
     assert!(manager.contains_consistent(&fixture.keeper_id).await);
     assert_same_events(
         &fixture.events().await,
-        &[
-            StorageEvent::new(
-                fixture.target_entry.clone(),
-                StorageOp::Store,
-                StorageOutcome::FailedAfterMutation,
-            ),
-            StorageEvent::new(
-                fixture.target_entry.clone(),
-                StorageOp::Delete,
-                StorageOutcome::FailedBeforeMutation,
-            ),
-            StorageEvent::new(
-                fixture.target_entry.clone(),
-                StorageOp::Delete,
-                StorageOutcome::Deleted,
-            ),
-        ],
+        &[StorageEvent::new(
+            fixture.target_entry.clone(),
+            StorageOp::Delete,
+            StorageOutcome::Deleted,
+        )],
     );
 }
 
@@ -267,24 +250,7 @@ async fn rejected_context_store_keeps_an_existing_context() {
 async fn failed_session_update_rolls_back_the_stored_context() {
     let fixture = ContextFixture::new(TargetState::Absent).await;
     let base_kms = BaseKmsStruct::new(KMSType::Threshold, fixture.signing_key.clone()).unwrap();
-    _ = default_provider().install_default();
-    let verifier = Arc::new(
-        AttestedVerifier::new(
-            None,
-            false,
-            #[cfg(feature = "testing")]
-            true,
-        )
-        .unwrap(),
-    );
-    let networking_manager = Arc::new(RwLock::new(
-        GrpcNetworkingManager::new(None, CoreToCoreNetworkConfig::default()).unwrap(),
-    ));
-    let session_maker = SessionMaker::new_uninitialized(
-        networking_manager,
-        Some(verifier),
-        base_kms.new_rng().await,
-    );
+    let session_maker = attested_session_maker(base_kms.new_rng().await);
     let mut invalid_context = fixture.target.clone();
     invalid_context.mpc_nodes[0].ca_cert =
         Some(b"-----BEGIN CERTIFICATE-----\nAQID\n-----END CERTIFICATE-----\n".to_vec());
@@ -293,7 +259,11 @@ async fn failed_session_update_rolls_back_the_stored_context() {
         .await
         .unwrap_err();
 
-    assert!(error.to_string().contains("certificate"));
+    assert!(
+        error
+            .to_string()
+            .contains("Failed to add context to verifier")
+    );
     assert_eq!(fixture.state().await, fixture.before);
     assert!(
         !session_maker

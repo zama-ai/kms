@@ -17,6 +17,13 @@ use crate::{
 };
 use kms_grpc::rpc_types::{KMSType, PrivDataType};
 use rand::rngs::OsRng;
+use std::sync::Arc;
+use threshold_networking::{
+    grpc::{CoreToCoreNetworkConfig, GrpcNetworkingManager},
+    tls::AttestedVerifier,
+};
+use tokio::sync::RwLock;
+use tokio_rustls::rustls::crypto::aws_lc_rs::default_provider;
 
 type TestStorage = CryptoMaterialStorage<RamStorage, FailingRamStorage>;
 
@@ -214,6 +221,10 @@ impl ContextFixture {
             .clear_fail_points();
     }
 
+    pub(super) async fn clear_events(&self) {
+        self.storage.private_storage.lock().await.clear_events();
+    }
+
     pub(super) async fn state(&self) -> StorageState {
         self.storage.private_storage.lock().await.state()
     }
@@ -221,6 +232,24 @@ impl ContextFixture {
     pub(super) async fn events(&self) -> Vec<StorageEvent> {
         self.storage.private_storage.lock().await.events().to_vec()
     }
+}
+
+/// Returns an empty session maker with attested TLS verification enabled.
+pub(super) fn attested_session_maker(rng: AesRng) -> SessionMaker {
+    _ = default_provider().install_default();
+    let verifier = Arc::new(
+        AttestedVerifier::new(
+            None,
+            false,
+            #[cfg(feature = "testing")]
+            true,
+        )
+        .unwrap(),
+    );
+    let networking_manager = Arc::new(RwLock::new(
+        GrpcNetworkingManager::new(None, CoreToCoreNetworkConfig::default()).unwrap(),
+    ));
+    SessionMaker::new_uninitialized(networking_manager, Some(verifier), rng)
 }
 
 pub(super) fn state_without_target(fixture: &ContextFixture) -> StorageState {
