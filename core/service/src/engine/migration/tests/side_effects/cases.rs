@@ -282,3 +282,255 @@ async fn failed_old_prss_cleanup_is_retryable() {
         assert_eq!(after_retry.get(control_entry), before.get(control_entry));
     }
 }
+
+/// A conflicting epoch-scoped CRS entry halts migration without changing either copy.
+#[tokio::test]
+async fn crs_migration_rejects_a_mismatched_target() {
+    let mut fixture =
+        CrsMigrationFixture::new("mismatched_crs_target", Some(b"legacy CRS metadatb")).await;
+
+    let error = migrate_crs_to_0_15_x(&mut fixture.storage)
+        .await
+        .unwrap_err();
+
+    assert!(error.to_string().contains("does not match"));
+    assert_eq!(fixture.storage.state(), fixture.before);
+    assert_same_events(
+        fixture.storage.events(),
+        &[StorageEvent::new(
+            fixture.target_entry.clone(),
+            StorageOp::Store,
+            StorageOutcome::SkippedExisting,
+        )],
+    );
+    fixture.assert_controls_unchanged();
+}
+
+/// A failure after migrating one CRS leaves partial progress that a retry can finish.
+#[tokio::test]
+async fn partially_completed_crs_migration_is_retryable() {
+    let mut storage = FailingRamStorage::new();
+    let data_type = PrivDataType::CrsInfo.to_string();
+    let mut crs_ids = [
+        request_id("partial_crs_migration_first"),
+        request_id("partial_crs_migration_second"),
+    ];
+    crs_ids.sort_by(|left, right| left.as_bytes().cmp(right.as_bytes()));
+    let [first_id, second_id] = crs_ids;
+    for crs_id in crs_ids {
+        storage
+            .store_bytes(LEGACY_CRS_DATA, &crs_id, &data_type)
+            .await
+            .unwrap();
+    }
+    let control_entries = seed_controls(&mut storage).await;
+    let before = storage.state();
+    let first_legacy = StorageEntry::new(first_id, None, &data_type);
+    let first_target = StorageEntry::new(first_id, Some(*DEFAULT_EPOCH_ID), &data_type);
+    let second_legacy = StorageEntry::new(second_id, None, &data_type);
+    let second_target = StorageEntry::new(second_id, Some(*DEFAULT_EPOCH_ID), &data_type);
+    storage.set_fail_store_at(second_target.clone());
+    storage.clear_events();
+
+    migrate_crs_to_0_15_x(&mut storage).await.unwrap_err();
+
+    let after_failure = storage.state();
+    assert!(!after_failure.contains_key(&first_legacy));
+    assert!(after_failure.contains_key(&first_target));
+    assert!(after_failure.contains_key(&second_legacy));
+    assert!(!after_failure.contains_key(&second_target));
+    for control_entry in &control_entries {
+        assert_eq!(after_failure.get(control_entry), before.get(control_entry));
+    }
+
+    storage.clear_fail_points();
+    migrate_crs_to_0_15_x(&mut storage).await.unwrap();
+
+    let after_retry = storage.state();
+    assert!(!after_retry.contains_key(&first_legacy));
+    assert!(after_retry.contains_key(&first_target));
+    assert!(!after_retry.contains_key(&second_legacy));
+    assert!(after_retry.contains_key(&second_target));
+    for control_entry in &control_entries {
+        assert_eq!(after_retry.get(control_entry), before.get(control_entry));
+    }
+}
+
+/// A failed CRS copy keeps the legacy entry and completes on retry.
+#[rstest::rstest]
+#[case(FaultPhase::BeforeMutation)]
+#[case(FaultPhase::AfterMutation)]
+#[tokio::test]
+async fn failed_crs_copy_is_retryable(#[case] fault_phase: FaultPhase) {
+    let mut fixture = CrsMigrationFixture::new("failed_crs_copy", None).await;
+    match fault_phase {
+        FaultPhase::BeforeMutation => fixture
+            .storage
+            .set_fail_store_at(fixture.target_entry.clone()),
+        FaultPhase::AfterMutation => fixture
+            .storage
+            .set_fail_store_after_mutation_at(fixture.target_entry.clone()),
+    }
+
+    migrate_crs_to_0_15_x(&mut fixture.storage)
+        .await
+        .unwrap_err();
+
+    let after_failure = fixture.storage.state();
+    assert!(after_failure.contains_key(&fixture.legacy_entry));
+    match fault_phase {
+        FaultPhase::BeforeMutation => assert!(!after_failure.contains_key(&fixture.target_entry)),
+        FaultPhase::AfterMutation => assert!(after_failure.contains_key(&fixture.target_entry)),
+    }
+    fixture.assert_controls_unchanged();
+    let failed_outcome = match fault_phase {
+        FaultPhase::BeforeMutation => StorageOutcome::FailedBeforeMutation,
+        FaultPhase::AfterMutation => StorageOutcome::FailedAfterMutation,
+    };
+    assert_same_events(
+        fixture.storage.events(),
+        &[StorageEvent::new(
+            fixture.target_entry.clone(),
+            StorageOp::Store,
+            failed_outcome,
+        )],
+    );
+
+    fixture.storage.clear_fail_points();
+    fixture.storage.clear_events();
+    migrate_crs_to_0_15_x(&mut fixture.storage).await.unwrap();
+
+    let after_retry = fixture.storage.state();
+    assert!(!after_retry.contains_key(&fixture.legacy_entry));
+    assert!(after_retry.contains_key(&fixture.target_entry));
+    fixture.assert_controls_unchanged();
+    let retry_store_outcome = match fault_phase {
+        FaultPhase::BeforeMutation => StorageOutcome::Created,
+        FaultPhase::AfterMutation => StorageOutcome::SkippedExisting,
+    };
+    assert_same_events(
+        fixture.storage.events(),
+        &[
+            StorageEvent::new(fixture.target_entry, StorageOp::Store, retry_store_outcome),
+            StorageEvent::new(
+                fixture.legacy_entry,
+                StorageOp::Delete,
+                StorageOutcome::Deleted,
+            ),
+        ],
+    );
+}
+
+/// A failed legacy CRS delete leaves a state that a later startup can finish.
+#[rstest::rstest]
+#[case(FaultPhase::BeforeMutation)]
+#[case(FaultPhase::AfterMutation)]
+#[tokio::test]
+async fn failed_legacy_crs_delete_is_retryable(#[case] fault_phase: FaultPhase) {
+    let mut fixture =
+        CrsMigrationFixture::new("failed_legacy_crs_delete", Some(LEGACY_CRS_DATA)).await;
+    match fault_phase {
+        FaultPhase::BeforeMutation => fixture
+            .storage
+            .set_fail_delete_at(fixture.legacy_entry.clone()),
+        FaultPhase::AfterMutation => fixture
+            .storage
+            .set_fail_delete_after_mutation_at(fixture.legacy_entry.clone()),
+    }
+
+    migrate_crs_to_0_15_x(&mut fixture.storage)
+        .await
+        .unwrap_err();
+
+    let after_failure = fixture.storage.state();
+    assert!(after_failure.contains_key(&fixture.target_entry));
+    match fault_phase {
+        FaultPhase::BeforeMutation => assert!(after_failure.contains_key(&fixture.legacy_entry)),
+        FaultPhase::AfterMutation => assert!(!after_failure.contains_key(&fixture.legacy_entry)),
+    }
+    fixture.assert_controls_unchanged();
+    let failed_outcome = match fault_phase {
+        FaultPhase::BeforeMutation => StorageOutcome::FailedBeforeMutation,
+        FaultPhase::AfterMutation => StorageOutcome::FailedAfterMutation,
+    };
+    assert_same_events(
+        fixture.storage.events(),
+        &[
+            StorageEvent::new(
+                fixture.target_entry.clone(),
+                StorageOp::Store,
+                StorageOutcome::SkippedExisting,
+            ),
+            StorageEvent::new(
+                fixture.legacy_entry.clone(),
+                StorageOp::Delete,
+                failed_outcome,
+            ),
+        ],
+    );
+
+    fixture.storage.clear_fail_points();
+    fixture.storage.clear_events();
+    migrate_crs_to_0_15_x(&mut fixture.storage).await.unwrap();
+
+    assert!(!fixture.storage.state().contains_key(&fixture.legacy_entry));
+    assert!(fixture.storage.state().contains_key(&fixture.target_entry));
+    fixture.assert_controls_unchanged();
+    let expected_retry_events = match fault_phase {
+        FaultPhase::BeforeMutation => vec![
+            StorageEvent::new(
+                fixture.target_entry,
+                StorageOp::Store,
+                StorageOutcome::SkippedExisting,
+            ),
+            StorageEvent::new(
+                fixture.legacy_entry,
+                StorageOp::Delete,
+                StorageOutcome::Deleted,
+            ),
+        ],
+        FaultPhase::AfterMutation => vec![],
+    };
+    assert_same_events(fixture.storage.events(), &expected_retry_events);
+}
+
+/// Migration rejects a successful delete response when the legacy CRS entry remains.
+#[tokio::test]
+async fn crs_migration_rejects_a_delete_that_did_not_happen() {
+    let mut fixture =
+        CrsMigrationFixture::new("ignored_legacy_crs_delete", Some(LEGACY_CRS_DATA)).await;
+    fixture
+        .storage
+        .set_noop_delete_at(fixture.legacy_entry.clone());
+
+    let error = migrate_crs_to_0_15_x(&mut fixture.storage)
+        .await
+        .unwrap_err();
+
+    assert!(error.to_string().contains("remains after deletion"));
+    assert_eq!(fixture.storage.state(), fixture.before);
+    fixture.assert_controls_unchanged();
+    assert_same_events(
+        fixture.storage.events(),
+        &[
+            StorageEvent::new(
+                fixture.target_entry.clone(),
+                StorageOp::Store,
+                StorageOutcome::SkippedExisting,
+            ),
+            StorageEvent::new(
+                fixture.legacy_entry.clone(),
+                StorageOp::Delete,
+                StorageOutcome::SucceededWithoutMutation,
+            ),
+        ],
+    );
+
+    fixture.storage.clear_fail_points();
+    fixture.storage.clear_events();
+    migrate_crs_to_0_15_x(&mut fixture.storage).await.unwrap();
+
+    assert!(!fixture.storage.state().contains_key(&fixture.legacy_entry));
+    assert!(fixture.storage.state().contains_key(&fixture.target_entry));
+    fixture.assert_controls_unchanged();
+}

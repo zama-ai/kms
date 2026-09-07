@@ -423,6 +423,14 @@ on-wire encoding goes through the pinned-`bincode` wrapper
 versioned types: `BackupCiphertextVersions`,
 `InternalCustodianContextVersions`, `AppKeyBlobVersions`.
 
+**Startup migrations.** The service moves material when a release changes its storage path. The
+v0.15 migration moves legacy private `CrsInfo` into `DEFAULT_EPOCH_ID`. It accepts the copy kept by
+v0.14 or creates one for an older installation. It removes the non-epoched entry only after the two
+copies match, and it stops startup if they differ or if the legacy entry remains after deletion. If
+the copies differ, an operator must inspect them and remove the incorrect copy before restarting.
+Once the migration completes, releases older than v0.14 can no longer load that CRS metadata because
+they only know the removed non-epoched path.
+
 **Freeze-and-replay harness.** [backward-compatibility/](backward-compatibility/)
 is a separate Cargo workspace (excluded from the root — see [Cargo.toml](Cargo.toml)
 — because each pinned historical version drags in a conflicting dependency
