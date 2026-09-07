@@ -36,6 +36,7 @@ Release
 | [`rolling-upgrade-testing.yml`](rolling-upgrade-testing.yml) | Mixed-version perf tests for `thresholdWithEnclave` | Manual |
 | [`pr-preview-deploy.yml`](pr-preview-deploy.yml) | Ephemeral PR environments | Workflow call |
 | [`pr-preview-destroy.yml`](pr-preview-destroy.yml) | Cleanup PR environments | PR close, label removal, scheduled |
+| [`pr-images-cleanup.yml`](pr-images-cleanup.yml) | Cleanup PR images | PR push, PR close |
 | [`rust-lint.yml`](rust-lint.yml) | `cargo fmt --check` + `cargo clippy -D warnings` + `make lint-dylint` | PRs |
 | [`common-testing.yml`](common-testing.yml) | Reusable test runner | Workflow call |
 | [`wasm-testing.yml`](wasm-testing.yml) | WASM test pipeline | Workflow call |
