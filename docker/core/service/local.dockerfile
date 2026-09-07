@@ -56,9 +56,6 @@ RUN git clone https://github.com/grpc-ecosystem/grpc-health-probe && \
 ## Fourth stage: Build and install grpc-health-probe -- For development only with extra tools
 FROM --platform=$BUILDPLATFORM prod AS dev
 
-ARG YQ_VERSION=v4.52.4
-ARG TARGETARCH=amd64
-
 USER root
 COPY --from=go-builder /out/grpc_health_probe /bin/grpc_health_probe
 

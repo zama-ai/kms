@@ -53,6 +53,75 @@ async fn failed_context_creation_restores_state(
     assert_same_events(&fixture.events().await, &expected_events);
 }
 
+/// A failed rollback keeps a context registered until it can be destroyed.
+#[rstest::rstest]
+#[case::centralized(ManagerKind::Centralized)]
+#[case::threshold(ManagerKind::Threshold)]
+#[tokio::test]
+async fn failed_creation_cleanup_keeps_the_stored_context_retryable(
+    #[case] manager_kind: ManagerKind,
+) {
+    let fixture = ContextFixture::new(TargetState::Absent).await;
+    let manager = fixture.manager(manager_kind).await;
+    fixture.fail_target_store(FaultPhase::AfterMutation).await;
+    fixture.fail_target_delete(FaultPhase::BeforeMutation).await;
+
+    let error = manager.create(&fixture.target).await.unwrap_err();
+
+    assert_eq!(error.code(), tonic::Code::Internal);
+    let after_failure = fixture.state().await;
+    assert_eq!(after_failure.len(), fixture.before.len() + 1);
+    for (entry, digest) in &fixture.before {
+        assert_eq!(
+            after_failure.get(entry),
+            Some(digest),
+            "entry changed: {entry:?}"
+        );
+    }
+    assert!(after_failure.contains_key(&fixture.target_entry));
+    assert!(
+        manager
+            .contains_consistent(fixture.target.context_id())
+            .await
+    );
+    assert!(manager.contains_consistent(&fixture.keeper_id).await);
+    assert_same_events(
+        &fixture.events().await,
+        &[
+            StorageEvent::new(
+                fixture.target_entry.clone(),
+                StorageOp::Store,
+                StorageOutcome::FailedAfterMutation,
+            ),
+            StorageEvent::new(
+                fixture.target_entry.clone(),
+                StorageOp::Delete,
+                StorageOutcome::FailedBeforeMutation,
+            ),
+        ],
+    );
+
+    fixture.clear_faults().await;
+    fixture.clear_events().await;
+    manager.destroy(*fixture.target.context_id()).await.unwrap();
+
+    assert_eq!(fixture.state().await, fixture.before);
+    assert!(
+        !manager
+            .contains_consistent(fixture.target.context_id())
+            .await
+    );
+    assert!(manager.contains_consistent(&fixture.keeper_id).await);
+    assert_same_events(
+        &fixture.events().await,
+        &[StorageEvent::new(
+            fixture.target_entry.clone(),
+            StorageOp::Delete,
+            StorageOutcome::Deleted,
+        )],
+    );
+}
+
 /// A delete failure before mutation keeps the context available across restart and retry.
 #[rstest::rstest]
 #[case::centralized(ManagerKind::Centralized)]
@@ -181,15 +250,20 @@ async fn rejected_context_store_keeps_an_existing_context() {
 async fn failed_session_update_rolls_back_the_stored_context() {
     let fixture = ContextFixture::new(TargetState::Absent).await;
     let base_kms = BaseKmsStruct::new(KMSType::Threshold, fixture.signing_key.clone()).unwrap();
-    let session_maker = SessionMaker::empty_dummy_session(base_kms.new_rng().await);
+    let session_maker = attested_session_maker(base_kms.new_rng().await);
     let mut invalid_context = fixture.target.clone();
-    invalid_context.mpc_nodes[0].external_url = "http://localhost".to_string();
+    invalid_context.mpc_nodes[0].ca_cert =
+        Some(b"-----BEGIN CERTIFICATE-----\nAQID\n-----END CERTIFICATE-----\n".to_vec());
 
     let error = atomic_update_context(&session_maker, &fixture.storage, None, &invalid_context)
         .await
         .unwrap_err();
 
-    assert!(error.to_string().contains("missing port"));
+    assert!(
+        error
+            .to_string()
+            .contains("Failed to add context to verifier")
+    );
     assert_eq!(fixture.state().await, fixture.before);
     assert!(
         !session_maker
@@ -373,6 +447,7 @@ async fn backup_failure_keeps_the_stored_context_registered(#[case] manager_kind
                 storage.clone(),
                 MetaStore::new(100, 10),
                 session_maker,
+                false,
             );
             assert_backup_failure(&manager, &storage, &context).await;
         }

@@ -1247,7 +1247,6 @@ pub(crate) async fn retrieve_from_meta_store<T>(
         Some(EntryState::Pending) => {
             let msg =
                 format!("Result in scope {metric_scope} with request ID {req_id} is not ready yet");
-            tracing::info!(msg);
             Err(MetricedError::new(
                 metric_scope,
                 Some(*req_id),
@@ -1302,7 +1301,6 @@ pub(crate) async fn retrieve_from_meta_store_with_timeout<T>(
     };
 
     let unavailable = |msg: String| {
-        tracing::info!(msg);
         MetricedError::new(
             metric_scope,
             Some(*req_id),
