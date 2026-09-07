@@ -18,14 +18,20 @@ use tfhe::{Unversionize, Versionize, named::Named};
 /// path and compare the complete state before and after the operation.
 ///
 /// Store and delete fail points name the exact storage entry to reject, and choose whether the
-/// error arrives before or after the wrapped storage applies the change. Both can be active at
-/// the same time and remain active until replaced or cleared. Every store and delete appends a
+/// error arrives before or after the wrapped storage applies the change. A separate delete mode
+/// models S3's idempotent `DeleteObject`: deleting a nonexistent key reports success, so addressing
+/// the wrong key can leave the intended object stored without returning an error. Faults remain
+/// active until replaced or cleared. Every store and delete appends a
 /// [`StorageEvent`], and [`Self::state`] snapshots the stored entries. Reads pass through to the
 /// wrapped storage and are not recorded.
-#[derive(Default)]
+///
+/// Cloning copies the stored data, fault points, and events. Clones do not share later changes.
+#[derive(Clone, Debug, Default)]
 pub struct FailingRamStorage {
     fail_store_at: Option<(StorageEntry, FaultPhase)>,
     fail_delete_at: Option<(StorageEntry, FaultPhase)>,
+    /// Intended entry left in place when an S3 delete is sent to the wrong, nonexistent key.
+    noop_delete_at: Option<StorageEntry>,
     events: Vec<StorageEvent>,
     inner: RamStorage,
 }
@@ -47,18 +53,26 @@ impl FailingRamStorage {
 
     /// Reject the delete of `entry` without touching the wrapped storage.
     pub(crate) fn set_fail_delete_at(&mut self, entry: StorageEntry) {
+        self.noop_delete_at = None;
         self.fail_delete_at = Some((entry, FaultPhase::BeforeMutation));
     }
 
     /// Remove `entry` from the wrapped storage and then return an error.
-    #[allow(dead_code, reason = "used in the next stacked PR")]
     pub(crate) fn set_fail_delete_after_mutation_at(&mut self, entry: StorageEntry) {
+        self.noop_delete_at = None;
         self.fail_delete_at = Some((entry, FaultPhase::AfterMutation));
+    }
+
+    /// Model an S3 delete sent to the wrong, nonexistent key: return success and keep `entry`.
+    pub(crate) fn set_noop_delete_at(&mut self, entry: StorageEntry) {
+        self.fail_delete_at = None;
+        self.noop_delete_at = Some(entry);
     }
 
     pub(crate) fn clear_fail_points(&mut self) {
         self.fail_store_at = None;
         self.fail_delete_at = None;
+        self.noop_delete_at = None;
     }
 
     pub(crate) fn clear_events(&mut self) {
@@ -70,17 +84,7 @@ impl FailingRamStorage {
         &self.events
     }
 
-    /// The events that changed stored data, including those that mutated and then failed.
-    #[allow(dead_code, reason = "used in the next stacked PR")]
-    pub(crate) fn mutations(&self) -> Vec<&StorageEvent> {
-        self.events
-            .iter()
-            .filter(|event| event.outcome.changed_storage())
-            .collect()
-    }
-
-    /// The events that returned an error, whatever they did to storage.
-    #[allow(dead_code, reason = "used in the next stacked PR")]
+    /// The events that returned an error, whether or not they changed storage.
     pub(crate) fn faults(&self) -> Vec<&StorageEvent> {
         self.events
             .iter()
@@ -114,6 +118,11 @@ impl FailingRamStorage {
             fail_point,
             Some((target, target_phase)) if target == entry && *target_phase == phase
         )
+    }
+
+    /// Whether deleting `entry` should return success without changing storage.
+    fn delete_is_noop(&self, entry: &StorageEntry) -> bool {
+        self.noop_delete_at.as_ref() == Some(entry)
     }
 
     fn record_store_result(
@@ -242,6 +251,14 @@ impl Storage for FailingRamStorage {
 
     async fn delete_data(&mut self, data_id: &RequestId, data_type: &str) -> anyhow::Result<()> {
         let entry = StorageEntry::new(*data_id, None, data_type);
+        if self.delete_is_noop(&entry) {
+            self.record(
+                entry,
+                StorageOp::Delete,
+                StorageOutcome::SucceededWithoutMutation,
+            );
+            return Ok(());
+        }
         if self.matches_fail_point((StorageOp::Delete, FaultPhase::BeforeMutation), &entry) {
             self.record(
                 entry,
@@ -363,6 +380,14 @@ impl StorageExt for FailingRamStorage {
         data_type: &str,
     ) -> anyhow::Result<()> {
         let entry = StorageEntry::new(*data_id, Some(*epoch_id), data_type);
+        if self.delete_is_noop(&entry) {
+            self.record(
+                entry,
+                StorageOp::Delete,
+                StorageOutcome::SucceededWithoutMutation,
+            );
+            return Ok(());
+        }
         if self.matches_fail_point((StorageOp::Delete, FaultPhase::BeforeMutation), &entry) {
             self.record(
                 entry,

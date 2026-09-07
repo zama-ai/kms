@@ -6,8 +6,8 @@ use crate::engine::threshold::service::session::PRSSSetupCombined;
 use crate::util::key_setup::ensure_all_verf_material;
 use crate::vault::storage::crypto_material::get_core_signing_key;
 use crate::vault::storage::{
-    Storage, StorageExt, StorageReader, read_context_at_id, read_versioned_at_request_id,
-    store_versioned_at_request_id,
+    Storage, StorageExt, StorageReader, StoreWriteOutcome, read_context_at_id,
+    read_versioned_at_request_id, store_versioned_at_request_id,
 };
 use algebra::galois_rings::degree_4::{ResiduePolyF4Z64, ResiduePolyF4Z128};
 use kms_grpc::ContextId;
@@ -17,6 +17,8 @@ use std::collections::{HashMap, HashSet};
 use std::str::FromStr;
 use std::sync::LazyLock;
 use threshold_execution::small_execution::prss::PRSSSetup;
+
+const DSEP_MIGRATION_COPY: hashing::DomainSep = *b"MIG_COPY";
 
 static LEGACY_DEFAULT_MPC_CONTEXT: LazyLock<ContextId> = LazyLock::new(|| {
     ContextId::from_bytes([
@@ -128,6 +130,7 @@ where
     Ok(())
 }
 
+/// Applies the storage migrations required to start a v0.15 service.
 pub async fn migrate_to_0_15_x<PubS, PrivS>(
     pub_storage: &mut PubS,
     priv_storage: &mut PrivS,
@@ -138,11 +141,68 @@ where
     PubS: StorageExt + Sync + Send,
     PrivS: StorageExt + Sync + Send,
 {
-    // No migration to 0.14 done, but previous version did use migrate_to_0_13_20 so we keep it for completeness
+    // Complete migrations from releases before v0.15 first.
     migrate_to_0_13_20(priv_storage, kms_type).await?;
-    // Migration for 0.15
+    migrate_crs_to_0_15_x(priv_storage).await?;
     migrate_prss_to_epoch(priv_storage, kms_type, migration_config).await?;
     migrate_public_verification_material(priv_storage, pub_storage).await
+}
+
+/// Moves legacy private CRS metadata into the default epoch.
+///
+/// Older installations can hold `CrsInfo` without an epoch. The v0.14 migration copied that entry
+/// into [`DEFAULT_EPOCH_ID`] but retained it for downgrade support. This migration accepts either
+/// state and removes the obsolete entry only after its epoch-scoped replacement has the same bytes.
+async fn migrate_crs_to_0_15_x<PrivS>(priv_storage: &mut PrivS) -> anyhow::Result<()>
+where
+    PrivS: StorageExt + Sync + Send,
+{
+    let data_type = PrivDataType::CrsInfo.to_string();
+    let mut legacy_crs_ids: Vec<_> = priv_storage
+        .all_data_ids(&data_type)
+        .await?
+        .into_iter()
+        .collect();
+    // Report conflicts in the same order on every startup.
+    legacy_crs_ids.sort_by(|left, right| left.as_bytes().cmp(right.as_bytes()));
+
+    for crs_id in legacy_crs_ids {
+        let legacy_data = priv_storage.load_bytes(&crs_id, &data_type).await?;
+        let write_outcome = priv_storage
+            .store_bytes_at_epoch(&legacy_data, &crs_id, &DEFAULT_EPOCH_ID, &data_type)
+            .await?;
+        let migrated_data = priv_storage
+            .load_bytes_at_epoch(&crs_id, &DEFAULT_EPOCH_ID, &data_type)
+            .await?;
+
+        if migrated_data != legacy_data {
+            if write_outcome == StoreWriteOutcome::Created {
+                // A faithful backend reads back the bytes it just accepted. If it does not, remove
+                // the bad copy while the legacy entry is still available so a retry can start cleanly.
+                priv_storage
+                    .delete_data_at_epoch(&crs_id, &DEFAULT_EPOCH_ID, &data_type)
+                    .await?;
+            }
+            anyhow::bail!(
+                "CRS metadata {crs_id} at epoch {} does not match its legacy entry; refusing to delete the legacy entry",
+                *DEFAULT_EPOCH_ID,
+            );
+        }
+
+        priv_storage.delete_data(&crs_id, &data_type).await?;
+        if priv_storage.data_exists(&crs_id, &data_type).await? {
+            anyhow::bail!(
+                "Legacy CRS metadata {crs_id} remains after deletion; refusing to complete the migration"
+            );
+        }
+
+        tracing::info!(
+            "Migrated CRS metadata {crs_id} to epoch {} and removed its legacy entry",
+            *DEFAULT_EPOCH_ID,
+        );
+    }
+
+    Ok(())
 }
 
 /// TODO Placeholder method to ensure we remember to clean up upgraded material at the next version (0.16.0)
@@ -498,7 +558,9 @@ where
     Ok(migrated_count)
 }
 
-/// Deletes obsolete threshold keys after having confirmed that the upgrade in `migrate_fhe_keys_v0_12_to_v0_13` has been successful.
+/// Deletes obsolete keys after confirming that each epoch-scoped replacement has the same length
+/// and SHAKE-256 digest as its legacy entry. The preceding migration copies these bytes without
+/// transforming them.
 async fn migrate_fhe_keys_after_0_13_x<S>(storage: &mut S, kms_type: KMSType) -> anyhow::Result<()>
 where
     S: StorageExt + Sync + Send,
@@ -518,7 +580,28 @@ where
             .data_exists_at_epoch(&key_id, &legacy_epoch_id, &data_type_str)
             .await?
         {
-            // Removes obsolete keys that have already been converted
+            let legacy_fingerprint = {
+                let data = storage.load_bytes(&key_id, &data_type_str).await?;
+                (
+                    data.len(),
+                    hashing::hash_element(&DSEP_MIGRATION_COPY, &data),
+                )
+            };
+            let migrated_fingerprint = {
+                let data = storage
+                    .load_bytes_at_epoch(&key_id, &legacy_epoch_id, &data_type_str)
+                    .await?;
+                (
+                    data.len(),
+                    hashing::hash_element(&DSEP_MIGRATION_COPY, &data),
+                )
+            };
+            if legacy_fingerprint != migrated_fingerprint {
+                anyhow::bail!(
+                    "Migrated {data_type} for key {key_id} at epoch {legacy_epoch_id} does not match the legacy entry; refusing to delete the legacy entry"
+                );
+            }
+            // The replacement was read back and matched, so the legacy entry can be removed.
             storage.delete_data(&key_id, &data_type_str).await?;
         } else {
             tracing::error!(
@@ -656,6 +739,8 @@ so there is no legacy PRSS state to migrate.",
     Ok(outcome)
 }
 
+/// Moves combined PRSS data to the current epoch ID and compares the deserialized values before
+/// deleting the legacy entry.
 async fn migrate_combined_prss_to_0_13_10<PrivS>(
     priv_storage: &mut PrivS,
 ) -> anyhow::Result<PrssCombinedEpochMigrationOutcome>
@@ -687,6 +772,18 @@ where
         &PrivDataType::PrssSetupCombined.to_string(),
     )
     .await?;
+    let migrated: PRSSSetupCombined = read_versioned_at_request_id(
+        priv_storage,
+        &(*DEFAULT_EPOCH_ID).into(),
+        #[expect(deprecated)]
+        &PrivDataType::PrssSetupCombined.to_string(),
+    )
+    .await?;
+    if migrated != prss {
+        anyhow::bail!(
+            "PRSS data under the current default epoch does not match the legacy entry; refusing to delete the legacy entry"
+        );
+    }
     priv_storage
         .delete_data(
             &(*LEGACY_DEFAULT_EPOCH_ID).into(),
@@ -702,7 +799,8 @@ where
     Ok(PrssCombinedEpochMigrationOutcome::Migrated)
 }
 
-/// Reads context under the old legacy default context ID and if it exists, re-stores it under the new default context ID.
+/// Moves the legacy context to the current ID and compares the deserialized values before deleting
+/// the legacy entry.
 async fn migrate_context_before_0_13_10<PrivS>(
     priv_storage: &mut PrivS,
 ) -> anyhow::Result<LegacyContextMigrationOutcome>
@@ -729,7 +827,13 @@ where
         &PrivDataType::ContextInfo.to_string(),
     )
     .await?;
-    // Remove old context. It is safe to do in this migration as it does not contain any critical, non restorable info
+    let migrated = read_context_at_id(priv_storage, &DEFAULT_MPC_CONTEXT).await?;
+    if migrated != context {
+        anyhow::bail!(
+            "Context under the current default ID does not match the legacy entry; refusing to delete the legacy entry"
+        );
+    }
+    // The replacement was read back and matched, so the legacy entry can be removed.
     priv_storage
         .delete_data(
             &(*LEGACY_DEFAULT_MPC_CONTEXT).into(),
@@ -818,7 +922,9 @@ where
     Ok(migrated_count)
 }
 
-/// Remove private keys stored under the legacy epoch ID
+/// Remove private keys stored under the legacy epoch ID once their current-epoch copies have the
+/// same length and SHAKE-256 digest. The preceding migration copies these bytes without
+/// transforming them.
 async fn remove_old_keys_for_0_13_20<PrivS>(
     priv_storage: &mut PrivS,
     kms_type: KMSType,
@@ -843,8 +949,30 @@ where
             .data_exists_at_epoch(&key_id, &new_epoch_id, &data_type_str)
             .await?
         {
-            // Removes obsolete keys that have already been converted,
-            // specifically from the legacy epoch.
+            let legacy_fingerprint = {
+                let data = priv_storage
+                    .load_bytes_at_epoch(&key_id, &LEGACY_DEFAULT_EPOCH_ID, &data_type_str)
+                    .await?;
+                (
+                    data.len(),
+                    hashing::hash_element(&DSEP_MIGRATION_COPY, &data),
+                )
+            };
+            let migrated_fingerprint = {
+                let data = priv_storage
+                    .load_bytes_at_epoch(&key_id, &new_epoch_id, &data_type_str)
+                    .await?;
+                (
+                    data.len(),
+                    hashing::hash_element(&DSEP_MIGRATION_COPY, &data),
+                )
+            };
+            if legacy_fingerprint != migrated_fingerprint {
+                anyhow::bail!(
+                    "Migrated {data_type} for key {key_id} at epoch {new_epoch_id} does not match the legacy entry; refusing to delete the legacy entry"
+                );
+            }
+            // The replacement was read back and matched, so the legacy entry can be removed.
             priv_storage
                 .delete_data_at_epoch(&key_id, &LEGACY_DEFAULT_EPOCH_ID, &data_type_str)
                 .await?;
@@ -861,6 +989,9 @@ where
 
 #[cfg(test)]
 mod tests {
+    mod crs;
+    mod side_effects;
+
     use super::migrate_public_verification_material;
     use super::*;
     use crate::conf::ContextEpochAssociation;

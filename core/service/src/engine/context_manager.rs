@@ -19,7 +19,7 @@ use crate::util::meta_store::{
     lock_entry_in_meta_store, update_err_req_in_meta_store,
 };
 use crate::vault::keychain::KeychainProxy;
-use crate::vault::storage::crypto_material::{CryptoMaterialStorage, data_exists};
+use crate::vault::storage::crypto_material::{CryptoMaterialStorage, StorageError, data_exists};
 use crate::vault::storage::{
     StorageExt, delete_context_at_id, delete_custodian_context_at_id, store_context_at_id,
 };
@@ -60,6 +60,11 @@ struct SharedContextManager<
     base_kms: BaseKmsStruct,
     crypto_storage: CryptoMaterialStorage<PubS, PrivS>,
     custodian_meta_store: Arc<RwLock<CustodianMetaStore>>,
+    /// Serializes each MPC context existence check with its storage and in-memory updates.
+    ///
+    /// One global lock covers the update's storage I/O. Context updates are rare administrative
+    /// operations.
+    mpc_context_update_lock: Mutex<()>,
     /// Serializes whole custodian-context setups; see `inner_new_custodian_context`.
     custodian_setup_lock: Mutex<()>,
 }
@@ -695,6 +700,7 @@ where
                 base_kms,
                 crypto_storage,
                 custodian_meta_store,
+                mpc_context_update_lock: Mutex::new(()),
                 custodian_setup_lock: Mutex::new(()),
             },
             cache: Arc::new(RwLock::new(HashSet::new())),
@@ -746,6 +752,8 @@ where
             .map_err(|e| {
                 MetricedError::new(OP_NEW_MPC_CONTEXT, None, e, tonic::Code::InvalidArgument)
             })?;
+        let _update_guard = self.inner.mpc_context_update_lock.lock().await;
+
         // Check if the context already exists
         if self
             .inner
@@ -762,14 +770,19 @@ where
             ));
         }
 
-        // store the new context
-        let res = self
+        let storage_result = self
             .inner
             .crypto_storage
             .write_context_info(new_context.context_id(), &new_context, OP_NEW_MPC_CONTEXT)
             .await;
+        let context_is_stored = match &storage_result {
+            Ok(()) => true,
+            Err(error) => {
+                context_write_persisted(&self.inner.crypto_storage, &new_context, error).await
+            }
+        };
 
-        {
+        if context_is_stored {
             let mut write_guard = self.cache.write().await;
             let is_new_insert = (*write_guard).insert(*new_context.context_id());
             if !is_new_insert {
@@ -780,7 +793,7 @@ where
             }
         }
 
-        res.map_err(|e| {
+        storage_result.map_err(|e| {
             MetricedError::new(
                 OP_NEW_MPC_CONTEXT,
                 Some((*new_context.context_id()).into()),
@@ -817,6 +830,7 @@ where
                     tonic::Code::InvalidArgument,
                 )
             })?;
+        let _update_guard = self.inner.mpc_context_update_lock.lock().await;
 
         let storage_ref = self.inner.crypto_storage.private_storage.clone();
         let mut guarded_priv_storage = storage_ref.lock().await;
@@ -862,7 +876,7 @@ where
             ));
         }
 
-        delete_context_at_id(&mut *guarded_priv_storage, &context_id)
+        delete_context_from_storage(&mut *guarded_priv_storage, &context_id)
             .await
             .map_err(|e| {
                 MetricedError::new(
@@ -958,6 +972,7 @@ where
                 base_kms,
                 crypto_storage,
                 custodian_meta_store,
+                mpc_context_update_lock: Mutex::new(()),
                 custodian_setup_lock: Mutex::new(()),
             },
             session_maker,
@@ -1015,8 +1030,11 @@ where
     }
 }
 
-/// Atomically update both the storage and the session maker with the new context info.
-/// If any of the two operations fail, rollback to the original state.
+/// Updates storage and the session maker with the new context information.
+///
+/// A storage failure needs no extra cleanup because [`CryptoMaterialStorage::write_all`] removes
+/// entries created by its failed write. If the session update fails, this function removes the
+/// context that it stored.
 ///
 /// This function should only be used in the threshold setting since SessionMaker does not exist in centralized mode.
 async fn atomic_update_context<
@@ -1028,60 +1046,102 @@ async fn atomic_update_context<
     my_role: Option<Role>,
     new_context: &ContextInfo,
 ) -> anyhow::Result<()> {
-    let context_id = new_context.context_id();
-    let res1 = crypto_storage
+    let storage_result = crypto_storage
         .write_context_info(new_context.context_id(), new_context, OP_NEW_MPC_CONTEXT)
         .await;
-
-    let res2 = session_maker.add_context_info(my_role, new_context).await;
-
-    match (res1, res2) {
-        (Ok(_), Ok(_)) => (),
-        (storage_res, session_res) => {
-            // Say which half failed and why; both errors are otherwise lost to the rollback.
-            let cause = match (storage_res.err(), session_res.err()) {
-                (Some(e1), Some(e2)) => {
-                    format!("storage write failed ({e1}); session maker update failed ({e2})")
-                }
-                (Some(e1), None) => format!("storage write failed ({e1})"),
-                (None, Some(e2)) => format!("session maker update failed ({e2})"),
-                // Unreachable: the (Ok, Ok) case is handled by the arm above.
-                (None, None) => "no error reported".to_string(),
-            };
-            tracing::error!(
-                context_id = %context_id,
-                "Rolling back context creation: {cause}"
-            );
-
-            // Rollback if any operation failed
-            // First delete the context from storage.
-            {
-                let storage_ref = crypto_storage.private_storage.clone();
-                let mut guarded_priv_storage = storage_ref.lock().await;
-                if let Err(e) = delete_context_at_id(&mut *guarded_priv_storage, context_id).await {
-                    // Best-effort: the context may never have reached storage. Worth surfacing
-                    // because it can leave the persisted state ahead of the in-memory state.
-                    tracing::warn!(
-                        context_id = %context_id,
-                        "Could not delete context from storage during rollback: {e}"
-                    );
-                }
-            }
-
-            // Then remove the context from the session maker and TLS verifier.
-            session_maker
-                .remove_context(context_id)
-                .await
-                .map_err(|e| {
-                    anyhow::anyhow!("Failed to remove context during atomic update rollback: {e}")
-                })?;
-            return Err(anyhow::anyhow!(
-                "Failed to atomically update context {context_id}: {cause}"
-            ));
-        }
+    let context_is_stored = match &storage_result {
+        Ok(()) => true,
+        Err(error) => context_write_persisted(crypto_storage, new_context, error).await,
+    };
+    if !context_is_stored {
+        let storage_error = storage_result.unwrap_err();
+        return Err(anyhow::anyhow!(
+            "Failed to store context {}: {storage_error}",
+            new_context.context_id()
+        ));
     }
 
-    Ok(())
+    if let Err(session_error) = session_maker.add_context_info(my_role, new_context).await {
+        let context_id = new_context.context_id();
+        tracing::error!(
+            context_id = %context_id,
+            "Rolling back context creation after the session maker update failed: {session_error}"
+        );
+        let storage_ref = crypto_storage.private_storage.clone();
+        let mut guarded_priv_storage = storage_ref.lock().await;
+        let cleanup_result =
+            delete_context_from_storage(&mut *guarded_priv_storage, context_id).await;
+        // Ensure no session state remains if `add_context_info` applied only part of the update.
+        let session_cleanup_result = session_maker.remove_context(context_id).await;
+
+        return match (cleanup_result, session_cleanup_result) {
+            (Ok(()), Ok(())) => Err(anyhow::anyhow!(
+                "Failed to add context to the session maker: {session_error}"
+            )),
+            (Err(storage_cleanup_error), Ok(())) => Err(anyhow::anyhow!(
+                "Failed to add context to the session maker: {session_error}; failed to remove the stored context: {storage_cleanup_error}"
+            )),
+            (Ok(()), Err(session_cleanup_error)) => Err(anyhow::anyhow!(
+                "Failed to add context to the session maker: {session_error}; failed to remove partial session state: {session_cleanup_error}"
+            )),
+            (Err(storage_cleanup_error), Err(session_cleanup_error)) => Err(anyhow::anyhow!(
+                "Failed to add context to the session maker: {session_error}; failed to remove the stored context: {storage_cleanup_error}; failed to remove partial session state: {session_cleanup_error}"
+            )),
+        };
+    }
+
+    storage_result.map_err(|error| anyhow::anyhow!("Failed to store context: {error}"))
+}
+
+/// Returns whether a failed write left this call's context in primary storage.
+async fn context_write_persisted<
+    PubS: Storage + Sync + Send + 'static,
+    PrivS: StorageExt + Sync + Send + 'static,
+>(
+    crypto_storage: &CryptoMaterialStorage<PubS, PrivS>,
+    context: &ContextInfo,
+    error: &StorageError,
+) -> bool {
+    match error {
+        StorageError::Backup => true,
+        StorageError::Purging => crypto_storage
+            .read_context_info(context.context_id())
+            .await
+            .is_ok_and(|stored| stored == *context),
+        _ => false,
+    }
+}
+
+/// Deletes a context and resolves an error that arrives after the backend applied the deletion.
+///
+/// The caller must serialize updates for `context_id` until the existence check completes.
+async fn delete_context_from_storage<PrivS: StorageExt + Sync + Send + 'static>(
+    storage: &mut PrivS,
+    context_id: &ContextId,
+) -> anyhow::Result<()> {
+    let delete_error = match delete_context_at_id(storage, context_id).await {
+        Ok(()) => return Ok(()),
+        Err(error) => error,
+    };
+
+    match storage
+        .data_exists(
+            &(*context_id).into(),
+            &PrivDataType::ContextInfo.to_string(),
+        )
+        .await
+    {
+        Ok(false) => {
+            tracing::warn!(
+                "Context {context_id} was removed although the storage backend reported an error: {delete_error}"
+            );
+            Ok(())
+        }
+        Ok(true) => Err(delete_error),
+        Err(check_error) => Err(anyhow::anyhow!(
+            "Failed to delete context: {delete_error}; failed to check the result: {check_error}"
+        )),
+    }
 }
 
 #[tonic::async_trait]
@@ -1101,6 +1161,7 @@ where
             .map_err(|e| {
                 MetricedError::new(OP_NEW_MPC_CONTEXT, None, e, tonic::Code::InvalidArgument)
             })?;
+        let _update_guard = self.inner.mpc_context_update_lock.lock().await;
 
         // First check if the context already exists
         if self
@@ -1166,6 +1227,8 @@ where
                     tonic::Code::InvalidArgument,
                 )
             })?;
+        let _update_guard = self.inner.mpc_context_update_lock.lock().await;
+
         if !self.session_maker.context_exists(&context_id).await {
             return Err(MetricedError::new(
                 OP_DESTROY_MPC_CONTEXT,
@@ -1186,23 +1249,18 @@ where
             ));
         }
 
-        // Delete persisted state first. This operation is idempotent, so a failure during the
-        // subsequent in-memory cleanup can be retried while the context is still live.
-        {
-            let storage_ref = self.inner.crypto_storage.private_storage.clone();
-            let mut guarded_priv_storage = storage_ref.lock().await;
-            delete_context_at_id(&mut *guarded_priv_storage, &context_id)
-                .await
-                .map_err(|e| {
-                    MetricedError::new(
-                        OP_DESTROY_MPC_CONTEXT,
-                        Some(context_id.into()),
-                        anyhow::anyhow!("Failed to delete context: {e}"),
-                        tonic::Code::Internal,
-                    )
-                })?;
-        }
-
+        let storage_ref = self.inner.crypto_storage.private_storage.clone();
+        let mut guarded_priv_storage = storage_ref.lock().await;
+        delete_context_from_storage(&mut *guarded_priv_storage, &context_id)
+            .await
+            .map_err(|e| {
+                MetricedError::new(
+                    OP_DESTROY_MPC_CONTEXT,
+                    Some(context_id.into()),
+                    e,
+                    tonic::Code::Internal,
+                )
+            })?;
         self.session_maker
             .remove_context(&context_id)
             .await
@@ -1306,6 +1364,9 @@ async fn gen_recovery_validation(
 
 #[cfg(test)]
 mod tests {
+    mod custodian_side_effects;
+    mod lifecycle_side_effects;
+
     use super::*;
     use crate::{
         backup::{
@@ -1363,10 +1424,32 @@ mod tests {
         PrivateSigKey,
         CryptoMaterialStorage<RamStorage, RamStorage>,
     ) {
-        let priv_storage = Arc::new(Mutex::new(RamStorage::new()));
-        let pub_storage = Arc::new(Mutex::new(RamStorage::new()));
+        setup_crypto_storage_with_stores(
+            make_default_context,
+            RamStorage::new(),
+            RamStorage::new(),
+            StorageProxy::from(ram::RamStorage::new()),
+        )
+        .await
+    }
+
+    async fn setup_crypto_storage_with_stores<PubS, PrivS>(
+        make_default_context: bool,
+        pub_storage: PubS,
+        priv_storage: PrivS,
+        backup_proxy: StorageProxy,
+    ) -> (
+        PublicSigKey,
+        PrivateSigKey,
+        CryptoMaterialStorage<PubS, PrivS>,
+    )
+    where
+        PubS: Storage + Sync + Send + 'static,
+        PrivS: StorageExt + Sync + Send + 'static,
+    {
+        let priv_storage = Arc::new(Mutex::new(priv_storage));
+        let pub_storage = Arc::new(Mutex::new(pub_storage));
         let guarded_pub_storage = pub_storage.lock().await;
-        let backup_proxy = StorageProxy::from(ram::RamStorage::new());
         let ssk = secretsharing::SecretShareKeychain::new(
             AesRng::seed_from_u64(1244),
             Some(&*guarded_pub_storage),
@@ -1381,7 +1464,7 @@ mod tests {
         drop(guarded_pub_storage);
 
         let crypto_storage =
-            CryptoMaterialStorage::<_, _>::new(priv_storage, pub_storage, Some(backup_vault));
+            CryptoMaterialStorage::<_, _>::new(pub_storage, priv_storage, Some(backup_vault));
 
         // store private signing key
         let (pk, sk) = gen_sig_keys(&mut OsRng);
