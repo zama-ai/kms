@@ -263,7 +263,7 @@ fn authenticate_user_decrypt_and_check_meta_data(
         }
     }
 
-    // Every other entry has to verify, and an entry this client cannot check is a
+    // Every entry has to verify, and an entry this client cannot check is a
     // rejection rather than a skip.
     let mut verified = vec![SigningSchemeType::Ecdsa256k1];
     for typed in signatures {
@@ -273,7 +273,21 @@ fn authenticate_user_decrypt_and_check_meta_data(
             ))
         })?;
         if scheme == SigningSchemeType::Ecdsa256k1 {
-            // Verified above, from the deprecated fields that carry the same bytes.
+            // This entry is the EIP-712 signature, so it is checked exactly as
+            // `external_signature` is.
+            check_ext_user_decryption_signature(
+                &typed.signature,
+                response,
+                trusted_ctx.client_request,
+                eip712_params.trusted_eip712_domain,
+                expected_addr,
+            )
+            .map_err(|e| {
+                anyhow_error_and_log(format!(
+                    "the ECDSA entry of the `signatures` of party {} did not verify: {e}",
+                    response.party_id
+                ))
+            })?;
             continue;
         }
         let verf_key = trusted_ctx

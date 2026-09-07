@@ -235,7 +235,6 @@ impl Client {
         }
         Ok(())
     }
-
 }
 
 /// Every scheme's verification key stored.
@@ -351,7 +350,11 @@ mod tests {
     fn every_scheme_of_a_result_verifies() {
         let identity = seeded_identity(1);
         let client = client_for(&identity, true);
-        let signatures = signatures_for(&identity, &SigningSchemeType::iter().collect::<Vec<_>>(), PAYLOAD);
+        let signatures = signatures_for(
+            &identity,
+            &SigningSchemeType::iter().collect::<Vec<_>>(),
+            PAYLOAD,
+        );
 
         let (party_id, address) = verify(&client, &signatures, PAYLOAD).unwrap();
         assert_eq!(party_id, PARTY);
@@ -402,7 +405,11 @@ mod tests {
     fn another_partys_signatures_are_rejected() {
         let identity = seeded_identity(5);
         let client = client_for(&identity, true);
-        let signatures = signatures_for(&seeded_identity(6), &SigningSchemeType::iter().collect::<Vec<_>>(), PAYLOAD);
+        let signatures = signatures_for(
+            &seeded_identity(6),
+            &SigningSchemeType::iter().collect::<Vec<_>>(),
+            PAYLOAD,
+        );
 
         assert!(verify(&client, &signatures, PAYLOAD).is_err());
     }
@@ -413,7 +420,11 @@ mod tests {
     fn an_entry_with_no_known_key_is_rejected() {
         let identity = seeded_identity(7);
         let client = client_for(&identity, false);
-        let signatures = signatures_for(&identity, &SigningSchemeType::iter().collect::<Vec<_>>(), PAYLOAD);
+        let signatures = signatures_for(
+            &identity,
+            &SigningSchemeType::iter().collect::<Vec<_>>(),
+            PAYLOAD,
+        );
 
         let err = verify(&client, &signatures, PAYLOAD)
             .unwrap_err()
@@ -446,7 +457,11 @@ mod tests {
     #[test]
     fn a_stripped_scheme_is_caught() {
         let identity = seeded_identity(10);
-        let signatures = signatures_for(&identity, &SigningSchemeType::iter().collect::<Vec<_>>(), PAYLOAD);
+        let signatures = signatures_for(
+            &identity,
+            &SigningSchemeType::iter().collect::<Vec<_>>(),
+            PAYLOAD,
+        );
         let requested: Vec<_> = SigningSchemeType::iter().collect();
 
         Client::ensure_requested_schemes_present(&signatures, &requested).unwrap();
