@@ -872,6 +872,27 @@ mod tests {
         }
     }
 
+    /// The wire path a caller that predates `scheme_digests` takes: it knows only
+    /// `signer_address` and sends the new field empty.
+    #[test]
+    fn mpc_node_accepts_signer_address_without_scheme_digests() {
+        let (verification_key, _sk) = gen_sig_keys(&mut rand::rngs::OsRng);
+        let (_node, mut proto) = node_proto_with_schemes(1, &[]);
+        assert!(
+            proto.scheme_digests.is_empty(),
+            "the legacy-only case needs an empty scheme_digests"
+        );
+        proto.signer_address = Some(verification_key.verf_key_id());
+
+        let recovered = NodeInfo::try_from(proto).unwrap();
+        assert_eq!(
+            recovered.scheme_digests.get(&SigningSchemeType::Ecdsa256k1),
+            Some(verification_key.verf_key_id().as_slice())
+        );
+        // Nothing else can be inferred from the legacy field alone.
+        assert_eq!(recovered.scheme_digests.iter().count(), 1);
+    }
+
     #[test]
     fn mpc_node_accepts_identical_repeated_scheme() {
         let (node, mut proto) = node_proto_with_schemes(
@@ -1014,6 +1035,20 @@ mod tests {
         );
         // No other scheme can be inferred from a legacy context.
         assert_eq!(upgraded.scheme_digests.iter().count(), 1);
+    }
+
+    /// `signer_address` was optional, because a party did not always know its peers' signing
+    /// keys. Such a context must upgrade to an identity with no digests at all rather than to a
+    /// placeholder ECDSA entry, which would later be compared against a real key.
+    #[test]
+    fn node_info_v1_without_signer_address_upgrades_to_no_digests() {
+        let upgraded = node_info_v1(None).upgrade().unwrap();
+
+        assert_eq!(upgraded.scheme_digests.iter().count(), 0);
+        assert_eq!(
+            upgraded.scheme_digests.get(&SigningSchemeType::Ecdsa256k1),
+            None
+        );
     }
 
     #[test]

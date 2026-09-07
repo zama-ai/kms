@@ -185,8 +185,8 @@ mod tests {
         }
     }
 
-    /// Deriving the same scheme from the same identity twice yields identical
-    /// keys.
+    /// Deriving the same scheme from the same identity twice yields the *identical*
+    /// key, and a clone derives that same key too.
     #[test]
     fn derivation_is_deterministic() {
         let mut rng = AesRng::seed_from_u64(202);
@@ -194,9 +194,20 @@ mod tests {
         let msg = b"deriving twice must give the same key";
 
         for scheme in SigningSchemeType::iter() {
+            // Compare the keys directly: verifying a signature only shows that signing and
+            // verifying agree, which `every_scheme_signs_and_verifies` already covers.
+            let first = identity.unified_verifying_key(scheme).unwrap();
+            let second = identity.unified_verifying_key(scheme).unwrap();
+            assert_eq!(first, second, "{scheme:?} derived two different keys");
+
+            let from_clone = identity.clone().unified_verifying_key(scheme).unwrap();
+            assert_eq!(
+                first, from_clone,
+                "{scheme:?} derived a different key from a clone"
+            );
+
             let sig = identity.unified_sign_with(scheme, DSEP, msg).unwrap();
-            let vk = identity.clone().unified_verifying_key(scheme).unwrap();
-            unified_verify(DSEP, msg, &sig, &vk)
+            unified_verify(DSEP, msg, &sig, &first)
                 .unwrap_or_else(|e| panic!("{scheme:?} derivation was not deterministic: {e}"));
         }
     }

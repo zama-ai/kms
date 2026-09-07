@@ -503,13 +503,21 @@ mod tests {
     }
 
     fn all_private_keys<R: rand::CryptoRng + RngCore>(rng: &mut R) -> Vec<UnifiedPrivateSigKey> {
-        vec![
+        let keys = vec![
             UnifiedPrivateSigKey::Ecdsa256k1(gen_sig_keys(rng).1),
             UnifiedPrivateSigKey::Ed25519(Ed25519::keygen_from_seed(&seed(rng))),
             UnifiedPrivateSigKey::MlDsa44(Box::new(MlDsa::<MlDsa44>::keygen_from_seed(&seed(rng)))),
             UnifiedPrivateSigKey::MlDsa65(Box::new(MlDsa::<MlDsa65>::keygen_from_seed(&seed(rng)))),
             UnifiedPrivateSigKey::MlDsa87(Box::new(MlDsa::<MlDsa87>::keygen_from_seed(&seed(rng)))),
-        ]
+        ];
+        // This list is written out by hand, so pin it to the enum: a scheme added without a key
+        // here would be skipped in silence by every test below rather than failing one.
+        assert_eq!(
+            keys.len(),
+            SigningSchemeType::iter().count(),
+            "all_private_keys does not cover every SigningSchemeType"
+        );
+        keys
     }
 
     /// Every scheme round-trips; a tampered message fails.
@@ -654,9 +662,10 @@ mod tests {
         }
     }
 
-    /// Empty signing schemes resolves to an empty list (opt-in), known schemes map through
+    /// An empty request resolves to ECDSA, an explicit list is honoured as given and
+    /// de-duplicated, and an unknown scheme is an error.
     #[test]
-    fn test_resolve_signing_schemes() {
+    fn resolve_requested_defaults_to_ecdsa_and_dedups() {
         // Empty ⇒ ECDSA: a client that predates the field sends nothing and
         // expects the ECDSA signature it always got.
         assert_eq!(
