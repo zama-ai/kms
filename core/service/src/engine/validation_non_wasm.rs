@@ -2285,8 +2285,8 @@ mod tests {
         tampered[0].signature[0] ^= 1;
 
         let server_pks = HashMap::from([(1u32, vk_of(&pivot))]);
-        let ctx = |domain: Option<&Eip712Domain>| {
-            let scheme_verf_keys = HashMap::new();
+        let scheme_verf_keys = HashMap::new();
+        let ctx = |domain| {
             PublicDecTrustedValidationContext::new(
                 &server_pks,
                 &scheme_verf_keys,

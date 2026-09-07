@@ -1629,6 +1629,7 @@ mod tests {
 
     /// Store `CACert` and every scheme's typed verification material at their fixed IDs, so
     /// the expected sets for those types are fully populated.
+    #[allow(dead_code)]
     async fn store_fixed_id_material(storage: &mut RamStorage) {
         storage
             .store_bytes(
