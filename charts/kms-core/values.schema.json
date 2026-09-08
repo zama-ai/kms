@@ -113,7 +113,10 @@
         "nameOverride": { "$ref": "#/definitions/nullableString" },
         "schedule": { "type": "string" },
         "resources": { "$ref": "#/definitions/k8sResources" },
-        "shell_command": { "$ref": "#/definitions/nullableString" },
+        "shell_command": {
+          "type": ["array", "null"],
+          "items": { "type": "string" }
+        },
         "storage": { "$ref": "#/definitions/storage" }
       }
     },
@@ -165,7 +168,7 @@
     },
     "decryptionMode": {
       "type": "string",
-      "enum": ["NoiseFloodSmall", "BitDecSmall"]
+      "enum": ["NoiseFloodSmall", "NoiseFloodLarge", "BitDecSmall", "BitDecLarge"]
     },
     "fheParameter": {
       "type": "string",
