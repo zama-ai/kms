@@ -855,16 +855,19 @@ fn gao_decoding_common<F: Field>(
     g: &Poly<F>,
 ) -> anyhow::Result<Poly<F>> {
     // d = n - k + 1
-    let d = (n + 1)
-        .checked_sub(k)
-        .ok_or_else(|| anyhow_error_and_log("Gao decoding failure: overflow computing d"))?;
+    let d = (n + 1).checked_sub(k).ok_or_else(|| {
+        anyhow_error_and_log(format!(
+            "Gao decoding failure: overflow computing d with n={n} points and dimension k={k}"
+        ))
+    })?;
 
     // We are expecting to correct more than what can be done:
     // Gao can only correct up to (d-1)/2 errors
     if 2 * max_errors >= d {
-        return Err(anyhow_error_and_log(
-            "Gao decoding failure: expected max number of errors is too large for given code parameters".to_string(),
-        ));
+        return Err(anyhow_error_and_log(format!(
+            "Gao decoding failure: expected max number of errors ({max_errors}) is too large for given code parameters n={n}, k={k}, d={d}: can correct at most {} errors",
+            d.saturating_sub(1) / 2
+        )));
     }
 
     // apply EEA to compute q0, q1 such that

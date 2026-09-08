@@ -965,6 +965,10 @@ impl ImmutableSessionMaker {
         self.inner.epoch_exists(epoch_id).await
     }
 
+    pub(crate) async fn epochs_for_context(&self, context_id: &ContextId) -> Vec<EpochId> {
+        self.inner.epochs_for_context(context_id).await
+    }
+
     pub(crate) async fn make_base_session(
         &self,
         session_id: SessionId,
@@ -1094,10 +1098,22 @@ pub(crate) async fn validate_context_and_epoch(
         .map_err(|e| MetricedError::new(op_tag, req_id, e, Code::NotFound))?;
 
     if !session_maker.epoch_exists(epoch_id).await {
+        // Name the epochs this context does have: the usual cause is a request still pointing at an
+        // epoch that a completed epoch change replaced. `EpochId`'s `Debug` is the raw byte array,
+        // so format through `Display` to keep the list readable.
+        let known_epochs = session_maker
+            .epochs_for_context(context_id)
+            .await
+            .iter()
+            .map(|epoch| epoch.to_string())
+            .collect::<Vec<_>>()
+            .join(", ");
         return Err(MetricedError::new(
             op_tag,
             req_id,
-            anyhow::anyhow!("Epoch {epoch_id} not found"),
+            anyhow::anyhow!(
+                "Epoch {epoch_id} not found for context {context_id}, which currently has epochs [{known_epochs}]"
+            ),
             Code::NotFound,
         ));
     }
