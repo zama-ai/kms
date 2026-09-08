@@ -1806,8 +1806,8 @@ pub(crate) mod tests {
         },
         util::{
             key_setup::{
-                ThresholdSigningKeyConfig, ensure_client_keys_exist,
-                ensure_threshold_default_epoch_exists, ensure_threshold_server_signing_keys_exist,
+                ThresholdSigningKeyConfig, ensure_client_keys_exist, ensure_threshold_epoch_exists,
+                ensure_threshold_server_signing_keys_exist,
             },
             rate_limiter::RateLimiterConfig,
         },
@@ -1931,13 +1931,9 @@ pub(crate) mod tests {
         ensure_client_keys_exist(Some(material_path), true).await;
         // A server never creates an epoch on its own, so the default epoch is written the way
         // the fixture generator writes it.
-        ensure_threshold_default_epoch_exists(
-            &mut priv_storage,
-            &DEFAULT_EPOCH_ID,
-            &DEFAULT_MPC_CONTEXT,
-        )
-        .await
-        .unwrap();
+        ensure_threshold_epoch_exists(&mut priv_storage, &DEFAULT_EPOCH_ID, &DEFAULT_MPC_CONTEXT)
+            .await
+            .unwrap();
         let epoch_before: std::collections::HashMap<RequestId, EpochData> =
             read_all_data_versioned(&priv_storage[0], &PrivDataType::EpochData.to_string())
                 .await

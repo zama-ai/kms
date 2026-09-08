@@ -383,12 +383,11 @@ What it verifies, and how failures are treated:
 | `VerfKey` and `VerfAddress` at `SIGNING_KEY_ID` match the key derived from the private `SigningKey` | boot fails |
 | Every entry in a `PubDataType` folder is accounted for by private storage or by a fixed-ID convention | error logged, boot continues |
 | Every top-level name in public storage is a `PubDataType` folder, and every folder can be listed | error logged, boot continues |
-| The node has no foreign material (`FhePrivateKey` on a threshold node; `FheKeyInfo`, `PrssSetup`, or `PrssSetupCombined` on a centralized node) | boot fails if foreign material exists |
+| The node has no foreign material (`FhePrivateKey` or legacy `PrssSetup` on a threshold node; `FheKeyInfo`, `PrssSetup`, `PrssSetupCombined`, or `EpochData` on a centralized node) | boot fails if foreign material exists |
 | Every `FheKeyInfo` and `CrsInfo` epoch folder has an `EpochData` entry | boot fails |
 | Every `EpochData` has a `Context` entry | boot fails |
 | Every `Context` entry uses its declared context ID as its storage handle | boot fails |
 | No unexpected non-epoched files exist | error logged, boot continues |
-| A centralized node has no `EpochData` entries | boot fails if `EpochData` exists |
 | No epoch folder exists under `Context` or `EpochData` | error logged, boot continues |
 | Every top-level name in private storage is a `PrivDataType` folder, and every inspected folder can be listed | error logged, boot continues |
 | `SigningKey` and `SigningSeed` each hold nothing or exactly one flat entry at `SIGNING_KEY_ID`, and at least one of them holds an entry | serving boot fails; recovery mode remains available |
@@ -399,9 +398,9 @@ holds a second entry. The layout check accepts every combination with at least o
 The current loader requires the ECDSA key and attaches the seed when one is present. Future
 seed-derived ECDSA support can use the accepted seed-only layout.
 
-On a threshold node, a flat `PrssSetup` entry is unexpected and produces an error log. The 0.15
-migration leaves flat `PrssSetupCombined` entries next to their `EpochData`. The 0.16 migration
-removes those entries. A centralized node rejects both PRSS types.
+On a threshold node, a flat `PrssSetup` entry is foreign material and fails boot. The 0.15
+migration leaves flat `PrssSetupCombined` entries next to their `EpochData`; those remain accepted
+until the 0.16 migration removes them. A centralized node rejects both PRSS types and `EpochData`.
 
 Custodian backup readiness is deliberately *not* part of this. It is a property of the vault's
 keychain rather than of the published material, and the backup path already reports it:

@@ -82,7 +82,7 @@ pub mod setup {
     };
     use crate::{
         util::key_setup::{
-            ensure_threshold_crs_exists, ensure_threshold_default_epoch_exists,
+            ensure_threshold_crs_exists, ensure_threshold_epoch_exists,
             ensure_threshold_keys_exist, ensure_threshold_server_signing_keys_exist,
         },
         vault::storage::{StorageType, file::FileStorage},
@@ -284,13 +284,9 @@ pub mod setup {
         .await;
         // The key shares and CRS metadata above live under `epoch_id`, so the fixture carries
         // that epoch as well; a node refuses to boot on shares whose epoch it does not know.
-        ensure_threshold_default_epoch_exists(
-            &mut threshold_priv_storages,
-            epoch_id,
-            &DEFAULT_MPC_CONTEXT,
-        )
-        .await
-        .unwrap();
+        ensure_threshold_epoch_exists(&mut threshold_priv_storages, epoch_id, &DEFAULT_MPC_CONTEXT)
+            .await
+            .unwrap();
     }
 }
 

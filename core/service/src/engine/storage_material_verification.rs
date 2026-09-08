@@ -68,7 +68,6 @@ const ERR_UNEXPECTED_PUBLIC_MATERIAL: &str = "Unexpected public material";
 const ERR_UNKNOWN_PUBLIC_DATA_TYPE: &str = "Unexpected data type in public storage";
 const ERR_UNLISTABLE_PUBLIC_MATERIAL: &str = "Could not list public material";
 const ERR_FOREIGN_PRIVATE_MATERIAL: &str = "Foreign material in private storage";
-const ERR_EPOCH_DATA_ON_CENTRALIZED: &str = "EpochData on centralized node";
 const ERR_DANGLING_EPOCH: &str = "Dangling epoch in private storage";
 const ERR_EPOCH_WITHOUT_CONTEXT: &str = "Epoch without context in private storage";
 const ERR_CONTEXT_ID_MISMATCH: &str = "Context is stored under a different ID than it declares";
@@ -781,10 +780,14 @@ impl PrivateLayout<'_> {
                     PrivDataType::FheKeyInfo,
                     PrivDataType::PrssSetup,
                     PrivDataType::PrssSetupCombined,
+                    PrivDataType::EpochData,
                 ],
                 "threshold",
             ),
-            PrivateLayout::Threshold { .. } => (&[PrivDataType::FhePrivateKey], "centralized"),
+            PrivateLayout::Threshold { .. } => (
+                &[PrivDataType::FhePrivateKey, PrivDataType::PrssSetup],
+                "centralized or legacy threshold",
+            ),
         }
     }
 }
@@ -894,41 +897,6 @@ async fn ensure_no_foreign_material<S: StorageReaderExt + Sync>(
         )
     }
     Ok(())
-}
-
-/// Fail if a centralized node holds any epoch registry data. Centralized nodes do not serve
-/// epochs, so `EpochData` has no valid role in their private storage.
-async fn ensure_no_epoch_data_on_centralized<S: StorageReaderExt + Sync>(
-    storage: &S,
-) -> anyhow::Result<()> {
-    let flat: BTreeSet<RequestId> = storage
-        .all_data_ids(&PrivDataType::EpochData.to_string())
-        .await
-        .map_err(|e| {
-            anyhow::anyhow!(
-                "{ERR_EPOCH_DATA_ON_CENTRALIZED}: could not list EpochData in storage \"{}\": {e}",
-                storage.info()
-            )
-        })?
-        .into_iter()
-        .collect();
-    let epoched = epoched_private_entries(storage, PrivDataType::EpochData)
-        .await
-        .map_err(|e| {
-            anyhow::anyhow!(
-                "{ERR_EPOCH_DATA_ON_CENTRALIZED}: could not list EpochData epochs in storage \"{}\": {e}",
-                storage.info()
-            )
-        })?;
-    if flat.is_empty() && epoched.is_empty() {
-        return Ok(());
-    }
-    anyhow::bail!(
-        "{ERR_EPOCH_DATA_ON_CENTRALIZED}: storage \"{}\" holds EpochData entries: flat [{}], epoch-scoped [{}]",
-        storage.info(),
-        join_display(&flat),
-        describe_epoched(&epoched)
-    )
 }
 
 /// Verify the fixed-handle layout of the node's signing identity.
@@ -1106,7 +1074,6 @@ fn sweeps_flat_entries(data_type: PrivDataType) -> bool {
         // Contexts are validated when they are loaded.
         PrivDataType::ContextInfo => false,
         // On a threshold node this folder is the registry that the abort checks reconcile against.
-        // On a centralized node `ensure_no_epoch_data_on_centralized` rejects it before the sweep.
         PrivDataType::EpochData => false,
         PrivDataType::FheKeyInfo | PrivDataType::FhePrivateKey | PrivDataType::CrsInfo => true,
         PrivDataType::PrssSetup => true,
@@ -1217,9 +1184,7 @@ where
     ensure_no_foreign_material(private_storage, &layout).await?;
     let stored_contexts = ensure_context_ids_match(private_storage).await?;
     match &layout {
-        PrivateLayout::Centralized => {
-            ensure_no_epoch_data_on_centralized(private_storage).await?;
-        }
+        PrivateLayout::Centralized => {}
         PrivateLayout::Threshold { epoch_contexts } => {
             ensure_no_dangling_epochs(private_storage, epoch_contexts).await?;
             ensure_epochs_have_contexts(epoch_contexts, &stored_contexts, &private_storage.info())?;
@@ -2515,6 +2480,20 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn legacy_prss_material_on_threshold_node_fails_boot() {
+        let mut storage = RamStorage::new();
+        store_flat(&mut storage, PrivDataType::SigningKey, &SIGNING_KEY_ID).await;
+        store_flat(&mut storage, LEGACY_PRSS_SETUP, &test_id(211)).await;
+
+        let err = verify_private_storage_layout(&storage, threshold_layout(&BTreeMap::new()))
+            .await
+            .expect_err("legacy split PRSS material must not remain on a threshold node")
+            .to_string();
+        assert!(err.contains(ERR_FOREIGN_PRIVATE_MATERIAL), "got: {err}");
+        assert!(err.contains("PrssSetup"), "got: {err}");
+    }
+
+    #[tokio::test]
     async fn prss_material_on_centralized_node_fails_boot() {
         for data_type in [LEGACY_PRSS_SETUP, LEGACY_PRSS_SETUP_COMBINED] {
             let mut storage = RamStorage::new();
@@ -2543,8 +2522,6 @@ mod tests {
             &(&test_epoch(9)).into(),
         )
         .await;
-        let split_prss_id = test_id(210);
-        store_flat(&mut storage, LEGACY_PRSS_SETUP, &split_prss_id).await;
         let unepoched_key_id = test_id(211);
         store_flat(&mut storage, PrivDataType::FheKeyInfo, &unepoched_key_id).await;
         store_flat(&mut storage, PrivDataType::SigningKey, &SIGNING_KEY_ID).await;
@@ -2558,16 +2535,13 @@ mod tests {
             .expect("leftovers must not fail boot");
         assert_eq!(
             report.unexpected_flat,
-            BTreeMap::from([
-                (PrivDataType::FheKeyInfo, BTreeSet::from([unepoched_key_id])),
-                (LEGACY_PRSS_SETUP, BTreeSet::from([split_prss_id])),
-            ])
+            BTreeMap::from([(PrivDataType::FheKeyInfo, BTreeSet::from([unepoched_key_id])),])
         );
         assert_eq!(
             report.unknown_data_types,
             BTreeSet::from(["stray".to_string()])
         );
-        assert_eq!(report.unexpected_count(), 3, "got: {report:?}");
+        assert_eq!(report.unexpected_count(), 2, "got: {report:?}");
     }
 
     #[tokio::test]
@@ -2580,9 +2554,10 @@ mod tests {
             .await
             .expect_err("EpochData must fail centralized boot");
         assert!(
-            err.to_string().contains(ERR_EPOCH_DATA_ON_CENTRALIZED),
+            err.to_string().contains(ERR_FOREIGN_PRIVATE_MATERIAL),
             "got: {err:#}"
         );
+        assert!(err.to_string().contains("EpochData"), "got: {err:#}");
     }
 
     #[tokio::test]

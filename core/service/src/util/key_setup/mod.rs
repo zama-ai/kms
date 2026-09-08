@@ -1448,8 +1448,8 @@ where
     true
 }
 
-/// Writes the default epoch of a threshold fixture: one `EpochData` entry per party under
-/// `epoch_id`, tagged with `context_id`, that holds a PRSS setup built without networking.
+/// Writes a threshold epoch fixture: one `EpochData` entry per party under `epoch_id`, tagged with
+/// `context_id`, that holds a PRSS setup built without networking.
 ///
 /// The setups come from [`PRSSSetup::testing_party_epoch_init`], which derives each set key from
 /// the party IDs in the set. Every party therefore holds matching keys, and the output is
@@ -1464,7 +1464,7 @@ where
 /// - If `priv_storages` is empty
 /// - If a PRSS setup cannot be built, or an entry cannot be stored
 #[cfg(any(test, feature = "testing"))]
-pub async fn ensure_threshold_default_epoch_exists<PrivS>(
+pub async fn ensure_threshold_epoch_exists<PrivS>(
     priv_storages: &mut [PrivS],
     epoch_id: &EpochId,
     context_id: &ContextId,
@@ -1487,7 +1487,7 @@ where
             .unwrap_or(false);
     }
     if all_data_exists {
-        tracing::info!("Default epoch {epoch_id} exists for all parties, skipping generation");
+        tracing::info!("Threshold epoch {epoch_id} exists for all parties, skipping generation");
         return Ok(false);
     }
 
@@ -1719,7 +1719,7 @@ mod tests {
     use crate::util::key_setup::{
         all_verf_material_slots, delete_all_verf_material, non_legacy_verf_material_slots,
     };
-    use crate::util::key_setup::{ensure_threshold_default_epoch_exists, max_threshold};
+    use crate::util::key_setup::{ensure_threshold_epoch_exists, max_threshold};
     use crate::vault::storage::crypto_material::{
         get_core_root_signing_seed, get_core_signing_key, read_verf_key_at, store_verf_key_at,
     };
@@ -1745,13 +1745,10 @@ mod tests {
     #[tokio::test]
     async fn default_epoch_fixture_is_written_once_per_party() {
         let mut storages: Vec<RamStorage> = (0..4).map(|_| RamStorage::new()).collect();
-        let written = ensure_threshold_default_epoch_exists(
-            &mut storages,
-            &DEFAULT_EPOCH_ID,
-            &DEFAULT_MPC_CONTEXT,
-        )
-        .await
-        .unwrap();
+        let written =
+            ensure_threshold_epoch_exists(&mut storages, &DEFAULT_EPOCH_ID, &DEFAULT_MPC_CONTEXT)
+                .await
+                .unwrap();
         assert!(written);
         for storage in &storages {
             let epoch: EpochData = read_versioned_at_request_id(
@@ -1767,13 +1764,10 @@ mod tests {
         }
 
         // Every party already holds the epoch, so nothing is written.
-        let written = ensure_threshold_default_epoch_exists(
-            &mut storages,
-            &DEFAULT_EPOCH_ID,
-            &DEFAULT_MPC_CONTEXT,
-        )
-        .await
-        .unwrap();
+        let written =
+            ensure_threshold_epoch_exists(&mut storages, &DEFAULT_EPOCH_ID, &DEFAULT_MPC_CONTEXT)
+                .await
+                .unwrap();
         assert!(!written);
     }
 
