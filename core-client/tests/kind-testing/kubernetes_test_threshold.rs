@@ -134,7 +134,8 @@ impl K8sTestContext {
             file_conf: Some(vec![self.config_path().to_string_lossy().to_string()]),
             command,
             logs: true,
-            max_iter: 200,
+            // A 4-party insecure keygen can outlast 200 polls (~100 s) on a slow runner.
+            max_iter: 400,
             expect_all_responses: true,
             download_all: false,
             signing_schemes: vec![],

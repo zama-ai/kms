@@ -19,6 +19,50 @@ use std::sync::Arc;
 use tfhe::safe_serialization::{safe_deserialize, safe_serialize};
 use tonic::Status;
 
+/// Characters kept from a caller-supplied identifier when logging it. A well-formed request, key,
+/// context, or epoch ID is 64 hex characters, so every valid ID survives intact.
+const MAX_LOGGED_ID_CHARS: usize = 64;
+
+/// Leading bytes kept from a caller-supplied external handle when logging it. Handles are 32-byte
+/// identifiers in practice, so a valid handle survives intact.
+const MAX_LOGGED_HANDLE_BYTES: usize = 32;
+
+/// Format an identifier taken straight off the wire for logging.
+///
+/// Before validation an ID is an arbitrary string, bounded only by the gRPC message size limit, so
+/// logging it verbatim lets one malformed request write that much into persistent logs. Keep a
+/// bounded prefix and report the original size instead.
+///
+/// Truncation counts `chars`, not bytes: `String::truncate` would panic on a caller-chosen
+/// multi-byte sequence straddling the cut.
+pub(crate) fn format_unvalidated_id(id: &Option<kms_grpc::kms::v1::RequestId>) -> String {
+    let Some(id) = id else {
+        return "<missing>".to_string();
+    };
+    let kept: String = id.request_id.chars().take(MAX_LOGGED_ID_CHARS).collect();
+    if kept.len() == id.request_id.len() {
+        kept
+    } else {
+        format!("{kept}...(truncated from {} bytes)", id.request_id.len())
+    }
+}
+
+/// Hex-encode an external ciphertext handle for logging, bounded in size.
+///
+/// Handles are caller-supplied and unvalidated, so hex-encoding one in full can allocate twice the
+/// gRPC message limit. A prefix is enough to correlate a KMS log line with a gateway request.
+pub(crate) fn format_handle(handle: &[u8]) -> String {
+    if handle.len() <= MAX_LOGGED_HANDLE_BYTES {
+        hex::encode(handle)
+    } else {
+        format!(
+            "{}...(+{} bytes)",
+            hex::encode(&handle[..MAX_LOGGED_HANDLE_BYTES]),
+            handle.len() - MAX_LOGGED_HANDLE_BYTES
+        )
+    }
+}
+
 /// Query key material availability from private storage
 ///
 /// This shared utility function queries FHE keys, CRS keys, and optionally preprocessing keys
@@ -62,9 +106,10 @@ where
             })?,
     };
 
-    // Query CRS IDs
+    // Query CRS IDs. Must span all epochs, like the FHE keys above: CRS metadata is stored
+    // epoch-scoped, and `all_data_ids` deliberately excludes epoch-scoped entries.
     let crs_ids_set = priv_storage
-        .all_data_ids(&PrivDataType::CrsInfo.to_string())
+        .all_data_ids_from_all_epochs(&PrivDataType::CrsInfo.to_string())
         .await
         .map_err(|e| {
             MetricedError::new(
@@ -477,9 +522,52 @@ where
 mod tests {
     use super::*;
     use crate::cryptography::signatures::{PublicSigKey, gen_sig_keys};
+    use crate::vault::storage::{Storage, ram::RamStorage};
 
     use aes_prng::AesRng;
     use rand::SeedableRng;
+
+    /// The availability response includes CRS metadata stored under an epoch.
+    #[tokio::test]
+    async fn reports_epoch_scoped_crs() {
+        let crs_id = RequestId::from_bytes([0x51; 32]);
+        let epoch_id = EpochId::from_bytes([0x52; 32]);
+        let mut storage = RamStorage::new();
+
+        storage
+            .store_bytes_at_epoch(
+                &[1, 2, 3],
+                &crs_id,
+                &epoch_id,
+                &PrivDataType::CrsInfo.to_string(),
+            )
+            .await
+            .unwrap();
+
+        let response = query_key_material_availability(&storage, KMSType::Threshold, vec![])
+            .await
+            .unwrap();
+
+        assert_eq!(response.crs_ids, vec![crs_id.to_string()]);
+    }
+
+    /// The availability response continues to include CRS metadata in the legacy flat layout.
+    #[tokio::test]
+    async fn reports_legacy_flat_crs() {
+        let crs_id = RequestId::from_bytes([0x53; 32]);
+        let mut storage = RamStorage::new();
+
+        storage
+            .store_bytes(&[1, 2, 3], &crs_id, &PrivDataType::CrsInfo.to_string())
+            .await
+            .unwrap();
+
+        let response = query_key_material_availability(&storage, KMSType::Threshold, vec![])
+            .await
+            .unwrap();
+
+        assert_eq!(response.crs_ids, vec![crs_id.to_string()]);
+    }
 
     #[test]
     fn test_metriced_error_creation() {

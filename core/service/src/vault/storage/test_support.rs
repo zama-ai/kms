@@ -3,7 +3,19 @@ use std::collections::HashMap;
 
 const DSEP_STORAGE_TEST: hashing::DomainSep = *b"STOR_TST";
 
-/// Identify a storage item by its three components: id, epoch and type
+/// Identifies one stored item using the components of its path on disk.
+///
+/// Tests use these coordinates to configure fault points and describe expected storage events.
+///
+/// The containing storage supplies the `PUB` or `PRIV` root. The entry itself contains the remaining path parts. The
+/// writes covered by these tests use:
+///
+/// - `PUB/PublicKey/ae0…037` maps to `StorageEntry(ae0…037, None, "PublicKey")`.
+/// - `PRIV/FheKeyInfo/080…001/ae0…037` maps to `StorageEntry(ae0…037, Some(080…001), "FheKeyInfo")`.
+/// - `PUB/CRS/b91…30f` maps to `StorageEntry(b91…30f, None, "CRS")`.
+/// - `PRIV/CrsInfo/080…001/b91…30f` maps to `StorageEntry(b91…30f, Some(080…001), "CrsInfo")`.
+///
+/// In these pairs, the public half has no epoch and is shared across epochs. Each private half belongs to one epoch.
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
 pub(crate) struct StorageEntry {
     pub(crate) data_id: RequestId,
@@ -100,4 +112,21 @@ impl StorageEvent {
             outcome,
         }
     }
+}
+
+/// Assert that two event slices contain the same events, including duplicates, in any order.
+pub(crate) fn assert_same_events(actual: &[StorageEvent], expected: &[StorageEvent]) {
+    assert_eq!(
+        event_counts(actual),
+        event_counts(expected),
+        "actual events: {actual:#?}"
+    );
+}
+
+fn event_counts(events: &[StorageEvent]) -> HashMap<StorageEvent, usize> {
+    let mut counts = HashMap::new();
+    for event in events {
+        *counts.entry(event.clone()).or_default() += 1;
+    }
+    counts
 }
