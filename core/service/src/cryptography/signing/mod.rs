@@ -22,7 +22,7 @@ pub use mldsa::MlDsaVerfKey;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::str::FromStr;
-use strum::{EnumCount, EnumIter};
+use strum::{EnumCount, EnumIter, VariantNames as _};
 use strum_macros::{Display, EnumString, VariantNames};
 use tfhe::named::Named;
 use tfhe_versionable::{Versionize, VersionsDispatch};
@@ -82,8 +82,8 @@ pub enum SigningError {
     UnknownScheme(i32),
     /// A string did not name any known signing scheme.
     #[error(
-        "unknown signing scheme {0:?}, expected one of: {}",
-        SigningSchemeType::VARIANTS.join(", ")
+        "unknown signing scheme {0:?}, expected one of: {expected}",
+        expected = SigningSchemeType::VARIANTS.join(", ")
     )]
     UnknownSchemeName(String),
 }

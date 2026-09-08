@@ -651,7 +651,7 @@ fn scheme_signing_jobs(
 /// client requested.
 ///
 /// `external_signature` is produced whether or not ECDSA was requested, because
-/// it is part of the released wire contract until it goes away in 0.16.å
+/// it is part of the released wire contract until it goes away in 0.16.
 fn sign_result<D: SolStruct>(
     identity: &NodeSigningIdentity,
     schemes: &[SigningSchemeType],
@@ -1259,7 +1259,11 @@ pub struct BaseKmsStruct {
 }
 
 impl BaseKmsStruct {
-    pub fn new(kms_type: KMSType, signing_identity: NodeSigningIdentity) -> anyhow::Result<Self> {
+    pub fn new(
+        kms_type: KMSType,
+        signing_identity: impl Into<NodeSigningIdentity>,
+    ) -> anyhow::Result<Self> {
+        let signing_identity = signing_identity.into();
         Ok(BaseKmsStruct {
             kms_type,
             verf_key: Arc::new(signing_identity.verf_key()),

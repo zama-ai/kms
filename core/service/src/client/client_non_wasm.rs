@@ -375,7 +375,7 @@ mod tests {
 
         let err = verify(&client, &[], PAYLOAD).unwrap_err().to_string();
         assert!(
-            err.contains("predates"),
+            err.contains("carries no signatures"),
             "the error does not name the cause: {err}"
         );
     }

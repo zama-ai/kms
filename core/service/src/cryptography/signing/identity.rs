@@ -37,6 +37,14 @@ pub struct NodeSigningIdentity {
 // the ECDSA key goes when the last handle to it drops.
 impl ZeroizeOnDrop for NodeSigningIdentity {}
 
+/// A bare ECDSA key *is* a seedless identity, so anything that takes an identity
+/// accepts one directly.
+impl From<PrivateSigKey> for NodeSigningIdentity {
+    fn from(ecdsa: PrivateSigKey) -> Self {
+        Self::ecdsa_only(ecdsa)
+    }
+}
+
 impl NodeSigningIdentity {
     /// A node identity whose non-ECDSA keys descend from `seed`.
     pub fn new(ecdsa: PrivateSigKey, seed: RootSigningSeed) -> Self {
