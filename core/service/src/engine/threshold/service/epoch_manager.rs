@@ -64,7 +64,6 @@ use threshold_types::role::TwoSetsRole;
 use tokio::sync::RwLock;
 use tokio_util::task::TaskTracker;
 use tonic::{Request, Response};
-use tracing::Instrument;
 
 use crate::{
     cryptography::{signatures::PrivateSigKey, signing::SigningSchemeType},
@@ -327,13 +326,8 @@ impl<
         let all_epochs = self.crypto_storage.read_all_epoch_data().await?;
 
         for (epoch_id, prss) in all_epochs {
-            let context_id = prss.context_id;
             self.session_maker.add_epoch(epoch_id, prss).await;
-            tracing::info!(
-                context_id = %context_id,
-                epoch_id = %epoch_id,
-                "Loaded epoch data from storage"
-            );
+            tracing::info!("Loaded epoch data from storage for epoch ID {}.", epoch_id);
         }
         Ok(())
     }
@@ -382,14 +376,13 @@ impl<
             .make_base_session(session_id, *context_id, NetworkMode::Sync)
             .await?;
 
+        tracing::info!("Starting PRSS for identity {}.", own_identity);
         tracing::info!(
-            context_id = %context_id,
-            epoch_id = %epoch_id,
-            num_parties = base_session.parameters.num_parties(),
-            threshold = base_session.parameters.threshold(),
-            "Starting PRSS for identity {}", own_identity
+            "Session has {} parties with threshold {}",
+            base_session.parameters.num_parties(),
+            base_session.parameters.threshold()
         );
-        tracing::debug!("Role assignments: {:?}", base_session.parameters.roles());
+        tracing::info!("Role assignments: {:?}", base_session.parameters.roles());
 
         // It seems we cannot do something like
         // `Init::default().init(&mut base_session).await?;`
@@ -415,9 +408,9 @@ impl<
             .await?;
         session_maker.add_epoch(*epoch_id, epoch_data).await;
         tracing::info!(
-            context_id = %context_id,
-            epoch_id = %epoch_id,
-            "PRSS completed successfully for identity {}", own_identity
+            "PRSS on epoch ID {} completed successfully for identity {}.",
+            epoch_id,
+            own_identity
         );
         Ok(())
     }
@@ -1567,58 +1560,44 @@ impl<
         .await?;
         let session_maker = self.session_maker.clone();
         let crypto_storage = self.crypto_storage.clone();
-        // The epoch change runs detached, so give it its own span: PRSS init and resharing then log
-        // under the context and epoch they belong to without each line repeating them.
-        let epoch_span = tracing::info_span!(
-            "new_epoch",
-            context_id = %context_id,
-            epoch_id = %epoch_id,
-            resharing = resharing_task.is_some(),
-            prss = do_prss
-        );
-        self.tracker.spawn(
-            async move {
-                let _creation_lease = creation_lease;
-                let _rate_limiter_permit = rate_limiter_permit;
-                let crypto_storage = crypto_storage;
-                let context_id = context_id;
-                let epoch_id = epoch_id;
-                let meta_store = meta_store;
-                if do_prss
-                    && let Err(e) = Self::internal_init_epoch(
-                        session_maker,
-                        &crypto_storage,
-                        &context_id,
-                        &epoch_id,
-                    )
-                    .await
-                {
-                    let err = format!("PRSS initialization failed during epoch creation: {e:?}");
-                    let _ =
-                        update_err_req_in_meta_store(&meta_store, meta_permit, err, OP_NEW_EPOCH)
-                            .await;
-                    return;
-                }
-                // Either reshare and commit the resulting EpochOutput, or commit
-                // PRSSInitOnly. Either way, the permit is consumed exactly once.
-                let result: Result<EpochOutput, String> =
-                    if let Some(resharing_task) = resharing_task {
-                        resharing_task
-                            .await
-                            .map_err(|e| format!("Resharing failed during epoch creation: {e:?}"))
-                    } else {
-                        Ok(EpochOutput::PRSSInitOnly)
-                    };
-                let _ = update_req_in_meta_store::<_, String>(
-                    &meta_store,
-                    meta_permit,
-                    result,
-                    OP_NEW_EPOCH,
+        self.tracker.spawn(async move {
+            let _creation_lease = creation_lease;
+            let _rate_limiter_permit = rate_limiter_permit;
+            let crypto_storage = crypto_storage;
+            let context_id = context_id;
+            let epoch_id = epoch_id;
+            let meta_store = meta_store;
+            if do_prss
+                && let Err(e) = Self::internal_init_epoch(
+                    session_maker,
+                    &crypto_storage,
+                    &context_id,
+                    &epoch_id,
                 )
-                .await;
+                .await
+            {
+                let err = format!("PRSS initialization failed during epoch creation: {e:?}");
+                let _ =
+                    update_err_req_in_meta_store(&meta_store, meta_permit, err, OP_NEW_EPOCH).await;
+                return;
             }
-            .instrument(epoch_span),
-        );
+            // Either reshare and commit the resulting EpochOutput, or commit
+            // PRSSInitOnly. Either way, the permit is consumed exactly once.
+            let result: Result<EpochOutput, String> = if let Some(resharing_task) = resharing_task {
+                resharing_task
+                    .await
+                    .map_err(|e| format!("Resharing failed during epoch creation: {e:?}"))
+            } else {
+                Ok(EpochOutput::PRSSInitOnly)
+            };
+            let _ = update_req_in_meta_store::<_, String>(
+                &meta_store,
+                meta_permit,
+                result,
+                OP_NEW_EPOCH,
+            )
+            .await;
+        });
 
         Ok(Response::new(Empty {}))
     }
