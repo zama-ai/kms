@@ -520,16 +520,6 @@ where
         Ok(())
     }
 
-    pub(crate) async fn purge_crs_material(&self, req_id: &RequestId, epoch_id: &EpochId) -> bool {
-        self.purge_material(
-            req_id,
-            Some(epoch_id),
-            &[PubDataType::CRS],
-            &[PrivDataType::CrsInfo],
-        )
-        .await
-    }
-
     /// Helper method to purge material.
     /// Returns true if purge is successful, false otherwise.
     /// Even if no data exists, it is still considered a successful purge.
@@ -823,7 +813,8 @@ where
                 }
             }
             Err(_) => {
-                // Clean up the "special" key data stored in the first step, in case the second storage step fails, to avoid having orphaned data
+                // The first write created the special public key; an existing entry would have
+                // made `write_all` return `Duplicate`. Remove it if the paired write fails.
                 if !self
                     .purge_material(key_id, Some(epoch_id), &[special_pub_type], &[])
                     .await
