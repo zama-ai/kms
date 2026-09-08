@@ -3681,6 +3681,7 @@ dependencies = [
  "anyhow",
  "clap",
  "kms",
+ "kms-grpc",
  "path-absolutize",
  "threshold-execution",
  "tokio",

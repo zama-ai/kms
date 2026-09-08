@@ -18,6 +18,9 @@ path = "src/main.rs"
 # all of `kms` to generate keys.
 # Core KMS dependencies
 kms = { path = "../../core/service", features = ["testing", "non-wasm"] }
+# Parse the storage data type enums used to validate generated material; this is an internal,
+# trusted workspace crate and avoids exposing generator-only validation through the KMS library.
+kms-grpc = { workspace = true, default-features = false }
 # This shouldn't be needed but without it the wasm-build breaks because features.
 threshold-execution = { workspace = true, features = ["testing"] }
 # threshold-fhe = { workspace = true, features = ["testing"] }
