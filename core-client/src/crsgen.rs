@@ -448,7 +448,10 @@ pub(crate) async fn do_abort_crs_gen(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use kms_grpc::{rpc_types::{PrivDataType, ecdsa_signatures}, solidity_types::CrsgenVerification};
+    use kms_grpc::{
+        rpc_types::{PrivDataType, ecdsa_signatures},
+        solidity_types::CrsgenVerification,
+    };
     use kms_lib::{
         consts::{
             DEFAULT_EPOCH_ID, SIGNING_KEY_ID, TEST_CENTRAL_CRS_ID, TEST_PARAM, default_extra_data,
