@@ -80,22 +80,6 @@ pub(crate) enum StorageOutcome {
     FailedAfterMutation,
 }
 
-#[allow(dead_code, reason = "used in the next stacked PR")]
-impl StorageOutcome {
-    /// Whether the operation left the stored bytes different from how it found them.
-    pub(crate) fn changed_storage(&self) -> bool {
-        matches!(
-            self,
-            Self::Created | Self::Deleted | Self::FailedAfterMutation
-        )
-    }
-
-    /// Whether the operation returned an error, whatever it did to storage.
-    pub(crate) fn failed(&self) -> bool {
-        matches!(self, Self::FailedBeforeMutation | Self::FailedAfterMutation)
-    }
-}
-
 /// A single store or delete, with the entry it named and what it did.
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
 pub(crate) struct StorageEvent {
