@@ -1,0 +1,5 @@
+# Partner overlay that never sets the required block. Chart defaults no longer
+# supply empty strings, so merged values must fail schema validation.
+kmsCore:
+  thresholdMode:
+    enabled: true

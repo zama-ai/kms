@@ -5,6 +5,9 @@ kmsPeers:
 kmsCore:
   thresholdMode:
     enabled: false
+    legacyPrssMask:
+      beforePublicDecryptId: ""
+      beforeUserDecryptId: ""
   aws:
     region: eu-west-1
   publicVault:

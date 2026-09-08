@@ -28,6 +28,9 @@ kmsCore:
     bucketSize: 50000
   thresholdMode:
     enabled: true
+    legacyPrssMask:
+      beforePublicDecryptId: ""
+      beforeUserDecryptId: ""
     initializationScript:
       enabled: true
     tls:

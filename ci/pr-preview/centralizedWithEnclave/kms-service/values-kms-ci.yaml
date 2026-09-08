@@ -8,6 +8,9 @@ kmsConnector:
 kmsCore:
   thresholdMode:
     enabled: false
+    legacyPrssMask:
+      beforePublicDecryptId: ""
+      beforeUserDecryptId: ""
   nitroEnclave:
     enabled: true
     cpuCount: 48

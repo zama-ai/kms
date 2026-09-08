@@ -5,6 +5,9 @@ kmsCore:
       name:
   thresholdMode:
     enabled: true
+    legacyPrssMask:
+      beforePublicDecryptId: ""
+      beforeUserDecryptId: ""
     tls:
       enabled: false
     thresholdValue: 4 # 1 if 4 parties or 4 if 13 parties

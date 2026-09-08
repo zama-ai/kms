@@ -3,6 +3,9 @@
 
 kmsCore:
   thresholdMode:
+    legacyPrssMask:
+      beforePublicDecryptId: ""
+      beforeUserDecryptId: ""
     numSessionsPreproc: 2
 
   resources:
