@@ -12,7 +12,9 @@ pub const DSEP_LEN: usize = 8;
 pub const DIGEST_BYTES: usize = 256 / 8;
 
 /// The maximum size of the serialized element in bytes. Limit set for security reasons as well as a sanity check.
-pub const SAFE_SER_SIZE_LIMIT: u64 = 1024 * 1024 * 1024 * 2;
+/// The bound must hold a full server key. With noise squashing and transciphering keys such a key
+/// exceeds 2 GiB.
+pub const SAFE_SER_SIZE_LIMIT: u64 = 1024 * 1024 * 1024 * 4;
 
 const DSEP_LIST: DomainSep = *b"HASH_LST";
 
@@ -85,7 +87,7 @@ where
 }
 
 /// Compute the SHAKE-256 hash of a [`Versionize`]'d value `T` using [`tfhe_safe_serialize::safe_serialize`].
-/// The call will fail if the serialized size of `T` is larger than [`SAFE_SER_SIZE_LIMIT`] (currently 2 GB).
+/// The call will fail if the serialized size of `T` is larger than [`SAFE_SER_SIZE_LIMIT`].
 pub fn hash_versioned<T>(domain_sep: &DomainSep, msg: &T) -> anyhow::Result<Vec<u8>>
 where
     T: Serialize + Versionize + Named,

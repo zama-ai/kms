@@ -60,7 +60,7 @@ pub async fn write_element_owned<T: Serialize + Send + 'static, P: AsRef<Path>>(
 
 /// Reads a generic serialized value on Tokio's blocking pool.
 ///
-/// Decoding uses the 2 GiB limit from [`bc2wrap::deserialize_from`].
+/// Decoding uses the [`bc2wrap::BINCODE_SMALL_DESER_SIZE_LIMIT`] bound of [`bc2wrap::deserialize_from`].
 pub async fn read_element_async<T: DeserializeOwned + Send + 'static, P: AsRef<Path>>(
     file_path: P,
 ) -> anyhow::Result<T> {
