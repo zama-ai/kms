@@ -1,26 +1,22 @@
 use super::super::{Vault, VaultDataType, make_secret_share_keychain};
 use super::support::*;
 use crate::{
-    cryptography::encryption::{Encryption, PkeScheme, PkeSchemeType},
     engine::base::derive_request_id,
-    vault::{
-        keychain::{KeychainProxy, secretsharing::SecretShareKeychain},
-        storage::{
-            Storage, StorageExt, StorageProxy, StorageReader, StorageReaderExt, StorageType,
-            file::FileStorage,
-            ram::{FailingRamStorage, RamStorage},
-            test_support::{BackupEntry, FaultPhase, StorageOutcome, failing_ram_storage_mut},
-        },
+    vault::storage::{
+        Storage, StorageExt, StorageProxy, StorageReader, StorageReaderExt, StorageType,
+        file::FileStorage,
+        ram::{FailingRamStorage, RamStorage},
+        test_support::{BackupEntry, FaultPhase, StorageOutcome, failing_ram_storage_mut},
     },
 };
 use aes_prng::AesRng;
 use kms_grpc::{EpochId, rpc_types::PrivDataType};
 use rand::SeedableRng;
 
-/// `purge_backup` on a custodian vault deletes only the requested backup namespace.
+/// `purge_backup` on a custodian vault deletes only entries for the requested backup ID.
 ///
-/// Unlike `remove_old_backup`, it may delete the current namespace because it is also the cleanup
-/// path for a failed backup setup.
+/// Unlike `remove_old_backup`, it may delete entries for the current backup ID. Failed backup
+/// setup uses this path for cleanup.
 #[tokio::test]
 async fn test_purge_backup_custodian_vault_scoped_to_backup_id() {
     let current_id = derive_request_id("purge_backup_current").unwrap();
@@ -134,8 +130,10 @@ async fn test_purge_backup_unencrypted_vault() {
     );
 }
 
-/// Shared success scenario for the file, RAM, and S3 storage implementations.
-async fn remove_old_backup_scenario(storage: StorageProxy) {
+/// Runs retired-backup cleanup against one storage backend.
+///
+/// The epoch-scoped entry covers https://github.com/zama-ai/kms-internal/issues/3110.
+async fn run_remove_old_backup_scenario(storage: StorageProxy) {
     let mut fixture = BackupRemovalFixture::new(storage).await;
     assert!(
         fixture
@@ -166,12 +164,12 @@ async fn remove_old_backup_scenario(storage: StorageProxy) {
 async fn remove_old_backup_file() {
     let temp_dir = tempfile::tempdir().unwrap();
     let storage = FileStorage::new(Some(temp_dir.path()), StorageType::BACKUP, None).unwrap();
-    remove_old_backup_scenario(StorageProxy::from(storage)).await;
+    run_remove_old_backup_scenario(StorageProxy::from(storage)).await;
 }
 
 #[tokio::test]
 async fn remove_old_backup_ram() {
-    remove_old_backup_scenario(StorageProxy::from(RamStorage::new())).await;
+    run_remove_old_backup_scenario(StorageProxy::from(RamStorage::new())).await;
 }
 
 /// A partial erasure returns an error, preserves other contexts, and permits a retry.
@@ -261,7 +259,7 @@ async fn remove_old_backup_s3() {
         std::stringify!(remove_old_backup_s3),
     )
     .await;
-    remove_old_backup_scenario(StorageProxy::from(storage)).await;
+    run_remove_old_backup_scenario(StorageProxy::from(storage)).await;
 }
 
 #[tokio::test]
@@ -272,81 +270,4 @@ async fn remove_old_backup_requires_custodian_vault() {
     };
     let backup_id = derive_request_id("some_backup").unwrap();
     assert!(vault.remove_old_backup(&backup_id).await.is_err());
-}
-
-/// Regression test for the epoch-namespace gap in custodian context destruction.
-/// Details can be found in https://github.com/zama-ai/kms-internal/issues/3110.
-#[tokio::test]
-async fn remove_old_backup_deletes_epoch_scoped_data() {
-    let temp_dir = tempfile::tempdir().unwrap();
-    let backup_storage =
-        FileStorage::new(Some(temp_dir.path()), StorageType::BACKUP, None).unwrap();
-
-    let mut rng = AesRng::seed_from_u64(42);
-    let mut enc = Encryption::new(PkeSchemeType::MlKem512, &mut rng);
-    let (_dec_key, enc_key) = enc.keygen().unwrap();
-    let keychain = SecretShareKeychain::<AesRng>::new::<FileStorage>(rng, None)
-        .await
-        .unwrap();
-    let mut vault = Vault {
-        storage: StorageProxy::from(backup_storage),
-        keychain: Some(KeychainProxy::SecretSharing(keychain)),
-    };
-    let old_backup_id = derive_request_id("old_custodian_context").unwrap();
-    let current_backup_id = derive_request_id("current_custodian_context").unwrap();
-    let data_type = PrivDataType::FheKeyInfo;
-    let epoch_id = EpochId::from_bytes([7; 32]);
-
-    set_current_backup_id(&mut vault, old_backup_id, enc_key.clone());
-    let epoch_id_item = derive_request_id("epoch_backup_item").unwrap();
-    vault
-        .store_bytes_at_epoch(
-            b"epoch_secret",
-            &epoch_id_item,
-            &epoch_id,
-            &data_type.to_string(),
-        )
-        .await
-        .unwrap();
-    let non_epoch_item = derive_request_id("non_epoch_backup_item").unwrap();
-    vault
-        .store_bytes(b"non_epoch_secret", &non_epoch_item, &data_type.to_string())
-        .await
-        .unwrap();
-
-    let old_data_type = VaultDataType::CustodianBackupData(old_backup_id, data_type).to_string();
-    assert!(
-        vault
-            .storage
-            .data_exists(&non_epoch_item, &old_data_type)
-            .await
-            .unwrap()
-    );
-    assert!(
-        vault
-            .storage
-            .data_exists_at_epoch(&epoch_id_item, &epoch_id, &old_data_type)
-            .await
-            .unwrap()
-    );
-
-    set_current_backup_id(&mut vault, current_backup_id, enc_key);
-    vault.remove_old_backup(&old_backup_id).await.unwrap();
-
-    assert!(
-        vault
-            .storage
-            .all_data_ids(&old_data_type)
-            .await
-            .unwrap()
-            .is_empty()
-    );
-    assert!(
-        vault
-            .storage
-            .all_data_ids_from_all_epochs(&old_data_type)
-            .await
-            .unwrap()
-            .is_empty()
-    );
 }

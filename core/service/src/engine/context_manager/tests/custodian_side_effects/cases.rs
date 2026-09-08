@@ -34,7 +34,7 @@ async fn failed_backup_erasure_is_retryable(
         })
         .collect();
     assert_eq!(faults.len(), 1);
-    assert_eq!(faults[0].entry, fixture.target_backup_entry());
+    assert_eq!(faults[0].entry, fixture.target_backup_entry);
     assert_eq!(faults[0].outcome, expected_outcome);
 
     fixture.clear_faults_and_events().await;
@@ -47,7 +47,7 @@ async fn failed_backup_erasure_is_retryable(
     assert!(fixture.context_is_complete(fixture.current_id).await);
 }
 
-/// A recovery-material delete failure leaves an empty backup namespace in a retryable state.
+/// A recovery-material delete failure leaves no backup entries and permits a retry.
 #[tokio::test]
 async fn failed_recovery_material_deletion_is_retryable() {
     let fixture = CustodianFixture::new().await;
@@ -62,7 +62,7 @@ async fn failed_recovery_material_deletion_is_retryable() {
     assert_same_events(
         &fixture.public_events().await,
         &[StorageEvent::new(
-            fixture.target_recovery_entry(),
+            fixture.target_recovery_entry.clone(),
             StorageOp::Delete,
             StorageOutcome::FailedBeforeMutation,
         )],

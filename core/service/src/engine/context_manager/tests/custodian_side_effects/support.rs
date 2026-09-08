@@ -31,8 +31,8 @@ pub(super) struct CustodianFixture {
     storage: TestStorage,
     pub(super) target_id: RequestId,
     pub(super) current_id: RequestId,
-    target_backup_entry: BackupEntry,
-    target_recovery_entry: StorageEntry,
+    pub(super) target_backup_entry: StorageEntry,
+    pub(super) target_recovery_entry: StorageEntry,
 }
 
 impl CustodianFixture {
@@ -78,7 +78,8 @@ impl CustodianFixture {
             RequestId::from_bytes(DUMMY_SIGNING_KEY_REQ_ID),
             None,
             PrivDataType::SigningKey,
-        );
+        )
+        .storage_entry();
         let target_recovery_entry =
             StorageEntry::new(target_id, None, PubDataType::RecoveryMaterial.to_string());
         let fixture = Self {
@@ -100,10 +101,10 @@ impl CustodianFixture {
         let storage = failing_ram_storage_mut(&mut backup_vault);
         match phase {
             FaultPhase::BeforeMutation => {
-                storage.set_fail_delete_at(self.target_backup_entry.storage_entry())
+                storage.set_fail_delete_at(self.target_backup_entry.clone())
             }
             FaultPhase::AfterMutation => {
-                storage.set_fail_delete_after_mutation_at(self.target_backup_entry.storage_entry())
+                storage.set_fail_delete_after_mutation_at(self.target_backup_entry.clone())
             }
         }
     }
@@ -173,7 +174,7 @@ impl CustodianFixture {
             .any(|stored_id| stored_id == context_id)
     }
 
-    /// Returns whether the backup namespace for `context_id` is empty.
+    /// Returns whether all backup entries for `context_id` are absent.
     pub(super) async fn backup_is_empty(&self, context_id: RequestId) -> bool {
         let backup_vault = self.storage.backup_vault.as_ref().unwrap();
         let backup_vault = backup_vault.lock().await;
@@ -209,16 +210,6 @@ impl CustodianFixture {
         let backup_vault = self.storage.backup_vault.as_ref().unwrap();
         let backup_vault = backup_vault.lock().await;
         failing_ram_storage(&backup_vault).events().to_vec()
-    }
-
-    /// Returns the target backup coordinate used by fault assertions.
-    pub(super) fn target_backup_entry(&self) -> StorageEntry {
-        self.target_backup_entry.storage_entry()
-    }
-
-    /// Returns the target recovery coordinate used by fault assertions.
-    pub(super) fn target_recovery_entry(&self) -> StorageEntry {
-        self.target_recovery_entry.clone()
     }
 }
 

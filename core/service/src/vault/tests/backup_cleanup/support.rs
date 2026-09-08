@@ -14,7 +14,7 @@ use crate::{
 };
 use kms_grpc::{EpochId, RequestId, rpc_types::PrivDataType};
 
-/// Holds one retired backup and two control namespaces.
+/// Holds one retired backup plus current and unrelated backup entries.
 pub(super) struct BackupRemovalFixture {
     pub(super) vault: Vault,
     pub(super) retired_id: RequestId,
@@ -119,11 +119,7 @@ async fn store_backup_entries(vault: &mut Vault, entries: &[BackupEntry]) {
 }
 
 /// Points the vault's keychain at `backup_id`.
-pub(super) fn set_current_backup_id(
-    vault: &mut Vault,
-    backup_id: RequestId,
-    enc_key: UnifiedPublicEncKey,
-) {
+fn set_current_backup_id(vault: &mut Vault, backup_id: RequestId, enc_key: UnifiedPublicEncKey) {
     match vault.keychain.as_mut() {
         Some(KeychainProxy::SecretSharing(keychain)) => {
             keychain.set_backup_enc_key(backup_id, enc_key)
