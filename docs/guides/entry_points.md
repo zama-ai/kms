@@ -74,6 +74,12 @@ Rules a caller has to know:
   omits a scheme the request asked for. A tuple of a scheme the request did *not*
   ask for carries no weight either way: it neither stands in for a missing one nor
   invalidates a response that carries every requested scheme.
+- **An empty `signatures` list is still authenticated by the legacy ECDSA
+  signature.** A node from a release before the list answers that way, and a network
+  part-way through an upgrade runs both releases. Such a result counts for
+  `Ecdsa256k1` alone, so a request that named another scheme rejects it: an old node
+  cannot produce that scheme, and treating its silence as an answer would let any
+  server drop a requested signature.
 - **Only the ECDSA tuple is bound to EIP-712.** Every other scheme signs the
   serialized payload, because EIP-712 is an EVM and secp256k1 construction. A
   verifier therefore rebuilds the payload rather than the typed-data hash.
@@ -81,6 +87,12 @@ Rules a caller has to know:
   ECDSA tuple repeats what `external_signature` holds. `external_signature` is
   deprecated and is scheduled for removal in 0.16; after that the ECDSA entry of
   `signatures` is the only copy.
+- **Every copy a response carries is checked, not just the first one that works.** The
+  deprecated `signature` and `external_signature` fields and the matching entry of
+  `signatures` are independent statements about the same result, so a verifier holds
+  them all to the same signing party. A response whose copies disagree is rejected. The
+  one exception is a copy nothing can check: without an EIP-712 domain the two ECDSA
+  forms are skipped rather than failed, because rebuilding their message needs one.
 
 ### Preprocessing
 Preprocessing is needed to generate correlated randomness which is used later, when you generate a FHE key set, or a Key Switching Key (KSK). Preprocessed material can only be used _once_ and hence needs to be generated every time you wish to generate an FHE key set.

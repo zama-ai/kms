@@ -377,6 +377,7 @@ pub(crate) async fn do_new_epoch(
                             &preproc_id,
                             &key_id,
                             &reshared.signatures,
+                            &reshared.external_signature,
                             &default_domain,
                             extra_data.clone(),
                         )
@@ -393,6 +394,7 @@ pub(crate) async fn do_new_epoch(
                             &preproc_id,
                             &key_id,
                             &reshared.signatures,
+                            &reshared.external_signature,
                             &default_domain,
                             extra_data.clone(),
                         )

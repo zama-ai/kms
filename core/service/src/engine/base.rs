@@ -72,6 +72,8 @@ pub(crate) const DSEP_HANDLE: DomainSep = *b"_HANDLE_";
 pub const DSEP_PUBDATA_KEY: DomainSep = *b"PDAT_KEY";
 /// Domain separator for CRS (Common Reference String) data
 pub const DSEP_PUBDATA_CRS: DomainSep = *b"PDAT_CRS";
+/// Domain separator for public decryption operations
+pub const DSEP_PUBLIC_DECRYPTION: DomainSep = *b"PUBL_DEC";
 
 pub static INSECURE_PREPROCESSING_ID: LazyLock<RequestId> =
     LazyLock::new(|| crate::engine::base::derive_request_id("INSECURE_PREPROCESSING_ID").unwrap());
@@ -412,8 +414,6 @@ pub struct UserDecSignedPayload {
 impl Named for UserDecSignedPayload {
     const NAME: &'static str = "UserDecSignedPayload";
 }
-
-pub use crate::engine::validation_non_wasm::DSEP_PUBLIC_DECRYPTION;
 
 /// The canonical bytes a non-ECDSA scheme signs for a public decryption result.
 pub fn public_dec_payload_bytes(
@@ -1222,7 +1222,7 @@ pub(crate) fn sign_user_decryption_result(
 /// Adds the deprecated scalar `signature` to what [`sign_result`] produces. That
 /// signature covers `bc2wrap::serialize` of the response payload alone, because
 /// those exact bytes are part of the released wire contract.
-#[allow(clippy::too_many_arguments)]
+#[expect(clippy::too_many_arguments)]
 fn sign_decryption_result<P: Serialize, D: SolStruct>(
     server_sk: &NodeSigningIdentity,
     schemes: &[SigningSchemeType],

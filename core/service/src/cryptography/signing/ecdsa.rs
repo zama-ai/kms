@@ -453,6 +453,22 @@ pub fn recover_address_from_ext_signature<S: SolStruct>(
     domain: &Eip712Domain,
     external_sig: &[u8],
 ) -> anyhow::Result<alloy_primitives::Address> {
+    let hash = data.eip712_signing_hash(domain);
+    tracing::debug!("Public Data EIP-712 Message hash: {:?}", hash);
+    recover_address_from_eip712_hash(&hash, external_sig)
+}
+
+/// Recover the address that signed a precomputed EIP-712 signing hash (the value
+/// [`SolStruct::eip712_signing_hash`] returns).
+///
+/// # Errors
+///
+/// Errors when `external_sig` is not 65 bytes, and when no address can be recovered
+/// from it.
+pub fn recover_address_from_eip712_hash(
+    message_hash: &alloy_primitives::B256,
+    external_sig: &[u8],
+) -> anyhow::Result<alloy_primitives::Address> {
     // convert received data into proper format for EIP-712 verification
     if external_sig.len() != 65 {
         return Err(anyhow::anyhow!(
@@ -467,16 +483,12 @@ pub fn recover_address_from_ext_signature<S: SolStruct>(
     );
 
     tracing::debug!(
-        "ext. signature bytes: {:x?}, ext. signature: {:?}, EIP-712 domain: {:?}",
+        "ext. signature bytes: {:x?}, ext. signature: {:?}",
         external_sig,
-        sig,
-        domain
+        sig
     );
 
-    let hash = data.eip712_signing_hash(domain);
-    tracing::debug!("Public Data EIP-712 Message hash: {:?}", hash);
-
-    let addr = sig.recover_address_from_prehash(&hash)?;
+    let addr = sig.recover_address_from_prehash(message_hash)?;
     tracing::debug!("Reconstructed address: {}", addr);
 
     Ok(addr)

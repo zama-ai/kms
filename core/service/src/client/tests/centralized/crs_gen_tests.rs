@@ -150,6 +150,7 @@ async fn crs_gen_centralized_manual(
     internal_client
         .verify_result_signatures(
             &resp.signatures,
+            &resp.external_signature,
             &sol_type,
             &domain,
             &DSEP_PUBDATA_CRS,

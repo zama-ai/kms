@@ -132,6 +132,7 @@ impl Client {
                 crs_payload_bytes(request_id, max_num_bits as u32, &actual_digest, &extra_data)?;
             let (_party_id, signer) = match self.verify_result_signatures(
                 &result.signatures,
+                &result.external_signature,
                 &sol_type,
                 domain,
                 &DSEP_PUBDATA_CRS,
@@ -235,6 +236,7 @@ impl Client {
         )?;
         if let Err(e) = self.verify_result_signatures(
             &crs_gen_result.signatures,
+            &crs_gen_result.external_signature,
             &sol_type,
             domain,
             &DSEP_PUBDATA_CRS,

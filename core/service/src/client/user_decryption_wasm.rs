@@ -4,15 +4,16 @@ use crate::cryptography::signatures::PrivateSigKey;
 use crate::cryptography::signcryption::insecure_decrypt_ignoring_signature;
 use crate::cryptography::{
     encryption::{UnifiedPrivateEncKey, UnifiedPublicEncKey},
-    signatures::{PublicSigKey, Signature, internal_verify_sig},
+    signatures::PublicSigKey,
     signcryption::{UnifiedUnsigncryptionKey, UnsigncryptFHEPlaintext},
-    signing::{SigningError, SigningSchemeType},
+    signing::SigningSchemeType,
 };
+use crate::engine::base::user_dec_payload_bytes;
 use crate::engine::validation::{
-    DSEP_USER_DECRYPTION, ERR_VALIDATE_USER_DECRYPTION_MISMATCH_EXTRA_DATA,
-    RejectedUserDecResponse, UserDecRejectReason, UserDecTrustedValidationContext,
-    UserDecryptionInvariants, check_ext_user_decryption_signature, validate_user_decrypt_responses,
-    verify_user_decrypt_scheme_signatures,
+    DSEP_USER_DECRYPTION, ERR_VALIDATE_USER_DECRYPTION_MISMATCH_EXTRA_DATA, ExpectedSigner,
+    RejectedUserDecResponse, ResponseSignatures, SignedPayloads, UserDecRejectReason,
+    UserDecTrustedValidationContext, UserDecryptionInvariants, user_decrypt_eip712_hash,
+    validate_user_decrypt_responses, verify_response_signatures,
 };
 use crate::{anyhow_error_and_log, some_or_err};
 use algebra::error_correction::ReconstructionHints;
@@ -261,54 +262,36 @@ impl Client {
             ));
         }
 
-        // Prefer the normal ECDSA verification over the EIP712 one.
-        // The deprecated scalar `signature` field carries the raw internal ECDSA
-        // signature over the serialized payload.
-        // TODO(0.16) verify `signatures` and drop the two deprecated fields.
-        if resp.signature.is_empty() {
-            // we only consider the external signature in wasm
-            let eip712_signature = &resp.external_signature;
-
-            // check signature
-            if eip712_signature.is_empty() {
-                return Err(anyhow_error_and_log("empty signature"));
-            }
-
-            check_ext_user_decryption_signature(
-                eip712_signature,
-                &payload,
-                request,
-                eip712_domain,
-                expected_server_addr,
-            )
-            .inspect_err(|e| {
-                tracing::warn!("signature on received response is not valid ({})", e)
-            })?;
-        } else {
-            let sig = Signature::from_ecdsa(k256::ecdsa::Signature::from_slice(&resp.signature)?);
-            internal_verify_sig(
-                &DSEP_USER_DECRYPTION,
-                &bc2wrap::serialize(&payload)?,
-                &sig,
-                &cur_verf_key,
-            )
-            .inspect_err(|e| {
-                tracing::warn!("signature on received response is not valid ({})", e)
-            })?;
+        // A response has to carry at least one of the two deprecated fields until 0.16,
+        // so that a node from a release before `signatures` stays verifiable.
+        if resp.signature.is_empty() && resp.external_signature.is_empty() {
+            return Err(anyhow_error_and_log("empty signature"));
         }
 
-        // One of the two deprecated scalar fields was checked just above, so
-        // ECDSA is already established whether or not the list repeats it.
-        verify_user_decrypt_scheme_signatures(
+        let response_bytes = bc2wrap::serialize(&payload)?;
+        verify_response_signatures(
+            &ResponseSignatures {
+                scalar: &resp.signature,
+                external: &resp.external_signature,
+                list: &resp.signatures,
+            },
+            &SignedPayloads {
+                dsep: &DSEP_USER_DECRYPTION,
+                scalar_bytes: &response_bytes,
+                payload_bytes: &user_dec_payload_bytes(&response_bytes, &resp.extra_data)?,
+                eip712_hash: Some(user_decrypt_eip712_hash(&payload, request, eip712_domain)?),
+            },
+            request.signing_schemes(),
+            &ExpectedSigner::Known {
+                // This path handles a single response, whose address was looked up at
+                // party id 1 just above, so that is the party its keys live under too.
+                party_id: 1,
+                address: *expected_server_addr,
+                verf_key: &cur_verf_key,
+            },
             &self.scheme_verf_keys,
-            &payload,
-            &resp.signatures,
-            request,
-            eip712_domain,
-            expected_server_addr,
-            &resp.extra_data,
-            true,
-        )?;
+        )
+        .inspect_err(|e| tracing::warn!("signature on received response is not valid ({})", e))?;
 
         let receiver_id = self.client_address.to_vec();
         let unsign_key =
@@ -1055,12 +1038,6 @@ impl ParsedUserDecryptionRequest {
         &self.signing_schemes
     }
 
-    /// Record the schemes this request asks for, resolved by
-    /// [`SigningSchemeType::resolve_requested`].
-    pub fn with_signing_schemes(mut self, requested: &[i32]) -> Result<Self, SigningError> {
-        self.signing_schemes = SigningSchemeType::resolve_requested(requested)?;
-        Ok(self)
-    }
     pub fn new(
         signature: Option<alloy_primitives::Signature>,
         client_address: alloy_primitives::Address,

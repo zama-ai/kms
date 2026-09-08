@@ -8,7 +8,7 @@ use alloy_sol_types::Eip712Domain;
 use hashing::hash_versioned;
 use kms_grpc::kms::v1::{CrsGenResult, FheParameter, TypedSignature};
 use kms_grpc::kms_service::v1::core_service_endpoint_client::CoreServiceEndpointClient;
-use kms_grpc::rpc_types::PubDataType;
+use kms_grpc::rpc_types::{PubDataType, scheme_signature};
 use kms_grpc::{ContextId, EpochId, RequestId};
 use kms_lib::client::client_wasm::Client;
 use kms_lib::engine::base::{DSEP_PUBDATA_CRS, crs_payload_bytes, crs_sol_type};
@@ -187,11 +187,15 @@ pub(crate) async fn fetch_and_check_crsgen(
 
     for response in responses {
         let resp_req_id: RequestId = response.request_id.try_into()?;
+        let signature_bytes = scheme_signature(
+            &response.signatures,
+            kms_grpc::kms::v1::SigningSchemeType::Ecdsa256k1,
+        );
         tracing::info!(
             "Received CrsGenResult with request ID {}. Signature:{}. Digest:{}",
             resp_req_id,
             hex::encode(&response.crs_digest),
-            hex::encode(crate::ecdsa_signature(&response.signatures).unwrap_or_default())
+            hex::encode(signature_bytes.unwrap_or_default())
         );
 
         if request_id != resp_req_id {
@@ -209,6 +213,7 @@ pub(crate) async fn fetch_and_check_crsgen(
                     &crs,
                     &request_id,
                     &response.signatures,
+                    &response.external_signature,
                     &material.domain,
                     material.extra_data.clone(),
                 )
@@ -346,6 +351,7 @@ fn check_crsgen_signatures(
     crs: &CompactPkeCrs,
     crs_id: &RequestId,
     signatures: &[TypedSignature],
+    external_signature: &[u8],
     domain: &Eip712Domain,
     extra_data: Vec<u8>,
 ) -> anyhow::Result<()> {
@@ -363,6 +369,7 @@ fn check_crsgen_signatures(
     internal_client
         .verify_result_signatures(
             signatures,
+            external_signature,
             &sol_type,
             domain,
             &DSEP_PUBDATA_CRS,
@@ -551,6 +558,7 @@ mod tests {
             &crs,
             crs_id,
             &ecdsa_signatures(external_sig.clone()),
+            &external_sig,
             &domain,
             vec![],
         )
@@ -559,16 +567,21 @@ mod tests {
             &client,
             &crs,
             crs_id,
-            &ecdsa_signatures(external_sig_extra_data),
+            &ecdsa_signatures(external_sig_extra_data.clone()),
+            &external_sig_extra_data,
             &domain,
             default_extra_data(),
         )
         .expect("signature should be valid");
 
-        // An empty list is rejected outright: a request that names no scheme
-        // still asks for ECDSA, so the entry has to be there.
+        // A node from a release before `signatures` sends an empty list and the legacy
+        // signature alone, which a network part-way through an upgrade still has to accept.
+        check_crsgen_signatures(&client, &crs, crs_id, &[], &external_sig, &domain, vec![])
+            .expect("the legacy signature alone should authenticate the result");
+
+        // With neither, there is nothing to check.
         assert!(
-            check_crsgen_signatures(&client, &crs, crs_id, &[], &domain, vec![])
+            check_crsgen_signatures(&client, &crs, crs_id, &[], &[], &domain, vec![])
                 .unwrap_err()
                 .to_string()
                 .contains("carries no signatures")
@@ -583,6 +596,7 @@ mod tests {
                 &crs,
                 crs_id,
                 &ecdsa_signatures(external_sig.clone()),
+                &external_sig,
                 &domain,
                 vec![],
             )
@@ -591,9 +605,8 @@ mod tests {
             .contains(UNKNOWN_PARTY)
         );
 
-        // A signature that is too short, is not a signature at all, or does not
-        // cover this message all fail the same way: no known party's address can
-        // be recovered from it.
+        // A signature that is too short, is not a signature at all, or does not cover
+        // this message is rejected in each case.
         let short_sig = [0_u8; 37].to_vec();
         let malformed_sig = [23_u8; 65].to_vec();
         let wrong_sig = hex::decode("cf92fe4c0b7c72fd8571c9a6680f2cd7481ebed7a3c8c7c7a6e6eaf27f5654f36100c146e609e39950953602ed73a3c10c1672729295ed8b33009b375813e5801b").unwrap();
@@ -602,19 +615,18 @@ mod tests {
             ("malformed", malformed_sig),
             ("wrong message", wrong_sig),
         ] {
-            let err = check_crsgen_signatures(
-                &client,
-                &crs,
-                crs_id,
-                &ecdsa_signatures(bad_sig),
-                &domain,
-                vec![],
-            )
-            .unwrap_err()
-            .to_string();
             assert!(
-                err.contains(UNKNOWN_PARTY),
-                "a {label} signature was not rejected as expected: {err}"
+                check_crsgen_signatures(
+                    &client,
+                    &crs,
+                    crs_id,
+                    &ecdsa_signatures(bad_sig.clone()),
+                    &bad_sig,
+                    &domain,
+                    vec![],
+                )
+                .is_err(),
+                "a {label} signature was not rejected"
             );
         }
     }

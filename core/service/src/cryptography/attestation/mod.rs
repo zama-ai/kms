@@ -3,10 +3,9 @@ use crate::vault::keychain::RootKeyMeasurements;
 use anyhow::{bail, ensure};
 use attestation_doc_validation::attestation_doc::decode_attestation_document;
 use enum_dispatch::enum_dispatch;
-use k256::{
-    ecdsa::{Signature as EcdsaSignature, signature::Verifier as _},
-    pkcs8::EncodePrivateKey,
-};
+use k256::ecdsa::{Signature as EcdsaSignature, signature::Verifier as _};
+#[cfg(feature = "insecure")]
+use k256::pkcs8::EncodePrivateKey;
 #[cfg(feature = "insecure")]
 use nsm_nitro_enclave_utils::{driver::dev::DevNitro, pcr::Pcrs};
 #[cfg(feature = "insecure")]

@@ -1,21 +1,21 @@
 use crate::consts::{DEFAULT_EPOCH_ID, DEFAULT_MPC_CONTEXT};
-use crate::engine::base::retrieve_parameters;
+use crate::engine::base::{DSEP_PUBLIC_DECRYPTION, retrieve_parameters};
 use crate::engine::keyset_configuration::{InternalKeySetConfig, preproc_proto_to_keyset_config};
 use crate::engine::utils::{MetricedError, sanity_check_extra_data};
 use crate::{
     anyhow_error_and_log,
     cryptography::{
         encryption::UnifiedPublicEncKey,
-        signatures::{
-            PublicSigKey, Signature, internal_verify_sig, recover_address_from_ext_signature,
-        },
+        signatures::PublicSigKey,
         signing::{SchemeVerfKeys, SigningSchemeType},
     },
     engine::base::{compute_public_decryption_message, public_dec_payload_bytes},
-    engine::validation_wasm::{ensure_requested_verified, verify_scheme_entry},
+    engine::validation_wasm::{
+        ExpectedSigner, ResponseSignatures, SignedPayloads, verify_response_signatures,
+    },
 };
 use alloy_dyn_abi::Eip712Domain;
-use hashing::DomainSep;
+use alloy_sol_types::SolStruct;
 use itertools::Itertools;
 use kms_grpc::identifiers::{ContextId, EpochId};
 use kms_grpc::kms::v1::{
@@ -37,8 +37,6 @@ use std::collections::{HashMap, HashSet};
 use threshold_execution::keyset_config::KeySetConfig;
 use threshold_execution::tfhe_internals::parameters::DKGParams;
 use threshold_execution::zk::ceremony::compute_witness_dim;
-
-pub const DSEP_PUBLIC_DECRYPTION: DomainSep = *b"PUBL_DEC";
 
 /// Trusted client-side configuration used to validate public decryption server responses.
 /// The expectation is that no unvalidated data coming from e.g., the network should be used in this type.
@@ -434,10 +432,7 @@ pub(crate) fn verify_user_decrypt_eip712(
 ///
 /// # What makes a response authentic
 ///
-/// - Every entry that can be checked has to verify.
-/// - The deprecated scalar fields, `signature` and `external_signature`, are checked first.
-/// - Then every entry of `signatures` for a requested scheme is verified.
-/// - Every scheme the request asked for has to end up verified.
+/// [`verify_response_signatures`] decides that, as it does for every other result kind.
 #[expect(clippy::too_many_arguments)]
 fn verify_public_decrypt_signatures(
     trusted_ctx: &PublicDecTrustedValidationContext,
@@ -449,160 +444,82 @@ fn verify_public_decrypt_signatures(
     signatures: &[TypedSignature],
     response_extra_data: &[u8],
 ) -> bool {
+    match check_public_decrypt_signatures(
+        trusted_ctx,
+        response,
+        party_id,
+        verification_key,
+        signature,
+        external_signature,
+        signatures,
+        response_extra_data,
+    ) {
+        Ok(()) => true,
+        Err(e) => {
+            tracing::warn!("A public decryption response of party {party_id} is rejected: {e}");
+            false
+        }
+    }
+}
+
+/// The fallible body of [`verify_public_decrypt_signatures`], which turns every error
+/// here into `false`.
+#[expect(clippy::too_many_arguments)]
+fn check_public_decrypt_signatures(
+    trusted_ctx: &PublicDecTrustedValidationContext,
+    response: &PublicDecryptionResponsePayload,
+    party_id: u32,
+    verification_key: &PublicSigKey,
+    signature: &[u8],
+    external_signature: &[u8],
+    signatures: &[TypedSignature],
+    response_extra_data: &[u8],
+) -> anyhow::Result<()> {
     let requested = match trusted_ctx.request {
-        Some(request) => match SigningSchemeType::resolve_requested(&request.signing_schemes) {
-            Ok(requested) => requested,
-            Err(e) => {
-                tracing::warn!("The request names a signing scheme that cannot be resolved: {e}");
-                return false;
-            }
-        },
+        Some(request) => SigningSchemeType::resolve_requested(&request.signing_schemes)?,
         None => vec![SigningSchemeType::Ecdsa256k1],
     };
 
     // NOTE that we cannot use `BaseKmsStruct::verify_sig`
     // because `BaseKmsStruct` cannot be compiled for wasm (it has an async mutex).
-    let response_bytes = match bc2wrap::serialize(&response) {
-        Ok(payload) => payload,
-        Err(e) => {
-            tracing::warn!("Could not serialize public decryption response: {e}");
-            return false;
-        }
-    };
-    let payload_bytes = match public_dec_payload_bytes(&response_bytes, response_extra_data) {
-        Ok(bytes) => bytes,
-        Err(e) => {
-            tracing::warn!("Could not build the signed public decryption payload: {e}");
-            return false;
-        }
-    };
+    let response_bytes = bc2wrap::serialize(&response)?;
+    let payload_bytes = public_dec_payload_bytes(&response_bytes, response_extra_data)?;
 
-    // What every ECDSA signature of this response covers, needed by both the
-    // deprecated `external_signature` and the ECDSA entry of `signatures`.
-    let eip712_message = match trusted_ctx.eip712_domain {
-        Some(domain) => match compute_public_decryption_message(
-            trusted_ctx.ext_handles_bytes,
-            &response.plaintexts,
-            response_extra_data,
-        ) {
-            Ok(message) => Some((message, domain)),
-            Err(e) => {
-                tracing::warn!("Failed to compute public decryption message: {e}");
-                return false;
-            }
-        },
+    // Built only when a domain is available: without one no ECDSA signature of this
+    // response can be checked, and the message would be of no use.
+    let eip712_hash = match trusted_ctx.eip712_domain {
+        Some(domain) => Some(
+            compute_public_decryption_message(
+                trusted_ctx.ext_handles_bytes,
+                &response.plaintexts,
+                response_extra_data,
+            )?
+            .eip712_signing_hash(domain),
+        ),
         None => None,
     };
-    let expected_addr = verification_key.address();
-    let recovers_to_signer = |ecdsa_signature: &[u8]| -> bool {
-        let Some((message, domain)) = eip712_message.as_ref() else {
-            // Only reached for `external_signature`, which the caller skips when
-            // there is no domain; the ECDSA entry is passed over above.
-            return false;
-        };
-        match recover_address_from_ext_signature(message, domain, ecdsa_signature) {
-            Ok(recovered_addr) if recovered_addr == expected_addr => true,
-            Ok(recovered_addr) => {
-                tracing::warn!(
-                    "ECDSA signature address mismatch: recovered {recovered_addr} but expected \
-                     {expected_addr}"
-                );
-                false
-            }
-            Err(e) => {
-                tracing::warn!("Failed to recover address from the ECDSA signature: {e}");
-                false
-            }
-        }
-    };
 
-    let mut verified: Vec<SigningSchemeType> = Vec::with_capacity(signatures.len() + 1);
-
-    if !signature.is_empty() {
-        let sig = match k256::ecdsa::Signature::from_slice(signature) {
-            Ok(sig) => Signature::from_ecdsa(sig),
-            Err(e) => {
-                tracing::warn!("Could not parse the deprecated ECDSA signature: {e}");
-                return false;
-            }
-        };
-        if internal_verify_sig(
-            &DSEP_PUBLIC_DECRYPTION,
-            &response_bytes,
-            &sig,
-            verification_key,
-        )
-        .is_err()
-        {
-            tracing::warn!(
-                "The deprecated ECDSA signature of a public decryption response is not valid"
-            );
-            return false;
-        }
-        verified.push(SigningSchemeType::Ecdsa256k1);
-    } else if !external_signature.is_empty() && eip712_message.is_some() {
-        if !recovers_to_signer(external_signature) {
-            return false;
-        }
-        verified.push(SigningSchemeType::Ecdsa256k1);
-    }
-    // If none of the legacy fields are there the verification relies entirely on the `signatures` array.
-    for typed in signatures {
-        let scheme = match SigningSchemeType::try_from(typed.scheme) {
-            Ok(scheme) => scheme,
-            Err(e) => {
-                tracing::warn!(
-                    "A public decryption response carries a signature of an unknown scheme: {e}"
-                );
-                return false;
-            }
-        };
-        if !requested.contains(&scheme) {
-            // Nobody asked for this scheme, so it carries no weight either way.
-            tracing::warn!(
-                "A public decryption response carries a signature of a scheme that was not requested: {scheme:?}"
-            );
-            continue;
-        }
-        if scheme == SigningSchemeType::Ecdsa256k1 {
-            // Only this entry needs the domain, because only it is an EIP-712
-            // signature.
-            if eip712_message.is_none() {
-                tracing::warn!(
-                    "No EIP-712 domain is available, so the ECDSA entry of a public decryption \
-                     response cannot be checked"
-                );
-                continue;
-            }
-            if !recovers_to_signer(&typed.signature) {
-                return false;
-            }
-            if !verified.contains(&scheme) {
-                verified.push(scheme);
-            }
-            continue;
-        }
-
-        if let Err(e) = verify_scheme_entry(
-            trusted_ctx.scheme_verf_keys,
+    verify_response_signatures(
+        &ResponseSignatures {
+            scalar: signature,
+            external: external_signature,
+            list: signatures,
+        },
+        &SignedPayloads {
+            dsep: &DSEP_PUBLIC_DECRYPTION,
+            scalar_bytes: &response_bytes,
+            payload_bytes: &payload_bytes,
+            eip712_hash,
+        },
+        &requested,
+        &ExpectedSigner::Known {
             party_id,
-            scheme,
-            &typed.signature,
-            &DSEP_PUBLIC_DECRYPTION,
-            &payload_bytes,
-        ) {
-            tracing::warn!("A public decryption response of party {party_id} is rejected: {e}");
-            return false;
-        }
-        verified.push(scheme);
-    }
-
-    if let Err(e) = ensure_requested_verified(&verified, &requested, party_id) {
-        tracing::warn!("A public decryption response of party {party_id} is rejected: {e}");
-        return false;
-    }
-
-    true
+            address: verification_key.address(),
+            verf_key: verification_key,
+        },
+        trusted_ctx.scheme_verf_keys,
+    )
+    .map(|_signer| ())
 }
 
 /// The fields every honest public-decryption response must agree on for a given request.

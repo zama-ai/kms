@@ -291,6 +291,7 @@ pub(crate) async fn fetch_and_check_keygen(
                         &prep_id.try_into()?,
                         &request_id,
                         &response.signatures,
+                        &response.external_signature,
                         &material.domain,
                         material.extra_data.clone(),
                     )
@@ -347,6 +348,7 @@ pub(crate) async fn fetch_and_check_keygen(
                         &prep_id.try_into()?,
                         &request_id,
                         &response.signatures,
+                        &response.external_signature,
                         &material.domain,
                         material.extra_data.clone(),
                     )
@@ -569,6 +571,7 @@ fn check_keyset_signatures(
     key_id: &RequestId,
     key_digests: BTreeMap<PubDataType, Vec<u8>>,
     signatures: &[TypedSignature],
+    external_signature: &[u8],
     domain: &Eip712Domain,
     extra_data: Vec<u8>,
 ) -> anyhow::Result<()> {
@@ -577,6 +580,7 @@ fn check_keyset_signatures(
     internal_client
         .verify_result_signatures(
             signatures,
+            external_signature,
             &sol_type,
             domain,
             &DSEP_PUBDATA_KEY,
@@ -596,6 +600,7 @@ pub(crate) fn check_uncompressed_keyset_signatures(
     prep_id: &RequestId,
     key_id: &RequestId,
     signatures: &[TypedSignature],
+    external_signature: &[u8],
     domain: &Eip712Domain,
     extra_data: Vec<u8>,
 ) -> anyhow::Result<()> {
@@ -620,6 +625,7 @@ pub(crate) fn check_uncompressed_keyset_signatures(
             (PubDataType::PublicKey, public_key_digest),
         ]),
         signatures,
+        external_signature,
         domain,
         extra_data,
     )
@@ -634,6 +640,7 @@ pub(crate) fn check_compressed_keyset_signatures(
     prep_id: &RequestId,
     key_id: &RequestId,
     signatures: &[TypedSignature],
+    external_signature: &[u8],
     domain: &Eip712Domain,
     extra_data: Vec<u8>,
 ) -> anyhow::Result<()> {
@@ -658,6 +665,7 @@ pub(crate) fn check_compressed_keyset_signatures(
             (PubDataType::PublicKey, public_key_digest),
         ]),
         signatures,
+        external_signature,
         domain,
         extra_data,
     )
@@ -1057,6 +1065,7 @@ mod tests {
             prep_id,
             key_id,
             &ecdsa_signatures(compressed_sig.clone()),
+            &compressed_sig,
             &dummy_domain(),
             vec![],
         )
@@ -1067,14 +1076,29 @@ mod tests {
             &compact_public_key,
             prep_id,
             key_id,
-            &ecdsa_signatures(compressed_sig_extra_data),
+            &ecdsa_signatures(compressed_sig_extra_data.clone()),
+            &compressed_sig_extra_data,
             &dummy_domain(),
             default_extra_data(),
         )
         .expect("signature should be valid");
 
-        // An empty list is rejected outright: a request that names no scheme
-        // still asks for ECDSA, so the entry has to be there.
+        // A node from a release before `signatures` sends an empty list and the legacy
+        // signature alone, which a network part-way through an upgrade still has to accept.
+        check_compressed_keyset_signatures(
+            &client,
+            &compressed_keyset,
+            &compact_public_key,
+            prep_id,
+            key_id,
+            &[],
+            &compressed_sig,
+            &dummy_domain(),
+            vec![],
+        )
+        .expect("the legacy signature alone should authenticate the result");
+
+        // With neither, there is nothing to check.
         assert!(
             check_compressed_keyset_signatures(
                 &client,
@@ -1082,6 +1106,7 @@ mod tests {
                 &compact_public_key,
                 prep_id,
                 key_id,
+                &[],
                 &[],
                 &dummy_domain(),
                 vec![],
@@ -1102,6 +1127,7 @@ mod tests {
                 prep_id,
                 key_id,
                 &ecdsa_signatures(compressed_sig.clone()),
+                &compressed_sig,
                 &dummy_domain(),
                 vec![],
             )
@@ -1110,9 +1136,8 @@ mod tests {
             .contains(UNKNOWN_PARTY)
         );
 
-        // A signature that is too short, is not a signature at all, or does not
-        // cover this message all fail the same way: no known party's address can
-        // be recovered from it.
+        // A signature that is too short, is not a signature at all, or does not cover
+        // this message is rejected in each case.
         let short_sig = [0_u8; 37].to_vec();
         let malformed_sig = [23_u8; 65].to_vec();
         let wrong_sig = hex::decode("cf92fe4c0b7c72fd8571c9a6680f2cd7481ebed7a3c8c7c7a6e6eaf27f5654f36100c146e609e39950953602ed73a3c10c1672729295ed8b33009b375813e5801b").unwrap();
@@ -1121,21 +1146,20 @@ mod tests {
             ("malformed", malformed_sig),
             ("wrong message", wrong_sig),
         ] {
-            let err = check_compressed_keyset_signatures(
-                &client,
-                &compressed_keyset,
-                &compact_public_key,
-                prep_id,
-                key_id,
-                &ecdsa_signatures(bad_sig),
-                &dummy_domain(),
-                vec![],
-            )
-            .unwrap_err()
-            .to_string();
             assert!(
-                err.contains(UNKNOWN_PARTY),
-                "a {label} signature was not rejected as expected: {err}"
+                check_compressed_keyset_signatures(
+                    &client,
+                    &compressed_keyset,
+                    &compact_public_key,
+                    prep_id,
+                    key_id,
+                    &ecdsa_signatures(bad_sig.clone()),
+                    &bad_sig,
+                    &dummy_domain(),
+                    vec![],
+                )
+                .is_err(),
+                "a {label} signature was not rejected"
             );
         }
     }

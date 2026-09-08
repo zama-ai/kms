@@ -13,19 +13,6 @@ mod s3_operations;
 // reexport fetch_public_elements for integration test
 pub use crate::s3_operations::fetch_public_elements;
 
-/// The ECDSA signature of a result, or an error naming what was missing.
-pub(crate) fn ecdsa_signature(
-    signatures: &[kms_grpc::kms::v1::TypedSignature],
-) -> anyhow::Result<&[u8]> {
-    kms_grpc::rpc_types::scheme_signature(
-        signatures,
-        kms_grpc::kms::v1::SigningSchemeType::Ecdsa256k1,
-    )
-    .ok_or_else(|| {
-        anyhow::anyhow!("the response carries no ECDSA signature in its `signatures` list")
-    })
-}
-
 use crate::backup::{
     do_custodian_backup_recovery, do_custodian_recovery_init, do_destroy_custodian_context,
     do_get_operator_pub_keys, do_new_custodian_context, do_restore_from_backup,

@@ -183,6 +183,7 @@ impl Client {
         let payload_bytes = preproc_payload_bytes(preproc_id, sol_type.extraData.as_ref())?;
         self.verify_result_signatures(
             &resp.signatures,
+            &resp.external_signature,
             &sol_type,
             domain,
             &DSEP_PUBDATA_KEY,
@@ -395,6 +396,7 @@ impl Client {
 
         self.verify_result_signatures(
             &key_gen_result.signatures,
+            &key_gen_result.external_signature,
             sol_type,
             domain,
             &DSEP_PUBDATA_KEY,

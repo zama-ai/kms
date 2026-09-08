@@ -1,4 +1,3 @@
-#[cfg(feature = "testing")]
 use kms_grpc::{
     identifiers::ContextId,
     kms::v1::{DestroyMpcContextRequest, NewMpcContextRequest},

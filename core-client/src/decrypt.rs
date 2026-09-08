@@ -246,6 +246,7 @@ fn check_pt_signatures(
 
     let (party_id, address) = internal_client.verify_result_signatures(
         &response.signatures,
+        &response.external_signature,
         &sol_type,
         domain,
         &DSEP_PUBLIC_DECRYPTION,

@@ -571,7 +571,7 @@ where
 
     // Verify public material and recovery validation material when the signing key is available.
     // Recovery mode only supports backup recovery operations, so it skips both startup checks.
-    // Private storage is the reference; extra material in public storage is ignored.
+    // Private storage is the reference.
     match base_kms.signing_identity() {
         Ok(signing_key) => {
             verify_storage_material(
