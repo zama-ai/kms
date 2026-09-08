@@ -55,7 +55,7 @@ use crate::{
             service::session::{ImmutableSessionMaker, validate_context_and_epoch},
             traits::PublicDecryptor,
         },
-        utils::{MetricedError, format_handle, format_unvalidated_id},
+        utils::{MetricedError, format_handle, format_unvalidated_id, signing_identity_for},
         validation::{
             RequestIdParsingErr, parse_grpc_request_id, parse_optional_grpc_request_id,
             validate_public_decrypt_req,

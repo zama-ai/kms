@@ -5,7 +5,7 @@ use crate::engine::centralized::central_kms::{
     CentralizedKms, async_user_decrypt, central_public_decrypt,
 };
 use crate::engine::traits::{BackupOperator, ContextManager};
-use crate::engine::utils::{MetricedError, signing_identity_for};
+use crate::engine::utils::{MetricedError, format_unvalidated_id, signing_identity_for};
 use crate::engine::validation::{
     RequestIdParsingErr, parse_grpc_request_id, parse_optional_grpc_request_id,
     validate_public_decrypt_req, validate_user_decrypt_req,

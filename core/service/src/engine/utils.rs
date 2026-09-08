@@ -151,7 +151,7 @@ pub const MAX_EXTRA_DATA_VERSION: u8 = 2;
 ///   [`tonic::Code::FailedPrecondition`].
 /// - A scheme the node holds no key for is the caller's mistake, and is refused
 ///   before any work starts: [`tonic::Code::InvalidArgument`].
-pub(crate) fn signing_identity_for(
+pub fn signing_identity_for(
     base_kms: &BaseKmsStruct,
     schemes: &[SigningSchemeType],
     op_metric: &'static str,
