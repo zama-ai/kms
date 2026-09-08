@@ -2,7 +2,7 @@
 //!
 //! FHE key storage first writes a `ServerKey` or `CompressedXofKeySet`, then writes the paired
 //! `PublicKey` and private key material. A failure in the pair must remove every entry created by
-//! the call, preserve unrelated storage and leave the private-key cache empty.
+//! the call, preserve unrelated storage and leave the private-key cache unchanged.
 
 mod cases;
 mod support;
