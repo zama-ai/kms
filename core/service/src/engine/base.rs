@@ -1963,6 +1963,7 @@ pub(crate) mod tests {
     use crate::cryptography::signing::identity::NodeSigningIdentity;
     use crate::cryptography::signing::seed::RootSigningSeed;
     use crate::cryptography::signing::{Signature, SigningSchemeType, unified_verify};
+    use crate::engine::base::DSEP_PUBLIC_DECRYPTION;
     use crate::{
         consts::{SAFE_SER_SIZE_LIMIT, TEST_PARAM},
         cryptography::signatures::{gen_sig_keys, recover_address_from_ext_signature},
@@ -1981,6 +1982,7 @@ pub(crate) mod tests {
     };
     use aes_prng::AesRng;
     use alloy_sol_types::SolStruct;
+    use kms_grpc::kms::v1::PublicDecryptionResponsePayload;
     use kms_grpc::rpc_types::PubDataType;
     use kms_grpc::solidity_types::{CrsgenVerificationQ126, KeygenVerificationQ126};
     use kms_grpc::{
@@ -2035,9 +2037,6 @@ pub(crate) mod tests {
     /// TODO(0.16): remove the deprecated fields and unify the ECDSA entry of `signatures` with `external_signature`.
     #[test]
     fn decryption_scheme_signatures_round_trip() {
-        use crate::engine::validation::DSEP_PUBLIC_DECRYPTION;
-        use kms_grpc::kms::v1::PublicDecryptionResponsePayload;
-
         let mut rng = AesRng::seed_from_u64(0xABCD);
         let (pk, sk) = gen_sig_keys(&mut rng);
         let sk = NodeSigningIdentity::new(sk, RootSigningSeed::random(&mut rng));
@@ -2136,9 +2135,6 @@ pub(crate) mod tests {
     /// multi-scheme feature.
     #[test]
     fn external_signature_still_behaves_as_before_multi_scheme() {
-        use crate::engine::validation::DSEP_PUBLIC_DECRYPTION;
-        use kms_grpc::kms::v1::PublicDecryptionResponsePayload;
-
         let mut rng = AesRng::seed_from_u64(0x0DDD);
         let (pk, sk) = gen_sig_keys(&mut rng);
         let identity = NodeSigningIdentity::new(sk, RootSigningSeed::random(&mut rng));

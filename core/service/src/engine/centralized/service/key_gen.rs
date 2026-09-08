@@ -1131,7 +1131,7 @@ pub(crate) mod tests {
             &epoch_id,
             meta_store.clone(),
             storage.clone(),
-            Arc::new(signing_key),
+            Arc::new(signing_key.into()),
             vec![SigningSchemeType::Ecdsa256k1],
             crate::consts::TEST_PARAM,
             InternalKeySetConfig::new(None, None).unwrap(),

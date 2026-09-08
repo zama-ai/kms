@@ -140,7 +140,7 @@ fn generate_uncompressed_keys(
     let mut rng = AesRng::seed_from_u64(signing_seed);
     let (_, signing_key) = gen_sig_keys(&mut rng);
     generate_uncompressed_fhe_keys(
-        &signing_key,
+        &signing_key.into(),
         &[SigningSchemeType::Ecdsa256k1],
         TEST_PARAM,
         KeyGenSecretKeyConfig::GenerateAll,
