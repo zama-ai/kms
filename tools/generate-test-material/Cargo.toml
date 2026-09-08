@@ -17,9 +17,7 @@ path = "src/main.rs"
 # TODO: once `vault` is its own crate and we have sorted out the `non-wasm` mess, this tool should not need to compile
 # all of `kms` to generate keys.
 # Core KMS dependencies
-kms = { path = "../../core/service", features = ["testing", "non-wasm"] }
-# Parse the storage data type enums used to validate generated material; this is an internal,
-# trusted workspace crate and avoids exposing generator-only validation through the KMS library.
+kms = { workspace = true, features = ["testing", "non-wasm"] }
 kms-grpc = { workspace = true, default-features = false }
 # This shouldn't be needed but without it the wasm-build breaks because features.
 threshold-execution = { workspace = true, features = ["testing"] }
