@@ -7664,7 +7664,6 @@ dependencies = [
  "anyhow",
  "bc2wrap",
  "serde",
- "tempfile",
  "tokio",
  "tracing-subscriber",
 ]

@@ -430,9 +430,7 @@ done
 Key generation is typically triggered via smart contracts, but can be monitored:
 
 ```bash
-# Enable key generation job for non-production testing only.
-# The `insecure-*` commands below require a core-client image built with the
-# `kms-core-client` `insecure` feature and should not be used in production.
+# Enable key generation job (if needed for testing)
 helm upgrade kms-party-1 . \
   --namespace kms-threshold \
   --values values-party1-prod.yaml \

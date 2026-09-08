@@ -34,7 +34,6 @@ RUN chown -R kms:kms /app/kms && \
 
 USER kms
 
-# This controls only the outer image that launches the already-built EIF. The
-# EIF command was captured from core-service by `nitro-cli build-enclave`, and
-# Helm overrides this outer command when starting the parent container.
+# This is not going to be used in practice because Helm charts specify their own
+# commands when starting containers.
 CMD ["kms-server", "centralized"]

@@ -48,15 +48,8 @@ NEW_KMS_CHART_VERSION="${NEW_KMS_CHART_VERSION:-repository}"
 TKMS_INFRA_VERSION="${TKMS_INFRA_CHART_VERSION:-0.3.2}"
 SYNC_SECRETS_VERSION="0.2.3"
 PATH_SUFFIX="${PATH_SUFFIX:-kms-enclave-ci}"
-KMS_CORE_IMAGE_NAME="${KMS_CORE_IMAGE_NAME:-hub.zama.org/ghcr/zama-ai/kms/core-service-insecure}"
-KMS_CORE_CLIENT_IMAGE_NAME="${KMS_CORE_CLIENT_IMAGE_NAME:-hub.zama.org/ghcr/zama-ai/kms/core-client-insecure}"
-KMS_CORE_ENCLAVE_IMAGE_NAME="${KMS_CORE_ENCLAVE_IMAGE_NAME:-hub.zama.org/ghcr/zama-ai/kms/core-service-enclave-insecure}"
-OLD_KMS_CORE_IMAGE_NAME="${OLD_KMS_CORE_IMAGE_NAME:-hub.zama.org/ghcr/zama-ai/kms/core-service}"
-OLD_KMS_CORE_CLIENT_IMAGE_NAME="${OLD_KMS_CORE_CLIENT_IMAGE_NAME:-hub.zama.org/ghcr/zama-ai/kms/core-client}"
-OLD_KMS_CORE_ENCLAVE_IMAGE_NAME="${OLD_KMS_CORE_ENCLAVE_IMAGE_NAME:-hub.zama.org/ghcr/zama-ai/kms/core-service-enclave}"
-NEW_KMS_CORE_IMAGE_NAME="${NEW_KMS_CORE_IMAGE_NAME:-${KMS_CORE_IMAGE_NAME}}"
-NEW_KMS_CORE_CLIENT_IMAGE_NAME="${NEW_KMS_CORE_CLIENT_IMAGE_NAME:-${KMS_CORE_CLIENT_IMAGE_NAME}}"
-NEW_KMS_CORE_ENCLAVE_IMAGE_NAME="${NEW_KMS_CORE_ENCLAVE_IMAGE_NAME:-${KMS_CORE_ENCLAVE_IMAGE_NAME}}"
+KMS_CORE_IMAGE_NAME="${KMS_CORE_IMAGE_NAME:-hub.zama.org/ghcr/zama-ai/kms/core-service}"
+KMS_CORE_CLIENT_IMAGE_NAME="${KMS_CORE_CLIENT_IMAGE_NAME:-hub.zama.org/ghcr/zama-ai/kms/core-client}"
 HELM_RELEASE_PREFIX="${HELM_RELEASE_PREFIX:-kms-core}"
 ENABLE_TLS="true"
 TLS="true"
@@ -126,8 +119,7 @@ parse_rolling_upgrade_args() {
 #=============================================================================
 fetch_pcrs_for_tag() {
     local tag="$1"
-    local image_name="$2"
-    local prefix="$3"
+    local prefix="$2"
 
     log_info "Fetching PCR values for tag: ${tag}"
 
@@ -136,7 +128,8 @@ fetch_pcrs_for_tag() {
         exit 1
     fi
 
-    local FULL_IMAGE="${image_name}:${tag}"
+    local IMAGE_REPO="hub.zama.org/ghcr/zama-ai/kms"
+    local FULL_IMAGE="${IMAGE_REPO}/core-service-enclave:${tag}"
 
     log_info "Pulling ${FULL_IMAGE}..."
     docker pull "${FULL_IMAGE}" > /dev/null 2>&1 || {
@@ -189,13 +182,13 @@ main() {
     if [[ -n "${OLD_PCR0:-}" && -n "${OLD_PCR1:-}" && -n "${OLD_PCR2:-}" ]]; then
         log_info "Using pre-set OLD PCR values from environment"
     else
-        fetch_pcrs_for_tag "${OLD_TAG}" "${OLD_KMS_CORE_ENCLAVE_IMAGE_NAME}" "OLD"
+        fetch_pcrs_for_tag "${OLD_TAG}" "OLD"
     fi
 
     if [[ -n "${NEW_PCR0:-}" && -n "${NEW_PCR1:-}" && -n "${NEW_PCR2:-}" ]]; then
         log_info "Using pre-set NEW PCR values from environment"
     else
-        fetch_pcrs_for_tag "${NEW_TAG}" "${NEW_KMS_CORE_ENCLAVE_IMAGE_NAME}" "NEW"
+        fetch_pcrs_for_tag "${NEW_TAG}" "NEW"
     fi
 
     #=========================================================================

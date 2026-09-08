@@ -10,8 +10,6 @@ pub mod js_api;
 #[cfg(feature = "non-wasm")]
 pub mod key_gen;
 #[cfg(feature = "non-wasm")]
-pub mod local_crypto;
-#[cfg(feature = "non-wasm")]
 pub mod mpc_context;
 #[cfg(feature = "non-wasm")]
 pub mod public_decryption;
