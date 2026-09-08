@@ -109,8 +109,8 @@ impl Vault {
         // when erasing a retired context.
         self.delete_custodian_backup_data(backup_id).await?;
 
-        // A backend can report a successful delete without removing the object. Re-enumerate the
-        // namespace before the caller removes recovery material and lifecycle state.
+        // A backend can report a successful delete without removing the object. Check all entries
+        // for this backup ID before the caller removes recovery material and lifecycle state.
         let mut residual = Vec::new();
         for cur_type in PrivDataType::iter() {
             let vault_data_type =
