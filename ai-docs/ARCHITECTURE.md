@@ -110,12 +110,12 @@ The service crate is the main surface area. Key subdirectories under
   private objects: its ECDSA signing key (`PrivDataType::SigningKey`, the
   authoritative on-chain identity) and an independent, CSPRNG-generated
   `RootSigningSeed` (`PrivDataType::SigningSeed`), both under `SIGNING_KEY_ID`.
-  The seed will eventuall be the root of *every* signing key of the node, ECDSA 
+  The seed will eventuall be the root of *every* signing key of the node, ECDSA
   included: keys are derived on demand from the *seed*. However to ensure backward
-  compatibility and avoid requiring nodes to roll their ECDSA keys, legacy ECDSA 
-  are derived and stored seperately, and the seed is only used to derive every 
-  non-ECDSA key. That is, if a legacy ECDSA key is stored, then the seed will *not* 
-  be used to derive ECDSA material. 
+  compatibility and avoid requiring nodes to roll their ECDSA keys, legacy ECDSA
+  are derived and stored seperately, and the seed is only used to derive every
+  non-ECDSA key. That is, if a legacy ECDSA key is stored, then the seed will *not*
+  be used to derive ECDSA material.
   The seed is carried in memory on `PrivateSigKey` (a `#[serde(skip)]` field, so
   the persisted format is unchanged) and attached by `get_core_signing_key`; a key
   without it — a client wallet key, or a node that has not yet run `kms-gen-keys` —
@@ -189,6 +189,10 @@ The primary service is `CoreServiceEndpoint`. Its RPCs group into:
   field are upgraded with the OPRF share absent; `UseExisting` keygen generates
   and persists a fresh OPRF share for such legacy material before regenerating
   public keys.
+  When the parameter set carries transciphering parameters, keygen additionally
+  persists a *second*, independently sampled LWE secret-key share and includes the
+  matching transciphering server key. Similar to the OPRF key, a new
+  transciphering key is created when keygen uses the `UseExisting` option.
 - **Decryption** — `PublicDecrypt` (returns plaintext) and `UserDecrypt`
   (user-initiated, EIP-712 authenticated). `PublicDecryptSync` / `UserDecryptSync`
   start a decryption and wait for its result in the same call, so the caller does
@@ -206,8 +210,10 @@ The primary service is `CoreServiceEndpoint`. Its RPCs group into:
   both sets must hold the key material, so failing to read it rejects the
   request, whereas a pure set 2 party (a node joining the new context) never held
   the key and logs a warning instead. When resharing legacy key material that
-  has no dedicated OPRF secret-key share, the OPRF sub-protocol is skipped and
-  the reshared private keyset keeps that field absent. A storage failure during
+  has no dedicated OPRF/transciphering secret-key share, the OPRF/transciphering
+  sub-protocol is skipped and the reshared private keyset keeps that field
+  absent. Which of these optional shares to reshare is decided from the input
+  keyset, and every party must agree. A storage failure during
   resharing rolls the new epoch back on the party that fails. That party attempts
   to delete the key shares, the CRS metadata and the epoch data of the new epoch.
   Public data remains because an epoch change does not affect it. If cleanup
@@ -474,8 +480,12 @@ exact commands.
   [docker/kms-binaries/Dockerfile](docker/kms-binaries/Dockerfile) and pass the
   desired tag explicitly; production CI builds its secure `prod` target and
   retags it as `:latest` before packaging the `prod` targets of `core-service`
-  and `core-client`. Release compilation uses fat LTO, while other CI builds use
-  thin LTO. The published runtime image for the service remains
+  and `core-client`. Secure compilation uses fat LTO on release tags and thin
+  LTO otherwise; the insecure flavor always uses thin LTO, and must never be
+  built with LTO off, because pr-preview and perf-testing deploy it and take
+  their numbers from it. Both flavors target the
+  `x86-64-v3` CPU baseline, overridable via the `TARGET_CPU` build arg. The
+  published runtime image for the service remains
   `ghcr.io/zama-ai/kms/core-service`.
 - **Kubernetes** — a Helm chart is provided at
   [charts/kms-core/](charts/kms-core/) for both centralized and threshold

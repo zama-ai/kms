@@ -44,7 +44,7 @@ kmsCore:
         backupVaultKeychainAWSKMSRootKeySpec: KMS_CORE__BACKUP_VAULT__KEYCHAIN__AWS_KMS__ROOT_KEY_SPEC
         backupVaultKeychainAWSKMSRootKeyID: KMS_CORE__BACKUP_VAULT__KEYCHAIN__AWS_KMS__ROOT_KEY_ID
   rateLimiter:
-    bucketSize: 50000
+    bucketSize: 100000
   # One-time migration input associating existing epochs with the context they belong to.
   # Consumed once by the epoch-data migration on startup; idempotent, so it can be left in place.
   # Each epoch belongs to exactly one context, so a given epoch ID must appear under a single entry.
@@ -113,14 +113,14 @@ kmsCore:
     enableSysMetrics: true
     refreshIntervalMs: 5000
     tokioWorkerThreads: 10
-    rayonNumThreads: 40
+    rayonNumThreads: 60
     # Threshold value is the number of corruptions that the protocol handles.
     # 1 for 4 parties, 4 for 13 parties
     thresholdValue: 4
     decCapacity: 10000
     minDecCache: 6000
     # Number of sessions to pre-process should be equal to number of vCPUs
-    numSessionsPreproc: 100
+    numSessionsPreproc: 90
     decryptionMode: "NoiseFloodSmall"
   # Add the following to enable nitro enclave:
   # Nitro enclave needs specific instance types
@@ -130,7 +130,7 @@ kmsCore:
     # Enclave bootstrap support sockets.
     webIdentityTokenPort: 4100
     # Enclave CPU count, must be a multiple of 2 since whole cores (not hyperthreads) are sliced off and dedicated to the enclave
-    cpuCount: 48
+    cpuCount: 52
     # Enclave Memory in GiB
     memoryGiB: 96
     networkTunnel:

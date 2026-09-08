@@ -35,6 +35,7 @@ use threshold_execution::{
         parameters::BC_PARAMS_NO_SNS,
         private_keysets::{
             GlweSecretKeyShareEnum, LweSecretKeyShareEnum, PrivateKeySet, PrivateKeySetV2,
+            PrivateKeySetV3,
         },
     },
 };
@@ -280,6 +281,13 @@ fn test_private_key_gen(
         "legacy private keysets must upgrade with no dedicated OPRF private share"
     );
 
+    assert!(
+        original_versionized
+            .transciphering_secret_key_share
+            .is_none(),
+        "legacy private keysets must upgrade with no transciphering private share"
+    );
+
     Ok(test.success(format))
 }
 
@@ -350,4 +358,36 @@ fn test_private_keyset_v2_upgrade_sets_missing_oprf_share_to_none() {
 
     let upgraded = legacy.upgrade().unwrap();
     assert!(upgraded.oprf_secret_key_share.is_none());
+}
+
+/// Verifies that the V3 -> V4 `PrivateKeySet` upgrade path leaves the new
+/// `transciphering_secret_key_share` field as `None` for material that predates
+/// transciphering, while carrying the OPRF share added in V3 across unchanged.
+#[test]
+fn test_private_keyset_v3_upgrade_sets_missing_transciphering_share_to_none() {
+    use tfhe_versionable::Upgrade;
+
+    let params = *BC_PARAMS_NO_SNS;
+    let oprf_share = LweSecretKeyShareEnum::Z128(LweSecretKeyShare { data: vec![] });
+    let legacy = PrivateKeySetV3::<4> {
+        lwe_compute_secret_key_share: LweSecretKeyShareEnum::Z128(LweSecretKeyShare {
+            data: vec![],
+        }),
+        lwe_encryption_secret_key_share: LweSecretKeyShareEnum::Z128(LweSecretKeyShare {
+            data: vec![],
+        }),
+        oprf_secret_key_share: Some(oprf_share.clone()),
+        glwe_secret_key_share: GlweSecretKeyShareEnum::Z128(GlweSecretKeyShare {
+            data: vec![],
+            polynomial_size: params.polynomial_size(),
+        }),
+        glwe_secret_key_share_sns_as_lwe: None,
+        glwe_secret_key_share_compression: None,
+        glwe_sns_compression_key_as_lwe: None,
+        parameters: params.classic_pbs(),
+    };
+
+    let upgraded = legacy.upgrade().unwrap();
+    assert!(upgraded.transciphering_secret_key_share.is_none());
+    assert_eq!(upgraded.oprf_secret_key_share, Some(oprf_share));
 }

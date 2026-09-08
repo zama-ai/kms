@@ -226,10 +226,14 @@ graph LR
 
 The two binaries jobs compile the secure production flavor and the insecure test
 flavor. The downstream jobs only assemble runtime layers around the matching
-binaries. All published service and client jobs build the `prod` target. Release
-tags use fat LTO and other builds use thin LTO. Builds use OIDC auth, GHCR + CGR
-publishing, and an S3-backed cache. The workflow outputs `image_tag` and the
-insecure test enclave PCR values.
+binaries. All published service and client jobs build the `prod` target. The
+insecure flavor always uses thin LTO — never `off`, since pr-preview and
+perf-testing take their measurements from it; the secure flavor uses fat LTO on
+release tags and thin LTO otherwise. Both are built for the `x86-64-v3` CPU
+baseline (see
+[`docker/kms-binaries/Dockerfile`](../../docker/kms-binaries/Dockerfile)).
+Builds use OIDC auth, GHCR + CGR publishing, and an S3-backed cache. The
+workflow outputs `image_tag` and the insecure test enclave PCR values.
 
 ---
 

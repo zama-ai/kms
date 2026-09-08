@@ -460,6 +460,7 @@ pub(crate) mod tests {
                                     _noise_squashing_compression_key,
                                     _rerand_parameters,
                                     _oprf_private_key,
+                                    _transciphering_private_key,
                                     _tag,
                                 ) = client_key.into_raw_parts();
 
@@ -527,7 +528,7 @@ pub(crate) mod tests {
         #[cfg(feature = "slow_tests")]
         const NUM_SEEDS: u128 = 50;
 
-        let (integer_server_key, _, _, _, _, _, _, oprf_server_key, _) =
+        let (integer_server_key, _, _, _, _, _, _, oprf_server_key, _, _) =
             server_key.clone().into_raw_parts();
         let Some(oprf_server_key) = oprf_server_key else {
             panic!("expected oprf_server_key")
@@ -542,6 +543,7 @@ pub(crate) mod tests {
             _noise_squashing_compression_key,
             _rerand_parameters,
             oprf_private_key,
+            _transciphering_private_key,
             _tag,
         ) = client_key.clone().into_raw_parts();
         let Some(oprf_private_key) = oprf_private_key else {
