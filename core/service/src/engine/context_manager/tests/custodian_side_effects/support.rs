@@ -57,6 +57,7 @@ impl CustodianFixture {
             storage.clone(),
             MetaStore::new(100, 10),
             session_maker,
+            false,
         );
         let target_id = RequestId::from_bytes([TARGET_CONTEXT_BYTE; 32]);
         let current_id = RequestId::from_bytes([CURRENT_CONTEXT_BYTE; 32]);

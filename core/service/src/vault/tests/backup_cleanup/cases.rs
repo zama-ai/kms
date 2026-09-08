@@ -210,7 +210,16 @@ async fn remove_old_backup_failure_is_retryable(#[case] fault_phase: FaultPhase)
     }
 
     let storage = failing_ram_storage_mut(&mut fixture.vault);
-    let faults = storage.faults();
+    let faults: Vec<_> = storage
+        .events()
+        .iter()
+        .filter(|event| {
+            matches!(
+                event.outcome,
+                StorageOutcome::FailedBeforeMutation | StorageOutcome::FailedAfterMutation
+            )
+        })
+        .collect();
     assert_eq!(faults.len(), 1);
     assert_eq!(faults[0].entry, failed_entry.storage_entry());
     let expected_outcome = match fault_phase {

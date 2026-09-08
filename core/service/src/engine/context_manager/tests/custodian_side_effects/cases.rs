@@ -26,7 +26,12 @@ async fn failed_backup_erasure_is_retryable(
     let backup_events = fixture.backup_events().await;
     let faults: Vec<_> = backup_events
         .iter()
-        .filter(|event| event.outcome.failed())
+        .filter(|event| {
+            matches!(
+                event.outcome,
+                StorageOutcome::FailedBeforeMutation | StorageOutcome::FailedAfterMutation
+            )
+        })
         .collect();
     assert_eq!(faults.len(), 1);
     assert_eq!(faults[0].entry, fixture.target_backup_entry());
