@@ -27,15 +27,9 @@ use tokio_rustls::rustls::crypto::aws_lc_rs::default_provider;
 
 type TestStorage = CryptoMaterialStorage<RamStorage, FailingRamStorage>;
 
-#[derive(Clone, Copy, Debug)]
-pub(super) enum ManagerKind {
-    Centralized,
-    Threshold,
-}
-
 /// Selects whether the fixture seeds the target context before the test starts.
 #[derive(Clone, Copy, Debug)]
-pub(super) enum TargetState {
+pub(super) enum InitialTargetContextState {
     Absent,
     Stored,
 }
@@ -46,7 +40,7 @@ pub(super) enum TestContextManager {
 }
 
 impl TestContextManager {
-    pub(super) async fn create(
+    pub(super) async fn new_mpc_context(
         &self,
         context: &ContextInfo,
     ) -> Result<Response<Empty>, MetricedError> {
@@ -59,7 +53,10 @@ impl TestContextManager {
         }
     }
 
-    pub(super) async fn destroy(&self, context_id: ContextId) -> Result<(), MetricedError> {
+    pub(super) async fn destroy_mpc_context(
+        &self,
+        context_id: ContextId,
+    ) -> Result<(), MetricedError> {
         let request = Request::new(DestroyMpcContextRequest {
             context_id: Some(context_id.into()),
         });
@@ -78,10 +75,7 @@ impl TestContextManager {
     }
 
     /// Returns whether persistent and in-memory state both contain `context_id`.
-    ///
-    /// The method returns an error if the two states disagree. Tests unwrap that error so an
-    /// inconsistent state fails the test instead of appearing as a normal `false` result.
-    pub(super) async fn contains_consistent(&self, context_id: &ContextId) -> bool {
+    pub(super) async fn mpc_context_exists_and_consistent(&self, context_id: &ContextId) -> bool {
         match self {
             Self::Centralized(manager) => manager
                 .mpc_context_exists_and_consistent(context_id)
@@ -106,7 +100,7 @@ pub(super) struct ContextFixture {
 }
 
 impl ContextFixture {
-    pub(super) async fn new(target_state: TargetState) -> Self {
+    pub(super) async fn new(target_state: InitialTargetContextState) -> Self {
         let storage =
             CryptoMaterialStorage::from(RamStorage::new(), FailingRamStorage::new(), None);
         let (verification_key, signing_key) = gen_sig_keys(&mut OsRng);
@@ -140,8 +134,8 @@ impl ContextFixture {
                 .await
                 .unwrap();
             match target_state {
-                TargetState::Absent => {}
-                TargetState::Stored => {
+                InitialTargetContextState::Absent => {}
+                InitialTargetContextState::Stored => {
                     store_context_at_id(&mut *private, target.context_id(), &target)
                         .await
                         .unwrap();
@@ -161,15 +155,11 @@ impl ContextFixture {
         }
     }
 
-    pub(super) async fn manager(&self, kind: ManagerKind) -> TestContextManager {
-        let kms_type = match kind {
-            ManagerKind::Centralized => KMSType::Centralized,
-            ManagerKind::Threshold => KMSType::Threshold,
-        };
+    pub(super) async fn manager(&self, kms_type: KMSType) -> TestContextManager {
         let base_kms = BaseKmsStruct::new(kms_type, self.signing_key.clone()).unwrap();
 
-        match kind {
-            ManagerKind::Centralized => {
+        match kms_type {
+            KMSType::Centralized => {
                 let manager = CentralizedContextManager::new(
                     base_kms,
                     self.storage.clone(),
@@ -178,7 +168,7 @@ impl ContextFixture {
                 manager.load_mpc_context_from_storage().await.unwrap();
                 TestContextManager::Centralized(manager)
             }
-            ManagerKind::Threshold => {
+            KMSType::Threshold => {
                 let session_maker = SessionMaker::empty_dummy_session(base_kms.new_rng().await);
                 let manager = ThresholdContextManager::new(
                     base_kms,
@@ -236,7 +226,7 @@ impl ContextFixture {
 
 /// Returns an empty session maker with attested TLS verification enabled.
 pub(super) fn attested_session_maker(rng: AesRng) -> SessionMaker {
-    _ = default_provider().install_default();
+    let _ = default_provider().install_default();
     let verifier = Arc::new(
         AttestedVerifier::new(
             None,
