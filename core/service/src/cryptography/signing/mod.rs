@@ -816,9 +816,9 @@ mod tests {
                 format!("  {name} "),
             ] {
                 assert_eq!(
-                    SigningSchemeType::parse_requested(&[spelling.clone()]).unwrap(),
+                    SigningSchemeType::parse_requested(&[spelling]).unwrap(),
                     vec![scheme],
-                    "{spelling:?} did not parse as {scheme}"
+                    "Spelling did not parse as {scheme}"
                 );
             }
         }

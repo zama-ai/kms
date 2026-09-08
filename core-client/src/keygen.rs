@@ -10,7 +10,6 @@ use kms_grpc::identifiers::EpochId;
 use kms_grpc::kms::v1::{FheParameter, KeyGenPreprocResult, KeyGenResult, TypedSignature};
 use kms_grpc::kms_service::v1::core_service_endpoint_client::CoreServiceEndpointClient;
 use kms_grpc::rpc_types::PubDataType;
-use kms_grpc::solidity_types::KeygenVerification;
 use kms_grpc::{ContextId, RequestId};
 use kms_lib::client::client_wasm::Client;
 use kms_lib::engine::base::{
@@ -535,6 +534,7 @@ pub(crate) async fn do_abort_key_gen(
 
 /// Verify every signature a keygen result carries, under every scheme the client
 /// requested, and that it was produced by one of the known KMS parties.
+#[expect(clippy::too_many_arguments)]
 fn check_keyset_signatures(
     internal_client: &Client,
     layout: CurrentPublicMaterialLayout,
@@ -894,7 +894,10 @@ pub(crate) async fn get_preproc_keygen_responses(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use kms_grpc::rpc_types::{PrivDataType, PubDataType, ecdsa_signatures};
+    use kms_grpc::{
+        rpc_types::{PrivDataType, PubDataType, ecdsa_signatures},
+        solidity_types::KeygenVerification,
+    };
     use kms_lib::{
         consts::{
             DEFAULT_EPOCH_ID, OTHER_CENTRAL_TEST_ID, SIGNING_KEY_ID, TEST_CENTRAL_KEY_ID,

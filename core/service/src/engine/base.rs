@@ -2190,12 +2190,14 @@ pub(crate) mod tests {
             // And the ECDSA entry of `signatures` is the same bytes, so validation
             // reading the list sees what the legacy field carries.
             if schemes.contains(&SigningSchemeType::Ecdsa256k1) {
-                let ecdsa_entry = kms_grpc::rpc_types::scheme_signature(
-                    signatures,
-                    crate::kms::v1::SigningSchemeType::Ecdsa256k1,
-                )(&sigs.signatures)
-                .expect("an ECDSA entry was requested");
-                assert_eq!(ecdsa_entry, sigs.external_signature);
+                let ecdsa_entry = sigs
+                    .signatures
+                    .iter()
+                    .find(|signature_scheme| {
+                        signature_scheme.scheme == SigningSchemeType::Ecdsa256k1 as i32
+                    })
+                    .expect("an ECDSA entry was requested");
+                assert_eq!(ecdsa_entry.signature, sigs.external_signature);
             }
 
             // The deprecated scalar signature also keeps its pre-feature meaning:

@@ -258,6 +258,7 @@ pub(crate) fn ensure_requested_verified(
 /// deprecated scalar `signature` / `external_signature` fields before reaching
 /// the list, so ECDSA counts as verified even when the list omits it. An ECDSA
 /// entry that *is* present is still checked, exactly as those fields are.
+#[expect(clippy::too_many_arguments)]
 pub(crate) fn verify_user_decrypt_scheme_signatures(
     keys: &SchemeVerfKeys,
     payload: &UserDecryptionResponsePayload,

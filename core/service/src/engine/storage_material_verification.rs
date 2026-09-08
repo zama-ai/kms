@@ -1294,8 +1294,8 @@ mod tests {
             &HashMap::new(),
             &NodeSigningIdentity::ecdsa_only(sk.clone()),
         )
-            .await
-            .expect("material with no private counterpart must not fail boot");
+        .await
+        .expect("material with no private counterpart must not fail boot");
         let expected = BTreeMap::from([
             (
                 PubDataType::PublicKey,
@@ -1501,8 +1501,8 @@ mod tests {
             &HashMap::new(),
             &NodeSigningIdentity::ecdsa_only(sk.clone()),
         )
-            .await
-            .expect("an unlistable folder must not fail boot");
+        .await
+        .expect("an unlistable folder must not fail boot");
         assert!(
             report
                 .unlistable

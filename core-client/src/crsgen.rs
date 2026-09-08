@@ -9,7 +9,6 @@ use hashing::hash_versioned;
 use kms_grpc::kms::v1::{CrsGenResult, FheParameter, TypedSignature};
 use kms_grpc::kms_service::v1::core_service_endpoint_client::CoreServiceEndpointClient;
 use kms_grpc::rpc_types::PubDataType;
-use kms_grpc::solidity_types::CrsgenVerification;
 use kms_grpc::{ContextId, EpochId, RequestId};
 use kms_lib::client::client_wasm::Client;
 use kms_lib::engine::base::{DSEP_PUBDATA_CRS, crs_payload_bytes, crs_sol_type};
@@ -422,7 +421,7 @@ pub(crate) async fn do_abort_crs_gen(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use kms_grpc::rpc_types::{PrivDataType, ecdsa_signatures};
+    use kms_grpc::{rpc_types::{PrivDataType, ecdsa_signatures}, solidity_types::CrsgenVerification};
     use kms_lib::{
         consts::{
             DEFAULT_EPOCH_ID, SIGNING_KEY_ID, TEST_CENTRAL_CRS_ID, TEST_PARAM, default_extra_data,
