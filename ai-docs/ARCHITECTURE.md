@@ -480,8 +480,12 @@ exact commands.
   [docker/kms-binaries/Dockerfile](docker/kms-binaries/Dockerfile) and pass the
   desired tag explicitly; production CI builds its secure `prod` target and
   retags it as `:latest` before packaging the `prod` targets of `core-service`
-  and `core-client`. Release compilation uses fat LTO, while other CI builds use
-  thin LTO. The published runtime image for the service remains
+  and `core-client`. Secure compilation uses fat LTO on release tags and thin
+  LTO otherwise; the insecure flavor always uses thin LTO, and must never be
+  built with LTO off, because pr-preview and perf-testing deploy it and take
+  their numbers from it. Both flavors target the
+  `x86-64-v3` CPU baseline, overridable via the `TARGET_CPU` build arg. The
+  published runtime image for the service remains
   `ghcr.io/zama-ai/kms/core-service`.
 - **Kubernetes** — a Helm chart is provided at
   [charts/kms-core/](charts/kms-core/) for both centralized and threshold

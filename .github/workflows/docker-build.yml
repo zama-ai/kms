@@ -390,7 +390,16 @@ jobs:
       packages: write # Required to publish Docker images
       attestations: write # Required to create build attestations
     with:
-      lto-release: ${{ github.event_name == 'release' && 'release' || 'release-lto-off' }}
+      # These binaries are what pr-preview, perf-testing and rolling-upgrade
+      # actually deploy, so they must not be built with LTO off: cross-CGU and
+      # cross-crate inlining is worth double digits on the PRSS-heavy
+      # preprocessing path, and losing it makes every measurement taken against
+      # a preview or perf cluster an underestimate. Thin captures nearly all of
+      # that; fat costs a lot of link time for a further 1-3% that is below the
+      # noise floor of a 13-party cluster. Unconditional (rather than fat on
+      # release tags, as the secure flavor does) so that perf numbers stay
+      # comparable across every trigger.
+      lto-release: 'release-lto-thin'
       docker-file: './docker/kms-binaries/Dockerfile'
       working-directory: './docker/kms-binaries'
       image-name: 'kms/kms-binaries-insecure'

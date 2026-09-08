@@ -7,6 +7,13 @@ FROM --platform=$BUILDPLATFORM ${RUST_GOLDEN_IMAGE} AS builder
 # Cargo profile to build with.
 # Use --build-arg LTO_RELEASE=release-lto-off for faster local linking.
 ARG LTO_RELEASE=release-lto-thin
+# Baseline CPU to generate code for. `x86-64-v3` (AVX2, FMA, BMI1/2, LZCNT)
+# is supported by every Haswell-or-later x86 host, which covers the CI
+# runners, the Kind clusters and the c7a enclave nodes, and it lets the
+# threshold arithmetic and non-tfhe hot paths use instructions the generic
+# `x86-64` baseline has to emulate. Pass `--build-arg TARGET_CPU=` to fall
+# back to the generic baseline.
+ARG TARGET_CPU=x86-64-v3
 ARG SCCACHE_BUCKET
 ARG SCCACHE_REGION=eu-west-3
 ARG SCCACHE_S3_PREFIX
@@ -15,6 +22,10 @@ ARG SCCACHE_S3_PREFIX
 # unset, so RUSTC_WRAPPER stays empty and the build compiles without the remote
 # cache instead of failing to authenticate to S3.
 ENV RUSTC_WRAPPER=${SCCACHE_BUCKET:+sccache}
+# Append to (not replace) the golden image's RUSTFLAGS, which carries
+# `-C target-feature=-crt-static`. RUSTFLAGS is part of the sccache cache key,
+# so the first build after changing TARGET_CPU is a full cache miss.
+ENV RUSTFLAGS="${RUSTFLAGS}${TARGET_CPU:+ -C target-cpu=${TARGET_CPU}}"
 ENV SCCACHE_IDLE_TIMEOUT=0
 ENV SCCACHE_BUCKET=${SCCACHE_BUCKET}
 ENV SCCACHE_REGION=${SCCACHE_REGION}
