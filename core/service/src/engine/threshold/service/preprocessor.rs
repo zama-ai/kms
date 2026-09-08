@@ -39,7 +39,7 @@ use tracing::Instrument;
 use crate::{
     anyhow_error_and_log,
     consts::DURATION_WAITING_ON_PREPROC_RESULT_SECONDS,
-    cryptography::{signing::SigningSchemeType, signing::identity::NodeSigningIdentity},
+    cryptography::signing::{SigningSchemeType, identity::NodeSigningIdentity},
     engine::{
         base::{
             BaseKmsStruct, compute_preprocessing_signatures, stored_scheme_signatures_to_proto,
@@ -48,7 +48,7 @@ use crate::{
             service::session::{ImmutableSessionMaker, validate_context_and_epoch},
             traits::KeyGenPreprocessor,
         },
-        utils::MetricedError,
+        utils::{MetricedError, signing_identity_for},
         validation::{RequestIdParsingErr, parse_grpc_request_id, validate_preproc_request},
     },
     util::{
@@ -88,6 +88,7 @@ impl<P: ProducerFactory<ResiduePolyF4Z128, SmallSession<ResiduePolyF4Z128>>> Rea
         context_id: ContextId,
         epoch_id: EpochId,
         extra_data: Vec<u8>,
+        sk: Arc<NodeSigningIdentity>,
         signing_schemes: Vec<SigningSchemeType>,
         domain: &alloy_sol_types::Eip712Domain,
         timer: DurationGuard<'static>,
@@ -133,8 +134,6 @@ impl<P: ProducerFactory<ResiduePolyF4Z128, SmallSession<ResiduePolyF4Z128>>> Rea
         }
         let ongoing = Arc::clone(&self.ongoing);
 
-        let sk = self.base_kms.signing_identity()?;
-        sk.ensure_supported(&signing_schemes)?;
         let domain_clone = domain.clone();
         self.tracker.spawn(
             async move {
@@ -400,6 +399,12 @@ impl<P: ProducerFactory<ResiduePolyF4Z128, SmallSession<ResiduePolyF4Z128>>> Rea
             extra_data,
             signing_schemes,
         ) = validate_preproc_request(request)?;
+        let sk = signing_identity_for(
+            &self.base_kms,
+            &signing_schemes,
+            OP_KEYGEN_PREPROC_REQUEST,
+            Some(request_id),
+        )?;
         let my_role = validate_context_and_epoch(
             OP_KEYGEN_PREPROC_REQUEST,
             &self.session_maker,
@@ -428,6 +433,7 @@ impl<P: ProducerFactory<ResiduePolyF4Z128, SmallSession<ResiduePolyF4Z128>>> Rea
                 context_id,
                 epoch_id,
                 extra_data,
+                sk,
                 signing_schemes,
                 &eip712_domain,
                 timer,
@@ -467,6 +473,12 @@ impl<P: ProducerFactory<ResiduePolyF4Z128, SmallSession<ResiduePolyF4Z128>>> Rea
             extra_data,
             signing_schemes,
         ) = validate_preproc_request(request)?;
+        let sk = signing_identity_for(
+            &self.base_kms,
+            &signing_schemes,
+            OP_INSECURE_KEYGEN_PREPROC_REQUEST,
+            Some(request_id),
+        )?;
         let my_role = validate_context_and_epoch(
             OP_INSECURE_KEYGEN_PREPROC_REQUEST,
             &self.session_maker,
@@ -479,13 +491,6 @@ impl<P: ProducerFactory<ResiduePolyF4Z128, SmallSession<ResiduePolyF4Z128>>> Rea
         timer.tags(metric_tags);
 
         tracing::info!("Starting preproc generation for Request ID {}", request_id);
-
-        let sk = crate::engine::utils::signing_identity_for(
-            &self.base_kms,
-            &signing_schemes,
-            OP_INSECURE_KEYGEN_PREPROC_REQUEST,
-            Some(request_id),
-        )?;
 
         // Add preprocessing to metastore and fail in case it is already present.
         let meta_permit = add_req_to_meta_store(

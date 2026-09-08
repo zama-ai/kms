@@ -94,6 +94,11 @@ impl Client {
         }
     }
 
+    /// The schemes this client requests, and requires back on every result.
+    pub fn signing_schemes(&self) -> &[SigningSchemeType] {
+        &self.signing_schemes
+    }
+
     /// The schemes this client requests, in the gRPC representation.
     pub fn signing_schemes_proto(&self) -> Vec<i32> {
         self.signing_schemes

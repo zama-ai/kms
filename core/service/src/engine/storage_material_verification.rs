@@ -464,9 +464,6 @@ fn verify_eip712_metadata_signature<T: SolStruct>(
             "Invalid EIP-712 signature in private {metadata_kind} metadata for id={metadata_id}: recovered signer {recovered_address}, expected {expected_address}"
         );
     }
-
-    // TODO(https://github.com/zama-ai/kms-internal/issues/3078): verify the optional
-    // per-scheme signatures stored in the metadata, including PQ signatures.
     Ok(())
 }
 

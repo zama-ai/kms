@@ -14,11 +14,12 @@ use backward_compatibility::{
     InternalCustodianSetupMessageTest, InternalRecoveryRequestTest, KeyGenMetadataTest,
     KeyGenMetadataWithExtraDataTest, KeygenSignedPayloadTest, KmsFheKeyHandlesTest, NodeInfoTest,
     OperatorBackupOutputTest, PrepKeygenSignedPayloadTest, PrivateSigKeyTest,
-    PrssSetupCombinedTest, PublicSigKeyTest, RecoveryValidationMaterialTest, RootSigningSeedTest,
-    SchemeDigestsTest, SigncryptionPayloadTest, SoftwareVersionTest, StoredEip712DomainTest,
-    StoredTypedSignatureTest, TestMetadataKMS, TestType, Testcase, ThresholdFheKeysTest,
-    TypedPlaintextTest, UnifiedCipherTest, UnifiedPublicSigKeyTest, UnifiedSigncryptionKeyTest,
-    UnifiedSigncryptionTest, UnifiedUnsigncryptionKeyTest, data_dir,
+    PrssSetupCombinedTest, PublicDecSignedPayloadTest, PublicSigKeyTest,
+    RecoveryValidationMaterialTest, RootSigningSeedTest, SchemeDigestsTest,
+    SigncryptionPayloadTest, SoftwareVersionTest, StoredEip712DomainTest, StoredTypedSignatureTest,
+    TestMetadataKMS, TestType, Testcase, ThresholdFheKeysTest, TypedPlaintextTest,
+    UnifiedCipherTest, UnifiedPublicSigKeyTest, UnifiedSigncryptionKeyTest,
+    UnifiedSigncryptionTest, UnifiedUnsigncryptionKeyTest, UserDecSignedPayloadTest, data_dir,
     load::{DataFormat, TestFailure, TestResult, TestSuccess},
     tests::{TestedModule, run_all_tests},
 };
@@ -60,7 +61,8 @@ use kms_lib::{
         base::{
             CrsGenMetadata, CrsGenMetadataInner, CrsGenMetadataInnerV2, CrsSignedPayload,
             KeyGenMetadata, KeyGenMetadataInner, KeygenSignedPayload, KmsFheKeyHandles,
-            PrepKeygenSignedPayload, StoredEip712Domain, StoredTypedSignature,
+            PrepKeygenSignedPayload, PublicDecSignedPayload, StoredEip712Domain,
+            StoredTypedSignature, UserDecSignedPayload,
         },
         context::{ContextInfo, NodeInfo, SchemeDigests, SignerAddress, SoftwareVersion},
         threshold::service::{
@@ -1636,6 +1638,54 @@ fn test_crs_signed_payload(
     }
 }
 
+fn test_public_dec_signed_payload(
+    dir: &Path,
+    test: &PublicDecSignedPayloadTest,
+    format: DataFormat,
+) -> Result<TestSuccess, TestFailure> {
+    let original_versionized: PublicDecSignedPayload = load_and_unversionize(dir, test, format)?;
+
+    let new_versionized = PublicDecSignedPayload {
+        response_bytes: test.response_bytes.to_vec(),
+        extra_data: test.extra_data.to_vec(),
+    };
+
+    if original_versionized != new_versionized {
+        Err(test.failure(
+            format!(
+                "Invalid PublicDecSignedPayload:\n Expected :\n{original_versionized:?}\nGot:\n{new_versionized:?}"
+            ),
+            format,
+        ))
+    } else {
+        Ok(test.success(format))
+    }
+}
+
+fn test_user_dec_signed_payload(
+    dir: &Path,
+    test: &UserDecSignedPayloadTest,
+    format: DataFormat,
+) -> Result<TestSuccess, TestFailure> {
+    let original_versionized: UserDecSignedPayload = load_and_unversionize(dir, test, format)?;
+
+    let new_versionized = UserDecSignedPayload {
+        response_bytes: test.response_bytes.to_vec(),
+        extra_data: test.extra_data.to_vec(),
+    };
+
+    if original_versionized != new_versionized {
+        Err(test.failure(
+            format!(
+                "Invalid UserDecSignedPayload:\n Expected :\n{original_versionized:?}\nGot:\n{new_versionized:?}"
+            ),
+            format,
+        ))
+    } else {
+        Ok(test.success(format))
+    }
+}
+
 pub struct KMS;
 
 impl TestedModule for KMS {
@@ -1755,6 +1805,12 @@ impl TestedModule for KMS {
             }
             Self::Metadata::CrsSignedPayload(test) => {
                 test_crs_signed_payload(test_dir.as_ref(), test, format).into()
+            }
+            Self::Metadata::PublicDecSignedPayload(test) => {
+                test_public_dec_signed_payload(test_dir.as_ref(), test, format).into()
+            }
+            Self::Metadata::UserDecSignedPayload(test) => {
+                test_user_dec_signed_payload(test_dir.as_ref(), test, format).into()
             }
         }
     }

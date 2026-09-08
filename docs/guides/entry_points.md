@@ -71,7 +71,9 @@ Rules a caller has to know:
   root signing seed. A request naming a scheme the node cannot serve is rejected
   with `InvalidArgument`, before any work starts.
 - **A consumer picks the tuples it can verify**, and must reject a response that
-  omits a scheme the request asked for.
+  omits a scheme the request asked for. A tuple of a scheme the request did *not*
+  ask for carries no weight either way: it neither stands in for a missing one nor
+  invalidates a response that carries every requested scheme.
 - **Only the ECDSA tuple is bound to EIP-712.** Every other scheme signs the
   serialized payload, because EIP-712 is an EVM and secp256k1 construction. A
   verifier therefore rebuilds the payload rather than the typed-data hash.

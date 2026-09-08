@@ -8,7 +8,7 @@
 //! (and the `core-client` / WASM / backward-compatibility consumers) are
 //! unaffected. Prefer the `signing` paths in new code.
 
-// TODO(#3078): Do this before finishing #3078, but wait until the last sub-issue since the signing surface may still change.
+// TODO(0.16): Remove this file and just import everything directly.
 pub use crate::cryptography::signing::ecdsa::{
     ERR_EXT_USER_DECRYPTION_SIG_BAD_LENGTH, PrivateSigKey, PrivateSigKeyVersions, PublicSigKey,
     PublicSigKeyVersions, SIG_SIZE, compute_eip712_signature, eip712_sign_hash, gen_sig_keys,

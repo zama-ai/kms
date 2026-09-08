@@ -33,7 +33,7 @@ use kms_0_15_0::cryptography::{
 use kms_0_15_0::engine::base::{
     CrsGenMetadata, CrsGenMetadataInner, CrsGenMetadataInnerV2, CrsSignedPayload,
     KeyGenMetadataInner, KeygenSignedPayload, KmsFheKeyHandles, PrepKeygenSignedPayload,
-    StoredEip712Domain, StoredTypedSignature,
+    PublicDecSignedPayload, StoredEip712Domain, StoredTypedSignature, UserDecSignedPayload,
 };
 use kms_0_15_0::engine::centralized::central_kms::generate_client_fhe_key;
 use kms_0_15_0::engine::context::{
@@ -107,13 +107,14 @@ use backward_compatibility::{
     KeyGenMetadataWithExtraDataTest, KeygenSignedPayloadTest, KmsFheKeyHandlesTest, NodeInfoTest,
     OperatorBackupOutputTest, PRSSSetupTest, PrepKeygenSignedPayloadTest, PrfKeyTest,
     PrivDataTypeTest, PrivateSigKeyTest, PrssSetTest, PrssSetupCombinedTest, PubDataTypeTest,
-    PublicSigKeyTest, RecoveryValidationMaterialTest, ReleasePCRValuesTest, RootSigningSeedTest,
-    SchemeDigestsTest, ShareTest, SigncryptionPayloadTest, SignedPubDataHandleInternalTest,
-    SoftwareVersionTest, StoredEip712DomainTest, StoredTypedSignatureTest, TestMetadataDD,
-    TestMetadataKMS, TestMetadataKmsGrpc, ThresholdFheKeysTest, TypedPlaintextTest,
-    UnifiedCipherTest, UnifiedPublicSigKeyTest, UnifiedSigncryptionKeyTest,
-    UnifiedSigncryptionTest, UnifiedUnsigncryptionKeyTest, DISTRIBUTED_DECRYPTION_MODULE_NAME,
-    KMS_GRPC_MODULE_NAME, KMS_MODULE_NAME,
+    PublicDecSignedPayloadTest, PublicSigKeyTest, RecoveryValidationMaterialTest,
+    ReleasePCRValuesTest, RootSigningSeedTest, SchemeDigestsTest, ShareTest,
+    SigncryptionPayloadTest, SignedPubDataHandleInternalTest, SoftwareVersionTest,
+    StoredEip712DomainTest, StoredTypedSignatureTest, TestMetadataDD, TestMetadataKMS,
+    TestMetadataKmsGrpc, ThresholdFheKeysTest, TypedPlaintextTest, UnifiedCipherTest,
+    UnifiedPublicSigKeyTest, UnifiedSigncryptionKeyTest, UnifiedSigncryptionTest,
+    UnifiedUnsigncryptionKeyTest, UserDecSignedPayloadTest,
+    DISTRIBUTED_DECRYPTION_MODULE_NAME, KMS_GRPC_MODULE_NAME, KMS_MODULE_NAME,
 };
 use hashing_0_15_0::hash_versioned;
 use kms_0_15_0::cryptography::signcryption::SigncryptionPayload;
@@ -664,6 +665,20 @@ const CRS_SIGNED_PAYLOAD_TEST: CrsSignedPayloadTest = CrsSignedPayloadTest {
     max_num_bits: 2048,
     crs_digest: Cow::Borrowed(&[0xCC; 32]),
     extra_data: Cow::Borrowed(&[0x09, 0x0A, 0x0B, 0x0C]),
+};
+
+// KMS test — the payload non-ECDSA schemes sign for a public decryption result.
+const PUBLIC_DEC_SIGNED_PAYLOAD_TEST: PublicDecSignedPayloadTest = PublicDecSignedPayloadTest {
+    test_filename: Cow::Borrowed("public_dec_signed_payload"),
+    response_bytes: Cow::Borrowed(&[0xDD; 48]),
+    extra_data: Cow::Borrowed(&[0x0D, 0x0E, 0x0F, 0x10]),
+};
+
+// KMS test — the payload non-ECDSA schemes sign for a user decryption result.
+const USER_DEC_SIGNED_PAYLOAD_TEST: UserDecSignedPayloadTest = UserDecSignedPayloadTest {
+    test_filename: Cow::Borrowed("user_dec_signed_payload"),
+    response_bytes: Cow::Borrowed(&[0xEE; 48]),
+    extra_data: Cow::Borrowed(&[0x11, 0x12, 0x13, 0x14]),
 };
 
 /// Maps the scheme names pinned in [`STORED_SCHEME_SIGNATURE_TEST`] and
@@ -1833,6 +1848,39 @@ impl KmsV0_15_0 {
 
         TestMetadataKMS::CrsSignedPayload(CRS_SIGNED_PAYLOAD_TEST)
     }
+
+    /// `PublicDecSignedPayload` was introduced in v0.15.0 as the canonical form
+    /// non-ECDSA schemes sign for a public decryption result.
+    fn gen_public_dec_signed_payload(dir: &PathBuf) -> TestMetadataKMS {
+        let payload = PublicDecSignedPayload {
+            response_bytes: PUBLIC_DEC_SIGNED_PAYLOAD_TEST.response_bytes.to_vec(),
+            extra_data: PUBLIC_DEC_SIGNED_PAYLOAD_TEST.extra_data.to_vec(),
+        };
+
+        store_versioned_test!(
+            &payload,
+            dir,
+            &PUBLIC_DEC_SIGNED_PAYLOAD_TEST.test_filename
+        );
+
+        TestMetadataKMS::PublicDecSignedPayload(PUBLIC_DEC_SIGNED_PAYLOAD_TEST)
+    }
+
+    /// `UserDecSignedPayload` was introduced in v0.15.0 as the canonical form
+    /// non-ECDSA schemes sign for a user decryption result. It is a distinct type
+    /// from [`PublicDecSignedPayload`] despite the identical fields, because
+    /// `safe_serialize` embeds `Named::NAME` and that is what keeps a signature
+    /// over one from verifying against the other.
+    fn gen_user_dec_signed_payload(dir: &PathBuf) -> TestMetadataKMS {
+        let payload = UserDecSignedPayload {
+            response_bytes: USER_DEC_SIGNED_PAYLOAD_TEST.response_bytes.to_vec(),
+            extra_data: USER_DEC_SIGNED_PAYLOAD_TEST.extra_data.to_vec(),
+        };
+
+        store_versioned_test!(&payload, dir, &USER_DEC_SIGNED_PAYLOAD_TEST.test_filename);
+
+        TestMetadataKMS::UserDecSignedPayload(USER_DEC_SIGNED_PAYLOAD_TEST)
+    }
 }
 
 struct DistributedDecryptionV0_15_0;
@@ -2087,6 +2135,8 @@ impl KMSCoreVersion for V0_15_0 {
             KmsV0_15_0::gen_prep_keygen_signed_payload(&dir),
             KmsV0_15_0::gen_keygen_signed_payload(&dir),
             KmsV0_15_0::gen_crs_signed_payload(&dir),
+            KmsV0_15_0::gen_public_dec_signed_payload(&dir),
+            KmsV0_15_0::gen_user_dec_signed_payload(&dir),
         ]
     }
 

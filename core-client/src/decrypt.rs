@@ -16,7 +16,7 @@ use kms_lib::{
         user_decryption_wasm::ParsedUserDecryptionRequest,
     },
     cryptography::encryption::{UnifiedPrivateEncKey, UnifiedPublicEncKey},
-    cryptography::signatures::recover_address_from_ext_signature,
+    cryptography::signatures::{SigningSchemeType, recover_address_from_ext_signature},
     engine::base::compute_public_decryption_message,
 };
 use prost::Message as _;
@@ -251,6 +251,11 @@ fn check_ext_pt_signature(
     }
 }
 
+/// Check the ECDSA/EIP-712 signature of every response, and that each one decrypts
+/// to `expected_answer`.
+///
+/// `requested_schemes` are the schemes the client asked for. Only those are
+/// checked here.
 fn check_external_decryption_signature(
     responses: &[PublicDecryptionResponse], // one response per party
     expected_answer: TypedPlaintext,
@@ -258,21 +263,31 @@ fn check_external_decryption_signature(
     domain: &Eip712Domain,
     kms_addrs: &[alloy_primitives::Address],
     extra_data: &[u8],
+    requested_schemes: &[SigningSchemeType],
 ) -> anyhow::Result<()> {
+    let check_ecdsa = requested_schemes.contains(&SigningSchemeType::Ecdsa256k1);
+    if !check_ecdsa {
+        tracing::info!(
+            "No ECDSA signature was requested, so only the plaintexts of the decryption \
+             responses are checked here"
+        );
+    }
     let mut results = Vec::new();
     for response in responses {
         let payload = response
             .payload
             .as_ref()
             .ok_or_else(|| anyhow::anyhow!("missing payload in decryption response"))?;
-        check_ext_pt_signature(
-            crate::ecdsa_signature(&response.signatures)?,
-            &payload.plaintexts,
-            external_handles,
-            domain.clone(),
-            kms_addrs,
-            extra_data,
-        )?;
+        if check_ecdsa {
+            check_ext_pt_signature(
+                crate::ecdsa_signature(&response.signatures)?,
+                &payload.plaintexts,
+                external_handles,
+                domain.clone(),
+                kms_addrs,
+                extra_data,
+            )?;
+        }
 
         for (idx, pt) in payload.plaintexts.iter().enumerate() {
             tracing::info!(
@@ -2208,6 +2223,7 @@ fn verify_public_decrypt_responses(
         &domain,
         kms_addrs,
         &extra_data,
+        internal_client.signing_schemes(),
     )?;
 
     Ok(())

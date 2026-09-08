@@ -1212,11 +1212,22 @@ impl TryFrom<&UserDecryptionResponse> for UserDecryptionResponseHex {
     type Error = anyhow::Error;
 
     fn try_from(resp: &UserDecryptionResponse) -> Result<Self, Self::Error> {
-        let ecdsa_signature = kms_grpc::rpc_types::scheme_signature(
-            &resp.signatures,
-            kms_grpc::kms::v1::SigningSchemeType::Ecdsa256k1,
-        )
-        .ok_or_else(|| anyhow::anyhow!("the response carries no ECDSA signature"))?;
+        // The deprecated `external_signature` is what this hex shape has always
+        // carried, and it is read first for backward compatibility.
+        let ecdsa_signature = if resp.external_signature.is_empty() {
+            kms_grpc::rpc_types::scheme_signature(
+                &resp.signatures,
+                kms_grpc::kms::v1::SigningSchemeType::Ecdsa256k1,
+            )
+            .ok_or_else(|| {
+                anyhow::anyhow!(
+                    "the response carries neither an `external_signature` nor an ECDSA entry \
+                     in its `signatures`"
+                )
+            })?
+        } else {
+            &resp.external_signature
+        };
         Ok(Self {
             signature: hex::encode(ecdsa_signature),
             payload: resp
