@@ -120,6 +120,9 @@ kmsCore:
     # path used by chart <=1.6.1 — Helm ignores them without error and the party silently runs the
     # fixed schedule against legacy-schedule peers. The chart hard-fails on that old path.
     #
+    # This required overlay block and this chart's values.schema.json exist only for KMS
+    # v0.13.22. Do not use chart 1.6.3 or this schema with any other KMS version.
+    #
     # Chart defaults do NOT set this block. values.schema.json requires every install overlay
     # to define kmsCore.thresholdMode.legacyPrssMask (Helm schema sees merged values, so empty
     # chart defaults would make a missing overlay still pass).

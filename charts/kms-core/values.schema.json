@@ -3,7 +3,7 @@
   "$id": "https://github.com/zama-ai/kms/charts/kms-core/values.schema.json",
   "title": "kms-core Helm values",
   "type": "object",
-  "description": "Values for the kms-core chart (release/v0.13.20). kmsCore.thresholdMode.legacyPrssMask is required. Extra properties are allowed on most objects so existing CI and GitOps overlays still install. kmsCore.thresholdMode.tls is closed so misplaced keys such as legacyPrssMask fail install.",
+  "description": "Values for kms-core chart 1.6.3, for KMS v0.13.22 only. Do not use this schema or chart with any other KMS version. kmsCore.thresholdMode.legacyPrssMask is required. Extra properties are allowed on most objects so existing CI and GitOps overlays still install. kmsCore.thresholdMode.tls is closed so misplaced keys such as legacyPrssMask fail install.",
   "properties": {
     "kmsPeers": {
       "type": "object",
@@ -183,7 +183,10 @@
           "$ref": "#/definitions/k8sResources"
         },
         "shell_command": {
-          "$ref": "#/definitions/nullableString"
+          "type": ["array", "null"],
+          "items": {
+            "type": "string"
+          }
         },
         "storage": {
           "$ref": "#/definitions/storage"
