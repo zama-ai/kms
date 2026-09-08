@@ -1,8 +1,8 @@
 //! Tests cleanup after the second step of an FHE key write fails.
 //!
-//! FHE key storage first writes a `ServerKey` or `CompressedXofKeySet`, then writes the paired
-//! `PublicKey` and private key material. A failure in the pair must remove every entry created by
-//! the call, preserve unrelated storage and leave the private-key cache empty.
+//! The tests cover the compressed and uncompressed write paths using centralized key material. A
+//! failed write must remove every new entry while leaving unrelated storage and the private-key
+//! cache unchanged.
 
 mod cases;
 mod support;
