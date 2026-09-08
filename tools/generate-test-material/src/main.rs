@@ -362,10 +362,10 @@ fn storage_directory_name(name: &str) -> Option<(StorageType, Option<usize>)> {
         if name == prefix {
             return Some((storage_type, None));
         }
-        if matches!(storage_type, StorageType::PUB | StorageType::PRIV) {
-            if let Some(party) = name.strip_prefix(&format!("{prefix}-p")) {
-                return Some((storage_type, Some(party.parse().unwrap_or(0))));
-            }
+        if matches!(storage_type, StorageType::PUB | StorageType::PRIV)
+            && let Some(party) = name.strip_prefix(&format!("{prefix}-p"))
+        {
+            return Some((storage_type, Some(party.parse().unwrap_or(0))));
         }
     }
     None
