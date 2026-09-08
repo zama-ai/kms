@@ -13,6 +13,10 @@ use tfhe::{Unversionize, Versionize, named::Named};
 
 /// Test-only [`RamStorage`] wrapper with entry-specific fault injection and side-effect recording.
 ///
+/// Each [`StorageEntry`] identifies the same data type, request ID, and optional epoch that form a
+/// path in file-backed storage. The wrapper keeps those entries in RAM so tests can fail one exact
+/// path and compare the complete state before and after the operation.
+///
 /// Store and delete fail points name the exact storage entry to reject, and choose whether the
 /// error arrives before or after the wrapped storage applies the change. Both can be active at
 /// the same time and remain active until replaced or cleared. Every store and delete appends a
@@ -37,7 +41,6 @@ impl FailingRamStorage {
     }
 
     /// Write `entry` to the wrapped storage and then return an error.
-    #[allow(dead_code, reason = "used in the next stacked PR")]
     pub(crate) fn set_fail_store_after_mutation_at(&mut self, entry: StorageEntry) {
         self.fail_store_at = Some((entry, FaultPhase::AfterMutation));
     }
@@ -48,7 +51,6 @@ impl FailingRamStorage {
     }
 
     /// Remove `entry` from the wrapped storage and then return an error.
-    #[allow(dead_code, reason = "used in the next stacked PR")]
     pub(crate) fn set_fail_delete_after_mutation_at(&mut self, entry: StorageEntry) {
         self.fail_delete_at = Some((entry, FaultPhase::AfterMutation));
     }
@@ -67,24 +69,6 @@ impl FailingRamStorage {
         &self.events
     }
 
-    /// The events that changed stored data, including those that mutated and then failed.
-    #[allow(dead_code, reason = "used in the next stacked PR")]
-    pub(crate) fn mutations(&self) -> Vec<&StorageEvent> {
-        self.events
-            .iter()
-            .filter(|event| event.outcome.changed_storage())
-            .collect()
-    }
-
-    /// The events that returned an error, whatever they did to storage.
-    #[allow(dead_code, reason = "used in the next stacked PR")]
-    pub(crate) fn faults(&self) -> Vec<&StorageEvent> {
-        self.events
-            .iter()
-            .filter(|event| event.outcome.failed())
-            .collect()
-    }
-
     pub(crate) fn state(&self) -> StorageState {
         self.inner
             .internal_storage
@@ -98,7 +82,6 @@ impl FailingRamStorage {
             .collect()
     }
 
-    // Checks if a [`StorageEntry`] fails at the specified operation and at the specified phase (before/after a write).
     fn matches_fail_point(
         &self,
         (op, phase): (StorageOp, FaultPhase),

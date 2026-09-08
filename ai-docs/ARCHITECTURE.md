@@ -64,7 +64,8 @@ The repository is a Cargo workspace. The members are declared in
 
 Auxiliary tools live under [tools/](tools/): `kms-health-check` is a gRPC
 health probe and `generate-test-material` produces reproducible crypto test
-vectors. Shared test fixtures are in [core/test-utils/](core/test-utils/).
+vectors. Shared test fixtures and generic local file helpers are in
+[core/test-utils/](core/test-utils/).
 The [backward-compatibility/](backward-compatibility/) crate is a separate
 Cargo workspace — see [Backward compatibility](#backward-compatibility).
 
@@ -131,8 +132,8 @@ The service crate is the main surface area. Key subdirectories under
   removal and nothing new should read them. Both copies are validated against the
   signing key when backfilling.
 - [client/](core/service/src/client/) and
-  [testing/](core/service/src/testing/) — client-side helpers and
-  test-only wiring.
+  [testing/](core/service/src/testing/) — client-side helpers (including
+  local key-material utilities used by `core-client`) and test-only wiring.
 - [bin/](core/service/src/bin/) — entry points (see below).
 
 ### Binaries
@@ -187,7 +188,9 @@ The primary service is `CoreServiceEndpoint`. Its RPCs group into:
   key in the generated TFHE server key. Legacy private keysets that predate this
   field are upgraded with the OPRF share absent; `UseExisting` keygen generates
   and persists a fresh OPRF share for such legacy material before regenerating
-  public keys.
+  public keys. Key generation and CRS generation write persistent material only
+  after generation completes. An abort updates request state but does not purge
+  storage.
 - **Decryption** — `PublicDecrypt` (returns plaintext) and `UserDecrypt`
   (user-initiated, EIP-712 authenticated). `PublicDecryptSync` / `UserDecryptSync`
   start a decryption and wait for its result in the same call, so the caller does
@@ -207,24 +210,25 @@ The primary service is `CoreServiceEndpoint`. Its RPCs group into:
   the key and logs a warning instead. When resharing legacy key material that
   has no dedicated OPRF secret-key share, the OPRF sub-protocol is skipped and
   the reshared private keyset keeps that field absent. A storage failure during
-  resharing rolls the new epoch back on the party that fails. 
-  That party attempts to delete the key shares, the CRS metadata and the epoch data of the new epoch. 
-  Observe that no public data is deleted as this is, and should be, unaffected by an epoch change. 
-  If cleanup succeeds, it forgets the epoch; otherwise, it keeps the epoch registered so that deletion can be retried. 
-  `DestroyMpcContext` carries
-  the context's epoch IDs and erases their secret shares (cascading to the
-  existing per-epoch deletion) before forgetting the context and removing its
-  TLS trust-root references. Trust roots shared with another live context are
-  retained. This ensures retiring a
-  party set leaves no usable key shares behind; the kms-connector is the source
-  of truth for which epochs belong to a context. In-memory lifecycle leases
-  serialize creation against destruction: `NewMpcEpoch` holds shared leases for
-  its target context and epoch through all PRSS, resharing and persistence work,
+  resharing rolls the new epoch back on the party that fails. That party attempts
+  to delete the key shares, the CRS metadata and the epoch data of the new epoch.
+  Public data remains because an epoch change does not affect it. If cleanup
+  succeeds, the party forgets the epoch. Otherwise, the party keeps the epoch
+  registered so that deletion can be retried. `DestroyMpcContext` takes a stable
+  snapshot of the context's registered epochs and erases their secret shares
+  before it forgets the context and removes its TLS trust-root references. A trust
+  root remains if another live context uses it. This order leaves no usable key
+  shares after the party set retires. Its response lists the deleted epoch IDs. In-memory
+  lifecycle leases serialize creation against destruction: `NewMpcEpoch` holds
+  shared leases for its target context and epoch through all PRSS, resharing and
+  persistence work,
   while `DestroyMpcEpoch` and `DestroyMpcContext` require exclusive leases before
   taking snapshots or deleting data. A conflicting destruction is refused with
   `FailedPrecondition`, including while PRSS is still running and the new epoch
   has not yet been registered in the session maker; callers retry once creation
-  has settled.
+  has settled. MPC context updates serialize the existence check with storage and
+  cache or session updates. A failed deletion keeps the in-memory context if its
+  persistent entry remains, which permits a retry before or after restart.
 - **Session management** — creation, result retrieval, and cleanup for
   long-running threshold sessions.
 
@@ -301,6 +305,25 @@ end-to-end tests live at
 [core/service/src/client/tests/centralized/custodian_backup_tests.rs](core/service/src/client/tests/centralized/custodian_backup_tests.rs)
 and
 [core/service/src/client/tests/threshold/custodian_backup_tests.rs](core/service/src/client/tests/threshold/custodian_backup_tests.rs).
+
+## Paired material writes
+
+Threshold calls to `CryptoMaterialStorage::write_all` use two public/private pairs:
+
+- `PublicKey` and `FheKeyInfo` share a key ID.
+- `CRS` and `CrsInfo` share a CRS ID.
+
+The public half has no epoch. The private half has an epoch and contains one party's material.
+Initial generation writes both halves through `CryptoMaterialStorage::write_all`. The method also
+accepts one-sided writes. Resharing writes only the private half for the new epoch and reuses the
+public half. A `ContextInfo` write stores one request-scoped private entry with no public half.
+
+Storage never overwrites an entry. If one requested half exists, storage keeps its bytes and writes
+the missing half. The caller must ensure that the two halves belong together. If either write
+fails, cleanup removes only entries created by that call. It retains each entry that existed
+before the call. A backend can apply a write and then return an error, so cleanup checks the
+earlier state. Callers must serialize writes to the same entries until cleanup finishes. A later
+backup failure does not purge the primary material.
 
 ## Boot-time storage verification
 
@@ -445,10 +468,17 @@ exact commands.
 - **Makefile** — [Makefile](Makefile) provides compose orchestration,
   backward-compat vector generation, test-material generation, and lint
   targets.
-- **Container images** — [docker/core/service/Dockerfile](docker/core/service/Dockerfile)
-  is a multi-stage build producing the `core-service` image (published as
-  `ghcr.io/zama-ai/kms/core-service`). Its entrypoint generates signing
-  keys and TLS certs on first boot, then runs `kms-server`.
+- **Container images** — local developer builds still use
+  [docker/core/service/Dockerfile](docker/core/service/Dockerfile) and
+  [docker/core-client/Dockerfile](docker/core-client/Dockerfile). Both package
+  Dockerfiles always consume a shared `kms-binaries` image via
+  `KMS_BINARIES_IMAGE`. Local scripts/compose targets build that image with
+  [docker/kms-binaries/Dockerfile](docker/kms-binaries/Dockerfile) and pass the
+  desired tag explicitly; production CI builds its secure `prod` target and
+  retags it as `:latest` before packaging the `prod` targets of `core-service`
+  and `core-client`. Release compilation uses fat LTO, while other CI builds use
+  thin LTO. The published runtime image for the service remains
+  `ghcr.io/zama-ai/kms/core-service`.
 - **Kubernetes** — a Helm chart is provided at
   [charts/kms-core/](charts/kms-core/) for both centralized and threshold
   deployments, including Nitro Enclaves when configured.

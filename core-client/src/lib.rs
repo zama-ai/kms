@@ -22,9 +22,11 @@ use crate::decrypt::{
     PubDecVerificationMaterial, do_public_decrypt, do_public_decrypt_once, do_user_decrypt,
     do_user_decrypt_once, get_public_decrypt_responses,
 };
+#[cfg(feature = "insecure")]
+use crate::keygen::do_partial_preproc;
 use crate::keygen::{
-    do_abort_key_gen, do_keygen, do_partial_preproc, do_preproc, fetch_and_check_keygen,
-    get_keygen_responses, get_preproc_keygen_responses,
+    do_abort_key_gen, do_keygen, do_preproc, fetch_and_check_keygen, get_keygen_responses,
+    get_preproc_keygen_responses,
 };
 use crate::mpc_context::{do_destroy_mpc_context, do_new_mpc_context};
 use crate::mpc_epoch::{do_destroy_mpc_epoch, do_new_epoch};
@@ -37,17 +39,15 @@ use kms_grpc::kms_service::v1::core_service_endpoint_client::CoreServiceEndpoint
 use kms_grpc::rpc_types::PubDataType;
 use kms_grpc::{ContextId, EpochId, KeyId};
 use kms_lib::backup::custodian::InternalCustodianSetupMessage;
-use kms_lib::client::client_wasm::Client;
+use kms_lib::client::{
+    client_wasm::Client,
+    local_crypto::{EncryptionConfig, TestingPlaintext, compute_cipher_from_stored_key},
+};
 use kms_lib::consts::{
     DEFAULT_EPOCH_ID, DEFAULT_MPC_CONTEXT, DEFAULT_PARAM, SIGNING_KEY_ID, TEST_PARAM,
 };
 use kms_lib::engine::utils::{base64_deserialize, base64_serialize, make_extra_data};
-use kms_lib::util::file_handling::{read_element, write_element};
-
-use kms_lib::util::key_setup::{
-    ensure_client_keys_exist,
-    test_tools::{EncryptionConfig, TestingPlaintext, compute_cipher_from_stored_key},
-};
+use kms_lib::util::key_setup::ensure_client_keys_exist;
 use kms_lib::vault::Vault;
 use kms_lib::vault::storage::{StorageType, file::FileStorage};
 use kms_lib::vault::storage::{make_storage, read_text_at_request_id};
@@ -61,6 +61,7 @@ use std::str::FromStr;
 use std::sync::Arc;
 use std::time::Duration;
 use strum_macros::{Display, EnumString};
+use test_utils::{read_element_async as read_element, write_element_owned};
 use tfhe::FheTypes as TfheFheType;
 use tokio::sync::RwLock;
 use tracing_appender::rolling::{RollingFileAppender, Rotation};
@@ -836,6 +837,8 @@ pub struct KeyGenParameters {
 }
 
 /// Parameters for insecure key generation (testing/development only).
+/// Available only when `kms-core-client` is built with the `insecure` feature.
+#[cfg(feature = "insecure")]
 #[derive(Debug, Parser, Clone)]
 pub struct InsecureKeyGenParameters {
     /// ID of an existing preprocessing to consume.
@@ -1134,6 +1137,7 @@ pub struct InsecureKeyGenPreprocParameters {
 }
 
 #[derive(Debug, Parser, Clone)]
+#[cfg(feature = "insecure")]
 pub struct PartialKeyGenPreprocParameters {
     #[clap(long)]
     pub context_id: Option<ContextId>,
@@ -1150,14 +1154,19 @@ pub struct PartialKeyGenPreprocParameters {
 #[derive(Debug, Subcommand, Clone)]
 pub enum CCCommand {
     PreprocKeyGen(KeyGenPreprocParameters),
+    #[cfg(feature = "insecure")]
     PartialPreprocKeyGen(PartialKeyGenPreprocParameters),
     PreprocKeyGenResult(ResultParameters),
     KeyGen(KeyGenParameters),
     KeyGenResult(KeyGenResultParameters),
     AbortKeyGen(AbortParameters),
+    #[cfg(feature = "insecure")]
     InsecurePreprocKeyGen(InsecureKeyGenPreprocParameters),
+    #[cfg(feature = "insecure")]
     InsecurePreprocKeyGenResult(ResultParameters),
+    #[cfg(feature = "insecure")]
     InsecureKeyGen(InsecureKeyGenParameters),
+    #[cfg(feature = "insecure")]
     InsecureKeyGenResult(KeyGenResultParameters),
     Encrypt(CipherParameters),
     #[clap(subcommand)]
@@ -1168,7 +1177,9 @@ pub enum CCCommand {
     CrsGen(CrsParameters),
     CrsGenResult(CrsGenResultParameters),
     AbortCrsGen(AbortParameters),
+    #[cfg(feature = "insecure")]
     InsecureCrsGen(CrsParameters),
+    #[cfg(feature = "insecure")]
     InsecureCrsGenResult(CrsGenResultParameters),
     NewCustodianContext(NewCustodianContextParameters),
     GetOperatorPublicKey(NoParameters),
@@ -1683,7 +1694,7 @@ pub async fn encrypt(
         keys_folder
     );
 
-    let (cipher, ct_format, _) = compute_cipher_from_stored_key(
+    let (mut cipher, ct_format, _) = compute_cipher_from_stored_key(
         Some(keys_folder),
         typed_to_encrypt,
         &cipher_params.key_id.into(),
@@ -1697,11 +1708,12 @@ pub async fn encrypt(
 
     if let Some(path) = cipher_params.ciphertext_output_path.clone() {
         let cipher_w_params = CipherWithParams {
-            cipher: cipher.clone(),
+            cipher,
             params: cipher_params.clone(),
             ct_format: ct_format.as_str_name().to_string(),
         };
-        write_element(path, &cipher_w_params).await?;
+        let cipher_w_params = write_element_owned(path, cipher_w_params).await?;
+        cipher = cipher_w_params.cipher;
     }
 
     Ok(EncryptionResult::new(
@@ -2227,6 +2239,7 @@ pub async fn execute_cmd(
 
             vec![(Some(req_id), "keygen done".to_string())]
         }
+        #[cfg(feature = "insecure")]
         CCCommand::InsecureKeyGen(InsecureKeyGenParameters {
             preproc_id,
             shared_args,
@@ -2291,6 +2304,7 @@ pub async fn execute_cmd(
             .await?;
             vec![(Some(req_id), "crsgen done".to_string())]
         }
+        #[cfg(feature = "insecure")]
         CCCommand::InsecureCrsGen(CrsParameters {
             max_num_bits,
             epoch_id,
@@ -2364,6 +2378,7 @@ pub async fn execute_cmd(
             .await?;
             vec![(Some(req_id), "preproc done".to_string())]
         }
+        #[cfg(feature = "insecure")]
         CCCommand::InsecurePreprocKeyGen(InsecureKeyGenPreprocParameters {
             context_id,
             epoch_id,
@@ -2388,6 +2403,7 @@ pub async fn execute_cmd(
             .await?;
             vec![(Some(req_id), "insecure preproc done".to_string())]
         }
+        #[cfg(feature = "insecure")]
         CCCommand::PartialPreprocKeyGen(partial_params) => {
             let mut internal_client = internal_client.unwrap();
             tracing::info!(
@@ -2449,6 +2465,7 @@ pub async fn execute_cmd(
                 get_preproc_keygen_responses(&core_endpoints_req, req_id, max_iter, false).await?;
             vec![(Some(req_id), "preproc result queried".to_string())]
         }
+        #[cfg(feature = "insecure")]
         CCCommand::InsecurePreprocKeyGenResult(result_parameters) => {
             let req_id: RequestId = result_parameters.request_id;
             let _ =
@@ -2491,6 +2508,7 @@ pub async fn execute_cmd(
             .await?;
             vec![(Some(req_id), "keygen result queried".to_string())]
         }
+        #[cfg(feature = "insecure")]
         CCCommand::InsecureKeyGenResult(result_parameters) => {
             let num_expected_responses = if expect_all_responses {
                 num_parties
@@ -2622,6 +2640,7 @@ pub async fn execute_cmd(
             .await?;
             vec![(Some(req_id), "crs gen result queried".to_string())]
         }
+        #[cfg(feature = "insecure")]
         CCCommand::InsecureCrsGenResult(result_parameters) => {
             let num_expected_responses = if expect_all_responses {
                 num_parties
@@ -2938,8 +2957,8 @@ fn print_phased_timings(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use kms_lib::client::local_crypto::load_pk_from_pub_storage;
     use kms_lib::engine::base::derive_request_id;
-    use kms_lib::util::key_setup::test_tools::load_pk_from_pub_storage;
     use kms_lib::vault::storage::{StorageType, file::FileStorage, store_versioned_at_request_id};
     use std::env;
     use tempfile::tempdir;

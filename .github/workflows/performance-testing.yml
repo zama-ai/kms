@@ -277,14 +277,14 @@ jobs:
           IMAGE_REPO: hub.zama.org/ghcr/zama-ai/kms
         run: |
           if [[ "${DEPLOYMENT_TYPE}" == *"Enclave"* ]]; then
-            CORE_IMAGE_NAME="core-service-enclave"
+            CORE_IMAGE_NAME="core-service-enclave-insecure"
           else
-            CORE_IMAGE_NAME="core-service"
+            CORE_IMAGE_NAME="core-service-insecure"
           fi
 
           images=(
             "${IMAGE_REPO}/${CORE_IMAGE_NAME}:${KMS_CORE_IMAGE_TAG}"
-            "${IMAGE_REPO}/core-client:${KMS_CORE_CLIENT_IMAGE_TAG}"
+            "${IMAGE_REPO}/core-client-insecure:${KMS_CORE_CLIENT_IMAGE_TAG}"
           )
 
           missing=0

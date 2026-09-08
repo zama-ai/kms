@@ -14,7 +14,7 @@ use crate::{
     util::meta_store::{EntryState, add_req_to_meta_store, retrieve_from_meta_store},
     vault::{
         Vault, VaultDataType,
-        storage::{Storage, StorageProxy, crypto_material::PublicKeySet},
+        storage::{Storage, StorageProxy, StoreWriteOutcome, crypto_material::PublicKeySet},
     },
 };
 use aes_prng::AesRng;
@@ -29,7 +29,7 @@ use std::collections::{BTreeMap, HashMap};
 use std::sync::Arc;
 use std::time::SystemTime;
 use tfhe::{
-    CompactPublicKey, ConfigBuilder, Seed, ServerKey, safe_serialization::safe_serialize,
+    CompactPublicKey, ConfigBuilder, Seed, safe_serialization::safe_serialize,
     shortint::ClassicPBSParameters, xof_key_set::CompressedXofKeySet,
 };
 use threshold_execution::keyset_config::KeyGenSecretKeyConfig;
@@ -45,7 +45,9 @@ use crate::{
     consts::TEST_PARAM,
     engine::{
         base::KmsFheKeyHandles,
-        centralized::central_kms::{async_generate_crs, generate_fhe_keys},
+        centralized::central_kms::{
+            async_generate_crs, generate_fhe_keys, generate_uncompressed_fhe_keys,
+        },
         threshold::service::{PublicKeyMaterial, ThresholdFheKeys},
     },
     util::meta_store::MetaStore,
@@ -128,6 +130,27 @@ fn generate_compressed_keys(
     .unwrap();
 
     (sk, domain, compressed_keyset, compact_pk, key_info)
+}
+
+fn generate_uncompressed_keys(
+    req_id: &RequestId,
+    prep_id: &RequestId,
+    signing_seed: u64,
+) -> (FhePubKeySet, KmsFheKeyHandles) {
+    let mut rng = AesRng::seed_from_u64(signing_seed);
+    let (_, signing_key) = gen_sig_keys(&mut rng);
+    generate_uncompressed_fhe_keys(
+        &signing_key,
+        &[SigningSchemeType::Ecdsa256k1],
+        TEST_PARAM,
+        KeyGenSecretKeyConfig::GenerateAll,
+        req_id,
+        prep_id,
+        Some(Seed(42)),
+        &dummy_domain(),
+        vec![],
+    )
+    .unwrap()
 }
 
 const TEST_METRIC: &str = "test";
@@ -270,7 +293,6 @@ async fn read_public_key() {
 
 #[tokio::test]
 async fn write_central_keys() {
-    let param = TEST_PARAM;
     let crypto_storage = CentralizedCryptoMaterialStorage::new(
         FailingRamStorage::new(),
         RamStorage::new(),
@@ -284,22 +306,8 @@ async fn write_central_keys() {
         .unwrap()
         .into();
 
-    let pbs_params: ClassicPBSParameters = param.classic_pbs();
-    let sns_params = param.sns().expect("sns param").sns_params();
-    let config =
-        ConfigBuilder::with_custom_parameters(pbs_params).enable_noise_squashing(sns_params);
-    let client_key = tfhe::ClientKey::generate(config);
-    let public_key = CompactPublicKey::new(&client_key);
-    let server_key = ServerKey::new(&client_key);
-    let key_info = KmsFheKeyHandles {
-        client_key,
-        decompression_key: None,
-        public_key_info: dummy_info(),
-    };
-    let fhe_key_set = PublicKeySet::Uncompressed(Arc::new(FhePubKeySet {
-        public_key,
-        server_key,
-    }));
+    let (public_keys, key_info) = generate_uncompressed_keys(&req_id, &req_id, 100);
+    let fhe_key_set = PublicKeySet::Uncompressed(Arc::new(public_keys));
 
     let meta_store = MetaStore::new_unlimited();
 
@@ -368,7 +376,6 @@ async fn write_central_keys() {
 
 #[tokio::test]
 async fn write_central_keys_failed_storage_sets_terminal_error() {
-    let param = TEST_PARAM;
     let crypto_storage = CentralizedCryptoMaterialStorage::new(
         FailingRamStorage::new(),
         RamStorage::new(),
@@ -384,22 +391,8 @@ async fn write_central_keys_failed_storage_sets_terminal_error() {
             .unwrap()
             .into();
 
-    let pbs_params: ClassicPBSParameters = param.classic_pbs();
-    let sns_params = param.sns().expect("sns param").sns_params();
-    let config =
-        ConfigBuilder::with_custom_parameters(pbs_params).enable_noise_squashing(sns_params);
-    let client_key = tfhe::ClientKey::generate(config);
-    let public_key = CompactPublicKey::new(&client_key);
-    let server_key = ServerKey::new(&client_key);
-    let key_info = KmsFheKeyHandles {
-        client_key,
-        decompression_key: None,
-        public_key_info: dummy_info(),
-    };
-    let public_key_set = PublicKeySet::Uncompressed(Arc::new(FhePubKeySet {
-        public_key,
-        server_key,
-    }));
+    let (public_keys, key_info) = generate_uncompressed_keys(&req_id, &req_id, 100);
+    let public_key_set = PublicKeySet::Uncompressed(Arc::new(public_keys));
 
     let meta_store = MetaStore::new_unlimited();
     let permit = {
@@ -1081,19 +1074,21 @@ async fn write_pub_data_and_priv_data_paths() {
     let priv_orphan = TestType { i: 0 };
 
     // Sunshine: write_pub_data persists the value.
-    assert!(
+    assert_eq!(
         storage
             .write_pub_data(&req_id, &pub_data, &PubDataType::PublicKey)
-            .await
+            .await,
+        Some(StoreWriteOutcome::Created)
     );
     // Sunshine: write_priv_data with a non-epoched type.
-    assert!(
+    assert_eq!(
         storage
             .write_priv_data(&req_id, None, &priv_non_epoched, &PrivDataType::SigningKey)
-            .await
+            .await,
+        Some(StoreWriteOutcome::Created)
     );
     // Sunshine: write_priv_data with an epoched type + epoch_id.
-    assert!(
+    assert_eq!(
         storage
             .write_priv_data(
                 &req_id,
@@ -1101,13 +1096,15 @@ async fn write_pub_data_and_priv_data_paths() {
                 &priv_epoched,
                 &PrivDataType::FhePrivateKey,
             )
-            .await
+            .await,
+        Some(StoreWriteOutcome::Created)
     );
-    // Negative: epoched type without epoch_id must return false and store nothing.
+    // Negative: epoched type without epoch_id must fail and store nothing.
     assert!(
-        !storage
+        storage
             .write_priv_data(&req_id, None, &priv_orphan, &PrivDataType::FhePrivateKey)
             .await
+            .is_none()
     );
 
     let pub_s = storage.public_storage.lock().await;
@@ -1152,9 +1149,10 @@ async fn write_pub_data_and_priv_data_paths() {
         None,
     );
     assert!(
-        !failing
+        failing
             .write_pub_data(&req_id, &pub_data, &PubDataType::PublicKey)
             .await
+            .is_none()
     );
 }
 
@@ -1254,115 +1252,6 @@ async fn purge_material_paths() {
         !storage
             .purge_material(&req_id, None, &[], &[PrivDataType::FhePrivateKey])
             .await
-    );
-}
-
-#[tokio::test]
-async fn write_all_no_overwrite_of_existing_data() {
-    let storage = fresh_ram_storage();
-    let req_id = derive_request_id("handle_all_dup").unwrap();
-    let epoch_id: EpochId = derive_request_id("handle_all_dup_epoch").unwrap().into();
-    let original = TestType { i: 1 };
-    let attempted_overwrite = TestType { i: 2 };
-
-    storage
-        .write_all(
-            &req_id,
-            Some(&epoch_id),
-            Some((&original, PubDataType::PublicKey)),
-            Some((&original, PrivDataType::FhePrivateKey)),
-            false,
-            TEST_METRIC,
-        )
-        .await
-        .unwrap();
-
-    // Initial entries are present.
-    {
-        let pub_s = storage.public_storage.lock().await;
-        let priv_s = storage.private_storage.lock().await;
-        assert!(
-            pub_s
-                .data_exists(&req_id, &PubDataType::PublicKey.to_string())
-                .await
-                .unwrap()
-        );
-        assert!(
-            priv_s
-                .data_exists_at_epoch(&req_id, &epoch_id, &PrivDataType::FhePrivateKey.to_string())
-                .await
-                .unwrap()
-        );
-    }
-
-    // Duplicate call must not purge the original entries.
-    assert!(matches!(
-        storage
-            .write_all(
-                &req_id,
-                Some(&epoch_id),
-                Some((&attempted_overwrite, PubDataType::PublicKey)),
-                Some((&attempted_overwrite, PrivDataType::FhePrivateKey)),
-                false,
-                TEST_METRIC,
-            )
-            .await
-            .unwrap_err(),
-        StorageError::Duplicate
-    ));
-    // Initial entries are still there and unchanged.
-    {
-        let pub_s = storage.public_storage.lock().await;
-        let priv_s = storage.private_storage.lock().await;
-        let pub_read: TestType =
-            read_versioned_at_request_id(&*pub_s, &req_id, &PubDataType::PublicKey.to_string())
-                .await
-                .unwrap();
-        assert_eq!(pub_read, original);
-
-        let priv_read: TestType = read_versioned_at_request_and_epoch_id(
-            &*priv_s,
-            &req_id,
-            &epoch_id,
-            &PrivDataType::FhePrivateKey.to_string(),
-        )
-        .await
-        .unwrap();
-        assert_eq!(priv_read, original);
-    }
-}
-
-#[tokio::test]
-async fn write_all_purges_on_write_failure() {
-    // Public storage rejects the public-key write; the private write succeeds, so write_all
-    // must purge the orphan and report `WritingError`.
-    let req_id = derive_request_id("handle_all_purge").unwrap();
-    let storage = CryptoMaterialStorage::from(
-        failing_public_store(req_id, PubDataType::PublicKey),
-        RamStorage::new(),
-        None,
-    );
-    let data = TestType { i: 11 };
-
-    let res = storage
-        .write_all(
-            &req_id,
-            None,
-            Some((&data, PubDataType::PublicKey)),
-            Some((&data, PrivDataType::SigningKey)),
-            false,
-            TEST_METRIC,
-        )
-        .await;
-    assert_eq!(res, Err(StorageError::Writing));
-
-    let priv_g = storage.private_storage.lock().await;
-    assert!(
-        !priv_g
-            .data_exists(&req_id, &PrivDataType::SigningKey.to_string())
-            .await
-            .unwrap(),
-        "successful private write must be purged when public write fails"
     );
 }
 
@@ -2076,4 +1965,6 @@ async fn refresh_fhe_private_material_paths() {
     assert!(cache_guard.get(&(miss_req, miss_epoch)).is_none());
 }
 
+mod fhe_write_side_effects;
 mod migration;
+mod storage_side_effects;

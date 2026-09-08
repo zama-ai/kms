@@ -1,0 +1,148 @@
+//! Fixture logic for multi-step FHE key write failures.
+
+use super::super::*;
+use crate::vault::storage::{
+    ram::FailingRamStorage,
+    test_support::{StorageEntry, StorageEvent, StorageOp, StorageOutcome, assert_same_events},
+};
+/// Fails the private storage write after mutation and verifies that the FHE key write is rolled back.
+///
+/// Panics on failure.
+pub(super) async fn run_fhe_write_rollback(
+    key_id: RequestId,
+    epoch_id: EpochId,
+    private_data: KmsFheKeyHandles,
+    public_keys: PublicKeySet,
+    // The public artifact written before the pair: `ServerKey` for uncompressed keys or
+    // `CompressedXofKeySet` for compressed keys.
+    special_public_type: PubDataType,
+) {
+    let storage =
+        CryptoMaterialStorage::from(FailingRamStorage::new(), FailingRamStorage::new(), None);
+    let control_id = derive_request_id("fhe_write_failure_control").unwrap();
+    let other_epoch_id: EpochId = derive_request_id("fhe_write_failure_other_epoch")
+        .unwrap()
+        .into();
+    let control = TestType { i: 99 };
+    {
+        let mut public = storage.public_storage.lock().await;
+        for data_type in [PubDataType::PublicKey, special_public_type] {
+            store_versioned_at_request_id(
+                &mut *public,
+                &control_id,
+                &control,
+                &data_type.to_string(),
+            )
+            .await
+            .unwrap();
+        }
+        store_versioned_at_request_id(
+            &mut *public,
+            &control_id,
+            &control,
+            &PubDataType::CACert.to_string(),
+        )
+        .await
+        .unwrap();
+        public.clear_events();
+    }
+    {
+        let mut private = storage.private_storage.lock().await;
+        store_versioned_at_request_and_epoch_id(
+            &mut *private,
+            &control_id,
+            &epoch_id,
+            &control,
+            &PrivDataType::FhePrivateKey.to_string(),
+        )
+        .await
+        .unwrap();
+        store_versioned_at_request_and_epoch_id(
+            &mut *private,
+            &key_id,
+            &other_epoch_id,
+            &control,
+            &PrivDataType::FhePrivateKey.to_string(),
+        )
+        .await
+        .unwrap();
+        store_versioned_at_request_id(
+            &mut *private,
+            &control_id,
+            &control,
+            &PrivDataType::ContextInfo.to_string(),
+        )
+        .await
+        .unwrap();
+        private.clear_events();
+    }
+
+    let public_before = storage.public_storage.lock().await.state();
+    let private_before = storage.private_storage.lock().await.state();
+    let special_entry = StorageEntry::new(key_id, None, special_public_type.to_string());
+    let public_key_entry = StorageEntry::new(key_id, None, PubDataType::PublicKey.to_string());
+    let private_entry = StorageEntry::new(
+        key_id,
+        Some(epoch_id),
+        PrivDataType::FhePrivateKey.to_string(),
+    );
+    storage
+        .private_storage
+        .lock()
+        .await
+        .set_fail_store_after_mutation_at(private_entry.clone());
+    let cache_control = (control_id, other_epoch_id);
+    let cache = Arc::new(RwLock::new(HashMap::from([(
+        cache_control,
+        private_data.clone(),
+    )])));
+
+    let result = storage
+        .handle_fhe_keys(
+            &key_id,
+            &epoch_id,
+            private_data,
+            PrivDataType::FhePrivateKey,
+            public_keys,
+            cache.clone(),
+            false,
+            TEST_METRIC,
+        )
+        .await;
+
+    assert_eq!(result, Err(StorageError::Writing));
+    assert_eq!(storage.public_storage.lock().await.state(), public_before);
+    assert_eq!(storage.private_storage.lock().await.state(), private_before);
+    let guarded_cache = cache.read().await;
+    assert_eq!(guarded_cache.len(), 1);
+    assert!(guarded_cache.contains_key(&cache_control));
+    drop(guarded_cache);
+    assert_same_events(
+        storage.public_storage.lock().await.events(),
+        &[
+            StorageEvent::new(
+                special_entry.clone(),
+                StorageOp::Store,
+                StorageOutcome::Created,
+            ),
+            StorageEvent::new(
+                public_key_entry.clone(),
+                StorageOp::Store,
+                StorageOutcome::Created,
+            ),
+            StorageEvent::new(public_key_entry, StorageOp::Delete, StorageOutcome::Deleted),
+            StorageEvent::new(special_entry, StorageOp::Delete, StorageOutcome::Deleted),
+        ],
+    );
+    assert_same_events(
+        storage.private_storage.lock().await.events(),
+        &[
+            StorageEvent::new(
+                private_entry.clone(),
+                StorageOp::Store,
+                StorageOutcome::FailedAfterMutation,
+            ),
+            StorageEvent::new(private_entry, StorageOp::Delete, StorageOutcome::Deleted),
+        ],
+    );
+}
