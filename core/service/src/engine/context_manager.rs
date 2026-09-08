@@ -99,8 +99,8 @@ where
             "PCR values are required for context {} in enclave deployments",
             context.context_id()
         );
-        let storage_ref = self.crypto_storage.private_storage.clone();
-        let guarded_priv_storage = storage_ref.lock().await;
+        let private_storage = Arc::clone(&self.crypto_storage.private_storage);
+        let guarded_priv_storage = private_storage.lock().await;
         context.verify(&(*guarded_priv_storage)).await
     }
 
@@ -837,7 +837,7 @@ where
             })?;
         let _update_guard = self.inner.mpc_context_update_lock.lock().await;
 
-        let private_storage = self.inner.crypto_storage.private_storage.clone();
+        let private_storage = Arc::clone(&self.inner.crypto_storage.private_storage);
         let mut guarded_priv_storage = private_storage.lock().await;
         let context_exists = guarded_priv_storage
             .data_exists(&context_id.into(), &PrivDataType::ContextInfo.to_string())
@@ -1074,7 +1074,7 @@ async fn atomic_update_context<
             context_id = %context_id,
             "Rolling back context creation after the session maker update failed: {session_error}"
         );
-        let private_storage = crypto_storage.private_storage.clone();
+        let private_storage = Arc::clone(&crypto_storage.private_storage);
         let mut guarded_priv_storage = private_storage.lock().await;
         let cleanup_result =
             delete_context_from_storage(&mut *guarded_priv_storage, context_id).await;
@@ -1258,7 +1258,7 @@ where
             ));
         }
 
-        let private_storage = self.inner.crypto_storage.private_storage.clone();
+        let private_storage = Arc::clone(&self.inner.crypto_storage.private_storage);
         let mut guarded_priv_storage = private_storage.lock().await;
         delete_context_from_storage(&mut *guarded_priv_storage, &context_id)
             .await
