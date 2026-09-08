@@ -6,7 +6,9 @@ use crate::{
     anyhow_error_and_log,
     cryptography::{
         encryption::UnifiedPublicEncKey,
-        signatures::{PublicSigKey, recover_address_from_ext_signature},
+        signatures::{
+            PublicSigKey, Signature, internal_verify_sig, recover_address_from_ext_signature,
+        },
         signing::{SchemeVerfKeys, SigningSchemeType},
     },
     engine::base::{compute_public_decryption_message, public_dec_payload_bytes},
@@ -36,7 +38,7 @@ use threshold_execution::keyset_config::KeySetConfig;
 use threshold_execution::tfhe_internals::parameters::DKGParams;
 use threshold_execution::zk::ceremony::compute_witness_dim;
 
-pub(crate) const DSEP_PUBLIC_DECRYPTION: DomainSep = *b"PUBL_DEC";
+pub const DSEP_PUBLIC_DECRYPTION: DomainSep = *b"PUBL_DEC";
 
 /// Trusted client-side configuration used to validate public decryption server responses.
 /// The expectation is that no unvalidated data coming from e.g., the network should be used in this type.
@@ -433,24 +435,20 @@ pub(crate) fn verify_user_decrypt_eip712(
 /// # What makes a response authentic
 ///
 /// - Every entry that can be checked has to verify.
-/// - Every scheme the request asked for has to be present and verified. A party
-///   cannot drop the post-quantum entry of a hybrid request and pass on ECDSA
-///   alone.
-/// - At least one entry has to have been verified, so a response that nothing
-///   could check never passes for one that was checked.
+/// - The deprecated scalar fields, `signature` and `external_signature`, are checked first.
+/// - Then every entry of `signatures` for a requested scheme is verified.
+/// - Every scheme the request asked for has to end up verified.
+#[expect(clippy::too_many_arguments)]
 fn verify_public_decrypt_signatures(
     trusted_ctx: &PublicDecTrustedValidationContext,
     response: &PublicDecryptionResponsePayload,
     party_id: u32,
     verification_key: &PublicSigKey,
+    signature: &[u8],
+    external_signature: &[u8],
     signatures: &[TypedSignature],
     response_extra_data: &[u8],
 ) -> bool {
-    if signatures.is_empty() {
-        tracing::warn!("A public decryption response carries no signatures");
-        return false;
-    }
-
     let requested = match trusted_ctx.request {
         Some(request) => match SigningSchemeType::resolve_requested(&request.signing_schemes) {
             Ok(requested) => requested,
@@ -479,7 +477,76 @@ fn verify_public_decrypt_signatures(
         }
     };
 
-    let mut verified: Vec<SigningSchemeType> = Vec::with_capacity(signatures.len());
+    // What every ECDSA signature of this response covers, needed by both the
+    // deprecated `external_signature` and the ECDSA entry of `signatures`.
+    let eip712_message = match trusted_ctx.eip712_domain {
+        Some(domain) => match compute_public_decryption_message(
+            trusted_ctx.ext_handles_bytes,
+            &response.plaintexts,
+            response_extra_data,
+        ) {
+            Ok(message) => Some((message, domain)),
+            Err(e) => {
+                tracing::warn!("Failed to compute public decryption message: {e}");
+                return false;
+            }
+        },
+        None => None,
+    };
+    let expected_addr = verification_key.address();
+    let recovers_to_signer = |ecdsa_signature: &[u8]| -> bool {
+        let Some((message, domain)) = eip712_message.as_ref() else {
+            // Only reached for `external_signature`, which the caller skips when
+            // there is no domain; the ECDSA entry is passed over above.
+            return false;
+        };
+        match recover_address_from_ext_signature(message, domain, ecdsa_signature) {
+            Ok(recovered_addr) if recovered_addr == expected_addr => true,
+            Ok(recovered_addr) => {
+                tracing::warn!(
+                    "ECDSA signature address mismatch: recovered {recovered_addr} but expected \
+                     {expected_addr}"
+                );
+                false
+            }
+            Err(e) => {
+                tracing::warn!("Failed to recover address from the ECDSA signature: {e}");
+                false
+            }
+        }
+    };
+
+    let mut verified: Vec<SigningSchemeType> = Vec::with_capacity(signatures.len() + 1);
+
+    if !signature.is_empty() {
+        let sig = match k256::ecdsa::Signature::from_slice(signature) {
+            Ok(sig) => Signature::from_ecdsa(sig),
+            Err(e) => {
+                tracing::warn!("Could not parse the deprecated ECDSA signature: {e}");
+                return false;
+            }
+        };
+        if internal_verify_sig(
+            &DSEP_PUBLIC_DECRYPTION,
+            &response_bytes,
+            &sig,
+            verification_key,
+        )
+        .is_err()
+        {
+            tracing::warn!(
+                "The deprecated ECDSA signature of a public decryption response is not valid"
+            );
+            return false;
+        }
+        verified.push(SigningSchemeType::Ecdsa256k1);
+    } else if !external_signature.is_empty() && eip712_message.is_some() {
+        if !recovers_to_signer(external_signature) {
+            return false;
+        }
+        verified.push(SigningSchemeType::Ecdsa256k1);
+    }
+    // If none of the legacy fields are there the verification relies entirely on the `signatures` array.
     for typed in signatures {
         let scheme = match SigningSchemeType::try_from(typed.scheme) {
             Ok(scheme) => scheme,
@@ -498,43 +565,21 @@ fn verify_public_decrypt_signatures(
             continue;
         }
         if scheme == SigningSchemeType::Ecdsa256k1 {
-            // Only this entry needs the domain, because only it is an EIP-712 signature.
-            let Some(domain) = trusted_ctx.eip712_domain else {
+            // Only this entry needs the domain, because only it is an EIP-712
+            // signature.
+            if eip712_message.is_none() {
                 tracing::warn!(
-                    "No EIP-712 domain is available, so the requested ECDSA signature of a \
-                     public decryption response cannot be checked"
+                    "No EIP-712 domain is available, so the ECDSA entry of a public decryption \
+                     response cannot be checked"
                 );
-                return false;
-            };
-            let message = match compute_public_decryption_message(
-                trusted_ctx.ext_handles_bytes,
-                &response.plaintexts,
-                response_extra_data,
-            ) {
-                Ok(msg) => msg,
-                Err(e) => {
-                    tracing::warn!("Failed to compute public decryption message: {e}");
-                    return false;
-                }
-            };
-            match recover_address_from_ext_signature(&message, domain, &typed.signature) {
-                Ok(recovered_addr) => {
-                    let expected_addr = verification_key.address();
-                    if recovered_addr != expected_addr {
-                        tracing::warn!(
-                            "ECDSA signature address mismatch: recovered {} but expected {}",
-                            recovered_addr,
-                            expected_addr
-                        );
-                        return false;
-                    }
-                }
-                Err(e) => {
-                    tracing::warn!("Failed to recover address from the ECDSA signature: {e}");
-                    return false;
-                }
+                continue;
             }
-            verified.push(scheme);
+            if !recovers_to_signer(&typed.signature) {
+                return false;
+            }
+            if !verified.contains(&scheme) {
+                verified.push(scheme);
+            }
             continue;
         }
 
@@ -761,13 +806,16 @@ fn authenticate_public_decrypt_response(
 
     // Verify the signature(s) carried by the response. This is pure authenticity and does not
     // depend on the (not-yet-established) consensus.
-    // The deprecated scalar `signature` and `external_signature` fields are still populated
-    // by the KMS for clients that predate `signatures`, but nothing reads them here.
+    // The deprecated scalar `signature` and `external_signature` fields are checked alongside
+    // `signatures`, as user decryption checks them, so a response stays verifiable without an
+    // EIP-712 domain. TODO(0.16): drop the two fields and their arguments.
     if !verify_public_decrypt_signatures(
         trusted_ctx,
         cur_payload,
         signing_party,
         &cur_verf_key,
+        &cur_resp.signature,
+        &cur_resp.external_signature,
         &cur_resp.signatures,
         &cur_resp.extra_data,
     ) {
@@ -1774,10 +1822,10 @@ mod tests {
             )
         };
         let verify = |payload: &PublicDecryptionResponsePayload, sigs: &[TypedSignature]| {
-            verify_public_decrypt_signatures(&ctx, payload, 1, &vk_of(payload), sigs, &[])
+            verify_public_decrypt_signatures(&ctx, payload, 1, &vk_of(payload), &[], &[], sigs, &[])
         };
 
-        // an empty list: the peer predates the field, so nothing can be authenticated
+        // an empty list and no scalar field either, so nothing can be authenticated
         assert!(!verify(&pivot, &[]));
 
         // signed with the wrong private key
@@ -2287,20 +2335,81 @@ mod tests {
             .unwrap()
         };
         let verify = |ctx: &PublicDecTrustedValidationContext, sigs: &[TypedSignature]| {
-            verify_public_decrypt_signatures(ctx, &pivot, 1, &vk_of(&pivot), sigs, &extra_data)
+            verify_public_decrypt_signatures(
+                ctx,
+                &pivot,
+                1,
+                &vk_of(&pivot),
+                &[],
+                &[],
+                sigs,
+                &extra_data,
+            )
         };
 
-        // an empty list means the peer predates the field
+        // an empty list, with no scalar field to fall back on
         assert!(!verify(&ctx(Some(&alloy_domain)), &[]));
 
         // a tampered ECDSA signature recovers to another address
         assert!(!verify(&ctx(Some(&alloy_domain)), &tampered));
 
-        // without a domain the EIP-712 message cannot be rebuilt, so nothing can be checked
+        // without a domain the EIP-712 message cannot be rebuilt, so the only entry
+        // there is gets passed over and the requested ECDSA is left unverified
         assert!(!verify(&ctx(None), &signatures));
 
         // happy path
         assert!(verify(&ctx(Some(&alloy_domain)), &signatures));
+
+        // The deprecated scalar fields authenticate the same response. The raw ECDSA
+        // signature needs no domain.
+        let domainless = ctx(None);
+        assert!(verify_public_decrypt_signatures(
+            &domainless,
+            &pivot,
+            1,
+            &vk_of(&pivot),
+            &signed.signature,
+            &[],
+            &[],
+            &extra_data,
+        ));
+        // `external_signature` does the same, but only with a domain to rebuild the
+        // EIP-712 message from.
+        let with_domain = ctx(Some(&alloy_domain));
+        assert!(verify_public_decrypt_signatures(
+            &with_domain,
+            &pivot,
+            1,
+            &vk_of(&pivot),
+            &[],
+            &signed.external_signature,
+            &[],
+            &extra_data,
+        ));
+        assert!(!verify_public_decrypt_signatures(
+            &domainless,
+            &pivot,
+            1,
+            &vk_of(&pivot),
+            &[],
+            &signed.external_signature,
+            &[],
+            &extra_data,
+        ));
+        // A corrupt scalar signature is a rejection, not something the list can
+        // paper over.
+        let mut bad_scalar = signed.signature.clone();
+        bad_scalar[0] ^= 1;
+        assert!(!verify_public_decrypt_signatures(
+            &with_domain,
+            &pivot,
+            1,
+            &vk_of(&pivot),
+            &bad_scalar,
+            &[],
+            &signatures,
+            &extra_data,
+        ));
     }
 
     /// The EIP-712 domain is a precondition of the ECDSA entry alone, so a
@@ -2364,12 +2473,16 @@ mod tests {
             )
             .unwrap()
         };
+        // This response carries no deprecated scalar field, so the post-quantum
+        // entry of `signatures` is the only thing that can authenticate it.
         let verify = |ctx: &PublicDecTrustedValidationContext, response_extra_data: &[u8]| {
             verify_public_decrypt_signatures(
                 ctx,
                 &payload,
                 1,
                 &vk,
+                &[],
+                &[],
                 &signatures,
                 response_extra_data,
             )
@@ -2412,6 +2525,8 @@ mod tests {
             &payload,
             1,
             &vk,
+            &[],
+            &[],
             &with_junk,
             &extra_data
         ));
@@ -2421,6 +2536,8 @@ mod tests {
             &payload,
             1,
             &vk,
+            &[],
+            &[],
             &junk_only,
             &extra_data
         ));

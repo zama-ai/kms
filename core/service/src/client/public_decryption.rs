@@ -59,9 +59,13 @@ impl Client {
     ///
     /// * `request` — The original public decryption request constructed by this
     ///   client. Used to verify that the server responses match the request
-    ///   (digest, ciphertext handles, domain). Passing `None` skips the
-    ///   request-level checks and **no response can be authenticated**
-    ///   and every one is rejected. It exists for callers that only want to
+    ///   (digest, ciphertext handles, domain).
+    ///
+    ///   Passing `None` skips the request-level checks, and with them the EIP-712
+    ///   domain, so neither `external_signature` nor the ECDSA entry of
+    ///   `signatures` can be checked. A response is then authenticated by the
+    ///   deprecated scalar `signature`, which covers the serialized payload and
+    ///   needs no domain. That is enough for a caller that only wants to inspect a
     ///   inspect a result.
     /// * `min_agree_count` — Minimum number of server responses that must agree
     ///   on the same plaintext for the result to be accepted.

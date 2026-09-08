@@ -413,8 +413,10 @@ impl Named for UserDecSignedPayload {
     const NAME: &'static str = "UserDecSignedPayload";
 }
 
+pub use crate::engine::validation_non_wasm::DSEP_PUBLIC_DECRYPTION;
+
 /// The canonical bytes a non-ECDSA scheme signs for a public decryption result.
-pub(crate) fn public_dec_payload_bytes(
+pub fn public_dec_payload_bytes(
     response_bytes: &[u8],
     extra_data: &[u8],
 ) -> anyhow::Result<Vec<u8>> {
@@ -1185,7 +1187,7 @@ pub(crate) fn sign_public_decryption_result(
         extra_data,
         &sol_type,
         eip712_domain,
-        &crate::engine::validation::DSEP_PUBLIC_DECRYPTION,
+        &DSEP_PUBLIC_DECRYPTION,
         public_dec_payload_bytes,
     )
 }
