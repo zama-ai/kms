@@ -48,7 +48,7 @@ use crate::{
             service::session::{ImmutableSessionMaker, validate_context_and_epoch},
             traits::KeyGenPreprocessor,
         },
-        utils::{MetricedError, signing_identity_for},
+        utils::MetricedError,
         validation::{RequestIdParsingErr, parse_grpc_request_id, validate_preproc_request},
     },
     util::{
@@ -480,7 +480,7 @@ impl<P: ProducerFactory<ResiduePolyF4Z128, SmallSession<ResiduePolyF4Z128>>> Rea
 
         tracing::info!("Starting preproc generation for Request ID {}", request_id);
 
-        let sk = signing_identity_for(
+        let sk = crate::engine::utils::signing_identity_for(
             &self.base_kms,
             &signing_schemes,
             OP_INSECURE_KEYGEN_PREPROC_REQUEST,
