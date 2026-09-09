@@ -43,6 +43,32 @@ has_value() {
 export PATH="/app/kms/core/service/bin:$PATH"
 cd /app/kms/core/service |& logger  || fail "cannot set working directory"
 
+# TEMPORARY (TODO(#3150)): report which entropy sources this kernel exposes, to
+# settle whether getrandom(2) in here is fed by the NSM through `nsm-hwrng`. If
+# rng_current is nsm-hwrng then the kernel pool behind getrandom(2) is seeded
+# from the same device our SecurityModule::get_random calls, which means the two
+# entropy sources we mix are not independent. Runs before the config fetch so we
+# still get the answer if the parent never sends one. Deliberately kept as one
+# contiguous block so it reverts in a single hunk — it changes PCR0.
+report_entropy_sources() {
+    log "entropy probe: kernel: $(cat /proc/version 2>&1)"
+    log "entropy probe: cmdline: $(cat /proc/cmdline 2>&1)"
+    for entry in rng_available rng_current rng_quality; do
+        log "entropy probe: hw_random/$entry: $(cat "/sys/class/misc/hw_random/$entry" 2>&1)"
+    done
+    log "entropy probe: /dev/nsm: $(ls -l /dev/nsm 2>&1)"
+    log "entropy probe: /dev/hwrng: $(ls -l /dev/hwrng 2>&1)"
+    # /dev/kmsg follows the ring buffer like `tail -f`, so read it non-blocking.
+    # A dd without iflag support just fails here and we lose only these lines.
+    dd if=/dev/kmsg iflag=nonblock 2>/dev/null \
+        | grep -i -E 'hw_random|hwrng|random:|nsm' \
+        | head -40 \
+        | while IFS= read -r kmsg_line; do
+              log "entropy probe: kmsg: $kmsg_line"
+          done
+}
+report_entropy_sources
+
 # receive keygen or server configuration from the parent
 log "requesting KMS config"
 socat -u VSOCK-CONNECT:$PARENT_CID:$CONFIG_PORT \

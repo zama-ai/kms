@@ -1,0 +1,119 @@
+##############################################################################
+# nsm-entropy-probe
+#
+# TEMPORARY (TODO(#3150)). Manual dispatch only. Delete once the question below
+# is answered.
+#
+# Question: inside a Nitro Enclave, is getrandom(2) fed by the NSM through the
+# `nsm-hwrng` device? If it is, the OS entropy and the SecurityModule entropy we
+# XOR together when reseeding share provenance, and mixing them is no longer a
+# hedge against NSM failure.
+#
+# This workflow answers the STATIC half only: whether the nsm.ko that nitro-cli
+# bundles contains the hwrng registration at all, plus the kernel version and
+# cmdline that ship in the same blobs. A negative result is conclusive (no
+# registration code, hypothesis refuted). A positive result is not — it proves
+# capability, not use.
+#
+# For the RUNTIME half, which is the only sufficient test, build this branch's
+# enclave image and read the sysfs values from a live enclave:
+#   1. label a PR on this branch `pr-preview-thresholdWithEnclave`
+#      (see build-and-test.yml:134-138)
+#   2. the enclave's init script logs over vsock to the parent container's
+#      stdout (docker/core/service/start_parent_proxies.sh:109), so:
+#      kubectl -n kms-ci-<actor>-<pr> logs <kms-core-pod> | grep 'entropy probe'
+#   3. rng_current == nsm-hwrng answers the question
+#
+# Note the kernel here is whatever the AL2023 repos serve *today*: the EIF build
+# in common-nitro-enclave.yml:222 installs aws-nitro-enclaves-cli unpinned, so
+# this reports what a build right now would produce, not what a deployed EIF
+# contains. For that, read the archived eif-info.txt from the matching release.
+##############################################################################
+name: nsm-entropy-probe
+
+on:
+  workflow_dispatch:
+    inputs:
+      amazonlinux_digest:
+        description: 'amazonlinux digest to probe (default: the one common-nitro-enclave.yml pins)'
+        required: false
+        type: string
+        default: 'sha256:97073cc66ae1fe66d59315987c36f4eeb98242a85086e972b4109bab4cb57454'
+
+permissions: {}
+
+jobs:
+  blob-probe:
+    name: nsm-entropy-probe/blob-probe
+    runs-on: ubuntu-latest
+    permissions: {}
+    timeout-minutes: 15
+    steps:
+      - name: Probe the nitro-cli kernel blobs
+        env:
+          AMAZONLINUX_DIGEST: ${{ inputs.amazonlinux_digest }}
+        run: |
+          set -euo pipefail
+          # --platform is a no-op on this runner; kept so the same command works
+          # verbatim on an Apple Silicon laptop.
+          docker run --rm --platform=linux/amd64 \
+            "amazonlinux@${AMAZONLINUX_DIGEST}" \
+            sh -c '
+              set -eu
+              dnf install -q -y aws-nitro-enclaves-cli aws-nitro-enclaves-cli-devel binutils file >/dev/null
+              BLOBS=/usr/share/nitro_enclaves/blobs
+
+              echo "### nitro-cli version"
+              nitro-cli --version
+              echo
+
+              echo "### blobs"
+              ls -l "$BLOBS"
+              echo
+
+              echo "### kernel cmdline"
+              echo "(random.trust_cpu / random.trust_bootloader decide whether RDRAND"
+              echo " is credited as a second hardware source in the pool)"
+              cat "$BLOBS/cmdline"
+              echo
+              echo
+
+              echo "### kernel version"
+              # bzImage is self-extracting, so the version string is inside the
+              # compressed payload and invisible to strings. file(1) reads it from
+              # the setup header; the config header carries it too.
+              file "$BLOBS/bzImage"
+              head -4 "$BLOBS/bzImage.config"
+              echo
+
+              echo "### entropy-related kernel config"
+              echo "(unanchored grep so \"is not set\" lines show up too)"
+              grep -iE "hw_random|random_trust" "$BLOBS/bzImage.config" || echo "NONE"
+              echo
+
+              echo "### nsm.ko hwrng registration"
+              if strings "$BLOBS/nsm.ko" | grep -i -e hwrng -e nsm-hwrng; then
+                echo
+                echo "VERDICT: nsm.ko CAN register an hwrng. Capability only —"
+                echo "run the runtime half to see whether the kernel selected it."
+              else
+                echo "none"
+                echo
+                echo "VERDICT: nsm.ko does NOT register an hwrng. Hypothesis refuted;"
+                echo "OS entropy and NSM entropy are independent sources. Stop here."
+              fi
+            ' 2>&1 | tee /tmp/nsm-entropy-probe.txt
+
+      - name: Publish results to the run summary
+        if: always()
+        run: |
+          {
+            echo "## NSM entropy probe — static blobs"
+            echo ""
+            echo '```'
+            cat /tmp/nsm-entropy-probe.txt 2>/dev/null || echo "probe produced no output"
+            echo '```'
+            echo ""
+            echo "This is the static half. See the workflow header for the runtime half,"
+            echo "which is the only sufficient test."
+          } >> "$GITHUB_STEP_SUMMARY"
