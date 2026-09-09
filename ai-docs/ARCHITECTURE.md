@@ -136,6 +136,22 @@ The service crate is the main surface area. Key subdirectories under
   local key-material utilities used by `core-client`) and test-only wiring.
 - [bin/](core/service/src/bin/) — entry points (see below).
 
+### Task randomness
+
+[`RngSource`](../core/service/src/engine/rng_source.rs) supplies task seeds from
+one shared AES RNG per KMS instance. `BaseKmsStruct` instances and `SessionMaker`
+share the source through `Arc`. Each task receives an owned RNG with a separate seed.
+Source initialization combines OS entropy with entropy from the configured security module.
+Refresh also mixes output from the existing source. Entropy failures return errors and leave
+the source unchanged. Refresh logs report success or failure without seed values.
+
+Threshold epoch creation refreshes before resharing setup in `new_mpc_epoch` and before
+PRSS initialization in `internal_init_epoch`. A request that enters both paths refreshes twice.
+A successful refresh protects future task seeds once fresh entropy is unknown to the attacker.
+Existing task RNGs remain unchanged. The source does not provide backtracking resistance
+within a reseeding interval. Centralized services seed at construction; these epoch refresh
+hooks apply to threshold services.
+
 ### Binaries
 
 All under [core/service/src/bin/](core/service/src/bin/):

@@ -29,6 +29,7 @@ use tokio_rustls::rustls::{
     server::{ClientHello, ResolvesServerCert},
     sign::{CertifiedKey, SingleCertAndKey},
 };
+use zeroize::Zeroizing;
 
 use webpki::{EndEntityCert, KeyUsage, anchor_from_trusted_cert};
 use x509_parser::{
@@ -373,6 +374,10 @@ pub trait SecurityModule {
             crypto_provider,
         )?))
     }
+
+    /// Returns exactly N entropy bytes in a buffer that clears itself on drop.
+    /// This method blocks the calling thread during the entropy read.
+    fn get_random_sync<const N: usize>(&self) -> anyhow::Result<Zeroizing<[u8; N]>>;
 }
 
 #[allow(clippy::large_enum_variant)]

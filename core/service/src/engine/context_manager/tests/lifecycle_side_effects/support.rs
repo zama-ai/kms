@@ -5,6 +5,7 @@
 //! threshold session maker. Tests can then compare storage state and lifecycle state.
 
 use super::super::*;
+use crate::engine::rng_source::{RngSource, test_rng_source};
 use crate::{
     cryptography::signatures::{PublicSigKey, gen_sig_keys},
     util::meta_store::MetaStore,
@@ -156,7 +157,7 @@ impl ContextFixture {
     }
 
     pub(super) async fn manager(&self, kms_type: KMSType) -> TestContextManager {
-        let base_kms = BaseKmsStruct::new(kms_type, self.signing_key.clone()).unwrap();
+        let base_kms = BaseKmsStruct::new(kms_type, self.signing_key.clone(), test_rng_source());
 
         match kms_type {
             KMSType::Centralized => {
@@ -169,7 +170,7 @@ impl ContextFixture {
                 TestContextManager::Centralized(manager)
             }
             KMSType::Threshold => {
-                let session_maker = SessionMaker::empty_dummy_session(base_kms.new_rng().await);
+                let session_maker = SessionMaker::empty_dummy_session(base_kms.new_rng());
                 let manager = ThresholdContextManager::new(
                     base_kms,
                     self.storage.clone(),
@@ -239,7 +240,11 @@ pub(super) fn attested_session_maker(rng: AesRng) -> SessionMaker {
     let networking_manager = Arc::new(RwLock::new(
         GrpcNetworkingManager::new(None, CoreToCoreNetworkConfig::default()).unwrap(),
     ));
-    SessionMaker::new_uninitialized(networking_manager, Some(verifier), rng)
+    SessionMaker::new_uninitialized(
+        networking_manager,
+        Some(verifier),
+        Arc::new(RngSource::from_rng(rng)),
+    )
 }
 
 pub(super) fn state_without_target(fixture: &ContextFixture) -> StorageState {

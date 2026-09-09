@@ -377,6 +377,9 @@ impl<
         // this is because we might also use the epoch id to derive sessions for the reshare
         let session_id = epoch_id.derive_session_id_with_counter(PRSS_SESSION_COUNTER)?;
 
+        // Direct epoch initialization must also refresh before drawing the PRSS contribution.
+        session_maker.reseed_rng()?;
+
         // PRSS robust init requires broadcast, which is implemented with Sync network assumption
         let mut base_session = session_maker
             .make_base_session(session_id, *context_id, NetworkMode::Sync)
@@ -1523,6 +1526,16 @@ impl<
             ));
         }
 
+        // Set-1-only parties also need fresh randomness for resharing, even without local PRSS init.
+        self.session_maker.reseed_rng().map_err(|e| {
+            MetricedError::new(
+                OP_NEW_EPOCH,
+                Some(epoch_id.into()),
+                e,
+                tonic::Code::Unavailable,
+            )
+        })?;
+
         let resharing_task = match resharing_params {
             Some(ResharingParams {
                 previous_epoch,
@@ -1791,6 +1804,7 @@ impl<
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
+    use crate::engine::rng_source::test_rng_source;
 
     use crate::{
         client::test_tools::{self},
@@ -2043,10 +2057,10 @@ pub(crate) mod tests {
     ) -> RealThresholdEpochManager<ram::RamStorage, ram::RamStorage, I, SecureReshareSecretKeys>
     {
         let (_pk, sk) = gen_sig_keys(rng);
-        let base_kms = BaseKmsStruct::new(KMSType::Threshold, sk).unwrap();
+        let base_kms = BaseKmsStruct::new(KMSType::Threshold, sk, test_rng_source());
         let epoch_id = *DEFAULT_EPOCH_ID;
         let session_maker =
-            SessionMaker::four_party_dummy_session(None, None, &epoch_id, base_kms.new_rng().await);
+            SessionMaker::four_party_dummy_session(None, None, &epoch_id, base_kms.new_rng());
 
         RealThresholdEpochManager::<ram::RamStorage, ram::RamStorage, I, SecureReshareSecretKeys>::init_test(
             base_kms,

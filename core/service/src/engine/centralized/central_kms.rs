@@ -19,6 +19,7 @@ use crate::engine::base::sign_user_decryption_result;
 use crate::engine::base::{BaseKmsStruct, KmsFheKeyHandles};
 use crate::engine::base::{KeyGenMetadata, PubDecCallValues, UserDecryptCallValues};
 use crate::engine::context_manager::CentralizedContextManager;
+use crate::engine::rng_source::RngSource;
 #[cfg(feature = "non-wasm")]
 use crate::engine::storage_material_verification::verify_storage_material;
 use crate::engine::traits::{BackupOperator, ContextManager};
@@ -974,18 +975,19 @@ impl<
             backup_vault,
             key_info_with_epoch,
         );
-        let base_kms = BaseKmsStruct::new(KMSType::Centralized, sk)?;
+        let rng_source = Arc::new(RngSource::new(security_module.clone())?);
+        let base_kms = BaseKmsStruct::new(KMSType::Centralized, sk, rng_source);
 
         let context_manager: CentralizedContextManager<PubS, PrivS> =
             CentralizedContextManager::new(
-                base_kms.new_instance().await,
+                base_kms.new_instance(),
                 crypto_storage.inner.clone(),
                 Arc::clone(&custodian_meta_store),
             );
         // Load existing MPC contexts from storage into the cache
         context_manager.load_mpc_context_from_storage().await?;
         let backup_operator = RealBackupOperator::new(
-            base_kms.new_instance().await,
+            base_kms.new_instance(),
             crypto_storage.inner.clone(),
             security_module,
         );
@@ -1845,7 +1847,7 @@ pub(crate) mod tests {
             }
             keys
         };
-        let mut rng = kms.base_kms.new_rng().await;
+        let mut rng = kms.base_kms.new_rng();
 
         let raw_cipher = RealCentralizedKms::<FileStorage, FileStorage>::user_decrypt(
             &kms.crypto_storage

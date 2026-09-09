@@ -741,7 +741,7 @@ where
         &crypto_storage,
         networking_manager,
         verifier,
-        base_kms.new_rng().await,
+        base_kms.rng_source(),
     )
     .await?;
     let immutable_session_maker = session_maker.make_immutable();
@@ -752,7 +752,7 @@ where
     // NOTE: context must be loaded before attempting to automatically start the PRSS
     // since the PRSS requires a context to be present.
     let context_manager = ThresholdContextManager::new(
-        base_kms.new_instance().await,
+        base_kms.new_instance(),
         crypto_storage.inner.clone(),
         custodian_meta_store,
         session_maker.clone(),
@@ -769,7 +769,7 @@ where
     let epoch_manager = RealThresholdEpochManager {
         crypto_storage: crypto_storage.clone(),
         session_maker: session_maker.clone(),
-        base_kms: base_kms.new_instance().await,
+        base_kms: base_kms.new_instance(),
         reshare_pubinfo_meta_store: MetaStore::new_unlimited(),
         tracker: Arc::clone(&tracker),
         rate_limiter: rate_limiter.clone(),
@@ -798,7 +798,7 @@ where
     let slow_events = Arc::new(Mutex::new(HashMap::new()));
 
     let user_decryptor = RealUserDecryptor {
-        base_kms: base_kms.new_instance().await,
+        base_kms: base_kms.new_instance(),
         crypto_storage: crypto_storage.clone(),
         user_decrypt_meta_store: user_decrypt_meta_store.clone(),
         session_maker: immutable_session_maker.clone(),
@@ -809,7 +809,7 @@ where
     };
 
     let public_decryptor = RealPublicDecryptor {
-        base_kms: base_kms.new_instance().await,
+        base_kms: base_kms.new_instance(),
         crypto_storage: crypto_storage.clone(),
         pub_dec_meta_store: pub_dec_meta_store.clone(),
         session_maker: immutable_session_maker.clone(),
@@ -820,7 +820,7 @@ where
     };
 
     let keygenerator = RealKeyGenerator {
-        base_kms: base_kms.new_instance().await,
+        base_kms: base_kms.new_instance(),
         crypto_storage: crypto_storage.clone(),
         preproc_buckets: Arc::clone(&preproc_buckets),
         dkg_pubinfo_meta_store,
@@ -836,7 +836,7 @@ where
     let insecure_keygenerator = RealInsecureKeyGenerator::from_real_keygen(&keygenerator).await;
 
     let keygen_preprocessor = RealPreprocessor {
-        base_kms: base_kms.new_instance().await,
+        base_kms: base_kms.new_instance(),
         session_maker: immutable_session_maker.clone(),
         preproc_buckets,
         preproc_factory,
@@ -848,7 +848,7 @@ where
     };
 
     let crs_generator = RealCrsGenerator {
-        base_kms: base_kms.new_instance().await,
+        base_kms: base_kms.new_instance(),
         crypto_storage: crypto_storage.clone(),
         crs_meta_store,
         session_maker: immutable_session_maker.clone(),
@@ -862,7 +862,7 @@ where
     let insecure_crs_generator = RealInsecureCrsGenerator::from_real_crsgen(&crs_generator).await;
 
     let backup_operator = RealBackupOperator::new(
-        base_kms.new_instance().await,
+        base_kms.new_instance(),
         crypto_storage.inner.clone(),
         security_module,
     );

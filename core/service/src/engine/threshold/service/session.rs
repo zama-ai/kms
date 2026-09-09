@@ -7,12 +7,16 @@ use std::{
 
 use crate::{
     engine::{
-        context::ContextInfo, threshold::service::epoch_manager::EpochData, utils::MetricedError,
+        context::ContextInfo,
+        rng_source::{RngSource, RngSourceError},
+        threshold::service::epoch_manager::EpochData,
+        utils::MetricedError,
     },
     vault::storage::{Storage, StorageExt, crypto_material::ThresholdCryptoMaterialStorage},
 };
 
 // === External Crates ===
+#[cfg(test)]
 use aes_prng::AesRng;
 use algebra::galois_rings::degree_4::{ResiduePolyF4Z64, ResiduePolyF4Z128};
 use kms_grpc::{EpochId, RequestId, identifiers::ContextId};
@@ -34,7 +38,8 @@ use threshold_networking::{
 use threshold_networking::grpc::CoreToCoreNetworkConfig;
 use threshold_types::role::{DualRole, Role, TwoSetsRole, TwoSetsThreshold};
 
-use rand::{RngCore, SeedableRng};
+#[cfg(test)]
+use rand::SeedableRng;
 use serde::{Deserialize, Serialize};
 use tfhe::Versionize;
 use tfhe_versionable::VersionsDispatch;
@@ -156,7 +161,7 @@ pub(crate) struct SessionMaker {
     epoch_map: Arc<RwLock<HashMap<EpochId, EpochData>>>,
     lifecycle: LifecycleCoordinator,
     verifier: Option<Arc<AttestedVerifier>>, // optional as it's not used when there's no TLS
-    rng: Arc<Mutex<AesRng>>,
+    rng_source: Arc<RngSource>,
 }
 
 /// The role assignment shared by all dummy contexts used in tests: four parties on localhost.
@@ -181,10 +186,10 @@ impl SessionMaker {
         crypto_storage: &ThresholdCryptoMaterialStorage<PubS, PrivS>,
         networking_manager: Arc<RwLock<GrpcNetworkingManager>>,
         verifier: Option<Arc<AttestedVerifier>>,
-        rng: AesRng,
+        rng_source: Arc<RngSource>,
     ) -> anyhow::Result<Self> {
         let session_maker: SessionMaker =
-            Self::new_uninitialized(networking_manager, verifier, rng);
+            Self::new_uninitialized(networking_manager, verifier, rng_source);
         let all_epochs = crypto_storage.read_all_epoch_data().await?;
         if all_epochs.is_empty() {
             tracing::warn!(
@@ -217,7 +222,7 @@ impl SessionMaker {
     pub(crate) fn new_uninitialized(
         networking_manager: Arc<RwLock<GrpcNetworkingManager>>,
         verifier: Option<Arc<AttestedVerifier>>,
-        rng: AesRng,
+        rng_source: Arc<RngSource>,
     ) -> Self {
         Self {
             networking_manager,
@@ -225,7 +230,7 @@ impl SessionMaker {
             epoch_map: Arc::new(RwLock::new(HashMap::new())),
             lifecycle: LifecycleCoordinator::default(),
             verifier,
-            rng: Arc::new(Mutex::new(rng)),
+            rng_source,
         }
     }
 
@@ -328,7 +333,7 @@ impl SessionMaker {
             epoch_map: Arc::new(RwLock::new(HashMap::new())),
             lifecycle: LifecycleCoordinator::default(),
             verifier: None,
-            rng: Arc::new(Mutex::new(rng)),
+            rng_source: Arc::new(RngSource::from_rng(rng)),
         }
     }
 
@@ -390,7 +395,7 @@ impl SessionMaker {
             })),
             lifecycle: LifecycleCoordinator::default(),
             verifier: None,
-            rng: Arc::new(Mutex::new(rng)),
+            rng_source: Arc::new(RngSource::from_rng(rng)),
         }
     }
 
@@ -588,14 +593,8 @@ impl SessionMaker {
         context_map.contains_key(context_id)
     }
 
-    async fn new_rng(&self) -> AesRng {
-        let mut seed = [0u8; crate::consts::RND_SIZE];
-        // Make a seperate scope for the rng so that it is dropped before the lock is released
-        {
-            let mut base_rng = self.rng.lock().await;
-            base_rng.fill_bytes(seed.as_mut());
-        }
-        AesRng::from_seed(seed)
+    pub(crate) fn reseed_rng(&self) -> Result<(), RngSourceError> {
+        self.rng_source.reseed()
     }
 
     pub(crate) async fn make_base_session(
@@ -622,7 +621,7 @@ impl SessionMaker {
             context_info.role_assignment.keys().cloned().collect(),
         )?;
 
-        let base_session = BaseSession::new(parameters, networking?, self.new_rng().await)?;
+        let base_session = BaseSession::new(parameters, networking?, self.rng_source.fork_rng())?;
         Ok(base_session)
     }
 
@@ -743,7 +742,7 @@ impl SessionMaker {
             )
             .await?;
 
-        TwoSetsBaseSession::new(session_params, network, self.new_rng().await)
+        TwoSetsBaseSession::new(session_params, network, self.rng_source.fork_rng())
     }
 
     async fn get_networking(
@@ -1322,7 +1321,7 @@ mod tests {
         let session_maker = SessionMaker::new_uninitialized(
             networking_manager,
             Some(Arc::clone(&verifier)),
-            AesRng::seed_from_u64(6),
+            Arc::new(RngSource::from_rng(AesRng::seed_from_u64(6))),
         );
 
         let identity = "shared.example.com";
