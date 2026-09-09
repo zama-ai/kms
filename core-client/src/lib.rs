@@ -1981,6 +1981,9 @@ pub async fn execute_cmd(
                 // result to a server by its signature and never look up a party id. The
                 // positions are counted from 1, like party ids, because the validation
                 // contexts reject the key 0.
+                //
+                // In any case, we need a cleaner fix for this, tracked by the issue below.
+                // TODO(https://github.com/zama-ai/kms-internal/issues/3207)
                 let party_ids_unique = {
                     let mut seen = HashSet::new();
                     cc_conf.cores.iter().all(|core| seen.insert(core.party_id))
