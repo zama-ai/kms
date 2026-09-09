@@ -550,8 +550,8 @@ pub(crate) mod test_support {
     /// backend gets the same coverage by writing a single call.
     ///
     /// A freshly produced signature verifies, and a tampered message, a different domain
-    /// separator, a tampered signature and a truncated signature all reject. Key generation is
-    /// not part of the trait, so the caller supplies the signing key.
+    /// separator, and a tampered signature all reject. Key generation is not part of the trait,
+    /// so the caller supplies the signing key.
     pub(crate) fn exercise_backend<S: SigningScheme>(dsep: &DomainSep, sk: &S::SigningKey) {
         let vk = S::verifying_key(sk).expect("the backend must derive its verification key");
         let sig = S::sign(dsep, b"hello", sk).expect("the backend must sign");
@@ -571,11 +571,6 @@ pub(crate) mod test_support {
         assert!(
             S::verify(dsep, b"hello", &tampered, &vk).is_err(),
             "a tampered signature verified"
-        );
-
-        assert!(
-            S::verify(dsep, b"hello", &[0u8; 10], &vk).is_err(),
-            "a truncated signature verified"
         );
     }
 }

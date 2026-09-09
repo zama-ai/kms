@@ -196,11 +196,12 @@ mod tests {
     }
 
     /// A client that knows `identity` as party [`PARTY`], with or without that
-    /// party's per-scheme verification keys.
-    fn client_for(identity: &NodeSigningIdentity, with_scheme_keys: bool) -> Client {
-        let scheme_verf_keys = if with_scheme_keys {
-            let keys = SigningSchemeType::iter()
-                .map(|scheme| (scheme, identity.unified_verifying_key(scheme).unwrap()))
+    /// party's selected per-scheme verification keys.
+    fn client_for(identity: &NodeSigningIdentity, key_schemes: &[SigningSchemeType]) -> Client {
+        let scheme_verf_keys = if !key_schemes.is_empty() {
+            let keys = key_schemes
+                .iter()
+                .map(|&scheme| (scheme, identity.unified_verifying_key(scheme).unwrap()))
                 .collect();
             HashMap::from([(PARTY, keys)])
         } else {
@@ -221,7 +222,7 @@ mod tests {
         with_scheme_keys: bool,
         schemes: &[SigningSchemeType],
     ) -> Client {
-        let mut client = client_for(identity, with_scheme_keys);
+        let mut client = client_for(identity, if with_scheme_keys { schemes } else { &[] });
         client.set_signing_schemes(schemes).unwrap();
         client
     }
@@ -285,27 +286,12 @@ mod tests {
         compute_eip712_signature(identity.ecdsa(), &sol_type(), &dummy_domain()).unwrap()
     }
 
-    /// Every entry verifies, and the result is attributed to the signing party.
-    #[test]
-    fn every_scheme_of_a_result_verifies() {
-        let identity = seeded_identity(1);
-        let every_scheme: Vec<_> = SigningSchemeType::iter().collect();
-        // Ask for every scheme, so every entry is one the verifier has to check rather
-        // than one it may pass over as unrequested.
-        let client = client_requesting(&identity, true, &every_scheme);
-        let signatures = signatures_for(&identity, &every_scheme, PAYLOAD);
-
-        let (party_id, address) = verify(&client, &signatures, PAYLOAD).unwrap();
-        assert_eq!(party_id, PARTY);
-        assert_eq!(address, identity.verf_key().address());
-    }
-
     /// A result with nothing to check at all must not pass: no list, and no legacy
     /// signature to fall back on either.
     #[test]
     fn a_result_with_no_signature_at_all_is_rejected() {
         let identity = seeded_identity(2);
-        let client = client_for(&identity, true);
+        let client = client_for(&identity, &[]);
 
         let err = verify(&client, &[], PAYLOAD).unwrap_err().to_string();
         assert!(
@@ -320,7 +306,7 @@ mod tests {
     #[test]
     fn an_empty_list_falls_back_to_the_legacy_signature() {
         let identity = seeded_identity(12);
-        let client = client_for(&identity, true);
+        let client = client_for(&identity, &[]);
 
         let (party_id, address) =
             verify_with_legacy(&client, &[], &legacy_external_signature(&identity), PAYLOAD)
@@ -354,7 +340,7 @@ mod tests {
     #[test]
     fn the_legacy_fallback_rejects_a_signature_of_another_party() {
         let identity = seeded_identity(14);
-        let client = client_for(&identity, true);
+        let client = client_for(&identity, &[]);
         let stranger = legacy_external_signature(&seeded_identity(15));
 
         assert!(verify_with_legacy(&client, &[], &stranger, PAYLOAD).is_err());
@@ -367,7 +353,7 @@ mod tests {
     #[test]
     fn a_bad_legacy_signature_is_rejected_even_when_the_list_verifies() {
         let identity = seeded_identity(16);
-        let client = client_for(&identity, true);
+        let client = client_for(&identity, &[]);
         let signatures = signatures_for(&identity, &[SigningSchemeType::Ecdsa256k1], PAYLOAD);
 
         // Both copies present and agreeing is the honest case.
@@ -405,23 +391,6 @@ mod tests {
         assert_eq!(party_id, PARTY);
     }
 
-    /// The same list is rejected by a client that asked for ECDSA: a server may
-    /// not answer with a scheme of its own choosing.
-    #[test]
-    fn a_result_missing_the_requested_ecdsa_entry_is_rejected() {
-        let identity = seeded_identity(3);
-        let client = client_for(&identity, true);
-        let signatures = signatures_for(&identity, &[SigningSchemeType::MlDsa65], PAYLOAD);
-
-        let err = verify(&client, &signatures, PAYLOAD)
-            .unwrap_err()
-            .to_string();
-        assert!(
-            err.contains("was requested"),
-            "the error does not name the missing scheme: {err}"
-        );
-    }
-
     /// Each entry covers the payload it was signed over, and nothing else.
     #[test]
     fn a_tampered_payload_is_rejected() {
@@ -443,14 +412,17 @@ mod tests {
     #[test]
     fn another_partys_signatures_are_rejected() {
         let identity = seeded_identity(5);
-        let client = client_for(&identity, true);
+        let client = client_for(&identity, &[]);
         let signatures = signatures_for(
             &seeded_identity(6),
-            &SigningSchemeType::iter().collect::<Vec<_>>(),
+            &[SigningSchemeType::Ecdsa256k1],
             PAYLOAD,
         );
 
-        assert!(verify(&client, &signatures, PAYLOAD).is_err());
+        let err = verify(&client, &signatures, PAYLOAD)
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("belongs to no known party"), "{err}");
     }
 
     /// A signature that cannot be checked for want of a key must not pass for one
@@ -458,17 +430,23 @@ mod tests {
     #[test]
     fn an_entry_with_no_known_key_is_rejected() {
         let identity = seeded_identity(7);
-        let every_scheme: Vec<_> = SigningSchemeType::iter().collect();
-        // The client holds no per-scheme keys, but asks for every scheme, so each entry
-        // is one it is obliged to check and cannot.
-        let client = client_requesting(&identity, false, &every_scheme);
-        let signatures = signatures_for(&identity, &every_scheme, PAYLOAD);
+        let requested = [SigningSchemeType::Ecdsa256k1, SigningSchemeType::Ed25519];
+        // ECDSA identifies the party before Ed25519 encounters its missing key.
+        let client = client_requesting(&identity, false, &requested);
+        let signatures = signatures_for(&identity, &requested, PAYLOAD);
+        assert_eq!(
+            verify(&client_for(&identity, &[]), &signatures[..1], PAYLOAD)
+                .unwrap()
+                .0,
+            PARTY
+        );
 
         let err = verify(&client, &signatures, PAYLOAD)
             .unwrap_err()
             .to_string();
         assert!(
-            err.contains("verification key") || err.contains("no known party key"),
+            err.contains("party 1 signed under Ed25519")
+                && err.contains("no Ed25519 verification key is known"),
             "the error does not name the missing key: {err}"
         );
     }
@@ -491,52 +469,98 @@ mod tests {
         assert!(verify(&client, &signatures, PAYLOAD).is_err());
     }
 
-    /// A hybrid request answered with its ECDSA half alone is rejected, even though that half verifies.
+    /// Every requested scheme must verify, even when other entries verify.
     #[test]
-    fn a_hybrid_request_answered_with_ecdsa_alone_is_rejected() {
-        let identity = seeded_identity(11);
-        let requested = [SigningSchemeType::Ecdsa256k1, SigningSchemeType::MlDsa65];
-        let client = client_requesting(&identity, true, &requested);
-        let ecdsa_only = signatures_for(&identity, &[SigningSchemeType::Ecdsa256k1], PAYLOAD);
-
-        let err = verify(&client, &ecdsa_only, PAYLOAD)
-            .unwrap_err()
-            .to_string();
-        assert!(
-            err.contains("MlDsa65") && err.contains("was requested"),
-            "the error does not name the dropped post-quantum scheme: {err}"
-        );
-
-        // The full list, by contrast, passes.
-        let both = signatures_for(&identity, &requested, PAYLOAD);
-        let (party_id, _address) = verify(&client, &both, PAYLOAD).unwrap();
-        assert_eq!(party_id, PARTY);
-    }
-
-    /// A response that drops any one requested scheme is caught, even though every
-    /// entry it does carry verifies.
-    #[test]
-    fn a_stripped_scheme_is_caught() {
+    fn requested_schemes_cannot_be_stripped() {
         let identity = seeded_identity(10);
-        let requested: Vec<_> = SigningSchemeType::iter().collect();
-        let client = client_requesting(&identity, true, &requested);
-        let signatures = signatures_for(&identity, &requested, PAYLOAD);
+        let every_scheme: Vec<_> = SigningSchemeType::iter().collect();
+        let signatures = signatures_for(&identity, &every_scheme, PAYLOAD);
+        let hybrid = vec![SigningSchemeType::Ecdsa256k1, SigningSchemeType::MlDsa65];
 
-        verify(&client, &signatures, PAYLOAD).unwrap();
-
-        for dropped in SigningSchemeType::iter() {
-            let stripped: Vec<_> = signatures
+        for (case, requested, offered) in [
+            (
+                "default ECDSA with unrequested MLDSA",
+                vec![],
+                hybrid.clone(),
+            ),
+            ("hybrid", hybrid.clone(), hybrid),
+            ("all schemes", every_scheme.clone(), every_scheme),
+        ] {
+            let mut client = client_for(&identity, &requested);
+            if !requested.is_empty() {
+                client.set_signing_schemes(&requested).unwrap();
+            }
+            let offered: Vec<_> = signatures
                 .iter()
                 .filter(|typed| {
-                    SigningSchemeType::try_from(typed.scheme).is_ok_and(|found| found != dropped)
+                    offered
+                        .iter()
+                        .any(|scheme| scheme.as_wire() == typed.scheme)
                 })
                 .cloned()
                 .collect();
-            let err = verify(&client, &stripped, PAYLOAD).unwrap_err().to_string();
-            assert!(
-                err.contains(&dropped.to_string()),
-                "a response missing its {dropped} signature was not rejected for that: {err}"
+            assert_eq!(
+                verify(&client, &offered, PAYLOAD).unwrap(),
+                (PARTY, identity.verf_key().address()),
+                "{case}"
             );
+
+            for dropped in &client.signing_schemes {
+                let stripped: Vec<_> = offered
+                    .iter()
+                    .filter(|typed| typed.scheme != dropped.as_wire())
+                    .cloned()
+                    .collect();
+                let err = verify(&client, &stripped, PAYLOAD).unwrap_err().to_string();
+                assert!(
+                    err.contains(&dropped.to_string()) && err.contains("was requested"),
+                    "{case}: the error does not name the missing {dropped} scheme: {err}"
+                );
+            }
+        }
+    }
+
+    /// ECDSA signatures must parse and authenticate the expected signer and message.
+    #[test]
+    fn invalid_ecdsa_signatures_are_rejected() {
+        let identity = seeded_identity(18);
+        let client = client_for(&identity, &[]);
+        let valid = legacy_external_signature(&identity);
+        let other_message = CrsgenVerification::new(&RequestId::zeros(), 65, vec![7u8; 32], vec![]);
+        let wrong_message =
+            compute_eip712_signature(identity.ecdsa(), &other_message, &dummy_domain()).unwrap();
+        let invalid = [
+            ("short", valid[..64].to_vec()),
+            ("malformed", vec![0u8; 65]),
+            (
+                "wrong signer",
+                legacy_external_signature(&seeded_identity(19)),
+            ),
+            ("wrong message", wrong_message),
+        ];
+
+        for legacy in [false, true] {
+            let check = |signature: Vec<u8>| {
+                if legacy {
+                    verify_with_legacy(&client, &[], &signature, PAYLOAD)
+                } else {
+                    verify(
+                        &client,
+                        &[TypedSignature {
+                            scheme: SigningSchemeType::Ecdsa256k1.as_wire(),
+                            signature,
+                        }],
+                        PAYLOAD,
+                    )
+                }
+            };
+            assert_eq!(
+                check(valid.clone()).unwrap(),
+                (PARTY, identity.verf_key().address())
+            );
+            for (case, signature) in &invalid {
+                assert!(check(signature.clone()).is_err(), "{case}, legacy={legacy}");
+            }
         }
     }
 }

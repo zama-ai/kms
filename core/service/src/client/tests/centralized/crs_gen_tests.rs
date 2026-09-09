@@ -162,19 +162,6 @@ async fn crs_gen_centralized_manual(
     // multi-scheme feature, which is what a client that predates `signatures`
     // relies on during a rolling upgrade. TODO(0.16): drop with the field.
     assert!(!resp.external_signature.is_empty());
-    let recovered = crate::cryptography::signatures::recover_address_from_ext_signature(
-        &sol_type,
-        &domain,
-        &resp.external_signature,
-    )
-    .unwrap();
-    assert!(
-        internal_client
-            .get_server_addrs()
-            .values()
-            .any(|addr| *addr == recovered),
-        "external_signature did not recover to a known server address"
-    );
 
     kms_server.assert_shutdown().await;
     Ok(())

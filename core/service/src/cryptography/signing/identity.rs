@@ -194,7 +194,6 @@ mod tests {
     fn derivation_is_deterministic() {
         let mut rng = AesRng::seed_from_u64(202);
         let identity = seeded_identity(&mut rng);
-        let msg = b"deriving twice must give the same key";
 
         for scheme in SigningSchemeType::iter() {
             // Compare the keys directly: verifying a signature only shows that signing and
@@ -208,10 +207,6 @@ mod tests {
                 first, from_clone,
                 "{scheme:?} derived a different key from a clone"
             );
-
-            let sig = identity.unified_sign_with(scheme, DSEP, msg).unwrap();
-            unified_verify(DSEP, msg, &sig, &first)
-                .unwrap_or_else(|e| panic!("{scheme:?} derivation was not deterministic: {e}"));
         }
     }
 

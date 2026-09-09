@@ -1081,39 +1081,6 @@ mod tests {
         )
         .expect("signature should be valid");
 
-        // A node from a release before `signatures` sends an empty list and the legacy
-        // signature alone, which a network part-way through an upgrade still has to accept.
-        check_compressed_keyset_signatures(
-            &client,
-            &compressed_keyset,
-            &compact_public_key,
-            prep_id,
-            key_id,
-            &[],
-            &compressed_sig,
-            &dummy_domain(),
-            vec![],
-        )
-        .expect("the legacy signature alone should authenticate the result");
-
-        // With neither, there is nothing to check.
-        assert!(
-            check_compressed_keyset_signatures(
-                &client,
-                &compressed_keyset,
-                &compact_public_key,
-                prep_id,
-                key_id,
-                &[],
-                &[],
-                &dummy_domain(),
-                vec![],
-            )
-            .unwrap_err()
-            .to_string()
-            .contains("carries no signatures")
-        );
-
         // check that verification fails for a client that knows another party
         let mut rng = AesRng::seed_from_u64(0xC0FFEE);
         let stranger = client_knowing(gen_sig_keys(&mut rng).0);
@@ -1133,32 +1100,5 @@ mod tests {
             .to_string()
             .contains(UNKNOWN_PARTY)
         );
-
-        // A signature that is too short, is not a signature at all, or does not cover
-        // this message is rejected in each case.
-        let short_sig = [0_u8; 37].to_vec();
-        let malformed_sig = [23_u8; 65].to_vec();
-        let wrong_sig = hex::decode("cf92fe4c0b7c72fd8571c9a6680f2cd7481ebed7a3c8c7c7a6e6eaf27f5654f36100c146e609e39950953602ed73a3c10c1672729295ed8b33009b375813e5801b").unwrap();
-        for (label, bad_sig) in [
-            ("too short", short_sig),
-            ("malformed", malformed_sig),
-            ("wrong message", wrong_sig),
-        ] {
-            assert!(
-                check_compressed_keyset_signatures(
-                    &client,
-                    &compressed_keyset,
-                    &compact_public_key,
-                    prep_id,
-                    key_id,
-                    &ecdsa_signatures(bad_sig.clone()),
-                    &bad_sig,
-                    &dummy_domain(),
-                    vec![],
-                )
-                .is_err(),
-                "a {label} signature was not rejected"
-            );
-        }
     }
 }

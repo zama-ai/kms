@@ -156,12 +156,6 @@ pub(crate) struct Eip712VerificationParams<'a> {
     pub trusted_eip712_domain: &'a Eip712Domain,
 }
 
-/// Only [`check_ext_user_decryption_signature`] reports this, and the production paths
-/// go through [`verify_response_signatures`] instead.
-#[cfg(test)]
-const ERR_EXT_USER_DECRYPTION_SIG_VERIFICATION_FAILURE: &str =
-    "External PT signature verification failed";
-
 const ERR_VALIDATE_USER_DECRYPTION_MISSING_SIGNATURE: &str =
     "Missing signature in user decryption response";
 const ERR_VALIDATE_USER_DECRYPTION_ID_NOT_FOUND: &str = "ID claimed in payload not found";
@@ -184,25 +178,6 @@ pub(crate) fn user_decrypt_eip712_hash(
     let message = compute_user_decrypt_message(payload, request.enc_key(), request.extra_data())?;
     tracing::debug!("Built the UserDecryptResponseVerification EIP-712 message");
     Ok(message.eip712_signing_hash(eip712_domain))
-}
-
-/// Check that the external signature on a user decryption result was made by
-/// `expected_addr`.
-#[cfg(test)]
-pub(crate) fn check_ext_user_decryption_signature(
-    external_sig: &[u8],
-    payload: &UserDecryptionResponsePayload,
-    request: &ParsedUserDecryptionRequest,
-    eip712_domain: &Eip712Domain,
-    expected_addr: &alloy_primitives::Address,
-) -> anyhow::Result<()> {
-    let hash = user_decrypt_eip712_hash(payload, request, eip712_domain)?;
-    let addr = recover_address_from_eip712_hash(&hash, external_sig)?;
-    if addr != *expected_addr {
-        anyhow::bail!(ERR_EXT_USER_DECRYPTION_SIG_VERIFICATION_FAILURE);
-    }
-
-    Ok(())
 }
 
 /// Verify one non-ECDSA entry of a result's `signatures` list against the key
@@ -946,7 +921,6 @@ mod tests {
             base::sign_user_decryption_result,
             validation::{ERR_VALIDATE_USER_DECRYPTION_MISMATCH_EXTRA_DATA, select_most_common},
             validation_wasm::{
-                ERR_EXT_USER_DECRYPTION_SIG_VERIFICATION_FAILURE,
                 ERR_VALIDATE_USER_DECRYPTION_ID_NOT_FOUND, ERR_VALIDATE_USER_DECRYPTION_NO_RESP,
                 ERR_VALIDATE_USER_DECRYPTION_WRONG_ADDRESS,
                 authenticate_user_decrypt_and_check_meta_data,
@@ -956,9 +930,10 @@ mod tests {
 
     use super::{
         DSEP_USER_DECRYPTION, ERR_VALIDATE_USER_DECRYPTION_MISSING_SIGNATURE,
-        ERR_VALIDATE_USER_DECRYPTION_NOT_ENOUGH_RESP, Eip712VerificationParams,
-        UserDecTrustedValidationContext, UserDecryptionInvariants,
-        check_ext_user_decryption_signature, validate_user_decrypt_responses,
+        ERR_VALIDATE_USER_DECRYPTION_NOT_ENOUGH_RESP, Eip712VerificationParams, ExpectedSigner,
+        ResponseSignatures, SignedPayloads, UserDecTrustedValidationContext,
+        UserDecryptionInvariants, user_decrypt_eip712_hash, validate_user_decrypt_responses,
+        verify_response_signatures,
     };
 
     /// Helper method to be removed in 0.16 when the external signature is no longer used in production.
@@ -982,7 +957,7 @@ mod tests {
     }
 
     #[test]
-    fn test_check_ext_user_decryption_signature() {
+    fn test_verify_response_signatures_external_user_decryption() {
         let mut rng = AesRng::seed_from_u64(0);
         let (vk0, sk0) = gen_sig_keys(&mut rng);
         let (vk1, _sk1) = gen_sig_keys(&mut rng);
@@ -1044,19 +1019,45 @@ mod tests {
         )
         .unwrap();
 
+        let verify = |external: &[u8],
+                      response: &UserDecryptionResponsePayload,
+                      eip712_domain: &Eip712Domain| {
+            let response_bytes = bc2wrap::serialize(response).unwrap();
+            verify_response_signatures(
+                &ResponseSignatures {
+                    scalar: &[],
+                    external,
+                    list: &[],
+                },
+                &SignedPayloads {
+                    dsep: &DSEP_USER_DECRYPTION,
+                    scalar_bytes: &response_bytes,
+                    payload_bytes: &super::user_dec_payload_bytes(
+                        &response_bytes,
+                        request.extra_data(),
+                    )
+                    .unwrap(),
+                    eip712_hash: Some(
+                        user_decrypt_eip712_hash(response, &request, eip712_domain).unwrap(),
+                    ),
+                },
+                request.signing_schemes(),
+                &ExpectedSigner::Known {
+                    party_id: 1,
+                    address: kms_addrs[&1],
+                    verf_key: &pks[&1],
+                },
+                &HashMap::new(),
+            )
+        };
+
         // incorrect external signature length
         {
             assert!(
-                check_ext_user_decryption_signature(
-                    &external_sig[0..64],
-                    &payload,
-                    &request,
-                    &domain,
-                    &kms_addrs[&1],
-                )
-                .unwrap_err()
-                .to_string()
-                .contains(ERR_EXT_USER_DECRYPTION_SIG_BAD_LENGTH)
+                verify(&external_sig[0..64], &payload, &domain)
+                    .unwrap_err()
+                    .to_string()
+                    .contains(ERR_EXT_USER_DECRYPTION_SIG_BAD_LENGTH)
             );
         }
 
@@ -1068,19 +1069,10 @@ mod tests {
                 &payload,
                 &domain,
                 request.enc_key(),
-                &[],
+                request.extra_data(),
             )
             .unwrap();
-            assert!(
-                check_ext_user_decryption_signature(
-                    &bad_external_sig,
-                    &payload,
-                    &request,
-                    &domain,
-                    &kms_addrs[&1],
-                )
-                .is_err()
-            );
+            assert!(verify(&bad_external_sig, &payload, &domain).is_err());
         }
 
         // bad signature due to bad domain
@@ -1091,16 +1083,7 @@ mod tests {
                 chain_id: 1234, // incorrect chain ID
                 verifying_contract: alloy_primitives::address!("66f9664f97F2b50F62D13eA064982f936dE76657"),
             );
-            assert!(
-                check_ext_user_decryption_signature(
-                    &external_sig,
-                    &payload,
-                    &request,
-                    &bad_domain,
-                    &kms_addrs[&1],
-                )
-                .is_err()
-            );
+            assert!(verify(&external_sig, &payload, &bad_domain).is_err());
         }
 
         // check that we detect the error if payload is modified
@@ -1108,29 +1091,19 @@ mod tests {
             let mut bad_payload = payload.clone();
             bad_payload.party_id = 2; // modify ID
             assert!(
-                check_ext_user_decryption_signature(
-                    &external_sig,
-                    &bad_payload,
-                    &request,
-                    &domain,
-                    &kms_addrs[&1],
-                )
-                .unwrap_err()
-                .to_string()
-                .contains(ERR_EXT_USER_DECRYPTION_SIG_VERIFICATION_FAILURE)
+                verify(&external_sig, &bad_payload, &domain)
+                    .unwrap_err()
+                    .to_string()
+                    .contains("an ECDSA signature of party 1 recovered to")
             );
         }
 
         // happy path
         {
-            check_ext_user_decryption_signature(
-                &external_sig,
-                &payload,
-                &request,
-                &domain,
-                &kms_addrs[&1],
-            )
-            .unwrap();
+            assert_eq!(
+                verify(&external_sig, &payload, &domain).unwrap(),
+                (1, kms_addrs[&1])
+            );
         }
     }
 
@@ -1299,7 +1272,7 @@ mod tests {
             );
         }
 
-        // no need to explicitly test the signature issues again since they were tested in [test_check_ext_user_decryption_signature]
+        // Signature failures are covered by `test_verify_response_signatures_external_user_decryption`.
         {
             let pivot_buf = bc2wrap::serialize(&pivot_resp).unwrap();
             let signature_buf = internal_sign(&DSEP_USER_DECRYPTION, &pivot_buf, &sk0)
