@@ -252,7 +252,7 @@ pub(crate) fn ensure_requested_verified(
 pub(crate) struct ResponseSignatures<'a> {
     /// The deprecated raw ECDSA signature over the serialized response payload. Only a
     /// decryption response carries one; every other result kind leaves this empty.
-    pub scalar: &'a [u8],
+    pub internal: &'a [u8],
     /// The deprecated ECDSA/EIP-712 signature.
     pub external: &'a [u8],
     /// One entry per scheme, for the schemes the request asked for.
@@ -263,9 +263,9 @@ pub(crate) struct ResponseSignatures<'a> {
 pub(crate) struct SignedPayloads<'a> {
     /// Domain separator of the raw and the per-scheme signatures.
     pub dsep: &'a DomainSep,
-    /// The serialized response payload, which the deprecated scalar signature covers.
-    /// Unused when [`ResponseSignatures::scalar`] is empty.
-    pub scalar_bytes: &'a [u8],
+    /// The serialized response payload, which the deprecated internal signature covers.
+    /// Unused when [`ResponseSignatures::internal`] is empty.
+    pub internal_bytes: &'a [u8],
     /// The versioned payload every non-ECDSA scheme covers.
     pub payload_bytes: &'a [u8],
     /// The EIP-712 signing hash both ECDSA signatures recover from, or `None` when no
@@ -280,7 +280,7 @@ pub(crate) enum ExpectedSigner<'a> {
     Known {
         party_id: u32,
         address: Address,
-        /// Verifies the deprecated scalar signature, which is not recoverable.
+        /// Verifies the deprecated internal signature, which is not recoverable.
         verf_key: &'a PublicSigKey,
     },
     /// Discovered from the signatures: whichever party an ECDSA signature recovers to,
@@ -402,11 +402,12 @@ fn attribute_scheme_entry(
 ///
 /// # What gets checked
 ///
-/// - The deprecated scalar `signature`, when the result kind carries one.
+/// - The deprecated internal `signature`, when the result kind carries one.
 /// - The deprecated `external_signature`, whenever an EIP-712 domain is available. It is
-///   checked *in addition to* the scalar one, not instead of it.
+///   checked *in addition to* the internal one, not instead of it.
 /// - Every entry of `list` for a requested scheme. An entry for a scheme nobody asked
-///   for carries no weight either way, so it is skipped.
+///   for carries no weight either way, so it is skipped, and so is an entry of a scheme
+///   this release does not know.
 /// - Finally, that every requested scheme was verified, and that every signature agreed
 ///   on one party.
 ///
@@ -429,7 +430,7 @@ pub(crate) fn verify_response_signatures(
 
     // The deprecated raw ECDSA signature is not recoverable, so it is checked against
     // the key the caller established rather than used to find one.
-    if !sigs.scalar.is_empty() {
+    if !sigs.internal.is_empty() {
         let ExpectedSigner::Known {
             party_id,
             address,
@@ -437,25 +438,25 @@ pub(crate) fn verify_response_signatures(
         } = expected
         else {
             return Err(anyhow_tracked(
-                "the response carries a deprecated scalar signature, but its signer has to be \
+                "the response carries a deprecated internal signature, but its signer has to be \
                  discovered from its signatures and that field is not recoverable"
                     .to_string(),
             ));
         };
-        let parsed = k256::ecdsa::Signature::from_slice(sigs.scalar).map_err(|e| {
+        let parsed = k256::ecdsa::Signature::from_slice(sigs.internal).map_err(|e| {
             anyhow_tracked(format!(
-                "could not parse the deprecated scalar signature: {e}"
+                "could not parse the deprecated internal signature: {e}"
             ))
         })?;
         internal_verify_sig(
             payloads.dsep,
-            payloads.scalar_bytes,
+            payloads.internal_bytes,
             &Signature::from_ecdsa(parsed),
             verf_key,
         )
         .map_err(|e| {
             anyhow_tracked(format!(
-                "the deprecated scalar signature of party {party_id} did not verify: {e}"
+                "the deprecated internal signature of party {party_id} did not verify: {e}"
             ))
         })?;
         signer = Some((*party_id, *address));
@@ -478,11 +479,16 @@ pub(crate) fn verify_response_signatures(
     }
 
     for typed in sigs.list {
-        let scheme = SigningSchemeType::try_from(typed.scheme).map_err(|e| {
-            anyhow_tracked(format!(
-                "the response carries a signature of an unknown scheme: {e}"
-            ))
-        })?;
+        // A scheme this release does not know cannot have been requested, so its entry
+        // is passed over like an unrequested one. That keeps a verifier working while a
+        // newer node adds a scheme during a rolling upgrade.
+        let Ok(scheme) = SigningSchemeType::try_from(typed.scheme) else {
+            tracing::warn!(
+                "A response carries a signature of the unknown scheme {}, which is skipped",
+                typed.scheme
+            );
+            continue;
+        };
         if !requested.contains(&scheme) {
             tracing::warn!("A response carries a {scheme} signature that was not requested");
             continue;
@@ -562,13 +568,13 @@ fn authenticate_user_decrypt_and_check_meta_data(
     let response_bytes = bc2wrap::serialize(&response)?;
     verify_response_signatures(
         &ResponseSignatures {
-            scalar: signature,
+            internal: signature,
             external: eip712_params.response_external_signature,
             list: signatures,
         },
         &SignedPayloads {
             dsep: &DSEP_USER_DECRYPTION,
-            scalar_bytes: &response_bytes,
+            internal_bytes: &response_bytes,
             payload_bytes: &user_dec_payload_bytes(
                 &response_bytes,
                 eip712_params.response_extra_data,
@@ -1025,13 +1031,13 @@ mod tests {
             let response_bytes = bc2wrap::serialize(response).unwrap();
             verify_response_signatures(
                 &ResponseSignatures {
-                    scalar: &[],
+                    internal: &[],
                     external,
                     list: &[],
                 },
                 &SignedPayloads {
                     dsep: &DSEP_USER_DECRYPTION,
-                    scalar_bytes: &response_bytes,
+                    internal_bytes: &response_bytes,
                     payload_bytes: &super::user_dec_payload_bytes(
                         &response_bytes,
                         request.extra_data(),

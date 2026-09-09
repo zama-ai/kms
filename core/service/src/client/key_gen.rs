@@ -390,7 +390,14 @@ impl Client {
         let mut key_digests: BTreeMap<PubDataType, Vec<u8>> = BTreeMap::new();
         for digest in &key_gen_result.key_digests {
             let key_type: PubDataType = digest.key_type.parse()?;
-            key_digests.insert(key_type, digest.digest.clone());
+            if key_digests
+                .insert(key_type, digest.digest.clone())
+                .is_some()
+            {
+                return Err(anyhow::anyhow!(
+                    "the keygen result for key {key_id} lists the {key_type} digest more than once"
+                ));
+            }
         }
         let payload_bytes = keygen_payload_bytes(preproc_id, key_id, &key_digests, extra_data)?;
 

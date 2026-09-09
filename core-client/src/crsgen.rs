@@ -8,7 +8,7 @@ use alloy_sol_types::Eip712Domain;
 use hashing::hash_versioned;
 use kms_grpc::kms::v1::{CrsGenResult, FheParameter, TypedSignature};
 use kms_grpc::kms_service::v1::core_service_endpoint_client::CoreServiceEndpointClient;
-use kms_grpc::rpc_types::{PubDataType, scheme_signature};
+use kms_grpc::rpc_types::{PubDataType, first_signature_with_scheme};
 use kms_grpc::{ContextId, EpochId, RequestId};
 use kms_lib::client::client_wasm::Client;
 use kms_lib::client::local_crypto::load_material_from_pub_storage;
@@ -187,7 +187,7 @@ pub(crate) async fn fetch_and_check_crsgen(
 
     for response in responses {
         let resp_req_id: RequestId = response.request_id.try_into()?;
-        let signature_bytes = scheme_signature(
+        let signature_bytes = first_signature_with_scheme(
             &response.signatures,
             kms_grpc::kms::v1::SigningSchemeType::Ecdsa256k1,
         );
@@ -346,7 +346,7 @@ pub(crate) async fn get_crsgen_responses(
 
 /// Check every signature the CRS result carries, under every scheme the client
 /// requested, and that it was produced by one of the known KMS parties.
-fn check_crsgen_signatures(
+pub(crate) fn check_crsgen_signatures(
     internal_client: &Client,
     crs: &CompactPkeCrs,
     crs_id: &RequestId,

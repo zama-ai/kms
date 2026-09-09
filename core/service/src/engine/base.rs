@@ -1174,7 +1174,7 @@ pub(crate) fn sign_user_decryption_result(
 /// Shared body of [`sign_public_decryption_result`] and
 /// [`sign_user_decryption_result`].
 ///
-/// Adds the deprecated scalar `signature` to what [`sign_result`] produces. That
+/// Adds the deprecated internal `signature` to what [`sign_result`] produces. That
 /// signature covers `bc2wrap::serialize` of the response payload alone, because
 /// those exact bytes are part of the released wire contract.
 #[expect(clippy::too_many_arguments)]
@@ -1982,7 +1982,7 @@ pub(crate) mod tests {
 
     /// Round-trip test for every signature on a decryption response, as the
     /// async decryption job produces them:
-    /// - the deprecated scalar `signature` is the raw signature over the payload,
+    /// - the deprecated internal `signature` is the raw signature over the payload,
     /// - `external_signature` is the EIP-712 signature the fhevm contracts verify,
     /// - the ECDSA entry of `signatures` is byte-identical to `external_signature`,
     /// - every other scheme signs the raw payload.
@@ -2044,7 +2044,7 @@ pub(crate) mod tests {
             assert_eq!(sigs.payload, payload);
             assert_eq!(sigs.extra_data, extra_data);
 
-            // The deprecated scalar field is the raw signature over the payload.
+            // The deprecated internal field is the raw signature over the payload.
             let legacy =
                 internal_sign(&DSEP_PUBLIC_DECRYPTION, &payload_bytes, sk.ecdsa()).unwrap();
             assert_eq!(sigs.signature, legacy.as_bytes());

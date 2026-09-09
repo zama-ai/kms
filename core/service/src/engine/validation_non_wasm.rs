@@ -501,13 +501,13 @@ fn check_public_decrypt_signatures(
 
     verify_response_signatures(
         &ResponseSignatures {
-            scalar: signature,
+            internal: signature,
             external: external_signature,
             list: signatures,
         },
         &SignedPayloads {
             dsep: &DSEP_PUBLIC_DECRYPTION,
-            scalar_bytes: &response_bytes,
+            internal_bytes: &response_bytes,
             payload_bytes: &payload_bytes,
             eip712_hash,
         },
@@ -723,7 +723,7 @@ fn authenticate_public_decrypt_response(
 
     // Verify the signature(s) carried by the response. This is pure authenticity and does not
     // depend on the (not-yet-established) consensus.
-    // The deprecated scalar `signature` and `external_signature` fields are checked alongside
+    // The deprecated internal `signature` and `external_signature` fields are checked alongside
     // `signatures`, as user decryption checks them, so a response stays verifiable without an
     // EIP-712 domain. TODO(0.16): drop the two fields and their arguments.
     if !verify_public_decrypt_signatures(
@@ -1261,7 +1261,7 @@ mod tests {
     }
 
     /// Build a public decryption response exactly as the server produces one: the
-    /// deprecated scalar `signature` over the serialized payload, the EIP-712
+    /// deprecated internal `signature` over the serialized payload, the EIP-712
     /// `external_signature`, and the per-scheme `signatures` list.
     fn signed_public_decrypt_response(
         server_sk: &PrivateSigKey,
@@ -1744,7 +1744,7 @@ mod tests {
             verify_public_decrypt_signatures(&ctx, payload, 1, &vk_of(payload), &[], &[], sigs, &[])
         };
 
-        // an empty list and no scalar field either, so nothing can be authenticated
+        // an empty list and no internal field either, so nothing can be authenticated
         assert!(!verify(&pivot, &[]));
 
         // signed with the wrong private key
@@ -2266,7 +2266,7 @@ mod tests {
             )
         };
 
-        // an empty list, with no scalar field to fall back on
+        // an empty list, with no internal field to fall back on
         assert!(!verify(&ctx(Some(&alloy_domain)), &[]));
 
         // a tampered ECDSA signature recovers to another address
@@ -2279,7 +2279,7 @@ mod tests {
         // happy path
         assert!(verify(&ctx(Some(&alloy_domain)), &signatures));
 
-        // The deprecated scalar fields authenticate the same response. The raw ECDSA
+        // The deprecated internal fields authenticate the same response. The raw ECDSA
         // signature needs no domain.
         let domainless = ctx(None);
         assert!(verify_public_decrypt_signatures(
@@ -2315,16 +2315,16 @@ mod tests {
             &[],
             &extra_data,
         ));
-        // A corrupt scalar signature is a rejection, not something the list can
+        // A corrupt internal signature is a rejection, not something the list can
         // paper over.
-        let mut bad_scalar = signed.signature.clone();
-        bad_scalar[0] ^= 1;
+        let mut bad_internal = signed.signature.clone();
+        bad_internal[0] ^= 1;
         assert!(!verify_public_decrypt_signatures(
             &with_domain,
             &pivot,
             1,
             &vk_of(&pivot),
-            &bad_scalar,
+            &bad_internal,
             &[],
             &signatures,
             &extra_data,
@@ -2392,7 +2392,7 @@ mod tests {
             )
             .unwrap()
         };
-        // This response carries no deprecated scalar field, so the post-quantum
+        // This response carries no deprecated internal field, so the post-quantum
         // entry of `signatures` is the only thing that can authenticate it.
         let verify = |ctx: &PublicDecTrustedValidationContext, response_extra_data: &[u8]| {
             verify_public_decrypt_signatures(
@@ -2458,6 +2458,24 @@ mod tests {
             &[],
             &[],
             &junk_only,
+            &extra_data
+        ));
+
+        // An entry of a scheme this release does not know is skipped the same way, so a
+        // newer node can add a scheme during a rolling upgrade.
+        let mut with_unknown = signatures.clone();
+        with_unknown.push(TypedSignature {
+            scheme: i32::MAX,
+            signature: vec![0u8; 64],
+        });
+        assert!(verify_public_decrypt_signatures(
+            &pq_ctx,
+            &payload,
+            1,
+            &vk,
+            &[],
+            &[],
+            &with_unknown,
             &extra_data
         ));
     }

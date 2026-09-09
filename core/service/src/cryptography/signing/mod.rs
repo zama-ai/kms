@@ -80,6 +80,9 @@ pub enum SigningError {
     /// An integer discriminant did not correspond to any known signing scheme.
     #[error("unsupported signing scheme discriminant: {0}")]
     UnknownScheme(i32),
+    /// A scheme was requested that no known party published a verification key for.
+    #[error("no party published a {0} verification key, so no {0} signature could be checked")]
+    NoVerificationKey(SigningSchemeType),
     /// A string did not name any known signing scheme.
     #[error(
         "unknown signing scheme {0:?}, expected one of: {expected}",

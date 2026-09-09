@@ -64,7 +64,7 @@ Rules a caller has to know:
 
 - **An empty list means `Ecdsa256k1`.** A client that predates `signing_schemes`
   sends nothing and gets exactly the ECDSA signature it always got: in
-  `external_signature`, in the deprecated scalar `signature` of a decryption
+  `external_signature`, in the deprecated internal `signature` of a decryption
   response, and as the single entry of `signatures`.
 - **Naming schemes explicitly replaces that default**, it does not extend it.
 - **ECDSA is always available**; every other scheme requires the node to hold a
@@ -73,7 +73,9 @@ Rules a caller has to know:
 - **A consumer picks the tuples it can verify**, and must reject a response that
   omits a scheme the request asked for. A tuple of a scheme the request did *not*
   ask for carries no weight either way: it neither stands in for a missing one nor
-  invalidates a response that carries every requested scheme.
+  invalidates a response that carries every requested scheme. The same holds for a
+  tuple of a scheme the consumer does not know, so a newer node can add a scheme
+  without breaking older verifiers during a rolling upgrade.
 - **An empty `signatures` list is still authenticated by the legacy ECDSA
   signature.** A node from a release before the list answers that way, and a network
   part-way through an upgrade runs both releases. Such a result counts for

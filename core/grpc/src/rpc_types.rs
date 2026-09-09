@@ -549,8 +549,11 @@ pub fn ecdsa_signatures(signature: Vec<u8>) -> Vec<crate::kms::v1::TypedSignatur
     }]
 }
 
-/// The signature `signatures` carries for `scheme`, if it carries one.
-pub fn scheme_signature(
+/// The first entry of `signatures` for `scheme`, if there is one.
+///
+/// A list the KMS built holds each scheme at most once, so the tie-break only
+/// matters for a malformed list.
+pub fn first_signature_with_scheme(
     signatures: &[crate::kms::v1::TypedSignature],
     scheme: crate::kms::v1::SigningSchemeType,
 ) -> Option<&[u8]> {
@@ -1196,6 +1199,48 @@ mod tests {
     use crate::kms::v1;
     use std::str::FromStr;
     use strum::IntoEnumIterator;
+
+    /// The lookup returns the entry of the scheme asked for, `None` when the list has
+    /// no such entry, and the first entry when a scheme appears more than once.
+    #[test]
+    fn first_signature_with_scheme_finds_the_entry_of_a_scheme() {
+        let ecdsa = v1::SigningSchemeType::Ecdsa256k1;
+        let mldsa = v1::SigningSchemeType::Mldsa65;
+        let signatures = vec![
+            v1::TypedSignature {
+                scheme: ecdsa as i32,
+                signature: vec![1, 2, 3],
+            },
+            v1::TypedSignature {
+                scheme: mldsa as i32,
+                signature: vec![4, 5, 6],
+            },
+            v1::TypedSignature {
+                scheme: ecdsa as i32,
+                signature: vec![7, 8, 9],
+            },
+        ];
+
+        assert_eq!(
+            first_signature_with_scheme(&signatures, mldsa),
+            Some(&[4u8, 5, 6][..])
+        );
+        // A duplicated scheme resolves to its first entry.
+        assert_eq!(
+            first_signature_with_scheme(&signatures, ecdsa),
+            Some(&[1u8, 2, 3][..])
+        );
+        assert_eq!(
+            first_signature_with_scheme(&signatures, v1::SigningSchemeType::Ed25519),
+            None
+        );
+        assert_eq!(first_signature_with_scheme(&[], ecdsa), None);
+        // `ecdsa_signatures` builds the list this lookup reads back.
+        assert_eq!(
+            first_signature_with_scheme(&ecdsa_signatures(vec![9]), ecdsa),
+            Some(&[9u8][..])
+        );
+    }
 
     /// Every `PrivDataType` round-trips through its `Display` form. That form is
     /// the name of the type's storage folder.

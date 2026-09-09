@@ -27,14 +27,16 @@
 
 use crate::backup::operator::RecoveryValidationMaterial;
 use crate::consts::{SIGNING_KEY_ID, signing_material_id};
-use crate::cryptography::signatures::recover_address_from_ext_signature;
-use crate::cryptography::signing::SigningSchemeType;
-use crate::cryptography::signing::ecdsa::{PrivateSigKey, PublicSigKey};
+use crate::cryptography::signing::ecdsa::{
+    PrivateSigKey, PublicSigKey, recover_address_from_eip712_hash,
+};
 use crate::cryptography::signing::identity::NodeSigningIdentity;
+use crate::cryptography::signing::{Signature, SigningSchemeType, unified_verify};
 use crate::engine::base::{
-    CrsGenMetadata, CrsGenMetadataInner, CurrentPublicMaterialLayout, DSEP_PUBDATA_KEY,
-    KeyGenMetadata, KeyGenMetadataInner, StoredEip712Domain, classify_current_public_material,
-    crs_sol_type, keygen_sol_type,
+    CrsGenMetadata, CrsGenMetadataInner, CurrentPublicMaterialLayout, DSEP_PUBDATA_CRS,
+    DSEP_PUBDATA_KEY, KeyGenMetadata, KeyGenMetadataInner, StoredTypedSignature,
+    classify_current_public_material, crs_payload_bytes, crs_sol_type, keygen_payload_bytes,
+    keygen_sol_type,
 };
 use crate::engine::material_integrity::{
     verify_compressed_key_digest_from_bytes, verify_crs_digest_from_bytes,
@@ -42,8 +44,9 @@ use crate::engine::material_integrity::{
 };
 use crate::util::key_setup::{non_legacy_verf_material_slots, validate_slots};
 use crate::vault::storage::{StorageReader, read_text_at_request_id};
-use alloy_primitives::Address;
+use alloy_primitives::{Address, B256};
 use alloy_sol_types::{Eip712Domain, SolStruct};
+use hashing::DomainSep;
 use kms_grpc::RequestId;
 use kms_grpc::rpc_types::PubDataType;
 use std::collections::{BTreeMap, BTreeSet, HashMap};
@@ -258,8 +261,7 @@ where
         ensure_crs_metadata_id_matches(crs_id, metadata)?;
     }
 
-    let expected_address = identity.verf_key().address();
-    verify_private_metadata(key_entries, crs_entries, expected_address)?;
+    verify_private_metadata(key_entries, crs_entries, identity)?;
 
     for data_type in PubDataType::iter() {
         match data_type {
@@ -320,22 +322,24 @@ where
 
 /// Verify the signatures that authenticate current metadata in private storage.
 ///
-/// We cannot authenticate the signatures for older metadata since the EIP-712
+/// The ECDSA signatures of older metadata cannot be checked, since the EIP-712
 /// domain was not persisted. So those entries remain usable for backward
 /// compatibility. All newly written current metadata must carry a domain and a
-/// valid signature from this node.
+/// valid signature from this node. The signatures of the other schemes cover the
+/// result payload rather than an EIP-712 message, so they are checked whether or
+/// not a domain was stored.
 ///
 /// Assumes every entry has already been checked against the ID it is stored under; see
 /// [`verify_keygen_metadata_signature`] for why that ordering matters.
 fn verify_private_metadata(
     key_entries: &[(RequestId, KeyGenMetadata)],
     crs_entries: &HashMap<RequestId, CrsGenMetadata>,
-    expected_address: Address,
+    identity: &NodeSigningIdentity,
 ) -> anyhow::Result<()> {
     for (key_id, metadata) in key_entries {
         match metadata {
             KeyGenMetadata::Current(inner) => {
-                verify_keygen_metadata_signature(key_id, inner, expected_address)?;
+                verify_keygen_metadata_signature(key_id, inner, identity)?;
             }
             KeyGenMetadata::LegacyV0(_) => {
                 tracing::info!(
@@ -348,7 +352,7 @@ fn verify_private_metadata(
     for (crs_id, metadata) in crs_entries {
         match metadata {
             CrsGenMetadata::Current(inner) => {
-                verify_crs_metadata_signature(crs_id, inner, expected_address)?;
+                verify_crs_metadata_signature(crs_id, inner, identity)?;
             }
             CrsGenMetadata::LegacyV0(_) => {
                 tracing::info!(
@@ -361,7 +365,8 @@ fn verify_private_metadata(
     Ok(())
 }
 
-/// Verify the EIP-712 `external_signature` on one current keygen metadata record.
+/// Verify every signature on one current keygen metadata record: the EIP-712
+/// `external_signature` and each entry of its per-scheme `signatures`.
 ///
 /// Callers must run [`ensure_keygen_metadata_id_matches`] first. Without it,
 /// metadata stored under the wrong ID would verify happily against the ID it
@@ -369,45 +374,62 @@ fn verify_private_metadata(
 fn verify_keygen_metadata_signature(
     key_id: &RequestId,
     metadata: &KeyGenMetadataInner,
-    expected_address: Address,
+    identity: &NodeSigningIdentity,
 ) -> anyhow::Result<()> {
+    let extra_data = metadata.extra_data.as_deref().unwrap_or_default();
+    let payload_bytes = keygen_payload_bytes(
+        &metadata.preprocessing_id,
+        &metadata.key_id,
+        &metadata.key_digest_map,
+        extra_data,
+    )
+    .map_err(|e| anyhow::anyhow!("Invalid private keygen metadata for id={key_id}: {e}"))?;
+
     // TODO(github.com/zama-ai/kms-internal/issues/3201)
     // After we upgrade to 0.16 (and have migrated keys in 0.15),
     // or after we retire the default epoch, then remove the backward compatibility support.
     // That is, we should always have a domain in the metadata that we can use to verify the signature.
-    let Some(stored_domain) = metadata.eip712_domain.as_ref() else {
-        tracing::info!(
-            "Current keygen metadata for id={key_id} has no stored EIP-712 domain; skipping signature verification"
-        );
-        return Ok(());
+    let eip712_hash = match metadata.eip712_domain.as_ref() {
+        Some(stored_domain) => {
+            // Signing sites know their layout statically; here it can only be read back off
+            // the stored digest map.
+            let sol_type = classify_current_public_material(&metadata.key_digest_map)
+                .and_then(|layout| {
+                    keygen_sol_type(
+                        layout,
+                        &metadata.preprocessing_id,
+                        &metadata.key_id,
+                        &metadata.key_digest_map,
+                        extra_data,
+                    )
+                })
+                .map_err(|e| {
+                    anyhow::anyhow!("Invalid private keygen metadata for id={key_id}: {e}")
+                })?;
+            Some(sol_type.eip712_signing_hash(&Eip712Domain::from(stored_domain)))
+        }
+        None => {
+            tracing::info!(
+                "Current keygen metadata for id={key_id} has no stored EIP-712 domain; skipping the ECDSA signature verification"
+            );
+            None
+        }
     };
 
-    // Signing sites know their layout statically; here it can only be read back off the
-    // stored digest map.
-    let sol_type = classify_current_public_material(&metadata.key_digest_map)
-        .and_then(|layout| {
-            keygen_sol_type(
-                layout,
-                &metadata.preprocessing_id,
-                &metadata.key_id,
-                &metadata.key_digest_map,
-                metadata.extra_data.as_deref().unwrap_or_default(),
-            )
-        })
-        .map_err(|e| anyhow::anyhow!("Invalid private keygen metadata for id={key_id}: {e}"))?;
-    verify_eip712_metadata_signature(
+    verify_metadata_signatures(
         "keygen",
         key_id,
-        &sol_type,
-        stored_domain,
         &metadata.external_signature,
-        expected_address,
-    )?;
-
-    Ok(())
+        &metadata.signatures,
+        eip712_hash.as_ref(),
+        &DSEP_PUBDATA_KEY,
+        &payload_bytes,
+        identity,
+    )
 }
 
-/// Verify the EIP-712 `external_signature` on one current CRS metadata record.
+/// Verify every signature on one current CRS metadata record: the EIP-712
+/// `external_signature` and each entry of its per-scheme `signatures`.
 ///
 /// Carries the same precondition as [`verify_keygen_metadata_signature`]: the signed message is
 /// rebuilt from the metadata's own `crs_id`, so [`ensure_crs_metadata_id_matches`] must have run
@@ -415,45 +437,120 @@ fn verify_keygen_metadata_signature(
 fn verify_crs_metadata_signature(
     crs_id: &RequestId,
     metadata: &CrsGenMetadataInner,
-    expected_address: Address,
+    identity: &NodeSigningIdentity,
 ) -> anyhow::Result<()> {
+    let extra_data = metadata.extra_data.as_deref().unwrap_or_default();
+    let payload_bytes = crs_payload_bytes(
+        &metadata.crs_id,
+        metadata.max_num_bits,
+        &metadata.crs_digest,
+        extra_data,
+    )
+    .map_err(|e| anyhow::anyhow!("Invalid private CRS metadata for id={crs_id}: {e}"))?;
+
     // TODO(github.com/zama-ai/kms-internal/issues/3201)
     // After we can retire the default epoch, we can remove the backward compatibility support
     // since new epochs will be re-signed using the more recent format.
     // That is, we should always have a domain in the metadata that we can use to verify the signature.
-    let Some(stored_domain) = metadata.eip712_domain.as_ref() else {
-        tracing::info!(
-            "Current CRS metadata for id={crs_id} has no stored EIP-712 domain; skipping signature verification"
-        );
-        return Ok(());
+    let eip712_hash = match metadata.eip712_domain.as_ref() {
+        Some(stored_domain) => {
+            let sol_type = crs_sol_type(
+                &metadata.crs_id,
+                &metadata.crs_digest,
+                metadata.max_num_bits,
+                extra_data,
+            );
+            Some(sol_type.eip712_signing_hash(&Eip712Domain::from(stored_domain)))
+        }
+        None => {
+            tracing::info!(
+                "Current CRS metadata for id={crs_id} has no stored EIP-712 domain; skipping the ECDSA signature verification"
+            );
+            None
+        }
     };
 
-    let sol_type = crs_sol_type(
-        &metadata.crs_id,
-        &metadata.crs_digest,
-        metadata.max_num_bits,
-        metadata.extra_data.as_deref().unwrap_or_default(),
-    );
-    verify_eip712_metadata_signature(
+    verify_metadata_signatures(
         "CRS",
         crs_id,
-        &sol_type,
-        stored_domain,
         &metadata.external_signature,
-        expected_address,
+        &metadata.signatures,
+        eip712_hash.as_ref(),
+        &DSEP_PUBDATA_CRS,
+        &payload_bytes,
+        identity,
     )
 }
 
-fn verify_eip712_metadata_signature<T: SolStruct>(
+/// Verify the signatures one current metadata record carries against `identity`.
+///
+/// Both ECDSA forms, the `external_signature` and the ECDSA entry of `signatures`,
+/// recover their signer from `eip712_hash`, so they are skipped when no stored
+/// domain yields one. Every other scheme signs `payload_bytes` under `dsep` and is
+/// checked against the key `identity` derives for it. A scheme `identity` cannot
+/// derive a key for is an error rather than a skip: an entry nobody can check must
+/// not pass as one that was checked.
+#[expect(clippy::too_many_arguments)]
+fn verify_metadata_signatures(
     metadata_kind: &str,
     metadata_id: &RequestId,
-    sol_type: &T,
-    stored_domain: &StoredEip712Domain,
+    external_signature: &[u8],
+    signatures: &[StoredTypedSignature],
+    eip712_hash: Option<&B256>,
+    dsep: &DomainSep,
+    payload_bytes: &[u8],
+    identity: &NodeSigningIdentity,
+) -> anyhow::Result<()> {
+    let expected_address = identity.verf_key().address();
+    if let Some(hash) = eip712_hash {
+        verify_eip712_metadata_signature(
+            metadata_kind,
+            metadata_id,
+            hash,
+            external_signature,
+            expected_address,
+        )?;
+    }
+
+    for stored in signatures {
+        match stored.scheme {
+            SigningSchemeType::Ecdsa256k1 => {
+                if let Some(hash) = eip712_hash {
+                    verify_eip712_metadata_signature(
+                        metadata_kind,
+                        metadata_id,
+                        hash,
+                        &stored.signature,
+                        expected_address,
+                    )?;
+                }
+            }
+            scheme => {
+                let verf_key = identity.unified_verifying_key(scheme).map_err(|e| {
+                    anyhow::anyhow!(
+                        "Private {metadata_kind} metadata for id={metadata_id} carries a {scheme} signature, but this node cannot derive the {scheme} verification key to check it against: {e}"
+                    )
+                })?;
+                let signature = Signature::new(scheme, stored.signature.clone());
+                unified_verify(dsep, payload_bytes, &signature, &verf_key).map_err(|e| {
+                    anyhow::anyhow!(
+                        "Invalid {scheme} signature in private {metadata_kind} metadata for id={metadata_id}: {e}"
+                    )
+                })?;
+            }
+        }
+    }
+    Ok(())
+}
+
+fn verify_eip712_metadata_signature(
+    metadata_kind: &str,
+    metadata_id: &RequestId,
+    eip712_hash: &B256,
     external_signature: &[u8],
     expected_address: Address,
 ) -> anyhow::Result<()> {
-    let domain = Eip712Domain::from(stored_domain);
-    let recovered_address = recover_address_from_ext_signature(sol_type, &domain, external_signature)
+    let recovered_address = recover_address_from_eip712_hash(eip712_hash, external_signature)
         .map_err(|e| {
             anyhow::anyhow!(
                 "Invalid EIP-712 signature in private {metadata_kind} metadata for id={metadata_id}: {e}"
@@ -742,7 +839,7 @@ mod tests {
     use crate::backup::operator::RecoveryValidationMaterial;
     use crate::consts::DEFAULT_MPC_CONTEXT;
     use crate::cryptography::encryption::{Encryption, PkeScheme, PkeSchemeType};
-    use crate::cryptography::signatures::gen_sig_keys;
+    use crate::cryptography::signatures::{RootSigningSeed, gen_sig_keys};
     use crate::engine::base::KeyGenMetadataInner;
     use crate::engine::base::{DSEP_PUBDATA_CRS, ERR_INVALID_CURRENT_PUBLIC_KEY_SHAPE};
     use crate::engine::material_integrity::{
@@ -1624,7 +1721,7 @@ mod tests {
         verify_keygen_metadata_signature(
             &key_id,
             inner,
-            PublicSigKey::from_sk(&signing_key).address(),
+            &NodeSigningIdentity::ecdsa_only(signing_key.clone()),
         )
         .expect("the stored domain must verify the standard keygen signature");
 
@@ -1637,7 +1734,7 @@ mod tests {
         let err = verify_keygen_metadata_signature(
             &key_id,
             &tampered_inner,
-            PublicSigKey::from_sk(&signing_key).address(),
+            &NodeSigningIdentity::ecdsa_only(signing_key.clone()),
         )
         .expect_err("a changed server-key digest must invalidate the signature");
         assert!(
@@ -1671,7 +1768,7 @@ mod tests {
         verify_keygen_metadata_signature(
             &key_id,
             inner,
-            PublicSigKey::from_sk(&signing_key).address(),
+            &NodeSigningIdentity::ecdsa_only(signing_key.clone()),
         )
         .expect("the stored domain must verify the compressed keygen signature");
 
@@ -1686,7 +1783,7 @@ mod tests {
         let err = verify_keygen_metadata_signature(
             &key_id,
             &tampered_inner,
-            PublicSigKey::from_sk(&signing_key).address(),
+            &NodeSigningIdentity::ecdsa_only(signing_key.clone()),
         )
         .expect_err("a changed stored domain must invalidate the signature");
         assert!(
@@ -1717,9 +1814,141 @@ mod tests {
         verify_crs_metadata_signature(
             &crs_id,
             inner,
-            PublicSigKey::from_sk(&signing_key).address(),
+            &NodeSigningIdentity::ecdsa_only(signing_key.clone()),
         )
         .expect("the stored domain must verify the CRS signature");
+    }
+
+    /// The per-scheme `signatures` of stored metadata are checked against the keys the
+    /// node derives, with and without a stored domain, and a tampered entry is rejected.
+    #[test]
+    fn private_metadata_scheme_signatures_are_verified() {
+        let mut rng = AesRng::seed_from_u64(177);
+        let (_verf_key, signing_key) = gen_sig_keys(&mut rng);
+        let identity =
+            NodeSigningIdentity::new(signing_key.clone(), RootSigningSeed::random(&mut rng));
+        let schemes = [
+            SigningSchemeType::Ecdsa256k1,
+            SigningSchemeType::Ed25519,
+            SigningSchemeType::MlDsa65,
+        ];
+        let domain = crate::dummy_domain();
+        let prep_id = RequestId::new_random(&mut rng);
+        let key_id = RequestId::new_random(&mut rng);
+        let crs_id = RequestId::new_random(&mut rng);
+
+        let KeyGenMetadata::Current(key_inner) =
+            crate::engine::base::compute_info_standard_keygen_from_digests(
+                &identity,
+                &schemes,
+                &prep_id,
+                &key_id,
+                vec![0x11; 32],
+                vec![0x22; 32],
+                &domain,
+                vec![0x03],
+            )
+            .expect("standard keygen metadata construction must succeed")
+        else {
+            panic!("metadata construction must produce current metadata");
+        };
+        let CrsGenMetadata::Current(crs_inner) = crate::engine::base::compute_info_crs_from_digest(
+            &identity,
+            &schemes,
+            &crs_id,
+            vec![0x33; 32],
+            64,
+            &domain,
+            vec![0x04],
+        )
+        .expect("CRS metadata construction must succeed") else {
+            panic!("metadata construction must produce current metadata");
+        };
+        assert_eq!(key_inner.signatures.len(), schemes.len());
+        assert_eq!(crs_inner.signatures.len(), schemes.len());
+
+        verify_keygen_metadata_signature(&key_id, &key_inner, &identity)
+            .expect("every keygen signature must verify under the identity that made it");
+        verify_crs_metadata_signature(&crs_id, &crs_inner, &identity)
+            .expect("every CRS signature must verify under the identity that made it");
+
+        // Without a stored domain neither ECDSA form can be rebuilt, but the other schemes
+        // sign the payload and are still checked.
+        for with_domain in [true, false] {
+            let mut key_metadata = key_inner.clone();
+            let mut crs_metadata = crs_inner.clone();
+            if !with_domain {
+                key_metadata.eip712_domain = None;
+                crs_metadata.eip712_domain = None;
+            }
+            verify_keygen_metadata_signature(&key_id, &key_metadata, &identity)
+                .expect("intact keygen metadata must verify");
+            verify_crs_metadata_signature(&crs_id, &crs_metadata, &identity)
+                .expect("intact CRS metadata must verify");
+
+            let tampered_entry = key_metadata
+                .signatures
+                .iter_mut()
+                .find(|stored| stored.scheme == SigningSchemeType::MlDsa65)
+                .expect("the metadata carries an MlDsa65 entry");
+            tampered_entry.signature[0] ^= 1;
+            let err = verify_keygen_metadata_signature(&key_id, &key_metadata, &identity)
+                .expect_err("a tampered MlDsa65 entry must be rejected");
+            assert!(
+                err.to_string().contains("Invalid MlDsa65 signature"),
+                "with_domain={with_domain}: expected an MlDsa65 signature error, got: {err}"
+            );
+
+            let tampered_entry = crs_metadata
+                .signatures
+                .iter_mut()
+                .find(|stored| stored.scheme == SigningSchemeType::Ed25519)
+                .expect("the metadata carries an Ed25519 entry");
+            tampered_entry.signature[0] ^= 1;
+            let err = verify_crs_metadata_signature(&crs_id, &crs_metadata, &identity)
+                .expect_err("a tampered Ed25519 entry must be rejected");
+            assert!(
+                err.to_string().contains("Invalid Ed25519 signature"),
+                "with_domain={with_domain}: expected an Ed25519 signature error, got: {err}"
+            );
+        }
+
+        // The ECDSA entry of `signatures` is held to the same standard as `external_signature`.
+        let mut tampered = key_inner.clone();
+        tampered
+            .signatures
+            .iter_mut()
+            .find(|stored| stored.scheme == SigningSchemeType::Ecdsa256k1)
+            .expect("the metadata carries an ECDSA entry")
+            .signature = vec![0u8; 65];
+        let err = verify_keygen_metadata_signature(&key_id, &tampered, &identity)
+            .expect_err("a corrupt ECDSA entry must be rejected");
+        assert!(
+            err.to_string().contains("Invalid EIP-712 signature"),
+            "expected an EIP-712 signature error, got: {err}"
+        );
+
+        // The same ECDSA key under another seed derives other keys, so the entries of the
+        // other schemes no longer verify.
+        let other_seed =
+            NodeSigningIdentity::new(signing_key.clone(), RootSigningSeed::random(&mut rng));
+        let err = verify_keygen_metadata_signature(&key_id, &key_inner, &other_seed)
+            .expect_err("metadata signed under another seed must be rejected");
+        assert!(
+            err.to_string().contains("Invalid Ed25519 signature"),
+            "expected an Ed25519 signature error, got: {err}"
+        );
+
+        // A node without a seed cannot check a post-quantum entry, and says so rather than
+        // passing it over.
+        let seedless = NodeSigningIdentity::ecdsa_only(signing_key);
+        let err = verify_keygen_metadata_signature(&key_id, &key_inner, &seedless)
+            .expect_err("a seedless node must not accept an entry it cannot check");
+        assert!(
+            err.to_string()
+                .contains("cannot derive the Ed25519 verification key"),
+            "expected an error naming the missing key, got: {err}"
+        );
     }
 
     // === End to end ===

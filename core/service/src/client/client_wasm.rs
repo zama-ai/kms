@@ -108,12 +108,40 @@ impl Client {
     }
 
     /// Choose the schemes this client requests, and requires back.
+    ///
+    /// # Errors
+    ///
+    /// Fails when a scheme other than ECDSA is named that no known party published a
+    /// verification key for, since no signature under it could ever be checked. ECDSA
+    /// needs no key, because its signer is recovered from the signature. A party that
+    /// lacks a key for a named scheme is logged, since its results will not verify.
     pub fn set_signing_schemes(
         &mut self,
         requested: &[SigningSchemeType],
     ) -> Result<(), SigningError> {
         let raw: Vec<i32> = requested.iter().map(|scheme| scheme.as_wire()).collect();
-        self.signing_schemes = SigningSchemeType::resolve_requested(&raw)?;
+        let resolved = SigningSchemeType::resolve_requested(&raw)?;
+        for scheme in resolved
+            .iter()
+            .filter(|scheme| **scheme != SigningSchemeType::Ecdsa256k1)
+        {
+            let holders = self
+                .scheme_verf_keys
+                .values()
+                .filter(|keys| keys.contains_key(scheme))
+                .count();
+            if holders == 0 {
+                return Err(SigningError::NoVerificationKey(*scheme));
+            }
+            let parties = self.server_identities.len();
+            if holders < parties {
+                tracing::warn!(
+                    "Only {holders} of {parties} parties published a {scheme} verification key, \
+                     so the results of the other parties will not verify"
+                );
+            }
+        }
+        self.signing_schemes = resolved;
         Ok(())
     }
 

@@ -84,7 +84,7 @@ impl Client {
 
         let mut scheme_verf_keys = HashMap::new();
         for (party_id, cur_storage) in pub_storages.iter() {
-            scheme_verf_keys.insert(*party_id, read_scheme_verf_keys(cur_storage).await?);
+            scheme_verf_keys.insert(*party_id, read_all_verf_keys(cur_storage).await?);
         }
 
         Ok(Client::new(
@@ -99,8 +99,25 @@ impl Client {
 
     /// Verify every signature a result carries, and identify the party that produced it.
     ///
-    /// A keygen, CRS or preprocessing result carries no deprecated *scalar* signature —
+    /// A keygen, CRS or preprocessing result carries no deprecated *internal* signature —
     /// only a decryption response does — so that field is left empty here.
+    ///
+    /// # Arguments
+    ///
+    /// * `signatures` - the per-scheme `signatures` list of the result. Every entry of a
+    ///   scheme this client requested (see [`Client::signing_schemes`]) has to verify.
+    /// * `external_signature` - the deprecated ECDSA/EIP-712 `external_signature` of the
+    ///   result. It is checked when present, and a result from a node that predates
+    ///   `signatures` carries nothing else.
+    /// * `sol_type` - the EIP-712 struct the KMS signed, rebuilt from the result. Both
+    ///   ECDSA signatures recover their signer from its hash under `domain`.
+    /// * `domain` - the EIP-712 domain of the request the result answers.
+    /// * `dsep` - the domain separator of the result kind, which the non-ECDSA entries
+    ///   sign under.
+    /// * `payload_bytes` - the serialized result payload the non-ECDSA entries sign, as
+    ///   the `*_payload_bytes` helpers of [`crate::engine::base`] build it.
+    ///
+    /// Returns the party id and address of the signer.
     ///
     /// # Errors
     ///
@@ -124,13 +141,13 @@ impl Client {
         let addresses = self.get_server_addrs();
         verify_response_signatures(
             &ResponseSignatures {
-                scalar: &[],
+                internal: &[],
                 external: external_signature,
                 list: signatures,
             },
             &SignedPayloads {
                 dsep,
-                scalar_bytes: &[],
+                internal_bytes: &[],
                 payload_bytes,
                 eip712_hash: Some(sol_type.eip712_signing_hash(domain)),
             },
@@ -144,8 +161,7 @@ impl Client {
     }
 }
 
-/// Every scheme's verification key stored.
-async fn read_scheme_verf_keys<S: StorageReader>(
+async fn read_all_verf_keys<S: StorageReader>(
     storage: &S,
 ) -> anyhow::Result<HashMap<SigningSchemeType, UnifiedPublicSigKey>> {
     let data_type = PubDataType::TypedVerfKey.to_string();
@@ -174,6 +190,7 @@ mod tests {
     use crate::cryptography::signatures::{
         NodeSigningIdentity, RootSigningSeed, compute_eip712_signature, gen_sig_keys,
     };
+    use crate::cryptography::signing::SigningError;
     use crate::dummy_domain;
     use aes_prng::AesRng;
     use kms_grpc::RequestId;
@@ -223,7 +240,13 @@ mod tests {
         schemes: &[SigningSchemeType],
     ) -> Client {
         let mut client = client_for(identity, if with_scheme_keys { schemes } else { &[] });
-        client.set_signing_schemes(schemes).unwrap();
+        if with_scheme_keys {
+            client.set_signing_schemes(schemes).unwrap();
+        } else {
+            // The setter refuses a scheme no party has a key for, so the verifier's own
+            // handling of a missing key is reached by setting the field directly.
+            client.signing_schemes = schemes.to_vec();
+        }
         client
     }
 
@@ -280,7 +303,7 @@ mod tests {
         )
     }
 
-    /// The deprecated scalar ECDSA/EIP-712 signature, which is all a node from a
+    /// The deprecated external ECDSA/EIP-712 signature, which is all a node from a
     /// release before `signatures` carries.
     fn legacy_external_signature(identity: &NodeSigningIdentity) -> Vec<u8> {
         compute_eip712_signature(identity.ecdsa(), &sol_type(), &dummy_domain()).unwrap()
@@ -406,6 +429,53 @@ mod tests {
                 "the {scheme} entry verified a payload it does not cover"
             );
         }
+    }
+
+    /// Requesting a scheme is refused up front when no party published a key for it,
+    /// since no signature under it could ever be checked. ECDSA needs no key.
+    #[test]
+    fn set_signing_schemes_needs_a_key_for_every_non_ecdsa_scheme() {
+        let identity = seeded_identity(21);
+        let hybrid = [SigningSchemeType::Ecdsa256k1, SigningSchemeType::MlDsa65];
+
+        client_for(&identity, &[])
+            .set_signing_schemes(&[SigningSchemeType::Ecdsa256k1])
+            .unwrap();
+
+        let err = client_for(&identity, &[])
+            .set_signing_schemes(&hybrid)
+            .unwrap_err();
+        assert!(
+            matches!(
+                err,
+                SigningError::NoVerificationKey(SigningSchemeType::MlDsa65)
+            ),
+            "the error does not name the scheme without a key: {err}"
+        );
+
+        let mut client = client_for(&identity, &[SigningSchemeType::MlDsa65]);
+        client.set_signing_schemes(&hybrid).unwrap();
+        assert_eq!(client.signing_schemes(), &hybrid);
+    }
+
+    /// An entry of a scheme this release does not know is passed over, so a newer node
+    /// can add a scheme without breaking a verifier still on this release.
+    #[test]
+    fn an_entry_of_an_unknown_scheme_is_skipped() {
+        let identity = seeded_identity(20);
+        let client = client_for(&identity, &[]);
+        let mut signatures = signatures_for(&identity, &[SigningSchemeType::Ecdsa256k1], PAYLOAD);
+        signatures.push(TypedSignature {
+            scheme: i32::MAX,
+            signature: vec![0xEE; 64],
+        });
+
+        assert_eq!(
+            verify(&client, &signatures, PAYLOAD).unwrap(),
+            (PARTY, identity.verf_key().address())
+        );
+        // On its own the unknown entry authenticates nothing.
+        assert!(verify(&client, &signatures[1..], PAYLOAD).is_err());
     }
 
     /// Another party's signatures are not accepted as this party's.

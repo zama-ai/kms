@@ -271,13 +271,13 @@ impl Client {
         let response_bytes = bc2wrap::serialize(&payload)?;
         verify_response_signatures(
             &ResponseSignatures {
-                scalar: &resp.signature,
+                internal: &resp.signature,
                 external: &resp.external_signature,
                 list: &resp.signatures,
             },
             &SignedPayloads {
                 dsep: &DSEP_USER_DECRYPTION,
-                scalar_bytes: &response_bytes,
+                internal_bytes: &response_bytes,
                 payload_bytes: &user_dec_payload_bytes(&response_bytes, &resp.extra_data)?,
                 eip712_hash: Some(user_decrypt_eip712_hash(&payload, request, eip712_domain)?),
             },
@@ -1192,7 +1192,7 @@ impl TryFrom<&UserDecryptionResponse> for UserDecryptionResponseHex {
         // The deprecated `external_signature` is what this hex shape has always
         // carried, and it is read first for backward compatibility.
         let ecdsa_signature = if resp.external_signature.is_empty() {
-            kms_grpc::rpc_types::scheme_signature(
+            kms_grpc::rpc_types::first_signature_with_scheme(
                 &resp.signatures,
                 kms_grpc::kms::v1::SigningSchemeType::Ecdsa256k1,
             )
