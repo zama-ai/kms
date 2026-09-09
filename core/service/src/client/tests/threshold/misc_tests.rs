@@ -12,7 +12,7 @@ use crate::consts::TEST_THRESHOLD_KEY_ID_4P;
 use crate::consts::{DEFAULT_EPOCH_ID, DEFAULT_MPC_CONTEXT};
 use crate::engine::threshold::service::RealThresholdKms;
 use crate::engine::utils::make_extra_data;
-use crate::testing::material::material_subdir;
+use crate::testing::material::{material_subdir, threshold_material_subdir};
 use crate::testing::prelude::*;
 use crate::vault::storage::file::FileStorage;
 use kms_grpc::kms::v1::NewMpcEpochRequest;
@@ -37,7 +37,8 @@ async fn test_threshold_health_endpoint_availability() -> Result<()> {
     let fixture_pub_path = create_test_material_manager()
         .source_path()
         .expect("pre-generated test material is required")
-        .join(material_subdir(MaterialType::Testing));
+        .join(material_subdir(MaterialType::Testing))
+        .join(threshold_material_subdir(amount_parties));
     let env = ThresholdTestEnv::builder()
         .with_test_name("health_endpoint")
         .with_party_count(amount_parties)

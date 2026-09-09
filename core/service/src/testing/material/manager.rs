@@ -3,7 +3,10 @@
 //! This module provides utilities for copying pre-generated test material
 //! into isolated temporary directories for each test.
 use super::spec::{KeyType, MaterialType, TestMaterialSpec};
-use super::{material_subdir, threshold_crs_id_name, threshold_key_id_name};
+use super::{
+    CENTRALIZED_MATERIAL_SUBDIR, material_subdir, threshold_crs_id_name, threshold_key_id_name,
+    threshold_material_subdir,
+};
 use crate::consts::{
     DEFAULT_CENTRAL_CRS_ID, DEFAULT_CENTRAL_KEY_ID, DEFAULT_EPOCH_ID, KEY_PATH_PREFIX,
     OTHER_CENTRAL_DEFAULT_ID, OTHER_CENTRAL_TEST_ID, SIGNING_KEY_ID, TEST_CENTRAL_CRS_ID,
@@ -112,16 +115,7 @@ impl TestMaterialManager {
     /// Verify that source material exists for the requested material type.
     #[cfg(any(test, feature = "testing"))]
     fn verify_material_exists(&self, spec: &TestMaterialSpec) -> Result<()> {
-        let source_path = self.source_path.as_ref().ok_or_else(|| {
-            anyhow!(
-                "Test material source path is not configured. \
-                 Tests requiring pre-generated material need a `test-material/` directory at the workspace root.\n\
-                 Run: {}",
-                generation_hint(spec.material_type)
-            )
-        })?;
-
-        let material_path = source_path.join(material_subdir(spec.material_type));
+        let material_path = self.source_material_path(spec)?;
 
         if !material_path.exists() {
             return Err(anyhow!(
@@ -140,6 +134,23 @@ impl TestMaterialManager {
         );
 
         Ok(())
+    }
+
+    fn source_material_path(&self, spec: &TestMaterialSpec) -> Result<PathBuf> {
+        let source_path = self.source_path.as_ref().ok_or_else(|| {
+            anyhow!(
+                "Test material source path is not configured. \
+                 Tests requiring pre-generated material need a `test-material/` directory at the workspace root.\n\
+                 Run: {}",
+                generation_hint(spec.material_type)
+            )
+        })?;
+        let profile_path = source_path.join(material_subdir(spec.material_type));
+        Ok(if spec.is_threshold() {
+            profile_path.join(threshold_material_subdir(spec.party_count()))
+        } else {
+            profile_path.join(CENTRALIZED_MATERIAL_SUBDIR)
+        })
     }
 
     /// Create the required directory structure
@@ -189,11 +200,8 @@ impl TestMaterialManager {
     #[cfg(any(test, feature = "testing"))]
     async fn copy_material(&self, temp_dir: &TempDir, spec: &TestMaterialSpec) -> Result<()> {
         // Determine source subdirectory based on material type
-        let source_base = self
-            .source_path
-            .as_ref()
-            .map(|p| p.join(material_subdir(spec.material_type)));
-        let source_base_ref = source_base.as_deref();
+        let source_base = self.source_material_path(spec)?;
+        let source_base_ref = Some(source_base.as_path());
         let dest_base = temp_dir.path();
 
         let copy_client_keys = if spec.requires_key_type(KeyType::ClientKeys) {

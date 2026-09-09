@@ -116,6 +116,20 @@ pub mod setup {
         path: Option<&Path>,
         party_counts: &[usize],
     ) -> Result<()> {
+        generate_central_material_to_path(material_type, path).await;
+
+        let unique_party_counts = party_counts.iter().copied().collect::<BTreeSet<_>>();
+        for party_count in unique_party_counts {
+            generate_threshold_material_to_path(material_type, path, party_count).await?;
+        }
+
+        Ok(())
+    }
+
+    pub async fn generate_central_material_to_path(
+        material_type: MaterialType,
+        path: Option<&Path>,
+    ) {
         let epoch_id = *DEFAULT_EPOCH_ID;
         ensure_dir_exist(path).await;
         ensure_client_keys_exist(path, true).await;
@@ -143,47 +157,47 @@ pub mod setup {
                 .await;
             }
         }
+    }
+
+    pub async fn generate_threshold_material_to_path(
+        material_type: MaterialType,
+        path: Option<&Path>,
+        party_count: usize,
+    ) -> Result<()> {
+        let epoch_id = *DEFAULT_EPOCH_ID;
+        ensure_dir_exist(path).await;
+        ensure_client_keys_exist(path, true).await;
 
         let max_supported_parties = PUBLIC_STORAGE_PREFIX_THRESHOLD_ALL.len();
-        if party_counts.contains(&0) {
+        if !(2..=max_supported_parties).contains(&party_count) {
             bail!(
-                "Unsupported party count 0. Centralized material is generated implicitly, so threshold party counts must start at 2."
+                "Unsupported party count {party_count}. Threshold party counts must be between 2 and {max_supported_parties}; centralized material is generated implicitly."
             );
         }
 
-        let unique_party_counts = party_counts.iter().copied().collect::<BTreeSet<_>>();
+        let key_id = derive_request_id(&threshold_key_id_name(material_type, party_count))
+            .with_context(|| {
+                format!("Failed to derive threshold key ID for {party_count} parties")
+            })?;
+        let crs_id = derive_request_id(&threshold_crs_id_name(material_type, party_count))
+            .with_context(|| {
+                format!("Failed to derive threshold CRS ID for {party_count} parties")
+            })?;
+        let params = match material_type {
+            MaterialType::Testing => &TEST_PARAM,
+            MaterialType::Default => &DEFAULT_PARAM,
+        };
 
-        for party_count in unique_party_counts {
-            if !(2..=max_supported_parties).contains(&party_count) {
-                bail!(
-                    "Unsupported party count {party_count}. Threshold party counts must be between 2 and {max_supported_parties}; centralized material is generated implicitly."
-                );
-            }
-
-            let key_id = derive_request_id(&threshold_key_id_name(material_type, party_count))
-                .with_context(|| {
-                    format!("Failed to derive threshold key ID for {party_count} parties")
-                })?;
-            let crs_id = derive_request_id(&threshold_crs_id_name(material_type, party_count))
-                .with_context(|| {
-                    format!("Failed to derive threshold CRS ID for {party_count} parties")
-                })?;
-            let params = match material_type {
-                MaterialType::Testing => &TEST_PARAM,
-                MaterialType::Default => &DEFAULT_PARAM,
-            };
-
-            threshold_material(
-                params,
-                &key_id,
-                &crs_id,
-                &PUBLIC_STORAGE_PREFIX_THRESHOLD_ALL[0..party_count],
-                &PRIVATE_STORAGE_PREFIX_THRESHOLD_ALL[0..party_count],
-                &epoch_id,
-                path,
-            )
-            .await;
-        }
+        threshold_material(
+            params,
+            &key_id,
+            &crs_id,
+            &PUBLIC_STORAGE_PREFIX_THRESHOLD_ALL[0..party_count],
+            &PRIVATE_STORAGE_PREFIX_THRESHOLD_ALL[0..party_count],
+            &epoch_id,
+            path,
+        )
+        .await;
 
         Ok(())
     }

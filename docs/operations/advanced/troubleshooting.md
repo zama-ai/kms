@@ -192,9 +192,10 @@ threshold deployment) or at a deletion that stopped half-way.
 | `Invalid signing key layout in private storage` | `SigningKey` holds an entry that is not the single flat entry at `SIGNING_KEY_ID`, or holds an entry under an epoch. |
 | `Invalid signing seed layout in private storage` | `SigningSeed` holds an entry that is not the single flat entry at `SIGNING_KEY_ID`, or holds an entry under an epoch. |
 
-`SigningKey` and `SigningSeed` may each be absent individually for legacy layouts; at least one
-must be present for serving boot. Recovery mode may proceed without either one while restoration
-is in progress.
+Either object may be absent for legacy or recovery layouts. `SigningSeed` may be absent on legacy
+ECDSA-only nodes. A `SigningKey` is required for serving boot; if it is absent, the server enters
+recovery mode, even if a `SigningSeed` is present. Recovery mode may proceed without either object
+while restoration is in progress.
 
 **Common Fixes:**
 - Confirm the node is pointed at its own private storage.

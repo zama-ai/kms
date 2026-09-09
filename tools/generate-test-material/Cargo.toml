@@ -18,7 +18,6 @@ path = "src/main.rs"
 # all of `kms` to generate keys.
 # Core KMS dependencies
 kms = { workspace = true, features = ["testing", "non-wasm"] }
-kms-grpc = { workspace = true, default-features = false }
 # This shouldn't be needed but without it the wasm-build breaks because features.
 threshold-execution = { workspace = true, features = ["testing"] }
 # threshold-fhe = { workspace = true, features = ["testing"] }

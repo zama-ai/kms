@@ -1147,7 +1147,13 @@ where
         }
     }
 
-    for data_type in [PrivDataType::ContextInfo, PrivDataType::EpochData] {
+    #[expect(deprecated)]
+    let epoched_data_types = [
+        PrivDataType::ContextInfo,
+        PrivDataType::EpochData,
+        PrivDataType::PrssSetupCombined,
+    ];
+    for data_type in epoched_data_types {
         let entries = match epoched_private_entries(private_storage, data_type).await {
             Ok(entries) => entries,
             Err(e) => {
@@ -2574,6 +2580,14 @@ mod tests {
             &epoch_data_id,
         )
         .await;
+        let combined_prss_id = test_id(218);
+        store_epoched(
+            &mut storage,
+            LEGACY_PRSS_SETUP_COMBINED,
+            &test_epoch(10),
+            &combined_prss_id,
+        )
+        .await;
         let expected = BTreeMap::from([
             (
                 PrivDataType::ContextInfo,
@@ -2583,13 +2597,17 @@ mod tests {
                 PrivDataType::EpochData,
                 BTreeMap::from([(test_epoch(9), BTreeSet::from([epoch_data_id]))]),
             ),
+            (
+                LEGACY_PRSS_SETUP_COMBINED,
+                BTreeMap::from([(test_epoch(10), BTreeSet::from([combined_prss_id]))]),
+            ),
         ]);
 
         let report = verify_private_storage_layout(&storage, threshold_layout(&BTreeMap::new()))
             .await
             .expect("misplaced epoch folders must not fail boot");
         assert_eq!(report.unexpected_epoched, expected);
-        assert_eq!(report.unexpected_count(), 2, "got: {report:?}");
+        assert_eq!(report.unexpected_count(), 3, "got: {report:?}");
     }
 
     #[tokio::test]
