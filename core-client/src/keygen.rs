@@ -14,11 +14,9 @@ use kms_grpc::kms_service::v1::core_service_endpoint_client::CoreServiceEndpoint
 use kms_grpc::rpc_types::PubDataType;
 use kms_grpc::{ContextId, RequestId};
 use kms_lib::client::client_wasm::Client;
+use kms_lib::client::local_crypto::{load_material_from_pub_storage, load_pk_from_pub_storage};
 use kms_lib::engine::base::{
     CurrentPublicMaterialLayout, DSEP_PUBDATA_KEY, keygen_payload_bytes, keygen_sol_type,
-};
-use kms_lib::util::key_setup::test_tools::{
-    load_material_from_pub_storage, load_pk_from_pub_storage,
 };
 use std::collections::{BTreeMap, HashMap};
 use std::path::Path;

@@ -373,6 +373,7 @@ impl MaterialSlot {
     }
 
     /// The handle this slot is published under.
+    #[cfg(any(test, feature = "testing"))]
     pub(crate) fn handle(self) -> RequestId {
         self.req_id
     }

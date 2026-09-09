@@ -78,6 +78,7 @@ use crate::cryptography::encryption::{
 };
 use crate::cryptography::hybrid_ml_kem;
 use crate::cryptography::signatures::{PrivateSigKey, PublicSigKey};
+use crate::cryptography::signing::SigningSchemeType;
 use aes_prng::AesRng;
 use bc2wrap::deserialize_slice;
 use kms_grpc::kms::v1::FheParameter;
@@ -199,6 +200,9 @@ pub fn new_client(
         client_sk: None,
         params,
         decryption_mode: DecryptionMode::default(),
+        // The browser can verify only the ECDSA entry (see `scheme_verf_keys`), so it
+        // requests no other scheme.
+        signing_schemes: vec![SigningSchemeType::Ecdsa256k1],
     })
 }
 

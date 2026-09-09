@@ -1711,7 +1711,7 @@ mod tests {
             verification_key: bc2wrap::serialize(&pks[&1]).unwrap(),
             plaintexts: vec![TypedPlaintext {
                 bytes: vec![1],
-                fhe_type: tfhe::FheTypes::Uint4 as i32,
+                fhe_type: tfhe::FheTypes::Uint8 as i32, // Uint8, supported for ABI encoding
             }],
             request_id: request_id.clone(),
         };
@@ -1767,7 +1767,7 @@ mod tests {
                 verification_key: bc2wrap::serialize(&pks[&1]).unwrap(),
                 plaintexts: vec![TypedPlaintext {
                     bytes: vec![2],
-                    fhe_type: tfhe::FheTypes::Uint4 as i32,
+                    fhe_type: tfhe::FheTypes::Uint8 as i32,
                 }],
                 request_id: request_id.clone(),
             };
@@ -1782,7 +1782,7 @@ mod tests {
                 verification_key: bc2wrap::serialize(&vk).unwrap(),
                 plaintexts: vec![TypedPlaintext {
                     bytes: vec![1],
-                    fhe_type: tfhe::FheTypes::Uint4 as i32,
+                    fhe_type: tfhe::FheTypes::Uint8 as i32,
                 }],
                 request_id,
             };

@@ -7,7 +7,7 @@ use crate::{
         signatures::{PublicSigKey, Signature, internal_verify_sig},
         signing::{SchemeVerfKeys, SigningSchemeType, unified_verify, verf_key_for},
     },
-    engine::base::user_dec_payload_bytes,
+    engine::signed_payload::user_dec_payload_bytes,
 };
 use alloy_dyn_abi::Eip712Domain;
 use alloy_primitives::{Address, B256};
@@ -249,17 +249,23 @@ pub(crate) fn verify_scheme_entry(
 /// Check that every scheme the request asked for was actually *verified*, not
 /// merely present in the list.
 ///
-/// The error is unlogged.
+/// `party_id` is the party the response was attributed to, if any signature identified
+/// one. The error is unlogged.
 pub(crate) fn ensure_requested_verified(
     verified: &[SigningSchemeType],
     requested: &[SigningSchemeType],
-    party_id: u32,
+    party_id: Option<u32>,
 ) -> anyhow::Result<()> {
     match requested.iter().find(|scheme| !verified.contains(scheme)) {
-        Some(missing) => Err(anyhow_tracked(format!(
-            "the response of party {party_id} carries no verified {missing} signature, but \
-             {missing} was requested"
-        ))),
+        Some(missing) => {
+            let response = match party_id {
+                Some(party_id) => format!("the response of party {party_id}"),
+                None => "the response".to_string(),
+            };
+            Err(anyhow_tracked(format!(
+                "{response} carries no verified {missing} signature, but {missing} was requested"
+            )))
+        }
         None => Ok(()),
     }
 }
@@ -304,6 +310,10 @@ pub(crate) enum ExpectedSigner<'a> {
     },
     /// Discovered from the signatures: whichever party an ECDSA signature recovers to,
     /// or whichever party's published key a per-scheme entry verifies under.
+    ///
+    /// Only the native client verifies results whose signer has to be discovered, so a
+    /// wasm build never constructs this variant.
+    #[cfg_attr(not(feature = "non-wasm"), allow(dead_code))]
     Discover {
         addresses: &'a HashMap<u32, Address>,
     },
@@ -519,13 +529,14 @@ pub(crate) fn verify_response_signatures(
         push_once(&mut verified, scheme);
     }
 
-    let (party_id, address) = signer.ok_or_else(|| {
+    // A requested scheme that was never verified is the actionable cause, so it is
+    // reported before the absence of any signer.
+    ensure_requested_verified(&verified, requested, signer.map(|(party_id, _)| party_id))?;
+    signer.ok_or_else(|| {
         anyhow_tracked(
             "no signature of the response could be checked, so it identified no party".to_string(),
         )
-    })?;
-    ensure_requested_verified(&verified, requested, party_id)?;
-    Ok((party_id, address))
+    })
 }
 
 /// Authenticate a single (untrusted) response: look its `party_id` up in

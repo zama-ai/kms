@@ -56,7 +56,7 @@ use kms_lib::{DecryptionMode, conf};
 use observability::conf::Settings;
 use rand::SeedableRng;
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
 use std::sync::Arc;
@@ -1943,7 +1943,16 @@ pub async fn execute_cmd(
                     cc_conf.cores.len()
                 );
 
-                for cur_core in &cc_conf.cores {
+                // A config that spans two contexts lists a server under the party id it holds in
+                // its own context, so two servers can share one party id. The client needs one
+                // identity per server, so such a config keys the identities by position. Only
+                // the context and epoch commands run with such a config. They attribute a
+                // result to a server by its signature and never look up a party id.
+                let party_ids_unique = {
+                    let mut seen = HashSet::new();
+                    cc_conf.cores.iter().all(|core| seen.insert(core.party_id))
+                };
+                for (position, cur_core) in cc_conf.cores.iter().enumerate() {
                     // make sure address starts with http://
                     let url = if cur_core.address.starts_with("http://") {
                         cur_core.address.clone()
@@ -1973,8 +1982,13 @@ pub async fn execute_cmd(
                     )?;
                     core_endpoints_resp.insert(cur_core.clone(), core_endpoint_resp);
 
+                    let identity_key = if party_ids_unique {
+                        cur_core.party_id as u32
+                    } else {
+                        position as u32 + 1
+                    };
                     pub_storage.insert(
-                        cur_core.party_id as u32,
+                        identity_key,
                         FileStorage::new(
                             Some(destination_prefix),
                             StorageType::PUB,

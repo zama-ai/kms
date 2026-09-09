@@ -8,7 +8,7 @@ use crate::cryptography::{
     signcryption::{UnifiedUnsigncryptionKey, UnsigncryptFHEPlaintext},
     signing::SigningSchemeType,
 };
-use crate::engine::base::user_dec_payload_bytes;
+use crate::engine::signed_payload::user_dec_payload_bytes;
 use crate::engine::validation::{
     DSEP_USER_DECRYPTION, ERR_VALIDATE_USER_DECRYPTION_MISMATCH_EXTRA_DATA, ExpectedSigner,
     RejectedUserDecResponse, ResponseSignatures, SignedPayloads, UserDecRejectReason,

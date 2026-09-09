@@ -90,7 +90,10 @@ The service crate is the main surface area. Key subdirectories under
   [validation_non_wasm.rs](core/service/src/engine/validation_non_wasm.rs) and
   [validation_wasm.rs](core/service/src/engine/validation_wasm.rs) (the
   validation logic is compiled for both native and WASM so that clients can
-  verify user-decryption responses in the browser).
+  verify user-decryption responses in the browser), and
+  [signed_payload.rs](core/service/src/engine/signed_payload.rs) (the
+  user-decryption payload that non-ECDSA schemes sign, also compiled for WASM;
+  the payloads of the other result kinds live in `base.rs`).
 - [vault/](core/service/src/vault/) — pluggable storage for key material.
   Backends include AWS S3, local file, AWS KMS, and AWS Nitro Enclaves. Root
   keys and key-encryption logic live in

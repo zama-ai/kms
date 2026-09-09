@@ -23,8 +23,8 @@ use kms_0_15_0::cryptography::{
     encryption::{Encryption, PkeScheme, PkeSchemeType, UnifiedCipher},
     hybrid_ml_kem::HybridKemCt,
     signatures::{
-        compute_eip712_signature, gen_sig_keys, RootSigningSeed, SigningSchemeType,
-        UnifiedPublicSigKey,
+        compute_eip712_signature, gen_sig_keys, NodeSigningIdentity, RootSigningSeed,
+        SigningSchemeType, UnifiedPublicSigKey,
     },
     signcryption::{
         Signcrypt, UnifiedSigncryption, UnifiedSigncryptionKeyOwned, UnifiedUnsigncryptionKeyOwned,
@@ -755,7 +755,7 @@ impl KmsV0_15_0 {
     fn gen_unified_public_sig_key(dir: &PathBuf) -> TestMetadataKMS {
         let mut rng = AesRng::seed_from_u64(UNIFIED_PUBLIC_SIG_KEY_TEST.state);
         let (_public_sig_key, sig_key) = gen_sig_keys(&mut rng);
-        let sig_key = sig_key.with_root_seed(RootSigningSeed::random(&mut rng));
+        let sig_key = NodeSigningIdentity::new(sig_key, RootSigningSeed::random(&mut rng));
 
         // Primary file: the ECDSA variant.
         let ecdsa_vk: UnifiedPublicSigKey = sig_key
@@ -1565,7 +1565,7 @@ impl KmsV0_15_0 {
         let key_id = kms_grpc_0_15_0::RequestId::zeros();
         let preproc_id = kms_grpc_0_15_0::RequestId::zeros();
         let kms_fhe_key_handles = KmsFheKeyHandles::new(
-            &private_sig_key,
+            &NodeSigningIdentity::ecdsa_only(private_sig_key),
             &[SigningSchemeType::Ecdsa256k1],
             client_key,
             &key_id,
