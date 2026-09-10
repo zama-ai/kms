@@ -239,19 +239,7 @@ impl StorageReaderExt for FileStorage {
         data_type: &str,
     ) -> anyhow::Result<HashSet<RequestId>> {
         let path = self.root_dir().join(data_type).join(epoch_id.to_string());
-        let mut ids = self.all_data_from_path(path.as_path(), true).await?;
-        if path.is_dir() {
-            let mut entries = tokio::fs::read_dir(path).await?;
-            while let Some(entry) = entries.next_entry().await? {
-                if entry.path().is_dir()
-                    && !entry.file_name().to_string_lossy().starts_with('.')
-                    && let Ok(id) = RequestId::from_str(&entry.file_name().to_string_lossy())
-                {
-                    ids.insert(id);
-                }
-            }
-        }
-        Ok(ids)
+        self.all_data_from_path(path.as_path(), true).await
     }
 
     async fn all_epoch_ids_for_data(&self, data_type: &str) -> anyhow::Result<HashSet<EpochId>> {
@@ -637,32 +625,6 @@ pub mod tests {
                 .unwrap()
                 .objects
                 .contains(&data_type)
-        );
-    }
-
-    #[tokio::test]
-    async fn all_data_ids_at_epoch_reports_request_directories() {
-        use aes_prng::AesRng;
-        use rand::SeedableRng;
-
-        let temp_dir = tempfile::tempdir().unwrap();
-        let storage = FileStorage::new(Some(temp_dir.path()), StorageType::PRIV, None).unwrap();
-        let mut rng = AesRng::seed_from_u64(0xE0C0);
-        let epoch_id = EpochId::new_random(&mut rng);
-        let request_id = RequestId::new_random(&mut rng);
-        let path = storage
-            .root_dir()
-            .join(PrivDataType::FhePrivateKey.to_string())
-            .join(epoch_id.to_string())
-            .join(request_id.to_string());
-        fs::create_dir_all(path.join("unexpected")).unwrap();
-
-        assert_eq!(
-            storage
-                .all_data_ids_at_epoch(&epoch_id, &PrivDataType::FhePrivateKey.to_string())
-                .await
-                .unwrap(),
-            HashSet::from([request_id])
         );
     }
 
