@@ -172,6 +172,18 @@ struct VerifiedPreviousEpochInfo {
     pub crs_info: Vec<VerifiedCrsInfo>,
 }
 
+/// Advance several sessions by the same number of rounds. A macro rather than a
+/// function because the co-advanced sessions are heterogeneously typed (different
+/// rings / role types) and so can't be passed as a slice to
+/// [`advance_session_by_rounds`]. The round count is evaluated once, then applied
+/// to each session in turn.
+macro_rules! advance_sessions_by_rounds {
+    ($rounds:expr, $($session:expr),+ $(,)?) => {{
+        let rounds = $rounds;
+        $(advance_session_by_rounds($session, rounds).await;)+
+    }};
+}
+
 /// Round-clock skews the epoch manager applies to the resharing sessions so each
 /// session's per-round timeout budgets for work done in *other* phases it does not
 /// itself participate in. See [`reshare_session_skews`].
@@ -643,8 +655,7 @@ impl<
 
             // One-time: advance the lift sessions for the new committee's PRSS init.
             // (The cross-set session is advanced once in `initiate_resharing`.)
-            advance_session_by_rounds(&session_z64, session_skews.skew_prss).await;
-            advance_session_by_rounds(&session_z128, session_skews.skew_prss).await;
+            advance_sessions_by_rounds!(session_skews.skew_prss, &session_z64, &session_z128);
 
             for ((private_keys, key_metadata), key_info) in
                 keys.into_iter().zip_eq(verified_previous_epoch.keys_info)
@@ -661,16 +672,11 @@ impl<
 
                 // Set-2 now runs the preprocessing while Set-1 idles; the lift and
                 // online sessions advance by the preproc rounds.
-                advance_session_by_rounds(
+                advance_sessions_by_rounds!(
+                    session_skews.per_key_reshare_preproc_rounds,
                     &session_z64,
-                    session_skews.per_key_reshare_preproc_rounds,
-                )
-                .await;
-                advance_session_by_rounds(
                     &session_z128,
-                    session_skews.per_key_reshare_preproc_rounds,
-                )
-                .await;
+                );
                 // Also add the number of rounds the lift took, so the online phase is ready to start
                 advance_session_by_rounds(
                     &two_sets_session,
@@ -698,16 +704,11 @@ impl<
                 .await?;
                 // Online done: the lift sessions, idle through it, advance by the
                 // online rounds (readying them for the next key's lift).
-                advance_session_by_rounds(
+                advance_sessions_by_rounds!(
+                    session_skews.per_key_reshare_online_rounds,
                     &session_z64,
-                    session_skews.per_key_reshare_online_rounds,
-                )
-                .await;
-                advance_session_by_rounds(
                     &session_z128,
-                    session_skews.per_key_reshare_online_rounds,
-                )
-                .await;
+                );
                 keys_metadata.push(key_metadata);
             }
 
@@ -1020,9 +1021,12 @@ impl<
 
             // One-time: advance each Set-2 session for the new committee's PRSS init.
             // (The cross-set session is advanced once in `initiate_resharing`.)
-            advance_session_by_rounds(&session_z64, session_skews.skew_prss).await;
-            advance_session_by_rounds(&session_z128, session_skews.skew_prss).await;
-            advance_session_by_rounds(&session_online, session_skews.skew_prss).await;
+            advance_sessions_by_rounds!(
+                session_skews.skew_prss,
+                &session_z64,
+                &session_z128,
+                &session_online,
+            );
 
             let num_parties_set_1 = two_sets_session
                 .roles()
@@ -1051,12 +1055,13 @@ impl<
                 );
 
                 // Set 1 runs lifting while Set 2 idles; the sessions advance by the lift rounds.
-                advance_session_by_rounds(&session_z64, session_skews.per_key_lift_rounds).await;
-                advance_session_by_rounds(&session_z128, session_skews.per_key_lift_rounds).await;
-                advance_session_by_rounds(&sessions_online.0, session_skews.per_key_lift_rounds)
-                    .await;
-                advance_session_by_rounds(&sessions_online.1, session_skews.per_key_lift_rounds)
-                    .await;
+                advance_sessions_by_rounds!(
+                    session_skews.per_key_lift_rounds,
+                    &session_z64,
+                    &session_z128,
+                    &sessions_online.0,
+                    &sessions_online.1,
+                );
 
                 let (mut correlated_randomness_z64, mut correlated_randomness_z128) =
                     Self::compute_s2_preproc(
@@ -1068,16 +1073,11 @@ impl<
 
                 // Preprocessing done: the online sessions, idle through it, advance by
                 // the preproc rounds.
-                advance_session_by_rounds(
+                advance_sessions_by_rounds!(
+                    session_skews.per_key_reshare_preproc_rounds,
                     &sessions_online.0,
-                    session_skews.per_key_reshare_preproc_rounds,
-                )
-                .await;
-                advance_session_by_rounds(
                     &sessions_online.1,
-                    session_skews.per_key_reshare_preproc_rounds,
-                )
-                .await;
+                );
 
                 let new_private_keyset = Reshare::reshare_sk_two_sets_as_s2(
                     sessions_online,
@@ -1092,16 +1092,11 @@ impl<
                 // online rounds (readying them for the next key's preprocessing).
                 drop(correlated_randomness_z64);
                 drop(correlated_randomness_z128);
-                advance_session_by_rounds(
+                advance_sessions_by_rounds!(
+                    session_skews.per_key_reshare_online_rounds,
                     &session_z64,
-                    session_skews.per_key_reshare_online_rounds,
-                )
-                .await;
-                advance_session_by_rounds(
                     &session_z128,
-                    session_skews.per_key_reshare_online_rounds,
-                )
-                .await;
+                );
 
                 new_private_keysets.push(new_private_keyset);
             }
@@ -1191,11 +1186,14 @@ impl<
                     .await?;
             // One-time: advance each session for the new committee's PRSS init.
             // (The cross-set session is advanced once in `initiate_resharing`.)
-            advance_session_by_rounds(&session_z64_set_1, session_skews.skew_prss).await;
-            advance_session_by_rounds(&session_z128_set_1, session_skews.skew_prss).await;
-            advance_session_by_rounds(&session_z64_set_2, session_skews.skew_prss).await;
-            advance_session_by_rounds(&session_z128_set_2, session_skews.skew_prss).await;
-            advance_session_by_rounds(&session_online, session_skews.skew_prss).await;
+            advance_sessions_by_rounds!(
+                session_skews.skew_prss,
+                &session_z64_set_1,
+                &session_z128_set_1,
+                &session_z64_set_2,
+                &session_z128_set_2,
+                &session_online,
+            );
 
             let num_parties_set_1 = two_sets_session
                 .roles()
@@ -1233,14 +1231,13 @@ impl<
                     oprf_key_present,
                 );
                 // Just ran the lift, so advance the sessions by the lift rounds to get them ready for the preprocessing.
-                advance_session_by_rounds(&session_z64_set_2, session_skews.per_key_lift_rounds)
-                    .await;
-                advance_session_by_rounds(&session_z128_set_2, session_skews.per_key_lift_rounds)
-                    .await;
-                advance_session_by_rounds(&sessions_online.0, session_skews.per_key_lift_rounds)
-                    .await;
-                advance_session_by_rounds(&sessions_online.1, session_skews.per_key_lift_rounds)
-                    .await;
+                advance_sessions_by_rounds!(
+                    session_skews.per_key_lift_rounds,
+                    &session_z64_set_2,
+                    &session_z128_set_2,
+                    &sessions_online.0,
+                    &sessions_online.1,
+                );
 
                 let (mut correlated_randomness_z64, mut correlated_randomness_z128) =
                     Self::compute_s2_preproc(
@@ -1252,26 +1249,13 @@ impl<
 
                 // Preprocessing done: the lift and online sessions, idle through it,
                 // advance by the preproc rounds.
-                advance_session_by_rounds(
+                advance_sessions_by_rounds!(
+                    session_skews.per_key_reshare_preproc_rounds,
                     &session_z64_set_1,
-                    session_skews.per_key_reshare_preproc_rounds,
-                )
-                .await;
-                advance_session_by_rounds(
                     &session_z128_set_1,
-                    session_skews.per_key_reshare_preproc_rounds,
-                )
-                .await;
-                advance_session_by_rounds(
                     &sessions_online.0,
-                    session_skews.per_key_reshare_preproc_rounds,
-                )
-                .await;
-                advance_session_by_rounds(
                     &sessions_online.1,
-                    session_skews.per_key_reshare_preproc_rounds,
-                )
-                .await;
+                );
 
                 let new_private_keyset = Reshare::reshare_sk_two_sets_as_both_sets(
                     sessions_online,
@@ -1287,26 +1271,13 @@ impl<
                 // by the online rounds (readying them for the next key).
                 drop(correlated_randomness_z64);
                 drop(correlated_randomness_z128);
-                advance_session_by_rounds(
+                advance_sessions_by_rounds!(
+                    session_skews.per_key_reshare_online_rounds,
                     &session_z64_set_1,
-                    session_skews.per_key_reshare_online_rounds,
-                )
-                .await;
-                advance_session_by_rounds(
                     &session_z128_set_1,
-                    session_skews.per_key_reshare_online_rounds,
-                )
-                .await;
-                advance_session_by_rounds(
                     &session_z64_set_2,
-                    session_skews.per_key_reshare_online_rounds,
-                )
-                .await;
-                advance_session_by_rounds(
                     &session_z128_set_2,
-                    session_skews.per_key_reshare_online_rounds,
-                )
-                .await;
+                );
                 new_private_keysets.push(new_private_keyset);
             }
 
