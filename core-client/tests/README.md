@@ -36,8 +36,8 @@
 ### Pre-generated material
 
 - PRSS-based keygen tests require the default epoch (PRSS setup) from the pre-generated test material and, for `nightly_full_gen_tests_default_*`, pre-generated keygen preprocessing material (offline DKG phase).
-- For **Test** params, missing PRSS can be initialized live. For **Default** params, both PRSS and keygen preprocessing material must be pre-generated — missing either is a hard error.
-- Some tests generate PRSS live during the test (via `new_prss`) — these do not require pre-generated PRSS. Used by MPC context init/switch and reshare tests.
+- Tests that use pre-generated material require the default epoch (PRSS setup) and, for **Default** params, keygen preprocessing material. Missing material causes a hard error.
+- Tests that call `new_prss` initialize PRSS live and do not require a pre-generated default epoch.
 - Generate the production-like required secure material (aka "default") with:
   `cargo run -p generate-test-material -- --output ./test-material --profile secure --parties 4,13`.
 

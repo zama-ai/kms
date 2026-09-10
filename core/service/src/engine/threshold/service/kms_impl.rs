@@ -581,6 +581,8 @@ where
 
     // The epoch registry: every epoch this node serves, keyed by the ID it is stored under. It is
     // read once here; it anchors the private storage checks below and seeds the session maker.
+    // Storage must not change while validation runs, so this snapshot stays consistent with the
+    // checks that use it.
     let all_epochs: HashMap<EpochId, EpochData> = read_all_data_versioned::<_, EpochData>(
         &private_storage,
         &PrivDataType::EpochData.to_string(),

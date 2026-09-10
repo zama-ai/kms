@@ -105,6 +105,10 @@ impl FileStorage {
             );
             return Ok(HashSet::new());
         }
+        if !path.is_dir() {
+            // Root-level objects are reported by `all_data_types`; they do not contain data IDs.
+            return Ok(HashSet::new());
+        }
 
         let mut res = HashSet::new();
         let mut files = tokio::fs::read_dir(path)
@@ -235,7 +239,19 @@ impl StorageReaderExt for FileStorage {
         data_type: &str,
     ) -> anyhow::Result<HashSet<RequestId>> {
         let path = self.root_dir().join(data_type).join(epoch_id.to_string());
-        self.all_data_from_path(path.as_path(), true).await
+        let mut ids = self.all_data_from_path(path.as_path(), true).await?;
+        if path.is_dir() {
+            let mut entries = tokio::fs::read_dir(path).await?;
+            while let Some(entry) = entries.next_entry().await? {
+                if entry.path().is_dir()
+                    && !entry.file_name().to_string_lossy().starts_with('.')
+                    && let Ok(id) = RequestId::from_str(&entry.file_name().to_string_lossy())
+                {
+                    ids.insert(id);
+                }
+            }
+        }
+        Ok(ids)
     }
 
     async fn all_epoch_ids_for_data(&self, data_type: &str) -> anyhow::Result<HashSet<EpochId>> {
@@ -413,7 +429,7 @@ pub mod tests {
         consts::PUBLIC_STORAGE_PREFIX_THRESHOLD_ALL, engine::base::derive_request_id,
         vault::storage::tests::*,
     };
-    use kms_grpc::rpc_types::PubDataType;
+    use kms_grpc::rpc_types::{PrivDataType, PubDataType};
     use strum::IntoEnumIterator;
 
     #[ignore]
@@ -603,6 +619,50 @@ pub mod tests {
                 folders: HashSet::from([pk_type]),
                 objects: HashSet::from(["stray".to_string(), ".hidden".to_string()]),
             }
+        );
+    }
+
+    #[tokio::test]
+    async fn all_data_ids_ignores_a_root_object_named_like_a_data_type() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let storage = FileStorage::new(Some(temp_dir.path()), StorageType::PRIV, None).unwrap();
+        let data_type = PrivDataType::FhePrivateKey.to_string();
+        fs::write(storage.root_dir().join(&data_type), b"stray").unwrap();
+
+        assert!(storage.all_data_ids(&data_type).await.unwrap().is_empty());
+        assert!(
+            storage
+                .all_data_types()
+                .await
+                .unwrap()
+                .objects
+                .contains(&data_type)
+        );
+    }
+
+    #[tokio::test]
+    async fn all_data_ids_at_epoch_reports_request_directories() {
+        use aes_prng::AesRng;
+        use rand::SeedableRng;
+
+        let temp_dir = tempfile::tempdir().unwrap();
+        let storage = FileStorage::new(Some(temp_dir.path()), StorageType::PRIV, None).unwrap();
+        let mut rng = AesRng::seed_from_u64(0xE0C0);
+        let epoch_id = EpochId::new_random(&mut rng);
+        let request_id = RequestId::new_random(&mut rng);
+        let path = storage
+            .root_dir()
+            .join(PrivDataType::FhePrivateKey.to_string())
+            .join(epoch_id.to_string())
+            .join(request_id.to_string());
+        fs::create_dir_all(path.join("unexpected")).unwrap();
+
+        assert_eq!(
+            storage
+                .all_data_ids_at_epoch(&epoch_id, &PrivDataType::FhePrivateKey.to_string())
+                .await
+                .unwrap(),
+            HashSet::from([request_id])
         );
     }
 

@@ -395,8 +395,7 @@ What it verifies, and how failures are treated:
 The signing material lives at `SIGNING_KEY_ID` as the ECDSA `SigningKey`, the root `SigningSeed`,
 or both. A node that predates the seed has only the key. Neither type is epoch-scoped, and neither
 holds a second entry. The layout check accepts every combination with at least one of the two.
-The current loader requires the ECDSA key and attaches the seed when one is present. Future
-seed-derived ECDSA support can use the accepted seed-only layout.
+The current loader requires the ECDSA key and attaches the seed when one is present.
 
 On a threshold node, a flat `PrssSetup` entry is foreign material and fails boot. The 0.15
 migration leaves flat `PrssSetupCombined` entries next to their `EpochData`; those remain accepted

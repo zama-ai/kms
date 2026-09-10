@@ -1934,7 +1934,7 @@ pub(crate) mod tests {
         ensure_threshold_epoch_exists(&mut priv_storage, &DEFAULT_EPOCH_ID, &DEFAULT_MPC_CONTEXT)
             .await
             .unwrap();
-        let epoch_before: std::collections::HashMap<RequestId, EpochData> =
+        let epoch_before: HashMap<RequestId, EpochData> =
             read_all_data_versioned(&priv_storage[0], &PrivDataType::EpochData.to_string())
                 .await
                 .unwrap();

@@ -749,6 +749,7 @@ where
 const RESTORE_ORDER: [PrivDataType; 9] = [
     PrivDataType::ContextInfo,
     PrivDataType::EpochData,
+    // Deprecated data retained by the 0.15 migration until the 0.16 migration removes it.
     PrivDataType::PrssSetupCombined,
     PrivDataType::PrssSetup,
     PrivDataType::FheKeyInfo,
