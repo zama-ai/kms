@@ -10,6 +10,8 @@ cfg_if::cfg_if! {
         };
         use crate::engine::base::{DSEP_PUBDATA_CRS, DSEP_PUBDATA_KEY};
         use crate::engine::centralized::central_kms::{gen_centralized_crs, generate_fhe_keys};
+        use crate::engine::threshold::service::epoch_manager::EpochData;
+        use crate::engine::threshold::service::session::PRSSSetupCombined;
         use crate::engine::threshold::service::{PublicKeyMaterial, ThresholdFheKeys};
         use crate::vault::storage::crypto_material::{
             calculate_max_num_bits,  data_exists, get_core_signing_identity,
@@ -28,7 +30,11 @@ cfg_if::cfg_if! {
         use threshold_execution::tfhe_internals::test_feature::gen_key_set;
         use threshold_execution::tfhe_internals::test_feature::keygen_all_party_shares_from_client_key;
         use threshold_execution::zk::ceremony::{max_num_bits_from_crs, public_parameters_by_trusted_setup};
+        use threshold_execution::small_execution::prss::PRSSSetup;
         use threshold_types::session_id::SessionId;
+        use threshold_types::role::Role;
+        use algebra::galois_rings::degree_4::{ResiduePolyF4Z64, ResiduePolyF4Z128};
+        use kms_grpc::identifiers::ContextId;
     }
 }
 
@@ -1443,6 +1449,77 @@ where
     true
 }
 
+/// Writes a threshold epoch fixture: one `EpochData` entry per party under `epoch_id`, tagged with
+/// `context_id`, that holds a PRSS setup built without networking.
+///
+/// The setups come from [`PRSSSetup::testing_party_epoch_init`], which derives each set key from
+/// the party IDs in the set. Every party therefore holds matching keys, and the output is
+/// deterministic. The threshold is [`max_threshold`] of the party count, the same value the
+/// fixture key shares use. The keys are public, so the epoch is insecure and fit for tests only.
+///
+/// # Returns
+/// - `true` if the epoch was written for every party
+/// - `false` if every party already held it
+///
+/// # Errors
+/// - If `priv_storages` is empty
+/// - If a PRSS setup cannot be built, or an entry cannot be stored
+#[cfg(any(test, feature = "testing"))]
+pub async fn ensure_threshold_epoch_exists<PrivS>(
+    priv_storages: &mut [PrivS],
+    epoch_id: &EpochId,
+    context_id: &ContextId,
+) -> anyhow::Result<bool>
+where
+    PrivS: Storage,
+{
+    let amount_parties = priv_storages.len();
+    if amount_parties == 0 {
+        anyhow::bail!("Cannot build a default epoch for zero parties");
+    }
+    let threshold = max_threshold(amount_parties);
+    let epoch_req_id: RequestId = epoch_id.into();
+    let data_type = PrivDataType::EpochData.to_string();
+
+    let mut all_data_exists = true;
+    for priv_storage in priv_storages.iter() {
+        all_data_exists &= data_exists(priv_storage, &epoch_req_id, &data_type)
+            .await
+            .unwrap_or(false);
+    }
+    if all_data_exists {
+        tracing::info!("Threshold epoch {epoch_id} exists for all parties, skipping generation");
+        return Ok(false);
+    }
+
+    for (idx, priv_storage) in priv_storages.iter_mut().enumerate() {
+        let role = Role::indexed_from_one(idx + 1);
+        let prss_setup_z64 = PRSSSetup::<ResiduePolyF4Z64>::testing_party_epoch_init(
+            amount_parties,
+            threshold,
+            role,
+        )
+        .await?;
+        let prss_setup_z128 = PRSSSetup::<ResiduePolyF4Z128>::testing_party_epoch_init(
+            amount_parties,
+            threshold,
+            role,
+        )
+        .await?;
+        let epoch_data = EpochData {
+            context_id: *context_id,
+            prss: PRSSSetupCombined {
+                prss_setup_z64,
+                prss_setup_z128,
+                num_parties: amount_parties as u8,
+                threshold: threshold as u8,
+            },
+        };
+        store_versioned_at_request_id(priv_storage, &epoch_req_id, &epoch_data, &data_type).await?;
+    }
+    Ok(true)
+}
+
 /// Generates and stores a threshold CRS with metadata.
 ///
 /// Implements the complete threshold CRS lifecycle:
@@ -1634,21 +1711,24 @@ mod tests {
         ensure_central_server_signing_keys_exist, ensure_no_verf_material,
         ensure_threshold_server_signing_key_exists,
     };
+    use crate::consts::{DEFAULT_EPOCH_ID, DEFAULT_MPC_CONTEXT};
     use crate::consts::{SIGNING_KEY_ID, signing_material_id};
     use crate::cryptography::signatures::{PrivateSigKey, PublicSigKey, gen_sig_keys};
     use crate::cryptography::signing::identity::NodeSigningIdentity;
     use crate::cryptography::signing::seed::RootSigningSeed;
     use crate::cryptography::signing::{HasSigningScheme, SigningSchemeType, unified_verify};
+    use crate::engine::threshold::service::epoch_manager::EpochData;
     use crate::util::key_setup::{
         all_verf_material_slots, delete_all_verf_material, non_legacy_verf_material_slots,
     };
+    use crate::util::key_setup::{ensure_threshold_epoch_exists, max_threshold};
     use crate::vault::storage::crypto_material::{
         get_core_root_signing_seed, get_core_signing_identity, read_verf_key_at, store_verf_key_at,
     };
     use crate::vault::storage::ram::RamStorage;
     use crate::vault::storage::{
         Storage, StorageReader, delete_at_request_id, read_text_at_request_id,
-        store_text_at_request_id, store_versioned_at_request_id,
+        read_versioned_at_request_id, store_text_at_request_id, store_versioned_at_request_id,
     };
     use crate::{
         consts::DEFAULT_PARAM, dummy_domain, engine::centralized::central_kms::gen_centralized_crs,
@@ -1663,6 +1743,35 @@ mod tests {
     use threshold_execution::zk::ceremony::max_num_bits_from_crs;
 
     const DSEP: &DomainSep = b"SEEDKGEN";
+
+    #[tokio::test]
+    async fn default_epoch_fixture_is_written_once_per_party() {
+        let mut storages: Vec<RamStorage> = (0..4).map(|_| RamStorage::new()).collect();
+        let written =
+            ensure_threshold_epoch_exists(&mut storages, &DEFAULT_EPOCH_ID, &DEFAULT_MPC_CONTEXT)
+                .await
+                .unwrap();
+        assert!(written);
+        for storage in &storages {
+            let epoch: EpochData = read_versioned_at_request_id(
+                storage,
+                &(*DEFAULT_EPOCH_ID).into(),
+                &PrivDataType::EpochData.to_string(),
+            )
+            .await
+            .unwrap();
+            assert_eq!(epoch.context_id, *DEFAULT_MPC_CONTEXT);
+            assert_eq!(epoch.prss.num_parties, 4);
+            assert_eq!(epoch.prss.threshold as usize, max_threshold(4));
+        }
+
+        // Every party already holds the epoch, so nothing is written.
+        let written =
+            ensure_threshold_epoch_exists(&mut storages, &DEFAULT_EPOCH_ID, &DEFAULT_MPC_CONTEXT)
+                .await
+                .unwrap();
+        assert!(!written);
+    }
 
     #[test]
     fn test_max_num_bits() {

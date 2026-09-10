@@ -21,7 +21,9 @@ use crate::engine::base::{BaseKmsStruct, KmsFheKeyHandles};
 use crate::engine::base::{KeyGenMetadata, PubDecCallValues, UserDecryptCallValues};
 use crate::engine::context_manager::CentralizedContextManager;
 #[cfg(feature = "non-wasm")]
-use crate::engine::storage_material_verification::verify_storage_material;
+use crate::engine::storage_material_verification::{
+    PrivateLayout, verify_private_storage_layout, verify_storage_material,
+};
 use crate::engine::traits::{BackupOperator, ContextManager};
 use crate::engine::traits::{BaseKms, Kms};
 use crate::engine::validation::DSEP_USER_DECRYPTION;
@@ -955,6 +957,8 @@ impl<
             read_all_data_versioned(&public_storage, &PubDataType::RecoveryMaterial.to_string())
                 .await?;
 
+        // Verify the private layout first: a centralized node must hold no threshold key shares.
+        verify_private_storage_layout(&private_storage, PrivateLayout::Centralized).await?;
         // Verify that public storage holds exactly what private storage says it should, and
         // that it is intact. Private storage is the reference; extra material in public
         // storage is logged as an error but does not stop boot.
@@ -1174,7 +1178,7 @@ pub(crate) mod tests {
     };
     use crate::cryptography::signing::identity::NodeSigningIdentity;
     use crate::dummy_domain;
-    use crate::engine::base::{KmsFheKeyHandles, compute_handle, derive_request_id};
+    use crate::engine::base::{KmsFheKeyHandles, derive_request_id};
     use crate::engine::centralized::central_kms::RealCentralizedKms;
     use crate::engine::traits::Kms;
     use crate::engine::validation::DSEP_USER_DECRYPTION;
@@ -1247,11 +1251,12 @@ pub(crate) mod tests {
             )
             .await?;
         }
-        let sk_handle = compute_handle(&keys.sig_pk)?;
+        // Store the signing key at `SIGNING_KEY_ID`, as `kms-gen-keys` does in production, so a
+        // KMS booted on this storage passes the private layout verification.
         let _ = ram_storage
             .store_data(
                 &keys.sig_sk,
-                &RequestId::from_str(&sk_handle)?,
+                &SIGNING_KEY_ID,
                 &PrivDataType::SigningKey.to_string(),
             )
             .await?;

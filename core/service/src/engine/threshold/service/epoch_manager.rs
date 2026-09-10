@@ -340,7 +340,6 @@ impl<
 
     /// Wrapper around the internal method [`Self::internal_init_epoch`]
     /// so it's easier to call from the outside if necessary.
-    /// (e.g. when initializing the KMS core with `ensure_default_prss` set to true.)
     pub async fn init_epoch(
         &self,
         context_id: &ContextId,
@@ -1803,7 +1802,7 @@ pub(crate) mod tests {
         },
         util::{
             key_setup::{
-                ThresholdSigningKeyConfig, ensure_client_keys_exist,
+                ThresholdSigningKeyConfig, ensure_client_keys_exist, ensure_threshold_epoch_exists,
                 ensure_threshold_server_signing_keys_exist,
             },
             rate_limiter::RateLimiterConfig,
@@ -1926,14 +1925,27 @@ pub(crate) mod tests {
         .await
         .unwrap();
         ensure_client_keys_exist(Some(material_path), true).await;
+        // A server never creates an epoch on its own, so the default epoch is written the way
+        // the fixture generator writes it.
+        ensure_threshold_epoch_exists(&mut priv_storage, &DEFAULT_EPOCH_ID, &DEFAULT_MPC_CONTEXT)
+            .await
+            .unwrap();
+        let epoch_before: HashMap<RequestId, EpochData> =
+            read_all_data_versioned(&priv_storage[0], &PrivDataType::EpochData.to_string())
+                .await
+                .unwrap();
+        let default_epoch_as_req: RequestId = (*DEFAULT_EPOCH_ID).into();
+        assert!(
+            epoch_before.contains_key(&default_epoch_as_req),
+            "expected the default epoch in party-0 private storage before the first run"
+        );
 
-        // create parties and run PrssSetup
+        // create parties, which load the epoch from storage
         let server_handles = test_tools::setup_threshold_no_client(
             PRSS_THRESHOLD as u8,
             pub_storage.clone(),
             priv_storage.clone(),
             vaults,
-            true,
             None,
             None,
         )
@@ -1947,24 +1959,22 @@ pub(crate) mod tests {
 
         tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
 
-        // Structural check: epoch must be on disk after the first run
+        // Startup must not rewrite the epoch on disk (load-from-storage path only).
         let epoch_after_first: std::collections::HashMap<RequestId, EpochData> =
             read_all_data_versioned(&priv_storage[0], &PrivDataType::EpochData.to_string())
                 .await
                 .unwrap();
-        let default_epoch_as_req: RequestId = (*DEFAULT_EPOCH_ID).into();
-        assert!(
-            epoch_after_first.contains_key(&default_epoch_as_req),
-            "expected PRSS for default epoch in party-0 private storage after first run"
+        assert_eq!(
+            epoch_before, epoch_after_first,
+            "PRSS in storage must be unchanged after the first server run"
         );
 
-        // create parties again without running PrssSetup this time (it should now be read from storage)
+        // create parties again; the epoch is read from storage once more
         let server_handles = test_tools::setup_threshold_no_client(
             PRSS_THRESHOLD as u8,
             pub_storage.clone(),
             priv_storage.clone(),
             vaults2,
-            false,
             None,
             None,
         )
@@ -1975,7 +1985,6 @@ pub(crate) mod tests {
             server_handle.assert_shutdown().await;
         }
 
-        // Second startup must not regenerate PRSS on disk (load-from-storage path only).
         let epoch_after_second: std::collections::HashMap<RequestId, EpochData> =
             read_all_data_versioned(&priv_storage[0], &PrivDataType::EpochData.to_string())
                 .await

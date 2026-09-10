@@ -9,11 +9,12 @@ use crate::consts::{
     PUBLIC_STORAGE_PREFIX_THRESHOLD_ALL,
 };
 use crate::testing::helpers::create_test_material_manager;
-use crate::testing::material::{TestMaterialManager, TestMaterialSpec};
+use crate::testing::material::{KeyType, TestMaterialManager, TestMaterialSpec};
 use crate::testing::types::ServerHandle;
 pub use crate::testing::types::ThresholdTestConfig;
 use crate::util::key_setup::{
-    ThresholdSigningKeyConfig, ensure_client_keys_exist, ensure_threshold_server_signing_keys_exist,
+    ThresholdSigningKeyConfig, ensure_client_keys_exist,
+    ensure_threshold_server_signing_keys_exist, max_threshold,
 };
 use crate::vault::Vault;
 use crate::vault::keychain::make_keychain_proxy;
@@ -204,7 +205,7 @@ pub struct ThresholdTestEnvBuilder {
     threshold: Option<u8>,
     material_spec: Option<TestMaterialSpec>,
     material_manager: Option<TestMaterialManager>,
-    ensure_default_prss: bool,
+    with_default_epoch: bool,
     with_backup_vault: bool,
     with_custodian_keychain: bool,
     rate_limiter_conf: Option<crate::util::rate_limiter::RateLimiterConfig>,
@@ -219,7 +220,7 @@ impl Default for ThresholdTestEnvBuilder {
             threshold: None,
             material_spec: None,
             material_manager: None,
-            ensure_default_prss: false,
+            with_default_epoch: false,
             with_backup_vault: false,
             with_custodian_keychain: false,
             rate_limiter_conf: None,
@@ -259,9 +260,10 @@ impl ThresholdTestEnvBuilder {
         self
     }
 
-    /// Enable PRSS initialization (required for secure key generation)
+    /// Include the fixture's default epoch, so the servers boot with a PRSS setup and can run
+    /// MPC protocols. A spec with FHE key shares includes the epoch already.
     pub fn with_prss(mut self) -> Self {
-        self.ensure_default_prss = true;
+        self.with_default_epoch = true;
         self
     }
 
@@ -301,9 +303,28 @@ impl ThresholdTestEnvBuilder {
         let manager = self
             .material_manager
             .unwrap_or_else(create_test_material_manager);
-        let spec = self
+        let mut spec = self
             .material_spec
             .unwrap_or_else(|| TestMaterialSpec::threshold_basic(self.party_count));
+        if self.with_default_epoch {
+            spec.required_keys.insert(KeyType::DefaultEpoch);
+        }
+
+        // Compute threshold if not provided
+        let threshold = self
+            .threshold
+            .unwrap_or_else(|| ((self.party_count - 1) / 3).max(1) as u8);
+        // The fixture epoch carries the threshold of the fixture key shares, so a test cannot
+        // combine it with another threshold.
+        if spec.requires_key_type(KeyType::DefaultEpoch)
+            && usize::from(threshold) != max_threshold(self.party_count)
+        {
+            anyhow::bail!(
+                "the fixture default epoch for {} parties uses threshold {}, but the test asked for {threshold}",
+                self.party_count,
+                max_threshold(self.party_count)
+            );
+        }
 
         let material_dir = manager.setup_test_material_temp(&spec, &test_name).await?;
 
@@ -353,13 +374,7 @@ impl ThresholdTestEnvBuilder {
             (0..self.party_count).map(|_| None).collect()
         };
 
-        // Compute threshold if not provided
-        let threshold = self
-            .threshold
-            .unwrap_or_else(|| ((self.party_count - 1) / 3).max(1) as u8);
-
         let config = ThresholdTestConfig {
-            ensure_default_prss: self.ensure_default_prss,
             rate_limiter_conf: self.rate_limiter_conf,
             decryption_mode: self.decryption_mode,
             test_material_path: Some(material_dir.path()),
@@ -412,7 +427,6 @@ impl ThresholdTestEnvBuilder {
             .threshold
             .unwrap_or_else(|| ((self.party_count - 1) / 3).max(1) as u8);
         let config = ThresholdTestConfig {
-            ensure_default_prss: self.ensure_default_prss,
             rate_limiter_conf: self.rate_limiter_conf,
             decryption_mode: self.decryption_mode,
             test_material_path: Some(path),
