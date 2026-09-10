@@ -104,14 +104,14 @@ pub(crate) async fn new_epoch_with_reshare_and_crs(
             .unwrap()
             .into();
 
-    // No FHE keys needed; PRSS is bootstrapped at runtime via `.with_prss()` below.
+    // No FHE keys needed; the default epoch (PRSS) comes from the fixture via `.with_prss()` below.
     let mut spec = TestMaterialSpec::threshold_signing_only(amount_parties);
     if matches!(parameters, FheParameter::Default) {
         spec.material_type = MaterialType::Default;
     }
 
-    // Setting ensure_default_prss to true to
-    // to create the default context and epoch with its PRSS init
+    // `.with_prss()` copies the default epoch, so the servers boot with the default context
+    // and its PRSS setup.
     let (material_dir, mut kms_servers, mut kms_clients, mut internal_client) = {
         let env = ThresholdTestEnv::builder()
             .with_test_name(format!(

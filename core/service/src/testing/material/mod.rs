@@ -4,6 +4,8 @@
 //! Material is generated once using `generate-test-material --profile ... --parties ...`
 //! and then copied into isolated temporary directories for each test, which prevents tests
 //! from interfering with each other.
+//! Each profile stores centralized material under `centralized/` and threshold material under a
+//! party-count-specific `threshold-N/` root.
 //!
 //! # Key Types
 //!
@@ -26,6 +28,14 @@ pub fn material_subdir(material_type: MaterialType) -> &'static str {
         MaterialType::Testing => "testing",
         MaterialType::Default => "default",
     }
+}
+
+/// Subdirectory containing centralized material for a material profile.
+pub const CENTRALIZED_MATERIAL_SUBDIR: &str = "centralized";
+
+/// Subdirectory containing threshold material for a specific party count.
+pub fn threshold_material_subdir(party_count: usize) -> String {
+    format!("threshold-{party_count}")
 }
 
 /// Deterministic threshold FHE key fixture ID label for a material family and party count.
