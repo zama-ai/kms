@@ -17,7 +17,7 @@ path = "src/main.rs"
 # TODO: once `vault` is its own crate and we have sorted out the `non-wasm` mess, this tool should not need to compile
 # all of `kms` to generate keys.
 # Core KMS dependencies
-kms = { path = "../../core/service", features = ["testing", "non-wasm"] }
+kms = { workspace = true, features = ["testing", "non-wasm"] }
 # This shouldn't be needed but without it the wasm-build breaks because features.
 threshold-execution = { workspace = true, features = ["testing"] }
 # threshold-fhe = { workspace = true, features = ["testing"] }

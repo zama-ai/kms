@@ -6,16 +6,15 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result, bail};
 use clap::{Parser, Subcommand, ValueEnum};
-use kms_lib::testing::material::{MaterialType, material_subdir};
-use kms_lib::testing::utils::setup::generate_material_to_path;
-use kms_lib::vault::storage::StorageType;
+use kms_lib::testing::material::{
+    CENTRALIZED_MATERIAL_SUBDIR, MaterialType, material_subdir, threshold_material_subdir,
+};
+use kms_lib::testing::utils::setup::{
+    generate_central_material_to_path, generate_threshold_material_to_path,
+};
 use path_absolutize::Absolutize;
-use tracing::{info, warn};
-
-/// Storage types that are required for test material.
-/// Note: BACKUP is excluded as it's not used in test material generation.
-const REQUIRED_STORAGE_TYPES: [StorageType; 3] =
-    [StorageType::PUB, StorageType::PRIV, StorageType::CLIENT];
+use std::collections::BTreeSet;
+use tracing::info;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, ValueEnum)]
 enum Profile {
@@ -66,8 +65,6 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Commands {
-    /// Validate existing test material
-    Validate,
     /// Clean existing test material
     Clean,
 }
@@ -105,9 +102,6 @@ async fn main() -> Result<()> {
         })?;
 
     match cli.command {
-        Some(Commands::Validate) => {
-            validate_material(&output_dir).await?;
-        }
         Some(Commands::Clean) => {
             clean_material(&output_dir).await?;
         }
@@ -163,49 +157,20 @@ async fn generate_profile_material(
     }
 
     fs::create_dir_all(&profile_dir).await?;
-    generate_material_to_path(material_type, Some(&profile_dir), parties).await?;
+    let centralized_dir = profile_dir.join(CENTRALIZED_MATERIAL_SUBDIR);
+    generate_central_material_to_path(material_type, Some(&centralized_dir)).await;
+
+    for party_count in parties.iter().copied().collect::<BTreeSet<_>>() {
+        let threshold_dir = profile_dir.join(threshold_material_subdir(party_count));
+        generate_threshold_material_to_path(material_type, Some(&threshold_dir), party_count)
+            .await?;
+    }
 
     info!(
         "{:?} material generated successfully at: {}",
         profile,
         profile_dir.display()
     );
-    Ok(())
-}
-
-async fn validate_material(output_dir: &Path) -> Result<()> {
-    info!("Validating test material in: {}", output_dir.display());
-
-    if !output_dir.exists() {
-        warn!("Output directory does not exist: {}", output_dir.display());
-        return Ok(());
-    }
-
-    let mut validation_errors = Vec::new();
-
-    if testing_material_exists(output_dir).await? {
-        info!("✓ Insecure material found");
-    } else {
-        validation_errors.push("Insecure material missing");
-    }
-
-    if default_material_exists(output_dir).await? {
-        info!("✓ Secure material found");
-    } else {
-        validation_errors.push("Secure material missing");
-    }
-
-    validate_directory_structure(output_dir, &mut validation_errors).await?;
-
-    if validation_errors.is_empty() {
-        info!("✓ All validation checks passed");
-    } else {
-        warn!("Validation errors found:");
-        for error in validation_errors {
-            warn!("  - {}", error);
-        }
-    }
-
     Ok(())
 }
 
@@ -229,60 +194,5 @@ async fn clean_material(output_dir: &Path) -> Result<()> {
     }
 
     info!("Test material cleaned successfully");
-    Ok(())
-}
-
-async fn testing_material_exists(output_dir: &Path) -> Result<bool> {
-    profile_material_exists(output_dir, MaterialType::Testing).await
-}
-
-async fn default_material_exists(output_dir: &Path) -> Result<bool> {
-    profile_material_exists(output_dir, MaterialType::Default).await
-}
-
-async fn profile_material_exists(output_dir: &Path, material_type: MaterialType) -> Result<bool> {
-    let profile_dir = output_dir.join(material_subdir(material_type));
-
-    if !profile_dir.exists() {
-        return Ok(false);
-    }
-
-    for storage_type in &REQUIRED_STORAGE_TYPES {
-        let path = profile_dir.join(storage_type.to_string());
-        if path.exists() {
-            return Ok(true);
-        }
-    }
-
-    Ok(false)
-}
-
-async fn validate_directory_structure(
-    output_dir: &Path,
-    errors: &mut Vec<&'static str>,
-) -> Result<()> {
-    let testing_dir = output_dir.join(material_subdir(MaterialType::Testing));
-    let default_dir = output_dir.join(material_subdir(MaterialType::Default));
-
-    if testing_dir.exists() {
-        for storage_type in &REQUIRED_STORAGE_TYPES {
-            let path = testing_dir.join(storage_type.to_string());
-            if !path.exists() {
-                errors.push("Insecure material missing required subdirectories");
-                break;
-            }
-        }
-    }
-
-    if default_dir.exists() {
-        for storage_type in &REQUIRED_STORAGE_TYPES {
-            let path = default_dir.join(storage_type.to_string());
-            if !path.exists() {
-                errors.push("Secure material missing required subdirectories");
-                break;
-            }
-        }
-    }
-
     Ok(())
 }

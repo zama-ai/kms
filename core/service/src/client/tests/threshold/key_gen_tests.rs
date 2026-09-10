@@ -458,7 +458,7 @@ pub(crate) async fn run_threshold_decompression_keygen(
         derive_request_id(&format!("decom_dkg_key_{amount_parties}_{parameter:?}_3")).unwrap();
 
     let dkg_param: WrappedDKGParams = parameter.into();
-    // No FHE keys needed; PRSS is bootstrapped at runtime via `.with_prss()` below.
+    // No FHE keys needed; the default epoch (PRSS) comes from the fixture via `.with_prss()` below.
     let mut spec = TestMaterialSpec::threshold_signing_only(amount_parties);
     if matches!(parameter, FheParameter::Default) {
         spec.material_type = MaterialType::Default;
@@ -685,7 +685,7 @@ pub(crate) async fn preproc_and_keygen(
         new_epoch: 1,
     };
 
-    // No FHE keys needed; PRSS is bootstrapped at runtime via `.with_prss()` below.
+    // No FHE keys needed; the default epoch (PRSS) comes from the fixture via `.with_prss()` below.
     let mut spec = TestMaterialSpec::threshold_signing_only(amount_parties);
     if matches!(parameter, FheParameter::Default) {
         spec.material_type = MaterialType::Default;
@@ -1431,7 +1431,7 @@ async fn test_insecure_dkg() -> anyhow::Result<()> {
 #[cfg(feature = "slow_tests")]
 async fn default_insecure_dkg() -> anyhow::Result<()> {
     // Use Default material spec for production-like keys.
-    // PRSS is generated at server startup via `with_prss()`.
+    // The default epoch (PRSS) comes from the fixture via `with_prss()`.
     let spec = TestMaterialSpec::threshold_default(4);
 
     let env = ThresholdTestEnv::builder()
@@ -1484,9 +1484,9 @@ async fn default_insecure_dkg() -> anyhow::Result<()> {
 ///
 /// **IMPORTANT:** Uses secure mode with preprocessing (not insecure mode).
 /// **Requires:**
-/// - `slow_tests` feature flag (PRSS generation at runtime)
+/// - `slow_tests` feature flag
 ///
-/// **Note:** PRSS material is generated at runtime by `.with_prss()`
+/// **Note:** the default epoch (PRSS) comes from the fixture via `.with_prss()`
 #[tokio::test]
 #[cfg(feature = "slow_tests")]
 async fn secure_threshold_keygen() -> anyhow::Result<()> {
@@ -1545,7 +1545,7 @@ async fn secure_threshold_keygen() -> anyhow::Result<()> {
 ///
 /// **IMPORTANT:** Tests crash recovery - party 2 excluded from keygen.
 /// **Requires:**
-/// - `slow_tests` feature flag (PRSS generation at runtime)
+/// - `slow_tests` feature flag
 #[tokio::test]
 #[cfg(feature = "slow_tests")]
 async fn secure_threshold_keygen_crash_online() -> anyhow::Result<()> {
@@ -1652,7 +1652,7 @@ async fn secure_threshold_keygen_crash_online() -> anyhow::Result<()> {
 ///
 /// **IMPORTANT:** Tests crash recovery - party 3 excluded from preprocessing and keygen.
 /// **Requires:**
-/// - `slow_tests` feature flag (PRSS generation at runtime)
+/// - `slow_tests` feature flag
 #[tokio::test]
 #[cfg(feature = "slow_tests")]
 async fn secure_threshold_keygen_crash_preprocessing() -> anyhow::Result<()> {
@@ -2135,7 +2135,6 @@ async fn restart_threshold_servers_from_material(
         pub_storages,
         priv_storages,
         vaults,
-        true,
         None,
         None,
     )

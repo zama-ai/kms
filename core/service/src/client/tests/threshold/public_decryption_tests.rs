@@ -215,8 +215,8 @@ pub async fn decryption_threshold(
         new_epoch: 1,
     };
 
-    // Decryption needs pre-generated FHE keys (identified by `key_id`) plus signing keys. PRSS is bootstrapped at
-    // runtime via `.with_prss()` below.
+    // Decryption needs pre-generated FHE keys (identified by `key_id`) plus signing keys. The
+    // default epoch (PRSS) comes from the fixture with the key shares.
     let spec = if dkg_params == TEST_PARAM {
         TestMaterialSpec::threshold_basic(amount_parties)
     } else {
