@@ -95,6 +95,9 @@ Rules a caller has to know:
   them all to the same signing party. A response whose copies disagree is rejected. The
   one exception is a copy nothing can check: without an EIP-712 domain the two ECDSA
   forms are skipped rather than failed, because rebuilding their message needs one.
+  The internal `signature` does not stand in for them when a domain is available: it
+  covers the payload alone, not the handles or the extra data, so a requested
+  `Ecdsa256k1` is then met only by an EIP-712 form.
 
 ### Preprocessing
 Preprocessing is needed to generate correlated randomness which is used later, when you generate a FHE key set, or a Key Switching Key (KSK). Preprocessed material can only be used _once_ and hence needs to be generated every time you wish to generate an FHE key set.

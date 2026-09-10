@@ -2315,6 +2315,19 @@ mod tests {
             &[],
             &extra_data,
         ));
+        // With a domain the internal signature does not stand in for the EIP-712 forms:
+        // it covers the payload alone, not the handles or the extra data the EIP-712
+        // message binds, so the requested ECDSA is left unverified.
+        assert!(!verify_public_decrypt_signatures(
+            &with_domain,
+            &pivot,
+            1,
+            &vk_of(&pivot),
+            &signed.signature,
+            &[],
+            &[],
+            &extra_data,
+        ));
         // A corrupt internal signature is a rejection, not something the list can
         // paper over.
         let mut bad_internal = signed.signature.clone();

@@ -402,7 +402,9 @@ fn attribute_scheme_entry(
 ///
 /// # What gets checked
 ///
-/// - The deprecated internal `signature`, when the result kind carries one.
+/// - The deprecated internal `signature`, when the result kind carries one. It covers the
+///   payload alone, so it satisfies a requested ECDSA only when no EIP-712 domain is
+///   available.
 /// - The deprecated `external_signature`, whenever an EIP-712 domain is available. It is
 ///   checked *in addition to* the internal one, not instead of it.
 /// - Every entry of `list` for a requested scheme. An entry for a scheme nobody asked
@@ -460,7 +462,13 @@ pub(crate) fn verify_response_signatures(
             ))
         })?;
         signer = Some((*party_id, *address));
-        push_once(&mut verified, SigningSchemeType::Ecdsa256k1);
+        // The internal signature covers the response payload alone, not the fields the
+        // EIP-712 message binds, such as the handles and the extra data. So it meets a
+        // requested ECDSA only when no EIP-712 form can be checked; with a domain, one of
+        // the two EIP-712 forms has to verify.
+        if payloads.eip712_hash.is_none() {
+            push_once(&mut verified, SigningSchemeType::Ecdsa256k1);
+        }
     }
 
     if !sigs.external.is_empty() {
@@ -1320,7 +1328,9 @@ mod tests {
             .unwrap();
         }
 
-        // happy path for empty external_signature, so we check ECDSA
+        // The internal signature alone is not enough: a domain is always available for user
+        // decryption, and the internal signature covers the payload only, so the requested
+        // ECDSA has to be met by an EIP-712 form.
         {
             let pivot_buf = bc2wrap::serialize(&pivot_resp).unwrap();
             let signature = &internal_sign(&DSEP_USER_DECRYPTION, &pivot_buf, &sk0).unwrap();
@@ -1330,14 +1340,19 @@ mod tests {
                 response_extra_data: &extra_data,
                 trusted_eip712_domain: &dummy_domain,
             };
-            authenticate_user_decrypt_and_check_meta_data(
+            let err = authenticate_user_decrypt_and_check_meta_data(
                 &trusted_ctx,
                 &pivot_resp,
                 &signature_buf,
                 &[],
                 &params,
             )
-            .unwrap();
+            .unwrap_err()
+            .to_string();
+            assert!(
+                err.contains("carries no verified Ecdsa256k1 signature"),
+                "the error does not name the unverified scheme: {err}"
+            );
         }
     }
 
