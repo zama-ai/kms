@@ -199,7 +199,7 @@ strum = "=0.27.2"  # Enum utilities - MEDIUM RISK: Reputable individual maintain
 strum_macros = "=0.27.2"  # Enum derive macros - MEDIUM RISK: Reputable individual maintainer (Peternator7)
 syn = { version = "2.0", features = ["full"] }  # Syn macro parsing - MEDIUM RISK: Reputable individual maintainer (dtolnay), 993M downloads
 sysinfo = "0.38.4"  # System information gathering - MEDIUM RISK: Reputable individual maintainer (GuillaumeGomez), 71M+ downloads
-tempfile = "=3.20.0"  # Temporary file handling - MEDIUM RISK: Individual maintainers (Stebalien, KodrAus), 345M+ downloads, test-only dependency
+tempfile = "=3.20.0"  # Temporary file handling - MEDIUM RISK: Individual maintainers (Stebalien, KodrAus), 345M+ downloads
 test-context = "=0.4.1"  # Test context utilities - MEDIUM RISK: Individual maintainers (markhildreth, JasperV), test-only dependency
 # NOTE: when changing the tfhe dependency, consider also updating the pinned version of dylint lints from tfhe (see dylint.toml)
 tfhe = "=1.7.0"  # Fully Homomorphic Encryption library - LOW RISK: Zama

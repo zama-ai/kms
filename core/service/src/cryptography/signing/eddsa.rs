@@ -2,8 +2,10 @@
 
 use super::{SigningError, SigningScheme};
 use crate::impl_generic_versionize;
+#[cfg(feature = "non-wasm")]
+use ed25519_dalek::Signer;
 use ed25519_dalek::{
-    PUBLIC_KEY_LENGTH, Signature as Ed25519Signature, Signer, SigningKey as Ed25519SigningKey,
+    PUBLIC_KEY_LENGTH, Signature as Ed25519Signature, SigningKey as Ed25519SigningKey,
     VerifyingKey as Ed25519VerifyingKey,
 };
 use hashing::DomainSep;
@@ -23,6 +25,7 @@ impl SigningScheme for Ed25519 {
     type SigningKey = Ed25519SigningKey; // TODO(#3078) Should this be a wrapped type? Consider in the last subissue.
     type VerificationKey = Ed25519VerifyingKey;
 
+    #[cfg(feature = "non-wasm")]
     fn sign(dsep: &DomainSep, msg: &[u8], sk: &Ed25519SigningKey) -> Result<Vec<u8>, SigningError> {
         let signed = [&dsep[..], msg].concat();
         let sig: Ed25519Signature = sk
@@ -62,11 +65,6 @@ impl Ed25519 {
     /// Deterministically derive the signing key from a 32-byte seed.
     pub fn keygen_from_seed(seed: &[u8; SEED_LEN]) -> Ed25519SigningKey {
         Ed25519SigningKey::from_bytes(seed)
-    }
-
-    /// The identifier of `vk`: the raw public key, which is also its Solana address.
-    pub fn digest(vk: &Ed25519VerifyingKey) -> Vec<u8> {
-        vk.as_bytes().to_vec()
     }
 }
 

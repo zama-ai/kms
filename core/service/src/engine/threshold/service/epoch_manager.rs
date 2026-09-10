@@ -64,6 +64,7 @@ use threshold_types::role::TwoSetsRole;
 use tokio::sync::RwLock;
 use tokio_util::task::TaskTracker;
 use tonic::{Request, Response};
+use tracing::Instrument;
 
 use crate::{
     cryptography::{signatures::PrivateSigKey, signing::SigningSchemeType},
@@ -326,8 +327,13 @@ impl<
         let all_epochs = self.crypto_storage.read_all_epoch_data().await?;
 
         for (epoch_id, prss) in all_epochs {
+            let context_id = prss.context_id;
             self.session_maker.add_epoch(epoch_id, prss).await;
-            tracing::info!("Loaded epoch data from storage for epoch ID {}.", epoch_id);
+            tracing::info!(
+                context_id = %context_id,
+                epoch_id = %epoch_id,
+                "Loaded epoch data from storage"
+            );
         }
         Ok(())
     }
@@ -376,13 +382,14 @@ impl<
             .make_base_session(session_id, *context_id, NetworkMode::Sync)
             .await?;
 
-        tracing::info!("Starting PRSS for identity {}.", own_identity);
         tracing::info!(
-            "Session has {} parties with threshold {}",
-            base_session.parameters.num_parties(),
-            base_session.parameters.threshold()
+            context_id = %context_id,
+            epoch_id = %epoch_id,
+            num_parties = base_session.parameters.num_parties(),
+            threshold = base_session.parameters.threshold(),
+            "Starting PRSS for identity {}", own_identity
         );
-        tracing::info!("Role assignments: {:?}", base_session.parameters.roles());
+        tracing::debug!("Role assignments: {:?}", base_session.parameters.roles());
 
         // It seems we cannot do something like
         // `Init::default().init(&mut base_session).await?;`
@@ -408,9 +415,9 @@ impl<
             .await?;
         session_maker.add_epoch(*epoch_id, epoch_data).await;
         tracing::info!(
-            "PRSS on epoch ID {} completed successfully for identity {}.",
-            epoch_id,
-            own_identity
+            context_id = %context_id,
+            epoch_id = %epoch_id,
+            "PRSS completed successfully for identity {}", own_identity
         );
         Ok(())
     }
@@ -491,8 +498,8 @@ impl<
         SmallSession<ResiduePolyF4Z64>,
     )> {
         let session_z128 =
-            // Note that we need to use the new epoch ID when deriving the session ID, otherwise we would not be able to create multiple 
-            // new epochs from the same previous epoch, in case an epoch creation failed, as the session ID would be the same and the 
+            // Note that we need to use the new epoch ID when deriving the session ID, otherwise we would not be able to create multiple
+            // new epochs from the same previous epoch, in case an epoch creation failed, as the session ID would be the same and the
             // session maker would return an error.
             async { new_epoch_id.derive_session_id_with_counter(LIFT_Z128_SESSION_COUNTER) }
                 .and_then(|id| {
@@ -1560,44 +1567,58 @@ impl<
         .await?;
         let session_maker = self.session_maker.clone();
         let crypto_storage = self.crypto_storage.clone();
-        self.tracker.spawn(async move {
-            let _creation_lease = creation_lease;
-            let _rate_limiter_permit = rate_limiter_permit;
-            let crypto_storage = crypto_storage;
-            let context_id = context_id;
-            let epoch_id = epoch_id;
-            let meta_store = meta_store;
-            if do_prss
-                && let Err(e) = Self::internal_init_epoch(
-                    session_maker,
-                    &crypto_storage,
-                    &context_id,
-                    &epoch_id,
-                )
-                .await
-            {
-                let err = format!("PRSS initialization failed during epoch creation: {e:?}");
-                let _ =
-                    update_err_req_in_meta_store(&meta_store, meta_permit, err, OP_NEW_EPOCH).await;
-                return;
-            }
-            // Either reshare and commit the resulting EpochOutput, or commit
-            // PRSSInitOnly. Either way, the permit is consumed exactly once.
-            let result: Result<EpochOutput, String> = if let Some(resharing_task) = resharing_task {
-                resharing_task
+        // The epoch change runs detached, so give it its own span: PRSS init and resharing then log
+        // under the context and epoch they belong to without each line repeating them.
+        let epoch_span = tracing::info_span!(
+            "new_epoch",
+            context_id = %context_id,
+            epoch_id = %epoch_id,
+            resharing = resharing_task.is_some(),
+            prss = do_prss
+        );
+        self.tracker.spawn(
+            async move {
+                let _creation_lease = creation_lease;
+                let _rate_limiter_permit = rate_limiter_permit;
+                let crypto_storage = crypto_storage;
+                let context_id = context_id;
+                let epoch_id = epoch_id;
+                let meta_store = meta_store;
+                if do_prss
+                    && let Err(e) = Self::internal_init_epoch(
+                        session_maker,
+                        &crypto_storage,
+                        &context_id,
+                        &epoch_id,
+                    )
                     .await
-                    .map_err(|e| format!("Resharing failed during epoch creation: {e:?}"))
-            } else {
-                Ok(EpochOutput::PRSSInitOnly)
-            };
-            let _ = update_req_in_meta_store::<_, String>(
-                &meta_store,
-                meta_permit,
-                result,
-                OP_NEW_EPOCH,
-            )
-            .await;
-        });
+                {
+                    let err = format!("PRSS initialization failed during epoch creation: {e:?}");
+                    let _ =
+                        update_err_req_in_meta_store(&meta_store, meta_permit, err, OP_NEW_EPOCH)
+                            .await;
+                    return;
+                }
+                // Either reshare and commit the resulting EpochOutput, or commit
+                // PRSSInitOnly. Either way, the permit is consumed exactly once.
+                let result: Result<EpochOutput, String> =
+                    if let Some(resharing_task) = resharing_task {
+                        resharing_task
+                            .await
+                            .map_err(|e| format!("Resharing failed during epoch creation: {e:?}"))
+                    } else {
+                        Ok(EpochOutput::PRSSInitOnly)
+                    };
+                let _ = update_req_in_meta_store::<_, String>(
+                    &meta_store,
+                    meta_permit,
+                    result,
+                    OP_NEW_EPOCH,
+                )
+                .await;
+            }
+            .instrument(epoch_span),
+        );
 
         Ok(Response::new(Empty {}))
     }
@@ -1775,7 +1796,7 @@ pub(crate) mod tests {
         client::test_tools::{self},
         consts::{
             DEFAULT_EPOCH_ID, DEFAULT_MPC_CONTEXT, PRIVATE_STORAGE_PREFIX_THRESHOLD_ALL,
-            PUBLIC_STORAGE_PREFIX_THRESHOLD_ALL, SIGNING_KEY_ID, default_extra_data,
+            PUBLIC_STORAGE_PREFIX_THRESHOLD_ALL, default_extra_data,
         },
         cryptography::signatures::gen_sig_keys,
         dummy_domain,
@@ -1798,6 +1819,7 @@ pub(crate) mod tests {
             ram::{self, RamStorage},
             read_all_data_versioned, store_versioned_at_request_and_epoch_id,
             store_versioned_at_request_id,
+            test_support::StorageEntry,
             tests::TestType,
         },
     };
@@ -1815,6 +1837,8 @@ pub(crate) mod tests {
         tfhe_internals::test_feature::gen_key_set,
     };
     use threshold_types::role::Role;
+
+    mod failed_reshare;
 
     impl<
         Init: PRSSInit<ResiduePolyF4Z64, OutputType = PRSSSetup<ResiduePolyF4Z64>>
@@ -1905,7 +1929,7 @@ pub(crate) mod tests {
         )
         .await
         .unwrap();
-        ensure_client_keys_exist(Some(material_path), &SIGNING_KEY_ID, true).await;
+        ensure_client_keys_exist(Some(material_path), true).await;
 
         // create parties and run PrssSetup
         let server_handles = test_tools::setup_threshold_no_client(
@@ -3036,10 +3060,10 @@ pub(crate) mod tests {
             .add_epoch(keeper_epoch_id, epoch.clone())
             .await;
 
-        // Fault-injecting private storage that we can flip between failing and succeeding on delete.
+        // Fault-injecting private storage that can fail the key-share deletion once.
         let crypto_storage = ThresholdCryptoMaterialStorage::new(
             RamStorage::new(),
-            FailingRamStorage::new(100),
+            FailingRamStorage::new(),
             None,
             HashMap::new(),
         );
@@ -3070,8 +3094,11 @@ pub(crate) mod tests {
             )
             .await
             .unwrap();
-            // Make every delete fail to simulate a partial failure mid-destruction.
-            guard.set_fail_deletes(true);
+            guard.set_fail_delete_at(StorageEntry::new(
+                data_id,
+                Some(epoch_id),
+                data_type.to_string(),
+            ));
         }
 
         // First attempt: deletion fails, so the whole operation must fail.
@@ -3113,7 +3140,7 @@ pub(crate) mod tests {
         }
 
         // Now let deletes succeed and retry: the operation must now complete and clean everything up.
-        priv_storage.lock().await.set_fail_deletes(false);
+        priv_storage.lock().await.clear_fail_points();
         RealThresholdEpochManager::<
             ram::RamStorage,
             FailingRamStorage,
@@ -3136,117 +3163,6 @@ pub(crate) mod tests {
             assert!(
                 !guard
                     .data_exists(&epoch_data_id, &PrivDataType::EpochData.to_string())
-                    .await
-                    .unwrap()
-            );
-        }
-    }
-
-    /// The public key material of a key carries no epoch in its storage path, hence it belongs to
-    /// every epoch of that key. A reshare that fails to store its shares must therefore keep that
-    /// material, and delete the private material of the new epoch only.
-    /// This test validates a fix of a bug found in E2E test on 0.14.x
-    #[tokio::test]
-    async fn test_failed_reshare_keeps_public_key_material() {
-        let mut rng = AesRng::seed_from_u64(45);
-        let epoch_manager = make_epoch_manager::<EmptyPrss>(&mut rng).await;
-        let crypto_storage = &epoch_manager.crypto_storage;
-
-        let new_epoch_id = EpochId::new_random(&mut rng);
-        let key_id = derive_request_id("reshared_key").unwrap();
-        let preproc_id = derive_request_id("reshared_key_preproc").unwrap();
-
-        {
-            let public_storage = crypto_storage.inner.get_public_storage();
-            let mut guard = public_storage.lock().await;
-            for public_type in PubDataType::iter() {
-                store_versioned_at_request_id(
-                    &mut (*guard),
-                    &key_id,
-                    &TestType { i: 7 },
-                    &public_type.to_string(),
-                )
-                .await
-                .unwrap();
-            }
-        }
-
-        // Occupy the slot that the reshare writes its shares to, which makes the reshare fail and
-        // roll the new epoch back. The duplicate check only tests for presence, hence the content of
-        // the slot is irrelevant.
-        {
-            let private_storage = crypto_storage.get_private_storage();
-            let mut guard = private_storage.lock().await;
-            store_versioned_at_request_and_epoch_id(
-                &mut (*guard),
-                &key_id,
-                &new_epoch_id,
-                &TestType { i: 42 },
-                &PrivDataType::FheKeyInfo.to_string(),
-            )
-            .await
-            .unwrap();
-        }
-
-        let (_keyset, compressed_keyset) =
-            gen_key_set(crate::consts::TEST_PARAM, tfhe::Tag::default(), &mut rng).unwrap();
-        let sk = epoch_manager.base_kms.sig_key().unwrap();
-        let res = RealThresholdEpochManager::<
-            RamStorage,
-            RamStorage,
-            EmptyPrss,
-            SecureReshareSecretKeys,
-        >::store_reshared_keys(
-            crypto_storage,
-            &epoch_manager.session_maker,
-            &sk,
-            &[SigningSchemeType::Ecdsa256k1],
-            new_epoch_id,
-            vec![],
-            &make_verified_previous_epoch(
-                *DEFAULT_EPOCH_ID,
-                &key_id,
-                &preproc_id,
-                crate::consts::TEST_PARAM,
-            ),
-            vec![VerifiedPublicMaterial::Compressed(compressed_keyset)],
-            vec![PrivateKeySet::init_dummy(crate::consts::TEST_PARAM)],
-            &dummy_domain(),
-            vec![],
-        )
-        .await;
-        assert!(
-            res.unwrap_err()
-                .to_string()
-                .contains("Failed to store all reshared keys for new epoch 8b4803c41504a7acc9a59ebfb4838379f2b50c3ba0dd4a0b984bd7e566ab1b56: [Err(Duplicate)]")
-        );
-
-        {
-            let public_storage = crypto_storage.inner.get_public_storage();
-            let guard = public_storage.lock().await;
-            // Validate that no public material of the key was deleted.
-            for public_type in PubDataType::iter() {
-                assert!(
-                    guard
-                        .data_exists(&key_id, &public_type.to_string())
-                        .await
-                        .unwrap(),
-                    "{public_type} of key {key_id} must survive a failed reshare"
-                );
-            }
-        }
-
-        // The rollback ran: the private material of the new epoch is gone.
-        {
-            let private_storage = crypto_storage.get_private_storage();
-            let guard = private_storage.lock().await;
-            assert!(
-                !guard
-                    .data_exists_at_epoch(
-                        &key_id,
-                        &new_epoch_id,
-                        &PrivDataType::FheKeyInfo.to_string()
-                    )
                     .await
                     .unwrap()
             );

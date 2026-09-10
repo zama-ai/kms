@@ -5,14 +5,15 @@ services:
 
   # 1. We generate signing keys and CA certificates for all nodes
   dev-kms-core-gen-signing-keys-ca-certs:
-    image: ghcr.io/zama-ai/kms/core-service:latest-dev
+    image: ghcr.io/zama-ai/kms/core-service-insecure:latest-dev
     build:
       context: .
       target: dev
       dockerfile: ./docker/core/service/Dockerfile
       cache_from:
-        - ghcr.io/zama-ai/kms/core-service:latest-dev
+        - ghcr.io/zama-ai/kms/core-service-insecure:latest-dev
       args:
+        KMS_BINARIES_IMAGE: ${KMS_BINARIES_IMAGE:-ghcr.io/zama-ai/kms/kms-binaries-insecure:latest-dev}
         LTO_RELEASE: ${LTO_RELEASE}
         RUST_IMAGE_VERSION: ${RUST_IMAGE_VERSION}
     env_file:
@@ -66,14 +67,15 @@ services:
   # 2. We start all cores
   dev-kms-core-1:
     hostname: abcd.dev-kms-core-1.com
-    image: ghcr.io/zama-ai/kms/core-service:latest-dev
+    image: ghcr.io/zama-ai/kms/core-service-insecure:latest-dev
     build:
       context: .
       target: dev
       dockerfile: ./docker/core/service/Dockerfile
       cache_from:
-        - ghcr.io/zama-ai/kms/core-service:latest-dev
+        - ghcr.io/zama-ai/kms/core-service-insecure:latest-dev
       args:
+        KMS_BINARIES_IMAGE: ${KMS_BINARIES_IMAGE:-ghcr.io/zama-ai/kms/kms-binaries-insecure:latest-dev}
         LTO_RELEASE: ${LTO_RELEASE}
         RUST_IMAGE_VERSION: ${RUST_IMAGE_VERSION}
     ports:
@@ -110,14 +112,15 @@ services:
 
   dev-kms-core-2:
     hostname: abcd.dev-kms-core-2.com
-    image: ghcr.io/zama-ai/kms/core-service:latest-dev
+    image: ghcr.io/zama-ai/kms/core-service-insecure:latest-dev
     build:
       context: .
       target: dev
       dockerfile: ./docker/core/service/Dockerfile
       cache_from:
-        - ghcr.io/zama-ai/kms/core-service:latest-dev
+        - ghcr.io/zama-ai/kms/core-service-insecure:latest-dev
       args:
+        KMS_BINARIES_IMAGE: ${KMS_BINARIES_IMAGE:-ghcr.io/zama-ai/kms/kms-binaries-insecure:latest-dev}
         LTO_RELEASE: ${LTO_RELEASE}
         RUST_IMAGE_VERSION: ${RUST_IMAGE_VERSION}
     ports:
@@ -154,14 +157,15 @@ services:
 
   dev-kms-core-3:
     hostname: abcd.dev-kms-core-3.com
-    image: ghcr.io/zama-ai/kms/core-service:latest-dev
+    image: ghcr.io/zama-ai/kms/core-service-insecure:latest-dev
     build:
       context: .
       target: dev
       dockerfile: ./docker/core/service/Dockerfile
       cache_from:
-        - ghcr.io/zama-ai/kms/core-service:latest-dev
+        - ghcr.io/zama-ai/kms/core-service-insecure:latest-dev
       args:
+        KMS_BINARIES_IMAGE: ${KMS_BINARIES_IMAGE:-ghcr.io/zama-ai/kms/kms-binaries-insecure:latest-dev}
         LTO_RELEASE: ${LTO_RELEASE}
         RUST_IMAGE_VERSION: ${RUST_IMAGE_VERSION}
     ports:
@@ -198,14 +202,15 @@ services:
 
   dev-kms-core-4:
     hostname: abcd.dev-kms-core-4.com
-    image: ghcr.io/zama-ai/kms/core-service:latest-dev
+    image: ghcr.io/zama-ai/kms/core-service-insecure:latest-dev
     build:
       context: .
       target: dev
       dockerfile: ./docker/core/service/Dockerfile
       cache_from:
-        - ghcr.io/zama-ai/kms/core-service:latest-dev
+        - ghcr.io/zama-ai/kms/core-service-insecure:latest-dev
       args:
+        KMS_BINARIES_IMAGE: ${KMS_BINARIES_IMAGE:-ghcr.io/zama-ai/kms/kms-binaries-insecure:latest-dev}
         LTO_RELEASE: ${LTO_RELEASE}
         RUST_IMAGE_VERSION: ${RUST_IMAGE_VERSION}
     ports:
@@ -242,14 +247,15 @@ services:
 
   # 3. Initialize the different cores
   dev-kms-core-init:
-    image: ghcr.io/zama-ai/kms/core-service:latest-dev
+    image: ghcr.io/zama-ai/kms/core-service-insecure:latest-dev
     build:
       context: .
       target: dev
       dockerfile: ./docker/core/service/Dockerfile
       cache_from:
-        - ghcr.io/zama-ai/kms/core-service:latest-dev
+        - ghcr.io/zama-ai/kms/core-service-insecure:latest-dev
       args:
+        KMS_BINARIES_IMAGE: ${KMS_BINARIES_IMAGE:-ghcr.io/zama-ai/kms/kms-binaries-insecure:latest-dev}
         LTO_RELEASE: ${LTO_RELEASE}
         RUST_IMAGE_VERSION: ${RUST_IMAGE_VERSION}
     depends_on:

@@ -252,9 +252,10 @@ where
             BroadcastValue::RingVector(cur_values) => {
                 if cur_values.len() != amount {
                     tracing::warn!(
-                        "I am party {:?} and party {:?} did not broadcast the correct amount of shares and is thus malicious",
+                        "I am party {:?} and party {:?} did not broadcast the correct amount of shares ({} instead of {amount}) and is thus malicious",
                         session.my_role().one_based(),
-                        cur_role.one_based()
+                        cur_role.one_based(),
+                        cur_values.len()
                     );
                     session.add_corrupt_with_reason(
                         cur_role,
@@ -434,7 +435,10 @@ async fn check_d<Z: Ring, Ses: SmallSessionHandles<Z>>(
                 "Party {cur_role} did not send correct values during PRSS-init and
                 has been added to the list of corrupt parties"
             );
-            session.add_corrupt(cur_role);
+            session.add_corrupt_with_reason(
+                cur_role,
+                "sent a d share inconsistent with x*y+v during PRSS-init",
+            );
         }
     }
     Ok(())

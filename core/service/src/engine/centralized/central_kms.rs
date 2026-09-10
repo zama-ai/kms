@@ -924,22 +924,22 @@ impl<
         RealCentralizedKms<PubS, PrivS>,
         (HealthReporter, HealthServer<impl Health>),
     )> {
-        let key_info: HashMap<(RequestId, EpochId), KmsFheKeyHandles> =
+        let key_info_with_epoch: HashMap<(RequestId, EpochId), KmsFheKeyHandles> =
             read_all_data_from_all_epochs_versioned(
                 &private_storage,
                 &PrivDataType::FhePrivateKey.to_string(),
             )
             .await?;
-        let entries: Vec<_> = key_info
+        let key_info: Vec<_> = key_info_with_epoch
             .iter()
             .map(|((id, _), handle)| (*id, handle.public_key_info.clone()))
             .collect();
         tracing::info!(
             "loaded key_info with key_ids: {:?}",
-            key_info.keys().collect::<Vec<_>>()
+            key_info_with_epoch.keys().collect::<Vec<_>>()
         );
         let public_key_info = select_data_from_max_epoch(
-            key_info
+            key_info_with_epoch
                 .iter()
                 .map(|((id, epoch_id), info)| ((*id, *epoch_id), info.public_key_info.clone())),
         );
@@ -956,10 +956,10 @@ impl<
 
         // Verify that public storage holds exactly what private storage says it should, and
         // that it is intact. Private storage is the reference; extra material in public
-        // storage is ignored.
+        // storage is logged as an error but does not stop boot.
         verify_storage_material(
             &public_storage,
-            &entries,
+            &key_info,
             &crs_info,
             &validation_material,
             &sk,
@@ -972,7 +972,7 @@ impl<
             public_storage,
             private_storage,
             backup_vault,
-            key_info,
+            key_info_with_epoch,
         );
         let base_kms = BaseKmsStruct::new(KMSType::Centralized, sk)?;
 

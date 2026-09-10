@@ -210,13 +210,15 @@ impl<R: Rng + CryptoRng> Keychain for SecretShareKeychain<R> {
             .as_ref()
             .ok_or_else(|| anyhow_error_and_log("Operator not set"))?;
         match backup_ct.priv_data_type {
-            PrivDataType::SigningKey => {
-                unwrapped_dec_key
-                    .decrypt(&backup_ct.ciphertext)
-                    .map_err(|e| {
-                        anyhow::anyhow!("Could not decrypt backed up secret shared signing key {e}")
-                    })
-            }
+            // Both halves of the node's signing identity, handled alike.
+            PrivDataType::SigningKey | PrivDataType::SigningSeed => unwrapped_dec_key
+                .decrypt(&backup_ct.ciphertext)
+                .map_err(|e| {
+                    anyhow::anyhow!(
+                        "Could not decrypt backed up secret shared {} {e}",
+                        backup_ct.priv_data_type
+                    )
+                }),
             PrivDataType::FheKeyInfo => {
                 unwrapped_dec_key
                     .decrypt(&backup_ct.ciphertext)

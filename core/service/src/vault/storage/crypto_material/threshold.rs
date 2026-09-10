@@ -200,27 +200,6 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: StorageExt + Send + Sync + 's
         .await
     }
 
-    /// Purge threshold FHE key material from disk **and** from the in-memory
-    /// cache.
-    pub(crate) async fn purge_fhe_keys(&self, req_id: &RequestId, epoch_id: &EpochId) -> bool {
-        let storage_ok = self
-            .inner
-            .purge_material(
-                req_id,
-                Some(epoch_id),
-                &[
-                    PubDataType::PublicKey,
-                    PubDataType::ServerKey,
-                    PubDataType::CompressedXofKeySet,
-                ],
-                &[PrivDataType::FheKeyInfo],
-            )
-            .await;
-        // Lock-order: cache is acquired after pub/priv have been released.
-        self.fhe_keys.write().await.remove(&(*req_id, *epoch_id));
-        storage_ok
-    }
-
     /// Drop all cached FHE keys for the given epoch, returning the number of
     /// entries removed. Cache-only — deleting the on-disk material is the
     /// caller's job (see `destroy_epoch`).
