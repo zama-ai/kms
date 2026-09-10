@@ -650,7 +650,7 @@ dependencies = [
  "fnv",
  "hashbrown 0.17.1",
  "itertools 0.14.0",
- "num-bigint",
+ "num-bigint 0.4.8",
  "num-integer",
  "num-traits",
  "rayon",
@@ -668,7 +668,7 @@ dependencies = [
  "ark-serialize 0.3.0",
  "ark-std 0.3.0",
  "derivative",
- "num-bigint",
+ "num-bigint 0.4.8",
  "num-traits",
  "paste",
  "rustc_version 0.3.3",
@@ -688,7 +688,7 @@ dependencies = [
  "derivative",
  "digest 0.10.7",
  "itertools 0.10.5",
- "num-bigint",
+ "num-bigint 0.4.8",
  "num-traits",
  "paste",
  "rustc_version 0.4.1",
@@ -709,7 +709,7 @@ dependencies = [
  "digest 0.10.7",
  "educe",
  "itertools 0.13.0",
- "num-bigint",
+ "num-bigint 0.4.8",
  "num-traits",
  "paste",
  "zeroize",
@@ -727,7 +727,7 @@ dependencies = [
  "ark-std 0.6.0",
  "digest 0.10.7",
  "educe",
- "num-bigint",
+ "num-bigint 0.4.8",
  "num-traits",
  "rayon",
  "zeroize",
@@ -779,7 +779,7 @@ version = "0.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "db2fd794a08ccb318058009eefdf15bcaaaaf6f8161eb3345f907222bac38b20"
 dependencies = [
- "num-bigint",
+ "num-bigint 0.4.8",
  "num-traits",
  "quote",
  "syn 1.0.109",
@@ -791,7 +791,7 @@ version = "0.4.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7abe79b0e4288889c4574159ab790824d0033b9fdcb2a112a3182fac2e514565"
 dependencies = [
- "num-bigint",
+ "num-bigint 0.4.8",
  "num-traits",
  "proc-macro2",
  "quote",
@@ -804,7 +804,7 @@ version = "0.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "09be120733ee33f7693ceaa202ca41accd5653b779563608f1234f78ae07c4b3"
 dependencies = [
- "num-bigint",
+ "num-bigint 0.4.8",
  "num-traits",
  "proc-macro2",
  "quote",
@@ -817,7 +817,7 @@ version = "0.6.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "4a0691ed21ef00ef89c1e9bda832eba493dda3ec2f8d892fb25b705f73f06bb8"
 dependencies = [
- "num-bigint",
+ "num-bigint 0.4.8",
  "num-traits",
  "proc-macro2",
  "quote",
@@ -858,7 +858,7 @@ checksum = "adb7b85a02b83d2f22f89bd5cac66c9c89474240cb6207cb1efc16d098e822a5"
 dependencies = [
  "ark-std 0.4.0",
  "digest 0.10.7",
- "num-bigint",
+ "num-bigint 0.4.8",
 ]
 
 [[package]]
@@ -870,7 +870,7 @@ dependencies = [
  "ark-std 0.5.0",
  "arrayvec",
  "digest 0.10.7",
- "num-bigint",
+ "num-bigint 0.4.8",
 ]
 
 [[package]]
@@ -882,7 +882,7 @@ dependencies = [
  "ark-serialize-derive",
  "ark-std 0.6.0",
  "digest 0.10.7",
- "num-bigint",
+ "num-bigint 0.4.8",
  "rayon",
  "serde_with",
 ]
@@ -2324,7 +2324,7 @@ dependencies = [
  "data-encoding",
  "half 2.7.1",
  "nom",
- "num-bigint",
+ "num-bigint 0.4.8",
  "num-rational",
  "num-traits",
  "separator",
@@ -2965,7 +2965,7 @@ dependencies = [
  "asn1-rs 0.5.2",
  "displaydoc",
  "nom",
- "num-bigint",
+ "num-bigint 0.4.8",
  "num-traits",
  "rusticata-macros",
 ]
@@ -2979,7 +2979,7 @@ dependencies = [
  "asn1-rs 0.7.2",
  "displaydoc",
  "nom",
- "num-bigint",
+ "num-bigint 0.4.8",
  "num-traits",
  "rusticata-macros",
 ]
@@ -5127,6 +5127,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "num-bigint"
+version = "0.5.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "93e7820bc0a80a0238e650327316f929ba18d5be054b647490a3a6a339f3e7c0"
+dependencies = [
+ "num-integer",
+ "num-traits",
+]
+
+[[package]]
 name = "num-bigint-dig"
 version = "0.8.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5185,7 +5195,7 @@ version = "0.4.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f83d14da390562dca69fc84082e73e548e1ad308d24accdedd2720017cb37824"
 dependencies = [
- "num-bigint",
+ "num-bigint 0.4.8",
  "num-integer",
  "num-traits",
 ]
@@ -6295,7 +6305,7 @@ dependencies = [
  "chrono",
  "either",
  "nom",
- "num-bigint",
+ "num-bigint 0.4.8",
  "num-integer",
  "num-traits",
  "once_cell",
@@ -6647,7 +6657,7 @@ dependencies = [
  "bytes",
  "fastrlp 0.3.1",
  "fastrlp 0.4.0",
- "num-bigint",
+ "num-bigint 0.4.8",
  "num-integer",
  "num-traits",
  "parity-scale-codec",
@@ -7681,7 +7691,8 @@ dependencies = [
 [[package]]
 name = "tfhe"
 version = "1.8.0"
-source = "git+https://github.com/zama-ai/tfhe-rs.git?rev=2277991cd81c2995054889b8e512d1c048baab3b#2277991cd81c2995054889b8e512d1c048baab3b"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "12c1dec4e123492cec47594236a388cda589468b5f25a01f473efb0d87e3fa9a"
 dependencies = [
  "aligned-vec",
  "bincode 1.3.3",
@@ -7707,7 +7718,8 @@ dependencies = [
 [[package]]
 name = "tfhe-csprng"
 version = "0.10.0"
-source = "git+https://github.com/zama-ai/tfhe-rs.git?rev=2277991cd81c2995054889b8e512d1c048baab3b#2277991cd81c2995054889b8e512d1c048baab3b"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e0f36be0a9dee8018cbe2be48a0f6c1b094ba022be5c29da7a35c537a9e98022"
 dependencies = [
  "aes 0.9.1",
  "getrandom 0.2.17",
@@ -7720,7 +7732,8 @@ dependencies = [
 [[package]]
 name = "tfhe-fft"
 version = "0.10.1"
-source = "git+https://github.com/zama-ai/tfhe-rs.git?rev=2277991cd81c2995054889b8e512d1c048baab3b#2277991cd81c2995054889b8e512d1c048baab3b"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "960a6a2ef1869320837e3d45ab60bbc031c045005eb2578b20fe074a982c2e56"
 dependencies = [
  "aligned-vec",
  "bytemuck",
@@ -7734,7 +7747,8 @@ dependencies = [
 [[package]]
 name = "tfhe-ntt"
 version = "0.7.1"
-source = "git+https://github.com/zama-ai/tfhe-rs.git?rev=2277991cd81c2995054889b8e512d1c048baab3b#2277991cd81c2995054889b8e512d1c048baab3b"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "10650c743ade46b166c698c8349902ed5986784a7db418c51f810bea25f09e3d"
 dependencies = [
  "aligned-vec",
  "bytemuck",
@@ -7744,7 +7758,8 @@ dependencies = [
 [[package]]
 name = "tfhe-safe-serialize"
 version = "0.1.1"
-source = "git+https://github.com/zama-ai/tfhe-rs.git?rev=2277991cd81c2995054889b8e512d1c048baab3b#2277991cd81c2995054889b8e512d1c048baab3b"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "09fc6480b20057adbb99ec2cd510561f181863e57303a32bc2eca5c3ea163097"
 dependencies = [
  "bincode 1.3.3",
  "serde",
@@ -7754,7 +7769,8 @@ dependencies = [
 [[package]]
 name = "tfhe-versionable"
 version = "0.8.0"
-source = "git+https://github.com/zama-ai/tfhe-rs.git?rev=2277991cd81c2995054889b8e512d1c048baab3b#2277991cd81c2995054889b8e512d1c048baab3b"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "41fb1f1e4dd17a046df5be453e82459305e391d66ab2f9067ef3d5f7a04875c9"
 dependencies = [
  "aligned-vec",
  "num-complex",
@@ -7765,7 +7781,8 @@ dependencies = [
 [[package]]
 name = "tfhe-versionable-derive"
 version = "0.8.0"
-source = "git+https://github.com/zama-ai/tfhe-rs.git?rev=2277991cd81c2995054889b8e512d1c048baab3b#2277991cd81c2995054889b8e512d1c048baab3b"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f1a35478dc88bf6978e21c9849cde5fd72bc63331e80732bbb64df2d94bfc688"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -7775,7 +7792,8 @@ dependencies = [
 [[package]]
 name = "tfhe-zk-pok"
 version = "0.9.0"
-source = "git+https://github.com/zama-ai/tfhe-rs.git?rev=2277991cd81c2995054889b8e512d1c048baab3b#2277991cd81c2995054889b8e512d1c048baab3b"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "cd4d91594d5434b3328f435ed77db1b7d0584e91128521a0014dab923ddcffc9"
 dependencies = [
  "ark-bls12-381",
  "ark-ec",
@@ -7783,7 +7801,7 @@ dependencies = [
  "ark-poly",
  "getrandom 0.2.17",
  "itertools 0.15.0",
- "num-bigint",
+ "num-bigint 0.5.1",
  "rand 0.8.6",
  "rayon",
  "serde",
