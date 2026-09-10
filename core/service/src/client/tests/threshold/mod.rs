@@ -2,7 +2,8 @@ mod common;
 mod crs_gen_tests;
 mod custodian_backup_tests;
 mod custodian_context_tests;
-// These are slow tests that we run in the nightly scheduled run. Some are very slow.
+// CI runs tests prefixed with `nightly_` only on scheduled runs.
+// The remaining tests also run in regular CI.
 #[cfg(feature = "slow_tests")]
 mod extended_tests;
 mod key_gen_tests;
