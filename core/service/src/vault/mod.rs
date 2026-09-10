@@ -28,6 +28,9 @@ pub enum VaultDataType {
     EncryptedPrivData(PrivDataType),
     // Unencrypted data. May be either private or public data.
     UnencryptedData(String),
+    /// Custodian recovery material at `RecoveryMaterial/<context_id>`, outside every backup id.
+    /// The keychain does not encrypt it; see `store_recovery_material`.
+    RecoveryMaterial,
 }
 
 impl fmt::Display for VaultDataType {
@@ -42,6 +45,7 @@ impl fmt::Display for VaultDataType {
                 write!(f, "{priv_data_type}")
             }
             VaultDataType::UnencryptedData(data_type) => write!(f, "{data_type}"),
+            VaultDataType::RecoveryMaterial => write!(f, "RecoveryMaterial"),
         }
     }
 }

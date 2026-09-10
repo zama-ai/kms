@@ -230,8 +230,10 @@ pub enum PubDataType {
     VerfAddress, // DEPRECATED (superseded by [`PubDataType::TypedVerfAddress`]): The ethereum address of the KMS core, needed for KMS signature verification
     DecompressionKey,
     CACert, // Certificate that signs TLS certificates used by MPC nodes // TODO will change in connection with #2491, also see #2723
-    /// Custodian recovery material. Lives in the backup vault, unencrypted, and is authenticated
-    /// by the operator signature it carries.
+    #[deprecated(
+        since = "0.15.0",
+        note = "recovery material lives in the backup vault under VaultDataType::RecoveryMaterial; public storage only holds copies left by earlier releases"
+    )]
     RecoveryMaterial,
     CompressedXofKeySet, // Compressed xof keyset
     /// A signature scheme's public verification key, holding one object per scheme.

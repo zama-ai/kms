@@ -1362,7 +1362,7 @@ mod tests {
             DestroyCustodianContextRequest, DestroyMpcContextRequest, NewCustodianContextRequest,
             NewMpcContextRequest,
         },
-        rpc_types::{KMSType, PrivDataType, PubDataType},
+        rpc_types::{KMSType, PrivDataType},
     };
     use rand::{SeedableRng, rngs::OsRng};
     use std::time::SystemTime;
@@ -2649,7 +2649,7 @@ mod tests {
                 .store_bytes(
                     b"pre-existing recovery material",
                     &context_id,
-                    &PubDataType::RecoveryMaterial.to_string(),
+                    &VaultDataType::RecoveryMaterial.to_string(),
                 )
                 .await
                 .unwrap();

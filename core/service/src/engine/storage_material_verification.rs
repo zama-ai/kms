@@ -274,6 +274,7 @@ where
                 // Verifies both the legacy verification key and address together.
                 verify_signing_key_material(public_storage, signing_key).await?;
             }
+            #[expect(deprecated)]
             PubDataType::RecoveryMaterial => {
                 verify_recovery_material(recovery_material, signing_key)?;
             }
@@ -635,6 +636,7 @@ fn expected_public_material(
             PubDataType::CRS => crs_entries.keys().copied().collect(),
             // Recovery material lives in the backup vault. Anything left here is a leftover of
             // the move, or was planted, and either way is only ever reported.
+            #[expect(deprecated)]
             PubDataType::RecoveryMaterial => BTreeSet::new(),
             PubDataType::VerfKey | PubDataType::VerfAddress | PubDataType::CACert => {
                 BTreeSet::from([*SIGNING_KEY_ID])
@@ -1458,6 +1460,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(deprecated)]
     fn expected_public_material_covers_fixed_id_signing_material() {
         let expected = expected_public_material(&[], &HashMap::new());
         for data_type in [

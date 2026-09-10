@@ -3,7 +3,7 @@ use crate::{
     backup::{custodian::CustodianContextAnchor, operator::RecoveryValidationMaterial},
     conf::{FileStorage, RamStorage, S3Storage, Storage as StorageConf},
     engine::context,
-    vault::Vault,
+    vault::{Vault, VaultDataType},
 };
 use anyhow::anyhow;
 use aws_sdk_s3::Client as S3Client;
@@ -531,7 +531,7 @@ pub async fn store_recovery_material<S: Storage>(
         .store_data(
             material,
             &context_id,
-            &PubDataType::RecoveryMaterial.to_string(),
+            &VaultDataType::RecoveryMaterial.to_string(),
         )
         .await
         .map_err(|e| {
@@ -610,7 +610,7 @@ pub async fn read_recovery_material_at_id<S: StorageReader>(
     let material: RecoveryValidationMaterial = read_versioned_at_request_id(
         backup_storage,
         id,
-        &PubDataType::RecoveryMaterial.to_string(),
+        &VaultDataType::RecoveryMaterial.to_string(),
     )
     .await?;
     let payload_id = material.custodian_context().context_id;
@@ -627,7 +627,7 @@ pub async fn read_all_recovery_material<S: StorageReader>(
     backup_storage: &S,
 ) -> anyhow::Result<HashMap<RequestId, RecoveryValidationMaterial>> {
     let id_set = backup_storage
-        .all_data_ids(&PubDataType::RecoveryMaterial.to_string())
+        .all_data_ids(&VaultDataType::RecoveryMaterial.to_string())
         .await?;
     let mut res = HashMap::with_capacity(id_set.len());
     for id in id_set.iter() {
@@ -649,7 +649,7 @@ pub async fn delete_recovery_material_at_id<S: Storage>(
     delete_at_request_id(
         backup_storage,
         id,
-        &PubDataType::RecoveryMaterial.to_string(),
+        &VaultDataType::RecoveryMaterial.to_string(),
     )
     .await
 }
@@ -965,7 +965,7 @@ pub mod tests {
             &mut storage,
             &foreign_id,
             &material,
-            &PubDataType::RecoveryMaterial.to_string(),
+            &VaultDataType::RecoveryMaterial.to_string(),
         )
         .await
         .unwrap();

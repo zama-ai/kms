@@ -32,7 +32,7 @@ use crate::{
         validation::RequestIdParsingErr,
     },
     vault::{
-        Vault,
+        Vault, VaultDataType,
         keychain::KeychainProxy,
         storage::{
             Storage, StorageReader, crypto_material::CryptoMaterialStorage,
@@ -50,7 +50,7 @@ use kms_grpc::{
 };
 use kms_grpc::{
     kms::v1::{Empty, KeyMaterialAvailabilityResponse, OperatorPublicKey},
-    rpc_types::{PrivDataType, PubDataType},
+    rpc_types::PrivDataType,
 };
 use observability::metrics_names::{
     OP_CUSTODIAN_BACKUP_RECOVERY, OP_CUSTODIAN_RECOVERY_INIT, OP_FETCH_PK, OP_RESTORE_FROM_BACKUP,
@@ -902,7 +902,7 @@ async fn recovery_context(
     installed: Option<RequestId>,
     requested: Option<RequestId>,
 ) -> Result<(RequestId, RecoveryValidationMaterial), RecoveryContextError> {
-    let data_type = PubDataType::RecoveryMaterial.to_string();
+    let data_type = VaultDataType::RecoveryMaterial.to_string();
     let guarded_vault = backup_vault.lock().await;
     if !matches!(
         guarded_vault.keychain.as_ref(),
@@ -942,7 +942,7 @@ async fn read_vault_material<V: StorageReader>(
     id: &RequestId,
 ) -> Result<RecoveryValidationMaterial, RecoveryContextError> {
     if !vault
-        .data_exists(id, &PubDataType::RecoveryMaterial.to_string())
+        .data_exists(id, &VaultDataType::RecoveryMaterial.to_string())
         .await?
     {
         return Err(RecoveryContextError::Unknown(*id));
@@ -1668,7 +1668,7 @@ mod tests {
                     &sk,
                 ),
                 &id,
-                &PubDataType::RecoveryMaterial.to_string(),
+                &VaultDataType::RecoveryMaterial.to_string(),
             )
             .await
             .unwrap();

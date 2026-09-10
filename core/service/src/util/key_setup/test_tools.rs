@@ -12,7 +12,7 @@ use crate::vault::storage::file::FileStorage;
 use crate::vault::storage::{
     StorageReaderExt, StorageType, delete_all_at_request_id, delete_at_request_and_epoch_id,
 };
-use kms_grpc::rpc_types::{PrivDataType, PubDataType};
+use kms_grpc::rpc_types::PrivDataType;
 use kms_grpc::{EpochId, RequestId};
 use std::path::Path;
 
@@ -95,7 +95,7 @@ pub async fn purge_backup(backup_path: Option<&Path>, storage_prefixes: &[Option
             continue;
         };
         while let Some(entry) = entries.next_entry().await.unwrap() {
-            if entry.file_name() != *PubDataType::RecoveryMaterial.to_string() {
+            if entry.file_name() != *VaultDataType::RecoveryMaterial.to_string() {
                 let _ = tokio::fs::remove_dir_all(entry.path()).await;
             }
         }
@@ -114,7 +114,7 @@ pub async fn backup_exists(
         let mut entries = tokio::fs::read_dir(storage.root_dir()).await.unwrap();
         let mut has_backup = false;
         while let Some(entry) = entries.next_entry().await.unwrap() {
-            if entry.file_name() != *PubDataType::RecoveryMaterial.to_string() {
+            if entry.file_name() != *VaultDataType::RecoveryMaterial.to_string() {
                 has_backup = true;
             }
         }

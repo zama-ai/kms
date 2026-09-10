@@ -1292,7 +1292,7 @@ async fn write_backup_keys() {
             .lock()
             .await
             .storage
-            .data_exists(&req_id, &PubDataType::RecoveryMaterial.to_string())
+            .data_exists(&req_id, &VaultDataType::RecoveryMaterial.to_string())
             .await
             .unwrap()
     );
@@ -1302,7 +1302,7 @@ async fn write_backup_keys() {
             .public_storage
             .lock()
             .await
-            .data_exists(&req_id, &PubDataType::RecoveryMaterial.to_string())
+            .data_exists(&req_id, &VaultDataType::RecoveryMaterial.to_string())
             .await
             .unwrap()
     );
@@ -1467,7 +1467,7 @@ async fn write_backup_keys_duplicate_keeps_existing_backup() {
             .store_bytes(
                 b"existing",
                 &req_id,
-                &PubDataType::RecoveryMaterial.to_string(),
+                &VaultDataType::RecoveryMaterial.to_string(),
             )
             .await
             .unwrap();
@@ -1529,7 +1529,7 @@ async fn write_backup_keys_material_failure_purges_the_context() {
         let entry_dir = backup_root
             .join(req_id.to_string())
             .join(PrivDataType::SigningKey.to_string());
-        let material_dir = backup_root.join(PubDataType::RecoveryMaterial.to_string());
+        let material_dir = backup_root.join(VaultDataType::RecoveryMaterial.to_string());
         std::fs::create_dir_all(&material_dir).unwrap();
         let locked = if purge_blocked {
             vec![&material_dir, &entry_dir]
