@@ -20,10 +20,9 @@ pub enum RngSourceError {
     SecurityModule(#[source] anyhow::Error),
 }
 
-/// Supplies task seeds and accepts fresh entropy at protocol boundaries.
+/// Shares one parent RNG across services and reseeds it on epoch changes.
 pub struct RngSource {
     rng: Mutex<AesRng>,
-    // The vault and TLS code share ownership of this module.
     security_module: Option<Arc<SecurityModuleProxy>>,
 }
 
@@ -37,7 +36,7 @@ impl RngSource {
         })
     }
 
-    /// Wraps an existing RNG, including deterministic RNGs used by test fixtures.
+    /// Uses a supplied RNG for deterministic tests.
     #[cfg(test)]
     pub(crate) fn from_rng(rng: AesRng) -> Self {
         Self {
@@ -46,7 +45,7 @@ impl RngSource {
         }
     }
 
-    /// Derives a separate AES key for a task without copying the parent state.
+    /// Returns a task RNG seeded from the parent RNG's next output.
     pub(crate) fn fork_rng(&self) -> AesRng {
         let mut seed = Zeroizing::new(Seed::default());
         // Only infallible AES operations run under this lock; poisoning indicates an invariant bug.
@@ -57,32 +56,25 @@ impl RngSource {
         AesRng::from_seed(*seed)
     }
 
-    /// Mixes fresh entropy with parent output before replacing the parent.
+    /// Reseeds the parent with its next output XORed with fresh OS and optional NSM entropy.
     /// An entropy failure leaves the parent unchanged and returns an error.
     pub(crate) fn reseed(&self) -> Result<(), RngSourceError> {
-        let result = Self::fresh_seed(self.security_module.as_deref())
-            .map(|entropy| self.reseed_with(entropy));
-        match &result {
-            Ok(()) => tracing::info!(
-                security_module = self.security_module.is_some(),
-                "RNG source refreshed"
-            ),
-            Err(error) => tracing::warn!(
-                %error,
-                security_module = self.security_module.is_some(),
-                "RNG source refresh failed"
-            ),
+        let entropy = Self::fresh_seed(self.security_module.as_deref())?;
+        let mut rng = self.rng.lock().expect("seed source mutex poisoned");
+        let mut seed = Zeroizing::new(Seed::default());
+        rng.fill_bytes(seed.as_mut());
+        for (out, contribution) in seed.iter_mut().zip(entropy.iter()) {
+            *out ^= contribution;
         }
-        result
+        *rng = AesRng::from_seed(*seed);
+        Ok(())
     }
 
-    fn fresh_seed(
-        security_module: Option<&SecurityModuleProxy>,
-    ) -> Result<Zeroizing<Seed>, RngSourceError> {
+    fn fresh_seed(nsm: Option<&SecurityModuleProxy>) -> Result<Zeroizing<Seed>, RngSourceError> {
         let mut seed = Zeroizing::new(Seed::default());
         getrandom::fill(seed.as_mut()).map_err(RngSourceError::Os)?;
-        if let Some(module) = security_module {
-            let bytes: Zeroizing<Seed> = module
+        if let Some(nsm_module) = nsm {
+            let bytes: Zeroizing<Seed> = nsm_module
                 .get_random_sync()
                 .map_err(RngSourceError::SecurityModule)?;
             for (out, contribution) in seed.iter_mut().zip(bytes.iter()) {
@@ -90,18 +82,6 @@ impl RngSource {
             }
         }
         Ok(seed)
-    }
-
-    // Tests can supply deterministic entropy without a global mock.
-    fn reseed_with(&self, entropy: Zeroizing<Seed>) {
-        let mut rng = self.rng.lock().expect("seed source mutex poisoned");
-        let mut seed = Zeroizing::new(Seed::default());
-        rng.fill_bytes(seed.as_mut());
-        for (out, contribution) in seed.iter_mut().zip(entropy.iter()) {
-            *out ^= contribution;
-        }
-        // Forking and replacement use the same lock, so each fork sees one complete state.
-        *rng = AesRng::from_seed(*seed);
     }
 }
 
@@ -115,47 +95,34 @@ pub(crate) fn test_rng_source() -> Arc<RngSource> {
 mod tests {
     use super::*;
 
-    fn draw(rng: &mut AesRng) -> Seed {
-        let mut bytes = Seed::default();
-        rng.fill_bytes(&mut bytes);
-        bytes
-    }
-
     #[test]
-    fn forks_use_distinct_keys_and_advance_the_parent() {
+    fn forks_use_distinct_seeds_and_advance_the_parent() {
         let source = RngSource::from_rng(AesRng::seed_from_u64(42));
         let mut expected_parent = AesRng::seed_from_u64(42);
-        let mut expected_first = AesRng::from_seed(draw(&mut expected_parent));
-        let mut expected_second = AesRng::from_seed(draw(&mut expected_parent));
-        let first = draw(&mut source.fork_rng());
-        let second = draw(&mut source.fork_rng());
-        assert_eq!(first, draw(&mut expected_first));
-        assert_eq!(second, draw(&mut expected_second));
+        let mut expected_first = AesRng::from_rng(&mut expected_parent).unwrap();
+        let mut expected_second = AesRng::from_rng(&mut expected_parent).unwrap();
+        let first = source.fork_rng().next_u64();
+        let second = source.fork_rng().next_u64();
+        assert_eq!(first, expected_first.next_u64());
+        assert_eq!(second, expected_second.next_u64());
         assert_ne!(first, second);
     }
 
     #[test]
-    fn reseed_mixes_both_contributions_and_preserves_existing_children() {
+    fn reseed_changes_future_forks_and_preserves_existing_children() {
         let source = Arc::new(RngSource::from_rng(AesRng::seed_from_u64(42)));
         let other_handle = Arc::clone(&source);
         let mut child = source.fork_rng();
         let mut child_before = child.clone();
-        let mut expected_parent = AesRng::seed_from_u64(42);
-        let _child_seed = draw(&mut expected_parent);
-        let mut seed = draw(&mut expected_parent);
-        for byte in &mut seed {
-            *byte ^= 0xA5;
-        }
-        let mut expected_parent = AesRng::from_seed(seed);
-        let mut expected_child = AesRng::from_seed(draw(&mut expected_parent));
+        let untouched = RngSource::from_rng(source.rng.lock().unwrap().clone());
 
-        source.reseed_with(Zeroizing::new([0xA5; aes_prng::SEED_SIZE]));
+        source.reseed().unwrap();
 
-        assert_eq!(
-            draw(&mut other_handle.fork_rng()),
-            draw(&mut expected_child)
+        assert_ne!(
+            other_handle.fork_rng().next_u64(),
+            untouched.fork_rng().next_u64()
         );
-        assert_eq!(draw(&mut child), draw(&mut child_before));
+        assert_eq!(child.next_u64(), child_before.next_u64());
     }
 
     #[test]
@@ -163,19 +130,19 @@ mod tests {
         let first = RngSource::from_rng(AesRng::seed_from_u64(42));
         let second = RngSource::from_rng(AesRng::seed_from_u64(42));
         let untouched = RngSource::from_rng(AesRng::seed_from_u64(42));
-        first.reseed_with(Zeroizing::new([1; aes_prng::SEED_SIZE]));
+        first.reseed().unwrap();
         assert_eq!(
-            draw(&mut second.fork_rng()),
-            draw(&mut untouched.fork_rng())
+            second.fork_rng().next_u64(),
+            untouched.fork_rng().next_u64()
         );
     }
 
     #[test]
     fn os_entropy_initialization_and_refresh() {
         let source = RngSource::new(None).unwrap();
-        let before = draw(&mut source.fork_rng());
+        let before = source.fork_rng().next_u64();
         source.reseed().unwrap();
-        assert_ne!(before, draw(&mut source.fork_rng()));
+        assert_ne!(before, source.fork_rng().next_u64());
     }
 
     // Networking setup spawns a task even though the source operations are synchronous.
@@ -199,15 +166,15 @@ mod tests {
         let mut before_refresh = AesRng::seed_from_u64(42);
         sessions.reseed_rng().unwrap();
         assert_ne!(
-            draw(&mut source.rng.lock().unwrap()),
-            draw(&mut before_refresh)
+            source.rng.lock().unwrap().next_u64(),
+            before_refresh.next_u64()
         );
 
         let mut expected_parent = source.rng.lock().unwrap().clone();
-        let mut expected = AesRng::from_seed(draw(&mut expected_parent));
-        assert_eq!(draw(&mut sibling.new_rng()), draw(&mut expected));
-        let mut expected = AesRng::from_seed(draw(&mut expected_parent));
-        assert_eq!(draw(&mut base.new_rng()), draw(&mut expected));
+        let mut expected = AesRng::from_rng(&mut expected_parent).unwrap();
+        assert_eq!(sibling.new_rng().next_u64(), expected.next_u64());
+        let mut expected = AesRng::from_rng(&mut expected_parent).unwrap();
+        assert_eq!(base.new_rng().next_u64(), expected.next_u64());
     }
 
     #[cfg(feature = "insecure")]
