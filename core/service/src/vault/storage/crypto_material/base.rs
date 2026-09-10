@@ -11,7 +11,6 @@ use crate::vault::storage::crypto_material::{data_exists, data_exists_at_epoch};
 use crate::{
     anyhow_error_and_warn_log,
     backup::operator::RecoveryValidationMaterial,
-    consts::SIGNING_KEY_ID,
     cryptography::signatures::PrivateSigKey,
     cryptography::signing::seed::RootSigningSeed,
     engine::{
@@ -911,12 +910,13 @@ where
     /// node adopts after a restart, so an earlier failure leaves the previous context in place.
     ///
     /// NOTE: Unlike most other storage methods, this one WILL fail if there is no backup vault,
-    /// since the goal of this method is exactly to setup a backup. On failure the material of the
-    /// failed setup is purged. Two cases keep it. On a duplicate nothing was written, so what is
-    /// stored under `req_id` pre-existed this call. When a failed anchor write cannot be read back,
-    /// the anchor may name this context. An anchor write that reports an error but took effect is
-    /// a success. Callers that also need the keychain rolled back must do that themselves; see
-    /// `rollback_failed_custodian_setup`.
+    /// since the goal of this method is exactly to setup a backup. The caller claims `req_id`
+    /// before writing under it, so nothing there predates this call. On failure the material of
+    /// the failed setup is purged. Two cases keep it. On a duplicate nothing was written, so what
+    /// is stored under `req_id` pre-existed this call. When a failed anchor write cannot be read
+    /// back, the anchor may name this context. An anchor write that reports an error but took
+    /// effect is a success. Callers that also need the keychain rolled back must do that
+    /// themselves; see `rollback_failed_custodian_setup`.
     pub async fn write_backup_keys(
         &self,
         recovery_material: RecoveryValidationMaterial,
@@ -1173,27 +1173,9 @@ where
                 let private_storage = private_storage.lock().await;
                 let mut backup_vault = backup_vault.lock().await;
                 if !crate::engine::backup_operator::keychain_initialized(&backup_vault).await {
-                    // A node holding key material with no custodian context backs nothing up,
-                    // and cannot fix itself on restart: the recovery material naming a context
-                    // would live in this same vault, and there is none.
-                    // On a probe failure assume material is present, so a degraded storage
-                    // backend cannot quietly demote the alert to a warning.
-                    let holds_key_material = private_storage
-                        .data_exists(&SIGNING_KEY_ID, &PrivDataType::SigningKey.to_string())
-                        .await
-                        .unwrap_or_else(|e| {
-                            tracing::warn!("Could not check for a signing key: {e}");
-                            true
-                        });
-                    if holds_key_material {
-                        tracing::error!(
-                            "Secret sharing keychain in the backup vault has not been initialized, but this node holds private key material. No backups are being made; create a new custodian context."
-                        );
-                    } else {
-                        tracing::warn!(
-                            "Secret sharing keychain in the backup vault has not been initialized yet. Skipping backup update."
-                        );
-                    }
+                    tracing::warn!(
+                        "Secret sharing keychain in the backup vault has not been initialized yet. Skipping backup update; no backups are made until a custodian context is created or recovered."
+                    );
                     return Ok(false);
                 }
                 for cur_type in PrivDataType::iter() {
@@ -1237,9 +1219,9 @@ where
                             )
                             .await?;
                         }
-                        // Node-local and stale the moment it is copied: a backup is taken under
-                        // the current context, so a restored anchor would name the context the
-                        // node is leaving. Recovery sets it from the context it recovered.
+                        // Not backed up. A rotation re-encrypts the vault before the anchor is
+                        // rewritten, so a copy would name the context the node is leaving;
+                        // recovery anchors the context it restores.
                         PrivDataType::CustodianContextAnchor => {}
                         PrivDataType::SigningKey => {
                             // TODO(#2862) will eventually be epoched

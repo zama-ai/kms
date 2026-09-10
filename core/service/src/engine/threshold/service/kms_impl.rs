@@ -572,7 +572,8 @@ where
     );
 
     // Verify public material and recovery validation material when the signing key is available.
-    // Recovery mode only supports backup recovery operations, so it skips both startup checks.
+    // Recovery mode only supports backup recovery operations, so it skips both startup checks and
+    // adopts no custodian context.
     // Private storage is the reference; extra material in public storage is logged as an error
     // but does not stop boot.
     match base_kms.sig_key() {
@@ -585,6 +586,10 @@ where
                 signing_key.as_ref(),
             )
             .await?;
+            if let Some(vault) = backup_storage.as_mut() {
+                adopt_custodian_context(&private_storage, vault, &recovery_validation_material)
+                    .await?;
+            }
         }
         Err(_) => {
             tracing::warn!(
@@ -592,13 +597,6 @@ where
                  validation material verification"
             );
         }
-    }
-
-    // Recovery mode has no private storage to anchor from; the recovery RPC picks the context.
-    if base_kms.sig_key().is_ok()
-        && let Some(vault) = backup_storage.as_mut()
-    {
-        adopt_custodian_context(&private_storage, vault, &recovery_validation_material).await?;
     }
 
     let networking_manager = Arc::new(RwLock::new(GrpcNetworkingManager::new(

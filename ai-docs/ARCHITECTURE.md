@@ -399,9 +399,9 @@ keychain rather than of the published material, and the backup path already repo
 `keychain_initialized` ([backup_operator.rs](../core/service/src/engine/backup_operator.rs)) asks
 the keychain directly whether a backup encryption key is set, and `inner_update_backup_vault`
 skips the update when it is not — during the same boot, from
-`update_backup_vault(false, OP_BOOT)`. That skip logs at error level once the node holds a signing
-key, since from then on it means no backups are being made: the recovery material lives in the
-backup vault, so losing that vault also loses the custodian context, and the node needs a new one.
+`update_backup_vault(false, OP_BOOT)`. That skip is logged as a warning, since it means no backups
+are being made: the recovery material lives in the backup vault, so losing that vault also loses
+the custodian context, and the node needs a new one or a recovery.
 
 The recovery-material signature check is part of the same startup pass, but its input comes from
 the backup vault rather than from public storage.

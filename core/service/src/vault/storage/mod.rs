@@ -547,6 +547,9 @@ pub async fn store_recovery_material<S: Storage>(
 /// leaves both and the higher sequence decides; it never leaves the node with no anchor while one
 /// existed. The record for `context_id` is rewritten because storage never overwrites, and losing
 /// only that one still leaves the previous context anchored.
+///
+/// The call fails on a private storage error, and when a stored anchor record does not decode. A
+/// record already present for `context_id` is not an error.
 pub async fn store_custodian_context_anchor<S: Storage>(
     priv_storage: &mut S,
     context_id: &RequestId,
@@ -558,12 +561,15 @@ pub async fn store_custodian_context_anchor<S: Storage>(
             .into_values()
             .filter(|anchor| anchor.context_id != *context_id)
             .collect();
-    if superseded.is_empty() && priv_storage.data_exists(context_id, &data_type).await? {
+    let exists = priv_storage.data_exists(context_id, &data_type).await?;
+    if superseded.is_empty() && exists {
         // Already the only anchor, so rewriting it would only open a window with none.
         return Ok(());
     }
     let sequence = superseded.iter().map(|a| a.sequence).max().unwrap_or(0) + 1;
-    delete_at_request_id(priv_storage, context_id, &data_type).await?;
+    if exists {
+        delete_at_request_id(priv_storage, context_id, &data_type).await?;
+    }
     store_versioned_at_request_id(
         priv_storage,
         context_id,

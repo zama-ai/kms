@@ -220,7 +220,9 @@ pub enum CustodianContextAnchorVersions {
 #[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize, Versionize)]
 #[versionize(CustodianContextAnchorVersions)]
 pub struct CustodianContextAnchor {
+    /// Also the storage id of the record.
     pub context_id: RequestId,
+    /// Higher wins when several records exist; see `store_custodian_context_anchor`.
     pub sequence: u64,
 }
 

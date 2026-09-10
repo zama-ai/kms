@@ -95,6 +95,7 @@ pub async fn purge_backup(backup_path: Option<&Path>, storage_prefixes: &[Option
             continue;
         };
         while let Some(entry) = entries.next_entry().await.unwrap() {
+            // Recovery material describes a context; it is not a backup.
             if entry.file_name() != *VaultDataType::RecoveryMaterial.to_string() {
                 let _ = tokio::fs::remove_dir_all(entry.path()).await;
             }
@@ -114,6 +115,7 @@ pub async fn backup_exists(
         let mut entries = tokio::fs::read_dir(storage.root_dir()).await.unwrap();
         let mut has_backup = false;
         while let Some(entry) = entries.next_entry().await.unwrap() {
+            // Recovery material describes a context; it is not a backup.
             if entry.file_name() != *VaultDataType::RecoveryMaterial.to_string() {
                 has_backup = true;
             }
