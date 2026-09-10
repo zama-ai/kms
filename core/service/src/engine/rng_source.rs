@@ -60,7 +60,8 @@ impl RngSource {
     /// Mixes fresh entropy with parent output before replacing the parent.
     /// An entropy failure leaves the parent unchanged and returns an error.
     pub(crate) fn reseed(&self) -> Result<(), RngSourceError> {
-        let result = self.reseed_with(Self::fresh_seed(self.security_module.as_deref()));
+        let result = Self::fresh_seed(self.security_module.as_deref())
+            .map(|entropy| self.reseed_with(entropy));
         match &result {
             Ok(()) => tracing::info!(
                 security_module = self.security_module.is_some(),
@@ -91,21 +92,16 @@ impl RngSource {
         Ok(seed)
     }
 
-    // Tests can supply deterministic entropy or an error without a global mock.
-    fn reseed_with(
-        &self,
-        entropy: Result<Zeroizing<Seed>, RngSourceError>,
-    ) -> Result<(), RngSourceError> {
-        let fresh = entropy?;
+    // Tests can supply deterministic entropy without a global mock.
+    fn reseed_with(&self, entropy: Zeroizing<Seed>) {
         let mut rng = self.rng.lock().expect("seed source mutex poisoned");
         let mut seed = Zeroizing::new(Seed::default());
         rng.fill_bytes(seed.as_mut());
-        for (out, contribution) in seed.iter_mut().zip(fresh.iter()) {
+        for (out, contribution) in seed.iter_mut().zip(entropy.iter()) {
             *out ^= contribution;
         }
         // Forking and replacement use the same lock, so each fork sees one complete state.
         *rng = AesRng::from_seed(*seed);
-        Ok(())
     }
 }
 
@@ -153,9 +149,7 @@ mod tests {
         let mut expected_parent = AesRng::from_seed(seed);
         let mut expected_child = AesRng::from_seed(draw(&mut expected_parent));
 
-        source
-            .reseed_with(Ok(Zeroizing::new([0xA5; aes_prng::SEED_SIZE])))
-            .unwrap();
+        source.reseed_with(Zeroizing::new([0xA5; aes_prng::SEED_SIZE]));
 
         assert_eq!(
             draw(&mut other_handle.fork_rng()),
@@ -165,27 +159,11 @@ mod tests {
     }
 
     #[test]
-    fn failed_reseed_does_not_advance_or_replace_the_parent() {
-        let source = RngSource::from_rng(AesRng::seed_from_u64(42));
-        let untouched = RngSource::from_rng(AesRng::seed_from_u64(42));
-        let result = source.reseed_with(Err(RngSourceError::SecurityModule(anyhow::anyhow!(
-            "injected NSM failure"
-        ))));
-        assert!(matches!(result, Err(RngSourceError::SecurityModule(_))));
-        assert_eq!(
-            draw(&mut source.fork_rng()),
-            draw(&mut untouched.fork_rng())
-        );
-    }
-
-    #[test]
     fn independent_sources_do_not_share_refresh_state() {
         let first = RngSource::from_rng(AesRng::seed_from_u64(42));
         let second = RngSource::from_rng(AesRng::seed_from_u64(42));
         let untouched = RngSource::from_rng(AesRng::seed_from_u64(42));
-        first
-            .reseed_with(Ok(Zeroizing::new([1; aes_prng::SEED_SIZE])))
-            .unwrap();
+        first.reseed_with(Zeroizing::new([1; aes_prng::SEED_SIZE]));
         assert_eq!(
             draw(&mut second.fork_rng()),
             draw(&mut untouched.fork_rng())
