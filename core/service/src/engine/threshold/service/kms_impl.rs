@@ -66,7 +66,6 @@ use crate::{
     conf::CoreConfig,
     consts::{DEFAULT_EPOCH_ID, DEFAULT_MPC_CONTEXT, MINIMUM_SESSIONS_PREPROC},
     cryptography::attestation::SecurityModuleProxy,
-    engine::migration::import_configured_legacy_context,
     engine::{
         backup_operator::RealBackupOperator,
         base::{
@@ -507,7 +506,7 @@ pub type RealThresholdKms<PubS, PrivS> = ThresholdKms<
 #[expect(clippy::too_many_arguments)]
 pub async fn new_real_threshold_kms<PubS, PrivS, F>(
     config: CoreConfig,
-    mut public_storage: PubS,
+    public_storage: PubS,
     mut private_storage: PrivS,
     mut backup_storage: Option<Vault>,
     security_module: Option<Arc<SecurityModuleProxy>>,
@@ -543,18 +542,6 @@ where
         )
         .await?;
 
-    // Recovery mode has no signing key to check the imported material against, and no private
-    // storage to anchor it in; the recovery RPC reads what it needs from where it still lives.
-    if let (Ok(signing_key), Some(vault)) = (base_kms.sig_key(), backup_storage.as_mut()) {
-        import_configured_legacy_context(
-            &mut public_storage,
-            &mut private_storage,
-            &mut vault.storage,
-            config.migration.as_ref(),
-            &signing_key.verf_key(),
-        )
-        .await?;
-    }
     let recovery_validation_material: HashMap<RequestId, RecoveryValidationMaterial> =
         match backup_storage.as_ref() {
             Some(vault) => read_all_recovery_material(&vault.storage).await?,

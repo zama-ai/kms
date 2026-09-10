@@ -244,7 +244,7 @@ The steps needed are as follows:
   ```
   The optional boolean expresses whether to allow overwriting any potential existing ephemeral key (default is false, expanded parameter `overwrite-ephemeral-key`). The command prints a base64 recovery request (prefixed with `Serialized custodian result:`) which must then be communicated to the custodians to proceed with the recovery.
 
-  A node that has lost its private storage no longer knows which custodian context it used. Name the one to recover under with `-i <custodian context id>` (expanded parameter `custodian-context-id`) unless its backup vault holds exactly one; the command fails and lists the candidate IDs otherwise. A node upgrading from a release that kept recovery material in public storage always needs the flag, since that store is modifiable and so cannot be allowed to pick. A node that still knows its context refuses any other.
+  A node that has lost its private storage no longer knows which custodian context it used. Name the one to recover under with `-i <custodian context id>` (expanded parameter `custodian-context-id`) unless its backup vault holds exactly one; the command fails and lists the candidate IDs otherwise. A node that still knows its context refuses any other.
 
   As a concrete example:
   ```{bash}

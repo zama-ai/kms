@@ -19,7 +19,6 @@ use crate::engine::base::sign_user_decryption_result;
 use crate::engine::base::{BaseKmsStruct, KmsFheKeyHandles};
 use crate::engine::base::{KeyGenMetadata, PubDecCallValues, UserDecryptCallValues};
 use crate::engine::context_manager::CentralizedContextManager;
-use crate::engine::migration::import_configured_legacy_context;
 #[cfg(feature = "non-wasm")]
 use crate::engine::storage_material_verification::verify_storage_material;
 use crate::engine::traits::{BackupOperator, ContextManager};
@@ -915,8 +914,8 @@ impl<
 {
     pub async fn new(
         config: CoreConfig,
-        mut public_storage: PubS,
-        mut private_storage: PrivS,
+        public_storage: PubS,
+        private_storage: PrivS,
         mut backup_vault: Option<Vault>,
         security_module: Option<Arc<SecurityModuleProxy>>,
         sk: PrivateSigKey,
@@ -950,16 +949,6 @@ impl<
             )
             .await?,
         );
-        if let Some(vault) = backup_vault.as_mut() {
-            import_configured_legacy_context(
-                &mut public_storage,
-                &mut private_storage,
-                &mut vault.storage,
-                config.migration.as_ref(),
-                &PublicSigKey::from_sk(&sk),
-            )
-            .await?;
-        }
         let validation_material: HashMap<RequestId, RecoveryValidationMaterial> =
             match backup_vault.as_ref() {
                 Some(vault) => read_all_recovery_material(&vault.storage).await?,

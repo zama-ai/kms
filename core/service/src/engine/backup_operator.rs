@@ -128,20 +128,6 @@ where
     PubS: Storage + Sync + Send + 'static,
     PrivS: StorageExt + Sync + Send + 'static,
 {
-    /// Public storage, but only for a node whose signing key is gone.
-    ///
-    /// That is the one case the legacy location exists for: a node upgrading from a release that
-    /// kept recovery material there, whose private storage went before it ever booted the new one.
-    /// A node that still has its key imports through the migration, which the operator names a
-    /// context for; letting it read public storage here would let whoever writes that store offer
-    /// it a context instead.
-    async fn legacy_public_storage(&self) -> Option<tokio::sync::MutexGuard<'_, PubS>> {
-        match self.base_kms.sig_key() {
-            Err(_) => Some(self.crypto_storage.public_storage.lock().await),
-            Ok(_) => None,
-        }
-    }
-
     /// The custodian context this node is installed with, as private storage records it.
     ///
     /// The keychain is only a cache of it and is empty whenever boot could not adopt — a node
@@ -305,10 +291,8 @@ where
             .backup_vault
             .as_ref()
             .ok_or_else(|| anyhow::anyhow!("Backup vault is not configured"))?;
-        let legacy_public = self.legacy_public_storage().await;
         let recovery_material = load_recovery_validation_material(
             backup_vault,
-            legacy_public.as_deref(),
             self.installed_context().await?,
             &custodian_context_id,
             &self.base_kms.verf_key(),
@@ -453,7 +437,6 @@ where
             )
         })?;
         let (backup_id, recovery_material) = {
-            let legacy_public = self.legacy_public_storage().await;
             let requested = inner
                 .custodian_context_id
                 .as_ref()
@@ -468,7 +451,7 @@ where
                     })
                 })
                 .transpose()?;
-            recovery_context(backup_vault, legacy_public.as_deref(), installed, requested)
+            recovery_context(backup_vault, installed, requested)
                 .await
                 .map_err(|e| {
                     MetricedError::new(
@@ -736,12 +719,9 @@ where
 
 /// Load and validate the recovery validation material associated with the provided context ID.
 ///
-/// Falls back to public storage for a node upgrading from a release that kept it there and whose
-/// private storage is gone, so nothing has imported it yet. Either way the operator signature is
-/// what authenticates it.
-async fn load_recovery_validation_material<PubS: StorageReader>(
+/// The operator signature is what authenticates it.
+async fn load_recovery_validation_material(
     backup_vault: &Mutex<Vault>,
-    legacy_public: Option<&PubS>,
     installed: Option<RequestId>,
     custodian_context_id: &ContextId,
     verf_key: &PublicSigKey,
@@ -760,7 +740,7 @@ async fn load_recovery_validation_material<PubS: StorageReader>(
             }
             read_recovery_material_at_id(&guarded_vault.storage, id).await?
         } else {
-            read_vault_or_legacy(&guarded_vault.storage, legacy_public, id).await?
+            read_vault_material(&guarded_vault.storage, id).await?
         }
     };
     if !recovery_material.validate(verf_key) {
@@ -886,10 +866,7 @@ enum RecoveryContextError {
     Ambiguous(Vec<RequestId>),
     #[error("No custodian recovery material {0} to recover under")]
     Unknown(RequestId),
-    #[error(
-        "No custodian context to recover: the backup vault holds none. If this node predates the \
-         move of recovery material into the vault, name the context with custodian_context_id."
-    )]
+    #[error("No custodian context to recover: the backup vault holds none.")]
     NoContext,
     #[error(transparent)]
     Storage(#[from] anyhow::Error),
@@ -919,12 +896,9 @@ fn join_ids(ids: &[RequestId]) -> String {
 /// The custodian context to recover under, and the material describing it.
 ///
 /// The anchored one wins. A node recovering with empty private storage has no anchor, so the
-/// operator names the context, or, when the vault holds exactly one, that one is taken. Public
-/// storage is never selected from: a node upgrading from a release that kept the material there
-/// must name the context.
-async fn recovery_context<PubS: StorageReader>(
+/// operator names the context, or, when the vault holds exactly one, that one is taken.
+async fn recovery_context(
     backup_vault: &Arc<Mutex<Vault>>,
-    legacy_public: Option<&PubS>,
     installed: Option<RequestId>,
     requested: Option<RequestId>,
 ) -> Result<(RequestId, RecoveryValidationMaterial), RecoveryContextError> {
@@ -951,7 +925,7 @@ async fn recovery_context<PubS: StorageReader>(
     // With nothing installed the operator says which context to recover under; a node that only
     // ever had one is unambiguous, so it need not be asked.
     if let Some(id) = requested {
-        let material = read_vault_or_legacy(&guarded_vault.storage, legacy_public, &id).await?;
+        let material = read_vault_material(&guarded_vault.storage, &id).await?;
         return Ok((id, material));
     }
     let vault_ids = guarded_vault.storage.all_data_ids(&data_type).await?;
@@ -959,28 +933,21 @@ async fn recovery_context<PubS: StorageReader>(
         let material = read_recovery_material_at_id(&guarded_vault.storage, &id).await?;
         return Ok((id, material));
     }
-    // The vault holds nothing, so the only material left is in the legacy public location, which
-    // is modifiable: whoever writes it also chooses how many objects are there, so "the only one"
-    // is their choice, not a fact. The operator names it, as they must for the recovery itself.
     Err(RecoveryContextError::NoContext)
 }
 
-/// The vault copy, or the legacy public one where a node without its signing key is allowed it.
-async fn read_vault_or_legacy<V: StorageReader, PubS: StorageReader>(
+/// The material at `id`, or `Unknown` when the vault holds none.
+async fn read_vault_material<V: StorageReader>(
     vault: &V,
-    legacy_public: Option<&PubS>,
     id: &RequestId,
 ) -> Result<RecoveryValidationMaterial, RecoveryContextError> {
-    let data_type = PubDataType::RecoveryMaterial.to_string();
-    if vault.data_exists(id, &data_type).await? {
-        return Ok(read_recovery_material_at_id(vault, id).await?);
-    }
-    if let Some(public) = legacy_public
-        && public.data_exists(id, &data_type).await?
+    if !vault
+        .data_exists(id, &PubDataType::RecoveryMaterial.to_string())
+        .await?
     {
-        return Ok(read_recovery_material_at_id(public, id).await?);
+        return Err(RecoveryContextError::Unknown(*id));
     }
-    Err(RecoveryContextError::Unknown(*id))
+    Ok(read_recovery_material_at_id(vault, id).await?)
 }
 
 fn sole_context(
@@ -1494,9 +1461,7 @@ mod tests {
         let vault = uninstalled_vault();
         store_dummy_recovery_material(&mut vault.lock().await.storage, &id, &sk).await;
 
-        let (selected, _) = recovery_context(&vault, None::<&RamStorage>, None, None)
-            .await
-            .unwrap();
+        let (selected, _) = recovery_context(&vault, None, None).await.unwrap();
         assert_eq!(selected, id);
     }
 
@@ -1517,41 +1482,14 @@ mod tests {
         }
 
         assert_eq!(
-            recovery_context(&vault, None::<&RamStorage>, None, None)
+            recovery_context(&vault, None, None)
                 .await
                 .unwrap_err()
                 .code(),
             tonic::Code::FailedPrecondition
         );
-        let (selected, _) = recovery_context(&vault, None::<&RamStorage>, None, Some(second))
-            .await
-            .unwrap();
+        let (selected, _) = recovery_context(&vault, None, Some(second)).await.unwrap();
         assert_eq!(selected, second);
-    }
-
-    /// A node upgrading from a release that kept the material in public storage, whose private
-    /// storage went before it ever booted the new one, still recovers — but only under a context
-    /// the operator names: whoever writes that store also decides what is "the only one" there.
-    #[tokio::test]
-    async fn recovery_context_uses_public_storage_only_when_named() {
-        let (_verf, sk) = gen_sig_keys(&mut AesRng::seed_from_u64(0));
-        let id = RequestId::from_bytes([1; 32]);
-        let vault = uninstalled_vault();
-        let mut public_storage = RamStorage::new();
-        store_dummy_recovery_material(&mut public_storage, &id, &sk).await;
-
-        assert_eq!(
-            recovery_context(&vault, Some(&public_storage), None, None)
-                .await
-                .unwrap_err()
-                .code(),
-            tonic::Code::FailedPrecondition,
-            "the sole object in public storage must not select itself"
-        );
-        let (selected, _) = recovery_context(&vault, Some(&public_storage), None, Some(id))
-            .await
-            .unwrap();
-        assert_eq!(selected, id);
     }
 
     /// A node that has a context recovers under that one: a request naming another is refused, so
@@ -1564,54 +1502,33 @@ mod tests {
             RequestId::from_bytes([9; 32]),
         );
         let vault = uninstalled_vault();
-        let mut public_storage = RamStorage::new();
-        store_dummy_recovery_material(&mut public_storage, &rogue, &sk).await;
         {
             let mut guard = vault.lock().await;
             store_dummy_recovery_material(&mut guard.storage, &installed, &sk).await;
             store_dummy_recovery_material(&mut guard.storage, &rogue, &sk).await;
         }
 
-        let refused = recovery_context(&vault, Some(&public_storage), Some(installed), Some(rogue))
+        let refused = recovery_context(&vault, Some(installed), Some(rogue))
             .await
             .expect_err("a request naming another context must not move an installed node");
         assert_eq!(refused.code(), tonic::Code::FailedPrecondition);
-        let (selected, _) = recovery_context(&vault, Some(&public_storage), Some(installed), None)
+        let (selected, _) = recovery_context(&vault, Some(installed), None)
             .await
             .unwrap();
         assert_eq!(selected, installed);
     }
 
-    /// A node that still holds its signing key must never take the legacy public location: only
-    /// one whose key is gone may, and only then can public storage offer it a context.
+    /// Naming a context the vault does not hold is the operator's mistake, not the node's.
     #[tokio::test]
-    async fn recovery_context_ignores_public_storage_without_the_legacy_opt_in() {
-        let (_verf, sk) = gen_sig_keys(&mut AesRng::seed_from_u64(0));
-        let id = RequestId::from_bytes([9; 32]);
+    async fn recovery_context_reports_an_unknown_context() {
         let vault = uninstalled_vault();
-        let mut public_storage = RamStorage::new();
-        store_dummy_recovery_material(&mut public_storage, &id, &sk).await;
-
         assert_eq!(
-            recovery_context(&vault, None::<&RamStorage>, None, None)
+            recovery_context(&vault, None, Some(RequestId::from_bytes([9; 32])))
                 .await
                 .unwrap_err()
                 .code(),
-            tonic::Code::FailedPrecondition,
-            "the vault holds nothing, so with no legacy opt-in there is nothing to recover"
+            tonic::Code::NotFound
         );
-        assert_eq!(
-            recovery_context(&vault, None::<&RamStorage>, None, Some(id))
-                .await
-                .unwrap_err()
-                .code(),
-            tonic::Code::NotFound,
-            "naming an id must not reach public storage either"
-        );
-        let (selected, _) = recovery_context(&vault, Some(&public_storage), None, Some(id))
-            .await
-            .unwrap();
-        assert_eq!(selected, id);
     }
 
     /// An operator as a node has it once a restore has put its signing key back.

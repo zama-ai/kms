@@ -100,12 +100,6 @@ prefix = "BACKUP-p1"
 # root_key_id = "zama_kms_backup_root_key"
 # root_key_spec = "asymm"
 
-# On the first boot after upgrading from a release that kept custodian recovery material in
-# public storage, name the context to import; remove the line once the node reports it as
-# anchored. Without it the node runs but makes no new backups.
-# [migration]
-# custodian_context_id = "<hex context id>"
-
 # Configuration for communicating with other KMS nodes.
 # Not needed when running in centralized mode.
 [threshold]

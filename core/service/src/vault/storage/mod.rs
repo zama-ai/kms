@@ -655,10 +655,7 @@ pub async fn delete_recovery_material_at_id<S: Storage>(
 }
 
 /// Erase a custodian context: its backed-up private material and its recovery material.
-///
-/// `pub_storage` is cleared of any legacy copy; the backup vault is authoritative.
-pub async fn delete_custodian_context_at_id<PubS: Storage>(
-    pub_storage: &mut PubS,
+pub async fn delete_custodian_context_at_id(
     backup_storage: &mut Vault,
     backup_id: &RequestId, // TODO(#2830) should be changed to a BackupId
 ) -> anyhow::Result<()> {
@@ -667,14 +664,7 @@ pub async fn delete_custodian_context_at_id<PubS: Storage>(
     backup_storage.remove_old_backup(backup_id).await?;
 
     // Only once the backup data is gone may the recovery material describing it be dropped.
-    delete_recovery_material_at_id(&mut backup_storage.storage, backup_id).await?;
-
-    delete_at_request_id(
-        pub_storage,
-        backup_id,
-        &PubDataType::RecoveryMaterial.to_string(),
-    )
-    .await
+    delete_recovery_material_at_id(&mut backup_storage.storage, backup_id).await
 }
 /// Helper method for reading all data of a specific type.
 pub async fn read_all_data_from_all_epochs_versioned<

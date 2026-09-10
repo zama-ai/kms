@@ -1,13 +1,12 @@
 use self::threshold::{ThresholdPartyConf, TlsConf};
 use crate::util::rate_limiter::RateLimiterConfig;
 use clap::ValueEnum;
-use kms_grpc::RequestId;
 use observability::{
     conf::{Settings, TelemetryConfig},
     telemetry::{ConfigTracing, SdkTracerProvider, init_telemetry},
 };
 use serde::{Deserialize, Serialize};
-use std::{cmp, path::PathBuf, str::FromStr};
+use std::{cmp, path::PathBuf};
 use strum_macros::EnumIs;
 use url::Url;
 use validator::{Validate, ValidationError, ValidationErrors};
@@ -85,10 +84,6 @@ pub struct MigrationConfig {
     #[serde(default)]
     #[validate(nested)]
     pub context_associations: Vec<ContextEpochAssociation>,
-    /// Hex-encoded custodian context to import from public storage on the first boot after the
-    /// upgrade that moved recovery material into the backup vault. Remove it once imported.
-    #[validate(custom(function = reject_malformed_request_id))]
-    pub custodian_context_id: Option<String>,
 }
 
 /// A single context together with the epochs associated with it.
@@ -240,14 +235,6 @@ pub struct VaultConfig {
     pub storage: Storage,
     #[validate(nested)]
     pub keychain: Option<Keychain>,
-}
-
-fn reject_malformed_request_id(id: &str) -> Result<(), ValidationError> {
-    RequestId::from_str(id)
-        .ok()
-        .filter(RequestId::is_valid)
-        .map(drop)
-        .ok_or_else(|| ValidationError::new("malformed_request_id"))
 }
 
 /// A secret-sharing keychain decrypts only once custodians have reconstructed its key, so it
@@ -407,14 +394,6 @@ mod tests {
             }))))
             .is_ok()
         );
-    }
-
-    /// `from_str` accepts the all-zero id that `is_valid` forbids everywhere else.
-    #[test]
-    fn migration_context_id_must_be_a_valid_request_id() {
-        assert!(reject_malformed_request_id(&"1".repeat(64)).is_ok());
-        assert!(reject_malformed_request_id(&"0".repeat(64)).is_err());
-        assert!(reject_malformed_request_id("not-hex").is_err());
     }
 
     /// The rule is enforced by `validate()`, so every entry point that loads a config gets it.

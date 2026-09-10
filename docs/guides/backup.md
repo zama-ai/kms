@@ -186,19 +186,13 @@ When the operator writes any `PrivDataType` (signing key, root signing seed, thr
 
 This phase is invisible to custodians and to the core-client. It runs continuously for the life of the operator.
 
-### Upgrading from a release that kept recovery material in public storage
+### Upgrading from, or rolling back to, a release that kept recovery material in public storage
 
-Set `[migration] custodian_context_id` (Helm: `kmsCore.migration.custodianContextId`) to the context
-the node currently backs up under before its first boot on this release, then remove it once the
-node has started. The node imports that one
-object into the backup vault, anchors it in private storage and deletes the public copy.
-
-Skipping this is silent: the node serves normally and backs nothing up. The line to alert on is
-`Secret sharing keychain in the backup vault has not been initialized, but this node holds private
-key material`. To recover, set the key and restart, or create a new custodian context.
-
-The import is one-way — once the public copy is gone, the previous release finds no recovery
-material and will not back up either.
+The node does not read that copy: it boots with no custodian context, serves normally and backs
+nothing up until a new custodian context is created. The earlier release reads recovery material
+from public storage only, so after a rollback the node backs nothing up until a custodian context
+is created on that release, or the object at `RecoveryMaterial/<id>` in the backup vault is copied
+to the same path in public storage.
 
 ### Phase 4 — Recovery init (operator's private storage is gone)
 

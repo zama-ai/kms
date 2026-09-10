@@ -169,7 +169,6 @@ fn build_test_core_config(
                 context_id: DEFAULT_MPC_CONTEXT.to_string(),
                 epoch_ids: vec![DEFAULT_EPOCH_ID.to_string()],
             }],
-            custodian_context_id: None,
         }),
     }
 }

@@ -306,15 +306,9 @@ the vault — or was replayed into it — is inert, and a new context whose id h
 not abandoned on the next restart. A node with no anchor makes no backups and says so; it never
 guesses.
 
-Deployments upgrading from a release that kept the material in public storage import it once, with
-`import_configured_legacy_context` ([migration.rs](../core/service/src/engine/migration.rs)), which
-reads the single context named by `[migration] custodian_context_id`, checks it against the node's
-own signing key, stores it in the vault, writes the anchor and deletes the public copy. The
-operator names it because public storage is modifiable: were the node to take whatever it found,
-deleting the current object would be enough to leave a retired one as the only candidate. The
-anchor is what stops the import running again, and nothing else at boot reads that folder, so its
-content can neither steer the node nor stall it; the startup sweep lists it only to report
-leftovers.
+A deployment upgraded from a release that kept the material in public storage starts with no
+custodian context and creates a new one. Nothing reads that folder, so its content can neither
+steer the node nor stall it; the startup sweep lists it only to report leftovers.
 
 `NewCustodianContext` points the keychain at the new context and re-encrypts the whole
 vault under it *before* persisting the recovery material, so it is rolled back if any later

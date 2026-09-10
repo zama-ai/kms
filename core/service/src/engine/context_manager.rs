@@ -300,7 +300,6 @@ where
                 tonic::Code::FailedPrecondition,
             ));
         }
-        let mut guarded_pub_storage = self.crypto_storage.public_storage.lock().await;
         let guarded_backup_storage_ref =
             self.crypto_storage.backup_vault.as_ref().ok_or_else(|| {
                 MetricedError::new(
@@ -317,20 +316,16 @@ where
         // returns an error we propagate it and, crucially, do NOT drop the context from the
         // meta store below, so the operator retains a retryable degraded state instead of a
         // context that reports successful destruction while backups linger in storage.
-        delete_custodian_context_at_id(
-            &mut *guarded_pub_storage,
-            &mut guarded_backup_storage,
-            &context_id,
-        )
-        .await
-        .map_err(|e| {
-            MetricedError::new(
-                OP_DESTROY_CUSTODIAN_CONTEXT,
-                Some(context_id),
-                anyhow::anyhow!("Failed to delete context: {e}"),
-                tonic::Code::Internal,
-            )
-        })?;
+        delete_custodian_context_at_id(&mut guarded_backup_storage, &context_id)
+            .await
+            .map_err(|e| {
+                MetricedError::new(
+                    OP_DESTROY_CUSTODIAN_CONTEXT,
+                    Some(context_id),
+                    anyhow::anyhow!("Failed to delete context: {e}"),
+                    tonic::Code::Internal,
+                )
+            })?;
         delete_in_meta_store(
             meta_store_guard,
             permit,
