@@ -1193,7 +1193,10 @@ fn try_reconstruct_shares(
             Some(
                 tfhe::core_crypto::prelude::LweSecretKeyOwned::from_container(reconstruct_bit_vec(
                     transciphering_lwe_shares,
-                    param.lwe_dimension().0,
+                    param
+                        .transciphering_lwe_dimension()
+                        .expect("transciphering shares require transciphering parameters")
+                        .0,
                     threshold,
                 )),
             )

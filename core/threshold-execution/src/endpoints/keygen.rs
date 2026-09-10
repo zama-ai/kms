@@ -45,7 +45,6 @@ use tfhe::{
         ClassicPBSParameters,
         list_compression::{CompressedDecompressionKey, DecompressionKey},
         oprf::{CompressedOprfBootstrappingKey, CompressedOprfServerKey},
-        parameters::TranscipheringParameters,
         server_key::CompressedModulusSwitchConfiguration,
     },
     transciphering::CompressedTranscipheringServerKey,
@@ -462,20 +461,21 @@ where
         .await?,
     );
 
-    let transciphering_secret_key_share = if params.transciphering_params().is_some() {
-        tracing::info!("(Party {my_role}) Generating transciphering LWE secret key...Start");
-        let share = LweSecretKeyShare::new_from_preprocessing(
-            params.lwe_dimension(),
-            preprocessing,
-            params.pmax(),
-            session,
-        )
-        .await?;
-        tracing::info!("(Party {my_role}) Generating transciphering LWE secret key...Done");
-        Some(share)
-    } else {
-        None
-    };
+    let transciphering_secret_key_share =
+        if let Some(transciphering_lwe_dimension) = params.transciphering_lwe_dimension() {
+            tracing::info!("(Party {my_role}) Generating transciphering LWE secret key...Start");
+            let share = LweSecretKeyShare::new_from_preprocessing(
+                transciphering_lwe_dimension,
+                preprocessing,
+                params.pmax(),
+                session,
+            )
+            .await?;
+            tracing::info!("(Party {my_role}) Generating transciphering LWE secret key...Done");
+            Some(share)
+        } else {
+            None
+        };
 
     let priv_key_set = GenericPrivateKeySet {
         lwe_encryption_secret_key_share: lwe_hat_secret_key_share,
@@ -546,13 +546,13 @@ pub async fn ensure_transciphering_secret_key_share_z128<
 where
     ResiduePoly<Z128, EXTENSION_DEGREE>: ErrorCorrect,
 {
-    if params.transciphering_params().is_some()
+    if let Some(transciphering_lwe_dimension) = params.transciphering_lwe_dimension()
         && private_key_set.transciphering_secret_key_share.is_none()
     {
         private_key_set.transciphering_secret_key_share = Some(
             crate::tfhe_internals::private_keysets::LweSecretKeyShareEnum::Z128(
                 LweSecretKeyShare::new_from_preprocessing(
-                    params.lwe_dimension(),
+                    transciphering_lwe_dimension,
                     preprocessing,
                     params.pmax(),
                     session,
@@ -867,18 +867,7 @@ where
     // (`CompressedXofKeySet::generate_with_pre_seeded_generator`).
     let transciphering_key = match params.transciphering_params() {
         None => None,
-        Some(transciphering_params) => {
-            // `TranscipheringParameters` is `#[non_exhaustive]` upstream. Every variant we know of
-            // is a compute-parameter BK; refuse an unknown one rather than silently generating the
-            // wrong key material.
-            if !matches!(
-                transciphering_params,
-                TranscipheringParameters::SameAsCompute
-            ) {
-                return Err(anyhow_error_and_log(format!(
-                    "unsupported transciphering parameters {transciphering_params:?}, can not generate the transciphering key"
-                )));
-            }
+        Some(_) => {
             let transciphering_sk_share = private_key_set
                 .transciphering_secret_key_share
                 .as_ref()
@@ -1007,8 +996,8 @@ where
 /// Bootstrap key from a *dedicated* LWE secret key share into the compute GLWE key, using the
 /// compute bootstrap parameters.
 ///
-/// Both the general-purpose OPRF key and the transciphering key have this exact shape — they only
-/// differ in which dedicated LWE secret key share they bootstrap from.
+/// Both the general-purpose OPRF key and the transciphering key bootstrap into the compute GLWE
+/// key. Their input LWE secret-key shares may have different dimensions.
 async fn generate_compressed_dedicated_bootstrap_key<
     Z: BaseRing,
     P: DKGPreprocessing<ResiduePoly<Z, EXTENSION_DEGREE>> + ?Sized,

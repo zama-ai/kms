@@ -258,12 +258,20 @@ impl DKGParams {
     /// The parameters of the transciphering key material, or `None` when this
     /// parameter set does not enable transciphering.
     ///
-    /// [`TranscipheringParameters::SameAsCompute`] means the transciphering key is a
-    /// bootstrap key built with the compute parameters ([`Self::bk_params`]) from a
-    /// dedicated LWE secret key of dimension [`Self::lwe_dimension`] — the same shape
-    /// as the general-purpose OPRF key, but sampled independently of it.
+    /// [`TranscipheringParameters::SameAsCompute`] resolves to the compute LWE dimension;
+    /// [`TranscipheringParameters::DedicatedOprf`] carries a dedicated dimension. In both cases,
+    /// the bootstrap key uses the compute GLWE and decomposition parameters.
     pub fn transciphering_params(&self) -> Option<TranscipheringParameters> {
         self.meta.transciphering_parameters
+    }
+
+    /// The LWE dimension of the dedicated transciphering OPRF key, when enabled.
+    pub fn transciphering_lwe_dimension(&self) -> Option<LweDimension> {
+        self.transciphering_params().map(|params| {
+            params
+                .oprf_parameters(self.meta.compute_parameters)
+                .lwe_dimension
+        })
     }
 
     pub fn lwe_dimension(&self) -> LweDimension {
@@ -879,8 +887,8 @@ impl DKGParams {
         }
     }
 
-    pub fn num_needed_noise_bk(&self) -> NoiseInfo {
-        let amount = self.lwe_dimension().0
+    fn num_needed_noise_bk_for_lwe_dimension(&self, lwe_dimension: LweDimension) -> NoiseInfo {
+        let amount = lwe_dimension.0
             * (self.glwe_dimension().0 + 1)
             * self.decomposition_level_count_bk().0
             * self.polynomial_size().0;
@@ -890,13 +898,17 @@ impl DKGParams {
         }
     }
 
+    pub fn num_needed_noise_bk(&self) -> NoiseInfo {
+        self.num_needed_noise_bk_for_lwe_dimension(self.lwe_dimension())
+    }
+
     /// Noise needed for the dedicated transciphering bootstrap key.
     ///
-    /// The key is a compute-parameter BK ([`Self::num_needed_noise_bk`]), so the amount is the
-    /// same — but zero when the parameter set does not enable transciphering.
+    /// The key uses the compute GLWE and decomposition parameters, but its input LWE dimension is
+    /// resolved from [`Self::transciphering_params`].
     pub fn num_needed_noise_transciphering_bk(&self) -> NoiseInfo {
-        match self.transciphering_params() {
-            Some(_) => self.num_needed_noise_bk(),
+        match self.transciphering_lwe_dimension() {
+            Some(lwe_dimension) => self.num_needed_noise_bk_for_lwe_dimension(lwe_dimension),
             None => NoiseInfo {
                 amount: 0,
                 bound: NoiseBounds::GlweNoise(self.glwe_tuniform_bound()),
@@ -960,8 +972,8 @@ impl DKGParams {
 // ---------------------------------------------------------------------------
 
 impl DKGParams {
-    pub fn lwe_sk_num_bits_to_sample(&self) -> usize {
-        let key_size = self.lwe_dimension().0;
+    fn lwe_sk_num_bits_to_sample_for_dimension(&self, lwe_dimension: LweDimension) -> usize {
+        let key_size = lwe_dimension.0;
         if let Some(dev) = self.secret_key_deviations {
             let prob = compute_prob_hw_within_range(dev.pmax, key_size as u64);
             let tries = compute_min_trials(prob, dev.log2_failure_proba).unwrap();
@@ -971,17 +983,19 @@ impl DKGParams {
         }
     }
 
+    pub fn lwe_sk_num_bits_to_sample(&self) -> usize {
+        self.lwe_sk_num_bits_to_sample_for_dimension(self.lwe_dimension())
+    }
+
     /// Raw bits needed to sample the dedicated transciphering LWE secret key, or `0` when the
     /// parameter set does not enable transciphering.
     ///
-    /// The key has the compute LWE dimension, so this is [`Self::lwe_sk_num_bits_to_sample`]
-    /// gated on the parameter.
+    /// The sampling budget uses the transciphering OPRF's resolved LWE dimension, which may be
+    /// different from the compute LWE dimension.
     pub fn transciphering_lwe_sk_num_bits_to_sample(&self) -> usize {
-        if self.transciphering_params().is_some() {
-            self.lwe_sk_num_bits_to_sample()
-        } else {
-            0
-        }
+        self.transciphering_lwe_dimension().map_or(0, |dimension| {
+            self.lwe_sk_num_bits_to_sample_for_dimension(dimension)
+        })
     }
 
     pub fn lwe_hat_sk_num_bits_to_sample(&self) -> usize {
@@ -1141,25 +1155,24 @@ impl DKGParams {
                 * (c.packing_ks_glwe_dimension().0 * c.packing_ks_polynomial_size().0)
         });
 
-        // The transciphering BK, when present, bootstraps into the same compute GLWE key as the
-        // regular and OPRF BKs, so it costs exactly one more of them.
-        let num_compute_bks = if self.transciphering_params().is_some() {
-            3
-        } else {
-            2
-        };
         let mut triples = match keyset_config {
             KeySetConfig::Standard(_) => match self.sns() {
-                // regular BK + OPRF BK (+ transciphering BK) + SnS BK
+                // regular BK + OPRF BK + SnS BK; the transciphering BK is added below because it
+                // can have a different input LWE dimension.
                 Some(sns) => {
                     self.lwe_dimension().0
-                        * (num_compute_bks * self.glwe_sk_num_bits() + sns.glwe_sk_num_bits_sns())
+                        * (2 * self.glwe_sk_num_bits() + sns.glwe_sk_num_bits_sns())
                 }
-                // regular BK + OPRF BK (+ transciphering BK)
-                None => num_compute_bks * self.lwe_dimension().0 * self.glwe_sk_num_bits(),
+                // regular BK + OPRF BK
+                None => 2 * self.lwe_dimension().0 * self.glwe_sk_num_bits(),
             },
             KeySetConfig::DecompressionOnly => 0,
         };
+        if let (Some(transciphering_lwe_dimension), KeySetConfig::Standard(_)) =
+            (self.transciphering_lwe_dimension(), keyset_config)
+        {
+            triples += transciphering_lwe_dimension.0 * self.glwe_sk_num_bits();
+        }
         triples += compression_bk_triples;
 
         self.total_bits_required(keyset_config) + triples
@@ -2051,6 +2064,7 @@ mod tests {
     use super::*;
     use crate::keyset_config::{KeySetConfig, StandardKeySetConfig};
     use strum::IntoEnumIterator;
+    use tfhe::shortint::parameters::OprfParameters;
 
     // `KeySetConfig` does not implement `Debug`, so we carry an explicit label
     // for assertion messages.
@@ -2134,6 +2148,62 @@ mod tests {
             bad.check_conformance().is_err(),
             "SnS parameters with Z64 dkg_mode must be rejected"
         );
+    }
+
+    /// The transciphering OPRF can use a smaller input LWE key than the compute key. Keep its
+    /// secret-key, bootstrap-key, and triple budgets tied to that dedicated dimension.
+    #[test]
+    fn dedicated_transciphering_oprf_dimension_is_used_for_dkg_budgets() {
+        let mut dedicated = PARAMS_TEST_BK_SNS;
+        if let AtomicPatternParameters::Standard(PBSParameters::PBS(pbs)) =
+            &mut dedicated.meta.compute_parameters
+        {
+            pbs.lwe_dimension = LweDimension(2);
+        }
+        dedicated.meta.transciphering_parameters =
+            Some(TranscipheringParameters::DedicatedOprf(OprfParameters {
+                lwe_dimension: LweDimension(1),
+            }));
+
+        dedicated
+            .check_conformance()
+            .expect("dedicated transciphering OPRF parameters should be conformant");
+        assert_eq!(
+            dedicated.transciphering_lwe_dimension(),
+            Some(LweDimension(1))
+        );
+        assert_eq!(dedicated.transciphering_lwe_sk_num_bits_to_sample(), 1);
+
+        let expected_bk_noise = (dedicated.glwe_dimension().0 + 1)
+            * dedicated.decomposition_level_count_bk().0
+            * dedicated.polynomial_size().0;
+        assert_eq!(
+            dedicated.num_needed_noise_transciphering_bk().amount,
+            expected_bk_noise,
+        );
+
+        let mut same_as_compute = dedicated;
+        same_as_compute.meta.transciphering_parameters =
+            Some(TranscipheringParameters::SameAsCompute);
+        assert_eq!(
+            same_as_compute.transciphering_lwe_dimension(),
+            Some(LweDimension(2))
+        );
+        let config = KeySetConfig::Standard(StandardKeySetConfig::default());
+        assert_eq!(
+            same_as_compute.total_triples_required(config)
+                - same_as_compute.total_bits_required(config),
+            dedicated.total_triples_required(config) - dedicated.total_bits_required(config)
+                + dedicated.glwe_sk_num_bits()
+        );
+        assert_eq!(
+            dedicated.total_triples_required(KeySetConfig::DecompressionOnly),
+            same_as_compute.total_triples_required(KeySetConfig::DecompressionOnly)
+        );
+
+        // This also verifies that the new variant is forwarded to tfhe-rs when building the
+        // centralized client-key configuration.
+        let _ = dedicated.to_tfhe_config();
     }
 
     /// Derived-CPK re-randomization: the derived test set is conformant and

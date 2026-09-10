@@ -203,7 +203,7 @@ impl KeySet {
     }
 }
 
-/// Derives the seed used by tfhe-rs 1.7.0 to create the modulus-switched
+/// Derives the seed used by tfhe-rs 1.8.0 to create the modulus-switched
 /// PRF input. This mirrors `create_random_from_seed_modulus_switched` in
 /// tfhe-rs so the expected plaintext is computed independently from the
 /// encrypted OPRF path.
@@ -527,7 +527,15 @@ fn extract_key_containers(
                     ck.raw_transciphering_client_key()
                         .map(|k| k.into_container())
                 })
-                .unwrap_or_else(|| vec![Numeric::ZERO; params.lwe_dimension().0])
+                .unwrap_or_else(|| {
+                    vec![
+                        Numeric::ZERO;
+                        params
+                            .transciphering_lwe_dimension()
+                            .expect("transciphering parameters imply an LWE dimension")
+                            .0
+                    ]
+                })
         });
 
     Ok(RawKeyContainers {
@@ -1193,13 +1201,16 @@ where
     // key, since otherwise no transciphering material is generated at all.
     let transciphering_private_lwe_sk =
         params
-            .transciphering_params()
-            .map(|_| match transciphering_bits {
+            .transciphering_lwe_dimension()
+            .map(|transciphering_lwe_dimension| match transciphering_bits {
                 Some(bits) => LweSecretKeyOwned::from_container(bits),
                 None => {
                     let seed: u128 = session.rng().r#gen();
                     let mut secret_generator = secret_rng_from_seed(seed);
-                    LweSecretKey::generate_new_binary(params.lwe_dimension(), &mut secret_generator)
+                    LweSecretKey::generate_new_binary(
+                        transciphering_lwe_dimension,
+                        &mut secret_generator,
+                    )
                 }
             });
 

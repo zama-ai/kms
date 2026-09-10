@@ -1470,7 +1470,7 @@ pub(crate) mod tests {
         }
 
         // Verify the compressed keyset can be decompressed. `decompress` is infallible since
-        // tfhe 1.7.0, so this only asserts it does not panic.
+        // tfhe 1.8.0, so this only asserts it does not panic.
         let (_pk, server_key) = compressed_keyset.decompress().into_raw_parts();
         let (_, _, _, _, _, _, _, oprf_key, _, _) = server_key.into_raw_parts();
         assert!(

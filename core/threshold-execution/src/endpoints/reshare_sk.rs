@@ -87,7 +87,10 @@ impl ResharePreprocRequired {
                     num_randoms_64 += parameters.lwe_dimension().0;
                 }
                 if dedicated_keys.transciphering {
-                    num_randoms_64 += parameters.lwe_dimension().0;
+                    num_randoms_64 += parameters
+                        .transciphering_lwe_dimension()
+                        .expect("transciphering key requires transciphering parameters")
+                        .0;
                 }
                 num_randoms_64 +=
                     parameters.glwe_sk_num_bits() + parameters.compression_sk_num_bits()
@@ -99,7 +102,10 @@ impl ResharePreprocRequired {
                     num_randoms_128 += parameters.lwe_dimension().0;
                 }
                 if dedicated_keys.transciphering {
-                    num_randoms_128 += parameters.lwe_dimension().0;
+                    num_randoms_128 += parameters
+                        .transciphering_lwe_dimension()
+                        .expect("transciphering key requires transciphering parameters")
+                        .0;
                 }
                 num_randoms_128 +=
                     parameters.glwe_sk_num_bits() + parameters.compression_sk_num_bits();
@@ -564,7 +570,10 @@ where
 
     // Reshare the transciphering LWE key only when the old keyset has one.
     let transciphering_secret_key_share = if dedicated_keys.transciphering {
-        let expected_key_size = parameters.lwe_dimension().0;
+        let expected_key_size = parameters
+            .transciphering_lwe_dimension()
+            .ok_or_else(|| anyhow_error_and_log("transciphering key has no parameters"))?
+            .0;
         match parameters.dkg_mode() {
             DkgMode::Z64 => {
                 let maybe_key = input_share
