@@ -264,6 +264,12 @@ pub(crate) async fn do_new_epoch(
         // signature covers that epoch's `extra_data`. Everyone in the new context re-signs
         // with the new epoch's `extra_data`. Both are legitimate, so accept either. The
         // same holds for the re-signed CRS metadata.
+        //
+        // The metadata of a set-1-only party also carries only the signing schemes that the
+        // previous keygen used. A request for another scheme therefore fails the verification
+        // below, even though the KMS answered correctly. A context-aware client resolves this.
+        // TODO(https://github.com/zama-ai/kms-internal/issues/3207): relax the requested
+        // scheme set for a set-1-only reshare response.
         let accepted_extra_data = [
             request.extra_data.clone(),
             crate::extra_data_from_context_epoch(

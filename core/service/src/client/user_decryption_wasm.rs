@@ -1038,7 +1038,13 @@ impl ParsedUserDecryptionRequest {
         &self.signing_schemes
     }
 
-    pub fn new(
+    /// Builds a request that only asks for an ECDSA signature.
+    ///
+    /// The real scheme list comes from the gRPC request, through
+    /// `TryFrom<&UserDecryptionRequest>`. This constructor pins one scheme, so it stays
+    /// out of the public API and out of non-test code.
+    #[cfg(test)]
+    pub(crate) fn new(
         signature: Option<alloy_primitives::Signature>,
         client_address: alloy_primitives::Address,
         enc_key: Vec<u8>,

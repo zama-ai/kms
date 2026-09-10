@@ -99,20 +99,29 @@ fn dummy_domain() -> alloy_sol_types::Eip712Domain {
     )
 }
 
-/// Check the `signatures` list of a stored keygen/CRS metadata vector, and return
-/// it so the caller can compare the rest of the struct field by field.
-fn checked_scheme_signatures(
-    signatures: &[StoredTypedSignature],
+/// The `signatures` list that the current code has to hold after it loads a keygen or
+/// CRS metadata vector that version `stored_version` wrote.
+///
+/// The versions up to 0.14.0 keep no per-scheme signature list. Their upgrade steps
+/// (`Upgrade<KeyGenMetadataInnerV3> for KeyGenMetadataInnerV2`, and the CRS twin)
+/// rebuild the single ECDSA entry from `external_signature`. Version 0.15.0 keeps the
+/// list, and its generator writes it empty.
+///
+/// A version without an entry here is an error: every new fixture has to name the value
+/// that its stored bytes must produce.
+fn expected_scheme_signatures(
+    stored_version: &str,
     external_signature: &[u8],
 ) -> Result<Vec<StoredTypedSignature>, String> {
-    if signatures.is_empty()
-        || signatures == StoredTypedSignature::ecdsa_only(external_signature.to_vec())
-    {
-        return Ok(signatures.to_vec());
+    match stored_version {
+        "0.13.0" | "0.13.10" | "0.13.20" | "0.14.0" => Ok(StoredTypedSignature::ecdsa_only(
+            external_signature.to_vec(),
+        )),
+        "0.15.0" => Ok(Vec::new()),
+        other => Err(format!(
+            "no expected per-scheme signature list for stored version {other}"
+        )),
     }
-    Err(format!(
-        "stored metadata carries unexpected per-scheme signatures: {signatures:?}"
-    ))
 }
 
 /// Rebuilds the EIP-712 domain that `test` describes.
@@ -247,6 +256,7 @@ fn test_key_gen_metadata(
     dir: &Path,
     test: &KeyGenMetadataTest,
     format: DataFormat,
+    stored_version: &str,
 ) -> Result<TestSuccess, TestFailure> {
     let original_versionized: KeyGenMetadataInner = load_and_unversionize(dir, test, format)?;
 
@@ -292,11 +302,8 @@ fn test_key_gen_metadata(
         },
     );
 
-    let signatures = checked_scheme_signatures(
-        &original_versionized.signatures,
-        &original_versionized.external_signature,
-    )
-    .map_err(|e| test.failure(e, format))?;
+    let signatures = expected_scheme_signatures(stored_version, &external_signature)
+        .map_err(|e| test.failure(e, format))?;
 
     let new_versionized = KeyGenMetadataInner {
         signatures,
@@ -333,6 +340,7 @@ fn test_crs_gen_metadata(
     dir: &Path,
     test: &CrsGenMetadataTest,
     format: DataFormat,
+    stored_version: &str,
 ) -> Result<TestSuccess, TestFailure> {
     let original_current: CrsGenMetadata = load_and_unversionize(dir, test, format)?;
     let original_legacy: CrsGenMetadata =
@@ -355,18 +363,8 @@ fn test_crs_gen_metadata(
                 format,
             )
         })?;
-    let signatures = match &original_current {
-        CrsGenMetadata::Current(inner) => {
-            checked_scheme_signatures(inner.scheme_signatures(), inner.external_signature())
-                .map_err(|e| test.failure(e, format))?
-        }
-        CrsGenMetadata::LegacyV0(_) => {
-            return Err(test.failure(
-                "Expected current CrsGenMetadata, got legacy".to_string(),
-                format,
-            ));
-        }
-    };
+    let signatures = expected_scheme_signatures(stored_version, &external_signature)
+        .map_err(|e| test.failure(e, format))?;
     let new_inner: CrsGenMetadataInner = CrsGenMetadataInnerV2 {
         crs_id,
         crs_digest: digest,
@@ -431,6 +429,7 @@ fn test_key_gen_metadata_with_extra_data(
     dir: &Path,
     test: &KeyGenMetadataWithExtraDataTest,
     format: DataFormat,
+    stored_version: &str,
 ) -> Result<TestSuccess, TestFailure> {
     let original_versionized: KeyGenMetadataInner = load_and_unversionize(dir, test, format)?;
 
@@ -461,11 +460,8 @@ fn test_key_gen_metadata_with_extra_data(
     let external_signature =
         compute_eip712_signature(&sig_key, &sol_type, &signing_domain).unwrap();
 
-    let signatures = checked_scheme_signatures(
-        &original_versionized.signatures,
-        &original_versionized.external_signature,
-    )
-    .map_err(|e| test.failure(e, format))?;
+    let signatures = expected_scheme_signatures(stored_version, &external_signature)
+        .map_err(|e| test.failure(e, format))?;
 
     let new_versionized = KeyGenMetadataInner {
         signatures,
@@ -494,6 +490,7 @@ fn test_crs_gen_metadata_with_extra_data(
     dir: &Path,
     test: &CrsGenMetadataWithExtraDataTest,
     format: DataFormat,
+    stored_version: &str,
 ) -> Result<TestSuccess, TestFailure> {
     let original_current: CrsGenMetadata = load_and_unversionize(dir, test, format)?;
 
@@ -516,18 +513,8 @@ fn test_crs_gen_metadata_with_extra_data(
                 format,
             )
         })?;
-    let signatures = match &original_current {
-        CrsGenMetadata::Current(inner) => {
-            checked_scheme_signatures(inner.scheme_signatures(), inner.external_signature())
-                .map_err(|e| test.failure(e, format))?
-        }
-        CrsGenMetadata::LegacyV0(_) => {
-            return Err(test.failure(
-                "Expected current CrsGenMetadata, got legacy".to_string(),
-                format,
-            ));
-        }
-    };
+    let signatures = expected_scheme_signatures(stored_version, &external_signature)
+        .map_err(|e| test.failure(e, format))?;
     let new_inner: CrsGenMetadataInner = CrsGenMetadataInnerV2 {
         crs_id,
         crs_digest: digest,
@@ -1722,17 +1709,37 @@ impl TestedModule for KMS {
             Self::Metadata::AppKeyBlob(test) => {
                 test_app_key_blob(test_dir.as_ref(), test, format).into()
             }
-            Self::Metadata::KeyGenMetadata(test) => {
-                test_key_gen_metadata(test_dir.as_ref(), test, format).into()
-            }
-            Self::Metadata::CrsGenMetadata(test) => {
-                test_crs_gen_metadata(test_dir.as_ref(), test, format).into()
-            }
+            Self::Metadata::KeyGenMetadata(test) => test_key_gen_metadata(
+                test_dir.as_ref(),
+                test,
+                format,
+                &testcase.kms_core_version_min,
+            )
+            .into(),
+            Self::Metadata::CrsGenMetadata(test) => test_crs_gen_metadata(
+                test_dir.as_ref(),
+                test,
+                format,
+                &testcase.kms_core_version_min,
+            )
+            .into(),
             Self::Metadata::KeyGenMetadataWithExtraData(test) => {
-                test_key_gen_metadata_with_extra_data(test_dir.as_ref(), test, format).into()
+                test_key_gen_metadata_with_extra_data(
+                    test_dir.as_ref(),
+                    test,
+                    format,
+                    &testcase.kms_core_version_min,
+                )
+                .into()
             }
             Self::Metadata::CrsGenMetadataWithExtraData(test) => {
-                test_crs_gen_metadata_with_extra_data(test_dir.as_ref(), test, format).into()
+                test_crs_gen_metadata_with_extra_data(
+                    test_dir.as_ref(),
+                    test,
+                    format,
+                    &testcase.kms_core_version_min,
+                )
+                .into()
             }
             Self::Metadata::StoredEip712Domain(test) => {
                 test_stored_eip712_domain(test_dir.as_ref(), test, format).into()
