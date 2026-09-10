@@ -1,6 +1,6 @@
 use crate::{
     consts::DEFAULT_EPOCH_ID,
-    cryptography::signatures::{PrivateSigKey, gen_sig_keys},
+    cryptography::signatures::{PrivateSigKey, SigningSchemeType, gen_sig_keys},
     dummy_domain,
     engine::base::{CrsGenMetadata, KeyGenMetadata, derive_request_id},
     util::meta_store::{EntryState, add_req_to_meta_store, retrieve_from_meta_store},
@@ -22,7 +22,7 @@ use rand::SeedableRng;
 use std::collections::{BTreeMap, HashMap};
 use std::sync::Arc;
 use tfhe::{
-    CompactPublicKey, ConfigBuilder, Seed, ServerKey, shortint::ClassicPBSParameters,
+    CompactPublicKey, ConfigBuilder, Seed, shortint::ClassicPBSParameters,
     xof_key_set::CompressedXofKeySet,
 };
 use threshold_execution::keyset_config::KeyGenSecretKeyConfig;
@@ -37,7 +37,9 @@ use crate::{
     consts::TEST_PARAM,
     engine::{
         base::KmsFheKeyHandles,
-        centralized::central_kms::{async_generate_crs, generate_fhe_keys},
+        centralized::central_kms::{
+            async_generate_crs, generate_fhe_keys, generate_uncompressed_fhe_keys,
+        },
         threshold::service::{PublicKeyMaterial, ThresholdFheKeys},
     },
     util::meta_store::MetaStore,
@@ -121,6 +123,27 @@ fn generate_compressed_keys(
     .unwrap();
 
     (sk, domain, compressed_keyset, compact_pk, key_info)
+}
+
+fn generate_uncompressed_keys(
+    req_id: &RequestId,
+    prep_id: &RequestId,
+    signing_seed: u64,
+) -> (FhePubKeySet, KmsFheKeyHandles) {
+    let mut rng = AesRng::seed_from_u64(signing_seed);
+    let (_, signing_key) = gen_sig_keys(&mut rng);
+    generate_uncompressed_fhe_keys(
+        &signing_key,
+        &[SigningSchemeType::Ecdsa256k1],
+        TEST_PARAM,
+        KeyGenSecretKeyConfig::GenerateAll,
+        req_id,
+        prep_id,
+        Some(Seed(42)),
+        &dummy_domain(),
+        vec![],
+    )
+    .unwrap()
 }
 
 const TEST_METRIC: &str = "test";
@@ -263,7 +286,6 @@ async fn read_public_key() {
 
 #[tokio::test]
 async fn write_central_keys() {
-    let param = TEST_PARAM;
     let crypto_storage = CentralizedCryptoMaterialStorage::new(
         FailingRamStorage::new(),
         RamStorage::new(),
@@ -277,22 +299,8 @@ async fn write_central_keys() {
         .unwrap()
         .into();
 
-    let pbs_params: ClassicPBSParameters = param.classic_pbs();
-    let sns_params = param.sns().expect("sns param").sns_params();
-    let config =
-        ConfigBuilder::with_custom_parameters(pbs_params).enable_noise_squashing(sns_params);
-    let client_key = tfhe::ClientKey::generate(config);
-    let public_key = CompactPublicKey::new(&client_key);
-    let server_key = ServerKey::new(&client_key);
-    let key_info = KmsFheKeyHandles {
-        client_key,
-        decompression_key: None,
-        public_key_info: dummy_info(),
-    };
-    let fhe_key_set = PublicKeySet::Uncompressed(Arc::new(FhePubKeySet {
-        public_key,
-        server_key,
-    }));
+    let (public_keys, key_info) = generate_uncompressed_keys(&req_id, &req_id, 100);
+    let fhe_key_set = PublicKeySet::Uncompressed(Arc::new(public_keys));
 
     let meta_store = MetaStore::new_unlimited();
 
@@ -361,7 +369,6 @@ async fn write_central_keys() {
 
 #[tokio::test]
 async fn write_central_keys_failed_storage_sets_terminal_error() {
-    let param = TEST_PARAM;
     let crypto_storage = CentralizedCryptoMaterialStorage::new(
         FailingRamStorage::new(),
         RamStorage::new(),
@@ -377,22 +384,8 @@ async fn write_central_keys_failed_storage_sets_terminal_error() {
             .unwrap()
             .into();
 
-    let pbs_params: ClassicPBSParameters = param.classic_pbs();
-    let sns_params = param.sns().expect("sns param").sns_params();
-    let config =
-        ConfigBuilder::with_custom_parameters(pbs_params).enable_noise_squashing(sns_params);
-    let client_key = tfhe::ClientKey::generate(config);
-    let public_key = CompactPublicKey::new(&client_key);
-    let server_key = ServerKey::new(&client_key);
-    let key_info = KmsFheKeyHandles {
-        client_key,
-        decompression_key: None,
-        public_key_info: dummy_info(),
-    };
-    let public_key_set = PublicKeySet::Uncompressed(Arc::new(FhePubKeySet {
-        public_key,
-        server_key,
-    }));
+    let (public_keys, key_info) = generate_uncompressed_keys(&req_id, &req_id, 100);
+    let public_key_set = PublicKeySet::Uncompressed(Arc::new(public_keys));
 
     let meta_store = MetaStore::new_unlimited();
     let permit = {
@@ -1862,5 +1855,6 @@ async fn refresh_fhe_private_material_paths() {
     assert!(cache_guard.get(&(miss_req, miss_epoch)).is_none());
 }
 
+mod fhe_write_side_effects;
 mod migration;
 mod storage_side_effects;
