@@ -203,7 +203,7 @@ jobs:
       # and the docker-tls test which has its own dedicated job.
       # nightly_* and nightly_full_gen_tests_* are intentionally included here.
       args-tests: >-
-        --features slow_tests -- --skip k8s_ --skip isolated_test_example
+        --features e2e,slow_tests -- --skip k8s_ --skip isolated_test_example
         --skip test_threshold_mpc_context_switch_6_docker
       runs-on: '64cpu-linux-x64'
       nextest-test-threads: "10"
@@ -238,10 +238,8 @@ jobs:
       matrix:
         include:
 
-          # "Normal" crates and small utilities; default features only.
-          # threshold-execution / threshold-bgv / threshold-networking are
-          # intentionally excluded — heavy-1 / heavy-2 already run them with
-          # `*/slow_tests`, which is a *superset* of the default test set.
+          # "Normal" crates and small utilities; default features only. threshold-execution / threshold-bgv /
+          # threshold-networking are intentionally excluded. The heavy groups run their test sets.
           - group: crates-normies
             crates: '-p threshold-types -p threshold-hashing -p threshold-algebra -p bc2wrap -p error-utils -p thread-handles -p test-utils -p observability'
             features: ''
@@ -270,11 +268,11 @@ jobs:
             threads: '8'
             runs-on: '64cpu-linux-x64'
 
-          # Slow/heavy tests, 2/2. Big iron, lots of RAM.
-          # The `threshold-bgv` tests all use N65536 and is inherently RAM-heavy, so gets own runner.
+          # Slow/heavy tests, 2/2. Big iron, lots of RAM. The threshold-bgv tests use N65536 and need a large runner.
+          # threshold-networking shares the fast job and its build artifacts. 
           # TODO(dp): discuss making this non-required so failures here do not impeed PR merge?
           - group: crates-heavy-2-fast
-            crates: '-p threshold-bgv'
+            crates: '-p threshold-bgv -p threshold-networking'
             features: '-F threshold-bgv/slow_tests'
             partition: '-- --skip test_dkg_with_offline --skip test_dkg_dummy_preproc'
             threads: '8'

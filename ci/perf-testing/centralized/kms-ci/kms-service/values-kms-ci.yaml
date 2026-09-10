@@ -7,7 +7,7 @@ kmsConnector:
 
 kmsCore:
   image:
-    name: hub.zama.org/ghcr/zama-ai/kms/core-service-enclave
+    name: hub.zama.org/ghcr/zama-ai/kms/core-service-insecure
     tag: <version>
   thresholdMode:
     enabled: false
@@ -54,7 +54,7 @@ kmsCoreClient:
   enabled: true
   nameOverride: kms-core-client-centralized-ci
   image:
-    name: hub.zama.org/ghcr/zama-ai/kms/core-client
+    name: hub.zama.org/ghcr/zama-ai/kms/core-client-insecure
     tag: <version>
   envFrom:
     configmap:

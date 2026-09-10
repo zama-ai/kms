@@ -19,7 +19,7 @@ kubeUtils:
 
 kmsCore:
   image:
-    name: hub.zama.org/ghcr/zama-ai/kms/core-service
+    name: hub.zama.org/ghcr/zama-ai/kms/core-service-insecure
     tag: <version>
 
   envFrom:
@@ -34,6 +34,7 @@ kmsCore:
     bucketSize: 50000
   thresholdMode:
     enabled: true
+    decCapacity: 30000
     initializationScript:
       enabled: true
     tls:

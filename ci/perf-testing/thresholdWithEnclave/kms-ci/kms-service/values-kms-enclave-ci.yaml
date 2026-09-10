@@ -5,6 +5,7 @@ kmsPeers:
 kmsCore:
   thresholdMode:
     enabled: true
+    decCapacity: 30000
     # peersList is generated dynamically by deploy.sh and should not be set here
     tls:
       enabled: true  # TLS is enabled by default for enclave deployments

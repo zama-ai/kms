@@ -54,6 +54,8 @@ pub(crate) static NETWORK_TIMEOUT_BK_SNS: Duration = Duration::from_secs(1200);
 // max message size for decoding - encoding message on gRPC protocol
 pub static MAX_EN_DECODE_MESSAGE_SIZE: LazyLock<usize> = LazyLock::new(|| 2 * 1024 * 1024 * 1024);
 
+/// Maximum number of rounds ahead that a future message can be buffered.
+pub(crate) const MAX_FUTURE_ROUNDS: usize = 16;
+
 /// Hard cap on the number of distinct future-round messages buffered per sender.
-/// Since we only ever have one message per round, this is also the cap on highest round number we buffer.
 pub(crate) const MAX_BUFFERED_FUTURE_MSGS: usize = 32;

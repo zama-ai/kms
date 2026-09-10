@@ -2,7 +2,7 @@
 
 use crate::constants::{
     DISCARD_INACTIVE_SESSION_INTERVAL_SECS, INITIAL_INTERVAL_MS, MAX_BUFFERED_FUTURE_MSGS,
-    MAX_ELAPSED_TIME, MAX_EN_DECODE_MESSAGE_SIZE, MAX_INTERVAL,
+    MAX_ELAPSED_TIME, MAX_EN_DECODE_MESSAGE_SIZE, MAX_FUTURE_ROUNDS, MAX_INTERVAL,
     MAX_OPENED_INACTIVE_SESSIONS_PER_PARTY, MAX_WAITING_TIME_MESSAGE_QUEUE, MESSAGE_LIMIT,
     MULTIPLIER, NETWORK_TIMEOUT_BK, NETWORK_TIMEOUT_BK_SNS, NETWORK_TIMEOUT_LONG,
     SESSION_CLEANUP_INTERVAL_SECS, SESSION_STATUS_UPDATE_INTERVAL_SECS,
@@ -174,5 +174,11 @@ impl CoreToCoreNetworkConfig {
         self.max_buffered_future_msgs
             .map(|v| v as usize)
             .unwrap_or(MAX_BUFFERED_FUTURE_MSGS)
+    }
+
+    pub fn get_max_future_rounds(&self) -> usize {
+        self.max_future_rounds
+            .map(|v| v as usize)
+            .unwrap_or(MAX_FUTURE_ROUNDS)
     }
 }
