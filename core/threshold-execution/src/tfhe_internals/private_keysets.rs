@@ -109,6 +109,7 @@ impl<const EXTENSION_DEGREE: usize> PrivateKeySet<EXTENSION_DEGREE> {
 
     /// Worst-case number of Z64 sub-keys a [`Self::lift_to_z128_integrated`] would
     /// bit-lift for a keyset with the given `parameters`.
+    /// NOTE: This should be updated every time we add a new sub-key to the keyset
     pub fn num_liftable_subkeys(parameters: DKGParams) -> usize {
         // LWE-encryption, LWE-compute and GLWE are always present. The SnS
         // keys are always shared over Z128 and are never bit-lifted.
@@ -910,6 +911,7 @@ mod test {
             assert_eq!(params.dkg_mode(), DkgMode::Z128);
             let n = PrivateKeySet::<E>::num_liftable_subkeys(params);
             // 3 always-present base sub-keys + optional compression + conservative OPRF.
+            // NOTE: This should be updated every time we add a new sub-key to the keyset
             assert_eq!(n, 3 + usize::from(params.compression_sk_num_bits() > 0) + 1);
             assert!(
                 (4..=5).contains(&n),

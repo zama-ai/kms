@@ -857,7 +857,7 @@ where
     advance_session_by_rounds(
         two_sets_session,
         reshare_set2_only_num_rounds::<OpenProtocol, BroadcastProtocol>(
-            two_sets_session.num_parties(),
+            two_sets_session.parameters().num_parties_in_set2(),
             two_sets_session.threshold().threshold_set_2 as usize,
         ),
     )

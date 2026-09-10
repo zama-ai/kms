@@ -117,8 +117,8 @@ impl<R: RoleTrait> GenericParameterHandles<R> for GenericBaseSession<R> {
         self.parameters.roles_mut()
     }
 
-    fn to_parameters(&self) -> GenericSessionParameters<R> {
-        self.parameters.clone()
+    fn parameters(&self) -> &GenericSessionParameters<R> {
+        self.parameters.parameters()
     }
 
     fn get_all_sorted_roles(&self) -> &Vec<R> {

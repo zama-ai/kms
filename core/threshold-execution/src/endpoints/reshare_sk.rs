@@ -693,9 +693,7 @@ where
         }),
     };
 
-    // 6. GLWE compression key (only when present). The SnS compression key size
-    // bug noted in the legacy code is preserved by using each component's own
-    // recorded size (`compression_size` / `sns_compression_size`).
+    // 6. GLWE compression key (only when present).
     let glwe_secret_key_share_compression =
         if let Some(compression_params) = parameters.compression_decompression_params() {
             let comp_polynomial_size = compression_params

@@ -63,7 +63,7 @@ impl DummyPreprocessing {
     pub fn new<Ses: ParameterHandles>(seed: u64, session: &Ses) -> Self {
         DummyPreprocessing {
             seed,
-            parameters: session.to_parameters(),
+            parameters: session.parameters().clone(),
             rnd_ctr: 0,
             trip_ctr: 0,
             bit_ctr: 0,
@@ -451,7 +451,7 @@ impl<Z> DummyDebugPreprocessing<Z> {
     pub fn new<Ses: ParameterHandles>(seed: u64, session: &Ses) -> Self {
         DummyDebugPreprocessing::<Z> {
             seed,
-            session: session.to_parameters(),
+            session: session.parameters().clone(),
             rnd_ctr: 0,
             trip_ctr: 0,
             _phantom_z: Default::default(),
