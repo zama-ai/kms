@@ -274,6 +274,7 @@ where
     /// Returns (validated_rec, operator).
     pub(crate) async fn validate_custodian_backup_recovery_request(
         &self,
+        backup_vault: &Mutex<Vault>,
         ephemeral_dec_key: &UnifiedPrivateEncKey,
         ephemeral_enc_key: &UnifiedPublicEncKey,
         req: CustodianRecoveryRequest,
@@ -286,11 +287,6 @@ where
             &req.custodian_context_id,
             RequestIdParsingErr::BackupRecovery,
         )?;
-        let backup_vault = self
-            .crypto_storage
-            .backup_vault
-            .as_ref()
-            .ok_or_else(|| anyhow::anyhow!("Backup vault is not configured"))?;
         let recovery_material = load_recovery_validation_material(
             backup_vault,
             self.installed_context().await?,
@@ -518,9 +514,20 @@ where
         let context_guard = Arc::clone(&self.crypto_storage.custodian_context_lock)
             .lock_owned()
             .await;
+        // Checked before validation, which reports a missing vault as a bad request rather than
+        // the unavailability it is.
+        let Some(backup_vault) = self.crypto_storage.backup_vault.as_ref() else {
+            return Err(MetricedError::new(
+                OP_CUSTODIAN_BACKUP_RECOVERY,
+                None,
+                anyhow::anyhow!("Backup vault is not configured"),
+                tonic::Code::Unavailable,
+            ));
+        };
         let inner = request.into_inner();
         let (parsed_custodian_rec, operator, recovery_material) = self
             .validate_custodian_backup_recovery_request(
+                backup_vault,
                 &ephemeral_dec_key,
                 &ephemeral_enc_key,
                 inner,
@@ -549,14 +556,6 @@ where
                 )
             })?
             .is_none();
-        let Some(backup_vault) = self.crypto_storage.backup_vault.as_ref() else {
-            return Err(MetricedError::new(
-                OP_CUSTODIAN_BACKUP_RECOVERY,
-                None,
-                anyhow::anyhow!("Backup vault is not configured"),
-                tonic::Code::Unavailable,
-            ));
-        };
         let recovered = recovery_material.custodian_context().context_id;
         let mut adopted = false;
         {
