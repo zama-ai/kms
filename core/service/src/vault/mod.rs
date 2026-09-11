@@ -649,6 +649,7 @@ pub(crate) fn storage_prefix_safety(
 #[cfg(test)]
 pub mod tests {
     use super::{Vault, VaultDataType, adopt_custodian_context};
+    use crate::backup::custodian::CustodianContextAnchor;
     use crate::cryptography::encryption::{Encryption, PkeScheme, PkeSchemeType};
     use crate::cryptography::signatures::{PrivateSigKey, gen_sig_keys};
     use crate::engine::base::derive_request_id;
@@ -659,7 +660,7 @@ pub mod tests {
     use crate::vault::storage::{
         Storage, StorageExt, StorageProxy, StorageReader, StorageReaderExt, StorageType,
         read_custodian_context_anchor, store_custodian_context_anchor,
-        tests::dummy_recovery_material_at_id,
+        store_versioned_at_request_id, tests::dummy_recovery_material_at_id,
     };
     use aes_prng::AesRng;
     use kms_grpc::{EpochId, RequestId, rpc_types::PrivDataType};
@@ -762,6 +763,34 @@ pub mod tests {
 
         assert!(
             store_custodian_context_anchor(&mut storage, &second)
+                .await
+                .is_err()
+        );
+        assert_eq!(
+            read_custodian_context_anchor(&storage).await.unwrap(),
+            Some(first)
+        );
+    }
+
+    /// A sequence that cannot grow fails the replacement before anything is deleted.
+    #[tokio::test]
+    async fn an_exhausted_sequence_fails_closed() {
+        let first = RequestId::from_bytes([1; 32]);
+        let mut storage = RamStorage::new();
+        store_versioned_at_request_id(
+            &mut storage,
+            &first,
+            &CustodianContextAnchor {
+                context_id: first,
+                sequence: u64::MAX,
+            },
+            &PrivDataType::CustodianContextAnchor.to_string(),
+        )
+        .await
+        .unwrap();
+
+        assert!(
+            store_custodian_context_anchor(&mut storage, &RequestId::from_bytes([2; 32]))
                 .await
                 .is_err()
         );

@@ -566,7 +566,13 @@ pub async fn store_custodian_context_anchor<S: Storage>(
         // Already the only anchor, so rewriting it would only open a window with none.
         return Ok(());
     }
-    let sequence = superseded.iter().map(|a| a.sequence).max().unwrap_or(0) + 1;
+    let sequence = superseded
+        .iter()
+        .map(|anchor| anchor.sequence)
+        .max()
+        .unwrap_or(0)
+        .checked_add(1)
+        .ok_or_else(|| anyhow_error_and_log("Custodian context anchor sequence overflow"))?;
     if exists {
         delete_at_request_id(priv_storage, context_id, &data_type).await?;
     }
