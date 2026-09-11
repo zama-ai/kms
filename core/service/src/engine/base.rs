@@ -1211,15 +1211,12 @@ impl BaseKmsStruct {
     }
 
     /// Shares the seed source; each task receives its own RNG from [`Self::new_rng`].
+    // This method is cloning `BaseKmsStruct` but we prefer not to impl `Clone` to avoid accidental misuse.
     pub fn new_instance(&self) -> Self {
-        let sig_key = match &self.sig_key {
-            Some(sk) => Some(Arc::clone(sk)),
-            None => None,
-        };
         Self {
             kms_type: self.kms_type,
             verf_key: Arc::clone(&self.verf_key),
-            sig_key,
+            sig_key: self.sig_key.as_ref().map(Arc::clone),
             rng_source: Arc::clone(&self.rng_source),
         }
     }
