@@ -663,6 +663,16 @@ impl DKGParams {
 
     pub fn bk_params(&self) -> BKParams {
         let NoiseInfo { amount, bound } = self.num_needed_noise_bk();
+        self.bk_params_with_noise(amount, bound)
+    }
+
+    /// Bootstrap-key parameters for the dedicated transciphering OPRF.
+    pub fn transciphering_bk_params(&self) -> BKParams {
+        let NoiseInfo { amount, bound } = self.num_needed_noise_transciphering_bk();
+        self.bk_params_with_noise(amount, bound)
+    }
+
+    fn bk_params_with_noise(&self, amount: usize, bound: NoiseBounds) -> BKParams {
         BKParams {
             num_needed_noise: amount,
             noise_bound: bound,
@@ -1759,8 +1769,6 @@ pub const PARAMS_TEST_BK_SNS: DKGParams = DKGParams {
         rerand_configuration: Some(
             tfhe::shortint::parameters::ReRandomizationConfiguration::DerivedCompactPublicKeyWithoutKeySwitch,
         ),
-        // Transciphering is exercised only by the test parameter sets for now; the
-        // production sets above deliberately leave it off.
         transciphering_parameters: Some(TranscipheringParameters::SameAsCompute),
     },
     secret_key_deviations: None,

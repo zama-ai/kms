@@ -20,7 +20,7 @@ use crate::{
         },
         lwe_keyswitch_key_generation::generate_compressed_key_switch_key,
         modulus_switch_noise_reduction_key_generation::generate_compressed_mod_switch_noise_reduction_key,
-        parameters::{DKGParams, MSNRKConfiguration},
+        parameters::{BKParams, DKGParams, MSNRKConfiguration},
         private_keysets::{Definalizable, GenericPrivateKeySet, PrivateKeySet},
         public_keysets::{
             CompressedReRandomizationRawKey, CompressedReRandomizationRawKeySwitchingKey,
@@ -851,7 +851,7 @@ where
             .oprf_secret_key_share
             .as_ref()
             .ok_or_else(|| anyhow::anyhow!("missing OPRF secret key share"))?,
-        params,
+        params.bk_params(),
         mpc_encryption_rng,
         preprocessing,
         session,
@@ -879,7 +879,7 @@ where
             let transciphering_bsk = generate_compressed_dedicated_bootstrap_key(
                 &private_key_set.glwe_secret_key_share,
                 transciphering_sk_share,
-                params,
+                params.transciphering_bk_params(),
                 mpc_encryption_rng,
                 preprocessing,
                 session,
@@ -993,8 +993,7 @@ where
     .await
 }
 
-/// Bootstrap key from a *dedicated* LWE secret key share into the compute GLWE key, using the
-/// compute bootstrap parameters.
+/// Bootstrap key from a *dedicated* LWE secret key share into the compute GLWE key.
 ///
 /// Both the general-purpose OPRF key and the transciphering key bootstrap into the compute GLWE
 /// key. Their input LWE secret-key shares may have different dimensions.
@@ -1008,7 +1007,7 @@ async fn generate_compressed_dedicated_bootstrap_key<
 >(
     glwe_secret_key_share: &GlweSecretKeyShare<Z, EXTENSION_DEGREE>,
     dedicated_lwe_secret_key_share: &LweSecretKeyShare<Z, EXTENSION_DEGREE>,
-    params: DKGParams,
+    bk_params: BKParams,
     mpc_encryption_rng: &mut MPCEncryptionRandomGenerator<Z, Gen, EXTENSION_DEGREE>,
     preprocessing: &mut P,
     session: &mut S,
@@ -1019,7 +1018,7 @@ where
     generate_compressed_bootstrap_key(
         glwe_secret_key_share,
         dedicated_lwe_secret_key_share,
-        params.bk_params(),
+        bk_params,
         mpc_encryption_rng,
         session,
         preprocessing,

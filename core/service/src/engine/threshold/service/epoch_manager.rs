@@ -725,7 +725,10 @@ impl<
                     );
                     fhe_key_infos.push(info);
                 }
-                VerifiedPublicMaterial::Compressed(compressed_keyset) => {
+                VerifiedPublicMaterial::Compressed {
+                    keyset: compressed_keyset,
+                    ..
+                } => {
                     // TODO(2905): https://github.com/zama-ai/kms-internal/issues/2905
                     // Resharing currently signs and stores the CompactPublicKey derived
                     // from the newly generated compressed keyset. Revisit whether it should

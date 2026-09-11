@@ -326,9 +326,9 @@ impl<const EXTENSION_DEGREE: usize> PrivateKeySet<EXTENSION_DEGREE> {
             oprf_secret_key_share: Some(LweSecretKeyShareEnum::Z128(LweSecretKeyShare {
                 data: vec![],
             })),
-            transciphering_secret_key_share: Some(LweSecretKeyShareEnum::Z128(LweSecretKeyShare {
-                data: vec![],
-            })),
+            transciphering_secret_key_share: param
+                .transciphering_params()
+                .map(|_| LweSecretKeyShareEnum::Z128(LweSecretKeyShare { data: vec![] })),
             lwe_encryption_secret_key_share: LweSecretKeyShareEnum::Z128(LweSecretKeyShare {
                 data: vec![],
             }),
