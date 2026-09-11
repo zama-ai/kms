@@ -90,6 +90,44 @@ impl CustodianFixture {
             retired_backup_entry: target_backup_entry,
             retired_recovery_entry: target_recovery_entry,
         };
+        for context_id in [fixture.retired_id, fixture.current_id] {
+            assert!(
+                fixture.context_is_complete(context_id).await,
+                "fixture context {context_id} is not successful"
+            );
+            assert!(
+                fixture.recovery_exists(context_id).await,
+                "fixture context {context_id} has no recovery material"
+            );
+        }
+        {
+            let backup_vault = fixture.storage.backup_vault.as_ref().unwrap().lock().await;
+            let backup_state = failing_ram_storage(&backup_vault).state();
+            let signing_key_id = RequestId::from_bytes(DUMMY_SIGNING_KEY_REQ_ID);
+            let mpc_context_id: RequestId = (*DEFAULT_MPC_CONTEXT).into();
+            let expected_items = [
+                (signing_key_id, PrivDataType::SigningKey),
+                (mpc_context_id, PrivDataType::ContextInfo),
+            ];
+            for context_id in [fixture.retired_id, fixture.current_id] {
+                for (data_id, data_type) in expected_items {
+                    let entry =
+                        BackupEntry::new(context_id, data_id, None, data_type).storage_entry();
+                    assert!(
+                        backup_state.contains_key(&entry),
+                        "fixture backup entry is absent: {entry:?}"
+                    );
+                }
+            }
+            let Some(KeychainProxy::SecretSharing(keychain)) = backup_vault.keychain.as_ref()
+            else {
+                panic!("fixture requires a custodian keychain");
+            };
+            assert_eq!(
+                keychain.get_current_backup_id().unwrap(),
+                fixture.current_id
+            );
+        }
         fixture.clear_events().await;
         fixture
     }
