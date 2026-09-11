@@ -192,7 +192,8 @@ The node does not read that copy: it boots with no custodian context, serves nor
 nothing up until a new custodian context is created. The earlier release reads recovery material
 from public storage only, so after a rollback the node backs nothing up until a custodian context
 is created on that release, or the object at `RecoveryMaterial/<id>` in the backup vault is copied
-to the same path in public storage.
+to the same path in public storage. That folder must then hold no other recovery material: the
+earlier release takes the greatest id it finds there.
 
 ### Phase 4 — Recovery init (operator's private storage is gone)
 
