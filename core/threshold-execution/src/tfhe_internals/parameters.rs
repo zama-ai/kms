@@ -1797,7 +1797,7 @@ pub const PARAMS_TEST_RESHARE: DKGParams = DKGParams {
         backend: Backend::Cpu,
         compute_parameters: AtomicPatternParameters::Standard(PBSParameters::PBS(
             ClassicPBSParameters {
-                lwe_dimension: LweDimension(1),
+                lwe_dimension: LweDimension(2),
                 glwe_dimension: GlweDimension(1),
                 polynomial_size: PolynomialSize(256),
                 lwe_noise_distribution: DynamicDistribution::new_t_uniform(0),
@@ -1891,8 +1891,6 @@ pub const PARAMS_TEST_RESHARE: DKGParams = DKGParams {
         rerand_configuration: Some(
             tfhe::shortint::parameters::ReRandomizationConfiguration::DerivedCompactPublicKeyWithoutKeySwitch,
         ),
-        // Transciphering is exercised only by the test parameter sets for now; the
-        // production sets above deliberately leave it off.
         transciphering_parameters: Some(TranscipheringParameters::DedicatedOprf(tfhe::shortint::parameters::OprfParameters { lwe_dimension: LweDimension(1) })),
     },
     secret_key_deviations: None,

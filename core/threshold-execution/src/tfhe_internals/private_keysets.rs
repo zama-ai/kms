@@ -129,10 +129,12 @@ impl<const EXTENSION_DEGREE: usize> PrivateKeySet<EXTENSION_DEGREE> {
         // keys are always shared over Z128 and are never bit-lifted.
         let base = 3;
         let compression = usize::from(parameters.compression().is_some());
-        // Counted conservatively: OPRF presence is not encoded in `parameters`, and both the
-        // general-purpose OPRF and transciphering keys are OPRF sub-keys.
-        let oprf_upper_bound = 2;
-        base + compression + oprf_upper_bound
+        // Counted conservatively: general-purpose OPRF presence is not encoded in `parameters`.
+        let oprf_upper_bound = 1;
+        // Unlike the general-purpose OPRF key, transciphering is enabled explicitly by the
+        // parameters, so count it only when the parameter set includes it.
+        let transciphering = usize::from(parameters.transciphering_lwe_dimension().is_some());
+        base + compression + oprf_upper_bound + transciphering
     }
 
     pub fn lift_to_z64(self) -> Self
@@ -1004,9 +1006,15 @@ mod test {
         for params in [BC_PARAMS_SNS, PARAMS_TEST_RESHARE] {
             assert_eq!(params.dkg_mode(), DkgMode::Z128);
             let n = PrivateKeySet::<E>::num_liftable_subkeys(params);
-            // 3 always-present base sub-keys + optional compression + the two OPRF sub-keys.
+            // 3 always-present base sub-keys + optional compression, conservative OPRF and
+            // parameter-enabled transciphering.
             // NOTE: This should be updated every time we add a new sub-key to the keyset
-            assert_eq!(n, 3 + usize::from(params.compression_sk_num_bits() > 0) + 2);
+            assert_eq!(
+                n,
+                3 + usize::from(params.compression_sk_num_bits() > 0)
+                    + 1
+                    + usize::from(params.transciphering_lwe_dimension().is_some())
+            );
             assert!(
                 (4..=6).contains(&n),
                 "a Z128 keyset lifts at most 4-6 sub-keys, got {n}"
