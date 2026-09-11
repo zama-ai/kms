@@ -345,7 +345,7 @@ mod tests {
 
     /// Regression test: the task used to discard an active session that had not
     /// received anything for `discard_inactive_sessions_interval`. Sessions that
-    /// legitimately idle would thus be discarded, which turned out to be an issue..
+    /// legitimately idle would thus be discarded, which turned out to be an issue.
     #[tokio::test(flavor = "multi_thread")]
     async fn test_active_session_is_never_discarded() {
         let conf = CoreToCoreNetworkConfig {

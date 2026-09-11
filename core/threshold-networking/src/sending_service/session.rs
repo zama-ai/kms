@@ -363,8 +363,8 @@ impl NetworkSession {
     /// [`GrpcNetworkingManager::make_network_session`](crate::grpc::GrpcNetworkingManager)
     /// (the inactive→active and vacant branches), which previously duplicated this
     /// 14-field literal and had to be kept in lock-step by hand. All the
-    /// round-independent fields (round counter, timers, byte counter, activity
-    /// time) are initialised here; callers supply only what actually differs.
+    /// round-independent fields (round counter, timers, byte counter)
+    /// are initialised here; callers supply only what actually differs.
     pub(crate) fn new(
         owner: Identity,
         session_id: SessionId,
