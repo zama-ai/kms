@@ -821,6 +821,31 @@ pub mod tests {
         );
     }
 
+    /// A record under an id other than the context it names would survive every replacement, so
+    /// both reading and replacing the anchor refuse it.
+    #[tokio::test]
+    async fn a_misfiled_anchor_fails_closed() {
+        let mut storage = RamStorage::new();
+        store_versioned_at_request_id(
+            &mut storage,
+            &RequestId::from_bytes([1; 32]),
+            &CustodianContextAnchor {
+                context_id: RequestId::from_bytes([2; 32]),
+                sequence: 1,
+            },
+            &PrivDataType::CustodianContextAnchor.to_string(),
+        )
+        .await
+        .unwrap();
+
+        assert!(read_custodian_context_anchor(&storage).await.is_err());
+        assert!(
+            store_custodian_context_anchor(&mut storage, &RequestId::from_bytes([3; 32]))
+                .await
+                .is_err()
+        );
+    }
+
     #[tokio::test]
     async fn anchor_round_trips_and_is_replaced() {
         let mut storage = RamStorage::new();

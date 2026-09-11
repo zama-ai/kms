@@ -555,12 +555,11 @@ pub async fn store_custodian_context_anchor<S: Storage>(
     context_id: &RequestId,
 ) -> anyhow::Result<()> {
     let data_type = PrivDataType::CustodianContextAnchor.to_string();
-    let superseded: Vec<CustodianContextAnchor> =
-        read_all_data_versioned::<_, CustodianContextAnchor>(priv_storage, &data_type)
-            .await?
-            .into_values()
-            .filter(|anchor| anchor.context_id != *context_id)
-            .collect();
+    let superseded: Vec<CustodianContextAnchor> = read_custodian_context_anchors(priv_storage)
+        .await?
+        .into_values()
+        .filter(|anchor| anchor.context_id != *context_id)
+        .collect();
     let exists = priv_storage.data_exists(context_id, &data_type).await?;
     if superseded.is_empty() && exists {
         // Already the only anchor, so rewriting it would only open a window with none.
@@ -601,14 +600,36 @@ pub async fn store_custodian_context_anchor<S: Storage>(
 pub async fn read_custodian_context_anchor<S: StorageReader>(
     priv_storage: &S,
 ) -> anyhow::Result<Option<RequestId>> {
-    Ok(read_all_data_versioned::<_, CustodianContextAnchor>(
+    Ok(read_custodian_context_anchors(priv_storage)
+        .await?
+        .into_values()
+        .max_by_key(|anchor| anchor.sequence)
+        .map(|anchor| anchor.context_id))
+}
+
+/// Read every anchor record, keyed by its storage id.
+///
+/// A record stored under an id other than the context it names is refused: superseded records are
+/// deleted by context id, so it would survive every replacement, and each one would then rewrite
+/// the current anchor with only that record readable in between.
+async fn read_custodian_context_anchors<S: StorageReader>(
+    priv_storage: &S,
+) -> anyhow::Result<HashMap<RequestId, CustodianContextAnchor>> {
+    let anchors = read_all_data_versioned::<_, CustodianContextAnchor>(
         priv_storage,
         &PrivDataType::CustodianContextAnchor.to_string(),
     )
-    .await?
-    .into_values()
-    .max_by_key(|anchor| anchor.sequence)
-    .map(|anchor| anchor.context_id))
+    .await?;
+    if let Some((id, anchor)) = anchors
+        .iter()
+        .find(|(id, anchor)| **id != anchor.context_id)
+    {
+        return Err(anyhow_error_and_log(format!(
+            "Custodian context anchor stored at {id} names context {}",
+            anchor.context_id
+        )));
+    }
+    Ok(anchors)
 }
 
 /// Read the recovery material stored at `id`, see [`store_recovery_material`].
