@@ -81,46 +81,6 @@ async fn nightly_default_decryption_threshold_with_crash(
 #[cfg(feature = "slow_tests")]
 #[tokio::test(flavor = "multi_thread")]
 #[rstest::rstest]
-#[case(TestingPlaintext::U8(u8::MAX), 1, DEFAULT_AMOUNT_PARTIES, &DEFAULT_THRESHOLD_KEY_ID)]
-#[case(TestingPlaintext::Bool(true), 2, DEFAULT_AMOUNT_PARTIES, &DEFAULT_THRESHOLD_KEY_ID)]
-#[case(TestingPlaintext::U8(u8::MAX), 1, DEFAULT_AMOUNT_PARTIES, &DEFAULT_THRESHOLD_KEY_ID)]
-#[case(TestingPlaintext::U16(u16::MAX), 1, DEFAULT_AMOUNT_PARTIES, &DEFAULT_THRESHOLD_KEY_ID)]
-#[case(TestingPlaintext::U32(u32::MAX), 1, DEFAULT_AMOUNT_PARTIES, &DEFAULT_THRESHOLD_KEY_ID)]
-#[case(TestingPlaintext::U64(u64::MAX), 1, DEFAULT_AMOUNT_PARTIES, &DEFAULT_THRESHOLD_KEY_ID)]
-#[case(TestingPlaintext::U128(u128::MAX), 1, DEFAULT_AMOUNT_PARTIES, &DEFAULT_THRESHOLD_KEY_ID)]
-#[case(TestingPlaintext::U160(tfhe::integer::U256::from((u128::MAX, u32::MAX as u128))), 1, DEFAULT_AMOUNT_PARTIES, &DEFAULT_THRESHOLD_KEY_ID)]
-#[case(TestingPlaintext::U256(tfhe::integer::U256::from((u128::MAX, u128::MAX))), 1, DEFAULT_AMOUNT_PARTIES, &DEFAULT_THRESHOLD_KEY_ID)]
-
-async fn nightly_default_user_decryption_threshold(
-    #[case] msg: TestingPlaintext,
-    #[case] parallelism: usize,
-    #[case] amount_parties: usize,
-    #[case] key_id: &RequestId,
-    #[values(true)] secure: bool,
-) {
-    user_decryption_threshold(
-        DEFAULT_PARAM,
-        key_id,
-        false,
-        msg,
-        EncryptionConfig {
-            compression: true,
-            precompute_sns: true,
-        },
-        parallelism,
-        secure,
-        amount_parties,
-        None,
-        None,
-        None,
-    )
-    .await;
-}
-
-#[cfg(feature = "slow_tests")]
-#[tokio::test(flavor = "multi_thread")]
-#[rstest::rstest]
-#[case(TestingPlaintext::U8(u8::MAX), 1, DEFAULT_AMOUNT_PARTIES, &DEFAULT_THRESHOLD_KEY_ID)]
 #[case(TestingPlaintext::Bool(true), 2, DEFAULT_AMOUNT_PARTIES, &DEFAULT_THRESHOLD_KEY_ID)]
 #[case(TestingPlaintext::U8(u8::MAX), 1, DEFAULT_AMOUNT_PARTIES, &DEFAULT_THRESHOLD_KEY_ID)]
 #[case(TestingPlaintext::U16(u16::MAX), 1, DEFAULT_AMOUNT_PARTIES, &DEFAULT_THRESHOLD_KEY_ID)]
