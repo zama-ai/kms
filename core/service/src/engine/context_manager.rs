@@ -2392,6 +2392,33 @@ mod tests {
             let response = context_manager.new_custodian_context(request).await;
             assert!(response.is_ok());
         }
+        // With two contexts present, only the anchor guard can refuse the second one: it is the
+        // context the node backs up under.
+        {
+            let request = Request::new(DestroyCustodianContextRequest {
+                context_id: Some(second_context_id.into()),
+            });
+
+            let error = context_manager
+                .destroy_custodian_context(request)
+                .await
+                .expect_err("the anchored context must not be destroyed");
+            assert_eq!(error.code(), tonic::Code::FailedPrecondition);
+            assert!(
+                error
+                    .internal_err()
+                    .to_string()
+                    .contains("it is the one this node backs up under")
+            );
+            let backup_vault = crypto_storage.get_backup_vault().unwrap();
+            let guarded_backup_vault = backup_vault.lock().await;
+            assert!(
+                read_recovery_material_at_id(&guarded_backup_vault.storage, &second_context_id)
+                    .await
+                    .is_ok(),
+                "the anchored context's recovery material must survive the refused destroy"
+            );
+        }
         // now try again to delete the first context. This should succeed since
         // there are now 2 contexts present.
         {
