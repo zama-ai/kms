@@ -267,32 +267,17 @@ where
         ))
     }
 
-    /// Validate the recovery request from the custodian and return the fully-validated, decrypted
-    /// per-role `BackupMaterial`s.
+    /// Validate the custodians' recovery outputs against `recovery_material` and return the
+    /// fully-validated, decrypted per-role `BackupMaterial`s.
     ///
     /// Returns (validated_rec, operator).
     pub(crate) async fn validate_custodian_backup_recovery_request(
         &self,
-        backup_vault: &Mutex<Vault>,
         ephemeral_dec_key: &UnifiedPrivateEncKey,
         ephemeral_enc_key: &UnifiedPublicEncKey,
-        req: CustodianRecoveryRequest,
-    ) -> anyhow::Result<(
-        HashMap<Role, Zeroizing<BackupMaterial>>,
-        Operator,
-        RecoveryValidationMaterial,
-    )> {
-        let custodian_context_id = parse_optional_grpc_request_id(
-            &req.custodian_context_id,
-            RequestIdParsingErr::BackupRecovery,
-        )?;
-        let recovery_material = load_recovery_validation_material(
-            backup_vault,
-            self.installed_context().await?,
-            &custodian_context_id,
-            &self.base_kms.verf_key(),
-        )
-        .await?;
+        custodian_recovery_outputs: Vec<CustodianRecoveryOutput>,
+        recovery_material: &RecoveryValidationMaterial,
+    ) -> anyhow::Result<(HashMap<Role, Zeroizing<BackupMaterial>>, Operator)> {
         // The MPC context to validate against is taken from the operator-signed `RecoveryValidationMaterial`
         // stored at backup time. `filter_custodian_data` enforces the per-share equality.
         let mpc_context_id = recovery_material.mpc_context();
@@ -316,14 +301,14 @@ where
         )?;
 
         let validated_rec = filter_custodian_data(
-            req.custodian_recovery_outputs,
+            custodian_recovery_outputs,
             &operator,
-            &recovery_material,
+            recovery_material,
             ephemeral_dec_key,
             ephemeral_enc_key,
         )
         .await?;
-        Ok((validated_rec, operator, recovery_material))
+        Ok((validated_rec, operator))
     }
 }
 
@@ -513,8 +498,7 @@ where
         let context_guard = Arc::clone(&self.crypto_storage.custodian_context_lock)
             .lock_owned()
             .await;
-        // Checked before validation, which reports a missing vault as a bad request rather than
-        // the unavailability it is.
+        // Checked first, so a missing vault is reported as the unavailability it is.
         let Some(backup_vault) = self.crypto_storage.backup_vault.as_ref() else {
             return Err(MetricedError::new(
                 OP_CUSTODIAN_BACKUP_RECOVERY,
@@ -524,12 +508,51 @@ where
             ));
         };
         let inner = request.into_inner();
-        let (parsed_custodian_rec, operator, recovery_material) = self
+        let custodian_context_id = parse_optional_grpc_request_id(
+            &inner.custodian_context_id,
+            RequestIdParsingErr::BackupRecovery,
+        )
+        .map_err(|e| {
+            MetricedError::new(
+                OP_CUSTODIAN_BACKUP_RECOVERY,
+                None,
+                e,
+                tonic::Code::InvalidArgument,
+            )
+        })?;
+        // Only a node with nothing installed adopts the recovered context, so a recovery cannot
+        // re-point one that is already working, and a retry after a failed attempt still adopts.
+        // The anchor decides, not the keychain.
+        let installed = self.installed_context().await.map_err(|e| {
+            MetricedError::new(
+                OP_CUSTODIAN_BACKUP_RECOVERY,
+                None,
+                anyhow::anyhow!("Could not read the custodian context anchor: {e}"),
+                tonic::Code::Internal,
+            )
+        })?;
+        let adopting = installed.is_none();
+        let recovery_material = load_recovery_validation_material(
+            backup_vault,
+            installed,
+            &custodian_context_id,
+            &self.base_kms.verf_key(),
+        )
+        .await
+        .map_err(|e| {
+            MetricedError::new(
+                OP_CUSTODIAN_BACKUP_RECOVERY,
+                None,
+                anyhow::anyhow!("Failed to select the custodian context to recover: {e}"),
+                e.code(),
+            )
+        })?;
+        let (parsed_custodian_rec, operator) = self
             .validate_custodian_backup_recovery_request(
-                backup_vault,
                 &ephemeral_dec_key,
                 &ephemeral_enc_key,
-                inner,
+                inner.custodian_recovery_outputs,
+                &recovery_material,
             )
             .await
             .map_err(|e| {
@@ -540,21 +563,6 @@ where
                     tonic::Code::InvalidArgument,
                 )
             })?;
-        // Only a node with nothing installed adopts the recovered context, so a recovery cannot
-        // re-point one that is already working, and a retry after a failed attempt still adopts.
-        // The anchor decides, not the keychain.
-        let adopting = self
-            .installed_context()
-            .await
-            .map_err(|e| {
-                MetricedError::new(
-                    OP_CUSTODIAN_BACKUP_RECOVERY,
-                    None,
-                    anyhow::anyhow!("Could not read the custodian context anchor: {e}"),
-                    tonic::Code::Internal,
-                )
-            })?
-            .is_none();
         let recovered = recovery_material.custodian_context().context_id;
         let mut adopted = false;
         {
@@ -723,7 +731,7 @@ async fn load_recovery_validation_material(
     installed: Option<RequestId>,
     custodian_context_id: &ContextId,
     verf_key: &PublicSigKey,
-) -> anyhow::Result<RecoveryValidationMaterial> {
+) -> Result<RecoveryValidationMaterial, RecoveryContextError> {
     let id = &custodian_context_id.into();
     let recovery_material = {
         let guarded_vault = backup_vault.lock().await;
@@ -731,10 +739,10 @@ async fn load_recovery_validation_material(
             // The node has a context, so it recovers under that one; a request naming another must
             // not be able to move it, least of all onto a retired one an attacker replayed.
             if installed != *id {
-                anyhow::bail!(
-                    "This node backs up under custodian context {installed}; refusing to recover \
-                     under {id}"
-                );
+                return Err(RecoveryContextError::Conflict {
+                    installed,
+                    requested: *id,
+                });
             }
             read_recovery_material_at_id(&guarded_vault.storage, id).await?
         } else {
@@ -742,7 +750,7 @@ async fn load_recovery_validation_material(
         }
     };
     if !recovery_material.validate(verf_key) {
-        anyhow::bail!("Could not verify the signature on the recovery material",);
+        return Err(RecoveryContextError::InvalidSignature(*id));
     }
     Ok(recovery_material)
 }
@@ -866,6 +874,8 @@ enum RecoveryContextError {
     Unknown(RequestId),
     #[error("No custodian context to recover: the backup vault holds none.")]
     NoContext,
+    #[error("Could not verify the signature on the recovery material {0}")]
+    InvalidSignature(RequestId),
     #[error(transparent)]
     Storage(#[from] anyhow::Error),
 }
@@ -877,6 +887,7 @@ impl RecoveryContextError {
             Self::Storage(_) => tonic::Code::Internal,
             Self::NoKeychain => tonic::Code::Unavailable,
             Self::Unknown(_) => tonic::Code::NotFound,
+            Self::InvalidSignature(_) => tonic::Code::InvalidArgument,
             Self::Conflict { .. } | Self::Ambiguous(_) | Self::NoContext => {
                 tonic::Code::FailedPrecondition
             }
@@ -1542,6 +1553,40 @@ mod tests {
         );
         let (selected, _) = recovery_context(&vault, None, Some(second)).await.unwrap();
         assert_eq!(selected, second);
+    }
+
+    /// The operator's mistakes come back with their own status codes, not as bad requests.
+    #[tokio::test]
+    async fn loading_recovery_material_reports_operator_errors() {
+        let (verf, sk) = gen_sig_keys(&mut AesRng::seed_from_u64(0));
+        let (other_verf, _) = gen_sig_keys(&mut AesRng::seed_from_u64(1));
+        let installed = ContextId::from_bytes([1; 32]);
+        let other = ContextId::from_bytes([2; 32]);
+        let vault = uninstalled_vault();
+        store_dummy_recovery_material(
+            &mut vault.lock().await.storage,
+            &RequestId::from(&installed),
+            &sk,
+        )
+        .await;
+
+        let conflict = load_recovery_validation_material(
+            &vault,
+            Some(RequestId::from(&installed)),
+            &other,
+            &verf,
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(conflict.code(), tonic::Code::FailedPrecondition);
+        let unknown = load_recovery_validation_material(&vault, None, &other, &verf)
+            .await
+            .unwrap_err();
+        assert_eq!(unknown.code(), tonic::Code::NotFound);
+        let foreign = load_recovery_validation_material(&vault, None, &installed, &other_verf)
+            .await
+            .unwrap_err();
+        assert_eq!(foreign.code(), tonic::Code::InvalidArgument);
     }
 
     /// A node that has a context recovers under that one: a request naming another is refused, so
