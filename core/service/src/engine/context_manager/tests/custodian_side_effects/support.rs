@@ -29,10 +29,10 @@ pub(super) const SETUP_CONTEXT_BYTE: u8 = 35;
 pub(super) struct CustodianFixture {
     pub(super) manager: TestManager,
     storage: TestStorage,
-    pub(super) target_id: RequestId,
+    pub(super) retired_id: RequestId,
     pub(super) current_id: RequestId,
-    pub(super) target_backup_entry: StorageEntry,
-    pub(super) target_recovery_entry: StorageEntry,
+    pub(super) retired_backup_entry: StorageEntry,
+    pub(super) retired_recovery_entry: StorageEntry,
 }
 
 impl CustodianFixture {
@@ -85,10 +85,10 @@ impl CustodianFixture {
         let fixture = Self {
             manager,
             storage,
-            target_id,
+            retired_id: target_id,
             current_id,
-            target_backup_entry,
-            target_recovery_entry,
+            retired_backup_entry: target_backup_entry,
+            retired_recovery_entry: target_recovery_entry,
         };
         fixture.clear_events().await;
         fixture
@@ -101,10 +101,10 @@ impl CustodianFixture {
         let storage = failing_ram_storage_mut(&mut backup_vault);
         match phase {
             FaultPhase::BeforeMutation => {
-                storage.set_fail_delete_at(self.target_backup_entry.clone())
+                storage.set_fail_delete_at(self.retired_backup_entry.clone())
             }
             FaultPhase::AfterMutation => {
-                storage.set_fail_delete_after_mutation_at(self.target_backup_entry.clone())
+                storage.set_fail_delete_after_mutation_at(self.retired_backup_entry.clone())
             }
         }
     }
@@ -115,7 +115,7 @@ impl CustodianFixture {
             .public_storage
             .lock()
             .await
-            .set_fail_delete_at(self.target_recovery_entry.clone());
+            .set_fail_delete_at(self.retired_recovery_entry.clone());
     }
 
     /// Removes all fault points and recorded events from both mutable stores.
