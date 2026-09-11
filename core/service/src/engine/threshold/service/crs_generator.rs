@@ -206,7 +206,7 @@ impl<
 
         // we do not need to hold the handle,
         // the result of the computation is tracked the crs_meta_store
-        let rng = self.base_kms.new_rng().await.to_owned();
+        let rng = self.base_kms.new_rng();
 
         let token = CancellationToken::new();
         {
@@ -522,7 +522,7 @@ impl<
     pub async fn from_real_crsgen(value: &RealCrsGenerator<PubS, PrivS, C>) -> Self {
         Self {
             real_crs_generator: RealCrsGenerator {
-                base_kms: value.base_kms.new_instance().await,
+                base_kms: value.base_kms.new_instance(),
                 crypto_storage: value.crypto_storage.clone(),
                 crs_meta_store: Arc::clone(&value.crs_meta_store),
                 session_maker: value.session_maker.clone(),
@@ -572,6 +572,7 @@ impl<
 
 #[cfg(test)]
 mod tests {
+    use crate::engine::rng_source::test_rng_source;
     use std::time::Duration;
 
     use algebra::structure_traits::Ring;
@@ -700,8 +701,11 @@ mod tests {
         rng: &mut AesRng,
     ) -> RealCrsGenerator<ram::RamStorage, ram::RamStorage, C> {
         let (_pk, sk) = gen_sig_keys(rng);
-        let base_kms =
-            BaseKmsStruct::new(KMSType::Threshold, NodeSigningIdentity::ecdsa_only(sk)).unwrap();
+        let base_kms = BaseKmsStruct::new(
+            KMSType::Threshold,
+            NodeSigningIdentity::ecdsa_only(sk),
+            test_rng_source(),
+        );
         let prss_setup_z128 = Some(PRSSSetup::new_testing_prss(vec![], vec![]));
         let prss_setup_z64 = Some(PRSSSetup::new_testing_prss(vec![], vec![]));
         let epoch_id = *DEFAULT_EPOCH_ID;
@@ -709,7 +713,7 @@ mod tests {
             prss_setup_z128,
             prss_setup_z64,
             &epoch_id,
-            base_kms.new_rng().await,
+            base_kms.new_rng(),
         );
 
         let pub_storage = ram::RamStorage::new();

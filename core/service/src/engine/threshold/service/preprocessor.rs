@@ -713,6 +713,7 @@ impl<P: ProducerFactory<ResiduePolyF4Z128, SmallSession<ResiduePolyF4Z128>> + Se
 mod tests {
     use super::*;
     use crate::consts::{DEFAULT_EPOCH_ID, DEFAULT_MPC_CONTEXT};
+    use crate::engine::rng_source::test_rng_source;
     use crate::engine::{base::BaseKmsStruct, threshold::service::session::SessionMaker};
     use crate::testing::utils::poll_result_until_ready;
     use crate::{cryptography::signatures::gen_sig_keys, dummy_domain};
@@ -766,8 +767,8 @@ mod tests {
         let base_kms = BaseKmsStruct::new(
             KMSType::Threshold,
             NodeSigningIdentity::ecdsa_only(sk.clone()),
-        )
-        .unwrap();
+            test_rng_source(),
+        );
         let prss_setup_z128 = if use_prss {
             Some(PRSSSetup::new_testing_prss(vec![], vec![]))
         } else {
@@ -783,7 +784,7 @@ mod tests {
             prss_setup_z128,
             prss_setup_z64,
             &epoch_id,
-            base_kms.new_rng().await,
+            base_kms.new_rng(),
         );
         RealPreprocessor::<P>::init_test(base_kms, session_maker.make_immutable())
     }

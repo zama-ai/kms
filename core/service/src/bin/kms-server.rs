@@ -22,7 +22,8 @@ use kms_lib::{
     engine::{
         base::BaseKmsStruct, centralized::central_kms::RealCentralizedKms,
         context::SoftwareVersion, context_manager::create_default_centralized_context_in_storage,
-        migration::migrate_to_0_15_x, run_server, threshold::service::new_real_threshold_kms,
+        migration::migrate_to_0_15_x, rng_source::RngSource, run_server,
+        threshold::service::new_real_threshold_kms,
     },
     grpc::MetaStoreStatusServiceImpl,
     vault::{
@@ -598,9 +599,14 @@ async fn main_exec() -> anyhow::Result<()> {
         .await
         .unwrap_or_else(|e| panic!("Could not bind to {service_socket_addr} \n {e:?}"));
 
+    let rng_source = Arc::new(RngSource::new(security_module.clone())?);
+
     // load key
     let (base_kms, able_to_use_tls) = match get_core_signing_identity(&private_vault).await {
-        Ok(sk) => (BaseKmsStruct::new(kms_type, sk)?, true), // The signing key is present, so we can use TLS if configured
+        Ok(sk) => (
+            BaseKmsStruct::new(kms_type, sk, Arc::clone(&rng_source)),
+            true,
+        ),
         Err(e) => {
             tracing::warn!("Error loading signing key: {e:?}");
             tracing::warn!(
@@ -611,7 +617,10 @@ async fn main_exec() -> anyhow::Result<()> {
             let verf_key = public_storage
                 .read_data(&SIGNING_KEY_ID, &PubDataType::VerfKey.to_string())
                 .await?;
-            (BaseKmsStruct::new_no_signing_key(kms_type, verf_key), false) // No signing key, so we cannot use TLS even if configured
+            (
+                BaseKmsStruct::new_no_signing_key(kms_type, verf_key, rng_source),
+                false,
+            )
         }
     };
 

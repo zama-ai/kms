@@ -434,24 +434,8 @@ impl<
         Ok(())
     }
 
-    /// Wrapper around the internal method [`Self::internal_init_epoch`]
-    /// so it's easier to call from the outside if necessary.
-    pub async fn init_epoch(
-        &self,
-        context_id: &ContextId,
-        epoch_id: &EpochId,
-    ) -> anyhow::Result<()> {
-        Self::internal_init_epoch(
-            self.session_maker.clone(),
-            &self.crypto_storage,
-            context_id,
-            epoch_id,
-        )
-        .await
-    }
-
     /// Execute the PRSS setup phase and store the epoch data in the storage backend (which includes the PRSS result)
-    async fn internal_init_epoch(
+    async fn init_epoch(
         session_maker: SessionMaker,
         crypto_storage: &ThresholdCryptoMaterialStorage<PubS, PrivS>,
         context_id: &ContextId,
@@ -1773,6 +1757,16 @@ impl<
             ));
         }
 
+        // Refresh before forking either session, including for old-committee parties that skip PRSS init.
+        self.session_maker.reseed_rng().map_err(|e| {
+            MetricedError::new(
+                OP_NEW_EPOCH,
+                Some(epoch_id.into()),
+                e,
+                tonic::Code::Unavailable,
+            )
+        })?;
+
         let resharing_task = match resharing_params {
             Some(ResharingParams {
                 previous_epoch,
@@ -1835,13 +1829,9 @@ impl<
                 let epoch_id = epoch_id;
                 let meta_store = meta_store;
                 if do_prss
-                    && let Err(e) = Self::internal_init_epoch(
-                        session_maker,
-                        &crypto_storage,
-                        &context_id,
-                        &epoch_id,
-                    )
-                    .await
+                    && let Err(e) =
+                        Self::init_epoch(session_maker, &crypto_storage, &context_id, &epoch_id)
+                            .await
                 {
                     let err = format!("PRSS initialization failed during epoch creation: {e:?}");
                     let _ =
@@ -2041,6 +2031,7 @@ impl<
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
+    use crate::engine::rng_source::test_rng_source;
 
     use crate::{
         client::test_tools::{self},
@@ -2396,11 +2387,14 @@ pub(crate) mod tests {
     ) -> RealThresholdEpochManager<ram::RamStorage, ram::RamStorage, I, SecureReshareSecretKeys>
     {
         let (_pk, sk) = gen_sig_keys(rng);
-        let base_kms =
-            BaseKmsStruct::new(KMSType::Threshold, NodeSigningIdentity::ecdsa_only(sk)).unwrap();
+        let base_kms = BaseKmsStruct::new(
+            KMSType::Threshold,
+            NodeSigningIdentity::ecdsa_only(sk),
+            test_rng_source(),
+        );
         let epoch_id = *DEFAULT_EPOCH_ID;
         let session_maker =
-            SessionMaker::four_party_dummy_session(None, None, &epoch_id, base_kms.new_rng().await);
+            SessionMaker::four_party_dummy_session(None, None, &epoch_id, base_kms.new_rng());
 
         RealThresholdEpochManager::<ram::RamStorage, ram::RamStorage, I, SecureReshareSecretKeys>::init_test(
             base_kms,

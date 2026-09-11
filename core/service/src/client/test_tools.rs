@@ -7,6 +7,7 @@ use crate::consts::{DEC_CAPACITY, DEFAULT_PROTOCOL, DEFAULT_URL, MAX_TRIES, MIN_
 use crate::engine::base::BaseKmsStruct;
 use crate::engine::centralized::central_kms::RealCentralizedKms;
 use crate::engine::context_manager::create_default_centralized_context_in_storage;
+use crate::engine::rng_source::test_rng_source;
 use crate::engine::threshold::service::{RealThresholdKms, new_real_threshold_kms};
 use crate::engine::{Shutdown, run_server};
 use crate::grpc::MetaStoreStatusServiceImpl;
@@ -153,7 +154,7 @@ pub async fn setup_threshold_no_client<
 
         handles.spawn(async move {
             let sk = get_core_signing_identity(&cur_priv_storage).await.unwrap();
-            let base_kms = BaseKmsStruct::new(KMSType::Threshold, sk).unwrap();
+            let base_kms = BaseKmsStruct::new(KMSType::Threshold, sk, test_rng_source());
 
             // TODO pass in cert_paths for testing TLS
             let server = new_real_threshold_kms(
@@ -381,7 +382,7 @@ pub async fn setup_threshold_with_custom_peers<
         let server_idx = idx; // Track the physical server index
         handles.push(tokio::spawn(async move {
             let sk = get_core_signing_identity(&cur_priv_storage).await.unwrap();
-            let base_kms = BaseKmsStruct::new(KMSType::Threshold, sk).unwrap();
+            let base_kms = BaseKmsStruct::new(KMSType::Threshold, sk, test_rng_source());
 
             // Note: explicit some of the types to avoid clippy complaining
             let server: anyhow::Result<(
