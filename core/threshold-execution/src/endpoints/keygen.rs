@@ -2518,7 +2518,15 @@ pub mod tests {
         use tfhe_csprng::seeders::Seed;
         use threshold_types::role::Role;
 
-        let lwe_dim = params.lwe_dimension().0;
+        // The transciphering OPRF may use a smaller input LWE key than the compute key, so the
+        // reconstruction length depends on which dedicated key is under test.
+        let lwe_dim = match key_kind {
+            DedicatedOprfKey::Oprf => params.lwe_dimension(),
+            DedicatedOprfKey::Transciphering => params
+                .transciphering_lwe_dimension()
+                .expect("the caller only selects this kind when transciphering is enabled"),
+        }
+        .0;
         let ciphertext_params = params.classic_pbs();
         let shortint_params = tfhe::shortint::ShortintParameterSet::from(ciphertext_params);
         let random_bits_count: u64 = shortint_params.message_modulus().0.ilog2().into();

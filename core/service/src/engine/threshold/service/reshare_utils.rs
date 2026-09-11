@@ -63,22 +63,19 @@ impl VerifiedPublicMaterial {
 
     /// Whether the public material carries a transciphering server key.
     ///
-    /// NOTE: tfhe-rs exposes cheap `has_*_key` predicates for every other optional key but not yet
-    /// for the transciphering one, so this has to clone the key and take it apart. The clone is
-    /// paid once per key per reshare, which is negligible next to running the reshare protocol
-    /// itself; replace this with `has_transciphering_key()` once tfhe-rs offers it.
+    /// NOTE: `CompressedXofKeySet` forwards a `has_*_key` predicate for every other optional key
+    /// but not for the transciphering one, so that branch has to clone the keyset to reach the
+    /// inner `CompressedServerKey`. Cloning a *compressed* key costs far less than running the
+    /// reshare protocol that follows; replace it with a forwarded predicate once tfhe-rs offers
+    /// one.
     pub(crate) fn has_transciphering_key(&self) -> bool {
         match self {
             VerifiedPublicMaterial::Uncompressed(fhe_pubkeys) => {
-                let (_, _, _, _, _, _, _, _, transciphering_key, _) =
-                    fhe_pubkeys.server_key.clone().into_raw_parts();
-                transciphering_key.is_some()
+                fhe_pubkeys.server_key.has_transciphering_key()
             }
             VerifiedPublicMaterial::Compressed(compressed_keyset) => {
                 let (_, _, compressed_server_key) = compressed_keyset.clone().into_raw_parts();
-                let (_, _, _, _, _, _, _, _, transciphering_key, _) =
-                    compressed_server_key.into_raw_parts();
-                transciphering_key.is_some()
+                compressed_server_key.has_transciphering_key()
             }
         }
     }

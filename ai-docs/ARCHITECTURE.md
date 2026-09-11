@@ -188,13 +188,13 @@ The primary service is `CoreServiceEndpoint`. Its RPCs group into:
   key in the generated TFHE server key. Legacy private keysets that predate this
   field are upgraded with the OPRF share absent; `UseExisting` keygen generates
   and persists a fresh OPRF share for such legacy material before regenerating
- public keys. Key generation and CRS generation write persistent material only
- after generation completes. An abort updates request state but does not purge
- storage.
- When the parameter set carries transciphering parameters, keygen additionally
- persists a *second*, independently sampled LWE secret-key share and includes the
- matching transciphering server key. Similar to the OPRF key, a new
- transciphering key is created when keygen uses the `UseExisting` option.
+  public keys. When the parameter set carries transciphering parameters, keygen
+  additionally persists a *second*, independently sampled LWE secret-key share
+  and includes the matching transciphering server key; as for the OPRF key,
+  `UseExisting` keygen generates a fresh transciphering share when the existing
+  keyset has none. Key generation and CRS generation write persistent material
+  only after generation completes. An abort updates request state but does not
+  purge storage.
 - **Decryption** — `PublicDecrypt` (returns plaintext) and `UserDecrypt`
   (user-initiated, EIP-712 authenticated). `PublicDecryptSync` / `UserDecryptSync`
   start a decryption and wait for its result in the same call, so the caller does

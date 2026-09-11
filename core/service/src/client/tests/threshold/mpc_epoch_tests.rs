@@ -300,10 +300,14 @@ pub(crate) async fn new_epoch_with_reshare_and_crs(
                 lwe_compute_secret_key_share,
                 reshared_lwe_compute_secret_key_share
             );
+            // `assert_ne!` alone would also hold if resharing dropped the share, so assert the
+            // reshared keyset still carries it.
             if oprf_secret_key_share.is_some() {
+                assert!(reshared_oprf_secret_key_share.is_some());
                 assert_ne!(oprf_secret_key_share, reshared_oprf_secret_key_share);
             }
             if transciphering_secret_key_share.is_some() {
+                assert!(reshared_transciphering_secret_key_share.is_some());
                 assert_ne!(
                     transciphering_secret_key_share,
                     reshared_transciphering_secret_key_share

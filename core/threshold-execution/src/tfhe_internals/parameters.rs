@@ -798,9 +798,6 @@ impl DKGParams {
             None => config,
         };
         let config = config.use_dedicated_oprf_key(true);
-        // TODO: the centralized and insecure engines get their transciphering key material for
-        // free from tfhe-rs through this config, but neither is covered by a test that asserts
-        // the key is present and usable.
         let config = match self.transciphering_params() {
             Some(transciphering_params) => config.enable_transciphering(transciphering_params),
             None => config,

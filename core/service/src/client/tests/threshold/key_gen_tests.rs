@@ -1336,6 +1336,13 @@ pub(crate) async fn verify_keygen_responses(
             threshold,
             all_threshold_fhe_keys.clone(),
         );
+    // `try_reconstruct_shares` only returns the dedicated key when *every* party holds its share,
+    // so this also catches a keygen that produced the share on some parties only.
+    assert_eq!(
+        transciphering_lwe_sk.is_some(),
+        internal_client.params.transciphering_params().is_some(),
+        "every party must hold a transciphering share exactly when the parameters call for one"
+    );
 
     let client_key = to_hl_client_key(
         &internal_client.params,
@@ -1753,20 +1760,20 @@ async fn secure_threshold_keygen_crash_preprocessing() -> anyhow::Result<()> {
 }
 
 /// Test secure threshold compressed key generation from existing secret shares
-/// that already include the dedicated OPRF private-key share.
+/// that already include the dedicated OPRF and transciphering private-key shares.
 #[tokio::test]
 #[cfg(feature = "slow_tests")]
-async fn secure_threshold_compressed_keygen_from_existing_keeps_existing_oprf() -> anyhow::Result<()>
-{
+async fn secure_threshold_compressed_keygen_from_existing_keeps_existing_dedicated_keys()
+-> anyhow::Result<()> {
     run_threshold_compressed_keygen_from_existing(false, false).await
 }
 
 /// Test secure threshold compressed key generation from legacy existing secret shares
-/// that do not include the dedicated OPRF private-key share.
+/// that do not include the dedicated OPRF or transciphering private-key shares.
 #[tokio::test]
 #[cfg(feature = "slow_tests")]
-async fn secure_threshold_compressed_keygen_from_existing_adds_missing_oprf() -> anyhow::Result<()>
-{
+async fn secure_threshold_compressed_keygen_from_existing_adds_missing_dedicated_keys()
+-> anyhow::Result<()> {
     run_threshold_compressed_keygen_from_existing(false, true).await
 }
 
@@ -1781,11 +1788,11 @@ async fn insecure_threshold_compressed_keygen_from_existing() -> anyhow::Result<
 }
 
 /// Same insecure migration flow as above, but starting from legacy existing secret shares
-/// that do not include the dedicated OPRF private-key share.
+/// that do not include the dedicated OPRF or transciphering private-key shares.
 #[tokio::test]
 #[cfg(all(feature = "slow_tests", feature = "insecure"))]
-async fn insecure_threshold_compressed_keygen_from_existing_adds_missing_oprf() -> anyhow::Result<()>
-{
+async fn insecure_threshold_compressed_keygen_from_existing_adds_missing_dedicated_keys()
+-> anyhow::Result<()> {
     run_threshold_compressed_keygen_from_existing(true, true).await
 }
 
@@ -1793,9 +1800,9 @@ async fn insecure_threshold_compressed_keygen_from_existing_adds_missing_oprf() 
 /// or the insecure keygen path (selected by `insecure`).
 ///
 /// Generates an uncompressed keyset first, then performs compressed key generation
-/// reusing the existing secret key shares from the first keygen. When `remove_oprf`
-/// is true, the first keyset is rewritten to mimic legacy material with no
-/// dedicated OPRF share before the servers are restarted.
+/// reusing the existing secret key shares from the first keygen. When
+/// `remove_legacy_dedicated_keys` is true, the first keyset is rewritten to mimic legacy material
+/// with no dedicated OPRF or transciphering shares before the servers are restarted.
 ///
 /// **Workflow:**
 /// 1. Uncompressed keygen to produce the first keyset
@@ -1804,7 +1811,7 @@ async fn insecure_threshold_compressed_keygen_from_existing_adds_missing_oprf() 
 #[cfg(feature = "slow_tests")]
 async fn run_threshold_compressed_keygen_from_existing(
     insecure: bool,
-    remove_oprf: bool,
+    remove_legacy_dedicated_keys: bool,
 ) -> anyhow::Result<()> {
     use crate::client::tests::common::keygen_config_from_existing;
 
@@ -1863,13 +1870,18 @@ async fn run_threshold_compressed_keygen_from_existing(
         assert_eq!(result.into_inner().request_id, Some(keygen_id_1.into()));
     }
 
-    if remove_oprf {
+    if remove_legacy_dedicated_keys {
         let old_servers = std::mem::take(&mut servers);
         for (_, server) in old_servers {
             server.assert_shutdown().await;
         }
-        remove_oprf_from_existing_keyset(NUM_PARTIES, &material_path, &keygen_id_1, &preproc_id_1)
-            .await?;
+        remove_legacy_dedicated_keys_from_existing_keyset(
+            NUM_PARTIES,
+            &material_path,
+            &keygen_id_1,
+            &preproc_id_1,
+        )
+        .await?;
 
         let (restarted_servers, restarted_clients) =
             restart_threshold_servers_from_material(NUM_PARTIES, &material_path).await?;
@@ -1951,10 +1963,15 @@ async fn run_threshold_compressed_keygen_from_existing(
                 CryptoMaterialReader::read_from_storage(storage, &keygen_id_2).await?;
 
             let (pk, server_key) = compressed_keyset.decompress().into_raw_parts();
-            let (_, _, _, _, _, _, _, oprf_key, _, _) = server_key.clone().into_raw_parts();
+            let (_, _, _, _, _, _, _, oprf_key, transciphering_key, _) =
+                server_key.clone().into_raw_parts();
             assert!(
                 oprf_key.is_some(),
                 "Party {party_id}: compressed UseExisting keygen must embed a dedicated OPRF key"
+            );
+            assert!(
+                transciphering_key.is_some(),
+                "Party {party_id}: compressed UseExisting keygen must embed a transciphering key"
             );
             assert_eq!(
                 pk.tag(),
@@ -2016,13 +2033,32 @@ async fn run_threshold_compressed_keygen_from_existing(
                 .as_ref()
                 .oprf_secret_key_share;
             let new_oprf_share = &threshold_keys.private_keys.as_ref().oprf_secret_key_share;
+            let old_transciphering_share = &threshold_keys_old
+                .private_keys
+                .as_ref()
+                .transciphering_secret_key_share;
+            let new_transciphering_share = &threshold_keys
+                .private_keys
+                .as_ref()
+                .transciphering_secret_key_share;
             assert!(
-                old_oprf_share.is_some(),
-                "Party {party_id}: migrated key must have OPRF private share"
+                new_oprf_share.is_some(),
+                "Party {party_id}: migrated key must have an OPRF private share"
             );
+            assert!(
+                new_transciphering_share.is_some(),
+                "Party {party_id}: migrated key must have a transciphering private share"
+            );
+            // The migration copies the resulting private keyset back to keygen_id_1, so the
+            // original key ID must contain the same dedicated shares after migration. The legacy
+            // absence is checked immediately after constructing the fixture below.
             assert_eq!(
                 old_oprf_share, new_oprf_share,
-                "Party {party_id}: UseExisting keygen must reuse the persisted OPRF private share"
+                "Party {party_id}: migration must persist the OPRF private share at both key IDs"
+            );
+            assert_eq!(
+                old_transciphering_share, new_transciphering_share,
+                "Party {party_id}: migration must persist the transciphering private share at both key IDs"
             );
             match &threshold_keys.meta_data {
                 KeyGenMetadata::Current(inner) => {
@@ -2142,7 +2178,7 @@ async fn restart_threshold_servers_from_material(
 }
 
 #[cfg(feature = "slow_tests")]
-async fn remove_oprf_from_existing_keyset(
+async fn remove_legacy_dedicated_keys_from_existing_keyset(
     num_parties: usize,
     material_path: &Path,
     key_id: &RequestId,
@@ -2186,7 +2222,11 @@ async fn remove_oprf_from_existing_keyset(
             oprf_key.is_some(),
             "Party {party_id}: first keygen should store an OPRF server key before legacy rewrite"
         );
-        let server_key_without_oprf = tfhe::ServerKey::from_raw_parts(
+        assert!(
+            transciphering_key.is_some(),
+            "Party {party_id}: first keygen should store a transciphering server key before legacy rewrite"
+        );
+        let server_key_without_dedicated_keys = tfhe::ServerKey::from_raw_parts(
             integer_server_key,
             cpk_key_switching_key_material,
             compression_key,
@@ -2195,7 +2235,7 @@ async fn remove_oprf_from_existing_keyset(
             noise_squashing_compression_key,
             cpk_re_randomization_key,
             None,
-            transciphering_key,
+            None,
             tag,
         );
 
@@ -2211,10 +2251,17 @@ async fn remove_oprf_from_existing_keyset(
             private_keys.oprf_secret_key_share.take().is_some(),
             "Party {party_id}: first keygen should store an OPRF private share before legacy rewrite"
         );
+        assert!(
+            private_keys
+                .transciphering_secret_key_share
+                .take()
+                .is_some(),
+            "Party {party_id}: first keygen should store a transciphering private share before legacy rewrite"
+        );
 
         let fhe_key_set = threshold_execution::tfhe_internals::public_keysets::FhePubKeySet {
             public_key,
-            server_key: server_key_without_oprf.clone(),
+            server_key: server_key_without_dedicated_keys.clone(),
         };
         let metadata = compute_info_uncompressed_keygen(
             &signing_key,
@@ -2241,7 +2288,7 @@ async fn remove_oprf_from_existing_keyset(
         store_versioned_at_request_id(
             &mut pub_storage,
             key_id,
-            &server_key_without_oprf,
+            &server_key_without_dedicated_keys,
             &PubDataType::ServerKey.to_string(),
         )
         .await?;
@@ -2260,6 +2307,32 @@ async fn remove_oprf_from_existing_keyset(
             &PrivDataType::FheKeyInfo.to_string(),
         )
         .await?;
+
+        // Confirm that the persisted fixture really represents a legacy keyset before the
+        // UseExisting flow is allowed to add the missing dedicated shares.
+        let stored_legacy_keys: ThresholdFheKeys = read_versioned_at_request_and_epoch_id(
+            &priv_storage,
+            key_id,
+            &DEFAULT_EPOCH_ID,
+            &PrivDataType::FheKeyInfo.to_string(),
+        )
+        .await?;
+        assert!(
+            stored_legacy_keys
+                .private_keys
+                .as_ref()
+                .oprf_secret_key_share
+                .is_none(),
+            "Party {party_id}: legacy fixture must not persist an OPRF private share"
+        );
+        assert!(
+            stored_legacy_keys
+                .private_keys
+                .as_ref()
+                .transciphering_secret_key_share
+                .is_none(),
+            "Party {party_id}: legacy fixture must not persist a transciphering private share"
+        );
     }
 
     Ok(())

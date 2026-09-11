@@ -906,6 +906,39 @@ mod tests {
         generate_keys_deterministically(PARAMS_TEST_RESHARE, tfhe::Tag::default())
     });
 
+    /// `DedicatedKeysPresent::from_private_keyset` must report exactly which optional shares a
+    /// keyset carries: a wrong flag makes a party skip (or run) a reshare round the others do
+    /// not, which desynchronises the protocol.
+    #[test]
+    fn dedicated_keys_present_reads_the_optional_shares() {
+        let mut keyset = PrivateKeySet::<4>::init_dummy(PARAMS_TEST_RESHARE);
+        assert_eq!(
+            DedicatedKeysPresent::from_private_keyset(&keyset),
+            DedicatedKeysPresent {
+                oprf: true,
+                transciphering: true,
+            }
+        );
+
+        keyset.oprf_secret_key_share = None;
+        assert_eq!(
+            DedicatedKeysPresent::from_private_keyset(&keyset),
+            DedicatedKeysPresent {
+                oprf: false,
+                transciphering: true,
+            }
+        );
+
+        keyset.transciphering_secret_key_share = None;
+        assert_eq!(
+            DedicatedKeysPresent::from_private_keyset(&keyset),
+            DedicatedKeysPresent {
+                oprf: false,
+                transciphering: false,
+            }
+        );
+    }
+
     #[tokio::test(flavor = "multi_thread")]
     async fn reshare_no_error() {
         simulate_reshare_same_set::<3>(false, false)

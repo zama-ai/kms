@@ -351,13 +351,20 @@ pub async fn run_key_gen_centralized(
         assert_eq!(&tag, public_key.tag());
         assert_eq!(&tag, server_key.tag());
 
-        let (_, _, _, _, _, _, _, oprf_key, _, _) = server_key.clone().into_raw_parts();
+        let (_, _, _, _, _, _, _, oprf_key, transciphering_key, _) =
+            server_key.clone().into_raw_parts();
         assert!(
             oprf_key.is_some(),
             "centralized full keygen must embed a dedicated OPRF server key"
         );
+        assert_eq!(
+            transciphering_key.is_some(),
+            internal_client.params.transciphering_params().is_some(),
+            "centralized full keygen must embed a transciphering server key exactly when the parameters call for one"
+        );
 
         crate::client::key_gen::tests::check_oprf_correctness(&server_key, &client_key);
+        crate::client::key_gen::tests::check_transciphering_correctness(&server_key, &client_key);
         crate::client::key_gen::tests::check_conformance(server_key, client_key);
     };
 
