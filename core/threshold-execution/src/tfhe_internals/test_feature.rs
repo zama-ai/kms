@@ -281,7 +281,9 @@ pub fn oprf_expected_plaintext(
     };
     use tfhe_csprng::seeders::XofSeed;
 
-    let lwe_size = params.lwe_dimension().to_lwe_size();
+    // Dedicated OPRF keys may use a different input dimension than the compute parameters. The
+    // synthetic ciphertext must therefore be sized from the key being used for decryption.
+    let lwe_size = prf_lwe_sk.lwe_dimension().to_lwe_size();
     let polynomial_size = params.polynomial_size();
     let input_p = 2 * polynomial_size.0 as u64;
     let log_input_p = input_p.ilog2() as usize;
