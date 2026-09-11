@@ -230,8 +230,8 @@ impl Vault {
 ///
 /// The vault also holds material for retired contexts and public storage is modifiable, so the
 /// anchor is the only input; nothing here reads either store to decide. A node with no anchor, or
-/// whose anchored material is gone from the vault, keeps an uninitialized keychain: it serves but
-/// makes no new backups and says so.
+/// whose anchored material is gone from the vault, ends with an uninitialized keychain: it serves
+/// but makes no new backups and says so.
 ///
 /// `material` is the vault's recovery material, already checked against the node's signing key by
 /// [`crate::engine::storage_material_verification::verify_storage_material`].
@@ -243,6 +243,8 @@ pub async fn adopt_custodian_context<PrivS: StorageReader>(
     let Some(KeychainProxy::SecretSharing(keychain)) = backup_vault.keychain.as_mut() else {
         return Ok(());
     };
+    // Whatever the caller's keychain held, only the anchor decides.
+    keychain.restore_backup_enc_key(None);
     let Some(context_id) = read_custodian_context_anchor(priv_storage).await? else {
         tracing::info!("No custodian context anchored; no backups will be made");
         return Ok(());
@@ -716,6 +718,25 @@ pub mod tests {
     async fn adopts_nothing_without_an_anchor() {
         let (priv_storage, mut vault, sig_key) = unanchored_fixture();
         let id = RequestId::from_bytes([9; 32]);
+        let material = HashMap::from([(id, dummy_recovery_material_at_id(&id, &sig_key))]);
+
+        adopt_custodian_context(&priv_storage, &mut vault, &material)
+            .await
+            .unwrap();
+
+        assert!(keychain_backup_id(&vault).is_err());
+    }
+
+    /// A keychain that arrives initialized is reset: without an anchor it keeps no context, whatever
+    /// the caller put there.
+    #[tokio::test]
+    async fn adopting_without_an_anchor_resets_an_initialized_keychain() {
+        let (priv_storage, _, sig_key) = unanchored_fixture();
+        let id = RequestId::from_bytes([9; 32]);
+        let mut vault = Vault {
+            storage: StorageProxy::from(RamStorage::new()),
+            keychain: Some(make_secret_share_keychain(id)),
+        };
         let material = HashMap::from([(id, dummy_recovery_material_at_id(&id, &sig_key))]);
 
         adopt_custodian_context(&priv_storage, &mut vault, &material)
