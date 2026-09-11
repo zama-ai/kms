@@ -554,19 +554,11 @@ pub(crate) mod tests {
             atomic_pattern: integer_client_key.into_raw_parts().atomic_pattern,
         };
 
-        let prf_lwe_sk = match oprf_private_key.into_raw_parts().into_raw_parts() {
-            tfhe::shortint::oprf::AtomicPatternOprfPrivateKey::Standard(sk) => sk,
-            tfhe::shortint::oprf::AtomicPatternOprfPrivateKey::KeySwitch32(_) => {
-                panic!("Unsupported AtomicPatternOprfPrivateKey::KeySwitch32")
-            }
-        };
-        let oprf_server_key = oprf_server_key.into_raw_parts();
-
         assert_oprf_matches_plaintext(
             &shortint_ck,
             &target_shortint_server_key,
-            &oprf_server_key,
-            &prf_lwe_sk,
+            &oprf_server_key.into_raw_parts(),
+            &oprf_private_key.into_raw_parts(),
             NUM_SEEDS,
         );
     }
@@ -615,22 +607,11 @@ pub(crate) mod tests {
             atomic_pattern: integer_client_key.into_raw_parts().atomic_pattern,
         };
 
-        let prf_lwe_sk = match transciphering_private_key
-            .into_raw_parts()
-            .0
-            .into_raw_parts()
-        {
-            tfhe::shortint::oprf::AtomicPatternOprfPrivateKey::Standard(sk) => sk,
-            tfhe::shortint::oprf::AtomicPatternOprfPrivateKey::KeySwitch32(_) => {
-                panic!("Unsupported AtomicPatternOprfPrivateKey::KeySwitch32")
-            }
-        };
-
         assert_oprf_matches_plaintext(
             &shortint_ck,
             &target_shortint_server_key,
             &transciphering_server_key.into_raw_parts(),
-            &prf_lwe_sk,
+            &transciphering_private_key.into_raw_parts().0,
             NUM_SEEDS,
         );
     }

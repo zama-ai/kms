@@ -2506,7 +2506,9 @@ pub mod tests {
         ResiduePoly<Z128, EXTENSION_DEGREE>: ErrorCorrect,
     {
         use crate::tfhe_internals::private_keysets::{LweSecretKeyShareEnum, PrivateKeySet};
-        use crate::tfhe_internals::test_feature::assert_oprf_matches_plaintext;
+        use crate::tfhe_internals::test_feature::{
+            assert_oprf_matches_plaintext, oprf_mismatching_seeds,
+        };
         use crate::tfhe_internals::utils::reconstruct_bit_vec;
         use std::collections::HashMap;
         use tfhe::shortint::oprf::{
@@ -2514,7 +2516,6 @@ pub mod tests {
             CompressedOprfServerKey as ShortintCompressedOprfServerKey,
             OprfPrivateKey as ShortintOprfPrivateKey,
         };
-        use tfhe_csprng::seeders::Seed;
         use threshold_types::role::Role;
 
         // The transciphering OPRF may use a smaller input LWE key than the compute key, so the
@@ -2526,9 +2527,6 @@ pub mod tests {
                 .expect("the caller only selects this kind when transciphering is enabled"),
         }
         .0;
-        let ciphertext_params = params.classic_pbs();
-        let shortint_params = tfhe::shortint::ShortintParameterSet::from(ciphertext_params);
-        let random_bits_count: u64 = shortint_params.message_modulus().0.ilog2().into();
 
         let mut key_shares_z128: HashMap<Role, Vec<_>> = HashMap::new();
         for party in 1..=num_parties {
@@ -2561,7 +2559,10 @@ pub mod tests {
 
         let key_bits =
             reconstruct_bit_vec::<Z128, EXTENSION_DEGREE>(key_shares_z128, lwe_dim, threshold);
-        let key_sk = tfhe::core_crypto::prelude::LweSecretKey::from_container(key_bits.clone());
+        let private_key =
+            ShortintOprfPrivateKey::from_raw_parts(AtomicPatternOprfPrivateKey::Standard(
+                tfhe::core_crypto::prelude::LweSecretKey::from_container(key_bits.clone()),
+            ));
 
         let (shortint_ck, pk) = retrieve_keys_from_files::<EXTENSION_DEGREE>(
             params,
@@ -2601,7 +2602,7 @@ pub mod tests {
             &shortint_ck,
             &target_shortint_server_key,
             &dedicated_server_key,
-            &key_sk,
+            &private_key,
             NUM_SEEDS,
         );
 
@@ -2609,37 +2610,24 @@ pub mod tests {
         // cleartext reference for at least one seed.
         let mut wrong_key_bits = key_bits;
         wrong_key_bits[0] ^= 1;
-        let wrong_lwe_sk = tfhe::core_crypto::prelude::LweSecretKey::from_container(wrong_key_bits);
-        let wrong_private_key = ShortintOprfPrivateKey::from_raw_parts(
-            AtomicPatternOprfPrivateKey::Standard(wrong_lwe_sk),
-        );
+        let wrong_private_key =
+            ShortintOprfPrivateKey::from_raw_parts(AtomicPatternOprfPrivateKey::Standard(
+                tfhe::core_crypto::prelude::LweSecretKey::from_container(wrong_key_bits),
+            ));
         let wrong_server_key =
             ShortintCompressedOprfServerKey::new(&wrong_private_key, &shortint_ck)
                 .unwrap()
                 .expand()
                 .to_fourier();
-        let mut mismatches = 0u64;
-        for s in 0u128..NUM_SEEDS {
-            let seed = Seed(s);
-            let img = crate::tfhe_internals::test_feature::oprf_single_block(
-                &wrong_server_key,
-                seed,
-                random_bits_count,
-                &target_shortint_server_key,
-            );
-            let actual = shortint_ck.decrypt_message_and_carry(&img);
-            let expected = crate::tfhe_internals::test_feature::oprf_expected_plaintext(
-                &key_sk.as_view(),
-                seed,
-                shortint_params,
-                random_bits_count,
-            );
-            if actual != expected {
-                mismatches += 1;
-            }
-        }
+        let mismatches = oprf_mismatching_seeds(
+            &shortint_ck,
+            &target_shortint_server_key,
+            &wrong_server_key,
+            &private_key,
+            NUM_SEEDS,
+        );
         assert!(
-            mismatches > 0,
+            !mismatches.is_empty(),
             "expected mismatches when using the wrong {} server key, but all {NUM_SEEDS} matched",
             key_kind.name()
         );

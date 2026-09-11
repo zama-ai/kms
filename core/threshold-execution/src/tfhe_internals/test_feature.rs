@@ -203,38 +203,6 @@ impl KeySet {
     }
 }
 
-/// Derives the seed used by tfhe-rs 1.8.0 to create the modulus-switched
-/// PRF input. This mirrors `create_random_from_seed_modulus_switched` in
-/// tfhe-rs so the expected plaintext is computed independently from the
-/// encrypted OPRF path.
-///
-/// Only the single-block layout is mirrored, i.e. one chunk of
-/// `random_bits_count` bits requested with a per-block budget of
-/// `random_bits_count`, which is what [`oprf_single_block`] asks for. The
-/// run-length encoding hashed in for that layout is
-/// `bits_per_block || random_bits_count || 1 block || 1 full block ||
-/// random_bits_count`, where `bits_per_block` is the total usable width of a
-/// block (message + carry + padding bit).
-pub fn oprf_modulus_switched_seed(
-    seed: tfhe_csprng::seeders::Seed,
-    random_bits_count: u64,
-    bits_per_block: u64,
-) -> Vec<u8> {
-    use sha3::{Digest, Sha3_256};
-
-    let mut hasher = Sha3_256::default();
-    hasher.update(b"TFHE_PRF");
-    hasher.update(seed.0.to_le_bytes());
-    hasher.update(bits_per_block.to_le_bytes());
-    hasher.update(random_bits_count.to_le_bytes());
-    // A single chunk that exactly fills one block: 1 block in total, 1 of them
-    // full, carrying `random_bits_count` bits. No trailing partial block.
-    hasher.update(1u64.to_le_bytes());
-    hasher.update(1u64.to_le_bytes());
-    hasher.update(random_bits_count.to_le_bytes());
-    hasher.finalize().to_vec()
-}
-
 /// Generates a single OPRF block for `seed`, standing in for the
 /// `generate_oblivious_pseudo_random` helper that tfhe-rs removed in 1.7.0.
 ///
@@ -264,63 +232,52 @@ pub fn oprf_single_block(
     blocks.remove(0)
 }
 
-/// Plaintext reference for the shortint OPRF — mirrors
-/// `oprf_compare_plain_from_seed` in tfhe-rs (shortint/oprf.rs).
-/// Given the PRF's small LWE secret key, a seed, the shortint params, and
-/// the `random_bits_count`, returns the expected OPRF output in
-/// `[0, 2^random_bits_count)`.
-pub fn oprf_expected_plaintext(
-    prf_lwe_sk: &tfhe::core_crypto::prelude::LweSecretKeyView<u64>,
-    seed: tfhe_csprng::seeders::Seed,
-    params: tfhe::shortint::ShortintParameterSet,
-    random_bits_count: u64,
-) -> u64 {
-    use tfhe::core_crypto::commons::math::random::{RandomGenerator, Uniform};
-    use tfhe::core_crypto::prelude::{
-        CiphertextModulus, DefaultRandomGenerator, LweCiphertextOwned, decrypt_lwe_ciphertext,
+/// Runs the encrypted PRF for seeds `0..num_seeds` and returns the seeds whose decrypted output
+/// disagreed with the cleartext reference computed from `prf_private_key`.
+///
+/// Pairing a server key with the private key it was generated from must yield no mismatch;
+/// pairing it with any other private key must yield at least one.
+pub fn oprf_mismatching_seeds(
+    shortint_ck: &tfhe::shortint::ClientKey,
+    target_shortint_server_key: &tfhe::shortint::ServerKey,
+    oprf_server_key: &tfhe::shortint::oprf::OprfServerKey,
+    prf_private_key: &tfhe::shortint::oprf::OprfPrivateKey,
+    num_seeds: u128,
+) -> Vec<u128> {
+    use tfhe::shortint::oprf::OprfBootstrappingKey;
+    use tfhe::shortint::oprf::test_utils::expected_prf_output_cleartexts;
+    use tfhe::shortint::parameters::{AtomicPatternParameters, PBSParameters};
+
+    let lwe_dimension = match oprf_server_key.as_view().into_raw_parts() {
+        OprfBootstrappingKey::Classic { bsk } => bsk.input_lwe_dimension(),
+        OprfBootstrappingKey::MultiBit { fourier_bsk, .. } => fourier_bsk.input_lwe_dimension(),
     };
-    use tfhe_csprng::seeders::XofSeed;
+    let mut ap_params = shortint_ck
+        .parameters()
+        .ap_parameters()
+        .expect("the KMS only uses PBS parameter sets");
+    match &mut ap_params {
+        AtomicPatternParameters::Standard(PBSParameters::PBS(p)) => p.lwe_dimension = lwe_dimension,
+        _ => panic!("the KMS only supports the classic PBS atomic pattern"),
+    }
+    let params = tfhe::shortint::ShortintParameterSet::from_atomic_pattern_params(ap_params);
+    let random_bits_count: u64 = params.message_modulus().0.ilog2().into();
 
-    // Dedicated OPRF keys may use a different input dimension than the compute parameters. The
-    // synthetic ciphertext must therefore be sized from the key being used for decryption.
-    let lwe_size = prf_lwe_sk.lwe_dimension().to_lwe_size();
-    let polynomial_size = params.polynomial_size();
-    let input_p = 2 * polynomial_size.0 as u64;
-    let log_input_p = input_p.ilog2() as usize;
-    let log_modulus = polynomial_size.to_blind_rotation_input_modulus_log().0;
-
-    // Total usable width of a block: message bits + carry bits + the padding bit.
-    let bits_per_block =
-        1 + params.message_modulus().0.ilog2() as u64 + params.carry_modulus().0.ilog2() as u64;
-    let seed = oprf_modulus_switched_seed(seed, random_bits_count, bits_per_block);
-    let mut xof = RandomGenerator::<DefaultRandomGenerator>::new(XofSeed::new(seed, *b"PRF_INIT"));
-    let mask = (0..lwe_size.to_lwe_dimension().0)
-        .map(|_| {
-            xof.random_from_distribution_custom_mod::<u32, _>(
-                Uniform,
-                CiphertextModulus::new(input_p as u128),
-            ) as u64
+    (0u128..num_seeds)
+        .filter(|s| {
+            let seed = tfhe_csprng::seeders::Seed(*s);
+            let img = oprf_single_block(
+                oprf_server_key,
+                seed,
+                random_bits_count,
+                target_shortint_server_key,
+            );
+            let expected =
+                expected_prf_output_cleartexts(prf_private_key, seed, params, &[random_bits_count]);
+            // `oprf_single_block` requests a single block, so a single cleartext comes back.
+            shortint_ck.decrypt_message_and_carry(&img) != expected[0]
         })
-        .collect_vec();
-
-    let shift = u64::BITS as usize - log_modulus;
-    let container: Vec<u64> = mask
-        .into_iter()
-        .map(|sample| sample << shift)
-        .chain(std::iter::once(0))
-        .collect();
-    let ct = LweCiphertextOwned::from_container(container, CiphertextModulus::new_native());
-
-    let pt = decrypt_lwe_ciphertext(prf_lwe_sk, &ct).0;
-    let plain_prf_input = pt.wrapping_add(1u64 << (u64::BITS as usize - log_input_p - 1))
-        >> (u64::BITS as usize - log_input_p);
-
-    tfhe::shortint::oprf::test_utils::cleartext_prf(
-        plain_prf_input,
-        random_bits_count,
-        2 * params.carry_modulus().0 * params.message_modulus().0,
-        polynomial_size.0 as u64,
-    )
+        .collect()
 }
 
 /// Verifies that an OPRF server key agrees with the cleartext PRF for a range
@@ -329,29 +286,20 @@ pub fn assert_oprf_matches_plaintext(
     shortint_ck: &tfhe::shortint::ClientKey,
     target_shortint_server_key: &tfhe::shortint::ServerKey,
     oprf_server_key: &tfhe::shortint::oprf::OprfServerKey,
-    prf_lwe_sk: &LweSecretKey<Vec<u64>>,
+    prf_private_key: &tfhe::shortint::oprf::OprfPrivateKey,
     num_seeds: u128,
 ) {
-    let shortint_params = shortint_ck.parameters();
-    let random_bits_count: u64 = shortint_params.message_modulus().0.ilog2().into();
-
-    for s in 0u128..num_seeds {
-        let seed = tfhe_csprng::seeders::Seed(s);
-        let img = oprf_single_block(
-            oprf_server_key,
-            seed,
-            random_bits_count,
-            target_shortint_server_key,
-        );
-        let actual = shortint_ck.decrypt_message_and_carry(&img);
-        let expected = oprf_expected_plaintext(
-            &prf_lwe_sk.as_view(),
-            seed,
-            shortint_params,
-            random_bits_count,
-        );
-        assert_eq!(actual, expected, "OPRF mismatch for seed {s}");
-    }
+    let mismatches = oprf_mismatching_seeds(
+        shortint_ck,
+        target_shortint_server_key,
+        oprf_server_key,
+        prf_private_key,
+        num_seeds,
+    );
+    assert!(
+        mismatches.is_empty(),
+        "OPRF mismatch for seeds {mismatches:?}"
+    );
 }
 
 pub fn gen_uncompressed_key_set<R>(params: DKGParams, tag: tfhe::Tag, rng: &mut R) -> KeySet
