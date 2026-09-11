@@ -47,7 +47,7 @@ use tfhe::{Versionize, zk::CompactPkeCrs};
 use tfhe_versionable::VersionsDispatch;
 use threshold_execution::{
     config::BatchParams,
-    endpoints::reshare_sk::{ResharePreprocRequired, ReshareSecretKeys},
+    endpoints::reshare_sk::{DedicatedOprfKeysPresent, ResharePreprocRequired, ReshareSecretKeys},
     online::preprocessing::BasePreprocessing,
     runtime::sessions::{
         base_session::{BaseSession, TwoSetsBaseSession, advance_session_by_rounds},
@@ -683,22 +683,15 @@ impl<
                         + session_skews.per_key_lift_rounds,
                 )
                 .await;
-                // S1 has the previous epoch's private shares, so we read
-                // `oprf_key_present` from local state. The S2-only path in
-                // `reshare_as_set_2` has no private share and derives the same
-                // flag from the verified public `ServerKey` instead. Both
-                // derivations must yield the same value for the reshare
-                // sub-protocols to converge; this holds by construction
-                // because public and private OPRF material are produced
-                // together (legacy keysets predating the dedicated OPRF share
-                // have neither).
-                let oprf_key_present = private_keys.oprf_secret_key_share.is_some();
+                // S1 has the previous epoch's private shares, so we read which
+                // dedicated key shares exist from local state.
+                let dedicated_keys = DedicatedOprfKeysPresent::from_private_keyset(&private_keys);
 
                 Reshare::reshare_sk_two_sets_as_s1(
                     &mut two_sets_session,
                     &mut private_keys,
                     key_info.key_parameters,
-                    oprf_key_present,
+                    dedicated_keys,
                 )
                 .await?;
                 // Online done: the lift sessions, idle through it, advance by the
@@ -827,7 +820,7 @@ impl<
                         }
                     };
 
-                    let (integer_server_key, _, _, decompression_key, sns_key, _, _, _, _) =
+                    let (integer_server_key, _, _, decompression_key, sns_key, _, _, _, _, _) =
                         fhe_pubkeys.server_key.clone().into_raw_parts();
 
                     let threshold_fhe_keys = ThresholdFheKeys::new(
@@ -851,7 +844,10 @@ impl<
                     );
                     fhe_key_infos.push(info);
                 }
-                VerifiedPublicMaterial::Compressed(compressed_keyset) => {
+                VerifiedPublicMaterial::Compressed {
+                    keyset: compressed_keyset,
+                    ..
+                } => {
                     // TODO(2905): https://github.com/zama-ai/kms-internal/issues/2905
                     // Resharing currently signs and stores the CompactPublicKey derived
                     // from the newly generated compressed keyset. Revisit whether it should
@@ -1039,16 +1035,17 @@ impl<
                 .zip_eq(verified_fhe_public_materials.iter())
             {
                 // S2 has no private share for the previous epoch, so unlike
-                // the S1 / both-sets paths (which read
-                // `private_keys.oprf_secret_key_share.is_some()`) we derive
-                // `oprf_key_present` from the verified public `ServerKey`.
-                // The protocol assumes both derivations yield the same value
-                // — see the comment in `reshare_as_set_1`.
-                let oprf_key_present = verified_material.has_oprf_key();
+                // the S1 / both-sets paths (which read the flags off the local
+                // `PrivateKeySet`) we derive them from the verified
+                // public material.
+                let dedicated_keys = DedicatedOprfKeysPresent {
+                    oprf: verified_material.has_oprf_key(),
+                    transciphering: verified_material.has_transciphering_key(),
+                };
                 let num_needed_preproc = ResharePreprocRequired::new(
                     num_parties_set_1,
                     key_info.key_parameters,
-                    oprf_key_present,
+                    dedicated_keys,
                 );
 
                 // Set 1 runs lifting while Set 2 idles; the sessions advance by the lift rounds.
@@ -1081,7 +1078,7 @@ impl<
                     &mut correlated_randomness_z128,
                     &mut correlated_randomness_z64,
                     key_info.key_parameters,
-                    oprf_key_present,
+                    dedicated_keys,
                 )
                 .await?;
 
@@ -1214,16 +1211,13 @@ impl<
                             .await?
                     }
                 };
-                // Same as `reshare_as_set_1`: derived from local private
-                // state. The pure-S2 path in `reshare_as_set_2` derives the
-                // same flag from the verified public `ServerKey`; both must
-                // agree.
-                let oprf_key_present = private_keys.oprf_secret_key_share.is_some();
+
+                let dedicated_keys = DedicatedOprfKeysPresent::from_private_keyset(&private_keys);
 
                 let num_needed_preproc = ResharePreprocRequired::new(
                     num_parties_set_1,
                     key_info.key_parameters,
-                    oprf_key_present,
+                    dedicated_keys,
                 );
                 // Just ran the lift, so advance the sessions by the lift rounds to get them ready for the preprocessing.
                 advance_sessions_by_rounds!(
@@ -1258,7 +1252,7 @@ impl<
                     &mut correlated_randomness_z64,
                     &mut private_keys,
                     key_info.key_parameters,
-                    oprf_key_present,
+                    dedicated_keys,
                 )
                 .await?;
 

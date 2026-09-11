@@ -343,7 +343,7 @@ impl ThresholdFheKeys {
             },
             PublicKeyMaterial::Compressed { keyset } => {
                 let (_pk, sk) = keyset.decompress().into_raw_parts();
-                let (isk, _, _, decompk, snsk, _, _, _, _) = sk.into_raw_parts();
+                let (isk, _, _, decompk, snsk, _, _, _, _, _) = sk.into_raw_parts();
                 UncompressedKeys {
                     integer_server_key: Arc::new(isk),
                     sns_key: snsk.map(Arc::new),
@@ -1076,6 +1076,7 @@ mod tests {
                 _sns_compression_key,
                 _rerand_key,
                 _oprf_key,
+                _transciphering_key,
                 _tag,
             ) = keyset.public_keys.server_key.into_raw_parts();
 
@@ -1118,7 +1119,7 @@ mod tests {
         let (keyset, compressed_keyset) =
             gen_key_set(TEST_PARAM, tfhe::Tag::default(), &mut rng).unwrap();
 
-        let (integer_server_key, _, _, decompression_key, sns_key, _, _, _, _) =
+        let (integer_server_key, _, _, decompression_key, sns_key, _, _, _, _, _) =
             keyset.public_keys.server_key.into_raw_parts();
 
         let v0 = PublicKeyMaterialV0::Compressed {
@@ -1200,7 +1201,7 @@ mod tests {
         let mut rng = AesRng::seed_from_u64(42);
         let (keyset, compressed_keyset) =
             gen_key_set(TEST_PARAM, tfhe::Tag::default(), &mut rng).unwrap();
-        let (integer_server_key, _, _, decompression_key, sns_key, _, _, _, _) =
+        let (integer_server_key, _, _, decompression_key, sns_key, _, _, _, _, _) =
             keyset.public_keys.server_key.into_raw_parts();
 
         // V3 control

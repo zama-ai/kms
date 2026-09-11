@@ -25,6 +25,9 @@ pub(crate) struct GenericPrivateKeySet<Z: Clone, const EXTENSION_DEGREE: usize> 
     pub lwe_encryption_secret_key_share: LweSecretKeyShare<Z, EXTENSION_DEGREE>,
     pub lwe_secret_key_share: LweSecretKeyShare<Z, EXTENSION_DEGREE>,
     pub oprf_secret_key_share: Option<LweSecretKeyShare<Z, EXTENSION_DEGREE>>,
+    /// Sampled independently of `oprf_secret_key_share`: the transciphering key material is
+    /// handed out to clients, so it must not derive from the general-purpose OPRF key.
+    pub transciphering_secret_key_share: Option<LweSecretKeyShare<Z, EXTENSION_DEGREE>>,
     pub glwe_secret_key_share: GlweSecretKeyShare<Z, EXTENSION_DEGREE>,
     pub glwe_secret_key_share_sns: Option<GlweSecretKeyShare<Z, EXTENSION_DEGREE>>,
     pub glwe_secret_key_share_compression: Option<CompressionPrivateKeyShares<Z, EXTENSION_DEGREE>>,
@@ -39,7 +42,10 @@ pub enum PrivateKeySetVersions<const EXTENSION_DEGREE: usize> {
     // V1 is the same as V0 with the addition of glwe_sns_compression_key
     V1(PrivateKeySetV1<EXTENSION_DEGREE>),
     V2(PrivateKeySetV2<EXTENSION_DEGREE>),
-    V3(PrivateKeySet<EXTENSION_DEGREE>),
+    // V3 is the same as V2 with the addition of oprf_secret_key_share
+    V3(PrivateKeySetV3<EXTENSION_DEGREE>),
+    // V4 is the same as V3 with the addition of transciphering_secret_key_share
+    V4(PrivateKeySet<EXTENSION_DEGREE>),
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Versionize)]
@@ -61,6 +67,9 @@ pub struct PrivateKeySet<const EXTENSION_DEGREE: usize> {
     pub lwe_encryption_secret_key_share: LweSecretKeyShareEnum<EXTENSION_DEGREE>,
     pub lwe_compute_secret_key_share: LweSecretKeyShareEnum<EXTENSION_DEGREE>,
     pub oprf_secret_key_share: Option<LweSecretKeyShareEnum<EXTENSION_DEGREE>>,
+    /// Similar to `oprf_secret_key_share` but may use a different parameter,
+    /// (see `DKGParams::transciphering_params`).
+    pub transciphering_secret_key_share: Option<LweSecretKeyShareEnum<EXTENSION_DEGREE>>,
     pub glwe_secret_key_share: GlweSecretKeyShareEnum<EXTENSION_DEGREE>,
     pub glwe_secret_key_share_sns_as_lwe: Option<LweSecretKeyShare<Z128, EXTENSION_DEGREE>>,
     pub glwe_secret_key_share_compression:
@@ -75,6 +84,7 @@ impl<const EXTENSION_DEGREE: usize> PrivateKeySet<EXTENSION_DEGREE> {
             lwe_encryption_secret_key_share,
             lwe_compute_secret_key_share,
             oprf_secret_key_share,
+            transciphering_secret_key_share,
             glwe_secret_key_share,
             glwe_secret_key_share_sns_as_lwe: _,
             glwe_secret_key_share_compression,
@@ -93,6 +103,10 @@ impl<const EXTENSION_DEGREE: usize> PrivateKeySet<EXTENSION_DEGREE> {
         }
 
         if let Some(LweSecretKeyShareEnum::Z64(key)) = oprf_secret_key_share {
+            count += key.data.len();
+        }
+
+        if let Some(LweSecretKeyShareEnum::Z64(key)) = transciphering_secret_key_share {
             count += key.data.len();
         }
 
@@ -115,9 +129,12 @@ impl<const EXTENSION_DEGREE: usize> PrivateKeySet<EXTENSION_DEGREE> {
         // keys are always shared over Z128 and are never bit-lifted.
         let base = 3;
         let compression = usize::from(parameters.compression().is_some());
-        // Counted conservatively: OPRF presence is not encoded in `parameters`.
+        // Counted conservatively: general-purpose OPRF presence is not encoded in `parameters`.
         let oprf_upper_bound = 1;
-        base + compression + oprf_upper_bound
+        // Unlike the general-purpose OPRF key, transciphering is enabled explicitly by the
+        // parameters, so count it only when the parameter set includes it.
+        let transciphering = usize::from(parameters.transciphering_lwe_dimension().is_some());
+        base + compression + oprf_upper_bound + transciphering
     }
 
     pub fn lift_to_z64(self) -> Self
@@ -134,6 +151,9 @@ impl<const EXTENSION_DEGREE: usize> PrivateKeySet<EXTENSION_DEGREE> {
             ),
             oprf_secret_key_share: self
                 .oprf_secret_key_share
+                .map(|key| LweSecretKeyShareEnum::Z64(key.convert_to_z64())),
+            transciphering_secret_key_share: self
+                .transciphering_secret_key_share
                 .map(|key| LweSecretKeyShareEnum::Z64(key.convert_to_z64())),
             glwe_secret_key_share: GlweSecretKeyShareEnum::Z64(
                 self.glwe_secret_key_share.convert_to_z64(),
@@ -280,6 +300,13 @@ impl<const EXTENSION_DEGREE: usize> PrivateKeySet<EXTENSION_DEGREE> {
             }));
         }
 
+        if let Some(LweSecretKeyShareEnum::Z64(key)) = self.transciphering_secret_key_share {
+            self.transciphering_secret_key_share =
+                Some(LweSecretKeyShareEnum::Z128(LweSecretKeyShare {
+                    data: SecureBitLift::execute(key.data, preproc, session).await?,
+                }));
+        }
+
         if let GlweSecretKeyShareEnum::Z64(key) = self.glwe_secret_key_share {
             self.glwe_secret_key_share = GlweSecretKeyShareEnum::Z128(GlweSecretKeyShare {
                 data: SecureBitLift::execute(key.data, preproc, session).await?,
@@ -339,6 +366,21 @@ pub struct PrivateKeySetV2<const EXTENSION_DEGREE: usize> {
     pub parameters: ClassicPBSParameters,
 }
 
+/// V3: private key set before adding the transciphering secret-key share.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Version)]
+pub struct PrivateKeySetV3<const EXTENSION_DEGREE: usize> {
+    //The two Lwe keys are the same if there's no dedicated pk parameters
+    pub lwe_encryption_secret_key_share: LweSecretKeyShareEnum<EXTENSION_DEGREE>,
+    pub lwe_compute_secret_key_share: LweSecretKeyShareEnum<EXTENSION_DEGREE>,
+    pub oprf_secret_key_share: Option<LweSecretKeyShareEnum<EXTENSION_DEGREE>>,
+    pub glwe_secret_key_share: GlweSecretKeyShareEnum<EXTENSION_DEGREE>,
+    pub glwe_secret_key_share_sns_as_lwe: Option<LweSecretKeyShare<Z128, EXTENSION_DEGREE>>,
+    pub glwe_secret_key_share_compression:
+        Option<CompressionPrivateKeySharesEnum<EXTENSION_DEGREE>>,
+    pub glwe_sns_compression_key_as_lwe: Option<LweSecretKeyShare<Z128, EXTENSION_DEGREE>>,
+    pub parameters: ClassicPBSParameters,
+}
+
 #[cfg(any(test, feature = "testing"))]
 impl<const EXTENSION_DEGREE: usize> PrivateKeySet<EXTENSION_DEGREE> {
     pub fn init_dummy(param: DKGParams) -> Self {
@@ -349,6 +391,9 @@ impl<const EXTENSION_DEGREE: usize> PrivateKeySet<EXTENSION_DEGREE> {
             oprf_secret_key_share: Some(LweSecretKeyShareEnum::Z128(LweSecretKeyShare {
                 data: vec![],
             })),
+            transciphering_secret_key_share: param
+                .transciphering_params()
+                .map(|_| LweSecretKeyShareEnum::Z128(LweSecretKeyShare { data: vec![] })),
             lwe_encryption_secret_key_share: LweSecretKeyShareEnum::Z128(LweSecretKeyShare {
                 data: vec![],
             }),
@@ -416,8 +461,27 @@ impl<const EXTENSION_DEGREE: usize> Upgrade<PrivateKeySetV2<EXTENSION_DEGREE>>
     }
 }
 
-impl<const EXTENSION_DEGREE: usize> Upgrade<PrivateKeySet<EXTENSION_DEGREE>>
+impl<const EXTENSION_DEGREE: usize> Upgrade<PrivateKeySetV3<EXTENSION_DEGREE>>
     for PrivateKeySetV2<EXTENSION_DEGREE>
+{
+    type Error = std::convert::Infallible;
+
+    fn upgrade(self) -> Result<PrivateKeySetV3<EXTENSION_DEGREE>, Self::Error> {
+        Ok(PrivateKeySetV3 {
+            lwe_encryption_secret_key_share: self.lwe_encryption_secret_key_share,
+            lwe_compute_secret_key_share: self.lwe_compute_secret_key_share,
+            oprf_secret_key_share: None,
+            glwe_secret_key_share: self.glwe_secret_key_share,
+            glwe_secret_key_share_sns_as_lwe: self.glwe_secret_key_share_sns_as_lwe,
+            glwe_secret_key_share_compression: self.glwe_secret_key_share_compression,
+            glwe_sns_compression_key_as_lwe: self.glwe_sns_compression_key_as_lwe,
+            parameters: self.parameters,
+        })
+    }
+}
+
+impl<const EXTENSION_DEGREE: usize> Upgrade<PrivateKeySet<EXTENSION_DEGREE>>
+    for PrivateKeySetV3<EXTENSION_DEGREE>
 {
     type Error = std::convert::Infallible;
 
@@ -425,7 +489,8 @@ impl<const EXTENSION_DEGREE: usize> Upgrade<PrivateKeySet<EXTENSION_DEGREE>>
         Ok(PrivateKeySet {
             lwe_encryption_secret_key_share: self.lwe_encryption_secret_key_share,
             lwe_compute_secret_key_share: self.lwe_compute_secret_key_share,
-            oprf_secret_key_share: None,
+            oprf_secret_key_share: self.oprf_secret_key_share,
+            transciphering_secret_key_share: None,
             glwe_secret_key_share: self.glwe_secret_key_share,
             glwe_secret_key_share_sns_as_lwe: self.glwe_secret_key_share_sns_as_lwe,
             glwe_secret_key_share_compression: self.glwe_secret_key_share_compression,
@@ -678,6 +743,21 @@ where
             })
             .transpose()?;
 
+        let transciphering_secret_key_share = self
+            .transciphering_secret_key_share
+            .as_ref()
+            .map(|key| -> anyhow::Result<_> {
+                match key {
+                    LweSecretKeyShareEnum::Z128(key) => Ok(key.clone()),
+                    LweSecretKeyShareEnum::Z64(_) => {
+                        anyhow::bail!(
+                            "Expected Z128 transciphering_secret_key_share, got Z64. Keys must be lifted to Z128 before calling to_generic."
+                        )
+                    }
+                }
+            })
+            .transpose()?;
+
         let glwe_secret_key_share = match &self.glwe_secret_key_share {
             GlweSecretKeyShareEnum::Z128(key) => key.clone(),
             GlweSecretKeyShareEnum::Z64(_) => {
@@ -737,6 +817,7 @@ where
             lwe_encryption_secret_key_share,
             lwe_secret_key_share,
             oprf_secret_key_share,
+            transciphering_secret_key_share,
             glwe_secret_key_share,
             glwe_secret_key_share_sns,
             glwe_secret_key_share_compression,
@@ -773,6 +854,14 @@ where
             None => None,
         };
 
+        let transciphering_secret_key_share = match lifted.transciphering_secret_key_share {
+            Some(LweSecretKeyShareEnum::Z64(key)) => Some(key),
+            Some(_) => {
+                unreachable!("lift_to_z64 should have converted transciphering key to Z64")
+            }
+            None => None,
+        };
+
         let glwe_secret_key_share = match lifted.glwe_secret_key_share {
             GlweSecretKeyShareEnum::Z64(key) => key,
             _ => unreachable!("lift_to_z64 should have converted to Z64"),
@@ -796,6 +885,7 @@ where
             lwe_encryption_secret_key_share,
             lwe_secret_key_share,
             oprf_secret_key_share,
+            transciphering_secret_key_share,
             glwe_secret_key_share,
             glwe_secret_key_share_sns: None,
             glwe_secret_key_share_compression,
@@ -828,6 +918,9 @@ where
             ),
             lwe_compute_secret_key_share: LweSecretKeyShareEnum::Z128(self.lwe_secret_key_share),
             oprf_secret_key_share: self.oprf_secret_key_share.map(LweSecretKeyShareEnum::Z128),
+            transciphering_secret_key_share: self
+                .transciphering_secret_key_share
+                .map(LweSecretKeyShareEnum::Z128),
             glwe_secret_key_share: GlweSecretKeyShareEnum::Z128(self.glwe_secret_key_share),
             glwe_secret_key_share_sns_as_lwe,
             glwe_secret_key_share_compression: self
@@ -852,6 +945,9 @@ impl<const EXTENSION_DEGREE: usize> GenericPrivateKeySet<Z64, EXTENSION_DEGREE> 
             ),
             lwe_compute_secret_key_share: LweSecretKeyShareEnum::Z64(self.lwe_secret_key_share),
             oprf_secret_key_share: self.oprf_secret_key_share.map(LweSecretKeyShareEnum::Z64),
+            transciphering_secret_key_share: self
+                .transciphering_secret_key_share
+                .map(LweSecretKeyShareEnum::Z64),
             glwe_secret_key_share: GlweSecretKeyShareEnum::Z64(self.glwe_secret_key_share),
             glwe_secret_key_share_sns_as_lwe: None,
             glwe_secret_key_share_compression: self
@@ -910,12 +1006,18 @@ mod test {
         for params in [BC_PARAMS_SNS, PARAMS_TEST_RESHARE] {
             assert_eq!(params.dkg_mode(), DkgMode::Z128);
             let n = PrivateKeySet::<E>::num_liftable_subkeys(params);
-            // 3 always-present base sub-keys + optional compression + conservative OPRF.
+            // 3 always-present base sub-keys + optional compression, conservative OPRF and
+            // parameter-enabled transciphering.
             // NOTE: This should be updated every time we add a new sub-key to the keyset
-            assert_eq!(n, 3 + usize::from(params.compression_sk_num_bits() > 0) + 1);
+            assert_eq!(
+                n,
+                3 + usize::from(params.compression_sk_num_bits() > 0)
+                    + 1
+                    + usize::from(params.transciphering_lwe_dimension().is_some())
+            );
             assert!(
-                (4..=5).contains(&n),
-                "a Z128 keyset lifts at most 4-5 sub-keys, got {n}"
+                (4..=6).contains(&n),
+                "a Z128 keyset lifts at most 4-6 sub-keys, got {n}"
             );
         }
     }
@@ -955,6 +1057,7 @@ mod test {
             lwe_encryption_secret_key_share,
             lwe_compute_secret_key_share,
             oprf_secret_key_share,
+            transciphering_secret_key_share,
             glwe_secret_key_share,
             glwe_secret_key_share_sns_as_lwe,
             glwe_secret_key_share_compression,
@@ -979,6 +1082,14 @@ mod test {
                 z64_vec.extend(oprf_key.data);
             } else if let LweSecretKeyShareEnum::Z128(oprf_key) = oprf_key {
                 z128_vec.extend(oprf_key.data);
+            }
+        }
+
+        if let Some(transciphering_key) = transciphering_secret_key_share {
+            if let LweSecretKeyShareEnum::Z64(transciphering_key) = transciphering_key {
+                z64_vec.extend(transciphering_key.data);
+            } else if let LweSecretKeyShareEnum::Z128(transciphering_key) = transciphering_key {
+                z128_vec.extend(transciphering_key.data);
             }
         }
 
@@ -1126,6 +1237,9 @@ mod test {
             LweSecretKeyShareEnum::Z64(_)
         )) + usize::from(matches!(
             key.oprf_secret_key_share,
+            Some(LweSecretKeyShareEnum::Z64(_))
+        )) + usize::from(matches!(
+            key.transciphering_secret_key_share,
             Some(LweSecretKeyShareEnum::Z64(_))
         )) + usize::from(matches!(
             key.glwe_secret_key_share,
@@ -1332,6 +1446,7 @@ mod test {
                 }),
                 glwe_secret_key_share_sns_as_lwe: None,
                 oprf_secret_key_share: None,
+                transciphering_secret_key_share: None,
                 glwe_secret_key_share_compression: None,
                 glwe_sns_compression_key_as_lwe: None,
                 parameters: params.classic_pbs(),
@@ -1434,6 +1549,9 @@ mod test {
                 oprf_secret_key_share: Some(LweSecretKeyShareEnum::Z128(LweSecretKeyShare {
                     data: vec![share],
                 })),
+                transciphering_secret_key_share: Some(LweSecretKeyShareEnum::Z128(
+                    LweSecretKeyShare { data: vec![share] },
+                )),
                 glwe_secret_key_share_compression: None,
                 glwe_sns_compression_key_as_lwe: None,
                 parameters: params.classic_pbs(),

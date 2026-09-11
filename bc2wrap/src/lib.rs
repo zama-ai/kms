@@ -7,8 +7,14 @@ use bincode::error::{DecodeError, EncodeError};
 use serde::{Serialize, de::DeserializeOwned};
 use std::io::{Read, Write};
 
-// Setting the limit to 2GB as no network message should ever be bigger than this
-// (i.e. matches the MAX_EN_DECODE_MESSAGE_SIZE constant in core/threshold-networking)
+/// Upper bound on the serialized size of one deserialized value.
+///
+/// The bound must hold a full public key set. With noise squashing and transciphering keys such a
+/// set exceeds 2 GiB, so the bound is 4 GiB. On 32-bit targets `usize` cannot hold 4 GiB and no
+/// key set of that size is deserialized, so the bound is 2 GiB there.
+#[cfg(target_pointer_width = "64")]
+pub const BINCODE_SMALL_DESER_SIZE_LIMIT: usize = 1024 * 1024 * 1024 * 4;
+#[cfg(not(target_pointer_width = "64"))]
 pub const BINCODE_SMALL_DESER_SIZE_LIMIT: usize = 1024 * 1024 * 1024 * 2;
 
 /// Wrapper around bincode::serde::encode_to_vec that uses the legacy config

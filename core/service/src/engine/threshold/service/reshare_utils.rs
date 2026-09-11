@@ -33,7 +33,10 @@ pub(crate) enum VerifiedPublicMaterial {
     /// Standard uncompressed keyset with server key and public key
     Uncompressed(FhePubKeySet),
     /// Compressed keyset
-    Compressed(CompressedXofKeySet),
+    Compressed {
+        keyset: CompressedXofKeySet,
+        has_transciphering_key: bool,
+    },
 }
 
 impl std::fmt::Debug for VerifiedPublicMaterial {
@@ -42,7 +45,7 @@ impl std::fmt::Debug for VerifiedPublicMaterial {
             VerifiedPublicMaterial::Uncompressed(_) => {
                 write!(f, "VerifiedPublicMaterial::Uncompressed(...)")
             }
-            VerifiedPublicMaterial::Compressed(_) => {
+            VerifiedPublicMaterial::Compressed { .. } => {
                 write!(f, "VerifiedPublicMaterial::Compressed(...)")
             }
         }
@@ -50,14 +53,45 @@ impl std::fmt::Debug for VerifiedPublicMaterial {
 }
 
 impl VerifiedPublicMaterial {
+    /// Builds verified compressed material and records whether its server key contains the
+    /// transciphering key, avoiding a later deep clone of the compressed keyset during reshare.
+    // TODO: ask tfhe-rs to expose `has_transciphering_key()` on `CompressedXofKeySet` so this can
+    // use a borrowed predicate instead of unpacking and repacking the keyset.
+    pub(crate) fn from_compressed_keyset(compressed_keyset: CompressedXofKeySet) -> Self {
+        let (seed, compressed_public_key, compressed_server_key) =
+            compressed_keyset.into_raw_parts();
+        let has_transciphering_key = compressed_server_key.has_transciphering_key();
+        let keyset =
+            CompressedXofKeySet::from_raw_parts(seed, compressed_public_key, compressed_server_key);
+
+        Self::Compressed {
+            keyset,
+            has_transciphering_key,
+        }
+    }
+
     pub(crate) fn has_oprf_key(&self) -> bool {
         match self {
             VerifiedPublicMaterial::Uncompressed(fhe_pubkeys) => {
                 fhe_pubkeys.server_key.has_oprf_key()
             }
-            VerifiedPublicMaterial::Compressed(compressed_keyset) => {
-                compressed_keyset.has_oprf_key()
+            VerifiedPublicMaterial::Compressed { keyset, .. } => keyset.has_oprf_key(),
+        }
+    }
+
+    /// Whether the public material carries a transciphering server key.
+    ///
+    /// The compressed-key flag is captured when [`VerifiedPublicMaterial`] is constructed because
+    /// `CompressedXofKeySet` does not expose a borrowed predicate for the transciphering key.
+    pub(crate) fn has_transciphering_key(&self) -> bool {
+        match self {
+            VerifiedPublicMaterial::Uncompressed(fhe_pubkeys) => {
+                fhe_pubkeys.server_key.has_transciphering_key()
             }
+            VerifiedPublicMaterial::Compressed {
+                has_transciphering_key,
+                ..
+            } => *has_transciphering_key,
         }
     }
 }
@@ -140,7 +174,9 @@ async fn fetch_public_fhe_materials_from_peers<
                                     )
                                 })?;
 
-                            return Ok(VerifiedPublicMaterial::Compressed(compressed_keyset));
+                            return Ok(VerifiedPublicMaterial::from_compressed_keyset(
+                                compressed_keyset,
+                            ));
                         }
                         Err(e) => {
                             let msg =
@@ -319,7 +355,9 @@ pub(crate) async fn get_verified_fhe_public_materials<
                         )
                     })?;
 
-                Ok(VerifiedPublicMaterial::Compressed(compressed_keyset))
+                Ok(VerifiedPublicMaterial::from_compressed_keyset(
+                    compressed_keyset,
+                ))
             }
             Err(_) => {
                 // If local retrieval fails, attempt to fetch from s3 of another party
@@ -1139,7 +1177,7 @@ mod tests {
 
         assert!(matches!(
             verified_material,
-            VerifiedPublicMaterial::Compressed(_)
+            VerifiedPublicMaterial::Compressed { .. }
         ));
         assert_eq!(*ro_storage_getter.counter.borrow(), 1);
     }
@@ -1206,7 +1244,7 @@ mod tests {
 
         assert!(matches!(
             verified_material,
-            VerifiedPublicMaterial::Compressed(_)
+            VerifiedPublicMaterial::Compressed { .. }
         ));
         // we should've used my own storage directly, so the counter here should be 0
         assert_eq!(*ro_storage_getter.counter.borrow(), 0);
