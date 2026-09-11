@@ -6,7 +6,7 @@ use crate::{
     consts::{DEFAULT_EPOCH_ID, DEFAULT_MPC_CONTEXT, SAFE_SER_SIZE_LIMIT},
     cryptography::{
         encryption::{Encryption, PkeScheme, PkeSchemeType},
-        signatures::{PrivateSigKey, SigningSchemeType, gen_sig_keys},
+        signatures::{NodeSigningIdentity, PrivateSigKey, SigningSchemeType, gen_sig_keys},
         signcryption::UnifiedSigncryption,
     },
     dummy_domain,
@@ -117,7 +117,7 @@ fn generate_compressed_keys(
     let (_pk, sk) = gen_sig_keys(&mut rng);
     let domain = dummy_domain();
     let (compressed_keyset, compact_pk, key_info) = generate_fhe_keys(
-        &sk,
+        &NodeSigningIdentity::ecdsa_only(sk.clone()),
         &[crate::cryptography::signing::SigningSchemeType::Ecdsa256k1],
         TEST_PARAM,
         KeyGenSecretKeyConfig::GenerateAll,
@@ -140,7 +140,7 @@ fn generate_uncompressed_keys(
     let mut rng = AesRng::seed_from_u64(signing_seed);
     let (_, signing_key) = gen_sig_keys(&mut rng);
     generate_uncompressed_fhe_keys(
-        &signing_key,
+        &signing_key.into(),
         &[SigningSchemeType::Ecdsa256k1],
         TEST_PARAM,
         KeyGenSecretKeyConfig::GenerateAll,
@@ -177,7 +177,7 @@ async fn write_crs() {
     let domain = dummy_domain();
     let (_sig_pk, sig_sk) = gen_sig_keys(&mut rng);
     let (pp, crs_info) = async_generate_crs(
-        &sig_sk,
+        &NodeSigningIdentity::ecdsa_only(sig_sk.clone()),
         &[crate::cryptography::signing::SigningSchemeType::Ecdsa256k1],
         TEST_PARAM,
         Some(1),

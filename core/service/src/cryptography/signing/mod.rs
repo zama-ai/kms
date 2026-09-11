@@ -5,6 +5,7 @@
 
 pub mod ecdsa;
 mod eddsa;
+pub mod identity;
 mod mldsa;
 pub mod seed;
 
@@ -19,8 +20,10 @@ use ml_dsa::{MlDsa44, MlDsa65, MlDsa87, SigningKey as MlDsaSigningKey};
 use mldsa::MlDsa;
 pub use mldsa::MlDsaVerfKey;
 use serde::{Deserialize, Serialize};
-use strum::{EnumCount, EnumIter};
-use strum_macros::Display;
+use std::collections::HashMap;
+use std::str::FromStr;
+use strum::{EnumCount, EnumIter, VariantNames as _};
+use strum_macros::{Display, EnumString, VariantNames};
 use tfhe::named::Named;
 use tfhe_versionable::{Versionize, VersionsDispatch};
 use thiserror::Error;
@@ -77,6 +80,15 @@ pub enum SigningError {
     /// An integer discriminant did not correspond to any known signing scheme.
     #[error("unsupported signing scheme discriminant: {0}")]
     UnknownScheme(i32),
+    /// A scheme was requested that no known party published a verification key for.
+    #[error("no party published a {0} verification key, so no {0} signature could be checked")]
+    NoVerificationKey(SigningSchemeType),
+    /// A string did not name any known signing scheme.
+    #[error(
+        "unknown signing scheme {0:?}, expected one of: {expected}",
+        expected = SigningSchemeType::VARIANTS.join(", ")
+    )]
+    UnknownSchemeName(String),
 }
 
 /// Trait for any value that is tied to a concrete signature scheme.
@@ -89,6 +101,8 @@ pub enum SigningSchemeTypeVersions {
     V0(SigningSchemeType),
 }
 
+/// A signature profile: a key type together with the message convention it signs
+/// under.
 #[derive(
     Debug,
     Clone,
@@ -103,9 +117,12 @@ pub enum SigningSchemeTypeVersions {
     Display,
     EnumIter,
     EnumCount,
+    EnumString,
+    VariantNames,
     Versionize,
 )]
 #[versionize(SigningSchemeTypeVersions)]
+#[strum(ascii_case_insensitive)]
 pub enum SigningSchemeType {
     // WARNING: Do not reorder or remove variants; only append.
     Ecdsa256k1,
@@ -131,9 +148,51 @@ impl SigningSchemeType {
         }
     }
 
+    /// The schemes a request asks its response to be signed under.
+    ///
+    /// An explicit list is honoured as given, so a caller that wants only
+    /// [`SigningSchemeType::Ed25519`] gets exactly that. An empty list resolves to
+    /// [`SigningSchemeType::Ecdsa256k1`].
+    pub fn resolve_requested(requested: &[i32]) -> Result<Vec<Self>, SigningError> {
+        if requested.is_empty() {
+            return Ok(vec![SigningSchemeType::Ecdsa256k1]);
+        }
+        let mut resolved = Vec::with_capacity(SigningSchemeType::COUNT);
+        for &raw in requested {
+            let scheme = SigningSchemeType::try_from(raw)?;
+            if !resolved.contains(&scheme) {
+                resolved.push(scheme);
+            }
+        }
+        Ok(resolved)
+    }
+
+    /// The schemes named by `requested`, for command-line and config input.
+    ///
+    /// An unrecognised name is an error that lists the accepted spellings.
+    ///
+    /// Only the parsing lives here: the resolution itself is
+    /// [`Self::resolve_requested`], so the two forms cannot drift apart.
+    pub fn parse_requested<S: AsRef<str>>(requested: &[S]) -> Result<Vec<Self>, SigningError> {
+        let mut raw = Vec::with_capacity(requested.len());
+        for name in requested {
+            let name = name.as_ref().trim();
+            let scheme = SigningSchemeType::from_str(name)
+                .map_err(|_| SigningError::UnknownSchemeName(name.to_owned()))?;
+            raw.push(scheme.as_wire());
+        }
+        Self::resolve_requested(&raw)
+    }
+
+    /// The discriminant this scheme travels as on the wire, as the gRPC
+    /// `SigningSchemeType` field holds it.
+    pub fn as_wire(self) -> i32 {
+        kms_grpc::kms::v1::SigningSchemeType::from(self) as i32
+    }
+
     /// The scheme's stable 4-byte tag, for binding a scheme into a hash input.
     fn tag(self) -> [u8; 4] {
-        (kms_grpc::kms::v1::SigningSchemeType::from(self) as i32).to_le_bytes()
+        self.as_wire().to_le_bytes()
     }
 }
 
@@ -409,45 +468,17 @@ impl HasSigningScheme for UnifiedPublicSigKey {
     }
 }
 
-/// The multi-scheme surface of a node's signing identity.
-///
-/// - **ECDSA** uses this key itself. That is a property of the transition rather
-///   than of the design.
-/// - **Every other scheme** is derived from the attached [`seed::RootSigningSeed`],
-///   and errors with [`SigningError::MissingRootSeed`] if none is attached.
-impl PrivateSigKey {
-    /// Sign `msg` (domain-separated by `dsep`) under `scheme`.
-    #[cfg(feature = "non-wasm")]
-    pub(crate) fn unified_sign_with(
-        &self,
-        scheme: SigningSchemeType,
-        dsep: &DomainSep,
-        msg: &[u8],
-    ) -> Result<Signature, SigningError> {
-        match scheme {
-            SigningSchemeType::Ecdsa256k1 => {
-                Ok(Signature::new(scheme, Ecdsa256k1::sign(dsep, msg, self)?))
-            }
-            _ => {
-                let seed = self.require_root_seed(scheme)?;
-                unified_sign(dsep, msg, seed.derive_signing_key(scheme)?)
-            }
-        }
-    }
+/// The verification keys a client or validator holds for its peers: per party
+/// id, one key per scheme that party has published.
+pub type SchemeVerfKeys = HashMap<u32, HashMap<SigningSchemeType, UnifiedPublicSigKey>>;
 
-    /// The verification key that [`Self::unified_sign_with`] signatures under
-    /// `scheme` verify against.
-    pub fn unified_verifying_key(
-        &self,
-        scheme: SigningSchemeType,
-    ) -> Result<UnifiedPublicSigKey, SigningError> {
-        match scheme {
-            SigningSchemeType::Ecdsa256k1 => Ok(UnifiedPublicSigKey::Ecdsa256k1(self.verf_key())),
-            _ => self
-                .require_root_seed(scheme)?
-                .unified_verifying_key(scheme),
-        }
-    }
+/// The verification key `party_id` published for `scheme`, if it published one.
+pub fn verf_key_for(
+    keys: &SchemeVerfKeys,
+    party_id: u32,
+    scheme: SigningSchemeType,
+) -> Option<&UnifiedPublicSigKey> {
+    keys.get(&party_id).and_then(|keys| keys.get(&scheme))
 }
 
 /// Sign `msg` (domain-separated by `dsep`) under the scheme of `sk`.
@@ -472,10 +503,6 @@ pub fn unified_sign(
 ///
 /// Errors if the signature's scheme does not match the verification key, if the
 /// bytes are malformed for that scheme, or if verification fails.
-///
-/// TODO(#3078): call this from client-side response validation, which checks only
-/// the legacy ECDSA/EIP-712 signature.
-#[allow(dead_code)]
 pub fn unified_verify(
     dsep: &DomainSep,
     msg: &[u8],
@@ -499,12 +526,64 @@ pub fn unified_verify(
     }
 }
 
+/// Scaffolding shared by the test modules of this module and its backends.
+#[cfg(test)]
+pub(crate) mod test_support {
+    use super::*;
+    use crate::cryptography::signatures::gen_sig_keys;
+    use crate::cryptography::signing::identity::NodeSigningIdentity;
+    use crate::cryptography::signing::seed::RootSigningSeed;
+    use rand::RngCore;
+
+    pub(crate) fn random_seed<R: RngCore>(rng: &mut R) -> [u8; 32] {
+        let mut s = [0u8; 32];
+        rng.fill_bytes(&mut s);
+        s
+    }
+
+    /// A complete node signing identity: an ECDSA key with a root seed attached.
+    pub(crate) fn seeded_identity<R: rand::CryptoRng + RngCore>(
+        rng: &mut R,
+    ) -> NodeSigningIdentity {
+        let (_pk, sk) = gen_sig_keys(rng);
+        NodeSigningIdentity::new(sk, RootSigningSeed::random(rng))
+    }
+
+    /// The contract every [`SigningScheme`] backend owes, checked in one place so that a new
+    /// backend gets the same coverage by writing a single call.
+    ///
+    /// A freshly produced signature verifies, and a tampered message, a different domain
+    /// separator, and a tampered signature all reject. Key generation is not part of the trait,
+    /// so the caller supplies the signing key.
+    pub(crate) fn exercise_backend<S: SigningScheme>(dsep: &DomainSep, sk: &S::SigningKey) {
+        let vk = S::verifying_key(sk).expect("the backend must derive its verification key");
+        let sig = S::sign(dsep, b"hello", sk).expect("the backend must sign");
+        S::verify(dsep, b"hello", &sig, &vk).expect("a fresh signature must verify");
+
+        assert!(
+            S::verify(dsep, b"HELLO", &sig, &vk).is_err(),
+            "a tampered message verified"
+        );
+        assert!(
+            S::verify(b"OTHERDSP", b"hello", &sig, &vk).is_err(),
+            "a different domain separator verified"
+        );
+
+        let mut tampered = sig.clone();
+        tampered[0] ^= 0x01;
+        assert!(
+            S::verify(dsep, b"hello", &tampered, &vk).is_err(),
+            "a tampered signature verified"
+        );
+    }
+}
+
 #[cfg(test)]
 mod tests {
+    use super::test_support::{random_seed, seeded_identity};
     use super::*;
     use crate::consts::SAFE_SER_SIZE_LIMIT;
     use crate::cryptography::signatures::gen_sig_keys;
-    use crate::cryptography::signing::seed::RootSigningSeed;
     use aes_prng::AesRng;
     use rand::{RngCore, SeedableRng};
     use strum::IntoEnumIterator;
@@ -512,27 +591,28 @@ mod tests {
 
     const DSEP: &DomainSep = b"SCHMTEST";
 
-    fn seed<R: RngCore>(rng: &mut R) -> [u8; 32] {
-        let mut s = [0u8; 32];
-        rng.fill_bytes(&mut s);
-        s
-    }
-
-    /// A complete node signing identity: an ECDSA key with a root seed attached.
-    fn seeded_identity<R: rand::CryptoRng + RngCore>(rng: &mut R) -> PrivateSigKey {
-        let (_pk, sk) = gen_sig_keys(rng);
-        let root = RootSigningSeed::random(rng);
-        sk.with_root_seed(root)
-    }
-
     fn all_private_keys<R: rand::CryptoRng + RngCore>(rng: &mut R) -> Vec<UnifiedPrivateSigKey> {
-        vec![
+        let keys = vec![
             UnifiedPrivateSigKey::Ecdsa256k1(gen_sig_keys(rng).1),
-            UnifiedPrivateSigKey::Ed25519(Ed25519::keygen_from_seed(&seed(rng))),
-            UnifiedPrivateSigKey::MlDsa44(Box::new(MlDsa::<MlDsa44>::keygen_from_seed(&seed(rng)))),
-            UnifiedPrivateSigKey::MlDsa65(Box::new(MlDsa::<MlDsa65>::keygen_from_seed(&seed(rng)))),
-            UnifiedPrivateSigKey::MlDsa87(Box::new(MlDsa::<MlDsa87>::keygen_from_seed(&seed(rng)))),
-        ]
+            UnifiedPrivateSigKey::Ed25519(Ed25519::keygen_from_seed(&random_seed(rng))),
+            UnifiedPrivateSigKey::MlDsa44(Box::new(MlDsa::<MlDsa44>::keygen_from_seed(
+                &random_seed(rng),
+            ))),
+            UnifiedPrivateSigKey::MlDsa65(Box::new(MlDsa::<MlDsa65>::keygen_from_seed(
+                &random_seed(rng),
+            ))),
+            UnifiedPrivateSigKey::MlDsa87(Box::new(MlDsa::<MlDsa87>::keygen_from_seed(
+                &random_seed(rng),
+            ))),
+        ];
+        // This list is written out by hand, so pin it to the enum: a scheme added without a key
+        // here would be skipped in silence by every test below rather than failing one.
+        assert_eq!(
+            keys.len(),
+            SigningSchemeType::iter().count(),
+            "all_private_keys does not cover every SigningSchemeType"
+        );
+        keys
     }
 
     /// Every scheme round-trips; a tampered message fails.
@@ -566,7 +646,7 @@ mod tests {
         let mut rng = AesRng::seed_from_u64(7);
         let ecdsa_key = UnifiedPrivateSigKey::Ecdsa256k1(gen_sig_keys(&mut rng).1);
         let mldsa_key = UnifiedPrivateSigKey::MlDsa65(Box::new(
-            MlDsa::<MlDsa65>::keygen_from_seed(&seed(&mut rng)),
+            MlDsa::<MlDsa65>::keygen_from_seed(&random_seed(&mut rng)),
         ));
         let msg = b"hybrid classic + post-quantum message";
 
@@ -599,26 +679,6 @@ mod tests {
         }
     }
 
-    /// Every scheme signs and verifies through the per-scheme key of a seeded
-    /// identity, and a tampered message fails.
-    #[test]
-    fn derived_keys_sign_and_verify() {
-        let mut rng = AesRng::seed_from_u64(101);
-        let sk = seeded_identity(&mut rng);
-        let msg = b"a message signed under a derived scheme key";
-
-        for scheme in SigningSchemeType::iter() {
-            let derived_vk = sk.unified_verifying_key(scheme).unwrap();
-            assert_eq!(derived_vk.signing_scheme_type(), scheme);
-
-            let sig = sk.unified_sign_with(scheme, DSEP, msg).unwrap();
-            assert_eq!(sig.scheme(), scheme);
-            unified_verify(DSEP, msg, &sig, &derived_vk)
-                .unwrap_or_else(|e| panic!("{scheme:?} derived key should verify: {e}"));
-            assert!(unified_verify(DSEP, b"tampered", &sig, &derived_vk).is_err());
-        }
-    }
-
     /// Every scheme's unified verification key survives a safe-serialization
     /// round-trip (the persisted form used for `VerfKey`), keeping equality,
     /// scheme tag and digest — exercising the hand-written `Versionize`/serde
@@ -639,104 +699,6 @@ mod tests {
             assert_eq!(vk, back, "{scheme:?} verf key did not survive round-trip");
             assert_eq!(back.signing_scheme_type(), scheme);
             assert_eq!(vk.digest(), back.digest(), "{scheme:?} digest changed");
-        }
-    }
-
-    /// Deriving the same scheme from the same identity twice yields identical
-    /// keys
-    #[test]
-    fn derivation_is_deterministic() {
-        let mut rng = AesRng::seed_from_u64(202);
-        let sk = seeded_identity(&mut rng);
-        let msg = b"deriving twice must give the same key";
-
-        for scheme in SigningSchemeType::iter() {
-            let sig = sk.unified_sign_with(scheme, DSEP, msg).unwrap();
-            let vk = sk.clone().unified_verifying_key(scheme).unwrap();
-            unified_verify(DSEP, msg, &sig, &vk)
-                .unwrap_or_else(|e| panic!("{scheme:?} derivation was not deterministic: {e}"));
-        }
-    }
-
-    /// Extract the Ethereum address from an ECDSA unified verification key,
-    /// panicking on any other scheme.
-    fn ecdsa_address(vk: UnifiedPublicSigKey) -> alloy_primitives::Address {
-        match vk {
-            UnifiedPublicSigKey::Ecdsa256k1(pk) => pk.address(),
-            other => panic!(
-                "expected an ECDSA verification key, got {:?}",
-                other.signing_scheme_type()
-            ),
-        }
-    }
-
-    /// For ECDSA, the per-scheme key is the persisted identity unchanged — with
-    /// or without a root seed attached.
-    #[test]
-    fn ecdsa_signing_key_is_the_identity() {
-        let mut rng = AesRng::seed_from_u64(303);
-        let (pk, sk) = gen_sig_keys(&mut rng);
-
-        let vk = sk
-            .unified_verifying_key(SigningSchemeType::Ecdsa256k1)
-            .unwrap();
-        assert_eq!(ecdsa_address(vk), pk.address());
-
-        let seeded = sk.with_root_seed(RootSigningSeed::random(&mut rng));
-        let vk = seeded
-            .unified_verifying_key(SigningSchemeType::Ecdsa256k1)
-            .unwrap();
-        assert_eq!(ecdsa_address(vk), pk.address());
-    }
-
-    /// The transition invariant: attaching a root seed does **not** move the
-    /// node's ECDSA identity.
-    #[test]
-    fn ecdsa_identity_is_never_the_seed_derived_key() {
-        let mut rng = AesRng::seed_from_u64(305);
-        let (pk, sk) = gen_sig_keys(&mut rng);
-        let sk = sk.with_root_seed(RootSigningSeed::random(&mut rng));
-
-        // What the identity publishes is the persisted key...
-        let vk = sk
-            .unified_verifying_key(SigningSchemeType::Ecdsa256k1)
-            .unwrap();
-        assert_eq!(ecdsa_address(vk.clone()), pk.address());
-
-        // ...and what it signs with verifies against exactly that key.
-        let msg = b"signed by the node's ECDSA identity";
-        let sig = sk
-            .unified_sign_with(SigningSchemeType::Ecdsa256k1, DSEP, msg)
-            .unwrap();
-        unified_verify(DSEP, msg, &sig, &vk).unwrap();
-    }
-
-    /// Without a root seed an identity can still do everything ECDSA, and fails
-    /// loudly for every other scheme.
-    #[test]
-    fn non_ecdsa_requires_a_root_seed() {
-        let mut rng = AesRng::seed_from_u64(707);
-        let (_pk, sk) = gen_sig_keys(&mut rng);
-        assert!(!sk.has_root_seed());
-        let msg = b"a seedless identity is ECDSA-only";
-
-        let vk = sk
-            .unified_verifying_key(SigningSchemeType::Ecdsa256k1)
-            .unwrap();
-        let sig = sk
-            .unified_sign_with(SigningSchemeType::Ecdsa256k1, DSEP, msg)
-            .unwrap();
-        unified_verify(DSEP, msg, &sig, &vk).unwrap();
-
-        for scheme in SigningSchemeType::iter().filter(|s| *s != SigningSchemeType::Ecdsa256k1) {
-            assert!(matches!(
-                sk.unified_verifying_key(scheme),
-                Err(SigningError::MissingRootSeed(s)) if s == scheme
-            ));
-            assert!(matches!(
-                sk.unified_sign_with(scheme, DSEP, msg),
-                Err(SigningError::MissingRootSeed(s)) if s == scheme
-            ));
         }
     }
 
@@ -791,6 +753,92 @@ mod tests {
                 "{} should have a {} byte digest",
                 vk.signing_scheme_type(),
                 expected_len
+            );
+        }
+    }
+
+    /// An empty request resolves to ECDSA, an explicit list is honoured as given and
+    /// de-duplicated, and an unknown scheme is an error.
+    #[test]
+    fn resolve_requested_defaults_to_ecdsa_and_dedups() {
+        // Empty ⇒ ECDSA: a client that predates the field sends nothing and
+        // expects the ECDSA signature it always got.
+        assert_eq!(
+            SigningSchemeType::resolve_requested(&[]).unwrap(),
+            vec![SigningSchemeType::Ecdsa256k1]
+        );
+
+        // An explicit list is honoured as given; ECDSA is not added to it.
+        let ed25519 = kms_grpc::kms::v1::SigningSchemeType::Ed25519 as i32;
+        assert_eq!(
+            SigningSchemeType::resolve_requested(&[ed25519]).unwrap(),
+            vec![SigningSchemeType::Ed25519]
+        );
+
+        // Known schemes map through, preserving order.
+        let ecdsa = kms_grpc::kms::v1::SigningSchemeType::Ecdsa256k1 as i32;
+        let mldsa65 = kms_grpc::kms::v1::SigningSchemeType::Mldsa65 as i32;
+        assert_eq!(
+            SigningSchemeType::resolve_requested(&[ecdsa, mldsa65]).unwrap(),
+            vec![SigningSchemeType::Ecdsa256k1, SigningSchemeType::MlDsa65]
+        );
+
+        // Duplicates are removed while preserving first-seen order.
+        assert_eq!(
+            SigningSchemeType::resolve_requested(&[mldsa65, ecdsa, mldsa65]).unwrap(),
+            vec![SigningSchemeType::MlDsa65, SigningSchemeType::Ecdsa256k1]
+        );
+
+        // An unknown scheme is an error.
+        assert!(SigningSchemeType::resolve_requested(&[9999]).is_err());
+    }
+
+    /// The string form a command line supplies follows the same rules as the
+    /// gRPC form, and every scheme name round-trips through it.
+    #[test]
+    fn parse_requested_matches_resolve_requested() {
+        // Naming nothing asks for ECDSA, exactly as an empty gRPC field does.
+        assert_eq!(
+            SigningSchemeType::parse_requested::<&str>(&[]).unwrap(),
+            SigningSchemeType::resolve_requested(&[]).unwrap()
+        );
+
+        // Every scheme's own name parses back to it, whatever the casing, and
+        // surrounding whitespace from a config value is ignored.
+        for scheme in SigningSchemeType::iter() {
+            let name = scheme.to_string();
+            for spelling in [
+                name.clone(),
+                name.to_lowercase(),
+                name.to_uppercase(),
+                format!("  {name} "),
+            ] {
+                assert_eq!(
+                    SigningSchemeType::parse_requested(&[spelling]).unwrap(),
+                    vec![scheme],
+                    "Spelling did not parse as {scheme}"
+                );
+            }
+        }
+
+        // Order is kept and duplicates are dropped, as in the gRPC form.
+        assert_eq!(
+            SigningSchemeType::parse_requested(&["mldsa65", "ecdsa256k1", "MlDsa65"]).unwrap(),
+            vec![SigningSchemeType::MlDsa65, SigningSchemeType::Ecdsa256k1]
+        );
+
+        // A name that is not a scheme is an error naming the accepted spellings.
+        let err = SigningSchemeType::parse_requested(&["rsa"])
+            .unwrap_err()
+            .to_string();
+        assert!(
+            err.contains("rsa"),
+            "the error does not quote the input: {err}"
+        );
+        for scheme in SigningSchemeType::iter() {
+            assert!(
+                err.contains(&scheme.to_string()),
+                "the error does not list {scheme}: {err}"
             );
         }
     }

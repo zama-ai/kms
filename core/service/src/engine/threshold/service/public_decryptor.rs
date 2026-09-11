@@ -55,7 +55,7 @@ use crate::{
             service::session::{ImmutableSessionMaker, validate_context_and_epoch},
             traits::PublicDecryptor,
         },
-        utils::{MetricedError, format_handle, format_unvalidated_id},
+        utils::{MetricedError, format_handle, format_unvalidated_id, signing_identity_for},
         validation::{
             RequestIdParsingErr, parse_grpc_request_id, parse_optional_grpc_request_id,
             validate_public_decrypt_req,
@@ -345,14 +345,12 @@ impl<
             .collect::<Vec<_>>();
 
         let meta_store = Arc::clone(&self.pub_dec_meta_store);
-        let sigkey = self.base_kms.sig_key().map_err(|e| {
-            MetricedError::new(
-                OP_PUBLIC_DECRYPT_REQUEST,
-                Some(req_id),
-                e,
-                tonic::Code::FailedPrecondition,
-            )
-        })?;
+        let sigkey = signing_identity_for(
+            &self.base_kms,
+            &signing_schemes,
+            OP_PUBLIC_DECRYPT_REQUEST,
+            Some(req_id),
+        )?;
         let server_verf_key = self.base_kms.verf_key().to_legacy_bytes().map_err(|e| {
             MetricedError::new(
                 OP_PUBLIC_DECRYPT_REQUEST,
@@ -771,6 +769,7 @@ mod tests {
     use crate::{
         consts::{DEFAULT_MPC_CONTEXT, TEST_PARAM},
         cryptography::signatures::gen_sig_keys,
+        cryptography::signing::identity::NodeSigningIdentity,
         dummy_domain,
         engine::threshold::service::session::SessionMaker,
         util::meta_store::EntryState,
@@ -911,7 +910,11 @@ mod tests {
         RealPublicDecryptor<ram::RamStorage, ram::RamStorage, DummyNoisefloodDecryptor>,
     ) {
         let (_pk, sk) = gen_sig_keys(rng);
-        let base_kms = BaseKmsStruct::new(KMSType::Threshold, sk.clone()).unwrap();
+        let base_kms = BaseKmsStruct::new(
+            KMSType::Threshold,
+            NodeSigningIdentity::ecdsa_only(sk.clone()),
+        )
+        .unwrap();
         let param = TEST_PARAM;
         let epoch_id = EpochId::new_random(rng);
 

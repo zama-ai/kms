@@ -3,10 +3,9 @@ use crate::vault::keychain::RootKeyMeasurements;
 use anyhow::{bail, ensure};
 use attestation_doc_validation::attestation_doc::decode_attestation_document;
 use enum_dispatch::enum_dispatch;
-use k256::{
-    ecdsa::{Signature as EcdsaSignature, signature::Verifier as _},
-    pkcs8::EncodePrivateKey,
-};
+use k256::ecdsa::{Signature as EcdsaSignature, signature::Verifier as _};
+#[cfg(feature = "insecure")]
+use k256::pkcs8::EncodePrivateKey;
 #[cfg(feature = "insecure")]
 use nsm_nitro_enclave_utils::{driver::dev::DevNitro, pcr::Pcrs};
 #[cfg(feature = "insecure")]
@@ -327,14 +326,9 @@ pub trait SecurityModule {
                     ca_cert_key_usage.value.key_cert_sign(),
                     "Bad party CA certificate: cannot be used to sign other certificates"
                 );
-                let sk_der = {
-                    // Will be fixed as part of [#2781](https://github.com/zama-ai/kms-internal/issues/2781).
-                    #[expect(deprecated)]
-                    let ecdsa_key = ca_key.sk();
-                    ecdsa_key.to_pkcs8_der()?
-                };
+                let sk_der = ca_key.to_pkcs8_der()?;
                 let ca_keypair = KeyPair::from_pkcs8_der_and_sign_algo(
-                    &sk_der.as_bytes().into(),
+                    &sk_der.as_slice().into(),
                     &PKCS_ECDSA_P256K1_SHA256,
                 )?;
                 let issuing_ca =
@@ -698,14 +692,12 @@ mod tests {
         gen_sig_keys(&mut AesRng::seed_from_u64(seed)).1
     }
 
-    #[expect(deprecated)]
     fn rcgen_key_pair(signing_key: &PrivateSigKey) -> KeyPair {
         let signing_key_der = signing_key
-            .sk()
             .to_pkcs8_der()
             .expect("test signing key must serialize");
         KeyPair::from_pkcs8_der_and_sign_algo(
-            &signing_key_der.as_bytes().into(),
+            &signing_key_der.as_slice().into(),
             &PKCS_ECDSA_P256K1_SHA256,
         )
         .expect("test signing key must convert to an rcgen key pair")

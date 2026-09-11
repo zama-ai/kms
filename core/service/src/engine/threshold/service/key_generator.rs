@@ -49,7 +49,7 @@ use tracing::Instrument;
 
 // === Internal Crate Imports ===
 use crate::{
-    cryptography::{signatures::PrivateSigKey, signing::SigningSchemeType},
+    cryptography::{signing::SigningSchemeType, signing::identity::NodeSigningIdentity},
     engine::{
         base::{
             BaseKmsStruct, DSEP_PUBDATA_KEY, KeyGenMetadata, compute_info_compressed_keygen,
@@ -65,7 +65,7 @@ use crate::{
             },
             traits::KeyGenerator,
         },
-        utils::MetricedError,
+        utils::{MetricedError, signing_identity_for},
         validation::{
             RequestIdParsingErr, parse_grpc_request_id, parse_optional_grpc_request_id,
             validate_key_gen_request,
@@ -367,9 +367,7 @@ impl<
 
         // Clone all the Arcs to give them to the tokio thread
         let meta_store = Arc::clone(&self.dkg_pubinfo_meta_store);
-        let sk = self.base_kms.sig_key().map_err(|e| {
-            MetricedError::new(op_tag, Some(req_id), e, tonic::Code::FailedPrecondition)
-        })?;
+        let sk = signing_identity_for(&self.base_kms, &signing_schemes, op_tag, Some(req_id))?;
         let crypto_storage = self.crypto_storage.clone();
         let eip712_domain_copy = eip712_domain.clone();
         let ongoing = Arc::clone(&self.ongoing);
@@ -828,7 +826,8 @@ impl<
                     // since no domain separation is used
                     key_digests: Vec::new(),
                     external_signature: vec![],
-                    // TODO(#3078): populate multi-scheme signatures (replication step).
+                    // A legacy result predates the per-scheme signatures, so it
+                    // has none to report.
                     signatures: vec![],
                 }))
             }
@@ -1080,7 +1079,7 @@ impl<
         meta_store: Arc<RwLock<MetaStore<KeyGenMetadata>>>,
         crypto_storage: ThresholdCryptoMaterialStorage<PubS, PrivS>,
         preproc_handle_w_mode: PreprocHandleWithMode,
-        sk: Arc<PrivateSigKey>,
+        sk: Arc<NodeSigningIdentity>,
         params: DKGParams,
         keyset_added_info: KeySetAddedInfo,
         eip712_domain: alloy_sol_types::Eip712Domain,
@@ -1330,7 +1329,7 @@ impl<
         meta_store: Arc<RwLock<MetaStore<KeyGenMetadata>>>,
         crypto_storage: ThresholdCryptoMaterialStorage<PubS, PrivS>,
         preproc_handle_w_mode: PreprocHandleWithMode,
-        sk: Arc<PrivateSigKey>,
+        sk: Arc<NodeSigningIdentity>,
         params: DKGParams,
         keyset_config: ddec_keyset_config::StandardKeySetConfig,
         internal_keyset_config: &InternalKeySetConfig,
@@ -1727,7 +1726,7 @@ impl<
                             epoch_id,
                             &old_key_id,
                             epoch_id,
-                            &sk,
+                            sk.ecdsa(),
                             &eip712_domain,
                             Arc::clone(&meta_store),
                         )
@@ -1983,7 +1982,8 @@ mod tests {
         use crate::cryptography::signatures::gen_sig_keys;
         let mut rng = AesRng::seed_from_u64(13371);
         let (_pk, sk) = gen_sig_keys(&mut rng);
-        let base_kms = BaseKmsStruct::new(KMSType::Threshold, sk).unwrap();
+        let base_kms =
+            BaseKmsStruct::new(KMSType::Threshold, NodeSigningIdentity::ecdsa_only(sk)).unwrap();
         let epoch_id = *DEFAULT_EPOCH_ID;
         let prss_setup_z128 = Some(PRSSSetup::new_testing_prss(vec![], vec![]));
         let prss_setup_z64 = Some(PRSSSetup::new_testing_prss(vec![], vec![]));

@@ -31,6 +31,7 @@ use crate::keygen::{
 use crate::mpc_context::{do_destroy_mpc_context, do_new_mpc_context};
 use crate::mpc_epoch::{do_destroy_mpc_epoch, do_new_epoch};
 use aes_prng::AesRng;
+use clap::builder::PossibleValuesParser;
 use clap::{Args, Parser, Subcommand};
 use core::str;
 use kms_grpc::identifiers::RequestId;
@@ -45,7 +46,9 @@ use kms_lib::client::{
 };
 use kms_lib::consts::{
     DEFAULT_EPOCH_ID, DEFAULT_MPC_CONTEXT, DEFAULT_PARAM, SIGNING_KEY_ID, TEST_PARAM,
+    signing_material_id,
 };
+use kms_lib::cryptography::signatures::SigningSchemeType;
 use kms_lib::engine::utils::{base64_deserialize, base64_serialize, make_extra_data};
 use kms_lib::util::key_setup::ensure_client_keys_exist;
 use kms_lib::vault::Vault;
@@ -55,11 +58,12 @@ use kms_lib::{DecryptionMode, conf};
 use observability::conf::Settings;
 use rand::SeedableRng;
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
 use std::sync::Arc;
 use std::time::Duration;
+use strum::VariantNames;
 use strum_macros::{Display, EnumString};
 use test_utils::{read_element_async as read_element, write_element_owned};
 use tfhe::FheTypes as TfheFheType;
@@ -1219,6 +1223,26 @@ pub struct CmdConfig {
     /// Set this if you want to download the generated keys/CRSes from all KMS cores
     #[clap(long, short = 'd', default_value_t = false)]
     pub download_all: bool,
+    /// The signature schemes to have the KMS sign its responses under, as a
+    /// repeated or comma-separated list of scheme names.
+    ///
+    /// Names are matched case-insensitively, so `--signing-schemes
+    /// ecdsa256k1,mldsa65` asks for a hybrid classic + post-quantum pair. Every
+    /// response is then required to carry a valid signature for each scheme
+    /// named. Leaving this out asks for `Ecdsa256k1` alone, which is what the
+    /// KMS defaults to.
+    ///
+    /// Every scheme other than `Ecdsa256k1` needs the KMS nodes to hold a root
+    /// signing seed; naming one they cannot serve is rejected before any work
+    /// starts.
+    #[clap(
+        long,
+        value_delimiter = ',',
+        value_name = "SCHEME",
+        value_parser = PossibleValuesParser::new(SigningSchemeType::VARIANTS.iter().copied()),
+        ignore_case = true
+    )]
+    pub signing_schemes: Vec<String>,
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone, PartialEq, Eq, EnumString, Display)]
@@ -1855,6 +1879,8 @@ pub async fn execute_cmd(
     // Vector of KMS ethereum addresses
     let mut addr_vec = Vec::new();
 
+    let signing_schemes = SigningSchemeType::parse_requested(&cmd_config.signing_schemes)?;
+
     if let CCCommand::Encrypt(_) = command {
         //Don't need to fetch or connect if we just do an encrypt
     } else if let CCCommand::DoNothing(_) = command {
@@ -1871,6 +1897,26 @@ pub async fn execute_cmd(
             true, // we always need to download all verification keys
         )
         .await?;
+
+        // The client checks the entry of every other requested scheme against the key each
+        // core publishes for that scheme, so those keys are fetched as well. The two objects
+        // above cover ECDSA.
+        for scheme in signing_schemes
+            .iter()
+            .filter(|scheme| **scheme != SigningSchemeType::Ecdsa256k1)
+        {
+            fetch_public_elements(
+                &signing_material_id(*scheme).to_string(),
+                &[PubDataType::TypedVerfKey],
+                &cc_conf,
+                destination_prefix,
+                true,
+            )
+            .await
+            .map_err(|e| {
+                anyhow::anyhow!("no KMS core publishes a {scheme} verification key: {e}")
+            })?;
+        }
 
         // read the addresses we just fetched from disk
         addr_vec.append(&mut read_kms_addresses_local(destination_prefix, &cc_conf).await?);
@@ -1928,7 +1974,21 @@ pub async fn execute_cmd(
                     cc_conf.cores.len()
                 );
 
-                for cur_core in &cc_conf.cores {
+                // A config that spans two contexts lists a server under the party id it holds in
+                // its own context, so two servers can share one party id. The client needs one
+                // identity per server, so such a config keys the identities by position. Only
+                // the context and epoch commands run with such a config. They attribute a
+                // result to a server by its signature and never look up a party id. The
+                // positions are counted from 1, like party ids, because the validation
+                // contexts reject the key 0.
+                //
+                // In any case, we need a cleaner fix for this, tracked by the issue below.
+                // TODO(https://github.com/zama-ai/kms-internal/issues/3207)
+                let party_ids_unique = {
+                    let mut seen = HashSet::new();
+                    cc_conf.cores.iter().all(|core| seen.insert(core.party_id))
+                };
+                for (position, cur_core) in cc_conf.cores.iter().enumerate() {
                     // make sure address starts with http://
                     let url = if cur_core.address.starts_with("http://") {
                         cur_core.address.clone()
@@ -1958,8 +2018,13 @@ pub async fn execute_cmd(
                     )?;
                     core_endpoints_resp.insert(cur_core.clone(), core_endpoint_resp);
 
+                    let identity_key = if party_ids_unique {
+                        cur_core.party_id as u32
+                    } else {
+                        position as u32 + 1
+                    };
                     pub_storage.insert(
-                        cur_core.party_id as u32,
+                        identity_key,
                         FileStorage::new(
                             Some(destination_prefix),
                             StorageType::PUB,
@@ -1982,11 +2047,19 @@ pub async fn execute_cmd(
             }
         };
     }
+    if let Some(client) = internal_client.as_mut() {
+        client.set_signing_schemes(&signing_schemes)?;
+    }
     tracing::info!(
-        "Total #Parties: {}. #Cores to talk to: {}. FHE Parameters: {}",
+        "Total #Parties: {}. #Cores to talk to: {}. FHE Parameters: {}. Signing schemes: {}",
         num_parties,
         num_cores,
-        fhe_params.as_str_name()
+        fhe_params.as_str_name(),
+        signing_schemes
+            .iter()
+            .map(|scheme| scheme.to_string())
+            .collect::<Vec<_>>()
+            .join(", ")
     );
 
     let kms_addrs = Arc::new(addr_vec);
@@ -2228,7 +2301,6 @@ pub async fn execute_cmd(
                 &cc_conf,
                 cmd_config,
                 num_parties,
-                &kms_addrs,
                 fhe_params,
                 *preproc_id,
                 false,
@@ -2256,7 +2328,6 @@ pub async fn execute_cmd(
                 &cc_conf,
                 cmd_config,
                 num_parties,
-                &kms_addrs,
                 fhe_params,
                 *preproc_id,
                 true,
@@ -2293,7 +2364,6 @@ pub async fn execute_cmd(
                 &cc_conf,
                 cmd_config,
                 num_parties,
-                &kms_addrs,
                 Some(*max_num_bits),
                 fhe_params,
                 false,
@@ -2323,7 +2393,6 @@ pub async fn execute_cmd(
                 &cc_conf,
                 cmd_config,
                 num_parties,
-                &kms_addrs,
                 Some(*max_num_bits),
                 fhe_params,
                 true,
@@ -2497,7 +2566,9 @@ pub async fn execute_cmd(
             fetch_and_check_keygen(
                 num_expected_responses,
                 &cc_conf,
-                &kms_addrs,
+                internal_client
+                    .as_ref()
+                    .ok_or_else(|| anyhow::anyhow!("a keygen result needs a KMS client"))?,
                 destination_prefix,
                 req_id,
                 verify,
@@ -2534,7 +2605,9 @@ pub async fn execute_cmd(
             fetch_and_check_keygen(
                 num_expected_responses,
                 &cc_conf,
-                &kms_addrs,
+                internal_client
+                    .as_ref()
+                    .ok_or_else(|| anyhow::anyhow!("a keygen result needs a KMS client"))?,
                 destination_prefix,
                 req_id,
                 verify,
@@ -2630,7 +2703,9 @@ pub async fn execute_cmd(
             fetch_and_check_crsgen(
                 num_expected_responses,
                 &cc_conf,
-                &kms_addrs,
+                internal_client
+                    .as_ref()
+                    .ok_or_else(|| anyhow::anyhow!("a CRS gen result needs a KMS client"))?,
                 destination_prefix,
                 req_id,
                 verify,
@@ -2666,7 +2741,9 @@ pub async fn execute_cmd(
             fetch_and_check_crsgen(
                 num_expected_responses,
                 &cc_conf,
-                &kms_addrs,
+                internal_client
+                    .as_ref()
+                    .ok_or_else(|| anyhow::anyhow!("a CRS gen result needs a KMS client"))?,
                 destination_prefix,
                 req_id,
                 verify,
@@ -2752,7 +2829,6 @@ pub async fn execute_cmd(
                 cmd_config,
                 &cc_conf,
                 destination_prefix,
-                &kms_addrs,
                 fhe_params,
                 new_epoch_params.clone(),
             )
@@ -3093,6 +3169,53 @@ mod tests {
             panic!("expected a public-decrypt command");
         };
         assert!(args.get_sync());
+    }
+
+    /// `--signing-schemes` takes the scheme names in any case, as one list or repeated,
+    /// and clap rejects a name that is not a scheme before the command runs.
+    #[test]
+    fn test_signing_schemes_flag() {
+        const PREPROC_ID: &str = "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20";
+        let conf = CmdConfig::try_parse_from([
+            "core-client",
+            "--signing-schemes",
+            "ECDSA256K1,mldsa65",
+            "--signing-schemes",
+            "Ed25519",
+            "key-gen",
+            "--preproc-id",
+            PREPROC_ID,
+        ])
+        .unwrap();
+        assert_eq!(
+            SigningSchemeType::parse_requested(&conf.signing_schemes).unwrap(),
+            vec![
+                SigningSchemeType::Ecdsa256k1,
+                SigningSchemeType::MlDsa65,
+                SigningSchemeType::Ed25519,
+            ]
+        );
+
+        // Left out, the flag names nothing, which resolves to ECDSA.
+        let conf =
+            CmdConfig::try_parse_from(["core-client", "key-gen", "--preproc-id", PREPROC_ID])
+                .unwrap();
+        assert!(conf.signing_schemes.is_empty());
+        assert_eq!(
+            SigningSchemeType::parse_requested(&conf.signing_schemes).unwrap(),
+            vec![SigningSchemeType::Ecdsa256k1]
+        );
+
+        let err = CmdConfig::try_parse_from([
+            "core-client",
+            "--signing-schemes",
+            "rsa",
+            "key-gen",
+            "--preproc-id",
+            PREPROC_ID,
+        ])
+        .unwrap_err();
+        assert_eq!(err.kind(), clap::error::ErrorKind::InvalidValue);
     }
 
     fn test_decrypt_parameters() -> DecryptParameters {

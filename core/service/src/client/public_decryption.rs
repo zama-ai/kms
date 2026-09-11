@@ -4,8 +4,8 @@ use crate::engine::validation::PublicDecTrustedValidationContext;
 use crate::engine::validation::validate_public_decrypt_responses;
 use alloy_sol_types::Eip712Domain;
 use kms_grpc::identifiers::ContextId;
+use kms_grpc::kms::v1::TypedPlaintext;
 use kms_grpc::kms::v1::{PublicDecryptionRequest, PublicDecryptionResponse, TypedCiphertext};
-use kms_grpc::kms::v1::{SigningSchemeType, TypedPlaintext};
 use kms_grpc::rpc_types::{alloy_to_protobuf_domain, optional_protobuf_to_alloy_domain};
 use kms_grpc::{EpochId, RequestId};
 
@@ -41,7 +41,7 @@ impl Client {
             extra_data: extra_data.to_vec(),
             context_id: context_id.map(|c| (*c).into()),
             epoch_id: epoch_id.map(|e| (*e).into()),
-            signing_schemes: vec![SigningSchemeType::Ecdsa256k1 as i32],
+            signing_schemes: self.signing_schemes_proto(),
         };
         Ok(req)
     }
@@ -59,8 +59,14 @@ impl Client {
     ///
     /// * `request` — The original public decryption request constructed by this
     ///   client. Used to verify that the server responses match the request
-    ///   (digest, ciphertext handles, domain). Pass `None` to skip request-level
-    ///   checks (not recommended in production).
+    ///   (digest, ciphertext handles, domain).
+    ///
+    ///   Passing `None` skips the request-level checks, and with them the EIP-712
+    ///   domain, so neither `external_signature` nor the ECDSA entry of
+    ///   `signatures` can be checked. A response is then authenticated by the
+    ///   deprecated internal `signature`, which covers the serialized payload and
+    ///   needs no domain. That is enough for a caller that only wants to inspect a
+    ///   result.
     /// * `min_agree_count` — Minimum number of server responses that must agree
     ///   on the same plaintext for the result to be accepted.
     ///
@@ -89,6 +95,7 @@ impl Client {
         let extra_data = request.as_ref().map(|req| req.extra_data.as_slice());
         let trusted_ctx = PublicDecTrustedValidationContext::new(
             self.get_server_pks()?,
+            &self.scheme_verf_keys,
             eip712_domain.as_ref(),
             &ext_handles_bytes,
             extra_data,

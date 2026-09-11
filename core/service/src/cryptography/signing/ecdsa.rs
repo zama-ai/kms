@@ -1,6 +1,5 @@
 //! ECDSA over secp256k1 signing backend.
 
-use super::seed::RootSigningSeed;
 use super::{HasSigningScheme, Signature, SigningError, SigningScheme, SigningSchemeType};
 use crate::anyhow_tracked;
 use crate::cryptography::error::CryptographyError;
@@ -12,12 +11,13 @@ use alloy_signer_local::PrivateKeySigner;
 use alloy_sol_types::{Eip712Domain, SolStruct};
 use hashing::DomainSep;
 use k256::ecdsa::{SigningKey, VerifyingKey};
+use k256::pkcs8::EncodePrivateKey;
 use serde::{Deserialize, Serialize, de::Visitor};
 use std::sync::Arc;
 use tfhe::named::Named;
 use tfhe_versionable::{Versionize, VersionsDispatch};
 use wasm_bindgen::prelude::wasm_bindgen;
-use zeroize::{Zeroize, ZeroizeOnDrop};
+use zeroize::{Zeroize, ZeroizeOnDrop, Zeroizing};
 
 pub const SIG_SIZE: usize = 64; // a 32 byte r value and a 32 byte s value
 
@@ -75,11 +75,15 @@ impl PublicSigKey {
         &self.pk.0
     }
 
-    #[deprecated(
-        note = "This is legacy code and should not be used for new development. Will be handled in #2781"
-    )]
-    pub fn pk(&self) -> &k256::ecdsa::VerifyingKey {
-        &self.pk.0
+    /// The SEC1 encoding of this key, which is the form Ethereum uses and the
+    /// form the WASM client exchanges with JavaScript.
+    pub fn to_sec1_bytes(&self) -> Vec<u8> {
+        self.pk.0.to_sec1_bytes().to_vec()
+    }
+
+    /// The uncompressed SEC1 point of this key, for logging the node identity.
+    pub fn to_uncompressed_bytes(&self) -> Vec<u8> {
+        self.pk.0.to_encoded_point(false).as_bytes().to_vec()
     }
 }
 
@@ -172,8 +176,7 @@ impl Visitor<'_> for PublicSigKeyVisitor {
     }
 }
 
-// Drop manually implemented due to conflict with Versionize macro
-// TODO(#3078) Rename in the last subissue
+// Drop manually implemented due to conflict with Versionize macro.
 #[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize, Zeroize, VersionsDispatch)]
 pub enum PrivateSigKeyVersions {
     V0(PrivateSigKey),
@@ -186,26 +189,6 @@ pub enum PrivateSigKeyVersions {
 #[versionize(PrivateSigKeyVersions)]
 pub struct PrivateSigKey {
     sk: WrappedSigningKey,
-    /// The root seed this identity's derived signing keys come from.
-    ///
-    /// The seed may be used for *every* scheme, including ECDSA.
-    /// However if a legacy ECDSA key already exists, that should take presidence.
-    ///
-    /// Skipped from (de)serialization and versioning to ensure backward
-    /// compatibility: the seed is persisted as its own object
-    /// (`PrivDataType::SigningSeed`) instead.
-    ///
-    /// # Equality
-    ///
-    /// The derived [`PartialEq`] **covers this field**, deliberately: two values
-    /// that hold the same secp256k1 scalar but different roots are different
-    /// identities, since they derive different post-quantum keys. Note the
-    /// consequence, which is easy to trip over — a key read back from storage is
-    /// seedless, so it does *not* compare equal to the same key with a seed
-    /// attached by [`Self::with_root_seed`].
-    #[serde(skip)]
-    #[versionize(skip)]
-    seed: Option<RootSigningSeed>,
 }
 
 impl Named for PrivateSigKey {
@@ -213,42 +196,26 @@ impl Named for PrivateSigKey {
 }
 
 impl PrivateSigKey {
-    /// A bare ECDSA signing key, with no root seed attached.
+    /// An ECDSA signing key.
     pub fn new(sk: k256::ecdsa::SigningKey) -> Self {
         Self {
             sk: WrappedSigningKey(sk),
-            seed: None,
         }
     }
 
-    /// Attach `seed` as the root this identity's derived keys come from.
-    pub fn with_root_seed(mut self, seed: RootSigningSeed) -> Self {
-        self.seed = Some(seed);
-        self
-    }
-
-    /// Whether a root seed is attached, i.e. whether this identity can derive
-    /// keys at all. Without one it is limited to ECDSA.
-    pub fn has_root_seed(&self) -> bool {
-        self.seed.is_some()
-    }
-
-    /// The attached root seed, or an error naming what is missing and why.
-    pub(super) fn require_root_seed(
-        &self,
-        scheme: SigningSchemeType,
-    ) -> Result<&RootSigningSeed, SigningError> {
-        self.seed
-            .as_ref()
-            .ok_or(SigningError::MissingRootSeed(scheme))
-    }
-
-    /// TODO(#2781) DEPRECATED: code should be refactored to not use this outside on this class
-    #[deprecated(
-        note = "This is legacy code and should not be used for new development. Will be handled in #2781"
-    )]
-    pub fn sk(&self) -> &k256::ecdsa::SigningKey {
-        &self.sk.0
+    /// The PKCS#8 DER encoding of this key.
+    ///
+    /// This is what [`rcgen`] takes to build the key pair that issues a party's
+    /// mTLS certificates, and the only reason the raw scalar leaves this module.
+    ///
+    /// [`rcgen`]: https://docs.rs/rcgen
+    pub fn to_pkcs8_der(&self) -> Result<Zeroizing<Vec<u8>>, CryptographyError> {
+        let document = EncodePrivateKey::to_pkcs8_der(&self.sk.0).map_err(|e| {
+            CryptographyError::SerializationError(format!(
+                "Could not encode the signing key as PKCS#8: {e}"
+            ))
+        })?;
+        Ok(Zeroizing::new(document.as_bytes().to_vec()))
     }
 
     pub fn verf_key(&self) -> PublicSigKey {
@@ -486,6 +453,22 @@ pub fn recover_address_from_ext_signature<S: SolStruct>(
     domain: &Eip712Domain,
     external_sig: &[u8],
 ) -> anyhow::Result<alloy_primitives::Address> {
+    let hash = data.eip712_signing_hash(domain);
+    tracing::debug!("Public Data EIP-712 Message hash: {:?}", hash);
+    recover_address_from_eip712_hash(&hash, external_sig)
+}
+
+/// Recover the address that signed a precomputed EIP-712 signing hash (the value
+/// [`SolStruct::eip712_signing_hash`] returns).
+///
+/// # Errors
+///
+/// Errors when `external_sig` is not 65 bytes, and when no address can be recovered
+/// from it.
+pub fn recover_address_from_eip712_hash(
+    message_hash: &alloy_primitives::B256,
+    external_sig: &[u8],
+) -> anyhow::Result<alloy_primitives::Address> {
     // convert received data into proper format for EIP-712 verification
     if external_sig.len() != 65 {
         return Err(anyhow::anyhow!(
@@ -500,16 +483,12 @@ pub fn recover_address_from_ext_signature<S: SolStruct>(
     );
 
     tracing::debug!(
-        "ext. signature bytes: {:x?}, ext. signature: {:?}, EIP-712 domain: {:?}",
+        "ext. signature bytes: {:x?}, ext. signature: {:?}",
         external_sig,
-        sig,
-        domain
+        sig
     );
 
-    let hash = data.eip712_signing_hash(domain);
-    tracing::debug!("Public Data EIP-712 Message hash: {:?}", hash);
-
-    let addr = sig.recover_address_from_prehash(&hash)?;
+    let addr = sig.recover_address_from_prehash(message_hash)?;
     tracing::debug!("Reconstructed address: {}", addr);
 
     Ok(addr)
@@ -636,58 +615,27 @@ mod tests {
         assert!(verf_id == signing_id);
     }
 
-    /// The root seed stays out of the persisted key
+    /// The persisted key is exactly the secp256k1 scalar.
+    ///
+    /// Persisting anything beside the scalar would make every key stored by an
+    /// earlier release unreadable, so this pins the size of the serialized form:
+    /// the safe-serialization header, then the 32 secret bytes.
     #[test]
-    fn the_persisted_key_carries_no_root_seed() {
+    fn the_persisted_key_holds_the_scalar_alone() {
         let mut rng = AesRng::seed_from_u64(3078);
-        let (_pk, seedless) = gen_sig_keys(&mut rng);
-        let seeded = seedless
-            .clone()
-            .with_root_seed(RootSigningSeed::random(&mut rng));
-        assert!(!seedless.has_root_seed());
-        assert!(seeded.has_root_seed());
+        let (_pk, sk) = gen_sig_keys(&mut rng);
+        let bytes = persisted_bytes(&sk);
 
+        let restored: PrivateSigKey =
+            safe_deserialize(std::io::Cursor::new(&bytes), SAFE_SER_SIZE_LIMIT).unwrap();
+        assert_eq!(restored, sk);
+        assert_eq!(persisted_bytes(&restored), bytes);
+
+        let (_other_pk, other_sk) = gen_sig_keys(&mut rng);
         assert_eq!(
-            persisted_bytes(&seedless),
-            persisted_bytes(&seeded),
-            "the root seed leaked into the persisted signing key"
-        );
-
-        let restored: PrivateSigKey = safe_deserialize(
-            std::io::Cursor::new(persisted_bytes(&seeded)),
-            SAFE_SER_SIZE_LIMIT,
-        )
-        .unwrap();
-        assert!(
-            !restored.has_root_seed(),
-            "a seed was read back out of the persisted key"
-        );
-        assert_eq!(restored.verf_key(), seedless.verf_key());
-    }
-
-    /// Equality covers the root seed, deliberately
-    #[test]
-    fn equality_covers_the_root_seed() {
-        let mut rng = AesRng::seed_from_u64(3079);
-        let (_pk, seedless) = gen_sig_keys(&mut rng);
-        let root = RootSigningSeed::random(&mut rng);
-        let seeded = seedless.clone().with_root_seed(root.clone());
-
-        assert_ne!(
-            seedless, seeded,
-            "a seedless key compared equal to the same scalar with a seed attached"
-        );
-        assert_eq!(
-            seeded,
-            seedless.clone().with_root_seed(root),
-            "the same scalar under the same root compared unequal"
-        );
-        assert_ne!(
-            seeded,
-            seedless
-                .clone()
-                .with_root_seed(RootSigningSeed::random(&mut rng)),
-            "the same scalar under two different roots compared equal"
+            bytes.len(),
+            persisted_bytes(&other_sk).len(),
+            "the persisted size depends on the key material"
         );
     }
 
@@ -698,5 +646,40 @@ mod tests {
         let serialized_key = verf_key.to_legacy_bytes().unwrap();
         let deserialized_key = PublicSigKey::from_legacy_bytes(&serialized_key).unwrap();
         assert_eq!(verf_key, deserialized_key);
+    }
+
+    /// The PKCS#8 encoding round-trips, which is what the mTLS certificate path
+    /// relies on.
+    #[test]
+    fn pkcs8_der_round_trips() {
+        use k256::pkcs8::DecodePrivateKey;
+
+        let mut rng = AesRng::seed_from_u64(11);
+        let (_pk, sk) = gen_sig_keys(&mut rng);
+
+        let der = sk.to_pkcs8_der().unwrap();
+        let restored = SigningKey::from_pkcs8_der(&der).expect("the DER encoding must parse back");
+        assert_eq!(PrivateSigKey::new(restored), sk);
+    }
+
+    /// Both SEC1 encodings of a verification key parse back to the same key.
+    #[test]
+    fn sec1_encodings_round_trip() {
+        let mut rng = AesRng::seed_from_u64(12);
+        let (pk, _sk) = gen_sig_keys(&mut rng);
+
+        let compressed = pk.to_sec1_bytes();
+        let uncompressed = pk.to_uncompressed_bytes();
+        assert_eq!(uncompressed.len(), 65, "an uncompressed point is 65 bytes");
+        assert_eq!(
+            uncompressed.first(),
+            Some(&0x04),
+            "an uncompressed point starts with the 0x04 tag"
+        );
+
+        for encoding in [compressed, uncompressed] {
+            let restored = PublicSigKey::new(VerifyingKey::from_sec1_bytes(&encoding).unwrap());
+            assert_eq!(restored, pk);
+        }
     }
 }

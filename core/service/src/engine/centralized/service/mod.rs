@@ -28,7 +28,7 @@ mod tests {
     use crate::engine::traits::ContextManager;
     use crate::util::key_setup::store_server_signing_keys;
     use crate::{
-        cryptography::signatures::{PublicSigKey, gen_sig_keys},
+        cryptography::signatures::{NodeSigningIdentity, PublicSigKey, gen_sig_keys},
         engine::centralized::central_kms::RealCentralizedKms,
         vault::storage::ram::RamStorage,
     };
@@ -55,7 +55,7 @@ mod tests {
             private_storage,
             None,
             None,
-            sig_key,
+            NodeSigningIdentity::ecdsa_only(sig_key),
         )
         .await
         .expect("Could not create KMS");

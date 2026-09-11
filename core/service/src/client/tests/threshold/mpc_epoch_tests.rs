@@ -32,6 +32,7 @@ use crate::{
     },
     consts::{DEFAULT_EPOCH_ID, DEFAULT_MPC_CONTEXT, PUBLIC_STORAGE_PREFIX_THRESHOLD_ALL},
     cryptography::internal_crypto_types::WrappedDKGParams,
+    cryptography::signing::SigningSchemeType,
     dummy_domain,
     engine::{
         base::{DSEP_PUBDATA_KEY, derive_request_id},
@@ -222,7 +223,7 @@ pub(crate) async fn new_epoch_with_reshare_and_crs(
     let new_epoch_outputs = run_new_epoch(
         amount_parties,
         &kms_clients,
-        &internal_client,
+        &mut internal_client,
         new_context_id,
         new_epoch_id,
         resharing,
@@ -347,7 +348,7 @@ pub(crate) async fn new_epoch_with_reshare_and_crs(
 async fn run_new_epoch(
     amount_parties: usize,
     kms_clients: &HashMap<u32, CoreServiceEndpointClient<Channel>>,
-    internal_client: &Client,
+    internal_client: &mut Client,
     new_context_id: ContextId,
     new_epoch_id: EpochId,
     resharing: Option<ResharingParams>,
@@ -356,7 +357,17 @@ async fn run_new_epoch(
     let num_keys = resharing
         .as_ref()
         .map_or(0, |r| r.previous_epoch.keys_info.len());
-    let mut reshare_request = internal_client
+
+    internal_client
+        .set_signing_schemes(&[
+            SigningSchemeType::Ecdsa256k1,
+            SigningSchemeType::Ed25519,
+            SigningSchemeType::MlDsa65,
+        ])
+        .unwrap();
+    let requested_schemes = internal_client.signing_schemes_proto();
+
+    let reshare_request = internal_client
         .new_epoch_request(
             &new_context_id,
             &new_epoch_id,
@@ -364,13 +375,10 @@ async fn run_new_epoch(
             resharing.as_ref().map(|r| &r.signing_domain),
         )
         .unwrap();
-    // Ask for a hybrid classic + post-quantum set, so the reshared key and CRS
-    // metadata is signed under more than the default ECDSA scheme.
-    let requested_schemes = vec![
-        kms_grpc::kms::v1::SigningSchemeType::Ecdsa256k1 as i32,
-        kms_grpc::kms::v1::SigningSchemeType::Mldsa65 as i32,
-    ];
-    reshare_request.signing_schemes = requested_schemes.clone();
+    assert_eq!(
+        reshare_request.signing_schemes, requested_schemes,
+        "the request must carry the schemes the client asks for"
+    );
     let extra_data = reshare_request.extra_data.clone();
 
     // Execute reshare

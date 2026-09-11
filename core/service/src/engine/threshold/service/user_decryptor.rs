@@ -57,6 +57,7 @@ use crate::{
         internal_crypto_types::LegacySerialization,
         signcryption::{SigncryptFHEPlaintext, UnifiedSigncryptionKeyOwned},
         signing::SigningSchemeType,
+        signing::identity::NodeSigningIdentity,
         zeroizing_writer::ZeroizingWriter,
     },
     engine::{
@@ -68,7 +69,7 @@ use crate::{
             service::session::{ImmutableSessionMaker, validate_context_and_epoch},
             traits::UserDecryptor,
         },
-        utils::{MetricedError, format_handle, format_unvalidated_id},
+        utils::{MetricedError, format_handle, format_unvalidated_id, signing_identity_for},
         validation::{
             DSEP_USER_DECRYPTION, RequestIdParsingErr, parse_grpc_request_id,
             parse_optional_grpc_request_id, validate_user_decrypt_req,
@@ -182,6 +183,7 @@ impl<
         typed_ciphertexts: Vec<TypedCiphertext>,
         link: Vec<u8>,
         signcryption_key: Arc<UnifiedSigncryptionKeyOwned>,
+        identity: Arc<NodeSigningIdentity>,
         client_enc_key_bytes_orig: Vec<u8>,
         fhe_keys: OwnedRwLockReadGuard<
             HashMap<(RequestId, EpochId), ThresholdFheKeys>,
@@ -416,7 +418,7 @@ impl<
             metrics::METRICS.time_user_decrypt_stage(UserDecryptStage::ResultSign);
         let signed = spawn_compute_bound(move || {
             sign_user_decryption_result(
-                &signcryption_key.signing_key,
+                &identity,
                 &signing_schemes,
                 payload,
                 &client_enc_key_bytes_orig,
@@ -552,15 +554,12 @@ impl<
         let crypto_storage = self.crypto_storage.clone();
         let rng = self.base_kms.new_rng().await;
 
-        let sk = (*self.base_kms.sig_key().map_err(|e| {
-            MetricedError::new(
-                OP_USER_DECRYPT_REQUEST,
-                Some(req_id),
-                e,
-                tonic::Code::FailedPrecondition,
-            )
-        })?)
-        .clone();
+        let identity = signing_identity_for(
+            &self.base_kms,
+            &signing_schemes,
+            OP_USER_DECRYPT_REQUEST,
+            Some(req_id),
+        )?;
         let client_enc_key = UnifiedPublicEncKey::deserialize_and_validate(
             &client_enc_key_bytes_orig,
         )
@@ -573,7 +572,7 @@ impl<
             )
         })?;
         let signcryption_key = Arc::new(UnifiedSigncryptionKeyOwned::new(
-            sk,
+            identity.ecdsa().clone(),
             client_enc_key,
             client_address.to_vec(),
         ));
@@ -620,6 +619,7 @@ impl<
                 typed_ciphertexts,
                 link,
                 signcryption_key,
+                identity,
                 client_enc_key_bytes_orig,
                 fhe_keys_rlock,
                 dec_mode,
@@ -829,7 +829,11 @@ mod tests {
     ) {
         let (_pk, sk) = gen_sig_keys(rng);
         let param = TEST_PARAM;
-        let base_kms = BaseKmsStruct::new(KMSType::Threshold, sk.clone()).unwrap();
+        let base_kms = BaseKmsStruct::new(
+            KMSType::Threshold,
+            NodeSigningIdentity::ecdsa_only(sk.clone()),
+        )
+        .unwrap();
 
         let epoch_id = EpochId::new_random(rng);
         let prss_setup_z128 = Some(PRSSSetup::new_testing_prss(vec![], vec![]));

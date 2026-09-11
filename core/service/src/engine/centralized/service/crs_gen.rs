@@ -16,12 +16,12 @@ use tokio::sync::RwLock;
 use tonic::{Request, Response};
 use tracing::Instrument;
 
-use crate::cryptography::signatures::PrivateSigKey;
 use crate::cryptography::signing::SigningSchemeType;
+use crate::cryptography::signing::identity::NodeSigningIdentity;
 use crate::engine::base::{CrsGenMetadata, stored_scheme_signatures_to_proto};
 use crate::engine::centralized::central_kms::{CentralizedKms, async_generate_crs};
 use crate::engine::traits::{BackupOperator, ContextManager};
-use crate::engine::utils::MetricedError;
+use crate::engine::utils::{MetricedError, signing_identity_for};
 use crate::engine::validation::{
     RequestIdParsingErr, parse_grpc_request_id, validate_crs_gen_request,
 };
@@ -75,17 +75,12 @@ pub async fn crs_gen_impl<
 
     let meta_store = Arc::clone(&service.crs_meta_map);
     let crypto_storage = service.crypto_storage.clone();
-    let sk = service
-            .base_kms
-            .sig_key()
-            .map_err(|e| {
-        MetricedError::new(
-            op_tag,
-            Some(verified.req_id),
-            anyhow::anyhow!("Signing key is not present. This should only happen when server is booted in recovery mode: {}", e),
-            tonic::Code::FailedPrecondition,
-        )
-    })?;
+    let sk = signing_identity_for(
+        &service.base_kms,
+        &verified.signing_schemes,
+        op_tag,
+        Some(verified.req_id),
+    )?;
     // check that the request ID is not used yet
     // and then insert the request ID only if it's unused
     // all validation must be done before inserting the request ID.
@@ -245,7 +240,7 @@ pub(crate) async fn crs_gen_background<
     rng: AesRng,
     meta_store: Arc<RwLock<MetaStore<CrsGenMetadata>>>,
     crypto_storage: CentralizedCryptoMaterialStorage<PubS, PrivS>,
-    sk: Arc<PrivateSigKey>,
+    sk: Arc<NodeSigningIdentity>,
     params: DKGParams,
     eip712_domain: Eip712Domain,
     extra_data: Vec<u8>,

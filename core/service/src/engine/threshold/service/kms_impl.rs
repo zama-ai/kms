@@ -444,7 +444,7 @@ pub enum PreprocMaterial {
 /// no material is generated, only the external signature is computed.
 #[cfg(feature = "insecure")]
 pub(crate) fn new_insecure_preproc_bucket(
-    sk: &crate::cryptography::signatures::PrivateSigKey,
+    sk: &crate::cryptography::signing::identity::NodeSigningIdentity,
     schemes: &[crate::cryptography::signing::SigningSchemeType],
     preprocessing_id: RequestId,
     dkg_param: DKGParams,
@@ -597,7 +597,7 @@ where
         .collect();
 
     // Recovery mode skips storage verification.
-    match base_kms.sig_key() {
+    match base_kms.signing_identity() {
         Ok(signing_key) => {
             verify_private_storage_layout(
                 &private_storage,
@@ -611,7 +611,7 @@ where
                 &key_info,
                 &crs_info,
                 &recovery_validation_material,
-                signing_key.as_ref(),
+                &signing_key,
             )
             .await?;
         }
