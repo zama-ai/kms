@@ -54,12 +54,7 @@ pub struct NetworkSession {
     /// (an [`AtomicInstant`]) so `synchronize_from` can overwrite it from `&self`,
     /// like the other atomic time fields below.
     pub(crate) init_time: AtomicInstant,
-    /// When the last message was received, or when the session was made active if
-    /// no message has been received yet. Used to discard inactive sessions. Stored
-    /// lock-free (an [`AtomicInstant`]) so it can be read and written without
-    /// awaiting — in particular from the session cleanup task while it holds a
-    /// `DashMap` shard guard.
-    pub(crate) last_rec_activity_time: AtomicInstant,
+
     /// Current round's network timeout. Backed by an [`AtomicDuration`] rather
     /// than a lock so the round-transition update in
     /// [`Networking::increase_round_counter`] only needs to hold the
@@ -173,7 +168,6 @@ impl<R: RoleTrait> Networking<R> for NetworkSession {
         // on `ReceiverState` (see `take_current`) so the buffer discipline stays
         // unit-testable without a running session.
         if let Some(value) = state.take_current(network_round) {
-            self.last_rec_activity_time.store(Instant::now());
             return Ok(value);
         }
 
@@ -208,8 +202,6 @@ impl<R: RoleTrait> Networking<R> for NetworkSession {
                     )));
                 }
             };
-            // Update the time we received a message
-            self.last_rec_activity_time.store(Instant::now());
 
             // Classify the packet against the current round. The round counter
             // is peer-controlled and unauthenticated, so a packet is only
@@ -371,8 +363,8 @@ impl NetworkSession {
     /// [`GrpcNetworkingManager::make_network_session`](crate::grpc::GrpcNetworkingManager)
     /// (the inactive→active and vacant branches), which previously duplicated this
     /// 14-field literal and had to be kept in lock-step by hand. All the
-    /// round-independent fields (round counter, timers, byte counter, activity
-    /// time) are initialised here; callers supply only what actually differs.
+    /// round-independent fields (round counter, timers, byte counter)
+    /// are initialised here; callers supply only what actually differs.
     pub(crate) fn new(
         owner: Identity,
         session_id: SessionId,
@@ -398,7 +390,6 @@ impl NetworkSession {
             network_mode,
             conf,
             init_time: AtomicInstant::now(),
-            last_rec_activity_time: AtomicInstant::now(),
             current_network_timeout: AtomicDuration::new(timeout),
             next_network_timeout: AtomicDuration::new(timeout),
             max_elapsed_time: AtomicDuration::new(Duration::ZERO),
@@ -753,7 +744,6 @@ mod tests {
             network_mode: NetworkMode::Async,
             conf: CoreToCoreNetworkConfig::default(),
             init_time: AtomicInstant::now(),
-            last_rec_activity_time: AtomicInstant::now(),
             current_network_timeout: AtomicDuration::new(Duration::from_secs(10)),
             next_network_timeout: AtomicDuration::new(Duration::from_secs(10)),
             max_elapsed_time: AtomicDuration::new(Duration::ZERO),
@@ -899,7 +889,6 @@ mod tests {
             network_mode: NetworkMode::Async,
             conf,
             init_time: AtomicInstant::now(),
-            last_rec_activity_time: AtomicInstant::now(),
             current_network_timeout: AtomicDuration::new(Duration::from_secs(10)),
             next_network_timeout: AtomicDuration::new(Duration::from_secs(10)),
             max_elapsed_time: AtomicDuration::new(Duration::ZERO),
@@ -1511,7 +1500,6 @@ mod tests {
             network_mode: NetworkMode::Async,
             conf: test_config(1),
             init_time: AtomicInstant::now(),
-            last_rec_activity_time: AtomicInstant::now(),
             current_network_timeout: AtomicDuration::new(wait),
             next_network_timeout: AtomicDuration::new(wait),
             max_elapsed_time: AtomicDuration::new(Duration::ZERO),
