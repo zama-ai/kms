@@ -12,7 +12,7 @@ use crate::engine::threshold::service::session::PRSSSetupCombined;
 use crate::engine::utils::{MetricedError, query_key_material_availability};
 use crate::engine::validation::parse_optional_grpc_request_id;
 use crate::vault::storage::{
-    StorageExt, StorageReaderExt, crypto_material::get_core_signing_key,
+    StorageExt, StorageReaderExt, crypto_material::get_core_signing_identity,
     delete_at_request_and_epoch_id, delete_at_request_id, read_custodian_context_anchor,
     read_recovery_material_at_id, read_versioned_at_request_id, store_custodian_context_anchor,
     store_recovery_material, store_versioned_at_request_and_epoch_id,
@@ -180,10 +180,10 @@ where
             Some(_) => return Ok(()),
             None => {}
         }
-        let signing_key = get_core_signing_key(&*private_storage)
+        let identity = get_core_signing_identity(&*private_storage)
             .await
             .map_err(fail)?;
-        if !material.validate(&PublicSigKey::from_sk(&signing_key)) {
+        if !material.validate(&identity.verf_key()) {
             return Err(fail(anyhow::anyhow!(
                 "recovery material for {context_id} is not signed by the restored key"
             )));

@@ -1201,6 +1201,54 @@ impl TestType for CrsSignedPayloadTest {
     }
 }
 
+// KMS test
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct PublicDecSignedPayloadTest {
+    pub test_filename: Cow<'static, str>,
+    /// The serialized `PublicDecryptionResponsePayload` the payload wraps. Pinned
+    /// as opaque bytes on purpose: what this vector freezes is the wrapper's own
+    /// layout, not the gRPC payload's, which has its own coverage.
+    pub response_bytes: Cow<'static, [u8]>,
+    pub extra_data: Cow<'static, [u8]>,
+}
+
+impl TestType for PublicDecSignedPayloadTest {
+    fn module(&self) -> String {
+        KMS_MODULE_NAME.to_string()
+    }
+
+    fn target_type(&self) -> String {
+        "PublicDecSignedPayload".to_string()
+    }
+
+    fn test_filename(&self) -> String {
+        self.test_filename.to_string()
+    }
+}
+
+// KMS test
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct UserDecSignedPayloadTest {
+    pub test_filename: Cow<'static, str>,
+    /// The serialized `UserDecryptionResponsePayload` the payload wraps.
+    pub response_bytes: Cow<'static, [u8]>,
+    pub extra_data: Cow<'static, [u8]>,
+}
+
+impl TestType for UserDecSignedPayloadTest {
+    fn module(&self) -> String {
+        KMS_MODULE_NAME.to_string()
+    }
+
+    fn target_type(&self) -> String {
+        "UserDecSignedPayload".to_string()
+    }
+
+    fn test_filename(&self) -> String {
+        self.test_filename.to_string()
+    }
+}
+
 /// KMS metadata
 #[derive(Serialize, Deserialize, Clone, Debug, Display)]
 pub enum TestMetadataKMS {
@@ -1241,6 +1289,8 @@ pub enum TestMetadataKMS {
     PrepKeygenSignedPayload(PrepKeygenSignedPayloadTest),
     KeygenSignedPayload(KeygenSignedPayloadTest),
     CrsSignedPayload(CrsSignedPayloadTest),
+    PublicDecSignedPayload(PublicDecSignedPayloadTest),
+    UserDecSignedPayload(UserDecSignedPayloadTest),
 }
 
 /// KMS-grpc metadata

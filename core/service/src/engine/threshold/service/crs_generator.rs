@@ -29,9 +29,9 @@ use tonic::{Request, Response};
 use tracing::Instrument;
 
 // === Internal Crate ===
-use crate::engine::utils::MetricedError;
+use crate::engine::utils::{MetricedError, signing_identity_for};
 use crate::{
-    cryptography::{signatures::PrivateSigKey, signing::SigningSchemeType},
+    cryptography::{signing::SigningSchemeType, signing::identity::NodeSigningIdentity},
     engine::{
         base::{
             BaseKmsStruct, CrsGenMetadata, DSEP_PUBDATA_CRS, compute_info_crs,
@@ -138,14 +138,12 @@ impl<
                 tonic::Code::AlreadyExists,
             ));
         }
-        let sigkey = self.base_kms.sig_key().map_err(|e| {
-            MetricedError::new(
-                op_tag,
-                Some(verified.req_id),
-                e,
-                tonic::Code::FailedPrecondition,
-            )
-        })?;
+        let sigkey = signing_identity_for(
+            &self.base_kms,
+            &verified.signing_schemes,
+            op_tag,
+            Some(verified.req_id),
+        )?;
         let meta_permit =
             add_req_to_meta_store(&self.crs_meta_store, &verified.req_id, op_tag).await?;
         tracing::info!(
@@ -191,7 +189,7 @@ impl<
         meta_permit: MetaStorePermit<CrsGenMetadata>,
         epoch_id: EpochId,
         context_id: ContextId,
-        sk: Arc<PrivateSigKey>,
+        sk: Arc<NodeSigningIdentity>,
         timer: DurationGuard<'static>,
         insecure: bool,
     ) -> anyhow::Result<()> {
@@ -350,7 +348,7 @@ impl<
         rng: AesRng,
         meta_store: Arc<RwLock<MetaStore<CrsGenMetadata>>>,
         crypto_storage: ThresholdCryptoMaterialStorage<PubS, PrivS>,
-        sk: Arc<PrivateSigKey>,
+        sk: Arc<NodeSigningIdentity>,
         params: DKGParams,
         eip712_domain: alloy_sol_types::Eip712Domain,
         extra_data: Vec<u8>,
@@ -702,7 +700,8 @@ mod tests {
         rng: &mut AesRng,
     ) -> RealCrsGenerator<ram::RamStorage, ram::RamStorage, C> {
         let (_pk, sk) = gen_sig_keys(rng);
-        let base_kms = BaseKmsStruct::new(KMSType::Threshold, sk).unwrap();
+        let base_kms =
+            BaseKmsStruct::new(KMSType::Threshold, NodeSigningIdentity::ecdsa_only(sk)).unwrap();
         let prss_setup_z128 = Some(PRSSSetup::new_testing_prss(vec![], vec![]));
         let prss_setup_z64 = Some(PRSSSetup::new_testing_prss(vec![], vec![]));
         let epoch_id = *DEFAULT_EPOCH_ID;

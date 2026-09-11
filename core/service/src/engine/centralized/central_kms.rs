@@ -11,6 +11,7 @@ use crate::cryptography::signatures::{PrivateSigKey, PublicSigKey, Signature};
 use crate::cryptography::signcryption::SigncryptFHEPlaintext;
 use crate::cryptography::signcryption::UnifiedSigncryptionKey;
 use crate::cryptography::signing::SigningSchemeType;
+use crate::cryptography::signing::identity::NodeSigningIdentity;
 use crate::engine::Shutdown;
 use crate::engine::backup_operator::RealBackupOperator;
 use crate::engine::base::CrsGenMetadata;
@@ -98,7 +99,7 @@ pub(crate) enum CentralizedKeyGenResult {
 /// Used for key generation of standard keysets, which may or may not use an existing secret key.
 #[expect(clippy::too_many_arguments)]
 pub(crate) async fn async_generate_fhe_keys(
-    sk: &PrivateSigKey,
+    sk: &NodeSigningIdentity,
     schemes: &[SigningSchemeType],
     params: DKGParams,
     keyset_config: StandardKeySetConfig,
@@ -208,7 +209,7 @@ where
 
 #[expect(clippy::too_many_arguments)]
 pub(crate) async fn async_generate_crs(
-    sk: &PrivateSigKey,
+    sk: &NodeSigningIdentity,
     signing_schemes: &[SigningSchemeType],
     params: DKGParams,
     max_num_bits: Option<u32>,
@@ -240,7 +241,7 @@ pub(crate) async fn async_generate_crs(
 
 #[expect(clippy::too_many_arguments)]
 pub(crate) fn generate_fhe_keys(
-    sk: &PrivateSigKey,
+    sk: &NodeSigningIdentity,
     schemes: &[SigningSchemeType],
     params: DKGParams,
     keyset_config: KeyGenSecretKeyConfig,
@@ -311,7 +312,7 @@ pub(crate) fn generate_fhe_keys(
 
 #[expect(clippy::too_many_arguments)]
 pub fn generate_uncompressed_fhe_keys(
-    sk: &PrivateSigKey,
+    sk: &NodeSigningIdentity,
     schemes: &[SigningSchemeType],
     params: DKGParams,
     compression_config: KeyGenSecretKeyConfig,
@@ -385,7 +386,7 @@ pub fn generate_client_fhe_key(params: DKGParams, tag: tfhe::Tag, seed: Option<S
 /// compute the CRS in the centralized KMS.
 #[expect(clippy::too_many_arguments)]
 pub(crate) fn gen_centralized_crs<R: Rng + CryptoRng>(
-    sk: &PrivateSigKey,
+    sk: &NodeSigningIdentity,
     signing_schemes: &[SigningSchemeType],
     params: &DKGParams,
     max_num_bits: Option<u32>,
@@ -529,7 +530,7 @@ pub async fn async_user_decrypt<
     PrivS: StorageExt + Sync + Send + 'static,
 >(
     keys: &KmsFheKeyHandles,
-    sig_key: &PrivateSigKey,
+    identity: &NodeSigningIdentity,
     rng: &mut (impl CryptoRng + RngCore),
     typed_ciphertexts: &[TypedCiphertext],
     req_digest: &[u8],
@@ -561,7 +562,7 @@ pub async fn async_user_decrypt<
         let external_handle = typed_ciphertext.external_handle.clone();
         let signcrypted_ciphertext = RealCentralizedKms::<PubS, PrivS>::user_decrypt(
             keys,
-            sig_key,
+            identity.ecdsa(),
             rng,
             high_level_ct,
             fhe_type,
@@ -587,13 +588,13 @@ pub async fn async_user_decrypt<
         degree: 0,   // In the centralized KMS, the degree is always 0 since result is a constant
     };
 
-    let sig_key = sig_key.clone();
+    let identity = identity.clone();
     let signing_schemes = signing_schemes.to_vec();
     let client_enc_key_bytes = client_enc_key_bytes.to_vec();
     let domain = domain.clone();
     let signed = spawn_compute_bound(move || {
         sign_user_decryption_result(
-            &sig_key,
+            &identity,
             &signing_schemes,
             payload,
             &client_enc_key_bytes,
@@ -920,7 +921,7 @@ impl<
         private_storage: PrivS,
         mut backup_vault: Option<Vault>,
         security_module: Option<Arc<SecurityModuleProxy>>,
-        sk: PrivateSigKey,
+        signing_identity: NodeSigningIdentity,
     ) -> anyhow::Result<(
         RealCentralizedKms<PubS, PrivS>,
         (HealthReporter, HealthServer<impl Health>),
@@ -967,7 +968,7 @@ impl<
             &key_info,
             &crs_info,
             &validation_material,
-            &sk,
+            &signing_identity,
         )
         .await?;
         if let Some(vault) = backup_vault.as_mut() {
@@ -982,7 +983,7 @@ impl<
             backup_vault,
             key_info_with_epoch,
         );
-        let base_kms = BaseKmsStruct::new(KMSType::Centralized, sk)?;
+        let base_kms = BaseKmsStruct::new(KMSType::Centralized, signing_identity)?;
 
         let context_manager: CentralizedContextManager<PubS, PrivS> =
             CentralizedContextManager::new(
@@ -1178,6 +1179,7 @@ pub(crate) mod tests {
     use crate::cryptography::signcryption::{
         UnsigncryptFHEPlaintext, ephemeral_signcryption_key_generation,
     };
+    use crate::cryptography::signing::identity::NodeSigningIdentity;
     use crate::dummy_domain;
     use crate::engine::base::{KmsFheKeyHandles, derive_request_id};
     use crate::engine::centralized::central_kms::RealCentralizedKms;
@@ -1348,8 +1350,9 @@ pub(crate) mod tests {
         let seed = Some(Seed(42));
         let (sig_pk, sig_sk) = gen_sig_keys(&mut rng);
         let domain = dummy_domain();
+        let identity = NodeSigningIdentity::ecdsa_only(sig_sk.clone());
         let (pub_fhe_keys, key_info) = generate_uncompressed_fhe_keys(
-            &sig_sk,
+            &identity,
             &[crate::cryptography::signing::SigningSchemeType::Ecdsa256k1],
             dkg_params,
             StandardKeySetConfig::default().secret_key_config,
@@ -1365,7 +1368,7 @@ pub(crate) mod tests {
         let mut key_info_map = HashMap::from([(key_id.to_string().try_into().unwrap(), key_info)]);
 
         let (other_pub_fhe_keys, other_key_info) = generate_uncompressed_fhe_keys(
-            &sig_sk,
+            &identity,
             &[crate::cryptography::signing::SigningSchemeType::Ecdsa256k1],
             dkg_params,
             StandardKeySetConfig::default().secret_key_config,
@@ -1417,7 +1420,7 @@ pub(crate) mod tests {
         let preproc_id = RequestId::new_random(&mut rng);
         assert!(
             generate_fhe_keys(
-                &sig_sk,
+                &NodeSigningIdentity::ecdsa_only(sig_sk),
                 &[crate::cryptography::signing::SigningSchemeType::Ecdsa256k1],
                 DEFAULT_PARAM,
                 StandardKeySetConfig::default().secret_key_config,
@@ -1445,7 +1448,7 @@ pub(crate) mod tests {
         let seed = Some(Seed(42));
 
         let result = generate_fhe_keys(
-            &sig_sk,
+            &NodeSigningIdentity::ecdsa_only(sig_sk),
             &[crate::cryptography::signing::SigningSchemeType::Ecdsa256k1],
             TEST_PARAM,
             KeyGenSecretKeyConfig::GenerateAll,
@@ -1594,7 +1597,7 @@ pub(crate) mod tests {
                     .unwrap(),
                 None,
                 None,
-                keys.centralized_kms_keys.sig_sk.clone(),
+                NodeSigningIdentity::ecdsa_only(keys.centralized_kms_keys.sig_sk.clone()),
             )
             .await
             .unwrap();
@@ -1811,7 +1814,7 @@ pub(crate) mod tests {
                     .unwrap(),
                 None,
                 None,
-                keys.centralized_kms_keys.sig_sk.clone(),
+                NodeSigningIdentity::ecdsa_only(keys.centralized_kms_keys.sig_sk.clone()),
             )
             .await
             .unwrap();
@@ -1830,17 +1833,19 @@ pub(crate) mod tests {
         };
         let link = vec![42_u8, 42, 42];
         let (client_verf_key, _client_sig_key) = gen_sig_keys(&mut rng);
+        let server_identity = kms.base_kms.signing_identity().ok();
+        let server_ecdsa = server_identity.as_deref().map(|i| i.ecdsa());
         let client_key_pair = {
             let mut keys = ephemeral_signcryption_key_generation(
                 &mut rng,
                 &client_verf_key.verf_key_id(),
-                kms.base_kms.sig_key().ok().as_deref(),
+                server_ecdsa,
             );
             if sim_type == SimulationType::BadEphemeralKey {
                 let bad_keys = ephemeral_signcryption_key_generation(
                     &mut rng,
                     &client_verf_key.verf_key_id(),
-                    kms.base_kms.sig_key().ok().as_deref(),
+                    server_ecdsa,
                 );
                 // Change the decryption key
                 keys.unsigncryption_key.decryption_key =
@@ -1860,7 +1865,7 @@ pub(crate) mod tests {
                 .read_centralized_fhe_keys(key_id, epoch_id)
                 .await
                 .unwrap(),
-            kms.base_kms.sig_key().unwrap().as_ref(),
+            kms.base_kms.signing_identity().unwrap().ecdsa(),
             &mut rng,
             &ct,
             fhe_type,

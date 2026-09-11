@@ -13,6 +13,7 @@ use crate::consts::{
     TEST_CENTRAL_KEY_ID, TMP_PATH_PREFIX,
 };
 use crate::engine::base::derive_request_id;
+use crate::util::key_setup::all_verf_material_slots;
 use crate::vault::storage::StorageType;
 use anyhow::{Context, Result, anyhow};
 use futures_util::future::{Either, ready};
@@ -253,73 +254,49 @@ impl TestMaterialManager {
             .await
     }
 
-    /// Copy signing keys
+    /// Copy the whole signing identity of each node.
     async fn copy_signing_keys(
         &self,
         source_base: Option<&Path>,
         dest_base: &Path,
         spec: &TestMaterialSpec,
     ) -> Result<()> {
-        let signing_key_id = SIGNING_KEY_ID.to_string();
-        let verification_key_type = PubDataType::VerfKey.to_string();
-        let verification_address_type = PubDataType::VerfAddress.to_string();
-        let signing_key_type = PrivDataType::SigningKey.to_string();
-
-        if spec.is_threshold() {
-            for i in 1..=spec.party_count() {
-                let role = Role::indexed_from_one(i);
-
-                let source_pub = compute_storage_path(source_base, StorageType::PUB, Some(role));
-                let source_priv = compute_storage_path(source_base, StorageType::PRIV, Some(role));
-                let dest_pub = compute_storage_path(Some(dest_base), StorageType::PUB, Some(role));
-                let dest_priv =
-                    compute_storage_path(Some(dest_base), StorageType::PRIV, Some(role));
-
-                fs::create_dir_all(&dest_pub).await?;
-                fs::create_dir_all(&dest_priv).await?;
-
-                self.copy_key_files(
-                    &source_pub,
-                    &dest_pub,
-                    &verification_key_type,
-                    &signing_key_id,
-                )
-                .await?;
-                self.copy_key_files(
-                    &source_pub,
-                    &dest_pub,
-                    &verification_address_type,
-                    &signing_key_id,
-                )
-                .await?;
-                self.copy_key_files(&source_priv, &dest_priv, &signing_key_type, &signing_key_id)
-                    .await?;
-            }
+        let roles: Vec<Option<Role>> = if spec.is_threshold() {
+            (1..=spec.party_count())
+                .map(|i| Some(Role::indexed_from_one(i)))
+                .collect()
         } else {
-            let source_pub = compute_storage_path(source_base, StorageType::PUB, None);
-            let source_priv = compute_storage_path(source_base, StorageType::PRIV, None);
-            let dest_pub = compute_storage_path(Some(dest_base), StorageType::PUB, None);
-            let dest_priv = compute_storage_path(Some(dest_base), StorageType::PRIV, None);
+            vec![None]
+        };
+
+        for role in roles {
+            let source_pub = compute_storage_path(source_base, StorageType::PUB, role);
+            let source_priv = compute_storage_path(source_base, StorageType::PRIV, role);
+            let dest_pub = compute_storage_path(Some(dest_base), StorageType::PUB, role);
+            let dest_priv = compute_storage_path(Some(dest_base), StorageType::PRIV, role);
 
             fs::create_dir_all(&dest_pub).await?;
             fs::create_dir_all(&dest_priv).await?;
 
-            self.copy_key_files(
-                &source_pub,
-                &dest_pub,
-                &verification_key_type,
-                &signing_key_id,
-            )
-            .await?;
-            self.copy_key_files(
-                &source_pub,
-                &dest_pub,
-                &verification_address_type,
-                &signing_key_id,
-            )
-            .await?;
-            self.copy_key_files(&source_priv, &dest_priv, &signing_key_type, &signing_key_id)
+            // `all_verf_material_slots` is what `kms-gen-keys` publishes.
+            for slot in all_verf_material_slots() {
+                self.copy_key_files(
+                    &source_pub,
+                    &dest_pub,
+                    &slot.data_type(),
+                    &slot.handle().to_string(),
+                )
                 .await?;
+            }
+            for data_type in [PrivDataType::SigningKey, PrivDataType::SigningSeed] {
+                self.copy_key_files(
+                    &source_priv,
+                    &dest_priv,
+                    &data_type.to_string(),
+                    &SIGNING_KEY_ID.to_string(),
+                )
+                .await?;
+            }
         }
 
         Ok(())

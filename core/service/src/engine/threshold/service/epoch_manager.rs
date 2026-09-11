@@ -21,7 +21,10 @@
 //! In particular, this means that parties must be aware of both contexts (the old one and the new one) even if
 //! they are not part of one of the two contexts.
 
-use algebra::galois_rings::degree_4::{ResiduePolyF4Z64, ResiduePolyF4Z128};
+use algebra::{
+    galois_rings::degree_4::{ResiduePolyF4Z64, ResiduePolyF4Z128},
+    structure_traits::Ring,
+};
 use alloy_dyn_abi::Eip712Domain;
 use futures_util::{
     FutureExt, TryFutureExt,
@@ -43,10 +46,11 @@ use std::{collections::HashMap, future::Future, marker::PhantomData, sync::Arc};
 use tfhe::{Versionize, zk::CompactPkeCrs};
 use tfhe_versionable::VersionsDispatch;
 use threshold_execution::{
+    config::BatchParams,
     endpoints::reshare_sk::{ResharePreprocRequired, ReshareSecretKeys},
     online::preprocessing::BasePreprocessing,
     runtime::sessions::{
-        base_session::{BaseSession, TwoSetsBaseSession},
+        base_session::{BaseSession, TwoSetsBaseSession, advance_session_by_rounds},
         session_parameters::GenericParameterHandles,
         small_session::SmallSession,
     },
@@ -67,7 +71,7 @@ use tonic::{Request, Response};
 use tracing::Instrument;
 
 use crate::{
-    cryptography::{signatures::PrivateSigKey, signing::SigningSchemeType},
+    cryptography::{signing::SigningSchemeType, signing::identity::NodeSigningIdentity},
     engine::{
         base::{
             CrsGenMetadata, DSEP_PUBDATA_CRS, DSEP_PUBDATA_KEY, KeyGenMetadata,
@@ -83,7 +87,7 @@ use crate::{
             session::{ImmutableSessionMaker, PRSSSetupCombined, SessionMaker},
         },
         traits::EpochManager,
-        utils::MetricedError,
+        utils::{MetricedError, signing_identity_for},
         validation::{
             RequestIdParsingErr, ResharingParams, VerifiedNewMpcEpochRequest,
             parse_grpc_request_id, parse_optional_grpc_request_id, validate_new_mpc_epoch_request,
@@ -166,6 +170,98 @@ struct VerifiedPreviousEpochInfo {
     pub epoch_id: EpochId,
     pub keys_info: Vec<VerifiedKeyInfo>,
     pub crs_info: Vec<VerifiedCrsInfo>,
+}
+
+/// Advance several sessions by the same number of rounds. A macro rather than a
+/// function because the co-advanced sessions are heterogeneously typed (different
+/// rings / role types) and so can't be passed as a slice to
+/// [`advance_session_by_rounds`]. The round count is evaluated once, then applied
+/// to each session in turn.
+macro_rules! advance_sessions_by_rounds {
+    ($rounds:expr, $($session:expr),+ $(,)?) => {{
+        let rounds = $rounds;
+        $(advance_session_by_rounds($session, rounds).await;)+
+    }};
+}
+
+/// Round-clock skews the epoch manager applies to the resharing sessions so each
+/// session's per-round timeout budgets for work done in *other* phases it does not
+/// itself participate in. See [`reshare_session_skews`].
+///
+/// Skews induced *inside* a protocol (e.g. the lift's z64/z128 switch, or the
+/// reshare's open→broadcast switch) are handled by the protocols themselves.
+///
+/// The resharing phases run, per epoch, in this order:
+/// - The new committee (Set 2) runs PRSS init once (z128 + z64).
+/// - Then, for each key:
+///   1. Set 1 / both lift the key (`per_key_lift_rounds`),
+///   2. Set 2 / both run the reshare preprocessing (`per_key_reshare_preproc_rounds`),
+///   3. Everyone runs the reshare online phase (`per_key_reshare_online_rounds`).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+struct ReshareSessionSkews {
+    /// One-time PRSS-init skew, applied to *every* resharing session before the
+    /// per-key loop.
+    skew_prss: usize,
+    /// Rounds the lift phase takes for one key.
+    per_key_lift_rounds: usize,
+    /// Rounds the reshare preprocessing takes for one key (0 in practice — the
+    /// preprocessing is non-interactive — but kept explicit should resharing ever
+    /// need interactive preprocessing, e.g. if it switches to large sessions).
+    per_key_reshare_preproc_rounds: usize,
+    /// Rounds the reshare online phase takes for one key.
+    per_key_reshare_online_rounds: usize,
+}
+
+/// Round-clock skews for the resharing sessions (see [`ReshareSessionSkews`]).
+///
+/// * `prss_init_rounds` — rounds of a *single* PRSS `init`; PRSS is run twice
+///   (z128 + z64), so the one-time skew is `2 * prss_init_rounds`.
+/// * `num_parties_set1` / `set1_threshold` — size and threshold of the old
+///   committee (drives the lift and the — currently trivial — preprocessing).
+/// * `num_liftable_subkeys` — upper bound on Z64 sub-keys bit-lifted, over *all*
+///   keys reshared on the (shared) session; derive it per key with
+///   [`PrivateKeySet::num_liftable_subkeys`] and take the max.
+/// * `reshare_online_rounds` — the worst-case per-key online-phase round count,
+///   from [`ReshareSecretKeys::num_rounds`] (which already budgets the two-batch
+///   Z64-mode case: switch-and-squash in Z128 plus DKG-ring in Z64).
+fn reshare_session_skews(
+    prss_init_rounds: usize,
+    num_parties_set1: usize,
+    set1_threshold: usize,
+    num_liftable_subkeys: usize,
+    reshare_online_rounds: usize,
+) -> ReshareSessionSkews {
+    // PRSS runs the z128 and z64 inits sequentially on the same session.
+    let skew_prss = 2 * prss_init_rounds;
+
+    // Per-key lift rounds. Uses the worst-case (max) liftable sub-key count so every
+    // party — including Set-2 parties that never held the key — computes the same
+    // value.
+    let per_key_lift_rounds =
+        PrivateKeySet::<{ ResiduePolyF4Z128::EXTENSION_DEGREE }>::lift_to_z128_num_rounds(
+            num_parties_set1,
+            set1_threshold,
+            num_liftable_subkeys,
+        );
+    // Per-key reshare preprocessing rounds. Non-interactive (0 rounds in practice)
+    // but kept as an explicit term should resharing ever need interactive
+    // preprocessing (i.e. if we switch to large sessions).
+    let per_key_reshare_preproc_rounds = SecureSmallPreprocessing::num_rounds(
+        BatchParams {
+            triples: 0,
+            randoms: 1, // Note: num_rounds is independent of the batch size; 1 suffices.
+        },
+        num_parties_set1,
+        set1_threshold,
+    );
+    let per_key_reshare_online_rounds = reshare_online_rounds;
+
+    ReshareSessionSkews {
+        skew_prss,
+        per_key_lift_rounds,
+        per_key_reshare_preproc_rounds,
+        per_key_reshare_online_rounds,
+    }
 }
 
 /// Parses the [`PreviousEpochInfo`] proto message and verifies its contents.
@@ -529,6 +625,7 @@ impl<
         mut two_sets_session: TwoSetsBaseSession,
         new_epoch_id: EpochId,
         verified_previous_epoch: VerifiedPreviousEpochInfo,
+        session_skews: ReshareSessionSkews,
     ) -> Result<
         impl Future<Output = anyhow::Result<EpochOutput>> + use<PubS, PrivS, Init, Reshare>,
         MetricedError,
@@ -555,6 +652,10 @@ impl<
             )
             .await?;
 
+            // One-time: advance the lift sessions for the new committee's PRSS init.
+            // (The cross-set session is advanced once in `initiate_resharing`.)
+            advance_sessions_by_rounds!(session_skews.skew_prss, &session_z64, &session_z128);
+
             for ((private_keys, key_metadata), key_info) in
                 keys.into_iter().zip_eq(verified_previous_epoch.keys_info)
             {
@@ -567,6 +668,21 @@ impl<
                             .await?
                     }
                 };
+
+                // Set-2 now runs the preprocessing while Set-1 idles; the lift and
+                // online sessions advance by the preproc rounds.
+                advance_sessions_by_rounds!(
+                    session_skews.per_key_reshare_preproc_rounds,
+                    &session_z64,
+                    &session_z128,
+                );
+                // Also add the number of rounds the lift took, so the online phase is ready to start
+                advance_session_by_rounds(
+                    &two_sets_session,
+                    session_skews.per_key_reshare_preproc_rounds
+                        + session_skews.per_key_lift_rounds,
+                )
+                .await;
                 // S1 has the previous epoch's private shares, so we read
                 // `oprf_key_present` from local state. The S2-only path in
                 // `reshare_as_set_2` has no private share and derives the same
@@ -585,6 +701,13 @@ impl<
                     oprf_key_present,
                 )
                 .await?;
+                // Online done: the lift sessions, idle through it, advance by the
+                // online rounds (readying them for the next key's lift).
+                advance_sessions_by_rounds!(
+                    session_skews.per_key_reshare_online_rounds,
+                    &session_z64,
+                    &session_z128,
+                );
                 keys_metadata.push(key_metadata);
             }
 
@@ -663,7 +786,7 @@ impl<
     async fn store_reshared_keys(
         crypto_storage: &ThresholdCryptoMaterialStorage<PubS, PrivS>,
         session_maker: &SessionMaker,
-        sk: &PrivateSigKey,
+        sk: &NodeSigningIdentity,
         signing_schemes: &[SigningSchemeType],
         new_epoch_id: EpochId,
         new_extra_data: Vec<u8>,
@@ -852,6 +975,7 @@ impl<
         eip712_domain: Eip712Domain,
         signing_schemes: Vec<SigningSchemeType>,
         crs_info: Vec<CompactPkeCrs>,
+        session_skews: ReshareSessionSkews,
     ) -> Result<
         impl Future<Output = anyhow::Result<EpochOutput>> + use<PubS, PrivS, Init, Reshare>,
         MetricedError,
@@ -877,14 +1001,12 @@ impl<
 
         let immutable_session_maker = self.session_maker.make_immutable();
 
-        let sk = self.base_kms.sig_key().map_err(|e| {
-            MetricedError::new(
-                OP_NEW_EPOCH,
-                Some(epoch_id_as_request_id),
-                e,
-                tonic::Code::FailedPrecondition,
-            )
-        })?;
+        let sk = signing_identity_for(
+            &self.base_kms,
+            &signing_schemes,
+            OP_NEW_EPOCH,
+            Some(epoch_id_as_request_id),
+        )?;
 
         let crypto_storage = self.crypto_storage.clone();
         let session_maker = self.session_maker.clone();
@@ -893,6 +1015,15 @@ impl<
             let (mut session_z128, mut session_z64, session_online) =
                 Self::create_set2_sessions(immutable_session_maker, new_epoch_id, new_context_id)
                     .await?;
+
+            // One-time: advance each Set-2 session for the new committee's PRSS init.
+            // (The cross-set session is advanced once in `initiate_resharing`.)
+            advance_sessions_by_rounds!(
+                session_skews.skew_prss,
+                &session_z64,
+                &session_z128,
+                &session_online,
+            );
 
             let num_parties_set_1 = two_sets_session
                 .roles()
@@ -920,6 +1051,15 @@ impl<
                     oprf_key_present,
                 );
 
+                // Set 1 runs lifting while Set 2 idles; the sessions advance by the lift rounds.
+                advance_sessions_by_rounds!(
+                    session_skews.per_key_lift_rounds,
+                    &session_z64,
+                    &session_z128,
+                    &sessions_online.0,
+                    &sessions_online.1,
+                );
+
                 let (mut correlated_randomness_z64, mut correlated_randomness_z128) =
                     Self::compute_s2_preproc(
                         &mut session_z64,
@@ -927,6 +1067,14 @@ impl<
                         &num_needed_preproc,
                     )
                     .await?;
+
+                // Preprocessing done: the online sessions, idle through it, advance by
+                // the preproc rounds.
+                advance_sessions_by_rounds!(
+                    session_skews.per_key_reshare_preproc_rounds,
+                    &sessions_online.0,
+                    &sessions_online.1,
+                );
 
                 let new_private_keyset = Reshare::reshare_sk_two_sets_as_s2(
                     sessions_online,
@@ -936,6 +1084,16 @@ impl<
                     oprf_key_present,
                 )
                 .await?;
+
+                // Online done: the preproc sessions, idle through it, advance by the
+                // online rounds (readying them for the next key's preprocessing).
+                drop(correlated_randomness_z64);
+                drop(correlated_randomness_z128);
+                advance_sessions_by_rounds!(
+                    session_skews.per_key_reshare_online_rounds,
+                    &session_z64,
+                    &session_z128,
+                );
 
                 new_private_keysets.push(new_private_keyset);
             }
@@ -970,6 +1128,7 @@ impl<
         eip712_domain: Eip712Domain,
         signing_schemes: Vec<SigningSchemeType>,
         crs_info: Vec<CompactPkeCrs>,
+        session_skews: ReshareSessionSkews,
     ) -> Result<
         impl Future<Output = anyhow::Result<EpochOutput>> + use<PubS, PrivS, Init, Reshare>,
         MetricedError,
@@ -998,14 +1157,12 @@ impl<
             .await?;
 
         let immutable_session_maker = self.session_maker.make_immutable();
-        let sk = self.base_kms.sig_key().map_err(|e| {
-            MetricedError::new(
-                OP_NEW_EPOCH,
-                Some(epoch_id_as_request_id),
-                e,
-                tonic::Code::FailedPrecondition,
-            )
-        })?;
+        let sk = signing_identity_for(
+            &self.base_kms,
+            &signing_schemes,
+            OP_NEW_EPOCH,
+            Some(epoch_id_as_request_id),
+        )?;
 
         let crypto_storage = self.crypto_storage.clone();
         let session_maker = self.session_maker.clone();
@@ -1022,6 +1179,16 @@ impl<
             let (mut session_z128_set_2, mut session_z64_set_2, session_online) =
                 Self::create_set2_sessions(immutable_session_maker, new_epoch_id, new_context_id)
                     .await?;
+            // One-time: advance each session for the new committee's PRSS init.
+            // (The cross-set session is advanced once in `initiate_resharing`.)
+            advance_sessions_by_rounds!(
+                session_skews.skew_prss,
+                &session_z64_set_1,
+                &session_z128_set_1,
+                &session_z64_set_2,
+                &session_z128_set_2,
+                &session_online,
+            );
 
             let num_parties_set_1 = two_sets_session
                 .roles()
@@ -1058,6 +1225,15 @@ impl<
                     key_info.key_parameters,
                     oprf_key_present,
                 );
+                // Just ran the lift, so advance the sessions by the lift rounds to get them ready for the preprocessing.
+                advance_sessions_by_rounds!(
+                    session_skews.per_key_lift_rounds,
+                    &session_z64_set_2,
+                    &session_z128_set_2,
+                    &sessions_online.0,
+                    &sessions_online.1,
+                );
+
                 let (mut correlated_randomness_z64, mut correlated_randomness_z128) =
                     Self::compute_s2_preproc(
                         &mut session_z64_set_2,
@@ -1065,6 +1241,16 @@ impl<
                         &num_needed_preproc,
                     )
                     .await?;
+
+                // Preprocessing done: the lift and online sessions, idle through it,
+                // advance by the preproc rounds.
+                advance_sessions_by_rounds!(
+                    session_skews.per_key_reshare_preproc_rounds,
+                    &session_z64_set_1,
+                    &session_z128_set_1,
+                    &sessions_online.0,
+                    &sessions_online.1,
+                );
 
                 let new_private_keyset = Reshare::reshare_sk_two_sets_as_both_sets(
                     sessions_online,
@@ -1075,6 +1261,18 @@ impl<
                     oprf_key_present,
                 )
                 .await?;
+
+                // Online done: the lift and preproc sessions, idle through it, advance
+                // by the online rounds (readying them for the next key).
+                drop(correlated_randomness_z64);
+                drop(correlated_randomness_z128);
+                advance_sessions_by_rounds!(
+                    session_skews.per_key_reshare_online_rounds,
+                    &session_z64_set_1,
+                    &session_z128_set_1,
+                    &session_z64_set_2,
+                    &session_z128_set_2,
+                );
                 new_private_keysets.push(new_private_keyset);
             }
 
@@ -1396,7 +1594,7 @@ impl<
                 id,
                 verified_previous_epoch.context_id,
                 *new_context_id,
-                NetworkMode::Async,
+                NetworkMode::Sync,
             )
         })
         .await
@@ -1410,6 +1608,58 @@ impl<
         })?;
 
         let my_role = two_sets_session.my_role();
+
+        let two_sets_threshold = two_sets_session.threshold();
+        let num_parties_set1 = two_sets_session
+            .roles()
+            .iter()
+            .filter(|r| r.is_set1())
+            .count();
+        let num_parties_set2 = two_sets_session
+            .roles()
+            .iter()
+            .filter(|r| r.is_set2())
+            .count();
+        let prss_init_rounds = <Init as PRSSInit<ResiduePolyF4Z128>>::num_rounds(
+            num_parties_set2,
+            two_sets_threshold.threshold_set_2 as usize,
+        );
+
+        // The single cross-set offset must cover the worst key reshared on the
+        // shared session, so budget for the key with the most liftable sub-keys.
+        // Derived from each key's (public, verified) parameters, so every party —
+        // including new-committee parties that never held the key — computes the
+        // same value.
+        let num_liftable_subkeys = verified_previous_epoch
+            .keys_info
+            .iter()
+            .map(|k| {
+                PrivateKeySet::<{ ResiduePolyF4Z128::EXTENSION_DEGREE }>::num_liftable_subkeys(
+                    k.key_parameters,
+                )
+            })
+            .max()
+            .unwrap_or(0);
+        // Worst-case per-key online-phase round count, used to compensate the lift
+        // and preproc sessions per key (they sit idle during each key's reshare). The
+        // reshare protocol reports it — already budgeting the two-batch Z64-mode case
+        // — so the round math stays in one place.
+        let reshare_online_rounds = Reshare::num_rounds(
+            two_sets_session.num_parties(),
+            two_sets_threshold.threshold_set_2 as usize,
+        );
+        let session_skews = reshare_session_skews(
+            prss_init_rounds,
+            num_parties_set1,
+            two_sets_threshold.threshold_set_1 as usize,
+            num_liftable_subkeys,
+            reshare_online_rounds,
+        );
+
+        // One-time: advance the cross-set session for the new committee's PRSS init.
+        // Per-key advances (for the lift/preproc each key spends before its reshare)
+        // are applied inside the reshare loops.
+        advance_session_by_rounds(&two_sets_session, session_skews.skew_prss).await;
 
         // Fetch CRS for parties that are in set2 or both
         let crs_info = if matches!(my_role, TwoSetsRole::OnlySet1(_)) {
@@ -1439,7 +1689,12 @@ impl<
 
         Ok(match my_role {
             TwoSetsRole::OnlySet1(_) => self
-                .reshare_as_set_1(two_sets_session, *new_epoch_id, verified_previous_epoch)
+                .reshare_as_set_1(
+                    two_sets_session,
+                    *new_epoch_id,
+                    verified_previous_epoch,
+                    session_skews,
+                )
                 .await?
                 .boxed(),
             TwoSetsRole::OnlySet2(_) => self
@@ -1452,6 +1707,7 @@ impl<
                     eip712_domain,
                     signing_schemes,
                     crs_info,
+                    session_skews,
                 )
                 .await?
                 .boxed(),
@@ -1465,6 +1721,7 @@ impl<
                     eip712_domain,
                     signing_schemes,
                     crs_info,
+                    session_skews,
                 )
                 .await?
                 .boxed(),
@@ -1837,6 +2094,99 @@ pub(crate) mod tests {
     };
     use threshold_types::role::Role;
 
+    /// [`reshare_session_skews`] composes the per-protocol round counts into the
+    /// per-session skews. The one-time skew covers only the new committee's PRSS,
+    /// applied uniformly to every session; everything else is compensated per key.
+    ///
+    /// Sub-counts for (n1=4, t1=1): lift(k) = 2*8 + 2 + k*2 (or 0 when k=0), with
+    /// lift preproc = (t+1)*(3+t) = 8. PRSS is passed as 6, so skew_prss = 2*6 = 12.
+    /// Reshare preprocessing is non-interactive (0 rounds).
+    #[test]
+    fn reshare_session_skews_composition() {
+        // Keyset with 3 liftable sub-keys (a Z128 keyset upgraded from Z64):
+        // lift(k) = 24.
+        assert_eq!(
+            reshare_session_skews(6, 4, 1, 3, 10),
+            ReshareSessionSkews {
+                skew_prss: 12,
+                per_key_lift_rounds: 24,
+                per_key_reshare_preproc_rounds: 0,
+                per_key_reshare_online_rounds: 10,
+            }
+        );
+
+        // Nothing to lift (k=0, e.g. a Z64-mode keyset): per_key_lift_rounds = 0.
+        assert_eq!(
+            reshare_session_skews(6, 4, 1, 0, 10),
+            ReshareSessionSkews {
+                skew_prss: 12,
+                per_key_lift_rounds: 0,
+                per_key_reshare_preproc_rounds: 0,
+                per_key_reshare_online_rounds: 10,
+            }
+        );
+    }
+
+    /// The inputs [`RealThresholdEpochManager::initiate_resharing_and_crs_resign`]
+    /// feeds into [`reshare_session_skews`] come from the round counts the production
+    /// protocols declare. Pins the composed skews for two four-party committees, so a
+    /// change in any protocol's declared count shows up here.
+    #[test]
+    fn reshare_session_skews_from_production_protocols() {
+        use threshold_execution::small_execution::prss::RobustSecurePrssInit;
+
+        let (num_parties_set1, set1_threshold) = (4, 1);
+        let (num_parties_set2, set2_threshold) = (4, 1);
+        let num_parties = num_parties_set1 + num_parties_set2;
+        let broadcast_rounds = |threshold: usize| 3 + threshold;
+
+        // Robust PRSS init: a VSS (dealing round plus, at worst, three broadcasts)
+        // and one robust open.
+        let prss_init_rounds = <RobustSecurePrssInit as PRSSInit<ResiduePolyF4Z128>>::num_rounds(
+            num_parties_set2,
+            set2_threshold,
+        );
+        assert_eq!(
+            prss_init_rounds,
+            1 + 3 * broadcast_rounds(set2_threshold) + 1
+        );
+
+        // Two-sets online phase, budgeted for two batches: mask open, masked-share
+        // exchange, within-set-2 broadcast and syndrome open.
+        let reshare_online_rounds =
+            SecureReshareSecretKeys::num_rounds(num_parties, set2_threshold);
+        assert_eq!(
+            reshare_online_rounds,
+            2 * (1 + 1 + broadcast_rounds(set2_threshold) + 1)
+        );
+
+        let num_liftable_subkeys =
+            PrivateKeySet::<{ ResiduePolyF4Z128::EXTENSION_DEGREE }>::num_liftable_subkeys(
+                crate::consts::TEST_PARAM,
+            );
+        // Two triple preprocessings of (t + 1) broadcasts each, one bit generation
+        // and one bit lift per liftable sub-key.
+        let lift_rounds = 2 * (set1_threshold + 1) * broadcast_rounds(set1_threshold)
+            + 2
+            + 2 * num_liftable_subkeys;
+
+        assert_eq!(
+            reshare_session_skews(
+                prss_init_rounds,
+                num_parties_set1,
+                set1_threshold,
+                num_liftable_subkeys,
+                reshare_online_rounds,
+            ),
+            ReshareSessionSkews {
+                skew_prss: 2 * prss_init_rounds,
+                per_key_lift_rounds: lift_rounds,
+                per_key_reshare_preproc_rounds: 0,
+                per_key_reshare_online_rounds: reshare_online_rounds,
+            }
+        );
+    }
+
     mod failed_reshare;
 
     impl<
@@ -2052,7 +2402,8 @@ pub(crate) mod tests {
     ) -> RealThresholdEpochManager<ram::RamStorage, ram::RamStorage, I, SecureReshareSecretKeys>
     {
         let (_pk, sk) = gen_sig_keys(rng);
-        let base_kms = BaseKmsStruct::new(KMSType::Threshold, sk).unwrap();
+        let base_kms =
+            BaseKmsStruct::new(KMSType::Threshold, NodeSigningIdentity::ecdsa_only(sk)).unwrap();
         let epoch_id = *DEFAULT_EPOCH_ID;
         let session_maker =
             SessionMaker::four_party_dummy_session(None, None, &epoch_id, base_kms.new_rng().await);

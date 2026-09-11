@@ -363,7 +363,7 @@ where
             InternalCustodianContext::new(context, backup_enc_key.clone())?;
         let recovery_validation = gen_recovery_validation(
             &mut rng,
-            self.base_kms.sig_key()?.as_ref(),
+            self.base_kms.signing_identity()?.ecdsa(),
             backup_dec_key,
             &inner_context,
             mpc_context_id,
@@ -1422,7 +1422,7 @@ mod tests {
             keychain::secretsharing,
             storage::{
                 StorageProxy, StorageReaderExt,
-                crypto_material::get_core_signing_key,
+                crypto_material::get_core_signing_identity,
                 delete_context_at_id,
                 ram::{self, RamStorage},
                 read_context_at_id, read_recovery_material_at_id, store_context_at_id,
@@ -1488,7 +1488,9 @@ mod tests {
             .unwrap();
 
             // check that the signing key exists
-            let _ = get_core_signing_key(&*guarded_priv_storage).await.unwrap();
+            let _ = get_core_signing_identity(&*guarded_priv_storage)
+                .await
+                .unwrap();
 
             if make_default_context {
                 // Setup dummy default MPC context
@@ -2220,7 +2222,11 @@ mod tests {
                 .await
                 .unwrap();
             // Confirm the signing key is gone
-            assert!(get_core_signing_key(&*guarded_priv_storage).await.is_err());
+            assert!(
+                get_core_signing_identity(&*guarded_priv_storage)
+                    .await
+                    .is_err()
+            );
         }
 
         // Create a new context manager without a signing key (recovery mode)

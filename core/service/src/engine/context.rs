@@ -14,7 +14,7 @@ use crate::{
     cryptography::{signatures::PublicSigKey, signing::SigningSchemeType},
     engine::validation::{RequestIdParsingErr, parse_optional_grpc_request_id},
     impl_generic_versionize,
-    vault::storage::{StorageReader, crypto_material::get_core_signing_key},
+    vault::storage::{StorageReader, crypto_material::get_core_signing_identity},
 };
 
 const ERR_DUPLICATE_PARTY_IDS: &str = "Duplicate party_ids found in context";
@@ -452,7 +452,7 @@ impl TryFrom<NodeInfo> for kms_grpc::kms::v1::MpcNode {
                 .scheme_digests
                 .iter()
                 .map(|(scheme, digest)| SchemeDigest {
-                    scheme: kms_grpc::kms::v1::SigningSchemeType::from(scheme) as i32,
+                    scheme: scheme.as_wire(),
                     digest: digest.to_vec(),
                 })
                 .collect(),
@@ -488,8 +488,8 @@ impl ContextInfo {
     /// before the context passed to the KMS, it should have been validated on the gateway.
     pub async fn verify<S: StorageReader>(&self, storage: &S) -> anyhow::Result<Option<Role>> {
         // Check the signing key is consistent with the private key in storage.
-        let signing_key = get_core_signing_key(storage).await?;
-        let core_address = signing_key.verf_key().verf_key_id();
+        let identity = get_core_signing_identity(storage).await?;
+        let core_address = identity.verf_key().verf_key_id();
 
         let my_node = self.mpc_nodes.iter().find(|node| {
             node.scheme_digests.get(&SigningSchemeType::Ecdsa256k1) == Some(core_address.as_slice())
@@ -872,6 +872,27 @@ mod tests {
         }
     }
 
+    /// The wire path a caller that predates `scheme_digests` takes: it knows only
+    /// `signer_address` and sends the new field empty.
+    #[test]
+    fn mpc_node_accepts_signer_address_without_scheme_digests() {
+        let (verification_key, _sk) = gen_sig_keys(&mut rand::rngs::OsRng);
+        let (_node, mut proto) = node_proto_with_schemes(1, &[]);
+        assert!(
+            proto.scheme_digests.is_empty(),
+            "the legacy-only case needs an empty scheme_digests"
+        );
+        proto.signer_address = Some(verification_key.verf_key_id());
+
+        let recovered = NodeInfo::try_from(proto).unwrap();
+        assert_eq!(
+            recovered.scheme_digests.get(&SigningSchemeType::Ecdsa256k1),
+            Some(verification_key.verf_key_id().as_slice())
+        );
+        // Nothing else can be inferred from the legacy field alone.
+        assert_eq!(recovered.scheme_digests.iter().count(), 1);
+    }
+
     #[test]
     fn mpc_node_accepts_identical_repeated_scheme() {
         let (node, mut proto) = node_proto_with_schemes(
@@ -946,7 +967,7 @@ mod tests {
             for actual in [expected - 1, expected + 1] {
                 let (_node, mut proto) = node_proto_with_schemes(1, &[]);
                 proto.scheme_digests.push(SchemeDigest {
-                    scheme: kms_grpc::kms::v1::SigningSchemeType::from(scheme) as i32,
+                    scheme: scheme.as_wire(),
                     digest: vec![0xab; actual],
                 });
 
@@ -1014,6 +1035,20 @@ mod tests {
         );
         // No other scheme can be inferred from a legacy context.
         assert_eq!(upgraded.scheme_digests.iter().count(), 1);
+    }
+
+    /// `signer_address` was optional, because a party did not always know its peers' signing
+    /// keys. Such a context must upgrade to an identity with no digests at all rather than to a
+    /// placeholder ECDSA entry, which would later be compared against a real key.
+    #[test]
+    fn node_info_v1_without_signer_address_upgrades_to_no_digests() {
+        let upgraded = node_info_v1(None).upgrade().unwrap();
+
+        assert_eq!(upgraded.scheme_digests.iter().count(), 0);
+        assert_eq!(
+            upgraded.scheme_digests.get(&SigningSchemeType::Ecdsa256k1),
+            None
+        );
     }
 
     #[test]

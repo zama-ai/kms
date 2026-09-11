@@ -9,18 +9,16 @@ use aes_prng::AesRng;
 use alloy_sol_types::Eip712Domain;
 use hashing::hash_versioned;
 use kms_grpc::identifiers::EpochId;
-use kms_grpc::kms::v1::{FheParameter, KeyGenPreprocResult, KeyGenResult};
+use kms_grpc::kms::v1::{FheParameter, KeyGenPreprocResult, KeyGenResult, TypedSignature};
 use kms_grpc::kms_service::v1::core_service_endpoint_client::CoreServiceEndpointClient;
 use kms_grpc::rpc_types::PubDataType;
-use kms_grpc::solidity_types::KeygenVerification;
 use kms_grpc::{ContextId, RequestId};
-use kms_lib::client::{
-    client_wasm::Client,
-    local_crypto::{load_material_from_pub_storage, load_pk_from_pub_storage},
+use kms_lib::client::client_wasm::Client;
+use kms_lib::client::local_crypto::{load_material_from_pub_storage, load_pk_from_pub_storage};
+use kms_lib::engine::base::{
+    CurrentPublicMaterialLayout, DSEP_PUBDATA_KEY, keygen_payload_bytes, keygen_sol_type,
 };
-use kms_lib::cryptography::signatures::recover_address_from_ext_signature;
-use kms_lib::engine::base::DSEP_PUBDATA_KEY;
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::path::Path;
 use tfhe::{CompactPublicKey, ServerKey};
 use tokio::task::JoinSet;
@@ -77,7 +75,6 @@ pub(crate) async fn do_keygen(
     cc_conf: &CoreClientConfig,
     cmd_conf: &CmdConfig,
     num_parties: usize,
-    kms_addrs: &[alloy_primitives::Address],
     param: FheParameter,
     preproc_id: RequestId,
     insecure: bool,
@@ -193,7 +190,7 @@ pub(crate) async fn do_keygen(
     fetch_and_check_keygen(
         num_expected_responses,
         cc_conf,
-        kms_addrs,
+        internal_client,
         destination_prefix,
         req_id,
         Some(SigVerificationMaterial { domain, extra_data }),
@@ -210,7 +207,7 @@ pub(crate) async fn do_keygen(
 pub(crate) async fn fetch_and_check_keygen(
     num_expected_responses: usize,
     cc_conf: &CoreClientConfig,
-    kms_addrs: &[alloy_primitives::Address],
+    internal_client: &Client,
     destination_prefix: &Path,
     request_id: RequestId,
     // EIP-712 domain + extra_data to verify the external signature against. When
@@ -280,25 +277,27 @@ pub(crate) async fn fetch_and_check_keygen(
 
             match verify.as_ref() {
                 Some(material) => {
-                    let external_signature = response.external_signature;
                     let prep_id = response.preprocessing_id.ok_or_else(|| {
                         anyhow::anyhow!(
-                            "No preprocessing ID in keygen response, cannot verify external signature"
+                            "No preprocessing ID in keygen response, cannot verify its signatures"
                         )
                     })?;
-                    check_compressed_keyset_ext_signature(
+                    check_compressed_keyset_signatures(
+                        internal_client,
                         &compressed_keyset,
                         &compact_public_key,
                         &prep_id.try_into()?,
                         &request_id,
-                        &external_signature,
+                        &response.signatures,
+                        &response.external_signature,
                         &material.domain,
                         material.extra_data.clone(),
-                        kms_addrs,
                     )
                     .inspect_err(|e| tracing::error!("signature check failed: {}", e))?;
 
-                    tracing::info!("EIP712 verification of CompressedXofKeySet successful.");
+                    tracing::info!(
+                        "Verification of every requested CompressedXofKeySet signature successful."
+                    );
                 }
                 None => {
                     tracing::error!(
@@ -335,25 +334,28 @@ pub(crate) async fn fetch_and_check_keygen(
 
             match verify.as_ref() {
                 Some(material) => {
-                    let external_signature = response.external_signature;
                     let prep_id = response.preprocessing_id.ok_or_else(|| {
                         anyhow::anyhow!(
-                            "No preprocessing ID in keygen response, cannot verify external signature"
+                            "No preprocessing ID in keygen response, cannot verify its signatures"
                         )
                     })?;
-                    check_uncompressed_keyset_ext_signature(
+                    check_uncompressed_keyset_signatures(
+                        internal_client,
                         &public_key,
                         &server_key,
                         &prep_id.try_into()?,
                         &request_id,
-                        &external_signature,
+                        &response.signatures,
+                        &response.external_signature,
                         &material.domain,
                         material.extra_data.clone(),
-                        kms_addrs,
                     )
                     .inspect_err(|e| tracing::error!("signature check failed: {}", e))?;
 
-                    tracing::info!("EIP712 verification of Public Key and Server Key successful.");
+                    tracing::info!(
+                        "Verification of every requested Public Key and Server Key signature \
+                         successful."
+                    );
                 }
                 None => {
                     tracing::error!(
@@ -557,88 +559,114 @@ pub(crate) async fn do_abort_key_gen(
     Ok(resp_response_vec)
 }
 
-/// Check that the external signature on the keygen is valid, i.e. was made by one of the supplied addresses
+/// Verify every signature a keygen result carries, under every scheme the client
+/// requested, and that it was produced by one of the known KMS parties.
 #[expect(clippy::too_many_arguments)]
-pub(crate) fn check_uncompressed_keyset_ext_signature(
+fn check_keyset_signatures(
+    internal_client: &Client,
+    layout: CurrentPublicMaterialLayout,
+    prep_id: &RequestId,
+    key_id: &RequestId,
+    key_digests: BTreeMap<PubDataType, Vec<u8>>,
+    signatures: &[TypedSignature],
+    external_signature: &[u8],
+    domain: &Eip712Domain,
+    extra_data: Vec<u8>,
+) -> anyhow::Result<()> {
+    let sol_type = keygen_sol_type(layout, prep_id, key_id, &key_digests, &extra_data)?;
+    let payload_bytes = keygen_payload_bytes(prep_id, key_id, &key_digests, &extra_data)?;
+    internal_client
+        .verify_result_signatures(
+            signatures,
+            external_signature,
+            &sol_type,
+            domain,
+            &DSEP_PUBDATA_KEY,
+            &payload_bytes,
+        )
+        .map(|(party_id, _address)| {
+            tracing::info!("Keygen result verified as produced by party {party_id}");
+        })
+}
+
+/// Check the signatures on an uncompressed keyset; see [`check_keyset_signatures`].
+#[expect(clippy::too_many_arguments)]
+pub(crate) fn check_uncompressed_keyset_signatures(
+    internal_client: &Client,
     public_key: &CompactPublicKey,
     server_key: &ServerKey,
     prep_id: &RequestId,
     key_id: &RequestId,
-    external_sig: &[u8],
+    signatures: &[TypedSignature],
+    external_signature: &[u8],
     domain: &Eip712Domain,
     extra_data: Vec<u8>,
-    kms_addrs: &[alloy_primitives::Address],
 ) -> anyhow::Result<()> {
     let server_key_digest = hash_versioned(&DSEP_PUBDATA_KEY, server_key)?;
     let public_key_digest = hash_versioned(&DSEP_PUBDATA_KEY, public_key)?;
 
     tracing::info!(
-        "Checking external signature for standard keyset: key_id={},preproc_id={},server_key_digest={},public_key_digest={}",
+        "Checking the signatures for standard keyset: key_id={},preproc_id={},server_key_digest={},public_key_digest={}",
         key_id,
         prep_id,
         hex::encode(&server_key_digest),
         hex::encode(&public_key_digest)
     );
 
-    let sol_type = KeygenVerification::new_uncompressed(
+    check_keyset_signatures(
+        internal_client,
+        CurrentPublicMaterialLayout::Standard,
         prep_id,
         key_id,
-        server_key_digest,
-        public_key_digest,
+        BTreeMap::from([
+            (PubDataType::ServerKey, server_key_digest),
+            (PubDataType::PublicKey, public_key_digest),
+        ]),
+        signatures,
+        external_signature,
+        domain,
         extra_data,
-    );
-    let addr = recover_address_from_ext_signature(&sol_type, domain, external_sig)?;
-
-    // check that the address is in the list of known KMS addresses
-    if kms_addrs.contains(&addr) {
-        Ok(())
-    } else {
-        Err(anyhow::anyhow!(
-            "External signature verification failed for keygen as it does not contain the right address!"
-        ))
-    }
+    )
 }
 
-/// Check external signature for compressed keyset
+/// Check the signatures on a compressed keyset; see [`check_keyset_signatures`].
 #[expect(clippy::too_many_arguments)]
-pub(crate) fn check_compressed_keyset_ext_signature(
+pub(crate) fn check_compressed_keyset_signatures(
+    internal_client: &Client,
     compressed_keyset: &tfhe::xof_key_set::CompressedXofKeySet,
     public_key: &CompactPublicKey,
     prep_id: &RequestId,
     key_id: &RequestId,
-    external_sig: &[u8],
+    signatures: &[TypedSignature],
+    external_signature: &[u8],
     domain: &Eip712Domain,
     extra_data: Vec<u8>,
-    kms_addrs: &[alloy_primitives::Address],
 ) -> anyhow::Result<()> {
     let keyset_digest = hash_versioned(&DSEP_PUBDATA_KEY, compressed_keyset)?;
     let public_key_digest = hash_versioned(&DSEP_PUBDATA_KEY, public_key)?;
 
     tracing::info!(
-        "Checking external signature for compressed keyset: key_id={},preproc_id={},xof_keyset_digest={},public_key_digest={}",
+        "Checking the signatures for compressed keyset: key_id={},preproc_id={},xof_keyset_digest={},public_key_digest={}",
         key_id,
         prep_id,
         hex::encode(&keyset_digest),
         hex::encode(&public_key_digest)
     );
 
-    let sol_type = KeygenVerification::new_compressed(
+    check_keyset_signatures(
+        internal_client,
+        CurrentPublicMaterialLayout::Compressed,
         prep_id,
         key_id,
-        keyset_digest,
-        public_key_digest,
+        BTreeMap::from([
+            (PubDataType::CompressedXofKeySet, keyset_digest),
+            (PubDataType::PublicKey, public_key_digest),
+        ]),
+        signatures,
+        external_signature,
+        domain,
         extra_data,
-    );
-    let addr = recover_address_from_ext_signature(&sol_type, domain, external_sig)?;
-
-    // check that the address is in the list of known KMS addresses
-    if kms_addrs.contains(&addr) {
-        Ok(())
-    } else {
-        Err(anyhow::anyhow!(
-            "External signature verification failed for compressed keygen"
-        ))
-    }
+    )
 }
 
 #[expect(clippy::too_many_arguments)]
@@ -918,19 +946,41 @@ pub(crate) async fn get_preproc_keygen_responses(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use kms_grpc::rpc_types::{PrivDataType, PubDataType};
+    use kms_grpc::{
+        rpc_types::{PrivDataType, PubDataType, ecdsa_signatures},
+        solidity_types::KeygenVerification,
+    };
     use kms_lib::{
         consts::{
             DEFAULT_EPOCH_ID, OTHER_CENTRAL_TEST_ID, SIGNING_KEY_ID, TEST_CENTRAL_KEY_ID,
             TEST_PARAM, default_extra_data,
         },
-        cryptography::signatures::{PrivateSigKey, compute_eip712_signature},
+        cryptography::signatures::{
+            PrivateSigKey, PublicSigKey, compute_eip712_signature, gen_sig_keys,
+        },
         engine::base::INSECURE_PREPROCESSING_ID,
         util::key_setup::{ensure_central_keys_exist, ensure_central_server_signing_keys_exist},
         vault::storage::{ram::RamStorage, read_versioned_at_request_id},
     };
+    use rand::SeedableRng;
     use std::str::FromStr;
     use tfhe::xof_key_set::CompressedXofKeySet;
+
+    /// The error every failed ECDSA check now reports.
+    const UNKNOWN_PARTY: &str = "belongs to no known party";
+
+    /// A client that treats `pk` as the only known KMS party.
+    fn client_knowing(pk: PublicSigKey) -> Client {
+        let address = pk.address();
+        Client::new(
+            HashMap::from([(1, pk)]),
+            HashMap::new(),
+            address,
+            None,
+            TEST_PARAM,
+            None,
+        )
+    }
 
     #[tokio::test]
     async fn test_eip712_sigs() {
@@ -978,7 +1028,7 @@ mod tests {
         )
         .await
         .unwrap();
-        let addr = sk.address();
+        let client = client_knowing(sk.verf_key());
 
         // === compressed keyset signatures ===
         let compressed_keyset_digest =
@@ -1006,99 +1056,49 @@ mod tests {
                 .expect("signature computation should succeed");
 
         // check that the signature verifies and unwraps without error
-        check_compressed_keyset_ext_signature(
+        check_compressed_keyset_signatures(
+            &client,
             &compressed_keyset,
             &compact_public_key,
             prep_id,
             key_id,
+            &ecdsa_signatures(compressed_sig.clone()),
             &compressed_sig,
             &dummy_domain(),
             vec![],
-            &[addr],
         )
         .expect("signature should be valid");
-        check_compressed_keyset_ext_signature(
+        check_compressed_keyset_signatures(
+            &client,
             &compressed_keyset,
             &compact_public_key,
             prep_id,
             key_id,
+            &ecdsa_signatures(compressed_sig_extra_data.clone()),
             &compressed_sig_extra_data,
             &dummy_domain(),
             default_extra_data(),
-            &[addr],
         )
         .expect("signature should be valid");
 
-        // check that verification fails for a wrong address
-        let wrong_address = alloy_primitives::address!("0EdA6bf26964aF942Eed9e03e53442D37aa960EE");
+        // check that verification fails for a client that knows another party
+        let mut rng = AesRng::seed_from_u64(0xC0FFEE);
+        let stranger = client_knowing(gen_sig_keys(&mut rng).0);
         assert!(
-            check_compressed_keyset_ext_signature(
+            check_compressed_keyset_signatures(
+                &stranger,
                 &compressed_keyset,
                 &compact_public_key,
                 prep_id,
                 key_id,
+                &ecdsa_signatures(compressed_sig.clone()),
                 &compressed_sig,
                 &dummy_domain(),
                 vec![],
-                &[wrong_address]
             )
             .unwrap_err()
             .to_string()
-            .contains("External signature verification failed for compressed keygen")
-        );
-
-        // check that verification fails for signature that is too short
-        let short_sig = [0_u8; 37];
-        assert!(
-            check_compressed_keyset_ext_signature(
-                &compressed_keyset,
-                &compact_public_key,
-                prep_id,
-                key_id,
-                &short_sig,
-                &dummy_domain(),
-                vec![],
-                &[addr]
-            )
-            .unwrap_err()
-            .to_string()
-            .contains("Expected external signature of length 65 Bytes, but got 37")
-        );
-
-        // check that verification fails for a byte string that is not a signature
-        let malformed_sig = [23_u8; 65];
-        assert!(
-            check_compressed_keyset_ext_signature(
-                &compressed_keyset,
-                &compact_public_key,
-                prep_id,
-                key_id,
-                &malformed_sig,
-                &dummy_domain(),
-                vec![],
-                &[addr]
-            )
-            .unwrap_err()
-            .to_string()
-            .contains("signature error")
-        );
-
-        // check that verification fails for a signature that does not match the message
-        let wrong_sig = hex::decode("cf92fe4c0b7c72fd8571c9a6680f2cd7481ebed7a3c8c7c7a6e6eaf27f5654f36100c146e609e39950953602ed73a3c10c1672729295ed8b33009b375813e5801b").unwrap();
-        assert!(
-            check_compressed_keyset_ext_signature(
-                &compressed_keyset,
-                &compact_public_key,
-                prep_id,
-                key_id,
-                &wrong_sig,
-                &dummy_domain(),
-                vec![],
-                &[addr]
-            )
-            .unwrap_err()
-            .to_string()
-            .contains("External signature verification failed for compressed keygen")
+            .contains(UNKNOWN_PARTY)
         );
     }
 }

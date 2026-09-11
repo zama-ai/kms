@@ -23,8 +23,8 @@ use kms_0_15_0::cryptography::{
     encryption::{Encryption, PkeScheme, PkeSchemeType, UnifiedCipher},
     hybrid_ml_kem::HybridKemCt,
     signatures::{
-        compute_eip712_signature, gen_sig_keys, RootSigningSeed, SigningSchemeType,
-        UnifiedPublicSigKey,
+        compute_eip712_signature, gen_sig_keys, NodeSigningIdentity, RootSigningSeed,
+        SigningSchemeType, UnifiedPublicSigKey,
     },
     signcryption::{
         Signcrypt, UnifiedSigncryption, UnifiedSigncryptionKeyOwned, UnifiedUnsigncryptionKeyOwned,
@@ -33,7 +33,7 @@ use kms_0_15_0::cryptography::{
 use kms_0_15_0::engine::base::{
     CrsGenMetadata, CrsGenMetadataInner, CrsGenMetadataInnerV2, CrsSignedPayload,
     KeyGenMetadataInner, KeygenSignedPayload, KmsFheKeyHandles, PrepKeygenSignedPayload,
-    StoredEip712Domain, StoredTypedSignature,
+    PublicDecSignedPayload, StoredEip712Domain, StoredTypedSignature, UserDecSignedPayload,
 };
 use kms_0_15_0::engine::centralized::central_kms::generate_client_fhe_key;
 use kms_0_15_0::engine::context::{
@@ -107,14 +107,14 @@ use backward_compatibility::{
     InternalRecoveryRequestTest, KeyGenMetadataTest, KeyGenMetadataWithExtraDataTest,
     KeygenSignedPayloadTest, KmsFheKeyHandlesTest, NodeInfoTest, OperatorBackupOutputTest,
     PRSSSetupTest, PrepKeygenSignedPayloadTest, PrfKeyTest, PrivDataTypeTest, PrivateSigKeyTest,
-    PrssSetTest, PrssSetupCombinedTest, PubDataTypeTest, PublicSigKeyTest,
-    RecoveryValidationMaterialTest, ReleasePCRValuesTest, RootSigningSeedTest, SchemeDigestsTest,
-    ShareTest, SigncryptionPayloadTest, SignedPubDataHandleInternalTest, SoftwareVersionTest,
-    StoredEip712DomainTest, StoredTypedSignatureTest, TestMetadataDD, TestMetadataKMS,
-    TestMetadataKmsGrpc, ThresholdFheKeysTest, TypedPlaintextTest, UnifiedCipherTest,
-    UnifiedPublicSigKeyTest, UnifiedSigncryptionKeyTest, UnifiedSigncryptionTest,
-    UnifiedUnsigncryptionKeyTest, DISTRIBUTED_DECRYPTION_MODULE_NAME, KMS_GRPC_MODULE_NAME,
-    KMS_MODULE_NAME,
+    PrssSetTest, PrssSetupCombinedTest, PubDataTypeTest, PublicDecSignedPayloadTest,
+    PublicSigKeyTest, RecoveryValidationMaterialTest, ReleasePCRValuesTest, RootSigningSeedTest,
+    SchemeDigestsTest, ShareTest, SigncryptionPayloadTest, SignedPubDataHandleInternalTest,
+    SoftwareVersionTest, StoredEip712DomainTest, StoredTypedSignatureTest, TestMetadataDD,
+    TestMetadataKMS, TestMetadataKmsGrpc, ThresholdFheKeysTest, TypedPlaintextTest,
+    UnifiedCipherTest, UnifiedPublicSigKeyTest, UnifiedSigncryptionKeyTest,
+    UnifiedSigncryptionTest, UnifiedUnsigncryptionKeyTest, UserDecSignedPayloadTest,
+    DISTRIBUTED_DECRYPTION_MODULE_NAME, KMS_GRPC_MODULE_NAME, KMS_MODULE_NAME,
 };
 use hashing_0_15_0::hash_versioned;
 use kms_0_15_0::cryptography::signcryption::SigncryptionPayload;
@@ -674,6 +674,20 @@ const CRS_SIGNED_PAYLOAD_TEST: CrsSignedPayloadTest = CrsSignedPayloadTest {
     extra_data: Cow::Borrowed(&[0x09, 0x0A, 0x0B, 0x0C]),
 };
 
+// KMS test — the payload non-ECDSA schemes sign for a public decryption result.
+const PUBLIC_DEC_SIGNED_PAYLOAD_TEST: PublicDecSignedPayloadTest = PublicDecSignedPayloadTest {
+    test_filename: Cow::Borrowed("public_dec_signed_payload"),
+    response_bytes: Cow::Borrowed(&[0xDD; 48]),
+    extra_data: Cow::Borrowed(&[0x0D, 0x0E, 0x0F, 0x10]),
+};
+
+// KMS test — the payload non-ECDSA schemes sign for a user decryption result.
+const USER_DEC_SIGNED_PAYLOAD_TEST: UserDecSignedPayloadTest = UserDecSignedPayloadTest {
+    test_filename: Cow::Borrowed("user_dec_signed_payload"),
+    response_bytes: Cow::Borrowed(&[0xEE; 48]),
+    extra_data: Cow::Borrowed(&[0x11, 0x12, 0x13, 0x14]),
+};
+
 /// Maps the scheme names pinned in [`STORED_SCHEME_SIGNATURE_TEST`] and
 /// [`SCHEME_DIGESTS_TEST`] onto `SigningSchemeType` variants. The test side has the same mapping.
 fn scheme_from_name(name: &str) -> SigningSchemeType {
@@ -759,7 +773,7 @@ impl KmsV0_15_0 {
     fn gen_unified_public_sig_key(dir: &PathBuf) -> TestMetadataKMS {
         let mut rng = AesRng::seed_from_u64(UNIFIED_PUBLIC_SIG_KEY_TEST.state);
         let (_public_sig_key, sig_key) = gen_sig_keys(&mut rng);
-        let sig_key = sig_key.with_root_seed(RootSigningSeed::random(&mut rng));
+        let sig_key = NodeSigningIdentity::new(sig_key, RootSigningSeed::random(&mut rng));
 
         // Primary file: the ECDSA variant.
         let ecdsa_vk: UnifiedPublicSigKey = sig_key
@@ -1569,7 +1583,7 @@ impl KmsV0_15_0 {
         let key_id = kms_grpc_0_15_0::RequestId::zeros();
         let preproc_id = kms_grpc_0_15_0::RequestId::zeros();
         let kms_fhe_key_handles = KmsFheKeyHandles::new(
-            &private_sig_key,
+            &NodeSigningIdentity::ecdsa_only(private_sig_key),
             &[SigningSchemeType::Ecdsa256k1],
             client_key,
             &key_id,
@@ -1852,6 +1866,35 @@ impl KmsV0_15_0 {
 
         TestMetadataKMS::CrsSignedPayload(CRS_SIGNED_PAYLOAD_TEST)
     }
+
+    /// `PublicDecSignedPayload` was introduced in v0.15.0 as the canonical form
+    /// non-ECDSA schemes sign for a public decryption result.
+    fn gen_public_dec_signed_payload(dir: &PathBuf) -> TestMetadataKMS {
+        let payload = PublicDecSignedPayload {
+            response_bytes: PUBLIC_DEC_SIGNED_PAYLOAD_TEST.response_bytes.to_vec(),
+            extra_data: PUBLIC_DEC_SIGNED_PAYLOAD_TEST.extra_data.to_vec(),
+        };
+
+        store_versioned_test!(&payload, dir, &PUBLIC_DEC_SIGNED_PAYLOAD_TEST.test_filename);
+
+        TestMetadataKMS::PublicDecSignedPayload(PUBLIC_DEC_SIGNED_PAYLOAD_TEST)
+    }
+
+    /// `UserDecSignedPayload` was introduced in v0.15.0 as the canonical form
+    /// non-ECDSA schemes sign for a user decryption result. It is a distinct type
+    /// from [`PublicDecSignedPayload`] despite the identical fields, because
+    /// `safe_serialize` embeds `Named::NAME` and that is what keeps a signature
+    /// over one from verifying against the other.
+    fn gen_user_dec_signed_payload(dir: &PathBuf) -> TestMetadataKMS {
+        let payload = UserDecSignedPayload {
+            response_bytes: USER_DEC_SIGNED_PAYLOAD_TEST.response_bytes.to_vec(),
+            extra_data: USER_DEC_SIGNED_PAYLOAD_TEST.extra_data.to_vec(),
+        };
+
+        store_versioned_test!(&payload, dir, &USER_DEC_SIGNED_PAYLOAD_TEST.test_filename);
+
+        TestMetadataKMS::UserDecSignedPayload(USER_DEC_SIGNED_PAYLOAD_TEST)
+    }
 }
 
 struct DistributedDecryptionV0_15_0;
@@ -2107,6 +2150,8 @@ impl KMSCoreVersion for V0_15_0 {
             KmsV0_15_0::gen_prep_keygen_signed_payload(&dir),
             KmsV0_15_0::gen_keygen_signed_payload(&dir),
             KmsV0_15_0::gen_crs_signed_payload(&dir),
+            KmsV0_15_0::gen_public_dec_signed_payload(&dir),
+            KmsV0_15_0::gen_user_dec_signed_payload(&dir),
         ]
     }
 

@@ -118,8 +118,6 @@ pub enum NetworkDebugEvent {
     SessionCompleted,
     /// An inbound-only session expired before it was started locally.
     SessionInactiveDiscarded,
-    /// An active session was discarded after its receive activity timed out.
-    SessionActiveDiscarded,
     /// A completed session was removed after its grace period expired.
     SessionCompletedRemoved,
     /// An inbound peer message was added to its session queue.
@@ -151,14 +149,13 @@ pub enum NetworkDebugEvent {
 }
 
 impl NetworkDebugEvent {
-    const COUNT: usize = 20;
+    const COUNT: usize = 19;
     const LABELS: [&'static str; Self::COUNT] = [
         "session_inactive_created",
         "session_activated",
         "session_active_created",
         "session_completed",
         "session_inactive_discarded",
-        "session_active_discarded",
         "session_completed_removed",
         "message_enqueued",
         "message_to_inactive",

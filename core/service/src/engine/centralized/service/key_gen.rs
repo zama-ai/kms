@@ -1,5 +1,5 @@
-use crate::cryptography::signatures::PrivateSigKey;
 use crate::cryptography::signing::SigningSchemeType;
+use crate::cryptography::signing::identity::NodeSigningIdentity;
 use crate::engine::base::{
     DSEP_PUBDATA_KEY, KeyGenMetadata, compute_info_decompression_keygen,
     stored_scheme_signatures_to_proto,
@@ -10,7 +10,7 @@ use crate::engine::centralized::central_kms::{
 };
 use crate::engine::keyset_configuration::InternalKeySetConfig;
 use crate::engine::traits::{BackupOperator, ContextManager};
-use crate::engine::utils::MetricedError;
+use crate::engine::utils::{MetricedError, signing_identity_for};
 use crate::engine::validation::{
     RequestIdParsingErr, parse_grpc_request_id, validate_key_gen_request,
 };
@@ -163,17 +163,7 @@ pub async fn key_gen_impl<
     };
 
     let meta_store = Arc::clone(&service.key_meta_map);
-    let sk = service
-            .base_kms
-            .sig_key()
-            .map_err(|e| {
-        MetricedError::new(
-            op_tag,
-            Some(req_id),
-            anyhow::anyhow!("Signing key is not present. This should only happen when server is booted in recovery mode: {}", e),
-            tonic::Code::FailedPrecondition,
-        )
-    })?;
+    let sk = signing_identity_for(&service.base_kms, &signing_schemes, op_tag, Some(req_id))?;
 
     let token = CancellationToken::new();
     {
@@ -340,7 +330,8 @@ pub async fn get_key_gen_result_impl<
                 // since no domain separation is used
                 key_digests: Vec::new(),
                 external_signature: vec![],
-                // TODO(#3078): populate multi-scheme signatures (replication step).
+                // A legacy result predates the per-scheme signatures, so it has
+                // none to report.
                 signatures: vec![],
             }))
         }
@@ -393,7 +384,7 @@ pub(crate) async fn key_gen_background<
     epoch_id: &EpochId,
     meta_store: Arc<RwLock<MetaStore<KeyGenMetadata>>>,
     crypto_storage: CentralizedCryptoMaterialStorage<PubS, PrivS>,
-    sk: Arc<PrivateSigKey>,
+    sk: Arc<NodeSigningIdentity>,
     schemes: Vec<SigningSchemeType>,
     params: DKGParams,
     internal_keyset_config: InternalKeySetConfig,
@@ -1140,7 +1131,7 @@ pub(crate) mod tests {
             &epoch_id,
             meta_store.clone(),
             storage.clone(),
-            Arc::new(signing_key),
+            Arc::new(signing_key.into()),
             vec![SigningSchemeType::Ecdsa256k1],
             crate::consts::TEST_PARAM,
             InternalKeySetConfig::new(None, None).unwrap(),

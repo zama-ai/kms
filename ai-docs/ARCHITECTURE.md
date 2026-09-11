@@ -110,17 +110,24 @@ The service crate is the main surface area. Key subdirectories under
   private objects: its ECDSA signing key (`PrivDataType::SigningKey`, the
   authoritative on-chain identity) and an independent, CSPRNG-generated
   `RootSigningSeed` (`PrivDataType::SigningSeed`), both under `SIGNING_KEY_ID`.
-  The seed will eventuall be the root of *every* signing key of the node, ECDSA 
-  included: keys are derived on demand from the *seed*. However to ensure backward
-  compatibility and avoid requiring nodes to roll their ECDSA keys, legacy ECDSA 
-  are derived and stored seperately, and the seed is only used to derive every 
-  non-ECDSA key. That is, if a legacy ECDSA key is stored, then the seed will *not* 
-  be used to derive ECDSA material. 
-  The seed is carried in memory on `PrivateSigKey` (a `#[serde(skip)]` field, so
-  the persisted format is unchanged) and attached by `get_core_signing_key`; a key
-  without it — a client wallet key, or a node that has not yet run `kms-gen-keys` —
-  can only do ECDSA and errors with `SigningError::MissingRootSeed` for anything
-  else. Every scheme's public verification material — ECDSA's included —
+  The seed will eventually be the root of *every* signing key of the node, ECDSA
+  included: keys are derived on demand from the *seed*. To keep backward
+  compatibility, and to avoid making nodes roll their ECDSA keys, an ECDSA key is
+  also stored on its own, and the seed serves every non-ECDSA scheme. That is, if
+  a stored ECDSA key exists, then the seed does *not* derive the ECDSA material.
+  The two halves come together in memory as `signing::identity::NodeSigningIdentity`,
+  which `get_core_signing_identity` assembles and `BaseKmsStruct::signing_identity`
+  hands out. `NodeSigningIdentity` is never persisted, and it is the only type with
+  the multi-scheme `unified_sign_with` / `unified_verifying_key` methods:
+  `PrivateSigKey` is the ECDSA leaf type, which client wallets and the WASM
+  surface also use. An identity with no seed — a node that has not yet run
+  `kms-gen-keys` — can only do ECDSA, and errors with
+  `SigningError::MissingRootSeed` for anything else. On the client side,
+  `Client::verify_result_signatures` checks a result's per-scheme `signatures`
+  against the peers' published keys, which `Client::new_client` reads from
+  `PubDataType::TypedVerfKey`, and rejects a result that omits a scheme the
+  client asked for (`Client::signing_schemes`). Every scheme's public
+  verification material — ECDSA's included —
   is stored under the handle `consts::signing_material_id(scheme)` gives, in the
   data types `key_setup::NON_LEGACY_VERF_MATERIAL_TYPES` names:
   `PubDataType::TypedVerfKey` holds the scheme's *own* verification key type
@@ -411,6 +418,7 @@ What it verifies, and how failures are treated:
 |---|---|
 | Published keysets and CRSes are present, and their raw stored bytes hash to the digests in `KeyGenMetadata` / `CrsGenMetadata` | boot fails |
 | Current private keygen and CRS metadata with a stored domain reconstruct a valid EIP-712 signature from the node's signing key | boot fails |
+| Every non-ECDSA entry of the per-scheme `signatures` in current private keygen and CRS metadata verifies, under the key the node derives for that scheme, over the rebuilt result payload | boot fails |
 | `VerfKey` and `VerfAddress` at `SIGNING_KEY_ID` match the key derived from the private `SigningKey` | boot fails |
 | Every entry in a `PubDataType` folder is accounted for by private storage or by a fixed-ID convention | error logged, boot continues |
 | Every top-level name in public storage is a `PubDataType` folder, and every folder can be listed | error logged, boot continues |
@@ -452,7 +460,11 @@ Legacy metadata has no digest, so its public objects receive a raw presence chec
 `external_signature` and the ECDSA entry of `signatures` sign an EIP-712 hash built from an
 `Eip712Domain` that arrives from a gRPC request. At boot, current private keygen and CRS metadata
 with a stored domain reconstruct their signed Solidity payload and must recover the node's
-signing address. Older metadata versions upgrade with no domain and stay unverifiable.
+signing address. Older metadata versions upgrade with no domain and stay unverifiable. The
+entries of the other schemes sign the serialized result payload (`keygen_payload_bytes`,
+`crs_payload_bytes`) instead, which needs no domain, so they are checked for every current
+entry. A node that cannot derive a scheme's key, because it holds no root seed, fails boot on
+such an entry rather than passing it over.
 
 `PubDataType::DecompressionKey` has no private-storage counterpart at all
 (`write_decompression_key` persists no private data), so a published decompression key cannot be

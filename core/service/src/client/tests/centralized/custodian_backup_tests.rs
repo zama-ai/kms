@@ -182,7 +182,7 @@ async fn auto_update_backup(amount_custodians: usize, threshold: u32) {
 /// adopts on restart. Regression test for the advisory behind issue #3139.
 #[tokio::test(flavor = "multi_thread")]
 async fn test_planted_public_recovery_material_ignored_central() {
-    use crate::vault::storage::crypto_material::get_core_signing_key;
+    use crate::vault::storage::crypto_material::get_core_signing_identity;
     use crate::vault::storage::tests::store_dummy_recovery_material;
     use crate::vault::storage::{read_custodian_context_anchor, read_recovery_material_at_id};
 
@@ -195,9 +195,9 @@ async fn test_planted_public_recovery_material_ignored_central() {
     let rogue_id = RequestId::from_bytes([0xff; 32]);
     assert!(rogue_id > env.req_new_cus, "the decoy must sort last");
     let priv_storage = FileStorage::new(env.test_path(), StorageType::PRIV, None).unwrap();
-    let node_sig_key = get_core_signing_key(&priv_storage).await.unwrap();
+    let node_identity = get_core_signing_identity(&priv_storage).await.unwrap();
     let mut pub_storage = FileStorage::new(env.test_path(), StorageType::PUB, None).unwrap();
-    store_dummy_recovery_material(&mut pub_storage, &rogue_id, &node_sig_key).await;
+    store_dummy_recovery_material(&mut pub_storage, &rogue_id, node_identity.ecdsa()).await;
 
     let (_kms_server, _kms_client) = env.spawn_server_on_existing_material().await;
 
