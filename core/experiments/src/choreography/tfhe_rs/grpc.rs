@@ -53,7 +53,7 @@ use threshold_execution::endpoints::keygen::{
     OnlineDistributedKeyGen, SecureOnlineDistributedKeyGen,
 };
 use threshold_execution::endpoints::reshare_sk::{
-    DedicatedKeysPresent, ResharePreprocRequired, ReshareSecretKeys, SecureReshareSecretKeys,
+    DedicatedOprfKeysPresent, ResharePreprocRequired, ReshareSecretKeys, SecureReshareSecretKeys,
 };
 use threshold_execution::keyset_config::KeySetConfig;
 use threshold_execution::large_execution::offline::SecureLargePreprocessing;
@@ -2615,7 +2615,8 @@ where
             let public_key_set_decompressed = key_ref.pub_keyset_decompressed.clone();
             let old_private_key_set = key_ref.priv_keyset.as_ref().clone();
             let params = key_ref.as_ref().params;
-            let dedicated_keys = DedicatedKeysPresent::from_private_keyset(&old_private_key_set);
+            let dedicated_keys =
+                DedicatedOprfKeysPresent::from_private_keyset(&old_private_key_set);
 
             //Perform preprocessing
             let num_needed_preproc =

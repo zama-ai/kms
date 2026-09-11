@@ -34,21 +34,16 @@ use threshold_types::role::TwoSetsRole;
 use tfhe::shortint::parameters::CompressionParameters;
 use tracing::instrument;
 
-/// Which of the optional dedicated LWE key shares the keyset being reshared carries.
-///
-/// Both are `Option` fields of [`PrivateKeySet`] that can legitimately be absent — legacy keysets
-/// predate them, and transciphering is only generated for parameter sets that enable it. They
-/// determine the size of the reshared batch, which must match on *every* party, so the flags are
-/// passed in explicitly instead of being derived per party from input shares that may be missing.
+/// Which of the optional dedicated OPRF key shares the keyset being reshared carries.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct DedicatedKeysPresent {
+pub struct DedicatedOprfKeysPresent {
     /// Whether the old keyset contains a dedicated OPRF key share.
     pub oprf: bool,
     /// Whether the old keyset contains a transciphering key share.
     pub transciphering: bool,
 }
 
-impl DedicatedKeysPresent {
+impl DedicatedOprfKeysPresent {
     /// Reads the flags off a private keyset held locally.
     ///
     /// Parties that do not hold the old keyset (e.g. S2 in a two-set reshare) must derive the same
@@ -78,7 +73,7 @@ impl ResharePreprocRequired {
     pub fn new(
         num_parties_reshare_from: usize,
         parameters: DKGParams,
-        dedicated_keys: DedicatedKeysPresent,
+        dedicated_keys: DedicatedOprfKeysPresent,
     ) -> Self {
         let mut num_randoms_128 = 0;
         let mut num_randoms_64 = 0;
@@ -157,7 +152,7 @@ pub trait ReshareSecretKeys: Send + Sync + Sized {
         preproc64: &mut P64,
         input_share: &mut Option<PrivateKeySet<EXTENSION_DEGREE>>,
         parameters: DKGParams,
-        dedicated_keys: DedicatedKeysPresent,
+        dedicated_keys: DedicatedOprfKeysPresent,
     ) -> anyhow::Result<PrivateKeySet<EXTENSION_DEGREE>>
     where
         ResiduePoly<Z64, EXTENSION_DEGREE>: ErrorCorrect + Invert + QuotientMaximalIdeal,
@@ -180,7 +175,7 @@ pub trait ReshareSecretKeys: Send + Sync + Sized {
         two_sets_session: &mut S,
         input_share: &mut PrivateKeySet<EXTENSION_DEGREE>,
         parameters: DKGParams,
-        dedicated_keys: DedicatedKeysPresent,
+        dedicated_keys: DedicatedOprfKeysPresent,
     ) -> anyhow::Result<()>
     where
         ResiduePoly<Z64, EXTENSION_DEGREE>: ErrorCorrect + Invert + QuotientMaximalIdeal,
@@ -207,7 +202,7 @@ pub trait ReshareSecretKeys: Send + Sync + Sized {
         preproc128: &mut P128,
         preproc64: &mut P64,
         parameters: DKGParams,
-        dedicated_keys: DedicatedKeysPresent,
+        dedicated_keys: DedicatedOprfKeysPresent,
     ) -> anyhow::Result<PrivateKeySet<EXTENSION_DEGREE>>
     where
         ResiduePoly<Z64, EXTENSION_DEGREE>: ErrorCorrect + Invert + QuotientMaximalIdeal,
@@ -236,7 +231,7 @@ pub trait ReshareSecretKeys: Send + Sync + Sized {
         preproc64: &mut P64,
         input_share: &mut PrivateKeySet<EXTENSION_DEGREE>,
         parameters: DKGParams,
-        dedicated_keys: DedicatedKeysPresent,
+        dedicated_keys: DedicatedOprfKeysPresent,
     ) -> anyhow::Result<PrivateKeySet<EXTENSION_DEGREE>>
     where
         ResiduePoly<Z64, EXTENSION_DEGREE>: ErrorCorrect + Invert + QuotientMaximalIdeal,
@@ -268,7 +263,7 @@ impl ReshareSecretKeys for SecureReshareSecretKeys {
         preproc64: &mut P64,
         input_share: &mut Option<PrivateKeySet<EXTENSION_DEGREE>>,
         parameters: DKGParams,
-        dedicated_keys: DedicatedKeysPresent,
+        dedicated_keys: DedicatedOprfKeysPresent,
     ) -> anyhow::Result<PrivateKeySet<EXTENSION_DEGREE>>
     where
         ResiduePoly<Z64, EXTENSION_DEGREE>: ErrorCorrect + Invert + QuotientMaximalIdeal,
@@ -298,7 +293,7 @@ impl ReshareSecretKeys for SecureReshareSecretKeys {
         two_sets_session: &mut S,
         input_share: &mut PrivateKeySet<EXTENSION_DEGREE>,
         parameters: DKGParams,
-        dedicated_keys: DedicatedKeysPresent,
+        dedicated_keys: DedicatedOprfKeysPresent,
     ) -> anyhow::Result<()>
     where
         ResiduePoly<Z64, EXTENSION_DEGREE>: ErrorCorrect + Invert + QuotientMaximalIdeal,
@@ -332,7 +327,7 @@ impl ReshareSecretKeys for SecureReshareSecretKeys {
         preproc128: &mut P128,
         preproc64: &mut P64,
         parameters: DKGParams,
-        dedicated_keys: DedicatedKeysPresent,
+        dedicated_keys: DedicatedOprfKeysPresent,
     ) -> anyhow::Result<PrivateKeySet<EXTENSION_DEGREE>>
     where
         ResiduePoly<Z64, EXTENSION_DEGREE>: ErrorCorrect + Invert + QuotientMaximalIdeal,
@@ -368,7 +363,7 @@ impl ReshareSecretKeys for SecureReshareSecretKeys {
         preproc64: &mut P64,
         input_share: &mut PrivateKeySet<EXTENSION_DEGREE>,
         parameters: DKGParams,
-        dedicated_keys: DedicatedKeysPresent,
+        dedicated_keys: DedicatedOprfKeysPresent,
     ) -> anyhow::Result<PrivateKeySet<EXTENSION_DEGREE>>
     where
         ResiduePoly<Z64, EXTENSION_DEGREE>: ErrorCorrect + Invert + QuotientMaximalIdeal,
@@ -417,7 +412,7 @@ pub(crate) async fn reshare_sk<
     sessions: &mut R::ReshareSessions,
     input_share: R::MaybeExpectedInputShares<&mut PrivateKeySet<EXTENSION_DEGREE>>,
     parameters: DKGParams,
-    dedicated_keys: DedicatedKeysPresent,
+    dedicated_keys: DedicatedOprfKeysPresent,
 ) -> anyhow::Result<Option<PrivateKeySet<EXTENSION_DEGREE>>>
 where
     ResiduePoly<Z64, EXTENSION_DEGREE>: ErrorCorrect + Invert + QuotientMaximalIdeal,
@@ -950,8 +945,8 @@ mod tests {
     fn dedicated_keys_present_reads_the_optional_shares() {
         let mut keyset = PrivateKeySet::<4>::init_dummy(PARAMS_TEST_RESHARE);
         assert_eq!(
-            DedicatedKeysPresent::from_private_keyset(&keyset),
-            DedicatedKeysPresent {
+            DedicatedOprfKeysPresent::from_private_keyset(&keyset),
+            DedicatedOprfKeysPresent {
                 oprf: true,
                 transciphering: true,
             }
@@ -959,8 +954,8 @@ mod tests {
 
         keyset.oprf_secret_key_share = None;
         assert_eq!(
-            DedicatedKeysPresent::from_private_keyset(&keyset),
-            DedicatedKeysPresent {
+            DedicatedOprfKeysPresent::from_private_keyset(&keyset),
+            DedicatedOprfKeysPresent {
                 oprf: false,
                 transciphering: true,
             }
@@ -968,8 +963,8 @@ mod tests {
 
         keyset.transciphering_secret_key_share = None;
         assert_eq!(
-            DedicatedKeysPresent::from_private_keyset(&keyset),
-            DedicatedKeysPresent {
+            DedicatedOprfKeysPresent::from_private_keyset(&keyset),
+            DedicatedOprfKeysPresent {
                 oprf: false,
                 transciphering: false,
             }
@@ -1160,7 +1155,7 @@ mod tests {
                 add_error,
             )
             .unwrap();
-            let dedicated_keys = DedicatedKeysPresent {
+            let dedicated_keys = DedicatedOprfKeysPresent {
                 oprf: key_shares
                     .iter()
                     .any(|share| share.oprf_secret_key_share.is_some()),
@@ -1369,7 +1364,7 @@ mod tests {
             let new_params = PARAMS_TEST_RESHARE;
             let keyset = RESHARE_KEYSET.clone();
             let client_key_view = ClientKeyView::new(&keyset.client_key);
-            let dedicated_keys = DedicatedKeysPresent {
+            let dedicated_keys = DedicatedOprfKeysPresent {
                 oprf: client_key_view.raw_oprf_client_key().is_some(),
                 transciphering: client_key_view.raw_transciphering_client_key().is_some(),
             };

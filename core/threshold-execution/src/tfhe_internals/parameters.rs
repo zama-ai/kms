@@ -1893,7 +1893,7 @@ pub const PARAMS_TEST_RESHARE: DKGParams = DKGParams {
         ),
         // Transciphering is exercised only by the test parameter sets for now; the
         // production sets above deliberately leave it off.
-        transciphering_parameters: Some(TranscipheringParameters::SameAsCompute),
+        transciphering_parameters: Some(TranscipheringParameters::DedicatedOprf(tfhe::shortint::parameters::OprfParameters { lwe_dimension: LweDimension(2) })),
     },
     secret_key_deviations: None,
 };

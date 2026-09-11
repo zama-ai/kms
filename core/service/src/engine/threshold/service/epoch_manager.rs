@@ -47,7 +47,7 @@ use tfhe::{Versionize, zk::CompactPkeCrs};
 use tfhe_versionable::VersionsDispatch;
 use threshold_execution::{
     config::BatchParams,
-    endpoints::reshare_sk::{DedicatedKeysPresent, ResharePreprocRequired, ReshareSecretKeys},
+    endpoints::reshare_sk::{DedicatedOprfKeysPresent, ResharePreprocRequired, ReshareSecretKeys},
     online::preprocessing::BasePreprocessing,
     runtime::sessions::{
         base_session::{BaseSession, TwoSetsBaseSession, advance_session_by_rounds},
@@ -684,12 +684,8 @@ impl<
                 )
                 .await;
                 // S1 has the previous epoch's private shares, so we read which
-                // dedicated key shares exist from local state. The S2-only path
-                // in `reshare_as_set_2` has no private share and derives the
-                // same flags from the verified public material instead. For
-                // uncompressed keys this is the `ServerKey`; for compressed
-                // keys it is the `CompressedXofKeySet`.
-                let dedicated_keys = DedicatedKeysPresent::from_private_keyset(&private_keys);
+                // dedicated key shares exist from local state.
+                let dedicated_keys = DedicatedOprfKeysPresent::from_private_keyset(&private_keys);
 
                 Reshare::reshare_sk_two_sets_as_s1(
                     &mut two_sets_session,
@@ -1044,7 +1040,7 @@ impl<
                 // the S1 / both-sets paths (which read the flags off the local
                 // `PrivateKeySet`) we derive them from the verified
                 // public material.
-                let dedicated_keys = DedicatedKeysPresent {
+                let dedicated_keys = DedicatedOprfKeysPresent {
                     oprf: verified_material.has_oprf_key(),
                     transciphering: verified_material.has_transciphering_key(),
                 };
@@ -1220,7 +1216,7 @@ impl<
                     }
                 };
 
-                let dedicated_keys = DedicatedKeysPresent::from_private_keyset(&private_keys);
+                let dedicated_keys = DedicatedOprfKeysPresent::from_private_keyset(&private_keys);
 
                 let num_needed_preproc = ResharePreprocRequired::new(
                     num_parties_set_1,

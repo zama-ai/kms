@@ -1474,8 +1474,7 @@ pub(crate) mod tests {
             _ => panic!("Expected Current variant of KeyGenMetadata"),
         }
 
-        // Verify the compressed keyset can be decompressed. `decompress` is infallible since
-        // tfhe 1.7.0, so this only asserts it does not panic.
+        // Verify the compressed keyset can be decompressed.
         let (_pk, server_key) = compressed_keyset.decompress().into_raw_parts();
         let (_, _, _, _, _, _, _, oprf_key, _, _) = server_key.into_raw_parts();
         assert!(

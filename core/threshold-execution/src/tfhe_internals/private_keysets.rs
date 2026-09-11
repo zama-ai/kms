@@ -67,10 +67,8 @@ pub struct PrivateKeySet<const EXTENSION_DEGREE: usize> {
     pub lwe_encryption_secret_key_share: LweSecretKeyShareEnum<EXTENSION_DEGREE>,
     pub lwe_compute_secret_key_share: LweSecretKeyShareEnum<EXTENSION_DEGREE>,
     pub oprf_secret_key_share: Option<LweSecretKeyShareEnum<EXTENSION_DEGREE>>,
-    /// Sampled independently of `oprf_secret_key_share`: the transciphering key material is
-    /// handed out to clients, so it must not derive from the general-purpose OPRF key.
-    /// `None` for keysets generated before transciphering existed, and for parameter sets that
-    /// do not enable it (see `DKGParams::transciphering_params`).
+    /// Similar to `oprf_secret_key_share` but may use a different parameter,
+    /// (see `DKGParams::transciphering_params`).
     pub transciphering_secret_key_share: Option<LweSecretKeyShareEnum<EXTENSION_DEGREE>>,
     pub glwe_secret_key_share: GlweSecretKeyShareEnum<EXTENSION_DEGREE>,
     pub glwe_secret_key_share_sns_as_lwe: Option<LweSecretKeyShare<Z128, EXTENSION_DEGREE>>,
