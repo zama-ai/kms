@@ -125,7 +125,7 @@ async fn failed_recovery_material_deletion_is_retryable(
 #[tokio::test]
 async fn last_custodian_context_destruction_has_no_side_effects() {
     let fixture = CustodianFixture::new().await;
-    // First retire the target so the current context is the only successful context left.
+    // Destroy the retired context so the current context is the only successful context left.
     fixture.destroy(fixture.retired_id).await.unwrap();
     fixture.clear_faults_and_events().await;
 

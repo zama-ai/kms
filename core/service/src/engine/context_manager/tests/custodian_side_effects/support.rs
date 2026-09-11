@@ -21,7 +21,7 @@ use strum::IntoEnumIterator;
 type TestStorage = CryptoMaterialStorage<FailingRamStorage, RamStorage>;
 type TestManager = ThresholdContextManager<FailingRamStorage, RamStorage>;
 
-const TARGET_CONTEXT_BYTE: u8 = 31;
+const RETIRED_CONTEXT_BYTE: u8 = 31;
 const CURRENT_CONTEXT_BYTE: u8 = 32;
 pub(super) const SETUP_CONTEXT_BYTE: u8 = 35;
 
@@ -59,10 +59,13 @@ impl CustodianFixture {
             session_maker,
             false,
         );
-        let target_id = RequestId::from_bytes([TARGET_CONTEXT_BYTE; 32]);
+        let retired_id = RequestId::from_bytes([RETIRED_CONTEXT_BYTE; 32]);
         let current_id = RequestId::from_bytes([CURRENT_CONTEXT_BYTE; 32]);
         manager
-            .new_custodian_context(custodian_request(target_id, u64::from(TARGET_CONTEXT_BYTE)))
+            .new_custodian_context(custodian_request(
+                retired_id,
+                u64::from(RETIRED_CONTEXT_BYTE),
+            ))
             .await
             .unwrap();
         manager
@@ -73,22 +76,22 @@ impl CustodianFixture {
             .await
             .unwrap();
 
-        let target_backup_entry = BackupEntry::new(
-            target_id,
+        let retired_backup_entry = BackupEntry::new(
+            retired_id,
             RequestId::from_bytes(DUMMY_SIGNING_KEY_REQ_ID),
             None,
             PrivDataType::SigningKey,
         )
         .storage_entry();
-        let target_recovery_entry =
-            StorageEntry::new(target_id, None, PubDataType::RecoveryMaterial.to_string());
+        let retired_recovery_entry =
+            StorageEntry::new(retired_id, None, PubDataType::RecoveryMaterial.to_string());
         let fixture = Self {
             manager,
             storage,
-            retired_id: target_id,
+            retired_id,
             current_id,
-            retired_backup_entry: target_backup_entry,
-            retired_recovery_entry: target_recovery_entry,
+            retired_backup_entry,
+            retired_recovery_entry,
         };
         for context_id in [fixture.retired_id, fixture.current_id] {
             assert!(
@@ -132,7 +135,7 @@ impl CustodianFixture {
         fixture
     }
 
-    /// Rejects one target backup deletion at `phase`.
+    /// Fails deletion of the retired context's signing-key backup at `phase`.
     pub(super) async fn fail_backup_delete(&self, phase: FaultPhase) {
         let backup_vault = self.storage.backup_vault.as_ref().unwrap();
         let mut backup_vault = backup_vault.lock().await;
