@@ -56,14 +56,31 @@ impl BackupRemovalFixture {
         store_backup_entries(&mut vault, &control_entries).await;
         set_current_backup_id(&mut vault, current_id, enc_key);
 
-        Self {
+        let fixture = Self {
             vault,
             retired_id,
             current_id,
             retired_entries,
             current_entries,
             control_entries,
-        }
+        };
+        fixture
+            .assert_entries_present(&fixture.retired_entries)
+            .await;
+        fixture
+            .assert_entries_present(&fixture.current_entries)
+            .await;
+        fixture
+            .assert_entries_present(&fixture.control_entries)
+            .await;
+        let Some(KeychainProxy::SecretSharing(keychain)) = fixture.vault.keychain.as_ref() else {
+            panic!("fixture requires a custodian keychain");
+        };
+        assert_eq!(
+            keychain.get_current_backup_id().unwrap(),
+            fixture.current_id
+        );
+        fixture
     }
 
     /// Panics if an entry is absent.
