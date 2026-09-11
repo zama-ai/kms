@@ -322,7 +322,8 @@ vault entries written under the failed id are purged
 `Vault::purge_backup`). Without that, the node would keep encrypting backups under a key
 whose recovery material was never written, making them unrecoverable. One failure is judged by the
 anchor instead: a write that reports an error is read back, and if the anchor names the new context
-the setup succeeded; if it cannot be read, the material is kept for whichever anchor wins. Setup,
+the setup succeeded; if it cannot be read, the material is kept for whichever anchor wins and the
+keychain is emptied, so the node makes no backups until the next boot reads the anchor. Setup,
 destruction and recovery are serialized by `custodian_context_lock` for the same reason. The anchor
 is written last, after the material, so a crash anywhere before it leaves the previous context
 anchored rather than a half-installed one.

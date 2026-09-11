@@ -472,9 +472,15 @@ where
             )
             .await
         {
+            // An unresolved anchor may already name the new context, so the keychain is emptied
+            // rather than restored: no backups until the next boot reads the anchor.
+            let restore_to = match e {
+                StorageError::Unresolved => None,
+                _ => previous_backup_state,
+            };
             self.rollback_failed_custodian_setup(
                 inner_context.context_id,
-                previous_backup_state,
+                restore_to,
                 RollbackScope::KeychainOnly,
             )
             .await;
@@ -2692,6 +2698,105 @@ mod tests {
                     "no leaked backup data may remain under the failed context id for {cur_type}"
                 );
             }
+        }
+    }
+
+    /// A custodian context request for `context_id` with `2 * threshold + 1` fresh custodians.
+    fn custodian_context_request(
+        context_id: RequestId,
+        threshold: u32,
+    ) -> Request<NewCustodianContextRequest> {
+        let mut rng = AesRng::seed_from_u64(77);
+        let custodian_nodes = (1..=2 * threshold as usize + 1)
+            .map(|index| {
+                let mut enc = Encryption::new(PkeSchemeType::MlKem512, &mut rng);
+                let (_dec_key, public_enc_key) = enc.keygen().unwrap();
+                let (public_verf_key, _sig_key) = gen_sig_keys(&mut rng);
+                InternalCustodianSetupMessage {
+                    header: HEADER.to_string(),
+                    custodian_role: Role::indexed_from_one(index),
+                    name: format!("Custodian-{index}"),
+                    random_value: [3u8; 32],
+                    timestamp: SystemTime::now(),
+                    public_enc_key,
+                    public_verf_key,
+                }
+                .try_into()
+                .unwrap()
+            })
+            .collect();
+        Request::new(NewCustodianContextRequest {
+            new_custodian_context: Some(CustodianContext {
+                custodian_nodes,
+                custodian_context_id: Some(context_id.into()),
+                threshold,
+            }),
+            mpc_context_id: Some((*DEFAULT_MPC_CONTEXT).into()),
+        })
+    }
+
+    /// `write_backup_keys` cannot tell whether the anchor names the new context, so the keychain
+    /// is emptied instead of restored: no backups until the next boot reads the anchor.
+    #[tokio::test]
+    async fn test_custodian_context_rollback_empties_keychain_on_unresolved_anchor() {
+        use crate::vault::storage::Storage;
+
+        let (_verification_key, sig_key, crypto_storage) = setup_crypto_storage(true).await;
+        let base_kms = BaseKmsStruct::new(KMSType::Threshold, sig_key).unwrap();
+        let previous_id = RequestId::from_bytes([6u8; 32]);
+        let context_id = RequestId::from_bytes([7u8; 32]);
+        // The keychain holds a previous context, so a restore and a reset differ.
+        {
+            let backup_vault = crypto_storage.get_backup_vault().unwrap();
+            let mut guarded_backup_vault = backup_vault.lock().await;
+            let Some(KeychainProxy::SecretSharing(keychain)) =
+                guarded_backup_vault.keychain.as_mut()
+            else {
+                panic!("expected a secret-sharing keychain in the backup vault")
+            };
+            let (_dec_key, enc_key) =
+                Encryption::new(PkeSchemeType::MlKem512, &mut AesRng::seed_from_u64(5))
+                    .keygen()
+                    .unwrap();
+            keychain.set_backup_enc_key(previous_id, enc_key);
+        }
+        // An anchor record that does not decode fails both the anchor write and its read-back.
+        crypto_storage
+            .private_storage
+            .lock()
+            .await
+            .store_bytes(
+                &[0xff; 8],
+                &RequestId::from_bytes([9u8; 32]),
+                &PrivDataType::CustodianContextAnchor.to_string(),
+            )
+            .await
+            .unwrap();
+        let epoch_id = *DEFAULT_EPOCH_ID;
+        let session_maker =
+            SessionMaker::four_party_dummy_session(None, None, &epoch_id, base_kms.new_rng().await);
+        let backup_vault = crypto_storage.get_backup_vault().unwrap();
+        let context_manager = ThresholdContextManager::new(
+            base_kms,
+            crypto_storage,
+            MetaStore::new(100, 10),
+            session_maker,
+            false,
+        );
+
+        assert!(
+            context_manager
+                .new_custodian_context(custodian_context_request(context_id, 1))
+                .await
+                .is_err()
+        );
+
+        match backup_vault.lock().await.keychain.as_ref() {
+            Some(KeychainProxy::SecretSharing(keychain)) => assert!(
+                keychain.get_current_backup_id().is_err(),
+                "an unresolved anchor must leave the keychain uninitialized"
+            ),
+            _ => panic!("expected a secret-sharing keychain in the backup vault"),
         }
     }
 

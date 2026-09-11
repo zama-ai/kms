@@ -58,6 +58,8 @@ pub enum StorageError {
     Duplicate,
     #[error("Writing error")]
     Writing,
+    #[error("Write outcome could not be read back")]
+    Unresolved,
     #[error("Reading error")]
     Reading,
     #[error("Purging error")]
@@ -905,9 +907,10 @@ where
     /// before writing under it, so nothing there predates this call. On failure the material of
     /// the failed setup is purged. Two cases keep it. On a duplicate nothing was written, so what
     /// is stored under `req_id` pre-existed this call. When a failed anchor write cannot be read
-    /// back, the anchor may name this context. An anchor write that reports an error but took
-    /// effect is a success. Callers that also need the keychain rolled back must do that
-    /// themselves; see `rollback_failed_custodian_setup`.
+    /// back, the anchor may name this context: the call fails with [`StorageError::Unresolved`]
+    /// and the caller must make no backups until a restart reads the anchor. An anchor write that
+    /// reports an error but took effect is a success. Callers that also need the keychain rolled
+    /// back must do that themselves; see `rollback_failed_custodian_setup`.
     pub async fn write_backup_keys(
         &self,
         recovery_material: RecoveryValidationMaterial,
@@ -950,9 +953,9 @@ where
                         }
                         Err(read_err) => {
                             tracing::error!(
-                                "Failed to anchor custodian context {req_id} ({e}) and to read the anchor back ({read_err}); its material is kept"
+                                "Failed to anchor custodian context {req_id} ({e}) and to read the anchor back ({read_err}); its material is kept and no backups are made until the next boot reads the anchor"
                             );
-                            (Err(StorageError::Writing), false)
+                            (Err(StorageError::Unresolved), false)
                         }
                     },
                 }

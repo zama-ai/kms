@@ -1408,7 +1408,7 @@ async fn write_backup_keys_anchor_failure_lets_the_anchor_decide() {
                 );
             }
             _ => {
-                assert_eq!(res, Err(StorageError::Writing));
+                assert_eq!(res, Err(StorageError::Unresolved));
                 assert!(matches!(recorded, EntryState::Done(Err(_))));
                 assert!(anchored.is_err());
                 assert!(
