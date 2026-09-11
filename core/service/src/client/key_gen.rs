@@ -519,6 +519,7 @@ pub(crate) mod tests {
                                     _noise_squashing_compression_key,
                                     _rerand_parameters,
                                     _oprf_private_key,
+                                    _transciphering_private_key,
                                     _tag,
                                 ) = client_key.into_raw_parts();
 
@@ -586,7 +587,7 @@ pub(crate) mod tests {
         #[cfg(feature = "slow_tests")]
         const NUM_SEEDS: u128 = 50;
 
-        let (integer_server_key, _, _, _, _, _, _, oprf_server_key, _) =
+        let (integer_server_key, _, _, _, _, _, _, oprf_server_key, _, _) =
             server_key.clone().into_raw_parts();
         let Some(oprf_server_key) = oprf_server_key else {
             panic!("expected oprf_server_key")
@@ -601,6 +602,7 @@ pub(crate) mod tests {
             _noise_squashing_compression_key,
             _rerand_parameters,
             oprf_private_key,
+            _transciphering_private_key,
             _tag,
         ) = client_key.clone().into_raw_parts();
         let Some(oprf_private_key) = oprf_private_key else {
@@ -611,19 +613,64 @@ pub(crate) mod tests {
             atomic_pattern: integer_client_key.into_raw_parts().atomic_pattern,
         };
 
-        let prf_lwe_sk = match oprf_private_key.into_raw_parts().into_raw_parts() {
-            tfhe::shortint::oprf::AtomicPatternOprfPrivateKey::Standard(sk) => sk,
-            tfhe::shortint::oprf::AtomicPatternOprfPrivateKey::KeySwitch32(_) => {
-                panic!("Unsupported AtomicPatternOprfPrivateKey::KeySwitch32")
-            }
+        assert_oprf_matches_plaintext(
+            &shortint_ck,
+            &target_shortint_server_key,
+            &oprf_server_key.into_raw_parts(),
+            &oprf_private_key.into_raw_parts(),
+            NUM_SEEDS,
+        );
+    }
+
+    /// Same check as [`check_oprf_correctness`], for the transciphering server key: it is an
+    /// OPRF key of its own, sampled independently of the general-purpose one.
+    ///
+    /// Parameter sets without transciphering carry neither the server nor the private key, and
+    /// then there is nothing to verify; a keyset carrying only one of the two is a bug.
+    pub(crate) fn check_transciphering_correctness(
+        server_key: &tfhe::ServerKey,
+        client_key: &tfhe::ClientKey,
+    ) {
+        use threshold_execution::tfhe_internals::test_feature::assert_oprf_matches_plaintext;
+
+        #[cfg(not(feature = "slow_tests"))]
+        const NUM_SEEDS: u128 = 2;
+        #[cfg(feature = "slow_tests")]
+        const NUM_SEEDS: u128 = 50;
+
+        let (integer_server_key, _, _, _, _, _, _, _, transciphering_server_key, _) =
+            server_key.clone().into_raw_parts();
+        let (
+            integer_client_key,
+            _compact_client_key,
+            _compression_key,
+            _noise_squashing_key,
+            _noise_squashing_compression_key,
+            _rerand_parameters,
+            _oprf_private_key,
+            transciphering_private_key,
+            _tag,
+        ) = client_key.clone().into_raw_parts();
+
+        let (transciphering_server_key, transciphering_private_key) =
+            match (transciphering_server_key, transciphering_private_key) {
+                (None, None) => return,
+                (Some(server), Some(private)) => (server, private),
+                (Some(_), None) => panic!("transciphering server key without a private key"),
+                (None, Some(_)) => panic!("transciphering private key without a server key"),
+            };
+
+        let target_shortint_server_key = integer_server_key.into_raw_parts();
+
+        let shortint_ck = tfhe::shortint::ClientKey {
+            atomic_pattern: integer_client_key.into_raw_parts().atomic_pattern,
         };
-        let oprf_server_key = oprf_server_key.into_raw_parts();
 
         assert_oprf_matches_plaintext(
             &shortint_ck,
             &target_shortint_server_key,
-            &oprf_server_key,
-            &prf_lwe_sk,
+            &transciphering_server_key.into_raw_parts(),
+            &transciphering_private_key.into_raw_parts().0,
             NUM_SEEDS,
         );
     }
