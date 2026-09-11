@@ -20,10 +20,7 @@ static ACTIVITY_EPOCH: LazyLock<Instant> = LazyLock::new(Instant::now);
 /// be read and updated without holding a lock.
 ///
 /// Network timeouts stay far below the u64 nanosecond ceiling (~584 years), so
-/// the nanosecond encoding never truncates in practice. All operations use
-/// [`Ordering::Relaxed`]: these values are only mutated while the owning
-/// session's `round_counter` lock is held, and are otherwise best-effort timeout
-/// hints that need no cross-variable ordering guarantees.
+/// the nanosecond encoding never truncates in practice.
 #[derive(Debug)]
 pub(crate) struct AtomicDuration(AtomicU64);
 

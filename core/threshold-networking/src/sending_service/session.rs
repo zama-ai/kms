@@ -299,6 +299,7 @@ impl<R: RoleTrait> Networking<R> for NetworkSession {
             round: *round_counter,
             max_elapsed_time: self.max_elapsed_time.load(),
             current_network_timeout: self.current_network_timeout.load(),
+            next_network_timeout: self.next_network_timeout.load(),
             init_time: self.init_time.load(),
         }
     }
@@ -317,6 +318,7 @@ impl<R: RoleTrait> Networking<R> for NetworkSession {
         self.max_elapsed_time.store(clock.max_elapsed_time);
         self.current_network_timeout
             .store(clock.current_network_timeout);
+        self.next_network_timeout.store(clock.next_network_timeout);
     }
 
     /// Method to set a different timeout than the one set at construction, effective for the next round.

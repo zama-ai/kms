@@ -236,9 +236,10 @@ impl<R: RoleTrait> Networking<R> for LocalNetworking<R> {
     }
 
     async fn round_clock_snapshot(&self) -> RoundClock {
-        let (max_elapsed_time, current_network_timeout, round) = join3(
+        let (max_elapsed_time, current_network_timeout, next_round_timeout, round) = join4(
             self.max_elapsed_time.lock(),
             self.current_network_timeout.lock(),
+            self.next_network_timeout.lock(),
             self.network_round.lock(),
         )
         .await;
@@ -247,6 +248,7 @@ impl<R: RoleTrait> Networking<R> for LocalNetworking<R> {
             round: *round,
             max_elapsed_time: *max_elapsed_time,
             current_network_timeout: *current_network_timeout,
+            next_network_timeout: *next_round_timeout,
         }
     }
 

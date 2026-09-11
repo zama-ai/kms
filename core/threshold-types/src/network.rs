@@ -22,6 +22,8 @@ pub struct RoundClock {
     pub max_elapsed_time: Duration,
     /// Current round's network timeout.
     pub current_network_timeout: Duration,
+    /// Next round's network timeout.
+    pub next_network_timeout: Duration,
 }
 
 /// Requirements for networking interface.

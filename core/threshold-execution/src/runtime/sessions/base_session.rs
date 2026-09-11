@@ -28,6 +28,11 @@ pub trait GenericBaseSessionHandles<R: RoleTrait>: GenericParameterHandles<R> {
 
 /// Advance a session's round counter *by* `num_rounds`, accumulating the timeout
 /// budget (`max_elapsed_time`) by one round-timeout per step.
+///
+/// __NOTE__: If this is called to synchronize the current session with a session that has
+/// already advanced, then one must make sure the timeout of the other session was the exact
+/// same for all rounds and is the same as this session otherwise the accumulated
+/// timeout budget will be wrong.
 pub async fn advance_session_by_rounds<R: RoleTrait, S: GenericBaseSessionHandles<R>>(
     session: &S,
     num_rounds: usize,
