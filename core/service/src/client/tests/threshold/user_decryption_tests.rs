@@ -350,8 +350,8 @@ pub(crate) async fn user_decryption_threshold(
 ) {
     assert!(parallelism > 0);
 
-    // Spec: pre-gen FHE keys for `key_id` plus signing. PRSS is bootstrapped
-    // at runtime via `.with_prss()`. Material type follows the DKG params.
+    // Spec: pre-gen FHE keys for `key_id` plus signing. The default epoch (PRSS) comes from
+    // the fixture with the key shares. Material type follows the DKG params.
     let spec = if dkg_params == TEST_PARAM {
         TestMaterialSpec::threshold_basic(amount_parties)
     } else {

@@ -6,3 +6,4 @@
 - Changes to production code must not reduce test coverage.
 - Prefer reusable scaffolding and stubs over large, duplicative per-test setup/teardown.
 - Refactoring existing tests to use new scaffolding or stubs is welcome when it reduces duplication.
+- Threshold tests boot from fixture material. The fixture holds the default epoch (an `EpochData` entry with a PRSS setup) for each party; `TestMaterialSpec::threshold_basic` includes it, and `with_prss()` adds it to a signing-only spec. A server never creates an epoch at boot, so a test that needs a fresh epoch requests it through `new_mpc_epoch`.
