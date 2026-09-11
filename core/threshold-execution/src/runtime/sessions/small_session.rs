@@ -92,8 +92,8 @@ impl<Z: Ring> GenericParameterHandles<Role> for SmallSession<Z> {
         self.base_session.roles_mut()
     }
 
-    fn to_parameters(&self) -> SessionParameters {
-        self.base_session.to_parameters()
+    fn parameters(&self) -> &SessionParameters {
+        self.base_session.parameters()
     }
 
     fn get_all_sorted_roles(&self) -> &Vec<Role> {
