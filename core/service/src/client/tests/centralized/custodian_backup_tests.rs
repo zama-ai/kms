@@ -399,6 +399,129 @@ async fn decrypt_after_recovery(amount_custodians: usize, threshold: u32) {
     .await;
 }
 
+/// After a rotation the vault holds two contexts, so a node that lost its anchor must name the
+/// one to recover under: `None` is refused as ambiguous, and the current context recovers the FHE
+/// private key, proven by a decryption at the end.
+#[tokio::test(flavor = "multi_thread")]
+async fn test_recovery_names_the_context_after_rotation_central() {
+    use crate::vault::storage::{delete_at_request_id, read_custodian_context_anchor};
+
+    let (amount_custodians, threshold) = (5, 2);
+    let mut env = CentralizedBackupTestEnv::new(
+        "recovery_names_context_central",
+        amount_custodians,
+        threshold,
+    )
+    .await;
+    let key_id: RequestId = derive_request_id("recovery_names_context_central_key").unwrap();
+    let epoch_id = *DEFAULT_EPOCH_ID;
+    run_key_gen_centralized(
+        env.kms_client.as_mut().unwrap(),
+        env.internal_client.as_ref().unwrap(),
+        &key_id,
+        &epoch_id,
+        FheParameter::Test,
+        None,
+        None,
+        Some(env.material_dir.path()),
+    )
+    .await;
+    // The rotation re-encrypts every backup under the second context.
+    let second_id: RequestId = derive_request_id("recovery_names_context_central_2").unwrap();
+    let second_mnemonics = run_new_cus_context(
+        env.kms_client.as_mut().unwrap(),
+        env.internal_client.as_mut().unwrap(),
+        &second_id,
+        amount_custodians,
+        threshold,
+    )
+    .await;
+    env.shutdown().await;
+    let dkg_param: WrappedDKGParams = FheParameter::Test.into();
+
+    // Lose the FHE private key and the anchor; the signing key stays so the server boots.
+    let mut priv_storage = FileStorage::new(env.test_path(), StorageType::PRIV, None).unwrap();
+    delete_at_request_and_epoch_id(
+        &mut priv_storage,
+        &key_id,
+        &epoch_id,
+        &PrivDataType::FhePrivateKey.to_string(),
+    )
+    .await
+    .unwrap();
+    delete_at_request_id(
+        &mut priv_storage,
+        &second_id,
+        &PrivDataType::CustodianContextAnchor.to_string(),
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        read_custodian_context_anchor(&priv_storage).await.unwrap(),
+        None
+    );
+
+    let (kms_server, mut kms_client) = env.spawn_server_on_existing_material().await;
+    let ambiguous = kms_client
+        .custodian_recovery_init(tonic::Request::new(CustodianRecoveryInitRequest {
+            overwrite_ephemeral_key: false,
+            custodian_context_id: None,
+        }))
+        .await
+        .expect_err("two contexts and no anchor must not select one");
+    assert_eq!(ambiguous.code(), tonic::Code::FailedPrecondition);
+
+    let mut rng = AesRng::seed_from_u64(17);
+    let recovery_req_resp = kms_client
+        .custodian_recovery_init(tonic::Request::new(CustodianRecoveryInitRequest {
+            overwrite_ephemeral_key: false,
+            custodian_context_id: Some(second_id.into()),
+        }))
+        .await
+        .unwrap()
+        .into_inner();
+    let cus_rec_req = emulate_custodian(
+        &mut rng,
+        recovery_req_resp,
+        second_id,
+        second_mnemonics,
+        env.test_path(),
+    )
+    .await;
+    kms_client
+        .custodian_backup_recovery(tonic::Request::new(cus_rec_req))
+        .await
+        .unwrap();
+    kms_client
+        .restore_from_backup(tonic::Request::new(Empty {}))
+        .await
+        .unwrap();
+    assert_eq!(
+        read_custodian_context_anchor(&priv_storage).await.unwrap(),
+        Some(second_id),
+        "recovery anchors the context it restored under"
+    );
+
+    kms_server.assert_shutdown().await;
+    drop(kms_client);
+    let (_kms_server, kms_client) = env.spawn_server_on_existing_material().await;
+    let mut internal_client = env.create_internal_client(&dkg_param).await;
+    run_decryption_centralized(
+        &kms_client,
+        &mut internal_client,
+        &key_id,
+        None,
+        vec![TestingPlaintext::U8(u8::MAX)],
+        EncryptionConfig {
+            compression: false,
+            precompute_sns: false,
+        },
+        1,
+        env.test_path(),
+    )
+    .await;
+}
+
 /// Two custodians submit corrupted signcryption; those outputs are rejected and recovery still
 /// completes with the remaining valid shares — proven by a successful decryption call on a
 /// recovered FHE private key at the end.
