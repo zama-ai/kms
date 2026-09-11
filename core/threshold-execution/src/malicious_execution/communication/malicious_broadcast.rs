@@ -35,6 +35,10 @@ impl ProtocolDescription for MaliciousBroadcastDrop {
 
 #[async_trait]
 impl Broadcast for MaliciousBroadcastDrop {
+    fn num_rounds(num_parties: usize, threshold: usize) -> usize {
+        SyncReliableBroadcast::num_rounds(num_parties, threshold)
+    }
+
     async fn execute<Z: Ring, B: BaseSessionHandles>(
         &self,
         _session: &mut B,
@@ -60,6 +64,10 @@ impl ProtocolDescription for MaliciousBroadcastSender {
 
 #[async_trait]
 impl Broadcast for MaliciousBroadcastSender {
+    fn num_rounds(num_parties: usize, threshold: usize) -> usize {
+        SyncReliableBroadcast::num_rounds(num_parties, threshold)
+    }
+
     async fn execute<Z: Ring, B: BaseSessionHandles>(
         &self,
         session: &mut B,
@@ -199,6 +207,10 @@ impl ProtocolDescription for MaliciousBroadcastSenderEcho {
 
 #[async_trait]
 impl Broadcast for MaliciousBroadcastSenderEcho {
+    fn num_rounds(num_parties: usize, threshold: usize) -> usize {
+        SyncReliableBroadcast::num_rounds(num_parties, threshold)
+    }
+
     async fn execute<Z: Ring, B: BaseSessionHandles>(
         &self,
         session: &mut B,
@@ -315,6 +327,10 @@ impl ProtocolDescription for MaliciousBroadcastRandomizer {
 
 #[async_trait]
 impl Broadcast for MaliciousBroadcastRandomizer {
+    fn num_rounds(num_parties: usize, threshold: usize) -> usize {
+        SyncReliableBroadcast::num_rounds(num_parties, threshold)
+    }
+
     async fn execute<Z: Ring, B: BaseSessionHandles>(
         &self,
         session: &mut B,
@@ -488,6 +504,10 @@ impl ProtocolDescription for MaliciousBroadcastDoubleVote {
 
 #[async_trait]
 impl Broadcast for MaliciousBroadcastDoubleVote {
+    fn num_rounds(num_parties: usize, threshold: usize) -> usize {
+        SyncReliableBroadcast::num_rounds(num_parties, threshold)
+    }
+
     async fn execute<Z: Ring, B: BaseSessionHandles>(
         &self,
         session: &mut B,

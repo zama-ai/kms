@@ -3,14 +3,12 @@ use std::{
     error::Error,
     net::IpAddr,
     str::FromStr,
-    sync::{
-        Arc, LazyLock, OnceLock,
-        atomic::{AtomicU64, Ordering},
-    },
+    sync::Arc,
     time::{Duration, Instant},
 };
 
 use super::ggen::gnetworking_client::GnetworkingClient;
+use crate::clock::AtomicInstant;
 use crate::ggen::Status;
 use backoff::SystemClock;
 use backoff::exponential::ExponentialBackoff;
@@ -36,7 +34,7 @@ use tonic::{async_trait, transport::Channel};
 use super::ggen::SendValueRequest;
 use super::grpc::NETWORK_RECEIVED_MEASUREMENT;
 use super::grpc::{MessageQueueStore, OptionConfigWrapper, Tag};
-use threshold_types::network::{NetworkMode, Networking};
+use threshold_types::network::{NetworkMode, Networking, RoundClock};
 
 pub struct ArcSendValueRequest {
     tag: Arc<Vec<u8>>,
@@ -377,19 +375,6 @@ impl SendingService for GrpcSendingService {
     }
 }
 
-/// Monotonic epoch for session activity timestamps.
-///
-/// Session activity times are stored as milliseconds elapsed since this instant
-/// in an [`AtomicU64`], so they can be read and written without locking or
-/// awaiting — notably from the session cleanup task, which must not hold a
-/// `DashMap` shard guard across an `.await`.
-static ACTIVITY_EPOCH: LazyLock<Instant> = LazyLock::new(Instant::now);
-
-/// Milliseconds elapsed since [`ACTIVITY_EPOCH`].
-pub(crate) fn now_activity_millis() -> u64 {
-    ACTIVITY_EPOCH.elapsed().as_millis() as u64
-}
-
 /// This acts as an interface with the real networking processes.
 /// It communicates with the SendingService via the mpsc Sender channel (sending_channels)
 /// And retrieves messages via the Grpc Server mpsc Receiver channel (receiving_channels)
@@ -418,13 +403,15 @@ pub struct NetworkSession {
     // If Network mode is sync, we need to keep track of the values below to make sure
     // we are within time bound
     pub(crate) conf: OptionConfigWrapper,
-    pub(crate) init_time: OnceLock<Instant>,
-    /// Milliseconds since [`ACTIVITY_EPOCH`] when the last message was received,
-    /// or when the session was made active if no message has been received yet.
-    /// Used to discard inactive sessions. Stored as an atomic (not a lock) so it
-    /// can be read and written without awaiting — in particular from the session
-    /// cleanup task while it holds a `DashMap` shard guard.
-    pub(crate) last_rec_activity_time: AtomicU64,
+    /// Anchor of the round clock, stamped at session creation. Stored lock-free
+    /// (an [`AtomicInstant`]) so `synchronize_from` can overwrite it from `&self`.
+    pub(crate) init_time: AtomicInstant,
+    /// When the last message was received, or when the session was made active if
+    /// no message has been received yet. Used to discard inactive sessions. Stored
+    /// lock-free (an [`AtomicInstant`]) so it can be read and written without
+    /// awaiting — in particular from the session cleanup task while it holds a
+    /// `DashMap` shard guard.
+    pub(crate) last_rec_activity_time: AtomicInstant,
     pub(crate) current_network_timeout: RwLock<Duration>,
     pub(crate) next_network_timeout: RwLock<Duration>,
     pub(crate) max_elapsed_time: RwLock<Duration>,
@@ -524,8 +511,7 @@ impl<R: RoleTrait> Networking<R> for NetworkSession {
         }
         .ok_or_else(|| anyhow_error_and_log("Trying to receive from a closed channel."))?;
         // Update the time we received a message
-        self.last_rec_activity_time
-            .store(now_activity_millis(), Ordering::Relaxed);
+        self.last_rec_activity_time.store(Instant::now());
         // drop old messages
         let network_round = *counter_lock;
         while returned_packet.round_counter < network_round {
@@ -573,17 +559,43 @@ impl<R: RoleTrait> Networking<R> for NetworkSession {
 
     ///Used to compute the timeout in network functions
     async fn get_timeout_current_round(&self) -> Instant {
-        let init_time = self.init_time.get_or_init(Instant::now);
         let (max_elapsed_time, network_timeout) = (
             self.max_elapsed_time.read().await,
             self.current_network_timeout.read().await,
         );
 
-        *init_time + *network_timeout + *max_elapsed_time
+        self.init_time.load() + *network_timeout + *max_elapsed_time
     }
 
     async fn get_current_round(&self) -> usize {
         *self.round_counter.read().await
+    }
+
+    async fn round_clock_snapshot(&self) -> RoundClock {
+        let round_counter = self.round_counter.read().await;
+        RoundClock {
+            round: *round_counter,
+            max_elapsed_time: *self.max_elapsed_time.read().await,
+            current_network_timeout: *self.current_network_timeout.read().await,
+            next_network_timeout: *self.next_network_timeout.read().await,
+            init_time: self.init_time.load(),
+        }
+    }
+
+    async fn restore_round_clock(&self, clock: RoundClock) {
+        let mut round_counter = self.round_counter.write().await;
+        // A round clock only ever moves forward.
+        assert!(
+            clock.round >= *round_counter,
+            "restore_round_clock: refusing to move round backwards from {} to {}",
+            *round_counter,
+            clock.round
+        );
+        self.init_time.store(clock.init_time);
+        *round_counter = clock.round;
+        *self.max_elapsed_time.write().await = clock.max_elapsed_time;
+        *self.current_network_timeout.write().await = clock.current_network_timeout;
+        *self.next_network_timeout.write().await = clock.next_network_timeout;
     }
 
     /// Method to set a different timeout than the one set at construction, effective for the next round.
@@ -658,16 +670,16 @@ mod tests {
     use tokio::sync::{Mutex, RwLock};
     use tokio::task::JoinSet;
 
+    use crate::clock::AtomicInstant;
     use crate::grpc::GrpcNetworkingManager;
     use crate::grpc::{
         CoreToCoreNetworkConfig, MessageQueueStore, NetworkRoundValue, OptionConfigWrapper,
         TlsExtensionGetter,
     };
-    use crate::sending_service::{NetworkSession, now_activity_millis};
+    use crate::sending_service::NetworkSession;
     use std::collections::HashMap;
     use std::net::IpAddr;
-    use std::sync::atomic::AtomicU64;
-    use std::sync::{Arc, OnceLock};
+    use std::sync::Arc;
     use std::time::Duration;
     use test_utils::random_free_port::get_listeners_random_free_ports;
     use threshold_types::network::{NetworkMode, Networking};
@@ -931,8 +943,8 @@ mod tests {
             num_byte_sent: RwLock::new(0),
             network_mode: NetworkMode::Async,
             conf: OptionConfigWrapper { conf: None },
-            init_time: OnceLock::new(),
-            last_rec_activity_time: AtomicU64::new(now_activity_millis()),
+            init_time: AtomicInstant::now(),
+            last_rec_activity_time: AtomicInstant::now(),
             current_network_timeout: RwLock::new(Duration::from_secs(10)),
             next_network_timeout: RwLock::new(Duration::from_secs(10)),
             max_elapsed_time: RwLock::new(Duration::from_secs(0)),
@@ -1000,6 +1012,150 @@ mod tests {
             let actual = session.receive(&role_2).await.unwrap();
             assert_eq!(actual, expected);
         }
+    }
+
+    /// Build a bare [`NetworkSession`] with no peers wired up: enough to exercise
+    /// the round clock (counter, accumulated budget, deadline), which is what the
+    /// resharing session-skew compensation relies on.
+    fn make_round_clock_session(timeout: Duration) -> NetworkSession {
+        let id_1 = Identity::new("127.0.0.1".to_string(), 1, None);
+        NetworkSession {
+            owner: id_1,
+            session_id: SessionId::from(0),
+            sending_channels: HashMap::new(),
+            receiving_channels: MessageQueueStore::new_uninitialized(DashMap::new()),
+            completed_parties: Arc::new(DashSet::new()),
+            round_counter: tokio::sync::RwLock::new(0),
+            num_byte_sent: RwLock::new(0),
+            network_mode: NetworkMode::Sync,
+            conf: OptionConfigWrapper { conf: None },
+            init_time: AtomicInstant::now(),
+            last_rec_activity_time: AtomicInstant::now(),
+            current_network_timeout: RwLock::new(timeout),
+            next_network_timeout: RwLock::new(timeout),
+            max_elapsed_time: RwLock::new(Duration::ZERO),
+        }
+    }
+
+    /// Advancing a session by `n` rounds moves the round counter to `n` and the
+    /// deadline of the current round to `init_time + (n + 1) * timeout`: every
+    /// skipped round contributes its full timeout to the accumulated budget. This
+    /// is the contract that the resharing session-skew compensation relies on.
+    #[tokio::test()]
+    async fn test_round_clock_deadline_grows_by_one_timeout_per_round() {
+        let timeout = Duration::from_secs(10);
+        let session = make_round_clock_session(timeout);
+        let init_time = session.init_time.load();
+
+        assert_eq!(
+            <NetworkSession as Networking<Role>>::get_current_round(&session).await,
+            0
+        );
+        assert_eq!(
+            <NetworkSession as Networking<Role>>::get_timeout_current_round(&session).await,
+            init_time + timeout
+        );
+
+        for round in 1..=7u32 {
+            <NetworkSession as Networking<Role>>::increase_round_counter(&session).await;
+            assert_eq!(
+                <NetworkSession as Networking<Role>>::get_current_round(&session).await,
+                round as usize
+            );
+            assert_eq!(
+                <NetworkSession as Networking<Role>>::get_timeout_current_round(&session).await,
+                init_time + timeout * (round + 1),
+                "deadline after {round} rounds must be init_time + (round + 1) * timeout"
+            );
+        }
+    }
+
+    /// The round-clock anchor is stamped when the session is built, not at first
+    /// use: a session that idles before its first `receive` keeps the deadline it
+    /// was created with, in lockstep with the sessions of the other parties.
+    #[tokio::test()]
+    async fn test_init_time_is_stamped_at_construction() {
+        let timeout = Duration::from_secs(10);
+        let used_immediately = make_round_clock_session(timeout);
+        let used_later = make_round_clock_session(timeout);
+
+        let deadline_immediate =
+            <NetworkSession as Networking<Role>>::get_timeout_current_round(&used_immediately)
+                .await;
+
+        let idle = Duration::from_millis(300);
+        tokio::time::sleep(idle).await;
+        let deadline_later =
+            <NetworkSession as Networking<Role>>::get_timeout_current_round(&used_later).await;
+
+        let skew = deadline_later.saturating_duration_since(deadline_immediate);
+        assert!(
+            skew < idle / 2,
+            "first use {idle:?} after construction moved the deadline by {skew:?}"
+        );
+    }
+
+    /// `synchronize_from` copies the whole round clock (anchor, round counter,
+    /// accumulated budget and current-round timeout), so afterwards both sessions
+    /// report the same round and the same deadline.
+    #[tokio::test()]
+    async fn test_synchronize_from_copies_round_clock() {
+        let timeout = Duration::from_secs(10);
+        let source = make_round_clock_session(timeout);
+        <NetworkSession as Networking<Role>>::increase_round_counter(&source).await;
+        <NetworkSession as Networking<Role>>::increase_round_counter(&source).await;
+        *source.next_network_timeout.write().await = Duration::from_secs(42);
+        <NetworkSession as Networking<Role>>::increase_round_counter(&source).await;
+
+        // Build the target later so that its anchor differs from the source's.
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        let target = make_round_clock_session(timeout);
+        assert_ne!(target.init_time.load(), source.init_time.load());
+
+        <NetworkSession as Networking<Role>>::synchronize_from(&target, &source).await;
+
+        let source_clock =
+            <NetworkSession as Networking<Role>>::round_clock_snapshot(&source).await;
+        let target_clock =
+            <NetworkSession as Networking<Role>>::round_clock_snapshot(&target).await;
+        assert_eq!(target_clock.init_time, source_clock.init_time);
+        assert_eq!(target_clock.round, 3);
+        assert_eq!(target_clock.round, source_clock.round);
+        assert_eq!(target_clock.max_elapsed_time, Duration::from_secs(30));
+        assert_eq!(target_clock.max_elapsed_time, source_clock.max_elapsed_time);
+        assert_eq!(
+            target_clock.current_network_timeout,
+            Duration::from_secs(42)
+        );
+        assert_eq!(
+            target_clock.current_network_timeout,
+            source_clock.current_network_timeout
+        );
+        assert_eq!(
+            <NetworkSession as Networking<Role>>::get_timeout_current_round(&target).await,
+            <NetworkSession as Networking<Role>>::get_timeout_current_round(&source).await
+        );
+
+        // Synchronizing to the same round is allowed (idempotent).
+        <NetworkSession as Networking<Role>>::synchronize_from(&target, &source).await;
+        assert_eq!(
+            <NetworkSession as Networking<Role>>::get_current_round(&target).await,
+            3
+        );
+    }
+
+    /// A round clock never moves backwards: synchronizing to a session that is
+    /// behind would reuse round tags that were already sent.
+    #[tokio::test()]
+    #[should_panic(expected = "refusing to move round backwards")]
+    async fn test_synchronize_from_refuses_to_rewind() {
+        let timeout = Duration::from_secs(10);
+        let ahead = make_round_clock_session(timeout);
+        let behind = make_round_clock_session(timeout);
+        <NetworkSession as Networking<Role>>::increase_round_counter(&ahead).await;
+        <NetworkSession as Networking<Role>>::increase_round_counter(&ahead).await;
+
+        <NetworkSession as Networking<Role>>::synchronize_from(&ahead, &behind).await;
     }
 
     #[tokio::test(flavor = "multi_thread")]
@@ -1352,8 +1508,8 @@ mod tests {
             conf: OptionConfigWrapper {
                 conf: Some(test_config(1)),
             },
-            init_time: OnceLock::new(),
-            last_rec_activity_time: AtomicU64::new(now_activity_millis()),
+            init_time: AtomicInstant::now(),
+            last_rec_activity_time: AtomicInstant::now(),
             current_network_timeout: RwLock::new(wait),
             next_network_timeout: RwLock::new(wait),
             max_elapsed_time: RwLock::new(Duration::from_secs(0)),

@@ -42,6 +42,11 @@ use threshold_types::{
 
 #[async_trait]
 pub trait RobustOpen: ProtocolDescription + Send + Sync + Clone {
+    /// Number of synchronous network rounds one open takes (a single send +
+    /// robust reconstruction). Implemented per concrete object; composed by
+    /// protocols built on a robust open to budget their first-round timeout.
+    fn num_rounds(num_parties: usize) -> usize;
+
     /// Inputs:
     /// - session
     /// - shares (wrapped inside [`OpeningKind`] to know who to open to) of the secrets to open
@@ -204,6 +209,14 @@ impl ProtocolDescription for SecureRobustOpen {
 
 #[async_trait]
 impl RobustOpen for SecureRobustOpen {
+    fn num_rounds(_num_parties: usize) -> usize {
+        // One send + robust reconstruction.
+        //
+        // CAREFUL: Very large openings may be chunked
+        // into more rounds, but resharing opens fit in a single round.
+        1
+    }
+
     async fn execute<Z: ErrorCorrect, B: BaseSessionHandles>(
         &self,
         session: &B,
