@@ -65,10 +65,16 @@ async fn failed_backup_erasure_is_retryable(
 }
 
 /// A recovery-material delete failure leaves no backup entries and permits a retry.
+#[rstest::rstest]
+#[case::before_mutation(FaultPhase::BeforeMutation, StorageOutcome::FailedBeforeMutation)]
+#[case::after_mutation(FaultPhase::AfterMutation, StorageOutcome::FailedAfterMutation)]
 #[tokio::test]
-async fn failed_recovery_material_deletion_is_retryable() {
+async fn failed_recovery_material_deletion_is_retryable(
+    #[case] fault_phase: FaultPhase,
+    #[case] expected_outcome: StorageOutcome,
+) {
     let fixture = CustodianFixture::new().await;
-    fixture.fail_recovery_delete().await;
+    fixture.fail_recovery_delete(fault_phase).await;
     let expected_backups = fixture.expected_backup_deletes(fixture.retired_id).await;
     let mut expected_final_state = fixture.backup_state().await;
     for event in &expected_backups {
@@ -81,14 +87,17 @@ async fn failed_recovery_material_deletion_is_retryable() {
     assert_same_events(&fixture.backup_events().await, &expected_backups);
     assert_eq!(fixture.backup_state().await, expected_final_state);
     assert!(fixture.backup_is_empty(fixture.retired_id).await);
-    assert!(fixture.recovery_exists(fixture.retired_id).await);
+    match fault_phase {
+        FaultPhase::BeforeMutation => assert!(fixture.recovery_exists(fixture.retired_id).await),
+        FaultPhase::AfterMutation => assert!(!fixture.recovery_exists(fixture.retired_id).await),
+    }
     assert!(fixture.context_is_complete(fixture.retired_id).await);
     assert_same_events(
         &fixture.public_events().await,
         &[StorageEvent::new(
             fixture.retired_recovery_entry.clone(),
             StorageOp::Delete,
-            StorageOutcome::FailedBeforeMutation,
+            expected_outcome,
         )],
     );
 
@@ -97,14 +106,16 @@ async fn failed_recovery_material_deletion_is_retryable() {
 
     assert!(fixture.backup_events().await.is_empty());
     assert_eq!(fixture.backup_state().await, expected_final_state);
-    assert_same_events(
-        &fixture.public_events().await,
-        &[StorageEvent::new(
+    let expected_retry = match fault_phase {
+        FaultPhase::BeforeMutation => vec![StorageEvent::new(
             fixture.retired_recovery_entry.clone(),
             StorageOp::Delete,
             StorageOutcome::Deleted,
         )],
-    );
+        // The first delete took effect, so only the meta-store entry remains to remove.
+        FaultPhase::AfterMutation => vec![],
+    };
+    assert_same_events(&fixture.public_events().await, &expected_retry);
     assert!(fixture.backup_is_empty(fixture.retired_id).await);
     assert!(!fixture.recovery_exists(fixture.retired_id).await);
     assert!(!fixture.context_is_complete(fixture.retired_id).await);

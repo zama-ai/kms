@@ -147,13 +147,17 @@ impl CustodianFixture {
         }
     }
 
-    /// Rejects deletion of the target's public recovery material.
-    pub(super) async fn fail_recovery_delete(&self) {
-        self.storage
-            .public_storage
-            .lock()
-            .await
-            .set_fail_delete_at(self.retired_recovery_entry.clone());
+    /// Fails deletion of the retired context's public recovery material at `phase`.
+    pub(super) async fn fail_recovery_delete(&self, phase: FaultPhase) {
+        let mut storage = self.storage.public_storage.lock().await;
+        match phase {
+            FaultPhase::BeforeMutation => {
+                storage.set_fail_delete_at(self.retired_recovery_entry.clone())
+            }
+            FaultPhase::AfterMutation => {
+                storage.set_fail_delete_after_mutation_at(self.retired_recovery_entry.clone())
+            }
+        }
     }
 
     /// Removes all fault points and recorded events from both mutable stores.
