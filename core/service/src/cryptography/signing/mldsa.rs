@@ -165,43 +165,32 @@ impl_generic_versionize!(<P: MlDsaParams> MlDsaVerfKey<P>);
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::cryptography::signing::test_support::{exercise_backend, random_seed};
     use aes_prng::AesRng;
     use ml_dsa::{MlDsa44, MlDsa65, MlDsa87};
-    use rand::{RngCore, SeedableRng};
+    use rand::SeedableRng;
 
     const DSEP: &DomainSep = b"MLDSATST";
 
-    fn seed<R: RngCore>(rng: &mut R) -> [u8; SEED_LEN] {
-        let mut s = [0u8; SEED_LEN];
-        rng.fill_bytes(&mut s);
-        s
-    }
-
-    /// Round-trips, and rejects a tampered message, a wrong domain separator,
-    /// a tampered signature, and a malformed (too short) signature.
-    fn exercise<P: MlDsaParams>(seed_u64: u64) {
+    /// The shared backend contract for one parameter set, plus the ML-DSA-specific
+    /// error for a signature it cannot decode.
+    fn exercise_param_set<P: MlDsaParams>(seed_u64: u64) {
         let mut rng = AesRng::seed_from_u64(seed_u64);
-        let sk = MlDsa::<P>::keygen_from_seed(&seed(&mut rng));
+        let sk = MlDsa::<P>::keygen_from_seed(&random_seed(&mut rng));
+        exercise_backend::<MlDsa<P>>(DSEP, &sk);
+
+        // ML-DSA decodes the signature rather than checking its length up front, so a
+        // truncated one is reported as malformed. The shared helper only asserts that it
+        // is refused.
         let vk = MlDsa::<P>::verifying_key(&sk).unwrap();
-
-        let sig = MlDsa::<P>::sign(DSEP, b"hello", &sk).unwrap();
-        MlDsa::<P>::verify(DSEP, b"hello", &sig, &vk).unwrap();
-
-        assert!(MlDsa::<P>::verify(DSEP, b"HELLO", &sig, &vk).is_err());
-        assert!(MlDsa::<P>::verify(b"OTHERDSP", b"hello", &sig, &vk).is_err());
-
-        let mut bad = sig.clone();
-        bad[0] ^= 0x01;
-        assert!(MlDsa::<P>::verify(DSEP, b"hello", &bad, &vk).is_err());
-
         let err = MlDsa::<P>::verify(DSEP, b"hello", &[0u8; 10], &vk).unwrap_err();
         assert!(matches!(err, SigningError::MalformedSignature(_)));
     }
 
     #[test]
     fn all_param_sets() {
-        exercise::<MlDsa44>(1);
-        exercise::<MlDsa65>(2);
-        exercise::<MlDsa87>(3);
+        exercise_param_set::<MlDsa44>(1);
+        exercise_param_set::<MlDsa65>(2);
+        exercise_param_set::<MlDsa87>(3);
     }
 }

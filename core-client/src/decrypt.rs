@@ -4,8 +4,8 @@ use anyhow::Context as _;
 use kms_grpc::{
     ContextId, EpochId, KeyId, RequestId,
     kms::v1::{
-        PublicDecryptionRequest, PublicDecryptionResponse, TypedCiphertext, TypedPlaintext,
-        UserDecryptionRequest, UserDecryptionResponse,
+        PublicDecryptionRequest, PublicDecryptionResponse, PublicDecryptionResponsePayload,
+        TypedCiphertext, TypedPlaintext, UserDecryptionRequest, UserDecryptionResponse,
     },
     kms_service::v1::core_service_endpoint_client::CoreServiceEndpointClient,
     rpc_types::protobuf_to_alloy_domain,
@@ -16,8 +16,9 @@ use kms_lib::{
         user_decryption_wasm::ParsedUserDecryptionRequest,
     },
     cryptography::encryption::{UnifiedPrivateEncKey, UnifiedPublicEncKey},
-    cryptography::signatures::recover_address_from_ext_signature,
-    engine::base::compute_public_decryption_message,
+    engine::base::{
+        DSEP_PUBLIC_DECRYPTION, compute_public_decryption_message, public_dec_payload_bytes,
+    },
 };
 use prost::Message as _;
 use rand::{CryptoRng, Rng};
@@ -222,35 +223,48 @@ async fn observe_rpc<T>(
     result
 }
 
-/// check that the external signature on the decryption result(s) is valid, i.e. was made by one of the supplied addresses
-fn check_ext_pt_signature(
-    external_sig: &[u8],
-    plaintexts: &[TypedPlaintext],
+/// Verify every signature a public-decryption response carries, under every scheme
+/// the client requested, and that it was produced by one of the known KMS parties.
+fn check_pt_signatures(
+    internal_client: &Client,
+    response: &PublicDecryptionResponse,
+    payload: &PublicDecryptionResponsePayload,
     external_handles: &[Vec<u8>],
-    domain: Eip712Domain,
+    domain: &Eip712Domain,
     kms_addrs: &[alloy_primitives::Address],
     extra_data: &[u8],
 ) -> anyhow::Result<()> {
     tracing::debug!(
-        "Checking signature for PTs: {:?}, ext. handles: {:?}, extra_data: {}, ext. sig {}",
-        plaintexts,
+        "Checking the signatures for PTs: {:?}, ext. handles: {:?}, extra_data: {}",
+        payload.plaintexts,
         external_handles,
         hex::encode(extra_data),
-        hex::encode(external_sig)
     );
-    let message = compute_public_decryption_message(external_handles, plaintexts, extra_data)?;
-    let addr = recover_address_from_ext_signature(&message, &domain, external_sig)?;
+    let sol_type =
+        compute_public_decryption_message(external_handles, &payload.plaintexts, extra_data)?;
+    let payload_bytes = public_dec_payload_bytes(&bc2wrap::serialize(payload)?, extra_data)?;
+
+    let (party_id, address) = internal_client.verify_result_signatures(
+        &response.signatures,
+        &response.external_signature,
+        &sol_type,
+        domain,
+        &DSEP_PUBLIC_DECRYPTION,
+        &payload_bytes,
+    )?;
 
     // check that the address is in the list of known KMS addresses
-    if kms_addrs.contains(&addr) {
-        Ok(())
-    } else {
-        Err(anyhow::anyhow!(
-            "External PT signature verification failed!"
-        ))
+    if !kms_addrs.contains(&address) {
+        anyhow::bail!(
+            "the response verified as party {party_id}, whose address {address} is not among \
+             the configured KMS addresses"
+        );
     }
+    Ok(())
 }
 
+/// Check every requested signature of every response, and that each one decrypts
+/// to `expected_answer`.
 fn check_external_decryption_signature(
     responses: &[PublicDecryptionResponse], // one response per party
     expected_answer: TypedPlaintext,
@@ -258,6 +272,7 @@ fn check_external_decryption_signature(
     domain: &Eip712Domain,
     kms_addrs: &[alloy_primitives::Address],
     extra_data: &[u8],
+    internal_client: &Client,
 ) -> anyhow::Result<()> {
     let mut results = Vec::new();
     for response in responses {
@@ -265,11 +280,12 @@ fn check_external_decryption_signature(
             .payload
             .as_ref()
             .ok_or_else(|| anyhow::anyhow!("missing payload in decryption response"))?;
-        check_ext_pt_signature(
-            &response.external_signature,
-            &payload.plaintexts,
+        check_pt_signatures(
+            internal_client,
+            response,
+            payload,
             external_handles,
-            domain.clone(),
+            domain,
             kms_addrs,
             extra_data,
         )?;
@@ -2200,7 +2216,7 @@ fn verify_public_decrypt_responses(
         resp_response_vec,
     )?;
 
-    // check the external signatures
+    // check the per-scheme signatures
     check_external_decryption_signature(
         resp_response_vec,
         ptxt,
@@ -2208,6 +2224,7 @@ fn verify_public_decrypt_responses(
         &domain,
         kms_addrs,
         &extra_data,
+        internal_client,
     )?;
 
     Ok(())

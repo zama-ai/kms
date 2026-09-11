@@ -3,7 +3,7 @@ use crate::{
         base::compute_preprocessing_signatures,
         centralized::central_kms::{CentralizedKms, CentralizedPreprocBucket},
         traits::{BackupOperator, ContextManager},
-        utils::MetricedError,
+        utils::{MetricedError, signing_identity_for},
         validation::{RequestIdParsingErr, parse_grpc_request_id, validate_preproc_request},
     },
     util::meta_store::{add_req_to_meta_store, retrieve_from_meta_store, update_req_in_meta_store},
@@ -67,14 +67,12 @@ pub async fn preprocessing_impl<
         signing_schemes,
     ) = validate_preproc_request(inner)?;
 
-    let sk = service.base_kms.sig_key().map_err(|e| {
-        MetricedError::new(
-            OP_KEYGEN_PREPROC_REQUEST,
-            Some(req_id),
-            e,
-            tonic::Code::FailedPrecondition,
-        )
-    })?;
+    let sk = signing_identity_for(
+        &service.base_kms,
+        &signing_schemes,
+        OP_KEYGEN_PREPROC_REQUEST,
+        Some(req_id),
+    )?;
     let permit = add_req_to_meta_store(
         &service.preprocessing_meta_store,
         &req_id,

@@ -16,6 +16,13 @@ use tracing::instrument;
 
 #[async_trait]
 pub trait BitGenEven {
+    /// Worst-case number of synchronous network rounds a `gen_bits_even` takes.
+    ///
+    /// Implemented per concrete object; composed by protocols built on top of
+    /// bit generation to budget their first-round timeout (see resharing session
+    /// advancement).
+    fn num_rounds() -> usize;
+
     async fn gen_bits_even<
         Z: Solve + Invert + ErrorCorrect,
         Ses: BaseSessionHandles,
@@ -36,6 +43,12 @@ pub struct SecureBitGenEven {}
 /// BitGen for even modulus
 #[async_trait]
 impl BitGenEven for SecureBitGenEven {
+    /// One multiplication opening plus one output opening. Independent of the
+    /// number of bits generated (the openings are batched).
+    fn num_rounds() -> usize {
+        2
+    }
+
     /// Generates a vector of secret shared random bits using a preprocessing functionality and a session.
     /// The code only works when the modulo of the ring used is even.
     #[instrument(name="MPC.GenBits", skip(amount, preproc, session), fields(sid = ?session.session_id(), my_role = ?session.my_role(),batch_size=?amount))]
@@ -115,6 +128,35 @@ mod tests {
     use std::num::Wrapping;
     use threshold_types::network::NetworkMode;
     use threshold_types::role::Role;
+
+    /// [`SecureBitGenEven::num_rounds`] is the exact number of rounds a bit
+    /// generation spends, whatever the amount of bits (the openings are batched).
+    /// The lift budget of the resharing sessions composes this count.
+    #[tokio::test]
+    async fn test_num_rounds_matches_execution() {
+        async fn task(mut session: SmallSession<ResiduePolyF4Z128>, _bot: Option<String>) {
+            let mut preprocessing = DummyPreprocessing::new(42, &session);
+            SecureBitGenEven::gen_bits_even::<ResiduePolyF4Z128, _, _>(
+                37,
+                &mut preprocessing,
+                &mut session,
+            )
+            .await
+            .unwrap();
+        }
+        assert_eq!(SecureBitGenEven::num_rounds(), 2);
+        // Async because the triple gen is dummy.
+        execute_protocol_small::<_, _, ResiduePolyF4Z128, { ResiduePolyF4Z128::EXTENSION_DEGREE }>(
+            4,
+            1,
+            Some(SecureBitGenEven::num_rounds()),
+            NetworkMode::Async,
+            None,
+            &mut task,
+            None,
+        )
+        .await;
+    }
 
     macro_rules! test_bitgen {
         ($z:ty, $u:ty) => {

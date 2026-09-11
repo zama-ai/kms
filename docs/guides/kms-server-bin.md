@@ -43,7 +43,9 @@ pick at most one per run:
   material for that handle. **This destroys every post-quantum identity of the
   node**, since they are derived from the seed and stored nowhere else.
 - `show_existing`: print the existing signing-material handles and exit, without
-  generating or deleting anything.
+  generating or deleting anything. Each per-scheme line names its scheme, and the
+  address folders print the stored text, so this is what an operator reads to learn
+  which identifiers to register for a node.
 - `repopulate`: derive and store every piece of missing verification material
   — each scheme's key and digest, ECDSA's included, plus the two deprecated
   ECDSA-only objects — from the signing identity already present in private
@@ -112,6 +114,40 @@ release: new readers should take the ECDSA entry from `TypedVerfKey` /
 `TypedVerfAddress` instead.
 
 For local test/dev runs that need pre-baked FHE keys + CRS, use `generate-test-material` instead (see the `generate-test-material-*` targets in the top-level `Makefile`).
+
+### Moving a cluster onto seed-rooted identities
+
+An operator that upgraded from a release without the root signing seed keeps its
+original ECDSA key, so only its non-ECDSA keys descend from the seed. The cluster
+reaches the end state — every key of every node derived from one seed — at an **MPC
+context switch**, with new nodes generated from scratch. No node ever rewrites the
+ECDSA key it is live under, so this is an operational procedure and not a
+KMS-side key rotation.
+
+Per node, in this order:
+
+1. **Generate the identity** with `kms-gen-keys` against empty storage. The seed is
+   drawn first and the ECDSA key is derived from it, so the whole identity descends
+   from one secret. Do not use `overwrite` on a live node for this: it deletes the
+   seed and destroys every post-quantum identity the node already published.
+2. **Start the node once**, and confirm the seed reached the backup vault. The boot
+   pass copies new private objects into the vault, so a freshly generated seed is
+   only protected after that start. A node whose seed is not yet backed up must not
+   be registered: losing the seed loses every key derived from it.
+3. **Read the identifiers to register**: run `kms-gen-keys` with
+   `[keygen] show_existing = true`. Every per-scheme line names its scheme, so the
+   `TypedVerfAddress` lines give the ECDSA address to register on-chain and each
+   other scheme's digest to put in the new context.
+4. **Register the node** in the new context's per-scheme digests, and its ECDSA
+   address on-chain.
+
+Once every node of the new context is registered, activate the context and only
+then decommission the old nodes. Each old node keeps its own key until it is
+retired, so there is no window in which a node signs under an identity nobody has
+registered.
+
+A further rotation follows the same route: a further context switch, with a fresh
+seed per node.
 
 ## Threshold KMS TLS Certificates
 

@@ -20,6 +20,14 @@ use threshold_types::protocol::ProtocolDescription;
 
 #[async_trait]
 pub trait BitLift: Send + Sync + Clone + ProtocolDescription {
+    /// Worst-case number of synchronous network rounds a single [`BitLift::execute`]
+    /// (one sub-key) takes.
+    ///
+    /// Implemented per concrete object; composed by protocols built on top of the
+    /// bit-lift to budget their first-round timeout (see resharing session
+    /// advancement).
+    fn num_rounds() -> usize;
+
     /// Lifts a vector of bits shared over a galois extension of Z64 into a vector of bits shared over a galois estension of Z128
     /// # Arguments
     /// * `secret_bit_vector` - Vector of bits shared over a galois extension of Z64
@@ -58,6 +66,11 @@ impl ProtocolDescription for SecureBitLift {
 
 #[async_trait]
 impl BitLift for SecureBitLift {
+    /// One AND/multiplication opening plus one output opening.
+    fn num_rounds() -> usize {
+        2
+    }
+
     async fn execute<
         const EXTENSION_DEGREE: usize,
         Ses: BaseSessionHandles,
@@ -253,6 +266,33 @@ mod tests {
     async fn sunshine() {
         let params = TestingParameters::init(4, 1, &[], &[], &[], false, None);
         test_bit_lift::<4, _>(params, 10, SecureBitLift).await;
+    }
+
+    /// [`SecureBitLift::num_rounds`] is the exact number of rounds one bit lift
+    /// spends, whatever the number of bits (the openings are batched). The lift
+    /// budget of the resharing sessions composes this count once per sub-key.
+    #[tokio::test]
+    async fn test_num_rounds_matches_execution() {
+        use crate::tests::helper::tests_and_benches::execute_protocol_large;
+
+        let mut task = |mut session: LargeSession| async move {
+            let mut prep = DummyPreprocessing::new(42, &session);
+            let bits_to_lift: Vec<Share<ResiduePoly<Z64, 4>>> = prep.next_bit_vec(37).unwrap();
+            SecureBitLift::execute(bits_to_lift, &mut prep, &mut session)
+                .await
+                .unwrap();
+        };
+        assert_eq!(SecureBitLift::num_rounds(), 2);
+        // Async because the preprocessing is dummy.
+        execute_protocol_large::<_, _, ResiduePoly<Z64, 4>, 4>(
+            4,
+            1,
+            Some(SecureBitLift::num_rounds()),
+            NetworkMode::Async,
+            None,
+            &mut task,
+        )
+        .await;
     }
 
     #[tokio::test]

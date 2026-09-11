@@ -1,7 +1,7 @@
 use crate::{
     CmdConfig, CoreClientConfig, CoreConf, DigestKeySet, NewEpochParameters,
-    PreviousEpochParameters, SLEEP_TIME_BETWEEN_REQUESTS_MS,
-    keygen::check_uncompressed_keyset_ext_signature, s3_operations::fetch_public_elements,
+    PreviousEpochParameters, SLEEP_TIME_BETWEEN_REQUESTS_MS, crsgen::check_crsgen_signatures,
+    keygen::check_uncompressed_keyset_signatures, s3_operations::fetch_public_elements,
 };
 use kms_grpc::{
     RequestId,
@@ -15,6 +15,7 @@ use kms_lib::client::{
     local_crypto::{load_material_from_pub_storage, load_pk_from_pub_storage},
 };
 use std::{collections::HashMap, path::Path};
+use tfhe::zk::CompactPkeCrs;
 use tokio::task::JoinSet;
 use tonic::transport::Channel;
 
@@ -96,7 +97,6 @@ impl PreviousEpochParameters {
     }
 }
 
-#[expect(clippy::too_many_arguments)]
 // NOTE: The new context must already exist !
 pub(crate) async fn do_new_epoch(
     internal_client: &mut Client,
@@ -104,7 +104,6 @@ pub(crate) async fn do_new_epoch(
     cmd_conf: &CmdConfig,
     cc_conf: &CoreClientConfig,
     destination_prefix: &Path,
-    kms_addrs: &[alloy_primitives::Address],
     fhe_params: FheParameter,
     new_epoch_params: NewEpochParameters,
 ) -> anyhow::Result<EpochId> {
@@ -260,6 +259,25 @@ pub(crate) async fn do_new_epoch(
             response_vec.push((core_conf, resp));
         }
 
+        // A party that is only in the *previous* context does not re-sign the keyset: its
+        // `reshare_as_set_1` path returns the metadata of the epoch we reshare from, whose
+        // signature covers that epoch's `extra_data`. Everyone in the new context re-signs
+        // with the new epoch's `extra_data`. Both are legitimate, so accept either. The
+        // same holds for the re-signed CRS metadata.
+        //
+        // The metadata of a set-1-only party also carries only the signing schemes that the
+        // previous keygen used. A request for another scheme therefore fails the verification
+        // below, even though the KMS answered correctly. A context-aware client resolves this.
+        // TODO(https://github.com/zama-ai/kms-internal/issues/3207): relax the requested
+        // scheme set for a set-1-only reshare response.
+        let accepted_extra_data = [
+            request.extra_data.clone(),
+            crate::extra_data_from_context_epoch(
+                Some(previous_epoch.context_id),
+                Some(previous_epoch.epoch_id),
+            )?,
+        ];
+
         for (key_id, preproc_id) in expected_key_ids.into_iter().zip(expected_preproc_ids) {
             // We try to download all because all parties needed to respond for a successful resharing
             let key_id: RequestId = key_id.try_into().map_err(|e| {
@@ -339,22 +357,10 @@ pub(crate) async fn do_new_epoch(
                 (None, None)
             };
 
-            // A party that is only in the *previous* context does not re-sign the keyset: its
-            // `reshare_as_set_1` path returns the metadata of the epoch we reshare from, whose
-            // signature covers that epoch's `extra_data`. Everyone in the new context re-signs
-            // with the new epoch's `extra_data`. Both are legitimate, so accept either.
-            let accepted_extra_data = [
-                request.extra_data.clone(),
-                crate::extra_data_from_context_epoch(
-                    Some(previous_epoch.context_id),
-                    Some(previous_epoch.epoch_id),
-                )?,
-            ];
-
             let key_id_proto: Option<kms_grpc::kms::v1::RequestId> = Some(key_id.into());
             let preproc_id_proto: Option<kms_grpc::kms::v1::RequestId> = Some(preproc_id.into());
             for (_, response) in response_vec.iter() {
-                let signature = response
+                let reshared = response
                     .reshare_responses
                     .iter()
                     .find(|r| {
@@ -366,28 +372,27 @@ pub(crate) async fn do_new_epoch(
                             key_id,
                             preproc_id
                         )
-                    })?
-                    .external_signature
-                    .clone();
-
+                    })?;
                 let verified = accepted_extra_data.iter().any(|extra_data| {
                     if let Some(keyset) = keyset.as_ref() {
                         let pk = compressed_public_key.as_ref().expect(
                             "compressed reshared key must have compact public key material",
                         );
-                        crate::keygen::check_compressed_keyset_ext_signature(
+                        crate::keygen::check_compressed_keyset_signatures(
+                            internal_client,
                             keyset,
                             pk,
                             &preproc_id,
                             &key_id,
-                            &signature,
+                            &reshared.signatures,
+                            &reshared.external_signature,
                             &default_domain,
                             extra_data.clone(),
-                            kms_addrs,
                         )
                         .is_ok()
                     } else {
-                        check_uncompressed_keyset_ext_signature(
+                        check_uncompressed_keyset_signatures(
+                            internal_client,
                             public_key
                                 .as_ref()
                                 .expect("legacy reshared key must have public key material"),
@@ -396,10 +401,10 @@ pub(crate) async fn do_new_epoch(
                                 .expect("legacy reshared key must have server key material"),
                             &preproc_id,
                             &key_id,
-                            &signature,
+                            &reshared.signatures,
+                            &reshared.external_signature,
                             &default_domain,
                             extra_data.clone(),
-                            kms_addrs,
                         )
                         .is_ok()
                     }
@@ -407,7 +412,62 @@ pub(crate) async fn do_new_epoch(
 
                 anyhow::ensure!(
                     verified,
-                    "External signature verification failed for the reshared key {key_id}"
+                    "Signature verification failed for the reshared key {key_id}"
+                );
+            }
+        }
+
+        // Every party re-signs the CRS of the epoch we reshare from, so every response has
+        // to carry a verifying entry for each of them, over the CRS the party published.
+        for previous_crs in &previous_epoch.previous_crs {
+            let crs_id = previous_crs.crs_id;
+            let party_confs_successful = fetch_public_elements(
+                &crs_id.to_string(),
+                &[PubDataType::CRS],
+                cc_conf,
+                destination_prefix,
+                true,
+            )
+            .await?;
+            anyhow::ensure!(
+                party_confs_successful.len() == cc_conf.cores.len(),
+                "Did not fetch the CRS {crs_id} from all parties after resharing! Got {}, expected {}",
+                party_confs_successful.len(),
+                cc_conf.cores.len()
+            );
+            let fetched_from = party_confs_successful
+                .first()
+                .expect("non-empty: the count was just checked against the core list");
+            let crs: CompactPkeCrs = load_material_from_pub_storage(
+                Some(destination_prefix),
+                &crs_id,
+                PubDataType::CRS,
+                Some(fetched_from.object_folder.as_str()),
+            )
+            .await;
+
+            let crs_id_proto: Option<kms_grpc::kms::v1::RequestId> = Some(crs_id.into());
+            for (_, response) in response_vec.iter() {
+                let resigned = response
+                    .crs_responses
+                    .iter()
+                    .find(|r| r.request_id == crs_id_proto)
+                    .ok_or_else(|| anyhow::anyhow!("No CRS response found for crs_id={crs_id}"))?;
+                let verified = accepted_extra_data.iter().any(|extra_data| {
+                    check_crsgen_signatures(
+                        internal_client,
+                        &crs,
+                        &crs_id,
+                        &resigned.signatures,
+                        &resigned.external_signature,
+                        &default_domain,
+                        extra_data.clone(),
+                    )
+                    .is_ok()
+                });
+                anyhow::ensure!(
+                    verified,
+                    "Signature verification failed for the reshared CRS {crs_id}"
                 );
             }
         }

@@ -4,7 +4,7 @@ use crate::engine::base::derive_request_id;
 use crate::engine::threshold::service::epoch_manager::EpochData;
 use crate::engine::threshold::service::session::PRSSSetupCombined;
 use crate::util::key_setup::ensure_all_verf_material;
-use crate::vault::storage::crypto_material::get_core_signing_key;
+use crate::vault::storage::crypto_material::get_core_signing_identity;
 use crate::vault::storage::{
     Storage, StorageExt, StorageReader, read_context_at_id, read_versioned_at_request_id,
     store_versioned_at_request_id,
@@ -184,15 +184,15 @@ where
         );
         return Ok(());
     }
-    let sk = get_core_signing_key(priv_storage).await?;
-    if !sk.has_root_seed() {
+    let identity = get_core_signing_identity(priv_storage).await?;
+    if !identity.has_root_seed() {
         tracing::warn!(
             "No root signing seed present; skipping the multi-scheme verification-material \
              backfill."
         );
         return Ok(());
     }
-    ensure_all_verf_material(pub_storage, &sk).await
+    ensure_all_verf_material(pub_storage, &identity).await
 }
 
 async fn migrate_prss_to_epoch<PrivS>(
@@ -865,14 +865,15 @@ mod tests {
     use super::*;
     use crate::conf::ContextEpochAssociation;
     use crate::consts::signing_material_id;
-    use crate::cryptography::signatures::{PrivateSigKey, gen_sig_keys};
+    use crate::cryptography::signatures::gen_sig_keys;
     use crate::cryptography::signing::SigningSchemeType;
+    use crate::cryptography::signing::identity::NodeSigningIdentity;
     use crate::engine::context::{ContextInfo, NodeInfo, SchemeDigests, SoftwareVersion};
     use crate::util::key_setup::{
         LEGACY_VERF_MATERIAL_TYPES, NON_LEGACY_VERF_MATERIAL_TYPES,
         delete_non_legacy_verf_material, ensure_central_server_signing_keys_exist,
     };
-    use crate::vault::storage::crypto_material::{get_core_signing_key, read_verf_key_at};
+    use crate::vault::storage::crypto_material::{get_core_signing_identity, read_verf_key_at};
     use crate::vault::storage::file::FileStorage;
     use crate::vault::storage::ram::{self, RamStorage};
     use crate::vault::storage::{
@@ -3160,7 +3161,7 @@ mod tests {
     }
 
     /// Validates that the published key and digest are the ones `sk` derives.
-    async fn assert_material_matches<S: StorageReader>(pub_storage: &S, sk: &PrivateSigKey) {
+    async fn assert_material_matches<S: StorageReader>(pub_storage: &S, sk: &NodeSigningIdentity) {
         let addr_type = PubDataType::TypedVerfAddress.to_string();
         for scheme in SigningSchemeType::iter() {
             let expected = sk.unified_verifying_key(scheme).unwrap();
@@ -3204,7 +3205,7 @@ mod tests {
             .await
             .unwrap();
 
-        let sk = get_core_signing_key(&priv_storage).await.unwrap();
+        let sk = get_core_signing_identity(&priv_storage).await.unwrap();
         assert_material_matches(&pub_storage, &sk).await;
         assert_eq!(
             snapshot(&pub_storage, &LEGACY_VERF_MATERIAL_TYPES).await,
