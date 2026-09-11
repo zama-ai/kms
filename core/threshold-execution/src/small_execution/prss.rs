@@ -119,6 +119,16 @@ pub trait PRSSInit<Z>: ProtocolDescription + Send + Sync + Sized {
         &self,
         session: &mut S,
     ) -> anyhow::Result<Self::OutputType>;
+
+    /// Worst-case number of synchronous network rounds one [`Self::init`] call
+    /// takes for a session of `num_parties` parties with the given `threshold`.
+    ///
+    /// Declared here but implemented by each concrete init object, which knows
+    /// the sub-protocols it relies on (VSS, AgreeRandom — themselves built on a
+    /// broadcast / robust-open) and composes their round counts. Exposed so
+    /// protocols that run *after* PRSS init (on the parties that perform it) can
+    /// budget their first-round timeout — see resharing session advancement.
+    fn num_rounds(num_parties: usize, threshold: usize) -> usize;
 }
 
 #[derive(Clone)]
@@ -205,6 +215,12 @@ impl<Z: ErrorCorrect + Invert + PRSSConversions, A: AgreeRandom> PRSSInit<Z>
     for AbortRealPrssInit<A>
 {
     type OutputType = PRSSSetup<Z>;
+
+    fn num_rounds(num_parties: usize, threshold: usize) -> usize {
+        // Abort init runs the AgreeRandom sub-protocol.
+        A::num_rounds(num_parties, threshold)
+    }
+
     /// initialize the PRSS setup for this epoch and a given party
     ///
     /// __NOTE__: Needs to be instantiated with [`RealAgreeRandomWithAbort`] to match the spec
@@ -264,6 +280,12 @@ impl<Z: ErrorCorrect + Invert + PRSSConversions, A: AgreeRandomFromShare, V: Vss
     for RobustRealPrssInit<A, V>
 {
     type OutputType = PRSSSetup<Z>;
+
+    fn num_rounds(num_parties: usize, threshold: usize) -> usize {
+        // Robust init runs a VSS, then an AgreeRandom-from-share over its output.
+        V::num_rounds(num_parties, threshold) + A::num_rounds(num_parties)
+    }
+
     /// initialize the PRSS setup for this epoch and a given party
     ///
     /// __NOTE__: Needs to be instantiated with [`RealAgreeRandomWithAbort`] to match the spec
@@ -2169,6 +2191,68 @@ mod tests {
             let com_true_psi_vals =
                 compute_party_shares(&true_psi_vals, &session, ComputeShareMode::Prss).unwrap();
             assert_eq!(&psi_next, com_true_psi_vals.get(&role).unwrap());
+        }
+    }
+
+    /// Runs a fault-free `init` of `I` on every party and returns the rounds each
+    /// party spent in it.
+    async fn prss_init_rounds_spent<I: PRSSInit<ResiduePolyF4Z128> + Default + 'static>(
+        num_parties: usize,
+        threshold: usize,
+    ) -> Vec<usize> {
+        let params = TestingParameters::init_honest(num_parties, threshold, None);
+        let mut task_honest = |mut session: SmallSession<ResiduePolyF4Z128>| async move {
+            I::default().init(&mut session).await.unwrap();
+            session.network().get_current_round().await
+        };
+        let mut task_malicious = |_session: SmallSession<ResiduePolyF4Z128>, _: ()| async move {};
+        let (results_honest, _) = execute_protocol_small_w_malicious::<
+            _,
+            _,
+            _,
+            _,
+            _,
+            ResiduePolyF4Z128,
+            { ResiduePolyF4Z128::EXTENSION_DEGREE },
+        >(
+            &params,
+            &params.malicious_roles,
+            (),
+            NetworkMode::Sync,
+            None,
+            &mut task_honest,
+            &mut task_malicious,
+        )
+        .await;
+        results_honest.into_values().collect()
+    }
+
+    /// [`PRSSInit::num_rounds`] bounds the rounds an `init` spends. The robust init
+    /// declares the VSS worst case (both dispute rounds), so a fault-free run stays
+    /// below it; the abort init has no dispute rounds, so its declared count is
+    /// exact. The epoch manager budgets the resharing sessions of the parties that
+    /// do not take part in the init with this count, so an under-count would make
+    /// those sessions time out.
+    #[tokio::test]
+    #[rstest]
+    #[case(4, 1)]
+    #[case(7, 2)]
+    async fn test_num_rounds_bounds_execution(
+        #[case] num_parties: usize,
+        #[case] threshold: usize,
+    ) {
+        let broadcast_rounds = SyncReliableBroadcast::num_rounds(num_parties, threshold);
+
+        // Robust: VSS (1 dealing round + 3 broadcasts at worst) + 1 robust open.
+        let declared_robust = <RobustSecurePrssInit as PRSSInit<ResiduePolyF4Z128>>::num_rounds(
+            num_parties,
+            threshold,
+        );
+        assert_eq!(declared_robust, 1 + 3 * broadcast_rounds + 1);
+        for rounds in prss_init_rounds_spent::<RobustSecurePrssInit>(num_parties, threshold).await {
+            // Fault-free VSS: dealing round + one broadcast, then the robust open.
+            assert_eq!(rounds, 1 + broadcast_rounds + 1);
+            assert!(rounds <= declared_robust);
         }
     }
 

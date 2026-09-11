@@ -31,6 +31,11 @@ pub type SecureVss = RealVss<SyncReliableBroadcast>;
 
 #[async_trait]
 pub trait Vss: Send + Sync + Clone + ProtocolDescription {
+    /// Worst-case number of synchronous network rounds one VSS takes.
+    /// Implemented per concrete object composing its broadcast sub-protocol;
+    /// used to budget the first-round timeout of protocols that run after a VSS.
+    fn num_rounds(num_parties: usize, threshold: usize) -> usize;
+
     /// Executes a Verifiable Secret Sharing
     /// where every party inputs one secret.
     /// The trait provides a default implementation for [execute]
@@ -168,6 +173,11 @@ impl ProtocolDescription for DummyVss {
 
 #[async_trait]
 impl Vss for DummyVss {
+    fn num_rounds(_num_parties: usize, _threshold: usize) -> usize {
+        // Dummy VSS fabricates shares locally, no network rounds.
+        0
+    }
+
     async fn execute_many<Z: RingWithExceptionalSequence, S: BaseSessionHandles>(
         &self,
         session: &mut S,
@@ -243,6 +253,13 @@ impl<BCast: Broadcast> RealVss<BCast> {
 
 #[async_trait]
 impl<BCast: Broadcast> Vss for RealVss<BCast> {
+    fn num_rounds(num_parties: usize, threshold: usize) -> usize {
+        // One dealing round (p2p) plus, in the worst case, the three broadcast
+        // rounds of the dispute resolution (round 2 always, rounds 3-4 under
+        // faults).
+        1 + 3 * BCast::num_rounds(num_parties, threshold)
+    }
+
     #[instrument(name="VSS", skip(self,session, secrets),fields(sid = ?session.session_id(),my_role = ?session.my_role()), batch_size= ?secrets.len())]
     async fn execute_many<Z: RingWithExceptionalSequence, S: BaseSessionHandles>(
         &self,
@@ -1743,6 +1760,86 @@ pub(crate) mod tests {
             num_secrets,
             dropping_vss_after_r1.clone(),
         )).await;
+    }
+
+    /// Runs one VSS with `malicious_vss` on the malicious parties and returns the
+    /// round each honest party's session ends at.
+    async fn vss_rounds_spent<V: Vss + 'static>(
+        params: &TestingParameters,
+        malicious_vss: V,
+    ) -> Vec<usize> {
+        use algebra::structure_traits::Sample;
+
+        let mut task_honest = |mut session: LargeSession| async move {
+            let secrets = vec![ResiduePolyF4Z128::sample(session.rng())];
+            SecureVss::default()
+                .execute_many(&mut session, &secrets)
+                .await
+                .unwrap();
+            session.network().get_current_round().await
+        };
+        let mut task_malicious = |mut session: LargeSession, malicious_vss: V| async move {
+            let secrets = vec![ResiduePolyF4Z128::sample(session.rng())];
+            let _ = malicious_vss.execute_many(&mut session, &secrets).await;
+        };
+        let (results_honest, _) = execute_protocol_large_w_disputes_and_malicious::<
+            _,
+            _,
+            _,
+            _,
+            _,
+            ResiduePolyF4Z128,
+            { ResiduePolyF4Z128::EXTENSION_DEGREE },
+        >(
+            params,
+            &[],
+            &params.malicious_roles,
+            malicious_vss,
+            NetworkMode::Sync,
+            None,
+            &mut task_honest,
+            &mut task_malicious,
+        )
+        .await;
+        results_honest.into_values().collect()
+    }
+
+    /// [`RealVss::num_rounds`] is the number of rounds an honest party spends in a
+    /// VSS when a dealer forces both dispute rounds; the fault-free run stops after
+    /// the dealing round and one broadcast. Rounds can only be skipped, never added,
+    /// so protocols that budget the round clock of an idle session with the
+    /// declared count never under-budget.
+    #[tokio::test]
+    #[rstest]
+    #[case(4, 1)]
+    #[case(7, 2)]
+    async fn test_num_rounds_bounds_execution(
+        #[case] num_parties: usize,
+        #[case] threshold: usize,
+    ) {
+        use crate::malicious_execution::large_execution::malicious_vss::MaliciousVssR1;
+
+        let declared = SecureVss::num_rounds(num_parties, threshold);
+        let broadcast_rounds = SyncReliableBroadcast::num_rounds(num_parties, threshold);
+        assert_eq!(declared, 1 + 3 * broadcast_rounds);
+
+        // Fault-free: dealing round plus the verification broadcast only.
+        let honest = TestingParameters::init_honest(num_parties, threshold, None);
+        for rounds in vss_rounds_spent(&honest, SecureVss::default()).await {
+            assert_eq!(rounds, 1 + broadcast_rounds);
+        }
+
+        // A dealer that lies to one party in round 1 triggers the unhappy and the
+        // conflict-resolution broadcasts: the declared worst case is reached.
+        let lying_dealer =
+            TestingParameters::init(num_parties, threshold, &[0], &[1], &[], false, None);
+        let malicious_vss_r1 = MaliciousVssR1::new(
+            &SyncReliableBroadcast::default(),
+            &lying_dealer.roles_to_lie_to,
+        );
+        for rounds in vss_rounds_spent(&lying_dealer, malicious_vss_r1).await {
+            assert_eq!(rounds, declared);
+        }
     }
 
     //Test for an adversary that drops out after Round2
