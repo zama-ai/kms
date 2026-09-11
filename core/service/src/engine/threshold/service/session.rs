@@ -598,7 +598,7 @@ impl SessionMaker {
     pub(crate) fn reseed_rng(&self) -> Result<(), RngSourceError> {
         self.rng_source.reseed()?;
 
-        tracing::info!("RNG Reseeded with fresh entroy");
+        tracing::info!("RNG Reseeded with fresh entropy");
         Ok(())
     }
 
