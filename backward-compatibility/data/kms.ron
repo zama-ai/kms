@@ -1758,6 +1758,15 @@
     (
         kms_core_version_min: "0.15.0",
         kms_core_module: "kms",
+        metadata: CustodianContextAnchor((
+            test_filename: "custodian_context_anchor",
+            context_id: (7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7),
+            sequence: 3,
+        )),
+    ),
+    (
+        kms_core_version_min: "0.15.0",
+        kms_core_module: "kms",
         metadata: PublicSigKey((
             test_filename: "public_sig_key",
             state: 100,

@@ -8,7 +8,7 @@ use algebra_0_15_0::{
     sharing::share::Share,
 };
 use kms_0_15_0::backup::custodian::{
-    Custodian, CustodianSetupMessagePayload, InternalCustodianContext,
+    Custodian, CustodianContextAnchor, CustodianSetupMessagePayload, InternalCustodianContext,
 };
 use kms_0_15_0::backup::{
     custodian::{InternalCustodianRecoveryOutput, InternalCustodianSetupMessage},
@@ -101,19 +101,20 @@ use backward_compatibility::parameters::{
 };
 use backward_compatibility::{
     AppKeyBlobTest, BackupCiphertextTest, ContextInfoTest, CrsGenMetadataTest,
-    CrsGenMetadataWithExtraDataTest, CrsSignedPayloadTest, Eip712DomainTest, EpochDataTest,
-    HybridKemCtTest, InternalCustodianContextTest, InternalCustodianRecoveryOutputTest,
-    InternalCustodianSetupMessageTest, InternalRecoveryRequestTest, KeyGenMetadataTest,
-    KeyGenMetadataWithExtraDataTest, KeygenSignedPayloadTest, KmsFheKeyHandlesTest, NodeInfoTest,
-    OperatorBackupOutputTest, PRSSSetupTest, PrepKeygenSignedPayloadTest, PrfKeyTest,
-    PrivDataTypeTest, PrivateSigKeyTest, PrssSetTest, PrssSetupCombinedTest, PubDataTypeTest,
-    PublicSigKeyTest, RecoveryValidationMaterialTest, ReleasePCRValuesTest, RootSigningSeedTest,
-    SchemeDigestsTest, ShareTest, SigncryptionPayloadTest, SignedPubDataHandleInternalTest,
-    SoftwareVersionTest, StoredEip712DomainTest, StoredTypedSignatureTest, TestMetadataDD,
-    TestMetadataKMS, TestMetadataKmsGrpc, ThresholdFheKeysTest, TypedPlaintextTest,
-    UnifiedCipherTest, UnifiedPublicSigKeyTest, UnifiedSigncryptionKeyTest,
-    UnifiedSigncryptionTest, UnifiedUnsigncryptionKeyTest, DISTRIBUTED_DECRYPTION_MODULE_NAME,
-    KMS_GRPC_MODULE_NAME, KMS_MODULE_NAME,
+    CrsGenMetadataWithExtraDataTest, CrsSignedPayloadTest, CustodianContextAnchorTest,
+    Eip712DomainTest, EpochDataTest, HybridKemCtTest, InternalCustodianContextTest,
+    InternalCustodianRecoveryOutputTest, InternalCustodianSetupMessageTest,
+    InternalRecoveryRequestTest, KeyGenMetadataTest, KeyGenMetadataWithExtraDataTest,
+    KeygenSignedPayloadTest, KmsFheKeyHandlesTest, NodeInfoTest, OperatorBackupOutputTest,
+    PRSSSetupTest, PrepKeygenSignedPayloadTest, PrfKeyTest, PrivDataTypeTest, PrivateSigKeyTest,
+    PrssSetTest, PrssSetupCombinedTest, PubDataTypeTest, PublicSigKeyTest,
+    RecoveryValidationMaterialTest, ReleasePCRValuesTest, RootSigningSeedTest, SchemeDigestsTest,
+    ShareTest, SigncryptionPayloadTest, SignedPubDataHandleInternalTest, SoftwareVersionTest,
+    StoredEip712DomainTest, StoredTypedSignatureTest, TestMetadataDD, TestMetadataKMS,
+    TestMetadataKmsGrpc, ThresholdFheKeysTest, TypedPlaintextTest, UnifiedCipherTest,
+    UnifiedPublicSigKeyTest, UnifiedSigncryptionKeyTest, UnifiedSigncryptionTest,
+    UnifiedUnsigncryptionKeyTest, DISTRIBUTED_DECRYPTION_MODULE_NAME, KMS_GRPC_MODULE_NAME,
+    KMS_MODULE_NAME,
 };
 use hashing_0_15_0::hash_versioned;
 use kms_0_15_0::cryptography::signcryption::SigncryptionPayload;
@@ -308,6 +309,13 @@ const PRIVATE_SIG_KEY_TEST: PrivateSigKeyTest = PrivateSigKeyTest {
 const ROOT_SIGNING_SEED_TEST: RootSigningSeedTest = RootSigningSeedTest {
     test_filename: Cow::Borrowed("root_signing_seed"),
     state: 100,
+};
+
+// KMS test
+const CUSTODIAN_CONTEXT_ANCHOR_TEST: CustodianContextAnchorTest = CustodianContextAnchorTest {
+    test_filename: Cow::Borrowed("custodian_context_anchor"),
+    context_id: [7; 32],
+    sequence: 3,
 };
 
 // KMS-grpc test
@@ -726,6 +734,17 @@ impl KmsV0_15_0 {
         );
 
         TestMetadataKMS::RootSigningSeed(ROOT_SIGNING_SEED_TEST)
+    }
+
+    fn gen_custodian_context_anchor(dir: &PathBuf) -> TestMetadataKMS {
+        let anchor = CustodianContextAnchor {
+            context_id: RequestId::from_bytes(CUSTODIAN_CONTEXT_ANCHOR_TEST.context_id),
+            sequence: CUSTODIAN_CONTEXT_ANCHOR_TEST.sequence,
+        };
+
+        store_versioned_test!(&anchor, dir, &CUSTODIAN_CONTEXT_ANCHOR_TEST.test_filename);
+
+        TestMetadataKMS::CustodianContextAnchor(CUSTODIAN_CONTEXT_ANCHOR_TEST)
     }
 
     fn gen_public_sig_key(dir: &PathBuf) -> TestMetadataKMS {
@@ -2053,6 +2072,7 @@ impl KMSCoreVersion for V0_15_0 {
         vec![
             KmsV0_15_0::gen_private_sig_key(&dir),
             KmsV0_15_0::gen_root_signing_seed(&dir),
+            KmsV0_15_0::gen_custodian_context_anchor(&dir),
             KmsV0_15_0::gen_public_sig_key(&dir),
             KmsV0_15_0::gen_unified_public_sig_key(&dir),
             KmsV0_15_0::gen_app_key_blob(&dir),

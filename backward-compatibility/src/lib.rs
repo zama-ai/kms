@@ -118,6 +118,28 @@ impl TestType for RootSigningSeedTest {
 
 // KMS test
 #[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct CustodianContextAnchorTest {
+    pub test_filename: Cow<'static, str>,
+    pub context_id: [u8; 32],
+    pub sequence: u64,
+}
+
+impl TestType for CustodianContextAnchorTest {
+    fn module(&self) -> String {
+        KMS_MODULE_NAME.to_string()
+    }
+
+    fn target_type(&self) -> String {
+        "CustodianContextAnchor".to_string()
+    }
+
+    fn test_filename(&self) -> String {
+        self.test_filename.to_string()
+    }
+}
+
+// KMS test
+#[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct PublicSigKeyTest {
     pub test_filename: Cow<'static, str>,
     pub state: u64,
@@ -1184,6 +1206,7 @@ impl TestType for CrsSignedPayloadTest {
 pub enum TestMetadataKMS {
     PrivateSigKey(PrivateSigKeyTest),
     RootSigningSeed(RootSigningSeedTest),
+    CustodianContextAnchor(CustodianContextAnchorTest),
     PublicSigKey(PublicSigKeyTest),
     UnifiedPublicSigKey(UnifiedPublicSigKeyTest),
     TypedPlaintext(TypedPlaintextTest),
