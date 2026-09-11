@@ -10,8 +10,8 @@ use crate::vault::{
         StorageReader,
         ram::FailingRamStorage,
         test_support::{
-            BackupEntry, FaultPhase, StorageEntry, StorageEvent, failing_ram_storage,
-            failing_ram_storage_mut,
+            BackupEntry, FaultPhase, StorageEntry, StorageEvent, StorageOp, StorageOutcome,
+            StorageState, failing_ram_storage, failing_ram_storage_mut,
         },
     },
 };
@@ -248,6 +248,26 @@ impl CustodianFixture {
         let backup_vault = self.storage.backup_vault.as_ref().unwrap();
         let backup_vault = backup_vault.lock().await;
         failing_ram_storage(&backup_vault).events().to_vec()
+    }
+
+    /// Returns the expected deletes for all backup entries stored under `context_id`.
+    pub(super) async fn expected_backup_deletes(&self, context_id: RequestId) -> Vec<StorageEvent> {
+        let backup_vault = self.storage.backup_vault.as_ref().unwrap().lock().await;
+        let state = failing_ram_storage(&backup_vault).state();
+        let data_types: Vec<_> = PrivDataType::iter()
+            .map(|data_type| VaultDataType::CustodianBackupData(context_id, data_type).to_string())
+            .collect();
+        state
+            .into_keys()
+            .filter(|entry| data_types.contains(&entry.data_type))
+            .map(|entry| StorageEvent::new(entry, StorageOp::Delete, StorageOutcome::Deleted))
+            .collect()
+    }
+
+    /// Returns a digest for every entry in backup storage.
+    pub(super) async fn backup_state(&self) -> StorageState {
+        let backup_vault = self.storage.backup_vault.as_ref().unwrap().lock().await;
+        failing_ram_storage(&backup_vault).state()
     }
 }
 

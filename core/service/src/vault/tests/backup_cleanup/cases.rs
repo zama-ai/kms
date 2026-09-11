@@ -6,7 +6,10 @@ use crate::{
         Storage, StorageExt, StorageProxy, StorageReader, StorageReaderExt, StorageType,
         file::FileStorage,
         ram::{FailingRamStorage, RamStorage},
-        test_support::{BackupEntry, FaultPhase, StorageOutcome, failing_ram_storage_mut},
+        test_support::{
+            BackupEntry, FaultPhase, StorageEvent, StorageOp, StorageOutcome, assert_same_events,
+            failing_ram_storage_mut,
+        },
     },
 };
 use aes_prng::AesRng;
@@ -208,37 +211,42 @@ async fn remove_old_backup_failure_is_retryable(#[case] fault_phase: FaultPhase)
     }
 
     let storage = failing_ram_storage_mut(&mut fixture.vault);
-    let faults: Vec<_> = storage
-        .events()
-        .iter()
-        .filter(|event| {
-            matches!(
-                event.outcome,
-                StorageOutcome::FailedBeforeMutation | StorageOutcome::FailedAfterMutation
-            )
-        })
-        .collect();
-    assert_eq!(faults.len(), 1);
-    assert_eq!(faults[0].entry, failed_entry.storage_entry());
     let expected_outcome = match fault_phase {
         FaultPhase::BeforeMutation => StorageOutcome::FailedBeforeMutation,
         FaultPhase::AfterMutation => StorageOutcome::FailedAfterMutation,
     };
-    assert_eq!(faults[0].outcome, expected_outcome);
     let retired_entries = fixture.retired_entries.map(BackupEntry::storage_entry);
-    assert!(
-        storage
-            .events()
-            .iter()
-            .all(|event| retired_entries.contains(&event.entry))
-    );
+    // Select permitted successful deletes that actually occurred, then add the one required failure event.
+    let mut expected_events: Vec<_> = retired_entries
+        .iter()
+        .filter(|entry| **entry != failed_entry.storage_entry())
+        .map(|entry| StorageEvent::new(entry.clone(), StorageOp::Delete, StorageOutcome::Deleted))
+        .filter(|event| storage.events().contains(event))
+        .collect();
+    expected_events.push(StorageEvent::new(
+        failed_entry.storage_entry(),
+        StorageOp::Delete,
+        expected_outcome,
+    ));
+    assert_same_events(storage.events(), &expected_events);
+    let remaining = storage.state();
+    let expected_retry: Vec<_> = retired_entries
+        .into_iter()
+        .filter(|entry| remaining.contains_key(entry))
+        .map(|entry| StorageEvent::new(entry, StorageOp::Delete, StorageOutcome::Deleted))
+        .collect();
     storage.clear_fail_points();
+    storage.clear_events();
 
     fixture
         .vault
         .remove_old_backup(&fixture.retired_id)
         .await
         .unwrap();
+    assert_same_events(
+        failing_ram_storage_mut(&mut fixture.vault).events(),
+        &expected_retry,
+    );
     fixture
         .assert_entries_absent(&fixture.retired_entries)
         .await;
