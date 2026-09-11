@@ -59,7 +59,6 @@ use std::{
     collections::{BTreeMap, HashMap},
     sync::Arc,
 };
-use strum::IntoEnumIterator;
 use tfhe::safe_serialization::{safe_deserialize, safe_serialize};
 use threshold_execution::small_execution::prss::PRSSSetup;
 use threshold_types::role::Role;
@@ -1064,6 +1063,28 @@ where
     Ok(())
 }
 
+/// The order in which [`restore_data`] writes the private data types back.
+///
+/// A restore can stop half-way, and it can be run again since existing entries are skipped. Epoch
+/// data and contexts come first, so that keysets never sit under an epoch the node does not know
+/// (startup refuses such a store). The signing key comes last, so that a partially restored node
+/// stays in recovery mode, where the restore can be repeated. The root signing seed precedes it,
+/// so that the node never boots with a signing key but no seed. The custodian context anchor is
+/// never backed up, so it is not restored either.
+#[expect(deprecated)]
+const RESTORE_ORDER: [PrivDataType; 9] = [
+    PrivDataType::ContextInfo,
+    PrivDataType::EpochData,
+    // Deprecated data retained by the 0.15 migration until the 0.16 migration removes it.
+    PrivDataType::PrssSetupCombined,
+    PrivDataType::PrssSetup,
+    PrivDataType::FheKeyInfo,
+    PrivDataType::FhePrivateKey,
+    PrivDataType::CrsInfo,
+    PrivDataType::SigningSeed,
+    PrivDataType::SigningKey,
+];
+
 async fn restore_data<PrivS>(
     backup_vault: &MutexGuard<'_, Vault>,
     priv_storage: &mut MutexGuard<'_, PrivS>,
@@ -1071,7 +1092,7 @@ async fn restore_data<PrivS>(
 where
     PrivS: StorageExt + Sync + Send + 'static,
 {
-    for cur_type in PrivDataType::iter() {
+    for cur_type in RESTORE_ORDER {
         match cur_type {
             // These types might have epoch-specific data
             PrivDataType::FheKeyInfo => {
@@ -1437,7 +1458,39 @@ mod tests {
     use kms_grpc::identifiers::EpochId;
     use kms_grpc::kms::v1::{CustodianContext, CustodianSetupMessage, OperatorBackupOutput};
     use rand::SeedableRng;
-    use std::{collections::BTreeMap, time::SystemTime};
+    use std::{
+        collections::{BTreeMap, HashSet},
+        time::SystemTime,
+    };
+    use strum::IntoEnumIterator;
+
+    /// Every backed-up private data type is restored exactly once, epoch data before the keysets
+    /// that depend on it, and the signing key last.
+    #[test]
+    fn restore_order_covers_every_private_data_type_once() {
+        let ordered: HashSet<PrivDataType> = RESTORE_ORDER.into_iter().collect();
+        assert_eq!(
+            ordered.len(),
+            RESTORE_ORDER.len(),
+            "RESTORE_ORDER holds a duplicate"
+        );
+        let backed_up: HashSet<PrivDataType> = PrivDataType::iter()
+            .filter(|data_type| *data_type != PrivDataType::CustodianContextAnchor)
+            .collect();
+        assert_eq!(ordered, backed_up);
+
+        let position = |data_type: PrivDataType| {
+            RESTORE_ORDER
+                .iter()
+                .position(|cur| *cur == data_type)
+                .expect("checked above to be present")
+        };
+        assert!(position(PrivDataType::ContextInfo) < position(PrivDataType::EpochData));
+        assert!(position(PrivDataType::EpochData) < position(PrivDataType::FheKeyInfo));
+        assert!(position(PrivDataType::EpochData) < position(PrivDataType::CrsInfo));
+        assert!(position(PrivDataType::SigningSeed) < position(PrivDataType::SigningKey));
+        assert_eq!(RESTORE_ORDER.last(), Some(&PrivDataType::SigningKey));
+    }
 
     /// A vault with an uninitialized secret-sharing keychain, as a node whose private storage is
     /// gone has at boot.

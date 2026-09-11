@@ -1,6 +1,6 @@
 // === Standard Library ===
 use std::{
-    collections::HashMap,
+    collections::{BTreeMap, HashMap},
     convert::Infallible,
     marker::PhantomData,
     sync::{Arc, OnceLock},
@@ -10,7 +10,7 @@ use std::{
 use algebra::{galois_rings::degree_4::ResiduePolyF4Z128, structure_traits::Ring};
 use kms_grpc::{
     RequestId,
-    identifiers::EpochId,
+    identifiers::{ContextId, EpochId},
     kms_service::v1::core_service_endpoint_server::CoreServiceEndpointServer,
     rpc_types::{PrivDataType, PubDataType, SignedPubDataHandleInternal},
 };
@@ -58,13 +58,13 @@ use tonic_health::{
 };
 use tonic_tls::rustls::TlsIncoming;
 
-use crate::engine::threshold::service::epoch_manager::RealThresholdEpochManager;
+use crate::engine::threshold::service::epoch_manager::{EpochData, RealThresholdEpochManager};
 // === Internal Crate ===
 use crate::{
     anyhow_error_and_log,
     backup::operator::RecoveryValidationMaterial,
     conf::CoreConfig,
-    consts::{DEFAULT_EPOCH_ID, DEFAULT_MPC_CONTEXT, MINIMUM_SESSIONS_PREPROC},
+    consts::MINIMUM_SESSIONS_PREPROC,
     cryptography::attestation::SecurityModuleProxy,
     engine::{
         backup_operator::RealBackupOperator,
@@ -73,7 +73,9 @@ use crate::{
         },
         context_manager::{ThresholdContextManager, ensure_default_threshold_context_in_storage},
         prepare_shutdown_signals,
-        storage_material_verification::verify_storage_material,
+        storage_material_verification::{
+            PrivateLayout, verify_private_storage_layout, verify_storage_material,
+        },
         threshold::{
             service::{
                 public_decryptor::SecureNoiseFloodDecryptor,
@@ -90,8 +92,8 @@ use crate::{
         Vault, adopt_custodian_context,
         storage::{
             Storage, StorageExt, crypto_material::ThresholdCryptoMaterialStorage,
-            read_all_data_from_all_epochs_versioned, read_all_recovery_material,
-            select_data_from_max_epoch,
+            read_all_data_from_all_epochs_versioned, read_all_data_versioned,
+            read_all_recovery_material, select_data_from_max_epoch,
         },
     },
 };
@@ -513,7 +515,6 @@ pub async fn new_real_threshold_kms<PubS, PrivS, F>(
     mpc_listener: TcpListener,
     base_kms: BaseKmsStruct,
     tls_config: Option<(ServerConfig, ClientConfig, Arc<AttestedVerifier>)>,
-    ensure_default_prss: bool,
     shutdown_signal: F,
 ) -> anyhow::Result<(
     RealThresholdKms<PubS, PrivS>,
@@ -533,6 +534,15 @@ where
     let telemetry_conf = config
         .telemetry
         .unwrap_or_else(|| TelemetryConfig::builder().build());
+
+    // TODO(zama-ai/kms-internal/issues/2758)
+    // Peer configuration defines the default context until context management replaces it.
+    ensure_default_threshold_context_in_storage(
+        &mut private_storage,
+        threshold_config,
+        &base_kms.verf_key(),
+    )
+    .await?;
 
     // load keys from storage
     let key_info_versioned: HashMap<(RequestId, EpochId), ThresholdFheKeys> =
@@ -571,13 +581,33 @@ where
         .await?,
     );
 
-    // Verify public material and recovery validation material when the signing key is available.
-    // Recovery mode only supports backup recovery operations, so it skips both startup checks and
-    // adopts no custodian context.
-    // Private storage is the reference; extra material in public storage is logged as an error
-    // but does not stop boot.
+    // The epoch registry: every epoch this node serves, keyed by the ID it is stored under. It is
+    // read once here; it anchors the private storage checks below and seeds the session maker.
+    // Storage must not change while validation runs, so this snapshot stays consistent with the
+    // checks that use it.
+    let all_epochs: HashMap<EpochId, EpochData> = read_all_data_versioned::<_, EpochData>(
+        &private_storage,
+        &PrivDataType::EpochData.to_string(),
+    )
+    .await?
+    .into_iter()
+    .map(|(epoch_id, epoch_data)| (epoch_id.into(), epoch_data))
+    .collect();
+    let epoch_contexts: BTreeMap<EpochId, ContextId> = all_epochs
+        .iter()
+        .map(|(epoch_id, epoch_data)| (*epoch_id, epoch_data.context_id))
+        .collect();
+
+    // Recovery mode skips storage verification and adopts no custodian context.
     match base_kms.sig_key() {
         Ok(signing_key) => {
+            verify_private_storage_layout(
+                &private_storage,
+                PrivateLayout::Threshold {
+                    epoch_contexts: &epoch_contexts,
+                },
+            )
+            .await?;
             verify_storage_material(
                 &public_storage,
                 &key_info,
@@ -593,8 +623,8 @@ where
         }
         Err(_) => {
             tracing::warn!(
-                "No signing key available (recovery mode): skipping public material and recovery \
-                 validation material verification"
+                "No signing key available (recovery mode): skipping private storage, public \
+                 material and recovery validation material verification"
             );
         }
     }
@@ -708,18 +738,6 @@ where
     );
     let custodian_meta_store = MetaStore::new_from_map(recovery_validation_material);
 
-    // TODO(zama-ai/kms-internal/issues/2758)
-    // If we're still using peer config, we need to manually write the default context into storage.
-    // This way we can load it into SessionMaker later when creating the ThresholdContextManager.
-    ensure_default_threshold_context_in_storage(
-        &mut private_storage,
-        threshold_config,
-        &base_kms.verf_key(),
-    )
-    .await?;
-
-    let private_storage_info = private_storage.info();
-
     let crypto_storage = ThresholdCryptoMaterialStorage::new(
         public_storage,
         private_storage,
@@ -746,6 +764,7 @@ where
     let session_maker = SessionMaker::new_initialized(
         threshold_config.my_id.map(Role::indexed_from_one),
         &crypto_storage,
+        all_epochs,
         networking_manager,
         verifier,
         base_kms.new_rng().await,
@@ -783,25 +802,6 @@ where
         _init: PhantomData,
         _reshare: PhantomData,
     };
-    if ensure_default_prss {
-        let epoch_id_prss = *DEFAULT_EPOCH_ID;
-        let default_context_id = *DEFAULT_MPC_CONTEXT;
-        if session_maker.epoch_exists(&epoch_id_prss).await {
-            tracing::warn!(
-                "Default epoch {} already exists. Skipping regeneration",
-                epoch_id_prss
-            );
-        } else {
-            tracing::info!(
-                "Initializing threshold KMS server and generating a new PRSS Setup for private storage {:?}",
-                private_storage_info
-            );
-            epoch_manager
-                .init_epoch(&default_context_id, &epoch_id_prss)
-                .await?;
-        }
-    }
-
     let slow_events = Arc::new(Mutex::new(HashMap::new()));
 
     let user_decryptor = RealUserDecryptor {

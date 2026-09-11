@@ -42,7 +42,7 @@ use tokio::task::JoinSet;
 ///
 /// **Requires:** `insecure` feature flag
 #[tokio::test]
-async fn nightly_test_insecure_threshold_dkg_backup() -> Result<()> {
+async fn test_insecure_threshold_dkg_backup() -> Result<()> {
     // Setup using builder pattern with backup vault
     let env = ThresholdTestEnv::builder()
         .with_test_name("threshold_dkg_backup")
@@ -172,7 +172,6 @@ async fn nightly_test_insecure_threshold_dkg_backup() -> Result<()> {
     }
 
     let config = crate::testing::types::ThresholdTestConfig {
-        ensure_default_prss: true, // PRSS required for threshold decryption
         rate_limiter_conf: None,
         decryption_mode: None,
         test_material_path: Some(material_dir.path()),
@@ -252,7 +251,7 @@ async fn nightly_test_insecure_threshold_dkg_backup() -> Result<()> {
 ///
 /// **Requires:** `insecure` feature flag
 #[tokio::test]
-async fn nightly_test_insecure_threshold_autobackup_after_deletion() -> Result<()> {
+async fn test_insecure_threshold_autobackup_after_deletion() -> Result<()> {
     // Setup using builder pattern with backup vault
     let env = ThresholdTestEnv::builder()
         .with_test_name("threshold_autobackup")

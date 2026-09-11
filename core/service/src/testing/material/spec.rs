@@ -45,6 +45,9 @@ pub enum KeyType {
     CrsKeys,
     /// Decompression keys for compressed ciphertexts
     DecompressionKeys,
+    /// The default epoch (`EpochData` with its PRSS setup) of every threshold party. FHE key
+    /// shares live under this epoch, so a threshold spec with `FheKeys` includes it.
+    DefaultEpoch,
 }
 
 impl TestMaterialSpec {
@@ -70,6 +73,7 @@ impl TestMaterialSpec {
         required_keys.insert(KeyType::SigningKeys);
         required_keys.insert(KeyType::ServerSigningKeys);
         required_keys.insert(KeyType::FheKeys);
+        required_keys.insert(KeyType::DefaultEpoch);
 
         Self {
             material_type: MaterialType::Testing,
@@ -108,6 +112,7 @@ impl TestMaterialSpec {
 
         if party_count.is_some() {
             required_keys.insert(KeyType::ServerSigningKeys);
+            required_keys.insert(KeyType::DefaultEpoch);
         }
 
         Self {
@@ -188,6 +193,7 @@ mod tests {
         assert!(spec.requires_key_type(KeyType::ClientKeys));
         assert!(spec.requires_key_type(KeyType::SigningKeys));
         assert!(spec.requires_key_type(KeyType::ServerSigningKeys));
+        assert!(spec.requires_key_type(KeyType::FheKeys));
     }
 
     #[test]

@@ -658,7 +658,7 @@ async fn decrypt_after_recovery_negative(amount_custodians: usize, threshold: u3
 }
 
 /// Test that epoch data (EpochData) is present in the custodian backup vault
-/// after server startup with `ensure_default_prss: true`.
+/// after a server boots from a fixture that holds the default epoch.
 #[tokio::test(flavor = "multi_thread")]
 async fn test_epoch_in_custodian_backup_threshold() {
     let mut env =

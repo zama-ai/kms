@@ -12,6 +12,7 @@ use crate::consts::TEST_THRESHOLD_KEY_ID_4P;
 use crate::consts::{DEFAULT_EPOCH_ID, DEFAULT_MPC_CONTEXT};
 use crate::engine::threshold::service::RealThresholdKms;
 use crate::engine::utils::make_extra_data;
+use crate::testing::material::{material_subdir, threshold_material_subdir};
 use crate::testing::prelude::*;
 use crate::vault::storage::file::FileStorage;
 use kms_grpc::kms::v1::NewMpcEpochRequest;
@@ -28,10 +29,16 @@ use tonic_health::pb::health_check_response::ServingStatus;
 async fn test_threshold_health_endpoint_availability() -> Result<()> {
     let amount_parties = 4;
 
-    // DON'T setup PRSS in order to ensure the server is not ready yet.
-    // `threshold_basic` gives ClientKeys + SigningKeys + ServerSigningKeys + FheKeys,
-    // no PRSS.
-    let spec = TestMaterialSpec::threshold_basic(amount_parties);
+    // DON'T setup PRSS in order to ensure the server is not ready yet. Key shares are not copied
+    // either: the boot-time layout check refuses shares under an epoch that has no `EpochData`.
+    // The decryption request below encrypts against the public key in the pre-generated
+    // material instead; the servers reject it because the epoch is missing.
+    let spec = TestMaterialSpec::threshold_signing_only(amount_parties);
+    let fixture_pub_path = create_test_material_manager()
+        .source_path()
+        .expect("pre-generated test material is required")
+        .join(material_subdir(MaterialType::Testing))
+        .join(threshold_material_subdir(amount_parties));
     let env = ThresholdTestEnv::builder()
         .with_test_name("health_endpoint")
         .with_party_count(amount_parties)
@@ -46,7 +53,6 @@ async fn test_threshold_health_endpoint_availability() -> Result<()> {
     let mut internal_client = env
         .create_internal_client(&crate::consts::TEST_PARAM, None)
         .await?;
-    let material_path = env.material_dir.path().to_path_buf();
     let _material_dir = env.material_dir; // keep alive for temp dir cleanup
     let clients = env.clients;
     let servers = env.servers;
@@ -67,7 +73,7 @@ async fn test_threshold_health_endpoint_availability() -> Result<()> {
         &clients,
         &mut internal_client,
         pub_storage_prefixes,
-        Some(&material_path),
+        Some(&fixture_pub_path),
     )
     .await;
     let dec_res = dec_tasks.join_all().await;
@@ -393,7 +399,7 @@ async fn test_ratelimiter() -> Result<()> {
 /// 6. Verifies party 3 gets an Internal error (session already completed by others)
 #[tokio::test(flavor = "current_thread")]
 #[cfg(feature = "slow_tests")]
-async fn nightly_test_complete_session_notification() -> Result<()> {
+async fn test_complete_session_notification() -> Result<()> {
     use crate::consts::{PUBLIC_STORAGE_PREFIX_THRESHOLD_ALL, TEST_PARAM};
     use crate::dummy_domain;
     use crate::engine::base::derive_request_id;

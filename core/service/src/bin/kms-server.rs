@@ -656,7 +656,6 @@ async fn main_exec() -> anyhow::Result<()> {
                     mpc_listener,
                     base_kms,
                     tls_identity,
-                    false,
                     std::future::pending(),
                 )
                 .await?;
