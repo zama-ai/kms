@@ -1,0 +1,416 @@
+name: rust-testing
+
+on:
+  workflow_call:
+    secrets:
+      BLOCKCHAIN_ACTIONS_TOKEN:
+        required: true
+      SLACK_CHANNEL:
+        required: true
+      BOT_USERNAME:
+        required: true
+      SLACK_WEBHOOK:
+        required: true
+      CGR_USERNAME:
+        required: true
+      CGR_PASSWORD:
+        required: true
+
+concurrency:
+  # Include the event so a push to main cannot cancel an in-progress scheduled run.
+  group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.head_ref || github.ref || github.run_id }}
+  cancel-in-progress: true
+
+permissions: {} # No permissions required for this workflow
+
+jobs:
+  generate-test-material:
+    name: rust-testing/generate-test-material
+    permissions:
+      checks: write # Required to write to the GitHub Actions check suite
+      packages: read # Required to read from the GitHub Packages registry
+      issues: write # Required to write to the GitHub Issues API
+      pull-requests: write # Required to write to the GitHub Pull Requests API
+      actions: read # Required to read the GitHub Actions API
+      contents: read # Required to read the GitHub Contents API
+    uses: ./.github/workflows/generate-test-material.yml
+
+  test-matrix:
+    name: rust-testing/${{ matrix.job_name }}
+    needs: [generate-test-material]
+    permissions:
+      checks: write # Required to write to the GitHub Actions check suite
+      packages: read # Required to read from the GitHub Packages registry
+      issues: write # Required to write to the GitHub Issues API
+      pull-requests: write # Required to write to the GitHub Pull Requests API
+      actions: read # Required to read the GitHub Actions API
+      contents: read # Required to read the GitHub Contents API
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Core client - threshold tests. Built with `slow_tests` so the heavy
+          # threshold tests (insecure, default preproc-keygen, 6-party context
+          # switch) run per-PR.
+          - job_name: core-client-threshold
+            crate_names: '-p kms-core-client'
+            args_tests: '--features slow_tests -- threshold --skip full_gen_tests --skip nightly --skip k8s_ --skip isolated_test_example --skip test_threshold_mpc_context_switch_6_docker'
+            skip_test_material: false
+            lfs: false
+            runs_on: '64cpu-linux-x64'
+            runner_volume: '200gb'
+            rust_log_level: 'error'
+            nextest_threads: '4'
+          #======================================================================
+          - job_name: core-client-centralized-p1
+            crate_names: '-p kms-core-client'
+            args_tests: '--features testing --partition count:1/3 -- centralized --skip full_gen_tests --skip nightly --skip k8s_ --skip threshold --skip isolated_test_example'
+            skip_test_material: false
+            lfs: false
+            runs_on: '64cpu-linux-x64'
+            runner_volume: '200gb'
+            rust_log_level: 'error'
+            nextest_threads: '4'
+          - job_name: core-client-centralized-p2
+            crate_names: '-p kms-core-client'
+            args_tests: '--features testing --partition count:2/3 -- centralized --skip full_gen_tests --skip nightly --skip k8s_ --skip threshold --skip isolated_test_example'
+            skip_test_material: false
+            lfs: false
+            runs_on: '64cpu-linux-x64'
+            runner_volume: '200gb'
+            rust_log_level: 'error'
+            nextest_threads: '4'
+          - job_name: core-client-centralized-p3
+            crate_names: '-p kms-core-client'
+            args_tests: '--features testing --partition count:3/3 -- centralized --skip full_gen_tests --skip nightly --skip k8s_ --skip threshold --skip isolated_test_example'
+            skip_test_material: false
+            lfs: false
+            runs_on: '64cpu-linux-x64'
+            runner_volume: '200gb'
+            rust_log_level: 'error'
+            nextest_threads: '4'
+          #======================================================================
+          - job_name: core-client-unit-p1
+            crate_names: '-p kms-core-client'
+            args_tests: '--features testing --partition count:1/3 -- --skip centralized --skip threshold --skip full_gen_tests --skip nightly --skip k8s_ --skip isolated_test_example'
+            skip_test_material: true
+            lfs: false
+            runs_on: '64cpu-linux-x64'
+            runner_volume: '200gb'
+            rust_log_level: 'error'
+            nextest_threads: '4'
+          - job_name: core-client-unit-p2
+            crate_names: '-p kms-core-client'
+            args_tests: '--features testing --partition count:2/3 -- --skip centralized --skip threshold --skip full_gen_tests --skip nightly --skip k8s_ --skip isolated_test_example'
+            skip_test_material: true
+            lfs: false
+            runs_on: '64cpu-linux-x64'
+            runner_volume: '200gb'
+            rust_log_level: 'error'
+            nextest_threads: '4'
+          - job_name: core-client-unit-p3
+            crate_names: '-p kms-core-client'
+            args_tests: '--features testing --partition count:3/3 -- --skip centralized --skip threshold --skip full_gen_tests --skip nightly --skip k8s_ --skip isolated_test_example'
+            skip_test_material: true
+            lfs: false
+            runs_on: '64cpu-linux-x64'
+            runner_volume: '200gb'
+            rust_log_level: 'error'
+            nextest_threads: '4'
+          #======================================================================
+          # Core service - aggressively sharded by family and partition.
+          - job_name: core-service-lib-p1
+            crate_names: '-p kms'
+            args_tests: '-F slow_tests -F insecure --partition count:1/10 --lib -- --skip nightly --skip test_new_epoch_with_reshare'
+            skip_test_material: false
+            lfs: true
+            runs_on: '64cpu-linux-x64'
+            runner_volume: '400gb'
+            rust_log_level: 'info'
+            nextest_threads: '4'
+          - job_name: core-service-lib-p2
+            crate_names: '-p kms'
+            args_tests: '-F slow_tests -F insecure --partition count:2/10 --lib -- --skip nightly --skip test_new_epoch_with_reshare'
+            skip_test_material: false
+            lfs: true
+            runs_on: '64cpu-linux-x64'
+            runner_volume: '400gb'
+            rust_log_level: 'info'
+            nextest_threads: '4'
+          - job_name: core-service-lib-p3
+            crate_names: '-p kms'
+            args_tests: '-F slow_tests -F insecure --partition count:3/10 --lib -- --skip nightly --skip test_new_epoch_with_reshare'
+            skip_test_material: false
+            lfs: true
+            runs_on: '64cpu-linux-x64'
+            runner_volume: '400gb'
+            rust_log_level: 'info'
+            nextest_threads: '4'
+          - job_name: core-service-lib-p4
+            crate_names: '-p kms'
+            args_tests: '-F slow_tests -F insecure --partition count:4/10 --lib -- --skip nightly --skip test_new_epoch_with_reshare'
+            skip_test_material: false
+            lfs: true
+            runs_on: '64cpu-linux-x64'
+            runner_volume: '400gb'
+            rust_log_level: 'info'
+            nextest_threads: '4'
+          - job_name: core-service-lib-p5
+            crate_names: '-p kms'
+            args_tests: '-F slow_tests -F insecure --partition count:5/10 --lib -- --skip nightly --skip test_new_epoch_with_reshare'
+            skip_test_material: false
+            lfs: true
+            runs_on: '64cpu-linux-x64'
+            runner_volume: '400gb'
+            rust_log_level: 'info'
+            nextest_threads: '4'
+          - job_name: core-service-lib-p6
+            crate_names: '-p kms'
+            args_tests: '-F slow_tests -F insecure --partition count:6/10 --lib -- --skip nightly --skip test_new_epoch_with_reshare'
+            skip_test_material: false
+            lfs: true
+            runs_on: '64cpu-linux-x64'
+            runner_volume: '400gb'
+            rust_log_level: 'info'
+            nextest_threads: '4'
+          - job_name: core-service-lib-p7
+            crate_names: '-p kms'
+            args_tests: '-F slow_tests -F insecure --partition count:7/10 --lib -- --skip nightly --skip test_new_epoch_with_reshare'
+            skip_test_material: false
+            lfs: true
+            runs_on: '64cpu-linux-x64'
+            runner_volume: '400gb'
+            rust_log_level: 'info'
+            nextest_threads: '4'
+          - job_name: core-service-lib-p8
+            crate_names: '-p kms'
+            args_tests: '-F slow_tests -F insecure --partition count:8/10 --lib -- --skip nightly --skip test_new_epoch_with_reshare'
+            skip_test_material: false
+            lfs: true
+            runs_on: '64cpu-linux-x64'
+            runner_volume: '400gb'
+            rust_log_level: 'info'
+            nextest_threads: '4'
+          - job_name: core-service-lib-p9
+            crate_names: '-p kms'
+            args_tests: '-F slow_tests -F insecure --partition count:9/10 --lib -- --skip nightly --skip test_new_epoch_with_reshare'
+            skip_test_material: false
+            lfs: true
+            runs_on: '64cpu-linux-x64'
+            runner_volume: '400gb'
+            rust_log_level: 'info'
+            nextest_threads: '4'
+          - job_name: core-service-lib-p10
+            crate_names: '-p kms'
+            args_tests: '-F slow_tests -F insecure --partition count:10/10 --lib -- --skip nightly --skip test_new_epoch_with_reshare'
+            skip_test_material: false
+            lfs: true
+            runs_on: '64cpu-linux-x64'
+            runner_volume: '400gb'
+            rust_log_level: 'info'
+            nextest_threads: '4'
+          #======================================================================
+          - job_name: core-service-lib-epoch-reshare
+            crate_names: '-p kms'
+            args_tests: '-F slow_tests -F insecure --partition count:1/1 --lib -- test_new_epoch_with_reshare'
+            skip_test_material: false
+            lfs: true
+            runs_on: '64cpu-linux-x64'
+            runner_volume: '400gb'
+            rust_log_level: 'info'
+            nextest_threads: '1'
+          #======================================================================
+          - job_name: core-service-test-p1
+            crate_names: '-p kms'
+            args_tests: '-E kind(test) -F slow_tests -F insecure --partition count:1/4 -- --skip threshold --skip nightly'
+            skip_test_material: false
+            lfs: true
+            runs_on: '64cpu-linux-x64'
+            runner_volume: '400gb'
+            rust_log_level: 'info'
+            nextest_threads: '4'
+          - job_name: core-service-test-p2
+            crate_names: '-p kms'
+            args_tests: '-E kind(test) -F slow_tests -F insecure --partition count:2/4 -- --skip threshold --skip nightly'
+            skip_test_material: false
+            lfs: true
+            runs_on: '64cpu-linux-x64'
+            runner_volume: '400gb'
+            rust_log_level: 'info'
+            nextest_threads: '4'
+          - job_name: core-service-test-p3
+            crate_names: '-p kms'
+            args_tests: '-E kind(test) -F slow_tests -F insecure --partition count:3/4 -- --skip threshold --skip nightly'
+            skip_test_material: false
+            lfs: true
+            runs_on: '64cpu-linux-x64'
+            runner_volume: '400gb'
+            rust_log_level: 'info'
+            nextest_threads: '4'
+          - job_name: core-service-test-p4
+            crate_names: '-p kms'
+            args_tests: '-E kind(test) -F slow_tests -F insecure --partition count:4/4 -- --skip threshold --skip nightly'
+            skip_test_material: false
+            lfs: true
+            runs_on: '64cpu-linux-x64'
+            runner_volume: '400gb'
+            rust_log_level: 'info'
+            nextest_threads: '4'
+          #======================================================================
+          - job_name: core-service-threshold
+            crate_names: '-p kms'
+            args_tests: '-E kind(test) -F slow_tests -F insecure threshold -- --skip nightly'
+            skip_test_material: false
+            lfs: true
+            runs_on: '64cpu-linux-x64'
+            runner_volume: '400gb'
+            rust_log_level: 'info'
+            nextest_threads: '6'
+          #======================================================================
+          # Core threshold.
+          - job_name: core-threshold-lib-p1
+            crate_names: '-p experiments'
+            args_tests: '--partition count:1/3 --lib'
+            skip_test_material: true
+            lfs: false
+            runs_on: '32cpu-linux-x64'
+            runner_volume: '200gb'
+            rust_log_level: 'error'
+            nextest_threads: '3'
+          - job_name: core-threshold-lib-p2
+            crate_names: '-p experiments'
+            args_tests: '--partition count:2/3 --lib'
+            skip_test_material: true
+            lfs: false
+            runs_on: '32cpu-linux-x64'
+            runner_volume: '200gb'
+            rust_log_level: 'error'
+            nextest_threads: '3'
+          - job_name: core-threshold-lib-p3
+            crate_names: '-p experiments'
+            args_tests: '--partition count:3/3 --lib'
+            skip_test_material: true
+            lfs: false
+            runs_on: '32cpu-linux-x64'
+            runner_volume: '200gb'
+            rust_log_level: 'error'
+            nextest_threads: '3'
+          #======================================================================
+          # Core gRPC.
+          - job_name: core-grpc-p1
+            crate_names: '-p kms-grpc'
+            args_tests: '--partition count:1/3 --all-features'
+            skip_test_material: true
+            lfs: false
+            runs_on: '32cpu-linux-x64'
+            runner_volume: '200gb'
+            rust_log_level: 'error'
+            nextest_threads: '3'
+          - job_name: core-grpc-p2
+            crate_names: '-p kms-grpc'
+            args_tests: '--partition count:2/3 --all-features'
+            skip_test_material: true
+            lfs: false
+            runs_on: '32cpu-linux-x64'
+            runner_volume: '200gb'
+            rust_log_level: 'error'
+            nextest_threads: '3'
+          - job_name: core-grpc-p3
+            crate_names: '-p kms-grpc'
+            args_tests: '--partition count:3/3 --all-features'
+            skip_test_material: true
+            lfs: false
+            runs_on: '32cpu-linux-x64'
+            runner_volume: '200gb'
+            rust_log_level: 'error'
+            nextest_threads: '3'
+          #======================================================================
+    uses: ./.github/workflows/common-testing.yml
+    with:
+      crate-names: ${{ matrix.crate_names }}
+      args-tests: ${{ matrix.args_tests }}
+      skip-test-material: ${{ matrix.skip_test_material }}
+      lfs: ${{ matrix.lfs }}
+      runs-on: ${{ matrix.runs_on }}
+      runner-volume: ${{ matrix.runner_volume }}
+      rust-log-level: ${{ matrix.rust_log_level }}
+      nextest-test-threads: ${{ matrix.nextest_threads }}
+      # Same EFS material path for every matrix entry, so reference the
+      # generate-test-material output once here instead of per entry.
+      efs-test-material-path: ${{ needs.generate-test-material.outputs.efs-test-material-path }}
+    secrets:
+      SLACK_CHANNEL: ${{ secrets.SLACK_CHANNEL }}
+      BOT_USERNAME: ${{ secrets.BOT_USERNAME }}
+      SLACK_WEBHOOK: ${{ secrets.SLACK_WEBHOOK }}
+      CGR_USERNAME: ${{ secrets.CGR_USERNAME }}
+      CGR_PASSWORD: ${{ secrets.CGR_PASSWORD }}
+
+  # KMS service tests that are too slow for regular CI.
+  test-kms-nightly:
+    name: rust-testing/kms-nightly-p${{ matrix.partition }}
+    if: github.event_name == 'schedule'
+    needs: [generate-test-material]
+    permissions:
+      checks: write # Required to write to the GitHub Actions check suite
+      packages: read # Required to read from the GitHub Packages registry
+      issues: write # Required to write to the GitHub Issues API
+      pull-requests: write # Required to write to the GitHub Pull Requests API
+      actions: read # Required to read the GitHub Actions API
+      contents: read # Required to read the GitHub Contents API
+    strategy:
+      fail-fast: false
+      matrix:
+        partition: [1, 2, 3, 4, 5]
+    uses: ./.github/workflows/common-testing.yml
+    with:
+      crate-names: '-p kms'
+      args-tests: '-F slow_tests -F insecure --partition count:${{ matrix.partition }}/5 --lib -E test(/::nightly_/)'
+      efs-test-material-path: ${{ needs.generate-test-material.outputs.efs-test-material-path }}
+      lfs: true
+      runs-on: '64cpu-linux-x64'
+      runner-volume: '400gb'
+      rust-log-level: 'info'
+      nextest-test-threads: '4'
+      notify-slack: false
+    secrets:
+      SLACK_CHANNEL: ${{ secrets.SLACK_CHANNEL }}
+      BOT_USERNAME: ${{ secrets.BOT_USERNAME }}
+      SLACK_WEBHOOK: ${{ secrets.SLACK_WEBHOOK }}
+      CGR_USERNAME: ${{ secrets.CGR_USERNAME }}
+      CGR_PASSWORD: ${{ secrets.CGR_PASSWORD }}
+
+  notify-kms-nightly:
+    name: rust-testing/kms-nightly-notification
+    if: always() && github.event_name == 'schedule'
+    needs: [generate-test-material, test-kms-nightly]
+    environment: main
+    runs-on: ubuntu-latest
+    steps:
+      - name: Post nightly tests result in a channel
+        uses: rtCamp/action-slack-notify@e31e87e03dd19038e411e38ae27cbad084a90661 # v2.3.3
+        env:
+          ACTION_RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          SLACK_CHANNEL: ${{ secrets.SLACK_CHANNEL }}
+          SLACK_USERNAME: ${{ secrets.BOT_USERNAME }}
+          SLACK_WEBHOOK: ${{ secrets.SLACK_WEBHOOK }}
+          SLACK_ICON_EMOJI: ':github-octocat:'
+          SLACK_TITLE: 'KMS Nightly Tests Result'
+          SLACK_COLOR: ${{ needs.generate-test-material.result == 'success' && needs.test-kms-nightly.result == 'success' && 'good' || 'danger' }}
+          SLACK_MESSAGE: "Test material: ${{ needs.generate-test-material.result }} \nKMS nightly shards: ${{ needs.test-kms-nightly.result }}"
+
+  test-reporter:
+    name: rust-testing/test-reporter
+    if: ${{ always() && github.event_name == 'pull_request' }}
+    needs: [test-matrix]
+    uses: ./.github/workflows/test-reporter.yml
+    with:
+      initial-workflow: 'rust-testing'
+    permissions:
+      checks: write # Required to write to the GitHub Actions check suite
+      packages: read # Required to read from the GitHub Packages registry
+      issues: write # Required to write to the GitHub Issues API
+      pull-requests: write # Required to write to the GitHub Pull Requests API
+      actions: read # Required to read the GitHub Actions API
+      contents: read # Required to read the GitHub Contents API
+    secrets:
+      BLOCKCHAIN_ACTIONS_TOKEN: ${{ secrets.BLOCKCHAIN_ACTIONS_TOKEN }}
