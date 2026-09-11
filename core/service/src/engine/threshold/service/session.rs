@@ -596,7 +596,10 @@ impl SessionMaker {
     }
 
     pub(crate) fn reseed_rng(&self) -> Result<(), RngSourceError> {
-        self.rng_source.reseed()
+        self.rng_source.reseed()?;
+
+        tracing::info!("RNG Reseeded with fresh entroy");
+        Ok(())
     }
 
     pub(crate) async fn make_base_session(
