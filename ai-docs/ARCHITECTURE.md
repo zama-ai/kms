@@ -152,12 +152,12 @@ Source initialization combines OS entropy with entropy from the configured secur
 Refresh also mixes output from the existing source. Entropy failures return errors and leave
 the source unchanged. Refresh logs report success or failure without seed values.
 
-Threshold epoch creation refreshes before resharing setup in `new_mpc_epoch` and before
-PRSS initialization in `internal_init_epoch`. A request that enters both paths refreshes twice.
+Threshold epoch creation refreshes once in `new_mpc_epoch`, before either the resharing
+or PRSS session forks its RNG. This includes old-committee parties that skip PRSS initialization.
 A successful refresh protects future task seeds once fresh entropy is unknown to the attacker.
 Existing task RNGs remain unchanged. The source does not provide backtracking resistance
-within a reseeding interval. Centralized services seed at construction; these epoch refresh
-hooks apply to threshold services.
+within a reseeding interval. Centralized services seed at construction; epoch refresh
+applies to threshold services.
 
 ### Binaries
 

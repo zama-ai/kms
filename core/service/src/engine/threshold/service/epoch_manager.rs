@@ -434,24 +434,8 @@ impl<
         Ok(())
     }
 
-    /// Wrapper around the internal method [`Self::internal_init_epoch`]
-    /// so it's easier to call from the outside if necessary.
-    pub async fn init_epoch(
-        &self,
-        context_id: &ContextId,
-        epoch_id: &EpochId,
-    ) -> anyhow::Result<()> {
-        Self::internal_init_epoch(
-            self.session_maker.clone(),
-            &self.crypto_storage,
-            context_id,
-            epoch_id,
-        )
-        .await
-    }
-
     /// Execute the PRSS setup phase and store the epoch data in the storage backend (which includes the PRSS result)
-    async fn internal_init_epoch(
+    async fn init_epoch(
         session_maker: SessionMaker,
         crypto_storage: &ThresholdCryptoMaterialStorage<PubS, PrivS>,
         context_id: &ContextId,
@@ -471,9 +455,6 @@ impl<
         // Note: derive session ID from epoch ID with fixed counter for PRSS
         // this is because we might also use the epoch id to derive sessions for the reshare
         let session_id = epoch_id.derive_session_id_with_counter(PRSS_SESSION_COUNTER)?;
-
-        // Direct epoch initialization must also refresh before drawing the PRSS contribution.
-        session_maker.reseed_rng()?;
 
         // PRSS robust init requires broadcast, which is implemented with Sync network assumption
         let mut base_session = session_maker
@@ -1776,7 +1757,7 @@ impl<
             ));
         }
 
-        // Set-1-only parties also need fresh randomness for resharing, even without local PRSS init.
+        // Refresh before forking either session, including for old-committee parties that skip PRSS init.
         self.session_maker.reseed_rng().map_err(|e| {
             MetricedError::new(
                 OP_NEW_EPOCH,
@@ -1848,13 +1829,9 @@ impl<
                 let epoch_id = epoch_id;
                 let meta_store = meta_store;
                 if do_prss
-                    && let Err(e) = Self::internal_init_epoch(
-                        session_maker,
-                        &crypto_storage,
-                        &context_id,
-                        &epoch_id,
-                    )
-                    .await
+                    && let Err(e) =
+                        Self::init_epoch(session_maker, &crypto_storage, &context_id, &epoch_id)
+                            .await
                 {
                     let err = format!("PRSS initialization failed during epoch creation: {e:?}");
                     let _ =
