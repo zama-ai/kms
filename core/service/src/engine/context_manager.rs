@@ -228,7 +228,16 @@ where
             custodian_context.custodian_nodes.len()
         );
         // On the tracker, so neither a dropped request nor a shutdown cuts the setup short
-        // between the keychain switch and the anchor write.
+        // between the keychain switch and the anchor write. A closed tracker means a shutdown
+        // is no longer waiting, so the setup is refused rather than started.
+        if self.tracker.is_closed() {
+            return Err(MetricedError::new(
+                OP_NEW_CUSTODIAN_CONTEXT,
+                Some(custodian_context_id),
+                anyhow::anyhow!("The node is shutting down"),
+                tonic::Code::Unavailable,
+            ));
+        }
         let setup = Arc::clone(&self);
         self.tracker
             .spawn(
@@ -2882,6 +2891,40 @@ mod tests {
             ),
             _ => panic!("expected a secret-sharing keychain in the backup vault"),
         }
+    }
+
+    /// Once a shutdown has closed the tracker, a setup is refused rather than started unwaited.
+    #[tokio::test]
+    async fn test_custodian_context_setup_is_refused_after_shutdown_began() {
+        let (_verification_key, sig_key, crypto_storage) = setup_crypto_storage(true).await;
+        let base_kms = BaseKmsStruct::new(KMSType::Threshold, sig_key, test_rng_source());
+        let context_id = RequestId::from_bytes([9u8; 32]);
+        let epoch_id = *DEFAULT_EPOCH_ID;
+        let session_maker =
+            SessionMaker::four_party_dummy_session(None, None, &epoch_id, base_kms.new_rng());
+        let private_storage = Arc::clone(&crypto_storage.private_storage);
+        let tracker = Arc::new(TaskTracker::new());
+        let context_manager = ThresholdContextManager::new(
+            base_kms,
+            crypto_storage,
+            MetaStore::new(100, 10),
+            session_maker,
+            false,
+            Arc::clone(&tracker),
+        );
+        tracker.close();
+
+        let error = context_manager
+            .new_custodian_context(custodian_context_request(context_id, 1))
+            .await
+            .expect_err("a setup must not start once shutdown began");
+        assert_eq!(error.code(), tonic::Code::Unavailable);
+        assert_eq!(
+            read_custodian_context_anchor(&*private_storage.lock().await)
+                .await
+                .unwrap(),
+            None
+        );
     }
 
     /// A request dropped while the setup runs, as a cancelled RPC or a timeout drops it, does not
