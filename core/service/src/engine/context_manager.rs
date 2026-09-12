@@ -228,8 +228,10 @@ where
             custodian_context.custodian_nodes.len()
         );
         // On the tracker, so neither a dropped request nor a shutdown cuts the setup short
-        // between the keychain switch and the anchor write. A closed tracker means a shutdown
-        // is no longer waiting, so the setup is refused rather than started.
+        // between the keychain switch and the anchor write. The token is held from before the
+        // check until the task is registered, so a shutdown cannot find the tracker empty in
+        // between; a closed tracker means it no longer waits, so the setup is refused.
+        let _admission = self.tracker.token();
         if self.tracker.is_closed() {
             return Err(MetricedError::new(
                 OP_NEW_CUSTODIAN_CONTEXT,
@@ -2894,7 +2896,9 @@ mod tests {
     }
 
     /// Once a shutdown has closed the tracker, a setup is refused rather than started unwaited.
-    #[tokio::test]
+    ///
+    /// The clock is paused, so an admission token the refusal fails to drop fails in virtual time.
+    #[tokio::test(start_paused = true)]
     async fn test_custodian_context_setup_is_refused_after_shutdown_began() {
         let (_verification_key, sig_key, crypto_storage) = setup_crypto_storage(true).await;
         let base_kms = BaseKmsStruct::new(KMSType::Threshold, sig_key, test_rng_source());
@@ -2925,6 +2929,9 @@ mod tests {
                 .unwrap(),
             None
         );
+        tokio::time::timeout(std::time::Duration::from_secs(1), tracker.wait())
+            .await
+            .expect("a refused setup must not hold the tracker open");
     }
 
     /// A request dropped while the setup runs, as a cancelled RPC or a timeout drops it, does not
