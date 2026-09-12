@@ -1660,7 +1660,9 @@ mod tests {
 
     /// A context the keychain took on for a recovery that failed must not outlive it, whether the
     /// recovery ends or is cancelled; one it held already, or one a setup put there since, must.
-    #[tokio::test]
+    ///
+    /// The clock is paused, so the sleep below resumes only once every other task is idle.
+    #[tokio::test(start_paused = true)]
     async fn recovered_keys_forget_only_the_context_they_adopted() {
         async fn context_of(vault: &Mutex<Vault>) -> Option<RequestId> {
             match vault.lock().await.keychain {
@@ -1693,7 +1695,8 @@ mod tests {
             "another context is not ours to forget"
         );
         drop(keys(id, false)); // as a cancelled RPC would
-        tokio::task::yield_now().await;
+        // The drop clears the context from a spawned task.
+        tokio::time::sleep(std::time::Duration::from_millis(1)).await;
         assert_eq!(
             context_of(&vault).await,
             None,

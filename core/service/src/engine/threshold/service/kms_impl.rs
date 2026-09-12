@@ -783,6 +783,7 @@ where
         custodian_meta_store,
         session_maker.clone(),
         require_pcr_allowlist,
+        Arc::clone(&tracker),
     );
     if let Err(e) = context_manager.load_mpc_context_from_storage().await {
         tracing::warn!(

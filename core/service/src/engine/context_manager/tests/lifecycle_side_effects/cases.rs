@@ -5,6 +5,7 @@ use crate::vault::storage::test_support::{
 };
 use crate::vault::storage::{Storage, read_context_at_id};
 use std::{future::Future, task::Poll};
+use tokio_util::task::TaskTracker;
 
 const INVALID_CA_CERTIFICATE: &[u8] =
     b"-----BEGIN CERTIFICATE-----\nAQID\n-----END CERTIFICATE-----\n";
@@ -463,8 +464,12 @@ async fn backup_failure_keeps_the_stored_context_registered(#[case] kms_type: KM
     let base_kms = BaseKmsStruct::new(kms_type, signing_key).unwrap();
     match kms_type {
         KMSType::Centralized => {
-            let manager =
-                CentralizedContextManager::new(base_kms, storage.clone(), MetaStore::new(100, 10));
+            let manager = CentralizedContextManager::new(
+                base_kms,
+                storage.clone(),
+                MetaStore::new(100, 10),
+                Arc::new(TaskTracker::new()),
+            );
             assert_backup_failure(&manager, &storage, &context).await;
         }
         KMSType::Threshold => {
@@ -475,6 +480,7 @@ async fn backup_failure_keeps_the_stored_context_registered(#[case] kms_type: KM
                 MetaStore::new(100, 10),
                 session_maker,
                 false,
+                Arc::new(TaskTracker::new()),
             );
             assert_backup_failure(&manager, &storage, &context).await;
         }

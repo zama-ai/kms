@@ -24,6 +24,7 @@ use threshold_networking::{
 };
 use tokio::sync::RwLock;
 use tokio_rustls::rustls::crypto::aws_lc_rs::default_provider;
+use tokio_util::task::TaskTracker;
 
 type TestStorage = CryptoMaterialStorage<RamStorage, FailingRamStorage>;
 
@@ -164,6 +165,7 @@ impl ContextFixture {
                     base_kms,
                     self.storage.clone(),
                     MetaStore::new(100, 10),
+                    Arc::new(TaskTracker::new()),
                 );
                 manager.load_mpc_context_from_storage().await.unwrap();
                 TestContextManager::Centralized(manager)
@@ -176,6 +178,7 @@ impl ContextFixture {
                     MetaStore::new(100, 10),
                     session_maker,
                     false,
+                    Arc::new(TaskTracker::new()),
                 );
                 manager.load_mpc_context_from_storage().await.unwrap();
                 TestContextManager::Threshold(manager)

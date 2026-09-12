@@ -47,7 +47,9 @@ use std::sync::Arc;
 use tfhe::safe_serialization::safe_serialize;
 use threshold_types::role::Role;
 use tokio::sync::{Mutex, RwLock};
+use tokio_util::task::TaskTracker;
 use tonic::Response;
+use tracing::Instrument;
 
 const CENTRALIZED_MPC_IDENTITY: &str = "centralized-zama-kms";
 const CENTRALIZED_PARTY_ID: u32 = 1;
@@ -63,6 +65,8 @@ struct SharedContextManager<
     custodian_meta_store: Arc<RwLock<CustodianMetaStore>>,
     /// Serializes MPC context creation and destruction across storage and in-memory updates.
     mpc_context_update_lock: Mutex<()>,
+    /// The node's task tracker; a shutdown waits for what runs on it.
+    tracker: Arc<TaskTracker>,
 }
 
 impl<PubS, PrivS> SharedContextManager<PubS, PrivS>
@@ -132,7 +136,7 @@ where
     }
 
     async fn new_custodian_context(
-        &self,
+        self: Arc<Self>,
         request: tonic::Request<kms_grpc::kms::v1::NewCustodianContextRequest>,
     ) -> Result<tonic::Response<kms_grpc::kms::v1::Empty>, MetricedError> {
         let inner = request.into_inner();
@@ -223,10 +227,28 @@ where
             custodian_context.threshold,
             custodian_context.custodian_nodes.len()
         );
-        self.inner_new_custodian_context(custodian_context, mpc_context_id)
+        // On the tracker, so neither a dropped request nor a shutdown cuts the setup short
+        // between the keychain switch and the anchor write.
+        let setup = Arc::clone(&self);
+        self.tracker
+            .spawn(
+                async move {
+                    setup
+                        .inner_new_custodian_context(custodian_context, mpc_context_id)
+                        .await
+                }
+                .instrument(tracing::Span::current()),
+            )
             .await
+            .map_err(|e| anyhow::anyhow!("Custodian context setup task failed: {e}"))
+            .and_then(|outcome| outcome)
             .map_err(|e| {
-                MetricedError::new(OP_NEW_CUSTODIAN_CONTEXT, None, e, tonic::Code::Internal)
+                MetricedError::new(
+                    OP_NEW_CUSTODIAN_CONTEXT,
+                    Some(custodian_context_id),
+                    e,
+                    tonic::Code::Internal,
+                )
             })?;
 
         //Always answer with Empty
@@ -705,7 +727,7 @@ pub struct CentralizedContextManager<
     PubS: Storage + Sync + Send + 'static,
     PrivS: StorageExt + Sync + Send + 'static,
 > {
-    inner: SharedContextManager<PubS, PrivS>,
+    inner: Arc<SharedContextManager<PubS, PrivS>>,
     cache: Arc<RwLock<HashSet<ContextId>>>,
 }
 
@@ -718,14 +740,16 @@ where
         base_kms: BaseKmsStruct,
         crypto_storage: CryptoMaterialStorage<PubS, PrivS>,
         custodian_meta_store: Arc<RwLock<CustodianMetaStore>>,
+        tracker: Arc<TaskTracker>,
     ) -> Self {
         Self {
-            inner: SharedContextManager {
+            inner: Arc::new(SharedContextManager {
                 base_kms,
                 crypto_storage,
                 custodian_meta_store,
                 mpc_context_update_lock: Mutex::new(()),
-            },
+                tracker,
+            }),
             cache: Arc::new(RwLock::new(HashSet::new())),
         }
     }
@@ -944,7 +968,7 @@ where
         &self,
         request: tonic::Request<NewCustodianContextRequest>,
     ) -> Result<Response<Empty>, MetricedError> {
-        self.inner.new_custodian_context(request).await
+        Arc::clone(&self.inner).new_custodian_context(request).await
     }
 
     async fn destroy_custodian_context(
@@ -982,7 +1006,7 @@ pub struct ThresholdContextManager<
     PubS: Storage + Sync + Send + 'static,
     PrivS: StorageExt + Sync + Send + 'static,
 > {
-    inner: SharedContextManager<PubS, PrivS>,
+    inner: Arc<SharedContextManager<PubS, PrivS>>,
     session_maker: SessionMaker,
     require_pcr_allowlist: bool,
 }
@@ -998,14 +1022,16 @@ where
         custodian_meta_store: Arc<RwLock<CustodianMetaStore>>,
         session_maker: SessionMaker,
         require_pcr_allowlist: bool,
+        tracker: Arc<TaskTracker>,
     ) -> Self {
         Self {
-            inner: SharedContextManager {
+            inner: Arc::new(SharedContextManager {
                 base_kms,
                 crypto_storage,
                 custodian_meta_store,
                 mpc_context_update_lock: Mutex::new(()),
-            },
+                tracker,
+            }),
             session_maker,
             require_pcr_allowlist,
         }
@@ -1320,7 +1346,7 @@ where
         &self,
         request: tonic::Request<NewCustodianContextRequest>,
     ) -> Result<tonic::Response<Empty>, MetricedError> {
-        self.inner.new_custodian_context(request).await
+        Arc::clone(&self.inner).new_custodian_context(request).await
     }
 
     async fn destroy_custodian_context(
@@ -1566,6 +1592,7 @@ mod tests {
             MetaStore::new(100, 10),
             session_maker,
             false,
+            Arc::new(TaskTracker::new()),
         );
 
         let response = context_manager.new_mpc_context(request).await;
@@ -1701,6 +1728,7 @@ mod tests {
             MetaStore::new(100, 10),
             session_maker,
             true,
+            Arc::new(TaskTracker::new()),
         );
         let make_context = |context_id, pcr_values| ContextInfo {
             mpc_nodes: vec![NodeInfo {
@@ -1809,6 +1837,7 @@ mod tests {
                 MetaStore::new(100, 10),
                 session_maker,
                 false,
+                Arc::new(TaskTracker::new()),
             );
             let response = context_manager.new_mpc_context(request).await;
             response.unwrap();
@@ -1847,6 +1876,7 @@ mod tests {
                 MetaStore::new(100, 10),
                 session_maker,
                 false,
+                Arc::new(TaskTracker::new()),
             );
 
             // check that there are no contexts
@@ -1899,6 +1929,7 @@ mod tests {
                 MetaStore::new(100, 10),
                 session_maker,
                 false,
+                Arc::new(TaskTracker::new()),
             );
             let pcr_values = vec![threshold_networking::tls::ReleasePCRValues {
                 pcr0: vec![0u8; 48],
@@ -1924,6 +1955,7 @@ mod tests {
             MetaStore::new(100, 10),
             session_maker,
             true,
+            Arc::new(TaskTracker::new()),
         );
         context_manager
             .load_mpc_context_from_storage()
@@ -1971,6 +2003,7 @@ mod tests {
                 MetaStore::new(100, 10),
                 session_maker,
                 false,
+                Arc::new(TaskTracker::new()),
             );
 
             for context_id in &context_ids {
@@ -2027,6 +2060,7 @@ mod tests {
                 MetaStore::new(100, 10),
                 session_maker,
                 false,
+                Arc::new(TaskTracker::new()),
             );
 
             assert_eq!(0, context_manager.session_maker.context_count().await);
@@ -2058,6 +2092,7 @@ mod tests {
                 MetaStore::new(100, 10),
                 session_maker,
                 false,
+                Arc::new(TaskTracker::new()),
             );
 
             for context_id in &context_ids {
@@ -2154,6 +2189,7 @@ mod tests {
                 MetaStore::new(100, 10),
                 session_maker,
                 false,
+                Arc::new(TaskTracker::new()),
             );
 
             assert_eq!(0, context_manager.session_maker.context_count().await);
@@ -2205,6 +2241,7 @@ mod tests {
                 MetaStore::new(100, 10),
                 session_maker,
                 false,
+                Arc::new(TaskTracker::new()),
             );
             let request = Request::new(NewMpcContextRequest {
                 new_context: Some(new_context.try_into().unwrap()),
@@ -2240,6 +2277,7 @@ mod tests {
                 MetaStore::new(100, 10),
                 session_maker,
                 false,
+                Arc::new(TaskTracker::new()),
             );
 
             // load_mpc_context_from_storage should succeed (not panic or error)
@@ -2305,6 +2343,7 @@ mod tests {
                 MetaStore::new(100, 10),
                 session_maker,
                 false,
+                Arc::new(TaskTracker::new()),
             );
 
             let response = context_manager.new_custodian_context(request).await;
@@ -2475,6 +2514,7 @@ mod tests {
             custodian_meta_store.clone(),
             session_maker,
             false,
+            Arc::new(TaskTracker::new()),
         );
 
         let mut rng = AesRng::seed_from_u64(43);
@@ -2686,6 +2726,7 @@ mod tests {
             MetaStore::new(100, 10),
             session_maker,
             false,
+            Arc::new(TaskTracker::new()),
         );
 
         // The custodian context creation should fail because backup update fails
@@ -2815,6 +2856,7 @@ mod tests {
             MetaStore::new(100, 10),
             session_maker,
             false,
+            Arc::new(TaskTracker::new()),
         );
 
         assert!(
@@ -2829,6 +2871,61 @@ mod tests {
                 keychain.get_current_backup_id().is_err(),
                 "an unresolved anchor must leave the keychain uninitialized"
             ),
+            _ => panic!("expected a secret-sharing keychain in the backup vault"),
+        }
+    }
+
+    /// A request dropped while the setup runs, as a cancelled RPC or a timeout drops it, does not
+    /// cut the setup short: the keychain, the material and the anchor still end consistent.
+    ///
+    /// The clock is paused, so a setup that hangs fails in virtual time.
+    #[tokio::test(start_paused = true)]
+    async fn test_custodian_context_setup_survives_a_dropped_request() {
+        let (_verification_key, sig_key, crypto_storage) = setup_crypto_storage(true).await;
+        let base_kms = BaseKmsStruct::new(KMSType::Threshold, sig_key).unwrap();
+        let context_id = RequestId::from_bytes([8u8; 32]);
+        let epoch_id = *DEFAULT_EPOCH_ID;
+        let session_maker =
+            SessionMaker::four_party_dummy_session(None, None, &epoch_id, base_kms.new_rng().await);
+        let backup_vault = crypto_storage.get_backup_vault().unwrap();
+        let private_storage = Arc::clone(&crypto_storage.private_storage);
+        let tracker = Arc::new(TaskTracker::new());
+        let context_manager = ThresholdContextManager::new(
+            base_kms,
+            crypto_storage,
+            MetaStore::new(100, 10),
+            session_maker,
+            false,
+            Arc::clone(&tracker),
+        );
+
+        // One poll spawns the setup; dropping the request then leaves it running on its own.
+        let mut request = Box::pin(
+            context_manager.new_custodian_context(custodian_context_request(context_id, 1)),
+        );
+        assert!(futures_util::poll!(&mut request).is_pending());
+        drop(request);
+
+        tracker.close();
+        tokio::time::timeout(std::time::Duration::from_secs(1), tracker.wait())
+            .await
+            .expect("the setup must complete without its request");
+        assert_eq!(
+            read_custodian_context_anchor(&*private_storage.lock().await)
+                .await
+                .unwrap(),
+            Some(context_id)
+        );
+        let guarded_backup_vault = backup_vault.lock().await;
+        assert!(
+            read_recovery_material_at_id(&guarded_backup_vault.storage, &context_id)
+                .await
+                .is_ok()
+        );
+        match guarded_backup_vault.keychain.as_ref() {
+            Some(KeychainProxy::SecretSharing(keychain)) => {
+                assert_eq!(keychain.get_current_backup_id().unwrap(), context_id)
+            }
             _ => panic!("expected a secret-sharing keychain in the backup vault"),
         }
     }
@@ -2903,6 +3000,7 @@ mod tests {
             MetaStore::new(100, 10),
             session_maker,
             false,
+            Arc::new(TaskTracker::new()),
         );
 
         assert!(
@@ -2969,6 +3067,7 @@ mod tests {
             base_kms,
             crypto_storage.clone(),
             MetaStore::new(100, 10),
+            Arc::new(TaskTracker::new()),
         );
 
         // Initially, the cache should be empty
@@ -3099,6 +3198,7 @@ mod tests {
             base_kms,
             crypto_storage.clone(),
             MetaStore::new(100, 10),
+            Arc::new(TaskTracker::new()),
         );
 
         // Initially, context should not exist
@@ -3182,6 +3282,7 @@ mod tests {
             base_kms,
             crypto_storage.clone(),
             MetaStore::new(100, 10),
+            Arc::new(TaskTracker::new()),
         );
 
         // Create multiple contexts

@@ -333,7 +333,10 @@ the setup succeeded; if it cannot be read, the material is kept for whichever an
 keychain is emptied, so the node makes no backups until the next boot reads the anchor. Setup,
 destruction and recovery are serialized by `custodian_context_lock` for the same reason. The anchor
 is written last, after the material, so a crash anywhere before it leaves the previous context
-anchored rather than a half-installed one.
+anchored rather than a half-installed one. The setup runs on the node's task tracker, so neither a
+dropped request nor a shutdown cuts it short between the keychain switch and the anchor write.
+Destruction still runs on the request itself; a dropped one leaves a context that a repeated
+destroy finishes.
 
 Restoration writes the private data types back in a fixed order (`RESTORE_ORDER` in
 [backup_operator.rs](../core/service/src/engine/backup_operator.rs)): contexts and `EpochData`
