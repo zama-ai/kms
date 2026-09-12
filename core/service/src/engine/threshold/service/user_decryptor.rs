@@ -552,7 +552,7 @@ impl<
 
         let meta_store = Arc::clone(&self.user_decrypt_meta_store);
         let crypto_storage = self.crypto_storage.clone();
-        let rng = self.base_kms.new_rng().await;
+        let rng = self.base_kms.new_rng();
 
         let identity = signing_identity_for(
             &self.base_kms,
@@ -715,6 +715,7 @@ impl<
 
 #[cfg(test)]
 mod tests {
+    use crate::engine::rng_source::test_rng_source;
     use aes_prng::AesRng;
     use kms_grpc::{
         kms::v1::{CiphertextFormat, SigningSchemeType},
@@ -832,8 +833,8 @@ mod tests {
         let base_kms = BaseKmsStruct::new(
             KMSType::Threshold,
             NodeSigningIdentity::ecdsa_only(sk.clone()),
-        )
-        .unwrap();
+            test_rng_source(),
+        );
 
         let epoch_id = EpochId::new_random(rng);
         let prss_setup_z128 = Some(PRSSSetup::new_testing_prss(vec![], vec![]));
@@ -843,7 +844,7 @@ mod tests {
             prss_setup_z128,
             prss_setup_z64,
             &epoch_id,
-            base_kms.new_rng().await,
+            base_kms.new_rng(),
         );
 
         let key_id = RequestId::new_random(rng);

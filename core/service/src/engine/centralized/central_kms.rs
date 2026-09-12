@@ -20,6 +20,7 @@ use crate::engine::base::sign_user_decryption_result;
 use crate::engine::base::{BaseKmsStruct, KmsFheKeyHandles};
 use crate::engine::base::{KeyGenMetadata, PubDecCallValues, UserDecryptCallValues};
 use crate::engine::context_manager::CentralizedContextManager;
+use crate::engine::rng_source::RngSource;
 #[cfg(feature = "non-wasm")]
 use crate::engine::storage_material_verification::{
     PrivateLayout, verify_private_storage_layout, verify_storage_material,
@@ -292,7 +293,7 @@ pub(crate) fn generate_fhe_keys(
     )?;
 
     let (public_key, server_key) = compressed_keyset.decompress().into_raw_parts();
-    let (_, _, _, decompression_key, _, _, _, _, _) = server_key.into_raw_parts();
+    let (_, _, _, decompression_key, _, _, _, _, _, _) = server_key.into_raw_parts();
 
     let handles = KmsFheKeyHandles::new_compressed(
         sk,
@@ -344,6 +345,7 @@ pub fn generate_uncompressed_fhe_keys(
             server_key.6,
             server_key.7,
             server_key.8,
+            server_key.9,
         );
         let public_key = FhePublicKey::new(&client_key);
         let pks = FhePubKeySet {
@@ -983,11 +985,12 @@ impl<
             backup_vault,
             key_info_with_epoch,
         );
-        let base_kms = BaseKmsStruct::new(KMSType::Centralized, signing_identity)?;
+        let rng_source = Arc::new(RngSource::new(security_module.clone())?);
+        let base_kms = BaseKmsStruct::new(KMSType::Centralized, signing_identity, rng_source);
 
         let context_manager: CentralizedContextManager<PubS, PrivS> =
             CentralizedContextManager::new(
-                base_kms.new_instance().await,
+                base_kms.new_instance(),
                 crypto_storage.inner.clone(),
                 Arc::clone(&custodian_meta_store),
                 Arc::clone(&tracker),
@@ -995,7 +998,7 @@ impl<
         // Load existing MPC contexts from storage into the cache
         context_manager.load_mpc_context_from_storage().await?;
         let backup_operator = RealBackupOperator::new(
-            base_kms.new_instance().await,
+            base_kms.new_instance(),
             crypto_storage.inner.clone(),
             security_module,
         );
@@ -1480,10 +1483,9 @@ pub(crate) mod tests {
             _ => panic!("Expected Current variant of KeyGenMetadata"),
         }
 
-        // Verify the compressed keyset can be decompressed. `decompress` is infallible since
-        // tfhe 1.7.0, so this only asserts it does not panic.
+        // Verify the compressed keyset can be decompressed.
         let (_pk, server_key) = compressed_keyset.decompress().into_raw_parts();
-        let (_, _, _, _, _, _, _, oprf_key, _) = server_key.into_raw_parts();
+        let (_, _, _, _, _, _, _, oprf_key, _, _) = server_key.into_raw_parts();
         assert!(
             oprf_key.is_some(),
             "centralized full keygen must embed a dedicated OPRF server key"
@@ -1859,7 +1861,7 @@ pub(crate) mod tests {
             }
             keys
         };
-        let mut rng = kms.base_kms.new_rng().await;
+        let mut rng = kms.base_kms.new_rng();
 
         let raw_cipher = RealCentralizedKms::<FileStorage, FileStorage>::user_decrypt(
             &kms.crypto_storage

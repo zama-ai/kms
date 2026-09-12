@@ -9,7 +9,7 @@ use kms_grpc::{
     kms_service::v1::core_service_endpoint_client::CoreServiceEndpointClient,
     rpc_types::PubDataType,
 };
-use threshold_execution::tfhe_internals::private_keysets::PrivateKeySet;
+use threshold_execution::tfhe_internals::private_keysets::{LweSecretKeyShareEnum, PrivateKeySet};
 use threshold_types::role::Role;
 use tokio::task::JoinSet;
 use tonic::{Response, Status, transport::Channel};
@@ -270,6 +270,7 @@ pub(crate) async fn new_epoch_with_reshare_and_crs(
                 lwe_encryption_secret_key_share,
                 lwe_compute_secret_key_share,
                 oprf_secret_key_share,
+                transciphering_secret_key_share,
                 glwe_secret_key_share,
                 glwe_secret_key_share_sns_as_lwe,
                 glwe_secret_key_share_compression,
@@ -281,6 +282,7 @@ pub(crate) async fn new_epoch_with_reshare_and_crs(
                 lwe_encryption_secret_key_share: reshared_lwe_encryption_secret_key_share,
                 lwe_compute_secret_key_share: reshared_lwe_compute_secret_key_share,
                 oprf_secret_key_share: reshared_oprf_secret_key_share,
+                transciphering_secret_key_share: reshared_transciphering_secret_key_share,
                 glwe_secret_key_share: reshared_glwe_secret_key_share,
                 glwe_secret_key_share_sns_as_lwe: reshared_glwe_secret_key_share_sns_as_lwe,
                 glwe_secret_key_share_compression: reshared_glwe_secret_key_share_compression,
@@ -290,6 +292,33 @@ pub(crate) async fn new_epoch_with_reshare_and_crs(
 
             // Assert parameters are the same
             assert_eq!(parameters, reshared_parameters);
+            let transciphering_expected = dkg_param.transciphering_lwe_dimension();
+            assert_eq!(
+                transciphering_secret_key_share.is_some(),
+                transciphering_expected.is_some(),
+                "the original keyset must match the parameters' transciphering configuration"
+            );
+            assert_eq!(
+                reshared_transciphering_secret_key_share.is_some(),
+                transciphering_expected.is_some(),
+                "the reshared keyset must match the parameters' transciphering configuration"
+            );
+            let share_dimension = |share: &Option<LweSecretKeyShareEnum<4>>| {
+                share.as_ref().map(|share| match share {
+                    LweSecretKeyShareEnum::Z64(share) => share.lwe_dimension(),
+                    LweSecretKeyShareEnum::Z128(share) => share.lwe_dimension(),
+                })
+            };
+            assert_eq!(
+                share_dimension(&transciphering_secret_key_share),
+                transciphering_expected,
+                "the original transciphering share must have the parameter-defined LWE dimension"
+            );
+            assert_eq!(
+                share_dimension(&reshared_transciphering_secret_key_share),
+                transciphering_expected,
+                "the reshared transciphering share must have the parameter-defined LWE dimension"
+            );
             // Assert none of the keys is similar
             assert_ne!(
                 lwe_encryption_secret_key_share,
@@ -299,8 +328,18 @@ pub(crate) async fn new_epoch_with_reshare_and_crs(
                 lwe_compute_secret_key_share,
                 reshared_lwe_compute_secret_key_share
             );
+            // `assert_ne!` alone would also hold if resharing dropped the share, so assert the
+            // reshared keyset still carries it.
             if oprf_secret_key_share.is_some() {
+                assert!(reshared_oprf_secret_key_share.is_some());
                 assert_ne!(oprf_secret_key_share, reshared_oprf_secret_key_share);
+            }
+            if transciphering_secret_key_share.is_some() {
+                assert!(reshared_transciphering_secret_key_share.is_some());
+                assert_ne!(
+                    transciphering_secret_key_share,
+                    reshared_transciphering_secret_key_share
+                );
             }
             assert_ne!(glwe_secret_key_share, reshared_glwe_secret_key_share);
             if glwe_secret_key_share_sns_as_lwe.is_some() {

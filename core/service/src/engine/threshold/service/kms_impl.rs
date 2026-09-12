@@ -343,7 +343,7 @@ impl ThresholdFheKeys {
             },
             PublicKeyMaterial::Compressed { keyset } => {
                 let (_pk, sk) = keyset.decompress().into_raw_parts();
-                let (isk, _, _, decompk, snsk, _, _, _, _) = sk.into_raw_parts();
+                let (isk, _, _, decompk, snsk, _, _, _, _, _) = sk.into_raw_parts();
                 UncompressedKeys {
                     integer_server_key: Arc::new(isk),
                     sns_key: snsk.map(Arc::new),
@@ -767,7 +767,7 @@ where
         all_epochs,
         networking_manager,
         verifier,
-        base_kms.new_rng().await,
+        base_kms.rng_source(),
     )
     .await?;
     let immutable_session_maker = session_maker.make_immutable();
@@ -778,7 +778,7 @@ where
     // NOTE: context must be loaded before attempting to automatically start the PRSS
     // since the PRSS requires a context to be present.
     let context_manager = ThresholdContextManager::new(
-        base_kms.new_instance().await,
+        base_kms.new_instance(),
         crypto_storage.inner.clone(),
         custodian_meta_store,
         session_maker.clone(),
@@ -796,7 +796,7 @@ where
     let epoch_manager = RealThresholdEpochManager {
         crypto_storage: crypto_storage.clone(),
         session_maker: session_maker.clone(),
-        base_kms: base_kms.new_instance().await,
+        base_kms: base_kms.new_instance(),
         reshare_pubinfo_meta_store: MetaStore::new_unlimited(),
         tracker: Arc::clone(&tracker),
         rate_limiter: rate_limiter.clone(),
@@ -806,7 +806,7 @@ where
     let slow_events = Arc::new(Mutex::new(HashMap::new()));
 
     let user_decryptor = RealUserDecryptor {
-        base_kms: base_kms.new_instance().await,
+        base_kms: base_kms.new_instance(),
         crypto_storage: crypto_storage.clone(),
         user_decrypt_meta_store: user_decrypt_meta_store.clone(),
         session_maker: immutable_session_maker.clone(),
@@ -817,7 +817,7 @@ where
     };
 
     let public_decryptor = RealPublicDecryptor {
-        base_kms: base_kms.new_instance().await,
+        base_kms: base_kms.new_instance(),
         crypto_storage: crypto_storage.clone(),
         pub_dec_meta_store: pub_dec_meta_store.clone(),
         session_maker: immutable_session_maker.clone(),
@@ -828,7 +828,7 @@ where
     };
 
     let keygenerator = RealKeyGenerator {
-        base_kms: base_kms.new_instance().await,
+        base_kms: base_kms.new_instance(),
         crypto_storage: crypto_storage.clone(),
         preproc_buckets: Arc::clone(&preproc_buckets),
         dkg_pubinfo_meta_store,
@@ -844,7 +844,7 @@ where
     let insecure_keygenerator = RealInsecureKeyGenerator::from_real_keygen(&keygenerator).await;
 
     let keygen_preprocessor = RealPreprocessor {
-        base_kms: base_kms.new_instance().await,
+        base_kms: base_kms.new_instance(),
         session_maker: immutable_session_maker.clone(),
         preproc_buckets,
         preproc_factory,
@@ -856,7 +856,7 @@ where
     };
 
     let crs_generator = RealCrsGenerator {
-        base_kms: base_kms.new_instance().await,
+        base_kms: base_kms.new_instance(),
         crypto_storage: crypto_storage.clone(),
         crs_meta_store,
         session_maker: immutable_session_maker.clone(),
@@ -870,7 +870,7 @@ where
     let insecure_crs_generator = RealInsecureCrsGenerator::from_real_crsgen(&crs_generator).await;
 
     let backup_operator = RealBackupOperator::new(
-        base_kms.new_instance().await,
+        base_kms.new_instance(),
         crypto_storage.inner.clone(),
         security_module,
     );
@@ -1082,6 +1082,7 @@ mod tests {
                 _sns_compression_key,
                 _rerand_key,
                 _oprf_key,
+                _transciphering_key,
                 _tag,
             ) = keyset.public_keys.server_key.into_raw_parts();
 
@@ -1124,7 +1125,7 @@ mod tests {
         let (keyset, compressed_keyset) =
             gen_key_set(TEST_PARAM, tfhe::Tag::default(), &mut rng).unwrap();
 
-        let (integer_server_key, _, _, decompression_key, sns_key, _, _, _, _) =
+        let (integer_server_key, _, _, decompression_key, sns_key, _, _, _, _, _) =
             keyset.public_keys.server_key.into_raw_parts();
 
         let v0 = PublicKeyMaterialV0::Compressed {
@@ -1206,7 +1207,7 @@ mod tests {
         let mut rng = AesRng::seed_from_u64(42);
         let (keyset, compressed_keyset) =
             gen_key_set(TEST_PARAM, tfhe::Tag::default(), &mut rng).unwrap();
-        let (integer_server_key, _, _, decompression_key, sns_key, _, _, _, _) =
+        let (integer_server_key, _, _, decompression_key, sns_key, _, _, _, _, _) =
             keyset.public_keys.server_key.into_raw_parts();
 
         // V3 control

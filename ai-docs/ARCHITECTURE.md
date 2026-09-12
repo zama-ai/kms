@@ -143,6 +143,22 @@ The service crate is the main surface area. Key subdirectories under
   local key-material utilities used by `core-client`) and test-only wiring.
 - [bin/](../core/service/src/bin/) — entry points (see below).
 
+### Task randomness
+
+[`RngSource`](../core/service/src/engine/rng_source.rs) supplies task seeds from
+one shared AES RNG per KMS instance. `BaseKmsStruct` instances and `SessionMaker`
+share the source through `Arc`. Each task receives an owned RNG with a separate seed.
+Source initialization combines OS entropy with entropy from the configured security module.
+Refresh also mixes output from the existing source. Entropy failures return errors and leave
+the source unchanged. Refresh logs report success or failure without seed values.
+
+Threshold epoch creation refreshes once in `new_mpc_epoch`, before either the resharing
+or PRSS session forks its RNG. This includes old-committee parties that skip PRSS initialization.
+A successful refresh protects future task seeds once fresh entropy is unknown to the attacker.
+Existing task RNGs remain unchanged. The source does not provide backtracking resistance
+within a reseeding interval. Centralized services seed at construction; epoch refresh
+applies to threshold services.
+
 ### Binaries
 
 All under [core/service/src/bin/](../core/service/src/bin/):
@@ -195,9 +211,13 @@ The primary service is `CoreServiceEndpoint`. Its RPCs group into:
   key in the generated TFHE server key. Legacy private keysets that predate this
   field are upgraded with the OPRF share absent; `UseExisting` keygen generates
   and persists a fresh OPRF share for such legacy material before regenerating
-  public keys. Key generation and CRS generation write persistent material only
-  after generation completes. An abort updates request state but does not purge
-  storage.
+  public keys. When the parameter set carries transciphering parameters, keygen
+  additionally persists a *second*, independently sampled LWE secret-key share
+  and includes the matching transciphering server key; as for the OPRF key,
+  `UseExisting` keygen generates a fresh transciphering share when the existing
+  keyset has none. Key generation and CRS generation write persistent material
+  only after generation completes. An abort updates request state but does not
+  purge storage.
 - **Decryption** — `PublicDecrypt` (returns plaintext) and `UserDecrypt`
   (user-initiated, EIP-712 authenticated). `PublicDecryptSync` / `UserDecryptSync`
   start a decryption and wait for its result in the same call, so the caller does
@@ -215,8 +235,10 @@ The primary service is `CoreServiceEndpoint`. Its RPCs group into:
   both sets must hold the key material, so failing to read it rejects the
   request, whereas a pure set 2 party (a node joining the new context) never held
   the key and logs a warning instead. When resharing legacy key material that
-  has no dedicated OPRF secret-key share, the OPRF sub-protocol is skipped and
-  the reshared private keyset keeps that field absent. A storage failure during
+  has no dedicated OPRF/transciphering secret-key share, the OPRF/transciphering
+  sub-protocol is skipped and the reshared private keyset keeps that field
+  absent. Which of these optional shares to reshare is decided from the input
+  keyset, and every party must agree. A storage failure during
   resharing rolls the new epoch back on the party that fails. That party attempts
   to delete the key shares, the CRS metadata and the epoch data of the new epoch.
   Public data remains because an epoch change does not affect it. If cleanup

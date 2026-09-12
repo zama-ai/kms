@@ -841,7 +841,7 @@ where
 
     let fhe_key_set = keyset.public_keys.clone();
 
-    let (integer_server_key, _, _, _, sns_key, _, _, _, _) =
+    let (integer_server_key, _, _, _, sns_key, _, _, _, _, _) =
         keyset.public_keys.server_key.clone().into_raw_parts();
 
     let threshold_fhe_keys = ThresholdFheKeys::new(

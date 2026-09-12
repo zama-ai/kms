@@ -230,7 +230,7 @@ where
         backup_id: RequestId,
         cts: BTreeMap<Role, InnerOperatorBackupOutput>,
     ) -> anyhow::Result<(RecoveryRequest, UnifiedPrivateEncKey, UnifiedPublicEncKey)> {
-        let mut rng = self.base_kms.new_rng().await;
+        let mut rng = self.base_kms.new_rng();
         let operator_verf_key = self.base_kms.verf_key().to_legacy_bytes()?;
         // Generate asymmetric ephemeral keys for the operator to use to encrypt the backup
         let mut enc = Encryption::new(PkeSchemeType::MlKem512, &mut rng);
@@ -1452,6 +1452,7 @@ mod tests {
     use super::*;
     use crate::backup::error::{BackupError, RecoverySkipReason};
     use crate::consts::{DEFAULT_MPC_CONTEXT, SIGNING_KEY_ID};
+    use crate::engine::rng_source::test_rng_source;
     use crate::vault::storage::{
         StorageProxy,
         ram::RamStorage,
@@ -1648,7 +1649,11 @@ mod tests {
                 .unwrap();
         }
         RealBackupOperator::new(
-            BaseKmsStruct::new(kms_grpc::rpc_types::KMSType::Centralized, sig_key.clone()).unwrap(),
+            BaseKmsStruct::new(
+                kms_grpc::rpc_types::KMSType::Centralized,
+                sig_key.clone(),
+                test_rng_source(),
+            ),
             CryptoMaterialStorage::from(
                 RamStorage::new(),
                 priv_storage,

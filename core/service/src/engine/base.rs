@@ -9,6 +9,7 @@ use crate::cryptography::signatures::internal_sign;
 use crate::cryptography::signatures::{PublicSigKey, Signature};
 use crate::cryptography::signing::SigningSchemeType;
 use crate::cryptography::signing::identity::NodeSigningIdentity;
+use crate::engine::rng_source::RngSource;
 use crate::engine::traits::PrivateKeyMaterialMetadata;
 use crate::util::key_setup::FhePrivateKey;
 use aes_prng::AesRng;
@@ -33,7 +34,6 @@ use kms_grpc::solidity_types::{
     PublicDecryptVerification,
 };
 use kms_grpc::utils::tonic_result::BoxedStatus;
-use rand::{RngCore, SeedableRng};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::collections::HashMap;
@@ -61,7 +61,6 @@ use threshold_execution::endpoints::decryption::{LowLevelCiphertext, SnsRadixOrB
 use threshold_execution::tfhe_internals::parameters::DKGParams;
 use threshold_execution::tfhe_internals::public_keysets::FhePubKeySet;
 use threshold_execution::zk::ceremony::max_num_bits_from_crs;
-use tokio::sync::Mutex;
 use tracing::error;
 
 // Domain separators for cryptographic operations to ensure domain separation
@@ -1212,24 +1211,31 @@ pub struct BaseKmsStruct {
     kms_type: KMSType,
     signing_identity: Option<Arc<NodeSigningIdentity>>,
     verf_key: Arc<PublicSigKey>,
-    rng: Arc<Mutex<AesRng>>,
+    rng_source: Arc<RngSource>,
 }
 
 impl BaseKmsStruct {
+    /// Constructs a service with an explicitly supplied seed source.
     pub fn new(
         kms_type: KMSType,
         signing_identity: impl Into<NodeSigningIdentity>,
-    ) -> anyhow::Result<Self> {
+        rng_source: Arc<RngSource>,
+    ) -> Self {
         let signing_identity = signing_identity.into();
-        Ok(BaseKmsStruct {
+        BaseKmsStruct {
             kms_type,
             verf_key: Arc::new(signing_identity.verf_key()),
             signing_identity: Some(Arc::new(signing_identity)),
-            rng: Arc::new(Mutex::new(AesRng::from_entropy())),
-        })
+            rng_source,
+        }
     }
 
-    pub fn new_no_signing_key(kms_type: KMSType, verf_key: PublicSigKey) -> Self {
+    /// Constructs a recovery service with an explicitly supplied seed source.
+    pub fn new_no_signing_key(
+        kms_type: KMSType,
+        verf_key: PublicSigKey,
+        rng_source: Arc<RngSource>,
+    ) -> Self {
         tracing::warn!(
             "Initializing KMS without a signing key. ONLY BACKUP RECOVERY OPERATIONS WILL BE POSSIBLE."
         );
@@ -1237,7 +1243,7 @@ impl BaseKmsStruct {
             kms_type,
             signing_identity: None,
             verf_key: Arc::new(verf_key),
-            rng: Arc::new(Mutex::new(AesRng::from_entropy())),
+            rng_source,
         }
     }
 
@@ -1258,24 +1264,25 @@ impl BaseKmsStruct {
         Arc::clone(&self.verf_key)
     }
 
-    /// Make a clone of this struct with a newly initialized RNG s.t. that both the new and old struct are safe to use.
-    pub async fn new_instance(&self) -> Self {
+    /// Shares the seed source; each task receives its own RNG from [`Self::new_rng`].
+    // This method is cloning `BaseKmsStruct` but we prefer not to impl `Clone` to avoid accidental misuse.
+    pub fn new_instance(&self) -> Self {
         Self {
             kms_type: self.kms_type,
             verf_key: Arc::clone(&self.verf_key),
             signing_identity: self.signing_identity.as_ref().map(Arc::clone),
-            rng: Arc::new(Mutex::new(self.new_rng().await)),
+            rng_source: Arc::clone(&self.rng_source),
         }
     }
 
-    pub async fn new_rng(&self) -> AesRng {
-        let mut seed = [0u8; crate::consts::RND_SIZE];
-        // Make a seperate scope for the rng so that it is dropped before the lock is released
-        {
-            let mut base_rng = self.rng.lock().await;
-            base_rng.fill_bytes(seed.as_mut());
-        }
-        AesRng::from_seed(seed)
+    /// Returns a task RNG seeded from the shared source.
+    pub fn new_rng(&self) -> AesRng {
+        self.rng_source.fork_rng()
+    }
+
+    /// Returns the shared source for session construction and refresh.
+    pub(crate) fn rng_source(&self) -> Arc<RngSource> {
+        Arc::clone(&self.rng_source)
     }
 }
 
@@ -2669,6 +2676,7 @@ pub(crate) mod tests {
             _noise_squashing_compression_key,
             _rerand_key,
             _oprf_key,
+            _transciphering_key,
             _tag,
         ) = pubkeyset.server_key.clone().into_raw_parts();
         assert!(compression_key.is_some());
