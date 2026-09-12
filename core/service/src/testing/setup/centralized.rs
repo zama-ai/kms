@@ -211,17 +211,11 @@ async fn build_backup_vault(material_path: &Path, with_custodian_keychain: bool)
     )?);
 
     let keychain = if with_custodian_keychain {
-        let pub_proxy = StorageProxy::from(FileStorage::new(
-            Some(material_path),
-            StorageType::PUB,
-            None,
-        )?);
         Some(
             make_keychain_proxy(
                 &Keychain::SecretSharing(SecretSharingKeychain {}),
                 None,
                 None,
-                Some(&pub_proxy),
                 false,
             )
             .await?,

@@ -89,11 +89,11 @@ use crate::{
     grpc::metastore_status_service::MetaStoreStatusServiceImpl,
     util::{meta_store::MetaStore, rate_limiter::RateLimiter},
     vault::{
-        Vault,
+        Vault, adopt_custodian_context,
         storage::{
             Storage, StorageExt, crypto_material::ThresholdCryptoMaterialStorage,
             read_all_data_from_all_epochs_versioned, read_all_data_versioned,
-            select_data_from_max_epoch,
+            read_all_recovery_material, select_data_from_max_epoch,
         },
     },
 };
@@ -510,7 +510,7 @@ pub async fn new_real_threshold_kms<PubS, PrivS, F>(
     config: CoreConfig,
     public_storage: PubS,
     mut private_storage: PrivS,
-    backup_storage: Option<Vault>,
+    mut backup_storage: Option<Vault>,
     security_module: Option<Arc<SecurityModuleProxy>>,
     mpc_listener: TcpListener,
     base_kms: BaseKmsStruct,
@@ -553,8 +553,10 @@ where
         .await?;
 
     let recovery_validation_material: HashMap<RequestId, RecoveryValidationMaterial> =
-        read_all_data_versioned(&public_storage, &PubDataType::RecoveryMaterial.to_string())
-            .await?;
+        match backup_storage.as_ref() {
+            Some(vault) => read_all_recovery_material(&vault.storage).await?,
+            None => HashMap::new(),
+        };
 
     // Build public_key_info map using the chronologically latest epoch for each key ID.
     // Epoch IDs are ordered chronologically by comparing their raw bytes as a
@@ -596,7 +598,7 @@ where
         .map(|(epoch_id, epoch_data)| (*epoch_id, epoch_data.context_id))
         .collect();
 
-    // Recovery mode skips storage verification.
+    // Recovery mode skips storage verification and adopts no custodian context.
     match base_kms.signing_identity() {
         Ok(signing_key) => {
             verify_private_storage_layout(
@@ -614,6 +616,10 @@ where
                 &signing_key,
             )
             .await?;
+            if let Some(vault) = backup_storage.as_mut() {
+                adopt_custodian_context(&private_storage, vault, &recovery_validation_material)
+                    .await?;
+            }
         }
         Err(_) => {
             tracing::warn!(
@@ -777,6 +783,7 @@ where
         custodian_meta_store,
         session_maker.clone(),
         require_pcr_allowlist,
+        Arc::clone(&tracker),
     );
     if let Err(e) = context_manager.load_mpc_context_from_storage().await {
         tracing::warn!(
@@ -880,7 +887,6 @@ where
     {
         anyhow::bail!("Failed to update backup vault when booting");
     }
-    tracing::info!("Successfully updated backup vault when booting");
     // Start updating system metrics
     update_threshold_kms_system_metrics(
         rate_limiter.clone(),

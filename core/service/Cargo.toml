@@ -149,6 +149,8 @@ serde = { workspace = true, features = ["derive"] }
 syn = { workspace = true }
 tempfile.workspace = true
 test-utils-service = { path = "./test-utils-service" }
+# `test-util` gives tests a paused clock, so waits on spawned tasks are bounded in virtual time.
+tokio = { workspace = true, features = ["test-util"] }
 tracing-subscriber = { workspace = true, features = ["fmt", "std"] }
 walkdir = { workspace = true }
 

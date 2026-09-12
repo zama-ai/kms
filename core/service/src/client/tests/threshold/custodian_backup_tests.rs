@@ -1177,6 +1177,7 @@ async fn run_custodian_recovery_init(
                 cur_client
                     .custodian_recovery_init(tonic::Request::new(CustodianRecoveryInitRequest {
                         overwrite_ephemeral_key: false,
+                        custodian_context_id: None,
                     }))
                     .await,
             )

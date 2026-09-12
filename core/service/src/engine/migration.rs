@@ -207,7 +207,8 @@ where
         tracing::info!("No migration needed for centralized KMS");
         return Ok(());
     }
-    let inner_migration_conf = match migration_config {
+    let inner_migration_conf = match migration_config.filter(|c| !c.context_associations.is_empty())
+    {
         Some(inner_migration_conf) => inner_migration_conf,
         None => {
             // This should only be allowed on a fresh system, and not an upgraded system

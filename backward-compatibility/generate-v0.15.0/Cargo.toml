@@ -9,7 +9,7 @@ license = "BSD-3-Clause-Clear"
 [dependencies]
 # Import the base backward-compatibility crate for shared types and utilities
 backward-compatibility = { path = ".." }
-bc2wrap = { git = "https://github.com/zama-ai/kms.git", package = "bc2wrap", rev = "ff23fd23ca24dbccc358ead31701abc933dc246b" }
+bc2wrap = { git = "https://github.com/zama-ai/kms.git", package = "bc2wrap", rev = "c85c7c2f33941b06cee96ab328ed886dd0b3ccf7" }
 
 # NOTE: Some dependencies below are duplicated from ../Cargo.toml
 # This is intentional - these crates are excluded from the workspace for isolation.
@@ -19,13 +19,13 @@ bc2wrap = { git = "https://github.com/zama-ai/kms.git", package = "bc2wrap", rev
 # NOTE: v0.15.0 is not tagged yet, so we pin a commit rev on `main`. Bump this rev to a
 # commit that contains every type this generator serializes, otherwise the generator will
 # not compile.
-kms_0_15_0 = { git = "https://github.com/zama-ai/kms.git", package = "kms", rev = "ff23fd23ca24dbccc358ead31701abc933dc246b" }
-kms_grpc_0_15_0 = { git = "https://github.com/zama-ai/kms.git", package = "kms-grpc", rev = "ff23fd23ca24dbccc358ead31701abc933dc246b" }
-algebra_0_15_0 = { git = "https://github.com/zama-ai/kms.git", package = "threshold-algebra", default-features = false, rev = "ff23fd23ca24dbccc358ead31701abc933dc246b" }
-threshold_execution_0_15_0 = { git = "https://github.com/zama-ai/kms.git", package = "threshold-execution", default-features = false, rev = "ff23fd23ca24dbccc358ead31701abc933dc246b", features = ["testing"] }
-threshold_networking_0_15_0 = { git = "https://github.com/zama-ai/kms.git", package = "threshold-networking", default-features = false, rev = "ff23fd23ca24dbccc358ead31701abc933dc246b" }
-threshold_types_0_15_0 = { git = "https://github.com/zama-ai/kms.git", package = "threshold-types", default-features = false, rev = "ff23fd23ca24dbccc358ead31701abc933dc246b" }
-hashing_0_15_0 = { git = "https://github.com/zama-ai/kms.git", package = "threshold-hashing", default-features = false, rev = "ff23fd23ca24dbccc358ead31701abc933dc246b" }
+kms_0_15_0 = { git = "https://github.com/zama-ai/kms.git", package = "kms", rev = "c85c7c2f33941b06cee96ab328ed886dd0b3ccf7" }
+kms_grpc_0_15_0 = { git = "https://github.com/zama-ai/kms.git", package = "kms-grpc", rev = "c85c7c2f33941b06cee96ab328ed886dd0b3ccf7" }
+algebra_0_15_0 = { git = "https://github.com/zama-ai/kms.git", package = "threshold-algebra", default-features = false, rev = "c85c7c2f33941b06cee96ab328ed886dd0b3ccf7" }
+threshold_execution_0_15_0 = { git = "https://github.com/zama-ai/kms.git", package = "threshold-execution", default-features = false, rev = "c85c7c2f33941b06cee96ab328ed886dd0b3ccf7", features = ["testing"] }
+threshold_networking_0_15_0 = { git = "https://github.com/zama-ai/kms.git", package = "threshold-networking", default-features = false, rev = "c85c7c2f33941b06cee96ab328ed886dd0b3ccf7" }
+threshold_types_0_15_0 = { git = "https://github.com/zama-ai/kms.git", package = "threshold-types", default-features = false, rev = "c85c7c2f33941b06cee96ab328ed886dd0b3ccf7" }
+hashing_0_15_0 = { git = "https://github.com/zama-ai/kms.git", package = "threshold-hashing", default-features = false, rev = "c85c7c2f33941b06cee96ab328ed886dd0b3ccf7" }
 #error-utils_0_15_0 = { path = "./core/error-utils", default-features = false }
 #thread-handles_0_15_0 = { path = "./core/thread-handles" }
 

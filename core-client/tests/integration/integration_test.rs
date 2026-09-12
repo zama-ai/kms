@@ -2075,11 +2075,16 @@ fn extract_seed_phrase(out: Output) -> String {
 }
 
 /// Native implementation: Initialize custodian backup using isolated config.
-async fn custodian_backup_init(config_path: &Path, test_path: &Path) -> Vec<String> {
+async fn custodian_backup_init(
+    config_path: &Path,
+    test_path: &Path,
+    custodian_context_id: Option<RequestId>,
+) -> Vec<String> {
     let config = cmd_config(
         config_path,
         CCCommand::CustodianRecoveryInit(RecoveryInitParameters {
             overwrite_ephemeral_key: false,
+            custodian_context_id,
         }),
         200,
     );
@@ -2386,8 +2391,13 @@ async fn test_centralized_custodian_backup() -> Result<()> {
     let cus_backup_id =
         new_custodian_context(&config_path, temp_path, custodian_threshold, setup_msgs).await;
 
-    // Initialize custodian backup
-    let operator_recovery_resp = custodian_backup_init(&config_path, temp_path).await;
+    // Initialize custodian backup, naming the context as an operator does after a rotation.
+    let operator_recovery_resp = custodian_backup_init(
+        &config_path,
+        temp_path,
+        Some(RequestId::from_str(&cus_backup_id)?),
+    )
+    .await;
 
     // Re-encrypt with custodian keys
     let custodian_recovery_output =
@@ -2748,7 +2758,8 @@ async fn test_threshold_custodian_backup() -> Result<()> {
     .await;
 
     // Initialize custodian backup
-    let operator_recovery_resps = custodian_backup_init(&single_core_config_path, temp_path).await;
+    let operator_recovery_resps =
+        custodian_backup_init(&single_core_config_path, temp_path, None).await;
 
     // Re-encrypt with custodian keys (single operator)
     let custodian_recovery_output =

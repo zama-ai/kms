@@ -162,9 +162,9 @@ async fn auto_update_backup(amount_custodians: usize, threshold: u32) {
     // Purge backup
     purge_backup(env.test_path(), &[None]).await;
 
-    // Check that the backup is still there after reboot
+    // Check that the backup is restored after reboot
     let (_kms_server, _kms_client) = env.spawn_server_on_existing_material().await;
-    let _reread_backup = read_custodian_backup_files(
+    let reread_backup = read_custodian_backup_files(
         env.test_path(),
         &env.req_new_cus,
         &SIGNING_KEY_ID,
@@ -172,7 +172,69 @@ async fn auto_update_backup(amount_custodians: usize, threshold: u32) {
         &[None],
     )
     .await;
+    assert!(
+        !reread_backup.is_empty(),
+        "the purged backup must be rewritten under the anchored context on boot"
+    );
 }
+
+/// Recovery material planted in public storage must not decide which custodian context the node
+/// adopts on restart. Regression test for the advisory behind issue #3139.
+#[tokio::test(flavor = "multi_thread")]
+async fn test_planted_public_recovery_material_ignored_central() {
+    use crate::vault::storage::crypto_material::get_core_signing_identity;
+    use crate::vault::storage::tests::store_dummy_recovery_material;
+    use crate::vault::storage::{read_custodian_context_anchor, read_recovery_material_at_id};
+
+    let mut env = CentralizedBackupTestEnv::new("planted_public_recovery_central", 5, 2).await;
+    env.shutdown().await;
+
+    // Signed by the node, as a replayed retired context is, so a refused foreign signature
+    // cannot pass the test on its own. Its id sorts above the genuine one, so it wins the
+    // latest-id selection wherever it is read.
+    let rogue_id = RequestId::from_bytes([0xff; 32]);
+    assert!(rogue_id > env.req_new_cus, "the decoy must sort last");
+    let priv_storage = FileStorage::new(env.test_path(), StorageType::PRIV, None).unwrap();
+    let node_identity = get_core_signing_identity(&priv_storage).await.unwrap();
+    let mut pub_storage = FileStorage::new(env.test_path(), StorageType::PUB, None).unwrap();
+    store_dummy_recovery_material(&mut pub_storage, &rogue_id, node_identity.ecdsa()).await;
+
+    let (_kms_server, _kms_client) = env.spawn_server_on_existing_material().await;
+
+    // The decoy is readable, so a reinstated public-storage lookup fails this test, not skips it.
+    assert!(
+        read_recovery_material_at_id(&pub_storage, &rogue_id)
+            .await
+            .is_ok(),
+        "the planted material must still be readable in public storage"
+    );
+
+    // Backups still land under the genuine context, and the planted one was never adopted.
+    let backups = read_custodian_backup_files(
+        env.test_path(),
+        &env.req_new_cus,
+        &SIGNING_KEY_ID,
+        &PrivDataType::SigningKey.to_string(),
+        &[None],
+    )
+    .await;
+    assert!(!backups.is_empty());
+    assert!(
+        !env.material_dir
+            .path()
+            .join("BACKUP")
+            .join(rogue_id.to_string())
+            .exists(),
+        "the planted context must never become the active backup id"
+    );
+    // Boot only reads the anchor; it must still name the genuine context.
+    assert_eq!(
+        read_custodian_context_anchor(&priv_storage).await.unwrap(),
+        Some(env.req_new_cus),
+        "the node must stay anchored to the context it installed"
+    );
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn test_backup_after_crs_central() {
     backup_after_crs(5, 2).await;
@@ -293,6 +355,7 @@ async fn decrypt_after_recovery(amount_custodians: usize, threshold: u32) {
     let recovery_req_resp = kms_client
         .custodian_recovery_init(tonic::Request::new(CustodianRecoveryInitRequest {
             overwrite_ephemeral_key: false,
+            custodian_context_id: None,
         }))
         .await
         .unwrap()
@@ -316,6 +379,129 @@ async fn decrypt_after_recovery(amount_custodians: usize, threshold: u32) {
 
     // Decryption succeeds only if the FHE private key was correctly restored
     // by the custodian recovery + restore_from_backup calls above.
+    kms_server.assert_shutdown().await;
+    drop(kms_client);
+    let (_kms_server, kms_client) = env.spawn_server_on_existing_material().await;
+    let mut internal_client = env.create_internal_client(&dkg_param).await;
+    run_decryption_centralized(
+        &kms_client,
+        &mut internal_client,
+        &key_id,
+        None,
+        vec![TestingPlaintext::U8(u8::MAX)],
+        EncryptionConfig {
+            compression: false,
+            precompute_sns: false,
+        },
+        1,
+        env.test_path(),
+    )
+    .await;
+}
+
+/// After a rotation the vault holds two contexts, so a node that lost its anchor must name the
+/// one to recover under: `None` is refused as ambiguous, and the current context recovers the FHE
+/// private key, proven by a decryption at the end.
+#[tokio::test(flavor = "multi_thread")]
+async fn test_recovery_names_the_context_after_rotation_central() {
+    use crate::vault::storage::{delete_at_request_id, read_custodian_context_anchor};
+
+    let (amount_custodians, threshold) = (5, 2);
+    let mut env = CentralizedBackupTestEnv::new(
+        "recovery_names_context_central",
+        amount_custodians,
+        threshold,
+    )
+    .await;
+    let key_id: RequestId = derive_request_id("recovery_names_context_central_key").unwrap();
+    let epoch_id = *DEFAULT_EPOCH_ID;
+    run_key_gen_centralized(
+        env.kms_client.as_mut().unwrap(),
+        env.internal_client.as_ref().unwrap(),
+        &key_id,
+        &epoch_id,
+        FheParameter::Test,
+        None,
+        None,
+        Some(env.material_dir.path()),
+    )
+    .await;
+    // The rotation re-encrypts every backup under the second context.
+    let second_id: RequestId = derive_request_id("recovery_names_context_central_2").unwrap();
+    let second_mnemonics = run_new_cus_context(
+        env.kms_client.as_mut().unwrap(),
+        env.internal_client.as_mut().unwrap(),
+        &second_id,
+        amount_custodians,
+        threshold,
+    )
+    .await;
+    env.shutdown().await;
+    let dkg_param: WrappedDKGParams = FheParameter::Test.into();
+
+    // Lose the FHE private key and the anchor; the signing key stays so the server boots.
+    let mut priv_storage = FileStorage::new(env.test_path(), StorageType::PRIV, None).unwrap();
+    delete_at_request_and_epoch_id(
+        &mut priv_storage,
+        &key_id,
+        &epoch_id,
+        &PrivDataType::FhePrivateKey.to_string(),
+    )
+    .await
+    .unwrap();
+    delete_at_request_id(
+        &mut priv_storage,
+        &second_id,
+        &PrivDataType::CustodianContextAnchor.to_string(),
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        read_custodian_context_anchor(&priv_storage).await.unwrap(),
+        None
+    );
+
+    let (kms_server, mut kms_client) = env.spawn_server_on_existing_material().await;
+    let ambiguous = kms_client
+        .custodian_recovery_init(tonic::Request::new(CustodianRecoveryInitRequest {
+            overwrite_ephemeral_key: false,
+            custodian_context_id: None,
+        }))
+        .await
+        .expect_err("two contexts and no anchor must not select one");
+    assert_eq!(ambiguous.code(), tonic::Code::FailedPrecondition);
+
+    let mut rng = AesRng::seed_from_u64(17);
+    let recovery_req_resp = kms_client
+        .custodian_recovery_init(tonic::Request::new(CustodianRecoveryInitRequest {
+            overwrite_ephemeral_key: false,
+            custodian_context_id: Some(second_id.into()),
+        }))
+        .await
+        .unwrap()
+        .into_inner();
+    let cus_rec_req = emulate_custodian(
+        &mut rng,
+        recovery_req_resp,
+        second_id,
+        second_mnemonics,
+        env.test_path(),
+    )
+    .await;
+    kms_client
+        .custodian_backup_recovery(tonic::Request::new(cus_rec_req))
+        .await
+        .unwrap();
+    kms_client
+        .restore_from_backup(tonic::Request::new(Empty {}))
+        .await
+        .unwrap();
+    assert_eq!(
+        read_custodian_context_anchor(&priv_storage).await.unwrap(),
+        Some(second_id),
+        "recovery anchors the context it restored under"
+    );
+
     kms_server.assert_shutdown().await;
     drop(kms_client);
     let (_kms_server, kms_client) = env.spawn_server_on_existing_material().await;
@@ -391,6 +577,7 @@ async fn decrypt_after_recovery_negative(amount_custodians: usize, threshold: u3
     let recovery_req_resp = kms_client
         .custodian_recovery_init(tonic::Request::new(CustodianRecoveryInitRequest {
             overwrite_ephemeral_key: false,
+            custodian_context_id: None,
         }))
         .await
         .unwrap()
