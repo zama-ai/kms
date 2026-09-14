@@ -84,14 +84,6 @@ impl FailingRamStorage {
         &self.events
     }
 
-    /// The events that returned an error, whether or not they changed storage.
-    pub(crate) fn faults(&self) -> Vec<&StorageEvent> {
-        self.events
-            .iter()
-            .filter(|event| event.outcome.failed())
-            .collect()
-    }
-
     pub(crate) fn state(&self) -> StorageState {
         self.inner
             .internal_storage

@@ -37,6 +37,11 @@ impl ProtocolDescription for MaliciousPrssDrop {
 
 #[async_trait]
 impl<Z: Zero + Clone> PRSSInit<Z> for MaliciousPrssDrop {
+    fn num_rounds(_num_parties: usize, _threshold: usize) -> usize {
+        // No PRSS communication happens.
+        0
+    }
+
     type OutputType = MaliciousPrssDrop;
     async fn init<S: BaseSessionHandles>(
         &self,
@@ -168,6 +173,11 @@ impl<
     Z: ErrorCorrect + Invert + PRSSConversions,
 > PRSSInit<Z> for MaliciousPrssHonestInitRobustThenRandom<A, V, Bcast, Z>
 {
+    fn num_rounds(num_parties: usize, threshold: usize) -> usize {
+        // Runs the honest robust PRSS init (VSS + agree-random).
+        V::num_rounds(num_parties, threshold) + A::num_rounds(num_parties)
+    }
+
     type OutputType = MaliciousPrssHonestInitRobustThenRandom<A, V, Bcast, Z>;
 
     async fn init<S: BaseSessionHandles>(
@@ -328,6 +338,11 @@ impl<
     Z: ErrorCorrect + Invert + PRSSConversions,
 > PRSSInit<Z> for MaliciousPrssHonestInitLieAll<A, V, Bcast, Z>
 {
+    fn num_rounds(num_parties: usize, threshold: usize) -> usize {
+        // Runs the honest robust PRSS init (VSS + agree-random).
+        V::num_rounds(num_parties, threshold) + A::num_rounds(num_parties)
+    }
+
     type OutputType = MaliciousPrssHonestInitLieAll<A, V, Bcast, Z>;
 
     async fn init<S: BaseSessionHandles>(
@@ -406,6 +421,11 @@ impl ProtocolDescription for EmptyPrss {
 
 #[async_trait]
 impl<Z: Zero + RingWithExceptionalSequence + Invert + PRSSConversions> PRSSInit<Z> for EmptyPrss {
+    fn num_rounds(_num_parties: usize, _threshold: usize) -> usize {
+        // No PRSS communication happens.
+        0
+    }
+
     type OutputType = PRSSSetup<Z>;
     async fn init<S: BaseSessionHandles>(
         &self,
@@ -431,6 +451,11 @@ impl ProtocolDescription for FailingPrss {
 
 #[async_trait]
 impl<Z: Zero + RingWithExceptionalSequence + Invert + PRSSConversions> PRSSInit<Z> for FailingPrss {
+    fn num_rounds(_num_parties: usize, _threshold: usize) -> usize {
+        // No PRSS communication happens.
+        0
+    }
+
     type OutputType = PRSSSetup<Z>;
     async fn init<S: BaseSessionHandles>(
         &self,

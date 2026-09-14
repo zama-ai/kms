@@ -5,26 +5,18 @@ use crate::vault::storage::{
     ram::FailingRamStorage,
     test_support::{StorageEntry, StorageEvent, StorageOp, StorageOutcome, assert_same_events},
 };
-use serde::Serialize;
-use tfhe::named::Named;
-use tfhe_versionable::Versionize;
-
 /// Fails the private storage write after mutation and verifies that the FHE key write is rolled back.
 ///
 /// Panics on failure.
-pub(super) async fn assert_fhe_write_rollback<PrivData>(
+pub(super) async fn run_fhe_write_rollback(
     key_id: RequestId,
     epoch_id: EpochId,
-    private_data: PrivData,
-    private_type: PrivDataType,
+    private_data: KmsFheKeyHandles,
     public_keys: PublicKeySet,
-    // The public artifact written before the pair: `ServerKey` for threshold keys or
-    // `CompressedXofKeySet` for centralized keys.
+    // The public artifact written before the pair: `ServerKey` for uncompressed keys or
+    // `CompressedXofKeySet` for compressed keys.
     special_public_type: PubDataType,
-) where
-    PrivData: Clone + Serialize + Versionize + Named + Send + Sync,
-    for<'a> <PrivData as Versionize>::Versioned<'a>: Send + Sync,
-{
+) {
     let storage =
         CryptoMaterialStorage::from(FailingRamStorage::new(), FailingRamStorage::new(), None);
     let control_id = derive_request_id("fhe_write_failure_control").unwrap();
@@ -61,7 +53,7 @@ pub(super) async fn assert_fhe_write_rollback<PrivData>(
             &control_id,
             &epoch_id,
             &control,
-            &private_type.to_string(),
+            &PrivDataType::FhePrivateKey.to_string(),
         )
         .await
         .unwrap();
@@ -70,7 +62,7 @@ pub(super) async fn assert_fhe_write_rollback<PrivData>(
             &key_id,
             &other_epoch_id,
             &control,
-            &private_type.to_string(),
+            &PrivDataType::FhePrivateKey.to_string(),
         )
         .await
         .unwrap();
@@ -89,7 +81,11 @@ pub(super) async fn assert_fhe_write_rollback<PrivData>(
     let private_before = storage.private_storage.lock().await.state();
     let special_entry = StorageEntry::new(key_id, None, special_public_type.to_string());
     let public_key_entry = StorageEntry::new(key_id, None, PubDataType::PublicKey.to_string());
-    let private_entry = StorageEntry::new(key_id, Some(epoch_id), private_type.to_string());
+    let private_entry = StorageEntry::new(
+        key_id,
+        Some(epoch_id),
+        PrivDataType::FhePrivateKey.to_string(),
+    );
     storage
         .private_storage
         .lock()
@@ -106,7 +102,7 @@ pub(super) async fn assert_fhe_write_rollback<PrivData>(
             &key_id,
             &epoch_id,
             private_data,
-            private_type,
+            PrivDataType::FhePrivateKey,
             public_keys,
             cache.clone(),
             false,

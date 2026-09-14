@@ -109,6 +109,8 @@ impl Vault {
         // when erasing a retired context.
         self.delete_custodian_backup_data(backup_id).await?;
 
+        // A backend can report a successful delete without removing the object. Check all entries
+        // for this backup ID before the caller removes recovery material and lifecycle state.
         self.ensure_custodian_backup_removed(backup_id).await
     }
 
@@ -214,8 +216,8 @@ impl Vault {
         match self.keychain.as_ref() {
             Some(KeychainProxy::SecretSharing(_)) => {
                 self.delete_custodian_backup_data(backup_id).await?;
-                // A backend can report a successful delete without removing the object. Confirm
-                // the rollback completed before its caller proceeds.
+                // Detect leftover entries even when every delete reports success. Rollback callers
+                // log this error without replacing the original setup or write error.
                 self.ensure_custodian_backup_removed(backup_id).await
             }
             _ => storage::delete_all_at_request_id(self, backup_id).await,

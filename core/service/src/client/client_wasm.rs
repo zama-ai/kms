@@ -1,4 +1,5 @@
 use crate::cryptography::signatures::{PrivateSigKey, PublicSigKey};
+use crate::cryptography::signing::{SchemeVerfKeys, SigningError, SigningSchemeType};
 #[cfg(feature = "non-wasm")]
 use aes_prng::AesRng;
 #[cfg(feature = "non-wasm")]
@@ -40,10 +41,12 @@ pub struct Client {
     #[cfg(feature = "non-wasm")]
     pub(crate) rng: Box<AesRng>,
     pub(crate) server_identities: ServerIdentities,
+    pub(crate) scheme_verf_keys: SchemeVerfKeys,
     pub(crate) client_address: alloy_primitives::Address,
     pub(crate) client_sk: Option<PrivateSigKey>,
     pub(crate) params: DKGParams,
     pub(crate) decryption_mode: DecryptionMode,
+    pub(crate) signing_schemes: Vec<SigningSchemeType>,
 }
 
 impl std::fmt::Debug for Client {
@@ -57,6 +60,10 @@ impl Client {
     /// from a [PublicStorage].
     ///
     /// * `server_pks` - a set of tkms core public keys.
+    /// * `scheme_verf_keys` - each server's verification key per signing scheme,
+    ///   keyed by party id, for verifying the per-scheme `signatures` of a
+    ///   response. A client that has no access to the servers' public storage
+    ///   passes an empty map, and can then only verify ECDSA.
     /// * `client_address` - the client wallet address.
     /// * `client_sk` - client private key.
     ///   This is optional because sometimes the private signing key is kept
@@ -67,6 +74,7 @@ impl Client {
     ///   If set to none, DecryptionMode::default() is used.
     pub fn new(
         server_pks: HashMap<u32, PublicSigKey>,
+        scheme_verf_keys: SchemeVerfKeys,
         client_address: alloy_primitives::Address,
         client_sk: Option<PrivateSigKey>,
         params: DKGParams,
@@ -77,11 +85,64 @@ impl Client {
             #[cfg(feature = "non-wasm")]
             rng: Box::new(AesRng::from_entropy()), // todo should be argument
             server_identities: ServerIdentities::Pks(server_pks),
+            scheme_verf_keys,
             client_address,
             client_sk,
             params,
             decryption_mode,
+            signing_schemes: vec![SigningSchemeType::Ecdsa256k1],
         }
+    }
+
+    /// The schemes this client requests, and requires back on every result.
+    pub fn signing_schemes(&self) -> &[SigningSchemeType] {
+        &self.signing_schemes
+    }
+
+    /// The schemes this client requests, in the gRPC representation.
+    pub fn signing_schemes_proto(&self) -> Vec<i32> {
+        self.signing_schemes
+            .iter()
+            .map(|scheme| scheme.as_wire())
+            .collect()
+    }
+
+    /// Choose the schemes this client requests, and requires back.
+    ///
+    /// # Errors
+    ///
+    /// Fails when a scheme other than ECDSA is named that no known party published a
+    /// verification key for, since no signature under it could ever be checked. ECDSA
+    /// needs no key, because its signer is recovered from the signature. A party that
+    /// lacks a key for a named scheme is logged, since its results will not verify.
+    pub fn set_signing_schemes(
+        &mut self,
+        requested: &[SigningSchemeType],
+    ) -> Result<(), SigningError> {
+        let raw: Vec<i32> = requested.iter().map(|scheme| scheme.as_wire()).collect();
+        let resolved = SigningSchemeType::resolve_requested(&raw)?;
+        for scheme in resolved
+            .iter()
+            .filter(|scheme| **scheme != SigningSchemeType::Ecdsa256k1)
+        {
+            let holders = self
+                .scheme_verf_keys
+                .values()
+                .filter(|keys| keys.contains_key(scheme))
+                .count();
+            if holders == 0 {
+                return Err(SigningError::NoVerificationKey(*scheme));
+            }
+            let parties = self.server_identities.len();
+            if holders < parties {
+                tracing::warn!(
+                    "Only {holders} of {parties} parties published a {scheme} verification key, \
+                     so the results of the other parties will not verify"
+                );
+            }
+        }
+        self.signing_schemes = resolved;
+        Ok(())
     }
 
     pub fn get_server_pks(&self) -> anyhow::Result<&HashMap<u32, PublicSigKey>> {

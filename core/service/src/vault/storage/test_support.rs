@@ -45,13 +45,13 @@ impl StorageEntry {
 /// here. [`Self::storage_entry`] maps the backup ID and private type to one backend type string.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub(crate) struct BackupEntry {
-    /// Custodian context that owns the backup namespace.
+    /// Custodian context whose backup contains the item.
     pub(crate) backup_id: RequestId,
     /// Request ID of the backed-up private item.
     pub(crate) data_id: RequestId,
     /// Epoch of the private item, when its type uses epoch storage.
     pub(crate) epoch_id: Option<EpochId>,
-    /// Source private type before the vault maps it to a backup namespace.
+    /// Source private type before the vault adds the custodian context to the backend type.
     pub(crate) data_type: PrivDataType,
 }
 
@@ -134,19 +134,12 @@ pub(crate) enum StorageOutcome {
     SkippedExisting,
     /// A delete removed data.
     Deleted,
-    /// A delete returned success without changing storage, like S3's `DeleteObject`.
+    /// A delete returned success but left the intended entry intact, as when S3 receives the wrong, nonexistent key.
     SucceededWithoutMutation,
     /// The operation returned an error without changing storage.
     FailedBeforeMutation,
     /// The operation changed storage and then returned an error.
     FailedAfterMutation,
-}
-
-impl StorageOutcome {
-    /// Whether the storage operation returned an error.
-    pub(crate) fn failed(self) -> bool {
-        matches!(self, Self::FailedBeforeMutation | Self::FailedAfterMutation)
-    }
 }
 
 /// A single store or delete, with the entry it named and what it did.

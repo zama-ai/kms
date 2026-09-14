@@ -1,21 +1,22 @@
-use alloy_dyn_abi::Eip712Domain;
-use alloy_primitives::Address;
-use hashing::DomainSep;
-use kms_grpc::kms::v1::{UserDecryptionResponse, UserDecryptionResponsePayload};
-use std::collections::{HashMap, HashSet};
-use tfhe::FheTypes;
-use threshold_types::role::Role;
-
+use crate::cryptography::signing::ecdsa::recover_address_from_eip712_hash;
 use crate::{
-    anyhow_error_and_log,
+    anyhow_error_and_log, anyhow_tracked,
     client::user_decryption_wasm::{ParsedUserDecryptionRequest, compute_link},
     cryptography::{
         compute_user_decrypt_message,
-        signatures::{
-            PublicSigKey, Signature, internal_verify_sig, recover_address_from_ext_signature,
-        },
+        signatures::{PublicSigKey, Signature, internal_verify_sig},
+        signing::{SchemeVerfKeys, SigningSchemeType, unified_verify, verf_key_for},
     },
+    engine::signed_payload::user_dec_payload_bytes,
 };
+use alloy_dyn_abi::Eip712Domain;
+use alloy_primitives::{Address, B256};
+use alloy_sol_types::SolStruct;
+use hashing::DomainSep;
+use kms_grpc::kms::v1::{TypedSignature, UserDecryptionResponse, UserDecryptionResponsePayload};
+use std::collections::{HashMap, HashSet};
+use tfhe::FheTypes;
+use threshold_types::role::Role;
 
 pub(crate) const DSEP_USER_DECRYPTION: DomainSep = *b"USER_DEC";
 
@@ -24,6 +25,7 @@ pub(crate) const DSEP_USER_DECRYPTION: DomainSep = *b"USER_DEC";
 /// All fields MUST originate from the client's own configuration or some trusted source.
 pub(crate) struct UserDecTrustedValidationContext<'a> {
     server_addresses: &'a HashMap<u32, Address>,
+    scheme_verf_keys: &'a SchemeVerfKeys,
     client_request: &'a ParsedUserDecryptionRequest,
     eip712_domain: &'a Eip712Domain,
     threshold: usize,
@@ -42,6 +44,7 @@ impl<'a> UserDecTrustedValidationContext<'a> {
     /// Creates a new context and check sanity
     pub fn new(
         server_addresses: &'a HashMap<u32, Address>,
+        scheme_verf_keys: &'a SchemeVerfKeys,
         client_request: &'a ParsedUserDecryptionRequest,
         eip712_domain: &'a Eip712Domain,
         threshold: Option<usize>,
@@ -71,6 +74,7 @@ impl<'a> UserDecTrustedValidationContext<'a> {
 
         Ok(Self {
             server_addresses,
+            scheme_verf_keys,
             client_request,
             eip712_domain,
             threshold,
@@ -152,9 +156,6 @@ pub(crate) struct Eip712VerificationParams<'a> {
     pub trusted_eip712_domain: &'a Eip712Domain,
 }
 
-const ERR_EXT_USER_DECRYPTION_SIG_VERIFICATION_FAILURE: &str =
-    "External PT signature verification failed";
-
 const ERR_VALIDATE_USER_DECRYPTION_MISSING_SIGNATURE: &str =
     "Missing signature in user decryption response";
 const ERR_VALIDATE_USER_DECRYPTION_ID_NOT_FOUND: &str = "ID claimed in payload not found";
@@ -166,25 +167,365 @@ const ERR_VALIDATE_USER_DECRYPTION_NO_RESP: &str = "No response to verify in use
 const ERR_VALIDATE_USER_DECRYPTION_NOT_ENOUGH_RESP: &str =
     "Not enough correct responses to user-decrypt the data!";
 
-/// check that the external signature on the decryption result(s) is valid, i.e. was made by one of the supplied addresses
-pub(crate) fn check_ext_user_decryption_signature(
-    external_sig: &[u8],
+/// The EIP-712 signing hash that the ECDSA signature of a user decryption response
+/// covers, whether it arrives in the deprecated `external_signature` field or as the
+/// ECDSA entry of `signatures`.
+pub(crate) fn user_decrypt_eip712_hash(
     payload: &UserDecryptionResponsePayload,
     request: &ParsedUserDecryptionRequest,
     eip712_domain: &Eip712Domain,
-    expected_addr: &alloy_primitives::Address,
+) -> anyhow::Result<B256> {
+    let message = compute_user_decrypt_message(payload, request.enc_key(), request.extra_data())?;
+    tracing::debug!("Built the UserDecryptResponseVerification EIP-712 message");
+    Ok(message.eip712_signing_hash(eip712_domain))
+}
+
+/// Verify one non-ECDSA entry of a result's `signatures` list against the key
+/// `party_id` published for that scheme.
+///
+/// A scheme the verifier holds no key for is a rejection rather than a skip:
+/// accepting an entry nobody can check would let a party satisfy a requested
+/// scheme without producing a valid signature for it.
+///
+/// ECDSA is not handled here — it signs the EIP-712 hash rather than
+/// `payload_bytes`, and what that hash covers differs per result kind.
+///
+/// The error is returned **unlogged**: whether a failure here is a fault or an
+/// expected Byzantine rejection is the caller's to know, and so is the level it
+/// deserves. Public-decryption validation logs it at `warn!`, the client paths at
+/// `error!`.
+pub(crate) fn verify_scheme_entry(
+    keys: &SchemeVerfKeys,
+    party_id: u32,
+    scheme: SigningSchemeType,
+    signature: &[u8],
+    dsep: &DomainSep,
+    payload_bytes: &[u8],
 ) -> anyhow::Result<()> {
-    let extra_data = request.extra_data();
-    let message = compute_user_decrypt_message(payload, request.enc_key(), extra_data)?;
-    tracing::debug!(
-        "Verifying external user decryption signature for UserDecryptResponseVerification"
+    debug_assert_ne!(
+        scheme,
+        SigningSchemeType::Ecdsa256k1,
+        "the ECDSA entry covers the EIP-712 hash, not the serialized payload"
     );
-    let addr = recover_address_from_ext_signature(&message, eip712_domain, external_sig)?;
-    if addr != *expected_addr {
-        anyhow::bail!(ERR_EXT_USER_DECRYPTION_SIG_VERIFICATION_FAILURE);
+    let verf_key = verf_key_for(keys, party_id, scheme).ok_or_else(|| {
+        anyhow_tracked(format!(
+            "party {party_id} signed under {scheme}, but no {scheme} verification key is known \
+             for it"
+        ))
+    })?;
+    let signature = Signature::new(scheme, signature.to_vec());
+    unified_verify(dsep, payload_bytes, &signature, verf_key).map_err(|e| {
+        anyhow_tracked(format!(
+            "the {scheme} signature of party {party_id} did not verify: {e}"
+        ))
+    })
+}
+
+/// Check that every scheme the request asked for was actually *verified*, not
+/// merely present in the list.
+///
+/// `party_id` is the party the response was attributed to, if any signature identified
+/// one. The error is unlogged.
+pub(crate) fn ensure_requested_verified(
+    verified: &[SigningSchemeType],
+    requested: &[SigningSchemeType],
+    party_id: Option<u32>,
+) -> anyhow::Result<()> {
+    match requested.iter().find(|scheme| !verified.contains(scheme)) {
+        Some(missing) => {
+            let response = match party_id {
+                Some(party_id) => format!("the response of party {party_id}"),
+                None => "the response".to_string(),
+            };
+            Err(anyhow_tracked(format!(
+                "{response} carries no verified {missing} signature, but {missing} was requested"
+            )))
+        }
+        None => Ok(()),
+    }
+}
+
+/// The signatures one server response carries, whatever kind of result it is.
+///
+/// All three are checked. They are independent statements about the same result, so a
+/// verifier that read only one would accept a response whose other copy disagrees.
+pub(crate) struct ResponseSignatures<'a> {
+    /// The deprecated raw ECDSA signature over the serialized response payload. Only a
+    /// decryption response carries one; every other result kind leaves this empty.
+    pub internal: &'a [u8],
+    /// The deprecated ECDSA/EIP-712 signature.
+    pub external: &'a [u8],
+    /// One entry per scheme, for the schemes the request asked for.
+    pub list: &'a [TypedSignature],
+}
+
+/// What each signature of a [`ResponseSignatures`] covers.
+pub(crate) struct SignedPayloads<'a> {
+    /// Domain separator of the raw and the per-scheme signatures.
+    pub dsep: &'a DomainSep,
+    /// The serialized response payload, which the deprecated internal signature covers.
+    /// Unused when [`ResponseSignatures::internal`] is empty.
+    pub internal_bytes: &'a [u8],
+    /// The versioned payload every non-ECDSA scheme covers.
+    pub payload_bytes: &'a [u8],
+    /// The EIP-712 signing hash both ECDSA signatures recover from, or `None` when no
+    /// domain is available and neither can therefore be checked.
+    pub eip712_hash: Option<B256>,
+}
+
+/// The party a response has to belong to.
+pub(crate) enum ExpectedSigner<'a> {
+    /// Established before any signature is read, by matching the verification key the
+    /// response carries against the caller's trusted set.
+    Known {
+        party_id: u32,
+        address: Address,
+        /// Verifies the deprecated internal signature, which is not recoverable.
+        verf_key: &'a PublicSigKey,
+    },
+    /// Discovered from the signatures: whichever party an ECDSA signature recovers to,
+    /// or whichever party's published key a per-scheme entry verifies under.
+    ///
+    /// Only the native client verifies results whose signer has to be discovered, so a
+    /// wasm build never constructs this variant.
+    #[cfg_attr(not(feature = "non-wasm"), allow(dead_code))]
+    Discover {
+        addresses: &'a HashMap<u32, Address>,
+    },
+}
+
+impl ExpectedSigner<'_> {
+    /// The party `recovered` belongs to, or an error saying why it belongs to none.
+    fn attribute(&self, recovered: Address) -> anyhow::Result<(u32, Address)> {
+        match self {
+            ExpectedSigner::Known {
+                party_id, address, ..
+            } => {
+                if recovered == *address {
+                    Ok((*party_id, *address))
+                } else {
+                    Err(anyhow_tracked(format!(
+                        "an ECDSA signature of party {party_id} recovered to {recovered}, but \
+                         {address} was expected"
+                    )))
+                }
+            }
+            ExpectedSigner::Discover { addresses } => addresses
+                .iter()
+                .find(|(_party_id, address)| **address == recovered)
+                .map(|(party_id, address)| (*party_id, *address))
+                .ok_or_else(|| {
+                    anyhow_tracked(format!(
+                        "an ECDSA signature of the response recovered to {recovered}, which \
+                         belongs to no known party"
+                    ))
+                }),
+        }
+    }
+}
+
+/// Hold every signature of one response to the same party.
+fn agree(signer: Option<(u32, Address)>, found: (u32, Address)) -> anyhow::Result<(u32, Address)> {
+    match signer {
+        Some((party, _)) if party != found.0 => Err(anyhow_tracked(format!(
+            "the response mixes signatures of party {party} and party {}",
+            found.0
+        ))),
+        _ => Ok(found),
+    }
+}
+
+fn push_once(verified: &mut Vec<SigningSchemeType>, scheme: SigningSchemeType) {
+    if !verified.contains(&scheme) {
+        verified.push(scheme);
+    }
+}
+
+/// Verify one non-ECDSA entry and say which party it belongs to.
+fn attribute_scheme_entry(
+    signature: &[u8],
+    scheme: SigningSchemeType,
+    payloads: &SignedPayloads,
+    expected: &ExpectedSigner,
+    keys: &SchemeVerfKeys,
+    signer: Option<(u32, Address)>,
+) -> anyhow::Result<(u32, Address)> {
+    let check = |party_id: u32| {
+        verify_scheme_entry(
+            keys,
+            party_id,
+            scheme,
+            signature,
+            payloads.dsep,
+            payloads.payload_bytes,
+        )
+    };
+    match expected {
+        ExpectedSigner::Known {
+            party_id, address, ..
+        } => {
+            check(*party_id)?;
+            Ok((*party_id, *address))
+        }
+        // A party another signature already fixed decides which key this entry must
+        // verify under, rather than whichever key happens to match.
+        ExpectedSigner::Discover { addresses } => match signer {
+            Some((party_id, address)) => {
+                check(party_id)?;
+                Ok((party_id, address))
+            }
+            None => {
+                let parsed = Signature::new(scheme, signature.to_vec());
+                keys.iter()
+                    .find_map(|(party_id, party_keys)| {
+                        let verf_key = party_keys.get(&scheme)?;
+                        unified_verify(payloads.dsep, payloads.payload_bytes, &parsed, verf_key)
+                            .ok()?;
+                        addresses.get(party_id).map(|address| (*party_id, *address))
+                    })
+                    .ok_or_else(|| {
+                        anyhow_tracked(format!(
+                            "the {scheme} signature of the response verifies under no known \
+                             party key"
+                        ))
+                    })
+            }
+        },
+    }
+}
+
+/// Verify **every** signature a server response carries that can be checked, and
+/// require every requested scheme to end up verified. This is the one signature check
+/// behind decryption, key generation, CRS generation and preprocessing.
+///
+/// Returns the party the response is attributed to.
+///
+/// # What gets checked
+///
+/// - The deprecated internal `signature`, when the result kind carries one. It covers the
+///   payload alone, so it satisfies a requested ECDSA only when no EIP-712 domain is
+///   available.
+/// - The deprecated `external_signature`, whenever an EIP-712 domain is available. It is
+///   checked *in addition to* the internal one, not instead of it.
+/// - Every entry of `list` for a requested scheme. An entry for a scheme nobody asked
+///   for carries no weight either way, so it is skipped, and so is an entry of a scheme
+///   this release does not know.
+/// - Finally, that every requested scheme was verified, and that every signature agreed
+///   on one party.
+///
+/// A result whose `list` is empty is still authenticated by the deprecated fields, which
+/// is what a node from a release before the list sends.
+///
+/// # Errors
+///
+/// The error is returned **unlogged**: whether a failure here is a fault or an expected
+/// Byzantine rejection is the caller's to know, and so is the level it deserves.
+pub(crate) fn verify_response_signatures(
+    sigs: &ResponseSignatures,
+    payloads: &SignedPayloads,
+    requested: &[SigningSchemeType],
+    expected: &ExpectedSigner,
+    keys: &SchemeVerfKeys,
+) -> anyhow::Result<(u32, Address)> {
+    let mut verified: Vec<SigningSchemeType> = Vec::with_capacity(sigs.list.len() + 1);
+    let mut signer: Option<(u32, Address)> = None;
+
+    // The deprecated raw ECDSA signature is not recoverable, so it is checked against
+    // the key the caller established rather than used to find one.
+    if !sigs.internal.is_empty() {
+        let ExpectedSigner::Known {
+            party_id,
+            address,
+            verf_key,
+        } = expected
+        else {
+            return Err(anyhow_tracked(
+                "the response carries a deprecated internal signature, but its signer has to be \
+                 discovered from its signatures and that field is not recoverable"
+                    .to_string(),
+            ));
+        };
+        let parsed = k256::ecdsa::Signature::from_slice(sigs.internal).map_err(|e| {
+            anyhow_tracked(format!(
+                "could not parse the deprecated internal signature: {e}"
+            ))
+        })?;
+        internal_verify_sig(
+            payloads.dsep,
+            payloads.internal_bytes,
+            &Signature::from_ecdsa(parsed),
+            verf_key,
+        )
+        .map_err(|e| {
+            anyhow_tracked(format!(
+                "the deprecated internal signature of party {party_id} did not verify: {e}"
+            ))
+        })?;
+        signer = Some((*party_id, *address));
+        // The internal signature covers the response payload alone, not the fields the
+        // EIP-712 message binds, such as the handles and the extra data. So it meets a
+        // requested ECDSA only when no EIP-712 form can be checked; with a domain, one of
+        // the two EIP-712 forms has to verify.
+        if payloads.eip712_hash.is_none() {
+            push_once(&mut verified, SigningSchemeType::Ecdsa256k1);
+        }
     }
 
-    Ok(())
+    if !sigs.external.is_empty() {
+        match payloads.eip712_hash.as_ref() {
+            Some(hash) => {
+                let found =
+                    expected.attribute(recover_address_from_eip712_hash(hash, sigs.external)?)?;
+                signer = Some(agree(signer, found)?);
+                push_once(&mut verified, SigningSchemeType::Ecdsa256k1);
+            }
+            None => tracing::warn!(
+                "No EIP-712 domain is available, so the deprecated external signature of a \
+                 response cannot be checked"
+            ),
+        }
+    }
+
+    for typed in sigs.list {
+        // A scheme this release does not know cannot have been requested, so its entry
+        // is passed over like an unrequested one. That keeps a verifier working while a
+        // newer node adds a scheme during a rolling upgrade.
+        let Ok(scheme) = SigningSchemeType::try_from(typed.scheme) else {
+            tracing::warn!(
+                "A response carries a signature of the unknown scheme {}, which is skipped",
+                typed.scheme
+            );
+            continue;
+        };
+        if !requested.contains(&scheme) {
+            tracing::warn!("A response carries a {scheme} signature that was not requested");
+            continue;
+        }
+        let found = if scheme == SigningSchemeType::Ecdsa256k1 {
+            // Only this entry is an EIP-712 signature, so only it needs the domain.
+            let Some(hash) = payloads.eip712_hash.as_ref() else {
+                tracing::warn!(
+                    "No EIP-712 domain is available, so the ECDSA entry of a response cannot \
+                     be checked"
+                );
+                continue;
+            };
+            expected.attribute(recover_address_from_eip712_hash(hash, &typed.signature)?)?
+        } else {
+            attribute_scheme_entry(&typed.signature, scheme, payloads, expected, keys, signer)?
+        };
+        signer = Some(agree(signer, found)?);
+        push_once(&mut verified, scheme);
+    }
+
+    // A requested scheme that was never verified is the actionable cause, so it is
+    // reported before the absence of any signer.
+    ensure_requested_verified(&verified, requested, signer.map(|(party_id, _)| party_id))?;
+    signer.ok_or_else(|| {
+        anyhow_tracked(
+            "no signature of the response could be checked, so it identified no party".to_string(),
+        )
+    })
 }
 
 /// Authenticate a single (untrusted) response: look its `party_id` up in
@@ -199,6 +540,7 @@ fn authenticate_user_decrypt_and_check_meta_data(
     trusted_ctx: &UserDecTrustedValidationContext,
     response: &UserDecryptionResponsePayload,
     signature: &[u8],
+    signatures: &[TypedSignature],
     eip712_params: &Eip712VerificationParams,
 ) -> anyhow::Result<(PublicSigKey, Role)> {
     // TODO: Need to update this to a safer deserialization (which checks versions) with #2781 ?
@@ -223,38 +565,43 @@ fn authenticate_user_decrypt_and_check_meta_data(
         ));
     }
 
-    // Prefer ECDSA signature over the eip712 one
-    if signature.is_empty() {
-        // check signature
-        if eip712_params.response_external_signature.is_empty() {
-            return Err(anyhow_error_and_log(
-                ERR_VALIDATE_USER_DECRYPTION_MISSING_SIGNATURE,
-            ));
-        }
-
-        check_ext_user_decryption_signature(
-            eip712_params.response_external_signature,
-            response,
-            trusted_ctx.client_request,
-            eip712_params.trusted_eip712_domain,
-            expected_addr,
-        )
-        .inspect_err(|e| tracing::warn!("signature on received response is not valid ({})!", e))?;
-    } else {
-        let sig = Signature::from_ecdsa(k256::ecdsa::Signature::from_slice(signature)?);
-        // NOTE that we cannot use `BaseKmsStruct::verify_sig`
-        // because `BaseKmsStruct` cannot be compiled for wasm (it has an async mutex).
-        if internal_verify_sig(
-            &DSEP_USER_DECRYPTION,
-            &bc2wrap::serialize(&response)?,
-            &sig,
-            &resp_verf_key,
-        )
-        .is_err()
-        {
-            anyhow::bail!("Signature on received response is not valid!");
-        }
+    // A response has to carry at least one of the two deprecated fields until 0.16, so
+    // that a node from a release before `signatures` stays verifiable.
+    if signature.is_empty() && eip712_params.response_external_signature.is_empty() {
+        return Err(anyhow_error_and_log(
+            ERR_VALIDATE_USER_DECRYPTION_MISSING_SIGNATURE,
+        ));
     }
+
+    let response_bytes = bc2wrap::serialize(&response)?;
+    verify_response_signatures(
+        &ResponseSignatures {
+            internal: signature,
+            external: eip712_params.response_external_signature,
+            list: signatures,
+        },
+        &SignedPayloads {
+            dsep: &DSEP_USER_DECRYPTION,
+            internal_bytes: &response_bytes,
+            payload_bytes: &user_dec_payload_bytes(
+                &response_bytes,
+                eip712_params.response_extra_data,
+            )?,
+            eip712_hash: Some(user_decrypt_eip712_hash(
+                response,
+                trusted_ctx.client_request,
+                eip712_params.trusted_eip712_domain,
+            )?),
+        },
+        trusted_ctx.client_request.signing_schemes(),
+        &ExpectedSigner::Known {
+            party_id: response.party_id,
+            address: *expected_addr,
+            verf_key: &resp_verf_key,
+        },
+        trusted_ctx.scheme_verf_keys,
+    )
+    .inspect_err(|e| tracing::warn!("signature on received response is not valid ({})!", e))?;
 
     Ok((
         resp_verf_key,
@@ -370,13 +717,11 @@ pub(crate) fn validate_user_decrypt_responses(
             response_extra_data: &cur_resp.extra_data,
             trusted_eip712_domain: trusted_ctx.eip712_domain,
         };
-        // The deprecated scalar `signature` field carries the raw internal ECDSA signature over the
-        // serialized payload.
-        // TODO(0.16) verify `signatures` and drop the two deprecated fields.
         let (verification_key, role) = match authenticate_user_decrypt_and_check_meta_data(
             trusted_ctx,
             payload,
             &cur_resp.signature,
+            &cur_resp.signatures,
             &eip712_params,
         ) {
             Ok(key) => key,
@@ -581,8 +926,8 @@ mod tests {
         cryptography::{
             encryption::{Encryption, PkeScheme, PkeSchemeType},
             signatures::{
-                ERR_EXT_USER_DECRYPTION_SIG_BAD_LENGTH, PrivateSigKey, PublicSigKey, gen_sig_keys,
-                internal_sign,
+                ERR_EXT_USER_DECRYPTION_SIG_BAD_LENGTH, NodeSigningIdentity, PrivateSigKey,
+                PublicSigKey, gen_sig_keys, internal_sign,
             },
         },
         dummy_domain,
@@ -590,7 +935,6 @@ mod tests {
             base::sign_user_decryption_result,
             validation::{ERR_VALIDATE_USER_DECRYPTION_MISMATCH_EXTRA_DATA, select_most_common},
             validation_wasm::{
-                ERR_EXT_USER_DECRYPTION_SIG_VERIFICATION_FAILURE,
                 ERR_VALIDATE_USER_DECRYPTION_ID_NOT_FOUND, ERR_VALIDATE_USER_DECRYPTION_NO_RESP,
                 ERR_VALIDATE_USER_DECRYPTION_WRONG_ADDRESS,
                 authenticate_user_decrypt_and_check_meta_data,
@@ -600,9 +944,10 @@ mod tests {
 
     use super::{
         DSEP_USER_DECRYPTION, ERR_VALIDATE_USER_DECRYPTION_MISSING_SIGNATURE,
-        ERR_VALIDATE_USER_DECRYPTION_NOT_ENOUGH_RESP, Eip712VerificationParams,
-        UserDecTrustedValidationContext, UserDecryptionInvariants,
-        check_ext_user_decryption_signature, validate_user_decrypt_responses,
+        ERR_VALIDATE_USER_DECRYPTION_NOT_ENOUGH_RESP, Eip712VerificationParams, ExpectedSigner,
+        ResponseSignatures, SignedPayloads, UserDecTrustedValidationContext,
+        UserDecryptionInvariants, user_decrypt_eip712_hash, validate_user_decrypt_responses,
+        verify_response_signatures,
     };
 
     /// Helper method to be removed in 0.16 when the external signature is no longer used in production.
@@ -615,7 +960,7 @@ mod tests {
         extra_data: &[u8],
     ) -> anyhow::Result<Vec<u8>> {
         Ok(sign_user_decryption_result(
-            server_sk,
+            &NodeSigningIdentity::ecdsa_only(server_sk.clone()),
             &[],
             payload.clone(),
             user_pk_buf,
@@ -626,7 +971,7 @@ mod tests {
     }
 
     #[test]
-    fn test_check_ext_user_decryption_signature() {
+    fn test_verify_response_signatures_external_user_decryption() {
         let mut rng = AesRng::seed_from_u64(0);
         let (vk0, sk0) = gen_sig_keys(&mut rng);
         let (vk1, _sk1) = gen_sig_keys(&mut rng);
@@ -688,19 +1033,45 @@ mod tests {
         )
         .unwrap();
 
+        let verify = |external: &[u8],
+                      response: &UserDecryptionResponsePayload,
+                      eip712_domain: &Eip712Domain| {
+            let response_bytes = bc2wrap::serialize(response).unwrap();
+            verify_response_signatures(
+                &ResponseSignatures {
+                    internal: &[],
+                    external,
+                    list: &[],
+                },
+                &SignedPayloads {
+                    dsep: &DSEP_USER_DECRYPTION,
+                    internal_bytes: &response_bytes,
+                    payload_bytes: &super::user_dec_payload_bytes(
+                        &response_bytes,
+                        request.extra_data(),
+                    )
+                    .unwrap(),
+                    eip712_hash: Some(
+                        user_decrypt_eip712_hash(response, &request, eip712_domain).unwrap(),
+                    ),
+                },
+                request.signing_schemes(),
+                &ExpectedSigner::Known {
+                    party_id: 1,
+                    address: kms_addrs[&1],
+                    verf_key: &pks[&1],
+                },
+                &HashMap::new(),
+            )
+        };
+
         // incorrect external signature length
         {
             assert!(
-                check_ext_user_decryption_signature(
-                    &external_sig[0..64],
-                    &payload,
-                    &request,
-                    &domain,
-                    &kms_addrs[&1],
-                )
-                .unwrap_err()
-                .to_string()
-                .contains(ERR_EXT_USER_DECRYPTION_SIG_BAD_LENGTH)
+                verify(&external_sig[0..64], &payload, &domain)
+                    .unwrap_err()
+                    .to_string()
+                    .contains(ERR_EXT_USER_DECRYPTION_SIG_BAD_LENGTH)
             );
         }
 
@@ -712,19 +1083,10 @@ mod tests {
                 &payload,
                 &domain,
                 request.enc_key(),
-                &[],
+                request.extra_data(),
             )
             .unwrap();
-            assert!(
-                check_ext_user_decryption_signature(
-                    &bad_external_sig,
-                    &payload,
-                    &request,
-                    &domain,
-                    &kms_addrs[&1],
-                )
-                .is_err()
-            );
+            assert!(verify(&bad_external_sig, &payload, &domain).is_err());
         }
 
         // bad signature due to bad domain
@@ -735,16 +1097,7 @@ mod tests {
                 chain_id: 1234, // incorrect chain ID
                 verifying_contract: alloy_primitives::address!("66f9664f97F2b50F62D13eA064982f936dE76657"),
             );
-            assert!(
-                check_ext_user_decryption_signature(
-                    &external_sig,
-                    &payload,
-                    &request,
-                    &bad_domain,
-                    &kms_addrs[&1],
-                )
-                .is_err()
-            );
+            assert!(verify(&external_sig, &payload, &bad_domain).is_err());
         }
 
         // check that we detect the error if payload is modified
@@ -752,29 +1105,19 @@ mod tests {
             let mut bad_payload = payload.clone();
             bad_payload.party_id = 2; // modify ID
             assert!(
-                check_ext_user_decryption_signature(
-                    &external_sig,
-                    &bad_payload,
-                    &request,
-                    &domain,
-                    &kms_addrs[&1],
-                )
-                .unwrap_err()
-                .to_string()
-                .contains(ERR_EXT_USER_DECRYPTION_SIG_VERIFICATION_FAILURE)
+                verify(&external_sig, &bad_payload, &domain)
+                    .unwrap_err()
+                    .to_string()
+                    .contains("an ECDSA signature of party 1 recovered to")
             );
         }
 
         // happy path
         {
-            check_ext_user_decryption_signature(
-                &external_sig,
-                &payload,
-                &request,
-                &domain,
-                &kms_addrs[&1],
-            )
-            .unwrap();
+            assert_eq!(
+                verify(&external_sig, &payload, &domain).unwrap(),
+                (1, kms_addrs[&1])
+            );
         }
     }
 
@@ -841,9 +1184,10 @@ mod tests {
             &extra_data,
         )
         .unwrap();
-
+        let scheme_verf_keys = HashMap::new();
         let trusted_ctx = UserDecTrustedValidationContext::new(
             &server_addresses,
+            &scheme_verf_keys,
             &client_request,
             &dummy_domain,
             None,
@@ -866,6 +1210,7 @@ mod tests {
                     &trusted_ctx,
                     &pivot_resp,
                     &[], // the ECDSA signature may be empty, thus we check the external one
+                    &[],
                     &params,
                 )
                 .unwrap_err()
@@ -888,6 +1233,7 @@ mod tests {
                     &trusted_ctx,
                     &other_resp,
                     &[],
+                    &[],
                     &params,
                 )
                 .unwrap_err()
@@ -908,6 +1254,7 @@ mod tests {
                     &trusted_ctx,
                     &pivot_resp,
                     &[], // the ECDSA signature may be empty, thus we check the external one
+                    &[],
                     &params,
                 )
                 .unwrap_err()
@@ -930,6 +1277,7 @@ mod tests {
                     &trusted_ctx,
                     &other_resp,
                     &[],
+                    &[],
                     &params,
                 )
                 .unwrap_err()
@@ -938,7 +1286,7 @@ mod tests {
             );
         }
 
-        // no need to explicitly test the signature issues again since they were tested in [test_check_ext_user_decryption_signature]
+        // Signature failures are covered by `test_verify_response_signatures_external_user_decryption`.
         {
             let pivot_buf = bc2wrap::serialize(&pivot_resp).unwrap();
             let signature_buf = internal_sign(&DSEP_USER_DECRYPTION, &pivot_buf, &sk0)
@@ -954,6 +1302,7 @@ mod tests {
                     &trusted_ctx,
                     &pivot_resp,
                     &signature_buf,
+                    &[],
                     &params,
                 )
                 .unwrap_err()
@@ -973,12 +1322,15 @@ mod tests {
                 &trusted_ctx,
                 &pivot_resp,
                 &[], // the ECDSA signature may be empty, thus we check the external one
+                &[],
                 &params,
             )
             .unwrap();
         }
 
-        // happy path for empty external_signature, so we check ECDSA
+        // The internal signature alone is not enough: a domain is always available for user
+        // decryption, and the internal signature covers the payload only, so the requested
+        // ECDSA has to be met by an EIP-712 form.
         {
             let pivot_buf = bc2wrap::serialize(&pivot_resp).unwrap();
             let signature = &internal_sign(&DSEP_USER_DECRYPTION, &pivot_buf, &sk0).unwrap();
@@ -988,13 +1340,19 @@ mod tests {
                 response_extra_data: &extra_data,
                 trusted_eip712_domain: &dummy_domain,
             };
-            authenticate_user_decrypt_and_check_meta_data(
+            let err = authenticate_user_decrypt_and_check_meta_data(
                 &trusted_ctx,
                 &pivot_resp,
                 &signature_buf,
+                &[],
                 &params,
             )
-            .unwrap();
+            .unwrap_err()
+            .to_string();
+            assert!(
+                err.contains("carries no verified Ecdsa256k1 signature"),
+                "the error does not name the unverified scheme: {err}"
+            );
         }
     }
 
@@ -1039,9 +1397,10 @@ mod tests {
             dummy_domain.verifying_contract.unwrap(),
             vec![],
         );
-
+        let scheme_verf_keys = HashMap::new();
         let trusted_ctx = UserDecTrustedValidationContext::new(
             &server_addresses,
+            &scheme_verf_keys,
             &client_request,
             &dummy_domain,
             None,
@@ -1089,7 +1448,7 @@ mod tests {
                 .unwrap();
                 UserDecryptionResponse {
                     signature: vec![],
-                    signatures: vec![],
+                    signatures: kms_grpc::rpc_types::ecdsa_signatures(external_signature.clone()),
                     external_signature,
                     payload: Some(payload),
                     extra_data: vec![],
@@ -1249,7 +1608,7 @@ mod tests {
                 .unwrap();
                 UserDecryptionResponse {
                     signature: vec![],
-                    signatures: vec![],
+                    signatures: kms_grpc::rpc_types::ecdsa_signatures(external_signature.clone()),
                     external_signature,
                     payload: Some(payload),
                     extra_data: vec![],
@@ -1398,7 +1757,6 @@ mod tests {
         );
 
         let digest = compute_link(&client_request, &dummy_domain).unwrap();
-
         let resp0 = {
             let payload0 = UserDecryptionResponsePayload {
                 verification_key: bc2wrap::serialize(&pks[&1]).unwrap(),
@@ -1422,7 +1780,7 @@ mod tests {
             .unwrap();
             UserDecryptionResponse {
                 signature: vec![],
-                signatures: vec![],
+                signatures: kms_grpc::rpc_types::ecdsa_signatures(external_signature.clone()),
                 external_signature,
                 payload: Some(payload0),
                 extra_data: vec![],
@@ -1452,7 +1810,7 @@ mod tests {
             .unwrap();
             UserDecryptionResponse {
                 signature: vec![],
-                signatures: vec![],
+                signatures: kms_grpc::rpc_types::ecdsa_signatures(external_signature.clone()),
                 external_signature,
                 payload: Some(payload),
                 extra_data: vec![],
@@ -1482,13 +1840,13 @@ mod tests {
             .unwrap();
             UserDecryptionResponse {
                 signature: vec![],
-                signatures: vec![],
+                signatures: kms_grpc::rpc_types::ecdsa_signatures(external_signature.clone()),
                 external_signature,
                 payload: Some(payload),
                 extra_data: vec![],
             }
         };
-
+        let scheme_verf_keys = HashMap::new();
         // wrong link
         // Note that we cannot change the domain or other parts of the response to cause the failure
         // because that would lead to other failures in [validate_user_decrypt_responses], which are already tested.
@@ -1507,6 +1865,7 @@ mod tests {
             );
             let bad_ctx = UserDecTrustedValidationContext::new(
                 &server_addresses,
+                &scheme_verf_keys,
                 &bad_client_request,
                 &dummy_domain,
                 None,
@@ -1520,6 +1879,7 @@ mod tests {
             let agg_resp = vec![resp0.clone(), resp1.clone(), resp2.clone()];
             let trusted_ctx = UserDecTrustedValidationContext::new(
                 &server_addresses,
+                &scheme_verf_keys,
                 &client_request,
                 &dummy_domain,
                 None,
@@ -1745,7 +2105,7 @@ mod tests {
                 .unwrap();
                 UserDecryptionResponse {
                     signature: vec![],
-                    signatures: vec![],
+                    signatures: kms_grpc::rpc_types::ecdsa_signatures(external_signature.clone()),
                     external_signature,
                     payload: Some(payload),
                     extra_data: vec![],
@@ -1753,11 +2113,12 @@ mod tests {
             };
 
         let digest = compute_link(&client_request, &dummy_domain).unwrap();
-
+        let scheme_verf_keys = HashMap::new();
         // Test 1: happy path with threshold=Some(1), all 5 responses valid.
         {
             let trusted_ctx = UserDecTrustedValidationContext::new(
                 &server_addresses,
+                &scheme_verf_keys,
                 &client_request,
                 &dummy_domain,
                 Some(1),
@@ -1781,6 +2142,7 @@ mod tests {
         {
             let trusted_ctx = UserDecTrustedValidationContext::new(
                 &server_addresses,
+                &scheme_verf_keys,
                 &client_request,
                 &dummy_domain,
                 Some(1),
@@ -1837,12 +2199,14 @@ mod tests {
             vec![],
         );
 
+        let scheme_verf_keys = HashMap::new();
         // Positive control: 4 distinct servers, default threshold => Ok, threshold defaults to 1.
         {
             let servers: HashMap<u32, alloy_primitives::Address> =
                 (1u32..=4).map(|i| (i, addrs[i as usize - 1])).collect();
             let ctx = UserDecTrustedValidationContext::new(
                 &servers,
+                &scheme_verf_keys,
                 &client_request,
                 &dummy_domain,
                 None,
@@ -1858,6 +2222,7 @@ mod tests {
             assert!(
                 UserDecTrustedValidationContext::new(
                     &servers,
+                    &scheme_verf_keys,
                     &client_request,
                     &dummy_domain,
                     None,
@@ -1873,6 +2238,7 @@ mod tests {
             assert!(
                 UserDecTrustedValidationContext::new(
                     &servers,
+                    &scheme_verf_keys,
                     &client_request,
                     &dummy_domain,
                     Some(2),
@@ -1888,6 +2254,7 @@ mod tests {
             assert!(
                 UserDecTrustedValidationContext::new(
                     &servers,
+                    &scheme_verf_keys,
                     &client_request,
                     &dummy_domain,
                     None,
@@ -1904,6 +2271,7 @@ mod tests {
             assert!(
                 UserDecTrustedValidationContext::new(
                     &servers,
+                    &scheme_verf_keys,
                     &client_request,
                     &dummy_domain,
                     None,

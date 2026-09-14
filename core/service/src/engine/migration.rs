@@ -4,7 +4,7 @@ use crate::engine::base::derive_request_id;
 use crate::engine::threshold::service::epoch_manager::EpochData;
 use crate::engine::threshold::service::session::PRSSSetupCombined;
 use crate::util::key_setup::ensure_all_verf_material;
-use crate::vault::storage::crypto_material::get_core_signing_key;
+use crate::vault::storage::crypto_material::get_core_signing_identity;
 use crate::vault::storage::{
     Storage, StorageExt, StorageReader, StoreWriteOutcome, read_context_at_id,
     read_versioned_at_request_id, store_versioned_at_request_id,
@@ -244,15 +244,15 @@ where
         );
         return Ok(());
     }
-    let sk = get_core_signing_key(priv_storage).await?;
-    if !sk.has_root_seed() {
+    let identity = get_core_signing_identity(priv_storage).await?;
+    if !identity.has_root_seed() {
         tracing::warn!(
             "No root signing seed present; skipping the multi-scheme verification-material \
              backfill."
         );
         return Ok(());
     }
-    ensure_all_verf_material(pub_storage, &sk).await
+    ensure_all_verf_material(pub_storage, &identity).await
 }
 
 async fn migrate_prss_to_epoch<PrivS>(
@@ -561,6 +561,7 @@ where
 /// Deletes obsolete keys after confirming that each epoch-scoped replacement has the same length
 /// and SHAKE-256 digest as its legacy entry. The preceding migration copies these bytes without
 /// transforming them.
+/// Returns an error if a replacement is missing or differs, and retains that legacy entry.
 async fn migrate_fhe_keys_after_0_13_x<S>(storage: &mut S, kms_type: KMSType) -> anyhow::Result<()>
 where
     S: StorageExt + Sync + Send,
@@ -604,10 +605,8 @@ where
             // The replacement was read back and matched, so the legacy entry can be removed.
             storage.delete_data(&key_id, &data_type_str).await?;
         } else {
-            tracing::error!(
-                "Legacy key {} still exists but no migrated key found at epoch {}, skipping deletion",
-                key_id,
-                legacy_epoch_id
+            anyhow::bail!(
+                "Migrated {data_type} for key {key_id} at epoch {legacy_epoch_id} is missing; refusing to delete the legacy entry"
             );
         }
     }
@@ -925,6 +924,7 @@ where
 /// Remove private keys stored under the legacy epoch ID once their current-epoch copies have the
 /// same length and SHAKE-256 digest. The preceding migration copies these bytes without
 /// transforming them.
+/// Returns an error if a replacement is missing or differs, and retains that legacy entry.
 async fn remove_old_keys_for_0_13_20<PrivS>(
     priv_storage: &mut PrivS,
     kms_type: KMSType,
@@ -977,10 +977,8 @@ where
                 .delete_data_at_epoch(&key_id, &LEGACY_DEFAULT_EPOCH_ID, &data_type_str)
                 .await?;
         } else {
-            tracing::error!(
-                "No key {} under epoch ID {} appears to exist. This implies an inconsistent file system",
-                key_id,
-                new_epoch_id
+            anyhow::bail!(
+                "Migrated {data_type} for key {key_id} at epoch {new_epoch_id} is missing; refusing to delete the legacy entry"
             );
         }
     }
@@ -996,14 +994,15 @@ mod tests {
     use super::*;
     use crate::conf::ContextEpochAssociation;
     use crate::consts::signing_material_id;
-    use crate::cryptography::signatures::{PrivateSigKey, gen_sig_keys};
+    use crate::cryptography::signatures::gen_sig_keys;
     use crate::cryptography::signing::SigningSchemeType;
+    use crate::cryptography::signing::identity::NodeSigningIdentity;
     use crate::engine::context::{ContextInfo, NodeInfo, SchemeDigests, SoftwareVersion};
     use crate::util::key_setup::{
         LEGACY_VERF_MATERIAL_TYPES, NON_LEGACY_VERF_MATERIAL_TYPES,
         delete_non_legacy_verf_material, ensure_central_server_signing_keys_exist,
     };
-    use crate::vault::storage::crypto_material::{get_core_signing_key, read_verf_key_at};
+    use crate::vault::storage::crypto_material::{get_core_signing_identity, read_verf_key_at};
     use crate::vault::storage::file::FileStorage;
     use crate::vault::storage::ram::{self, RamStorage};
     use crate::vault::storage::{
@@ -1540,6 +1539,26 @@ mod tests {
     async fn test_after_0_13_x_no_legacy_ram() {
         let mut storage = RamStorage::new();
         test_migrate_fhe_keys_after_0_13_x_no_legacy(&mut storage).await;
+    }
+
+    /// A missing replacement rejects cleanup and preserves the non-epoched legacy key.
+    #[tokio::test]
+    async fn test_after_0_13_x_rejects_without_new_epoch_ram() {
+        let mut storage = RamStorage::new();
+        let key_id = derive_request_id("missing_migrated_fhe_key").unwrap();
+        let data_type = PrivDataType::FheKeyInfo.to_string();
+        let data = vec![9, 8, 7];
+        storage
+            .store_bytes(&data, &key_id, &data_type)
+            .await
+            .unwrap();
+
+        let error = migrate_fhe_keys_after_0_13_x(&mut storage, KMSType::Threshold)
+            .await
+            .unwrap_err();
+
+        assert!(error.to_string().contains("is missing"));
+        assert_eq!(storage.load_bytes(&key_id, &data_type).await.unwrap(), data);
     }
 
     #[tokio::test]
@@ -2320,7 +2339,7 @@ mod tests {
     }
 
     /// Test that legacy epoch keys are NOT deleted when no DEFAULT_EPOCH_ID counterpart exists
-    pub async fn test_remove_old_keys_for_0_13_20_skips_without_new_epoch<
+    pub async fn test_remove_old_keys_for_0_13_20_rejects_without_new_epoch<
         S: StorageExt + Sync + Send,
     >(
         storage: &mut S,
@@ -2338,16 +2357,18 @@ mod tests {
             .await
             .unwrap();
 
-        remove_old_keys_for_0_13_20(storage, KMSType::Threshold)
+        let error = remove_old_keys_for_0_13_20(storage, KMSType::Threshold)
             .await
-            .unwrap();
+            .unwrap_err();
 
+        assert!(error.to_string().contains("is missing"));
         // Legacy epoch key should still exist (not deleted because no DEFAULT_EPOCH_ID copy)
-        assert!(
+        assert_eq!(
             storage
-                .data_exists_at_epoch(&key_id, &LEGACY_DEFAULT_EPOCH_ID, &data_type)
+                .load_bytes_at_epoch(&key_id, &LEGACY_DEFAULT_EPOCH_ID, &data_type)
                 .await
-                .unwrap()
+                .unwrap(),
+            data
         );
     }
 
@@ -2371,9 +2392,9 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_remove_old_keys_skips_without_new_epoch_ram() {
+    async fn test_remove_old_keys_rejects_without_new_epoch_ram() {
         let mut storage = RamStorage::new();
-        test_remove_old_keys_for_0_13_20_skips_without_new_epoch(&mut storage).await;
+        test_remove_old_keys_for_0_13_20_rejects_without_new_epoch(&mut storage).await;
     }
 
     // File storage tests — remove_old_keys_for_0_13_20
@@ -2399,10 +2420,10 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_remove_old_keys_skips_without_new_epoch_file() {
+    async fn test_remove_old_keys_rejects_without_new_epoch_file() {
         let temp_dir = tempfile::tempdir().unwrap();
         let mut storage = FileStorage::new(Some(temp_dir.path()), StorageType::PRIV, None).unwrap();
-        test_remove_old_keys_for_0_13_20_skips_without_new_epoch(&mut storage).await;
+        test_remove_old_keys_for_0_13_20_rejects_without_new_epoch(&mut storage).await;
     }
 
     // ── Tests for migrate_to_0_13_x (orchestrator) ──
@@ -3291,7 +3312,7 @@ mod tests {
     }
 
     /// Validates that the published key and digest are the ones `sk` derives.
-    async fn assert_material_matches<S: StorageReader>(pub_storage: &S, sk: &PrivateSigKey) {
+    async fn assert_material_matches<S: StorageReader>(pub_storage: &S, sk: &NodeSigningIdentity) {
         let addr_type = PubDataType::TypedVerfAddress.to_string();
         for scheme in SigningSchemeType::iter() {
             let expected = sk.unified_verifying_key(scheme).unwrap();
@@ -3335,7 +3356,7 @@ mod tests {
             .await
             .unwrap();
 
-        let sk = get_core_signing_key(&priv_storage).await.unwrap();
+        let sk = get_core_signing_identity(&priv_storage).await.unwrap();
         assert_material_matches(&pub_storage, &sk).await;
         assert_eq!(
             snapshot(&pub_storage, &LEGACY_VERF_MATERIAL_TYPES).await,
@@ -3562,13 +3583,13 @@ mod tests {
         }
 
         #[tokio::test]
-        async fn test_remove_old_keys_skips_without_new_epoch_s3() {
+        async fn test_remove_old_keys_rejects_without_new_epoch_s3() {
             let mut storage = create_s3_storage(
                 StorageType::PRIV,
-                std::stringify!(test_remove_old_keys_skips_without_new_epoch_s3),
+                std::stringify!(test_remove_old_keys_rejects_without_new_epoch_s3),
             )
             .await;
-            test_remove_old_keys_for_0_13_20_skips_without_new_epoch(&mut storage).await;
+            test_remove_old_keys_for_0_13_20_rejects_without_new_epoch(&mut storage).await;
         }
     }
 }

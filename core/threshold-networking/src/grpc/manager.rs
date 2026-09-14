@@ -7,9 +7,7 @@ use crate::grpc::{
     TlsExtensionGetter,
 };
 use crate::health_check::HealthCheckSession;
-use crate::sending_service::{
-    GrpcSendingService, NetworkSession, SendingService, now_activity_millis,
-};
+use crate::sending_service::{GrpcSendingService, NetworkSession, SendingService};
 use dashmap::DashMap;
 use observability::metrics::{self, NetworkDebugEvent};
 use std::collections::HashMap;
@@ -114,21 +112,7 @@ impl GrpcNetworkingManager {
                             }
                         }
                         SessionStatus::Active(session) => match session.upgrade() {
-                            Some(network_session) => {
-                                let time_since_last_rec = Duration::from_millis(
-                                    now_activity_millis().saturating_sub(
-                                        network_session
-                                            .last_rec_activity_time
-                                            .load(Ordering::Relaxed),
-                                    ),
-                                );
-                                if time_since_last_rec > discard_inactive_interval {
-                                    metrics::METRICS.increment_network_event(
-                                        NetworkDebugEvent::SessionActiveDiscarded,
-                                    );
-                                    to_remove.push(*session_id);
-                                    continue;
-                                }
+                            Some(_) => {
                                 internal_active_sessions_count += 1;
                             }
                             None => {
@@ -340,5 +324,104 @@ impl GrpcNetworkingManager {
 
     pub async fn inactive_session_count(&self) -> u64 {
         self.inactive_session_count.load(Ordering::Relaxed)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use threshold_types::party::Identity;
+    use threshold_types::role::Role;
+
+    /// Name of a session store entry's status, for assertion messages.
+    fn status_name(status: Option<&SessionStatus>) -> &'static str {
+        match status {
+            Some(SessionStatus::Active(_)) => "active",
+            Some(SessionStatus::Inactive(_)) => "inactive",
+            Some(SessionStatus::Completed(_)) => "completed",
+            None => "absent",
+        }
+    }
+
+    /// Regression test: the task used to discard an active session that had not
+    /// received anything for `discard_inactive_sessions_interval`. Sessions that
+    /// legitimately idle would thus be discarded, which turned out to be an issue.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn test_active_session_is_never_discarded() {
+        let conf = CoreToCoreNetworkConfig {
+            network_timeout: Some(1),
+            session_update_interval_secs: Some(1),
+            session_cleanup_interval_secs: Some(1),
+            discard_inactive_sessions_interval: Some(1),
+            ..Default::default()
+        };
+        let manager = GrpcNetworkingManager::new(None, conf).unwrap();
+
+        let role_1 = Role::indexed_from_one(1);
+        let role_2 = Role::indexed_from_one(2);
+        let mut role_assignment = RoleAssignment::default();
+        role_assignment.insert(role_1, Identity::new("127.0.0.1".to_string(), 1, None));
+        role_assignment.insert(role_2, Identity::new("127.0.0.1".to_string(), 2, None));
+
+        // An idle session at round 0, whose 1s round deadline passes right away.
+        let idle_id = SessionId::from(7);
+        let idle = manager
+            .make_network_session(idle_id, &role_assignment, role_1, NetworkMode::Sync)
+            .await
+            .unwrap();
+        // A session budgeted 20 rounds ahead, whose deadline outlasts the test.
+        let ahead_id = SessionId::from(8);
+        let ahead = manager
+            .make_network_session(ahead_id, &role_assignment, role_1, NetworkMode::Sync)
+            .await
+            .unwrap();
+        let advance = 20;
+        for _ in 0..advance {
+            ahead.increase_round_counter().await;
+        }
+
+        // Several sweeps of the cleanup task at a 1s update interval, well past the
+        // 1s discard and cleanup intervals and past the idle session's deadline.
+        tokio::time::sleep(Duration::from_millis(3500)).await;
+
+        assert!(
+            idle.get_timeout_current_round().await < std::time::Instant::now(),
+            "the idle session must be past its own round deadline for the test to be meaningful"
+        );
+        for (id, session) in [(idle_id, &idle), (ahead_id, &ahead)] {
+            let entry = manager.session_store.get(&id);
+            match entry.as_deref() {
+                Some(SessionStatus::Active(weak)) => {
+                    let routed = weak.upgrade().unwrap_or_else(|| {
+                        panic!("the entry of session {id} must point at a live session")
+                    });
+                    assert_eq!(
+                        Arc::as_ptr(&routed) as *const (),
+                        Arc::as_ptr(session) as *const (),
+                        "the entry of session {id} must still route to the protocol's session"
+                    );
+                }
+                other => panic!(
+                    "session {id} must still be active while the protocol holds it, got {}",
+                    status_name(other)
+                ),
+            }
+        }
+        assert_eq!(manager.active_session_count().await, 2);
+        assert_eq!(ahead.get_current_round().await, advance);
+
+        // Dropping the handles is the only way out of `Active`: the next sweep marks
+        // the entries completed and the cleanup interval then removes them.
+        drop(idle);
+        drop(ahead);
+        tokio::time::sleep(Duration::from_millis(3500)).await;
+        for id in [idle_id, ahead_id] {
+            assert!(
+                manager.session_store.get(&id).is_none(),
+                "session {id} must be removed once dropped and past the cleanup interval, got {}",
+                status_name(manager.session_store.get(&id).as_deref())
+            );
+        }
+        assert_eq!(manager.active_session_count().await, 0);
     }
 }

@@ -110,17 +110,24 @@ The service crate is the main surface area. Key subdirectories under
   private objects: its ECDSA signing key (`PrivDataType::SigningKey`, the
   authoritative on-chain identity) and an independent, CSPRNG-generated
   `RootSigningSeed` (`PrivDataType::SigningSeed`), both under `SIGNING_KEY_ID`.
-  The seed will eventuall be the root of *every* signing key of the node, ECDSA 
-  included: keys are derived on demand from the *seed*. However to ensure backward
-  compatibility and avoid requiring nodes to roll their ECDSA keys, legacy ECDSA 
-  are derived and stored seperately, and the seed is only used to derive every 
-  non-ECDSA key. That is, if a legacy ECDSA key is stored, then the seed will *not* 
-  be used to derive ECDSA material. 
-  The seed is carried in memory on `PrivateSigKey` (a `#[serde(skip)]` field, so
-  the persisted format is unchanged) and attached by `get_core_signing_key`; a key
-  without it — a client wallet key, or a node that has not yet run `kms-gen-keys` —
-  can only do ECDSA and errors with `SigningError::MissingRootSeed` for anything
-  else. Every scheme's public verification material — ECDSA's included —
+  The seed will eventually be the root of *every* signing key of the node, ECDSA
+  included: keys are derived on demand from the *seed*. To keep backward
+  compatibility, and to avoid making nodes roll their ECDSA keys, an ECDSA key is
+  also stored on its own, and the seed serves every non-ECDSA scheme. That is, if
+  a stored ECDSA key exists, then the seed does *not* derive the ECDSA material.
+  The two halves come together in memory as `signing::identity::NodeSigningIdentity`,
+  which `get_core_signing_identity` assembles and `BaseKmsStruct::signing_identity`
+  hands out. `NodeSigningIdentity` is never persisted, and it is the only type with
+  the multi-scheme `unified_sign_with` / `unified_verifying_key` methods:
+  `PrivateSigKey` is the ECDSA leaf type, which client wallets and the WASM
+  surface also use. An identity with no seed — a node that has not yet run
+  `kms-gen-keys` — can only do ECDSA, and errors with
+  `SigningError::MissingRootSeed` for anything else. On the client side,
+  `Client::verify_result_signatures` checks a result's per-scheme `signatures`
+  against the peers' published keys, which `Client::new_client` reads from
+  `PubDataType::TypedVerfKey`, and rejects a result that omits a scheme the
+  client asked for (`Client::signing_schemes`). Every scheme's public
+  verification material — ECDSA's included —
   is stored under the handle `consts::signing_material_id(scheme)` gives, in the
   data types `key_setup::NON_LEGACY_VERF_MATERIAL_TYPES` names:
   `PubDataType::TypedVerfKey` holds the scheme's *own* verification key type
@@ -135,6 +142,22 @@ The service crate is the main surface area. Key subdirectories under
   [testing/](core/service/src/testing/) — client-side helpers (including
   local key-material utilities used by `core-client`) and test-only wiring.
 - [bin/](core/service/src/bin/) — entry points (see below).
+
+### Task randomness
+
+[`RngSource`](../core/service/src/engine/rng_source.rs) supplies task seeds from
+one shared AES RNG per KMS instance. `BaseKmsStruct` instances and `SessionMaker`
+share the source through `Arc`. Each task receives an owned RNG with a separate seed.
+Source initialization combines OS entropy with entropy from the configured security module.
+Refresh also mixes output from the existing source. Entropy failures return errors and leave
+the source unchanged. Refresh logs report success or failure without seed values.
+
+Threshold epoch creation refreshes once in `new_mpc_epoch`, before either the resharing
+or PRSS session forks its RNG. This includes old-committee parties that skip PRSS initialization.
+A successful refresh protects future task seeds once fresh entropy is unknown to the attacker.
+Existing task RNGs remain unchanged. The source does not provide backtracking resistance
+within a reseeding interval. Centralized services seed at construction; epoch refresh
+applies to threshold services.
 
 ### Binaries
 
@@ -188,9 +211,13 @@ The primary service is `CoreServiceEndpoint`. Its RPCs group into:
   key in the generated TFHE server key. Legacy private keysets that predate this
   field are upgraded with the OPRF share absent; `UseExisting` keygen generates
   and persists a fresh OPRF share for such legacy material before regenerating
-  public keys. Key generation and CRS generation write persistent material only
-  after generation completes. An abort updates request state but does not purge
-  storage.
+  public keys. When the parameter set carries transciphering parameters, keygen
+  additionally persists a *second*, independently sampled LWE secret-key share
+  and includes the matching transciphering server key; as for the OPRF key,
+  `UseExisting` keygen generates a fresh transciphering share when the existing
+  keyset has none. Key generation and CRS generation write persistent material
+  only after generation completes. An abort updates request state but does not
+  purge storage.
 - **Decryption** — `PublicDecrypt` (returns plaintext) and `UserDecrypt`
   (user-initiated, EIP-712 authenticated). `PublicDecryptSync` / `UserDecryptSync`
   start a decryption and wait for its result in the same call, so the caller does
@@ -208,8 +235,10 @@ The primary service is `CoreServiceEndpoint`. Its RPCs group into:
   both sets must hold the key material, so failing to read it rejects the
   request, whereas a pure set 2 party (a node joining the new context) never held
   the key and logs a warning instead. When resharing legacy key material that
-  has no dedicated OPRF secret-key share, the OPRF sub-protocol is skipped and
-  the reshared private keyset keeps that field absent. A storage failure during
+  has no dedicated OPRF/transciphering secret-key share, the OPRF/transciphering
+  sub-protocol is skipped and the reshared private keyset keeps that field
+  absent. Which of these optional shares to reshare is decided from the input
+  keyset, and every party must agree. A storage failure during
   resharing rolls the new epoch back on the party that fails. That party attempts
   to delete the key shares, the CRS metadata and the epoch data of the new epoch.
   Public data remains because an epoch change does not affect it. If cleanup
@@ -295,14 +324,23 @@ vault under it *before* persisting the recovery material, so it is rolled back i
 step fails: the keychain is restored to its pre-setup `(context_id, backup_enc_key)` and the
 vault entries written under the failed id are purged
 (`rollback_failed_custodian_setup` in
-[context_manager.rs](core/service/src/engine/context_manager.rs) and
+[context_manager.rs](../core/service/src/engine/context_manager.rs) and
 `Vault::purge_backup`). Cleanup checks that no backup entries remain under the failed context ID. If
 the storage backend reports a successful deletion but entries remain, rollback emits a
 `tracing::error!` and preserves the original setup or write error. Rollback cannot repair a backend
 that did not apply the deletion, so these leftover entries require operator attention. During
 custodian-context destruction, the same check must pass before recovery material and lifecycle
-state are removed. Setups are serialized against each other so the active backup context cannot
-change mid-operation.
+state are removed.
+Custodian setup and destruction share a lock. Setup holds it until completion, including rollback on failure.
+Destruction therefore cannot remove the previous context while setup might still restore its keychain state.
+
+Restoration writes the private data types back in a fixed order (`RESTORE_ORDER` in
+[backup_operator.rs](../core/service/src/engine/backup_operator.rs)): contexts and `EpochData`
+first, then PRSS setups, keysets and CRS metadata, and the signing key last. A restore can stop
+half-way and can be run again (entries that already exist are skipped), so the order keeps every
+intermediate state bootable: keysets never sit under an epoch the node does not know, which the
+[boot-time checks](#boot-time-storage-verification) refuse, and a node without its signing key
+stays in recovery mode, where the restore can be repeated.
 
 Implementation code lives in [core/service/src/backup/](core/service/src/backup/);
 end-to-end tests live at
@@ -332,7 +370,7 @@ backup failure does not purge the primary material.
 ## Boot-time storage verification
 
 Every node checks its storage during service construction, before it serves any request.
-Two independent things happen.
+Three independent things happen.
 Boot-time verification lets us ensure the public and private storage are
 consistent, and detect any malicious behaviour and/or misconfiguration before
 the KMS party boots up.
@@ -340,6 +378,15 @@ the KMS party boots up.
 **The backup vault is repaired.** `update_backup_vault(false, OP_BOOT)` copies anything
 present in private storage but missing from the backup vault, so a vault that moved or lost
 entries is brought back up to date. Existing entries are not re-read or re-verified.
+
+**Private storage is verified for internal consistency.** Private storage belongs to the node
+alone, so nothing legitimate lands there by accident. `verify_private_storage_layout` lists it
+and fails verification on inconsistent layouts. It deserializes contexts to verify that each
+context uses its declared ID as its storage handle. A threshold node with peer configuration
+writes its default context before these checks. Everything else the current layout does not
+account for is logged as an error without stopping boot. On a threshold node the epoch registry
+(`EpochData`) is read once before the checks, then handed to `SessionMaker::new_initialized`. In
+recovery mode, the private and public checks are skipped so that the node can repair storage.
 
 **Public storage is verified but never touched.** Public storage can drift out of a
 consistent state: a misconfigured bucket or prefix can point a node at the wrong material, and
@@ -351,8 +398,8 @@ The code is split by level. [material_integrity.rs](core/service/src/engine/mate
 holds the digest primitives — pure functions over raw stored bytes, with no storage or
 orchestration — so the vault layer can reuse them without depending on startup logic.
 [storage_material_verification.rs](core/service/src/engine/storage_material_verification.rs)
-sits above it and owns the startup orchestration, entered through `verify_storage_material`.
-The checks follow three rules:
+sits above it and owns the startup orchestration, entered through `verify_private_storage_layout`
+and `verify_storage_material`. The checks follow three rules:
 
 1. **Private storage is the reference.** Every integrity check takes an expected value from
    private storage and looks up its counterpart in public storage — never the reverse.
@@ -370,9 +417,27 @@ What it verifies, and how failures are treated:
 |---|---|
 | Published keysets and CRSes are present, and their raw stored bytes hash to the digests in `KeyGenMetadata` / `CrsGenMetadata` | boot fails |
 | Current private keygen and CRS metadata with a stored domain reconstruct a valid EIP-712 signature from the node's signing key | boot fails |
+| Every non-ECDSA entry of the per-scheme `signatures` in current private keygen and CRS metadata verifies, under the key the node derives for that scheme, over the rebuilt result payload | boot fails |
 | `VerfKey` and `VerfAddress` at `SIGNING_KEY_ID` match the key derived from the private `SigningKey` | boot fails |
 | Every entry in a `PubDataType` folder is accounted for by private storage or by a fixed-ID convention | error logged, boot continues |
 | Every top-level name in public storage is a `PubDataType` folder, and every folder can be listed | error logged, boot continues |
+| The node has no foreign material (`FhePrivateKey` or legacy `PrssSetup` on a threshold node; `FheKeyInfo`, `PrssSetup`, `PrssSetupCombined`, or `EpochData` on a centralized node) | boot fails if foreign material exists |
+| Every `FheKeyInfo` and `CrsInfo` epoch folder has an `EpochData` entry | boot fails |
+| Every `EpochData` has a `Context` entry | boot fails |
+| Every `Context` entry uses its declared context ID as its storage handle | boot fails |
+| No unexpected non-epoched files exist | error logged, boot continues |
+| No epoch folder exists under `Context` or `EpochData` | error logged, boot continues |
+| Every top-level name in private storage is a `PrivDataType` folder, and every inspected folder can be listed | error logged, boot continues |
+| `SigningKey` and `SigningSeed` each hold nothing or exactly one flat entry at `SIGNING_KEY_ID`, and at least one of them holds an entry | serving boot fails; recovery mode remains available |
+
+The signing material lives at `SIGNING_KEY_ID` as the ECDSA `SigningKey`, the root `SigningSeed`,
+or both. A node that predates the seed has only the key. Neither type is epoch-scoped, and neither
+holds a second entry. The layout check accepts every combination with at least one of the two.
+The current loader requires the ECDSA key and attaches the seed when one is present.
+
+On a threshold node, a flat `PrssSetup` entry is foreign material and fails boot. The 0.15
+migration leaves flat `PrssSetupCombined` entries next to their `EpochData`; those remain accepted
+until the 0.16 migration removes them. A centralized node rejects both PRSS types and `EpochData`.
 
 Custodian backup readiness is deliberately *not* part of this. It is a property of the vault's
 keychain rather than of the published material, and the backup path already reports it:
@@ -389,7 +454,11 @@ Legacy metadata has no digest, so its public objects receive a raw presence chec
 `external_signature` and the ECDSA entry of `signatures` sign an EIP-712 hash built from an
 `Eip712Domain` that arrives from a gRPC request. At boot, current private keygen and CRS metadata
 with a stored domain reconstruct their signed Solidity payload and must recover the node's
-signing address. Older metadata versions upgrade with no domain and stay unverifiable.
+signing address. Older metadata versions upgrade with no domain and stay unverifiable. The
+entries of the other schemes sign the serialized result payload (`keygen_payload_bytes`,
+`crs_payload_bytes`) instead, which needs no domain, so they are checked for every current
+entry. A node that cannot derive a scheme's key, because it holds no root seed, fails boot on
+such an entry rather than passing it over.
 
 `PubDataType::DecompressionKey` has no private-storage counterpart at all
 (`write_decompression_key` persists no private data), so a published decompression key cannot be
