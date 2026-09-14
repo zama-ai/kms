@@ -1372,6 +1372,7 @@ mod tests {
                     fhe_type: fhe_type as i32,
                 };
                 let result = Vec::<u8>::try_from(plaintext);
+                // Short inputs are rejected (no padding); oversized inputs are truncated to the type's width.
                 if len < width {
                     assert!(result.is_err(), "{fhe_type:?}, length {len}");
                 } else {
@@ -1393,6 +1394,7 @@ mod tests {
                 bytes: vec![0xab; len],
                 fhe_type: FheTypes::Uint256 as i32,
             };
+            // ABI encoding places the zero padding before the little-endian input's most significant byte.
             let mut expected = vec![0; 32 - len];
             expected.extend(vec![0xab; len]);
             assert_eq!(
@@ -1668,6 +1670,7 @@ mod tests {
     fn test_abi_encoding_rejects_unsupported_types() {
         for fhe_type in [
             FheTypes::Uint4,
+            FheTypes::Uint80,
             FheTypes::Uint512,
             FheTypes::Uint1024,
             FheTypes::Uint2048,
