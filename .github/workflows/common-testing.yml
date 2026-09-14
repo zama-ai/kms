@@ -170,7 +170,7 @@ jobs:
                      -e "MINIO_SECRET_KEY=${MINIO_SECRET_KEY}" \
                      -v /tmp/data:/data \
                      -v /tmp/config:/root/.minio \
-                     minio/minio server /data
+                     quay.io/minio/minio server /data
 
       - name: Setup Minio bucket
         if: ${{ inputs.run-minio }}
@@ -181,7 +181,7 @@ jobs:
           MINIO_SECRET_KEY: minioadmin
           MINIO_REGION: eu-north-1
         run: |
-          curl -fL --retry 3 --retry-delay 2 https://dl.min.io/client/mc/release/linux-amd64/mc \
+          curl -fL --retry 3 --retry-delay 2  https://dl.min.io/aistor/mc/release/linux-amd64/mc \
             --create-dirs \
             -o "${HOME}/minio-binaries/mc"
 

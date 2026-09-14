@@ -2,10 +2,9 @@
 
 use super::ggen::gnetworking_server::{Gnetworking, GnetworkingServer};
 use super::ggen::{HealthCheckRequest, HealthCheckResponse, SendValueRequest, SendValueResponse};
-use super::sending_service::{
-    GrpcSendingService, NetworkSession, SendingService, now_activity_millis,
-};
+use super::sending_service::{GrpcSendingService, NetworkSession, SendingService};
 use super::tls::extract_subject_from_cert;
+use crate::clock::AtomicInstant;
 use crate::constants::{
     DISCARD_INACTIVE_SESSION_INTERVAL_SECS, INITIAL_INTERVAL_MS, MAX_ELAPSED_TIME,
     MAX_EN_DECODE_MESSAGE_SIZE, MAX_INTERVAL, MAX_OPENED_INACTIVE_SESSIONS_PER_PARTY,
@@ -20,7 +19,7 @@ use dashmap::DashMap;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, LazyLock, OnceLock, Weak};
+use std::sync::{Arc, LazyLock, Weak};
 use threshold_types::role::{RoleKind, RoleTrait};
 use threshold_types::session_id::SessionId;
 use threshold_types::{
@@ -290,13 +289,8 @@ impl GrpcNetworkingManager {
                         }
                         SessionStatus::Active(session) => match session.upgrade() {
                             Some(network_session) => {
-                                let time_since_last_rec = Duration::from_millis(
-                                    now_activity_millis().saturating_sub(
-                                        network_session
-                                            .last_rec_activity_time
-                                            .load(Ordering::Relaxed),
-                                    ),
-                                );
+                                let time_since_last_rec =
+                                    network_session.last_rec_activity_time.load().elapsed();
                                 if time_since_last_rec > discard_inactive_interval {
                                     tracing::warn!(
                                         "Discarding Active session {:?} after {:?} seconds.",
@@ -480,8 +474,8 @@ impl GrpcNetworkingManager {
                     network_mode,
                     conf: self.conf,
                     completed_parties,
-                    init_time: OnceLock::new(),
-                    last_rec_activity_time: AtomicU64::new(now_activity_millis()),
+                    init_time: AtomicInstant::now(),
+                    last_rec_activity_time: AtomicInstant::now(),
                     current_network_timeout: RwLock::new(timeout),
                     next_network_timeout: RwLock::new(timeout),
                     max_elapsed_time: RwLock::new(Duration::ZERO),
@@ -508,8 +502,8 @@ impl GrpcNetworkingManager {
                     network_mode,
                     conf: self.conf,
                     completed_parties,
-                    init_time: OnceLock::new(),
-                    last_rec_activity_time: AtomicU64::new(now_activity_millis()),
+                    init_time: AtomicInstant::now(),
+                    last_rec_activity_time: AtomicInstant::now(),
                     current_network_timeout: RwLock::new(timeout),
                     next_network_timeout: RwLock::new(timeout),
                     max_elapsed_time: RwLock::new(Duration::ZERO),
@@ -1459,5 +1453,76 @@ mod tests {
         let result = store.get_tx(&other_sender);
         assert!(result.is_ok());
         assert!(result.unwrap().is_none());
+    }
+
+    /// The cleanup task discards an *active* session that received no message for
+    /// `discard_inactive_sessions_interval`, whatever its round clock says. A
+    /// session that was advanced many rounds ahead (its deadline is far in the
+    /// future) is discarded all the same while its owner idles, which destroys
+    /// the routing entry for messages that arrive later. A party that holds a
+    /// session while it waits for a slower phase is therefore only safe when that
+    /// phase is shorter than the discard interval.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn test_idle_active_session_is_discarded_regardless_of_round_clock() {
+        let conf = CoreToCoreNetworkConfig {
+            message_limit: 70,
+            multiplier: 1.1,
+            max_interval: 60,
+            max_elapsed_time: Some(60),
+            initial_interval_ms: Some(100),
+            network_timeout: 120,
+            network_timeout_bk: 300,
+            network_timeout_bk_sns: 1200,
+            max_en_decode_message_size: 2 * 1024 * 1024 * 1024,
+            // Sweep often and discard quickly, so the test does not have to wait
+            // for the production intervals.
+            session_update_interval_secs: Some(1),
+            session_cleanup_interval_secs: Some(86400),
+            discard_inactive_sessions_interval: Some(1),
+            max_waiting_time_for_message_queue: Some(60),
+            max_opened_inactive_sessions_per_party: Some(2000),
+        };
+        let manager = GrpcNetworkingManager::new(None, Some(conf)).unwrap();
+
+        let role_1 = Role::indexed_from_one(1);
+        let role_2 = Role::indexed_from_one(2);
+        let mut role_assignment = RoleAssignment::default();
+        role_assignment.insert(role_1, Identity::new("127.0.0.1".to_string(), 1, None));
+        role_assignment.insert(role_2, Identity::new("127.0.0.1".to_string(), 2, None));
+
+        let session_id = SessionId::from(7u128);
+        let session = manager
+            .make_network_session(session_id, &role_assignment, role_1, NetworkMode::Sync)
+            .await
+            .unwrap();
+
+        // Budget the session for many rounds, so that its deadline lies far beyond
+        // the discard interval.
+        let advance = 20;
+        for _ in 0..advance {
+            session.increase_round_counter().await;
+        }
+        let budget_left = session
+            .get_timeout_current_round()
+            .await
+            .saturating_duration_since(std::time::Instant::now());
+        assert!(
+            budget_left > Duration::from_secs(60),
+            "the round clock must leave a budget far beyond the discard interval, got {budget_left:?}"
+        );
+        assert!(matches!(
+            manager.session_store.get(&session_id).as_deref(),
+            Some(SessionStatus::Active(_))
+        ));
+
+        // Two sweeps of the cleanup task at a 1s update interval.
+        tokio::time::sleep(Duration::from_millis(2500)).await;
+
+        assert!(
+            manager.session_store.get(&session_id).is_none(),
+            "an active session without received messages is discarded after the discard interval"
+        );
+        // Only the routing entry is gone: the handle held by the protocol is untouched.
+        assert_eq!(session.get_current_round().await, advance);
     }
 }
