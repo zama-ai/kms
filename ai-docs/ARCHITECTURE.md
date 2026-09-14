@@ -69,6 +69,14 @@ vectors. Shared test fixtures and generic local file helpers are in
 The [backward-compatibility/](backward-compatibility/) crate is a separate
 Cargo workspace — see [Backward compatibility](#backward-compatibility).
 
+The concurrent keygen test can partition the process-wide Rayon worker budget
+into one PRSS/PRZS pool per party and a shared pool for other computation.
+Each party receives `budget / (party_count + 1)` workers; the shared pool receives
+the remainder. Insufficient budgets use only the shared pool. Initialization
+is process-wide and the first allocation wins, so nextest's separate test
+processes permit independent allocations for each cluster size. Production
+initialization retains a single shared compute pool.
+
 ## The service crate (`core/service`)
 
 The service crate is the main surface area. Key subdirectories under

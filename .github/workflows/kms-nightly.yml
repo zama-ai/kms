@@ -12,6 +12,10 @@ on:
         description: 'Enable computation and network deadline diagnostics'
         type: boolean
         default: false
+      prss-pool-experiment:
+        description: 'Run the PRSS pool comparison, then 13-party concurrent keygen'
+        type: boolean
+        default: false
   workflow_call:
     secrets:
       SLACK_CHANNEL:
@@ -32,7 +36,15 @@ concurrency:
 permissions: {}
 
 jobs:
+  prss-pool-experiment:
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.prss-pool-experiment }}
+    permissions:
+      actions: read
+      contents: read
+    uses: ./.github/workflows/prss-pool-experiment.yml
+
   generate-test-material:
+    if: ${{ !(github.event_name == 'workflow_dispatch' && inputs.prss-pool-experiment) }}
     name: kms-nightly/generate-test-material
     permissions:
       checks: write # Required to write to the GitHub Actions check suite
