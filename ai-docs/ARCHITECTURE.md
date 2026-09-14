@@ -324,14 +324,15 @@ vault under it *before* persisting the recovery material, so it is rolled back i
 step fails: the keychain is restored to its pre-setup `(context_id, backup_enc_key)` and the
 vault entries written under the failed id are purged
 (`rollback_failed_custodian_setup` in
-[context_manager.rs](core/service/src/engine/context_manager.rs) and
+[context_manager.rs](../core/service/src/engine/context_manager.rs) and
 `Vault::purge_backup`). Cleanup checks that no backup entries remain under the failed context ID. If
 the storage backend reports a successful deletion but entries remain, rollback emits a
 `tracing::error!` and preserves the original setup or write error. Rollback cannot repair a backend
 that did not apply the deletion, so these leftover entries require operator attention. During
 custodian-context destruction, the same check must pass before recovery material and lifecycle
-state are removed. Setups are serialized against each other so the active backup context cannot
-change mid-operation.
+state are removed.
+Custodian setup and destruction share a lock. Setup holds it until completion, including rollback on failure.
+Destruction therefore cannot remove the previous context while setup might still restore its keychain state.
 
 Restoration writes the private data types back in a fixed order (`RESTORE_ORDER` in
 [backup_operator.rs](../core/service/src/engine/backup_operator.rs)): contexts and `EpochData`

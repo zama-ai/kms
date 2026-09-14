@@ -62,8 +62,8 @@ struct SharedContextManager<
     custodian_meta_store: Arc<RwLock<CustodianMetaStore>>,
     /// Serializes MPC context creation and destruction across storage and in-memory updates.
     mpc_context_update_lock: Mutex<()>,
-    /// Serializes whole custodian-context setups; see `inner_new_custodian_context`.
-    custodian_setup_lock: Mutex<()>,
+    /// Serializes custodian setup, rollback, and destruction so rollback cannot restore a deleted context.
+    custodian_context_update_lock: Mutex<()>,
 }
 
 impl<PubS, PrivS> SharedContextManager<PubS, PrivS>
@@ -252,6 +252,7 @@ where
             )
         })?;
 
+        let _context_guard = self.custodian_context_update_lock.lock().await;
         let permit = lock_entry_in_meta_store(
             &self.custodian_meta_store,
             &context_id,
@@ -327,13 +328,10 @@ where
             Some(ref backup_vault) => backup_vault,
             None => return Err(anyhow::anyhow!("Backup vault is not configured")),
         };
-        // Serialize whole setups against each other. The meta-store permit below is keyed by
-        // context id, so two setups for *different* ids would otherwise interleave: the second
-        // one's pre-setup snapshot could capture the first one's half-applied keychain state and
-        // its rollback would then restore that over the first one's result. Held across
-        // `update_backup_vault`, which is the expensive part, but only custodian setups contend
-        // for it and they must not run concurrently anyway.
-        let _setup_guard = self.custodian_setup_lock.lock().await;
+        // Hold this through setup and rollback. Other setups must not snapshot temporary keychain
+        // state, and destruction must not remove the context that rollback would restore.
+        // Both operations acquire this lock before metadata locks and hold it across storage I/O.
+        let _context_guard = self.custodian_context_update_lock.lock().await;
         let mut rng = self.base_kms.new_rng();
         // Generate asymmetric keys for the operator to use to encrypt the backup
         let mut enc = Encryption::new(PkeSchemeType::MlKem512, &mut rng);
@@ -698,7 +696,7 @@ where
                 crypto_storage,
                 custodian_meta_store,
                 mpc_context_update_lock: Mutex::new(()),
-                custodian_setup_lock: Mutex::new(()),
+                custodian_context_update_lock: Mutex::new(()),
             },
             cache: Arc::new(RwLock::new(HashSet::new())),
         }
@@ -979,7 +977,7 @@ where
                 crypto_storage,
                 custodian_meta_store,
                 mpc_context_update_lock: Mutex::new(()),
-                custodian_setup_lock: Mutex::new(()),
+                custodian_context_update_lock: Mutex::new(()),
             },
             session_maker,
             require_pcr_allowlist,
