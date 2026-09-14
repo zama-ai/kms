@@ -263,8 +263,22 @@ pub(crate) async fn generic_receive_from_all_senders_with_role_transform<
         if !non_answering_parties.contains(sender) && my_role != *sender {
             let sender = *sender;
             let networking = Arc::clone(session.network());
-            let timeout = session.network().get_timeout_current_round().await.into();
+            let timeout: tokio::time::Instant =
+                session.network().get_timeout_current_round().await.into();
+            let network_round = if tracing::enabled!(target: "kms_timeout_probe", tracing::Level::DEBUG)
+            {
+                Some(networking.get_current_round().await)
+            } else {
+                None
+            };
+            let scheduled_at = tokio::time::Instant::now();
             let task = async move {
+                let started_at = tokio::time::Instant::now();
+                tracing::debug!(target: "kms_timeout_probe", sender = %sender, receiver = %my_role,
+                    ?network_round, queue_ms = started_at.duration_since(scheduled_at).as_millis() as u64,
+                    remaining_ms = timeout.saturating_duration_since(started_at).as_millis() as u64,
+                    overdue_ms = started_at.saturating_duration_since(timeout).as_millis() as u64,
+                    "peer_receive_polled");
                 let stripped_message = timeout_at(timeout, networking.receive(&sender)).await;
                 match stripped_message {
                     Ok(stripped_message) => {
@@ -280,7 +294,10 @@ pub(crate) async fn generic_receive_from_all_senders_with_role_transform<
                         Ok((role_mapping(&sender, extra_data), stripped_message))
                     }
                     Err(e) => {
-                        tracing::warn!("Sender {sender} timed out when sending to {my_role}");
+                        tracing::warn!(sender = %sender, receiver = %my_role, ?network_round,
+                            wait_ms = started_at.elapsed().as_millis() as u64,
+                            overdue_ms = tokio::time::Instant::now().saturating_duration_since(timeout).as_millis() as u64,
+                            "Peer receive deadline expired");
                         Err(e)
                     }
                 }

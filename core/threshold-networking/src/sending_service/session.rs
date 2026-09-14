@@ -108,6 +108,11 @@ impl<R: RoleTrait> Networking<R> for NetworkSession {
         // not error. Holding it is what binds the stamped round tag to the round
         // the caller intended, by preventing a round transition mid-send.
         let round_counter = *self.round_counter.read().await;
+        self.trace_round(
+            "send_started",
+            round_counter,
+            Some(receiver.get_role_kind()),
+        );
         let tagged_value = Tag {
             session_id: self.session_id,
             sender: self.owner.mpc_identity(),
@@ -131,6 +136,7 @@ impl<R: RoleTrait> Networking<R> for NetworkSession {
                 "Missing local channel for {receiver:?}"
             ))),
         }?;
+        self.trace_round("send_queued", round_counter, Some(receiver.get_role_kind()));
         Ok(())
     }
 
@@ -146,6 +152,11 @@ impl<R: RoleTrait> Networking<R> for NetworkSession {
         // fixes `network_round` for the entire call and makes exact-round
         // delivery well-defined against a racing round transition.
         let counter_lock = self.round_counter.read().await;
+        self.trace_round(
+            "receive_started",
+            *counter_lock,
+            Some(sender.get_role_kind()),
+        );
         let rx = self
             .receiving_channels
             .get_receiver_state(sender)?
@@ -160,6 +171,11 @@ impl<R: RoleTrait> Networking<R> for NetworkSession {
         // read lock and `increase_round_counter` holds the write lock, so no
         // round transition can race this call.
         let network_round = *counter_lock;
+        self.trace_round(
+            "receive_lock_acquired",
+            network_round,
+            Some(sender.get_role_kind()),
+        );
 
         // Fast path: drop buffered messages that have since become stale, then
         // deliver a previously buffered message for exactly this round. Future-
@@ -168,6 +184,11 @@ impl<R: RoleTrait> Networking<R> for NetworkSession {
         // on `ReceiverState` (see `take_current`) so the buffer discipline stays
         // unit-testable without a running session.
         if let Some(value) = state.take_current(network_round) {
+            self.trace_round(
+                "receive_buffered",
+                network_round,
+                Some(sender.get_role_kind()),
+            );
             return Ok(value);
         }
 
@@ -206,6 +227,11 @@ impl<R: RoleTrait> Networking<R> for NetworkSession {
             // Classify the packet against the current round. The round counter
             // is peer-controlled and unauthenticated, so a packet is only
             // deliverable when it is tagged with *exactly* the current round.
+            if network_round <= 3 {
+                tracing::debug!(target: "kms_timeout_probe", session_id = %self.session_id,
+                    owner = ?self.owner.mpc_identity(), sender = ?sender.get_role_kind(),
+                    network_round, packet_round = packet.round_counter, "receive_packet");
+            }
             match packet.round_counter.cmp(&network_round) {
                 // Stale: a message for a round we already passed. Drop it and
                 // keep waiting.
@@ -220,7 +246,14 @@ impl<R: RoleTrait> Networking<R> for NetworkSession {
                     continue;
                 }
                 // Exactly our round: deliver.
-                std::cmp::Ordering::Equal => return Ok(packet.value),
+                std::cmp::Ordering::Equal => {
+                    self.trace_round(
+                        "receive_delivered",
+                        network_round,
+                        Some(sender.get_role_kind()),
+                    );
+                    return Ok(packet.value);
+                }
                 // Future round: buffer it (within bounds) until the session
                 // advances, so it can never satisfy an earlier round's receive.
                 // The look-ahead window, per-sender cap and the
@@ -265,6 +298,7 @@ impl<R: RoleTrait> Networking<R> for NetworkSession {
 
         //Update round counter
         *net_round += 1;
+        self.trace_round("round_advanced", *net_round, None);
         tracing::debug!(
             "changed network round to: {:?} on party: {:?}, with timeout: {:?}",
             *net_round,
@@ -359,6 +393,23 @@ impl<R: RoleTrait> Networking<R> for NetworkSession {
 }
 
 impl NetworkSession {
+    // Bound diagnostic volume to the rounds around the first preprocessing broadcast.
+    fn trace_round(&self, event: &'static str, round: usize, peer: Option<RoleKind>) {
+        if round > 3 || !tracing::enabled!(target: "kms_timeout_probe", tracing::Level::DEBUG) {
+            return;
+        }
+        let now = Instant::now();
+        let init_time = self.init_time.load();
+        let deadline =
+            init_time + self.current_network_timeout.load() + self.max_elapsed_time.load();
+        tracing::debug!(target: "kms_timeout_probe", event, session_id = %self.session_id,
+            owner = ?self.owner.mpc_identity(), ?peer, round,
+            age_ms = now.saturating_duration_since(init_time).as_millis() as u64,
+            remaining_ms = deadline.saturating_duration_since(now).as_millis() as u64,
+            overdue_ms = now.saturating_duration_since(deadline).as_millis() as u64,
+            ?init_time, ?deadline, "network_round_timing");
+    }
+
     /// Build a fresh session. Collapses the two production construction sites in
     /// [`GrpcNetworkingManager::make_network_session`](crate::grpc::GrpcNetworkingManager)
     /// (the inactive→active and vacant branches), which previously duplicated this
@@ -379,7 +430,7 @@ impl NetworkSession {
             NetworkMode::Async => conf.get_discard_inactive_sessions_interval(),
             NetworkMode::Sync => conf.get_network_timeout(),
         };
-        NetworkSession {
+        let session = NetworkSession {
             owner,
             session_id,
             sending_channels,
@@ -393,7 +444,9 @@ impl NetworkSession {
             current_network_timeout: AtomicDuration::new(timeout),
             next_network_timeout: AtomicDuration::new(timeout),
             max_elapsed_time: AtomicDuration::new(Duration::ZERO),
-        }
+        };
+        session.trace_round("session_created", 0, None);
+        session
     }
 
     /// Wait for the next packet from `sender`'s channel, applying the

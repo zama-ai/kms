@@ -2,6 +2,16 @@ name: kms-nightly
 
 on:
   workflow_dispatch:
+    inputs:
+      partition:
+        description: 'Nightly partition to run'
+        type: choice
+        default: 'all'
+        options: ['all', '1', '2', '3', '4', '5']
+      timeout-probe:
+        description: 'Enable computation and network deadline diagnostics'
+        type: boolean
+        default: false
   workflow_call:
     secrets:
       SLACK_CHANNEL:
@@ -46,7 +56,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        partition: [1, 2, 3, 4, 5]
+        partition: ${{ fromJSON(github.event_name == 'workflow_dispatch' && inputs.partition != 'all' && inputs.partition != '' && format('[{0}]', inputs.partition) || '[1,2,3,4,5]') }}
     uses: ./.github/workflows/common-testing.yml
     with:
       crate-names: '-p kms'
@@ -55,7 +65,7 @@ jobs:
       lfs: true
       runs-on: '64cpu-linux-x64'
       runner-volume: '400gb'
-      rust-log-level: 'info'
+      rust-log-level: ${{ github.event_name == 'workflow_dispatch' && inputs.timeout-probe && 'info,kms_timeout_probe=debug' || 'info' }}
       nextest-test-threads: '4'
     secrets:
       SLACK_CHANNEL: ${{ secrets.SLACK_CHANNEL }}

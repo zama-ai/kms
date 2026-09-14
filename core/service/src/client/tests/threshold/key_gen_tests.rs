@@ -612,6 +612,8 @@ pub(crate) async fn preproc_and_keygen(
     partial_preproc: Option<kms_grpc::kms::v1::PartialKeyGenPreprocParams>,
     compressed: bool,
 ) {
+    test_utils::test_logging::init_test_logging();
+
     fn validate_keyset(keyset: TestKeyGenResult, key_id: &RequestId, compressed: bool) {
         let (client_key, public_key, server_key) = if compressed {
             let (client_key, keyset, public_key) = keyset.get_compressed();
