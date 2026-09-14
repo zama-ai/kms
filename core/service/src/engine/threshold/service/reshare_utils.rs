@@ -33,10 +33,7 @@ pub(crate) enum VerifiedPublicMaterial {
     /// Standard uncompressed keyset with server key and public key
     Uncompressed(FhePubKeySet),
     /// Compressed keyset
-    Compressed {
-        keyset: CompressedXofKeySet,
-        has_transciphering_key: bool,
-    },
+    Compressed(CompressedXofKeySet),
 }
 
 impl std::fmt::Debug for VerifiedPublicMaterial {
@@ -45,7 +42,7 @@ impl std::fmt::Debug for VerifiedPublicMaterial {
             VerifiedPublicMaterial::Uncompressed(_) => {
                 write!(f, "VerifiedPublicMaterial::Uncompressed(...)")
             }
-            VerifiedPublicMaterial::Compressed { .. } => {
+            VerifiedPublicMaterial::Compressed(_) => {
                 write!(f, "VerifiedPublicMaterial::Compressed(...)")
             }
         }
@@ -53,45 +50,26 @@ impl std::fmt::Debug for VerifiedPublicMaterial {
 }
 
 impl VerifiedPublicMaterial {
-    /// Builds verified compressed material and records whether its server key contains the
-    /// transciphering key, avoiding a later deep clone of the compressed keyset during reshare.
-    // TODO: ask tfhe-rs to expose `has_transciphering_key()` on `CompressedXofKeySet` so this can
-    // use a borrowed predicate instead of unpacking and repacking the keyset.
-    pub(crate) fn from_compressed_keyset(compressed_keyset: CompressedXofKeySet) -> Self {
-        let (seed, compressed_public_key, compressed_server_key) =
-            compressed_keyset.into_raw_parts();
-        let has_transciphering_key = compressed_server_key.has_transciphering_key();
-        let keyset =
-            CompressedXofKeySet::from_raw_parts(seed, compressed_public_key, compressed_server_key);
-
-        Self::Compressed {
-            keyset,
-            has_transciphering_key,
-        }
-    }
-
     pub(crate) fn has_oprf_key(&self) -> bool {
         match self {
             VerifiedPublicMaterial::Uncompressed(fhe_pubkeys) => {
                 fhe_pubkeys.server_key.has_oprf_key()
             }
-            VerifiedPublicMaterial::Compressed { keyset, .. } => keyset.has_oprf_key(),
+            VerifiedPublicMaterial::Compressed(compressed_keyset) => {
+                compressed_keyset.has_oprf_key()
+            }
         }
     }
 
     /// Whether the public material carries a transciphering server key.
-    ///
-    /// The compressed-key flag is captured when [`VerifiedPublicMaterial`] is constructed because
-    /// `CompressedXofKeySet` does not expose a borrowed predicate for the transciphering key.
     pub(crate) fn has_transciphering_key(&self) -> bool {
         match self {
             VerifiedPublicMaterial::Uncompressed(fhe_pubkeys) => {
                 fhe_pubkeys.server_key.has_transciphering_key()
             }
-            VerifiedPublicMaterial::Compressed {
-                has_transciphering_key,
-                ..
-            } => *has_transciphering_key,
+            VerifiedPublicMaterial::Compressed(compressed_keyset) => {
+                compressed_keyset.has_transciphering_key()
+            }
         }
     }
 }
@@ -174,9 +152,7 @@ async fn fetch_public_fhe_materials_from_peers<
                                     )
                                 })?;
 
-                            return Ok(VerifiedPublicMaterial::from_compressed_keyset(
-                                compressed_keyset,
-                            ));
+                            return Ok(VerifiedPublicMaterial::Compressed(compressed_keyset));
                         }
                         Err(e) => {
                             let msg =
@@ -355,9 +331,7 @@ pub(crate) async fn get_verified_fhe_public_materials<
                         )
                     })?;
 
-                Ok(VerifiedPublicMaterial::from_compressed_keyset(
-                    compressed_keyset,
-                ))
+                Ok(VerifiedPublicMaterial::Compressed(compressed_keyset))
             }
             Err(_) => {
                 // If local retrieval fails, attempt to fetch from s3 of another party
@@ -1041,6 +1015,25 @@ mod tests {
     use crate::engine::material_integrity::ERR_COMPRESSED_KEYSET_DIGEST_MISMATCH;
     use tfhe::core_crypto::prelude::NormalizedHammingWeightBound;
     use tfhe::xof_key_set::CompressedXofKeySet;
+    use threshold_execution::tfhe_internals::parameters::DKGParams;
+
+    /// Generates a compressed keyset under `params`, so tests can vary the parameter set (e.g. to
+    /// turn transciphering off) without repeating the config and Hamming-weight-bound plumbing.
+    fn generate_compressed_keyset(params: DKGParams, key_id: &RequestId) -> CompressedXofKeySet {
+        // use to_tfhe_config() which includes dedicated compact public key parameters
+        // required for compressed keys
+        let config = params.to_tfhe_config();
+        // if the pmax value is not set, e.g., for test parameters, we do not do the HW check
+        // and use a pmax=1 which should allow for any HW.
+        let max_norm_hwt = params.sk_deviations().map(|x| x.pmax).unwrap_or(1.0);
+        let max_norm_hwt = NormalizedHammingWeightBound::new(max_norm_hwt).unwrap();
+        let tag = key_id.into();
+
+        let (_client_key, compressed_keyset) =
+            CompressedXofKeySet::generate(config, vec![42, 43, 44, 45], 128, max_norm_hwt, tag)
+                .unwrap();
+        compressed_keyset
+    }
 
     async fn setup_public_materials_test_compressed(
         key_id: RequestId,
@@ -1055,19 +1048,7 @@ mod tests {
         // create memory storage that contains a compressed keyset
         let mut ram_storage = RamStorage::new();
 
-        // generate the compressed keyset using to_tfhe_config() which includes
-        // dedicated compact public key parameters required for compressed keys
-        let params = crate::consts::TEST_PARAM;
-        let config = params.to_tfhe_config();
-        // if the pmax value is not set, e.g., for test parameters, we do not do the HW check
-        // and use a pmax=1 which should allow for any HW.
-        let max_norm_hwt = params.sk_deviations().map(|x| x.pmax).unwrap_or(1.0);
-        let max_norm_hwt = NormalizedHammingWeightBound::new(max_norm_hwt).unwrap();
-        let tag = (&key_id).into();
-
-        let (_client_key, compressed_keyset) =
-            CompressedXofKeySet::generate(config, vec![42, 43, 44, 45], 128, max_norm_hwt, tag)
-                .unwrap();
+        let compressed_keyset = generate_compressed_keyset(crate::consts::TEST_PARAM, &key_id);
 
         // generate digest
         let compressed_keyset_digest =
@@ -1156,6 +1137,36 @@ mod tests {
         )
     }
 
+    /// The flags read off compressed public material drive `ResharePreprocRequired` on the Set 2
+    /// reshare path, which has no private share to read them from, so both must follow the keyset
+    /// rather than a constant or each other.
+    #[test]
+    fn compressed_material_key_flags_follow_the_keyset() {
+        let mut rng = AesRng::seed_from_u64(2334);
+        let key_id = RequestId::new_random(&mut rng);
+
+        let transciphering_params = crate::consts::TEST_PARAM;
+        assert!(
+            transciphering_params.transciphering_params().is_some(),
+            "TEST_PARAM is expected to enable transciphering"
+        );
+        let with_transciphering = VerifiedPublicMaterial::Compressed(generate_compressed_keyset(
+            transciphering_params,
+            &key_id,
+        ));
+        assert!(with_transciphering.has_transciphering_key());
+        assert!(with_transciphering.has_oprf_key());
+
+        let mut no_transciphering_params = transciphering_params;
+        no_transciphering_params.meta.transciphering_parameters = None;
+        let without_transciphering = VerifiedPublicMaterial::Compressed(
+            generate_compressed_keyset(no_transciphering_params, &key_id),
+        );
+        assert!(!without_transciphering.has_transciphering_key());
+        // the dedicated OPRF key is enabled independently of transciphering
+        assert!(without_transciphering.has_oprf_key());
+    }
+
     #[tokio::test]
     async fn sunshine_fetch_public_materials_from_peers_compressed() {
         let mut rng = AesRng::seed_from_u64(2333);
@@ -1177,7 +1188,7 @@ mod tests {
 
         assert!(matches!(
             verified_material,
-            VerifiedPublicMaterial::Compressed { .. }
+            VerifiedPublicMaterial::Compressed(_)
         ));
         assert_eq!(*ro_storage_getter.counter.borrow(), 1);
     }
@@ -1244,7 +1255,7 @@ mod tests {
 
         assert!(matches!(
             verified_material,
-            VerifiedPublicMaterial::Compressed { .. }
+            VerifiedPublicMaterial::Compressed(_)
         ));
         // we should've used my own storage directly, so the counter here should be 0
         assert_eq!(*ro_storage_getter.counter.borrow(), 0);
