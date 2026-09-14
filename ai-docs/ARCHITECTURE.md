@@ -103,6 +103,11 @@ Key generation (including decompression keys) and CRS generation store their out
 after generation succeeds. Failure or cancellation during generation records a request
 error without deleting existing key or CRS material.
 
+Paired writes preserve an existing public key or CRS when the new epoch's private write
+fails, and likewise preserve an existing private half when its public write fails. Cleanup
+removes newly created entries, not entries the backend skipped. Backup failure leaves
+successfully stored primary material in place. Callers must serialize writes to the same entries.
+
 ### Binaries
 
 All under [core/service/src/bin/](core/service/src/bin/):
