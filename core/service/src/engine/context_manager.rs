@@ -331,6 +331,7 @@ where
         // Hold this through setup and rollback. Other setups must not snapshot temporary keychain
         // state, and destruction must not remove the context that rollback would restore.
         // Both operations acquire this lock before metadata locks and hold it across storage I/O.
+        // Destruction waits for any active setup to finish backup re-encryption and rollback.
         let _context_guard = self.custodian_context_update_lock.lock().await;
         let mut rng = self.base_kms.new_rng();
         // Generate asymmetric keys for the operator to use to encrypt the backup
