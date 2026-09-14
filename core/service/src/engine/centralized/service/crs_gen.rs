@@ -211,7 +211,7 @@ pub async fn abort_crs_gen_impl<
         .map_err(|e| MetricedError::new(OP_CRS_GEN_ABORT, None, e, tonic::Code::InvalidArgument))?;
     match service.ongoing_crs_gen.lock().await.remove(&request_id) {
         Some(cancellation_token) => {
-            // Observe that the cancellation arm handles the abortion and clean-up
+            // The cancellation arm records the request as aborted.
             cancellation_token.cancel();
             tracing::info!("Aborted CRS generation with request ID {}", request_id);
             Ok(Response::new(Empty {}))
@@ -260,25 +260,8 @@ pub(crate) async fn crs_gen_background<
 
     match outcome {
         Err(msg) => {
+            // CRS material is only written after generation succeeds.
             tracing::error!("{msg}");
-            let del_res = crypto_storage
-                .inner
-                .purge_crs_material(req_id, epoch_id)
-                .await;
-            let msg = if del_res {
-                let m = format!(
-                    "CRS generation aborted and CRS material deleted successfully for request {req_id}"
-                );
-                tracing::info!(m);
-                m
-            } else {
-                let m = format!(
-                    "CRS generation aborted but failed to delete CRS material for request {req_id}"
-                );
-                tracing::error!(m);
-                m
-            };
-
             let _ = update_err_req_in_meta_store(&meta_store, permit, msg, op_tag).await;
         }
         Ok((pp, crs_info)) => {

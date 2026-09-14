@@ -99,6 +99,10 @@ The service crate is the main surface area. Key subdirectories under
   test-only wiring.
 - [bin/](core/service/src/bin/) — entry points (see below).
 
+Key generation (including decompression keys) and CRS generation store their output only
+after generation succeeds. Failure or cancellation during generation records a request
+error without deleting existing key or CRS material.
+
 ### Binaries
 
 All under [core/service/src/bin/](core/service/src/bin/):

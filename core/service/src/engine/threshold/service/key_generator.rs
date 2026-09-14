@@ -645,7 +645,7 @@ impl<
     async fn inner_abort_key_gen(&self, preproc_id: RequestId) -> Status {
         match self.ongoing.lock().await.remove(&preproc_id) {
             Some(cancellation_token) => {
-                // Observe that the cancellation arm handles the abortion and clean-up
+                // The cancellation arm records the request as aborted.
                 cancellation_token.cancel();
                 tracing::info!("Aborted key generation with preprocessing {}", preproc_id);
                 Status::ok("Key gen aborted successfully")
@@ -1142,7 +1142,7 @@ impl<
         let (prep_id, dkg_res) = match outcome {
             Some(res) => res,
             None => {
-                crypto_storage.purge_fhe_keys(req_id, epoch_id).await;
+                // Key material is only written after generation succeeds.
                 let _ = update_err_req_in_meta_store(
                     &meta_store,
                     meta_permit,
@@ -1518,7 +1518,7 @@ impl<
         let (prep_id, dkg_res) = match outcome {
             Some(res) => res,
             None => {
-                crypto_storage.purge_fhe_keys(req_id, epoch_id).await;
+                // Key material is only written after generation succeeds.
                 let _ = update_err_req_in_meta_store(
                     &meta_store,
                     meta_permit,
