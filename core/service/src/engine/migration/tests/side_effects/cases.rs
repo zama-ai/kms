@@ -3,7 +3,7 @@
 use super::super::super::*;
 use super::support::*;
 use crate::vault::storage::{
-    Storage, StorageExt, StorageReader,
+    Storage, StorageExt,
     ram::FailingRamStorage,
     test_support::{
         FaultPhase, StorageEntry, StorageEvent, StorageOp, StorageOutcome, assert_same_events,
@@ -162,10 +162,11 @@ async fn failed_combined_prss_write_is_retryable(#[case] fault_phase: FaultPhase
     let data_type = PrivDataType::PrssSetupCombined.to_string();
     let legacy_entry = StorageEntry::new((*LEGACY_DEFAULT_EPOCH_ID).into(), None, &data_type);
     let target_entry = StorageEntry::new((*DEFAULT_EPOCH_ID).into(), None, &data_type);
+    let original_prss = test_prss(1);
     store_versioned_at_request_id(
         &mut storage,
         &legacy_entry.data_id,
-        &test_prss(1),
+        &original_prss,
         &data_type,
     )
     .await
@@ -212,7 +213,11 @@ async fn failed_combined_prss_write_is_retryable(#[case] fault_phase: FaultPhase
 
     let after_retry = storage.state();
     assert!(!after_retry.contains_key(&legacy_entry));
-    assert!(after_retry.contains_key(&target_entry));
+    let migrated_prss: PRSSSetupCombined =
+        read_versioned_at_request_id(&storage, &target_entry.data_id, &data_type)
+            .await
+            .unwrap();
+    assert_eq!(migrated_prss, original_prss);
     for control_entry in &control_entries {
         assert_eq!(after_retry.get(control_entry), before.get(control_entry));
     }
@@ -242,7 +247,7 @@ async fn failed_old_prss_cleanup_is_retryable() {
             .await
             .unwrap();
     }
-    let control_entries = seed_controls(&mut storage).await;
+    seed_controls(&mut storage).await;
     let before = storage.state();
     let failed_entry = StorageEntry::new(second_id, None, &data_type);
     storage.set_fail_delete_after_mutation_at(failed_entry.clone());
@@ -252,33 +257,49 @@ async fn failed_old_prss_cleanup_is_retryable() {
         .await
         .unwrap_err();
 
-    assert!(!storage.state().contains_key(&failed_entry));
     let after_failure = storage.state();
-    for control_entry in &control_entries {
-        assert_eq!(after_failure.get(control_entry), before.get(control_entry));
-    }
-    // Storage does not promise an order for the two IDs, so assert the event scope and the
-    // required failed delete instead of an exact sequence.
-    assert!(
-        storage
-            .events()
-            .iter()
-            .all(|event| event.entry.data_type == data_type)
+    // Include successful deletes recorded before the failure, then add the required failure event.
+    let legacy_entries =
+        [first_id, second_id].map(|data_id| StorageEntry::new(data_id, None, &data_type));
+    let first_delete = StorageEvent::new(
+        legacy_entries[0].clone(),
+        StorageOp::Delete,
+        StorageOutcome::Deleted,
     );
-    assert!(storage.events().contains(&StorageEvent::new(
-        failed_entry,
+    let mut expected_events = vec![];
+    if storage.events().contains(&first_delete) {
+        expected_events.push(first_delete);
+    }
+    expected_events.push(StorageEvent::new(
+        failed_entry.clone(),
         StorageOp::Delete,
         StorageOutcome::FailedAfterMutation,
-    )));
+    ));
+    assert_same_events(storage.events(), &expected_events);
+    let mut expected_state = before.clone();
+    for event in &expected_events {
+        expected_state.remove(&event.entry);
+    }
+    assert_eq!(after_failure, expected_state);
+    let mut expected_retry = vec![];
+    if after_failure.contains_key(&legacy_entries[0]) {
+        expected_retry.push(StorageEvent::new(
+            legacy_entries[0].clone(),
+            StorageOp::Delete,
+            StorageOutcome::Deleted,
+        ));
+    }
     storage.clear_fail_points();
+    storage.clear_events();
 
     remove_old_prss_data(&mut storage, KMSType::Threshold)
         .await
         .unwrap();
 
-    assert!(storage.all_data_ids(&data_type).await.unwrap().is_empty());
     let after_retry = storage.state();
-    for control_entry in &control_entries {
-        assert_eq!(after_retry.get(control_entry), before.get(control_entry));
+    assert_same_events(storage.events(), &expected_retry);
+    for entry in &legacy_entries {
+        expected_state.remove(entry);
     }
+    assert_eq!(after_retry, expected_state);
 }
