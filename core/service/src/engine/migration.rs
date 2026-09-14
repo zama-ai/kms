@@ -2279,7 +2279,7 @@ mod tests {
             .unwrap();
     }
 
-    /// A missing replacement rejects cleanup and preserves the legacy epoch key.
+    /// Test that legacy epoch keys are NOT deleted when no DEFAULT_EPOCH_ID counterpart exists
     pub async fn test_remove_old_keys_for_0_13_20_rejects_without_new_epoch<
         S: StorageExt + Sync + Send,
     >(
@@ -2303,6 +2303,7 @@ mod tests {
             .unwrap_err();
 
         assert!(error.to_string().contains("is missing"));
+        // Legacy epoch key should still exist (not deleted because no DEFAULT_EPOCH_ID copy)
         assert_eq!(
             storage
                 .load_bytes_at_epoch(&key_id, &LEGACY_DEFAULT_EPOCH_ID, &data_type)
