@@ -33,3 +33,54 @@ async fn rejects_plaintext_without_insecure_feature() {
 async fn accepts_plaintext_with_insecure_feature() {
     assert!(GrpcNetworkingManager::new(None, CoreToCoreNetworkConfig::default()).is_ok());
 }
+
+#[cfg(not(feature = "insecure"))]
+mod secure_requests {
+    use threshold_networking::grpc::{GrpcServer, NetworkingImpl};
+    use threshold_types::{party::MpcIdentity, session_id::SessionId};
+    use tonic::Code;
+
+    #[allow(dead_code)]
+    mod proto {
+        tonic::include_proto!("ddec_networking");
+    }
+
+    fn client() -> proto::gnetworking_client::GnetworkingClient<GrpcServer> {
+        let server = GrpcServer::new(NetworkingImpl::default());
+        proto::gnetworking_client::GnetworkingClient::new(server)
+    }
+
+    #[tokio::test]
+    async fn health_check_rejects_missing_tls_identity() {
+        // HealthTag's fields are private; encode its field order.
+        let tag = bc2wrap::serialize(&(MpcIdentity("party1".into()),)).unwrap();
+
+        let error = client()
+            .health_check(proto::HealthCheckRequest {
+                tag,
+                payload: vec![],
+            })
+            .await
+            .unwrap_err();
+
+        assert_eq!(error.code(), Code::Unauthenticated);
+    }
+
+    #[tokio::test]
+    async fn send_value_rejects_missing_tls_identity() {
+        // Tag's fields are private; encode its field order.
+        let tag = bc2wrap::serialize(&(
+            SessionId::new(&"tls-policy-test").unwrap(),
+            MpcIdentity("party1".into()),
+            0_u64,
+        ))
+        .unwrap();
+
+        let error = client()
+            .send_value(proto::SendValueRequest { tag, value: vec![] })
+            .await
+            .unwrap_err();
+
+        assert_eq!(error.code(), Code::Unauthenticated);
+    }
+}
