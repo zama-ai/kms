@@ -363,8 +363,12 @@ async fn failed_fhe_write_is_retryable() {
 }
 
 /// A partially applied legacy-PRSS cleanup is limited to that type and completes on retry.
+#[rstest::rstest]
+#[case::before_mutation(StorageOutcome::FailedBeforeMutation)]
+#[case::after_mutation(StorageOutcome::FailedAfterMutation)]
+#[case::noop_delete(StorageOutcome::SucceededWithoutMutation)]
 #[tokio::test]
-async fn failed_old_prss_cleanup_is_retryable() {
+async fn failed_old_prss_cleanup_is_retryable(#[case] fault_outcome: StorageOutcome) {
     let mut storage = FailingRamStorage::new();
     let data_type = PrivDataType::PrssSetupCombined.to_string();
     let first_id = request_id("old_prss_cleanup_first");
@@ -378,15 +382,28 @@ async fn failed_old_prss_cleanup_is_retryable() {
     seed_controls(&mut storage).await;
     let before = storage.state();
     let failed_entry = StorageEntry::new(second_id, None, &data_type);
-    storage.set_fail_delete_after_mutation_at(failed_entry.clone());
+    match fault_outcome {
+        StorageOutcome::FailedBeforeMutation => storage.set_fail_delete_at(failed_entry.clone()),
+        StorageOutcome::FailedAfterMutation => {
+            storage.set_fail_delete_after_mutation_at(failed_entry.clone());
+        }
+        StorageOutcome::SucceededWithoutMutation => {
+            storage.set_noop_delete_at(failed_entry.clone())
+        }
+        _ => panic!("unexpected delete outcome for this test"),
+    }
     storage.clear_events();
 
-    remove_old_prss_data(&mut storage, KMSType::Threshold)
-        .await
-        .unwrap_err();
+    let result = remove_old_prss_data(&mut storage, KMSType::Threshold).await;
+    if fault_outcome == StorageOutcome::SucceededWithoutMutation {
+        // Cleanup trusts the backend's success response, so a no-op delete leaves data without an error.
+        result.unwrap();
+    } else {
+        result.unwrap_err();
+    }
 
     let after_failure = storage.state();
-    // Include successful deletes recorded before the failure, then add the required failure event.
+    // A failed delete can stop cleanup before the other entry; a no-op delete lets it continue.
     let legacy_entries =
         [first_id, second_id].map(|data_id| StorageEntry::new(data_id, None, &data_type));
     let first_delete = StorageEvent::new(
@@ -395,27 +412,36 @@ async fn failed_old_prss_cleanup_is_retryable() {
         StorageOutcome::Deleted,
     );
     let mut expected_events = vec![];
-    if storage.events().contains(&first_delete) {
+    if fault_outcome == StorageOutcome::SucceededWithoutMutation
+        || storage.events().contains(&first_delete)
+    {
         expected_events.push(first_delete);
     }
     expected_events.push(StorageEvent::new(
         failed_entry.clone(),
         StorageOp::Delete,
-        StorageOutcome::FailedAfterMutation,
+        fault_outcome,
     ));
     assert_same_events(storage.events(), &expected_events);
     let mut expected_state = before.clone();
     for event in &expected_events {
-        expected_state.remove(&event.entry);
+        if matches!(
+            event.outcome,
+            StorageOutcome::Deleted | StorageOutcome::FailedAfterMutation
+        ) {
+            expected_state.remove(&event.entry);
+        }
     }
     assert_eq!(after_failure, expected_state);
     let mut expected_retry = vec![];
-    if after_failure.contains_key(&legacy_entries[0]) {
-        expected_retry.push(StorageEvent::new(
-            legacy_entries[0].clone(),
-            StorageOp::Delete,
-            StorageOutcome::Deleted,
-        ));
+    for entry in &legacy_entries {
+        if after_failure.contains_key(entry) {
+            expected_retry.push(StorageEvent::new(
+                entry.clone(),
+                StorageOp::Delete,
+                StorageOutcome::Deleted,
+            ));
+        }
     }
     storage.clear_fail_points();
     storage.clear_events();
