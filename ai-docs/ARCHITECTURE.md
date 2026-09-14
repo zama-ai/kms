@@ -249,6 +249,10 @@ The KMS must read material produced by earlier releases: a fresh binary
 pointed at an existing vault has to load and use whatever is already there.
 Compatibility is enforced at two levels.
 
+FHE migration cleanup compares the legacy and replacement copies by length and SHAKE-256
+digest before deleting the legacy entry. A mismatch stops startup and retains both copies
+for investigation. A missing replacement is logged and the legacy entry is kept, as before.
+
 **Versioning trait.** Every type written to disk or sent over the wire uses
 [`tfhe-versionable`](https://crates.io/crates/tfhe-versionable): it derives
 `Versionize` / `VersionsDispatch`, implements `Named`, and is wrapped in an
