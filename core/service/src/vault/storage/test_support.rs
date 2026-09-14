@@ -45,13 +45,13 @@ impl StorageEntry {
 /// here. [`Self::storage_entry`] maps the backup ID and private type to one backend type string.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub(crate) struct BackupEntry {
-    /// Custodian context that owns the backup namespace.
+    /// Custodian context whose backup contains the item.
     pub(crate) backup_id: RequestId,
     /// Request ID of the backed-up private item.
     pub(crate) data_id: RequestId,
     /// Epoch of the private item, when its type uses epoch storage.
     pub(crate) epoch_id: Option<EpochId>,
-    /// Source private type before the vault maps it to a backup namespace.
+    /// Source private type before the vault adds the custodian context to the backend type.
     pub(crate) data_type: PrivDataType,
 }
 

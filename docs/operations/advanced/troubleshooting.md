@@ -174,6 +174,41 @@ from, and escalate to the Zama team if you do not. Only the node's own prefix (`
 
 ---
 
+### Private Storage Verification Failures at Startup
+
+Every node also checks that its private storage is internally consistent before it serves.
+Private storage belongs to one node, so material that no flow of this node writes points at a
+misconfiguration (the wrong bucket or prefix, or a store reused between a centralized and a
+threshold deployment) or at a deletion that stopped half-way.
+
+**Symptoms:** the pod exits during startup with one of these log lines:
+
+| Log line | Meaning |
+|---|---|
+| `Foreign material in private storage` | A threshold node found `FhePrivateKey` or legacy `PrssSetup`, or a centralized node found `FheKeyInfo`, PRSS material, or `EpochData`. |
+| `Dangling epoch in private storage` | Keysets or CRS metadata sit under an epoch that has no `EpochData`, so the node can neither serve nor delete them. Usually an epoch destruction that failed half-way. |
+| `Epoch without context in private storage` | An `EpochData` entry names a context that has no `Context` entry. |
+| `Context is stored under a different ID than it declares` | A `Context` entry uses a storage handle that differs from its declared context ID. |
+| `Invalid signing key layout in private storage` | `SigningKey` holds an entry that is not the single flat entry at `SIGNING_KEY_ID`, or holds an entry under an epoch. |
+| `Invalid signing seed layout in private storage` | `SigningSeed` holds an entry that is not the single flat entry at `SIGNING_KEY_ID`, or holds an entry under an epoch. |
+
+Either object may be absent for legacy or recovery layouts. `SigningSeed` may be absent on legacy
+ECDSA-only nodes. A `SigningKey` is required for serving boot; if it is absent, the server enters
+recovery mode, even if a `SigningSeed` is present. Recovery mode may proceed without either object
+while restoration is in progress.
+
+**Common Fixes:**
+- Confirm the node is pointed at its own private storage.
+- For a dangling epoch, restore its `EpochData` from backup, or remove the named entries once you
+  have confirmed that the epoch was meant to be destroyed.
+- Seek the Zama team before you delete anything you cannot account for.
+
+**Errors that do not stop the node:** `Unexpected flat private material`, `Unexpected epoched
+private material`, `Unexpected data type in private storage`, and `Could not list private material`.
+On a threshold node, the 0.15 migration leaves flat `PrssSetupCombined` entries in place.
+
+---
+
 ### Key Management Issues
 
 **Symptoms:**

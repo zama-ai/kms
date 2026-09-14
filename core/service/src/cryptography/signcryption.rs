@@ -698,7 +698,7 @@ fn check_format_and_signature(
 
     unsigncryption_key
         .sender_verf_key
-        .pk()
+        .raw_verifying_key()
         .verify(
             &msg_signed,
             &sig.ecdsa_sig()

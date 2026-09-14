@@ -165,6 +165,21 @@ wait_indefinitely() {
 }
 
 #=============================================================================
+# Pod Logs
+# Print the logs of every container in a KMS pod, except kms-core-init-load-env:
+# it prints the rendered config, which holds the TLS private key when TLS is on.
+#=============================================================================
+kms_pod_logs() {
+    local pod="$1"
+    for container in $(kubectl get pod "${pod}" -n "${NAMESPACE}" \
+        -o jsonpath='{.spec.initContainers[*].name} {.spec.containers[*].name}'); do
+        [[ "${container}" == "kms-core-init-load-env" ]] && continue
+        echo "### ${container}"
+        kubectl logs "${pod}" -n "${NAMESPACE}" -c "${container}" 2>&1 || true
+    done
+}
+
+#=============================================================================
 # Log Collection
 # Collect logs from KMS Core pods for debugging and analysis
 # Saves logs to ./logs directory in current working directory
@@ -178,16 +193,17 @@ collect_logs() {
         # Threshold mode: Collect logs from all parties
         #---------------------------------------------------------------------
         log_info "Collecting logs from ${NUM_PARTIES} KMS Core parties..."
+        local release_prefix="${HELM_RELEASE_PREFIX:-kms-core}"
 
         for i in $(seq 1 "${NUM_PARTIES}"); do
-            # Find pod by label (more reliable than hardcoded names)
+            # The chart labels pods app.kubernetes.io/name=<release>-core.
             local POD_NAME=$(kubectl get pods -n "${NAMESPACE}" \
-                -l "app.kubernetes.io/instance=kms-core-${i},app.kubernetes.io/name=kms-core-service" \
+                -l "app.kubernetes.io/name=${release_prefix}-${i}-core" \
                 -o jsonpath="{.items[0].metadata.name}" 2>/dev/null)
 
             if [[ -n "${POD_NAME}" ]]; then
                 log_info "  Collecting logs from party ${i}: ${POD_NAME}"
-                kubectl logs "${POD_NAME}" -n "${NAMESPACE}" > "logs/${POD_NAME}.log" 2>&1 || true
+                kms_pod_logs "${POD_NAME}" > "logs/${POD_NAME}.log"
             else
                 log_warn "  No pod found for party ${i}"
             fi
@@ -200,13 +216,14 @@ collect_logs() {
         #---------------------------------------------------------------------
         log_info "Collecting logs from centralized KMS Core..."
 
+        # The centralized deploy always uses the release name kms-core.
         local POD_NAME=$(kubectl get pods -n "${NAMESPACE}" \
-            -l "app.kubernetes.io/instance=kms-core" \
+            -l "app.kubernetes.io/name=kms-core-core" \
             -o jsonpath="{.items[0].metadata.name}" 2>/dev/null)
 
         if [[ -n "${POD_NAME}" ]]; then
              log_info "  Collecting logs: ${POD_NAME}"
-             kubectl logs "${POD_NAME}" -n "${NAMESPACE}" > "logs/${POD_NAME}.log" 2>&1 || true
+             kms_pod_logs "${POD_NAME}" > "logs/${POD_NAME}.log"
              log_info "Log saved to ./logs/${POD_NAME}.log"
         else
              log_warn "  No centralized pod found"

@@ -6,7 +6,7 @@ use crate::{
     consts::{DEFAULT_EPOCH_ID, DEFAULT_MPC_CONTEXT, SAFE_SER_SIZE_LIMIT},
     cryptography::{
         encryption::{Encryption, PkeScheme, PkeSchemeType},
-        signatures::{PrivateSigKey, SigningSchemeType, gen_sig_keys},
+        signatures::{NodeSigningIdentity, PrivateSigKey, SigningSchemeType, gen_sig_keys},
         signcryption::UnifiedSigncryption,
     },
     dummy_domain,
@@ -29,7 +29,7 @@ use std::collections::{BTreeMap, HashMap};
 use std::sync::Arc;
 use std::time::SystemTime;
 use tfhe::{
-    CompactPublicKey, ConfigBuilder, Seed, ServerKey, safe_serialization::safe_serialize,
+    CompactPublicKey, ConfigBuilder, Seed, safe_serialization::safe_serialize,
     shortint::ClassicPBSParameters, xof_key_set::CompressedXofKeySet,
 };
 use threshold_execution::keyset_config::KeyGenSecretKeyConfig;
@@ -45,7 +45,9 @@ use crate::{
     consts::TEST_PARAM,
     engine::{
         base::KmsFheKeyHandles,
-        centralized::central_kms::{async_generate_crs, generate_fhe_keys},
+        centralized::central_kms::{
+            async_generate_crs, generate_fhe_keys, generate_uncompressed_fhe_keys,
+        },
         threshold::service::{PublicKeyMaterial, ThresholdFheKeys},
     },
     util::meta_store::MetaStore,
@@ -115,7 +117,7 @@ fn generate_compressed_keys(
     let (_pk, sk) = gen_sig_keys(&mut rng);
     let domain = dummy_domain();
     let (compressed_keyset, compact_pk, key_info) = generate_fhe_keys(
-        &sk,
+        &NodeSigningIdentity::ecdsa_only(sk.clone()),
         &[crate::cryptography::signing::SigningSchemeType::Ecdsa256k1],
         TEST_PARAM,
         KeyGenSecretKeyConfig::GenerateAll,
@@ -128,6 +130,27 @@ fn generate_compressed_keys(
     .unwrap();
 
     (sk, domain, compressed_keyset, compact_pk, key_info)
+}
+
+fn generate_uncompressed_keys(
+    req_id: &RequestId,
+    prep_id: &RequestId,
+    signing_seed: u64,
+) -> (FhePubKeySet, KmsFheKeyHandles) {
+    let mut rng = AesRng::seed_from_u64(signing_seed);
+    let (_, signing_key) = gen_sig_keys(&mut rng);
+    generate_uncompressed_fhe_keys(
+        &signing_key.into(),
+        &[SigningSchemeType::Ecdsa256k1],
+        TEST_PARAM,
+        KeyGenSecretKeyConfig::GenerateAll,
+        req_id,
+        prep_id,
+        Some(Seed(42)),
+        &dummy_domain(),
+        vec![],
+    )
+    .unwrap()
 }
 
 const TEST_METRIC: &str = "test";
@@ -154,7 +177,7 @@ async fn write_crs() {
     let domain = dummy_domain();
     let (_sig_pk, sig_sk) = gen_sig_keys(&mut rng);
     let (pp, crs_info) = async_generate_crs(
-        &sig_sk,
+        &NodeSigningIdentity::ecdsa_only(sig_sk.clone()),
         &[crate::cryptography::signing::SigningSchemeType::Ecdsa256k1],
         TEST_PARAM,
         Some(1),
@@ -270,7 +293,6 @@ async fn read_public_key() {
 
 #[tokio::test]
 async fn write_central_keys() {
-    let param = TEST_PARAM;
     let crypto_storage = CentralizedCryptoMaterialStorage::new(
         FailingRamStorage::new(),
         RamStorage::new(),
@@ -284,22 +306,8 @@ async fn write_central_keys() {
         .unwrap()
         .into();
 
-    let pbs_params: ClassicPBSParameters = param.classic_pbs();
-    let sns_params = param.sns().expect("sns param").sns_params();
-    let config =
-        ConfigBuilder::with_custom_parameters(pbs_params).enable_noise_squashing(sns_params);
-    let client_key = tfhe::ClientKey::generate(config);
-    let public_key = CompactPublicKey::new(&client_key);
-    let server_key = ServerKey::new(&client_key);
-    let key_info = KmsFheKeyHandles {
-        client_key,
-        decompression_key: None,
-        public_key_info: dummy_info(),
-    };
-    let fhe_key_set = PublicKeySet::Uncompressed(Arc::new(FhePubKeySet {
-        public_key,
-        server_key,
-    }));
+    let (public_keys, key_info) = generate_uncompressed_keys(&req_id, &req_id, 100);
+    let fhe_key_set = PublicKeySet::Uncompressed(Arc::new(public_keys));
 
     let meta_store = MetaStore::new_unlimited();
 
@@ -368,7 +376,6 @@ async fn write_central_keys() {
 
 #[tokio::test]
 async fn write_central_keys_failed_storage_sets_terminal_error() {
-    let param = TEST_PARAM;
     let crypto_storage = CentralizedCryptoMaterialStorage::new(
         FailingRamStorage::new(),
         RamStorage::new(),
@@ -384,22 +391,8 @@ async fn write_central_keys_failed_storage_sets_terminal_error() {
             .unwrap()
             .into();
 
-    let pbs_params: ClassicPBSParameters = param.classic_pbs();
-    let sns_params = param.sns().expect("sns param").sns_params();
-    let config =
-        ConfigBuilder::with_custom_parameters(pbs_params).enable_noise_squashing(sns_params);
-    let client_key = tfhe::ClientKey::generate(config);
-    let public_key = CompactPublicKey::new(&client_key);
-    let server_key = ServerKey::new(&client_key);
-    let key_info = KmsFheKeyHandles {
-        client_key,
-        decompression_key: None,
-        public_key_info: dummy_info(),
-    };
-    let public_key_set = PublicKeySet::Uncompressed(Arc::new(FhePubKeySet {
-        public_key,
-        server_key,
-    }));
+    let (public_keys, key_info) = generate_uncompressed_keys(&req_id, &req_id, 100);
+    let public_key_set = PublicKeySet::Uncompressed(Arc::new(public_keys));
 
     let meta_store = MetaStore::new_unlimited();
     let permit = {
@@ -853,7 +846,7 @@ where
 
     let fhe_key_set = keyset.public_keys.clone();
 
-    let (integer_server_key, _, _, _, sns_key, _, _, _, _) =
+    let (integer_server_key, _, _, _, sns_key, _, _, _, _, _) =
         keyset.public_keys.server_key.clone().into_raw_parts();
 
     let threshold_fhe_keys = ThresholdFheKeys::new(

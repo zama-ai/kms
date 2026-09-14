@@ -5,7 +5,7 @@ use crate::engine::centralized::central_kms::{
     CentralizedKms, async_user_decrypt, central_public_decrypt,
 };
 use crate::engine::traits::{BackupOperator, ContextManager};
-use crate::engine::utils::{MetricedError, format_unvalidated_id};
+use crate::engine::utils::{MetricedError, format_unvalidated_id, signing_identity_for};
 use crate::engine::validation::{
     RequestIdParsingErr, parse_grpc_request_id, parse_optional_grpc_request_id,
     validate_public_decrypt_req, validate_user_decrypt_req,
@@ -99,14 +99,12 @@ pub async fn user_decrypt_impl<
                 tonic::Code::NotFound,
             )
         })?;
-    let sig_key = service.base_kms.sig_key().map_err(|e| {
-        MetricedError::new(
-            OP_USER_DECRYPT_REQUEST,
-            Some(request_id),
-            anyhow::anyhow!("Signing key is not present. This should only happen when server is booted in recovery mode: {}", e),
-            tonic::Code::FailedPrecondition,
-        )
-    })?;
+    let sig_key = signing_identity_for(
+        &service.base_kms,
+        &signing_schemes,
+        OP_USER_DECRYPT_REQUEST,
+        Some(request_id),
+    )?;
 
     let server_verf_key = sig_key.verf_key().to_legacy_bytes().map_err(|e| {
         MetricedError::new(
@@ -118,7 +116,7 @@ pub async fn user_decrypt_impl<
     })?;
 
     let meta_store = Arc::clone(&service.user_dec_meta_store);
-    let mut rng = service.base_kms.new_rng().await;
+    let mut rng = service.base_kms.new_rng();
     let meta_permit = add_or_redo_failed_in_meta_store(
         &service.user_dec_meta_store,
         &request_id,
@@ -315,14 +313,12 @@ pub async fn public_decrypt_impl<
                 tonic::Code::NotFound,
             )
         })?;
-    let sig_key = service.base_kms.sig_key().map_err(|e| {
-        MetricedError::new(
-            OP_PUBLIC_DECRYPT_REQUEST,
-            Some(request_id),
-            anyhow::anyhow!("Signing key is not present. This should only happen when server is booted in recovery mode: {}", e),
-            tonic::Code::FailedPrecondition,
-        )
-    })?;
+    let sig_key = signing_identity_for(
+        &service.base_kms,
+        &signing_schemes,
+        OP_PUBLIC_DECRYPT_REQUEST,
+        Some(request_id),
+    )?;
     let server_verf_key = service.base_kms.verf_key().to_legacy_bytes().map_err(|e| {
         MetricedError::new(
             OP_PUBLIC_DECRYPT_REQUEST,

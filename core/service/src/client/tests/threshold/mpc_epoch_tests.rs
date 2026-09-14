@@ -9,7 +9,7 @@ use kms_grpc::{
     kms_service::v1::core_service_endpoint_client::CoreServiceEndpointClient,
     rpc_types::PubDataType,
 };
-use threshold_execution::tfhe_internals::private_keysets::PrivateKeySet;
+use threshold_execution::tfhe_internals::private_keysets::{LweSecretKeyShareEnum, PrivateKeySet};
 use threshold_types::role::Role;
 use tokio::task::JoinSet;
 use tonic::{Response, Status, transport::Channel};
@@ -32,6 +32,7 @@ use crate::{
     },
     consts::{DEFAULT_EPOCH_ID, DEFAULT_MPC_CONTEXT, PUBLIC_STORAGE_PREFIX_THRESHOLD_ALL},
     cryptography::internal_crypto_types::WrappedDKGParams,
+    cryptography::signing::SigningSchemeType,
     dummy_domain,
     engine::{
         base::{DSEP_PUBDATA_KEY, derive_request_id},
@@ -104,14 +105,14 @@ pub(crate) async fn new_epoch_with_reshare_and_crs(
             .unwrap()
             .into();
 
-    // No FHE keys needed; PRSS is bootstrapped at runtime via `.with_prss()` below.
+    // No FHE keys needed; the default epoch (PRSS) comes from the fixture via `.with_prss()` below.
     let mut spec = TestMaterialSpec::threshold_signing_only(amount_parties);
     if matches!(parameters, FheParameter::Default) {
         spec.material_type = MaterialType::Default;
     }
 
-    // Setting ensure_default_prss to true to
-    // to create the default context and epoch with its PRSS init
+    // `.with_prss()` copies the default epoch, so the servers boot with the default context
+    // and its PRSS setup.
     let (material_dir, mut kms_servers, mut kms_clients, mut internal_client) = {
         let env = ThresholdTestEnv::builder()
             .with_test_name(format!(
@@ -222,7 +223,7 @@ pub(crate) async fn new_epoch_with_reshare_and_crs(
     let new_epoch_outputs = run_new_epoch(
         amount_parties,
         &kms_clients,
-        &internal_client,
+        &mut internal_client,
         new_context_id,
         new_epoch_id,
         resharing,
@@ -269,6 +270,7 @@ pub(crate) async fn new_epoch_with_reshare_and_crs(
                 lwe_encryption_secret_key_share,
                 lwe_compute_secret_key_share,
                 oprf_secret_key_share,
+                transciphering_secret_key_share,
                 glwe_secret_key_share,
                 glwe_secret_key_share_sns_as_lwe,
                 glwe_secret_key_share_compression,
@@ -280,6 +282,7 @@ pub(crate) async fn new_epoch_with_reshare_and_crs(
                 lwe_encryption_secret_key_share: reshared_lwe_encryption_secret_key_share,
                 lwe_compute_secret_key_share: reshared_lwe_compute_secret_key_share,
                 oprf_secret_key_share: reshared_oprf_secret_key_share,
+                transciphering_secret_key_share: reshared_transciphering_secret_key_share,
                 glwe_secret_key_share: reshared_glwe_secret_key_share,
                 glwe_secret_key_share_sns_as_lwe: reshared_glwe_secret_key_share_sns_as_lwe,
                 glwe_secret_key_share_compression: reshared_glwe_secret_key_share_compression,
@@ -289,6 +292,33 @@ pub(crate) async fn new_epoch_with_reshare_and_crs(
 
             // Assert parameters are the same
             assert_eq!(parameters, reshared_parameters);
+            let transciphering_expected = dkg_param.transciphering_lwe_dimension();
+            assert_eq!(
+                transciphering_secret_key_share.is_some(),
+                transciphering_expected.is_some(),
+                "the original keyset must match the parameters' transciphering configuration"
+            );
+            assert_eq!(
+                reshared_transciphering_secret_key_share.is_some(),
+                transciphering_expected.is_some(),
+                "the reshared keyset must match the parameters' transciphering configuration"
+            );
+            let share_dimension = |share: &Option<LweSecretKeyShareEnum<4>>| {
+                share.as_ref().map(|share| match share {
+                    LweSecretKeyShareEnum::Z64(share) => share.lwe_dimension(),
+                    LweSecretKeyShareEnum::Z128(share) => share.lwe_dimension(),
+                })
+            };
+            assert_eq!(
+                share_dimension(&transciphering_secret_key_share),
+                transciphering_expected,
+                "the original transciphering share must have the parameter-defined LWE dimension"
+            );
+            assert_eq!(
+                share_dimension(&reshared_transciphering_secret_key_share),
+                transciphering_expected,
+                "the reshared transciphering share must have the parameter-defined LWE dimension"
+            );
             // Assert none of the keys is similar
             assert_ne!(
                 lwe_encryption_secret_key_share,
@@ -298,8 +328,18 @@ pub(crate) async fn new_epoch_with_reshare_and_crs(
                 lwe_compute_secret_key_share,
                 reshared_lwe_compute_secret_key_share
             );
+            // `assert_ne!` alone would also hold if resharing dropped the share, so assert the
+            // reshared keyset still carries it.
             if oprf_secret_key_share.is_some() {
+                assert!(reshared_oprf_secret_key_share.is_some());
                 assert_ne!(oprf_secret_key_share, reshared_oprf_secret_key_share);
+            }
+            if transciphering_secret_key_share.is_some() {
+                assert!(reshared_transciphering_secret_key_share.is_some());
+                assert_ne!(
+                    transciphering_secret_key_share,
+                    reshared_transciphering_secret_key_share
+                );
             }
             assert_ne!(glwe_secret_key_share, reshared_glwe_secret_key_share);
             if glwe_secret_key_share_sns_as_lwe.is_some() {
@@ -347,7 +387,7 @@ pub(crate) async fn new_epoch_with_reshare_and_crs(
 async fn run_new_epoch(
     amount_parties: usize,
     kms_clients: &HashMap<u32, CoreServiceEndpointClient<Channel>>,
-    internal_client: &Client,
+    internal_client: &mut Client,
     new_context_id: ContextId,
     new_epoch_id: EpochId,
     resharing: Option<ResharingParams>,
@@ -356,7 +396,17 @@ async fn run_new_epoch(
     let num_keys = resharing
         .as_ref()
         .map_or(0, |r| r.previous_epoch.keys_info.len());
-    let mut reshare_request = internal_client
+
+    internal_client
+        .set_signing_schemes(&[
+            SigningSchemeType::Ecdsa256k1,
+            SigningSchemeType::Ed25519,
+            SigningSchemeType::MlDsa65,
+        ])
+        .unwrap();
+    let requested_schemes = internal_client.signing_schemes_proto();
+
+    let reshare_request = internal_client
         .new_epoch_request(
             &new_context_id,
             &new_epoch_id,
@@ -364,13 +414,10 @@ async fn run_new_epoch(
             resharing.as_ref().map(|r| &r.signing_domain),
         )
         .unwrap();
-    // Ask for a hybrid classic + post-quantum set, so the reshared key and CRS
-    // metadata is signed under more than the default ECDSA scheme.
-    let requested_schemes = vec![
-        kms_grpc::kms::v1::SigningSchemeType::Ecdsa256k1 as i32,
-        kms_grpc::kms::v1::SigningSchemeType::Mldsa65 as i32,
-    ];
-    reshare_request.signing_schemes = requested_schemes.clone();
+    assert_eq!(
+        reshare_request.signing_schemes, requested_schemes,
+        "the request must carry the schemes the client asks for"
+    );
     let extra_data = reshare_request.extra_data.clone();
 
     // Execute reshare

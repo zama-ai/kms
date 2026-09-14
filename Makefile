@@ -90,9 +90,6 @@ generate-test-material-testing:
 generate-test-material-default:
 	cargo run -p generate-test-material -- --output ./test-material --verbose --profile secure --parties 4,13
 
-validate-test-material:
-	cargo run -p generate-test-material -- --output ./test-material --verbose validate
-
 clean-test-material:
 	cargo run -p generate-test-material -- --output ./test-material --verbose clean
 

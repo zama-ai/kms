@@ -109,6 +109,8 @@ impl Vault {
         // when erasing a retired context.
         self.delete_custodian_backup_data(backup_id).await?;
 
+        // A backend can report a successful delete without removing the object. Check all entries
+        // for this backup ID before the caller removes recovery material and lifecycle state.
         self.ensure_custodian_backup_removed(backup_id).await
     }
 
