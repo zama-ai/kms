@@ -1015,6 +1015,25 @@ mod tests {
     use crate::engine::material_integrity::ERR_COMPRESSED_KEYSET_DIGEST_MISMATCH;
     use tfhe::core_crypto::prelude::NormalizedHammingWeightBound;
     use tfhe::xof_key_set::CompressedXofKeySet;
+    use threshold_execution::tfhe_internals::parameters::DKGParams;
+
+    /// Generates a compressed keyset under `params`, so tests can vary the parameter set (e.g. to
+    /// turn transciphering off) without repeating the config and Hamming-weight-bound plumbing.
+    fn generate_compressed_keyset(params: DKGParams, key_id: &RequestId) -> CompressedXofKeySet {
+        // use to_tfhe_config() which includes dedicated compact public key parameters
+        // required for compressed keys
+        let config = params.to_tfhe_config();
+        // if the pmax value is not set, e.g., for test parameters, we do not do the HW check
+        // and use a pmax=1 which should allow for any HW.
+        let max_norm_hwt = params.sk_deviations().map(|x| x.pmax).unwrap_or(1.0);
+        let max_norm_hwt = NormalizedHammingWeightBound::new(max_norm_hwt).unwrap();
+        let tag = key_id.into();
+
+        let (_client_key, compressed_keyset) =
+            CompressedXofKeySet::generate(config, vec![42, 43, 44, 45], 128, max_norm_hwt, tag)
+                .unwrap();
+        compressed_keyset
+    }
 
     async fn setup_public_materials_test_compressed(
         key_id: RequestId,
@@ -1029,19 +1048,7 @@ mod tests {
         // create memory storage that contains a compressed keyset
         let mut ram_storage = RamStorage::new();
 
-        // generate the compressed keyset using to_tfhe_config() which includes
-        // dedicated compact public key parameters required for compressed keys
-        let params = crate::consts::TEST_PARAM;
-        let config = params.to_tfhe_config();
-        // if the pmax value is not set, e.g., for test parameters, we do not do the HW check
-        // and use a pmax=1 which should allow for any HW.
-        let max_norm_hwt = params.sk_deviations().map(|x| x.pmax).unwrap_or(1.0);
-        let max_norm_hwt = NormalizedHammingWeightBound::new(max_norm_hwt).unwrap();
-        let tag = (&key_id).into();
-
-        let (_client_key, compressed_keyset) =
-            CompressedXofKeySet::generate(config, vec![42, 43, 44, 45], 128, max_norm_hwt, tag)
-                .unwrap();
+        let compressed_keyset = generate_compressed_keyset(crate::consts::TEST_PARAM, &key_id);
 
         // generate digest
         let compressed_keyset_digest =
@@ -1128,6 +1135,36 @@ mod tests {
             ro_storage_getter,
             compressed_keyset,
         )
+    }
+
+    /// The flags read off compressed public material drive `ResharePreprocRequired` on the Set 2
+    /// reshare path, which has no private share to read them from, so both must follow the keyset
+    /// rather than a constant or each other.
+    #[test]
+    fn compressed_material_key_flags_follow_the_keyset() {
+        let mut rng = AesRng::seed_from_u64(2334);
+        let key_id = RequestId::new_random(&mut rng);
+
+        let transciphering_params = crate::consts::TEST_PARAM;
+        assert!(
+            transciphering_params.transciphering_params().is_some(),
+            "TEST_PARAM is expected to enable transciphering"
+        );
+        let with_transciphering = VerifiedPublicMaterial::Compressed(generate_compressed_keyset(
+            transciphering_params,
+            &key_id,
+        ));
+        assert!(with_transciphering.has_transciphering_key());
+        assert!(with_transciphering.has_oprf_key());
+
+        let mut no_transciphering_params = transciphering_params;
+        no_transciphering_params.meta.transciphering_parameters = None;
+        let without_transciphering = VerifiedPublicMaterial::Compressed(
+            generate_compressed_keyset(no_transciphering_params, &key_id),
+        );
+        assert!(!without_transciphering.has_transciphering_key());
+        // the dedicated OPRF key is enabled independently of transciphering
+        assert!(without_transciphering.has_oprf_key());
     }
 
     #[tokio::test]
