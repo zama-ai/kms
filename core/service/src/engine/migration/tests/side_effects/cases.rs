@@ -234,6 +234,134 @@ async fn failed_combined_prss_write_is_retryable(#[case] fault_phase: FaultPhase
     );
 }
 
+/// Test retry after storage writes the context but returns an error.
+#[tokio::test]
+async fn failed_context_write_is_retryable() {
+    let mut storage = FailingRamStorage::new();
+    let data_type = PrivDataType::ContextInfo.to_string();
+    let legacy_entry = StorageEntry::new((*LEGACY_DEFAULT_MPC_CONTEXT).into(), None, &data_type);
+    let target_entry = StorageEntry::new((*DEFAULT_MPC_CONTEXT).into(), None, &data_type);
+    let mut context = test_context(*LEGACY_DEFAULT_MPC_CONTEXT);
+    store_versioned_at_request_id(&mut storage, &legacy_entry.data_id, &context, &data_type)
+        .await
+        .unwrap();
+    seed_controls(&mut storage).await;
+    let before = storage.state();
+    storage.clear_events();
+    storage.set_fail_store_after_mutation_at(target_entry.clone());
+
+    migrate_context_before_0_13_10(&mut storage)
+        .await
+        .unwrap_err();
+
+    // The new copy must use the new context ID, even though the write returned an error.
+    context.context_id = *DEFAULT_MPC_CONTEXT;
+    assert_eq!(
+        read_context_at_id(&storage, &DEFAULT_MPC_CONTEXT)
+            .await
+            .unwrap(),
+        context,
+    );
+    let mut expected_state = storage.state();
+    let target_digest = expected_state.remove(&target_entry).unwrap();
+    assert_eq!(expected_state, before);
+    expected_state.insert(target_entry.clone(), target_digest);
+    assert_same_events(
+        storage.events(),
+        &[StorageEvent::new(
+            target_entry.clone(),
+            StorageOp::Store,
+            StorageOutcome::FailedAfterMutation,
+        )],
+    );
+    storage.clear_fail_points();
+    storage.clear_events();
+
+    assert_eq!(
+        migrate_context_before_0_13_10(&mut storage).await.unwrap(),
+        LegacyContextMigrationOutcome::Migrated,
+    );
+
+    // Retry keeps the stored replacement and removes only the legacy context.
+    expected_state.remove(&legacy_entry);
+    assert_eq!(storage.state(), expected_state);
+    assert_same_events(
+        storage.events(),
+        &[
+            StorageEvent::new(
+                target_entry,
+                StorageOp::Store,
+                StorageOutcome::SkippedExisting,
+            ),
+            StorageEvent::new(legacy_entry, StorageOp::Delete, StorageOutcome::Deleted),
+        ],
+    );
+}
+
+/// Test retry after storage copies a threshold key to the current epoch but returns an error.
+#[tokio::test]
+async fn failed_fhe_write_is_retryable() {
+    let mut storage = FailingRamStorage::new();
+    let key_id = request_id("failed_fhe_migration");
+    let data_type = PrivDataType::FheKeyInfo.to_string();
+    let legacy_entry = StorageEntry::new(key_id, Some(*LEGACY_DEFAULT_EPOCH_ID), &data_type);
+    let target_entry = StorageEntry::new(key_id, Some(*DEFAULT_EPOCH_ID), &data_type);
+    storage
+        .store_bytes_at_epoch(
+            b"legacy FHE bytes",
+            &key_id,
+            &LEGACY_DEFAULT_EPOCH_ID,
+            &data_type,
+        )
+        .await
+        .unwrap();
+    seed_controls(&mut storage).await;
+    let mut expected_state = storage.state();
+    storage.clear_events();
+    storage.set_fail_store_after_mutation_at(target_entry.clone());
+
+    migrate_fhe_keys_0_13_x_to_0_13_10(&mut storage, KMSType::Threshold)
+        .await
+        .unwrap_err();
+
+    // Both copies must contain the original bytes; unrelated entries must be unchanged.
+    expected_state.insert(target_entry.clone(), expected_state[&legacy_entry]);
+    assert_eq!(storage.state(), expected_state);
+    assert_same_events(
+        storage.events(),
+        &[StorageEvent::new(
+            target_entry,
+            StorageOp::Store,
+            StorageOutcome::FailedAfterMutation,
+        )],
+    );
+    storage.clear_fail_points();
+    storage.clear_events();
+
+    // Retry skips the existing target, so no keys need copying and no write is attempted.
+    assert_eq!(
+        migrate_fhe_keys_0_13_x_to_0_13_10(&mut storage, KMSType::Threshold)
+            .await
+            .unwrap(),
+        0,
+    );
+    assert!(storage.events().is_empty());
+    remove_old_keys_for_0_13_20(&mut storage, KMSType::Threshold)
+        .await
+        .unwrap();
+
+    expected_state.remove(&legacy_entry);
+    assert_eq!(storage.state(), expected_state);
+    assert_same_events(
+        storage.events(),
+        &[StorageEvent::new(
+            legacy_entry,
+            StorageOp::Delete,
+            StorageOutcome::Deleted,
+        )],
+    );
+}
+
 /// A partially applied legacy-PRSS cleanup is limited to that type and completes on retry.
 #[tokio::test]
 async fn failed_old_prss_cleanup_is_retryable() {
