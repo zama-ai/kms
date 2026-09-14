@@ -174,8 +174,7 @@ impl ProtocolDescription for DummyVss {
 #[async_trait]
 impl Vss for DummyVss {
     fn num_rounds(_num_parties: usize, _threshold: usize) -> usize {
-        // Dummy VSS fabricates shares locally, no network rounds.
-        0
+        1
     }
 
     async fn execute_many<Z: RingWithExceptionalSequence, S: BaseSessionHandles>(

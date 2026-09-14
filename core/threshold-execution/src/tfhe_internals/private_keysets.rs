@@ -157,8 +157,7 @@ impl<const EXTENSION_DEGREE: usize> PrivateKeySet<EXTENSION_DEGREE> {
         threshold: usize,
         num_liftable_subkeys: usize,
     ) -> usize {
-        // Nothing to lift (`num_liftable_subkeys == 0`, e.g. a Z64-mode keyset,
-        // which is converted with the local `lift_to_z64`): the preprocessing
+        // Nothing to lift (`num_liftable_subkeys == 0`): the preprocessing
         // batches are empty and no bit-lift runs, so the whole interactive lift is
         // 0 rounds. Guard here so the budget is exact rather than counting the
         // (never-run) preprocessing/bit-gen.

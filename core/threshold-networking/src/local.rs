@@ -15,7 +15,7 @@ use threshold_types::role::RoleTrait;
 
 use async_trait::async_trait;
 use dashmap::DashMap;
-use futures_util::future::{join, join3, join4};
+use futures_util::future::{join, join4};
 use tokio::sync::{
     Mutex,
     mpsc::{UnboundedReceiver, UnboundedSender, unbounded_channel},
@@ -251,12 +251,14 @@ impl<R: RoleTrait> Networking<R> for LocalNetworking<R> {
     }
 
     async fn restore_round_clock(&self, clock: RoundClock) {
-        let (mut round, mut max_elapsed_time, mut current_network_timeout) = join3(
-            self.network_round.lock(),
-            self.max_elapsed_time.lock(),
-            self.current_network_timeout.lock(),
-        )
-        .await;
+        let (mut max_elapsed_time, mut current_network_timeout, mut next_round_timeout, mut round) =
+            join4(
+                self.max_elapsed_time.lock(),
+                self.current_network_timeout.lock(),
+                self.next_network_timeout.lock(),
+                self.network_round.lock(),
+            )
+            .await;
         // A round clock only ever moves forward.
         assert!(
             clock.round >= *round,
@@ -268,6 +270,7 @@ impl<R: RoleTrait> Networking<R> for LocalNetworking<R> {
         *round = clock.round;
         *max_elapsed_time = clock.max_elapsed_time;
         *current_network_timeout = clock.current_network_timeout;
+        *next_round_timeout = clock.next_network_timeout;
     }
 
     async fn set_timeout_for_next_round(&self, timeout: Duration) {

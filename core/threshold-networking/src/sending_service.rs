@@ -572,18 +572,33 @@ impl<R: RoleTrait> Networking<R> for NetworkSession {
     }
 
     async fn round_clock_snapshot(&self) -> RoundClock {
-        let round_counter = self.round_counter.read().await;
+        let (max_elapsed_time, current_round_timeout, next_round_timeout, net_round) = (
+            self.max_elapsed_time.read().await,
+            self.current_network_timeout.read().await,
+            self.next_network_timeout.read().await,
+            self.round_counter.read().await,
+        );
         RoundClock {
-            round: *round_counter,
-            max_elapsed_time: *self.max_elapsed_time.read().await,
-            current_network_timeout: *self.current_network_timeout.read().await,
-            next_network_timeout: *self.next_network_timeout.read().await,
+            round: *net_round,
+            max_elapsed_time: *max_elapsed_time,
+            current_network_timeout: *current_round_timeout,
+            next_network_timeout: *next_round_timeout,
             init_time: self.init_time.load(),
         }
     }
 
     async fn restore_round_clock(&self, clock: RoundClock) {
-        let mut round_counter = self.round_counter.write().await;
+        let (
+            mut max_elapsed_time,
+            mut current_round_timeout,
+            mut next_round_timeout,
+            mut round_counter,
+        ) = (
+            self.max_elapsed_time.write().await,
+            self.current_network_timeout.write().await,
+            self.next_network_timeout.write().await,
+            self.round_counter.write().await,
+        );
         // A round clock only ever moves forward.
         assert!(
             clock.round >= *round_counter,
@@ -593,9 +608,9 @@ impl<R: RoleTrait> Networking<R> for NetworkSession {
         );
         self.init_time.store(clock.init_time);
         *round_counter = clock.round;
-        *self.max_elapsed_time.write().await = clock.max_elapsed_time;
-        *self.current_network_timeout.write().await = clock.current_network_timeout;
-        *self.next_network_timeout.write().await = clock.next_network_timeout;
+        *max_elapsed_time = clock.max_elapsed_time;
+        *current_round_timeout = clock.current_network_timeout;
+        *next_round_timeout = clock.next_network_timeout;
     }
 
     /// Method to set a different timeout than the one set at construction, effective for the next round.
