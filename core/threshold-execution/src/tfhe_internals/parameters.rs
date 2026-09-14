@@ -578,29 +578,6 @@ impl DKGParams {
         PBSOrder::from(self.encryption_key_choice())
     }
 
-    /// A `temp/dkg/...` path that identifies this parameter set, used **only by
-    /// tests** to locate cached key material. The suffix hashes the serialized
-    /// parameters, so it is stable across runs for a given set (and more stable
-    /// across versions than hashing the `Debug` string would be).
-    ///
-    /// __Any two parameter sets that share message/carry modulus, SnS presence,
-    /// and compression presence and hash identically will collide.__
-    #[cfg(any(test, feature = "testing"))]
-    pub fn generate_testing_prefix(&self) -> std::path::PathBuf {
-        let mut h = std::hash::DefaultHasher::new();
-        let serialized = bc2wrap::serialize(self).expect("DKGParams is serializable");
-        std::hash::Hash::hash(&serialized, &mut h);
-        let hash = std::hash::Hasher::finish(&h);
-        std::path::PathBuf::from(format!(
-            "temp/dkg/MSGMOD_{}_CARRYMOD_{}_SNS_{}_compression_{}_{}",
-            self.message_modulus().0,
-            self.carry_modulus().0,
-            self.supports_sns(),
-            self.compression().is_some(),
-            hash
-        ))
-    }
-
     pub fn decomposition_base_log_ksk(&self) -> DecompositionBaseLog {
         self.classic_pbs().ks_base_log
     }
@@ -1788,9 +1765,9 @@ pub const PARAMS_TEST_BK_SNS: DKGParams = DKGParams {
 /// - regular compression: 1 × 128 = 128
 /// - SnS compression: 1 × 64 = 64
 ///
-/// Test/bench only — deliberately not reachable over the gRPC `FheParameter` enum.
-#[cfg(any(test, feature = "testing"))]
-pub const PARAMS_TEST_RESHARE: DKGParams = DKGParams {
+/// Unit-test only — deliberately not reachable over the gRPC `FheParameter` enum.
+#[cfg(test)]
+pub(crate) const PARAMS_TEST_RESHARE: DKGParams = DKGParams {
     dkg_mode: DkgMode::Z128,
     sec: 128,
     meta: MetaParameters {

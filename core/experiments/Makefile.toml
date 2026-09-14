@@ -74,21 +74,20 @@ command = "docker"
 args = ["build", "-f", "${THRESHOLD_FHE_DOCKER_FILE}", "--build-arg", "FEATURES=measure_memory,extension_degree_4", "-t", "bgv-core-mem", "${THRESHOLD_FHE_DOCKER_ROOT}"]
 
 # Generate the certificate for TLS communication of the parties
-# Note: templating feature isn't required, but allows to compile the code only once since gen-experiment requires the feature
 [tasks.gen-test-certs]
 command = "cargo"
-args = ["run", "--bin", "threshold-gen-tls-certs","--release","--features", "templating",  "--", "--ca-prefix", "p", "--ca-count", "${NUM_PARTIES}", "-n", "1", "-o", "test_certs"]
+args = ["run", "--bin", "threshold-gen-tls-certs","--release", "--", "--ca-prefix", "p", "--ca-count", "${NUM_PARTIES}", "-n", "1", "-o", "test_certs"]
 
 #Generate docker-compose file for the TFHE parties as well as the toml config file for the choreogrpaher for a local deployment (tfhe)
 [tasks.tfhe-gen-experiment]
 script = '''
-cargo run --bin gen-experiment --release --features templating -- -n ${NUM_PARTIES} -t ${THRESHOLD} -s ${MOBY_STRATEGY} -f temp -o ${EXPERIMENT_NAME} all --protocol tfhe ${MEASURE_MEMORY}
+cargo run --bin gen-experiment --release -- -n ${NUM_PARTIES} -t ${THRESHOLD} -s ${MOBY_STRATEGY} -f temp -o ${EXPERIMENT_NAME} all --protocol tfhe ${MEASURE_MEMORY}
 '''
 
 #Generate docker-compose file for the BGV parties as well as the toml config file for the choreogrpaher for a local deployment (bgv)
 [tasks.bgv-gen-experiment]
 script = '''
-cargo run --bin gen-experiment --release --features templating -- -n ${NUM_PARTIES} -t ${THRESHOLD} -f temp -o ${EXPERIMENT_NAME} all --protocol bgv ${MEASURE_MEMORY}
+cargo run --bin gen-experiment --release -- -n ${NUM_PARTIES} -t ${THRESHOLD} -f temp -o ${EXPERIMENT_NAME} all --protocol bgv ${MEASURE_MEMORY}
 '''
 
 
