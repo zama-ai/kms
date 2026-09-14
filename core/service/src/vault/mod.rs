@@ -70,7 +70,7 @@ impl Vault {
     }
 
     /// Method for removing an old custodian backup identified by `backup_id`.
-    /// This is based on the id of the backup, and removes all the backed up information under `backup_id`.
+    /// Removes both flat and epoch-scoped backup entries under `backup_id`.
     /// An error will be returned if the backup exists but could not be deleted or if `backup_id` is the _current_ backup id.
     /// An info log is produced for each data type that is not found in the backup.
     async fn remove_old_backup(&mut self, backup_id: &RequestId) -> anyhow::Result<()> {
@@ -87,7 +87,11 @@ impl Vault {
                         .storage
                         .all_data_ids(&vault_data_type.to_string())
                         .await?;
-                    if ids.is_empty() {
+                    let epoch_ids = self
+                        .storage
+                        .all_epoch_ids_for_data(&vault_data_type.to_string())
+                        .await?;
+                    if ids.is_empty() && epoch_ids.is_empty() {
                         tracing::info!(
                             "No data found for backup id {backup_id} and data type {cur_type}"
                         );
@@ -96,6 +100,21 @@ impl Vault {
                         self.storage
                             .delete_data(&cur_id, &vault_data_type.to_string())
                             .await?;
+                    }
+                    for epoch_id in epoch_ids {
+                        let ids = self
+                            .storage
+                            .all_data_ids_at_epoch(&epoch_id, &vault_data_type.to_string())
+                            .await?;
+                        for cur_id in ids {
+                            self.storage
+                                .delete_data_at_epoch(
+                                    &cur_id,
+                                    &epoch_id,
+                                    &vault_data_type.to_string(),
+                                )
+                                .await?;
+                        }
                     }
                 }
                 Ok(())

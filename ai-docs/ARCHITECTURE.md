@@ -224,6 +224,10 @@ Custodian workflows are driven through the
 [kms-service.v1.proto](core/grpc/proto/kms-service.v1.proto). 
 A separate `RestoreFromBackup` RPC completes restoration on the node for the non-custodian AWS-KMS path.
 
+Destroying a retired custodian context deletes its flat and epoch-scoped backups before
+removing its public recovery material. A backup deletion error stops that removal so it can
+be retried. The current backup context cannot be destroyed.
+
 Implementation code lives in [core/service/src/backup/](core/service/src/backup/);
 end-to-end tests live at
 [core/service/src/client/tests/centralized/custodian_backup_tests.rs](core/service/src/client/tests/centralized/custodian_backup_tests.rs)
