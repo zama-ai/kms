@@ -1,0 +1,127 @@
+name: PRSS pool experiment
+
+on:
+  workflow_call:
+
+permissions:
+  actions: read
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: never
+  CARGO_INCREMENTAL: 0
+  KMS_PRSS_PROBE_BATCHES: 10
+
+jobs:
+  compare:
+    runs-on: runs-on=${{ github.run_id }}/runner=64cpu-linux-x64/spot=false/volume=400gb/extras=s3-cache+efs
+    timeout-minutes: 240
+    steps:
+      - name: Setup Runs-on
+        uses: runs-on/action@cd2b598b0515d39d78c38a02d529db87d2196d1e # v2.0.3
+        with:
+          metrics: cpu,network,memory,disk,io
+
+      - name: Checkout project
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          persist-credentials: false
+          lfs: true
+
+      - name: Get Rust version
+        run: |
+          version="$(awk -F '"' '/^channel =/ {print $2}' rust-toolchain.toml)"
+          echo "RUST_IMAGE_VERSION=$version" >> "$GITHUB_ENV"
+
+      - name: Set up Rust and Protoc
+        uses: ./.github/actions/setup-rust-and-protoc
+        with:
+          rust-toolchain: ${{ env.RUST_IMAGE_VERSION }}
+          setup-cargo-nextest: 'true'
+
+      - name: Setup Rust cache
+        uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5 # v2.8.2
+        with:
+          shared-key: kms-rust
+          save-if: false
+
+      - name: Build experiment
+        run: cargo test -p threshold-execution --lib --no-run
+
+      - name: Compare pools sequentially
+        timeout-minutes: 75
+        shell: bash
+        run: |
+          mkdir -p prss-pool-results
+          lscpu > prss-pool-results/hardware.txt
+          git rev-parse HEAD > prss-pool-results/commit.txt
+          failed=0
+          iteration=0
+          for case in case_1_shared case_2_partitioned case_2_partitioned case_1_shared case_1_shared case_2_partitioned; do
+            iteration=$((iteration + 1))
+            name="small_execution::prss::tests::isolated_prss_pool_scheduling::$case"
+            if cargo nextest run -p threshold-execution --lib --run-ignored only \
+                --no-tests=fail --success-output immediate --failure-output immediate \
+                -E "test(=$name)" 2>&1 | tee "prss-pool-results/$iteration-$case.log"; then
+              continue
+            fi
+            failed=1
+          done
+          exit "$failed"
+
+      - name: Verify captured samples
+        if: ${{ !cancelled() }}
+        shell: python
+        run: |
+          import pathlib
+          import re
+
+          logs = sorted(pathlib.Path('prss-pool-results').glob('*.log'))
+          assert len(logs) == 6, f'Expected six runs, found {len(logs)}'
+          reference = None
+          for log in logs:
+              text = log.read_text()
+              samples = re.findall(
+                  r'SAMPLE party=(\d+) session=(\d+) elapsed_us=\d+ '
+                  r'finished_us=\d+ all_finished_us=\d+ digest=(\[[^\]]+\])', text)
+              outputs = {(party, session): digest for party, session, digest in samples}
+              assert len(samples) == len(outputs) == 130, f'{log}: missing or duplicate samples'
+              assert 'WORKLOAD batches_per_session=10' in text, f'{log}: wrong workload'
+              allocation = ('pools=13 per_party=4 shared=4' if 'partitioned' in log.name
+                            else 'pools=0 per_party=0 shared=56')
+              assert f'ALLOCATION {allocation}' in text, f'{log}: unexpected worker allocation'
+              if reference is None:
+                  reference = outputs
+              assert outputs == reference, f'{log}: output mismatch'
+              print(f'{log.name}: 130 matching outputs; {allocation}')
+
+      - name: Generate keygen test material
+        id: material
+        if: ${{ !cancelled() }}
+        timeout-minutes: 60
+        run: |
+          mkdir -p prss-pool-results
+          cargo run --profile test -p generate-test-material -- \
+            --output ./test-material --profile insecure,secure --parties 4,13 \
+            > prss-pool-results/generate-material.log 2>&1
+
+      - name: Run 13-party concurrent keygen with per-party pools
+        if: ${{ !cancelled() && steps.material.outcome == 'success' }}
+        timeout-minutes: 60
+        env:
+          RUST_LOG: info,kms_timeout_probe=debug
+          RUST_BACKTRACE: full
+        run: |
+          cargo nextest run -p kms --lib -F slow_tests -F insecure \
+            --profile ci --no-tests=fail --test-threads 1 \
+            --success-output immediate --failure-output immediate \
+            -E 'test(=client::tests::threshold::extended_tests::nightly_secure_threshold_concurrent_keygen_test::case_2)' \
+            > prss-pool-results/concurrent-keygen.log 2>&1
+
+      - name: Upload experiment output
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: prss-pool-results-${{ github.run_id }}-${{ github.run_attempt }}
+          path: prss-pool-results/
+          if-no-files-found: error
