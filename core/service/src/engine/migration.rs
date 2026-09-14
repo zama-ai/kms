@@ -503,6 +503,7 @@ where
 /// Deletes obsolete keys after confirming that each epoch-scoped replacement has the same length
 /// and SHAKE-256 digest as its legacy entry. The preceding migration copies these bytes without
 /// transforming them.
+/// Returns an error if a replacement is missing or differs, and retains that legacy entry.
 async fn migrate_fhe_keys_after_0_13_x<S>(storage: &mut S, kms_type: KMSType) -> anyhow::Result<()>
 where
     S: StorageExt + Sync + Send,
@@ -546,10 +547,8 @@ where
             // The replacement was read back and matched, so the legacy entry can be removed.
             storage.delete_data(&key_id, &data_type_str).await?;
         } else {
-            tracing::error!(
-                "Legacy key {} still exists but no migrated key found at epoch {}, skipping deletion",
-                key_id,
-                legacy_epoch_id
+            anyhow::bail!(
+                "Migrated {data_type} for key {key_id} at epoch {legacy_epoch_id} is missing; refusing to delete the legacy entry"
             );
         }
     }
@@ -867,6 +866,7 @@ where
 /// Remove private keys stored under the legacy epoch ID once their current-epoch copies have the
 /// same length and SHAKE-256 digest. The preceding migration copies these bytes without
 /// transforming them.
+/// Returns an error if a replacement is missing or differs, and retains that legacy entry.
 async fn remove_old_keys_for_0_13_20<PrivS>(
     priv_storage: &mut PrivS,
     kms_type: KMSType,
@@ -919,10 +919,8 @@ where
                 .delete_data_at_epoch(&key_id, &LEGACY_DEFAULT_EPOCH_ID, &data_type_str)
                 .await?;
         } else {
-            tracing::error!(
-                "No key {} under epoch ID {} appears to exist. This implies an inconsistent file system",
-                key_id,
-                new_epoch_id
+            anyhow::bail!(
+                "Migrated {data_type} for key {key_id} at epoch {new_epoch_id} is missing; refusing to delete the legacy entry"
             );
         }
     }
@@ -1482,6 +1480,26 @@ mod tests {
     async fn test_after_0_13_x_no_legacy_ram() {
         let mut storage = RamStorage::new();
         test_migrate_fhe_keys_after_0_13_x_no_legacy(&mut storage).await;
+    }
+
+    /// A missing replacement rejects cleanup and preserves the non-epoched legacy key.
+    #[tokio::test]
+    async fn test_after_0_13_x_rejects_without_new_epoch_ram() {
+        let mut storage = RamStorage::new();
+        let key_id = derive_request_id("missing_migrated_fhe_key").unwrap();
+        let data_type = PrivDataType::FheKeyInfo.to_string();
+        let data = vec![9, 8, 7];
+        storage
+            .store_bytes(&data, &key_id, &data_type)
+            .await
+            .unwrap();
+
+        let error = migrate_fhe_keys_after_0_13_x(&mut storage, KMSType::Threshold)
+            .await
+            .unwrap_err();
+
+        assert!(error.to_string().contains("is missing"));
+        assert_eq!(storage.load_bytes(&key_id, &data_type).await.unwrap(), data);
     }
 
     #[tokio::test]
@@ -2261,8 +2279,8 @@ mod tests {
             .unwrap();
     }
 
-    /// Test that legacy epoch keys are NOT deleted when no DEFAULT_EPOCH_ID counterpart exists
-    pub async fn test_remove_old_keys_for_0_13_20_skips_without_new_epoch<
+    /// A missing replacement rejects cleanup and preserves the legacy epoch key.
+    pub async fn test_remove_old_keys_for_0_13_20_rejects_without_new_epoch<
         S: StorageExt + Sync + Send,
     >(
         storage: &mut S,
@@ -2280,16 +2298,17 @@ mod tests {
             .await
             .unwrap();
 
-        remove_old_keys_for_0_13_20(storage, KMSType::Threshold)
+        let error = remove_old_keys_for_0_13_20(storage, KMSType::Threshold)
             .await
-            .unwrap();
+            .unwrap_err();
 
-        // Legacy epoch key should still exist (not deleted because no DEFAULT_EPOCH_ID copy)
-        assert!(
+        assert!(error.to_string().contains("is missing"));
+        assert_eq!(
             storage
-                .data_exists_at_epoch(&key_id, &LEGACY_DEFAULT_EPOCH_ID, &data_type)
+                .load_bytes_at_epoch(&key_id, &LEGACY_DEFAULT_EPOCH_ID, &data_type)
                 .await
-                .unwrap()
+                .unwrap(),
+            data
         );
     }
 
@@ -2313,9 +2332,9 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_remove_old_keys_skips_without_new_epoch_ram() {
+    async fn test_remove_old_keys_rejects_without_new_epoch_ram() {
         let mut storage = RamStorage::new();
-        test_remove_old_keys_for_0_13_20_skips_without_new_epoch(&mut storage).await;
+        test_remove_old_keys_for_0_13_20_rejects_without_new_epoch(&mut storage).await;
     }
 
     // File storage tests — remove_old_keys_for_0_13_20
@@ -2341,10 +2360,10 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_remove_old_keys_skips_without_new_epoch_file() {
+    async fn test_remove_old_keys_rejects_without_new_epoch_file() {
         let temp_dir = tempfile::tempdir().unwrap();
         let mut storage = FileStorage::new(Some(temp_dir.path()), StorageType::PRIV, None).unwrap();
-        test_remove_old_keys_for_0_13_20_skips_without_new_epoch(&mut storage).await;
+        test_remove_old_keys_for_0_13_20_rejects_without_new_epoch(&mut storage).await;
     }
 
     // ── Tests for migrate_to_0_13_x (orchestrator) ──
@@ -3504,13 +3523,13 @@ mod tests {
         }
 
         #[tokio::test]
-        async fn test_remove_old_keys_skips_without_new_epoch_s3() {
+        async fn test_remove_old_keys_rejects_without_new_epoch_s3() {
             let mut storage = create_s3_storage(
                 StorageType::PRIV,
-                std::stringify!(test_remove_old_keys_skips_without_new_epoch_s3),
+                std::stringify!(test_remove_old_keys_rejects_without_new_epoch_s3),
             )
             .await;
-            test_remove_old_keys_for_0_13_20_skips_without_new_epoch(&mut storage).await;
+            test_remove_old_keys_for_0_13_20_rejects_without_new_epoch(&mut storage).await;
         }
     }
 }
