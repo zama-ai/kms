@@ -19,33 +19,46 @@
 //!    planted by someone with write access to the storage. The node cannot tell these apart, so
 //!    once the integrity checks pass, [`report_unexpected_public_material`] lists public storage
 //!    and logs an error for every entry that private storage does not account for.
-//! 3. **Read-only.** Nothing here writes to, repairs, or re-fetches public storage.
+//! 3. **Read-only.** Nothing here writes to, repairs, or re-fetches either storage.
+//!
+//! Private storage gets its own checks in [`verify_private_storage_layout`]. Invalid layouts fail
+//! boot. Other unexpected material is logged by [`report_unexpected_private_material`] and left
+//! to the operator.
 //!
 //! Startup verification operates on raw stored bytes. It never deserializes stored keys or
 //! CRSes: current material is checked by hashing those bytes, while legacy material (which has
-//! no digest) is checked for presence only.
+//! no digest) is checked for presence only. Private context data is deserialized to verify that
+//! each context uses its declared ID as its storage handle.
 
 use crate::backup::operator::RecoveryValidationMaterial;
 use crate::consts::{SIGNING_KEY_ID, signing_material_id};
-use crate::cryptography::signatures::recover_address_from_ext_signature;
-use crate::cryptography::signing::SigningSchemeType;
-use crate::cryptography::signing::ecdsa::{PrivateSigKey, PublicSigKey};
-use crate::engine::base::{
-    CrsGenMetadata, CrsGenMetadataInner, CurrentPublicMaterialLayout, DSEP_PUBDATA_KEY,
-    KeyGenMetadata, KeyGenMetadataInner, StoredEip712Domain, classify_current_public_material,
-    crs_sol_type, keygen_sol_type,
+use crate::cryptography::signing::ecdsa::{
+    PrivateSigKey, PublicSigKey, recover_address_from_eip712_hash,
 };
+use crate::cryptography::signing::identity::NodeSigningIdentity;
+use crate::cryptography::signing::{Signature, SigningSchemeType, unified_verify};
+use crate::engine::base::{
+    CrsGenMetadata, CrsGenMetadataInner, CurrentPublicMaterialLayout, DSEP_PUBDATA_CRS,
+    DSEP_PUBDATA_KEY, KeyGenMetadata, KeyGenMetadataInner, StoredTypedSignature,
+    classify_current_public_material, crs_payload_bytes, crs_sol_type, keygen_payload_bytes,
+    keygen_sol_type,
+};
+use crate::engine::context::ContextInfo;
 use crate::engine::material_integrity::{
     verify_compressed_key_digest_from_bytes, verify_crs_digest_from_bytes,
     verify_public_key_digest_from_bytes, verify_server_key_digest_from_bytes,
 };
 use crate::util::key_setup::{non_legacy_verf_material_slots, validate_slots};
-use crate::vault::storage::{StorageReader, read_text_at_request_id};
-use alloy_primitives::Address;
+use crate::vault::storage::{
+    StorageReader, StorageReaderExt, read_all_data_versioned, read_text_at_request_id,
+};
+use alloy_primitives::{Address, B256};
 use alloy_sol_types::{Eip712Domain, SolStruct};
+use hashing::DomainSep;
 use kms_grpc::RequestId;
-use kms_grpc::rpc_types::PubDataType;
-use std::collections::{BTreeMap, BTreeSet, HashMap};
+use kms_grpc::rpc_types::{PrivDataType, PubDataType};
+use kms_grpc::{ContextId, EpochId};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::str::FromStr;
 use strum::IntoEnumIterator;
 
@@ -59,6 +72,17 @@ pub(crate) const ERR_VERF_ADDRESS_MISMATCH: &str =
 const ERR_UNEXPECTED_PUBLIC_MATERIAL: &str = "Unexpected public material";
 const ERR_UNKNOWN_PUBLIC_DATA_TYPE: &str = "Unexpected data type in public storage";
 const ERR_UNLISTABLE_PUBLIC_MATERIAL: &str = "Could not list public material";
+const ERR_FOREIGN_PRIVATE_MATERIAL: &str = "Foreign material in private storage";
+const ERR_DANGLING_EPOCH: &str = "Dangling epoch in private storage";
+const ERR_EPOCH_WITHOUT_CONTEXT: &str = "Epoch without context in private storage";
+const ERR_CONTEXT_ID_MISMATCH: &str = "Context is stored under a different ID than it declares";
+const ERR_INVALID_SIGNING_KEY_LAYOUT: &str = "Invalid signing key layout in private storage";
+const ERR_INVALID_SIGNING_SEED_LAYOUT: &str = "Invalid signing seed layout in private storage";
+const ERR_MISSING_SIGNING_IDENTITY: &str = "No signing identity in private storage";
+const ERR_UNEXPECTED_FLAT_PRIVATE_MATERIAL: &str = "Unexpected flat private material";
+const ERR_UNEXPECTED_EPOCHED_PRIVATE_MATERIAL: &str = "Unexpected epoched private material";
+const ERR_UNKNOWN_PRIVATE_DATA_TYPE: &str = "Unexpected data type in private storage";
+const ERR_UNLISTABLE_PRIVATE_MATERIAL: &str = "Could not list private material";
 
 fn validate_legacy_public_material_shape<T>(
     public_materials: &HashMap<PubDataType, T>,
@@ -242,7 +266,7 @@ pub async fn verify_storage_material<S>(
     key_entries: &[(RequestId, KeyGenMetadata)],
     crs_entries: &HashMap<RequestId, CrsGenMetadata>,
     recovery_material: &HashMap<RequestId, RecoveryValidationMaterial>,
-    signing_key: &PrivateSigKey,
+    identity: &NodeSigningIdentity,
 ) -> anyhow::Result<UnexpectedPublicMaterial>
 where
     S: StorageReader + Sync,
@@ -257,8 +281,7 @@ where
         ensure_crs_metadata_id_matches(crs_id, metadata)?;
     }
 
-    let expected_address = PublicSigKey::from_sk(signing_key).address();
-    verify_private_metadata(key_entries, crs_entries, expected_address)?;
+    verify_private_metadata(key_entries, crs_entries, identity)?;
 
     for data_type in PubDataType::iter() {
         match data_type {
@@ -272,18 +295,13 @@ where
             #[allow(deprecated)]
             PubDataType::VerfKey => {
                 // Verifies both the legacy verification key and address together.
-                verify_signing_key_material(public_storage, signing_key).await?;
+                verify_signing_key_material(public_storage, identity.ecdsa()).await?;
             }
             PubDataType::RecoveryMaterial => {
-                verify_recovery_material(recovery_material, signing_key)?;
+                verify_recovery_material(recovery_material, identity.ecdsa())?;
             }
             PubDataType::TypedVerfKey => {
-                validate_slots(
-                    public_storage,
-                    signing_key,
-                    non_legacy_verf_material_slots(),
-                )
-                .await?;
+                validate_slots(public_storage, identity, non_legacy_verf_material_slots()).await?;
             }
             PubDataType::ServerKey
             | PubDataType::DecompressionKey
@@ -324,22 +342,24 @@ where
 
 /// Verify the signatures that authenticate current metadata in private storage.
 ///
-/// We cannot authenticate the signatures for older metadata since the EIP-712
+/// The ECDSA signatures of older metadata cannot be checked, since the EIP-712
 /// domain was not persisted. So those entries remain usable for backward
 /// compatibility. All newly written current metadata must carry a domain and a
-/// valid signature from this node.
+/// valid signature from this node. The signatures of the other schemes cover the
+/// result payload rather than an EIP-712 message, so they are checked whether or
+/// not a domain was stored.
 ///
 /// Assumes every entry has already been checked against the ID it is stored under; see
 /// [`verify_keygen_metadata_signature`] for why that ordering matters.
 fn verify_private_metadata(
     key_entries: &[(RequestId, KeyGenMetadata)],
     crs_entries: &HashMap<RequestId, CrsGenMetadata>,
-    expected_address: Address,
+    identity: &NodeSigningIdentity,
 ) -> anyhow::Result<()> {
     for (key_id, metadata) in key_entries {
         match metadata {
             KeyGenMetadata::Current(inner) => {
-                verify_keygen_metadata_signature(key_id, inner, expected_address)?;
+                verify_keygen_metadata_signature(key_id, inner, identity)?;
             }
             KeyGenMetadata::LegacyV0(_) => {
                 tracing::info!(
@@ -352,7 +372,7 @@ fn verify_private_metadata(
     for (crs_id, metadata) in crs_entries {
         match metadata {
             CrsGenMetadata::Current(inner) => {
-                verify_crs_metadata_signature(crs_id, inner, expected_address)?;
+                verify_crs_metadata_signature(crs_id, inner, identity)?;
             }
             CrsGenMetadata::LegacyV0(_) => {
                 tracing::info!(
@@ -365,7 +385,8 @@ fn verify_private_metadata(
     Ok(())
 }
 
-/// Verify the EIP-712 `external_signature` on one current keygen metadata record.
+/// Verify every signature on one current keygen metadata record: the EIP-712
+/// `external_signature` and each entry of its per-scheme `signatures`.
 ///
 /// Callers must run [`ensure_keygen_metadata_id_matches`] first. Without it,
 /// metadata stored under the wrong ID would verify happily against the ID it
@@ -373,45 +394,62 @@ fn verify_private_metadata(
 fn verify_keygen_metadata_signature(
     key_id: &RequestId,
     metadata: &KeyGenMetadataInner,
-    expected_address: Address,
+    identity: &NodeSigningIdentity,
 ) -> anyhow::Result<()> {
+    let extra_data = metadata.extra_data.as_deref().unwrap_or_default();
+    let payload_bytes = keygen_payload_bytes(
+        &metadata.preprocessing_id,
+        &metadata.key_id,
+        &metadata.key_digest_map,
+        extra_data,
+    )
+    .map_err(|e| anyhow::anyhow!("Invalid private keygen metadata for id={key_id}: {e}"))?;
+
     // TODO(github.com/zama-ai/kms-internal/issues/3201)
     // After we upgrade to 0.16 (and have migrated keys in 0.15),
     // or after we retire the default epoch, then remove the backward compatibility support.
     // That is, we should always have a domain in the metadata that we can use to verify the signature.
-    let Some(stored_domain) = metadata.eip712_domain.as_ref() else {
-        tracing::info!(
-            "Current keygen metadata for id={key_id} has no stored EIP-712 domain; skipping signature verification"
-        );
-        return Ok(());
+    let eip712_hash = match metadata.eip712_domain.as_ref() {
+        Some(stored_domain) => {
+            // Signing sites know their layout statically; here it can only be read back off
+            // the stored digest map.
+            let sol_type = classify_current_public_material(&metadata.key_digest_map)
+                .and_then(|layout| {
+                    keygen_sol_type(
+                        layout,
+                        &metadata.preprocessing_id,
+                        &metadata.key_id,
+                        &metadata.key_digest_map,
+                        extra_data,
+                    )
+                })
+                .map_err(|e| {
+                    anyhow::anyhow!("Invalid private keygen metadata for id={key_id}: {e}")
+                })?;
+            Some(sol_type.eip712_signing_hash(&Eip712Domain::from(stored_domain)))
+        }
+        None => {
+            tracing::info!(
+                "Current keygen metadata for id={key_id} has no stored EIP-712 domain; skipping the ECDSA signature verification"
+            );
+            None
+        }
     };
 
-    // Signing sites know their layout statically; here it can only be read back off the
-    // stored digest map.
-    let sol_type = classify_current_public_material(&metadata.key_digest_map)
-        .and_then(|layout| {
-            keygen_sol_type(
-                layout,
-                &metadata.preprocessing_id,
-                &metadata.key_id,
-                &metadata.key_digest_map,
-                metadata.extra_data.as_deref().unwrap_or_default(),
-            )
-        })
-        .map_err(|e| anyhow::anyhow!("Invalid private keygen metadata for id={key_id}: {e}"))?;
-    verify_eip712_metadata_signature(
+    verify_metadata_signatures(
         "keygen",
         key_id,
-        &sol_type,
-        stored_domain,
         &metadata.external_signature,
-        expected_address,
-    )?;
-
-    Ok(())
+        &metadata.signatures,
+        eip712_hash.as_ref(),
+        &DSEP_PUBDATA_KEY,
+        &payload_bytes,
+        identity,
+    )
 }
 
-/// Verify the EIP-712 `external_signature` on one current CRS metadata record.
+/// Verify every signature on one current CRS metadata record: the EIP-712
+/// `external_signature` and each entry of its per-scheme `signatures`.
 ///
 /// Carries the same precondition as [`verify_keygen_metadata_signature`]: the signed message is
 /// rebuilt from the metadata's own `crs_id`, so [`ensure_crs_metadata_id_matches`] must have run
@@ -419,45 +457,120 @@ fn verify_keygen_metadata_signature(
 fn verify_crs_metadata_signature(
     crs_id: &RequestId,
     metadata: &CrsGenMetadataInner,
-    expected_address: Address,
+    identity: &NodeSigningIdentity,
 ) -> anyhow::Result<()> {
+    let extra_data = metadata.extra_data.as_deref().unwrap_or_default();
+    let payload_bytes = crs_payload_bytes(
+        &metadata.crs_id,
+        metadata.max_num_bits,
+        &metadata.crs_digest,
+        extra_data,
+    )
+    .map_err(|e| anyhow::anyhow!("Invalid private CRS metadata for id={crs_id}: {e}"))?;
+
     // TODO(github.com/zama-ai/kms-internal/issues/3201)
     // After we can retire the default epoch, we can remove the backward compatibility support
     // since new epochs will be re-signed using the more recent format.
     // That is, we should always have a domain in the metadata that we can use to verify the signature.
-    let Some(stored_domain) = metadata.eip712_domain.as_ref() else {
-        tracing::info!(
-            "Current CRS metadata for id={crs_id} has no stored EIP-712 domain; skipping signature verification"
-        );
-        return Ok(());
+    let eip712_hash = match metadata.eip712_domain.as_ref() {
+        Some(stored_domain) => {
+            let sol_type = crs_sol_type(
+                &metadata.crs_id,
+                &metadata.crs_digest,
+                metadata.max_num_bits,
+                extra_data,
+            );
+            Some(sol_type.eip712_signing_hash(&Eip712Domain::from(stored_domain)))
+        }
+        None => {
+            tracing::info!(
+                "Current CRS metadata for id={crs_id} has no stored EIP-712 domain; skipping the ECDSA signature verification"
+            );
+            None
+        }
     };
 
-    let sol_type = crs_sol_type(
-        &metadata.crs_id,
-        &metadata.crs_digest,
-        metadata.max_num_bits,
-        metadata.extra_data.as_deref().unwrap_or_default(),
-    );
-    verify_eip712_metadata_signature(
+    verify_metadata_signatures(
         "CRS",
         crs_id,
-        &sol_type,
-        stored_domain,
         &metadata.external_signature,
-        expected_address,
+        &metadata.signatures,
+        eip712_hash.as_ref(),
+        &DSEP_PUBDATA_CRS,
+        &payload_bytes,
+        identity,
     )
 }
 
-fn verify_eip712_metadata_signature<T: SolStruct>(
+/// Verify the signatures one current metadata record carries against `identity`.
+///
+/// Both ECDSA forms, the `external_signature` and the ECDSA entry of `signatures`,
+/// recover their signer from `eip712_hash`, so they are skipped when no stored
+/// domain yields one. Every other scheme signs `payload_bytes` under `dsep` and is
+/// checked against the key `identity` derives for it. A scheme `identity` cannot
+/// derive a key for is an error rather than a skip: an entry nobody can check must
+/// not pass as one that was checked.
+#[expect(clippy::too_many_arguments)]
+fn verify_metadata_signatures(
     metadata_kind: &str,
     metadata_id: &RequestId,
-    sol_type: &T,
-    stored_domain: &StoredEip712Domain,
+    external_signature: &[u8],
+    signatures: &[StoredTypedSignature],
+    eip712_hash: Option<&B256>,
+    dsep: &DomainSep,
+    payload_bytes: &[u8],
+    identity: &NodeSigningIdentity,
+) -> anyhow::Result<()> {
+    let expected_address = identity.verf_key().address();
+    if let Some(hash) = eip712_hash {
+        verify_eip712_metadata_signature(
+            metadata_kind,
+            metadata_id,
+            hash,
+            external_signature,
+            expected_address,
+        )?;
+    }
+
+    for stored in signatures {
+        match stored.scheme {
+            SigningSchemeType::Ecdsa256k1 => {
+                if let Some(hash) = eip712_hash {
+                    verify_eip712_metadata_signature(
+                        metadata_kind,
+                        metadata_id,
+                        hash,
+                        &stored.signature,
+                        expected_address,
+                    )?;
+                }
+            }
+            scheme => {
+                let verf_key = identity.unified_verifying_key(scheme).map_err(|e| {
+                    anyhow::anyhow!(
+                        "Private {metadata_kind} metadata for id={metadata_id} carries a {scheme} signature, but this node cannot derive the {scheme} verification key to check it against: {e}"
+                    )
+                })?;
+                let signature = Signature::new(scheme, stored.signature.clone());
+                unified_verify(dsep, payload_bytes, &signature, &verf_key).map_err(|e| {
+                    anyhow::anyhow!(
+                        "Invalid {scheme} signature in private {metadata_kind} metadata for id={metadata_id}: {e}"
+                    )
+                })?;
+            }
+        }
+    }
+    Ok(())
+}
+
+fn verify_eip712_metadata_signature(
+    metadata_kind: &str,
+    metadata_id: &RequestId,
+    eip712_hash: &B256,
     external_signature: &[u8],
     expected_address: Address,
 ) -> anyhow::Result<()> {
-    let domain = Eip712Domain::from(stored_domain);
-    let recovered_address = recover_address_from_ext_signature(sol_type, &domain, external_signature)
+    let recovered_address = recover_address_from_eip712_hash(eip712_hash, external_signature)
         .map_err(|e| {
             anyhow::anyhow!(
                 "Invalid EIP-712 signature in private {metadata_kind} metadata for id={metadata_id}: {e}"
@@ -468,9 +581,6 @@ fn verify_eip712_metadata_signature<T: SolStruct>(
             "Invalid EIP-712 signature in private {metadata_kind} metadata for id={metadata_id}: recovered signer {recovered_address}, expected {expected_address}"
         );
     }
-
-    // TODO(https://github.com/zama-ai/kms-internal/issues/3078): verify the optional
-    // per-scheme signatures stored in the metadata, including PQ signatures.
     Ok(())
 }
 
@@ -742,22 +852,470 @@ where
     report
 }
 
+/// The private storage layout for one deployment mode.
+pub(crate) enum PrivateLayout<'a> {
+    /// A centralized node layout.
+    Centralized,
+    /// A threshold node layout and its epoch-to-context registry.
+    Threshold {
+        epoch_contexts: &'a BTreeMap<EpochId, ContextId>,
+    },
+}
+
+impl PrivateLayout<'_> {
+    #[expect(deprecated)]
+    fn foreign_data_types(&self) -> (&'static [PrivDataType], &'static str) {
+        match self {
+            PrivateLayout::Centralized => (
+                &[
+                    PrivDataType::FheKeyInfo,
+                    PrivDataType::PrssSetup,
+                    PrivDataType::PrssSetupCombined,
+                    PrivDataType::EpochData,
+                ],
+                "threshold",
+            ),
+            PrivateLayout::Threshold { .. } => (
+                &[PrivDataType::FhePrivateKey, PrivDataType::PrssSetup],
+                "centralized or legacy threshold",
+            ),
+        }
+    }
+}
+
+/// Private material that the current layout does not account for.
+#[derive(Debug, Default, PartialEq, Eq)]
+pub(crate) struct UnexpectedPrivateMaterial {
+    unexpected_flat: BTreeMap<PrivDataType, BTreeSet<RequestId>>,
+    unexpected_epoched: BTreeMap<PrivDataType, BTreeMap<EpochId, BTreeSet<RequestId>>>,
+    /// Top-level names in private storage that are not a [`PrivDataType`] folder: a folder with
+    /// an unknown name, or an object at the root whatever its name.
+    unknown_data_types: BTreeSet<String>,
+    /// Data types whose folder could not be listed, with the listing error. The `None` key means
+    /// the root listing itself failed.
+    unlistable: BTreeMap<Option<PrivDataType>, String>,
+}
+
+impl UnexpectedPrivateMaterial {
+    /// Returns the number of reported items across all categories.
+    pub(crate) fn unexpected_count(&self) -> usize {
+        self.unexpected_flat
+            .values()
+            .map(BTreeSet::len)
+            .sum::<usize>()
+            + self
+                .unexpected_epoched
+                .values()
+                .flat_map(BTreeMap::values)
+                .map(BTreeSet::len)
+                .sum::<usize>()
+            + self.unknown_data_types.len()
+            + self.unlistable.len()
+    }
+}
+
+fn join_display<T: std::fmt::Display>(items: impl IntoIterator<Item = T>) -> String {
+    items
+        .into_iter()
+        .map(|item| item.to_string())
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
+fn describe_epoched(entries: &BTreeMap<EpochId, BTreeSet<RequestId>>) -> String {
+    join_display(
+        entries
+            .iter()
+            .map(|(epoch_id, ids)| format!("epoch {epoch_id}: [{}]", join_display(ids))),
+    )
+}
+
+/// List the entries of an epoched private data type, per epoch. Epochs without entries are left
+/// out: an empty folder is not material.
+async fn epoched_private_entries<S: StorageReaderExt + Sync>(
+    storage: &S,
+    data_type: PrivDataType,
+) -> anyhow::Result<BTreeMap<EpochId, BTreeSet<RequestId>>> {
+    let data_type = data_type.to_string();
+    let mut entries = BTreeMap::new();
+    for epoch_id in storage.all_epoch_ids_for_data(&data_type).await? {
+        let ids: BTreeSet<RequestId> = storage
+            .all_data_ids_at_epoch(&epoch_id, &data_type)
+            .await?
+            .into_iter()
+            .collect();
+        if !ids.is_empty() {
+            entries.insert(epoch_id, ids);
+        }
+    }
+    Ok(entries)
+}
+
+/// Ensures that the deployment mode matches the private material.
+async fn ensure_no_foreign_material<S: StorageReaderExt + Sync>(
+    storage: &S,
+    layout: &PrivateLayout<'_>,
+) -> anyhow::Result<()> {
+    let (foreign_types, writer) = layout.foreign_data_types();
+    for foreign in foreign_types {
+        let flat: BTreeSet<RequestId> = storage
+            .all_data_ids(&foreign.to_string())
+            .await
+            .map_err(|e| {
+                anyhow::anyhow!(
+                    "{ERR_FOREIGN_PRIVATE_MATERIAL}: could not list {foreign} in storage \"{}\": {e}",
+                    storage.info()
+                )
+            })?
+            .into_iter()
+            .collect();
+        let epoched = epoched_private_entries(storage, *foreign)
+            .await
+            .map_err(|e| {
+                anyhow::anyhow!(
+                    "{ERR_FOREIGN_PRIVATE_MATERIAL}: could not list {foreign} epochs in storage \"{}\": {e}",
+                    storage.info()
+                )
+            })?;
+        if flat.is_empty() && epoched.is_empty() {
+            continue;
+        }
+        anyhow::bail!(
+            "{ERR_FOREIGN_PRIVATE_MATERIAL}: storage \"{}\" holds {foreign} entries, which only a {writer} node writes: flat [{}], {}",
+            storage.info(),
+            join_display(&flat),
+            describe_epoched(&epoched)
+        )
+    }
+    Ok(())
+}
+
+/// Verify the fixed-handle layout of the node's signing identity.
+///
+/// The ECDSA signing key and the root signing seed each live at `SIGNING_KEY_ID`, never under an
+/// epoch. Either may be absent: a node that predates the seed has only the key, and a node whose
+/// ECDSA key is derived from the seed has only the seed. A node with neither has no identity.
+/// Which of the two the node can boot from is decided by `get_core_signing_key`, not here.
+async fn ensure_signing_material_layout<S: StorageReaderExt + Sync>(
+    storage: &S,
+) -> anyhow::Result<()> {
+    let has_signing_key = ensure_single_signing_material_handle(
+        storage,
+        PrivDataType::SigningKey,
+        ERR_INVALID_SIGNING_KEY_LAYOUT,
+    )
+    .await?;
+    let has_signing_seed = ensure_single_signing_material_handle(
+        storage,
+        PrivDataType::SigningSeed,
+        ERR_INVALID_SIGNING_SEED_LAYOUT,
+    )
+    .await?;
+    if has_signing_key || has_signing_seed {
+        return Ok(());
+    }
+    anyhow::bail!(
+        "{ERR_MISSING_SIGNING_IDENTITY}: storage \"{}\" holds neither a {} nor a {} entry at {}",
+        storage.info(),
+        PrivDataType::SigningKey,
+        PrivDataType::SigningSeed,
+        *SIGNING_KEY_ID
+    )
+}
+
+/// Returns whether `data_type` holds any entry, and fails unless that entry is exactly one flat
+/// entry at `SIGNING_KEY_ID`. Every error message starts with `error`.
+async fn ensure_single_signing_material_handle<S: StorageReaderExt + Sync>(
+    storage: &S,
+    data_type: PrivDataType,
+    error: &str,
+) -> anyhow::Result<bool> {
+    let flat: BTreeSet<RequestId> = storage
+        .all_data_ids(&data_type.to_string())
+        .await
+        .map_err(|e| {
+            anyhow::anyhow!(
+                "{error}: could not list {data_type} in storage \"{}\": {e}",
+                storage.info()
+            )
+        })?
+        .into_iter()
+        .collect();
+    let epoched = epoched_private_entries(storage, data_type)
+        .await
+        .map_err(|e| {
+            anyhow::anyhow!(
+                "{error}: could not list {data_type} epochs in storage \"{}\": {e}",
+                storage.info()
+            )
+        })?;
+    if flat.is_empty() && epoched.is_empty() {
+        return Ok(false);
+    }
+    if flat == BTreeSet::from([*SIGNING_KEY_ID]) && epoched.is_empty() {
+        return Ok(true);
+    }
+    anyhow::bail!(
+        "{error}: expected exactly one flat {data_type} entry at {}, found flat [{}], epoch-scoped [{}] in storage \"{}\"",
+        *SIGNING_KEY_ID,
+        join_display(&flat),
+        describe_epoched(&epoched),
+        storage.info()
+    )
+}
+
+/// Fails if keysets or CRS metadata sit under an epoch that is not in the registry.
+async fn ensure_no_dangling_epochs<S: StorageReaderExt + Sync>(
+    storage: &S,
+    epoch_contexts: &BTreeMap<EpochId, ContextId>,
+) -> anyhow::Result<()> {
+    let mut dangling: BTreeMap<PrivDataType, BTreeMap<EpochId, BTreeSet<RequestId>>> =
+        BTreeMap::new();
+    for data_type in [PrivDataType::FheKeyInfo, PrivDataType::CrsInfo] {
+        let entries = epoched_private_entries(storage, data_type)
+            .await
+            .map_err(|e| {
+                anyhow::anyhow!(
+                    "{ERR_DANGLING_EPOCH}: could not list {data_type} epochs in storage \"{}\": {e}",
+                    storage.info()
+                )
+            })?;
+        for (epoch_id, ids) in entries {
+            if epoch_contexts.contains_key(&epoch_id) {
+                continue;
+            }
+            dangling.entry(data_type).or_default().insert(epoch_id, ids);
+        }
+    }
+    if dangling.is_empty() {
+        return Ok(());
+    }
+    anyhow::bail!(
+        "{ERR_DANGLING_EPOCH}: storage \"{}\" holds material under epochs that have no epoch data, so the node can neither serve nor delete it: {}",
+        storage.info(),
+        join_display(
+            dangling
+                .iter()
+                .map(|(data_type, entries)| format!("{data_type} {}", describe_epoched(entries)))
+        )
+    )
+}
+
+/// Returns the declared IDs of stored contexts after it verifies their storage handles.
+async fn ensure_context_ids_match<S: StorageReader + Sync>(
+    storage: &S,
+) -> anyhow::Result<HashSet<ContextId>> {
+    let contexts: HashMap<RequestId, ContextInfo> =
+        read_all_data_versioned(storage, &PrivDataType::ContextInfo.to_string())
+            .await
+            .map_err(|e| {
+                anyhow::anyhow!(
+                    "Could not verify context storage handles in storage \"{}\": {e}",
+                    storage.info()
+                )
+            })?;
+    let mut context_ids = HashSet::new();
+    let mut mismatches = Vec::new();
+    for (handle, context) in contexts {
+        let context_id = *context.context_id();
+        if handle != RequestId::from(&context_id) {
+            mismatches.push(format!("handle {handle}: declared ID {context_id}"));
+        }
+        context_ids.insert(context_id);
+    }
+    if mismatches.is_empty() {
+        return Ok(context_ids);
+    }
+    anyhow::bail!(
+        "{ERR_CONTEXT_ID_MISMATCH} in storage \"{}\": {}",
+        storage.info(),
+        mismatches.join(", ")
+    )
+}
+
+/// Fails if an epoch belongs to a context that is not stored.
+fn ensure_epochs_have_contexts(
+    epoch_contexts: &BTreeMap<EpochId, ContextId>,
+    stored_contexts: &HashSet<ContextId>,
+    storage_info: &str,
+) -> anyhow::Result<()> {
+    let mut orphaned = Vec::new();
+    for (epoch_id, context_id) in epoch_contexts {
+        if stored_contexts.contains(context_id) {
+            continue;
+        }
+        orphaned.push(format!("epoch {epoch_id} (context {context_id})"));
+    }
+    if orphaned.is_empty() {
+        return Ok(());
+    }
+    anyhow::bail!(
+        "{ERR_EPOCH_WITHOUT_CONTEXT}: storage \"{}\" holds epochs whose context is not stored: {}",
+        storage_info,
+        orphaned.join(", ")
+    )
+}
+
+/// Returns whether the sweep inspects non-epoched entries of `data_type`.
+#[expect(deprecated)]
+fn sweeps_flat_entries(data_type: PrivDataType) -> bool {
+    match data_type {
+        // The signing material has its own abort check, `ensure_signing_material_layout`.
+        PrivDataType::SigningKey | PrivDataType::SigningSeed => false,
+        // Contexts are validated when they are loaded.
+        PrivDataType::ContextInfo => false,
+        // On a threshold node this folder is the registry that the abort checks reconcile against.
+        PrivDataType::EpochData => false,
+        PrivDataType::FheKeyInfo | PrivDataType::FhePrivateKey | PrivDataType::CrsInfo => true,
+        PrivDataType::PrssSetup => true,
+        // The 0.15 migration leaves the combined PRSS setup in place. The 0.16 migration removes
+        // it after every threshold node has migrated to `EpochData`.
+        PrivDataType::PrssSetupCombined => false,
+    }
+}
+
+/// Logs unexpected private material without stopping boot.
+pub(crate) async fn report_unexpected_private_material<S>(
+    private_storage: &S,
+) -> UnexpectedPrivateMaterial
+where
+    S: StorageReaderExt + Sync,
+{
+    let mut report = UnexpectedPrivateMaterial::default();
+    let storage_info = private_storage.info();
+
+    // Compared as exact strings: `PrivDataType::try_from` is case-insensitive, but the storage
+    // backends are not, so a folder that differs only in case is never read.
+    let known_data_types: BTreeSet<String> = PrivDataType::iter().map(|t| t.to_string()).collect();
+    match private_storage.all_data_types().await {
+        Ok(entries) => {
+            for name in entries.folders {
+                if !known_data_types.contains(&name) {
+                    tracing::error!(
+                        "{ERR_UNKNOWN_PRIVATE_DATA_TYPE} \"{storage_info}\": \"{name}\" is not a known data type"
+                    );
+                    report.unknown_data_types.insert(name);
+                }
+            }
+            // A data type stores its entries inside its folder only, so an object at the root is
+            // a stray even when it carries a data type's name.
+            for name in entries.objects {
+                tracing::error!(
+                    "{ERR_UNKNOWN_PRIVATE_DATA_TYPE} \"{storage_info}\": \"{name}\" is an object where only data type folders belong"
+                );
+                report.unknown_data_types.insert(name);
+            }
+        }
+        Err(e) => {
+            tracing::error!(
+                "{ERR_UNLISTABLE_PRIVATE_MATERIAL} in storage \"{storage_info}\", so unknown data types were not detected: {e}"
+            );
+            report.unlistable.insert(None, e.to_string());
+        }
+    }
+
+    for data_type in PrivDataType::iter().filter(|data_type| sweeps_flat_entries(*data_type)) {
+        let found: BTreeSet<RequestId> = match private_storage
+            .all_data_ids(&data_type.to_string())
+            .await
+        {
+            Ok(found) => found.into_iter().collect(),
+            Err(e) => {
+                tracing::error!(
+                    "{ERR_UNLISTABLE_PRIVATE_MATERIAL} {data_type} in storage \"{storage_info}\", so its entries were not reconciled: {e}"
+                );
+                report.unlistable.insert(Some(data_type), e.to_string());
+                continue;
+            }
+        };
+        for id in &found {
+            tracing::error!(
+                "{ERR_UNEXPECTED_FLAT_PRIVATE_MATERIAL} {data_type} for id={id} in storage \"{storage_info}\": the node does not read this entry"
+            );
+        }
+        if !found.is_empty() {
+            report.unexpected_flat.insert(data_type, found);
+        }
+    }
+
+    #[expect(deprecated)]
+    let epoched_data_types = [
+        PrivDataType::ContextInfo,
+        PrivDataType::EpochData,
+        PrivDataType::PrssSetupCombined,
+    ];
+    for data_type in epoched_data_types {
+        let entries = match epoched_private_entries(private_storage, data_type).await {
+            Ok(entries) => entries,
+            Err(e) => {
+                tracing::error!(
+                    "{ERR_UNLISTABLE_PRIVATE_MATERIAL} {data_type} epochs in storage \"{storage_info}\", so its epoch folders were not reconciled: {e}"
+                );
+                report.unlistable.insert(Some(data_type), e.to_string());
+                continue;
+            }
+        };
+        for (epoch_id, ids) in &entries {
+            for id in ids {
+                tracing::error!(
+                    "{ERR_UNEXPECTED_EPOCHED_PRIVATE_MATERIAL}: {data_type} for id={id} in storage \"{storage_info}\" sits under epoch {epoch_id}, but the node only reads this type without an epoch"
+                );
+            }
+        }
+        if !entries.is_empty() {
+            report.unexpected_epoched.insert(data_type, entries);
+        }
+    }
+    report
+}
+
+/// Verify that the private layout is one the node can serve, then sweep it for leftovers.
+pub(crate) async fn verify_private_storage_layout<S>(
+    private_storage: &S,
+    layout: PrivateLayout<'_>,
+) -> anyhow::Result<UnexpectedPrivateMaterial>
+where
+    S: StorageReaderExt + Sync,
+{
+    ensure_signing_material_layout(private_storage).await?;
+    ensure_no_foreign_material(private_storage, &layout).await?;
+    let stored_contexts = ensure_context_ids_match(private_storage).await?;
+    match &layout {
+        PrivateLayout::Centralized => {}
+        PrivateLayout::Threshold { epoch_contexts } => {
+            ensure_no_dangling_epochs(private_storage, epoch_contexts).await?;
+            ensure_epochs_have_contexts(epoch_contexts, &stored_contexts, &private_storage.info())?;
+        }
+    }
+
+    let report = report_unexpected_private_material(private_storage).await;
+    let storage_info = private_storage.info();
+    tracing::info!(
+        "Verified private storage layout in storage \"{storage_info}\": {} unexpected entry(ies)",
+        report.unexpected_count()
+    );
+    Ok(report)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::backup::custodian::InternalCustodianContext;
     use crate::backup::operator::RecoveryValidationMaterial;
-    use crate::consts::DEFAULT_MPC_CONTEXT;
+    use crate::consts::{DEFAULT_EPOCH_ID, DEFAULT_MPC_CONTEXT};
     use crate::cryptography::encryption::{Encryption, PkeScheme, PkeSchemeType};
-    use crate::cryptography::signatures::gen_sig_keys;
+    use crate::cryptography::signatures::{RootSigningSeed, gen_sig_keys};
     use crate::engine::base::KeyGenMetadataInner;
     use crate::engine::base::{DSEP_PUBDATA_CRS, ERR_INVALID_CURRENT_PUBLIC_KEY_SHAPE};
+    use crate::engine::context::{ContextInfo, SoftwareVersion};
     use crate::engine::material_integrity::{
         ERR_COMPRESSED_KEYSET_DIGEST_MISMATCH, ERR_CRS_DIGEST_MISMATCH,
         ERR_PUBLIC_KEY_DIGEST_MISMATCH, ERR_SERVER_KEY_DIGEST_MISMATCH,
     };
     use crate::vault::storage::ram::RamStorage;
-    use crate::vault::storage::{Storage, delete_at_request_id, store_versioned_at_request_id};
+    use crate::vault::storage::{
+        Storage, StorageExt, delete_at_request_id, store_versioned_at_request_id,
+    };
 
     use aes_prng::AesRng;
     use hashing::{DomainSep, hash_element};
@@ -1065,10 +1623,15 @@ mod tests {
             .await
             .expect("the digests match, so the digest checks alone cannot catch this");
 
-        let err =
-            verify_storage_material(&storage, &entries, &HashMap::new(), &HashMap::new(), &sk)
-                .await
-                .unwrap_err();
+        let err = verify_storage_material(
+            &storage,
+            &entries,
+            &HashMap::new(),
+            &HashMap::new(),
+            &NodeSigningIdentity::ecdsa_only(sk.clone()),
+        )
+        .await
+        .unwrap_err();
         assert!(
             err.to_string().contains(ERR_METADATA_ID_MISMATCH),
             "expected an ID mismatch before public storage verification, got: {err}"
@@ -1104,9 +1667,15 @@ mod tests {
         let (_pk, sk) = gen_sig_keys(&mut AesRng::seed_from_u64(124));
 
         let entries = HashMap::from([(other_id, metadata)]);
-        let err = verify_storage_material(&storage, &[], &entries, &HashMap::new(), &sk)
-            .await
-            .unwrap_err();
+        let err = verify_storage_material(
+            &storage,
+            &[],
+            &entries,
+            &HashMap::new(),
+            &NodeSigningIdentity::ecdsa_only(sk.clone()),
+        )
+        .await
+        .unwrap_err();
         assert!(
             err.to_string().contains(ERR_METADATA_ID_MISMATCH),
             "expected an ID mismatch before public storage verification, got: {err}"
@@ -1280,9 +1849,15 @@ mod tests {
         let crs_id = RequestId::new_random(&mut rng);
         let _crs_digest = setup_crs(&mut storage, &crs_id).await;
 
-        let report = verify_storage_material(&storage, &[], &HashMap::new(), &HashMap::new(), &sk)
-            .await
-            .expect("material with no private counterpart must not fail boot");
+        let report = verify_storage_material(
+            &storage,
+            &[],
+            &HashMap::new(),
+            &HashMap::new(),
+            &NodeSigningIdentity::ecdsa_only(sk.clone()),
+        )
+        .await
+        .expect("material with no private counterpart must not fail boot");
         let expected = BTreeMap::from([
             (
                 PubDataType::PublicKey,
@@ -1481,9 +2056,15 @@ mod tests {
         std::fs::create_dir_all(&public_key_dir).unwrap();
         std::fs::write(public_key_dir.join("not-a-request-id"), b"x").unwrap();
 
-        let report = verify_storage_material(&storage, &[], &HashMap::new(), &HashMap::new(), &sk)
-            .await
-            .expect("an unlistable folder must not fail boot");
+        let report = verify_storage_material(
+            &storage,
+            &[],
+            &HashMap::new(),
+            &HashMap::new(),
+            &NodeSigningIdentity::ecdsa_only(sk.clone()),
+        )
+        .await
+        .expect("an unlistable folder must not fail boot");
         assert!(
             report
                 .unlistable
@@ -1591,7 +2172,7 @@ mod tests {
         let prep_id = RequestId::new_random(&mut rng);
         let key_id = RequestId::new_random(&mut rng);
         let metadata = crate::engine::base::compute_info_standard_keygen_from_digests(
-            &signing_key,
+            &NodeSigningIdentity::ecdsa_only(signing_key.clone()),
             &[],
             &prep_id,
             &key_id,
@@ -1608,7 +2189,7 @@ mod tests {
         verify_keygen_metadata_signature(
             &key_id,
             inner,
-            PublicSigKey::from_sk(&signing_key).address(),
+            &NodeSigningIdentity::ecdsa_only(signing_key.clone()),
         )
         .expect("the stored domain must verify the standard keygen signature");
 
@@ -1621,7 +2202,7 @@ mod tests {
         let err = verify_keygen_metadata_signature(
             &key_id,
             &tampered_inner,
-            PublicSigKey::from_sk(&signing_key).address(),
+            &NodeSigningIdentity::ecdsa_only(signing_key.clone()),
         )
         .expect_err("a changed server-key digest must invalidate the signature");
         assert!(
@@ -1638,7 +2219,7 @@ mod tests {
         let prep_id = RequestId::new_random(&mut rng);
         let key_id = RequestId::new_random(&mut rng);
         let metadata = crate::engine::base::compute_info_compressed_keygen_from_digests(
-            &signing_key,
+            &NodeSigningIdentity::ecdsa_only(signing_key.clone()),
             &[],
             &prep_id,
             &key_id,
@@ -1655,7 +2236,7 @@ mod tests {
         verify_keygen_metadata_signature(
             &key_id,
             inner,
-            PublicSigKey::from_sk(&signing_key).address(),
+            &NodeSigningIdentity::ecdsa_only(signing_key.clone()),
         )
         .expect("the stored domain must verify the compressed keygen signature");
 
@@ -1670,7 +2251,7 @@ mod tests {
         let err = verify_keygen_metadata_signature(
             &key_id,
             &tampered_inner,
-            PublicSigKey::from_sk(&signing_key).address(),
+            &NodeSigningIdentity::ecdsa_only(signing_key.clone()),
         )
         .expect_err("a changed stored domain must invalidate the signature");
         assert!(
@@ -1685,7 +2266,7 @@ mod tests {
         let (_verf_key, signing_key) = gen_sig_keys(&mut rng);
         let crs_id = RequestId::new_random(&mut rng);
         let metadata = crate::engine::base::compute_info_crs_from_digest(
-            &signing_key,
+            &NodeSigningIdentity::ecdsa_only(signing_key.clone()),
             &[],
             &crs_id,
             vec![0x33; 32],
@@ -1701,9 +2282,141 @@ mod tests {
         verify_crs_metadata_signature(
             &crs_id,
             inner,
-            PublicSigKey::from_sk(&signing_key).address(),
+            &NodeSigningIdentity::ecdsa_only(signing_key.clone()),
         )
         .expect("the stored domain must verify the CRS signature");
+    }
+
+    /// The per-scheme `signatures` of stored metadata are checked against the keys the
+    /// node derives, with and without a stored domain, and a tampered entry is rejected.
+    #[test]
+    fn private_metadata_scheme_signatures_are_verified() {
+        let mut rng = AesRng::seed_from_u64(177);
+        let (_verf_key, signing_key) = gen_sig_keys(&mut rng);
+        let identity =
+            NodeSigningIdentity::new(signing_key.clone(), RootSigningSeed::random(&mut rng));
+        let schemes = [
+            SigningSchemeType::Ecdsa256k1,
+            SigningSchemeType::Ed25519,
+            SigningSchemeType::MlDsa65,
+        ];
+        let domain = crate::dummy_domain();
+        let prep_id = RequestId::new_random(&mut rng);
+        let key_id = RequestId::new_random(&mut rng);
+        let crs_id = RequestId::new_random(&mut rng);
+
+        let KeyGenMetadata::Current(key_inner) =
+            crate::engine::base::compute_info_standard_keygen_from_digests(
+                &identity,
+                &schemes,
+                &prep_id,
+                &key_id,
+                vec![0x11; 32],
+                vec![0x22; 32],
+                &domain,
+                vec![0x03],
+            )
+            .expect("standard keygen metadata construction must succeed")
+        else {
+            panic!("metadata construction must produce current metadata");
+        };
+        let CrsGenMetadata::Current(crs_inner) = crate::engine::base::compute_info_crs_from_digest(
+            &identity,
+            &schemes,
+            &crs_id,
+            vec![0x33; 32],
+            64,
+            &domain,
+            vec![0x04],
+        )
+        .expect("CRS metadata construction must succeed") else {
+            panic!("metadata construction must produce current metadata");
+        };
+        assert_eq!(key_inner.signatures.len(), schemes.len());
+        assert_eq!(crs_inner.signatures.len(), schemes.len());
+
+        verify_keygen_metadata_signature(&key_id, &key_inner, &identity)
+            .expect("every keygen signature must verify under the identity that made it");
+        verify_crs_metadata_signature(&crs_id, &crs_inner, &identity)
+            .expect("every CRS signature must verify under the identity that made it");
+
+        // Without a stored domain neither ECDSA form can be rebuilt, but the other schemes
+        // sign the payload and are still checked.
+        for with_domain in [true, false] {
+            let mut key_metadata = key_inner.clone();
+            let mut crs_metadata = crs_inner.clone();
+            if !with_domain {
+                key_metadata.eip712_domain = None;
+                crs_metadata.eip712_domain = None;
+            }
+            verify_keygen_metadata_signature(&key_id, &key_metadata, &identity)
+                .expect("intact keygen metadata must verify");
+            verify_crs_metadata_signature(&crs_id, &crs_metadata, &identity)
+                .expect("intact CRS metadata must verify");
+
+            let tampered_entry = key_metadata
+                .signatures
+                .iter_mut()
+                .find(|stored| stored.scheme == SigningSchemeType::MlDsa65)
+                .expect("the metadata carries an MlDsa65 entry");
+            tampered_entry.signature[0] ^= 1;
+            let err = verify_keygen_metadata_signature(&key_id, &key_metadata, &identity)
+                .expect_err("a tampered MlDsa65 entry must be rejected");
+            assert!(
+                err.to_string().contains("Invalid MlDsa65 signature"),
+                "with_domain={with_domain}: expected an MlDsa65 signature error, got: {err}"
+            );
+
+            let tampered_entry = crs_metadata
+                .signatures
+                .iter_mut()
+                .find(|stored| stored.scheme == SigningSchemeType::Ed25519)
+                .expect("the metadata carries an Ed25519 entry");
+            tampered_entry.signature[0] ^= 1;
+            let err = verify_crs_metadata_signature(&crs_id, &crs_metadata, &identity)
+                .expect_err("a tampered Ed25519 entry must be rejected");
+            assert!(
+                err.to_string().contains("Invalid Ed25519 signature"),
+                "with_domain={with_domain}: expected an Ed25519 signature error, got: {err}"
+            );
+        }
+
+        // The ECDSA entry of `signatures` is held to the same standard as `external_signature`.
+        let mut tampered = key_inner.clone();
+        tampered
+            .signatures
+            .iter_mut()
+            .find(|stored| stored.scheme == SigningSchemeType::Ecdsa256k1)
+            .expect("the metadata carries an ECDSA entry")
+            .signature = vec![0u8; 65];
+        let err = verify_keygen_metadata_signature(&key_id, &tampered, &identity)
+            .expect_err("a corrupt ECDSA entry must be rejected");
+        assert!(
+            err.to_string().contains("Invalid EIP-712 signature"),
+            "expected an EIP-712 signature error, got: {err}"
+        );
+
+        // The same ECDSA key under another seed derives other keys, so the entries of the
+        // other schemes no longer verify.
+        let other_seed =
+            NodeSigningIdentity::new(signing_key.clone(), RootSigningSeed::random(&mut rng));
+        let err = verify_keygen_metadata_signature(&key_id, &key_inner, &other_seed)
+            .expect_err("metadata signed under another seed must be rejected");
+        assert!(
+            err.to_string().contains("Invalid Ed25519 signature"),
+            "expected an Ed25519 signature error, got: {err}"
+        );
+
+        // A node without a seed cannot check a post-quantum entry, and says so rather than
+        // passing it over.
+        let seedless = NodeSigningIdentity::ecdsa_only(signing_key);
+        let err = verify_keygen_metadata_signature(&key_id, &key_inner, &seedless)
+            .expect_err("a seedless node must not accept an entry it cannot check");
+        assert!(
+            err.to_string()
+                .contains("cannot derive the Ed25519 verification key"),
+            "expected an error naming the missing key, got: {err}"
+        );
     }
 
     // === End to end ===
@@ -1718,7 +2431,7 @@ mod tests {
             &entries,
             &crs_entries,
             &recovery_material_for(&sk),
-            &sk,
+            &NodeSigningIdentity::ecdsa_only(sk.clone()),
         )
         .await
         .expect("consistent public storage must verify");
@@ -1739,7 +2452,7 @@ mod tests {
             &entries,
             &HashMap::new(),
             &recovery_material_for(&sk),
-            &sk,
+            &NodeSigningIdentity::ecdsa_only(sk.clone()),
         )
         .await
         .expect_err("metadata signed by another key must be rejected");
@@ -1784,10 +2497,486 @@ mod tests {
             &entries,
             &crs_entries,
             &recovery_material_for(&sk),
-            &sk,
+            &NodeSigningIdentity::ecdsa_only(sk.clone()),
         )
         .await
         .expect("current metadata without a stored domain must still verify");
+    }
+
+    // === Private storage layout ===
+
+    #[expect(deprecated)]
+    const LEGACY_PRSS_SETUP: PrivDataType = PrivDataType::PrssSetup;
+    #[expect(deprecated)]
+    const LEGACY_PRSS_SETUP_COMBINED: PrivDataType = PrivDataType::PrssSetupCombined;
+
+    #[tokio::test]
+    async fn private_layout_accepts_consistent_threshold_storage() {
+        let mut storage = RamStorage::new();
+        let (epoch, context) = (test_epoch(1), test_context(1));
+        let registry = store_epoch_registry(&mut storage, &[(epoch, context)]).await;
+        store_epoched(
+            &mut storage,
+            PrivDataType::FheKeyInfo,
+            &epoch,
+            &test_id(200),
+        )
+        .await;
+        store_epoched(&mut storage, PrivDataType::CrsInfo, &epoch, &test_id(201)).await;
+        store_flat(&mut storage, PrivDataType::SigningKey, &SIGNING_KEY_ID).await;
+        store_flat(&mut storage, PrivDataType::SigningSeed, &SIGNING_KEY_ID).await;
+        // The 0.15 migration leaves the combined PRSS setup next to the epoch data it produced.
+        store_flat(&mut storage, LEGACY_PRSS_SETUP_COMBINED, &(&epoch).into()).await;
+
+        let report = verify_private_storage_layout(&storage, threshold_layout(&registry))
+            .await
+            .expect("consistent threshold private storage must verify");
+        assert_eq!(report.unexpected_count(), 0, "got: {report:?}");
+    }
+
+    #[tokio::test]
+    async fn private_layout_accepts_consistent_centralized_storage() {
+        let mut storage = RamStorage::new();
+        let epoch = test_epoch(2);
+        store_epoched(
+            &mut storage,
+            PrivDataType::FhePrivateKey,
+            &epoch,
+            &test_id(202),
+        )
+        .await;
+        store_epoched(&mut storage, PrivDataType::CrsInfo, &epoch, &test_id(203)).await;
+        store_flat(&mut storage, PrivDataType::SigningKey, &SIGNING_KEY_ID).await;
+
+        let report = verify_private_storage_layout(&storage, PrivateLayout::Centralized)
+            .await
+            .expect("consistent centralized private storage must verify");
+        assert_eq!(report.unexpected_count(), 0, "got: {report:?}");
+    }
+
+    #[tokio::test]
+    async fn empty_private_storage_is_rejected_in_both_modes() {
+        let storage = RamStorage::new();
+        let registry = BTreeMap::new();
+        for layout in [threshold_layout(&registry), PrivateLayout::Centralized] {
+            let err = verify_private_storage_layout(&storage, layout)
+                .await
+                .expect_err("a serving node must have a signing identity")
+                .to_string();
+            assert!(err.contains(ERR_MISSING_SIGNING_IDENTITY), "got: {err}");
+        }
+    }
+
+    #[tokio::test]
+    async fn keysets_under_unknown_epoch_fail_boot() {
+        let mut storage = RamStorage::new();
+        let registry =
+            store_epoch_registry(&mut storage, &[(test_epoch(1), test_context(1))]).await;
+        store_flat(&mut storage, PrivDataType::SigningKey, &SIGNING_KEY_ID).await;
+        let dangling_epoch = test_epoch(9);
+        store_epoched(
+            &mut storage,
+            PrivDataType::FheKeyInfo,
+            &dangling_epoch,
+            &test_id(204),
+        )
+        .await;
+
+        let err = verify_private_storage_layout(&storage, threshold_layout(&registry))
+            .await
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains(ERR_DANGLING_EPOCH), "got: {err}");
+        assert!(err.contains(&dangling_epoch.to_string()), "got: {err}");
+    }
+
+    #[tokio::test]
+    async fn crs_metadata_under_unknown_epoch_fails_boot() {
+        let mut storage = RamStorage::new();
+        let registry =
+            store_epoch_registry(&mut storage, &[(test_epoch(1), test_context(1))]).await;
+        store_flat(&mut storage, PrivDataType::SigningKey, &SIGNING_KEY_ID).await;
+        store_epoched(
+            &mut storage,
+            PrivDataType::CrsInfo,
+            &test_epoch(9),
+            &test_id(205),
+        )
+        .await;
+
+        let err = verify_private_storage_layout(&storage, threshold_layout(&registry))
+            .await
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains(ERR_DANGLING_EPOCH), "got: {err}");
+        assert!(err.contains("CrsInfo"), "got: {err}");
+    }
+
+    #[tokio::test]
+    async fn keysets_under_default_epoch_without_epoch_data_fail_boot() {
+        let mut storage = RamStorage::new();
+        let key_id = test_id(206);
+        store_flat(&mut storage, PrivDataType::SigningKey, &SIGNING_KEY_ID).await;
+        store_epoched(
+            &mut storage,
+            PrivDataType::FheKeyInfo,
+            &DEFAULT_EPOCH_ID,
+            &key_id,
+        )
+        .await;
+        let err = verify_private_storage_layout(&storage, threshold_layout(&BTreeMap::new()))
+            .await
+            .expect_err("the default epoch must exist before key material refers to it")
+            .to_string();
+        assert!(err.contains(ERR_DANGLING_EPOCH), "got: {err}");
+        assert!(err.contains(&DEFAULT_EPOCH_ID.to_string()), "got: {err}");
+    }
+
+    #[tokio::test]
+    async fn epoch_of_unknown_context_fails_boot() {
+        let mut storage = RamStorage::new();
+        let (epoch, context) = (test_epoch(1), test_context(1));
+        store_flat(&mut storage, PrivDataType::SigningKey, &SIGNING_KEY_ID).await;
+        store_flat(&mut storage, PrivDataType::EpochData, &(&epoch).into()).await;
+        let registry = BTreeMap::from([(epoch, context)]);
+
+        let err = verify_private_storage_layout(&storage, threshold_layout(&registry))
+            .await
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains(ERR_EPOCH_WITHOUT_CONTEXT), "got: {err}");
+        assert!(err.contains(&context.to_string()), "got: {err}");
+    }
+
+    #[tokio::test]
+    async fn context_id_must_match_its_storage_handle() {
+        let mut storage = RamStorage::new();
+        let (handle, declared_id) = (test_context(1), test_context(2));
+        store_flat(&mut storage, PrivDataType::SigningKey, &SIGNING_KEY_ID).await;
+        store_context(&mut storage, &handle, &declared_id).await;
+
+        let err = verify_private_storage_layout(&storage, PrivateLayout::Centralized)
+            .await
+            .expect_err("a context must use its declared ID as its storage handle")
+            .to_string();
+        assert!(err.contains(ERR_CONTEXT_ID_MISMATCH), "got: {err}");
+        assert!(err.contains(&handle.to_string()), "got: {err}");
+        assert!(err.contains(&declared_id.to_string()), "got: {err}");
+    }
+
+    #[tokio::test]
+    async fn epoch_of_missing_default_context_fails_boot() {
+        let mut storage = RamStorage::new();
+        let epoch = test_epoch(1);
+        store_flat(&mut storage, PrivDataType::SigningKey, &SIGNING_KEY_ID).await;
+        store_flat(&mut storage, PrivDataType::EpochData, &(&epoch).into()).await;
+        let registry = BTreeMap::from([(epoch, *DEFAULT_MPC_CONTEXT)]);
+
+        let err = verify_private_storage_layout(&storage, threshold_layout(&registry))
+            .await
+            .expect_err("the default context must exist before validation")
+            .to_string();
+        assert!(err.contains(ERR_EPOCH_WITHOUT_CONTEXT), "got: {err}");
+        assert!(err.contains(&DEFAULT_MPC_CONTEXT.to_string()), "got: {err}");
+    }
+
+    #[tokio::test]
+    async fn centralized_key_material_on_threshold_node_fails_boot() {
+        let mut storage = RamStorage::new();
+        let (epoch, context) = (test_epoch(1), test_context(1));
+        let registry = store_epoch_registry(&mut storage, &[(epoch, context)]).await;
+        store_flat(&mut storage, PrivDataType::SigningKey, &SIGNING_KEY_ID).await;
+        store_epoched(
+            &mut storage,
+            PrivDataType::FhePrivateKey,
+            &epoch,
+            &test_id(207),
+        )
+        .await;
+        let err = verify_private_storage_layout(&storage, threshold_layout(&registry))
+            .await
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains(ERR_FOREIGN_PRIVATE_MATERIAL), "got: {err}");
+
+        // The pre-epoch layout of the foreign type is rejected as well.
+        let mut storage = RamStorage::new();
+        let registry = store_epoch_registry(&mut storage, &[(epoch, context)]).await;
+        store_flat(&mut storage, PrivDataType::SigningKey, &SIGNING_KEY_ID).await;
+        store_flat(&mut storage, PrivDataType::FhePrivateKey, &test_id(208)).await;
+        let err = verify_private_storage_layout(&storage, threshold_layout(&registry))
+            .await
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains(ERR_FOREIGN_PRIVATE_MATERIAL), "got: {err}");
+    }
+
+    #[tokio::test]
+    async fn threshold_key_material_on_centralized_node_fails_boot() {
+        let mut storage = RamStorage::new();
+        store_flat(&mut storage, PrivDataType::SigningKey, &SIGNING_KEY_ID).await;
+        store_epoched(
+            &mut storage,
+            PrivDataType::FheKeyInfo,
+            &test_epoch(1),
+            &test_id(209),
+        )
+        .await;
+
+        let err = verify_private_storage_layout(&storage, PrivateLayout::Centralized)
+            .await
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains(ERR_FOREIGN_PRIVATE_MATERIAL), "got: {err}");
+        assert!(err.contains("FheKeyInfo"), "got: {err}");
+    }
+
+    #[tokio::test]
+    async fn legacy_prss_material_on_threshold_node_fails_boot() {
+        let mut storage = RamStorage::new();
+        store_flat(&mut storage, PrivDataType::SigningKey, &SIGNING_KEY_ID).await;
+        store_flat(&mut storage, LEGACY_PRSS_SETUP, &test_id(211)).await;
+
+        let err = verify_private_storage_layout(&storage, threshold_layout(&BTreeMap::new()))
+            .await
+            .expect_err("legacy split PRSS material must not remain on a threshold node")
+            .to_string();
+        assert!(err.contains(ERR_FOREIGN_PRIVATE_MATERIAL), "got: {err}");
+        assert!(err.contains("PrssSetup"), "got: {err}");
+    }
+
+    #[tokio::test]
+    async fn prss_material_on_centralized_node_fails_boot() {
+        for data_type in [LEGACY_PRSS_SETUP, LEGACY_PRSS_SETUP_COMBINED] {
+            let mut storage = RamStorage::new();
+            store_flat(&mut storage, PrivDataType::SigningKey, &SIGNING_KEY_ID).await;
+            store_flat(&mut storage, data_type, &test_id(210)).await;
+
+            let err = verify_private_storage_layout(&storage, PrivateLayout::Centralized)
+                .await
+                .expect_err("a centralized node must not hold PRSS material")
+                .to_string();
+            assert!(err.contains(ERR_FOREIGN_PRIVATE_MATERIAL), "got: {err}");
+            assert!(err.contains(&data_type.to_string()), "got: {err}");
+        }
+    }
+
+    #[tokio::test]
+    async fn legacy_private_leftovers_are_reported_and_boot_succeeds() {
+        let mut storage = RamStorage::new();
+        let (epoch, context) = (test_epoch(1), test_context(1));
+        let registry = store_epoch_registry(&mut storage, &[(epoch, context)]).await;
+        // The 0.15 migration retains the combined PRSS setups until 0.16 removes them.
+        store_flat(&mut storage, LEGACY_PRSS_SETUP_COMBINED, &(&epoch).into()).await;
+        store_flat(
+            &mut storage,
+            LEGACY_PRSS_SETUP_COMBINED,
+            &(&test_epoch(9)).into(),
+        )
+        .await;
+        let unepoched_key_id = test_id(211);
+        store_flat(&mut storage, PrivDataType::FheKeyInfo, &unepoched_key_id).await;
+        store_flat(&mut storage, PrivDataType::SigningKey, &SIGNING_KEY_ID).await;
+        storage
+            .store_bytes(RAW_PRIVATE_ENTRY, &test_id(212), "stray")
+            .await
+            .unwrap();
+
+        let report = verify_private_storage_layout(&storage, threshold_layout(&registry))
+            .await
+            .expect("leftovers must not fail boot");
+        assert_eq!(
+            report.unexpected_flat,
+            BTreeMap::from([(PrivDataType::FheKeyInfo, BTreeSet::from([unepoched_key_id])),])
+        );
+        assert_eq!(
+            report.unknown_data_types,
+            BTreeSet::from(["stray".to_string()])
+        );
+        assert_eq!(report.unexpected_count(), 2, "got: {report:?}");
+    }
+
+    #[tokio::test]
+    async fn epoch_data_on_centralized_node_fails_boot() {
+        let mut storage = RamStorage::new();
+        let epoch_id = RequestId::from(&test_epoch(1));
+        store_flat(&mut storage, PrivDataType::SigningKey, &SIGNING_KEY_ID).await;
+        store_flat(&mut storage, PrivDataType::EpochData, &epoch_id).await;
+        let err = verify_private_storage_layout(&storage, PrivateLayout::Centralized)
+            .await
+            .expect_err("EpochData must fail centralized boot");
+        assert!(
+            err.to_string().contains(ERR_FOREIGN_PRIVATE_MATERIAL),
+            "got: {err:#}"
+        );
+        assert!(err.to_string().contains("EpochData"), "got: {err:#}");
+    }
+
+    #[tokio::test]
+    async fn epoch_folders_under_non_epoched_types_are_reported() {
+        let mut storage = RamStorage::new();
+        let epoch = test_epoch(1);
+        let (context_id, epoch_data_id) = (test_id(216), test_id(217));
+        store_flat(&mut storage, PrivDataType::SigningKey, &SIGNING_KEY_ID).await;
+        store_epoched(&mut storage, PrivDataType::ContextInfo, &epoch, &context_id).await;
+        store_epoched(
+            &mut storage,
+            PrivDataType::EpochData,
+            &test_epoch(9),
+            &epoch_data_id,
+        )
+        .await;
+        let combined_prss_id = test_id(218);
+        store_epoched(
+            &mut storage,
+            LEGACY_PRSS_SETUP_COMBINED,
+            &test_epoch(10),
+            &combined_prss_id,
+        )
+        .await;
+        let expected = BTreeMap::from([
+            (
+                PrivDataType::ContextInfo,
+                BTreeMap::from([(epoch, BTreeSet::from([context_id]))]),
+            ),
+            (
+                PrivDataType::EpochData,
+                BTreeMap::from([(test_epoch(9), BTreeSet::from([epoch_data_id]))]),
+            ),
+            (
+                LEGACY_PRSS_SETUP_COMBINED,
+                BTreeMap::from([(test_epoch(10), BTreeSet::from([combined_prss_id]))]),
+            ),
+        ]);
+
+        let report = verify_private_storage_layout(&storage, threshold_layout(&BTreeMap::new()))
+            .await
+            .expect("misplaced epoch folders must not fail boot");
+        assert_eq!(report.unexpected_epoched, expected);
+        assert_eq!(report.unexpected_count(), 3, "got: {report:?}");
+    }
+
+    #[tokio::test]
+    async fn unexpected_and_unlistable_private_files_are_reported() {
+        use crate::vault::storage::{StorageType, file::FileStorage};
+
+        let temp_dir = tempfile::tempdir().unwrap();
+        let mut storage = FileStorage::new(Some(temp_dir.path()), StorageType::PRIV, None).unwrap();
+        storage
+            .store_bytes(
+                RAW_PRIVATE_ENTRY,
+                &SIGNING_KEY_ID,
+                &PrivDataType::SigningKey.to_string(),
+            )
+            .await
+            .unwrap();
+        // A file whose name is not a request ID makes the flat listing fail. The epoch listing
+        // only considers folders, so the dangling-epoch check is unaffected.
+        let crs_dir = storage.root_dir().join(PrivDataType::CrsInfo.to_string());
+        std::fs::create_dir_all(&crs_dir).unwrap();
+        std::fs::write(crs_dir.join("not-a-request-id"), b"x").unwrap();
+        std::fs::write(storage.root_dir().join("stray"), b"x").unwrap();
+
+        let report = verify_private_storage_layout(&storage, threshold_layout(&BTreeMap::new()))
+            .await
+            .expect("an unlistable folder must not fail boot");
+        assert!(
+            report.unlistable.contains_key(&Some(PrivDataType::CrsInfo)),
+            "got: {report:?}"
+        );
+        assert_eq!(
+            report.unknown_data_types,
+            BTreeSet::from(["stray".to_string()])
+        );
+    }
+
+    /// The identity may be the ECDSA key alone (a node that predates the seed), the seed alone (a
+    /// node whose ECDSA key is derived from the seed), or both.
+    #[tokio::test]
+    async fn signing_key_or_seed_alone_is_a_valid_identity() {
+        let mut storage = RamStorage::new();
+        store_flat(&mut storage, PrivDataType::SigningKey, &SIGNING_KEY_ID).await;
+        verify_private_storage_layout(&storage, PrivateLayout::Centralized)
+            .await
+            .expect("a node that predates the seed has only the ECDSA key");
+
+        let mut storage = RamStorage::new();
+        store_flat(&mut storage, PrivDataType::SigningSeed, &SIGNING_KEY_ID).await;
+        verify_private_storage_layout(&storage, PrivateLayout::Centralized)
+            .await
+            .expect("a seed-only identity is a valid layout");
+
+        store_flat(&mut storage, PrivDataType::SigningKey, &SIGNING_KEY_ID).await;
+        verify_private_storage_layout(&storage, PrivateLayout::Centralized)
+            .await
+            .expect("key and seed together are a valid layout");
+    }
+
+    #[tokio::test]
+    async fn signing_key_must_be_the_sole_entry_at_the_signing_key_id() {
+        let mut storage = RamStorage::new();
+        let wrong_id = test_id(214);
+        store_flat(&mut storage, PrivDataType::SigningKey, &wrong_id).await;
+
+        let err = verify_private_storage_layout(&storage, PrivateLayout::Centralized)
+            .await
+            .expect_err("the signing key must use its fixed handle")
+            .to_string();
+        assert!(err.contains(ERR_INVALID_SIGNING_KEY_LAYOUT), "got: {err}");
+
+        store_flat(&mut storage, PrivDataType::SigningKey, &SIGNING_KEY_ID).await;
+        let err = verify_private_storage_layout(&storage, PrivateLayout::Centralized)
+            .await
+            .expect_err("the signing key must be unique")
+            .to_string();
+        assert!(err.contains(ERR_INVALID_SIGNING_KEY_LAYOUT), "got: {err}");
+    }
+
+    #[tokio::test]
+    async fn signing_key_must_not_be_epoch_scoped() {
+        let mut storage = RamStorage::new();
+        store_flat(&mut storage, PrivDataType::SigningKey, &SIGNING_KEY_ID).await;
+        store_epoched(
+            &mut storage,
+            PrivDataType::SigningKey,
+            &test_epoch(3),
+            &SIGNING_KEY_ID,
+        )
+        .await;
+
+        let err = verify_private_storage_layout(&storage, PrivateLayout::Centralized)
+            .await
+            .expect_err("the signing key must not be epoch-scoped")
+            .to_string();
+        assert!(err.contains(ERR_INVALID_SIGNING_KEY_LAYOUT), "got: {err}");
+    }
+
+    #[tokio::test]
+    async fn signing_seed_must_use_the_signing_key_id_and_not_be_epoched() {
+        let mut storage = RamStorage::new();
+        store_flat(&mut storage, PrivDataType::SigningKey, &SIGNING_KEY_ID).await;
+        store_flat(&mut storage, PrivDataType::SigningSeed, &test_id(215)).await;
+
+        let err = verify_private_storage_layout(&storage, PrivateLayout::Centralized)
+            .await
+            .expect_err("the signing seed must use its fixed handle")
+            .to_string();
+        assert!(err.contains(ERR_INVALID_SIGNING_SEED_LAYOUT), "got: {err}");
+
+        let mut storage = RamStorage::new();
+        store_flat(&mut storage, PrivDataType::SigningKey, &SIGNING_KEY_ID).await;
+        store_epoched(
+            &mut storage,
+            PrivDataType::SigningSeed,
+            &test_epoch(3),
+            &SIGNING_KEY_ID,
+        )
+        .await;
+        let err = verify_private_storage_layout(&storage, PrivateLayout::Centralized)
+            .await
+            .expect_err("the signing seed must not be epoch-scoped")
+            .to_string();
+        assert!(err.contains(ERR_INVALID_SIGNING_SEED_LAYOUT), "got: {err}");
     }
 
     // === Helpers ===
@@ -1813,8 +3002,9 @@ mod tests {
         store_signing_key_material(&mut storage, node_sk, None).await;
         let domain = crate::dummy_domain();
 
+        let metadata_identity = NodeSigningIdentity::ecdsa_only(metadata_sk.clone());
         let key_metadata = crate::engine::base::compute_info_standard_keygen_from_digests(
-            metadata_sk,
+            &metadata_identity,
             &[],
             &material.preproc_id,
             &material.key_id,
@@ -1836,7 +3026,7 @@ mod tests {
         let crs_id = RequestId::new_random(&mut rng);
         let crs_digest = setup_crs(&mut storage, &crs_id).await;
         let crs_metadata = crate::engine::base::compute_info_crs_from_digest(
-            metadata_sk,
+            &metadata_identity,
             &[],
             &crs_id,
             crs_digest,
@@ -2040,5 +3230,78 @@ mod tests {
             &DSEP_PUBDATA_CRS,
         )
         .await
+    }
+
+    // The private sweep only lists folders, so any bytes stand in for real material; an invalid
+    // encoding makes sure that stays true.
+    const RAW_PRIVATE_ENTRY: &[u8] = b"deliberately not serialized private material";
+
+    fn test_id(seed: u64) -> RequestId {
+        RequestId::new_random(&mut AesRng::seed_from_u64(seed))
+    }
+
+    fn test_epoch(seed: u8) -> EpochId {
+        EpochId::from_bytes([seed; 32])
+    }
+
+    fn test_context(seed: u8) -> ContextId {
+        ContextId::from_bytes([seed; 32])
+    }
+
+    fn threshold_layout(epoch_contexts: &BTreeMap<EpochId, ContextId>) -> PrivateLayout<'_> {
+        PrivateLayout::Threshold { epoch_contexts }
+    }
+
+    async fn store_flat(storage: &mut RamStorage, data_type: PrivDataType, id: &RequestId) {
+        storage
+            .store_bytes(RAW_PRIVATE_ENTRY, id, &data_type.to_string())
+            .await
+            .unwrap();
+    }
+
+    async fn store_epoched(
+        storage: &mut RamStorage,
+        data_type: PrivDataType,
+        epoch_id: &EpochId,
+        id: &RequestId,
+    ) {
+        storage
+            .store_bytes_at_epoch(RAW_PRIVATE_ENTRY, id, epoch_id, &data_type.to_string())
+            .await
+            .unwrap();
+    }
+
+    async fn store_context(storage: &mut RamStorage, handle: &ContextId, declared_id: &ContextId) {
+        let context = ContextInfo {
+            mpc_nodes: Vec::new(),
+            context_id: *declared_id,
+            software_version: SoftwareVersion::current().unwrap(),
+            threshold: 0,
+            pcr_values: Vec::new(),
+        };
+        store_versioned_at_request_id(
+            storage,
+            &RequestId::from(handle),
+            &context,
+            &PrivDataType::ContextInfo.to_string(),
+        )
+        .await
+        .unwrap();
+    }
+
+    /// Store an epoch data entry per epoch and a context entry per context, and return the
+    /// registry a threshold node would build from them.
+    async fn store_epoch_registry(
+        storage: &mut RamStorage,
+        epochs: &[(EpochId, ContextId)],
+    ) -> BTreeMap<EpochId, ContextId> {
+        let mut stored_contexts = HashSet::new();
+        for (epoch_id, context_id) in epochs {
+            store_flat(storage, PrivDataType::EpochData, &epoch_id.into()).await;
+            if stored_contexts.insert(*context_id) {
+                store_context(storage, context_id, context_id).await;
+            }
+        }
+        epochs.iter().copied().collect()
     }
 }

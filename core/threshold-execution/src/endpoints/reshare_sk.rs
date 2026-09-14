@@ -1,13 +1,16 @@
 use crate::{
+    communication::broadcast::SyncReliableBroadcast,
     config::BatchParams,
     online::{
         preprocessing::{BasePreprocessing, memory::InMemoryBasePreprocessing},
         reshare::{
             Expected, NotExpected, Reshare, SecureSameSetReshare, SecureTwoSetsReshareAsBothSets,
-            SecureTwoSetsReshareAsSet1, SecureTwoSetsReshareAsSet2,
+            SecureTwoSetsReshareAsSet1, SecureTwoSetsReshareAsSet2, reshare_cross_set_num_rounds,
+            reshare_set2_only_num_rounds,
         },
     },
     runtime::sessions::base_session::{BaseSessionHandles, GenericBaseSessionHandles},
+    sharing::open::SecureRobustOpen,
     tfhe_internals::{
         compression_decompression_key::CompressionPrivateKeyShares,
         glwe_key::GlweSecretKeyShare,
@@ -22,6 +25,7 @@ use crate::{
 use algebra::{
     base_ring::{Z64, Z128},
     galois_rings::common::ResiduePoly,
+    sharing::share::Share,
     structure_traits::{ErrorCorrect, Invert, QuotientMaximalIdeal},
 };
 use error_utils::anyhow_error_and_log;
@@ -29,6 +33,30 @@ use threshold_types::role::TwoSetsRole;
 
 use tfhe::shortint::parameters::CompressionParameters;
 use tracing::instrument;
+
+/// Which of the optional dedicated OPRF key shares the keyset being reshared carries.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct DedicatedOprfKeysPresent {
+    /// Whether the old keyset contains a dedicated OPRF key share.
+    pub oprf: bool,
+    /// Whether the old keyset contains a transciphering key share.
+    pub transciphering: bool,
+}
+
+impl DedicatedOprfKeysPresent {
+    /// Reads the flags off a private keyset held locally.
+    ///
+    /// Parties that do not hold the old keyset (e.g. S2 in a two-set reshare) must derive the same
+    /// flags from the verified public material instead.
+    pub fn from_private_keyset<const EXTENSION_DEGREE: usize>(
+        private_key_set: &PrivateKeySet<EXTENSION_DEGREE>,
+    ) -> Self {
+        Self {
+            oprf: private_key_set.oprf_secret_key_share.is_some(),
+            transciphering: private_key_set.transciphering_secret_key_share.is_some(),
+        }
+    }
+}
 
 pub struct ResharePreprocRequired {
     pub batch_params_128: BatchParams,
@@ -39,13 +67,13 @@ impl ResharePreprocRequired {
     /// Computes the number of randoms needed to reshare a private key set
     /// where `num_parties_reshare_from` is the number of parties holding the input shares
     /// (i.e. everyone in same set resharing, or the first set in two sets resharing)
-    /// and `oprf_key_present` says whether the old keyset contains a dedicated OPRF key.
+    /// and `dedicated_keys` says which optional dedicated key shares the old keyset contains.
     ///
     /// NOTE: A [`PrivateKeySet`] is expected to be either all Z64 or all Z128 depending on the DKG parameters.
     pub fn new(
         num_parties_reshare_from: usize,
         parameters: DKGParams,
-        oprf_key_present: bool,
+        dedicated_keys: DedicatedOprfKeysPresent,
     ) -> Self {
         let mut num_randoms_128 = 0;
         let mut num_randoms_64 = 0;
@@ -54,8 +82,14 @@ impl ResharePreprocRequired {
             DkgMode::Z64 => {
                 num_randoms_64 += parameters.lwe_hat_dimension().0;
                 num_randoms_64 += parameters.lwe_dimension().0;
-                if oprf_key_present {
+                if dedicated_keys.oprf {
                     num_randoms_64 += parameters.lwe_dimension().0;
+                }
+                if dedicated_keys.transciphering {
+                    num_randoms_64 += parameters
+                        .transciphering_lwe_dimension()
+                        .expect("transciphering key requires transciphering parameters")
+                        .0;
                 }
                 num_randoms_64 +=
                     parameters.glwe_sk_num_bits() + parameters.compression_sk_num_bits()
@@ -63,8 +97,14 @@ impl ResharePreprocRequired {
             DkgMode::Z128 => {
                 num_randoms_128 += parameters.lwe_hat_dimension().0;
                 num_randoms_128 += parameters.lwe_dimension().0;
-                if oprf_key_present {
+                if dedicated_keys.oprf {
                     num_randoms_128 += parameters.lwe_dimension().0;
+                }
+                if dedicated_keys.transciphering {
+                    num_randoms_128 += parameters
+                        .transciphering_lwe_dimension()
+                        .expect("transciphering key requires transciphering parameters")
+                        .0;
                 }
                 num_randoms_128 +=
                     parameters.glwe_sk_num_bits() + parameters.compression_sk_num_bits();
@@ -98,7 +138,7 @@ pub trait ReshareSecretKeys: Send + Sync + Sized {
     /// - `input_share` is `Some` for parties holding an input share, and `None` otherwise (e.g. if DKG failed)
     /// - `preproc128` and `preproc64` are the preprocessing instances for Z128 and Z64 operations respectively. See [`ResharePreprocRequired`] to know how much preprocessing is needed.
     /// - `parameters` are the DKG parameters
-    /// - `oprf_key_present` is true only when the old keyset contains a dedicated OPRF key
+    /// - `dedicated_keys` says which optional dedicated key shares the old keyset contains
     ///
     /// Returns the party's new secret key share
     async fn reshare_sk_same_set<
@@ -112,7 +152,7 @@ pub trait ReshareSecretKeys: Send + Sync + Sized {
         preproc64: &mut P64,
         input_share: &mut Option<PrivateKeySet<EXTENSION_DEGREE>>,
         parameters: DKGParams,
-        oprf_key_present: bool,
+        dedicated_keys: DedicatedOprfKeysPresent,
     ) -> anyhow::Result<PrivateKeySet<EXTENSION_DEGREE>>
     where
         ResiduePoly<Z64, EXTENSION_DEGREE>: ErrorCorrect + Invert + QuotientMaximalIdeal,
@@ -125,7 +165,7 @@ pub trait ReshareSecretKeys: Send + Sync + Sized {
     /// - `two_sets_session` is the session handle that contains parties in both Set1 and Set2
     /// - `input_share` is the input share held by the party in Set1 that will be reshared
     /// - `parameters` are the DKG parameters
-    /// - `oprf_key_present` is true only when the old keyset contains a dedicated OPRF key
+    /// - `dedicated_keys` says which optional dedicated key shares the old keyset contains
     ///
     /// Returns `()` since parties in Set1 do not receive any new share
     async fn reshare_sk_two_sets_as_s1<
@@ -135,7 +175,7 @@ pub trait ReshareSecretKeys: Send + Sync + Sized {
         two_sets_session: &mut S,
         input_share: &mut PrivateKeySet<EXTENSION_DEGREE>,
         parameters: DKGParams,
-        oprf_key_present: bool,
+        dedicated_keys: DedicatedOprfKeysPresent,
     ) -> anyhow::Result<()>
     where
         ResiduePoly<Z64, EXTENSION_DEGREE>: ErrorCorrect + Invert + QuotientMaximalIdeal,
@@ -148,7 +188,7 @@ pub trait ReshareSecretKeys: Send + Sync + Sized {
     /// - `sessions` is a tuple containing the session handle that contains parties in both Set1 and Set2 as well as the regular session handle for parties in Set2
     /// - `preproc128` and `preproc64` are the preprocessing instances for Z128 and Z64 operations respectively. See [`ResharePreprocRequired`] to know how much preprocessing is needed.
     /// - `parameters` are the DKG parameters
-    /// - `oprf_key_present` is true only when the old keyset contains a dedicated OPRF key
+    /// - `dedicated_keys` says which optional dedicated key shares the old keyset contains
     ///
     /// Returns the party's new secret key share
     async fn reshare_sk_two_sets_as_s2<
@@ -162,7 +202,7 @@ pub trait ReshareSecretKeys: Send + Sync + Sized {
         preproc128: &mut P128,
         preproc64: &mut P64,
         parameters: DKGParams,
-        oprf_key_present: bool,
+        dedicated_keys: DedicatedOprfKeysPresent,
     ) -> anyhow::Result<PrivateKeySet<EXTENSION_DEGREE>>
     where
         ResiduePoly<Z64, EXTENSION_DEGREE>: ErrorCorrect + Invert + QuotientMaximalIdeal,
@@ -176,7 +216,7 @@ pub trait ReshareSecretKeys: Send + Sync + Sized {
     /// - `preproc128` and `preproc64` are the preprocessing instances for Z128 and Z64 operations respectively. See [`ResharePreprocRequired`] to know how much preprocessing is needed.
     /// - `input_share` is the input share held by the party in Set1 that will be reshared
     /// - `parameters` are the DKG parameters
-    /// - `oprf_key_present` is true only when the old keyset contains a dedicated OPRF key
+    /// - `dedicated_keys` says which optional dedicated key shares the old keyset contains
     ///
     /// Returns the party's new secret key share
     async fn reshare_sk_two_sets_as_both_sets<
@@ -191,11 +231,15 @@ pub trait ReshareSecretKeys: Send + Sync + Sized {
         preproc64: &mut P64,
         input_share: &mut PrivateKeySet<EXTENSION_DEGREE>,
         parameters: DKGParams,
-        oprf_key_present: bool,
+        dedicated_keys: DedicatedOprfKeysPresent,
     ) -> anyhow::Result<PrivateKeySet<EXTENSION_DEGREE>>
     where
         ResiduePoly<Z64, EXTENSION_DEGREE>: ErrorCorrect + Invert + QuotientMaximalIdeal,
         ResiduePoly<Z128, EXTENSION_DEGREE>: ErrorCorrect + Invert + QuotientMaximalIdeal;
+
+    /// Worst-case number of rounds the two-sets *online* phase runs for
+    /// a committee of `num_parties` with the given `set2_threshold` (Set-2's threshold).
+    fn num_rounds(num_parties: usize, set2_threshold: usize) -> usize;
 }
 
 #[derive(Default)]
@@ -219,7 +263,7 @@ impl ReshareSecretKeys for SecureReshareSecretKeys {
         preproc64: &mut P64,
         input_share: &mut Option<PrivateKeySet<EXTENSION_DEGREE>>,
         parameters: DKGParams,
-        oprf_key_present: bool,
+        dedicated_keys: DedicatedOprfKeysPresent,
     ) -> anyhow::Result<PrivateKeySet<EXTENSION_DEGREE>>
     where
         ResiduePoly<Z64, EXTENSION_DEGREE>: ErrorCorrect + Invert + QuotientMaximalIdeal,
@@ -231,7 +275,7 @@ impl ReshareSecretKeys for SecureReshareSecretKeys {
             session,
             input_share.as_mut(),
             parameters,
-            oprf_key_present,
+            dedicated_keys,
         )
         .await?
         .ok_or_else(|| anyhow_error_and_log("Expected an output in same set reshare"))
@@ -249,7 +293,7 @@ impl ReshareSecretKeys for SecureReshareSecretKeys {
         two_sets_session: &mut S,
         input_share: &mut PrivateKeySet<EXTENSION_DEGREE>,
         parameters: DKGParams,
-        oprf_key_present: bool,
+        dedicated_keys: DedicatedOprfKeysPresent,
     ) -> anyhow::Result<()>
     where
         ResiduePoly<Z64, EXTENSION_DEGREE>: ErrorCorrect + Invert + QuotientMaximalIdeal,
@@ -265,7 +309,7 @@ impl ReshareSecretKeys for SecureReshareSecretKeys {
             two_sets_session,
             Expected(input_share),
             parameters,
-            oprf_key_present,
+            dedicated_keys,
         )
         .await?;
         Ok(())
@@ -283,7 +327,7 @@ impl ReshareSecretKeys for SecureReshareSecretKeys {
         preproc128: &mut P128,
         preproc64: &mut P64,
         parameters: DKGParams,
-        oprf_key_present: bool,
+        dedicated_keys: DedicatedOprfKeysPresent,
     ) -> anyhow::Result<PrivateKeySet<EXTENSION_DEGREE>>
     where
         ResiduePoly<Z64, EXTENSION_DEGREE>: ErrorCorrect + Invert + QuotientMaximalIdeal,
@@ -300,7 +344,7 @@ impl ReshareSecretKeys for SecureReshareSecretKeys {
                 _marker: std::marker::PhantomData,
             },
             parameters,
-            oprf_key_present,
+            dedicated_keys,
         )
         .await?
         .ok_or_else(|| anyhow_error_and_log("Expected an output in two sets reshare"))
@@ -319,7 +363,7 @@ impl ReshareSecretKeys for SecureReshareSecretKeys {
         preproc64: &mut P64,
         input_share: &mut PrivateKeySet<EXTENSION_DEGREE>,
         parameters: DKGParams,
-        oprf_key_present: bool,
+        dedicated_keys: DedicatedOprfKeysPresent,
     ) -> anyhow::Result<PrivateKeySet<EXTENSION_DEGREE>>
     where
         ResiduePoly<Z64, EXTENSION_DEGREE>: ErrorCorrect + Invert + QuotientMaximalIdeal,
@@ -334,11 +378,27 @@ impl ReshareSecretKeys for SecureReshareSecretKeys {
             sessions,
             Expected(input_share),
             parameters,
-            oprf_key_present,
+            dedicated_keys,
         )
         .await?
         .ok_or_else(|| anyhow_error_and_log("Expected an output in two sets reshare"))
     }
+
+    fn num_rounds(num_parties: usize, set2_threshold: usize) -> usize {
+        // A keyset is reshared one batch per ring on the same session, so count twice
+        2 * (reshare_cross_set_num_rounds::<SecureRobustOpen>(num_parties)
+            + reshare_set2_only_num_rounds::<SecureRobustOpen, SyncReliableBroadcast>(
+                num_parties,
+                set2_threshold,
+            ))
+    }
+}
+
+/// Split the next `n` reshared shares off the front of a batch output, in the
+/// same order they were concatenated. `None` (a party that receives no output,
+/// i.e. Set 1) stays `None`.
+fn drain_chunk<T>(out: &mut Option<Vec<T>>, n: usize) -> Option<Vec<T>> {
+    out.as_mut().map(|v| v.drain(..n).collect())
 }
 
 pub(crate) async fn reshare_sk<
@@ -352,7 +412,7 @@ pub(crate) async fn reshare_sk<
     sessions: &mut R::ReshareSessions,
     input_share: R::MaybeExpectedInputShares<&mut PrivateKeySet<EXTENSION_DEGREE>>,
     parameters: DKGParams,
-    oprf_key_present: bool,
+    dedicated_keys: DedicatedOprfKeysPresent,
 ) -> anyhow::Result<Option<PrivateKeySet<EXTENSION_DEGREE>>>
 where
     ResiduePoly<Z64, EXTENSION_DEGREE>: ErrorCorrect + Invert + QuotientMaximalIdeal,
@@ -360,32 +420,60 @@ where
 {
     let reshare = R::default();
     let mut input_share = input_share.into();
-    // Reshare the GLWE sns key
-    let glwe_secret_key_share_sns_as_lwe = if let Some(sns_params) = parameters.sns() {
-        let expected_key_size = sns_params.glwe_sk_num_bits_sns();
-        let maybe_key = input_share.as_mut().and_then(|s| {
+    let has_input = input_share.is_some();
+    let dkg_mode = parameters.dkg_mode();
+    let polynomial_size = parameters.polynomial_size();
+
+    // Reshare all key components together, one round-set per ring: concatenate
+    // every same-ring component into a single batch, reshare the batch once, then
+    // split the reshared output back apart. The extraction order here and the
+    // draining order in the wraps below must stay identical (and match on every
+    // party).
+    let mut batch128: Vec<Share<ResiduePoly<Z128, EXTENSION_DEGREE>>> = Vec::new();
+    let mut batch64: Vec<Share<ResiduePoly<Z64, EXTENSION_DEGREE>>> = Vec::new();
+
+    // Per-component sizes; needed even for Set 2 (which holds no input) to size
+    // the reshare. `None` marks an absent optional component.
+    let sns_size = parameters.sns().map(|p| p.glwe_sk_num_bits_sns());
+    let lwe_compute_size = parameters.lwe_dimension().0;
+    let lwe_encryption_size = parameters.lwe_hat_dimension().0;
+    let oprf_size = dedicated_keys.oprf.then(|| parameters.lwe_dimension().0);
+    let transciphering_size = dedicated_keys
+        .transciphering
+        .then(|| {
+            parameters
+                .transciphering_lwe_dimension()
+                .ok_or_else(|| anyhow_error_and_log("transciphering key has no parameters"))
+                .map(|d| d.0)
+        })
+        .transpose()?;
+    let glwe_size = parameters.glwe_sk_num_bits();
+    let compression_size = parameters
+        .compression_decompression_params()
+        .map(|_| parameters.compression_sk_num_bits());
+    let sns_compression_size = parameters.sns().and_then(|p| {
+        p.sns_compression_params()
+            .is_some()
+            .then(|| p.sns_compression_sk_num_bits())
+    });
+
+    // Extract each present component's shares into its ring's batch, in a fixed
+    // order. `append` moves the shares out of the input keyset (the reshare would
+    // zeroize them anyway); it is a no-op for Set 2, which holds no input.
+    // 1. GLWE SnS key (always Z128).
+    if sns_size.is_some()
+        && let Some(v) = input_share.as_mut().and_then(|s| {
             s.glwe_secret_key_share_sns_as_lwe
                 .as_mut()
                 .map(|key| key.data.as_mut())
-        });
-        let data = reshare
-            .execute(
-                sessions,
-                &mut preproc128,
-                &mut R::MaybeExpectedInputShares::from(maybe_key),
-                expected_key_size,
-            )
-            .await?;
-        (true, data.into().map(|data| LweSecretKeyShare { data }))
-    } else {
-        (false, None)
-    };
-
-    // Reshare the LWE compute key
-    let expected_key_size = parameters.lwe_dimension().0;
-    let lwe_compute_secret_key_share = match parameters.dkg_mode() {
+        })
+    {
+        batch128.append(v);
+    }
+    // 2. LWE compute key (DKG ring).
+    match dkg_mode {
         DkgMode::Z64 => {
-            let maybe_key = input_share
+            if let Some(v) = input_share
                 .as_mut()
                 .map(|s| {
                     s.lwe_compute_secret_key_share
@@ -393,20 +481,13 @@ where
                         .map(|key| key.data.as_mut())
                 })
                 .transpose()
-                .map_err(|e| anyhow_error_and_log(e.to_string()))?;
-            let data = reshare
-                .execute(
-                    sessions,
-                    &mut preproc64,
-                    &mut R::MaybeExpectedInputShares::from(maybe_key),
-                    expected_key_size,
-                )
-                .await?;
-            data.into()
-                .map(|data| LweSecretKeyShareEnum::Z64(LweSecretKeyShare { data }))
+                .map_err(|e| anyhow_error_and_log(e.to_string()))?
+            {
+                batch64.append(v);
+            }
         }
         DkgMode::Z128 => {
-            let maybe_key = input_share
+            if let Some(v) = input_share
                 .as_mut()
                 .map(|s| {
                     s.lwe_compute_secret_key_share
@@ -414,26 +495,16 @@ where
                         .map(|key| key.data.as_mut())
                 })
                 .transpose()
-                .map_err(|e| anyhow_error_and_log(e.to_string()))?;
-            let data = reshare
-                .execute(
-                    sessions,
-                    &mut preproc128,
-                    &mut R::MaybeExpectedInputShares::from(maybe_key),
-                    expected_key_size,
-                )
-                .await?;
-            data.into()
-                .map(|data| LweSecretKeyShareEnum::Z128(LweSecretKeyShare { data }))
+                .map_err(|e| anyhow_error_and_log(e.to_string()))?
+            {
+                batch128.append(v);
+            }
         }
-    };
-
-    // Reshare the LWE PKe key
-    let expected_key_size = parameters.lwe_hat_dimension().0;
-    let polynomial_size = parameters.polynomial_size();
-    let lwe_encryption_secret_key_share = match parameters.dkg_mode() {
+    }
+    // 3. LWE PKe (encryption) key (DKG ring).
+    match dkg_mode {
         DkgMode::Z64 => {
-            let maybe_key = input_share
+            if let Some(v) = input_share
                 .as_mut()
                 .map(|s| {
                     s.lwe_encryption_secret_key_share
@@ -441,20 +512,13 @@ where
                         .map(|key| key.data.as_mut())
                 })
                 .transpose()
-                .map_err(|e| anyhow_error_and_log(e.to_string()))?;
-            let data = reshare
-                .execute(
-                    sessions,
-                    &mut preproc64,
-                    &mut R::MaybeExpectedInputShares::from(maybe_key),
-                    expected_key_size,
-                )
-                .await?;
-            data.into()
-                .map(|data| LweSecretKeyShareEnum::Z64(LweSecretKeyShare { data }))
+                .map_err(|e| anyhow_error_and_log(e.to_string()))?
+            {
+                batch64.append(v);
+            }
         }
         DkgMode::Z128 => {
-            let maybe_key = input_share
+            if let Some(v) = input_share
                 .as_mut()
                 .map(|s| {
                     s.lwe_encryption_secret_key_share
@@ -462,26 +526,17 @@ where
                         .map(|key| key.data.as_mut())
                 })
                 .transpose()
-                .map_err(|e| anyhow_error_and_log(e.to_string()))?;
-            let data = reshare
-                .execute(
-                    sessions,
-                    &mut preproc128,
-                    &mut R::MaybeExpectedInputShares::from(maybe_key),
-                    expected_key_size,
-                )
-                .await?;
-            data.into()
-                .map(|data| LweSecretKeyShareEnum::Z128(LweSecretKeyShare { data }))
+                .map_err(|e| anyhow_error_and_log(e.to_string()))?
+            {
+                batch128.append(v);
+            }
         }
-    };
-
-    // Reshare the dedicated OPRF LWE key only when the old keyset has one.
-    let oprf_secret_key_share = if oprf_key_present {
-        let expected_key_size = parameters.lwe_dimension().0;
-        match parameters.dkg_mode() {
+    }
+    // 4. Dedicated OPRF LWE key (DKG ring), only when present.
+    if dedicated_keys.oprf {
+        match dkg_mode {
             DkgMode::Z64 => {
-                let maybe_key = input_share
+                if let Some(v) = input_share
                     .as_mut()
                     .and_then(|s| {
                         s.oprf_secret_key_share
@@ -489,20 +544,13 @@ where
                             .map(|key| key.try_cast_mut_to_z64().map(|key| key.data.as_mut()))
                     })
                     .transpose()
-                    .map_err(|e| anyhow_error_and_log(e.to_string()))?;
-                let data = reshare
-                    .execute(
-                        sessions,
-                        &mut preproc64,
-                        &mut R::MaybeExpectedInputShares::from(maybe_key),
-                        expected_key_size,
-                    )
-                    .await?;
-                data.into()
-                    .map(|data| LweSecretKeyShareEnum::Z64(LweSecretKeyShare { data }))
+                    .map_err(|e| anyhow_error_and_log(e.to_string()))?
+                {
+                    batch64.append(v);
+                }
             }
             DkgMode::Z128 => {
-                let maybe_key = input_share
+                if let Some(v) = input_share
                     .as_mut()
                     .and_then(|s| {
                         s.oprf_secret_key_share
@@ -510,28 +558,50 @@ where
                             .map(|key| key.try_cast_mut_to_z128().map(|key| key.data.as_mut()))
                     })
                     .transpose()
-                    .map_err(|e| anyhow_error_and_log(e.to_string()))?;
-                let data = reshare
-                    .execute(
-                        sessions,
-                        &mut preproc128,
-                        &mut R::MaybeExpectedInputShares::from(maybe_key),
-                        expected_key_size,
-                    )
-                    .await?;
-                data.into()
-                    .map(|data| LweSecretKeyShareEnum::Z128(LweSecretKeyShare { data }))
+                    .map_err(|e| anyhow_error_and_log(e.to_string()))?
+                {
+                    batch128.append(v);
+                }
             }
         }
-    } else {
-        None
-    };
-
-    // Reshare the GLWE compute key
-    let expected_key_size = parameters.glwe_sk_num_bits();
-    let glwe_secret_key_share = match parameters.dkg_mode() {
+    }
+    // 5. Transciphering LWE key (DKG ring), only when present.
+    if dedicated_keys.transciphering {
+        match dkg_mode {
+            DkgMode::Z64 => {
+                if let Some(v) = input_share
+                    .as_mut()
+                    .and_then(|s| {
+                        s.transciphering_secret_key_share
+                            .as_mut()
+                            .map(|key| key.try_cast_mut_to_z64().map(|key| key.data.as_mut()))
+                    })
+                    .transpose()
+                    .map_err(|e| anyhow_error_and_log(e.to_string()))?
+                {
+                    batch64.append(v);
+                }
+            }
+            DkgMode::Z128 => {
+                if let Some(v) = input_share
+                    .as_mut()
+                    .and_then(|s| {
+                        s.transciphering_secret_key_share
+                            .as_mut()
+                            .map(|key| key.try_cast_mut_to_z128().map(|key| key.data.as_mut()))
+                    })
+                    .transpose()
+                    .map_err(|e| anyhow_error_and_log(e.to_string()))?
+                {
+                    batch128.append(v);
+                }
+            }
+        }
+    }
+    // 6. GLWE compute key (DKG ring).
+    match dkg_mode {
         DkgMode::Z64 => {
-            let maybe_key = input_share
+            if let Some(v) = input_share
                 .as_mut()
                 .map(|s| {
                     s.glwe_secret_key_share
@@ -539,24 +609,13 @@ where
                         .map(|key| key.data.as_mut())
                 })
                 .transpose()
-                .map_err(|e| anyhow_error_and_log(e.to_string()))?;
-            let data = reshare
-                .execute(
-                    sessions,
-                    &mut preproc64,
-                    &mut R::MaybeExpectedInputShares::from(maybe_key),
-                    expected_key_size,
-                )
-                .await?;
-            data.into().map(|data| {
-                GlweSecretKeyShareEnum::Z64(GlweSecretKeyShare {
-                    data,
-                    polynomial_size,
-                })
-            })
+                .map_err(|e| anyhow_error_and_log(e.to_string()))?
+            {
+                batch64.append(v);
+            }
         }
         DkgMode::Z128 => {
-            let maybe_key = input_share
+            if let Some(v) = input_share
                 .as_mut()
                 .map(|s| {
                     s.glwe_secret_key_share
@@ -564,141 +623,209 @@ where
                         .map(|key| key.data.as_mut())
                 })
                 .transpose()
-                .map_err(|e| anyhow_error_and_log(e.to_string()))?;
-            let data = reshare
-                .execute(
-                    sessions,
-                    &mut preproc128,
-                    &mut R::MaybeExpectedInputShares::from(maybe_key),
-                    expected_key_size,
-                )
-                .await?;
-            data.into().map(|data| {
-                GlweSecretKeyShareEnum::Z128(GlweSecretKeyShare {
-                    data,
-                    polynomial_size,
-                })
-            })
+                .map_err(|e| anyhow_error_and_log(e.to_string()))?
+            {
+                batch128.append(v);
+            }
         }
+    }
+    // 7. GLWE compression key (DKG ring), only when present.
+    if compression_size.is_some() {
+        match dkg_mode {
+            DkgMode::Z64 => {
+                if let Some(v) = input_share
+                    .as_mut()
+                    .and_then(|s| {
+                        s.glwe_secret_key_share_compression.as_mut().map(|c| {
+                            c.try_cast_mut_to_z64()
+                                .map(|key| key.post_packing_ks_key.data.as_mut())
+                        })
+                    })
+                    .transpose()
+                    .map_err(|e| anyhow_error_and_log(e.to_string()))?
+                {
+                    batch64.append(v);
+                }
+            }
+            DkgMode::Z128 => {
+                if let Some(v) = input_share
+                    .as_mut()
+                    .and_then(|s| {
+                        s.glwe_secret_key_share_compression.as_mut().map(|c| {
+                            c.try_cast_mut_to_z128()
+                                .map(|key| key.post_packing_ks_key.data.as_mut())
+                        })
+                    })
+                    .transpose()
+                    .map_err(|e| anyhow_error_and_log(e.to_string()))?
+                {
+                    batch128.append(v);
+                }
+            }
+        }
+    }
+    // 8. GLWE SnS compression key (always Z128), only when present.
+    if sns_compression_size.is_some()
+        && let Some(v) = input_share.as_mut().and_then(|s| {
+            s.glwe_sns_compression_key_as_lwe
+                .as_mut()
+                .map(|key| key.data.as_mut())
+        })
+    {
+        batch128.append(v);
+    }
+
+    // Total shares per ring (from the sizes, so it is correct for Set 2 too).
+    let dkg_ring_total = lwe_compute_size
+        + lwe_encryption_size
+        + oprf_size.unwrap_or(0)
+        + transciphering_size.unwrap_or(0)
+        + glwe_size
+        + compression_size.unwrap_or(0);
+    let (total128, total64) = match dkg_mode {
+        DkgMode::Z64 => (
+            sns_size.unwrap_or(0) + sns_compression_size.unwrap_or(0),
+            dkg_ring_total,
+        ),
+        DkgMode::Z128 => (
+            sns_size.unwrap_or(0) + sns_compression_size.unwrap_or(0) + dkg_ring_total,
+            0,
+        ),
     };
 
-    // Reshare the GLWE compression key
+    // Reshare each ring's batch in a single round-set (skip empty rings).
+    let mut out128: Option<Vec<Share<ResiduePoly<Z128, EXTENSION_DEGREE>>>> = if total128 > 0 {
+        reshare
+            .execute(
+                sessions,
+                &mut preproc128,
+                &mut R::MaybeExpectedInputShares::from(has_input.then_some(&mut batch128)),
+                total128,
+            )
+            .await?
+            .into()
+    } else {
+        None
+    };
+    let mut out64: Option<Vec<Share<ResiduePoly<Z64, EXTENSION_DEGREE>>>> = if total64 > 0 {
+        reshare
+            .execute(
+                sessions,
+                &mut preproc64,
+                &mut R::MaybeExpectedInputShares::from(has_input.then_some(&mut batch64)),
+                total64,
+            )
+            .await?
+            .into()
+    } else {
+        None
+    };
+
+    // Split the reshared output back apart, in the same order it was concatenated.
+    // 1. GLWE SnS key.
+    let glwe_secret_key_share_sns_as_lwe = match sns_size {
+        Some(n) => (
+            true,
+            drain_chunk(&mut out128, n).map(|data| LweSecretKeyShare { data }),
+        ),
+        None => (false, None),
+    };
+
+    // 2. LWE compute key.
+    let lwe_compute_secret_key_share = match dkg_mode {
+        DkgMode::Z64 => drain_chunk(&mut out64, lwe_compute_size)
+            .map(|data| LweSecretKeyShareEnum::Z64(LweSecretKeyShare { data })),
+        DkgMode::Z128 => drain_chunk(&mut out128, lwe_compute_size)
+            .map(|data| LweSecretKeyShareEnum::Z128(LweSecretKeyShare { data })),
+    };
+
+    // 3. LWE PKe (encryption) key.
+    let lwe_encryption_secret_key_share = match dkg_mode {
+        DkgMode::Z64 => drain_chunk(&mut out64, lwe_encryption_size)
+            .map(|data| LweSecretKeyShareEnum::Z64(LweSecretKeyShare { data })),
+        DkgMode::Z128 => drain_chunk(&mut out128, lwe_encryption_size)
+            .map(|data| LweSecretKeyShareEnum::Z128(LweSecretKeyShare { data })),
+    };
+
+    // 4. Dedicated OPRF LWE key (only when present).
+    let oprf_secret_key_share = match (dedicated_keys.oprf, dkg_mode) {
+        (false, _) => None,
+        (true, DkgMode::Z64) => drain_chunk(&mut out64, oprf_size.unwrap_or(0))
+            .map(|data| LweSecretKeyShareEnum::Z64(LweSecretKeyShare { data })),
+        (true, DkgMode::Z128) => drain_chunk(&mut out128, oprf_size.unwrap_or(0))
+            .map(|data| LweSecretKeyShareEnum::Z128(LweSecretKeyShare { data })),
+    };
+
+    // 5. Transciphering LWE key (only when present).
+    let transciphering_secret_key_share = match (dedicated_keys.transciphering, dkg_mode) {
+        (false, _) => None,
+        (true, DkgMode::Z64) => drain_chunk(&mut out64, transciphering_size.unwrap_or(0))
+            .map(|data| LweSecretKeyShareEnum::Z64(LweSecretKeyShare { data })),
+        (true, DkgMode::Z128) => drain_chunk(&mut out128, transciphering_size.unwrap_or(0))
+            .map(|data| LweSecretKeyShareEnum::Z128(LweSecretKeyShare { data })),
+    };
+
+    // 6. GLWE compute key.
+    let glwe_secret_key_share = match dkg_mode {
+        DkgMode::Z64 => drain_chunk(&mut out64, glwe_size).map(|data| {
+            GlweSecretKeyShareEnum::Z64(GlweSecretKeyShare {
+                data,
+                polynomial_size,
+            })
+        }),
+        DkgMode::Z128 => drain_chunk(&mut out128, glwe_size).map(|data| {
+            GlweSecretKeyShareEnum::Z128(GlweSecretKeyShare {
+                data,
+                polynomial_size,
+            })
+        }),
+    };
+
+    // 7. GLWE compression key (only when present).
     let glwe_secret_key_share_compression =
         if let Some(compression_params) = parameters.compression_decompression_params() {
-            let polynomial_size = compression_params
+            let comp_polynomial_size = compression_params
                 .raw_compression_parameters
                 .packing_ks_polynomial_size;
-            let expected_key_size = parameters.compression_sk_num_bits();
+            let comp_size = compression_size.unwrap_or(0);
             (
                 true,
-                match parameters.dkg_mode() {
-                    DkgMode::Z64 => {
-                        // Extract the GLWE secret key share for the compression scheme if any
-                        let maybe_key = input_share
-                            .as_mut()
-                            .and_then(|s| {
-                                s.glwe_secret_key_share_compression.as_mut().map(
-                                    |compression_sk_share| {
-                                        compression_sk_share
-                                            .try_cast_mut_to_z64()
-                                            .map(|key| key.post_packing_ks_key.data.as_mut())
-                                    },
-                                )
-                            })
-                            .transpose()
-                            .map_err(|e| anyhow_error_and_log(e.to_string()))?;
-                        let data = reshare
-                            .execute(
-                                sessions,
-                                &mut preproc64,
-                                &mut R::MaybeExpectedInputShares::from(maybe_key),
-                                expected_key_size,
-                            )
-                            .await?;
-                        data.into().map(|data| {
-                            CompressionPrivateKeySharesEnum::Z64(CompressionPrivateKeyShares {
-                                post_packing_ks_key: GlweSecretKeyShare {
-                                    data,
-                                    polynomial_size,
-                                },
-                                params: CompressionParameters::Classic(
-                                    compression_params.raw_compression_parameters,
-                                ),
-                            })
+                match dkg_mode {
+                    DkgMode::Z64 => drain_chunk(&mut out64, comp_size).map(|data| {
+                        CompressionPrivateKeySharesEnum::Z64(CompressionPrivateKeyShares {
+                            post_packing_ks_key: GlweSecretKeyShare {
+                                data,
+                                polynomial_size: comp_polynomial_size,
+                            },
+                            params: CompressionParameters::Classic(
+                                compression_params.raw_compression_parameters,
+                            ),
                         })
-                    }
-                    DkgMode::Z128 => {
-                        // Extract the GLWE secret key share for the compression scheme if any
-                        let maybe_key = input_share
-                            .as_mut()
-                            .and_then(|s| {
-                                s.glwe_secret_key_share_compression.as_mut().map(
-                                    |compression_sk_share| {
-                                        compression_sk_share
-                                            .try_cast_mut_to_z128()
-                                            .map(|key| key.post_packing_ks_key.data.as_mut())
-                                    },
-                                )
-                            })
-                            .transpose()
-                            .map_err(|e| anyhow_error_and_log(e.to_string()))?;
-                        let data = reshare
-                            .execute(
-                                sessions,
-                                &mut preproc128,
-                                &mut R::MaybeExpectedInputShares::from(maybe_key),
-                                expected_key_size,
-                            )
-                            .await?;
-                        data.into().map(|data| {
-                            CompressionPrivateKeySharesEnum::Z128(CompressionPrivateKeyShares {
-                                post_packing_ks_key: GlweSecretKeyShare {
-                                    data,
-                                    polynomial_size,
-                                },
-                                params: CompressionParameters::Classic(
-                                    compression_params.raw_compression_parameters,
-                                ),
-                            })
+                    }),
+                    DkgMode::Z128 => drain_chunk(&mut out128, comp_size).map(|data| {
+                        CompressionPrivateKeySharesEnum::Z128(CompressionPrivateKeyShares {
+                            post_packing_ks_key: GlweSecretKeyShare {
+                                data,
+                                polynomial_size: comp_polynomial_size,
+                            },
+                            params: CompressionParameters::Classic(
+                                compression_params.raw_compression_parameters,
+                            ),
                         })
-                    }
+                    }),
                 },
             )
         } else {
             (false, None)
         };
 
-    // Reshare the GLWE sns compression key
-    let glwe_sns_compression_key_as_lwe = if let Some(params_sns) = parameters.sns() {
-        if params_sns.sns_compression_params().is_some() {
-            // NOTE (bugfix): this reshares the SnS *compression* key, so it must
-            // be sized with the SnS compression key size. The legacy code used
-            // `compression_sk_num_bits()`, which on the old `DKGParamsSnS`
-            // delegated to the *regular* compression params — the wrong key size.
-            // It went unnoticed because the only parameter set ever resharded in
-            // tests (`PARAMS_TEST_BK_SNS`) has identical regular and SnS
-            // compression dimensions (256 == 256), masking the discrepancy.
-            // Fixed here to use the SnS compression key size.
-            let expected_key_size = params_sns.sns_compression_sk_num_bits();
-            let maybe_key = input_share.as_mut().and_then(|s| {
-                s.glwe_sns_compression_key_as_lwe
-                    .as_mut()
-                    .map(|key| key.data.as_mut())
-            });
-            let data = reshare
-                .execute(
-                    sessions,
-                    &mut preproc128,
-                    &mut R::MaybeExpectedInputShares::from(maybe_key),
-                    expected_key_size,
-                )
-                .await?;
-            (true, data.into().map(|data| LweSecretKeyShare { data }))
-        } else {
-            (false, None)
-        }
-    } else {
-        (false, None)
+    // 8. GLWE SnS compression key (always Z128, only when present).
+    let glwe_sns_compression_key_as_lwe = match sns_compression_size {
+        Some(n) => (
+            true,
+            drain_chunk(&mut out128, n).map(|data| LweSecretKeyShare { data }),
+        ),
+        None => (false, None),
     };
 
     match (
@@ -745,6 +872,7 @@ where
                 lwe_encryption_secret_key_share,
                 lwe_compute_secret_key_share,
                 oprf_secret_key_share,
+                transciphering_secret_key_share,
                 glwe_secret_key_share,
                 glwe_secret_key_share_sns_as_lwe,
                 parameters: parameters.classic_pbs(),
@@ -774,7 +902,7 @@ mod tests {
     use crate::runtime::sessions::small_session::SmallSession;
     use crate::tests::helper::tests::generate_keys_deterministically;
     use crate::tests::helper::tests_and_benches::{
-        execute_protocol_small, execute_protocol_two_sets,
+        TwoSetsExpectedRounds, execute_protocol_small, execute_protocol_two_sets,
     };
     use crate::tfhe_internals::parameters::PARAMS_TEST_RESHARE;
     use crate::tfhe_internals::test_feature::{
@@ -809,6 +937,39 @@ mod tests {
     static RESHARE_KEYSET: LazyLock<KeySet> = LazyLock::new(|| {
         generate_keys_deterministically(PARAMS_TEST_RESHARE, tfhe::Tag::default())
     });
+
+    /// `DedicatedKeysPresent::from_private_keyset` must report exactly which optional shares a
+    /// keyset carries: a wrong flag sizes the reshared batch differently from the other parties,
+    /// which desynchronises the protocol.
+    #[test]
+    fn dedicated_keys_present_reads_the_optional_shares() {
+        let mut keyset = PrivateKeySet::<4>::init_dummy(PARAMS_TEST_RESHARE);
+        assert_eq!(
+            DedicatedOprfKeysPresent::from_private_keyset(&keyset),
+            DedicatedOprfKeysPresent {
+                oprf: true,
+                transciphering: true,
+            }
+        );
+
+        keyset.oprf_secret_key_share = None;
+        assert_eq!(
+            DedicatedOprfKeysPresent::from_private_keyset(&keyset),
+            DedicatedOprfKeysPresent {
+                oprf: false,
+                transciphering: true,
+            }
+        );
+
+        keyset.transciphering_secret_key_share = None;
+        assert_eq!(
+            DedicatedOprfKeysPresent::from_private_keyset(&keyset),
+            DedicatedOprfKeysPresent {
+                oprf: false,
+                transciphering: false,
+            }
+        );
+    }
 
     #[tokio::test(flavor = "multi_thread")]
     async fn reshare_no_error() {
@@ -893,6 +1054,55 @@ mod tests {
             num_parties_s2,
             intersection_size,
             threshold,
+            None,
+        )
+        .await
+    }
+
+    /// One keyset is reshared in a single batch per ring, so the two-sets session
+    /// and the set-2 session both end one cross-set plus one set-2-only round count
+    /// further per non-empty ring, at the same round; the set-1 session is never
+    /// used. [`ReshareSecretKeys::num_rounds`] budgets two batches and so bounds
+    /// the actual count. The epoch manager compensates the lift and preprocessing
+    /// sessions of a party with the declared count while its online sessions run.
+    #[tokio::test(flavor = "multi_thread")]
+    #[rstest::rstest]
+    async fn reshare_two_sets_round_accounting(
+        #[values(0, 2)] intersection_size: usize,
+    ) -> anyhow::Result<()> {
+        let num_parties_s1 = 7;
+        let num_parties_s2 = 4;
+        let threshold = TwoSetsThreshold {
+            threshold_set_1: 2,
+            threshold_set_2: 1,
+        };
+        let num_parties = num_parties_s1 + num_parties_s2 - intersection_size;
+        let rounds_per_batch = reshare_cross_set_num_rounds::<SecureRobustOpen>(num_parties)
+            + reshare_set2_only_num_rounds::<SecureRobustOpen, SyncReliableBroadcast>(
+                num_parties,
+                threshold.threshold_set_2 as usize,
+            );
+        // `PARAMS_TEST_RESHARE` is a Z128 keyset: every component lives in the
+        // Z128 batch and the Z64 batch is empty.
+        assert_eq!(PARAMS_TEST_RESHARE.dkg_mode(), DkgMode::Z128);
+        let num_batches = 1;
+        let declared =
+            SecureReshareSecretKeys::num_rounds(num_parties, threshold.threshold_set_2 as usize);
+        assert!(
+            num_batches * rounds_per_batch <= declared,
+            "declared {declared} rounds do not cover {num_batches} batch(es) of {rounds_per_batch} rounds"
+        );
+        simulate_reshare_two_sets::<4>(
+            false,
+            num_parties_s1,
+            num_parties_s2,
+            intersection_size,
+            threshold,
+            Some(TwoSetsExpectedRounds {
+                num_rounds_within_s1: 0,
+                num_rounds_within_s2: num_batches * rounds_per_batch,
+                num_rounds_across_sets: num_batches * rounds_per_batch,
+            }),
         )
         .await
     }
@@ -914,6 +1124,7 @@ mod tests {
             num_parties_s2,
             intersection_size,
             threshold,
+            None,
         )
         .await
     }
@@ -944,16 +1155,30 @@ mod tests {
                 add_error,
             )
             .unwrap();
-            let oprf_key_present = key_shares
-                .iter()
-                .any(|share| share.oprf_secret_key_share.is_some());
+            let dedicated_keys = DedicatedOprfKeysPresent {
+                oprf: key_shares
+                    .iter()
+                    .any(|share| share.oprf_secret_key_share.is_some()),
+                transciphering: key_shares
+                    .iter()
+                    .any(|share| share.transciphering_secret_key_share.is_some()),
+            };
+            // Guard against vacuous coverage: `PARAMS_TEST_RESHARE` enables transciphering, so
+            // the test keyset must carry both dedicated shares. Without this, a regression that
+            // stopped generating them would make every `assert_ne!`/`assert_same_client_key`
+            // below compare `None` against `None` and still pass.
+            assert!(dedicated_keys.oprf, "test keyset must carry the OPRF share");
+            assert!(
+                dedicated_keys.transciphering,
+                "test keyset must carry the transciphering share"
+            );
 
             let party_keyshare = session.my_role().get_from(&key_shares).unwrap().clone();
             let mut preproc = DummyPreprocessing::new(42, &session);
 
             //Testing ResharePreprocRequired
             let preproc_required =
-                ResharePreprocRequired::new(session.num_parties(), params, oprf_key_present);
+                ResharePreprocRequired::new(session.num_parties(), params, dedicated_keys);
 
             let mut new_preproc_64 = InMemoryBasePreprocessing {
                 available_triples: Vec::new(),
@@ -983,7 +1208,7 @@ mod tests {
                 &mut new_preproc_64,
                 &mut my_contribution,
                 params,
-                oprf_key_present,
+                dedicated_keys,
             )
             .await
             .unwrap();
@@ -991,7 +1216,11 @@ mod tests {
             //Making sure ResharPreprocRequired doesn't ask for too much preprocessing
             assert_eq!(new_preproc_64.available_randoms.len(), 0);
             assert_eq!(new_preproc_128.available_randoms.len(), 0);
-            assert_eq!(out.oprf_secret_key_share.is_some(), oprf_key_present);
+            assert_eq!(out.oprf_secret_key_share.is_some(), dedicated_keys.oprf);
+            assert_eq!(
+                out.transciphering_secret_key_share.is_some(),
+                dedicated_keys.transciphering
+            );
             (session.my_role(), out, my_contribution)
         };
 
@@ -1073,6 +1302,17 @@ mod tests {
             }
         }
 
+        if let Some(x) = keyset.transciphering_secret_key_share.as_ref() {
+            match x {
+                LweSecretKeyShareEnum::Z64(x) => {
+                    x.data.iter().for_each(|x| assert!(x.value().is_zero()))
+                }
+                LweSecretKeyShareEnum::Z128(x) => {
+                    x.data.iter().for_each(|x| assert!(x.value().is_zero()))
+                }
+            }
+        }
+
         match &keyset.glwe_secret_key_share {
             GlweSecretKeyShareEnum::Z64(x) => {
                 x.data.iter().for_each(|x| assert!(x.value().is_zero()))
@@ -1112,6 +1352,7 @@ mod tests {
         num_parties_s2: usize,
         intersection_size: usize,
         threshold: TwoSetsThreshold,
+        expected_rounds: Option<TwoSetsExpectedRounds>,
     ) -> anyhow::Result<()>
     where
         ResiduePoly<Z128, EXTENSION_DEGREE>: ErrorCorrect + Invert + QuotientMaximalIdeal,
@@ -1122,9 +1363,20 @@ mod tests {
                         session_set_2: Option<BaseSession>| async move {
             let new_params = PARAMS_TEST_RESHARE;
             let keyset = RESHARE_KEYSET.clone();
-            let oprf_key_present = ClientKeyView::new(&keyset.client_key)
-                .raw_oprf_client_key()
-                .is_some();
+            let client_key_view = ClientKeyView::new(&keyset.client_key);
+            let dedicated_keys = DedicatedOprfKeysPresent {
+                oprf: client_key_view.raw_oprf_client_key().is_some(),
+                transciphering: client_key_view.raw_transciphering_client_key().is_some(),
+            };
+            // Guard against vacuous coverage: `PARAMS_TEST_RESHARE` enables transciphering, so
+            // the test keyset must carry both dedicated shares. Without this, a regression that
+            // stopped generating them would make every `assert_ne!`/`assert_same_client_key`
+            // below compare `None` against `None` and still pass.
+            assert!(dedicated_keys.oprf, "test keyset must carry the OPRF share");
+            assert!(
+                dedicated_keys.transciphering,
+                "test keyset must carry the transciphering share"
+            );
             let mut party_keyshare = if let Some(session_set_1) = session_set_1.as_ref() {
                 let key_shares = generate_key_with_error_in_s1(
                     keyset,
@@ -1146,38 +1398,37 @@ mod tests {
                 None
             };
 
-            let (mut preproc_64, mut preproc_128) = if let Some(session_set_2) =
-                session_set_2.as_ref()
-            {
-                let mut preproc = DummyPreprocessing::new(42, session_set_2);
+            let (mut preproc_64, mut preproc_128) =
+                if let Some(session_set_2) = session_set_2.as_ref() {
+                    let mut preproc = DummyPreprocessing::new(42, session_set_2);
 
-                //Testing ResharePreprocRequired
-                let num_parties_set_1 = common_session
-                    .roles()
-                    .iter()
-                    .filter(|p| p.is_set1())
-                    .count();
-                assert_eq!(num_parties_set_1, num_parties_s1);
-                let preproc_required =
-                    ResharePreprocRequired::new(num_parties_set_1, new_params, oprf_key_present);
+                    //Testing ResharePreprocRequired
+                    let num_parties_set_1 = common_session
+                        .roles()
+                        .iter()
+                        .filter(|p| p.is_set1())
+                        .count();
+                    assert_eq!(num_parties_set_1, num_parties_s1);
+                    let preproc_required =
+                        ResharePreprocRequired::new(num_parties_set_1, new_params, dedicated_keys);
 
-                let new_preproc_64 = InMemoryBasePreprocessing {
-                    available_triples: Vec::new(),
-                    available_randoms: preproc
-                        .next_random_vec(preproc_required.batch_params_64.randoms)
-                        .unwrap(),
+                    let new_preproc_64 = InMemoryBasePreprocessing {
+                        available_triples: Vec::new(),
+                        available_randoms: preproc
+                            .next_random_vec(preproc_required.batch_params_64.randoms)
+                            .unwrap(),
+                    };
+
+                    let new_preproc_128 = InMemoryBasePreprocessing {
+                        available_triples: Vec::new(),
+                        available_randoms: preproc
+                            .next_random_vec(preproc_required.batch_params_128.randoms)
+                            .unwrap(),
+                    };
+                    (Some(new_preproc_64), Some(new_preproc_128))
+                } else {
+                    (None, None)
                 };
-
-                let new_preproc_128 = InMemoryBasePreprocessing {
-                    available_triples: Vec::new(),
-                    available_randoms: preproc
-                        .next_random_vec(preproc_required.batch_params_128.randoms)
-                        .unwrap(),
-                };
-                (Some(new_preproc_64), Some(new_preproc_128))
-            } else {
-                (None, None)
-            };
 
             let my_role = common_session.my_role();
             let out = match my_role {
@@ -1187,7 +1438,7 @@ mod tests {
                         &mut common_session,
                         &mut party_keyshare,
                         new_params,
-                        oprf_key_present,
+                        dedicated_keys,
                     )
                     .await
                     .unwrap();
@@ -1198,7 +1449,7 @@ mod tests {
                     preproc_128.as_mut().unwrap(),
                     preproc_64.as_mut().unwrap(),
                     new_params,
-                    oprf_key_present,
+                    dedicated_keys,
                 )
                 .await
                 .unwrap(),
@@ -1208,7 +1459,7 @@ mod tests {
                     preproc_64.as_mut().unwrap(),
                     party_keyshare.as_mut().unwrap(),
                     new_params,
-                    oprf_key_present,
+                    dedicated_keys,
                 )
                 .await
                 .unwrap(),
@@ -1221,7 +1472,11 @@ mod tests {
             if let Some(p) = preproc_128 {
                 assert_eq!(p.available_randoms.len(), 0)
             }
-            assert_eq!(out.oprf_secret_key_share.is_some(), oprf_key_present);
+            assert_eq!(out.oprf_secret_key_share.is_some(), dedicated_keys.oprf);
+            assert_eq!(
+                out.transciphering_secret_key_share.is_some(),
+                dedicated_keys.transciphering
+            );
 
             (my_role, out)
         };
@@ -1236,7 +1491,7 @@ mod tests {
             num_parties_s2,
             intersection_size,
             threshold,
-            None,
+            expected_rounds,
             NetworkMode::Sync,
             &mut task,
         )
@@ -1473,10 +1728,10 @@ mod tests {
     /// Asserts two client keys are byte-identical, component by component (a
     /// whole-key byte compare only says "different"; this names the offending
     /// field). Covers every component: compute key, dedicated CPK, compression,
-    /// noise-squashing, SnS-compression, re-randomization params, OPRF, and tag.
+    /// noise-squashing, SnS-compression, re-randomization params, OPRF, transciphering, and tag.
     fn assert_same_client_key(a: &tfhe::ClientKey, b: &tfhe::ClientKey) {
-        let (ai, acpk, acomp, ans, ansc, arerand, aoprf, atag) = a.clone().into_raw_parts();
-        let (bi, bcpk, bcomp, bns, bnsc, brerand, boprf, btag) = b.clone().into_raw_parts();
+        let (ai, acpk, acomp, ans, ansc, arerand, aoprf, atc, atag) = a.clone().into_raw_parts();
+        let (bi, bcpk, bcomp, bns, bnsc, brerand, boprf, btc, btag) = b.clone().into_raw_parts();
         macro_rules! same_field {
             ($x:expr, $y:expr, $name:literal) => {
                 assert_eq!(
@@ -1493,6 +1748,7 @@ mod tests {
         same_field!(ansc, bnsc, "sns compression private key");
         same_field!(arerand, brerand, "re-randomization parameters");
         same_field!(aoprf, boprf, "oprf private key");
+        same_field!(atc, btc, "transciphering private key");
         same_field!(atag, btag, "tag");
     }
 
@@ -1609,6 +1865,22 @@ mod tests {
             ))
         });
 
+        let transciphering_private_lwe_sk = shares[0]
+            .transciphering_secret_key_share
+            .is_some()
+            .then(|| {
+                LweSecretKey::from_container(recon_lwe_enum_u64(
+                    shares,
+                    |s| {
+                        s.transciphering_secret_key_share.as_ref().expect(
+                            "transciphering share present on all parties when present on party 0",
+                        )
+                    },
+                    threshold,
+                    max_errors,
+                ))
+            });
+
         to_hl_client_key(
             &params,
             tag,
@@ -1619,6 +1891,7 @@ mod tests {
             sns_secret_key,
             sns_compression_secret_key,
             oprf_private_lwe_sk,
+            transciphering_private_lwe_sk,
         )
     }
 

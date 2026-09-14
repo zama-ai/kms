@@ -138,6 +138,7 @@ impl K8sTestContext {
             max_iter: 400,
             expect_all_responses: true,
             download_all: false,
+            signing_schemes: vec![],
         };
 
         execute_cmd(&config, self.workspace())

@@ -6,6 +6,7 @@
 
 use crate::consts::SIGNING_KEY_ID;
 use crate::cryptography::signatures::{PrivateSigKey, PublicSigKey, RootSigningSeed};
+use crate::cryptography::signing::identity::NodeSigningIdentity;
 use crate::cryptography::signing::{
     Ed25519VerfKey, MlDsaVerfKey, SigningSchemeType, UnifiedPublicSigKey,
 };
@@ -336,7 +337,7 @@ pub fn calculate_max_num_bits(dkg_params: &DKGParams) -> usize {
     }
 }
 
-/// Generalizes `get_core_signing_key`, `get_client_verification_key` and
+/// Generalizes `get_core_signing_identity`, `get_client_verification_key` and
 /// `get_core_ca_cert`. Can be used to implement a getter for any per-entity
 /// (core or client) data.
 ///
@@ -382,27 +383,30 @@ async fn get_unique<
     Ok(value)
 }
 
-/// The node's signing identity: its ECDSA key with the root seed attached.
+/// The node's signing identity: its ECDSA key, assembled with the root seed the
+/// other schemes' keys come from.
 ///
-/// A node that has not yet had a seed generated simply has none
-/// attached: that is ECDSA-only operation, not a failure, and must not stop the
-/// server from booting.
+/// A node that has not yet had a seed generated simply has none: that is
+/// ECDSA-only operation, not a failure, and must not stop the server from
+/// booting.
 ///
 /// # Errors
 ///
 /// A seed that is present but unreadable is an error, not an absent seed.
-pub async fn get_core_signing_key<S: StorageReader>(storage: &S) -> anyhow::Result<PrivateSigKey> {
+pub async fn get_core_signing_identity<S: StorageReader>(
+    storage: &S,
+) -> anyhow::Result<NodeSigningIdentity> {
     let sk =
         get_unique::<S, PrivateSigKey, PrivDataType>(storage, PrivDataType::SigningKey).await?;
     match get_core_root_signing_seed(storage).await? {
-        Some(seed) => Ok(sk.with_root_seed(seed)),
+        Some(seed) => Ok(NodeSigningIdentity::new(sk, seed)),
         None => {
             tracing::warn!(
                 "No root signing seed found in storage \"{}\"; this node can only sign under \
                  ECDSA. Run kms-gen-keys to generate one.",
                 storage.info()
             );
-            Ok(sk)
+            Ok(NodeSigningIdentity::ecdsa_only(sk))
         }
     }
 }
