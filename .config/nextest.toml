@@ -15,6 +15,11 @@ k8s-integration = { max-threads = 1 }
 [profile.ci.junit]
 path = "junit.xml"
 
+# Retain deadline diagnostics when concurrent keygen succeeds.
+[[profile.ci.overrides]]
+filter = "test(/::nightly_secure_threshold_concurrent_keygen_test::/)"
+junit.store-success-output = true
+
 # Ensure K8s tests run serially, they share the same Kind cluster pods.
 [[profile.ci.overrides]]
 filter = "binary(/^kubernetes_test_/)"
