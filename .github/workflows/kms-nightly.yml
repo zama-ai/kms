@@ -2,6 +2,18 @@ name: kms-nightly
 
 on:
   workflow_dispatch:
+    inputs:
+      partition:
+        description: Nightly shard to run (out of five)
+        type: choice
+        default: all
+        options:
+          - all
+          - '1'
+          - '2'
+          - '3'
+          - '4'
+          - '5'
   workflow_call:
     secrets:
       SLACK_CHANNEL:
@@ -46,7 +58,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        partition: [1, 2, 3, 4, 5]
+        partition: ${{ fromJSON(inputs.partition != '' && inputs.partition != 'all' && format('[{0}]', inputs.partition) || '[1,2,3,4,5]') }}
     uses: ./.github/workflows/common-testing.yml
     with:
       crate-names: '-p kms'
