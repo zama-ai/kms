@@ -245,6 +245,9 @@ pub(crate) fn keygen(
 ) -> Result<(MlKem1024P384PrivateKey, MlKem1024P384PublicKey), CryptographyError> {
     let mut seed = Zeroizing::new([0_u8; PRIVATE_KEY_LENGTH]);
     rng.fill_bytes(&mut *seed);
+    // `rust-hpke` can panic here if its single P-384 scalar candidate is rejected.
+    // For a uniformly random seed, this failure has probability below 2^-192:
+    // <https://www.ietf.org/archive/id/draft-irtf-cfrg-concrete-hybrid-kems-03.html#section-3.1.1>.
     let hpke_private_key = HpkePrivateKey::from_bytes(&*seed)
         .map_err(|error| map_hpke_error("MLKEM1024-P384 private key", error))?;
     let public_key = MlKem1024P384PublicKey {

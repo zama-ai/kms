@@ -699,6 +699,17 @@ mod tests {
         )
         .unwrap();
         assert_eq!(pk, pk2);
+        let ct2 = pk2.encrypt(&mut rng, &msg).unwrap();
+
+        let mut sk_buf = Vec::new();
+        tfhe::safe_serialization::safe_serialize(&sk, &mut sk_buf, SAFE_SER_SIZE_LIMIT).unwrap();
+        let sk2: UnifiedPrivateEncKey = tfhe::safe_serialization::safe_deserialize(
+            std::io::Cursor::new(sk_buf),
+            SAFE_SER_SIZE_LIMIT,
+        )
+        .unwrap();
+        let pt2 = sk2.decrypt(&ct2).unwrap();
+        assert_eq!(msg, pt2);
     }
 
     #[test]
