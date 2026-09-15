@@ -147,7 +147,8 @@ impl S3Storage {
         Ok(())
     }
 
-    /// Deletes the object at the given key, if it exists. Does not fail if the object does not exist or if the deletion fails.
+    /// Deletes the object at the given key and propagates S3 errors.
+    /// Deleting an object that does not exist succeeds.
     async fn delete_data_at_key(&mut self, key: &str) -> anyhow::Result<()> {
         tracing::info!(
             "Deleting object from bucket {} under key {}",
@@ -155,17 +156,13 @@ impl S3Storage {
             key
         );
 
-        // Attempt S3 deletion but don't fail on errors
-        if let Err(e) = self
-            .s3_client
+        self.s3_client
             .delete_object()
             .bucket(&self.bucket)
             .key(key)
             .send()
             .await
-        {
-            tracing::warn!("S3 delete failed: {:?}", e);
-        }
+            .map_err(|e| anyhow::anyhow!("S3 delete failed for key {key}: {e}"))?;
 
         Ok(())
     }

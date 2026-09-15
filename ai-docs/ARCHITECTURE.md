@@ -240,7 +240,8 @@ A separate `RestoreFromBackup` RPC completes restoration on the node for the non
 
 Destroying a retired custodian context deletes its flat and epoch-scoped backups before
 removing its public recovery material. A backup deletion error stops that removal so it can
-be retried. The current backup context cannot be destroyed.
+be retried. S3 delete errors propagate to the caller; deleting a nonexistent object still succeeds.
+The current backup context cannot be destroyed.
 
 Implementation code lives in [core/service/src/backup/](core/service/src/backup/);
 end-to-end tests live at
