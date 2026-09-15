@@ -17,7 +17,7 @@ use crate::util::meta_store::{
     lock_entry_in_meta_store, update_err_req_in_meta_store,
 };
 use crate::vault::keychain::KeychainProxy;
-use crate::vault::storage::crypto_material::{CryptoMaterialStorage, data_exists};
+use crate::vault::storage::crypto_material::{CryptoMaterialStorage, StorageError, data_exists};
 use crate::vault::storage::{
     StorageExt, delete_context_at_id, delete_custodian_context_at_id, store_context_at_id,
 };
@@ -832,10 +832,9 @@ where
     }
 }
 
-/// Atomically update both the storage and the session maker with the new context info.
-/// If any of the two operations fail, rollback to the original state.
-///
-/// This function should only be used in the threshold setting since SessionMaker does not exist in centralized mode.
+/// Store the new context and register it with the threshold session maker.
+/// A duplicate store leaves existing storage and session state untouched.
+/// Other failures trigger best-effort rollback.
 async fn atomic_update_context<
     PubS: Storage + Sync + Send + 'static,
     PrivS: StorageExt + Sync + Send + 'static,
@@ -849,6 +848,11 @@ async fn atomic_update_context<
     let res1 = crypto_storage
         .write_context_info(new_context.context_id(), new_context, OP_NEW_MPC_CONTEXT)
         .await;
+
+    // This call wrote nothing, so neither registration nor rollback is ours to perform.
+    if let Err(StorageError::Duplicate) = res1 {
+        anyhow::bail!("Context {context_id} already exists");
+    }
 
     let res2 = session_maker.add_context_info(my_role, new_context).await;
 

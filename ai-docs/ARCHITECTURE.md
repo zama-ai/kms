@@ -108,6 +108,9 @@ fails, and likewise preserve an existing private half when its public write fail
 removes newly created entries, not entries the backend skipped. Backup failure leaves
 successfully stored primary material in place. Callers must serialize writes to the same entries.
 
+When threshold context creation reaches a duplicate storage write, it returns an error
+without changing the existing context or its session registration.
+
 ### Binaries
 
 All under [core/service/src/bin/](core/service/src/bin/):
