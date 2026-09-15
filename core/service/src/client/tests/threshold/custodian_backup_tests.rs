@@ -508,6 +508,146 @@ async fn decrypt_after_recovery(amount_custodians: usize, threshold: u32) {
     .await;
 }
 
+/// After a rotation the vault holds two contexts, so a node that lost its anchor must name the
+/// one to recover under: `None` is refused as ambiguous, and the current context recovers the FHE
+/// key shares, proven by a decryption at the end.
+#[tokio::test(flavor = "multi_thread")]
+async fn test_recovery_names_the_context_after_rotation_threshold() {
+    use crate::vault::storage::read_custodian_context_anchor;
+
+    let n = ThresholdBackupTestEnv::AMOUNT_PARTIES;
+    let (amount_custodians, threshold) = (3, 1);
+    let mut env = ThresholdBackupTestEnv::new(
+        "recovery_names_context_threshold",
+        amount_custodians,
+        threshold,
+    )
+    .await;
+    let key_id: RequestId = derive_request_id("recovery_names_context_threshold_key").unwrap();
+    let preproc_id: RequestId =
+        derive_request_id("recovery_names_context_threshold_preproc").unwrap();
+    let (keyset_config, keyset_added_info) = keygen_config();
+    run_insecure_preproc(env.kms_clients(), &preproc_id, FheParameter::Test)
+        .await
+        .unwrap();
+    run_threshold_keygen(
+        FheParameter::Test,
+        env.kms_clients(),
+        env.internal_client(),
+        &preproc_id,
+        &key_id,
+        keyset_config,
+        keyset_added_info,
+        true,
+        env.test_path(),
+        0,
+    )
+    .await;
+    // The rotation re-encrypts every backup under the second context.
+    let second_id: RequestId = derive_request_id("recovery_names_context_threshold_2").unwrap();
+    let second_mnemonics = run_new_cus_context(
+        env.kms_clients.as_ref().unwrap(),
+        env.internal_client.as_mut().unwrap(),
+        &second_id,
+        amount_custodians,
+        threshold,
+    )
+    .await;
+    env.shutdown().await;
+    let dkg_param: WrappedDKGParams = FheParameter::Test.into();
+    let operator_verf_keys = operator_verf_key_map(env.test_path(), env.pub_prefixes()).await;
+
+    // Lose the FHE key shares and the anchors; the signing keys stay so the servers boot.
+    let mut priv_stores: Vec<FileStorage> = env
+        .priv_prefixes()
+        .iter()
+        .map(|prefix| {
+            FileStorage::new(env.test_path(), StorageType::PRIV, prefix.as_deref()).unwrap()
+        })
+        .collect();
+    for priv_store in priv_stores.iter_mut() {
+        delete_at_request_and_epoch_id(
+            priv_store,
+            &key_id,
+            &DEFAULT_EPOCH_ID,
+            &PrivDataType::FheKeyInfo.to_string(),
+        )
+        .await
+        .unwrap();
+        delete_at_request_id(
+            priv_store,
+            &second_id,
+            &PrivDataType::CustodianContextAnchor.to_string(),
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            read_custodian_context_anchor(priv_store).await.unwrap(),
+            None
+        );
+    }
+
+    let (kms_servers, kms_clients) = env.spawn_server_on_existing_material().await;
+    for mut kms_client in kms_clients.values().cloned() {
+        let ambiguous = kms_client
+            .custodian_recovery_init(tonic::Request::new(CustodianRecoveryInitRequest {
+                overwrite_ephemeral_key: false,
+                custodian_context_id: None,
+            }))
+            .await
+            .expect_err("two contexts and no anchor must not select one");
+        assert_eq!(ambiguous.code(), tonic::Code::FailedPrecondition);
+    }
+
+    let mut rng = AesRng::seed_from_u64(17);
+    let recovery_req_resp = run_custodian_recovery_init(&kms_clients, Some(second_id)).await;
+    let cus_out = emulate_custodian(
+        &mut rng,
+        recovery_req_resp,
+        &operator_verf_keys,
+        second_id,
+        second_mnemonics,
+    )
+    .await;
+    assert_eq!(
+        run_custodian_backup_recovery(&kms_clients, &cus_out)
+            .await
+            .len(),
+        n
+    );
+    assert_eq!(run_restore_from_backup(&kms_clients).await.len(), n);
+    for priv_store in &priv_stores {
+        assert_eq!(
+            read_custodian_context_anchor(priv_store).await.unwrap(),
+            Some(second_id),
+            "recovery anchors the context it restored under"
+        );
+    }
+
+    shutdown_servers(kms_servers).await;
+    drop(kms_clients);
+    let (mut kms_servers, mut kms_clients) = env.spawn_server_on_existing_material().await;
+    let mut internal_client = env.create_internal_client(&dkg_param).await;
+    run_decryption_threshold(
+        n,
+        &mut kms_servers,
+        &mut kms_clients,
+        &mut internal_client,
+        None,
+        &key_id,
+        None,
+        vec![TestingPlaintext::U8(u8::MAX)],
+        EncryptionConfig {
+            compression: false,
+            precompute_sns: false,
+        },
+        None,
+        1,
+        env.test_path(),
+    )
+    .await;
+}
+
 /// Same intent as centralized negative test: corrupt signcryption for two custodians; invalid
 /// outputs are filtered and recovery still restores signing keys (`assert_eq!` on recovered keys).
 #[tokio::test]
@@ -1100,7 +1240,7 @@ async fn run_full_custodian_recovery(
     mutate_outputs: Option<fn(&mut HashMap<Address, (u32, CustodianRecoveryRequest)>)>,
 ) {
     let mut rng = AesRng::seed_from_u64(13);
-    let recovery_req_resp = run_custodian_recovery_init(kms_clients).await;
+    let recovery_req_resp = run_custodian_recovery_init(kms_clients, None).await;
     assert_eq!(recovery_req_resp.len(), amount_parties);
     let mut cus_out = emulate_custodian(
         &mut rng,
@@ -1166,6 +1306,7 @@ async fn operator_verf_key_map(
 // Right now only used by insecure tests
 async fn run_custodian_recovery_init(
     kms_clients: &HashMap<u32, CoreServiceEndpointClient<Channel>>,
+    custodian_context_id: Option<RequestId>,
 ) -> Vec<(u32, RecoveryRequest)> {
     let amount_parties = kms_clients.len();
     let mut tasks_gen = JoinSet::new();
@@ -1177,7 +1318,7 @@ async fn run_custodian_recovery_init(
                 cur_client
                     .custodian_recovery_init(tonic::Request::new(CustodianRecoveryInitRequest {
                         overwrite_ephemeral_key: false,
-                        custodian_context_id: None,
+                        custodian_context_id: custodian_context_id.map(Into::into),
                     }))
                     .await,
             )
