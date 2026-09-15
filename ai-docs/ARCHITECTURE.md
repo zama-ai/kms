@@ -329,9 +329,9 @@ context id its payload names. It sits outside the `<backup_id>/<PrivDataType>/`
 namespace the vault's backup entries use, at `RecoveryMaterial/<context_id>`, so purging a
 context's backups never touches it and vice versa; `vault/storage/mod.rs` holds the accessors.
 
-Which context is current is not decided by the vault. A `CustodianContextAnchor` in **private
-storage** names it, written by `NewCustodianContext` once the material is in the vault and by
-recovery once the private store is back. At boot `adopt_custodian_context`
+A `CustodianContextAnchor` in **private storage** names the current context, written by
+`NewCustodianContext` once the material is in the vault and by recovery once the private store is
+back. At boot `adopt_custodian_context`
 ([vault/mod.rs](../core/service/src/vault/mod.rs)) reads the anchor and points the keychain at that
 one context. Nothing is sorted or listed to make the choice, so a retired context that is still in
 the vault — or was replayed into it — is inert, and a new context whose id happens to sort low is

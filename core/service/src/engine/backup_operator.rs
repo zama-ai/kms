@@ -78,12 +78,10 @@ pub struct RealBackupOperator<
     ephemeral_keys: Arc<Mutex<Option<(UnifiedPrivateEncKey, UnifiedPublicEncKey)>>>,
 }
 
-/// The reconstructed backup decryption key, released when the recovery ends however it ends — a
-/// cancelled RPC included — since keeping it would leave the node able to read its own backups for
-/// the rest of the process's life. The context the keychain names goes with it unless
-/// `keep_context` is set: the anchor already named it, or the recovery anchored it. Otherwise later
-/// backups would be made under a context no restart would find. The context lock rides along so
-/// the clear runs before any other lifecycle operation can start.
+/// Clears the reconstructed backup decryption key when the recovery ends, a cancelled RPC included,
+/// so the node cannot decrypt its backups afterwards. Unless `keep_context` is set, it also clears
+/// the context that the recovery put in the keychain without an anchor. A restart does not find
+/// backups made under an unanchored context. It holds the context lock until the clear completes.
 struct RecoveredKeys {
     vault: Arc<Mutex<Vault>>,
     context: RequestId,
@@ -127,7 +125,7 @@ where
     PubS: Storage + Sync + Send + 'static,
     PrivS: StorageExt + Sync + Send + 'static,
 {
-    /// The custodian context this node is installed with, as private storage records it.
+    /// The custodian context this node is installed with, loaded from the private storage.
     ///
     /// The keychain is only a cache of it and is empty whenever boot could not adopt — a node
     /// whose anchored material is missing from the vault, say. Asking the keychain instead would
