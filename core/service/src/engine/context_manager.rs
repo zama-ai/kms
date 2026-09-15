@@ -2438,8 +2438,7 @@ mod tests {
             });
 
             let response = context_manager.destroy_custodian_context(request).await;
-            // This should fail since it is the only custodian context left and we
-            // require at least 2 contexts to be present before allowing a deletion.
+            // This fails: the node backs up under this context, which is also the only one left.
             assert!(response.is_err());
         }
 
