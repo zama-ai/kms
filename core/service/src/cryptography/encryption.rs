@@ -8,9 +8,11 @@ use crate::{
         zeroizing_writer::ZeroizingWriter,
     },
 };
-use ml_kem::EncodedSizeUser;
-use ml_kem::KemCore;
-use ml_kem::MlKem512;
+// Retain the legacy expanded private-key encoding so existing serialized keys
+// stay compatible after upgrading to ml-kem 0.3.
+#[allow(deprecated)]
+use ml_kem::ExpandedKeyEncoding;
+use ml_kem::{Kem, KeyExport, KeyInit, MlKem512, TryKeyInit};
 use rand::{CryptoRng, RngCore};
 use serde::{Deserialize, Deserializer, Serialize, de::Visitor};
 use strum_macros::Display;
@@ -20,7 +22,7 @@ use tfhe::{
     safe_serialization::{safe_deserialize, safe_serialize},
 };
 use tfhe_versionable::VersionsDispatch;
-use zeroize::{Zeroize, ZeroizeOnDrop};
+use zeroize::{Zeroize, ZeroizeOnDrop, Zeroizing};
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, VersionsDispatch)]
 pub enum UnifiedPublicEncKeyVersions {
@@ -97,45 +99,44 @@ impl UnifiedPublicEncKey {
 // Alias wrapping the ephemeral public encryption key the user's wallet constructs and the server
 // uses to encrypt its payload
 // The only reason this format is not private is that it is needed to handle the legacy case, as we do this by distinguishing between 512 and 1024 bit keys
-pub struct PublicEncKey<C: KemCore>(pub(crate) C::EncapsulationKey);
+pub struct PublicEncKey<C: Kem>(pub(crate) C::EncapsulationKey);
 
-impl<C: KemCore> Eq for PublicEncKey<C> {}
-impl<C: KemCore> PartialEq for PublicEncKey<C> {
+impl<C: Kem> Eq for PublicEncKey<C> {}
+impl<C: Kem> PartialEq for PublicEncKey<C> {
     fn eq(&self, other: &Self) -> bool {
-        self.0.as_bytes().as_slice() == other.0.as_bytes().as_slice()
+        self.0.to_bytes().as_slice() == other.0.to_bytes().as_slice()
     }
 }
 
-impl<C: KemCore> Serialize for PublicEncKey<C> {
+impl<C: Kem> Serialize for PublicEncKey<C> {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where
         S: serde::Serializer,
     {
-        serializer.serialize_bytes(&self.0.as_bytes())
+        serializer.serialize_bytes(&self.0.to_bytes())
     }
 }
 
-impl<C: KemCore> Named for PublicEncKey<C> {
+impl<C: Kem> Named for PublicEncKey<C> {
     const NAME: &'static str = "PublicEncKey";
 }
 
 /// workaround because clone doesn't get derived for this type
-impl<C: KemCore> Clone for PublicEncKey<C> {
+impl<C: Kem> Clone for PublicEncKey<C> {
     fn clone(&self) -> Self {
-        let buf = self.0.as_bytes();
-        PublicEncKey(C::EncapsulationKey::from_bytes(&buf))
+        PublicEncKey(self.0.clone())
     }
 }
 
-impl<C: KemCore> std::fmt::Debug for PublicEncKey<C> {
+impl<C: Kem> std::fmt::Debug for PublicEncKey<C> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("PublicEncKey")
-            .field("encapsulation_key", &self.0.as_bytes())
+            .field("encapsulation_key", &self.0.to_bytes())
             .finish()
     }
 }
 
-impl<C: KemCore> tfhe_versionable::Versionize for PublicEncKey<C> {
+impl<C: Kem> tfhe_versionable::Versionize for PublicEncKey<C> {
     type Versioned<'vers>
         = &'vers PublicEncKey<C>
     where
@@ -146,14 +147,14 @@ impl<C: KemCore> tfhe_versionable::Versionize for PublicEncKey<C> {
     }
 }
 
-impl<C: KemCore> tfhe_versionable::VersionizeOwned for PublicEncKey<C> {
+impl<C: Kem> tfhe_versionable::VersionizeOwned for PublicEncKey<C> {
     type VersionedOwned = PublicEncKey<C>;
     fn versionize_owned(self) -> Self::VersionedOwned {
         self
     }
 }
 
-impl<C: KemCore> tfhe_versionable::Unversionize for PublicEncKey<C> {
+impl<C: Kem> tfhe_versionable::Unversionize for PublicEncKey<C> {
     fn unversionize(
         versioned: Self::VersionedOwned,
     ) -> Result<Self, tfhe_versionable::UnversionizeError> {
@@ -163,9 +164,9 @@ impl<C: KemCore> tfhe_versionable::Unversionize for PublicEncKey<C> {
 
 // See this issue: https://github.com/zama-ai/kms-internal/issues/2781
 // We basically need to use standard serialization fo ecdsa keys to remain compatible with the KMS verifier contract
-impl<C: KemCore> tfhe_versionable::NotVersioned for PublicEncKey<C> {}
+impl<C: Kem> tfhe_versionable::NotVersioned for PublicEncKey<C> {}
 
-impl<'de, C: KemCore> Deserialize<'de> for PublicEncKey<C> {
+impl<'de, C: Kem> Deserialize<'de> for PublicEncKey<C> {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
     where
         D: serde::Deserializer<'de>,
@@ -174,8 +175,8 @@ impl<'de, C: KemCore> Deserialize<'de> for PublicEncKey<C> {
     }
 }
 
-struct PublicEncKeyVisitor<C: KemCore>(std::marker::PhantomData<C>);
-impl<C: KemCore> Visitor<'_> for PublicEncKeyVisitor<C> {
+struct PublicEncKeyVisitor<C: Kem>(std::marker::PhantomData<C>);
+impl<C: Kem> Visitor<'_> for PublicEncKeyVisitor<C> {
     type Value = PublicEncKey<C>;
 
     fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
@@ -193,7 +194,7 @@ impl<C: KemCore> Visitor<'_> for PublicEncKeyVisitor<C> {
                 return Err(serde::de::Error::custom(msg));
             }
         };
-        let ek = C::EncapsulationKey::from_bytes(array);
+        let ek = C::EncapsulationKey::new(array).map_err(E::custom)?;
         Ok(PublicEncKey(ek))
     }
 }
@@ -261,7 +262,6 @@ pub enum UnifiedPrivateEncKeyVersions {
 /// - Lifetime: Lifetime of a custodian context
 /// - Scope: Lifetime of a backup (i.e. lifetime of a custodian context), but local to client application
 #[derive(Clone, Debug, Serialize, Deserialize, Zeroize, Versionize)]
-#[expect(clippy::large_enum_variant)]
 #[versionize(UnifiedPrivateEncKeyVersions)]
 pub enum UnifiedPrivateEncKey {
     MlKem512(PrivateEncKey<ml_kem::MlKem512>),
@@ -334,7 +334,7 @@ impl HasPkeScheme for UnifiedPrivateEncKey {
 // The only reason this format is not private is that it is needed to handle the legacy case, as we do this by distinguishing between 512 and 1024 bit keys.
 //
 // The `where C::DecapsulationKey: zeroize::ZeroizeOnDrop` clause on the
-// struct itself makes `PrivateEncKey<C>` un-instantiable for any `KemCore`
+// struct itself makes `PrivateEncKey<C>` un-instantiable for any `Kem`
 // whose inner key doesn't wipe on drop — the wipe-on-drop guarantee is
 // enforced at type construction rather than only at `.zeroize()` call sites.
 // `#[derive(zeroize::ZeroizeOnDrop)]` then expands to a `Drop` impl calling
@@ -343,37 +343,40 @@ impl HasPkeScheme for UnifiedPrivateEncKey {
 #[derive(zeroize::ZeroizeOnDrop)]
 pub struct PrivateEncKey<C>(pub(crate) C::DecapsulationKey)
 where
-    C: KemCore,
-    C::DecapsulationKey: zeroize::ZeroizeOnDrop;
+    C: Kem,
+    C::DecapsulationKey: ExpandedKeyEncoding + KeyInit + zeroize::ZeroizeOnDrop;
 
 // `Zeroize` provides the wipe primitive called from the derived `Drop`.
 // The inner `DecapsulationKey` only impls `ZeroizeOnDrop` (marker) — not
 // `Zeroize` (method) — so we can't call `self.0.zeroize()`; instead, the
 // `mem::replace`-then-drop pattern lets the inner's `Drop` do the actual
 // zeroing.
-impl<C: KemCore> Zeroize for PrivateEncKey<C>
+impl<C: Kem> Zeroize for PrivateEncKey<C>
 where
-    C::DecapsulationKey: zeroize::ZeroizeOnDrop,
+    C::DecapsulationKey: ExpandedKeyEncoding + KeyInit + zeroize::ZeroizeOnDrop,
 {
     fn zeroize(&mut self) {
-        let dummy = C::DecapsulationKey::from_bytes(&Default::default());
+        let dummy = C::DecapsulationKey::new(&Default::default());
         let _wiped = std::mem::replace(&mut self.0, dummy);
     }
 }
 
-impl<C: KemCore> Clone for PrivateEncKey<C>
+impl<C: Kem> Clone for PrivateEncKey<C>
 where
-    C::DecapsulationKey: zeroize::ZeroizeOnDrop,
+    C::DecapsulationKey: ExpandedKeyEncoding + KeyInit + zeroize::ZeroizeOnDrop,
 {
     fn clone(&self) -> Self {
-        let buf = self.0.as_bytes();
-        PrivateEncKey(C::DecapsulationKey::from_bytes(&buf))
+        let buf = Zeroizing::new(self.0.to_expanded_bytes());
+        PrivateEncKey(
+            C::DecapsulationKey::from_expanded_bytes(&buf)
+                .expect("an exported ML-KEM private key must remain valid"),
+        )
     }
 }
 
-impl<C: KemCore> std::fmt::Debug for PrivateEncKey<C>
+impl<C: Kem> std::fmt::Debug for PrivateEncKey<C>
 where
-    C::DecapsulationKey: zeroize::ZeroizeOnDrop,
+    C::DecapsulationKey: ExpandedKeyEncoding + KeyInit + zeroize::ZeroizeOnDrop,
 {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("PrivateEncKey")
@@ -382,9 +385,9 @@ where
     }
 }
 
-impl<C: KemCore> tfhe_versionable::Versionize for PrivateEncKey<C>
+impl<C: Kem> tfhe_versionable::Versionize for PrivateEncKey<C>
 where
-    C::DecapsulationKey: zeroize::ZeroizeOnDrop,
+    C::DecapsulationKey: ExpandedKeyEncoding + KeyInit + zeroize::ZeroizeOnDrop,
 {
     type Versioned<'vers>
         = &'vers PrivateEncKey<C>
@@ -396,9 +399,9 @@ where
     }
 }
 
-impl<C: KemCore> tfhe_versionable::VersionizeOwned for PrivateEncKey<C>
+impl<C: Kem> tfhe_versionable::VersionizeOwned for PrivateEncKey<C>
 where
-    C::DecapsulationKey: zeroize::ZeroizeOnDrop,
+    C::DecapsulationKey: ExpandedKeyEncoding + KeyInit + zeroize::ZeroizeOnDrop,
 {
     type VersionedOwned = PrivateEncKey<C>;
     fn versionize_owned(self) -> Self::VersionedOwned {
@@ -406,9 +409,9 @@ where
     }
 }
 
-impl<C: KemCore> tfhe_versionable::Unversionize for PrivateEncKey<C>
+impl<C: Kem> tfhe_versionable::Unversionize for PrivateEncKey<C>
 where
-    C::DecapsulationKey: zeroize::ZeroizeOnDrop,
+    C::DecapsulationKey: ExpandedKeyEncoding + KeyInit + zeroize::ZeroizeOnDrop,
 {
     fn unversionize(
         versioned: Self::VersionedOwned,
@@ -417,21 +420,22 @@ where
     }
 }
 
-impl<C: KemCore> Serialize for PrivateEncKey<C>
+impl<C: Kem> Serialize for PrivateEncKey<C>
 where
-    C::DecapsulationKey: zeroize::ZeroizeOnDrop,
+    C::DecapsulationKey: ExpandedKeyEncoding + KeyInit + zeroize::ZeroizeOnDrop,
 {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where
         S: serde::Serializer,
     {
-        serializer.serialize_bytes(&self.0.as_bytes())
+        let bytes = Zeroizing::new(self.0.to_expanded_bytes());
+        serializer.serialize_bytes(&bytes)
     }
 }
 
-impl<'de, C: KemCore> Deserialize<'de> for PrivateEncKey<C>
+impl<'de, C: Kem> Deserialize<'de> for PrivateEncKey<C>
 where
-    C::DecapsulationKey: zeroize::ZeroizeOnDrop,
+    C::DecapsulationKey: ExpandedKeyEncoding + KeyInit + zeroize::ZeroizeOnDrop,
 {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
     where
@@ -441,10 +445,10 @@ where
     }
 }
 
-struct PrivateEncKeyVisitor<C: KemCore>(std::marker::PhantomData<C>);
-impl<C: KemCore> Visitor<'_> for PrivateEncKeyVisitor<C>
+struct PrivateEncKeyVisitor<C: Kem>(std::marker::PhantomData<C>);
+impl<C: Kem> Visitor<'_> for PrivateEncKeyVisitor<C>
 where
-    C::DecapsulationKey: zeroize::ZeroizeOnDrop,
+    C::DecapsulationKey: ExpandedKeyEncoding + KeyInit + zeroize::ZeroizeOnDrop,
 {
     type Value = PrivateEncKey<C>;
 
@@ -463,7 +467,7 @@ where
                 return Err(serde::de::Error::custom(msg));
             }
         };
-        let dk = C::DecapsulationKey::from_bytes(array);
+        let dk = C::DecapsulationKey::from_expanded_bytes(array).map_err(E::custom)?;
         Ok(PrivateEncKey(dk))
     }
 }
@@ -776,10 +780,9 @@ mod tests {
         use crate::cryptography::encryption::{
             PublicEncKey, UnifiedPublicEncKey as CrateUnifiedPublicEncKey,
         };
-        use ml_kem::KemCore;
-
+        use crate::cryptography::hybrid_ml_kem;
         let mut rng = AesRng::seed_from_u64(0);
-        let (_dk, ek) = ml_kem::MlKem1024::generate(&mut rng);
+        let (_dk, ek) = hybrid_ml_kem::keygen::<ml_kem::MlKem1024, _>(&mut rng);
         #[allow(deprecated)]
         let key = CrateUnifiedPublicEncKey::MlKem1024(PublicEncKey(ek));
 

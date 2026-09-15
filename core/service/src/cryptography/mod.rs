@@ -6,6 +6,7 @@ pub mod error;
 pub mod hybrid_composite_ml_kem;
 pub mod hybrid_ml_kem;
 pub mod internal_crypto_types;
+mod rand_compat;
 pub mod signatures;
 pub(crate) mod signing;
 pub(crate) mod zeroizing_writer;

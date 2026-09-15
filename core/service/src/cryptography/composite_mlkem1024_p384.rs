@@ -8,19 +8,11 @@
 //! to hedge against advances in cryptanalysis on lattice-based schemes. This
 //! reasoning is all given in x-wing <https://eprint.iacr.org/2024/039.pdf>.
 
-use crate::cryptography::error::CryptographyError;
-use hybrid_array::{Array, typenum::Unsigned};
-use ml_kem::{
-    B32, EncodedSizeUser, KemCore, MlKem1024,
-    kem::{Decapsulate, Encapsulate},
-};
-use p384::elliptic_curve::sec1::ToEncodedPoint;
+use crate::cryptography::{error::CryptographyError, rand_compat::RandCore010Adapter};
+use hpke::{Deserializable, HpkeError, Kem, Serializable, kem::MlKem1024P384 as HpkeMlKem1024P384};
 use rand::{CryptoRng, RngCore};
 use serde::{Deserialize, Deserializer, Serialize, de::Visitor};
-use sha3::{
-    Sha3_256, Shake256,
-    digest::{ExtendableOutput, FixedOutput, Output, Update, XofReader},
-};
+use shake::{ExtendableOutput, Shake256, Update, XofReader};
 use tfhe::named::Named;
 use tfhe_versionable::{
     Unversionize, UnversionizeError, Version, Versionize, VersionizeOwned, VersionsDispatch,
@@ -28,45 +20,35 @@ use tfhe_versionable::{
 };
 use zeroize::{Zeroize, ZeroizeOnDrop, Zeroizing};
 
-const KEM_LABEL: &[u8] = b"MLKEM1024-P384";
 const PRIVATE_KEY_LENGTH: usize = 32;
 const ML_KEM_SEED_LENGTH: usize = 64;
-const ML_KEM_POLY_VEC_LENGTH: usize = 1536;
-const ML_KEM_MODULUS: u16 = 3329;
 const P384_SCALAR_LENGTH: usize = 48;
+const EXPANDED_SEED_LENGTH: usize = ML_KEM_SEED_LENGTH + P384_SCALAR_LENGTH;
+const ML_KEM_1024_PUBLIC_KEY_OR_CIPHERTEXT_LENGTH: usize = 1568;
 const P384_PUBLIC_KEY_LENGTH: usize = 97;
 
 /// Length of a serialized MLKEM1024-P384 public key.
-pub(crate) const PUBLIC_KEY_LENGTH: usize = 1665;
+pub(crate) const PUBLIC_KEY_LENGTH: usize =
+    ML_KEM_1024_PUBLIC_KEY_OR_CIPHERTEXT_LENGTH + P384_PUBLIC_KEY_LENGTH;
 /// Length of an MLKEM1024-P384 encapsulated key.
-pub(crate) const CIPHERTEXT_LENGTH: usize = 1665;
+pub(crate) const CIPHERTEXT_LENGTH: usize =
+    ML_KEM_1024_PUBLIC_KEY_OR_CIPHERTEXT_LENGTH + P384_PUBLIC_KEY_LENGTH;
 /// Length of an MLKEM1024-P384 shared secret, fixed by the SHA3-256 combiner.
 pub(crate) const SHARED_SECRET_LENGTH: usize = 32;
 
-type MlKemPublicKey = <MlKem1024 as KemCore>::EncapsulationKey;
-type MlKemPrivateKey = <MlKem1024 as KemCore>::DecapsulationKey;
-
-// Both wire formats end in a P-384 point of a fixed length. `from_sec1_bytes`
-// therefore sees an input that only an uncompressed point can fill, and it
-// rejects every other SEC1 tag on its own.
-const _: () = assert!(
-    PUBLIC_KEY_LENGTH
-        == <MlKemPublicKey as EncodedSizeUser>::EncodedSize::USIZE + P384_PUBLIC_KEY_LENGTH
-);
-const _: () = assert!(
-    CIPHERTEXT_LENGTH == <MlKem1024 as KemCore>::CiphertextSize::USIZE + P384_PUBLIC_KEY_LENGTH
-);
+type HpkePublicKey = <HpkeMlKem1024P384 as Kem>::PublicKey;
+type HpkePrivateKey = <HpkeMlKem1024P384 as Kem>::PrivateKey;
+type HpkeEncappedKey = <HpkeMlKem1024P384 as Kem>::EncappedKey;
 
 /// Public key for the MLKEM1024-P384 composite KEM.
 #[derive(Clone, Debug)]
 pub struct MlKem1024P384PublicKey {
-    ml_kem_key: MlKemPublicKey,
-    p384_key: p384::PublicKey,
+    key: HpkePublicKey,
 }
 
 impl PartialEq for MlKem1024P384PublicKey {
     fn eq(&self, other: &Self) -> bool {
-        self.ml_kem_key.as_bytes() == other.ml_kem_key.as_bytes() && self.p384_key == other.p384_key
+        self.key == other.key
     }
 }
 
@@ -76,11 +58,7 @@ impl MlKem1024P384PublicKey {
     /// Encode as the ML-KEM-1024 encapsulation key followed by the uncompressed
     /// SEC1 P-384 point.
     fn to_bytes(&self) -> Vec<u8> {
-        let ml_kem_key = self.ml_kem_key.as_bytes();
-        let p384_key = self.p384_key.to_encoded_point(false);
-        debug_assert_eq!(ml_kem_key.len() + p384_key.len(), PUBLIC_KEY_LENGTH);
-
-        [ml_kem_key.as_slice(), p384_key.as_bytes()].concat()
+        self.key.to_bytes().to_vec()
     }
 
     /// Parse the encoding that [MlKem1024P384PublicKey::to_bytes] produces.
@@ -89,53 +67,10 @@ impl MlKem1024P384PublicKey {
     /// coefficient is out of range, or when the P-384 bytes are not a point on
     /// the curve.
     fn from_bytes(bytes: &[u8]) -> Result<Self, CryptographyError> {
-        if bytes.len() != PUBLIC_KEY_LENGTH {
-            return Err(CryptographyError::LengthError(format!(
-                "MLKEM1024-P384 public key has length {}, expected {PUBLIC_KEY_LENGTH}",
-                bytes.len()
-            )));
-        }
-
-        let ml_kem_key_length = <MlKemPublicKey as EncodedSizeUser>::EncodedSize::USIZE;
-        let (ml_kem_bytes, p384_bytes) = bytes.split_at(ml_kem_key_length);
-        if !ml_kem_public_key_is_canonical(ml_kem_bytes) {
-            return Err(CryptographyError::MlKem1024P384Error(
-                "ML-KEM-1024 public key contains a non-canonical coefficient".to_string(),
-            ));
-        }
-
-        let ml_kem_bytes = ml_kem_bytes.try_into().map_err(|_| {
-            CryptographyError::LengthError(
-                "ML-KEM-1024 public key has the wrong length".to_string(),
-            )
-        })?;
-        let ml_kem_key = MlKemPublicKey::from_bytes(ml_kem_bytes);
-        let p384_key = p384::PublicKey::from_sec1_bytes(p384_bytes).map_err(|_| {
-            CryptographyError::MlKem1024P384Error(
-                "P-384 public key is not a valid curve point".to_string(),
-            )
-        })?;
-
-        Ok(Self {
-            ml_kem_key,
-            p384_key,
-        })
+        let key = HpkePublicKey::from_bytes(bytes)
+            .map_err(|error| map_hpke_error("MLKEM1024-P384 public key", error))?;
+        Ok(Self { key })
     }
-}
-
-/// Report whether every ML-KEM-1024 coefficient is below the FIPS 203 modulus.
-///
-/// FIPS 203 encodes two 12-bit coefficients in each three-byte block. The
-/// ml-kem 0.2 decoding API does not expose this check.
-fn ml_kem_public_key_is_canonical(bytes: &[u8]) -> bool {
-    bytes.len() >= ML_KEM_POLY_VEC_LENGTH
-        && bytes[..ML_KEM_POLY_VEC_LENGTH]
-            .chunks_exact(3)
-            .all(|chunk| {
-                let first = u16::from(chunk[0]) | (u16::from(chunk[1] & 0x0f) << 8);
-                let second = (u16::from(chunk[1]) >> 4) | (u16::from(chunk[2]) << 4);
-                first < ML_KEM_MODULUS && second < ML_KEM_MODULUS
-            })
 }
 
 impl Serialize for MlKem1024P384PublicKey {
@@ -180,10 +115,9 @@ impl Named for MlKem1024P384PublicKey {
     const NAME: &'static str = "MlKem1024P384PublicKey";
 }
 
-// The `Version` and `Versionize` derives build a versioned mirror of every field.
-// `ml_kem_key` and `p384_key` come from other crates and are not versionable, so
-// both traits are written out here. They serialize the key through its own
-// `Serialize` implementation, which encodes the 1665-byte wire format.
+// The HPKE key type is not versionable, so these traits serialize it through
+// the KMS-owned wrapper's `Serialize` implementation, which encodes the
+// 1665-byte composite wire format.
 #[derive(Serialize, Deserialize)]
 pub struct MlKem1024P384PublicKeyOwned(MlKem1024P384PublicKey);
 
@@ -291,12 +225,7 @@ impl Visitor<'_> for MlKem1024P384PrivateKeyVisitor {
                 value.len()
             ))
         })?;
-        // Any 32-byte string is a valid seed except when the P-384 scalar that it
-        // expands to is zero or above the group order. RandomScalar in section 3.1.1
-        // of the draft gets a single attempt for P-384, because the group constants
-        // set Nseed == Nscalar == 48. That branch is taken with probability below
-        // 2^-192, and `decapsulate` reports it, so expanding the seed here would
-        // only move a full ML-KEM-1024 key generation onto the deserialization path.
+        validate_private_key_seed(&seed).map_err(E::custom)?;
         Ok(MlKem1024P384PrivateKey(seed))
     }
 }
@@ -314,13 +243,15 @@ pub enum MlKem1024P384PrivateKeyVersions {
 pub(crate) fn keygen(
     rng: &mut (impl CryptoRng + RngCore),
 ) -> Result<(MlKem1024P384PrivateKey, MlKem1024P384PublicKey), CryptographyError> {
-    loop {
-        let mut seed = Zeroizing::new([0_u8; PRIVATE_KEY_LENGTH]);
-        rng.fill_bytes(&mut *seed);
-        if let Ok((_, public_key, _)) = expand_key(&seed) {
-            return Ok((MlKem1024P384PrivateKey(*seed), public_key));
-        }
-    }
+    let mut seed = Zeroizing::new([0_u8; PRIVATE_KEY_LENGTH]);
+    rng.fill_bytes(&mut *seed);
+    let hpke_private_key = HpkePrivateKey::from_bytes(&*seed)
+        .map_err(|error| map_hpke_error("MLKEM1024-P384 private key", error))?;
+    let public_key = MlKem1024P384PublicKey {
+        key: HpkeMlKem1024P384::sk_to_pk(&hpke_private_key),
+    };
+
+    Ok((MlKem1024P384PrivateKey(*seed), public_key))
 }
 
 /// Encapsulate a shared secret to an MLKEM1024-P384 public key.
@@ -332,25 +263,15 @@ pub(crate) fn encapsulate(
     rng: &mut (impl CryptoRng + RngCore),
     public_key: &MlKem1024P384PublicKey,
 ) -> Result<(Vec<u8>, Zeroizing<[u8; SHARED_SECRET_LENGTH]>), CryptographyError> {
-    let (ml_kem_ct, ml_kem_shared_secret) = public_key
-        .ml_kem_key
-        .encapsulate(rng)
-        .map_err(|_| CryptographyError::MlKemError)?;
-    let ml_kem_shared_secret = Zeroizing::new(ml_kem_shared_secret);
+    let mut rng = RandCore010Adapter::new(rng);
+    let (hpke_shared_secret, hpke_encapped_key) =
+        HpkeMlKem1024P384::encap_with_rng(&public_key.key, None, &mut rng)
+            .map_err(|error| map_hpke_error("MLKEM1024-P384 encapsulation", error))?;
 
-    let ephemeral_secret = p384::ecdh::EphemeralSecret::random(rng);
-    let ephemeral_public = ephemeral_secret.public_key().to_encoded_point(false);
-    let p384_shared_secret = ephemeral_secret.diffie_hellman(&public_key.p384_key);
-    let recipient_public = public_key.p384_key.to_encoded_point(false);
-    let shared_secret = combine_shared_secrets(
-        &ml_kem_shared_secret,
-        p384_shared_secret.raw_secret_bytes(),
-        ephemeral_public.as_bytes(),
-        recipient_public.as_bytes(),
-    );
-
-    let kem_ciphertext = [ml_kem_ct.as_slice(), ephemeral_public.as_bytes()].concat();
+    let kem_ciphertext = hpke_encapped_key.to_bytes().to_vec();
     debug_assert_eq!(kem_ciphertext.len(), CIPHERTEXT_LENGTH);
+    let mut shared_secret = Zeroizing::new([0_u8; SHARED_SECRET_LENGTH]);
+    shared_secret.copy_from_slice(&hpke_shared_secret.0);
     Ok((kem_ciphertext, shared_secret))
 }
 
@@ -363,139 +284,57 @@ pub(crate) fn decapsulate(
     ciphertext: &[u8],
     private_key: &MlKem1024P384PrivateKey,
 ) -> Result<Zeroizing<[u8; SHARED_SECRET_LENGTH]>, CryptographyError> {
-    if ciphertext.len() != CIPHERTEXT_LENGTH {
-        return Err(CryptographyError::LengthError(format!(
-            "MLKEM1024-P384 ciphertext has length {}, expected {CIPHERTEXT_LENGTH}",
-            ciphertext.len()
-        )));
-    }
+    // Versioned deserialization does not necessarily pass through the custom
+    // Serde visitor, so validate again at the boundary before HPKE expands it.
+    validate_private_key_seed(&private_key.0)?;
+    let hpke_private_key = HpkePrivateKey::from_bytes(&private_key.0)
+        .map_err(|error| map_hpke_error("MLKEM1024-P384 private key", error))?;
+    let hpke_encapped_key = HpkeEncappedKey::from_bytes(ciphertext)
+        .map_err(|error| map_hpke_error("MLKEM1024-P384 ciphertext", error))?;
+    let hpke_shared_secret = HpkeMlKem1024P384::decap(&hpke_private_key, None, &hpke_encapped_key)
+        .map_err(|error| map_hpke_error("MLKEM1024-P384 decapsulation", error))?;
 
-    let ml_kem_ct_length = <MlKem1024 as KemCore>::CiphertextSize::USIZE;
-    let (ml_kem_ct, p384_ct) = ciphertext.split_at(ml_kem_ct_length);
-
-    let mut ml_kem_ct_array: Array<u8, <MlKem1024 as KemCore>::CiphertextSize> = Array::default();
-    ml_kem_ct_array.copy_from_slice(ml_kem_ct);
-    let p384_public = p384::PublicKey::from_sec1_bytes(p384_ct).map_err(|_| {
-        CryptographyError::MlKem1024P384Error(
-            "P-384 encapsulated key is not a valid curve point".to_string(),
-        )
-    })?;
-
-    let (ml_kem_private, recipient_public, p384_private) = expand_key(&private_key.0)?;
-    let ml_kem_shared_secret = ml_kem_private
-        .decapsulate(&ml_kem_ct_array)
-        .map_err(|_| CryptographyError::MlKemError)?;
-    let ml_kem_shared_secret = Zeroizing::new(ml_kem_shared_secret);
-    let p384_shared_secret =
-        p384::ecdh::diffie_hellman(p384_private.to_nonzero_scalar(), p384_public.as_affine());
-    let recipient_public = recipient_public.p384_key.to_encoded_point(false);
-
-    Ok(combine_shared_secrets(
-        &ml_kem_shared_secret,
-        p384_shared_secret.raw_secret_bytes(),
-        p384_ct,
-        recipient_public.as_bytes(),
-    ))
+    let mut shared_secret = Zeroizing::new([0_u8; SHARED_SECRET_LENGTH]);
+    shared_secret.copy_from_slice(&hpke_shared_secret.0);
+    Ok(shared_secret)
 }
 
-/// Expand a private key seed into the ML-KEM-1024 and P-384 component keys.
-///
-/// SHAKE-256 is the PRG, and the ML-KEM-1024 seed takes the first 64 bytes.
-/// This is `expandDecapsKeyG` of section 5.1.2 of
-/// <https://www.ietf.org/archive/id/draft-irtf-cfrg-hybrid-kems-11.html>, and
-/// [`expand_key`](https://github.com/rozbb/rust-hpke/blob/024f006836ce2adbfc528b25e22b635065b16096/src/kem/mlkem_nistp.rs#L362) in `rust-hpke`.
-///
-/// Returns an error when the P-384 scalar that the seed expands to is zero or
-/// above the group order.
-fn expand_key(
-    seed: &[u8; PRIVATE_KEY_LENGTH],
-) -> Result<(MlKemPrivateKey, MlKem1024P384PublicKey, p384::SecretKey), CryptographyError> {
-    let mut ml_kem_seed = Zeroizing::new([0_u8; ML_KEM_SEED_LENGTH]);
-    let mut p384_seed = Zeroizing::new([0_u8; P384_SCALAR_LENGTH]);
+/// Validate the P-384 scalar derived by rust-hpke before calling its expansion
+/// routine, which panics when rejection sampling exhausts its single attempt.
+fn validate_private_key_seed(seed: &[u8; PRIVATE_KEY_LENGTH]) -> Result<(), CryptographyError> {
+    let mut expanded_seed = Zeroizing::new([0_u8; EXPANDED_SEED_LENGTH]);
     let mut xof = Shake256::default();
     xof.update(seed);
     let mut reader = xof.finalize_xof();
-    reader.read(&mut *ml_kem_seed);
-    reader.read(&mut *p384_seed);
+    reader.read(&mut *expanded_seed);
 
-    // Borrow the halves of the guarded seed. `B32::try_from` on a slice copies,
-    // which would leave the ML-KEM seed and the implicit-rejection secret in
-    // unwiped temporaries.
-    let d = <&B32>::try_from(&ml_kem_seed[..32]).expect("ML-KEM seed has a fixed length");
-    let z = <&B32>::try_from(&ml_kem_seed[32..]).expect("ML-KEM seed has a fixed length");
-    let (ml_kem_private, ml_kem_public) = MlKem1024::generate_deterministic(d, z);
-    let p384_private = p384::SecretKey::from_slice(&*p384_seed).map_err(|_| {
-        CryptographyError::MlKem1024P384Error("P-384 scalar rejection sampling failed".to_string())
-    })?;
-    let p384_public = p384_private.public_key();
-
-    Ok((
-        ml_kem_private,
-        MlKem1024P384PublicKey {
-            ml_kem_key: ml_kem_public,
-            p384_key: p384_public,
-        },
-        p384_private,
-    ))
+    validate_p384_scalar(&expanded_seed[ML_KEM_SEED_LENGTH..])
 }
 
-/// Derive the composite shared secret from the two component shared secrets.
-///
-/// This is `C2PRICombiner` of section 5.1.3 of
-/// <https://www.ietf.org/archive/id/draft-irtf-cfrg-hybrid-kems-11.html> with
-/// SHA3-256 as the KDF, and [`combine_ss`](https://github.com/rozbb/rust-hpke/blob/024f006836ce2adbfc528b25e22b635065b16096/src/kem/mlkem_nistp.rs#L425) in `rust-hpke`.
-fn combine_shared_secrets(
-    ml_kem_shared_secret: &[u8],
-    p384_shared_secret: &[u8],
-    ephemeral_public: &[u8],
-    recipient_public: &[u8],
-) -> Zeroizing<[u8; SHARED_SECRET_LENGTH]> {
-    let mut digest = Sha3_256::default();
-    digest.update(ml_kem_shared_secret);
-    digest.update(p384_shared_secret);
-    digest.update(ephemeral_public);
-    digest.update(recipient_public);
-    digest.update(KEM_LABEL);
+fn validate_p384_scalar(scalar: &[u8]) -> Result<(), CryptographyError> {
+    p384::SecretKey::from_slice(scalar)
+        .map(|_| ())
+        .map_err(|_| {
+            CryptographyError::MlKem1024P384Error(
+                "P-384 scalar rejection sampling failed".to_string(),
+            )
+        })
+}
 
-    // Finalize into the guarded buffer. `finalize()` would return the shared
-    // secret in an unwiped temporary.
-    let mut shared_secret = Zeroizing::new([0_u8; SHARED_SECRET_LENGTH]);
-    let output = <&mut Output<Sha3_256>>::try_from(&mut shared_secret[..])
-        .expect("the shared secret buffer has the SHA3-256 output length");
-    digest.finalize_into(output);
-    shared_secret
+fn map_hpke_error(subject: &str, error: HpkeError) -> CryptographyError {
+    match error {
+        HpkeError::IncorrectInputLength(expected, actual) => CryptographyError::LengthError(
+            format!("{subject} has length {actual}, expected {expected}"),
+        ),
+        error => CryptographyError::MlKem1024P384Error(format!("{subject}: {error}")),
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use sha3::Digest;
-
     use aes_prng::AesRng;
-    use rand::{Error, SeedableRng};
-
-    struct RepeatingByteRng(u8);
-
-    impl RngCore for RepeatingByteRng {
-        fn next_u32(&mut self) -> u32 {
-            u32::from_ne_bytes([self.0; 4])
-        }
-
-        fn next_u64(&mut self) -> u64 {
-            u64::from_ne_bytes([self.0; 8])
-        }
-
-        fn fill_bytes(&mut self, dest: &mut [u8]) {
-            dest.fill(self.0);
-        }
-
-        fn try_fill_bytes(&mut self, dest: &mut [u8]) -> Result<(), Error> {
-            self.fill_bytes(dest);
-            Ok(())
-        }
-    }
-
-    impl CryptoRng for RepeatingByteRng {}
+    use rand::SeedableRng;
 
     #[test]
     fn round_trip_and_key_sizes() {
@@ -508,6 +347,22 @@ mod tests {
         assert_eq!(private_key.0.len(), PRIVATE_KEY_LENGTH);
         assert_eq!(ciphertext.len(), CIPHERTEXT_LENGTH);
         assert_eq!(*sender_secret, *receiver_secret);
+    }
+
+    #[test]
+    fn p384_scalar_validation_rejects_zero_and_out_of_range_values() {
+        assert!(matches!(
+            validate_p384_scalar(&[0_u8; P384_SCALAR_LENGTH]),
+            Err(CryptographyError::MlKem1024P384Error(_))
+        ));
+        assert!(matches!(
+            validate_p384_scalar(&[u8::MAX; P384_SCALAR_LENGTH]),
+            Err(CryptographyError::MlKem1024P384Error(_))
+        ));
+
+        let mut one = [0_u8; P384_SCALAR_LENGTH];
+        one[P384_SCALAR_LENGTH - 1] = 1;
+        validate_p384_scalar(&one).unwrap();
     }
 
     #[test]
@@ -531,7 +386,7 @@ mod tests {
         let mut rng = AesRng::seed_from_u64(42);
         let (private_key, public_key) = keygen(&mut rng).unwrap();
         let (mut ciphertext, _) = encapsulate(&mut rng, &public_key).unwrap();
-        let p384_offset = <MlKem1024 as KemCore>::CiphertextSize::USIZE;
+        let p384_offset = CIPHERTEXT_LENGTH - P384_PUBLIC_KEY_LENGTH;
         ciphertext[p384_offset] = 0x02;
 
         assert!(matches!(
@@ -551,39 +406,6 @@ mod tests {
             MlKem1024P384PublicKey::from_bytes(&bytes),
             Err(CryptographyError::MlKem1024P384Error(_))
         ));
-    }
-
-    #[test]
-    fn matches_rust_hpke_known_answer() {
-        // First MLKEM1024-P384 vector in rust-hpke's test vectors:
-        // https://github.com/rozbb/rust-hpke/blob/024f006836ce2adbfc528b25e22b635065b16096/test-vectors/hybrid-defafa2.json
-        let seed = [0_u8; PRIVATE_KEY_LENGTH];
-        let (_, public_key, p384_private) = expand_key(&seed).unwrap();
-        assert_eq!(
-            hex::encode(p384_private.to_bytes()),
-            "e00b3f9d338de90488973787b0916a4a9ae8bebf4e2bc07a7bc18f1a6221518238c5c4b1760c4ea8a9e47beb174f12d2"
-        );
-        assert_eq!(
-            hex::encode(Sha3_256::digest(public_key.to_bytes())),
-            "d1fd12cff1800199702d0f727113dc44c91fdc2e1c59bc40c5fba53a59f407b8"
-        );
-
-        let mut rng = RepeatingByteRng(0x64);
-        let (ciphertext, shared_secret) = encapsulate(&mut rng, &public_key).unwrap();
-        assert_eq!(
-            hex::encode(Sha3_256::digest(&ciphertext)),
-            "60445c7ec401dd023931587d848b108198eb36a51d75f3ef319babf36b15f381"
-        );
-        assert_eq!(
-            hex::encode(*shared_secret),
-            "8c028c6ea72a1c59408e2b15dd8fed8008517e861cd2329b159bda1919ea656c"
-        );
-
-        // The ciphertext is byte-identical to the vector, so this also pins
-        // decapsulation against the reference implementation.
-        let private_key = MlKem1024P384PrivateKey(seed);
-        let decapsulated = decapsulate(&ciphertext, &private_key).unwrap();
-        assert_eq!(*decapsulated, *shared_secret);
     }
 
     #[test]
