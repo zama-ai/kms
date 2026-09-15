@@ -15,7 +15,7 @@ env:
 jobs:
   compare:
     runs-on: runs-on=${{ github.run_id }}/runner=64cpu-linux-x64/spot=false/volume=400gb/extras=s3-cache+efs
-    timeout-minutes: 240
+    timeout-minutes: 480
     steps:
       - name: Setup Runs-on
         uses: runs-on/action@cd2b598b0515d39d78c38a02d529db87d2196d1e # v2.0.3
@@ -105,16 +105,26 @@ jobs:
             --output ./test-material --profile insecure,secure --parties 4,13 \
             > prss-pool-results/generate-material.log 2>&1
 
-      - name: Run 13-party concurrent keygen with per-party pools
+      - name: Build 13-party concurrent keygen
+        id: keygen-build
         if: ${{ !cancelled() && steps.material.outcome == 'success' }}
         timeout-minutes: 60
+        run: |
+          cargo test -p kms --lib -F slow_tests -F insecure --no-run \
+            > prss-pool-results/keygen-build.log 2>&1
+
+      - name: Run 13-party concurrent keygen with per-party pools
+        if: ${{ !cancelled() && steps.keygen-build.outcome == 'success' }}
+        timeout-minutes: 245
         env:
           RUST_LOG: info,kms_timeout_probe=debug
           RUST_BACKTRACE: full
         run: |
-          cargo nextest run -p kms --lib -F slow_tests -F insecure \
-            --profile ci --no-tests=fail --test-threads 1 \
-            --success-output immediate --failure-output immediate \
+          # Stop the test before the step limit so artifact upload can retain partial logs.
+          # Direct redirection preserves test output independently of console log collection.
+          timeout --signal=TERM --kill-after=30s 4h \
+            cargo nextest run -p kms --lib -F slow_tests -F insecure \
+            --profile ci --no-tests=fail --no-capture \
             -E 'test(=client::tests::threshold::extended_tests::nightly_secure_threshold_concurrent_keygen_test::case_2)' \
             > prss-pool-results/concurrent-keygen.log 2>&1
 
