@@ -20,7 +20,10 @@ use kms_0_15_0::backup::{
 };
 use kms_0_15_0::consts::SAFE_SER_SIZE_LIMIT;
 use kms_0_15_0::cryptography::{
-    encryption::{Encryption, PkeScheme, PkeSchemeType, UnifiedCipher},
+    encryption::{
+        Encryption, PkeScheme, PkeSchemeType, UnifiedCipher, UnifiedPrivateEncKey,
+        UnifiedPublicEncKey,
+    },
     hybrid_ml_kem::HybridKemCt,
     signatures::{
         compute_eip712_signature, gen_sig_keys, NodeSigningIdentity, RootSigningSeed,
@@ -57,13 +60,13 @@ use std::collections::BTreeMap;
 use std::num::Wrapping;
 use std::{borrow::Cow, collections::HashMap, fs::create_dir_all, path::PathBuf};
 use strum::IntoEnumIterator;
-use tfhe_1_7_0::safe_serialization::safe_serialize;
-use tfhe_1_7_0::shortint::parameters::{
+use tfhe_1_8_0::safe_serialization::safe_serialize;
+use tfhe_1_8_0::shortint::parameters::{
     AtomicPatternParameters, Backend, LweCiphertextCount, MetaNoiseSquashingParameters,
     MetaParameters, NoiseSquashingClassicParameters, NoiseSquashingCompressionParameters,
     PBSParameters,
 };
-use tfhe_1_7_0::{
+use tfhe_1_8_0::{
     core_crypto::commons::{
         ciphertext_modulus::CiphertextModulus,
         generators::DeterministicSeeder,
@@ -105,16 +108,18 @@ use backward_compatibility::{
     Eip712DomainTest, EpochDataTest, HybridKemCtTest, InternalCustodianContextTest,
     InternalCustodianRecoveryOutputTest, InternalCustodianSetupMessageTest,
     InternalRecoveryRequestTest, KeyGenMetadataTest, KeyGenMetadataWithExtraDataTest,
-    KeygenSignedPayloadTest, KmsFheKeyHandlesTest, NodeInfoTest, OperatorBackupOutputTest,
-    PRSSSetupTest, PrepKeygenSignedPayloadTest, PrfKeyTest, PrivDataTypeTest, PrivateSigKeyTest,
-    PrssSetTest, PrssSetupCombinedTest, PubDataTypeTest, PublicDecSignedPayloadTest,
-    PublicSigKeyTest, RecoveryValidationMaterialTest, ReleasePCRValuesTest, RootSigningSeedTest,
-    SchemeDigestsTest, ShareTest, SigncryptionPayloadTest, SignedPubDataHandleInternalTest,
-    SoftwareVersionTest, StoredEip712DomainTest, StoredTypedSignatureTest, TestMetadataDD,
-    TestMetadataKMS, TestMetadataKmsGrpc, ThresholdFheKeysTest, TypedPlaintextTest,
-    UnifiedCipherTest, UnifiedPublicSigKeyTest, UnifiedSigncryptionKeyTest,
-    UnifiedSigncryptionTest, UnifiedUnsigncryptionKeyTest, UserDecSignedPayloadTest,
-    DISTRIBUTED_DECRYPTION_MODULE_NAME, KMS_GRPC_MODULE_NAME, KMS_MODULE_NAME,
+    KeygenSignedPayloadTest, KmsFheKeyHandlesTest, MlKem1024P384PrivateKeyTest,
+    MlKem1024P384PublicKeyTest, NodeInfoTest,
+    OperatorBackupOutputTest, PRSSSetupTest, PrepKeygenSignedPayloadTest, PrfKeyTest,
+    PrivDataTypeTest, PrivateSigKeyTest, PrssSetTest, PrssSetupCombinedTest, PubDataTypeTest,
+    PublicDecSignedPayloadTest, PublicSigKeyTest, RecoveryValidationMaterialTest,
+    ReleasePCRValuesTest, RootSigningSeedTest, SchemeDigestsTest, ShareTest,
+    SigncryptionPayloadTest, SignedPubDataHandleInternalTest, SoftwareVersionTest,
+    StoredEip712DomainTest, StoredTypedSignatureTest, TestMetadataDD, TestMetadataKMS,
+    TestMetadataKmsGrpc, ThresholdFheKeysTest, TypedPlaintextTest, UnifiedCipherTest,
+    UnifiedPublicSigKeyTest, UnifiedSigncryptionKeyTest, UnifiedSigncryptionTest,
+    UnifiedUnsigncryptionKeyTest, UserDecSignedPayloadTest, DISTRIBUTED_DECRYPTION_MODULE_NAME,
+    KMS_GRPC_MODULE_NAME, KMS_MODULE_NAME,
 };
 use hashing_0_15_0::hash_versioned;
 use kms_0_15_0::cryptography::signcryption::SigncryptionPayload;
@@ -164,6 +169,7 @@ fn convert_dkg_params_sns(value: DKGParamsSnSTest) -> DKGParams {
                 )),
             }),
             rerand_configuration: None,
+            transciphering_parameters: None,
         },
         secret_key_deviations: None,
     }
@@ -196,7 +202,7 @@ fn convert_classic_pbs_parameters(value: ClassicPBSParametersTest) -> ClassicPBS
         },
         // no need to test this as it's from tfhe-rs
         modulus_switch_noise_reduction_params:
-            tfhe_1_7_0::shortint::prelude::ModulusSwitchType::Standard,
+            tfhe_1_8_0::shortint::prelude::ModulusSwitchType::Standard,
     }
 }
 
@@ -209,7 +215,7 @@ fn convert_sns_parameters(value: SwitchAndSquashParametersTest) -> NoiseSquashin
         decomp_level_count: DecompositionLevelCount(value.pbs_level),
         ciphertext_modulus: CiphertextModulus::<u128>::new_native(),
         modulus_switch_noise_reduction_params:
-            tfhe_1_7_0::shortint::prelude::ModulusSwitchType::Standard,
+            tfhe_1_8_0::shortint::prelude::ModulusSwitchType::Standard,
         message_modulus: MessageModulus(value.message_modulus),
         carry_modulus: CarryModulus(value.carry_modulus),
     })
@@ -483,6 +489,16 @@ const SIGNCRYPTION_KEY_TEST: UnifiedSigncryptionKeyTest = UnifiedSigncryptionKey
 const UNSIGNCRYPTION_KEY_TEST: UnifiedUnsigncryptionKeyTest = UnifiedUnsigncryptionKeyTest {
     test_filename: Cow::Borrowed("designcryption_key"),
     state: 200,
+};
+
+const MLKEM1024_P384_PUBLIC_KEY_TEST: MlKem1024P384PublicKeyTest = MlKem1024P384PublicKeyTest {
+    test_filename: Cow::Borrowed("mlkem1024_p384_public_key"),
+    state: 384,
+};
+
+const MLKEM1024_P384_PRIVATE_KEY_TEST: MlKem1024P384PrivateKeyTest = MlKem1024P384PrivateKeyTest {
+    test_filename: Cow::Borrowed("mlkem1024_p384_private_key"),
+    state: 384,
 };
 
 // KMS test
@@ -1085,6 +1101,38 @@ impl KmsV0_15_0 {
         TestMetadataKMS::UnifiedUnsigncryptionKeyOwned(UNSIGNCRYPTION_KEY_TEST)
     }
 
+    fn gen_mlkem1024_p384_public_key(dir: &PathBuf) -> TestMetadataKMS {
+        let mut rng = AesRng::seed_from_u64(MLKEM1024_P384_PUBLIC_KEY_TEST.state);
+        let mut encryption = Encryption::new(PkeSchemeType::MlKem1024P384, &mut rng);
+        let (_, public_key) = encryption.keygen().unwrap();
+        let UnifiedPublicEncKey::MlKem1024P384(public_key) = public_key else {
+            panic!("MLKEM1024-P384 key generation returned the wrong public-key variant");
+        };
+        store_versioned_test!(
+            &public_key,
+            dir,
+            &MLKEM1024_P384_PUBLIC_KEY_TEST.test_filename
+        );
+
+        TestMetadataKMS::MlKem1024P384PublicKey(MLKEM1024_P384_PUBLIC_KEY_TEST)
+    }
+
+    fn gen_mlkem1024_p384_private_key(dir: &PathBuf) -> TestMetadataKMS {
+        let mut rng = AesRng::seed_from_u64(MLKEM1024_P384_PRIVATE_KEY_TEST.state);
+        let mut encryption = Encryption::new(PkeSchemeType::MlKem1024P384, &mut rng);
+        let (private_key, _) = encryption.keygen().unwrap();
+        let UnifiedPrivateEncKey::MlKem1024P384(private_key) = private_key else {
+            panic!("MLKEM1024-P384 key generation returned the wrong private-key variant");
+        };
+        store_versioned_test!(
+            &private_key,
+            dir,
+            &MLKEM1024_P384_PRIVATE_KEY_TEST.test_filename
+        );
+
+        TestMetadataKMS::MlKem1024P384PrivateKey(MLKEM1024_P384_PRIVATE_KEY_TEST)
+    }
+
     fn gen_backup_ciphertext(dir: &PathBuf) -> TestMetadataKMS {
         let mut rng = AesRng::seed_from_u64(BACKUP_CIPHERTEXT_TEST.state);
         let backup_id: RequestId = RequestId::new_random(&mut rng);
@@ -1555,6 +1603,7 @@ impl KmsV0_15_0 {
             server_key.5,
             server_key.6,
             server_key.7,
+            server_key.8,
             Tag::default(),
         );
 
@@ -1627,7 +1676,7 @@ impl KmsV0_15_0 {
             &THRESHOLD_FHE_KEYS_TEST.private_key_set_filename,
         );
 
-        let (integer_server_key, _, _, _, sns_key, _, _, _, _) =
+        let (integer_server_key, _, _, _, sns_key, _, _, _, _, _) =
             fhe_pub_key_set.server_key.clone().into_raw_parts();
         store_versioned_auxiliary!(
             &sns_key,
@@ -2128,6 +2177,8 @@ impl KMSCoreVersion for V0_15_0 {
             KmsV0_15_0::gen_signcryption_payload(&dir),
             KmsV0_15_0::gen_signcryption_key(&dir),
             KmsV0_15_0::gen_designcryption_key(&dir),
+            KmsV0_15_0::gen_mlkem1024_p384_public_key(&dir),
+            KmsV0_15_0::gen_mlkem1024_p384_private_key(&dir),
             KmsV0_15_0::gen_unified_signcryption(&dir),
             KmsV0_15_0::gen_backup_ciphertext(&dir),
             KmsV0_15_0::gen_unified_cipher(&dir),

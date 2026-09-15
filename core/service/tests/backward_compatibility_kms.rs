@@ -13,14 +13,15 @@ use backward_compatibility::{
     Eip712DomainTest, EpochDataTest, HybridKemCtTest, InternalCustodianContextTest,
     InternalCustodianRecoveryOutputTest, InternalCustodianSetupMessageTest,
     InternalRecoveryRequestTest, KeyGenMetadataTest, KeyGenMetadataWithExtraDataTest,
-    KeygenSignedPayloadTest, KmsFheKeyHandlesTest, NodeInfoTest, OperatorBackupOutputTest,
-    PrepKeygenSignedPayloadTest, PrivateSigKeyTest, PrssSetupCombinedTest,
-    PublicDecSignedPayloadTest, PublicSigKeyTest, RecoveryValidationMaterialTest,
-    RootSigningSeedTest, SchemeDigestsTest, SigncryptionPayloadTest, SoftwareVersionTest,
-    StoredEip712DomainTest, StoredTypedSignatureTest, TestMetadataKMS, TestType, Testcase,
-    ThresholdFheKeysTest, TypedPlaintextTest, UnifiedCipherTest, UnifiedPublicSigKeyTest,
-    UnifiedSigncryptionKeyTest, UnifiedSigncryptionTest, UnifiedUnsigncryptionKeyTest,
-    UserDecSignedPayloadTest, data_dir,
+    KeygenSignedPayloadTest, KmsFheKeyHandlesTest, MlKem1024P384PrivateKeyTest,
+    MlKem1024P384PublicKeyTest, NodeInfoTest,
+    OperatorBackupOutputTest, PrepKeygenSignedPayloadTest, PrivateSigKeyTest,
+    PrssSetupCombinedTest, PublicDecSignedPayloadTest, PublicSigKeyTest,
+    RecoveryValidationMaterialTest, RootSigningSeedTest, SchemeDigestsTest,
+    SigncryptionPayloadTest, SoftwareVersionTest, StoredEip712DomainTest, StoredTypedSignatureTest,
+    TestMetadataKMS, TestType, Testcase, ThresholdFheKeysTest, TypedPlaintextTest,
+    UnifiedCipherTest, UnifiedPublicSigKeyTest, UnifiedSigncryptionKeyTest,
+    UnifiedSigncryptionTest, UnifiedUnsigncryptionKeyTest, UserDecSignedPayloadTest, data_dir,
     load::{DataFormat, TestFailure, TestResult, TestSuccess},
     tests::{TestedModule, run_all_tests},
 };
@@ -47,8 +48,12 @@ use kms_lib::{
         },
     },
     cryptography::{
-        encryption::{Encryption, PkeScheme, PkeSchemeType, UnifiedCipher, UnifiedPublicEncKey},
+        encryption::{
+            Encryption, PkeScheme, PkeSchemeType, UnifiedCipher, UnifiedPrivateEncKey,
+            UnifiedPublicEncKey,
+        },
         hybrid_ml_kem::HybridKemCt,
+        mlkem1024_p384::{MlKem1024P384PrivateKey, MlKem1024P384PublicKey},
         signatures::{
             NodeSigningIdentity, PrivateSigKey, PublicSigKey, RootSigningSeed, SigningSchemeType,
             UnifiedPublicSigKey, compute_eip712_signature, gen_sig_keys,
@@ -761,6 +766,44 @@ fn test_unsigncryption_keys(
     } else {
         Ok(test.success(format))
     }
+}
+
+fn test_mlkem1024_p384_public_key(
+    dir: &Path,
+    test: &MlKem1024P384PublicKeyTest,
+    format: DataFormat,
+) -> Result<TestSuccess, TestFailure> {
+    let stored: MlKem1024P384PublicKey = load_and_unversionize(dir, test, format)?;
+    let mut rng = AesRng::seed_from_u64(test.state);
+    let mut encryption = Encryption::new(PkeSchemeType::MlKem1024P384, &mut rng);
+    let (_, generated) = encryption.keygen().map_err(|e| test.failure(e, format))?;
+    let UnifiedPublicEncKey::MlKem1024P384(generated) = generated else {
+        return Err(test.failure("key generation returned the wrong public key type", format));
+    };
+
+    if stored != generated {
+        return Err(test.failure("the MLKEM1024-P384 public key changed", format));
+    }
+    Ok(test.success(format))
+}
+
+fn test_mlkem1024_p384_private_key(
+    dir: &Path,
+    test: &MlKem1024P384PrivateKeyTest,
+    format: DataFormat,
+) -> Result<TestSuccess, TestFailure> {
+    let stored: MlKem1024P384PrivateKey = load_and_unversionize(dir, test, format)?;
+    let mut rng = AesRng::seed_from_u64(test.state);
+    let mut encryption = Encryption::new(PkeSchemeType::MlKem1024P384, &mut rng);
+    let (generated, _) = encryption.keygen().map_err(|e| test.failure(e, format))?;
+    let UnifiedPrivateEncKey::MlKem1024P384(generated) = generated else {
+        return Err(test.failure("key generation returned the wrong private key type", format));
+    };
+
+    if stored != generated {
+        return Err(test.failure("the MLKEM1024-P384 private key changed", format));
+    }
+    Ok(test.success(format))
 }
 
 fn test_unified_signcryption(
@@ -1779,6 +1822,12 @@ impl TestedModule for KMS {
             }
             Self::Metadata::UnifiedUnsigncryptionKeyOwned(test) => {
                 test_unsigncryption_keys(test_dir.as_ref(), test, format).into()
+            }
+            Self::Metadata::MlKem1024P384PublicKey(test) => {
+                test_mlkem1024_p384_public_key(test_dir.as_ref(), test, format).into()
+            }
+            Self::Metadata::MlKem1024P384PrivateKey(test) => {
+                test_mlkem1024_p384_private_key(test_dir.as_ref(), test, format).into()
             }
             Self::Metadata::UnifiedSigncryption(test) => {
                 test_unified_signcryption(test_dir.as_ref(), test, format).into()

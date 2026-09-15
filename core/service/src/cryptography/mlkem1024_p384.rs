@@ -480,10 +480,8 @@ fn combine_shared_secrets(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::consts::SAFE_SER_SIZE_LIMIT;
     use aes_prng::AesRng;
     use rand::{Error, SeedableRng};
-    use tfhe::safe_serialization::{safe_deserialize, safe_serialize};
 
     struct RepeatingByteRng(u8);
 
@@ -594,40 +592,6 @@ mod tests {
         let private_key = MlKem1024P384PrivateKey(seed);
         let decapsulated = decapsulate(&ciphertext, &private_key).unwrap();
         assert_eq!(*decapsulated, *shared_secret);
-    }
-
-    #[test]
-    fn versioned_encoding_is_locked() {
-        // Stands in for a freeze-and-replay `.ron` fixture, which cannot exist
-        // until a published kms rev carries these types. The encodings are too
-        // large to spell out, so their length and digest are pinned instead.
-        let seed = [0_u8; PRIVATE_KEY_LENGTH];
-        let (_, public_key, _) = expand_key(&seed).unwrap();
-        let private_key = MlKem1024P384PrivateKey(seed);
-
-        let mut public_bytes = Vec::new();
-        safe_serialize(&public_key, &mut public_bytes, SAFE_SER_SIZE_LIMIT).unwrap();
-        let mut private_bytes = Vec::new();
-        safe_serialize(&private_key, &mut private_bytes, SAFE_SER_SIZE_LIMIT).unwrap();
-
-        // LOCKED V0 FORMAT - DO NOT CHANGE
-        assert_eq!(public_bytes.len(), 1733);
-        assert_eq!(
-            hex::encode(Sha3_256::digest(&public_bytes)),
-            "9cee0ee46a039f4d6c29012ac31769826bed69201d30c601dba136bff0eea8aa"
-        );
-        assert_eq!(private_bytes.len(), 101);
-        assert_eq!(
-            hex::encode(Sha3_256::digest(&private_bytes)),
-            "16b8362c15e09d776d7eec7b816a64c528f985cc2e01ac8e5681f23c63f57c92"
-        );
-
-        let public_key_2: MlKem1024P384PublicKey =
-            safe_deserialize(std::io::Cursor::new(&public_bytes), SAFE_SER_SIZE_LIMIT).unwrap();
-        let private_key_2: MlKem1024P384PrivateKey =
-            safe_deserialize(std::io::Cursor::new(&private_bytes), SAFE_SER_SIZE_LIMIT).unwrap();
-        assert_eq!(public_key, public_key_2);
-        assert_eq!(private_key, private_key_2);
     }
 
     #[test]
