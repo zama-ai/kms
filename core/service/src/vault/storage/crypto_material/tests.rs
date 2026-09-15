@@ -1027,12 +1027,14 @@ async fn write_pub_data_and_priv_data_paths() {
         storage
             .write_pub_data(&req_id, &pub_data, &PubDataType::PublicKey)
             .await
+            .is_some()
     );
     // Sunshine: write_priv_data with a non-epoched type.
     assert!(
         storage
             .write_priv_data(&req_id, None, &priv_non_epoched, &PrivDataType::SigningKey)
             .await
+            .is_some()
     );
     // Sunshine: write_priv_data with an epoched type + epoch_id.
     assert!(
@@ -1044,12 +1046,14 @@ async fn write_pub_data_and_priv_data_paths() {
                 &PrivDataType::FhePrivateKey,
             )
             .await
+            .is_some()
     );
-    // Negative: epoched type without epoch_id must return false and store nothing.
+    // Negative: epoched type without epoch_id must return None and store nothing.
     assert!(
-        !storage
+        storage
             .write_priv_data(&req_id, None, &priv_orphan, &PrivDataType::FhePrivateKey)
             .await
+            .is_none()
     );
 
     let pub_s = storage.public_storage.lock().await;
@@ -1090,9 +1094,10 @@ async fn write_pub_data_and_priv_data_paths() {
     // Failure path needs its own storage, since FailingRamStorage is the public side.
     let failing = CryptoMaterialStorage::from(FailingRamStorage::new(0), RamStorage::new(), None);
     assert!(
-        !failing
+        failing
             .write_pub_data(&req_id, &pub_data, &PubDataType::PublicKey)
             .await
+            .is_none()
     );
 }
 

@@ -99,6 +99,23 @@ The service crate is the main surface area. Key subdirectories under
   test-only wiring.
 - [bin/](core/service/src/bin/) — entry points (see below).
 
+Key generation (including decompression keys) and CRS generation store their output only
+after generation succeeds. Failure or cancellation during generation records a request
+error without deleting existing key or CRS material.
+
+Paired writes preserve an existing public key or CRS when the new epoch's private write
+fails, and likewise preserve an existing private half when its public write fails. Cleanup
+removes newly created entries, not entries the backend skipped. Backup failure leaves
+successfully stored primary material in place. Callers must serialize writes to the same entries.
+
+When threshold context creation reaches a duplicate storage write, it returns an error
+without changing the existing context or its session registration.
+Centralized context creation updates its cache only after the primary write succeeds.
+A backup-only failure keeps the stored context in the centralized cache or threshold session maker,
+but context creation still returns an error to report the failed backup.
+Threshold context destruction removes session registration only after storage deletion
+succeeds, so a rejected delete leaves the context registered for retry.
+
 ### Binaries
 
 All under [core/service/src/bin/](core/service/src/bin/):
@@ -224,6 +241,11 @@ Custodian workflows are driven through the
 [kms-service.v1.proto](core/grpc/proto/kms-service.v1.proto). 
 A separate `RestoreFromBackup` RPC completes restoration on the node for the non-custodian AWS-KMS path.
 
+Destroying a retired custodian context deletes its flat and epoch-scoped backups before
+removing its public recovery material. A backup deletion error stops that removal so it can
+be retried. S3 delete errors propagate to the caller; deleting a nonexistent object still succeeds.
+The current backup context cannot be destroyed.
+
 Implementation code lives in [core/service/src/backup/](core/service/src/backup/);
 end-to-end tests live at
 [core/service/src/client/tests/centralized/custodian_backup_tests.rs](core/service/src/client/tests/centralized/custodian_backup_tests.rs)
@@ -235,6 +257,13 @@ and
 The KMS must read material produced by earlier releases: a fresh binary
 pointed at an existing vault has to load and use whatever is already there.
 Compatibility is enforced at two levels.
+
+FHE migration cleanup compares the legacy and replacement copies by length and SHAKE-256
+digest before deleting the legacy entry. A mismatch stops startup and retains both copies
+for investigation. A missing replacement is logged and the legacy entry is kept, as before.
+
+PRSS and context migrations compare decoded replacement values before deleting their sources.
+The expected context includes its updated ID. A mismatch stops startup and preserves both copies.
 
 **Versioning trait.** Every type written to disk or sent over the wire uses
 [`tfhe-versionable`](https://crates.io/crates/tfhe-versionable): it derives
