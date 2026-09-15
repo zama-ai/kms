@@ -1,10 +1,11 @@
 use crate::anyhow_error_and_log;
+use crate::backup::BACKUP_PKE_SCHEME;
 use crate::backup::custodian::InternalCustodianContext;
 use crate::backup::operator::{Operator, RecoveryValidationMaterial};
 use crate::conf::threshold::{ThresholdPartyConf, TlsConf};
 use crate::consts::{DEFAULT_MPC_CONTEXT, SAFE_SER_SIZE_LIMIT};
 use crate::cryptography::encryption::{
-    Encryption, PkeScheme, PkeSchemeType, UnifiedPrivateEncKey, UnifiedPublicEncKey,
+    Encryption, PkeScheme, UnifiedPrivateEncKey, UnifiedPublicEncKey,
 };
 use crate::cryptography::signatures::{PrivateSigKey, PublicSigKey};
 use crate::engine::context::{ContextInfo, NodeInfo, SchemeDigests, SoftwareVersion};
@@ -389,7 +390,7 @@ where
         let _context_guard = self.crypto_storage.custodian_context_lock.lock().await;
         let mut rng = self.base_kms.new_rng();
         // Generate asymmetric keys for the operator to use to encrypt the backup
-        let mut enc = Encryption::new(PkeSchemeType::MlKem512, &mut rng);
+        let mut enc = Encryption::new(BACKUP_PKE_SCHEME, &mut rng);
         let (backup_dec_key, backup_enc_key) = enc.keygen()?;
         let inner_context: InternalCustodianContext =
             InternalCustodianContext::new(context, backup_enc_key.clone())?;
@@ -1448,7 +1449,7 @@ mod tests {
         },
         consts::DEFAULT_EPOCH_ID,
         cryptography::{
-            encryption::{Encryption, PkeScheme, PkeSchemeType},
+            encryption::{Encryption, HasPkeScheme, PkeScheme, PkeSchemeType},
             signatures::{PublicSigKey, gen_sig_keys},
             signcryption::{UnifiedUnsigncryptionKey, Unsigncrypt},
             signing::SigningSchemeType,
@@ -2349,7 +2350,7 @@ mod tests {
         let mut rng = AesRng::seed_from_u64(42);
         let epoch_id = *DEFAULT_EPOCH_ID;
         for custodian_index in 1..=amount_custodians {
-            let mut enc = Encryption::new(PkeSchemeType::MlKem512, &mut rng);
+            let mut enc = Encryption::new(BACKUP_PKE_SCHEME, &mut rng);
             let (_sk_dec_key, pk_enc_key) = enc.keygen().unwrap();
             let (verf_key, _sig_key) = gen_sig_keys(&mut rng);
             let cur_msg = InternalCustodianSetupMessage {
@@ -2403,6 +2404,15 @@ mod tests {
                     .unwrap();
 
             assert!(stored_context.validate(&verification_key));
+            // The vault key the operator generated for this context, and therefore the key every
+            // backup ciphertext is encrypted under, must be the composite scheme.
+            assert_eq!(
+                stored_context
+                    .custodian_context()
+                    .backup_enc_key
+                    .encryption_scheme_type(),
+                BACKUP_PKE_SCHEME
+            );
             assert_eq!(
                 stored_context.custodian_context().context_id,
                 first_context_id
@@ -2561,7 +2571,7 @@ mod tests {
         let mut rng = AesRng::seed_from_u64(43);
         let mut setup_messages = Vec::new();
         for role in 1..=3 {
-            let mut enc = Encryption::new(PkeSchemeType::MlKem512, &mut rng);
+            let mut enc = Encryption::new(BACKUP_PKE_SCHEME, &mut rng);
             let (_, public_enc_key) = enc.keygen().unwrap();
             let (public_verf_key, _) = gen_sig_keys(&mut rng);
             setup_messages.push(InternalCustodianSetupMessage {
@@ -2632,7 +2642,7 @@ mod tests {
         let mut rng = AesRng::seed_from_u64(40);
         let backup_id = RequestId::new_random(&mut rng);
         let (server_verf_key, server_sig_key) = gen_sig_keys(&mut rng);
-        let mut enc = Encryption::new(PkeSchemeType::MlKem512, &mut rng);
+        let mut enc = Encryption::new(BACKUP_PKE_SCHEME, &mut rng);
         let (backup_dec_key, backup_enc_key) = enc.keygen().unwrap();
         let mnemonic1 = seed_phrase_from_rng(&mut rng).expect("Failed to generate seed phrase");
         let mnemonic2 = seed_phrase_from_rng(&mut rng).expect("Failed to generate seed phrase");
@@ -2732,7 +2742,7 @@ mod tests {
         let mut rng = AesRng::seed_from_u64(42);
         let epoch_id = *DEFAULT_EPOCH_ID;
         for custodian_index in 1..=amount_custodians {
-            let mut enc = Encryption::new(PkeSchemeType::MlKem512, &mut rng);
+            let mut enc = Encryption::new(BACKUP_PKE_SCHEME, &mut rng);
             let (_sk_dec_key, pk_enc_key) = enc.keygen().unwrap();
             let (verf_key, _sig_key) = gen_sig_keys(&mut rng);
             let cur_msg = InternalCustodianSetupMessage {
@@ -2824,7 +2834,7 @@ mod tests {
         let mut rng = AesRng::seed_from_u64(77);
         let custodian_nodes = (1..=2 * threshold as usize + 1)
             .map(|index| {
-                let mut enc = Encryption::new(PkeSchemeType::MlKem512, &mut rng);
+                let mut enc = Encryption::new(BACKUP_PKE_SCHEME, &mut rng);
                 let (_dec_key, public_enc_key) = enc.keygen().unwrap();
                 let (public_verf_key, _sig_key) = gen_sig_keys(&mut rng);
                 InternalCustodianSetupMessage {
@@ -2869,6 +2879,10 @@ mod tests {
             else {
                 panic!("expected a secret-sharing keychain in the backup vault")
             };
+            // ML-KEM-512 rather than `BACKUP_PKE_SCHEME`, on purpose. A node can hold a previous
+            // context whose key uses the weaker scheme, and rollback must restore it unchanged.
+            // Each ciphertext carries its own `pke_type`, so a vault that holds both schemes
+            // decrypts.
             let (_dec_key, enc_key) =
                 Encryption::new(PkeSchemeType::MlKem512, &mut AesRng::seed_from_u64(5))
                     .keygen()
@@ -3046,7 +3060,7 @@ mod tests {
         let mut rng = AesRng::seed_from_u64(77);
         let epoch_id = *DEFAULT_EPOCH_ID;
         for custodian_index in 1..=amount_custodians {
-            let mut enc = Encryption::new(PkeSchemeType::MlKem512, &mut rng);
+            let mut enc = Encryption::new(BACKUP_PKE_SCHEME, &mut rng);
             let (_sk_dec_key, pk_enc_key) = enc.keygen().unwrap();
             let (verf_key, _sig_key) = gen_sig_keys(&mut rng);
             setup_msgs.push(

@@ -5,6 +5,7 @@ use super::{
 };
 use crate::{
     backup::{
+        BACKUP_PKE_SCHEME,
         custodian::{
             InternalCustodianContext, InternalCustodianRecoveryOutput,
             InternalCustodianSetupMessage,
@@ -29,6 +30,12 @@ use rand::{SeedableRng, rngs::OsRng};
 use std::{collections::BTreeMap, time::Duration};
 use threshold_types::role::Role;
 
+/// A valid 24-word phrase that is not any custodian's own — the all-zero BIP-39 entropy.
+///
+/// Stands in for a custodian that supplies the wrong seed phrase: derivation succeeds, so the
+/// failure surfaces where it should, in unsigncryption, rather than at parse time.
+const WRONG_MNEMONIC: &str = "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon art";
+
 #[test]
 fn operator_setup() {
     let mut rng = OsRng;
@@ -42,7 +49,7 @@ fn operator_setup() {
         .map(|i| {
             let custodian_role = Role::indexed_from_zero(i);
             let (_verification_key, signing_key) = gen_sig_keys(&mut rng);
-            let mut enc = Encryption::new(PkeSchemeType::MlKem512, &mut rng);
+            let mut enc = Encryption::new(BACKUP_PKE_SCHEME, &mut rng);
             let (dec_key, enc_key) = enc.keygen().unwrap();
             custodian::Custodian::new(custodian_role, signing_key, enc_key, dec_key).unwrap()
         })
@@ -106,7 +113,7 @@ fn custodian_reencrypt() {
         .map(|i| {
             let custodian_role = Role::indexed_from_zero(i);
             let (_verification_key, signing_key) = gen_sig_keys(&mut rng);
-            let mut enc = Encryption::new(PkeSchemeType::MlKem512, &mut rng);
+            let mut enc = Encryption::new(BACKUP_PKE_SCHEME, &mut rng);
             let (dec_key, enc_key) = enc.keygen().unwrap();
             custodian::Custodian::new(custodian_role, signing_key, enc_key, dec_key).unwrap()
         })
@@ -154,7 +161,7 @@ fn custodian_reencrypt() {
 
     let verification_key = operators[0].verification_key();
 
-    let mut enc = Encryption::new(PkeSchemeType::MlKem512, &mut rng);
+    let mut enc = Encryption::new(BACKUP_PKE_SCHEME, &mut rng);
     let (_ephemeral_dec_key, ephemeral_enc_key) = enc.keygen().unwrap();
 
     // tweak the ciphertext, so that signature verification fails
@@ -203,6 +210,85 @@ fn custodian_reencrypt() {
                 &mut rng,
                 signcrypt_results[0].ct_shares.get(&operator_role).unwrap(),
                 verification_key,
+                &ephemeral_enc_key,
+            )
+            .unwrap();
+    }
+}
+
+/// A custodian still on ML-KEM-512 takes part in a backup and a recovery alongside composite
+/// custodians.
+///
+/// Signcryption carries its own scheme tag, and the backup path accepts whatever scheme a peer
+/// advertises. A custodian that runs an older `kms-custodian` therefore interoperates. This test
+/// fails if the path gains a downgrade check.
+#[test]
+fn mixed_scheme_custodians_interoperate() {
+    let custodian_threshold = 1usize;
+    let backup_id = RequestId::from_bytes([8u8; crate::consts::ID_LENGTH]);
+    let mpc_context_id = *DEFAULT_MPC_CONTEXT;
+    let mut rng = AesRng::seed_from_u64(7);
+
+    // Role 1 publishes the legacy scheme; roles 2 and 3 publish the current one.
+    let schemes = [
+        PkeSchemeType::MlKem512,
+        BACKUP_PKE_SCHEME,
+        BACKUP_PKE_SCHEME,
+    ];
+    let custodians: Vec<_> = schemes
+        .iter()
+        .enumerate()
+        .map(|(i, scheme)| {
+            let (_verification_key, signing_key) = gen_sig_keys(&mut rng);
+            let mut enc = Encryption::new(*scheme, &mut rng);
+            let (dec_key, enc_key) = enc.keygen().unwrap();
+            custodian::Custodian::new(Role::indexed_from_zero(i), signing_key, enc_key, dec_key)
+                .unwrap()
+        })
+        .collect();
+    let custodian_messages: Vec<_> = custodians
+        .iter()
+        .enumerate()
+        .map(|(i, c)| {
+            c.generate_setup_message(&mut rng, format!("Custodian-{i}"))
+                .unwrap()
+        })
+        .collect();
+
+    let (operator_verf_key, operator_sig_key) = gen_sig_keys(&mut rng);
+    let operator = Operator::new_for_sharing(
+        custodian_messages,
+        operator_sig_key,
+        custodian_threshold,
+        custodians.len(),
+    )
+    .unwrap();
+
+    let secret = vec![3u8; 32];
+    let signcrypt_result = operator
+        .secret_share_and_signcrypt(&mut rng, &secret, backup_id, mpc_context_id)
+        .unwrap();
+    assert!(
+        signcrypt_result.skipped_roles.is_empty(),
+        "no custodian may be skipped over its encryption scheme"
+    );
+
+    // Each share is tagged with the scheme of the custodian it was encrypted for.
+    for (role, expected) in schemes.iter().enumerate() {
+        let share = &signcrypt_result.ct_shares[&Role::indexed_from_zero(role)];
+        assert_eq!(&share.signcryption.pke_type, expected);
+    }
+
+    // Recovery: every custodian re-signcrypts to the operator's ephemeral key, whatever its own
+    // scheme is.
+    let mut enc = Encryption::new(BACKUP_PKE_SCHEME, &mut rng);
+    let (_ephemeral_dec_key, ephemeral_enc_key) = enc.keygen().unwrap();
+    for (i, cur_custodian) in custodians.iter().enumerate() {
+        cur_custodian
+            .verify_reencrypt(
+                &mut rng,
+                &signcrypt_result.ct_shares[&Role::indexed_from_zero(i)],
+                &operator_verf_key,
                 &ephemeral_enc_key,
             )
             .unwrap();
@@ -357,7 +443,7 @@ fn full_flow_malicious_custodian_init() {
         .unwrap();
         // Verify the missing custodian was detected (only 4 of 5 accepted)
         assert_eq!(operator.num_custodian_keys(), custodian_count - 1);
-        let mut enc = Encryption::new(PkeSchemeType::MlKem512, &mut rng);
+        let mut enc = Encryption::new(BACKUP_PKE_SCHEME, &mut rng);
         let (backup_priv_key, _backup_enc_key) = enc.keygen().unwrap();
         let result = operator
             .secret_share_and_signcrypt(
@@ -398,10 +484,7 @@ fn full_flow_malicious_custodian_second() {
     {
         let mut mnemonics_malicious = mnemonics.clone();
         // Update the 3rd custodian to an incorrect mnemonic
-        let _= mnemonics_malicious.insert(
-            Role::indexed_from_one(3),
-            "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about"
-                .to_string());
+        let _ = mnemonics_malicious.insert(Role::indexed_from_one(3), WRONG_MNEMONIC.to_string());
         let backups = custodian_recover(
             &mut rng,
             &mnemonics_malicious,
@@ -438,10 +521,8 @@ fn full_flow_malicious_custodian_second() {
             })
             .collect();
         // Update the first custodian to an incorrect mnemonic
-        let _=  mnemonics_malicious_dropped.insert(
-            Role::indexed_from_one(1),
-            "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about"
-                .to_string());
+        let _ = mnemonics_malicious_dropped
+            .insert(Role::indexed_from_one(1), WRONG_MNEMONIC.to_string());
         let backups = custodian_recover(
             &mut rng,
             &mnemonics_malicious_dropped,
@@ -651,7 +732,7 @@ fn operator_handle_init(
             custodian_count,
         )
         .unwrap();
-        let mut enc = Encryption::new(PkeSchemeType::MlKem512, rng);
+        let mut enc = Encryption::new(BACKUP_PKE_SCHEME, rng);
         let (backup_dec_key, backup_enc_key) = enc.keygen().unwrap();
         let signcrypt_result = operator
             .secret_share_and_signcrypt(

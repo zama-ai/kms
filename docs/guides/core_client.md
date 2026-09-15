@@ -222,7 +222,7 @@ path = "./backup_vault"
 #### Setup
 
 For the custodian backup approach to work, and start doing backups, a custodian context first needs to be setup. To setup this, first a set of custodians must be selected. Each of this must complete an initialization step resulting in each of them holding a *seed phrase* and some public key material. 
-The key material of each custodian must then be communicated with operators (which happens during custodian context construction). Once this is done, the operators will automatically backup private key material in a secret-shared manner, signcrypted under the custodians' public keys.
+The key material of each custodian must then be communicated with operators (which happens during custodian context construction). Once this is done, the operators will automatically backup private key material in a secret-shared manner, signcrypted under the custodians' MLKEM1024-P384 public keys.
 More specifically the following steps must be done:
 
 1. Set up custodians.
@@ -758,7 +758,26 @@ To retrieve the operator public keys from the KMS cores:
 $ cargo run --bin kms-core-client -- -f <path-to-toml-config-file> get-operator-public-key
 ```
 
-This prints the public key for each configured core.
+This prints the operator's backup encryption key (MLKEM1024-P384) for each configured core, after
+checking it against the AWS Nitro attestation document each core returns.
+
+The attestation document carries a **digest** of the key, `SHAKE256("ATTESTPK" ‖ key)`, not the key
+itself: the composite key exceeds the 1024-byte `public_key` field of a Nitro attestation document.
+The command hashes the returned key and compares.
+
+Be precise about what that check establishes. The NSM signs opaque bytes alongside the enclave's PCR
+measurements, so a valid document proves only that *software measuring to those PCRs emitted this
+digest*. It is not a proof of possession — the NSM never sees a private key, and a KEM key cannot
+self-sign — and it is not evidence that the key is the correct one. The key's integrity comes from
+elsewhere: it travels inside operator-signed `RecoveryValidationMaterial`, which each node validates
+against its own signing key at boot before installing it. A key that is wrong but validly signed is
+attested just as faithfully.
+
+Note also that the document's nonce is chosen by the enclave rather than by the caller, and AWS
+permits attestation reuse, so the document offers no freshness guarantee.
+
+Cores with no security module configured return an empty attestation document, which this command
+rejects; it only works against enclave-backed deployments.
 
 ## Example Commands
 

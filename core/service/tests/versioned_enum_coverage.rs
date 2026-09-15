@@ -37,9 +37,12 @@ fn dispatch_underlying_type_name(enum_name: &str) -> String {
         .to_string()
 }
 
-/// Types we deliberately don't require a direct `.ron` fixture for, because
-/// they are transitively exercised as fields of a root type that *does* have
-/// a fixture.
+/// Types we deliberately don't require a direct `.ron` fixture for.
+///
+/// Most entries appear here because a root type that does have a fixture exercises them as a
+/// field. The custodian-backup group at the end is different in kind. Those types have no fixture
+/// at all, because their formats are not frozen. Keep the two groups apart. An entry that leaves
+/// the second group needs its own fixture, not a parent to point at.
 ///
 /// TODO(zama-ai/kms-internal#3028): this explicit list should go away after
 /// we have a proper way to identify which structs need to be tested.
@@ -50,28 +53,13 @@ const ALLOW_UNCOVERED: &[&str] = &[
     // Field of UnifiedUnsigncryptionKeyOwned.
     // Covered via UnifiedUnsigncryptionKeyTest.
     "UnifiedPrivateEncKey",
-    // Field of UnifiedCipher.
-    // Covered via UnifiedCipherTest.
+    // Field of UnifiedSigncryption.
+    // Covered via UnifiedSigncryptionTest.
     "PkeSchemeType",
     // Field of UnifiedSigncryption. (PrivateSigKey / PublicSigKey expose it
     // only via the HasSigningScheme trait method, not as a struct field.)
     // Covered via UnifiedSigncryptionTest.
     "SigningSchemeType",
-    // Map value in RecoveryValidationMaterialPayload.cts.
-    // Covered via RecoveryValidationMaterialTest.
-    "InnerOperatorBackupOutput",
-    // Plaintext that Operator::secret_share_and_signcrypt signcrypts into the
-    // UnifiedSigncryption inside InnerOperatorBackupOutput; not a struct
-    // field. Covered (in serialized-and-signcrypted form) via
-    // OperatorBackupOutputTest.
-    "BackupMaterial",
-    // Field of RecoveryValidationMaterial.payload.
-    // Covered via RecoveryValidationMaterialTest.
-    "RecoveryValidationMaterialPayload",
-    // safe_serialize'd into the protobuf CustodianSetupMessage.payload (then
-    // unpacked into InternalCustodianSetupMessage on load).
-    // Covered via InternalCustodianSetupMessageTest.
-    "CustodianSetupMessagePayload",
     // Variant payload of KeyGenMetadata::Current.
     // Covered via KeyGenMetadataTest.
     "KeyGenMetadataInner",
@@ -106,6 +94,27 @@ const ALLOW_UNCOVERED: &[&str] = &[
     // Field of PrivateKeySet.glwe_secret_key_share_compression.
     // Covered via PrivateKeySetTest.
     "CompressionPrivateKeySharesEnum",
+    // ---- Custodian backup ----
+    //
+    // These types have no fixture, transitive or otherwise. Custodian backup ships first in 0.15,
+    // and no deployment uses it, so its persisted and wire formats are not frozen. A fixture would
+    // pin data that nobody holds.
+    //
+    // TODO(#3168): add a fixture for each of these, and delete the entry, once the feature ships.
+    "RecoveryValidationMaterial",
+    "RecoveryValidationMaterialPayload",
+    "InternalRecoveryRequest",
+    "InternalCustodianContext",
+    "InternalCustodianSetupMessage",
+    "CustodianSetupMessagePayload",
+    "InternalCustodianRecoveryOutput",
+    "InnerOperatorBackupOutput",
+    "BackupMaterial",
+    "CustodianContextAnchor",
+    "BackupCiphertext",
+    // Only ever produced by `Encrypt for UnifiedPublicEncKey` and only ever stored inside
+    // BackupCiphertext, so it is reachable through custodian backup alone.
+    "UnifiedCipher",
 ];
 
 fn cargo_metadata() -> Metadata {

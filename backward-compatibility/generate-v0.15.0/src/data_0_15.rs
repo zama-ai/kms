@@ -7,23 +7,8 @@ use algebra_0_15_0::{
     galois_rings::degree_4::{ResiduePolyF4Z128, ResiduePolyF4Z64},
     sharing::share::Share,
 };
-use kms_0_15_0::backup::custodian::{
-    Custodian, CustodianContextAnchor, CustodianSetupMessagePayload, InternalCustodianContext,
-};
-use kms_0_15_0::backup::{
-    custodian::{InternalCustodianRecoveryOutput, InternalCustodianSetupMessage},
-    operator::{
-        BackupMaterial, InnerOperatorBackupOutput, InternalRecoveryRequest, Operator,
-        RecoveryValidationMaterial, DSEP_BACKUP_COMMITMENT,
-    },
-    BackupCiphertext,
-};
-use kms_0_15_0::consts::SAFE_SER_SIZE_LIMIT;
 use kms_0_15_0::cryptography::{
-    encryption::{
-        Encryption, PkeScheme, PkeSchemeType, UnifiedCipher, UnifiedPrivateEncKey,
-        UnifiedPublicEncKey,
-    },
+    encryption::{Encryption, PkeScheme, PkeSchemeType, UnifiedPrivateEncKey, UnifiedPublicEncKey},
     hybrid_ml_kem::HybridKemCt,
     signatures::{
         compute_eip712_signature, gen_sig_keys, NodeSigningIdentity, RootSigningSeed,
@@ -103,22 +88,19 @@ use backward_compatibility::parameters::{
     SwitchAndSquashParametersTest,
 };
 use backward_compatibility::{
-    AppKeyBlobTest, BackupCiphertextTest, ContextInfoTest, CrsGenMetadataTest,
-    CrsGenMetadataWithExtraDataTest, CrsSignedPayloadTest, CustodianContextAnchorTest,
-    Eip712DomainTest, EpochDataTest, HybridKemCtTest, InternalCustodianContextTest,
-    InternalCustodianRecoveryOutputTest, InternalCustodianSetupMessageTest,
-    InternalRecoveryRequestTest, KeyGenMetadataTest, KeyGenMetadataWithExtraDataTest,
-    KeygenSignedPayloadTest, KmsFheKeyHandlesTest, MlKem1024P384PrivateKeyTest,
-    MlKem1024P384PublicKeyTest, NodeInfoTest, OperatorBackupOutputTest, PRSSSetupTest,
+    AppKeyBlobTest, ContextInfoTest, CrsGenMetadataTest, CrsGenMetadataWithExtraDataTest,
+    CrsSignedPayloadTest, Eip712DomainTest, EpochDataTest, HybridKemCtTest, KeyGenMetadataTest,
+    KeyGenMetadataWithExtraDataTest, KeygenSignedPayloadTest, KmsFheKeyHandlesTest,
+    MlKem1024P384PrivateKeyTest, MlKem1024P384PublicKeyTest, NodeInfoTest, PRSSSetupTest,
     PrepKeygenSignedPayloadTest, PrfKeyTest, PrivDataTypeTest, PrivateSigKeyTest, PrssSetTest,
     PrssSetupCombinedTest, PubDataTypeTest, PublicDecSignedPayloadTest, PublicSigKeyTest,
-    RecoveryValidationMaterialTest, ReleasePCRValuesTest, RootSigningSeedTest, SchemeDigestsTest,
-    ShareTest, SigncryptionPayloadTest, SignedPubDataHandleInternalTest, SoftwareVersionTest,
+    ReleasePCRValuesTest, RootSigningSeedTest, SchemeDigestsTest, ShareTest,
+    SigncryptionPayloadTest, SignedPubDataHandleInternalTest, SoftwareVersionTest,
     StoredEip712DomainTest, StoredTypedSignatureTest, TestMetadataDD, TestMetadataKMS,
-    TestMetadataKmsGrpc, ThresholdFheKeysTest, TypedPlaintextTest, UnifiedCipherTest,
-    UnifiedPublicSigKeyTest, UnifiedSigncryptionKeyTest, UnifiedSigncryptionTest,
-    UnifiedUnsigncryptionKeyTest, UserDecSignedPayloadTest, DISTRIBUTED_DECRYPTION_MODULE_NAME,
-    KMS_GRPC_MODULE_NAME, KMS_MODULE_NAME,
+    TestMetadataKmsGrpc, ThresholdFheKeysTest, TypedPlaintextTest, UnifiedPublicSigKeyTest,
+    UnifiedSigncryptionKeyTest, UnifiedSigncryptionTest, UnifiedUnsigncryptionKeyTest,
+    UserDecSignedPayloadTest, DISTRIBUTED_DECRYPTION_MODULE_NAME, KMS_GRPC_MODULE_NAME,
+    KMS_MODULE_NAME,
 };
 use hashing_0_15_0::hash_versioned;
 use kms_0_15_0::cryptography::signcryption::SigncryptionPayload;
@@ -316,12 +298,6 @@ const ROOT_SIGNING_SEED_TEST: RootSigningSeedTest = RootSigningSeedTest {
     state: 100,
 };
 
-// KMS test
-const CUSTODIAN_CONTEXT_ANCHOR_TEST: CustodianContextAnchorTest = CustodianContextAnchorTest {
-    test_filename: Cow::Borrowed("custodian_context_anchor"),
-    context_id: [7; 32],
-    sequence: 3,
-};
 
 // KMS-grpc test
 const SIGNED_PUB_DATA_HANDLE_INTERNAL_TEST: SignedPubDataHandleInternalTest =
@@ -506,19 +482,7 @@ const UNIFIED_SIGNCRYPTION_TEST: UnifiedSigncryptionTest = UnifiedSigncryptionTe
     state: 202,
 };
 
-// KMS test
-const BACKUP_CIPHERTEXT_TEST: BackupCiphertextTest = BackupCiphertextTest {
-    test_filename: Cow::Borrowed("backup_ciphertext"),
-    unified_cipher_filename: Cow::Borrowed("unified_ciphertext_handle"),
-    state: 200,
-};
 
-// KMS test
-const UNIFIED_CIPHER_TEST: UnifiedCipherTest = UnifiedCipherTest {
-    test_filename: Cow::Borrowed("unified_ciphertext"),
-    hybrid_kem_filename: Cow::Borrowed("hybrid_kem_ct_handle"),
-    state: 123,
-};
 
 // KMS test
 const PRSS_SETUP_COMBINED_TEST: PrssSetupCombinedTest = PrssSetupCombinedTest {
@@ -600,55 +564,9 @@ const SOFTWARE_VERSION_TEST: SoftwareVersionTest = SoftwareVersionTest {
     tag: Cow::Borrowed("super fun version"),
 };
 
-// KMS test
-const RECOVERY_MATERIAL_TEST: RecoveryValidationMaterialTest = RecoveryValidationMaterialTest {
-    test_filename: Cow::Borrowed("recovery_material"),
-    internal_cus_context_filename: Cow::Borrowed("internal_cus_context_handle"),
-    state: 300,
-    custodian_count: 5,
-    mpc_context_id: [7u8; 32],
-};
 
-// KMS test
-const INTERNAL_RECOVERY_REQUEST_TEST: InternalRecoveryRequestTest = InternalRecoveryRequestTest {
-    test_filename: Cow::Borrowed("internal_recovery_request"),
-    amount: 10,
-    state: 300,
-};
 
-// KMS test
-const INTERNAL_CUS_CONTEXT_TEST: InternalCustodianContextTest = InternalCustodianContextTest {
-    test_filename: Cow::Borrowed("internal_cus_context"),
-    internal_cus_setup_filename: Cow::Borrowed("internal_cus_setup_handle"),
-    unified_enc_key_filename: Cow::Borrowed("unified_enc_key_handle"),
-    state: 300,
-    custodian_count: 5,
-};
 
-// KMS test
-const INTERNAL_CUS_SETUP_MSG_TEST: InternalCustodianSetupMessageTest =
-    InternalCustodianSetupMessageTest {
-        test_filename: Cow::Borrowed("internal_custodian_setup_message"),
-        state: 42,
-    };
-
-// KMS test
-const INTERNAL_CUS_REC_OUT_TEST: InternalCustodianRecoveryOutputTest =
-    InternalCustodianRecoveryOutputTest {
-        test_filename: Cow::Borrowed("internal_custodian_recovery_output"),
-        state: 43,
-        mpc_context_id: [7u8; 32],
-    };
-
-// KMS test
-const OPERATOR_BACKUP_OUTPUT_TEST: OperatorBackupOutputTest = OperatorBackupOutputTest {
-    test_filename: Cow::Borrowed("operator_backup_output"),
-    custodian_count: 3,
-    custodian_threshold: 1,
-    plaintext: [0u8; 32],
-    backup_id: [1u8; 32],
-    seed: 42,
-};
 
 // KMS test — one signature per `SigningSchemeType` variant, so a reordered or
 // removed scheme variant breaks the test.
@@ -763,17 +681,6 @@ impl KmsV0_15_0 {
         );
 
         TestMetadataKMS::RootSigningSeed(ROOT_SIGNING_SEED_TEST)
-    }
-
-    fn gen_custodian_context_anchor(dir: &PathBuf) -> TestMetadataKMS {
-        let anchor = CustodianContextAnchor {
-            context_id: RequestId::from_bytes(CUSTODIAN_CONTEXT_ANCHOR_TEST.context_id),
-            sequence: CUSTODIAN_CONTEXT_ANCHOR_TEST.sequence,
-        };
-
-        store_versioned_test!(&anchor, dir, &CUSTODIAN_CONTEXT_ANCHOR_TEST.test_filename);
-
-        TestMetadataKMS::CustodianContextAnchor(CUSTODIAN_CONTEXT_ANCHOR_TEST)
     }
 
     fn gen_public_sig_key(dir: &PathBuf) -> TestMetadataKMS {
@@ -1132,40 +1039,6 @@ impl KmsV0_15_0 {
         TestMetadataKMS::MlKem1024P384PrivateKey(MLKEM1024_P384_PRIVATE_KEY_TEST)
     }
 
-    fn gen_backup_ciphertext(dir: &PathBuf) -> TestMetadataKMS {
-        let mut rng = AesRng::seed_from_u64(BACKUP_CIPHERTEXT_TEST.state);
-        let backup_id: RequestId = RequestId::new_random(&mut rng);
-        // Generate the unified ciphertext after using the RNG for generating backup ID since backup ID
-        // will also be generated as part of the test
-        let mut kem_ct = [0_u8; 32];
-        rng.fill_bytes(&mut kem_ct);
-        let mut payload_ct = [0_u8; 32];
-        rng.fill_bytes(&mut payload_ct);
-        let ciphertext: UnifiedCipher = UnifiedCipher {
-            cipher: HybridKemCt {
-                nonce: [0_u8; 12],
-                kem_ct: kem_ct.to_vec(),
-                payload_ct: payload_ct.to_vec(),
-            },
-            pke_type: PkeSchemeType::MlKem512,
-        };
-        store_versioned_auxiliary!(
-            &ciphertext,
-            dir,
-            &BACKUP_CIPHERTEXT_TEST.test_filename,
-            &BACKUP_CIPHERTEXT_TEST.unified_cipher_filename,
-        );
-
-        let backup_ct = BackupCiphertext {
-            ciphertext,
-            priv_data_type: PrivDataType::SigningKey,
-            backup_id,
-        };
-
-        store_versioned_test!(&backup_ct, dir, &BACKUP_CIPHERTEXT_TEST.test_filename);
-        TestMetadataKMS::BackupCiphertext(BACKUP_CIPHERTEXT_TEST)
-    }
-
     fn gen_unified_signcryption(dir: &PathBuf) -> TestMetadataKMS {
         let mut rng = AesRng::seed_from_u64(UNIFIED_SIGNCRYPTION_TEST.state);
         let (verf_key, server_sig_key) = gen_sig_keys(&mut rng);
@@ -1183,33 +1056,6 @@ impl KmsV0_15_0 {
 
         store_versioned_test!(&signcryption, dir, &UNIFIED_SIGNCRYPTION_TEST.test_filename);
         TestMetadataKMS::UnifiedSigncryption(UNIFIED_SIGNCRYPTION_TEST)
-    }
-
-    fn gen_unified_cipher(dir: &PathBuf) -> TestMetadataKMS {
-        let mut rng = AesRng::seed_from_u64(UNIFIED_CIPHER_TEST.state);
-        let mut kem_ct = [0_u8; 32];
-        rng.fill_bytes(&mut kem_ct);
-        let mut payload_ct = [0_u8; 32];
-        rng.fill_bytes(&mut payload_ct);
-        let kem = HybridKemCt {
-            nonce: [0_u8; 12],
-            kem_ct: kem_ct.to_vec(),
-            payload_ct: payload_ct.to_vec(),
-        };
-        store_versioned_auxiliary!(
-            &kem,
-            dir,
-            &UNIFIED_CIPHER_TEST.test_filename,
-            &UNIFIED_CIPHER_TEST.hybrid_kem_filename,
-        );
-        let cipher = UnifiedCipher {
-            cipher: kem,
-            pke_type: PkeSchemeType::MlKem512,
-        };
-
-        store_versioned_test!(&cipher, dir, &UNIFIED_CIPHER_TEST.test_filename);
-
-        TestMetadataKMS::UnifiedCipher(UNIFIED_CIPHER_TEST)
     }
 
     fn gen_hybrid_kem_ct(dir: &PathBuf) -> TestMetadataKMS {
@@ -1396,167 +1242,6 @@ impl KmsV0_15_0 {
         TestMetadataKMS::SoftwareVersion(SOFTWARE_VERSION_TEST)
     }
 
-    fn gen_recovery_material(dir: &PathBuf) -> TestMetadataKMS {
-        let mut rng = AesRng::seed_from_u64(RECOVERY_MATERIAL_TEST.state);
-        let backup_id: RequestId = RequestId::new_random(&mut rng);
-        let (operator_pk, operator_sk) = gen_sig_keys(&mut rng);
-        let mut commitments = BTreeMap::new();
-        let mut cts = BTreeMap::new();
-        for role_j in 1..=RECOVERY_MATERIAL_TEST.custodian_count {
-            let cus_role = Role::indexed_from_one(role_j);
-            let (custodian_pk, _) = gen_sig_keys(&mut rng);
-            let backup_material = BackupMaterial {
-                backup_id,
-                mpc_context_id: kms_grpc_0_15_0::ContextId::from_bytes([9u8; 32]),
-                custodian_pk,
-                custodian_role: cus_role,
-                operator_pk: operator_pk.clone(),
-                shares: Vec::new(),
-            };
-            let msg_digest = hash_versioned(&DSEP_BACKUP_COMMITMENT, &backup_material).unwrap();
-            commitments.insert(cus_role, msg_digest);
-            let mut payload = [0_u8; 32];
-            rng.fill_bytes(&mut payload);
-            let cts_out = InnerOperatorBackupOutput {
-                signcryption: UnifiedSigncryption {
-                    payload: payload.to_vec(),
-                    pke_type: PkeSchemeType::MlKem512,
-                    signing_type: SigningSchemeType::Ecdsa256k1,
-                },
-            };
-            cts.insert(cus_role, cts_out);
-        }
-
-        // Dummy payload; but needs to be a properly serialized payload
-        // This must be generated after the commitment stuff, since the test will regenerate the commitment stuff,
-        // but read the custodian context from disk
-        let mut outer_encryption = Encryption::new(PkeSchemeType::MlKem512, &mut rng);
-        let (_dec_key, outer_enc_key) = outer_encryption.keygen().unwrap();
-        let mut custodian_nodes = Vec::new();
-        for role_j in 1..=RECOVERY_MATERIAL_TEST.custodian_count {
-            let mut encryption = Encryption::new(PkeSchemeType::MlKem512, &mut rng);
-            let (_dec_key, enc_key) = encryption.keygen().unwrap();
-            let (cus_pk, _) = gen_sig_keys(&mut rng);
-            let payload = CustodianSetupMessagePayload {
-                header: "header".to_string(),
-                random_value: [role_j as u8; 32],
-                timestamp: fixed_fixture_timestamp(),
-                public_enc_key: enc_key.clone(),
-                verification_key: cus_pk.clone(),
-            };
-            let mut payload_serial = Vec::new();
-            safe_serialize(&payload, &mut payload_serial, SAFE_SER_SIZE_LIMIT).unwrap();
-            let setup_msg = CustodianSetupMessage {
-                custodian_role: role_j as u64,
-                name: format!("Custodian-{role_j}"),
-                payload: payload_serial.clone(),
-            };
-            custodian_nodes.push(setup_msg);
-        }
-        let custodian_context = CustodianContext {
-            custodian_nodes,
-            custodian_context_id: Some(backup_id.into()),
-            threshold: 1,
-        };
-        let internal_custodian_context =
-            InternalCustodianContext::new(custodian_context, outer_enc_key).unwrap();
-        store_versioned_auxiliary!(
-            &internal_custodian_context,
-            dir,
-            &RECOVERY_MATERIAL_TEST.test_filename,
-            &RECOVERY_MATERIAL_TEST.internal_cus_context_filename,
-        );
-        let recovery_material = RecoveryValidationMaterial::new(
-            cts,
-            commitments,
-            internal_custodian_context,
-            &operator_sk,
-            kms_grpc_0_15_0::ContextId::from_bytes(RECOVERY_MATERIAL_TEST.mpc_context_id),
-        )
-        .unwrap();
-        store_versioned_test!(
-            &recovery_material,
-            dir,
-            &RECOVERY_MATERIAL_TEST.test_filename
-        );
-        TestMetadataKMS::RecoveryValidationMaterial(RECOVERY_MATERIAL_TEST)
-    }
-
-    fn gen_internal_recovery_request(dir: &PathBuf) -> TestMetadataKMS {
-        let mut rng = AesRng::seed_from_u64(INTERNAL_RECOVERY_REQUEST_TEST.state);
-        let mut encryption = Encryption::new(PkeSchemeType::MlKem512, &mut rng);
-        let (_dec_key, enc_key) = encryption.keygen().unwrap();
-        let (operator_verf_key, _operator_sig_key) = gen_sig_keys(&mut rng);
-        let mut cts = BTreeMap::new();
-        for role_j in 1..=INTERNAL_RECOVERY_REQUEST_TEST.amount {
-            let cur_role = Role::indexed_from_one(role_j as usize);
-            let mut payload = [0_u8; 32];
-            rng.fill_bytes(&mut payload);
-            let signcryption = UnifiedSigncryption {
-                payload: payload.to_vec(),
-                pke_type: PkeSchemeType::MlKem512,
-                signing_type: SigningSchemeType::Ecdsa256k1,
-            };
-            cts.insert(cur_role, InnerOperatorBackupOutput { signcryption });
-        }
-        let recovery_material =
-            InternalRecoveryRequest::new(enc_key, operator_verf_key, cts).unwrap();
-        store_versioned_test!(
-            &recovery_material,
-            dir,
-            &INTERNAL_RECOVERY_REQUEST_TEST.test_filename
-        );
-        TestMetadataKMS::InternalRecoveryRequest(INTERNAL_RECOVERY_REQUEST_TEST)
-    }
-
-    fn gen_internal_cus_context_handles(dir: &PathBuf) -> TestMetadataKMS {
-        let mut rng = AesRng::seed_from_u64(INTERNAL_CUS_CONTEXT_TEST.state);
-        let context_id: RequestId = RequestId::new_random(&mut rng);
-        let mut cus_nodes = BTreeMap::new();
-        for role_j in 1..=INTERNAL_CUS_CONTEXT_TEST.custodian_count {
-            let cus_role = Role::indexed_from_one(role_j);
-            let (custodian_verf_key, _) = gen_sig_keys(&mut rng);
-            let mut encryption = Encryption::new(PkeSchemeType::MlKem512, &mut rng);
-            let (_, cus_enc_key) = encryption.keygen().unwrap();
-            let mut rnd = [0_u8; 32];
-            rng.fill_bytes(&mut rnd);
-            let setup_msg = InternalCustodianSetupMessage {
-                header: "header".to_string(),
-                custodian_role: cus_role,
-                name: format!("role{role_j}"),
-                random_value: rnd,
-                timestamp: fixed_fixture_timestamp(),
-                public_enc_key: cus_enc_key,
-                public_verf_key: custodian_verf_key,
-            };
-            cus_nodes.insert(cus_role, setup_msg);
-        }
-        // Generate the extra encryption key last since it will be loaded from file and
-        // thus we should avoid using the RNG for the things that it will be used to generate in the test
-        let mut encryption = Encryption::new(PkeSchemeType::MlKem512, &mut rng);
-        let (_, cus_enc_key) = encryption.keygen().unwrap();
-        let internal_cus_context = InternalCustodianContext {
-            threshold: 1,
-            context_id,
-            custodian_nodes: cus_nodes,
-            backup_enc_key: cus_enc_key.clone(),
-        };
-        store_versioned_auxiliary!(
-            &cus_enc_key,
-            dir,
-            &INTERNAL_CUS_CONTEXT_TEST.test_filename,
-            &INTERNAL_CUS_CONTEXT_TEST.unified_enc_key_filename,
-        );
-
-        store_versioned_test!(
-            &internal_cus_context,
-            dir,
-            &INTERNAL_CUS_CONTEXT_TEST.test_filename
-        );
-
-        TestMetadataKMS::InternalCustodianContext(INTERNAL_CUS_CONTEXT_TEST)
-    }
-
     fn gen_kms_fhe_key_handles(dir: &PathBuf) -> TestMetadataKMS {
         let mut rng = AesRng::seed_from_u64(KMS_FHE_KEY_HANDLES_TEST.state);
         let (_, private_sig_key) = gen_sig_keys(&mut rng);
@@ -1726,103 +1411,6 @@ impl KmsV0_15_0 {
         );
 
         TestMetadataKMS::ThresholdFheKeys(THRESHOLD_FHE_KEYS_TEST)
-    }
-
-    /// Generates the _internal_ custodian setup message
-    fn gen_internal_cus_setup_msg(dir: &PathBuf) -> TestMetadataKMS {
-        let mut rng = AesRng::seed_from_u64(INTERNAL_CUS_SETUP_MSG_TEST.state);
-        let (_verification_key, signing_key) = gen_sig_keys(&mut rng);
-        let mut encryption = Encryption::new(PkeSchemeType::MlKem512, &mut rng);
-        let (private_key, public_key) = encryption.keygen().unwrap();
-        let custodian = Custodian::new(
-            Role::indexed_from_one(1),
-            signing_key,
-            public_key,
-            private_key,
-        )
-        .unwrap();
-        let custodian_setup_message = custodian.generate_setup_message_with_timestamp(
-            &mut rng,
-            "custodian-1".to_string(),
-            fixed_fixture_timestamp(),
-        );
-        store_versioned_test!(
-            &custodian_setup_message,
-            dir,
-            &INTERNAL_CUS_SETUP_MSG_TEST.test_filename
-        );
-        TestMetadataKMS::InternalCustodianSetupMessage(INTERNAL_CUS_SETUP_MSG_TEST)
-    }
-
-    fn gen_internal_cus_rec_out(dir: &PathBuf) -> TestMetadataKMS {
-        let mut rng = AesRng::seed_from_u64(INTERNAL_CUS_REC_OUT_TEST.state);
-        let mut buf = [0u8; 100];
-        rng.fill_bytes(&mut buf);
-        let signcryption = UnifiedSigncryption {
-            payload: buf.to_vec(),
-            pke_type: PkeSchemeType::MlKem512,
-            signing_type: SigningSchemeType::Ecdsa256k1,
-        };
-        let icro = InternalCustodianRecoveryOutput {
-            signcryption,
-            custodian_role: Role::indexed_from_one(2),
-        };
-        store_versioned_test!(&icro, dir, &INTERNAL_CUS_REC_OUT_TEST.test_filename);
-        TestMetadataKMS::InternalCustodianRecoveryOutput(INTERNAL_CUS_REC_OUT_TEST)
-    }
-
-    fn gen_operator_backup_output(dir: &PathBuf) -> TestMetadataKMS {
-        let mut rng = AesRng::seed_from_u64(OPERATOR_BACKUP_OUTPUT_TEST.seed);
-
-        let custodians: Vec<_> = (1..=OPERATOR_BACKUP_OUTPUT_TEST.custodian_count)
-            .map(|i| {
-                let (_verification_key, signing_key) = gen_sig_keys(&mut rng);
-                let mut encryption = Encryption::new(PkeSchemeType::MlKem512, &mut rng);
-                let (private_key, public_key) = encryption.keygen().unwrap();
-                Custodian::new(
-                    Role::indexed_from_one(i),
-                    signing_key,
-                    public_key,
-                    private_key,
-                )
-                .unwrap()
-            })
-            .collect();
-        let custodian_messages: Vec<_> = custodians
-            .iter()
-            .enumerate()
-            .map(|(i, c)| {
-                c.generate_setup_message(&mut rng, format!("Custodian-{i}"))
-                    .unwrap()
-            })
-            .collect();
-
-        let operator = {
-            let (_verification_key, signing_key) = gen_sig_keys(&mut rng);
-            Operator::new_for_sharing(
-                custodian_messages,
-                signing_key,
-                OPERATOR_BACKUP_OUTPUT_TEST.custodian_threshold,
-                custodians.len(),
-            )
-            .unwrap()
-        };
-        let operator_backup_output = &operator
-            .secret_share_and_signcrypt(
-                &mut rng,
-                &OPERATOR_BACKUP_OUTPUT_TEST.plaintext,
-                RequestId::from_bytes(OPERATOR_BACKUP_OUTPUT_TEST.backup_id),
-                kms_grpc_0_15_0::ContextId::from_bytes([9u8; 32]),
-            )
-            .unwrap()
-            .ct_shares[&Role::indexed_from_one(1)];
-
-        store_versioned_test!(
-            operator_backup_output,
-            dir,
-            &OPERATOR_BACKUP_OUTPUT_TEST.test_filename
-        );
-        TestMetadataKMS::OperatorBackupOutput(OPERATOR_BACKUP_OUTPUT_TEST)
     }
 
     /// `StoredTypedSignature` was introduced in v0.15.0 as the persisted form of a
@@ -2163,7 +1751,6 @@ impl KMSCoreVersion for V0_15_0 {
         vec![
             KmsV0_15_0::gen_private_sig_key(&dir),
             KmsV0_15_0::gen_root_signing_seed(&dir),
-            KmsV0_15_0::gen_custodian_context_anchor(&dir),
             KmsV0_15_0::gen_public_sig_key(&dir),
             KmsV0_15_0::gen_unified_public_sig_key(&dir),
             KmsV0_15_0::gen_app_key_blob(&dir),
@@ -2179,8 +1766,6 @@ impl KMSCoreVersion for V0_15_0 {
             KmsV0_15_0::gen_mlkem1024_p384_public_key(&dir),
             KmsV0_15_0::gen_mlkem1024_p384_private_key(&dir),
             KmsV0_15_0::gen_unified_signcryption(&dir),
-            KmsV0_15_0::gen_backup_ciphertext(&dir),
-            KmsV0_15_0::gen_unified_cipher(&dir),
             KmsV0_15_0::gen_hybrid_kem_ct(&dir),
             KmsV0_15_0::gen_prss_setup_combined(&dir),
             KmsV0_15_0::gen_epoch_data(&dir),
@@ -2188,14 +1773,8 @@ impl KMSCoreVersion for V0_15_0 {
             KmsV0_15_0::gen_node_info(&dir),
             KmsV0_15_0::gen_scheme_digests(&dir),
             KmsV0_15_0::gen_software_version(&dir),
-            KmsV0_15_0::gen_recovery_material(&dir),
-            KmsV0_15_0::gen_internal_recovery_request(&dir),
-            KmsV0_15_0::gen_internal_cus_context_handles(&dir),
-            KmsV0_15_0::gen_internal_cus_setup_msg(&dir),
             KmsV0_15_0::gen_kms_fhe_key_handles(&dir),
             KmsV0_15_0::gen_threshold_fhe_keys(&dir),
-            KmsV0_15_0::gen_internal_cus_rec_out(&dir),
-            KmsV0_15_0::gen_operator_backup_output(&dir),
             KmsV0_15_0::gen_stored_scheme_signature(&dir),
             KmsV0_15_0::gen_prep_keygen_signed_payload(&dir),
             KmsV0_15_0::gen_keygen_signed_payload(&dir),

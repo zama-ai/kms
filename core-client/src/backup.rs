@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
 use aes_prng::AesRng;
-use hashing::{DomainSep, hash_element};
+use hashing::hash_element;
 use kms_grpc::{
     ContextId, RequestId,
     kms::v1::{
@@ -12,6 +12,7 @@ use kms_grpc::{
     kms_service::v1::core_service_endpoint_client::CoreServiceEndpointClient,
 };
 use kms_lib::backup::{
+    DSEP_ATTESTED_BACKUP_PK,
     custodian::{InternalCustodianRecoveryOutput, InternalCustodianSetupMessage},
     operator::InternalRecoveryRequest,
 };
@@ -40,17 +41,17 @@ pub(crate) async fn do_get_operator_pub_keys(
         let attestation_doc = attestation_doc_validation::validate_and_parse_attestation_doc(
             &pk.attestation_document,
         )?;
-        let Some(attested_pk) = attestation_doc.public_key else {
+        let Some(attested_digest) = attestation_doc.public_key else {
             anyhow::bail!("Bad response: public key not present in attestation document")
         };
-        if pk.public_key.as_slice() != attested_pk.as_slice() {
-            let dsep: DomainSep = *b"EQUALITY";
-            let pk_hash = hex::encode(hash_element(&dsep, pk.public_key.as_slice()));
-            let att_pk_hash = hex::encode(hash_element(&dsep, attested_pk.as_slice()));
+        // The document carries a digest of the key, not the key: the composite backup key does not
+        // fit in the attestation document's `public_key` field. See `get_operator_public_key`.
+        let expected_digest = hash_element(&DSEP_ATTESTED_BACKUP_PK, pk.public_key.as_slice());
+        if expected_digest.as_slice() != attested_digest.as_slice() {
             anyhow::bail!(
-                "Bad response: public key with hash {} does not match attestation document public key with hash {}",
-                pk_hash,
-                att_pk_hash
+                "Bad response: public key digest {} does not match the attestation document digest {}",
+                hex::encode(&expected_digest),
+                hex::encode(attested_digest.as_slice()),
             )
         };
 

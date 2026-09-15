@@ -26,7 +26,8 @@ use tfhe_versionable::{
 };
 use zeroize::{Zeroize, ZeroizeOnDrop, Zeroizing};
 
-const PRIVATE_KEY_LENGTH: usize = 32;
+/// Length of the seed that is the canonical MLKEM1024-P384 private key.
+pub(crate) const PRIVATE_KEY_LENGTH: usize = 32;
 const ML_KEM_SEED_LENGTH: usize = 64;
 const P384_SCALAR_LENGTH: usize = 48;
 const EXPANDED_SEED_LENGTH: usize = ML_KEM_SEED_LENGTH + P384_SCALAR_LENGTH;
@@ -251,22 +252,37 @@ pub enum MlKem1024P384PrivateKeyVersions {
     V0(MlKem1024P384PrivateKey),
 }
 
-/// Generate a fresh MLKEM1024-P384 key pair.
-pub(crate) fn keygen(
-    rng: &mut (impl CryptoRng + RngCore),
+/// Derive an MLKEM1024-P384 key pair from a seed.
+///
+/// The seed *is* the private key, so a caller deriving a key deterministically (from a BIP-39
+/// mnemonic, say) should reach the key pair through here rather than seeding an intermediate RNG,
+/// which would cap the reachable key space at that RNG's own seed width.
+pub(crate) fn keygen_from_seed(
+    seed: &[u8; PRIVATE_KEY_LENGTH],
 ) -> Result<(MlKem1024P384PrivateKey, MlKem1024P384PublicKey), CryptographyError> {
-    let mut seed = Zeroizing::new([0_u8; PRIVATE_KEY_LENGTH]);
-    rng.fill_bytes(&mut *seed);
-    // This seed is fresh CSPRNG output, so key generation does not pre-validate its P-384 scalar.
-    // `rust-hpke` panics if its single candidate is rejected. This event has probability below 2^-192:
+    // `rust-hpke` panics instead of erroring when its single P-384 scalar candidate is rejected,
+    // so screen the seed before handing it over. The rejection has probability below 2^-192 for a
+    // uniformly random seed:
     // <https://www.ietf.org/archive/id/draft-irtf-cfrg-concrete-hybrid-kems-03.html#section-3.1.1>.
-    let hpke_private_key = HpkePrivateKey::from_bytes(&*seed)
+    // A caller that derives its seed deterministically cannot draw a fresh one, so the rejection
+    // has to reach it as an error.
+    validate_private_key_seed(seed)?;
+    let hpke_private_key = HpkePrivateKey::from_bytes(seed)
         .map_err(|error| map_hpke_error("MLKEM1024-P384 private key", error))?;
     let public_key = MlKem1024P384PublicKey {
         key: HpkeMlKem1024P384::sk_to_pk(&hpke_private_key),
     };
 
     Ok((MlKem1024P384PrivateKey(*seed), public_key))
+}
+
+/// Generate a fresh MLKEM1024-P384 key pair.
+pub(crate) fn keygen(
+    rng: &mut (impl CryptoRng + RngCore),
+) -> Result<(MlKem1024P384PrivateKey, MlKem1024P384PublicKey), CryptographyError> {
+    let mut seed = Zeroizing::new([0_u8; PRIVATE_KEY_LENGTH]);
+    rng.fill_bytes(&mut *seed);
+    keygen_from_seed(&seed)
 }
 
 /// Encapsulate a shared secret to an MLKEM1024-P384 public key.

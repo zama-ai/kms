@@ -101,9 +101,12 @@ The service crate is the main surface area. Key subdirectories under
 - [cryptography/](../core/service/src/cryptography/) — AES-GCM-SIV, signcryption,
   hybrid ML-KEM (post-quantum), MLKEM1024-P384 (a composite of post-quantum
   ML-KEM-1024 and classical P-384), and attestation (Nitro NSM + certificate
-  chain verification). The MLKEM1024-P384 scheme is available through the
-  lower-level encryption and signcryption types. User decryption accepts
-  ML-KEM-512 only. Signing lives under
+  chain verification). Custodian backup uses MLKEM1024-P384 for all three of its
+  keypairs — the custodian's long-term key, the operator's ephemeral recovery key,
+  and the operator's per-context backup vault key — selected in one place,
+  `backup::BACKUP_PKE_SCHEME`. Nothing rejects a peer that advertises a weaker
+  scheme: the signcryption carries its own `pke_type` tag, so a mixed-scheme
+  custodian context works. User decryption accepts ML-KEM-512 only. Signing lives under
   [cryptography/signing/](../core/service/src/cryptography/signing/): a
   scheme-tagged `Signature` plus one backend per scheme — ECDSA/secp256k1
   (`ecdsa`, the legacy default and EIP-712 home), EdDSA/ed25519 (`eddsa`), and
@@ -314,6 +317,12 @@ in server config and unified behind `KeychainProxy`
   has installed a context, so a node configured for it makes no backups until
   its first context exists. New custodian contexts are rejected unless every custodian
   encryption key and every custodian verification key is unique.
+  Every key in this path is MLKEM1024-P384 (`backup::BACKUP_PKE_SCHEME`), and the
+  custodian's is derived from 256 bits of seed-phrase entropy — a 24-word mnemonic —
+  so the phrase does not cap the scheme's security level. A vault written under an
+  older ML-KEM-512 context is not readable by a node holding a composite key, but
+  each ciphertext carries its own `pke_type`, so a vault spanning both schemes
+  decrypts as long as the matching key is installed.
 
 Custodian workflows are driven through the
 [kms-custodian](../core/service/src/bin/kms-custodian.rs) CLI and the
@@ -544,8 +553,8 @@ enum whose variants are its historical layouts (`V0`, `V1`, …).
 `Unversionize` dispatches to the right variant by tag on read. On-disk and
 on-wire encoding goes through the pinned-`bincode` wrapper
 [bc2wrap](../bc2wrap/) so the binary layout is deterministic. Examples of
-versioned types: `BackupCiphertextVersions`,
-`InternalCustodianContextVersions`, `AppKeyBlobVersions`.
+versioned types: `ThresholdFheKeysVersions`, `KeyGenMetadataVersions`,
+`AppKeyBlobVersions`.
 
 **Freeze-and-replay harness.** [backward-compatibility/](../backward-compatibility/)
 is a separate Cargo workspace (excluded from the root — see [Cargo.toml](../Cargo.toml)
@@ -557,6 +566,14 @@ indexed by per-module `.ron` manifests. The loader in
 [backward-compatibility/src/](../backward-compatibility/src/) replays every
 entry through the current-version `Unversionize` and asserts the expected
 metadata.
+
+Custodian-backup types are a deliberate exception: they have no fixtures at all.
+The feature ships first in 0.15 and is not used in production, so adopting
+MLKEM1024-P384 for it was allowed to break its persisted and wire formats
+outright rather than freeze shapes nobody holds. The exempt types are listed
+together, with that reasoning, in the `ALLOW_UNCOVERED` constant of
+[core/service/tests/versioned_enum_coverage.rs](../core/service/tests/versioned_enum_coverage.rs);
+fixtures go back once the feature ships (zama-ai/kms-internal#3168).
 
 To add support for a new release, follow
 [backward-compatibility/ADDING_NEW_VERSIONS.md](../backward-compatibility/ADDING_NEW_VERSIONS.md).

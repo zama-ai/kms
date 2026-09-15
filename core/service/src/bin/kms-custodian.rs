@@ -8,13 +8,14 @@ use kms_lib::{
     backup::{
         custodian::{Custodian, InternalCustodianSetupMessage},
         operator::{InnerOperatorBackupOutput, InternalRecoveryRequest},
-        seed_phrase::{custodian_from_seed_phrase, seed_phrase_from_rng},
+        seed_phrase::{custodian_from_seed_phrase, seed_phrase_from_entropy},
     },
-    consts::RND_SIZE,
+    consts::{CUSTODIAN_ENTROPY_SIZE, RND_SIZE},
 };
 use observability::{conf::TelemetryConfig, telemetry::init_tracing};
-use rand::{RngCore, SeedableRng};
+use rand::{RngCore, SeedableRng, rngs::OsRng};
 use threshold_types::role::Role;
+use zeroize::Zeroizing;
 
 const DSEP_ENTROPY: DomainSep = *b"ENTROPY_";
 
@@ -96,7 +97,8 @@ async fn main() -> Result<(), anyhow::Error> {
             let mut rng = get_rng(params.randomness.as_ref());
             tracing::info!("Generating custodian keys...");
             let role = Role::indexed_from_one(params.custodian_role);
-            let mnemonic = seed_phrase_from_rng(&mut rng)?;
+            let mnemonic =
+                seed_phrase_from_entropy(&*seed_phrase_entropy(params.randomness.as_ref())?)?;
             let custodian: Custodian = custodian_from_seed_phrase(&mnemonic, role)
                 .map_err(|e| anyhow::anyhow!("Failed to recover custodian keys: {e}"))?;
             let setup_msg = custodian
@@ -186,6 +188,40 @@ async fn main() -> Result<(), anyhow::Error> {
     Ok(())
 }
 
+/// Draw the entropy behind a new seed phrase.
+///
+/// This deliberately does not go through [`get_rng`]: `AesRng`'s seed is [`RND_SIZE`] bytes, so
+/// seeding one would cap the phrase — and therefore every key the custodian ever derives from it —
+/// at 128 bits, half of what the custodian encryption scheme assumes.
+///
+/// The optional user-supplied string is folded in over the full width with SHAKE-256, so providing
+/// it can only add entropy and never replaces the system's.
+fn seed_phrase_entropy(
+    randomness: Option<&String>,
+) -> anyhow::Result<Zeroizing<[u8; CUSTODIAN_ENTROPY_SIZE]>> {
+    let mut entropy = Zeroizing::new([0u8; CUSTODIAN_ENTROPY_SIZE]);
+    OsRng.try_fill_bytes(&mut *entropy)?;
+    let Some(user_seed) = randomness else {
+        return Ok(entropy);
+    };
+    let user_bytes = Zeroizing::new(hashing::hash_element_w_size(
+        &DSEP_ENTROPY,
+        user_seed,
+        CUSTODIAN_ENTROPY_SIZE,
+    ));
+    for (byte, user_byte) in entropy.iter_mut().zip(user_bytes.iter()) {
+        *byte ^= user_byte;
+    }
+    Ok(entropy)
+}
+
+/// Builds the RNG for everything that is not seed-phrase entropy: the setup message's random
+/// value, and the encryption randomness of a recovery re-signcryption.
+///
+/// `AesRng` takes a [`RND_SIZE`]-byte seed, so this caps that randomness at 128 bits. No stored key
+/// depends on it. The ephemeral secret of a recovery signcryption does, and is therefore narrower
+/// than the security level of the KEM that protects it.
+/// TODO(#3168): widen this. It needs a CSPRNG with a 256-bit seed.
 fn get_rng(randomness: Option<&String>) -> AesRng {
     match randomness {
         Some(user_seed) => {

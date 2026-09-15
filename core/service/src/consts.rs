@@ -23,6 +23,14 @@ pub const TEST_PARAM: DKGParams = PARAMS_TEST_BK_SNS;
 /// The amount of bytes used for sampling random values to stop brute-forcing or statistical attacks.
 pub const RND_SIZE: usize = 128 / 8;
 
+/// The amount of entropy behind a custodian's BIP-39 seed phrase, which is also the amount of
+/// entropy behind every key derived from it.
+///
+/// This is wider than [`RND_SIZE`] because the custodian's encryption key is MLKEM1024-P384, whose
+/// claimed security level needs a 256-bit key space to be reachable. A 24-word mnemonic carries
+/// exactly this much.
+pub const CUSTODIAN_ENTROPY_SIZE: usize = 256 / 8;
+
 // TODO do we want to load this from a configuration?
 pub const SEC_PAR: u64 = 128;
 /// The maximum amount of public/user decryptions to be stored in RAM.

@@ -447,7 +447,7 @@ async fn backup_failure_keeps_the_stored_context_registered(#[case] kms_type: KM
     );
     {
         let mut rng = AesRng::seed_from_u64(45);
-        let mut encryption = Encryption::new(PkeSchemeType::MlKem512, &mut rng);
+        let mut encryption = Encryption::new(BACKUP_PKE_SCHEME, &mut rng);
         let (_, backup_encryption_key) = encryption.keygen().unwrap();
         let backup_vault = storage.get_backup_vault().unwrap();
         let mut backup_vault = backup_vault.lock().await;

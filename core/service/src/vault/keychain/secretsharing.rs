@@ -199,9 +199,11 @@ impl<R: Rng + CryptoRng> Keychain for SecretShareKeychain<R> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::backup::BACKUP_PKE_SCHEME;
+    use crate::cryptography::attestation::NSM_ATTESTATION_FIELD_MAX_BYTES;
     use crate::{
         cryptography::{
-            encryption::{Encryption, PkeScheme, PkeSchemeType},
+            encryption::{Encryption, PkeScheme},
             signatures::{PrivateSigKey, gen_sig_keys},
         },
         engine::base::derive_request_id,
@@ -219,7 +221,7 @@ mod tests {
     #[tokio::test]
     async fn test_set_and_get_backup_enc_key() {
         let mut rng = AesRng::seed_from_u64(42);
-        let mut enc = Encryption::new(PkeSchemeType::MlKem512, &mut rng);
+        let mut enc = Encryption::new(BACKUP_PKE_SCHEME, &mut rng);
         let (_dec_key, enc_key) = enc.keygen().unwrap();
         let mut keychain = SecretShareKeychain::new(rng);
         let req_id = RequestId::zeros();
@@ -231,7 +233,7 @@ mod tests {
     #[tokio::test]
     async fn test_restore_backup_enc_key_restores_and_resets() {
         let mut rng = AesRng::seed_from_u64(42);
-        let mut enc = Encryption::new(PkeSchemeType::MlKem512, &mut rng);
+        let mut enc = Encryption::new(BACKUP_PKE_SCHEME, &mut rng);
         let (_dec_key, enc_key) = enc.keygen().unwrap();
         let mut keychain = SecretShareKeychain::new(rng);
         let req_id = RequestId::zeros();
@@ -254,6 +256,26 @@ mod tests {
         );
     }
 
+    /// Records why `GetOperatorPublicKey` attests a digest of the key instead of the key itself.
+    ///
+    /// An oversize attestation field fails only inside a real enclave, where no test reaches it.
+    #[tokio::test]
+    async fn test_operator_public_key_exceeds_attestation_field_limit() {
+        let mut rng = AesRng::seed_from_u64(42);
+        let mut enc = Encryption::new(BACKUP_PKE_SCHEME, &mut rng);
+        let (_dec_key, enc_key) = enc.keygen().unwrap();
+        let mut keychain = SecretShareKeychain::new(rng);
+        keychain.set_backup_enc_key(RequestId::zeros(), enc_key);
+
+        let bytes = keychain.operator_public_key_bytes().unwrap();
+        assert!(
+            bytes.len() > NSM_ATTESTATION_FIELD_MAX_BYTES,
+            "expected the composite operator key to exceed the {NSM_ATTESTATION_FIELD_MAX_BYTES}-byte \
+             attestation field, but it serialized to {} bytes",
+            bytes.len()
+        );
+    }
+
     #[tokio::test]
     async fn test_operator_public_key_bytes_error() {
         let keychain = SecretShareKeychain::new(AesRng::seed_from_u64(42));
@@ -265,7 +287,7 @@ mod tests {
     async fn test_encrypt_and_decrypt_roundtrip() {
         let mut rng = AesRng::seed_from_u64(42);
         let (_verf_key, sig_key) = gen_sig_keys(&mut rng);
-        let mut enc = Encryption::new(PkeSchemeType::MlKem512, &mut rng);
+        let mut enc = Encryption::new(BACKUP_PKE_SCHEME, &mut rng);
         let (dec_key, enc_key) = enc.keygen().unwrap();
         let mut keychain = SecretShareKeychain {
             rng,

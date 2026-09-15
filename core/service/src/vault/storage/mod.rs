@@ -852,12 +852,13 @@ pub mod tests {
     use super::*;
     use crate::{
         backup::{
+            BACKUP_PKE_SCHEME,
             custodian::{CustodianSetupMessagePayload, HEADER, InternalCustodianContext},
             operator::InnerOperatorBackupOutput,
         },
         consts::{DEFAULT_MPC_CONTEXT, SAFE_SER_SIZE_LIMIT},
         cryptography::{
-            encryption::{Encryption, PkeScheme, PkeSchemeType, UnifiedPublicEncKey},
+            encryption::{Encryption, PkeScheme, UnifiedPublicEncKey},
             signatures::{PrivateSigKey, SigningSchemeType, gen_sig_keys},
             signcryption::UnifiedSigncryption,
         },
@@ -904,10 +905,7 @@ pub mod tests {
         sig_key: &PrivateSigKey,
     ) -> RecoveryValidationMaterial {
         fn enc_key(rng: &mut AesRng) -> UnifiedPublicEncKey {
-            Encryption::new(PkeSchemeType::MlKem512, rng)
-                .keygen()
-                .unwrap()
-                .1
+            Encryption::new(BACKUP_PKE_SCHEME, rng).keygen().unwrap().1
         }
         let mut rng = AesRng::seed_from_u64(0);
         // Each custodian needs its own keys: the context rejects duplicates.
@@ -938,7 +936,7 @@ pub mod tests {
         let cts_out = InnerOperatorBackupOutput {
             signcryption: UnifiedSigncryption {
                 payload: vec![1, 2, 3],
-                pke_type: PkeSchemeType::MlKem512,
+                pke_type: BACKUP_PKE_SCHEME,
                 signing_type: SigningSchemeType::Ecdsa256k1,
             },
         };

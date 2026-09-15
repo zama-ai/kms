@@ -49,6 +49,8 @@ impl SecurityModule for Nitro {
     /// sensitive data that can only be shared with enclaves running an approved
     /// software version is encrypted under the attested enclave public key.
     async fn attest(&self, pk: Vec<u8>, user_data: Option<Vec<u8>>) -> anyhow::Result<Vec<u8>> {
+        super::check_attestation_field_sizes(&pk, user_data.as_deref())?;
+
         // generate a nonce to include into the attestation document
         let attestation_nonce = self.get_random(ATTESTATION_NONCE_SIZE).await?;
 

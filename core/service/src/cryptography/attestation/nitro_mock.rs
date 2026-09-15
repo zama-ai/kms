@@ -9,6 +9,9 @@ use zeroize::Zeroizing;
 
 impl SecurityModule for DevNitro {
     async fn attest(&self, pk: Vec<u8>, user_data: Option<Vec<u8>>) -> anyhow::Result<Vec<u8>> {
+        // Enforced here too, so a mock-enclave run rejects what a real enclave would.
+        super::check_attestation_field_sizes(&pk, user_data.as_deref())?;
+
         let request = Request::Attestation {
             public_key: Some(pk.into()),
             user_data: user_data.map(|x| x.into()),

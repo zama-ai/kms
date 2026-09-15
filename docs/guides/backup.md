@@ -22,7 +22,7 @@ $ cargo run --bin kms-custodian generate --randomness <random string of chars> -
 
 Observe that the `randomness` supplied is used along with entropy of the current system to derive keys, and thus the command is *not* idempotent. 
 This will generate a fresh pair of keys for the given custodian and print the base64-encoded *public* setup message to stdout (prefixed with `The custodian setup message is: `). This setup message is what the operator collects (out-of-band) to run `new-custodian-context`.
-Furthermore, this will print a BIP39 seed phrase on the screen. This seed phrase must be copied _exactly_ on to a piece of paper. The paper should be stored securely as this is needed in order to perform recovery.
+Furthermore, this will print a BIP39 seed phrase on the screen. This is a **24-word** phrase, carrying 256 bits of entropy, because every key derived from it — including the MLKEM1024-P384 encryption key — is only as strong as the phrase. A shorter 12-word phrase is rejected rather than stretched. The seed phrase must be copied _exactly_ on to a piece of paper. The paper should be stored securely as this is needed in order to perform recovery.
 
 Observe the seed phrase and the private keys do not get logged or saved to disc; instead the seed phrase is printed _once_ to stdout. Similarly for the base64-encoded *public* setup message.
 
@@ -32,7 +32,7 @@ $ cargo run --bin kms-custodian generate --randomness 123 --custodian-role 3 --c
 ```
 
 After execution, the following steps *must* be taken.
-1. The seed phrase must be written by hand on a paper. 
+1. The seed phrase must be written by hand on a paper. All 24 words, in order. 
 2. The base64-encoded *public* setup message must be copied and shared with the operators. This is done by using a factory-fresh USB stick and copy-pasting the base64 encoding into a new .txt file that is stored on the USB stick. NOTE: Do **NOT** store the seed phrase on the USB stick! 
 3. A validation of the first two steps must be done. This is done by executing the [key verification](#key-verification) steps below.
 4. After these steps have been executed the base64 setup message must be shared with *all* the operators. This is done out-of-band e.g. via Slack and/or Signal. 
@@ -87,11 +87,28 @@ The custodian-based backup protocol provides disaster recovery for KMS operators
 
 The alternative backup mode — wrapping the same key under an AWS KMS CMK — is documented in [ai-docs/ARCHITECTURE.md](../../ai-docs/ARCHITECTURE.md#backup-and-recovery).
 
+### Cryptographic primitives
+
+| Role | Primitive |
+|---|---|
+| KEM, everywhere in custodian backup | MLKEM1024-P384 — ML-KEM-1024 composed with P-384 ([draft-irtf-cfrg-concrete-hybrid-kems-03](https://www.ietf.org/archive/id/draft-irtf-cfrg-concrete-hybrid-kems-03.html) §4.3), selected in one place as `backup::BACKUP_PKE_SCHEME` |
+| DEM | AES-256-GCM, keyed directly on the 32-byte KEM shared secret |
+| Signature | ECDSA over secp256k1, for both operator and custodian identities |
+| Commitment | SHAKE-256 over the versioned `BackupMaterial` |
+| Seed-phrase derivation | 24-word BIP39 (256 bits) → SHAKE-256 with domain separators `MNEM_ENC` / `MNEM_SIG` |
+
+User decryption is unaffected by any of this and remains ML-KEM-512.
+
+Nothing in the backup path rejects a peer that advertises a weaker scheme. Every signcryption and
+ciphertext carries its own `pke_type` tag, so a custodian running an older `kms-custodian` still
+interoperates; the trade-off is that such a custodian's share is protected at that custodian's
+scheme, not at the context's.
+
 ### Parties
 
 | Party | What it does |
 |---|---|
-| **Custodian `B_j`** (`j = 1..n`) | Human-held, offline party. Owns a long-term signing key `sk^{S_j}` and a post-quantum encryption key `sk^{E_j}`, both deterministically derived from a BIP39 seed phrase. Stores nothing online beyond its public-key published in the `CustodianSetupMessage`. Re-signcrypts its share of the backup key on request. |
+| **Custodian `B_j`** (`j = 1..n`) | Human-held, offline party. Owns a long-term signing key `sk^{S_j}` (ECDSA/secp256k1) and a post-quantum encryption key `sk^{E_j}` (MLKEM1024-P384, the composite of ML-KEM-1024 and P-384), both deterministically derived from a 24-word BIP39 seed phrase. `sk^{E_j}` is the 32-byte seed `SHAKE256("MNEM_ENC" ‖ entropy)`, derived without an intervening PRNG so that none of the phrase's 256 bits are lost. Stores nothing online beyond its public-key published in the `CustodianSetupMessage`. Re-signcrypts its share of the backup key on request. |
 | **Operator `P_i`** (KMS node) | Online KMS server. Holds a long-term signing key `sk^{P_i}`, a TFHE secret key, and other private material that needs backing up. Receives `NewCustodianContext` and, later, `CustodianRecoveryInit` / `CustodianBackupRecovery` gRPC calls from the core-client. |
 | **core-client** | The CLI that drives every gRPC call into the KMS for custodian-based backup. It bundles the operator-bound RPCs (`NewCustodianContext`, `CustodianRecoveryInit`, `CustodianBackupRecovery`, `RestoreFromBackup`) and shuttles the resulting `RecoveryRequest` / `InternalCustodianRecoveryOutput` files between the operator and the custodians out-of-band. Documented in [docs/guides/core_client.md](core_client.md). |
 | **Recovering operator `P_i'`** | A fresh operator recovers the content of the private storage of a previous operator. Reads only the public storage (for the operator verification key) and the backup vault; coordinates with custodians (via the core-client) to rebuild private state. |
@@ -104,7 +121,7 @@ All names below match the Rust/proto types so you can grep for them.
 |---|---|---|
 | [`CustodianSetupMessage`](../../core/grpc/proto/kms.v1.proto) | gRPC + custodian's base64 setup message | `{ custodian_role, name, payload }`. `payload` is a versioned [`CustodianSetupMessagePayload`](../../core/service/src/backup/custodian.rs) `{ header, random_value, timestamp, public_enc_key = pk^{E_j}, verification_key = pk^{S_j} }`. |
 | [`CustodianContext`](../../core/grpc/proto/kms.v1.proto) | Argument to `NewCustodianContext` RPC | `{ custodian_nodes: [CustodianSetupMessage], custodian_context_id, threshold }`. |
-| [`InternalCustodianContext`](../../core/service/src/backup/custodian.rs) | Only inside `RecoveryValidationMaterial`; never stored on its own | `{ threshold, context_id, custodian_nodes, backup_enc_key }`. `backup_enc_key = pk^{B}` is the per-context public key whose secret half is Shamir-shared to the custodians. |
+| [`InternalCustodianContext`](../../core/service/src/backup/custodian.rs) | Only inside `RecoveryValidationMaterial`; never stored on its own | `{ threshold, context_id, custodian_nodes, backup_enc_key }`. `backup_enc_key = pk^{B}` is the per-context MLKEM1024-P384 public key whose secret half is Shamir-shared to the custodians. |
 | [`BackupMaterial`](../../core/service/src/backup/operator.rs) | Plaintext payload **inside** every operator→custodian signcryption | `{ backup_id (= custodian_context_id), mpc_context_id, custodian_pk = pk^{S_j}, custodian_role, operator_pk, shares: Vec<Share> }`. Authenticates the binding between operator, custodian, and context. |
 | [`OperatorBackupOutput`](../../core/grpc/proto/kms.v1.proto) | gRPC value | A signcryption `(payload, pke_type, signing_type)`. Plaintext is `BackupMaterial`. Created with `(sk^{P_i}, pk^{E_j})` and the custodian's verf-key ID as `receiver_id`. |
 | [`RecoveryValidationMaterial`](../../core/service/src/backup/operator.rs) | Operator's **backup vault** at `custodian_context_id`, unencrypted (see [Phase 2](#phase-2--custodian-context-creation-online-one-time-per-context)) | Operator-signed `{ cts: BTreeMap<Role, InnerOperatorBackupOutput>, commitments: BTreeMap<Role, H(BackupMaterial_j)>, custodian_context: InternalCustodianContext, mpc_context }`. Lets the recovering operator re-fetch the original signcryptions and verify them against the operator-signed commitments. |
@@ -171,7 +188,7 @@ The seed phrase is the only durable secret the custodian holds. `sk^{E_j}` and `
 
 ### Phase 2 — Custodian context creation (online, one-time per context)
 
-The core-client gathers `n` `CustodianSetupMessage`s (each custodian's base64 setup message), picks a corruption threshold `t < n/2`, and issues a `NewCustodianContext` gRPC call to every operator in the KMS cluster. Each operator, independently: generates a per-context backup keypair `(sk^{B}, pk^{B})`, Shamir-shares `sk^{B}` into `n` shares, builds and signcrypts one `BackupMaterial` per custodian role, computes a commitment over each `BackupMaterial`, and packages everything into a signed `RecoveryValidationMaterial`, written to the operator's own backup vault at `request_id = custodian_context_id`. After secret-sharing, the operator drops `sk^{B}` and installs `pk^{B}` in its `SecretSharing` keychain.
+The core-client gathers `n` `CustodianSetupMessage`s (each custodian's base64 setup message), picks a corruption threshold `t < n/2`, and issues a `NewCustodianContext` gRPC call to every operator in the KMS cluster. Each operator, independently: generates a per-context MLKEM1024-P384 backup keypair `(sk^{B}, pk^{B})`, Shamir-shares `sk^{B}` into `n` shares (its serialized private key is a 32-byte seed, so this is 4 blocks rather than the ~54 an ML-KEM-512 key needed), builds and signcrypts one `BackupMaterial` per custodian role, computes a commitment over each `BackupMaterial`, and packages everything into a signed `RecoveryValidationMaterial`, written to the operator's own backup vault at `request_id = custodian_context_id`. After secret-sharing, the operator drops `sk^{B}` and installs `pk^{B}` in its `SecretSharing` keychain.
 
 Notes:
 - The Shamir threshold encoded inside `RecoveryValidationMaterial.custodian_context.threshold` is the **recovery** threshold (`t + 1` shares needed). `Operator::new_for_sharing` enforces `t < n/2`.
@@ -197,7 +214,7 @@ earlier release takes the greatest id it finds there.
 
 ### Phase 4 — Recovery init (operator's private storage is gone)
 
-The recovering operator boots against the same public storage and backup vault but with empty private storage. It calls `CustodianRecoveryInit`, generates an ephemeral encryption keypair `(sk^{e_i}, pk^{e_i})` pinned in process memory, reads `RecoveryValidationMaterial` from the backup vault at `ctx_id`, verifies the operator's signature on it, and returns a `RecoveryRequest` to the core-client (which writes it to disk for later distribution to the custodians).
+The recovering operator boots against the same public storage and backup vault but with empty private storage. It calls `CustodianRecoveryInit`, generates an ephemeral MLKEM1024-P384 encryption keypair `(sk^{e_i}, pk^{e_i})` pinned in process memory, reads `RecoveryValidationMaterial` from the backup vault at `ctx_id`, verifies the operator's signature on it, and returns a `RecoveryRequest` to the core-client (which writes it to disk for later distribution to the custodians).
 
 The recovering operator has the same long-term verification key as the original (recovered out of band from public storage), so `RecoveryValidationMaterial`'s signature still verifies.
 

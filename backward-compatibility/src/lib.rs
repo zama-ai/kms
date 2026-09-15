@@ -118,28 +118,6 @@ impl TestType for RootSigningSeedTest {
 
 // KMS test
 #[derive(Serialize, Deserialize, Clone, Debug)]
-pub struct CustodianContextAnchorTest {
-    pub test_filename: Cow<'static, str>,
-    pub context_id: [u8; 32],
-    pub sequence: u64,
-}
-
-impl TestType for CustodianContextAnchorTest {
-    fn module(&self) -> String {
-        KMS_MODULE_NAME.to_string()
-    }
-
-    fn target_type(&self) -> String {
-        "CustodianContextAnchor".to_string()
-    }
-
-    fn test_filename(&self) -> String {
-        self.test_filename.to_string()
-    }
-}
-
-// KMS test
-#[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct PublicSigKeyTest {
     pub test_filename: Cow<'static, str>,
     pub state: u64,
@@ -650,30 +628,6 @@ impl TestType for ThresholdFheKeysTest {
     }
 }
 
-#[derive(Serialize, Deserialize, Clone, Debug)]
-pub struct OperatorBackupOutputTest {
-    pub test_filename: Cow<'static, str>,
-    pub custodian_count: usize,
-    pub custodian_threshold: usize,
-    pub plaintext: [u8; 32],
-    pub backup_id: [u8; 32],
-    pub seed: u64,
-}
-
-impl TestType for OperatorBackupOutputTest {
-    fn module(&self) -> String {
-        KMS_MODULE_NAME.to_string()
-    }
-
-    fn target_type(&self) -> String {
-        "OperatorBackupOutput".to_string()
-    }
-
-    fn test_filename(&self) -> String {
-        self.test_filename.to_string()
-    }
-}
-
 // KMS test
 /// Test metadata for SigncryptionPayload backward compatibility.
 ///
@@ -860,50 +814,6 @@ impl TestType for EpochDataTest {
 
 // KMS test
 #[derive(Serialize, Deserialize, Clone, Debug)]
-pub struct BackupCiphertextTest {
-    pub test_filename: Cow<'static, str>,
-    pub unified_cipher_filename: Cow<'static, str>,
-    pub state: u64,
-}
-
-impl TestType for BackupCiphertextTest {
-    fn module(&self) -> String {
-        KMS_MODULE_NAME.to_string()
-    }
-
-    fn target_type(&self) -> String {
-        "BackupCiphertext".to_string()
-    }
-
-    fn test_filename(&self) -> String {
-        self.test_filename.to_string()
-    }
-}
-
-// KMS test
-#[derive(Serialize, Deserialize, Clone, Debug)]
-pub struct UnifiedCipherTest {
-    pub test_filename: Cow<'static, str>,
-    pub hybrid_kem_filename: Cow<'static, str>,
-    pub state: u64,
-}
-
-impl TestType for UnifiedCipherTest {
-    fn module(&self) -> String {
-        KMS_MODULE_NAME.to_string()
-    }
-
-    fn target_type(&self) -> String {
-        "UnifiedCipher".to_string()
-    }
-
-    fn test_filename(&self) -> String {
-        self.test_filename.to_string()
-    }
-}
-
-// KMS test
-#[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct HybridKemCtTest {
     pub test_filename: Cow<'static, str>,
     pub nonce: [u8; 12],
@@ -1017,119 +927,6 @@ impl TestType for SoftwareVersionTest {
 
     fn target_type(&self) -> String {
         "SoftwareVersion".to_string()
-    }
-
-    fn test_filename(&self) -> String {
-        self.test_filename.to_string()
-    }
-}
-
-// KMS test
-#[derive(Serialize, Deserialize, Clone, Debug)]
-pub struct RecoveryValidationMaterialTest {
-    pub test_filename: Cow<'static, str>,
-    pub internal_cus_context_filename: Cow<'static, str>,
-    pub state: u64,
-    pub custodian_count: usize,
-    pub mpc_context_id: [u8; 32],
-}
-
-impl TestType for RecoveryValidationMaterialTest {
-    fn module(&self) -> String {
-        KMS_MODULE_NAME.to_string()
-    }
-
-    fn target_type(&self) -> String {
-        "RecoveryValidationMaterial".to_string()
-    }
-
-    fn test_filename(&self) -> String {
-        self.test_filename.to_string()
-    }
-}
-
-// KMS test
-#[derive(Serialize, Deserialize, Clone, Debug)]
-pub struct InternalRecoveryRequestTest {
-    pub test_filename: Cow<'static, str>,
-    pub amount: u8,
-    pub state: u64,
-}
-
-impl TestType for InternalRecoveryRequestTest {
-    fn module(&self) -> String {
-        KMS_MODULE_NAME.to_string()
-    }
-
-    fn target_type(&self) -> String {
-        "InternalRecoveryRequest".to_string()
-    }
-
-    fn test_filename(&self) -> String {
-        self.test_filename.to_string()
-    }
-}
-
-// KMS test
-#[derive(Serialize, Deserialize, Clone, Debug)]
-pub struct InternalCustodianContextTest {
-    pub test_filename: Cow<'static, str>,
-    pub internal_cus_setup_filename: Cow<'static, str>,
-    pub unified_enc_key_filename: Cow<'static, str>,
-    pub state: u64,
-    pub custodian_count: usize,
-}
-
-impl TestType for InternalCustodianContextTest {
-    fn module(&self) -> String {
-        KMS_MODULE_NAME.to_string()
-    }
-
-    fn target_type(&self) -> String {
-        "InternalCustodianContext".to_string()
-    }
-
-    fn test_filename(&self) -> String {
-        self.test_filename.to_string()
-    }
-}
-
-// KMS test
-#[derive(Serialize, Deserialize, Clone, Debug)]
-pub struct InternalCustodianRecoveryOutputTest {
-    pub test_filename: Cow<'static, str>,
-    pub state: u64,
-    pub mpc_context_id: [u8; 32],
-}
-
-impl TestType for InternalCustodianRecoveryOutputTest {
-    fn module(&self) -> String {
-        KMS_MODULE_NAME.to_string()
-    }
-
-    fn target_type(&self) -> String {
-        "InternalCustodianRecoveryOutput".to_string()
-    }
-
-    fn test_filename(&self) -> String {
-        self.test_filename.to_string()
-    }
-}
-
-// KMS test
-#[derive(Serialize, Deserialize, Clone, Debug)]
-pub struct InternalCustodianSetupMessageTest {
-    pub test_filename: Cow<'static, str>,
-    pub state: u64,
-}
-
-impl TestType for InternalCustodianSetupMessageTest {
-    fn module(&self) -> String {
-        KMS_MODULE_NAME.to_string()
-    }
-
-    fn target_type(&self) -> String {
-        "InternalCustodianSetupMessage".to_string()
     }
 
     fn test_filename(&self) -> String {
@@ -1296,7 +1093,6 @@ impl TestType for UserDecSignedPayloadTest {
 pub enum TestMetadataKMS {
     PrivateSigKey(PrivateSigKeyTest),
     RootSigningSeed(RootSigningSeedTest),
-    CustodianContextAnchor(CustodianContextAnchorTest),
     PublicSigKey(PublicSigKeyTest),
     UnifiedPublicSigKey(UnifiedPublicSigKeyTest),
     TypedPlaintext(TypedPlaintextTest),
@@ -1316,19 +1112,11 @@ pub enum TestMetadataKMS {
     MlKem1024P384PublicKey(MlKem1024P384PublicKeyTest),
     MlKem1024P384PrivateKey(MlKem1024P384PrivateKeyTest),
     UnifiedSigncryption(UnifiedSigncryptionTest),
-    BackupCiphertext(BackupCiphertextTest),
-    UnifiedCipher(UnifiedCipherTest),
     HybridKemCt(HybridKemCtTest),
     ContextInfo(ContextInfoTest),
     NodeInfo(NodeInfoTest),
     SchemeDigests(SchemeDigestsTest),
     SoftwareVersion(SoftwareVersionTest),
-    RecoveryValidationMaterial(RecoveryValidationMaterialTest),
-    InternalRecoveryRequest(InternalRecoveryRequestTest),
-    InternalCustodianContext(InternalCustodianContextTest),
-    InternalCustodianSetupMessage(InternalCustodianSetupMessageTest),
-    InternalCustodianRecoveryOutput(InternalCustodianRecoveryOutputTest),
-    OperatorBackupOutput(OperatorBackupOutputTest),
     StoredTypedSignature(StoredTypedSignatureTest),
     PrepKeygenSignedPayload(PrepKeygenSignedPayloadTest),
     KeygenSignedPayload(KeygenSignedPayloadTest),
