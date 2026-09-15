@@ -4,6 +4,7 @@ pub mod decompression;
 pub mod error;
 pub mod hybrid_ml_kem;
 pub mod internal_crypto_types;
+pub mod mlkem1024_p384;
 pub mod signatures;
 pub(crate) mod signing;
 pub(crate) mod zeroizing_writer;

@@ -44,6 +44,16 @@ fn dispatch_underlying_type_name(enum_name: &str) -> String {
 /// TODO(zama-ai/kms-internal#3028): this explicit list should go away after
 /// we have a proper way to identify which structs need to be tested.
 const ALLOW_UNCOVERED: &[&str] = &[
+    // Variant payloads of UnifiedPublicEncKey / UnifiedPrivateEncKey.
+    // A `.ron` fixture needs a generator built against a published kms rev, and
+    // the generators pin `kms` by git rev, so no fixture can exist until a rev
+    // that carries these types is published. Until then the versioned encoding
+    // is pinned by the `versioned_encoding_is_locked` unit test in
+    // core/service/src/cryptography/mlkem1024_p384.rs.
+    // TODO(#<issue>): add fixtures once generate-v0.15.0 is bumped to a rev
+    // containing the MLKEM1024-P384 keys.
+    "MlKem1024P384PublicKey",
+    "MlKem1024P384PrivateKey",
     // Field of UnifiedSigncryptionKeyOwned.
     // Covered via UnifiedSigncryptionKeyTest.
     "UnifiedPublicEncKey",

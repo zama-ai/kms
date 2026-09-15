@@ -141,6 +141,8 @@ The public decryption process is very fast and should be expected to be done wit
 ## User Decryption
 User decryption allows decryption of a vector of ciphertexts in such a manner that _only_ a designated receiver can learn the decrypted value in plain. This means that neither the caller, nor the KMS Cores learn the decrypted value. This is achieved by each KMS Core only "partially" decrypted the ciphertext and then signcrypting it under the public encryption key of a designated receiver. This allows the receiving user to decrypt and validate all the $$n$$ partial decryptions and then combine the partial decryptions to the true plaintext.
 
+The lower-level signcryption API also supports MLKEM1024-P384. User decryption itself accepts ML-KEM-512 only, and the request carries no scheme selector.
+
 The user decryption request requires a unique `RequestId`, which is a 32-byte hex string
 request, an ID of the key needed to decrypt (this will be the `RequestId` used to generate the key), EIP712 domain information (used by the servers for signing the response) along with the vector of ciphertexts to be decrypted and meta information about each of these. The meta information incudes what kind of plain value they are encrypting (e.g. uint8 or uint32).
 

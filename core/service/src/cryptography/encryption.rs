@@ -1,7 +1,10 @@
 use crate::{
     consts::SAFE_SER_SIZE_LIMIT,
     cryptography::{
-        error::CryptographyError, hybrid_ml_kem, hybrid_ml_kem::HybridKemCt,
+        error::CryptographyError,
+        hybrid_ml_kem,
+        hybrid_ml_kem::HybridKemCt,
+        mlkem1024_p384::{MlKem1024P384PrivateKey, MlKem1024P384PublicKey},
         zeroizing_writer::ZeroizingWriter,
     },
 };
@@ -26,7 +29,6 @@ pub enum UnifiedPublicEncKeyVersions {
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, Versionize)]
 #[versionize(UnifiedPublicEncKeyVersions)]
-#[expect(clippy::large_enum_variant)]
 pub enum UnifiedPublicEncKey {
     MlKem512(PublicEncKey<ml_kem::MlKem512>),
     /// LEGACY: Note that this should ONLY be used for legacy reasons, new code should use MlKem512.
@@ -37,6 +39,8 @@ pub enum UnifiedPublicEncKey {
         note = "Use MlKem512 instead. MlKem1024 is only for legacy compatibility with relayer-sdk v0.2.0-0 and older."
     )]
     MlKem1024(PublicEncKey<ml_kem::MlKem1024>),
+    /// Hybrid post-quantum KEM combining ML-KEM-1024 and P-384.
+    MlKem1024P384(MlKem1024P384PublicKey),
 }
 
 impl Zeroize for UnifiedPublicEncKey {
@@ -54,6 +58,7 @@ impl HasPkeScheme for UnifiedPublicEncKey {
         match self {
             UnifiedPublicEncKey::MlKem512(_) => PkeSchemeType::MlKem512,
             UnifiedPublicEncKey::MlKem1024(_) => PkeSchemeType::MlKem1024,
+            UnifiedPublicEncKey::MlKem1024P384(_) => PkeSchemeType::MlKem1024P384,
         }
     }
 }
@@ -67,17 +72,23 @@ impl UnifiedPublicEncKey {
         }
     }
 
-    /// Deserialize from bytes and reject MlKem1024 keys.
+    /// Deserialize a client-supplied public encryption key for user decryption.
+    ///
+    /// User decryption accepts ML-KEM-512 and nothing else. Every other scheme is
+    /// rejected at this edge, so no other variant reaches the signcryption code.
     pub fn deserialize_and_validate(bytes: &[u8]) -> Result<Self, CryptographyError> {
         let key: Self = tfhe::safe_serialization::safe_deserialize(
             std::io::Cursor::new(bytes),
             SAFE_SER_SIZE_LIMIT,
         )
         .map_err(|e| CryptographyError::DeserializationError(e.to_string()))?;
-        if matches!(key, UnifiedPublicEncKey::MlKem1024(_)) {
-            return Err(CryptographyError::MlKem1024Unsupported);
+        match key {
+            UnifiedPublicEncKey::MlKem512(_) => Ok(key),
+            UnifiedPublicEncKey::MlKem1024(_) => Err(CryptographyError::MlKem1024Unsupported),
+            _ => Err(CryptographyError::UnsupportedPkeScheme(
+                key.encryption_scheme_type(),
+            )),
         }
-        Ok(key)
     }
 }
 
@@ -223,6 +234,14 @@ impl Encrypt for UnifiedPublicEncKey {
             UnifiedPublicEncKey::MlKem1024(_) => {
                 return Err(CryptographyError::MlKem1024Unsupported);
             }
+            UnifiedPublicEncKey::MlKem1024P384(public_enc_key) => (
+                hybrid_ml_kem::enc_ml_kem_1024_p384(
+                    rng,
+                    serialized_msg.as_slice(),
+                    public_enc_key,
+                )?,
+                PkeSchemeType::MlKem1024P384,
+            ),
         };
         Ok(UnifiedCipher::new(inner_ct, scheme))
     }
@@ -245,6 +264,7 @@ pub enum UnifiedPrivateEncKeyVersions {
 pub enum UnifiedPrivateEncKey {
     MlKem512(PrivateEncKey<ml_kem::MlKem512>),
     MlKem1024(PrivateEncKey<ml_kem::MlKem1024>),
+    MlKem1024P384(MlKem1024P384PrivateKey),
     // WARNING: Do not modify the order of the variants or remove any variant as this will break deserialization of existing keys!
     // Only acceptable if you make a new version
 }
@@ -273,6 +293,7 @@ impl From<UnifiedPrivateEncKey> for PkeSchemeType {
         match value {
             UnifiedPrivateEncKey::MlKem512(_) => PkeSchemeType::MlKem512,
             UnifiedPrivateEncKey::MlKem1024(_) => PkeSchemeType::MlKem1024,
+            UnifiedPrivateEncKey::MlKem1024P384(_) => PkeSchemeType::MlKem1024P384,
         }
     }
 }
@@ -281,6 +302,7 @@ impl From<&UnifiedPrivateEncKey> for PkeSchemeType {
         match value {
             UnifiedPrivateEncKey::MlKem512(_) => PkeSchemeType::MlKem512,
             UnifiedPrivateEncKey::MlKem1024(_) => PkeSchemeType::MlKem1024,
+            UnifiedPrivateEncKey::MlKem1024P384(_) => PkeSchemeType::MlKem1024P384,
         }
     }
 }
@@ -300,6 +322,7 @@ impl HasPkeScheme for UnifiedPrivateEncKey {
         match self {
             UnifiedPrivateEncKey::MlKem512(_) => PkeSchemeType::MlKem512,
             UnifiedPrivateEncKey::MlKem1024(_) => PkeSchemeType::MlKem1024,
+            UnifiedPrivateEncKey::MlKem1024P384(_) => PkeSchemeType::MlKem1024P384,
         }
     }
 }
@@ -460,12 +483,22 @@ impl Decrypt for UnifiedPrivateEncKey {
         &self,
         cipher: &UnifiedCipher,
     ) -> Result<T, CryptographyError> {
+        // Same guard as `inner_unsigncrypt`: the scheme tag is not authenticated,
+        // so a caller that trusts it must not be able to disagree with the key.
+        if cipher.pke_type != self.encryption_scheme_type() {
+            return Err(CryptographyError::VerificationError(
+                "encryption type of cipher does not match the decryption key type".to_string(),
+            ));
+        }
         let raw_plaintext = match self {
             UnifiedPrivateEncKey::MlKem512(private_enc_key) => {
                 hybrid_ml_kem::dec::<MlKem512>(cipher.cipher.to_owned(), &private_enc_key.0)?
             }
             UnifiedPrivateEncKey::MlKem1024(_) => {
                 return Err(CryptographyError::MlKem1024Unsupported);
+            }
+            UnifiedPrivateEncKey::MlKem1024P384(private_enc_key) => {
+                hybrid_ml_kem::dec_ml_kem_1024_p384(cipher.cipher.to_owned(), private_enc_key)?
             }
         };
         // Keep plaintext guarded through deserialization.
@@ -493,6 +526,8 @@ pub enum PkeSchemeType {
         note = "Use MlKem512 instead. MlKem1024 is only for legacy compatibility with relayer-sdk v0.2.0-0 and older."
     )]
     MlKem1024,
+    /// Hybrid post-quantum KEM combining ML-KEM-1024 and P-384.
+    MlKem1024P384,
 }
 
 // Observe that since we serialize this enum, we need to implement a separate variant to keep it versioned properly
@@ -502,6 +537,7 @@ impl From<kms_grpc::kms::v1::PkeSchemeType> for PkeSchemeType {
         match value {
             kms_grpc::kms::v1::PkeSchemeType::Mlkem512 => PkeSchemeType::MlKem512,
             kms_grpc::kms::v1::PkeSchemeType::Mlkem1024 => PkeSchemeType::MlKem1024,
+            kms_grpc::kms::v1::PkeSchemeType::Mlkem1024P384 => PkeSchemeType::MlKem1024P384,
         }
     }
 }
@@ -513,6 +549,7 @@ impl TryFrom<i32> for PkeSchemeType {
         match value {
             0 => Ok(PkeSchemeType::MlKem512),
             1 => Err(CryptographyError::MlKem1024Unsupported.into()),
+            2 => Ok(PkeSchemeType::MlKem1024P384),
             // Future encryption schemes can be added here
             _ => Err(anyhow::anyhow!("Unsupported PkeSchemeType: {:?}", value)),
         }
@@ -553,6 +590,14 @@ impl<'a, R: CryptoRng + RngCore + Send + Sync> PkeScheme for Encryption<'a, R> {
             }
             PkeSchemeType::MlKem1024 => {
                 return Err(CryptographyError::MlKem1024Unsupported);
+            }
+            PkeSchemeType::MlKem1024P384 => {
+                let (private_key, public_key) =
+                    crate::cryptography::mlkem1024_p384::keygen(&mut self.rng)?;
+                (
+                    UnifiedPrivateEncKey::MlKem1024P384(private_key),
+                    UnifiedPublicEncKey::MlKem1024P384(public_key),
+                )
             }
         };
         Ok((sk, pk))
@@ -622,6 +667,61 @@ mod tests {
         .unwrap();
         let pt2 = sk2.decrypt(&ct2).unwrap();
         assert_eq!(msg, pt2);
+    }
+
+    #[test]
+    fn nested_mlkem1024_p384_sunshine() {
+        let msg = TestType { i: 42 };
+        let mut rng = AesRng::seed_from_u64(0);
+        let mut enc = Encryption::new(PkeSchemeType::MlKem1024P384, &mut rng);
+        let (sk, pk) = enc.keygen().unwrap();
+
+        assert!(matches!(sk, UnifiedPrivateEncKey::MlKem1024P384(_)));
+        assert!(matches!(pk, UnifiedPublicEncKey::MlKem1024P384(_)));
+
+        let ct = pk.encrypt(&mut rng, &msg).unwrap();
+        assert_eq!(ct.pke_type, PkeSchemeType::MlKem1024P384);
+        let pt = sk.decrypt(&ct).unwrap();
+        assert_eq!(msg, pt);
+
+        let mut pk_buf = Vec::new();
+        tfhe::safe_serialization::safe_serialize(&pk, &mut pk_buf, SAFE_SER_SIZE_LIMIT).unwrap();
+        let pk2: UnifiedPublicEncKey = tfhe::safe_serialization::safe_deserialize(
+            std::io::Cursor::new(pk_buf.as_slice()),
+            SAFE_SER_SIZE_LIMIT,
+        )
+        .unwrap();
+        assert_eq!(pk, pk2);
+    }
+
+    #[test]
+    fn decrypt_rejects_a_relabelled_scheme_tag() {
+        let msg = TestType { i: 42 };
+        let mut rng = AesRng::seed_from_u64(0);
+        let mut enc = Encryption::new(PkeSchemeType::MlKem1024P384, &mut rng);
+        let (sk, pk) = enc.keygen().unwrap();
+
+        let mut ct = pk.encrypt(&mut rng, &msg).unwrap();
+        ct.pke_type = PkeSchemeType::MlKem512;
+
+        let err = sk.decrypt::<TestType>(&ct).unwrap_err();
+        assert!(matches!(err, CryptographyError::VerificationError(_)));
+    }
+
+    #[test]
+    fn deserialize_and_validate_rejects_mlkem1024_p384() {
+        let mut rng = AesRng::seed_from_u64(0);
+        let mut enc = Encryption::new(PkeSchemeType::MlKem1024P384, &mut rng);
+        let (_sk, pk) = enc.keygen().unwrap();
+
+        let mut buf = Vec::new();
+        tfhe::safe_serialization::safe_serialize(&pk, &mut buf, SAFE_SER_SIZE_LIMIT).unwrap();
+
+        let err = UnifiedPublicEncKey::deserialize_and_validate(&buf).unwrap_err();
+        assert!(matches!(
+            err,
+            CryptographyError::UnsupportedPkeScheme(PkeSchemeType::MlKem1024P384)
+        ));
     }
 
     #[test]

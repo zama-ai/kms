@@ -4407,6 +4407,7 @@ dependencies = [
  "serde",
  "serde-wasm-bindgen",
  "serde_json",
+ "sha3 0.11.0",
  "signature 2.2.0",
  "strum",
  "strum_macros",
