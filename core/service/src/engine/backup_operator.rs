@@ -15,7 +15,7 @@ use crate::vault::storage::{
     StorageExt, StorageReaderExt, crypto_material::get_core_signing_identity,
     delete_at_request_and_epoch_id, delete_at_request_id, read_custodian_context_anchor,
     read_recovery_material_at_id, read_versioned_at_request_id, store_custodian_context_anchor,
-    store_recovery_material, store_versioned_at_request_and_epoch_id,
+    store_versioned_at_request_and_epoch_id,
 };
 use crate::{
     backup::operator::{InnerOperatorBackupOutput, Operator, RecoveryValidationMaterial},
@@ -136,8 +136,7 @@ where
         read_custodian_context_anchor(&*self.crypto_storage.private_storage.lock().await).await
     }
 
-    /// Adopt the context a recovery just restored under: put its material in the backup vault if
-    /// that is not where it came from, and anchor it so the next boot uses the same one.
+    /// Anchors the context a recovery just restored under, so the next boot adopts the same one.
     ///
     /// The material is re-checked against the signing key the restore put back, which is the first
     /// point at which this node can judge it: in recovery mode the key it was validated against
@@ -187,22 +186,6 @@ where
             return Err(fail(anyhow::anyhow!(
                 "recovery material for {context_id} is not signed by the restored key"
             )));
-        }
-        if let Some(ref backup_vault) = self.crypto_storage.backup_vault {
-            let mut guarded_vault = backup_vault.lock().await;
-            store_recovery_material(&mut guarded_vault.storage, material)
-                .await
-                .map_err(fail)?;
-            // Storage never overwrites, so whatever already sat at this id is what the next boot
-            // will read; anchor it only if that is this material.
-            let stored = read_recovery_material_at_id(&guarded_vault.storage, &context_id)
-                .await
-                .map_err(fail)?;
-            if stored != *material {
-                return Err(fail(anyhow::anyhow!(
-                    "the backup vault already holds different recovery material for {context_id}"
-                )));
-            }
         }
         store_custodian_context_anchor(&mut *private_storage, &context_id)
             .await
@@ -1710,7 +1693,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn install_recovered_context_anchors_and_stores_the_material() {
+    async fn install_recovered_context_anchors_the_context() {
         let id = RequestId::from_bytes([3; 32]);
         let (_vk, sk) = gen_sig_keys(&mut AesRng::seed_from_u64(9));
         let operator = operator_after_restore(&sk, None).await;
@@ -1724,10 +1707,6 @@ mod tests {
                 .unwrap(),
             Some(id)
         );
-        let vault = operator.crypto_storage.backup_vault.as_ref().unwrap();
-        read_recovery_material_at_id(&vault.lock().await.storage, &id)
-            .await
-            .expect("the material should be in the vault");
     }
 
     /// The anchor re-read is the guard against a dropped context lock: a context installed in
@@ -1752,42 +1731,6 @@ mod tests {
                 .unwrap(),
             Some(installed),
             "the anchor must still name the context that won the race"
-        );
-    }
-
-    /// Storage never overwrites, so an object already at this id — a hand-placed or truncated copy —
-    /// is what the next boot would read; it must not be anchored.
-    #[tokio::test]
-    async fn install_recovered_context_refuses_a_vault_object_that_is_not_the_material() {
-        let id = RequestId::from_bytes([3; 32]);
-        let (_vk, sk) = gen_sig_keys(&mut AesRng::seed_from_u64(9));
-        let operator = operator_after_restore(&sk, None).await;
-        let vault = operator.crypto_storage.backup_vault.as_ref().unwrap();
-        vault
-            .lock()
-            .await
-            .storage
-            .store_data(
-                &crate::vault::storage::tests::dummy_recovery_material_at_id(
-                    &RequestId::from_bytes([4; 32]),
-                    &sk,
-                ),
-                &id,
-                &VaultDataType::RecoveryMaterial.to_string(),
-            )
-            .await
-            .unwrap();
-        let material = crate::vault::storage::tests::dummy_recovery_material_at_id(&id, &sk);
-
-        operator
-            .install_recovered_context(&material)
-            .await
-            .expect_err("a vault object that is not this material must not be anchored");
-        assert_eq!(
-            read_custodian_context_anchor(&*operator.crypto_storage.private_storage.lock().await)
-                .await
-                .unwrap(),
-            None
         );
     }
 
