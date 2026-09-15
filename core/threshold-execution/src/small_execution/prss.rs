@@ -713,18 +713,16 @@ where
     /// and we want to avoid creating too many telemetry spans
     #[instrument(name="PRSS.Next",skip_all,fields(batch_size=?amount))]
     async fn prss_next_vec(&mut self, party_role: Role, amount: usize) -> anyhow::Result<Vec<Z>> {
-        //Cheap to clone as everything is an Arc or atomic types
-        let prfs = self.prfs.clone();
-        let prss_setup = self.prss_setup.clone();
         let prss_ctr = self.counters.prss_ctr;
-
-        // Independent per-counter elements, assembled in parallel. Element `idx`
-        // uses `ctr = prss_ctr + idx`.
-        let res = spawn_compute_bound(move || -> anyhow::Result<Vec<Z>> {
-            if amount == 0 {
-                return Ok(Vec::new());
-            }
-
+        let submission_size = *crate::constants::PRSS_MAX_SUBMISSION;
+        let mut res = Vec::with_capacity(amount);
+        // Await each bounded submission so other sessions can use the shared pool.
+        // Keep the state counter unchanged until every submission succeeds.
+        for offset in (0..amount).step_by(submission_size) {
+            let end = offset.saturating_add(submission_size).min(amount);
+            let prfs = self.prfs.clone();
+            let prss_setup = self.prss_setup.clone();
+            let chunk = spawn_compute_bound(move || -> anyhow::Result<Vec<Z>> {
             // Per-set invariants (membership, PRF key, f_A), computed once instead of per element.
             let mut set_data: Vec<(&PrfAes, Z)> = Vec::with_capacity(prss_setup.sets.len());
             for (i, set) in prss_setup.sets.iter().enumerate() {
@@ -740,7 +738,7 @@ where
                 set_data.push((aes_prf, set.f_a_points[&party_role]));
             }
 
-            (0..amount)
+            (offset..end)
                 .into_par_iter()
                 .with_min_len(*crate::constants::PRSS_GEN_PAR_MIN_CHUNK)
                 .map(|idx| {
@@ -753,9 +751,11 @@ where
                     Ok(res)
                 })
                 .collect::<anyhow::Result<Vec<_>>>()
-        })
-        .instrument(tracing::Span::current())
-        .await??;
+            })
+            .instrument(tracing::Span::current())
+            .await??;
+            res.extend(chunk);
+        }
 
         self.counters.prss_ctr += amount as u128;
 
@@ -1261,6 +1261,11 @@ mod tests {
         const PARTIES: usize = 13;
         const SESSIONS: usize = 10;
         const VALUES: usize = 30_000;
+        println!(
+            "PRODUCTION submission_size={}",
+            *crate::constants::PRSS_MAX_SUBMISSION
+        );
+        assert_eq!(*crate::constants::PRSS_MAX_SUBMISSION, chunk_size);
         assert_eq!(VALUES % chunk_size, 0);
         let batches = std::env::var("KMS_PRSS_PROBE_BATCHES")
             .map(|value| value.parse::<usize>().unwrap())
@@ -1300,17 +1305,11 @@ mod tests {
             jobs.spawn(async move {
                 barrier.wait().await;
                 let began = Instant::now();
-                let mut values = Vec::with_capacity(VALUES);
-                for _ in 0..VALUES / chunk_size {
-                    values.extend(state.prss_next_vec(role, chunk_size).await.unwrap());
-                }
+                let values = state.prss_next_vec(role, VALUES).await.unwrap();
                 let first_elapsed = began.elapsed();
                 let first_finished = start.elapsed();
                 for _ in 1..batches {
-                    let mut next = Vec::with_capacity(VALUES);
-                    for _ in 0..VALUES / chunk_size {
-                        next.extend(state.prss_next_vec(role, chunk_size).await.unwrap());
-                    }
+                    let next = state.prss_next_vec(role, VALUES).await.unwrap();
                     assert_eq!(next.len(), VALUES);
                     std::hint::black_box(next);
                 }
@@ -1666,6 +1665,8 @@ mod tests {
     #[case(23)]
     // amount above spans multiple rayon chunks (default PRSS_GEN_PAR_MIN_CHUNK = 1024)
     #[case(1025)]
+    #[case(3001)]
+    #[case(6001)]
     async fn test_prss_next_vec_matches_scalar_calls(#[case] amount: usize) {
         let num_parties = 4;
         let threshold = 1;
@@ -1679,6 +1680,7 @@ mod tests {
                 .unwrap();
 
         let mut scalar_state = prss.new_prss_session_state(sid);
+        scalar_state.counters.prss_ctr = 17;
         let mut batch_state = scalar_state.clone();
 
         let mut scalar_values = Vec::with_capacity(amount);
@@ -1701,6 +1703,19 @@ mod tests {
             batch_state.counters.przs_ctr,
             scalar_state.counters.przs_ctr
         );
+    }
+
+    #[tokio::test]
+    async fn test_prss_submission_error_preserves_counter() {
+        let role = Role::indexed_from_one(1);
+        let setup = PRSSSetup::<ResiduePolyF4Z128>::testing_party_epoch_init(4, 1, role)
+            .await
+            .unwrap();
+        let mut state = setup.new_prss_session_state(SessionId::from(23425));
+        state.counters.prss_ctr = 17;
+        state.prfs = Arc::new(Vec::new());
+        assert!(state.prss_next_vec(role, 6001).await.is_err());
+        assert_eq!(state.counters.prss_ctr, 17);
     }
 
     #[tokio::test]

@@ -283,6 +283,7 @@ async fn secure_threshold_keygen_with_partial_preproc(#[case] amount_parties: us
 #[case(4)]
 #[case(DEFAULT_AMOUNT_PARTIES)]
 async fn nightly_secure_threshold_concurrent_keygen_test(#[case] amount_parties: usize) {
+    test_utils::test_logging::init_test_logging();
     preproc_and_keygen(
         amount_parties,
         FheParameter::Test,

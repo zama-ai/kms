@@ -1,0 +1,182 @@
+name: PRSS chunk experiment
+
+on:
+  workflow_call:
+
+permissions:
+  actions: read
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: never
+  CARGO_INCREMENTAL: 0
+  KMS_PRSS_PROBE_BATCHES: 10
+
+jobs:
+  compare:
+    runs-on: runs-on=${{ github.run_id }}/runner=64cpu-linux-x64/spot=false/volume=400gb/extras=s3-cache+efs
+    timeout-minutes: 480
+    steps:
+      - name: Setup Runs-on
+        uses: runs-on/action@cd2b598b0515d39d78c38a02d529db87d2196d1e # v2.0.3
+        with:
+          metrics: cpu,network,memory,disk,io
+
+      - name: Checkout project
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          persist-credentials: false
+          lfs: true
+
+      - name: Get Rust version
+        run: |
+          version="$(awk -F '"' '/^channel =/ {print $2}' rust-toolchain.toml)"
+          echo "RUST_IMAGE_VERSION=$version" >> "$GITHUB_ENV"
+
+      - name: Set up Rust and Protoc
+        uses: ./.github/actions/setup-rust-and-protoc
+        with:
+          rust-toolchain: ${{ env.RUST_IMAGE_VERSION }}
+          setup-cargo-nextest: 'true'
+
+      - name: Setup Rust cache
+        uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5 # v2.8.2
+        with:
+          shared-key: kms-rust
+          save-if: false
+
+      - name: Build experiment
+        run: cargo test -p threshold-execution --lib --no-run
+
+      - name: Compare submission sizes sequentially
+        timeout-minutes: 75
+        shell: bash
+        run: |
+          mkdir -p prss-chunk-results
+          lscpu > prss-chunk-results/hardware.txt
+          git rev-parse HEAD > prss-chunk-results/commit.txt
+          failed=0
+          iteration=0
+          for case in case_1_whole case_2_chunked case_2_chunked case_1_whole case_1_whole case_2_chunked; do
+            iteration=$((iteration + 1))
+            name="small_execution::prss::tests::isolated_prss_chunk_scheduling::$case"
+            submission_size=30000
+            if [[ "$case" == case_2_chunked ]]; then submission_size=3000; fi
+            if MPC_PRSS_MAX_SUBMISSION="$submission_size" cargo nextest run -p threshold-execution --lib --run-ignored only \
+                --no-tests=fail --no-capture \
+                -E "test(=$name)" 2>&1 | tee "prss-chunk-results/$iteration-$case.log"; then
+              continue
+            fi
+            failed=1
+          done
+          exit "$failed"
+
+      - name: Verify captured samples
+        if: ${{ !cancelled() }}
+        shell: python
+        run: |
+          import pathlib
+          import re
+          import math
+          import statistics
+          import os
+
+          logs = sorted(pathlib.Path('prss-chunk-results').glob('*.log'))
+          assert len(logs) == 6, f'Expected six runs, found {len(logs)}'
+          reference = None
+          summary = ["| Run | Median first 30,000 | p95 | Slowest first 30,000 | Entire workload |",
+                     "|---|---:|---:|---:|---:|"]
+          for log in logs:
+              text = log.read_text()
+              samples = re.findall(
+                  r'SAMPLE party=(\d+) session=(\d+) elapsed_us=\d+ '
+                  r'finished_us=\d+ all_finished_us=\d+ digest=(\[[^\]]+\])', text)
+              outputs = {(party, session): digest for party, session, digest in samples}
+              assert len(samples) == len(outputs) == 130, f'{log}: missing or duplicate samples'
+              assert 'WORKLOAD batches_per_session=10' in text, f'{log}: wrong workload'
+              allocation = 'pools=0 per_party=0 shared=56'
+              assert f'ALLOCATION {allocation}' in text, f'{log}: unexpected worker allocation'
+              if reference is None:
+                  reference = outputs
+              assert outputs == reference, f'{log}: output mismatch'
+              expected = 3000 if 'chunked' in log.name else 30000
+              assert f'PRODUCTION submission_size={expected}' in text, f'{log}: wrong submission size'
+              timings = re.findall(r'elapsed_us=(\d+) finished_us=\d+ all_finished_us=(\d+)', text)
+              elapsed = sorted(int(a) / 1e6 for a, _ in timings)
+              total = max(int(b) for _, b in timings) / 1e6
+              summary.append(f'| {log.stem} | {statistics.median(elapsed):.2f}s | '
+                             f'{elapsed[math.ceil(len(elapsed) * .95) - 1]:.2f}s | '
+                             f'{max(elapsed):.2f}s | {total:.2f}s |')
+          report = '\n'.join(summary) + '\n\nAll 130 first-group outputs match across all six runs.\n'
+          pathlib.Path('prss-chunk-results/summary.md').write_text(report)
+          with open(os.environ['GITHUB_STEP_SUMMARY'], 'a') as output:
+              output.write(report)
+
+      - name: Generate keygen test material
+        id: material
+        if: ${{ !cancelled() }}
+        timeout-minutes: 60
+        run: |
+          mkdir -p prss-chunk-results
+          cargo run --profile test -p generate-test-material -- \
+            --output ./test-material --profile insecure,secure --parties 4,13 \
+            > prss-chunk-results/generate-material.log 2>&1
+
+      - name: Build 13-party concurrent keygen
+        id: keygen-build
+        if: ${{ !cancelled() && steps.material.outcome == 'success' }}
+        timeout-minutes: 60
+        run: |
+          cargo test -p kms --lib -F slow_tests -F insecure --no-run \
+            > prss-chunk-results/keygen-build.log 2>&1
+
+      - name: Run 13-party concurrent keygen with chunked PRSS on the shared pool
+        if: ${{ !cancelled() && steps.keygen-build.outcome == 'success' }}
+        timeout-minutes: 245
+        env:
+          MPC_PRSS_MAX_SUBMISSION: 3000
+          RUST_LOG: info,kms_timeout_probe=debug
+          RUST_BACKTRACE: full
+        run: |
+          # Stop the test before the step limit so artifact upload can retain partial logs.
+          # Direct redirection preserves test output independently of console log collection.
+          timeout --signal=TERM --kill-after=30s 4h \
+            cargo nextest run -p kms --lib -F slow_tests -F insecure \
+            --profile ci --no-tests=fail --no-capture \
+            -E 'test(=client::tests::threshold::extended_tests::nightly_secure_threshold_concurrent_keygen_test::case_2)' \
+            > prss-chunk-results/concurrent-keygen.log 2>&1
+
+      - name: Summarize initial keygen broadcasts
+        if: ${{ !cancelled() }}
+        shell: python
+        run: |
+          import os
+          import pathlib
+          import re
+          import statistics
+
+          log = pathlib.Path('prss-chunk-results/concurrent-keygen.log')
+          first = {}
+          if log.exists():
+              with log.open() as stream:
+                  for line in stream:
+                      if 'event="round_advanced"' in line and ' round=1 ' in line and 'GenTriples{' in line:
+                          session = re.search(r'session_id=(\d+)', line)[1]
+                          role = re.search(r'my_role=Role\((\d+)\)', line)[1]
+                          first.setdefault((session, role), int(re.search(r'age_ms=(\d+)', line)[1]) / 1000)
+              values = sorted(first.values())
+              report = f'\nInitial preprocessing broadcasts observed: {len(values)}/130.\n'
+              if values:
+                  report += f'Median: {statistics.median(values):.3f}s; slowest: {max(values):.3f}s.\n'
+              report += 'See the keygen step result for pass/fail and concurrent-keygen.log for complete diagnostics.\n'
+              pathlib.Path('prss-chunk-results/keygen-summary.md').write_text(report)
+              with open(os.environ['GITHUB_STEP_SUMMARY'], 'a') as output:
+                  output.write(report)
+
+      - name: Upload experiment output
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: prss-chunk-results-${{ github.run_id }}-${{ github.run_attempt }}
+          path: prss-chunk-results/
+          if-no-files-found: error

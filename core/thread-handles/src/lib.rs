@@ -96,15 +96,27 @@ pub async fn spawn_compute_bound<R: Send + 'static, F: FnOnce() -> R + Send + 's
         .await?;
     let (tx, rx) = tokio::sync::oneshot::channel();
     let current_span = tracing::Span::current();
+    let queued_at = tracing::enabled!(target: "kms_timeout_probe", tracing::Level::DEBUG)
+        .then(std::time::Instant::now);
+    tracing::debug!(target: "kms_timeout_probe", "compute_queued");
     pool.spawn(move || {
         let _guard = current_span.enter();
+        let started_at = queued_at.map(|_| std::time::Instant::now());
+        tracing::debug!(target: "kms_timeout_probe",
+            queue_ms = queued_at.map(|t| t.elapsed().as_millis() as u64), "compute_started");
         let res = compute_fn();
+        tracing::debug!(target: "kms_timeout_probe",
+            run_ms = started_at.map(|t| t.elapsed().as_millis() as u64), "compute_finished");
         let _ = tx
             .send(res)
             .map_err(|_| ())
             .inspect_err(|_| tracing::warn!("compute task receiver dropped"));
     });
 
-    rx.await
-        .map_err(|_| anyhow_error_and_log("compute task sender dropped"))
+    let result = rx
+        .await
+        .map_err(|_| anyhow_error_and_log("compute task sender dropped"));
+    tracing::debug!(target: "kms_timeout_probe",
+        total_ms = queued_at.map(|t| t.elapsed().as_millis() as u64), "compute_resumed");
+    result
 }

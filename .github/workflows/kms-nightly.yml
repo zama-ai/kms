@@ -2,6 +2,11 @@ name: kms-nightly
 
 on:
   workflow_dispatch:
+    inputs:
+      prss-chunk-experiment:
+        description: 'Compare PRSS submission sizes, then run 13-party keygen with chunking'
+        type: boolean
+        default: false
   workflow_call:
     secrets:
       SLACK_CHANNEL:
@@ -22,7 +27,15 @@ concurrency:
 permissions: {}
 
 jobs:
+  prss-chunk-experiment:
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.prss-chunk-experiment }}
+    permissions:
+      actions: read
+      contents: read
+    uses: ./.github/workflows/prss-chunk-experiment.yml
+
   generate-test-material:
+    if: ${{ !(github.event_name == 'workflow_dispatch' && inputs.prss-chunk-experiment) }}
     name: kms-nightly/generate-test-material
     permissions:
       checks: write # Required to write to the GitHub Actions check suite

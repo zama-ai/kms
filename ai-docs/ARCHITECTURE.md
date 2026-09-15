@@ -69,6 +69,15 @@ vectors. Shared test fixtures and generic local file helpers are in
 The [backward-compatibility/](backward-compatibility/) crate is a separate
 Cargo workspace — see [Backward compatibility](#backward-compatibility).
 
+PRSS vector generation uses sequential, bounded submissions to the shared Rayon
+pool. `MPC_PRSS_MAX_SUBMISSION` controls the maximum values per submission
+(default 3,000; values below one are clamped to one). This scheduling limit does
+not change protocol batch sizes or the generated sequence. The PRSS counter
+advances only after the complete vector succeeds. The manual nightly input
+`prss-chunk-experiment` compares 30,000-value and 3,000-value submissions, then
+runs 13-party concurrent keygen with the 3,000-value limit. It retains live logs
+and a synthetic timing summary as artifacts.
+
 ## The service crate (`core/service`)
 
 The service crate is the main surface area. Key subdirectories under
