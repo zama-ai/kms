@@ -110,6 +110,8 @@ successfully stored primary material in place. Callers must serialize writes to 
 
 When threshold context creation reaches a duplicate storage write, it returns an error
 without changing the existing context or its session registration.
+Threshold context destruction removes session registration only after storage deletion
+succeeds, so a rejected delete leaves the context registered for retry.
 
 ### Binaries
 

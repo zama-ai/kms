@@ -983,10 +983,7 @@ where
 
         let storage_ref = self.inner.crypto_storage.private_storage.clone();
         let mut guarded_priv_storage = storage_ref.lock().await;
-        self.session_maker.remove_context(&context_id).await;
-
-        // There is nothing we can do if deletion fails here.
-        // Note that it cannot fail if the context does not exist.
+        // Keep the context registered if storage rejects the deletion.
         delete_context_at_id(&mut *guarded_priv_storage, &context_id)
             .await
             .map_err(|e| {
@@ -997,6 +994,7 @@ where
                     tonic::Code::Internal,
                 )
             })?;
+        self.session_maker.remove_context(&context_id).await;
         let remaining_contexts = self.session_maker.context_count().await;
         tracing::info!(
             context_id = %context_id,
