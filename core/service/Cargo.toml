@@ -102,7 +102,6 @@ tfhe = { workspace = true, features = [
     "experimental-force_fft_algo_dif4",
     "extended-types",
 ] }
-tfhe-csprng.workspace = true
 tfhe-versionable.workspace = true
 thiserror.workspace = true
 thread-handles = { workspace = true, optional = true }
@@ -149,7 +148,6 @@ serde = { workspace = true, features = ["derive"] }
 syn = { workspace = true }
 tempfile.workspace = true
 test-utils-service = { path = "./test-utils-service" }
-tracing-subscriber = { workspace = true, features = ["fmt", "std"] }
 walkdir = { workspace = true }
 
 [[bench]]
@@ -197,7 +195,7 @@ slow_tests = ["testing"]
 wasm_tests = ["testing"]
 insecure = [
     "kms-grpc/insecure",
-    "threshold-networking/testing",
+    "threshold-networking/insecure",
     "dep:nsm-nitro-enclave-utils",
     "threshold-execution/testing",
 ]

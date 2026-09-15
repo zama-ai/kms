@@ -438,6 +438,8 @@ The current loader requires the ECDSA key and attaches the seed when one is pres
 On a threshold node, a flat `PrssSetup` entry is foreign material and fails boot. The 0.15
 migration leaves flat `PrssSetupCombined` entries next to their `EpochData`; those remain accepted
 until the 0.16 migration removes them. A centralized node rejects both PRSS types and `EpochData`.
+The 0.16 cleanup re-lists flat `PrssSetupCombined` entries after deletion and returns an error if any remain.
+A successful delete response alone does not count as completed cleanup.
 
 Custodian backup readiness is deliberately *not* part of this. It is a property of the vault's
 keychain rather than of the published material, and the backup path already reports it:
@@ -537,8 +539,10 @@ The [Cargo.toml](../Cargo.toml) should be considered the ground truth.
   (`docker-compose-core-base.yml`, `docker-compose-core-threshold.yml`,
   `docker-compose-core-centralized.yml`) for a local multi-party network
   plus S3-mock, and telemetry sidecars.
-- **Cargo feature flags** — `testing` enables test-only APIs; `slow_tests`
-  enables the long-running suite.
+- **Cargo feature flags** — `testing` exposes test helper APIs across crate boundaries;
+  `slow_tests` enables the long-running suite. `kms/insecure` enables development RPCs
+  and mock enclave support. It forwards `threshold-networking/insecure`, which permits
+  plaintext transport and mock attestation.
 
 See the "Building and testing" section of [README.md](README.md) for the
 exact commands.

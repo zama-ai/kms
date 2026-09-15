@@ -394,13 +394,9 @@ async fn failed_old_prss_cleanup_is_retryable(#[case] fault_outcome: StorageOutc
     }
     storage.clear_events();
 
-    let result = remove_old_prss_data(&mut storage, KMSType::Threshold).await;
-    if fault_outcome == StorageOutcome::SucceededWithoutMutation {
-        // Cleanup trusts the backend's success response, so a no-op delete leaves data without an error.
-        result.unwrap();
-    } else {
-        result.unwrap_err();
-    }
+    remove_old_prss_data(&mut storage, KMSType::Threshold)
+        .await
+        .unwrap_err();
 
     let after_failure = storage.state();
     // A failed delete can stop cleanup before the other entry; a no-op delete lets it continue.

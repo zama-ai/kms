@@ -94,7 +94,7 @@ Two helper binaries also live next to them:
 - `gen-experiment` (`src/bin/benches/gen-experiment.rs`) — renders the
   docker-compose `.yml` for the parties and the `.toml` for the
   choreographer from the Jinja templates under `experiments/`.
-  See `cargo run --bin gen-experiment --features="templating" -- --help`.
+  See `cargo run --bin gen-experiment -- --help`.
 - `threshold-gen-tls-certs` (`src/bin/threshold-gen-tls-certs.rs`) — generates
   the TLS material that the parties use for mTLS between themselves and with
   the choreographer.
@@ -107,9 +107,6 @@ The relevant features are:
   degree used by the threshold computation. Default is `extension_degree_4`.
 - `measure_memory`: enables the `peak_alloc` global allocator inside the
   parties, used by the memory benchmarks.
-- `templating`: only needed when running `gen-experiment` (and reused for
-  `threshold-gen-tls-certs` so the binary doesn't get rebuilt with a
-  different feature set).
 
 ### Docker images
 
