@@ -258,6 +258,9 @@ FHE migration cleanup compares the legacy and replacement copies by length and S
 digest before deleting the legacy entry. A mismatch stops startup and retains both copies
 for investigation. A missing replacement is logged and the legacy entry is kept, as before.
 
+PRSS and context migrations compare decoded replacement values before deleting their sources.
+The expected context includes its updated ID. A mismatch stops startup and preserves both copies.
+
 **Versioning trait.** Every type written to disk or sent over the wire uses
 [`tfhe-versionable`](https://crates.io/crates/tfhe-versionable): it derives
 `Versionize` / `VersionsDispatch`, implements `Named`, and is wrapped in an

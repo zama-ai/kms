@@ -543,6 +543,7 @@ so there is no legacy PRSS state to migrate.",
     Ok(outcome)
 }
 
+/// Moves combined PRSS to the new ID and verifies the decoded value before deleting the source.
 async fn migrate_combined_prss_to_0_13_10<PrivS>(
     priv_storage: &mut PrivS,
 ) -> anyhow::Result<PrssCombinedEpochMigrationOutcome>
@@ -572,6 +573,19 @@ where
         &PrivDataType::PrssSetupCombined.to_string(),
     )
     .await?;
+    let migrated: PRSSSetupCombined = read_versioned_at_request_id(
+        priv_storage,
+        &(*DEFAULT_EPOCH_ID).into(),
+        &PrivDataType::PrssSetupCombined.to_string(),
+    )
+    .await?;
+    if migrated != prss {
+        anyhow::bail!(
+            "Migrated PRSS at {} does not match the legacy entry at {}; refusing to delete the legacy entry",
+            *DEFAULT_EPOCH_ID,
+            *LEGACY_DEFAULT_EPOCH_ID,
+        );
+    }
     priv_storage
         .delete_data(
             &(*LEGACY_DEFAULT_EPOCH_ID).into(),
@@ -586,7 +600,8 @@ where
     Ok(PrssCombinedEpochMigrationOutcome::Migrated)
 }
 
-/// Reads context under the old legacy default context ID and if it exists, re-stores it under the new default context ID.
+/// Moves the legacy context to the new ID and verifies its decoded value before deleting the source.
+/// The expected context has the new ID but otherwise matches the source.
 async fn migrate_context_before_0_13_10<PrivS>(
     priv_storage: &mut PrivS,
 ) -> anyhow::Result<LegacyContextMigrationOutcome>
@@ -613,7 +628,14 @@ where
         &PrivDataType::ContextInfo.to_string(),
     )
     .await?;
-    // Remove old context. It is safe to do in this migration as it does not contain any critical, non restorable info
+    let migrated = read_context_at_id(priv_storage, &DEFAULT_MPC_CONTEXT).await?;
+    if migrated != context {
+        anyhow::bail!(
+            "Migrated context at {} does not match the legacy context at {} with its updated ID; refusing to delete the legacy context",
+            *DEFAULT_MPC_CONTEXT,
+            *LEGACY_DEFAULT_MPC_CONTEXT,
+        );
+    }
     priv_storage
         .delete_data(
             &(*LEGACY_DEFAULT_MPC_CONTEXT).into(),
