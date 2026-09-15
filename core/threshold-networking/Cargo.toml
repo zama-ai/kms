@@ -53,4 +53,5 @@ threshold-execution = { workspace = true, features = ["testing"] }
 tonic-prost-build.workspace = true
 
 [features]
-testing = ["threshold-execution/testing"]
+# Allow plaintext transport and mocked enclave attestation in development artifacts.
+insecure = []

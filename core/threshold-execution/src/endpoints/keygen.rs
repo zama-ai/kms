@@ -1026,8 +1026,8 @@ where
     .await
 }
 
-#[cfg(any(test, feature = "testing"))]
-pub mod conformance {
+#[cfg(test)]
+mod conformance {
     use tfhe::core_crypto::prelude::{
         ContiguousEntityContainer, LweCiphertextOwned, decrypt_lwe_ciphertext, divide_round,
     };
@@ -1036,7 +1036,7 @@ pub mod conformance {
     use tfhe::shortint::client_key::atomic_pattern::AtomicPatternClientKey;
     use tfhe::shortint::server_key::ModulusSwitchConfiguration;
 
-    pub fn check_drift_technique_key(
+    pub(super) fn check_drift_technique_key(
         pbs_params: ClassicPBSParameters,
         server_key: &tfhe::ServerKey,
         client_key: &tfhe::shortint::ClientKey,

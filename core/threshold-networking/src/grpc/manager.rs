@@ -33,7 +33,7 @@ pub struct GrpcNetworkingManager {
     pub opened_sessions_tracker: Arc<DashMap<MpcIdentity, u64>>,
     conf: CoreToCoreNetworkConfig,
     pub sending_service: GrpcSendingService,
-    #[cfg(feature = "testing")]
+    #[cfg(feature = "insecure")]
     pub force_tls: bool,
 }
 
@@ -53,7 +53,7 @@ impl GrpcNetworkingManager {
             self.conf.get_max_opened_inactive_sessions_per_party(),
             self.conf.get_max_waiting_time_for_message_queue(),
             tls_extension,
-            #[cfg(feature = "testing")]
+            #[cfg(feature = "insecure")]
             self.force_tls,
         ))
         .max_decoding_message_size(self.conf.get_max_en_decode_message_size())
@@ -139,19 +139,19 @@ impl GrpcNetworkingManager {
         tls_conf: Option<tokio_rustls::rustls::client::ClientConfig>,
         conf: CoreToCoreNetworkConfig,
     ) -> anyhow::Result<Self> {
-        #[cfg(feature = "testing")]
+        #[cfg(feature = "insecure")]
         let force_tls = tls_conf.is_some();
-        #[cfg(feature = "testing")]
+        #[cfg(feature = "insecure")]
         if !force_tls {
             tracing::warn!(
-                "force_tls is DISABLED. Testing feature is enabled - this is NOT recommended in production environments."
+                "force_tls is DISABLED. Insecure feature is enabled - this is NOT recommended in production environments."
             );
         }
 
-        #[cfg(not(any(test, feature = "testing")))]
+        #[cfg(not(any(test, feature = "insecure")))]
         if tls_conf.is_none() {
             return Err(error_utils::anyhow_error_and_log(
-                "TLS configuration must be provided in non-testing environments",
+                "TLS configuration must be provided in secure builds",
             ));
         }
 
@@ -182,7 +182,7 @@ impl GrpcNetworkingManager {
             opened_sessions_tracker: Arc::new(DashMap::new()),
             conf,
             sending_service: GrpcSendingService::new(tls_conf, conf)?,
-            #[cfg(feature = "testing")]
+            #[cfg(feature = "insecure")]
             force_tls,
         })
     }

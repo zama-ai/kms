@@ -611,8 +611,8 @@ where
 
 /// Store a caller-supplied server signing key together with the public verification key and
 /// Ethereum address it implies, all at the fixed [`SIGNING_KEY_ID`] handle.
-#[cfg(any(test, feature = "testing"))]
-pub async fn store_server_signing_keys<PubS, PrivS>(
+#[cfg(test)]
+pub(crate) async fn store_server_signing_keys<PubS, PrivS>(
     pub_storage: &mut PubS,
     priv_storage: &mut PrivS,
     sk: &PrivateSigKey,
