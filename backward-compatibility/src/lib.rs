@@ -744,6 +744,48 @@ impl TestType for UnifiedUnsigncryptionKeyTest {
     }
 }
 
+/// Test metadata for MLKEM1024-P384 public key backward compatibility.
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct MlKem1024P384PublicKeyTest {
+    pub test_filename: Cow<'static, str>,
+    pub state: u64,
+}
+
+impl TestType for MlKem1024P384PublicKeyTest {
+    fn module(&self) -> String {
+        KMS_MODULE_NAME.to_string()
+    }
+
+    fn target_type(&self) -> String {
+        "MlKem1024P384PublicKey".to_string()
+    }
+
+    fn test_filename(&self) -> String {
+        self.test_filename.to_string()
+    }
+}
+
+/// Test metadata for MLKEM1024-P384 private key backward compatibility.
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct MlKem1024P384PrivateKeyTest {
+    pub test_filename: Cow<'static, str>,
+    pub state: u64,
+}
+
+impl TestType for MlKem1024P384PrivateKeyTest {
+    fn module(&self) -> String {
+        KMS_MODULE_NAME.to_string()
+    }
+
+    fn target_type(&self) -> String {
+        "MlKem1024P384PrivateKey".to_string()
+    }
+
+    fn test_filename(&self) -> String {
+        self.test_filename.to_string()
+    }
+}
+
 // KMS test
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct UnifiedSigncryptionTest {
@@ -1271,6 +1313,8 @@ pub enum TestMetadataKMS {
     EpochData(EpochDataTest),
     UnifiedSigncryptionKeyOwned(UnifiedSigncryptionKeyTest),
     UnifiedUnsigncryptionKeyOwned(UnifiedUnsigncryptionKeyTest),
+    MlKem1024P384PublicKey(MlKem1024P384PublicKeyTest),
+    MlKem1024P384PrivateKey(MlKem1024P384PrivateKeyTest),
     UnifiedSigncryption(UnifiedSigncryptionTest),
     BackupCiphertext(BackupCiphertextTest),
     UnifiedCipher(UnifiedCipherTest),

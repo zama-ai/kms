@@ -648,7 +648,7 @@ mod tests {
         let mldsa_key = UnifiedPrivateSigKey::MlDsa65(Box::new(
             MlDsa::<MlDsa65>::keygen_from_seed(&random_seed(&mut rng)),
         ));
-        let msg = b"hybrid classic + post-quantum message";
+        let msg = b"composite classic + post-quantum message";
 
         let ecdsa_sig = unified_sign(DSEP, msg, &ecdsa_key).unwrap();
         let mldsa_sig = unified_sign(DSEP, msg, &mldsa_key).unwrap();

@@ -560,7 +560,7 @@ impl<
             OP_USER_DECRYPT_REQUEST,
             Some(req_id),
         )?;
-        let client_enc_key = UnifiedPublicEncKey::deserialize_and_validate(
+        let client_enc_key = UnifiedPublicEncKey::deserialize_and_validate_hybrid_ml_kem_512(
             &client_enc_key_bytes_orig,
         )
         .map_err(|e| {

@@ -68,6 +68,7 @@ futures-util.workspace = true
 getrandom = { workspace = true, optional = true }
 hashing.workspace = true
 hex.workspace = true
+hpke.workspace = true
 hybrid-array.workspace = true
 iam-rs = { workspace = true, optional = true }
 itertools.workspace = true
@@ -79,6 +80,7 @@ nsm-nitro-enclave-utils = { version = "0.1.2", features = ["pki"], optional = tr
 observability = { workspace = true, optional = true }
 p384.workspace = true
 rand = { workspace = true, features = ["std", "std_rng"] }
+rand_core_0_10.workspace = true
 rasn-cms.workspace = true
 rasn.workspace = true
 rayon.workspace = true
@@ -88,6 +90,7 @@ rustls-webpki = { workspace = true, optional = true }
 serde = { workspace = true, features = ["derive", "rc"] }
 serde-wasm-bindgen.workspace = true
 serde_json.workspace = true
+shake.workspace = true
 signature.workspace = true
 strum.workspace = true
 strum_macros.workspace = true

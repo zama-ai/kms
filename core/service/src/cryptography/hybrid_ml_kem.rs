@@ -1,10 +1,7 @@
-use super::error::CryptographyError;
+use super::{error::CryptographyError, rand_compat::RandCore010Adapter};
 use aes_gcm::{AeadCore, Aes256Gcm, Key, KeyInit, KeySizeUser, aead::Aead};
 use hybrid_array::{Array, typenum::Unsigned};
-use ml_kem::{
-    KemCore,
-    kem::{Decapsulate, Encapsulate},
-};
+use ml_kem::{Encapsulate, Kem, kem::TryDecapsulate};
 use rand::{CryptoRng, Rng};
 use serde::{Deserialize, Serialize};
 use tfhe::{Versionize, named::Named};
@@ -20,13 +17,13 @@ pub(crate) const ML_KEM_512_SK_LEN: usize = 1632; // decapsulation key size for 
 
 const NONCE_LEN: usize = 12;
 
-pub(crate) fn keygen<C: KemCore, R: Rng + CryptoRng>(
+pub(crate) fn keygen<C: Kem, R: Rng + CryptoRng>(
     rng: &mut R,
 ) -> (C::DecapsulationKey, C::EncapsulationKey) {
-    C::generate(rng)
+    C::generate_keypair_from_rng(&mut RandCore010Adapter::new(rng))
 }
 
-struct InnerHybridKemCt<C: KemCore> {
+struct InnerHybridKemCt<C: Kem> {
     pub nonce: [u8; NONCE_LEN],
     pub kem_ct: Array<u8, C::CiphertextSize>,
     pub payload_ct: Vec<u8>,
@@ -57,7 +54,7 @@ impl Named for HybridKemCt {
     const NAME: &'static str = "backup::HybridKemCt";
 }
 
-impl<C: KemCore> TryFrom<HybridKemCt> for InnerHybridKemCt<C> {
+impl<C: Kem> TryFrom<HybridKemCt> for InnerHybridKemCt<C> {
     type Error = CryptographyError;
 
     fn try_from(value: HybridKemCt) -> Result<Self, Self::Error> {
@@ -78,7 +75,7 @@ impl<C: KemCore> TryFrom<HybridKemCt> for InnerHybridKemCt<C> {
     }
 }
 
-impl<C: KemCore> From<InnerHybridKemCt<C>> for HybridKemCt {
+impl<C: Kem> From<InnerHybridKemCt<C>> for HybridKemCt {
     fn from(value: InnerHybridKemCt<C>) -> Self {
         Self {
             nonce: value.nonce,
@@ -88,14 +85,12 @@ impl<C: KemCore> From<InnerHybridKemCt<C>> for HybridKemCt {
     }
 }
 
-pub(crate) fn enc<C: KemCore, R: Rng + CryptoRng>(
+pub(crate) fn enc<C: Kem, R: Rng + CryptoRng>(
     rng: &mut R,
     msg: &[u8],
     enc_k: &C::EncapsulationKey,
 ) -> Result<HybridKemCt, CryptographyError> {
-    let (kem_ct, kem_shared_secret) = enc_k
-        .encapsulate(rng)
-        .map_err(|_| CryptographyError::MlKemError)?;
+    let (kem_ct, kem_shared_secret) = enc_k.encapsulate_with_rng(&mut RandCore010Adapter::new(rng));
     // kem_shared_secret (Array type) has no ZeroizeOnDrop,
     // using Zeroizing wipes it on every exit path.
     let kem_shared_secret = Zeroizing::new(kem_shared_secret);
@@ -115,7 +110,7 @@ pub(crate) fn enc<C: KemCore, R: Rng + CryptoRng>(
     .into())
 }
 
-pub(crate) fn dec<C: KemCore>(
+pub(crate) fn dec<C: Kem>(
     ct: HybridKemCt,
     dec_k: &C::DecapsulationKey,
 ) -> Result<Zeroizing<Vec<u8>>, CryptographyError> {
@@ -126,11 +121,10 @@ pub(crate) fn dec<C: KemCore>(
         payload_ct,
     } = ct;
 
-    // NOTE: this error never happens because there's implicit rejection,
-    // meaning that some default value is returned when there's a decapsulation failure.
-    // More information on implicit rejection here: https://eprint.iacr.org/2018/526.pdf
+    // Decapsulation uses implicit rejection, meaning a pseudorandom shared
+    // secret is returned for an invalid ciphertext.
     let kem_shared_secret = dec_k
-        .decapsulate(&kem_ct)
+        .try_decapsulate(&kem_ct)
         .map_err(|_| CryptographyError::MlKemError)?;
     // kem_shared_secret (Array type) has no ZeroizeOnDrop,
     // using Zeroizing wipes it on every exit path.
@@ -148,10 +142,13 @@ pub(crate) fn dec<C: KemCore>(
 
 #[cfg(test)]
 mod tests {
+    #![allow(deprecated)]
+
     use super::*;
     use crate::cryptography::encryption::{PrivateEncKey, PublicEncKey};
     use crate::cryptography::hybrid_ml_kem;
-    use ml_kem::EncodedSizeUser;
+    use ml_kem::ExpandedKeyEncoding;
+    use ml_kem::KeyExport;
     use proptest::prelude::*;
     use rand::rngs::OsRng;
     const SERIALIZED_SIZE_LIMIT: u64 = 1024 * 1024;
@@ -206,8 +203,8 @@ mod tests {
         fn pke_sunshine(msg: Vec<u8>) {
             let mut rng = OsRng;
             let (sk, pk) = keygen::<ml_kem::MlKem512, _>(&mut rng);
-            assert_eq!(pk.as_bytes().len(), ML_KEM_512_PK_LENGTH);
-            assert_eq!(sk.as_bytes().len(), ML_KEM_512_SK_LEN);
+            assert_eq!(pk.to_bytes().len(), ML_KEM_512_PK_LENGTH);
+            assert_eq!(sk.to_expanded_bytes().len(), ML_KEM_512_SK_LEN);
 
             let ct = enc::<ml_kem::MlKem512, _>(&mut rng, &msg, &pk).unwrap();
             assert_eq!(ct.kem_ct.len(), ML_KEM_512_CT_LENGTH);

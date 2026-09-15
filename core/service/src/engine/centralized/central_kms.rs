@@ -548,8 +548,9 @@ pub async fn async_user_decrypt<
         metrics_names::{OP_USER_DECRYPT_INNER, TAG_TFHE_TYPE},
     };
 
-    let client_enc_key = UnifiedPublicEncKey::deserialize_and_validate(client_enc_key_bytes)
-        .map_err(|e| anyhow::anyhow!("Error deserializing UnifiedPublicEncKey: {e}"))?;
+    let client_enc_key =
+        UnifiedPublicEncKey::deserialize_and_validate_hybrid_ml_kem_512(client_enc_key_bytes)
+            .map_err(|e| anyhow::anyhow!("Error deserializing UnifiedPublicEncKey: {e}"))?;
 
     let mut all_signcrypted_cts = vec![];
     for typed_ciphertext in typed_ciphertexts {
