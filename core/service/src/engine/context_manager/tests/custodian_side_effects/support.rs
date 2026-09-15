@@ -276,6 +276,15 @@ impl CustodianFixture {
         let backup_vault = self.storage.backup_vault.as_ref().unwrap().lock().await;
         failing_ram_storage(&backup_vault).state()
     }
+
+    /// Returns the context whose key encrypts new backups.
+    pub(super) async fn active_backup_context_id(&self) -> RequestId {
+        let backup_vault = self.storage.backup_vault.as_ref().unwrap().lock().await;
+        let Some(KeychainProxy::SecretSharing(keychain)) = backup_vault.keychain.as_ref() else {
+            panic!("fixture requires a custodian keychain");
+        };
+        keychain.get_current_backup_id().unwrap()
+    }
 }
 
 /// Builds a valid custodian-context request with deterministic keys.
@@ -321,7 +330,7 @@ pub(super) fn custodian_request(
 pub(super) async fn assert_pending<F: std::future::Future>(mut future: std::pin::Pin<&mut F>) {
     std::future::poll_fn(|context| match future.as_mut().poll(context) {
         Poll::Pending => Poll::Ready(()),
-        Poll::Ready(_) => panic!("custodian setup bypassed the setup lock"),
+        Poll::Ready(_) => panic!("custodian operation completed while it should be blocked"),
     })
     .await;
 }

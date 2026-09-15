@@ -258,6 +258,108 @@ async fn remove_old_backup_failure_is_retryable(#[case] fault_phase: FaultPhase)
         .await;
 }
 
+/// A backend acknowledgement is insufficient when the retired backup entry remains stored.
+#[tokio::test]
+async fn remove_old_backup_rejects_a_delete_that_did_not_happen() {
+    let mut fixture = BackupRemovalFixture::new(StorageProxy::from(FailingRamStorage::new())).await;
+    let ignored_entry = fixture.retired_entries[0].storage_entry();
+    let deleted_entry = fixture.retired_entries[1].storage_entry();
+    let storage = failing_ram_storage_mut(&mut fixture.vault);
+    let mut expected_state = storage.state();
+    expected_state.remove(&deleted_entry);
+    storage.set_noop_delete_at(ignored_entry.clone());
+    storage.clear_events();
+
+    let error = fixture
+        .vault
+        .remove_old_backup(&fixture.retired_id)
+        .await
+        .unwrap_err();
+
+    assert!(error.to_string().contains("residual data remains"));
+    let storage = failing_ram_storage_mut(&mut fixture.vault);
+    let expected_events = [
+        StorageEvent::new(deleted_entry, StorageOp::Delete, StorageOutcome::Deleted),
+        StorageEvent::new(
+            ignored_entry.clone(),
+            StorageOp::Delete,
+            StorageOutcome::SucceededWithoutMutation,
+        ),
+    ];
+    assert_same_events(storage.events(), &expected_events);
+    assert_eq!(storage.state(), expected_state);
+    storage.clear_fail_points();
+    storage.clear_events();
+
+    fixture
+        .vault
+        .remove_old_backup(&fixture.retired_id)
+        .await
+        .unwrap();
+    let storage = failing_ram_storage_mut(&mut fixture.vault);
+    assert_same_events(
+        storage.events(),
+        &[StorageEvent::new(
+            ignored_entry.clone(),
+            StorageOp::Delete,
+            StorageOutcome::Deleted,
+        )],
+    );
+    expected_state.remove(&ignored_entry);
+    assert_eq!(storage.state(), expected_state);
+}
+
+/// Custodian setup rollback also rejects a successful response that leaves backup data behind.
+#[tokio::test]
+async fn purge_backup_rejects_a_delete_that_did_not_happen() {
+    let mut fixture = BackupRemovalFixture::new(StorageProxy::from(FailingRamStorage::new())).await;
+    let ignored_entry = fixture.current_entries[1].storage_entry();
+    let deleted_entry = fixture.current_entries[0].storage_entry();
+    let storage = failing_ram_storage_mut(&mut fixture.vault);
+    let mut expected_state = storage.state();
+    expected_state.remove(&deleted_entry);
+    storage.set_noop_delete_at(ignored_entry.clone());
+    storage.clear_events();
+
+    let error = fixture
+        .vault
+        .purge_backup(&fixture.current_id)
+        .await
+        .unwrap_err();
+
+    assert!(error.to_string().contains("residual data remains"));
+    let storage = failing_ram_storage_mut(&mut fixture.vault);
+    let expected_events = [
+        StorageEvent::new(deleted_entry, StorageOp::Delete, StorageOutcome::Deleted),
+        StorageEvent::new(
+            ignored_entry.clone(),
+            StorageOp::Delete,
+            StorageOutcome::SucceededWithoutMutation,
+        ),
+    ];
+    assert_same_events(storage.events(), &expected_events);
+    assert_eq!(storage.state(), expected_state);
+    storage.clear_fail_points();
+    storage.clear_events();
+
+    fixture
+        .vault
+        .purge_backup(&fixture.current_id)
+        .await
+        .unwrap();
+    let storage = failing_ram_storage_mut(&mut fixture.vault);
+    assert_same_events(
+        storage.events(),
+        &[StorageEvent::new(
+            ignored_entry.clone(),
+            StorageOp::Delete,
+            StorageOutcome::Deleted,
+        )],
+    );
+    expected_state.remove(&ignored_entry);
+    assert_eq!(storage.state(), expected_state);
+}
+
 // Runs against the in-process S3 mock, so it needs the features that gate the mock constructor.
 #[cfg(all(feature = "non-wasm", feature = "testing"))]
 #[tokio::test]

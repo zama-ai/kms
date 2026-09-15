@@ -324,10 +324,15 @@ vault under it *before* persisting the recovery material, so it is rolled back i
 step fails: the keychain is restored to its pre-setup `(context_id, backup_enc_key)` and the
 vault entries written under the failed id are purged
 (`rollback_failed_custodian_setup` in
-[context_manager.rs](core/service/src/engine/context_manager.rs) and
-`Vault::purge_backup`). Without that, the node would keep encrypting backups under a key
-whose recovery material was never written, making them unrecoverable. Setups are serialized
-against each other for the same reason.
+[context_manager.rs](../core/service/src/engine/context_manager.rs) and
+`Vault::purge_backup`). Cleanup checks that no backup entries remain under the failed context ID. If
+the storage backend reports a successful deletion but entries remain, rollback emits a
+`tracing::error!` and preserves the original setup or write error. Rollback cannot repair a backend
+that did not apply the deletion, so these leftover entries require operator attention. During
+custodian-context destruction, the same check must pass before recovery material and lifecycle
+state are removed.
+Custodian setup and destruction share a lock. Setup holds it until completion, including rollback on failure.
+Destruction therefore cannot remove the previous context while setup might still restore its keychain state.
 
 Restoration writes the private data types back in a fixed order (`RESTORE_ORDER` in
 [backup_operator.rs](../core/service/src/engine/backup_operator.rs)): contexts and `EpochData`
@@ -433,6 +438,8 @@ The current loader requires the ECDSA key and attaches the seed when one is pres
 On a threshold node, a flat `PrssSetup` entry is foreign material and fails boot. The 0.15
 migration leaves flat `PrssSetupCombined` entries next to their `EpochData`; those remain accepted
 until the 0.16 migration removes them. A centralized node rejects both PRSS types and `EpochData`.
+The 0.16 cleanup re-lists flat `PrssSetupCombined` entries after deletion and returns an error if any remain.
+A successful delete response alone does not count as completed cleanup.
 
 Custodian backup readiness is deliberately *not* part of this. It is a property of the vault's
 keychain rather than of the published material, and the backup path already reports it:

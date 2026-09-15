@@ -134,6 +134,8 @@ pub(crate) enum StorageOutcome {
     SkippedExisting,
     /// A delete removed data.
     Deleted,
+    /// A delete returned success but left the intended entry intact, as when S3 receives the wrong, nonexistent key.
+    SucceededWithoutMutation,
     /// The operation returned an error without changing storage.
     FailedBeforeMutation,
     /// The operation changed storage and then returned an error.
