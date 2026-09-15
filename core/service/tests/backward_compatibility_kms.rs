@@ -9,17 +9,18 @@ use aes_prng::AesRng;
 use algebra::galois_rings::degree_4::{ResiduePolyF4Z64, ResiduePolyF4Z128};
 use backward_compatibility::{
     AppKeyBlobTest, BackupCiphertextTest, ContextInfoTest, CrsGenMetadataTest,
-    CrsGenMetadataWithExtraDataTest, CrsSignedPayloadTest, Eip712DomainTest, EpochDataTest,
-    HybridKemCtTest, InternalCustodianContextTest, InternalCustodianRecoveryOutputTest,
-    InternalCustodianSetupMessageTest, InternalRecoveryRequestTest, KeyGenMetadataTest,
-    KeyGenMetadataWithExtraDataTest, KeygenSignedPayloadTest, KmsFheKeyHandlesTest, NodeInfoTest,
-    OperatorBackupOutputTest, PrepKeygenSignedPayloadTest, PrivateSigKeyTest,
-    PrssSetupCombinedTest, PublicDecSignedPayloadTest, PublicSigKeyTest,
-    RecoveryValidationMaterialTest, RootSigningSeedTest, SchemeDigestsTest,
-    SigncryptionPayloadTest, SoftwareVersionTest, StoredEip712DomainTest, StoredTypedSignatureTest,
-    TestMetadataKMS, TestType, Testcase, ThresholdFheKeysTest, TypedPlaintextTest,
-    UnifiedCipherTest, UnifiedPublicSigKeyTest, UnifiedSigncryptionKeyTest,
-    UnifiedSigncryptionTest, UnifiedUnsigncryptionKeyTest, UserDecSignedPayloadTest, data_dir,
+    CrsGenMetadataWithExtraDataTest, CrsSignedPayloadTest, CustodianContextAnchorTest,
+    Eip712DomainTest, EpochDataTest, HybridKemCtTest, InternalCustodianContextTest,
+    InternalCustodianRecoveryOutputTest, InternalCustodianSetupMessageTest,
+    InternalRecoveryRequestTest, KeyGenMetadataTest, KeyGenMetadataWithExtraDataTest,
+    KeygenSignedPayloadTest, KmsFheKeyHandlesTest, NodeInfoTest, OperatorBackupOutputTest,
+    PrepKeygenSignedPayloadTest, PrivateSigKeyTest, PrssSetupCombinedTest,
+    PublicDecSignedPayloadTest, PublicSigKeyTest, RecoveryValidationMaterialTest,
+    RootSigningSeedTest, SchemeDigestsTest, SigncryptionPayloadTest, SoftwareVersionTest,
+    StoredEip712DomainTest, StoredTypedSignatureTest, TestMetadataKMS, TestType, Testcase,
+    ThresholdFheKeysTest, TypedPlaintextTest, UnifiedCipherTest, UnifiedPublicSigKeyTest,
+    UnifiedSigncryptionKeyTest, UnifiedSigncryptionTest, UnifiedUnsigncryptionKeyTest,
+    UserDecSignedPayloadTest, data_dir,
     load::{DataFormat, TestFailure, TestResult, TestSuccess},
     tests::{TestedModule, run_all_tests},
 };
@@ -37,8 +38,8 @@ use kms_lib::{
     backup::{
         BackupCiphertext,
         custodian::{
-            Custodian, InternalCustodianContext, InternalCustodianRecoveryOutput,
-            InternalCustodianSetupMessage,
+            Custodian, CustodianContextAnchor, InternalCustodianContext,
+            InternalCustodianRecoveryOutput, InternalCustodianSetupMessage,
         },
         operator::{
             BackupMaterial, DSEP_BACKUP_COMMITMENT, InnerOperatorBackupOutput,
@@ -176,6 +177,29 @@ fn test_root_signing_seed(
     if original != expected {
         return Err(test.failure(
             "the stored root signing seed does not match the one the current code derives",
+            format,
+        ));
+    }
+
+    Ok(test.success(format))
+}
+
+fn test_custodian_context_anchor(
+    dir: &Path,
+    test: &CustodianContextAnchorTest,
+    format: DataFormat,
+) -> Result<TestSuccess, TestFailure> {
+    let original: CustodianContextAnchor = load_and_unversionize(dir, test, format)?;
+    let expected = CustodianContextAnchor {
+        context_id: RequestId::from_bytes(test.context_id),
+        sequence: test.sequence,
+    };
+
+    if original != expected {
+        return Err(test.failure(
+            format!(
+                "Invalid CustodianContextAnchor test:\n Expected :\n{expected:?}\nGot:\n{original:?}"
+            ),
             format,
         ));
     }
@@ -1696,6 +1720,9 @@ impl TestedModule for KMS {
             }
             Self::Metadata::RootSigningSeed(test) => {
                 test_root_signing_seed(test_dir.as_ref(), test, format).into()
+            }
+            Self::Metadata::CustodianContextAnchor(test) => {
+                test_custodian_context_anchor(test_dir.as_ref(), test, format).into()
             }
             Self::Metadata::TypedPlaintext(test) => {
                 test_typed_plaintext(test_dir.as_ref(), test, format).into()

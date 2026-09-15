@@ -58,6 +58,7 @@ impl CustodianFixture {
             MetaStore::new(100, 10),
             session_maker,
             false,
+            Arc::new(TaskTracker::new()),
         );
         let retired_id = RequestId::from_bytes([RETIRED_CONTEXT_BYTE; 32]);
         let current_id = RequestId::from_bytes([CURRENT_CONTEXT_BYTE; 32]);
@@ -83,8 +84,11 @@ impl CustodianFixture {
             PrivDataType::SigningKey,
         )
         .storage_entry();
-        let retired_recovery_entry =
-            StorageEntry::new(retired_id, None, PubDataType::RecoveryMaterial.to_string());
+        let retired_recovery_entry = StorageEntry::new(
+            retired_id,
+            None,
+            VaultDataType::RecoveryMaterial.to_string(),
+        );
         let fixture = Self {
             manager,
             storage,
@@ -150,9 +154,11 @@ impl CustodianFixture {
         }
     }
 
-    /// Fails deletion of the retired context's public recovery material at `phase`.
+    /// Fails deletion of the retired context's recovery material at `phase`.
     pub(super) async fn fail_recovery_delete(&self, phase: FaultPhase) {
-        let mut storage = self.storage.public_storage.lock().await;
+        let backup_vault = self.storage.backup_vault.as_ref().unwrap();
+        let mut backup_vault = backup_vault.lock().await;
+        let storage = failing_ram_storage_mut(&mut backup_vault);
         match phase {
             FaultPhase::BeforeMutation => {
                 storage.set_fail_delete_at(self.retired_recovery_entry.clone())
@@ -185,6 +191,17 @@ impl CustodianFixture {
         failing_ram_storage_mut(&mut backup_vault).clear_events();
     }
 
+    /// Deletes the anchor record, so private storage names no current context.
+    pub(super) async fn delete_anchor(&self) {
+        crate::vault::storage::delete_at_request_id(
+            &mut *self.storage.private_storage.lock().await,
+            &self.current_id,
+            &PrivDataType::CustodianContextAnchor.to_string(),
+        )
+        .await
+        .unwrap();
+    }
+
     /// Requests destruction of `context_id`.
     pub(super) async fn destroy(
         &self,
@@ -197,13 +214,12 @@ impl CustodianFixture {
             .await
     }
 
-    /// Returns whether public recovery material exists for `context_id`.
+    /// Returns whether the backup vault holds recovery material for `context_id`.
     pub(super) async fn recovery_exists(&self, context_id: RequestId) -> bool {
-        self.storage
-            .public_storage
-            .lock()
-            .await
-            .data_exists(&context_id, &PubDataType::RecoveryMaterial.to_string())
+        let backup_vault = self.storage.backup_vault.as_ref().unwrap().lock().await;
+        backup_vault
+            .storage
+            .data_exists(&context_id, &VaultDataType::RecoveryMaterial.to_string())
             .await
             .unwrap()
     }

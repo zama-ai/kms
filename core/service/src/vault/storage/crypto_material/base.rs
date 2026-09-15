@@ -27,8 +27,9 @@ use crate::{
             crypto_material::{
                 log_storage_success_optional_variant, traits::PrivateCryptoMaterialReader,
             },
-            delete_at_request_and_epoch_id, delete_at_request_id, read_all_data_versioned,
-            read_context_at_id,
+            delete_at_request_and_epoch_id, delete_at_request_id, delete_recovery_material_at_id,
+            read_all_data_versioned, read_context_at_id, read_custodian_context_anchor,
+            store_custodian_context_anchor, store_recovery_material,
         },
     },
 };
@@ -57,6 +58,8 @@ pub enum StorageError {
     Duplicate,
     #[error("Writing error")]
     Writing,
+    #[error("Write outcome could not be read back")]
+    Unresolved,
     #[error("Reading error")]
     Reading,
     #[error("Purging error")]
@@ -124,7 +127,8 @@ fn private_data_is_epoch_scoped(data_type: PrivDataType) -> bool {
         | PrivDataType::PrssSetup
         | PrivDataType::PrssSetupCombined
         | PrivDataType::ContextInfo
-        | PrivDataType::EpochData => false,
+        | PrivDataType::EpochData
+        | PrivDataType::CustodianContextAnchor => false,
     }
 }
 
@@ -184,6 +188,10 @@ pub struct CryptoMaterialStorage<
 
     /// Optional backup vault for recovery purposes
     pub(crate) backup_vault: Option<Arc<Mutex<Vault>>>,
+
+    /// Serializes setup, destruction and recovery of the custodian context: each reads the anchor,
+    /// the keychain and the vault, then rewrites some of them.
+    pub(crate) custodian_context_lock: Arc<Mutex<()>>,
 }
 
 impl<PubS, PrivS> CryptoMaterialStorage<PubS, PrivS>
@@ -207,6 +215,7 @@ where
             public_storage,
             private_storage,
             backup_vault,
+            custodian_context_lock: Arc::new(Mutex::new(())),
         }
     }
 
@@ -886,27 +895,22 @@ where
         .await
     }
 
-    /// Write the backup keys to the storage and update the meta store.
-    /// This methods writes all the material associated with backups to storage,
-    /// and updates the meta store accordingly.
+    /// Persist the recovery material of a new custodian context and update the meta store.
     ///
-    /// This means that the public encryption key for backup is written to the public storage.
-    /// The same goes for the commitments to the custodian shares and the recovery request.
-    /// Finally the custodian context, with the information about the custodian nodes, is also written to public storage.
-    /// The private key for decrypting backups is written to the private storage.
+    /// The material goes to the backup vault unencrypted; see [`store_recovery_material`].
     ///
-    /// NOTE: Unlike most other storage methods, this one WILL fail if there is no backup vault or if backup fails,
-    /// since the goal of this method is exactly to setup a backup. On failure the material of the
-    /// failed setup — both the backup-vault entries and the public recovery material — is purged,
-    /// except on a duplicate, where nothing was written and what is stored under `req_id`
-    /// pre-existed this call. Callers that also need the keychain rolled back must do that
-    /// themselves; see `rollback_failed_custodian_setup`.
+    /// The anchor in private storage is written last: it is what makes this context the one the
+    /// node adopts after a restart, so an earlier failure leaves the previous context in place.
     ///
-    /// Precondition: when the backup vault is configured with a `SecretSharing`
-    /// keychain, the caller is expected to have set the backup encryption key
-    /// for `req_id` on the keychain before calling this method (see
-    /// `inner_new_custodian_context`); the backup pass inside
-    /// `write_all` requires it to be in place to encrypt private data.
+    /// NOTE: Unlike most other storage methods, this one WILL fail if there is no backup vault,
+    /// since the goal of this method is exactly to setup a backup. The caller claims `req_id`
+    /// before writing under it, so nothing there predates this call. On failure the material of
+    /// the failed setup is purged. Two cases keep it. On a duplicate nothing was written, so what
+    /// is stored under `req_id` pre-existed this call. When a failed anchor write cannot be read
+    /// back, the anchor may name this context: the call fails with [`StorageError::Unresolved`]
+    /// and the caller must make no backups until a restart reads the anchor. An anchor write that
+    /// reports an error but took effect is a success. Callers that also need the keychain rolled
+    /// back must do that themselves; see `rollback_failed_custodian_setup`.
     pub async fn write_backup_keys(
         &self,
         recovery_material: RecoveryValidationMaterial,
@@ -924,46 +928,60 @@ where
                 return Err(StorageError::Backup);
             }
         };
-        let res = self
-            .write_all::<RecoveryValidationMaterial, RecoveryValidationMaterial>(
-                &req_id,
-                None,
-                Some((&recovery_material, PubDataType::RecoveryMaterial)),
-                None,
-                true,
-                OP_NEW_CUSTODIAN_CONTEXT,
-            )
-            .await;
-        if let Err(write_err) = &res {
-            // Note that we also care about a BackupError here, since we are actually setting up the initial backup.
-            // Purge what this setup wrote to the backup vault — the caller re-encrypts the current
-            // material into the vault under `req_id` before this method, so on failure those entries
-            // must be rolled back. The one exception is a duplicate: then this call wrote nothing and
-            // the material under `req_id` pre-existed (possibly a live backup), so it must be kept.
-            // The write error is kept in all cases: neither a successful purge nor a purge failure
-            // (which is only logged) may mask the root cause recorded in the meta store.
-            if !matches!(write_err, StorageError::Duplicate)
-                && let Err(e) = vault.lock().await.purge_backup(&req_id).await
-            {
+        let (res, purge) = match self
+            .write_recovery_material(vault, &req_id, &recovery_material)
+            .await
+        {
+            Ok(()) => {
+                let mut private_storage = self.private_storage.lock().await;
+                match store_custodian_context_anchor(&mut *private_storage, &req_id).await {
+                    Ok(()) => (Ok(()), false),
+                    // Storage may apply a write and still report an error, so the anchor decides.
+                    // If it names this context, the setup succeeded. If it names another, the
+                    // material can go. If it cannot be read, the material stays so whichever anchor
+                    // wins still resolves.
+                    Err(e) => match read_custodian_context_anchor(&*private_storage).await {
+                        Ok(Some(anchored)) if anchored == req_id => {
+                            tracing::warn!(
+                                "Anchoring custodian context {req_id} reported an error but took effect: {e}"
+                            );
+                            (Ok(()), false)
+                        }
+                        Ok(_) => {
+                            tracing::error!("Failed to anchor custodian context {req_id}: {e}");
+                            (Err(StorageError::Writing), true)
+                        }
+                        Err(read_err) => {
+                            tracing::error!(
+                                "Failed to anchor custodian context {req_id} ({e}) and to read the anchor back ({read_err}); its material is kept and no backups are made until the next boot reads the anchor"
+                            );
+                            (Err(StorageError::Unresolved), false)
+                        }
+                    },
+                }
+            }
+            // A duplicate means nothing was written and what is stored under `req_id` pre-existed
+            // (possibly a live backup), so it must be kept.
+            Err(write_err) => {
+                let purge = !matches!(write_err, StorageError::Duplicate);
+                (Err(write_err), purge)
+            }
+        };
+        // Roll back both the entries the caller re-encrypted under `req_id` and any recovery
+        // material this call wrote. Purge failures are only logged: they must not mask the root
+        // cause in the meta store.
+        if purge {
+            let mut guarded_vault = vault.lock().await;
+            if let Err(e) = guarded_vault.purge_backup(&req_id).await {
                 tracing::error!(
                     "Failed to purge backup vault after failed backup setup for request {req_id}: {e}"
                 );
             }
-            // These are the two outcomes that can leave the recovery material in public storage:
-            // `Backup` means the write itself succeeded, and `Purging` means `write_all`'s own
-            // compensating purge failed. On a plain `Writing` error that purge succeeded, on a
-            // duplicate the material pre-existed and must be kept, and on the remaining variants
-            // nothing was written at all. A leftover would be picked as the active custodian
-            // context on restart (the latest RecoveryMaterial id wins) and would block retrying
-            // the same context id via the duplicate check, so purge it here. Like the vault purge
-            // above, a failure is only logged and never masks the write error.
-            if matches!(write_err, StorageError::Backup | StorageError::Purging)
-                && !self
-                    .purge_material(&req_id, None, &[PubDataType::RecoveryMaterial], &[])
-                    .await
+            if let Err(e) =
+                delete_recovery_material_at_id(&mut guarded_vault.storage, &req_id).await
             {
                 tracing::error!(
-                    "Failed to purge recovery material for {req_id} after failed backup setup"
+                    "Failed to purge recovery material for {req_id} after failed backup setup: {e}"
                 );
             }
         }
@@ -976,6 +994,30 @@ where
             OP_NEW_CUSTODIAN_CONTEXT,
         )
         .await
+    }
+
+    /// Record the recovery material of a new custodian context.
+    ///
+    /// The caller backs up private storage under the context first, and anchors the context after,
+    /// so a failure here leaves the previous context anchored and intact.
+    async fn write_recovery_material(
+        &self,
+        vault: &Arc<Mutex<Vault>>,
+        req_id: &RequestId,
+        recovery_material: &RecoveryValidationMaterial,
+    ) -> Result<(), StorageError> {
+        let mut guarded_vault = vault.lock().await;
+        match store_recovery_material(&mut guarded_vault.storage, recovery_material).await {
+            Ok(StoreWriteOutcome::SkippedExisting) => Err(StorageError::Duplicate),
+            Ok(_) => {
+                tracing::info!("Stored recovery material for custodian context {req_id}");
+                Ok(())
+            }
+            Err(e) => {
+                tracing::error!("Failed to store recovery material for request {req_id}: {e}");
+                Err(StorageError::Writing)
+            }
+        }
     }
 
     // TODO(#2849) should be changed to KeyId
@@ -1086,14 +1128,22 @@ where
     /// custodian context). When `false`, existing entries are skipped.
     ///
     /// Returns `true` if the update succeeded, `false` if it failed (in which case the error is also logged and the metrics are updated).
+    ///
+    /// A node with no vault, or one whose keychain has no custodian context, backs nothing up. That
+    /// is not a failure the caller can act on, so it still returns `true` — but it is not a success
+    /// either, and saying so would bury the line that says why nothing was written.
     pub async fn update_backup_vault(&self, overwrite: bool, op_metric_tag: &'static str) -> bool {
-        if let Err(e) = self.inner_update_backup_vault(overwrite).await {
-            tracing::error!("Failed to update backup vault for operation {op_metric_tag}: {e}",);
-            METRICS.increment_backup_error_counter(op_metric_tag, ERR_BACKUP);
-            false
-        } else {
-            tracing::info!("Successfully updated backup vault for {op_metric_tag}",);
-            true
+        match self.inner_update_backup_vault(overwrite).await {
+            Err(e) => {
+                tracing::error!("Failed to update backup vault for operation {op_metric_tag}: {e}",);
+                METRICS.increment_backup_error_counter(op_metric_tag, ERR_BACKUP);
+                false
+            }
+            Ok(true) => {
+                tracing::info!("Successfully updated backup vault for {op_metric_tag}",);
+                true
+            }
+            Ok(false) => true,
         }
     }
 
@@ -1105,10 +1155,12 @@ where
     /// When `overwrite` is `true`, existing backup entries are deleted and
     /// re-written (used when the backup encryption key changes, e.g. on a new
     /// custodian context). When `false`, existing entries are skipped.
+    /// `Ok(false)` when there was nothing to update: no backup vault, or a keychain with no
+    /// custodian context; the latter is logged with the reason.
     pub(in crate::vault::storage::crypto_material) async fn inner_update_backup_vault(
         &self,
         overwrite: bool,
-    ) -> anyhow::Result<()> {
+    ) -> anyhow::Result<bool> {
         match self.backup_vault {
             Some(ref backup_vault) => {
                 let private_storage = self.get_private_storage();
@@ -1116,9 +1168,9 @@ where
                 let mut backup_vault = backup_vault.lock().await;
                 if !crate::engine::backup_operator::keychain_initialized(&backup_vault).await {
                     tracing::warn!(
-                        "Secret sharing keychain in the backup vault has not been initialized yet. Skipping backup update."
+                        "Secret sharing keychain in the backup vault has not been initialized yet. Skipping backup update; no backups are made until a custodian context is created or recovered."
                     );
-                    return Ok(());
+                    return Ok(false);
                 }
                 for cur_type in PrivDataType::iter() {
                     match cur_type {
@@ -1161,6 +1213,10 @@ where
                             )
                             .await?;
                         }
+                        // Not backed up. A rotation re-encrypts the vault before the anchor is
+                        // rewritten, so a copy would name the context the node is leaving;
+                        // recovery anchors the context it restores.
+                        PrivDataType::CustodianContextAnchor => {}
                         PrivDataType::SigningKey => {
                             // TODO(#2862) will eventually be epoched
                             crate::engine::backup_operator::update_specific_backup_vault::<
@@ -1209,9 +1265,9 @@ where
                         }
                     }
                 }
-                Ok(())
+                Ok(true)
             }
-            None => Ok(()),
+            None => Ok(false),
         }
     }
 }
@@ -1275,6 +1331,7 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: StorageExt + Send + Sync + 's
             public_storage: Arc::clone(&self.public_storage),
             private_storage: Arc::clone(&self.private_storage),
             backup_vault: self.backup_vault.as_ref().map(Arc::clone),
+            custodian_context_lock: Arc::clone(&self.custodian_context_lock),
         }
     }
 }

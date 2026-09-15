@@ -64,6 +64,8 @@ prefix = "PRIV-p1"
 # policy for this root key should have only allow its use to known and attested
 # versions of the Core. (Unset by default)
 #
+# secret_sharing is not accepted here: it only decrypts once the custodians have reconstructed
+# its key, and private storage must be readable at boot.
 # [private_vault.keychain.aws_kms]
 # root_key_id = "root_key_id"
 

@@ -21,7 +21,8 @@ use crate::util::meta_store::{
 use crate::vault::keychain::KeychainProxy;
 use crate::vault::storage::crypto_material::{CryptoMaterialStorage, StorageError, data_exists};
 use crate::vault::storage::{
-    StorageExt, delete_context_at_id, delete_custodian_context_at_id, store_context_at_id,
+    StorageExt, delete_context_at_id, delete_custodian_context_at_id,
+    read_custodian_context_anchor, store_context_at_id,
 };
 use crate::{
     engine::base::BaseKmsStruct, grpc::metastore_status_service::CustodianMetaStore,
@@ -46,7 +47,9 @@ use std::sync::Arc;
 use tfhe::safe_serialization::safe_serialize;
 use threshold_types::role::Role;
 use tokio::sync::{Mutex, RwLock};
+use tokio_util::task::TaskTracker;
 use tonic::Response;
+use tracing::Instrument;
 
 const CENTRALIZED_MPC_IDENTITY: &str = "centralized-zama-kms";
 const CENTRALIZED_PARTY_ID: u32 = 1;
@@ -62,8 +65,8 @@ struct SharedContextManager<
     custodian_meta_store: Arc<RwLock<CustodianMetaStore>>,
     /// Serializes MPC context creation and destruction across storage and in-memory updates.
     mpc_context_update_lock: Mutex<()>,
-    /// Serializes custodian setup, rollback, and destruction so rollback cannot restore a deleted context.
-    custodian_context_update_lock: Mutex<()>,
+    /// The node's task tracker; a shutdown waits for what runs on it.
+    tracker: Arc<TaskTracker>,
 }
 
 impl<PubS, PrivS> SharedContextManager<PubS, PrivS>
@@ -133,7 +136,7 @@ where
     }
 
     async fn new_custodian_context(
-        &self,
+        self: Arc<Self>,
         request: tonic::Request<kms_grpc::kms::v1::NewCustodianContextRequest>,
     ) -> Result<tonic::Response<kms_grpc::kms::v1::Empty>, MetricedError> {
         let inner = request.into_inner();
@@ -224,10 +227,39 @@ where
             custodian_context.threshold,
             custodian_context.custodian_nodes.len()
         );
-        self.inner_new_custodian_context(custodian_context, mpc_context_id)
+        // On the tracker, so neither a dropped request nor a shutdown cuts the setup short
+        // between the keychain switch and the anchor write. The token is held from before the
+        // check until the task is registered, so a shutdown cannot find the tracker empty in
+        // between; a closed tracker means it no longer waits, so the setup is refused.
+        let _admission = self.tracker.token();
+        if self.tracker.is_closed() {
+            return Err(MetricedError::new(
+                OP_NEW_CUSTODIAN_CONTEXT,
+                Some(custodian_context_id),
+                anyhow::anyhow!("The node is shutting down"),
+                tonic::Code::Unavailable,
+            ));
+        }
+        let setup = Arc::clone(&self);
+        self.tracker
+            .spawn(
+                async move {
+                    setup
+                        .inner_new_custodian_context(custodian_context, mpc_context_id)
+                        .await
+                }
+                .instrument(tracing::Span::current()),
+            )
             .await
+            .map_err(|e| anyhow::anyhow!("Custodian context setup task failed: {e}"))
+            .and_then(|outcome| outcome)
             .map_err(|e| {
-                MetricedError::new(OP_NEW_CUSTODIAN_CONTEXT, None, e, tonic::Code::Internal)
+                MetricedError::new(
+                    OP_NEW_CUSTODIAN_CONTEXT,
+                    Some(custodian_context_id),
+                    e,
+                    tonic::Code::Internal,
+                )
             })?;
 
         //Always answer with Empty
@@ -252,13 +284,40 @@ where
             )
         })?;
 
-        let _context_guard = self.custodian_context_update_lock.lock().await;
+        // Held for the same reason `inner_new_custodian_context` holds it, and taken before the
+        // meta-store permit as there. Without it, a setup in flight may already have moved the
+        // keychain to its new context while the anchor still names the old one. The guards below
+        // would then read a state that belongs to neither.
+        let _context_guard = self.crypto_storage.custodian_context_lock.lock().await;
         let permit = lock_entry_in_meta_store(
             &self.custodian_meta_store,
             &context_id,
             OP_DESTROY_CUSTODIAN_CONTEXT,
         )
         .await?;
+        // Refuse to destroy the context this node backs up under. Private storage is the authority
+        // on that; the keychain is a cache a setup in flight may already have moved.
+        if read_custodian_context_anchor(&*self.crypto_storage.private_storage.lock().await)
+            .await
+            .map_err(|e| {
+                MetricedError::new(
+                    OP_DESTROY_CUSTODIAN_CONTEXT,
+                    Some(context_id),
+                    anyhow::anyhow!("Could not read the custodian context anchor: {e}"),
+                    tonic::Code::Internal,
+                )
+            })?
+            == Some(context_id)
+        {
+            return Err(MetricedError::new(
+                OP_DESTROY_CUSTODIAN_CONTEXT,
+                Some(context_id),
+                anyhow::anyhow!(
+                    "Cannot destroy custodian context {context_id}: it is the one this node backs up under"
+                ),
+                tonic::Code::FailedPrecondition,
+            ));
+        }
         // Take a write-lock to ensure that no other operations can concurrency modify the meta store during destruction
         let meta_store_guard = self.custodian_meta_store.write().await;
         // Ensure we are not destroying the only backup vault there exists.
@@ -277,7 +336,6 @@ where
                 tonic::Code::FailedPrecondition,
             ));
         }
-        let mut guarded_pub_storage = self.crypto_storage.public_storage.lock().await;
         let guarded_backup_storage_ref =
             self.crypto_storage.backup_vault.as_ref().ok_or_else(|| {
                 MetricedError::new(
@@ -294,20 +352,16 @@ where
         // returns an error we propagate it and, crucially, do NOT drop the context from the
         // meta store below, so the operator retains a retryable degraded state instead of a
         // context that reports successful destruction while backups linger in storage.
-        delete_custodian_context_at_id(
-            &mut *guarded_pub_storage,
-            &mut guarded_backup_storage,
-            &context_id,
-        )
-        .await
-        .map_err(|e| {
-            MetricedError::new(
-                OP_DESTROY_CUSTODIAN_CONTEXT,
-                Some(context_id),
-                anyhow::anyhow!("Failed to delete context: {e}"),
-                tonic::Code::Internal,
-            )
-        })?;
+        delete_custodian_context_at_id(&mut guarded_backup_storage, &context_id)
+            .await
+            .map_err(|e| {
+                MetricedError::new(
+                    OP_DESTROY_CUSTODIAN_CONTEXT,
+                    Some(context_id),
+                    anyhow::anyhow!("Failed to delete context: {e}"),
+                    tonic::Code::Internal,
+                )
+            })?;
         delete_in_meta_store(
             meta_store_guard,
             permit,
@@ -329,10 +383,10 @@ where
             None => return Err(anyhow::anyhow!("Backup vault is not configured")),
         };
         // Hold this through setup and rollback. Other setups must not snapshot temporary keychain
-        // state, and destruction must not remove the context that rollback would restore.
-        // Both operations acquire this lock before metadata locks and hold it across storage I/O.
-        // Destruction waits for any active setup to finish backup re-encryption and rollback.
-        let _context_guard = self.custodian_context_update_lock.lock().await;
+        // state, and destruction or recovery must not change the context that rollback would
+        // restore. Setup and destruction take it before metadata locks and hold it across storage
+        // I/O.
+        let _context_guard = self.crypto_storage.custodian_context_lock.lock().await;
         let mut rng = self.base_kms.new_rng();
         // Generate asymmetric keys for the operator to use to encrypt the backup
         let mut enc = Encryption::new(PkeSchemeType::MlKem512, &mut rng);
@@ -450,9 +504,15 @@ where
             )
             .await
         {
+            // An unresolved anchor may already name the new context, so the keychain is emptied
+            // rather than restored: no backups until the next boot reads the anchor.
+            let restore_to = match e {
+                StorageError::Unresolved => None,
+                _ => previous_backup_state,
+            };
             self.rollback_failed_custodian_setup(
                 inner_context.context_id,
-                previous_backup_state,
+                restore_to,
                 RollbackScope::KeychainOnly,
             )
             .await;
@@ -677,7 +737,7 @@ pub struct CentralizedContextManager<
     PubS: Storage + Sync + Send + 'static,
     PrivS: StorageExt + Sync + Send + 'static,
 > {
-    inner: SharedContextManager<PubS, PrivS>,
+    inner: Arc<SharedContextManager<PubS, PrivS>>,
     cache: Arc<RwLock<HashSet<ContextId>>>,
 }
 
@@ -690,15 +750,16 @@ where
         base_kms: BaseKmsStruct,
         crypto_storage: CryptoMaterialStorage<PubS, PrivS>,
         custodian_meta_store: Arc<RwLock<CustodianMetaStore>>,
+        tracker: Arc<TaskTracker>,
     ) -> Self {
         Self {
-            inner: SharedContextManager {
+            inner: Arc::new(SharedContextManager {
                 base_kms,
                 crypto_storage,
                 custodian_meta_store,
                 mpc_context_update_lock: Mutex::new(()),
-                custodian_context_update_lock: Mutex::new(()),
-            },
+                tracker,
+            }),
             cache: Arc::new(RwLock::new(HashSet::new())),
         }
     }
@@ -917,7 +978,7 @@ where
         &self,
         request: tonic::Request<NewCustodianContextRequest>,
     ) -> Result<Response<Empty>, MetricedError> {
-        self.inner.new_custodian_context(request).await
+        Arc::clone(&self.inner).new_custodian_context(request).await
     }
 
     async fn destroy_custodian_context(
@@ -955,7 +1016,7 @@ pub struct ThresholdContextManager<
     PubS: Storage + Sync + Send + 'static,
     PrivS: StorageExt + Sync + Send + 'static,
 > {
-    inner: SharedContextManager<PubS, PrivS>,
+    inner: Arc<SharedContextManager<PubS, PrivS>>,
     session_maker: SessionMaker,
     require_pcr_allowlist: bool,
 }
@@ -971,15 +1032,16 @@ where
         custodian_meta_store: Arc<RwLock<CustodianMetaStore>>,
         session_maker: SessionMaker,
         require_pcr_allowlist: bool,
+        tracker: Arc<TaskTracker>,
     ) -> Self {
         Self {
-            inner: SharedContextManager {
+            inner: Arc::new(SharedContextManager {
                 base_kms,
                 crypto_storage,
                 custodian_meta_store,
                 mpc_context_update_lock: Mutex::new(()),
-                custodian_context_update_lock: Mutex::new(()),
-            },
+                tracker,
+            }),
             session_maker,
             require_pcr_allowlist,
         }
@@ -1294,7 +1356,7 @@ where
         &self,
         request: tonic::Request<NewCustodianContextRequest>,
     ) -> Result<tonic::Response<Empty>, MetricedError> {
-        self.inner.new_custodian_context(request).await
+        Arc::clone(&self.inner).new_custodian_context(request).await
     }
 
     async fn destroy_custodian_context(
@@ -1401,7 +1463,7 @@ mod tests {
                 crypto_material::get_core_signing_identity,
                 delete_context_at_id,
                 ram::{self, RamStorage},
-                read_context_at_id, read_versioned_at_request_id, store_context_at_id,
+                read_context_at_id, read_recovery_material_at_id, store_context_at_id,
                 store_versioned_at_request_and_epoch_id, store_versioned_at_request_id,
                 tests::TestType,
             },
@@ -1414,7 +1476,7 @@ mod tests {
             DestroyCustodianContextRequest, DestroyMpcContextRequest, NewCustodianContextRequest,
             NewMpcContextRequest,
         },
-        rpc_types::{KMSType, PrivDataType, PubDataType},
+        rpc_types::{KMSType, PrivDataType},
     };
     use rand::{SeedableRng, rngs::OsRng};
     use std::time::SystemTime;
@@ -1459,19 +1521,13 @@ mod tests {
     {
         let priv_storage = Arc::new(Mutex::new(priv_storage));
         let pub_storage = Arc::new(Mutex::new(pub_storage));
-        let guarded_pub_storage = pub_storage.lock().await;
-        let ssk = secretsharing::SecretShareKeychain::new(
+        let keychain_proxy = KeychainProxy::from(secretsharing::SecretShareKeychain::new(
             AesRng::seed_from_u64(1244),
-            Some(&*guarded_pub_storage),
-        )
-        .await
-        .unwrap();
-        let keychain_proxy = KeychainProxy::from(ssk);
+        ));
         let backup_vault = Arc::new(Mutex::new(Vault {
             storage: backup_proxy,
             keychain: Some(keychain_proxy),
         }));
-        drop(guarded_pub_storage);
 
         let crypto_storage =
             CryptoMaterialStorage::<_, _>::new(pub_storage, priv_storage, Some(backup_vault));
@@ -1570,6 +1626,7 @@ mod tests {
             MetaStore::new(100, 10),
             session_maker,
             false,
+            Arc::new(TaskTracker::new()),
         );
 
         let response = context_manager.new_mpc_context(request).await;
@@ -1705,6 +1762,7 @@ mod tests {
             MetaStore::new(100, 10),
             session_maker,
             true,
+            Arc::new(TaskTracker::new()),
         );
         let make_context = |context_id, pcr_values| ContextInfo {
             mpc_nodes: vec![NodeInfo {
@@ -1814,6 +1872,7 @@ mod tests {
                 MetaStore::new(100, 10),
                 session_maker,
                 false,
+                Arc::new(TaskTracker::new()),
             );
             let response = context_manager.new_mpc_context(request).await;
             response.unwrap();
@@ -1853,6 +1912,7 @@ mod tests {
                 MetaStore::new(100, 10),
                 session_maker,
                 false,
+                Arc::new(TaskTracker::new()),
             );
 
             // check that there are no contexts
@@ -1906,6 +1966,7 @@ mod tests {
                 MetaStore::new(100, 10),
                 session_maker,
                 false,
+                Arc::new(TaskTracker::new()),
             );
             let pcr_values = vec![threshold_networking::tls::ReleasePCRValues {
                 pcr0: vec![0u8; 48],
@@ -1931,6 +1992,7 @@ mod tests {
             MetaStore::new(100, 10),
             session_maker,
             true,
+            Arc::new(TaskTracker::new()),
         );
         context_manager
             .load_mpc_context_from_storage()
@@ -1979,6 +2041,7 @@ mod tests {
                 MetaStore::new(100, 10),
                 session_maker,
                 false,
+                Arc::new(TaskTracker::new()),
             );
 
             for context_id in &context_ids {
@@ -2036,6 +2099,7 @@ mod tests {
                 MetaStore::new(100, 10),
                 session_maker,
                 false,
+                Arc::new(TaskTracker::new()),
             );
 
             assert_eq!(0, context_manager.session_maker.context_count().await);
@@ -2068,6 +2132,7 @@ mod tests {
                 MetaStore::new(100, 10),
                 session_maker,
                 false,
+                Arc::new(TaskTracker::new()),
             );
 
             for context_id in &context_ids {
@@ -2165,6 +2230,7 @@ mod tests {
                 MetaStore::new(100, 10),
                 session_maker,
                 false,
+                Arc::new(TaskTracker::new()),
             );
 
             assert_eq!(0, context_manager.session_maker.context_count().await);
@@ -2217,6 +2283,7 @@ mod tests {
                 MetaStore::new(100, 10),
                 session_maker,
                 false,
+                Arc::new(TaskTracker::new()),
             );
             let request = Request::new(NewMpcContextRequest {
                 new_context: Some(new_context.try_into().unwrap()),
@@ -2256,6 +2323,7 @@ mod tests {
                 MetaStore::new(100, 10),
                 session_maker,
                 false,
+                Arc::new(TaskTracker::new()),
             );
 
             // load_mpc_context_from_storage should succeed (not panic or error)
@@ -2317,6 +2385,7 @@ mod tests {
                 MetaStore::new(100, 10),
                 session_maker,
                 false,
+                Arc::new(TaskTracker::new()),
             );
 
             let response = context_manager.new_custodian_context(request).await;
@@ -2326,15 +2395,12 @@ mod tests {
 
         // check that the context is stored
         {
-            let pub_storage = Arc::clone(&crypto_storage.public_storage);
-            let guarded_pub_storage = pub_storage.lock().await;
-            let stored_context: RecoveryValidationMaterial = read_versioned_at_request_id(
-                &*guarded_pub_storage,
-                &first_context_id,
-                &PubDataType::RecoveryMaterial.to_string(),
-            )
-            .await
-            .unwrap();
+            let backup_vault = crypto_storage.get_backup_vault().unwrap();
+            let guarded_backup_vault = backup_vault.lock().await;
+            let stored_context =
+                read_recovery_material_at_id(&guarded_backup_vault.storage, &first_context_id)
+                    .await
+                    .unwrap();
 
             assert!(stored_context.validate(&verification_key));
             assert_eq!(
@@ -2372,8 +2438,7 @@ mod tests {
             });
 
             let response = context_manager.destroy_custodian_context(request).await;
-            // This should fail since it is the only custodian context left and we
-            // require at least 2 contexts to be present before allowing a deletion.
+            // This fails: the node backs up under this context, which is also the only one left.
             assert!(response.is_err());
         }
 
@@ -2407,6 +2472,33 @@ mod tests {
             let response = context_manager.new_custodian_context(request).await;
             assert!(response.is_ok());
         }
+        // With two contexts present, only the anchor guard can refuse the second one: it is the
+        // context the node backs up under.
+        {
+            let request = Request::new(DestroyCustodianContextRequest {
+                context_id: Some(second_context_id.into()),
+            });
+
+            let error = context_manager
+                .destroy_custodian_context(request)
+                .await
+                .expect_err("the anchored context must not be destroyed");
+            assert_eq!(error.code(), tonic::Code::FailedPrecondition);
+            assert!(
+                error
+                    .internal_err()
+                    .to_string()
+                    .contains("it is the one this node backs up under")
+            );
+            let backup_vault = crypto_storage.get_backup_vault().unwrap();
+            let guarded_backup_vault = backup_vault.lock().await;
+            assert!(
+                read_recovery_material_at_id(&guarded_backup_vault.storage, &second_context_id)
+                    .await
+                    .is_ok(),
+                "the anchored context's recovery material must survive the refused destroy"
+            );
+        }
         // now try again to delete the first context. This should succeed since
         // there are now 2 contexts present.
         {
@@ -2419,16 +2511,12 @@ mod tests {
         }
         // check that the context is deleted
         {
-            let pub_storage = Arc::clone(&crypto_storage.public_storage);
-            let guarded_pub_storage = pub_storage.lock().await;
+            let backup_vault = crypto_storage.get_backup_vault().unwrap();
+            let guarded_backup_vault = backup_vault.lock().await;
             assert!(
-                read_versioned_at_request_id::<RamStorage, RecoveryValidationMaterial>(
-                    &*guarded_pub_storage,
-                    &first_context_id,
-                    &PubDataType::RecoveryMaterial.to_string(),
-                )
-                .await
-                .is_err(),
+                read_recovery_material_at_id(&guarded_backup_vault.storage, &first_context_id)
+                    .await
+                    .is_err(),
                 "Custodian context was not deleted"
             );
         }
@@ -2444,16 +2532,12 @@ mod tests {
             assert!(response.is_err());
 
             // and the last context should still be present in storage
-            let pub_storage = Arc::clone(&crypto_storage.public_storage);
-            let guarded_pub_storage = pub_storage.lock().await;
+            let backup_vault = crypto_storage.get_backup_vault().unwrap();
+            let guarded_backup_vault = backup_vault.lock().await;
             assert!(
-                read_versioned_at_request_id::<RamStorage, RecoveryValidationMaterial>(
-                    &*guarded_pub_storage,
-                    &second_context_id,
-                    &PubDataType::RecoveryMaterial.to_string(),
-                )
-                .await
-                .is_ok(),
+                read_recovery_material_at_id(&guarded_backup_vault.storage, &second_context_id)
+                    .await
+                    .is_ok(),
                 "Last remaining custodian context should not have been deleted"
             );
         }
@@ -2471,6 +2555,7 @@ mod tests {
             custodian_meta_store.clone(),
             session_maker,
             false,
+            Arc::new(TaskTracker::new()),
         );
 
         let mut rng = AesRng::seed_from_u64(43);
@@ -2530,15 +2615,12 @@ mod tests {
             assert!(error.internal_err().to_string().contains(expected_error));
             assert!(!custodian_meta_store.read().await.has_existed(&context_id));
 
-            let guarded_pub_storage = crypto_storage.public_storage.lock().await;
+            let backup_vault = crypto_storage.get_backup_vault().unwrap();
+            let guarded_backup_vault = backup_vault.lock().await;
             assert!(
-                read_versioned_at_request_id::<RamStorage, RecoveryValidationMaterial>(
-                    &*guarded_pub_storage,
-                    &context_id,
-                    &PubDataType::RecoveryMaterial.to_string(),
-                )
-                .await
-                .is_err(),
+                read_recovery_material_at_id(&guarded_backup_vault.storage, &context_id)
+                    .await
+                    .is_err(),
                 "rejected custodian context {context_id} must not create recovery material"
             );
         }
@@ -2685,6 +2767,7 @@ mod tests {
             MetaStore::new(100, 10),
             session_maker,
             false,
+            Arc::new(TaskTracker::new()),
         );
 
         // The custodian context creation should fail because backup update fails
@@ -2733,6 +2816,200 @@ mod tests {
         }
     }
 
+    /// A custodian context request for `context_id` with `2 * threshold + 1` fresh custodians.
+    fn custodian_context_request(
+        context_id: RequestId,
+        threshold: u32,
+    ) -> Request<NewCustodianContextRequest> {
+        let mut rng = AesRng::seed_from_u64(77);
+        let custodian_nodes = (1..=2 * threshold as usize + 1)
+            .map(|index| {
+                let mut enc = Encryption::new(PkeSchemeType::MlKem512, &mut rng);
+                let (_dec_key, public_enc_key) = enc.keygen().unwrap();
+                let (public_verf_key, _sig_key) = gen_sig_keys(&mut rng);
+                InternalCustodianSetupMessage {
+                    header: HEADER.to_string(),
+                    custodian_role: Role::indexed_from_one(index),
+                    name: format!("Custodian-{index}"),
+                    random_value: [3u8; 32],
+                    timestamp: SystemTime::now(),
+                    public_enc_key,
+                    public_verf_key,
+                }
+                .try_into()
+                .unwrap()
+            })
+            .collect();
+        Request::new(NewCustodianContextRequest {
+            new_custodian_context: Some(CustodianContext {
+                custodian_nodes,
+                custodian_context_id: Some(context_id.into()),
+                threshold,
+            }),
+            mpc_context_id: Some((*DEFAULT_MPC_CONTEXT).into()),
+        })
+    }
+
+    /// `write_backup_keys` cannot tell whether the anchor names the new context, so the keychain
+    /// is emptied instead of restored: no backups until the next boot reads the anchor.
+    #[tokio::test]
+    async fn test_custodian_context_rollback_empties_keychain_on_unresolved_anchor() {
+        use crate::vault::storage::Storage;
+
+        let (_verification_key, sig_key, crypto_storage) = setup_crypto_storage(true).await;
+        let base_kms = BaseKmsStruct::new(KMSType::Threshold, sig_key, test_rng_source());
+        let previous_id = RequestId::from_bytes([6u8; 32]);
+        let context_id = RequestId::from_bytes([7u8; 32]);
+        // The keychain holds a previous context, so a restore and a reset differ.
+        {
+            let backup_vault = crypto_storage.get_backup_vault().unwrap();
+            let mut guarded_backup_vault = backup_vault.lock().await;
+            let Some(KeychainProxy::SecretSharing(keychain)) =
+                guarded_backup_vault.keychain.as_mut()
+            else {
+                panic!("expected a secret-sharing keychain in the backup vault")
+            };
+            let (_dec_key, enc_key) =
+                Encryption::new(PkeSchemeType::MlKem512, &mut AesRng::seed_from_u64(5))
+                    .keygen()
+                    .unwrap();
+            keychain.set_backup_enc_key(previous_id, enc_key);
+        }
+        // An anchor record that does not decode fails both the anchor write and its read-back.
+        crypto_storage
+            .private_storage
+            .lock()
+            .await
+            .store_bytes(
+                &[0xff; 8],
+                &RequestId::from_bytes([9u8; 32]),
+                &PrivDataType::CustodianContextAnchor.to_string(),
+            )
+            .await
+            .unwrap();
+        let epoch_id = *DEFAULT_EPOCH_ID;
+        let session_maker =
+            SessionMaker::four_party_dummy_session(None, None, &epoch_id, base_kms.new_rng());
+        let backup_vault = crypto_storage.get_backup_vault().unwrap();
+        let context_manager = ThresholdContextManager::new(
+            base_kms,
+            crypto_storage,
+            MetaStore::new(100, 10),
+            session_maker,
+            false,
+            Arc::new(TaskTracker::new()),
+        );
+
+        assert!(
+            context_manager
+                .new_custodian_context(custodian_context_request(context_id, 1))
+                .await
+                .is_err()
+        );
+
+        match backup_vault.lock().await.keychain.as_ref() {
+            Some(KeychainProxy::SecretSharing(keychain)) => assert!(
+                keychain.get_current_backup_id().is_err(),
+                "an unresolved anchor must leave the keychain uninitialized"
+            ),
+            _ => panic!("expected a secret-sharing keychain in the backup vault"),
+        }
+    }
+
+    /// Once a shutdown has closed the tracker, a setup is refused rather than started unwaited.
+    ///
+    /// The clock is paused, so an admission token the refusal fails to drop fails in virtual time.
+    #[tokio::test(start_paused = true)]
+    async fn test_custodian_context_setup_is_refused_after_shutdown_began() {
+        let (_verification_key, sig_key, crypto_storage) = setup_crypto_storage(true).await;
+        let base_kms = BaseKmsStruct::new(KMSType::Threshold, sig_key, test_rng_source());
+        let context_id = RequestId::from_bytes([9u8; 32]);
+        let epoch_id = *DEFAULT_EPOCH_ID;
+        let session_maker =
+            SessionMaker::four_party_dummy_session(None, None, &epoch_id, base_kms.new_rng());
+        let private_storage = Arc::clone(&crypto_storage.private_storage);
+        let tracker = Arc::new(TaskTracker::new());
+        let context_manager = ThresholdContextManager::new(
+            base_kms,
+            crypto_storage,
+            MetaStore::new(100, 10),
+            session_maker,
+            false,
+            Arc::clone(&tracker),
+        );
+        tracker.close();
+
+        let error = context_manager
+            .new_custodian_context(custodian_context_request(context_id, 1))
+            .await
+            .expect_err("a setup must not start once shutdown began");
+        assert_eq!(error.code(), tonic::Code::Unavailable);
+        assert_eq!(
+            read_custodian_context_anchor(&*private_storage.lock().await)
+                .await
+                .unwrap(),
+            None
+        );
+        tokio::time::timeout(std::time::Duration::from_secs(1), tracker.wait())
+            .await
+            .expect("a refused setup must not hold the tracker open");
+    }
+
+    /// A request dropped while the setup runs, as a cancelled RPC or a timeout drops it, does not
+    /// cut the setup short: the keychain, the material and the anchor still end consistent.
+    ///
+    /// The clock is paused, so a setup that hangs fails in virtual time.
+    #[tokio::test(start_paused = true)]
+    async fn test_custodian_context_setup_survives_a_dropped_request() {
+        let (_verification_key, sig_key, crypto_storage) = setup_crypto_storage(true).await;
+        let base_kms = BaseKmsStruct::new(KMSType::Threshold, sig_key, test_rng_source());
+        let context_id = RequestId::from_bytes([8u8; 32]);
+        let epoch_id = *DEFAULT_EPOCH_ID;
+        let session_maker =
+            SessionMaker::four_party_dummy_session(None, None, &epoch_id, base_kms.new_rng());
+        let backup_vault = crypto_storage.get_backup_vault().unwrap();
+        let private_storage = Arc::clone(&crypto_storage.private_storage);
+        let tracker = Arc::new(TaskTracker::new());
+        let context_manager = ThresholdContextManager::new(
+            base_kms,
+            crypto_storage,
+            MetaStore::new(100, 10),
+            session_maker,
+            false,
+            Arc::clone(&tracker),
+        );
+
+        // One poll spawns the setup; dropping the request then leaves it running on its own.
+        let mut request = Box::pin(
+            context_manager.new_custodian_context(custodian_context_request(context_id, 1)),
+        );
+        assert!(futures_util::poll!(&mut request).is_pending());
+        drop(request);
+
+        tracker.close();
+        tokio::time::timeout(std::time::Duration::from_secs(1), tracker.wait())
+            .await
+            .expect("the setup must complete without its request");
+        assert_eq!(
+            read_custodian_context_anchor(&*private_storage.lock().await)
+                .await
+                .unwrap(),
+            Some(context_id)
+        );
+        let guarded_backup_vault = backup_vault.lock().await;
+        assert!(
+            read_recovery_material_at_id(&guarded_backup_vault.storage, &context_id)
+                .await
+                .is_ok()
+        );
+        match guarded_backup_vault.keychain.as_ref() {
+            Some(KeychainProxy::SecretSharing(keychain)) => {
+                assert_eq!(keychain.get_current_backup_id().unwrap(), context_id)
+            }
+            _ => panic!("expected a secret-sharing keychain in the backup vault"),
+        }
+    }
+
     /// The other rollback call site: `update_backup_vault` succeeds but `write_backup_keys`
     /// fails. Triggered with a pre-existing `RecoveryMaterial` object under the context id, so
     /// the write is rejected as a duplicate. `write_backup_keys` owns the vault cleanup and
@@ -2748,14 +3025,16 @@ mod tests {
         let base_kms = BaseKmsStruct::new(KMSType::Threshold, sig_key, test_rng_source());
         let context_id = RequestId::from_bytes([7u8; 32]);
 
-        // Make `write_all` inside `write_backup_keys` report a duplicate.
+        // Make `write_backup_keys` report a duplicate.
         {
-            let mut pub_storage = crypto_storage.public_storage.lock().await;
-            pub_storage
+            let backup_vault = crypto_storage.get_backup_vault().unwrap();
+            let mut guarded_backup_vault = backup_vault.lock().await;
+            guarded_backup_vault
+                .storage
                 .store_bytes(
                     b"pre-existing recovery material",
                     &context_id,
-                    &PubDataType::RecoveryMaterial.to_string(),
+                    &VaultDataType::RecoveryMaterial.to_string(),
                 )
                 .await
                 .unwrap();
@@ -2801,6 +3080,7 @@ mod tests {
             MetaStore::new(100, 10),
             session_maker,
             false,
+            Arc::new(TaskTracker::new()),
         );
 
         assert!(
@@ -2867,6 +3147,7 @@ mod tests {
             base_kms,
             crypto_storage.clone(),
             MetaStore::new(100, 10),
+            Arc::new(TaskTracker::new()),
         );
 
         // Initially, the cache should be empty
@@ -2997,6 +3278,7 @@ mod tests {
             base_kms,
             crypto_storage.clone(),
             MetaStore::new(100, 10),
+            Arc::new(TaskTracker::new()),
         );
 
         // Initially, context should not exist
@@ -3080,6 +3362,7 @@ mod tests {
             base_kms,
             crypto_storage.clone(),
             MetaStore::new(100, 10),
+            Arc::new(TaskTracker::new()),
         );
 
         // Create multiple contexts
