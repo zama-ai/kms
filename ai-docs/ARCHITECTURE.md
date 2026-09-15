@@ -110,6 +110,9 @@ successfully stored primary material in place. Callers must serialize writes to 
 
 When threshold context creation reaches a duplicate storage write, it returns an error
 without changing the existing context or its session registration.
+Centralized context creation updates its cache only after the primary write succeeds.
+A backup-only failure keeps the stored context in the centralized cache or threshold session maker,
+but context creation still returns an error to report the failed backup.
 Threshold context destruction removes session registration only after storage deletion
 succeeds, so a rejected delete leaves the context registered for retry.
 

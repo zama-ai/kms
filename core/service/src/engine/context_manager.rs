@@ -635,7 +635,8 @@ where
             .write_context_info(new_context.context_id(), &new_context, OP_NEW_MPC_CONTEXT)
             .await;
 
-        {
+        // A backup error leaves the primary write intact, so the cache must include it.
+        if matches!(res, Ok(()) | Err(StorageError::Backup)) {
             let mut write_guard = self.cache.write().await;
             let is_new_insert = (*write_guard).insert(*new_context.context_id());
             if !is_new_insert {
@@ -647,10 +648,17 @@ where
         }
 
         res.map_err(|e| {
+            let message = match e {
+                StorageError::Backup => format!(
+                    "Context {} was stored, but its backup update failed",
+                    new_context.context_id()
+                ),
+                e => format!("Failed to store new context: {e}"),
+            };
             MetricedError::new(
                 OP_NEW_MPC_CONTEXT,
                 Some((*new_context.context_id()).into()),
-                anyhow::anyhow!("Failed to store new context: {}", e),
+                anyhow::anyhow!(message),
                 tonic::Code::Internal,
             )
         })?;
@@ -834,6 +842,7 @@ where
 
 /// Store the new context and register it with the threshold session maker.
 /// A duplicate store leaves existing storage and session state untouched.
+/// A backup-only failure keeps the stored context and its session registration, but returns an error.
 /// Other failures trigger best-effort rollback.
 async fn atomic_update_context<
     PubS: Storage + Sync + Send + 'static,
@@ -858,6 +867,12 @@ async fn atomic_update_context<
 
     match (res1, res2) {
         (Ok(_), Ok(_)) => (),
+        (Err(StorageError::Backup), Ok(_)) => {
+            // The primary write and session registration succeeded; only the backup failed.
+            anyhow::bail!(
+                "Context {context_id} was stored and registered, but its backup update failed"
+            );
+        }
         (storage_res, session_res) => {
             // Say which half failed and why; both errors are otherwise lost to the rollback.
             let cause = match (storage_res.err(), session_res.err()) {
