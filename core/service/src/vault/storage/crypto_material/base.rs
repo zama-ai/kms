@@ -739,7 +739,7 @@ where
     }
 
     /// Stores a newly generated FHE key and caches its private material.
-    /// Rejects an existing public key or private entry at this epoch rather than mixing key material.
+    /// Rejects existing FHE public material or a private entry at this epoch rather than mixing key material.
     /// Callers must serialize writes to the same key until this method returns.
     ///
     /// Note that backup errors are not treated as fatal since the keys are safely stored.
@@ -761,14 +761,23 @@ where
         for<'a> <PrivKeyData as Versionize>::Versioned<'a>: Send + Sync,
     {
         // Unlike resharing, a complete key write must not reuse either half of an old pair.
-        let public_exists = self
-            .data_exists(key_id, &[PubDataType::PublicKey], &[])
-            .await
-            .map_err(|e| StorageError::Other(e.to_string()))?;
+        for public_type in [
+            PubDataType::PublicKey,
+            PubDataType::ServerKey,
+            PubDataType::CompressedXofKeySet,
+        ] {
+            if self
+                .data_exists(key_id, &[public_type], &[])
+                .await
+                .map_err(|e| StorageError::Other(e.to_string()))?
+            {
+                return Err(StorageError::Duplicate);
+            }
+        }
         let private_exists = self
             .data_exists_at_epoch(key_id, epoch_id, &[], &[priv_data_type])
             .await?;
-        if public_exists || private_exists {
+        if private_exists {
             return Err(StorageError::Duplicate);
         }
 
