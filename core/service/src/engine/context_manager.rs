@@ -284,16 +284,17 @@ where
             )
         })?;
 
+        // Held for the same reason `inner_new_custodian_context` holds it, and taken before the
+        // meta-store permit as there. Without it, a setup in flight may already have moved the
+        // keychain to its new context while the anchor still names the old one. The guards below
+        // would then read a state that belongs to neither.
+        let _context_guard = self.crypto_storage.custodian_context_lock.lock().await;
         let permit = lock_entry_in_meta_store(
             &self.custodian_meta_store,
             &context_id,
             OP_DESTROY_CUSTODIAN_CONTEXT,
         )
         .await?;
-        // Held for the same reason `inner_new_custodian_context` holds it: without it a setup in
-        // flight has already moved the keychain to its new context while the anchor still names
-        // the old one, and the guards below would read a state that belongs to neither.
-        let _context_guard = self.crypto_storage.custodian_context_lock.lock().await;
         // Refuse to destroy the context this node backs up under. Private storage is the authority
         // on that; the keychain is a cache a setup in flight may already have moved.
         if read_custodian_context_anchor(&*self.crypto_storage.private_storage.lock().await)
@@ -381,12 +382,10 @@ where
             Some(ref backup_vault) => backup_vault,
             None => return Err(anyhow::anyhow!("Backup vault is not configured")),
         };
-        // Serialize whole setups against each other. The meta-store permit below is keyed by
-        // context id, so two setups for *different* ids would otherwise interleave: the second
-        // one's pre-setup snapshot could capture the first one's half-applied keychain state and
-        // its rollback would then restore that over the first one's result. Held across
-        // `update_backup_vault`, which is the expensive part, but only custodian lifecycle
-        // operations contend for it and none may overlap.
+        // Hold this through setup and rollback. Other setups must not snapshot temporary keychain
+        // state, and destruction or recovery must not change the context that rollback would
+        // restore. Setup and destruction take it before metadata locks and hold it across storage
+        // I/O.
         let _context_guard = self.crypto_storage.custodian_context_lock.lock().await;
         let mut rng = self.base_kms.new_rng();
         // Generate asymmetric keys for the operator to use to encrypt the backup

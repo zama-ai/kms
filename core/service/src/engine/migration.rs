@@ -18,6 +18,8 @@ use std::str::FromStr;
 use std::sync::LazyLock;
 use threshold_execution::small_execution::prss::PRSSSetup;
 
+const DSEP_MIGRATION_COPY: hashing::DomainSep = *b"MIG_COPY";
+
 static LEGACY_DEFAULT_MPC_CONTEXT: LazyLock<ContextId> = LazyLock::new(|| {
     ContextId::from_bytes([
         1u8, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 2,
@@ -385,6 +387,7 @@ fn parse_migration_map(
     Ok(context_to_epoch_map)
 }
 
+/// Removes flat legacy PRSS entries and returns an error if any remain.
 async fn remove_old_prss_data<PrivS: StorageExt + Sync + Send>(
     priv_storage: &mut PrivS,
     kms_type: KMSType,
@@ -395,14 +398,14 @@ async fn remove_old_prss_data<PrivS: StorageExt + Sync + Send>(
     }
 
     #[expect(deprecated)]
-    let data_ids = priv_storage
-        .all_data_ids(&PrivDataType::PrssSetupCombined.to_string())
-        .await?;
+    let data_type = PrivDataType::PrssSetupCombined.to_string();
+    let data_ids = priv_storage.all_data_ids(&data_type).await?;
     for cur_id in data_ids {
-        #[expect(deprecated)]
-        priv_storage
-            .delete_data(&cur_id, &PrivDataType::PrssSetupCombined.to_string())
-            .await?;
+        priv_storage.delete_data(&cur_id, &data_type).await?;
+    }
+    let remaining = priv_storage.all_data_ids(&data_type).await?;
+    if !remaining.is_empty() {
+        anyhow::bail!("Legacy {data_type} cleanup left entries in storage: {remaining:?}");
     }
     Ok(())
 }
@@ -498,7 +501,10 @@ where
     Ok(migrated_count)
 }
 
-/// Deletes obsolete threshold keys after having confirmed that the upgrade in `migrate_fhe_keys_v0_12_to_v0_13` has been successful.
+/// Deletes obsolete keys after confirming that each epoch-scoped replacement has the same length
+/// and SHAKE-256 digest as its legacy entry. The preceding migration copies these bytes without
+/// transforming them.
+/// Returns an error if a replacement is missing or differs, and retains that legacy entry.
 async fn migrate_fhe_keys_after_0_13_x<S>(storage: &mut S, kms_type: KMSType) -> anyhow::Result<()>
 where
     S: StorageExt + Sync + Send,
@@ -518,13 +524,32 @@ where
             .data_exists_at_epoch(&key_id, &legacy_epoch_id, &data_type_str)
             .await?
         {
-            // Removes obsolete keys that have already been converted
+            let legacy_fingerprint = {
+                let data = storage.load_bytes(&key_id, &data_type_str).await?;
+                (
+                    data.len(),
+                    hashing::hash_element(&DSEP_MIGRATION_COPY, &data),
+                )
+            };
+            let migrated_fingerprint = {
+                let data = storage
+                    .load_bytes_at_epoch(&key_id, &legacy_epoch_id, &data_type_str)
+                    .await?;
+                (
+                    data.len(),
+                    hashing::hash_element(&DSEP_MIGRATION_COPY, &data),
+                )
+            };
+            if legacy_fingerprint != migrated_fingerprint {
+                anyhow::bail!(
+                    "Migrated {data_type} for key {key_id} at epoch {legacy_epoch_id} does not match the legacy entry; refusing to delete the legacy entry"
+                );
+            }
+            // The replacement was read back and matched, so the legacy entry can be removed.
             storage.delete_data(&key_id, &data_type_str).await?;
         } else {
-            tracing::error!(
-                "Legacy key {} still exists but no migrated key found at epoch {}, skipping deletion",
-                key_id,
-                legacy_epoch_id
+            anyhow::bail!(
+                "Migrated {data_type} for key {key_id} at epoch {legacy_epoch_id} is missing; refusing to delete the legacy entry"
             );
         }
     }
@@ -656,6 +681,8 @@ so there is no legacy PRSS state to migrate.",
     Ok(outcome)
 }
 
+/// Moves combined PRSS data to the current epoch ID and compares the deserialized values before
+/// deleting the legacy entry.
 async fn migrate_combined_prss_to_0_13_10<PrivS>(
     priv_storage: &mut PrivS,
 ) -> anyhow::Result<PrssCombinedEpochMigrationOutcome>
@@ -687,6 +714,18 @@ where
         &PrivDataType::PrssSetupCombined.to_string(),
     )
     .await?;
+    let migrated: PRSSSetupCombined = read_versioned_at_request_id(
+        priv_storage,
+        &(*DEFAULT_EPOCH_ID).into(),
+        #[expect(deprecated)]
+        &PrivDataType::PrssSetupCombined.to_string(),
+    )
+    .await?;
+    if migrated != prss {
+        anyhow::bail!(
+            "PRSS data under the current default epoch does not match the legacy entry; refusing to delete the legacy entry"
+        );
+    }
     priv_storage
         .delete_data(
             &(*LEGACY_DEFAULT_EPOCH_ID).into(),
@@ -702,7 +741,8 @@ where
     Ok(PrssCombinedEpochMigrationOutcome::Migrated)
 }
 
-/// Reads context under the old legacy default context ID and if it exists, re-stores it under the new default context ID.
+/// Moves the legacy context to the current ID and compares the deserialized values before deleting
+/// the legacy entry.
 async fn migrate_context_before_0_13_10<PrivS>(
     priv_storage: &mut PrivS,
 ) -> anyhow::Result<LegacyContextMigrationOutcome>
@@ -729,7 +769,13 @@ where
         &PrivDataType::ContextInfo.to_string(),
     )
     .await?;
-    // Remove old context. It is safe to do in this migration as it does not contain any critical, non restorable info
+    let migrated = read_context_at_id(priv_storage, &DEFAULT_MPC_CONTEXT).await?;
+    if migrated != context {
+        anyhow::bail!(
+            "Context under the current default ID does not match the legacy entry; refusing to delete the legacy entry"
+        );
+    }
+    // The replacement was read back and matched, so the legacy entry can be removed.
     priv_storage
         .delete_data(
             &(*LEGACY_DEFAULT_MPC_CONTEXT).into(),
@@ -818,7 +864,10 @@ where
     Ok(migrated_count)
 }
 
-/// Remove private keys stored under the legacy epoch ID
+/// Remove private keys stored under the legacy epoch ID once their current-epoch copies have the
+/// same length and SHAKE-256 digest. The preceding migration copies these bytes without
+/// transforming them.
+/// Returns an error if a replacement is missing or differs, and retains that legacy entry.
 async fn remove_old_keys_for_0_13_20<PrivS>(
     priv_storage: &mut PrivS,
     kms_type: KMSType,
@@ -843,16 +892,36 @@ where
             .data_exists_at_epoch(&key_id, &new_epoch_id, &data_type_str)
             .await?
         {
-            // Removes obsolete keys that have already been converted,
-            // specifically from the legacy epoch.
+            let legacy_fingerprint = {
+                let data = priv_storage
+                    .load_bytes_at_epoch(&key_id, &LEGACY_DEFAULT_EPOCH_ID, &data_type_str)
+                    .await?;
+                (
+                    data.len(),
+                    hashing::hash_element(&DSEP_MIGRATION_COPY, &data),
+                )
+            };
+            let migrated_fingerprint = {
+                let data = priv_storage
+                    .load_bytes_at_epoch(&key_id, &new_epoch_id, &data_type_str)
+                    .await?;
+                (
+                    data.len(),
+                    hashing::hash_element(&DSEP_MIGRATION_COPY, &data),
+                )
+            };
+            if legacy_fingerprint != migrated_fingerprint {
+                anyhow::bail!(
+                    "Migrated {data_type} for key {key_id} at epoch {new_epoch_id} does not match the legacy entry; refusing to delete the legacy entry"
+                );
+            }
+            // The replacement was read back and matched, so the legacy entry can be removed.
             priv_storage
                 .delete_data_at_epoch(&key_id, &LEGACY_DEFAULT_EPOCH_ID, &data_type_str)
                 .await?;
         } else {
-            tracing::error!(
-                "No key {} under epoch ID {} appears to exist. This implies an inconsistent file system",
-                key_id,
-                new_epoch_id
+            anyhow::bail!(
+                "Migrated {data_type} for key {key_id} at epoch {new_epoch_id} is missing; refusing to delete the legacy entry"
             );
         }
     }
@@ -861,6 +930,8 @@ where
 
 #[cfg(test)]
 mod tests {
+    mod side_effects;
+
     use super::migrate_public_verification_material;
     use super::*;
     use crate::conf::ContextEpochAssociation;
@@ -1410,6 +1481,26 @@ mod tests {
     async fn test_after_0_13_x_no_legacy_ram() {
         let mut storage = RamStorage::new();
         test_migrate_fhe_keys_after_0_13_x_no_legacy(&mut storage).await;
+    }
+
+    /// A missing replacement rejects cleanup and preserves the non-epoched legacy key.
+    #[tokio::test]
+    async fn test_after_0_13_x_rejects_without_new_epoch_ram() {
+        let mut storage = RamStorage::new();
+        let key_id = derive_request_id("missing_migrated_fhe_key").unwrap();
+        let data_type = PrivDataType::FheKeyInfo.to_string();
+        let data = vec![9, 8, 7];
+        storage
+            .store_bytes(&data, &key_id, &data_type)
+            .await
+            .unwrap();
+
+        let error = migrate_fhe_keys_after_0_13_x(&mut storage, KMSType::Threshold)
+            .await
+            .unwrap_err();
+
+        assert!(error.to_string().contains("is missing"));
+        assert_eq!(storage.load_bytes(&key_id, &data_type).await.unwrap(), data);
     }
 
     #[tokio::test]
@@ -2190,7 +2281,7 @@ mod tests {
     }
 
     /// Test that legacy epoch keys are NOT deleted when no DEFAULT_EPOCH_ID counterpart exists
-    pub async fn test_remove_old_keys_for_0_13_20_skips_without_new_epoch<
+    pub async fn test_remove_old_keys_for_0_13_20_rejects_without_new_epoch<
         S: StorageExt + Sync + Send,
     >(
         storage: &mut S,
@@ -2208,16 +2299,18 @@ mod tests {
             .await
             .unwrap();
 
-        remove_old_keys_for_0_13_20(storage, KMSType::Threshold)
+        let error = remove_old_keys_for_0_13_20(storage, KMSType::Threshold)
             .await
-            .unwrap();
+            .unwrap_err();
 
+        assert!(error.to_string().contains("is missing"));
         // Legacy epoch key should still exist (not deleted because no DEFAULT_EPOCH_ID copy)
-        assert!(
+        assert_eq!(
             storage
-                .data_exists_at_epoch(&key_id, &LEGACY_DEFAULT_EPOCH_ID, &data_type)
+                .load_bytes_at_epoch(&key_id, &LEGACY_DEFAULT_EPOCH_ID, &data_type)
                 .await
-                .unwrap()
+                .unwrap(),
+            data
         );
     }
 
@@ -2241,9 +2334,9 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_remove_old_keys_skips_without_new_epoch_ram() {
+    async fn test_remove_old_keys_rejects_without_new_epoch_ram() {
         let mut storage = RamStorage::new();
-        test_remove_old_keys_for_0_13_20_skips_without_new_epoch(&mut storage).await;
+        test_remove_old_keys_for_0_13_20_rejects_without_new_epoch(&mut storage).await;
     }
 
     // File storage tests — remove_old_keys_for_0_13_20
@@ -2269,10 +2362,10 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_remove_old_keys_skips_without_new_epoch_file() {
+    async fn test_remove_old_keys_rejects_without_new_epoch_file() {
         let temp_dir = tempfile::tempdir().unwrap();
         let mut storage = FileStorage::new(Some(temp_dir.path()), StorageType::PRIV, None).unwrap();
-        test_remove_old_keys_for_0_13_20_skips_without_new_epoch(&mut storage).await;
+        test_remove_old_keys_for_0_13_20_rejects_without_new_epoch(&mut storage).await;
     }
 
     // ── Tests for migrate_to_0_13_x (orchestrator) ──
@@ -3432,13 +3525,13 @@ mod tests {
         }
 
         #[tokio::test]
-        async fn test_remove_old_keys_skips_without_new_epoch_s3() {
+        async fn test_remove_old_keys_rejects_without_new_epoch_s3() {
             let mut storage = create_s3_storage(
                 StorageType::PRIV,
-                std::stringify!(test_remove_old_keys_skips_without_new_epoch_s3),
+                std::stringify!(test_remove_old_keys_rejects_without_new_epoch_s3),
             )
             .await;
-            test_remove_old_keys_for_0_13_20_skips_without_new_epoch(&mut storage).await;
+            test_remove_old_keys_for_0_13_20_rejects_without_new_epoch(&mut storage).await;
         }
     }
 }

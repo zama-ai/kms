@@ -352,12 +352,18 @@ vault entries written under the failed id are purged
 whose recovery material was never written, making them unrecoverable. One failure is judged by the
 anchor instead: a write that reports an error is read back, and if the anchor names the new context
 the setup succeeded; if it cannot be read, the material is kept for whichever anchor wins and the
-keychain is emptied, so the node makes no backups until the next boot reads the anchor. Setup,
-destruction and recovery are serialized by `custodian_context_lock` for the same reason. The anchor
-is written last, after the material, so a crash anywhere before it leaves the previous context
-anchored rather than a half-installed one. The setup runs on the node's task tracker, so neither a
-dropped request nor a shutdown cuts it short between the keychain switch and the anchor write, and
-a setup requested once a shutdown has begun is refused.
+keychain is emptied, so the node makes no backups until the next boot reads the anchor. Cleanup
+checks that no backup entries remain under the failed context ID. If the storage backend reports a
+successful deletion but entries remain, rollback emits a `tracing::error!` and preserves the original
+setup or write error. Rollback cannot repair a backend that did not apply the deletion, so these
+leftover entries require operator attention. During custodian-context destruction, the same check
+must pass before recovery material and lifecycle state are removed. Setup, destruction and recovery
+are serialized by `custodian_context_lock`. Setup holds it until completion, including rollback on
+failure, so destruction cannot remove the previous context while setup might still restore its
+keychain state. The anchor is written last, after the material, so a crash anywhere before it leaves
+the previous context anchored rather than a half-installed one. The setup runs on the node's task
+tracker, so neither a dropped request nor a shutdown cuts it short between the keychain switch and
+the anchor write, and a setup requested once a shutdown has begun is refused.
 Destruction still runs on the request itself; a dropped one leaves a context that a repeated
 destroy finishes.
 
@@ -465,6 +471,8 @@ The current loader requires the ECDSA key and attaches the seed when one is pres
 On a threshold node, a flat `PrssSetup` entry is foreign material and fails boot. The 0.15
 migration leaves flat `PrssSetupCombined` entries next to their `EpochData`; those remain accepted
 until the 0.16 migration removes them. A centralized node rejects both PRSS types and `EpochData`.
+The 0.16 cleanup re-lists flat `PrssSetupCombined` entries after deletion and returns an error if any remain.
+A successful delete response alone does not count as completed cleanup.
 
 Custodian backup readiness is deliberately *not* part of this. It is a property of the vault's
 keychain rather than of the published material, and the backup path already reports it:
