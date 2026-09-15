@@ -1436,6 +1436,7 @@ async fn gen_recovery_validation(
 
 #[cfg(test)]
 mod tests {
+    mod custodian_side_effects;
     use crate::engine::rng_source::test_rng_source;
     mod lifecycle_side_effects;
 
@@ -1496,9 +1497,31 @@ mod tests {
         PrivateSigKey,
         CryptoMaterialStorage<RamStorage, RamStorage>,
     ) {
-        let priv_storage = Arc::new(Mutex::new(RamStorage::new()));
-        let pub_storage = Arc::new(Mutex::new(RamStorage::new()));
-        let backup_proxy = StorageProxy::from(ram::RamStorage::new());
+        setup_crypto_storage_with_stores(
+            make_default_context,
+            RamStorage::new(),
+            RamStorage::new(),
+            StorageProxy::from(ram::RamStorage::new()),
+        )
+        .await
+    }
+
+    async fn setup_crypto_storage_with_stores<PubS, PrivS>(
+        make_default_context: bool,
+        pub_storage: PubS,
+        priv_storage: PrivS,
+        backup_proxy: StorageProxy,
+    ) -> (
+        PublicSigKey,
+        PrivateSigKey,
+        CryptoMaterialStorage<PubS, PrivS>,
+    )
+    where
+        PubS: Storage + Sync + Send + 'static,
+        PrivS: StorageExt + Sync + Send + 'static,
+    {
+        let priv_storage = Arc::new(Mutex::new(priv_storage));
+        let pub_storage = Arc::new(Mutex::new(pub_storage));
         let keychain_proxy = KeychainProxy::from(secretsharing::SecretShareKeychain::new(
             AesRng::seed_from_u64(1244),
         ));
@@ -1508,7 +1531,7 @@ mod tests {
         }));
 
         let crypto_storage =
-            CryptoMaterialStorage::<_, _>::new(priv_storage, pub_storage, Some(backup_vault));
+            CryptoMaterialStorage::<_, _>::new(pub_storage, priv_storage, Some(backup_vault));
 
         // store private signing key
         let (pk, sk) = gen_sig_keys(&mut OsRng);

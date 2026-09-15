@@ -235,7 +235,7 @@ pub(super) fn attested_session_maker(rng: AesRng) -> SessionMaker {
         AttestedVerifier::new(
             None,
             false,
-            #[cfg(feature = "testing")]
+            #[cfg(feature = "insecure")]
             true,
         )
         .unwrap(),

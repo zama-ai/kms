@@ -561,8 +561,10 @@ The [Cargo.toml](../Cargo.toml) should be considered the ground truth.
   (`docker-compose-core-base.yml`, `docker-compose-core-threshold.yml`,
   `docker-compose-core-centralized.yml`) for a local multi-party network
   plus S3-mock, and telemetry sidecars.
-- **Cargo feature flags** — `testing` enables test-only APIs; `slow_tests`
-  enables the long-running suite.
+- **Cargo feature flags** — `testing` exposes test helper APIs across crate boundaries;
+  `slow_tests` enables the long-running suite. `kms/insecure` enables development RPCs
+  and mock enclave support. It forwards `threshold-networking/insecure`, which permits
+  plaintext transport and mock attestation.
 
 See the "Building and testing" section of [README.md](../README.md) for the
 exact commands.

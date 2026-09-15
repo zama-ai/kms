@@ -107,7 +107,7 @@ pub struct AttestedVerifier {
     // TLS identity is based on the decryption signing key, and no traditional
     // PKI is used.
     pcr8_expected: bool,
-    #[cfg(feature = "testing")]
+    #[cfg(feature = "insecure")]
     mock_enclave: bool,
 }
 
@@ -124,7 +124,7 @@ impl std::fmt::Debug for AttestedVerifier {
                 &self.user_data_verifier.is_some(),
             )
             .field("pcr8_expected", &self.pcr8_expected);
-        #[cfg(feature = "testing")]
+        #[cfg(feature = "insecure")]
         let f = f.field("mock_enclave", &self.mock_enclave);
         f.finish()
     }
@@ -134,7 +134,7 @@ impl AttestedVerifier {
     pub fn new(
         user_data_verifier: Option<Arc<UserDataVerifier>>,
         pcr8_expected: bool,
-        #[cfg(feature = "testing")] mock_enclave: bool,
+        #[cfg(feature = "insecure")] mock_enclave: bool,
     ) -> anyhow::Result<Self> {
         Ok(Self {
             root_hint_subjects: Vec::new(),
@@ -150,7 +150,7 @@ Crypto provider should exist at this point"
             release_pcrs: RwLock::new(HashMap::new()),
             user_data_verifier,
             pcr8_expected,
-            #[cfg(feature = "testing")]
+            #[cfg(feature = "insecure")]
             mock_enclave,
         })
     }
@@ -302,9 +302,9 @@ impl ServerCertVerifier for AttestedVerifier {
                 );
             })?;
         // check the bundled attestation document and EIF signing certificate
-        #[cfg(feature = "testing")]
+        #[cfg(feature = "insecure")]
         let do_validation = !&self.mock_enclave;
-        #[cfg(not(feature = "testing"))]
+        #[cfg(not(feature = "insecure"))]
         let do_validation = true;
 
         if do_validation && !release_pcrs.is_empty() {
@@ -404,9 +404,9 @@ impl ClientCertVerifier for AttestedVerifier {
             })?;
 
         // check the bundled attestation document and EIF signing certificate
-        #[cfg(feature = "testing")]
+        #[cfg(feature = "insecure")]
         let do_validation = !&self.mock_enclave;
-        #[cfg(not(feature = "testing"))]
+        #[cfg(not(feature = "insecure"))]
         let do_validation = true;
 
         if do_validation && !release_pcrs.is_empty() {
