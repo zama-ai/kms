@@ -231,7 +231,7 @@ More specifically the following steps must be done:
 2. Add a new custodian context.
   After the custodians have executed their setup locally, the KMS must be made aware of those custodians. This will be done using the CLI tool as detailed in [this section](#Custodian-context).
 
-NOTE: You may have multiple custodian contexts. However, the system only makes backups for a single one: the context it was last set up with, which each node records in its own private storage. Restarting never changes it.
+NOTE: You may have multiple custodian contexts. However, the system only makes backups for the context recorded in each node's private storage. A successful context setup or recovery updates this record; restarting does not change it.
 
 #### Recovery
 
