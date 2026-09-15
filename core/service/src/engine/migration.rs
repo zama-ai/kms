@@ -143,9 +143,10 @@ where
 {
     // Complete migrations from releases before v0.15 first.
     migrate_to_0_13_20(priv_storage, kms_type).await?;
-    migrate_crs_to_0_15_x(priv_storage).await?;
     migrate_prss_to_epoch(priv_storage, kms_type, migration_config).await?;
-    migrate_public_verification_material(priv_storage, pub_storage).await
+    migrate_public_verification_material(priv_storage, pub_storage).await?;
+    // Remove legacy CRS entries only after the other migrations succeed.
+    migrate_crs_to_0_15_x(priv_storage).await
 }
 
 /// Moves legacy private CRS metadata into the default epoch.
@@ -164,7 +165,7 @@ where
         .into_iter()
         .collect();
     // Report conflicts in the same order on every startup.
-    legacy_crs_ids.sort_by(|left, right| left.as_bytes().cmp(right.as_bytes()));
+    legacy_crs_ids.sort();
 
     for crs_id in legacy_crs_ids {
         let legacy_data = priv_storage.load_bytes(&crs_id, &data_type).await?;
@@ -176,9 +177,14 @@ where
             .await?;
 
         if migrated_data != legacy_data {
+            tracing::error!(
+                "CRS metadata {crs_id} at epoch {} does not match its legacy entry; keeping the legacy entry",
+                *DEFAULT_EPOCH_ID,
+            );
             if write_outcome == StoreWriteOutcome::Created {
                 // A faithful backend reads back the bytes it just accepted. If it does not, remove
                 // the bad copy while the legacy entry is still available so a retry can start cleanly.
+                // FailingRamStorage cannot simulate this corruption.
                 priv_storage
                     .delete_data_at_epoch(&crs_id, &DEFAULT_EPOCH_ID, &data_type)
                     .await?;
