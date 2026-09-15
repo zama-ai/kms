@@ -5,8 +5,8 @@ use crate::{
     consts::DEFAULT_EPOCH_ID,
     engine::base::{CrsGenMetadata, derive_request_id},
     vault::storage::{
-        StorageExt, StorageType, file::FileStorage, ram::RamStorage,
-        read_all_data_from_all_epochs_versioned, store_versioned_at_request_id,
+        Storage, StorageExt, StorageReader, StorageReaderExt, StorageType, file::FileStorage,
+        ram::RamStorage, read_all_data_from_all_epochs_versioned, store_versioned_at_request_id,
     },
 };
 use kms_grpc::{
@@ -15,6 +15,49 @@ use kms_grpc::{
     rpc_types::{KMSType, PrivDataType},
 };
 use std::collections::HashMap;
+
+/// A missing PRSS migration config stops startup before legacy CRS metadata is removed.
+#[tokio::test]
+async fn failed_prss_migration_keeps_legacy_crs_metadata() {
+    let mut public = RamStorage::new();
+    let mut private = RamStorage::new();
+    let crs_id = derive_request_id("crs_before_prss_failure").unwrap();
+    let crs_type = PrivDataType::CrsInfo.to_string();
+    private
+        .store_bytes(b"legacy CRS", &crs_id, &crs_type)
+        .await
+        .unwrap();
+    // The config check needs only the presence of legacy PRSS data, not its contents.
+    #[expect(deprecated)]
+    private
+        .store_bytes(
+            b"legacy PRSS",
+            &crs_id,
+            &PrivDataType::PrssSetupCombined.to_string(),
+        )
+        .await
+        .unwrap();
+
+    let error = migrate_to_0_15_x(&mut public, &mut private, KMSType::Threshold, None)
+        .await
+        .unwrap_err();
+
+    assert!(
+        error
+            .to_string()
+            .contains("Migration config must be provided")
+    );
+    assert_eq!(
+        private.load_bytes(&crs_id, &crs_type).await.unwrap(),
+        b"legacy CRS"
+    );
+    assert!(
+        !private
+            .data_exists_at_epoch(&crs_id, &DEFAULT_EPOCH_ID, &crs_type)
+            .await
+            .unwrap()
+    );
+}
 
 async fn assert_startup_migrates_legacy_crs_metadata<S>(mut private_storage: S)
 where

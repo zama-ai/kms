@@ -434,21 +434,23 @@ where
             Some((_, t)) => vec![t],
             None => vec![],
         };
-        // First ensure that the data to be written does not already exist
-        if let Some(inner_epoch_id) = epoch_id
-            && self
-                .data_exists_at_epoch(req_id, inner_epoch_id, &pub_type, &priv_type)
-                .await?
-        {
-            return Err(StorageError::Duplicate);
-        }
         // An epoch-scoped write must not be blocked by legacy data at the flat path.
-        if epoch_id.is_none()
-            && self
+        let private_epoch = epoch_id.filter(|_| {
+            priv_type
+                .first()
+                .is_some_and(|data_type| private_data_is_epoch_scoped(*data_type))
+        });
+        let already_exists = match private_epoch {
+            Some(epoch_id) => {
+                self.data_exists_at_epoch(req_id, epoch_id, &pub_type, &priv_type)
+                    .await?
+            }
+            None => self
                 .data_exists(req_id, &pub_type, &priv_type)
                 .await
-                .map_err(|e| StorageError::Other(e.to_string()))?
-        {
+                .map_err(|e| StorageError::Other(e.to_string()))?,
+        };
+        if already_exists {
             return Err(StorageError::Duplicate);
         }
 

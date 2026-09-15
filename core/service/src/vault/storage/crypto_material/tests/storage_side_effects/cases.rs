@@ -330,6 +330,43 @@ async fn failed_context_info_store_restores_private_storage(#[case] fault_phase:
     );
 }
 
+/// Context writes reject an existing flat entry even when the caller supplies an epoch.
+#[rstest::rstest]
+#[case::without_epoch(None)]
+#[case::with_epoch(Some(*DEFAULT_EPOCH_ID))]
+#[tokio::test]
+async fn context_info_write_rejects_a_duplicate(#[case] epoch_id: Option<EpochId>) {
+    let data_id = derive_request_id("duplicate_context_info").unwrap();
+    let data_type = PrivDataType::ContextInfo.to_string();
+    let storage =
+        CryptoMaterialStorage::from(FailingRamStorage::new(), FailingRamStorage::new(), None);
+    let before = {
+        let mut private = storage.private_storage.lock().await;
+        store_versioned_at_request_id(&mut *private, &data_id, &TestType { i: 1 }, &data_type)
+            .await
+            .unwrap();
+        private.clear_events();
+        private.state()
+    };
+
+    let result = storage
+        .write_all::<TestType, TestType>(
+            &data_id,
+            epoch_id.as_ref(),
+            None,
+            Some((&TestType { i: 2 }, PrivDataType::ContextInfo)),
+            false,
+            TEST_METRIC,
+        )
+        .await;
+
+    assert_eq!(result, Err(StorageError::Duplicate));
+    let private = storage.private_storage.lock().await;
+    assert_eq!(private.state(), before);
+    assert!(private.events().is_empty());
+    assert!(storage.public_storage.lock().await.events().is_empty());
+}
+
 /// Legacy flat CRS metadata does not block writing metadata for a new epoch.
 #[tokio::test]
 async fn legacy_crs_info_does_not_block_an_epoch_write() {
