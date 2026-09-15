@@ -387,6 +387,7 @@ fn parse_migration_map(
     Ok(context_to_epoch_map)
 }
 
+/// Removes flat legacy PRSS entries and returns an error if any remain.
 async fn remove_old_prss_data<PrivS: StorageExt + Sync + Send>(
     priv_storage: &mut PrivS,
     kms_type: KMSType,
@@ -397,14 +398,14 @@ async fn remove_old_prss_data<PrivS: StorageExt + Sync + Send>(
     }
 
     #[expect(deprecated)]
-    let data_ids = priv_storage
-        .all_data_ids(&PrivDataType::PrssSetupCombined.to_string())
-        .await?;
+    let data_type = PrivDataType::PrssSetupCombined.to_string();
+    let data_ids = priv_storage.all_data_ids(&data_type).await?;
     for cur_id in data_ids {
-        #[expect(deprecated)]
-        priv_storage
-            .delete_data(&cur_id, &PrivDataType::PrssSetupCombined.to_string())
-            .await?;
+        priv_storage.delete_data(&cur_id, &data_type).await?;
+    }
+    let remaining = priv_storage.all_data_ids(&data_type).await?;
+    if !remaining.is_empty() {
+        anyhow::bail!("Legacy {data_type} cleanup left entries in storage: {remaining:?}");
     }
     Ok(())
 }

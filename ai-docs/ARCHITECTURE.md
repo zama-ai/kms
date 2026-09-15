@@ -438,6 +438,8 @@ The current loader requires the ECDSA key and attaches the seed when one is pres
 On a threshold node, a flat `PrssSetup` entry is foreign material and fails boot. The 0.15
 migration leaves flat `PrssSetupCombined` entries next to their `EpochData`; those remain accepted
 until the 0.16 migration removes them. A centralized node rejects both PRSS types and `EpochData`.
+The 0.16 cleanup re-lists flat `PrssSetupCombined` entries after deletion and returns an error if any remain.
+A successful delete response alone does not count as completed cleanup.
 
 Custodian backup readiness is deliberately *not* part of this. It is a property of the vault's
 keychain rather than of the published material, and the backup path already reports it:
