@@ -48,12 +48,12 @@ use kms_lib::{
         },
     },
     cryptography::{
+        composite_mlkem1024_p384::{MlKem1024P384PrivateKey, MlKem1024P384PublicKey},
         encryption::{
             Encryption, PkeScheme, PkeSchemeType, UnifiedCipher, UnifiedPrivateEncKey,
             UnifiedPublicEncKey,
         },
         hybrid_ml_kem::HybridKemCt,
-        mlkem1024_p384::{MlKem1024P384PrivateKey, MlKem1024P384PublicKey},
         signatures::{
             NodeSigningIdentity, PrivateSigKey, PublicSigKey, RootSigningSeed, SigningSchemeType,
             UnifiedPublicSigKey, compute_eip712_signature, gen_sig_keys,

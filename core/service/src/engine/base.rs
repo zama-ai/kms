@@ -2023,7 +2023,7 @@ pub(crate) mod tests {
         )
         .unwrap();
 
-        // Several choices of schemes, including a classic + post-quantum hybrid.
+        // Several choices of schemes, including a classic + post-quantum composite.
         let choices: Vec<Vec<SigningSchemeType>> = vec![
             vec![SigningSchemeType::Ecdsa256k1],
             vec![SigningSchemeType::Ed25519],

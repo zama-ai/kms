@@ -1,10 +1,10 @@
 use crate::{
     consts::SAFE_SER_SIZE_LIMIT,
     cryptography::{
+        composite_mlkem1024_p384::{MlKem1024P384PrivateKey, MlKem1024P384PublicKey},
         error::CryptographyError,
-        hybrid_ml_kem,
+        hybrid_composite_ml_kem, hybrid_ml_kem,
         hybrid_ml_kem::HybridKemCt,
-        mlkem1024_p384::{MlKem1024P384PrivateKey, MlKem1024P384PublicKey},
         zeroizing_writer::ZeroizingWriter,
     },
 };
@@ -39,7 +39,7 @@ pub enum UnifiedPublicEncKey {
         note = "Use MlKem512 instead. MlKem1024 is only for legacy compatibility with relayer-sdk v0.2.0-0 and older."
     )]
     MlKem1024(PublicEncKey<ml_kem::MlKem1024>),
-    /// Hybrid post-quantum KEM combining ML-KEM-1024 and P-384.
+    /// Composite post-quantum KEM combining ML-KEM-1024 and P-384.
     MlKem1024P384(MlKem1024P384PublicKey),
 }
 
@@ -235,7 +235,7 @@ impl Encrypt for UnifiedPublicEncKey {
                 return Err(CryptographyError::MlKem1024Unsupported);
             }
             UnifiedPublicEncKey::MlKem1024P384(public_enc_key) => (
-                hybrid_ml_kem::enc_ml_kem_1024_p384(
+                hybrid_composite_ml_kem::enc_ml_kem_1024_p384(
                     rng,
                     serialized_msg.as_slice(),
                     public_enc_key,
@@ -498,7 +498,10 @@ impl Decrypt for UnifiedPrivateEncKey {
                 return Err(CryptographyError::MlKem1024Unsupported);
             }
             UnifiedPrivateEncKey::MlKem1024P384(private_enc_key) => {
-                hybrid_ml_kem::dec_ml_kem_1024_p384(cipher.cipher.to_owned(), private_enc_key)?
+                hybrid_composite_ml_kem::dec_ml_kem_1024_p384(
+                    cipher.cipher.to_owned(),
+                    private_enc_key,
+                )?
             }
         };
         // Keep plaintext guarded through deserialization.
@@ -526,7 +529,7 @@ pub enum PkeSchemeType {
         note = "Use MlKem512 instead. MlKem1024 is only for legacy compatibility with relayer-sdk v0.2.0-0 and older."
     )]
     MlKem1024,
-    /// Hybrid post-quantum KEM combining ML-KEM-1024 and P-384.
+    /// Composite post-quantum KEM combining ML-KEM-1024 and P-384.
     MlKem1024P384,
 }
 
@@ -593,7 +596,7 @@ impl<'a, R: CryptoRng + RngCore + Send + Sync> PkeScheme for Encryption<'a, R> {
             }
             PkeSchemeType::MlKem1024P384 => {
                 let (private_key, public_key) =
-                    crate::cryptography::mlkem1024_p384::keygen(&mut self.rng)?;
+                    crate::cryptography::composite_mlkem1024_p384::keygen(&mut self.rng)?;
                 (
                     UnifiedPrivateEncKey::MlKem1024P384(private_key),
                     UnifiedPublicEncKey::MlKem1024P384(public_key),

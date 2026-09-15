@@ -15,6 +15,7 @@ use crate::cryptography::encryption::{
     HasPkeScheme, PkeSchemeType, UnifiedPrivateEncKey, UnifiedPublicEncKey,
 };
 use crate::cryptography::error::CryptographyError;
+use crate::cryptography::hybrid_composite_ml_kem;
 use crate::cryptography::hybrid_ml_kem::{self, HybridKemCt};
 use crate::cryptography::signatures::{
     HasSigningScheme, PrivateSigKey, PublicSigKey, SIG_SIZE, Signature, SigningSchemeType,
@@ -508,7 +509,7 @@ fn inner_signcryption(
             return Err(CryptographyError::MlKem1024Unsupported);
         }
         UnifiedPublicEncKey::MlKem1024P384(public_enc_key) => {
-            hybrid_ml_kem::enc_ml_kem_1024_p384(rng, &to_encrypt, public_enc_key)
+            hybrid_composite_ml_kem::enc_ml_kem_1024_p384(rng, &to_encrypt, public_enc_key)
         }
     }?;
     // LEGACY: approach to serialization
@@ -629,7 +630,7 @@ fn inner_unsigncrypt(
             return Err(CryptographyError::MlKem1024Unsupported);
         }
         UnifiedPrivateEncKey::MlKem1024P384(dec_key) => {
-            hybrid_ml_kem::dec_ml_kem_1024_p384(deserialized_payload, dec_key)
+            hybrid_composite_ml_kem::dec_ml_kem_1024_p384(deserialized_payload, dec_key)
         }
     }?;
     let (msg, sig) = parse_msg(decrypted_plaintext, unsign_key.sender_verf_key)?;
@@ -740,7 +741,9 @@ pub(crate) fn insecure_decrypt_ignoring_signature(
         UnifiedPrivateEncKey::MlKem1024(_) => {
             return Err(CryptographyError::MlKem1024Unsupported);
         }
-        UnifiedPrivateEncKey::MlKem1024P384(dk) => hybrid_ml_kem::dec_ml_kem_1024_p384(cipher, dk)?,
+        UnifiedPrivateEncKey::MlKem1024P384(dk) => {
+            hybrid_composite_ml_kem::dec_ml_kem_1024_p384(cipher, dk)?
+        }
     };
 
     // strip off the signature bytes (these are ignored here)

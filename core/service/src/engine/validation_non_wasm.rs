@@ -2431,12 +2431,12 @@ mod tests {
 
         // A request that also asked for ECDSA is not satisfied by the
         // post-quantum entry alone.
-        let hybrid = request_for(vec![
+        let composite = request_for(vec![
             kms_grpc::kms::v1::SigningSchemeType::Mldsa65 as i32,
             kms_grpc::kms::v1::SigningSchemeType::Ecdsa256k1 as i32,
         ]);
-        let hybrid_ctx = ctx_for(Some(&hybrid));
-        assert!(!verify(&hybrid_ctx, &extra_data));
+        let composite_ctx = ctx_for(Some(&composite));
+        assert!(!verify(&composite_ctx, &extra_data));
 
         // Neither is an absent request, which names nothing and so means ECDSA:
         // the domain that entry needs is missing, and the list has no ECDSA entry

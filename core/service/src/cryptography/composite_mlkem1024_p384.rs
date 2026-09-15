@@ -1,4 +1,4 @@
-//! MLKEM1024-P384 hybrid post-quantum KEM.
+//! MLKEM1024-P384 composite post-quantum KEM.
 //!
 //! This implements the MLKEM1024-P384 construction from section 4.3 of
 //! <https://www.ietf.org/archive/id/draft-irtf-cfrg-concrete-hybrid-kems-03.html>.
@@ -42,7 +42,7 @@ pub(crate) const SHARED_SECRET_LENGTH: usize = 32;
 type MlKemPublicKey = <MlKem1024 as KemCore>::EncapsulationKey;
 type MlKemPrivateKey = <MlKem1024 as KemCore>::DecapsulationKey;
 
-/// Public key for the MLKEM1024-P384 hybrid KEM.
+/// Public key for the MLKEM1024-P384 composite KEM.
 #[derive(Clone, Debug)]
 pub struct MlKem1024P384PublicKey {
     ml_kem_key: MlKemPublicKey,
@@ -215,7 +215,7 @@ impl Unversionize for MlKem1024P384PublicKey {
     }
 }
 
-/// Private key for the MLKEM1024-P384 hybrid KEM.
+/// Private key for the MLKEM1024-P384 composite KEM.
 ///
 /// The 32-byte seed is the canonical private-key encoding. The component keys
 /// are re-derived when they are needed, keeping the serialized key compact.

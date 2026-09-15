@@ -99,11 +99,11 @@ The service crate is the main surface area. Key subdirectories under
   of long-term signing / root keys, used for disaster recovery. See
   [Backup and recovery](#backup-and-recovery) below.
 - [cryptography/](../core/service/src/cryptography/) — AES-GCM-SIV, signcryption,
-  hybrid ML-KEM (post-quantum), MLKEM1024-P384 (post-quantum plus P-384), and
-  attestation (Nitro NSM + certificate chain verification). The
-  MLKEM1024-P384 scheme is available through the lower-level encryption and
-  signcryption types. User decryption accepts ML-KEM-512 only.
-  Signing lives under
+  hybrid ML-KEM (post-quantum), MLKEM1024-P384 (a composite of post-quantum
+  ML-KEM-1024 and classical P-384), and attestation (Nitro NSM + certificate
+  chain verification). The MLKEM1024-P384 scheme is available through the
+  lower-level encryption and signcryption types. User decryption accepts
+  ML-KEM-512 only. Signing lives under
   [cryptography/signing/](../core/service/src/cryptography/signing/): a
   scheme-tagged `Signature` plus one backend per scheme — ECDSA/secp256k1
   (`ecdsa`, the legacy default and EIP-712 home), EdDSA/ed25519 (`eddsa`), and
