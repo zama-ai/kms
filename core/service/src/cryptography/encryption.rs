@@ -76,7 +76,9 @@ impl UnifiedPublicEncKey {
     ///
     /// User decryption accepts ML-KEM-512 and nothing else. Every other scheme is
     /// rejected at this edge, so no other variant reaches the signcryption code.
-    pub fn deserialize_and_validate(bytes: &[u8]) -> Result<Self, CryptographyError> {
+    pub fn deserialize_and_validate_hybrid_ml_kem_512(
+        bytes: &[u8],
+    ) -> Result<Self, CryptographyError> {
         let key: Self = tfhe::safe_serialization::safe_deserialize(
             std::io::Cursor::new(bytes),
             SAFE_SER_SIZE_LIMIT,
@@ -483,8 +485,6 @@ impl Decrypt for UnifiedPrivateEncKey {
         &self,
         cipher: &UnifiedCipher,
     ) -> Result<T, CryptographyError> {
-        // Same guard as `inner_unsigncrypt`: the scheme tag is not authenticated,
-        // so a caller that trusts it must not be able to disagree with the key.
         if cipher.pke_type != self.encryption_scheme_type() {
             return Err(CryptographyError::VerificationError(
                 "encryption type of cipher does not match the decryption key type".to_string(),
@@ -720,7 +720,8 @@ mod tests {
         let mut buf = Vec::new();
         tfhe::safe_serialization::safe_serialize(&pk, &mut buf, SAFE_SER_SIZE_LIMIT).unwrap();
 
-        let err = UnifiedPublicEncKey::deserialize_and_validate(&buf).unwrap_err();
+        let err =
+            UnifiedPublicEncKey::deserialize_and_validate_hybrid_ml_kem_512(&buf).unwrap_err();
         assert!(matches!(
             err,
             CryptographyError::UnsupportedPkeScheme(PkeSchemeType::MlKem1024P384)
@@ -761,7 +762,7 @@ mod tests {
         let mut buf = Vec::new();
         tfhe::safe_serialization::safe_serialize(&pk, &mut buf, SAFE_SER_SIZE_LIMIT).unwrap();
 
-        let pk2 = UnifiedPublicEncKey::deserialize_and_validate(&buf).unwrap();
+        let pk2 = UnifiedPublicEncKey::deserialize_and_validate_hybrid_ml_kem_512(&buf).unwrap();
         assert_eq!(pk, pk2);
     }
 
@@ -785,13 +786,16 @@ mod tests {
         let mut buf = Vec::new();
         tfhe::safe_serialization::safe_serialize(&key, &mut buf, SAFE_SER_SIZE_LIMIT).unwrap();
 
-        let err = UnifiedPublicEncKey::deserialize_and_validate(&buf).unwrap_err();
+        let err =
+            UnifiedPublicEncKey::deserialize_and_validate_hybrid_ml_kem_512(&buf).unwrap_err();
         assert!(matches!(err, CryptographyError::MlKem1024Unsupported));
     }
 
     #[test]
     fn deserialize_and_validate_rejects_invalid_bytes() {
-        let err = UnifiedPublicEncKey::deserialize_and_validate(b"not a valid key").unwrap_err();
+        let err =
+            UnifiedPublicEncKey::deserialize_and_validate_hybrid_ml_kem_512(b"not a valid key")
+                .unwrap_err();
         assert!(matches!(err, CryptographyError::DeserializationError(..)));
     }
 }

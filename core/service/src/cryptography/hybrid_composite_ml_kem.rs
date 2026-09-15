@@ -19,8 +19,7 @@ pub(crate) fn enc_ml_kem_1024_p384<R: Rng + CryptoRng>(
     let (kem_ct, kem_shared_secret) = composite_mlkem1024_p384::encapsulate(rng, public_key)?;
     // Borrow the key out of the guarded buffer; copying it out would leave an
     // unwiped duplicate on the stack.
-    #[allow(deprecated)]
-    let aead_key = Key::<Aes256Gcm>::from_slice(&*kem_shared_secret);
+    let aead_key: &Key<Aes256Gcm> = (&*kem_shared_secret).into();
     let cipher = Aes256Gcm::new(aead_key);
     let nonce = Aes256Gcm::generate_nonce(rng);
     let payload_ct = cipher.encrypt(&nonce, msg)?;
@@ -40,8 +39,7 @@ pub(crate) fn dec_ml_kem_1024_p384(
     let kem_shared_secret = composite_mlkem1024_p384::decapsulate(&ct.kem_ct, private_key)?;
     // Borrow the key out of the guarded buffer; copying it out would leave an
     // unwiped duplicate on the stack.
-    #[allow(deprecated)]
-    let aead_key = Key::<Aes256Gcm>::from_slice(&*kem_shared_secret);
+    let aead_key: &Key<Aes256Gcm> = (&*kem_shared_secret).into();
     let cipher = Aes256Gcm::new(aead_key);
     let out = cipher.decrypt(&ct.nonce.into(), &*ct.payload_ct)?;
     Ok(Zeroizing::new(out))

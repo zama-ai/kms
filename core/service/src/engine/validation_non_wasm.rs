@@ -306,12 +306,12 @@ fn unpack_user_decrypt_req(
     let (link, _) = req.compute_link_checked()?;
     // Deserialize to validate the enc_key bytes, but don't return the typed key —
     // callers use raw bytes for EIP-712 and deserialize at point-of-use for crypto.
-    let _client_enc_key =
-        UnifiedPublicEncKey::deserialize_and_validate(&req.enc_key).map_err(|e| {
-            anyhow::anyhow!(
-                "Error deserializing UnifiedPublicEncKey from UserDecryptionRequest: {e}"
-            )
-        })?;
+    let _client_enc_key = UnifiedPublicEncKey::deserialize_and_validate_hybrid_ml_kem_512(
+        &req.enc_key,
+    )
+    .map_err(|e| {
+        anyhow::anyhow!("Error deserializing UnifiedPublicEncKey from UserDecryptionRequest: {e}")
+    })?;
     Ok((
         req.typed_ciphertexts.clone(),
         link,
