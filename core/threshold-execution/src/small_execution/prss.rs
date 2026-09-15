@@ -1248,6 +1248,111 @@ mod tests {
 
     use tokio::task::JoinSet;
 
+    /// Compares PRSS submission sizes on the shared pool with continued competing work.
+    #[tokio::test(flavor = "multi_thread")]
+    #[rstest::rstest]
+    #[case::whole(30_000)]
+    #[case::chunked(3_000)]
+    #[ignore = "Manual chunk scheduling experiment; run each case in a separate process"]
+    async fn isolated_prss_chunk_scheduling(#[case] chunk_size: usize) {
+        use std::time::{Duration, Instant};
+        use tokio::sync::Barrier;
+
+        const PARTIES: usize = 13;
+        const SESSIONS: usize = 10;
+        const VALUES: usize = 30_000;
+        assert_eq!(VALUES % chunk_size, 0);
+        let batches = std::env::var("KMS_PRSS_PROBE_BATCHES")
+            .map(|value| value.parse::<usize>().unwrap())
+            .unwrap_or(10);
+        assert!((1..=10).contains(&batches));
+        println!(
+            "WORKLOAD batches_per_session={batches} values_per_batch={VALUES} chunk_size={chunk_size}"
+        );
+        let cpus = std::thread::available_parallelism().unwrap().get();
+        let budget = cpus.saturating_sub(cpus.div_ceil(8)).max(1);
+        let shared = thread_handles::init_rayon_thread_pool(budget)
+            .await
+            .unwrap();
+        assert_eq!(shared, budget);
+        println!("ALLOCATION pools=0 per_party=0 shared={shared}");
+
+        // Construct identical synthetic PRSS inputs before the timed interval.
+        let mut states = Vec::new();
+        for party in 1..=PARTIES {
+            let role = Role::indexed_from_one(party);
+            let setup = PRSSSetup::<ResiduePolyF4Z128>::testing_party_epoch_init(PARTIES, 4, role)
+                .await
+                .unwrap();
+            for session in 0..SESSIONS {
+                states.push((
+                    role,
+                    session,
+                    setup.new_prss_session_state(SessionId::from(session as u128 + 1)),
+                ));
+            }
+        }
+        let barrier = Arc::new(Barrier::new(states.len() + 1));
+        let mut jobs = JoinSet::new();
+        let start = Instant::now();
+        for (role, session, mut state) in states {
+            let barrier = Arc::clone(&barrier);
+            jobs.spawn(async move {
+                barrier.wait().await;
+                let began = Instant::now();
+                let mut values = Vec::with_capacity(VALUES);
+                for _ in 0..VALUES / chunk_size {
+                    values.extend(state.prss_next_vec(role, chunk_size).await.unwrap());
+                }
+                let first_elapsed = began.elapsed();
+                let first_finished = start.elapsed();
+                for _ in 1..batches {
+                    let mut next = Vec::with_capacity(VALUES);
+                    for _ in 0..VALUES / chunk_size {
+                        next.extend(state.prss_next_vec(role, chunk_size).await.unwrap());
+                    }
+                    assert_eq!(next.len(), VALUES);
+                    std::hint::black_box(next);
+                }
+                assert_eq!(state.counters.prss_ctr, (batches * VALUES) as u128);
+                (
+                    role,
+                    session,
+                    first_elapsed,
+                    first_finished,
+                    start.elapsed(),
+                    values,
+                )
+            });
+        }
+        let results = tokio::time::timeout(Duration::from_secs(600), async {
+            barrier.wait().await;
+            let mut results = Vec::new();
+            while let Some(result) = jobs.join_next().await {
+                results.push(result.unwrap());
+            }
+            results
+        })
+        .await
+        .expect("PRSS experiment exceeded its ten-minute workload limit");
+        assert_eq!(results.len(), PARTIES * SESSIONS);
+        // Hash after the timed work, so result verification does not compete with PRSS.
+        let mut results = results;
+        results.sort_by_key(|(role, session, ..)| (role.one_based(), *session));
+        for (role, session, elapsed, finished, all_finished, values) in results {
+            assert_eq!(values.len(), VALUES);
+            let digest =
+                hash_element_w_size(b"PRSSPOOL", &bc2wrap::serialize(&values).unwrap(), 32);
+            println!(
+                "SAMPLE party={} session={session} elapsed_us={} finished_us={} all_finished_us={} digest={digest:?}",
+                role.one_based(),
+                elapsed.as_micros(),
+                finished.as_micros(),
+                all_finished.as_micros()
+            );
+        }
+    }
+
     // async helper function that creates the prss setups
     async fn setup_prss_sess<Z: ErrorCorrect + Invert, P: PRSSInit<Z> + Clone + 'static>(
         sessions: Vec<SmallSession<Z>>,
