@@ -198,12 +198,11 @@ pub async fn write_bytes<P: AsRef<Path>>(file_path: P, bytes: &[u8]) -> anyhow::
     let Some(file_name) = file_path.file_name() else {
         anyhow::bail!("invalid file path: {}", file_path.display());
     };
-    // Create the parent directories of the file path if they don't exist
-    if let Some(p) = file_path.parent() {
-        tokio::fs::create_dir_all(p).await?
-    };
     let parent = match file_path.parent() {
-        Some(p) if !p.as_os_str().is_empty() => p,
+        Some(p) if !p.as_os_str().is_empty() => {
+            tokio::fs::create_dir_all(p).await?;
+            p
+        }
         _ => Path::new("."),
     };
     // Share the versioned writer's hidden names and crash-cleanup rules.
@@ -249,9 +248,12 @@ pub async fn safe_write_element_versioned<
     let Some(file_name) = file_path.file_name() else {
         anyhow::bail!("invalid file path: {}", file_path.display());
     };
-    // Create the parent directories of the file path if they don't exist
-    if let Some(p) = file_path.parent() {
-        tokio::fs::create_dir_all(p).await?
+    let parent = match file_path.parent() {
+        Some(p) if !p.as_os_str().is_empty() => {
+            tokio::fs::create_dir_all(p).await?;
+            p
+        }
+        _ => Path::new("."),
     };
     // Serialize into a sibling temp file, fsync it, then atomically rename it
     // over `file_path`, so a crash mid-write cannot leave a partial file there
@@ -261,10 +263,6 @@ pub async fn safe_write_element_versioned<
     // (`FileStorage::all_data_ids` parses every non-hidden name as a
     // `RequestId`), unique among live writers, and pid-attributable so
     // `sweep_stale_partials` can reclaim it if this process hard-crashes.
-    let parent = match file_path.parent() {
-        Some(p) if !p.as_os_str().is_empty() => p,
-        _ => Path::new("."),
-    };
     let seq = PARTIAL_SEQ.fetch_add(1, Ordering::Relaxed);
     let tmp = create_partial_tempfile(parent, file_name, std::process::id(), seq)
         .map_err(|e| anyhow::anyhow!("failed to create temp file in {}: {e}", parent.display()))?;
@@ -402,6 +400,7 @@ mod tests {
         let control = path.join("keep");
         std::fs::write(&control, b"original bytes").unwrap();
 
+        // The destination is a directory, so renaming a file over it must fail.
         assert!(write_bytes(&path, b"replacement bytes").await.is_err());
 
         assert_eq!(std::fs::read(&control).unwrap(), b"original bytes");
