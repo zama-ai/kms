@@ -4527,6 +4527,7 @@ dependencies = [
  "nsm-nitro-enclave-utils",
  "observability",
  "p384 0.13.1",
+ "p384 0.14.0",
  "proptest",
  "rand 0.8.6",
  "rand_core 0.10.1",

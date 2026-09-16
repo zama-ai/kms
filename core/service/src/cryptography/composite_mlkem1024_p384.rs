@@ -320,8 +320,14 @@ fn validate_private_key_seed(seed: &[u8; PRIVATE_KEY_LENGTH]) -> Result<(), Cryp
     validate_p384_scalar(&expanded_seed[ML_KEM_SEED_LENGTH..])
 }
 
+/// Apply the range check that rust-hpke's `random_scalar` will apply, rejecting
+/// zero and anything at or above the group order.
+///
+/// This goes through `p384_hpke`, which is pinned to the same version rust-hpke
+/// depends on, so this is literally the check hpke runs rather than a second
+/// crate's implementation of the same rule.
 fn validate_p384_scalar(scalar: &[u8]) -> Result<(), CryptographyError> {
-    p384::SecretKey::from_slice(scalar)
+    p384_hpke::SecretKey::from_slice(scalar)
         .map(|_| ())
         .map_err(|_| {
             CryptographyError::MlKem1024P384Error(
@@ -372,6 +378,34 @@ mod tests {
         let mut one = [0_u8; P384_SCALAR_LENGTH];
         one[P384_SCALAR_LENGTH - 1] = 1;
         validate_p384_scalar(&one).unwrap();
+    }
+
+    #[test]
+    fn the_guard_checks_the_scalar_that_hpke_derives() {
+        use p384_hpke::elliptic_curve::sec1::ToSec1Point;
+
+        // `validate_private_key_seed` reimplements rust-hpke's `expand_key`, so agreeing on the
+        // range check is not enough: the guard also has to read the same 48 bytes hpke reads. Take
+        // the scalar the guard inspects, derive its public key, and check that it is the P-384 half
+        // of the public key hpke derived from the same seed. Boundary values alone would not catch
+        // the guard drifting onto the wrong slice of the expanded seed.
+        let seed = [7_u8; PRIVATE_KEY_LENGTH];
+        let hpke_public_key = MlKem1024P384PublicKey {
+            key: HpkeMlKem1024P384::sk_to_pk(&HpkePrivateKey::from_bytes(&seed).unwrap()),
+        };
+
+        let mut expanded_seed = Zeroizing::new([0_u8; EXPANDED_SEED_LENGTH]);
+        let mut xof = Shake256::default();
+        xof.update(&seed);
+        let mut reader = xof.finalize_xof();
+        reader.read(&mut *expanded_seed);
+        let scalar =
+            p384_hpke::SecretKey::from_slice(&expanded_seed[ML_KEM_SEED_LENGTH..]).unwrap();
+
+        assert_eq!(
+            scalar.public_key().to_sec1_point(false).as_bytes(),
+            &hpke_public_key.to_bytes()[ML_KEM_1024_PUBLIC_KEY_OR_CIPHERTEXT_LENGTH..]
+        );
     }
 
     #[test]
