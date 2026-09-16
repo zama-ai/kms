@@ -553,8 +553,8 @@ enum whose variants are its historical layouts (`V0`, `V1`, …).
 `Unversionize` dispatches to the right variant by tag on read. On-disk and
 on-wire encoding goes through the pinned-`bincode` wrapper
 [bc2wrap](../bc2wrap/) so the binary layout is deterministic. Examples of
-versioned types: `ThresholdFheKeysVersions`, `KeyGenMetadataVersions`,
-`AppKeyBlobVersions`.
+versioned types: `BackupCiphertextVersions`,
+`InternalCustodianContextVersions`, `AppKeyBlobVersions`.
 
 **Freeze-and-replay harness.** [backward-compatibility/](../backward-compatibility/)
 is a separate Cargo workspace (excluded from the root — see [Cargo.toml](../Cargo.toml)
@@ -567,13 +567,10 @@ indexed by per-module `.ron` manifests. The loader in
 entry through the current-version `Unversionize` and asserts the expected
 metadata.
 
-Custodian-backup types are a deliberate exception: they have no fixtures at all.
-The feature ships first in 0.15 and is not used in production, so adopting
-MLKEM1024-P384 for it was allowed to break its persisted and wire formats
-outright rather than freeze shapes nobody holds. The exempt types are listed
-together, with that reasoning, in the `ALLOW_UNCOVERED` constant of
-[core/service/tests/versioned_enum_coverage.rs](../core/service/tests/versioned_enum_coverage.rs);
-fixtures go back once the feature ships (zama-ai/kms-internal#3168).
+Custodian-backup fixtures exist for 0.15.0 only. The feature ships first in 0.15
+and no deployment uses it, so adopting MLKEM1024-P384 for it broke its persisted
+and wire formats, and the fixtures for 0.14.0 and earlier were dropped rather
+than kept as a compatibility target.
 
 To add support for a new release, follow
 [backward-compatibility/ADDING_NEW_VERSIONS.md](../backward-compatibility/ADDING_NEW_VERSIONS.md).
