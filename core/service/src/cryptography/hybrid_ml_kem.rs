@@ -1,3 +1,5 @@
+//! Hybrid PKE built from ML-KEM as the KEM and AES-GCM as the DEM.
+
 use super::{error::CryptographyError, rand_compat::RandCore010Adapter};
 use aes_gcm::{AeadCore, Aes256Gcm, Key, KeyInit, KeySizeUser, aead::Aead};
 use hybrid_array::{Array, typenum::Unsigned};

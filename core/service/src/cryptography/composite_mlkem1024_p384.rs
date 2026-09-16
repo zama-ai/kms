@@ -4,6 +4,12 @@
 //! <https://www.ietf.org/archive/id/draft-irtf-cfrg-concrete-hybrid-kems-03.html>.
 //! It matches [`rust-hpke`](https://github.com/rozbb/rust-hpke/blob/024f006836ce2adbfc528b25e22b635065b16096/src/kem/mlkem_nistp.rs).
 //!
+//! We use the term "composite" to mean post-quantum+classical, which can be
+//! applied to both signing and encryption. We use the term "hybrid" to mean
+//! KEM+DEM (i.e., asymmetric+symmetric) encryption. This is a bit different
+//! from the IETF draft above since we do not want to load the word "hybrid" to
+//! mean two different things.
+//!
 //! While ML-KEM-1024 is NIST level 5 (256-bit security), it is paired with P384
 //! to hedge against advances in cryptanalysis on lattice-based schemes. This
 //! reasoning is all given in x-wing <https://eprint.iacr.org/2024/039.pdf>.
@@ -245,8 +251,8 @@ pub(crate) fn keygen(
 ) -> Result<(MlKem1024P384PrivateKey, MlKem1024P384PublicKey), CryptographyError> {
     let mut seed = Zeroizing::new([0_u8; PRIVATE_KEY_LENGTH]);
     rng.fill_bytes(&mut *seed);
-    // `rust-hpke` can panic here if its single P-384 scalar candidate is rejected.
-    // For a uniformly random seed, this failure has probability below 2^-192:
+    // This seed is fresh CSPRNG output, so key generation does not pre-validate its P-384 scalar.
+    // `rust-hpke` panics if its single candidate is rejected. This event has probability below 2^-192:
     // <https://www.ietf.org/archive/id/draft-irtf-cfrg-concrete-hybrid-kems-03.html#section-3.1.1>.
     let hpke_private_key = HpkePrivateKey::from_bytes(&*seed)
         .map_err(|error| map_hpke_error("MLKEM1024-P384 private key", error))?;
@@ -473,7 +479,7 @@ mod tests {
         let mut rng = AesRng::seed_from_u64(42);
         let (_, public_key) = keygen(&mut rng).unwrap();
         let mut bytes = public_key.to_bytes();
-        // Keep the 0x04 SEC1 tag and corrupt the affine x coordinate.
+        // Keep the 0x04 SEC1 tag and corrupt the affine y coordinate.
         let last = bytes.len() - 1;
         bytes[last] ^= 1;
 

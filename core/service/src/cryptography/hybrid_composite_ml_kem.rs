@@ -1,5 +1,10 @@
 //! KEM+DEM encryption with the MLKEM1024-P384 composite KEM.
 //!
+//! We use the term "composite" to mean post-quantum+classical, which can be
+//! applied to both signing and encryption. We use the term "hybrid" to mean
+//! KEM+DEM (i.e., asymmetric+symmetric) encryption. In this module, use a
+//! composite KEM in hybrid form to build a PKE scheme.
+//!
 //! The ciphertext type is [HybridKemCt], which this module shares with
 //! [crate::cryptography::hybrid_ml_kem].
 

@@ -1,8 +1,15 @@
+//! Cryptographic primitives and protocol implementations.
+//!
+//! This module uses "composite" for a combination of classical and post-quantum
+//! primitives. It uses "hybrid encryption" for a KEM+DEM construction.
+
 #[cfg(feature = "non-wasm")]
 pub mod attestation;
+#[cfg(feature = "non-wasm")]
 pub mod composite_mlkem1024_p384;
 pub mod decompression;
 pub mod error;
+#[cfg(feature = "non-wasm")]
 pub mod hybrid_composite_ml_kem;
 pub mod hybrid_ml_kem;
 pub mod internal_crypto_types;

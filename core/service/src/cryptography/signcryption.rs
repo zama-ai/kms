@@ -15,6 +15,7 @@ use crate::cryptography::encryption::{
     HasPkeScheme, PkeSchemeType, UnifiedPrivateEncKey, UnifiedPublicEncKey,
 };
 use crate::cryptography::error::CryptographyError;
+#[cfg(feature = "non-wasm")]
 use crate::cryptography::hybrid_composite_ml_kem;
 use crate::cryptography::hybrid_ml_kem::{self, HybridKemCt};
 use crate::cryptography::signatures::{
@@ -476,6 +477,7 @@ fn inner_signcryption(
         UnifiedPublicEncKey::MlKem1024(_) => {
             return Err(CryptographyError::MlKem1024Unsupported);
         }
+        #[cfg(feature = "non-wasm")]
         UnifiedPublicEncKey::MlKem1024P384(public_enc_key) => {
             serialize_hash_element(&DSEP_SIGNCRYPTION, public_enc_key)
                 .map_err(|e| CryptographyError::DeserializationError(e.to_string()))?
@@ -508,6 +510,7 @@ fn inner_signcryption(
         UnifiedPublicEncKey::MlKem1024(_) => {
             return Err(CryptographyError::MlKem1024Unsupported);
         }
+        #[cfg(feature = "non-wasm")]
         UnifiedPublicEncKey::MlKem1024P384(public_enc_key) => {
             hybrid_composite_ml_kem::enc_ml_kem_1024_p384(rng, &to_encrypt, public_enc_key)
         }
@@ -629,6 +632,7 @@ fn inner_unsigncrypt(
         UnifiedPrivateEncKey::MlKem1024(_) => {
             return Err(CryptographyError::MlKem1024Unsupported);
         }
+        #[cfg(feature = "non-wasm")]
         UnifiedPrivateEncKey::MlKem1024P384(dec_key) => {
             hybrid_composite_ml_kem::dec_ml_kem_1024_p384(deserialized_payload, dec_key)
         }
@@ -693,6 +697,7 @@ fn check_format_and_signature(
         UnifiedPublicEncKey::MlKem1024(_) => {
             return Err(CryptographyError::MlKem1024Unsupported);
         }
+        #[cfg(feature = "non-wasm")]
         UnifiedPublicEncKey::MlKem1024P384(public_enc_key) => {
             serialize_hash_element(&DSEP_SIGNCRYPTION, public_enc_key)
                 .map_err(|e| CryptographyError::DeserializationError(e.to_string()))?
@@ -741,6 +746,7 @@ pub(crate) fn insecure_decrypt_ignoring_signature(
         UnifiedPrivateEncKey::MlKem1024(_) => {
             return Err(CryptographyError::MlKem1024Unsupported);
         }
+        #[cfg(feature = "non-wasm")]
         UnifiedPrivateEncKey::MlKem1024P384(dk) => {
             hybrid_composite_ml_kem::dec_ml_kem_1024_p384(cipher, dk)?
         }
