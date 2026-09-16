@@ -383,6 +383,11 @@ and
 
 ## Paired material writes
 
+File storage writes raw bytes and versioned values into sibling temporary files, syncs them,
+then atomically renames them into place. A process crash during a write cannot expose a partial
+destination file. This does not make a multi-file operation atomic or guarantee rename durability
+after power loss; the writers do not sync the parent directory.
+
 Threshold calls to `CryptoMaterialStorage::write_all` use two public/private pairs:
 
 - `PublicKey` and `FheKeyInfo` share a key ID.
@@ -423,8 +428,8 @@ recovery mode, the private and public checks are skipped so that the node can re
 
 **Public storage is verified but never touched.** Public storage can drift out of a
 consistent state: a misconfigured bucket or prefix can point a node at the wrong material, and
-writes are not atomic, so a crash mid-operation can leave an entry missing, truncated, or
-stale. Private storage holds the digests and signatures describing what should be published,
+writes across multiple entries are not atomic, so a crash mid-operation can leave material missing
+or stale. Private storage holds the digests and signatures describing what should be published,
 so it is the reference.
 
 The code is split by level. [material_integrity.rs](../core/service/src/engine/material_integrity.rs)
