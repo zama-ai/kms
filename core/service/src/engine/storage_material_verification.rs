@@ -1,8 +1,8 @@
 //! Verification of material in private and public storage.
 //!
 //! Public storage may deviate from a consistent state: a misconfigured bucket or prefix can
-//! point a node at the wrong material, and writes are not atomic, so a crash part-way through
-//! an operation can leave an entry missing, truncated, or stale. Private storage holds the
+//! point a node at the wrong material, and writes across multiple entries are not atomic.
+//! A crash part-way through an operation can leave material missing or stale. Private storage holds the
 //! digests and signatures that say what the published material should be, so it is the
 //! reference, and every integrity check here runs in that direction — an expected value is
 //! taken from private storage and compared against what public storage holds, never the other
