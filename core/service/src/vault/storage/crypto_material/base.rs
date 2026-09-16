@@ -367,47 +367,6 @@ where
         .await
     }
 
-    /// Handle the storage of data after generation, and update the meta store accordingly.
-    /// This methods assumes that `req_id` has already been added to the meta store and will fail if not.
-    ///
-    /// WARNING: this method is not safe to call concurrently with the _same_ arguments.
-    /// However, this should never happen, since since any `req_id` should have been added
-    /// to the meta store as pending before this call, which can only be done for a fresh `req_id`.
-    #[expect(clippy::too_many_arguments)]
-    async fn handle_persistent_and_meta_storage<
-        'a,
-        PubData: Serialize + Versionize + Named + Send + Sync,
-        PrivData: Serialize + Versionize + Named + Send + Sync,
-        MetaT: Clone,
-    >(
-        &self,
-        req_id: &RequestId,
-        epoch_id: Option<&EpochId>,
-        pub_data: Option<(&'a PubData, PubDataType)>,
-        priv_data: Option<(&'a PrivData, PrivDataType)>,
-        meta_data: MetaT,
-        meta_store: Arc<RwLock<MetaStore<MetaT>>>,
-        permit: MetaStorePermit<MetaT>,
-        op_metric_tag: &'static str,
-    ) -> Result<(), StorageError>
-    where
-        <PubData as Versionize>::Versioned<'a>: Send + Sync,
-        <PrivData as Versionize>::Versioned<'a>: Send + Sync,
-    {
-        let res = self
-            .write_all(req_id, epoch_id, pub_data, priv_data, true, op_metric_tag)
-            .await;
-        update_meta_store(
-            res,
-            meta_data,
-            &meta_store,
-            permit,
-            BackupPolicy::BackupIsBestEffort,
-            op_metric_tag,
-        )
-        .await
-    }
-
     /// Stores up to one public entry and one private entry, then optionally updates the backup.
     ///
     /// Threshold callers use this for `PublicKey`/`FheKeyInfo` and `CRS`/`CrsInfo` pairs.
@@ -769,15 +728,29 @@ where
             if self
                 .data_exists(key_id, &[public_type], &[])
                 .await
-                .map_err(|e| StorageError::Other(e.to_string()))?
+                .map_err(|e| {
+                    tracing::warn!("Failed to check {public_type} for key {key_id}: {e}");
+                    StorageError::Other(e.to_string())
+                })?
             {
+                tracing::warn!(
+                    "Refusing FHE key write: {public_type} already exists for key {key_id}"
+                );
                 return Err(StorageError::Duplicate);
             }
         }
         let private_exists = self
             .data_exists_at_epoch(key_id, epoch_id, &[], &[priv_data_type])
-            .await?;
+            .await
+            .inspect_err(|e| {
+                tracing::warn!(
+                    "Failed to check {priv_data_type} for key {key_id} at epoch {epoch_id}: {e}"
+                );
+            })?;
         if private_exists {
+            tracing::warn!(
+                "Refusing FHE key write: {priv_data_type} already exists for key {key_id} at epoch {epoch_id}"
+            );
             return Err(StorageError::Duplicate);
         }
 
@@ -862,9 +835,9 @@ where
         res
     }
 
-    /// Write the CRS to public and private storage and update the meta
-    /// store with the outcome. On a write failure the partial data is
-    /// purged before the error is returned.
+    /// Stores a newly generated CRS and records the outcome in the meta store.
+    /// Rejects an existing public CRS or private metadata at the requested epoch.
+    /// The request must be pending in the meta store; callers must serialize writes to the same CRS.
     #[allow(clippy::too_many_arguments)]
     pub(crate) async fn write_crs(
         &self,
@@ -876,14 +849,45 @@ where
         permit: MetaStorePermit<CrsGenMetadata>,
         op_metric_tag: &'static str,
     ) -> Result<(), StorageError> {
-        self.handle_persistent_and_meta_storage(
-            crs_id,
-            Some(epoch_id),
-            Some((&pp, PubDataType::CRS)),
-            Some((&crs_info.clone(), PrivDataType::CrsInfo)),
+        let res = async {
+            if self
+                .data_exists(crs_id, &[PubDataType::CRS], &[])
+                .await
+                .map_err(|e| {
+                    tracing::warn!("Failed to check public CRS {crs_id}: {e}");
+                    StorageError::Other(e.to_string())
+                })?
+            {
+                tracing::warn!("Refusing CRS write: public CRS {crs_id} already exists");
+                return Err(StorageError::Duplicate);
+            }
+            if self
+                .data_exists_at_epoch(crs_id, epoch_id, &[], &[PrivDataType::CrsInfo])
+                .await
+                .inspect_err(|e| {
+                    tracing::warn!("Failed to check CrsInfo for CRS {crs_id} at epoch {epoch_id}: {e}");
+                })?
+            {
+                tracing::warn!("Refusing CRS write: CrsInfo already exists for CRS {crs_id} at epoch {epoch_id}");
+                return Err(StorageError::Duplicate);
+            }
+            self.write_all(
+                crs_id,
+                Some(epoch_id),
+                Some((&pp, PubDataType::CRS)),
+                Some((&crs_info, PrivDataType::CrsInfo)),
+                true,
+                op_metric_tag,
+            )
+            .await
+        }
+        .await;
+        update_meta_store(
+            res,
             crs_info,
-            meta_store,
+            &meta_store,
             permit,
+            BackupPolicy::BackupIsBestEffort,
             op_metric_tag,
         )
         .await
