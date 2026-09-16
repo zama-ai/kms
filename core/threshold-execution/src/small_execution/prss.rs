@@ -6,16 +6,12 @@ use super::{
 };
 
 use crate::{
+    communication::broadcast::{Broadcast, SyncReliableBroadcast},
+    constants::{PRSS_GEN_PAR_MIN_CHUNK, PRSS_SIZE_MAX, STATSEC},
+    large_execution::vss::{SecureVss, Vss},
     network_value::BroadcastValue,
-    {
-        communication::broadcast::{Broadcast, SyncReliableBroadcast},
-        constants::{PRSS_SIZE_MAX, STATSEC},
-        large_execution::vss::{SecureVss, Vss},
-        runtime::sessions::{
-            base_session::BaseSessionHandles, session_parameters::ParameterHandles,
-        },
-        small_execution::prf::{PhiAes, chi, phi_range, psi},
-    },
+    runtime::sessions::{base_session::BaseSessionHandles, session_parameters::ParameterHandles},
+    small_execution::prf::{PhiAes, chi, phi_range, psi},
 };
 use algebra::{
     matrix::{VdmMatrix, compute_powers_list},
@@ -711,51 +707,59 @@ where
     ///
     /// __NOTE__: telemetry is done at the caller because this function isn't batched
     /// and we want to avoid creating too many telemetry spans
+    ///
+    /// Internally, computation uses bounded Rayon submissions, each awaited before the next submission so competing
+    /// sessions can make progress. This matters mostly for tests or in a heavily concurrent environment with lots of
+    /// computation work.
+    /// Advances the counter only after the complete vector succeeds.
     #[instrument(name="PRSS.Next",skip_all,fields(batch_size=?amount))]
     async fn prss_next_vec(&mut self, party_role: Role, amount: usize) -> anyhow::Result<Vec<Z>> {
-        //Cheap to clone as everything is an Arc or atomic types
-        let prfs = self.prfs.clone();
-        let prss_setup = self.prss_setup.clone();
+        use crate::constants::PRSS_MAX_SUBMISSION;
         let prss_ctr = self.counters.prss_ctr;
-
-        // Independent per-counter elements, assembled in parallel. Element `idx`
-        // uses `ctr = prss_ctr + idx`.
-        let res = spawn_compute_bound(move || -> anyhow::Result<Vec<Z>> {
-            if amount == 0 {
-                return Ok(Vec::new());
-            }
-
-            // Per-set invariants (membership, PRF key, f_A), computed once instead of per element.
-            let mut set_data: Vec<(&PrfAes, Z)> = Vec::with_capacity(prss_setup.sets.len());
-            for (i, set) in prss_setup.sets.iter().enumerate() {
-                if !set.parties.contains(&party_role) {
-                    return Err(anyhow_error_and_log(format!(
-                        "Called prss.next() with party role {party_role} that is not in a precomputed set of parties!"
-                    )));
-                }
-                let aes_prf = prfs.get(i).ok_or_else(|| {
-                    anyhow_error_and_log("PRFs not properly initialized!".to_string())
-                })?;
-                // f_A(alpha_i): the embedded party ID indexes into f_a_points (from zero)
-                set_data.push((aes_prf, set.f_a_points[&party_role]));
-            }
-
-            (0..amount)
-                .into_par_iter()
-                .with_min_len(*crate::constants::PRSS_GEN_PAR_MIN_CHUNK)
-                .map(|idx| {
-                    let ctr = prss_ctr + idx as u128;
-                    let mut res = Z::ZERO;
-                    for &(aes_prf, f_a) in &set_data {
-                        let psi = psi(&aes_prf.psi_aes, ctr)?;
-                        res += f_a * psi;
+        let mut res = Vec::with_capacity(amount);
+        // Await each bounded submission so other sessions can use the shared pool.
+        // Keep the state counter unchanged until every submission succeeds.
+        for offset in (0..amount).step_by(PRSS_MAX_SUBMISSION) {
+            let end = offset.saturating_add(PRSS_MAX_SUBMISSION).min(amount);
+            // Cheap to clone as everything is an Arc or atomic types.
+            let prfs = self.prfs.clone();
+            let prss_setup = self.prss_setup.clone();
+            let chunk = spawn_compute_bound(move || -> anyhow::Result<Vec<Z>> {
+                // Per-set invariants (membership, PRF key, f_A), computed once instead of per element.
+                let mut set_data: Vec<(&PrfAes, Z)> = Vec::with_capacity(prss_setup.sets.len());
+                for (i, set) in prss_setup.sets.iter().enumerate() {
+                    if !set.parties.contains(&party_role) {
+                        return Err(anyhow_error_and_log(format!(
+                            "Called prss.next() with party role {party_role} that is not in a precomputed set of parties!"
+                        )));
                     }
-                    Ok(res)
-                })
-                .collect::<anyhow::Result<Vec<_>>>()
-        })
-        .instrument(tracing::Span::current())
-        .await??;
+                    let aes_prf = prfs.get(i).ok_or_else(|| {
+                        anyhow_error_and_log("PRFs not properly initialized!".to_string())
+                    })?;
+                    // f_A(alpha_i): the embedded party ID indexes into f_a_points (from zero)
+                    set_data.push((aes_prf, set.f_a_points[&party_role]));
+                }
+
+                // Independent per-counter elements, assembled in parallel. Element `idx`
+                // uses `ctr = prss_ctr + idx`.
+                (offset..end)
+                    .into_par_iter()
+                    .with_min_len(*PRSS_GEN_PAR_MIN_CHUNK)
+                    .map(|idx| {
+                        let ctr = prss_ctr + idx as u128;
+                        let mut res = Z::ZERO;
+                        for &(aes_prf, f_a) in &set_data {
+                            let psi = psi(&aes_prf.psi_aes, ctr)?;
+                            res += f_a * psi;
+                        }
+                        Ok(res)
+                    })
+                    .collect::<anyhow::Result<Vec<_>>>()
+            })
+            .instrument(tracing::Span::current())
+            .await??;
+            res.extend(chunk);
+        }
 
         self.counters.prss_ctr += amount as u128;
 
@@ -1561,6 +1565,9 @@ mod tests {
     #[case(23)]
     // amount above spans multiple rayon chunks (default PRSS_GEN_PAR_MIN_CHUNK = 1024)
     #[case(1025)]
+    #[case(4096)]
+    #[case(4097)]
+    #[case(8193)]
     async fn test_prss_next_vec_matches_scalar_calls(#[case] amount: usize) {
         let num_parties = 4;
         let threshold = 1;
@@ -1574,6 +1581,7 @@ mod tests {
                 .unwrap();
 
         let mut scalar_state = prss.new_prss_session_state(sid);
+        scalar_state.counters.prss_ctr = 17;
         let mut batch_state = scalar_state.clone();
 
         let mut scalar_values = Vec::with_capacity(amount);
@@ -1596,6 +1604,19 @@ mod tests {
             batch_state.counters.przs_ctr,
             scalar_state.counters.przs_ctr
         );
+    }
+
+    #[tokio::test]
+    async fn test_prss_submission_error_preserves_counter() {
+        let role = Role::indexed_from_one(1);
+        let setup = PRSSSetup::<ResiduePolyF4Z128>::testing_party_epoch_init(4, 1, role)
+            .await
+            .unwrap();
+        let mut state = setup.new_prss_session_state(SessionId::from(23425));
+        state.counters.prss_ctr = 17;
+        state.prfs = Arc::new(Vec::new());
+        assert!(state.prss_next_vec(role, 8193).await.is_err());
+        assert_eq!(state.counters.prss_ctr, 17);
     }
 
     #[tokio::test]

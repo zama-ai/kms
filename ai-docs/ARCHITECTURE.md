@@ -69,6 +69,11 @@ vectors. Shared test fixtures and generic local file helpers are in
 The [backward-compatibility/](../backward-compatibility/) crate is a separate
 Cargo workspace — see [Backward compatibility](#backward-compatibility).
 
+PRSS vector generation submits at most 4,096 values at a time to the shared
+Rayon pool, awaiting each submission so competing sessions can make progress.
+This scheduling limit preserves protocol batch sizes and output ordering. The
+PRSS counter advances only after the complete vector succeeds.
+
 ## The service crate (`core/service`)
 
 The service crate is the main surface area. Key subdirectories under

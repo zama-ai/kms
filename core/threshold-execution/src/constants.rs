@@ -16,6 +16,12 @@ cfg_if::cfg_if! {
         pub(crate) const PHI_XOR_CONSTANT: u8 = 2;
         pub(crate) const CHI_XOR_CONSTANT: u8 = 1;
 
+        /// Maximum PRSS values per awaited submission to the shared Rayon pool.
+        /// A large number here means a mostly idle server can use the Rayon pool efficiently, but the downside is that
+        /// concurrent tasks can get "locked out" of the pool and queue up while a big computation is underway.
+        /// Conversely, a small number here means the pool yields more often and lets competing jobs make progress.
+        pub(crate) const PRSS_MAX_SUBMISSION: usize = 1 << 12;
+
         // ---- MPC tuning knobs ----
         //
         // Each value is configurable at runtime via an environment variable and
