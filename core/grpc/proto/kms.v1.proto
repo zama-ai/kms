@@ -472,14 +472,17 @@ message UserDecryptionRequest {
   // Solana requests MUST leave this empty and carry their identity in `signing_metadata`.
   string client_address = 4;
 
-  // Encoding of the user's public encryption key for this request.
-  // This must be a bincode (v.1) encoded ML-KEM 512 key.
+  // Encoding of the user's public encryption key for this request: the tfhe-rs `safe_serialize`d
+  // `UnifiedPublicEncKey` (869 bytes for ML-KEM-512). The response link hashes these exact bytes.
   bytes enc_key = 5;
 
   // The user's EIP712 domain. This MUST be present. Furthermore, the `verifying_contract` MUST be set and, for EVM requests, be distinct from `client_address`.
+  // For Solana requests it is also the domain the response link is computed under: the Gateway
+  // `Decryption` contract's domain, not one derived from the Solana host chain.
   Eip712DomainMsg domain = 6;
 
-  // Extra data used in the EIP712 signature - external_signature.
+  // Extra data used in the EIP712 signature - external_signature. Not an input to the response
+  // link on either host path.
   bytes extra_data = 7;
 
   // MPC context ID which is used to identify the context to use for this request.

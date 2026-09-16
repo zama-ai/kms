@@ -88,8 +88,9 @@ impl Client {
     /// exact shape the KMS Connector produces, so a reference client sending this exercises the
     /// same server path.
     ///
-    /// `response_domain` is the EIP-712 domain the KMS nodes sign the response under (the gateway
-    /// domain in production); it plays no part in who can open the result.
+    /// `response_domain` is the Gateway `Decryption` contract's EIP-712 domain: the KMS nodes sign
+    /// the response under it and, on the Solana path, compute the link under it. It plays no part
+    /// in who can open the result.
     #[allow(unknown_lints)]
     // We allow modifying the internal rng before return
     #[allow(non_local_effect_before_error_return, clippy::too_many_arguments)]

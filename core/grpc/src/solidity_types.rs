@@ -23,6 +23,22 @@ alloy_sol_types::sol! {
     }
 }
 
+// The Solana counterpart of `UserDecryptionLinker`: the same EIP-712 construction over a
+// Solana-shaped request, hashed under the Gateway `Decryption` domain and recomputed by the KMS,
+// the Rust client and the WASM client alike. The 20-byte `userAddress` widens to the recipient's
+// 32-byte Ed25519 key and the host program id is appended. The host chain has no field of its own:
+// bytes [22..30] of every handle carry it, and the binding that builds this struct enforces that.
+// The type string is the version boundary — a layout change is a new type name, never a
+// reinterpretation of the same bytes. No wallet signs this type.
+alloy_sol_types::sol! {
+    struct SolanaUserDecryptionLinker {
+        bytes publicKey;
+        bytes32[] handles;
+        bytes32 userPubkey;
+        bytes32 verifyingProgramId;
+    }
+}
+
 // Solidity struct for decryption result signature
 // Struct needs to match what is in
 // https://github.com/zama-ai/gateway-l2/blob/main/contracts/DecryptionManager.sol#L18

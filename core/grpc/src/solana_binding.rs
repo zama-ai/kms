@@ -1,4 +1,4 @@
-//! The canonical Solana user-decryption binding (linker v1).
+//! The canonical Solana user-decryption binding.
 //!
 //! One checked type owns both halves of the request-side contract: its constructor validates the
 //! request's Solana-owned fields, and `compute_link` produces the per-request commitment that
@@ -6,44 +6,26 @@
 //! client/WASM response path, so a link can only be computed from inputs that passed validation —
 //! there is no unchecked helper to reach for.
 //!
+//! The link is the EVM construction over a Solana-shaped struct: the EIP-712 signing hash of
+//! [`SolanaUserDecryptionLinker`] under the Gateway `Decryption` domain,
+//! `keccak256(0x1901 ‖ domainSeparator(domain) ‖ hashStruct(linker))`, computed by the same alloy
+//! helper the EVM path uses for its `UserDecryptionLinker`. Every variable-width input is hashed
+//! to one 32-byte word before the struct hash, so no field boundary depends on validation, and the
+//! type string is the version boundary: a layout change is a new type name, never a
+//! reinterpretation of the same bytes.
+//!
 //! The link is opaque to signcryption: the engine neither parses nor re-hashes it, it embeds the
 //! bytes in the signed, encrypted payload, and the receiver compares them byte-for-byte against an
 //! independently recomputed link. The only hard requirement is therefore that every implementation
 //! (KMS core, KMS client/WASM, SDK) produces byte-identical bytes.
 
-use hashing::{DSEP_LIST, DomainSep, unsafe_hash_list_w_size};
+use alloy_primitives::B256;
+use alloy_sol_types::{Eip712Domain, SolStruct};
 
-/// Scheme and version tag, first element of the hashed list. The width in the type is the tag
-/// string's own length, not a parameter of the construction.
-///
-/// A change to any normative rule of the construction bumps the version in this tag rather than
-/// silently reinterpreting the same bytes. Frozen: see [`DSEP_SOLANA_LINKER`].
-pub const SOLANA_LINKER_SCHEME_TAG: &[u8; 29] = b"SolanaUserDecryptionLinker:v1";
-
-/// Call separator for the linker's list hash: SHAKE-256 with an 8-byte call separator, per the
-/// KMS hashing policy. Must stay unique among the codebase's [`DomainSep`] constants.
-///
-/// **Frozen**, together with [`SOLANA_LINKER_SCHEME_TAG`], the element layout, and the normative
-/// vectors in `core/grpc/test-vectors/solana_linker_v1.json`; changing any of them is a version
-/// bump in the scheme tag, not an edit. `core/grpc/tests/solana_frozen_constants.rs` is the gate.
-pub const DSEP_SOLANA_LINKER: DomainSep = *b"SOLLNK01";
+use crate::solidity_types::SolanaUserDecryptionLinker;
 
 /// Width of every identity the binding accepts: handles, the recipient, and the program id.
 pub const SOLANA_IDENTITY_LEN: usize = 32;
-
-/// Width of the link, in bytes.
-///
-/// Stated here rather than taken from the hashing crate's digest width: the link's width is a rule
-/// of this construction, and it must not follow an unrelated constant if that one ever moves.
-const SOLANA_LINK_LEN: usize = 32;
-
-/// Width of the big-endian chain id element.
-const CHAIN_ID_LEN: usize = size_of::<u64>();
-
-/// Hashed elements that are not a ciphertext handle: the scheme tag, the deployment pair, the
-/// recipient, the transport key, and the extra data. The element count is this plus the
-/// handle count, which is what lets a reader recover the handle count from the count alone.
-const FIXED_ELEMENTS: usize = 6;
 
 /// High byte of the eight-byte chain-id field (handle bytes 22–29).
 ///
@@ -78,20 +60,16 @@ pub const fn solana_host_chain_id(cluster_tag: u64) -> u64 {
 const HANDLE_CHAIN_ID_START: usize = 22;
 const HANDLE_CHAIN_ID_END: usize = 30;
 
-/// A host chain id that is valid for the Solana request path.
+/// A host chain id that is valid for the Solana request path: type byte `0x01`.
 ///
-/// Stored as the big-endian bytes the linker hashes, so the hashed element can be borrowed
-/// straight from the binding.
+/// The binding keeps it for the declared-value check only. The link binds the host chain through
+/// the handle bytes this value was read from, not through the value itself.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-struct SolanaHostChainId([u8; CHAIN_ID_LEN]);
+struct SolanaHostChainId(u64);
 
 impl SolanaHostChainId {
     fn get(self) -> u64 {
-        u64::from_be_bytes(self.0)
-    }
-
-    fn as_bytes(&self) -> &[u8; CHAIN_ID_LEN] {
-        &self.0
+        self.0
     }
 }
 
@@ -102,11 +80,11 @@ impl TryFrom<u64> for SolanaHostChainId {
         if !is_solana_host_chain_id(chain_id) {
             return Err(SolanaUserDecryptBindingError::InvalidDeclaredChainId { chain_id });
         }
-        Ok(Self(chain_id.to_be_bytes()))
+        Ok(Self(chain_id))
     }
 }
 
-/// A validated Solana user-decryption request, and the only place a linker v1 can come from.
+/// A validated Solana user-decryption request, and the only place a link can come from.
 ///
 /// Construction goes through [`SolanaUserDecryptBinding::new`], which is the request-side half of
 /// the linker contract; the response-side half (recompute, compare, discard mismatching shares)
@@ -122,13 +100,14 @@ impl TryFrom<u64> for SolanaHostChainId {
 ///     receiver_id: [0u8; 32],
 ///     handles: vec![[0u8; 32]],
 ///     transport_key: vec![],
-///     extra_data: vec![],
 /// };
 /// ```
 ///
 /// The supported way in, which also pins the argument order:
 ///
 /// ```
+/// use alloy_primitives::{Address, U256};
+/// use alloy_sol_types::Eip712Domain;
 /// use kms_grpc::solana_binding::{SolanaUserDecryptBinding, solana_host_chain_id};
 ///
 /// let mut handle = [0x11u8; 32];
@@ -139,11 +118,19 @@ impl TryFrom<u64> for SolanaHostChainId {
 ///     &[0x33u8; 32],                       // receiver_id (the raw ed25519 wallet key)
 ///     std::iter::once(handle.as_slice()),   // ordered ciphertext handles
 ///     &[0x66u8; 869],                      // transport key, as the request carries it
-///     &[0x77u8; 4],                        // extra_data, as the request carries it
 /// )
 /// .expect("a canonical Solana request");
 ///
-/// assert_eq!(binding.compute_link().len(), 32);
+/// // The Gateway `Decryption` contract's EIP-712 domain, as the request carries it.
+/// let domain = Eip712Domain::new(
+///     Some("Decryption".into()),
+///     Some("1".into()),
+///     Some(U256::from(54_321u64)),
+///     Some(Address::ZERO),
+///     None,
+/// );
+///
+/// assert_eq!(binding.compute_link(&domain).len(), 32);
 /// ```
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct SolanaUserDecryptBinding {
@@ -152,7 +139,6 @@ pub struct SolanaUserDecryptBinding {
     receiver_id: [u8; SOLANA_IDENTITY_LEN],
     handles: Vec<[u8; SOLANA_IDENTITY_LEN]>,
     transport_key: Vec<u8>,
-    extra_data: Vec<u8>,
 }
 
 impl SolanaUserDecryptBinding {
@@ -161,24 +147,26 @@ impl SolanaUserDecryptBinding {
     /// Checked here: the width of every identity, the type byte of each handle's embedded
     /// chain id, that all handles embed one common chain id, and that the handle list is not
     /// empty. Duplicate handles are legal — each occurrence is authorized independently upstream
-    /// and the linker binds every occurrence at its position.
+    /// and the linker binds every occurrence at its position. These checks are the part of the
+    /// host-chain binding the hash cannot provide — `keccak256` over the handle words accepts any
+    /// bytes — which is why this constructor is the only way to a link.
     ///
     /// Deliberately not checked: the request bit budget, which is enforced on chain before the
     /// request reaches any KMS party, and the 869-byte transport-key rule, which belongs to the
-    /// wallet permit and the connector. 869 is the width of the serialized
+    /// wallet permit and the connector. 869 is the width of the safe-serialized
     /// `UnifiedPublicEncKey::MlKem512` container — the 800-byte encapsulation key plus its framing
     /// — which is the one representation the key has anywhere in the system; the linker binds
     /// those bytes verbatim rather than reframing them. `transport_key` is taken as the request
-    /// carries it, the same way the EVM linker takes its `publicKey`. `extra_data` is likewise
-    /// bound verbatim and never parsed: the host-side metadata travels inside it, so the contract
-    /// can evolve what it carries without a KMS release, and the commitment still covers every
-    /// byte.
+    /// carries it, the same way the EVM linker takes its `publicKey`.
+    ///
+    /// Not an input: the request's `extra_data`. It is authenticated by the external response
+    /// signature alone, as on EVM, so a change to it fails that signature and leaves the link
+    /// unchanged; an internal node signature by itself does not authenticate it.
     pub fn new<'a>(
         verifying_program_id: &[u8],
         receiver_id: &[u8],
         handles: impl IntoIterator<Item = &'a [u8]>,
         transport_key: &[u8],
-        extra_data: &[u8],
     ) -> Result<Self, SolanaUserDecryptBindingError> {
         let verifying_program_id = identity(verifying_program_id).ok_or(
             SolanaUserDecryptBindingError::InvalidProgramIdLength {
@@ -225,7 +213,7 @@ impl SolanaUserDecryptBinding {
         // The Solana type byte was checked for every handle above, which is why this wraps the value
         // directly: the fallible conversion exists for a chain id a caller declares separately.
         let chain_id = common_chain_id
-            .map(|chain_id| SolanaHostChainId(chain_id.to_be_bytes()))
+            .map(SolanaHostChainId)
             .ok_or(SolanaUserDecryptBindingError::EmptyHandles)?;
 
         Ok(Self {
@@ -234,58 +222,29 @@ impl SolanaUserDecryptBinding {
             receiver_id,
             handles: canonical_handles,
             transport_key: transport_key.to_vec(),
-            extra_data: extra_data.to_vec(),
         })
     }
 
-    /// The per-request commitment: 32 bytes, delivered to signcryption as opaque bytes.
-    pub fn compute_link(&self) -> Vec<u8> {
-        unsafe_hash_list_w_size(
-            &DSEP_SOLANA_LINKER,
-            &self.hashed_elements(),
-            SOLANA_LINK_LEN,
-        )
-    }
-
-    /// The exact byte sequence fed to the hasher, in order — the `linker_hasher_input` field of
-    /// the published vectors. Consumed by the vector generator and the freeze gate
-    /// (`core/grpc/tests/solana_linker_vectors.rs` and
-    /// `core/grpc/tests/solana_frozen_constants.rs`); not part of the client contract.
-    #[doc(hidden)]
-    pub fn linker_hasher_input(&self) -> Vec<u8> {
-        let elements = self.hashed_elements();
-
-        let mut input = Vec::with_capacity(
-            DSEP_LIST.len()
-                + DSEP_SOLANA_LINKER.len()
-                + size_of::<u64>() // the element count
-                + elements.iter().map(|element| element.len()).sum::<usize>(),
-        );
-        input.extend_from_slice(&DSEP_LIST);
-        input.extend_from_slice(&DSEP_SOLANA_LINKER);
-        input.extend_from_slice(&(elements.len() as u64).to_le_bytes());
-        for element in elements {
-            input.extend_from_slice(element);
-        }
-        input
-    }
-
-    /// The hashed elements, in order.
+    /// The per-request commitment: the EIP-712 signing hash of [`SolanaUserDecryptionLinker`]
+    /// under `domain`, delivered to signcryption as 32 opaque bytes.
     ///
-    /// The transport key and the extra data are last and are the only elements of variable
-    /// length. Every element is length-prefixed by the shared list hash, so injectivity does not
-    /// depend on widths; keeping the variable-length pair at fixed trailing positions is what
-    /// lets the element count recover the handle count exactly.
-    fn hashed_elements(&self) -> Vec<&[u8]> {
-        let mut elements: Vec<&[u8]> = Vec::with_capacity(FIXED_ELEMENTS + self.handles.len());
-        elements.push(SOLANA_LINKER_SCHEME_TAG.as_slice());
-        elements.push(self.verifying_program_id.as_slice());
-        elements.push(self.chain_id.as_bytes().as_slice());
-        elements.push(self.receiver_id.as_slice());
-        elements.extend(self.handles.iter().map(|handle| handle.as_slice()));
-        elements.push(self.transport_key.as_slice());
-        elements.push(self.extra_data.as_slice());
-        elements
+    /// `domain` is the Gateway `Decryption` contract's EIP-712 domain — the one the request
+    /// carries and the client configures — not a domain built from the Solana host chain id. It is
+    /// a required input: the type has no default, so a caller without a domain has no link.
+    ///
+    /// What the struct binds, field by field: the transport key verbatim (`publicKey`), the handles
+    /// in request order (`handles`), the 32-byte recipient (`userPubkey`) and the host program
+    /// (`verifyingProgramId`). The host chain enters through bytes `[22..30]` of every handle; the
+    /// chain id this binding extracted from them is not hashed a second time, it only serves
+    /// [`Self::validate_declared_chain_id`].
+    pub fn compute_link(&self, domain: &Eip712Domain) -> Vec<u8> {
+        let linker = SolanaUserDecryptionLinker {
+            publicKey: self.transport_key.clone().into(),
+            handles: self.handles.iter().copied().map(B256::from).collect(),
+            userPubkey: B256::from(self.receiver_id),
+            verifyingProgramId: B256::from(self.verifying_program_id),
+        };
+        linker.eip712_signing_hash(domain).to_vec()
     }
 
     /// Checks a separately declared chain id against the one embedded in the handles.
@@ -350,13 +309,11 @@ fn identity(bytes: &[u8]) -> Option<[u8; SOLANA_IDENTITY_LEN]> {
     bytes.try_into().ok()
 }
 
-/// Reads the chain id a ciphertext handle embeds in bytes `[22..30]`.
+/// Reads the chain id a ciphertext handle embeds in bytes `[22..30]`, big-endian.
 pub(crate) fn handle_chain_id(handle: &[u8; SOLANA_IDENTITY_LEN]) -> u64 {
-    u64::from_be_bytes(
-        handle[HANDLE_CHAIN_ID_START..HANDLE_CHAIN_ID_END]
-            .try_into()
-            .expect("the chain ID range is eight bytes"),
-    )
+    let mut chain_id = [0u8; size_of::<u64>()];
+    chain_id.copy_from_slice(&handle[HANDLE_CHAIN_ID_START..HANDLE_CHAIN_ID_END]);
+    u64::from_be_bytes(chain_id)
 }
 
 #[cfg(test)]

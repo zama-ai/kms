@@ -29,19 +29,51 @@ Out of scope here, and belonging to the FHEVM integration:
 
 ## The linker
 
-Every Solana user-decryption request produces one 32-byte **link**: a SHAKE256 list-hash over the
-deployment pair (`verifying_program_id`, host chain id), the recipient (the raw 32-byte ed25519
-wallet key), the ordered ciphertext handles, the transport key, and the request's `extra_data`
-bound verbatim — the KMS never parses it, exactly as on the EVM path.
+Every Solana user-decryption request produces one 32-byte **link**: the EIP-712 signing hash of a
+typed struct under the Gateway `Decryption` contract's domain — the very construction the EVM path
+uses for its `UserDecryptionLinker`, over a Solana-shaped struct:
+
+```text
+struct SolanaUserDecryptionLinker {
+    bytes     publicKey;           // the safe-serialized ML-KEM-512 transport key, as the request carries it
+    bytes32[] handles;             // request order, duplicates preserved
+    bytes32   userPubkey;          // the full 32-byte ed25519 recipient
+    bytes32   verifyingProgramId;  // the host program
+}
+
+link = keccak256(0x1901 ‖ domainSeparator(Gateway Decryption domain) ‖ hashStruct(SolanaUserDecryptionLinker))
+```
+
 A KMS node embeds this link in its response as `payload.digest` and binds it into the
 authenticated encryption of the plaintext share. The client recomputes the link from its own
-request fields and accepts only responses that carry exactly that value — the response never gets
-to say what the expectation is.
+request fields and its configured Gateway domain and accepts only responses that carry exactly
+that value — the response never gets to say what the expectation is, and no domain or identity a
+response might carry is ever read.
 
-The transport key committed to is the complete serialized `UnifiedPublicEncKey` (869 bytes for
-ML-KEM-512, produced by tfhe-rs `safe_serialization` — the same bytes the EVM permit signs).
-Moving to a 32-byte key digest in permits and linkers is a possible future migration; it is not
-part of v1.
+What the link binds, and how:
+
+- The **host program** is bound explicitly, as `verifyingProgramId`.
+- The **host chain** is bound through the handles: bytes `[22..30]` of every handle carry the host
+  chain id with type byte `0x01`, the binding rejects a handle without that type byte or a batch
+  whose handles disagree, and a client compares that chain id with the one its permit signed
+  before it computes the link. The same program on another cluster therefore answers under different handle bytes
+  and a different link. There is no separate chain-id field: it would repeat a value the handles
+  already carry.
+- The **Gateway domain** is a required input on every side: the KMS computes the link under the
+  domain the request carries and rejects a request without one, and a client has no expected link
+  without it.
+- The **transport key** is the complete safe-serialized `UnifiedPublicEncKey` (869 bytes for
+  ML-KEM-512, produced by tfhe-rs `safe_serialization` — the same bytes the wallet permit binds),
+  hashed as `keccak256(bytes)` exactly like the EVM `publicKey`.
+- `extra_data` is **not** a link input. It is authenticated by the external response signature
+  only, exactly as on EVM: a response carrying different `extra_data` fails the node-signature
+  rule, not the link comparison, and an internal node signature alone does not authenticate it.
+
+Every variable-width input is hashed to one 32-byte word before the struct hash, so no field
+boundary depends on validation; the pre-hash checks above are the part of the binding the hash
+cannot provide, and the checked binding constructor is the only way to a link. The type string is
+the version boundary: a layout change is a new type name, never a reinterpretation of the same
+bytes. No wallet signs this type.
 
 ## The verification contract
 
@@ -49,13 +81,15 @@ Response verification lives in one place, `kms_lib::client::solana_response`, an
 in fixed order:
 
 1. **Recompute, don't parse.** The expected link is recomputed from the client's own typed request
-   fields. The digest inside a response is only ever compared against it.
+   fields and its configured Gateway domain. The digest inside a response is only ever compared
+   against it.
 2. **Authenticate before comparing.** Each share's KMS node signature is verified against the
    caller-supplied trusted signer set. A share carrying a non-empty internal signature is checked
    as ECDSA over the serialized payload; an empty internal signature falls back to the EIP-712
-   `external_signature`, which is fully verified (message rebuilt from the payload, the request's
-   transport key and `extra_data`; recovered address compared to the registered one) — never
-   merely observed to be present. A key found inside a response acts only under its binding to a
+   `external_signature`, which is fully verified under the same Gateway domain (message rebuilt
+   from the payload, the request's transport key and `extra_data`; recovered address compared to
+   the registered one) — never merely observed to be present. This is the only place `extra_data`
+   is authenticated. A key found inside a response acts only under its binding to a
    registered address, never on its own authority.
 3. **Byte equality.** The embedded digest must equal the recomputed link byte for byte.
 4. **Uniformity and threshold.** Every accepted share carries the same link, each party
@@ -80,25 +114,25 @@ the response call takes that client plus the request-side values the link commit
   configuration, exactly as the EVM SDK does. It is never learned from a response. Unlike
   `new_client` there is no wallet address — the recipient is the 32-byte ed25519 key passed per
   call.
-- **`process_user_decryption_resp_solana_from_js(client, request, solana_request, …)`** verifies
-  and releases. The Solana-owned request fields travel as one named object,
+- **`process_user_decryption_resp_solana_from_js(client, request, solana_request, …, eip712_domain)`**
+  verifies and releases. The Solana-owned request fields travel as one named object,
   `{ user_pubkey, host_chain_id, verifying_program_id }`, with
   identities as 32-byte hex strings and `host_chain_id` as a decimal string — the vector-set
-  convention, because a Solana chain id has type byte `0x01` and does not fit a JS number. Its trailing
-  **`eip712_domain`** argument is the EIP-712 domain KMS nodes produced the response's
-  `external_signature` under, in the same JS shape the EVM wrapper takes.
-- **`compute_solana_user_decrypt_link_from_js(solana_request, handles, enc_key, extra_data)`**
+  convention, because a Solana chain id has type byte `0x01` and does not fit a JS number. The
+  trailing **`eip712_domain`** argument is the Gateway `Decryption` contract's EIP-712 domain, in
+  the same JS shape the EVM wrapper takes: the link is computed under it, and it is the domain KMS
+  nodes produced the response's `external_signature` under.
+- **`compute_solana_user_decrypt_link_from_js(solana_request, handles, enc_key, eip712_domain)`**
   is the request half of the same contract: from the fields the client already holds — the same
   named `solana_request` object, the handles as hex strings in request order, the serialized
-  transport key and the request's `extra_data` — it returns the 32-byte link a response must be
-  bound to, or throws when the fields are not a valid request. It is marshalling over the one
-  canonical construction, not a second linker; an SDK uses it to compute the request-side link
-  and to replay the shared vector set against the wasm build.
+  transport key and the Gateway domain — it returns the 32-byte link a response must be bound to,
+  or throws when the fields are not a valid request. It is marshalling over the one canonical
+  construction, not a second linker; an SDK uses it to compute the request-side link and to replay
+  the shared vector set against the wasm build. `extra_data` is not among its inputs.
 
-Both arguments are required, and both fail closed: omitting the domain leaves an empty domain
-under which no real external signature verifies, and a client holding an empty signer set leaves
-every share an unknown party. A caller therefore stops decrypting instead of silently accepting
-response-supplied key material — this is intentional.
+All of these fail closed: a missing domain is an error — there is no link without it — and a
+client holding an empty signer set leaves every share an unknown party. A caller therefore stops
+decrypting instead of silently accepting response-supplied key material — this is intentional.
 
 The successful path is pinned across the wasm boundary by `core/service/tests/js/test.js`: stable
 Solana vectors (one centralized, one threshold; generated deterministically by
@@ -117,13 +151,14 @@ state, because the reference client talks gRPC to the cores directly.
 
 ## Frozen bytes and the shared vector set
 
-The linker v1 construction is frozen by a normative vector set:
+The linker construction is frozen by a normative vector set:
 
-- `core/grpc/test-vectors/solana_linker_v1.json` — accepted and rejected records, each carrying
-  the typed fields, the complete byte sequence the hasher consumes, and the expected link. All
-  64-bit values are decimal strings: every chain id has type byte `0x01`, so a JSON number reaching a
-  TypeScript consumer would be silently rounded.
-- `core/grpc/test-vectors/solana_linker_v1.sha256` — the set's SHA-256 in `sha256sum` format.
+- `core/grpc/test-vectors/solana_linker_v2.json` — accepted and rejected records, each carrying
+  the typed fields, the Gateway domain the record was computed under, the type string and type
+  hash, the struct hash and the expected link. All 64-bit values are decimal strings: every host
+  chain id has type byte `0x01`, so a JSON number reaching a TypeScript consumer would be silently
+  rounded.
+- `core/grpc/test-vectors/solana_linker_v2.sha256` — the set's SHA-256 in `sha256sum` format.
 
 Five implementations (SDK TypeScript, relayer, Connector Rust, KMS Core Rust, KMS client/WASM)
 must consume the same bytes. Each repository holding a copy commits the same two files, and CI
@@ -134,8 +169,15 @@ end twice: `core/service/tests/js/linker_vectors.test.js` replays every record o
 `compute_solana_user_decrypt_link_from_js`, and `core/service/tests/js/test.js`'s stable
 transcripts fail to decrypt if the wasm-compiled linker diverges.
 
-The scheme tag `SolanaUserDecryptionLinker:v1`, the call separator `SOLLNK01` and the element
-layout are pinned by `core/grpc/tests/solana_frozen_constants.rs`. Changing those bytes is a
-version bump in the scheme tag, not an edit. The vector runner and that constants test freeze the
-published set in this repository.
+The type string
+`SolanaUserDecryptionLinker(bytes publicKey,bytes32[] handles,bytes32 userPubkey,bytes32 verifyingProgramId)`,
+its keccak-256 type hash and the EIP-712 encoding of every field are pinned by
+`core/grpc/tests/solana_frozen_constants.rs`, which rebuilds the preimage by hand and requires the
+library to agree. A change to any of those bytes is a new type name, not an edit. The vector
+runner and that constants test freeze the published set in this repository.
+
+The list-hash linker v1 (SHAKE256 under the scheme tag `SolanaUserDecryptionLinker:v1` and the
+call separator `SOLLNK01`) and its `solana_linker_v1` set are removed rather than kept alongside:
+the KMS server and its clients ship as one artifact set — the Connector's KMS pin, the SDK's
+vendored WASM and the end-to-end `CORE_VERSION` — so no dual-linker code is kept.
 
