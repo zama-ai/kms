@@ -2000,7 +2000,9 @@ async fn reconstruct_solana_user_decrypt(
     } = collected;
     let reconstruct_one_start = Instant::now();
 
-    let response_domain = protobuf_to_alloy_domain(
+    // The Gateway domain the request was sent under: the link is recomputed under it, and the
+    // nodes' external signatures are verified under it.
+    let gateway_domain = protobuf_to_alloy_domain(
         user_decrypt_req
             .domain
             .as_ref()
@@ -2017,7 +2019,7 @@ async fn reconstruct_solana_user_decrypt(
             .collect(),
         enc_key: user_decrypt_req.enc_key.clone(),
         extra_data: user_decrypt_req.extra_data.clone(),
-        response_domain,
+        gateway_domain,
     };
 
     let plaintexts = internal_client
