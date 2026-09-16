@@ -289,7 +289,12 @@ where
         for cur_pub_data in pub_data_type {
             if !data_exists(&*pub_storage, req_id, &cur_pub_data.to_string())
                 .await
-                .map_err(|_| StorageError::Reading)?
+                .map_err(|e| {
+                    tracing::warn!(
+                        "Failed to check public {cur_pub_data} for request {req_id}: {e}"
+                    );
+                    StorageError::Reading
+                })?
             {
                 return Ok(false);
             }
@@ -297,7 +302,10 @@ where
         for cur_priv_data in priv_data_type {
             if !data_exists_at_epoch(&*priv_storage, req_id, epoch_id, &cur_priv_data.to_string())
                 .await
-                .map_err(|_| StorageError::Reading)?
+                .map_err(|e| {
+                    tracing::warn!("Failed to check private {cur_priv_data} for request {req_id} at epoch {epoch_id}: {e}");
+                    StorageError::Reading
+                })?
             {
                 return Ok(false);
             }
@@ -741,12 +749,7 @@ where
         }
         let private_exists = self
             .data_exists_at_epoch(key_id, epoch_id, &[], &[priv_data_type])
-            .await
-            .inspect_err(|e| {
-                tracing::warn!(
-                    "Failed to check {priv_data_type} for key {key_id} at epoch {epoch_id}: {e}"
-                );
-            })?;
+            .await?;
         if private_exists {
             tracing::warn!(
                 "Refusing FHE key write: {priv_data_type} already exists for key {key_id} at epoch {epoch_id}"
@@ -863,10 +866,7 @@ where
             }
             if self
                 .data_exists_at_epoch(crs_id, epoch_id, &[], &[PrivDataType::CrsInfo])
-                .await
-                .inspect_err(|e| {
-                    tracing::warn!("Failed to check CrsInfo for CRS {crs_id} at epoch {epoch_id}: {e}");
-                })?
+                .await?
             {
                 tracing::warn!("Refusing CRS write: CrsInfo already exists for CRS {crs_id} at epoch {epoch_id}");
                 return Err(StorageError::Duplicate);
