@@ -620,7 +620,6 @@ const INTERNAL_RECOVERY_REQUEST_TEST: InternalRecoveryRequestTest = InternalReco
 // KMS test
 const INTERNAL_CUS_CONTEXT_TEST: InternalCustodianContextTest = InternalCustodianContextTest {
     test_filename: Cow::Borrowed("internal_cus_context"),
-    internal_cus_setup_filename: Cow::Borrowed("internal_cus_setup_handle"),
     unified_enc_key_filename: Cow::Borrowed("unified_enc_key_handle"),
     state: 300,
     custodian_count: 5,

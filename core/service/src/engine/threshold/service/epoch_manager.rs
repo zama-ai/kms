@@ -2391,7 +2391,7 @@ pub(crate) mod tests {
         );
         let epoch_id = *DEFAULT_EPOCH_ID;
         let session_maker =
-            SessionMaker::four_party_dummy_session(None, None, &epoch_id, base_kms.new_rng());
+            SessionMaker::four_party_dummy_session(None, None, &epoch_id, base_kms.new_rngs());
 
         RealThresholdEpochManager::<ram::RamStorage, ram::RamStorage, I, SecureReshareSecretKeys>::init_test(
             base_kms,

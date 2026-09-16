@@ -677,6 +677,7 @@ pub mod tests {
     use aes_prng::AesRng;
     use kms_grpc::{RequestId, rpc_types::PrivDataType};
     use rand::SeedableRng;
+    use rand_chacha::ChaCha20Rng;
     use std::collections::HashMap;
 
     /// An uninitialized secret-sharing vault, an empty private storage and a signing key.
@@ -685,7 +686,7 @@ pub mod tests {
         let vault = Vault {
             storage: StorageProxy::from(RamStorage::new()),
             keychain: Some(KeychainProxy::SecretSharing(SecretShareKeychain::new(
-                AesRng::seed_from_u64(42),
+                ChaCha20Rng::seed_from_u64(42),
             ))),
         };
         (RamStorage::new(), vault, sig_key)
@@ -887,7 +888,7 @@ pub mod tests {
 
     /// Build a secret-sharing keychain whose current backup id is `current_backup_id`.
     pub(crate) fn make_secret_share_keychain(current_backup_id: RequestId) -> KeychainProxy {
-        let mut rng = AesRng::seed_from_u64(42);
+        let mut rng = ChaCha20Rng::seed_from_u64(42);
         let mut enc = Encryption::new(PkeSchemeType::MlKem512, &mut rng);
         let (_dec_key, enc_key) = enc.keygen().unwrap();
         let mut keychain = SecretShareKeychain::new(rng);

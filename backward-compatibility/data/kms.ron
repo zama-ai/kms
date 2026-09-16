@@ -2103,7 +2103,6 @@
         kms_core_module: "kms",
         metadata: InternalCustodianContext((
             test_filename: "internal_cus_context",
-            internal_cus_setup_filename: "internal_cus_setup_handle",
             unified_enc_key_filename: "unified_enc_key_handle",
             state: 300,
             custodian_count: 5,

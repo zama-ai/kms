@@ -215,7 +215,9 @@ where
         backup_id: RequestId,
         cts: BTreeMap<Role, InnerOperatorBackupOutput>,
     ) -> anyhow::Result<(RecoveryRequest, UnifiedPrivateEncKey, UnifiedPublicEncKey)> {
-        let mut rng = self.base_kms.new_rng();
+        // The ephemeral keypair is MLKEM1024-P384, so it needs a seed wider than the 128 bits
+        // `new_rng` provides.
+        let mut rng = self.base_kms.new_rng_256();
         let operator_verf_key = self.base_kms.verf_key().to_legacy_bytes()?;
         // Generate asymmetric ephemeral keys for the operator to use to encrypt the backup
         let mut enc = Encryption::new(BACKUP_PKE_SCHEME, &mut rng);
@@ -1475,6 +1477,7 @@ mod tests {
     use kms_grpc::identifiers::EpochId;
     use kms_grpc::kms::v1::{CustodianContext, CustodianSetupMessage, OperatorBackupOutput};
     use rand::SeedableRng;
+    use rand_chacha::ChaCha20Rng;
     use std::{
         collections::{BTreeMap, HashSet},
         time::SystemTime,
@@ -1516,7 +1519,7 @@ mod tests {
             storage: StorageProxy::Ram(RamStorage::new()),
             keychain: Some(KeychainProxy::SecretSharing(
                 crate::vault::keychain::secretsharing::SecretShareKeychain::new(
-                    AesRng::seed_from_u64(1),
+                    ChaCha20Rng::seed_from_u64(1),
                 ),
             )),
         }))

@@ -70,8 +70,8 @@ impl TryFrom<CustodianRecoveryOutput> for InternalCustodianRecoveryOutput {
         Ok(InternalCustodianRecoveryOutput {
             signcryption: UnifiedSigncryption::new(
                 backup_output.signcryption.clone(),
-                backup_output.pke_type().into(),
-                backup_output.signing_type().into(),
+                backup_output.pke_type.try_into()?,
+                backup_output.signing_type.try_into()?,
             ),
             custodian_role: Role::indexed_from_one(value.custodian_role as usize),
         })

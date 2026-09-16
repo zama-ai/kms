@@ -208,19 +208,19 @@ mod tests {
         },
         engine::base::derive_request_id,
     };
-    use aes_prng::AesRng;
     use rand::SeedableRng;
+    use rand_chacha::ChaCha20Rng;
 
     #[tokio::test]
     async fn test_new_keychain_is_uninitialized() {
-        let keychain = SecretShareKeychain::new(AesRng::seed_from_u64(42));
+        let keychain = SecretShareKeychain::new(ChaCha20Rng::seed_from_u64(42));
         assert!(keychain.backup_enc_key.is_none());
         assert!(keychain.custodian_context_id.is_none());
     }
 
     #[tokio::test]
     async fn test_set_and_get_backup_enc_key() {
-        let mut rng = AesRng::seed_from_u64(42);
+        let mut rng = ChaCha20Rng::seed_from_u64(42);
         let mut enc = Encryption::new(BACKUP_PKE_SCHEME, &mut rng);
         let (_dec_key, enc_key) = enc.keygen().unwrap();
         let mut keychain = SecretShareKeychain::new(rng);
@@ -232,7 +232,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_restore_backup_enc_key_restores_and_resets() {
-        let mut rng = AesRng::seed_from_u64(42);
+        let mut rng = ChaCha20Rng::seed_from_u64(42);
         let mut enc = Encryption::new(BACKUP_PKE_SCHEME, &mut rng);
         let (_dec_key, enc_key) = enc.keygen().unwrap();
         let mut keychain = SecretShareKeychain::new(rng);
@@ -261,7 +261,7 @@ mod tests {
     /// An oversize attestation field fails only inside a real enclave, where no test reaches it.
     #[tokio::test]
     async fn test_operator_public_key_exceeds_attestation_field_limit() {
-        let mut rng = AesRng::seed_from_u64(42);
+        let mut rng = ChaCha20Rng::seed_from_u64(42);
         let mut enc = Encryption::new(BACKUP_PKE_SCHEME, &mut rng);
         let (_dec_key, enc_key) = enc.keygen().unwrap();
         let mut keychain = SecretShareKeychain::new(rng);
@@ -278,14 +278,14 @@ mod tests {
 
     #[tokio::test]
     async fn test_operator_public_key_bytes_error() {
-        let keychain = SecretShareKeychain::new(AesRng::seed_from_u64(42));
+        let keychain = SecretShareKeychain::new(ChaCha20Rng::seed_from_u64(42));
         let result = keychain.operator_public_key_bytes();
         assert!(result.is_err());
     }
 
     #[tokio::test]
     async fn test_encrypt_and_decrypt_roundtrip() {
-        let mut rng = AesRng::seed_from_u64(42);
+        let mut rng = ChaCha20Rng::seed_from_u64(42);
         let (_verf_key, sig_key) = gen_sig_keys(&mut rng);
         let mut enc = Encryption::new(BACKUP_PKE_SCHEME, &mut rng);
         let (dec_key, enc_key) = enc.keygen().unwrap();

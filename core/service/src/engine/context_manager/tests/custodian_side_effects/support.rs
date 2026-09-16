@@ -50,7 +50,7 @@ impl CustodianFixture {
             None,
             None,
             &DEFAULT_EPOCH_ID,
-            base_kms.new_rng(),
+            base_kms.new_rngs(),
         );
         let manager = ThresholdContextManager::new(
             base_kms,

@@ -50,7 +50,7 @@ The call will print any inconsistencies found between the public keys generated 
 
 For example:
 ```{bash}
-$ cargo run --bin kms-custodian verify --seed-phrase "stick essence exhaust bunker meat orchard wolf timber tackle gesture video cheap" --setup-msg "<base64 setup message>"
+$ cargo run --bin kms-custodian verify --seed-phrase "bonus shaft long pony ramp often sight throw snack profit shock violin erosion obtain venue purchase minute inquiry sausage idea cinnamon kiwi own essence" --setup-msg "<base64 setup message>"
 ```
 
 ### Recovery (decryption of backup)
@@ -72,7 +72,7 @@ The base64-encoded recovery output is printed to stdout (prefixed with `The cust
 
 For example:
 ```{bash}
-$ cargo run --bin kms-custodian decrypt --seed-phrase "stick essence exhaust bunker meat orchard wolf timber tackle gesture video cheap" --randomness 123  --custodian-role 1 --recovery-request "<base64 recovery request>"
+$ cargo run --bin kms-custodian decrypt --seed-phrase "bonus shaft long pony ramp often sight throw snack profit shock violin erosion obtain venue purchase minute inquiry sausage idea cinnamon kiwi own essence" --randomness 123  --custodian-role 1 --recovery-request "<base64 recovery request>"
 ```
 
 WARNING: After recovery to an operator it is **crucial** to consider the previous backup burned and hence a new seed-phrase must be constructed for all backup custodians. That is, the [custodian setup](#custodian-setup) must be reexecuted once the backup recovery has been successfully completed on the operator. 
@@ -99,10 +99,11 @@ The alternative backup mode — wrapping the same key under an AWS KMS CMK — i
 
 User decryption is unaffected by any of this and remains ML-KEM-512.
 
-Nothing in the backup path rejects a peer that advertises a weaker scheme. Every signcryption and
-ciphertext carries its own `pke_type` tag, so a custodian running an older `kms-custodian` still
-interoperates; the trade-off is that such a custodian's share is protected at that custodian's
-scheme, not at the context's.
+Nothing in the backup path rejects a peer that advertises a weaker public key
+scheme. Every signcryption and ciphertext carries its own `pke_type` tag, so a
+context whose custodians publish different schemes works. On the other hand,
+there are no options to select a different scheme, so the backup process is
+initiated using built-in tools from KMS, MLKEM1024-P384 will be used.
 
 ### Parties
 

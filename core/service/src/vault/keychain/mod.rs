@@ -10,6 +10,7 @@ use aws_sdk_kms::Client as AWSKMSClient;
 use enum_dispatch::enum_dispatch;
 use iam_rs::IAMPolicy;
 use rand::SeedableRng;
+use rand_chacha::ChaCha20Rng;
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use std::{convert::Into, sync::Arc};
 use strum_macros::EnumTryAs;
@@ -63,7 +64,7 @@ pub trait Keychain {
 pub enum KeychainProxy {
     AwsKmsSymm(awskms::AWSKMSKeychain<SecurityModuleProxy, awskms::Symm, AesRng>),
     AwsKmsAsymm(awskms::AWSKMSKeychain<SecurityModuleProxy, awskms::Asymm, AesRng>),
-    SecretSharing(secretsharing::SecretShareKeychain<AesRng>),
+    SecretSharing(secretsharing::SecretShareKeychain<ChaCha20Rng>),
 }
 
 #[derive(EnumTryAs, Clone)]
@@ -128,6 +129,9 @@ pub async fn make_keychain_proxy(
     security_module: Option<Arc<SecurityModuleProxy>>,
     attest_key_policy: bool,
 ) -> anyhow::Result<KeychainProxy> {
+    // The AWS KMS keychains take their IVs and data keys from the security module, so a 128-bit
+    // seed is enough there. The secret-sharing keychain encapsulates under MLKEM1024-P384 for
+    // every backup blob, which needs the wider seed.
     let rng = AesRng::from_entropy();
     let keychain = match keychain_conf {
         KeychainConf::AwsKms(AwsKmsKeychain {
@@ -155,9 +159,9 @@ pub async fn make_keychain_proxy(
         }
         // Starts uninitialized and can only encrypt once `NewCustodianContext` has installed a
         // context, which in turn requires the vault to be configured with this keychain already.
-        KeychainConf::SecretSharing(SecretSharingKeychain {}) => {
-            KeychainProxy::from(secretsharing::SecretShareKeychain::new(rng))
-        }
+        KeychainConf::SecretSharing(SecretSharingKeychain {}) => KeychainProxy::from(
+            secretsharing::SecretShareKeychain::new(ChaCha20Rng::from_entropy()),
+        ),
     };
     Ok(keychain)
 }

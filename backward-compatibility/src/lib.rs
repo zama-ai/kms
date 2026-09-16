@@ -1074,7 +1074,6 @@ impl TestType for InternalRecoveryRequestTest {
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct InternalCustodianContextTest {
     pub test_filename: Cow<'static, str>,
-    pub internal_cus_setup_filename: Cow<'static, str>,
     pub unified_enc_key_filename: Cow<'static, str>,
     pub state: u64,
     pub custodian_count: usize,

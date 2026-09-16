@@ -106,7 +106,8 @@ The service crate is the main surface area. Key subdirectories under
   and the operator's per-context backup vault key — selected in one place,
   `backup::BACKUP_PKE_SCHEME`. Nothing rejects a peer that advertises a weaker
   scheme: the signcryption carries its own `pke_type` tag, so a mixed-scheme
-  custodian context works. User decryption accepts ML-KEM-512 only. Signing lives under
+  custodian context works. User decryption accepts ML-KEM-512 only. Every MLKEM1024-P384
+  keypair is drawn from a 256-bit-seeded CSPRNG. Signing lives under
   [cryptography/signing/](../core/service/src/cryptography/signing/): a
   scheme-tagged `Signature` plus one backend per scheme — ECDSA/secp256k1
   (`ecdsa`, the legacy default and EIP-712 home), EdDSA/ed25519 (`eddsa`), and
@@ -151,12 +152,15 @@ The service crate is the main surface area. Key subdirectories under
 
 ### Task randomness
 
-[`RngSource`](../core/service/src/engine/rng_source.rs) supplies task seeds from
-one shared AES RNG per KMS instance. `BaseKmsStruct` instances and `SessionMaker`
-share the source through `Arc`. Each task receives an owned RNG with a separate seed.
-Source initialization combines OS entropy with entropy from the configured security module.
-Refresh also mixes output from the existing source. Entropy failures return errors and leave
-the source unchanged. Refresh logs report success or failure without seed values.
+[`RngSource`](../core/service/src/engine/rng_source.rs) supplies task seeds from two parent
+RNGs per KMS instance: a 128-bit-seeded `AesRng` and a 256-bit-seeded `ChaCha20Rng`. A fork never
+carries more entropy than its parent. The wide path therefore needs its own parent, rather than a
+wider fork of the narrow one. `BaseKmsStruct` instances and `SessionMaker` share the source
+through `Arc`. Each task receives an owned RNG with a separate seed. Initialization seeds each
+parent from an independent draw, which combines OS entropy with entropy from the configured
+security module. Refresh also mixes output from the existing parents. Entropy failures return
+errors and leave both parents unchanged. Refresh logs report success or failure without seed
+values.
 
 Threshold epoch creation refreshes once in `new_mpc_epoch`, before either the resharing
 or PRSS session forks its RNG. This includes old-committee parties that skip PRSS initialization.

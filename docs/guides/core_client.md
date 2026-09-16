@@ -350,9 +350,9 @@ To further make this a manual test, make sure a [key is generated](#Key-generati
 4. Custodians do partial decryption.
   Each custodian decrypts the base64 recovery request from step 3 and prints a base64 recovery output (prefixed with `The custodian recovery output is: `). The recovery request already carries the operator's verification key, so it no longer needs to be supplied separately. Execute the following in the root of the KMS project, replacing the seed phrases with the ones from step 1 and `<recovery request>` with the base64 string from step 3:
   ```{bash}
-  cargo run --bin kms-custodian decrypt --seed-phrase "prosper wool oak moon light situate end palm sick monster clever solid" --randomness 123 --custodian-role 1 --recovery-request "<operator recovery request>"
-  cargo run --bin kms-custodian decrypt --seed-phrase "swallow around patrol toe bottom very pulse habit boy couch guide vendor" --randomness 123 --custodian-role 2 --recovery-request "<operator recovery request>"
-  cargo run --bin kms-custodian decrypt --seed-phrase "two often advance excite shiver speed vessel melt panther fiction giraffe voyage" --randomness 123 --custodian-role 3 --recovery-request "<operator recovery request>"
+  cargo run --bin kms-custodian decrypt --seed-phrase "bonus shaft long pony ramp often sight throw snack profit shock violin erosion obtain venue purchase minute inquiry sausage idea cinnamon kiwi own essence" --randomness 123 --custodian-role 1 --recovery-request "<operator recovery request>"
+  cargo run --bin kms-custodian decrypt --seed-phrase "pitch similar street card daughter cabin high off obvious grab duck deputy again verb obscure major exchange travel law grid wave asthma poverty panel" --randomness 123 --custodian-role 2 --recovery-request "<operator recovery request>"
+  cargo run --bin kms-custodian decrypt --seed-phrase "hazard you grow arena tail victory pretty rival roast august rifle useless chalk skin actress scan cereal remind super obey client entry relax fiber" --randomness 123 --custodian-role 3 --recovery-request "<operator recovery request>"
   ```
 5. KMS node recovers the backup decryption key.
   Execute the following from `core-client`, replacing the ID following `-i` with the custodian-context ID from step 3 and each `<custodian recovery output>` with a base64 output from step 4 (at least `t + 1` of them):

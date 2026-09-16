@@ -1,6 +1,5 @@
-use aes_prng::AesRng;
 use clap::Parser;
-use hashing::{DomainSep, hash_element};
+use hashing::DomainSep;
 use kms_lib::backup::{RECOVERY_OUTPUT_DESC, SEED_PHRASE_DESC, SETUP_MESSAGE_DESC};
 use kms_lib::engine::context::SoftwareVersion;
 use kms_lib::engine::utils::{base64_deserialize, base64_serialize};
@@ -10,10 +9,11 @@ use kms_lib::{
         operator::{InnerOperatorBackupOutput, InternalRecoveryRequest},
         seed_phrase::{custodian_from_seed_phrase, seed_phrase_from_entropy},
     },
-    consts::{CUSTODIAN_ENTROPY_SIZE, RND_SIZE},
+    consts::CUSTODIAN_ENTROPY_SIZE,
 };
 use observability::{conf::TelemetryConfig, telemetry::init_tracing};
 use rand::{RngCore, SeedableRng, rngs::OsRng};
+use rand_chacha::ChaCha20Rng;
 use threshold_types::role::Role;
 use zeroize::Zeroizing;
 
@@ -94,11 +94,12 @@ async fn main() -> Result<(), anyhow::Error> {
     match args {
         CustodianCommand::Generate(params) => {
             // Logic for generating keys and setup
-            let mut rng = get_rng(params.randomness.as_ref());
+            let mut rng = get_rng(params.randomness.as_ref())?;
             tracing::info!("Generating custodian keys...");
             let role = Role::indexed_from_one(params.custodian_role);
-            let mnemonic =
-                seed_phrase_from_entropy(&*seed_phrase_entropy(params.randomness.as_ref())?)?;
+            // The phrase carries raw entropy rather than `rng` output: every key the custodian
+            // derives from it must reach the full key space the encryption scheme assumes.
+            let mnemonic = seed_phrase_from_entropy(&*system_entropy(params.randomness.as_ref())?)?;
             let custodian: Custodian = custodian_from_seed_phrase(&mnemonic, role)
                 .map_err(|e| anyhow::anyhow!("Failed to recover custodian keys: {e}"))?;
             let setup_msg = custodian
@@ -158,7 +159,7 @@ async fn main() -> Result<(), anyhow::Error> {
                 Role::indexed_from_one(params.custodian_role),
             )?;
             tracing::info!("Custodian initialized successfully");
-            let mut rng = get_rng(params.randomness.as_ref());
+            let mut rng = get_rng(params.randomness.as_ref())?;
             let custodian_backup: &InnerOperatorBackupOutput = recovery_request
                 .signcryptions()
                 .get(&Role::indexed_from_one(params.custodian_role))
@@ -188,15 +189,11 @@ async fn main() -> Result<(), anyhow::Error> {
     Ok(())
 }
 
-/// Draw the entropy behind a new seed phrase.
-///
-/// This deliberately does not go through [`get_rng`]: `AesRng`'s seed is [`RND_SIZE`] bytes, so
-/// seeding one would cap the phrase — and therefore every key the custodian ever derives from it —
-/// at 128 bits, half of what the custodian encryption scheme assumes.
+/// Draw [`CUSTODIAN_ENTROPY_SIZE`] bytes of system entropy, folding in the operator's string.
 ///
 /// The optional user-supplied string is folded in over the full width with SHAKE-256, so providing
 /// it can only add entropy and never replaces the system's.
-fn seed_phrase_entropy(
+fn system_entropy(
     randomness: Option<&String>,
 ) -> anyhow::Result<Zeroizing<[u8; CUSTODIAN_ENTROPY_SIZE]>> {
     let mut entropy = Zeroizing::new([0u8; CUSTODIAN_ENTROPY_SIZE]);
@@ -218,25 +215,8 @@ fn seed_phrase_entropy(
 /// Builds the RNG for everything that is not seed-phrase entropy: the setup message's random
 /// value, and the encryption randomness of a recovery re-signcryption.
 ///
-/// `AesRng` takes a [`RND_SIZE`]-byte seed, so this caps that randomness at 128 bits. No stored key
-/// depends on it. The ephemeral secret of a recovery signcryption does, and is therefore narrower
-/// than the security level of the KEM that protects it.
-/// TODO(#3168): widen this. It needs a CSPRNG with a 256-bit seed.
-fn get_rng(randomness: Option<&String>) -> AesRng {
-    match randomness {
-        Some(user_seed) => {
-            let mut base_rng = AesRng::from_entropy();
-            // If randomness is provided then use this along with system randomness
-            let mut base_rng_bytes = [0u8; RND_SIZE];
-            base_rng.fill_bytes(&mut base_rng_bytes);
-            let mut user_seed_bytes = hash_element(&DSEP_ENTROPY, user_seed);
-            user_seed_bytes.truncate(RND_SIZE);
-            let mut rng_bytes = [0u8; RND_SIZE];
-            for i in 0..RND_SIZE {
-                rng_bytes[i] = user_seed_bytes[i] ^ base_rng_bytes[i];
-            }
-            AesRng::from_seed(rng_bytes)
-        }
-        None => AesRng::from_entropy(),
-    }
+/// The ephemeral secret of a recovery signcryption depends on this randomness, so the seed is
+/// [`CUSTODIAN_ENTROPY_SIZE`] bytes wide, matching the security level of the KEM that protects it.
+fn get_rng(randomness: Option<&String>) -> anyhow::Result<ChaCha20Rng> {
+    Ok(ChaCha20Rng::from_seed(*system_entropy(randomness)?))
 }

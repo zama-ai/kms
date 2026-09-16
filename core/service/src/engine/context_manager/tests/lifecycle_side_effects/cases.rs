@@ -256,7 +256,7 @@ async fn rejected_context_store_keeps_an_existing_context() {
         fixture.signing_key.clone(),
         test_rng_source(),
     );
-    let session_maker = SessionMaker::empty_dummy_session(base_kms.new_rng());
+    let session_maker = SessionMaker::empty_dummy_session(base_kms.new_rngs());
     session_maker
         .add_context_info(None, &fixture.target)
         .await
@@ -287,7 +287,7 @@ async fn failed_session_update_rolls_back_the_stored_context() {
         fixture.signing_key.clone(),
         test_rng_source(),
     );
-    let session_maker = attested_session_maker(base_kms.new_rng());
+    let session_maker = attested_session_maker(base_kms.new_rngs());
     let mut invalid_context = fixture.target.clone();
     invalid_context.mpc_nodes[0].ca_cert = Some(INVALID_CA_CERTIFICATE.to_vec());
 
@@ -482,7 +482,7 @@ async fn backup_failure_keeps_the_stored_context_registered(#[case] kms_type: KM
             assert_backup_failure(&manager, &storage, &context).await;
         }
         KMSType::Threshold => {
-            let session_maker = SessionMaker::empty_dummy_session(base_kms.new_rng());
+            let session_maker = SessionMaker::empty_dummy_session(base_kms.new_rngs());
             let manager = ThresholdContextManager::new(
                 base_kms,
                 storage.clone(),
