@@ -1635,8 +1635,8 @@ mod tests {
             assert!(unpack_user_decrypt_req(&req).is_ok());
         }
 
-        // EVM routing rejects handles that carry a non-EVM type byte while preserving the
-        // existing EVM handle-padding behavior.
+        // EVM routing rejects Solana type-byte handles. Other values in the eight-byte field,
+        // including chain ids that do not fill 64 bits, stay on the EVM path.
         {
             let mut evm_handle = [0xabu8; 32];
             let solana_chain_id = kms_grpc::solana_binding::solana_host_chain_id(12_345);
@@ -1663,7 +1663,7 @@ mod tests {
                 unpack_user_decrypt_req(&evm_req)
                     .unwrap_err()
                     .to_string()
-                    .contains("embeds non-EVM chain ID")
+                    .contains("embeds Solana chain ID")
             );
         }
 

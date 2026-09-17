@@ -54,7 +54,7 @@ fn frozen_domain() -> Eip712DomainMsg {
     }
 }
 
-/// A fixed EVM ciphertext handle: chain id in bytes `[22..30]` with type byte `0x00`.
+/// A fixed EVM ciphertext handle: chain id 8006 in bytes `[22..30]` as a big-endian `u64`.
 fn frozen_handle(discriminator: u8) -> Vec<u8> {
     let mut handle = [discriminator; 32];
     handle[22..30].copy_from_slice(&HOST_CHAIN_ID.to_be_bytes());
@@ -163,7 +163,7 @@ fn evm_path_rejects_solana_chain_kind_handles() {
         .expect_err("a Solana-kind handle must not reach the EVM linker")
         .to_string();
     assert!(
-        error.contains("embeds non-EVM chain ID"),
+        error.contains("embeds Solana chain ID"),
         "unexpected error: {error}",
     );
 }

@@ -1295,7 +1295,7 @@ fn dummy_domain() -> alloy_sol_types::Eip712Domain {
     )
 }
 
-/// Placeholder EVM handle. Bytes 22–29 must carry type byte `0x00`.
+/// Placeholder EVM handle. Bytes 22–29 are chain id 8006 as a big-endian `u64`.
 fn dummy_handle() -> Vec<u8> {
     let mut handle = vec![23_u8; 32];
     handle[22..30].copy_from_slice(&DUMMY_EVM_CHAIN_ID.to_be_bytes());

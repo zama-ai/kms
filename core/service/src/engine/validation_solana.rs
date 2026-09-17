@@ -254,11 +254,11 @@ mod tests {
 
     #[test]
     fn dispatch_table_is_closed() {
-        // The dispatch field (`signing_metadata`) and the load-bearing invariant (type byte of the
-        // chain id embedded in every handle) are pinned together, in all four combinations, so a
-        // request cannot reach the wrong linker by carrying the wrong field. The two rejecting
-        // cells live in two crates — `validate_solana_request` here and `compute_link_checked` in
-        // kms-grpc — and this is the one place they are read as one table.
+        // The dispatch field (`signing_metadata`) and the handle chain-id check are pinned
+        // together. Solana requires type byte `0x01`. EVM rejects that type byte and otherwise
+        // accepts the eight-byte field as a number. The two rejecting cells live in two crates —
+        // `validate_solana_request` here and `compute_link_checked` in kms-grpc — and this is the
+        // one place they are read as one table.
         let embed = |discriminator: u8, chain_id: u64| {
             let mut handle = [discriminator; 32];
             handle[22..30].copy_from_slice(&chain_id.to_be_bytes());
@@ -298,10 +298,11 @@ mod tests {
                 .compute_link_checked()
                 .expect_err("a Solana-kind handle must not reach the EVM linker")
                 .to_string()
-                .contains("embeds non-EVM chain ID")
+                .contains("embeds Solana chain ID")
         );
 
-        // Type byte 0x02 is neither family.
+        // Type byte 0x02 is not Solana. EVM chain ids have no type byte, so the EVM path accepts
+        // it; the Solana path still requires 0x01.
         let unknown_type = (0x02u64 << 56) | 12_345;
         let mut unknown_solana = solana_request();
         unknown_solana
@@ -317,25 +318,22 @@ mod tests {
             .iter_mut()
             .enumerate()
             .for_each(|(i, ct)| ct.external_handle = embed(0xa1 + i as u8, unknown_type));
-        assert!(
-            unknown_evm
-                .compute_link_checked()
-                .expect_err("type byte 0x02 is not EVM")
-                .to_string()
-                .contains("embeds non-EVM chain ID")
-        );
+        unknown_evm
+            .compute_link_checked()
+            .expect("EVM accepts a chain id whose high byte is not 0x01");
 
-        // EVM is exactly high byte 0x00: the largest 56-bit tag passes, 2^56 (type byte 0x01) fails.
-        let mut evm_max_tag = evm.clone();
-        evm_max_tag
+        // A chain id that does not fill 64 bits, or whose high byte is not 0x00, is still EVM.
+        let mut unpadded_evm = evm.clone();
+        unpadded_evm
             .typed_ciphertexts
             .iter_mut()
             .enumerate()
-            .for_each(|(i, ct)| ct.external_handle = embed(0xa1 + i as u8, CLUSTER_TAG_MASK));
-        evm_max_tag
+            .for_each(|(i, ct)| ct.external_handle = embed(0xa1 + i as u8, 0x1717_1717_1717_1717));
+        unpadded_evm
             .compute_link_checked()
-            .expect("type byte 0x00 with a 56-bit tag is EVM");
+            .expect("EVM chain ids are a number in the eight-byte field, not a 0x00 type byte");
 
+        // 2^56 is type byte 0x01: Solana, refused on EVM.
         let mut evm_two_pow_56 = evm.clone();
         evm_two_pow_56
             .typed_ciphertexts
@@ -347,7 +345,7 @@ mod tests {
                 .compute_link_checked()
                 .expect_err("2^56 has type byte 0x01")
                 .to_string()
-                .contains("embeds non-EVM chain ID")
+                .contains("embeds Solana chain ID")
         );
     }
 

@@ -45,10 +45,11 @@ const CHAIN_ID_LEN: usize = size_of::<u64>();
 /// handle count, which is what lets a reader recover the handle count from the count alone.
 const FIXED_ELEMENTS: usize = 6;
 
-/// High byte of a host chain id: `0x00` is EVM, `0x01` is Solana. The remaining seven bytes are
-/// the cluster tag. This is the KMS-side backstop that keeps Solana handles off the EVM linker
-/// and vice versa.
-pub const EVM_CHAIN_TYPE: u8 = 0x00;
+/// High byte of a host chain id: `0x01` is Solana. The remaining seven bytes are the cluster tag.
+///
+/// EVM chain ids have no type byte. The same eight handle bytes are a big-endian integer, which
+/// may use fewer than 64 bits, so a leading `0x00` is padding, not a kind marker. The EVM linker
+/// rejects Solana type byte `0x01` and accepts every other value.
 pub const SOLANA_CHAIN_TYPE: u8 = 0x01;
 const CHAIN_TYPE_SHIFT: u32 = 56;
 pub const CLUSTER_TAG_MASK: u64 = 0x00ff_ffff_ffff_ffff;
@@ -60,10 +61,6 @@ pub const fn chain_type_byte(chain_id: u64) -> u8 {
 
 pub const fn is_solana_host_chain_id(chain_id: u64) -> bool {
     chain_type_byte(chain_id) == SOLANA_CHAIN_TYPE
-}
-
-pub const fn is_evm_host_chain_id(chain_id: u64) -> bool {
-    chain_type_byte(chain_id) == EVM_CHAIN_TYPE
 }
 
 /// A Solana host chain id: type byte `0x01` plus a 56-bit cluster tag.
