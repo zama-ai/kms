@@ -249,9 +249,9 @@ The primary service is `CoreServiceEndpoint`. Its RPCs group into:
   root remains if another live context uses it. This order leaves no usable key
   shares after the party set retires. Its response lists the deleted epoch IDs. In-memory
   lifecycle leases serialize creation against destruction: `NewMpcEpoch` holds
-  shared leases for its target context and epoch through all PRSS, resharing and
-  persistence work,
-  while `DestroyMpcEpoch` and `DestroyMpcContext` require exclusive leases before
+  shared leases for its target context and epoch. A reshare also holds shared
+  leases for its source context and epoch through all PRSS, resharing, and persistence work.
+  `DestroyMpcEpoch` and `DestroyMpcContext` require exclusive leases before
   taking snapshots or deleting data. A conflicting destruction is refused with
   `FailedPrecondition`, including while PRSS is still running and the new epoch
   has not yet been registered in the session maker; callers retry once creation
