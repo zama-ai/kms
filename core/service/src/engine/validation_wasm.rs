@@ -929,6 +929,7 @@ mod tests {
                 ERR_EXT_USER_DECRYPTION_SIG_BAD_LENGTH, NodeSigningIdentity, PrivateSigKey,
                 PublicSigKey, gen_sig_keys, internal_sign,
             },
+            signing::SigningSchemeType,
         },
         dummy_domain,
         engine::{
@@ -1009,6 +1010,7 @@ mod tests {
             enc_key_buf,
             vec![CiphertextHandle::new(ciphertext_handle.clone())],
             domain.verifying_contract.unwrap(),
+            vec![SigningSchemeType::Ecdsa256k1],
             extra_data,
         );
 
@@ -1161,6 +1163,7 @@ mod tests {
             enc_key_buf,
             vec![CiphertextHandle::new(ciphertext_handle.clone())],
             dummy_domain.verifying_contract.unwrap(),
+            vec![SigningSchemeType::Ecdsa256k1],
             extra_data.clone(),
         );
 
@@ -1395,6 +1398,7 @@ mod tests {
             enc_key_buf,
             vec![CiphertextHandle::new(ciphertext_handle.clone())],
             dummy_domain.verifying_contract.unwrap(),
+            vec![SigningSchemeType::Ecdsa256k1],
             vec![],
         );
         let scheme_verf_keys = HashMap::new();
@@ -1753,6 +1757,7 @@ mod tests {
             enc_key_buf.clone(),
             vec![CiphertextHandle::new(ciphertext_handle.clone())],
             dummy_domain.verifying_contract.unwrap(),
+            vec![SigningSchemeType::Ecdsa256k1],
             vec![],
         );
 
@@ -1861,6 +1866,7 @@ mod tests {
                 enc_key_buf,
                 vec![CiphertextHandle::new(ciphertext_handle.clone())],
                 dummy_domain.verifying_contract.unwrap(),
+                vec![SigningSchemeType::Ecdsa256k1],
                 vec![],
             );
             let bad_ctx = UserDecTrustedValidationContext::new(
@@ -2077,6 +2083,7 @@ mod tests {
             enc_key_buf,
             vec![CiphertextHandle::new(ciphertext_handle.clone())],
             dummy_domain.verifying_contract.unwrap(),
+            vec![SigningSchemeType::Ecdsa256k1],
             vec![],
         );
 
@@ -2196,6 +2203,7 @@ mod tests {
             enc_key_buf,
             vec![CiphertextHandle::new(vec![5, 6, 7, 8])],
             dummy_domain.verifying_contract.unwrap(),
+            vec![SigningSchemeType::Ecdsa256k1],
             vec![],
         );
 

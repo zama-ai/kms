@@ -1050,6 +1050,7 @@ impl ParsedUserDecryptionRequest {
         enc_key: Vec<u8>,
         ciphertext_handles: Vec<CiphertextHandle>,
         eip712_verifying_contract: alloy_primitives::Address,
+        signing_schemes: Vec<SigningSchemeType>,
         extra_data: Vec<u8>,
     ) -> Self {
         Self {
@@ -1059,7 +1060,7 @@ impl ParsedUserDecryptionRequest {
             ciphertext_handles,
             eip712_verifying_contract,
             extra_data,
-            signing_schemes: vec![SigningSchemeType::Ecdsa256k1],
+            signing_schemes,
         }
     }
 
