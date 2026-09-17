@@ -44,21 +44,32 @@ pub(crate) async fn do_get_operator_pub_keys(
         let Some(attested_digest) = attestation_doc.public_key else {
             anyhow::bail!("Bad response: public key not present in attestation document")
         };
-        // The document carries a digest of the key, not the key: the composite backup key does not
-        // fit in the attestation document's `public_key` field. See `get_operator_public_key`.
-        let expected_digest = hash_element(&DSEP_ATTESTED_BACKUP_PK, pk.public_key.as_slice());
-        if expected_digest.as_slice() != attested_digest.as_slice() {
-            anyhow::bail!(
-                "Bad response: public key digest {} does not match the attestation document digest {}",
-                hex::encode(&expected_digest),
-                hex::encode(attested_digest.as_slice()),
-            )
-        };
+        check_attested_backup_pk(pk.public_key.as_slice(), attested_digest.as_slice())?;
 
         backup_pks.push(hex::encode(pk.public_key.as_slice()));
     }
 
     Ok(backup_pks)
+}
+
+/// Check that `attested_digest` binds the attestation document to `public_key`.
+///
+/// The document carries a digest of the key, not the key: the composite backup key does not fit in
+/// the attestation document's `public_key` field. The operator computes the same digest in
+/// `get_operator_public_key`, so the two sides must agree on
+/// [`DSEP_ATTESTED_BACKUP_PK`] and on the digest function.
+///
+/// Returns an error when the digests differ.
+fn check_attested_backup_pk(public_key: &[u8], attested_digest: &[u8]) -> anyhow::Result<()> {
+    let expected_digest = hash_element(&DSEP_ATTESTED_BACKUP_PK, public_key);
+    if expected_digest.as_slice() != attested_digest {
+        anyhow::bail!(
+            "Bad response: public key digest {} does not match the attestation document digest {}",
+            hex::encode(&expected_digest),
+            hex::encode(attested_digest),
+        )
+    }
+    Ok(())
 }
 
 pub(crate) async fn do_new_custodian_context(
@@ -216,4 +227,62 @@ pub(crate) async fn do_restore_from_backup(
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{DSEP_ATTESTED_BACKUP_PK, check_attested_backup_pk};
+    use hashing::hash_element;
+
+    /// A key whose digest is pinned by [`REFERENCE_DIGEST`].
+    fn reference_public_key() -> Vec<u8> {
+        (0u8..64).collect()
+    }
+
+    /// SHAKE-256 over `DSEP_ATTESTED_BACKUP_PK || reference_public_key()`, 32 bytes of output.
+    ///
+    /// The value is pinned rather than recomputed. A change to the domain separator or to the
+    /// digest function breaks every operator that runs an older binary, so it must fail here first.
+    const REFERENCE_DIGEST: &str =
+        "44a2cf7b4681e02de6f23e04a35513fecff192c0c9b7678a692d2ee48fceb919";
+
+    #[test]
+    fn digest_matches_reference() {
+        let digest = hash_element(&DSEP_ATTESTED_BACKUP_PK, reference_public_key().as_slice());
+        assert_eq!(hex::encode(&digest), REFERENCE_DIGEST);
+    }
+
+    #[test]
+    fn accepts_reference_digest() {
+        let attested_digest = hex::decode(REFERENCE_DIGEST).unwrap();
+        check_attested_backup_pk(reference_public_key().as_slice(), &attested_digest).unwrap();
+    }
+
+    #[test]
+    fn rejects_digest_of_another_key() {
+        let other_key: Vec<u8> = (1u8..65).collect();
+        let attested_digest = hash_element(&DSEP_ATTESTED_BACKUP_PK, other_key.as_slice());
+        let err = check_attested_backup_pk(reference_public_key().as_slice(), &attested_digest)
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains(REFERENCE_DIGEST), "unexpected error: {err}");
+    }
+
+    #[test]
+    fn rejects_undigested_key() {
+        let public_key = reference_public_key();
+        let err = check_attested_backup_pk(public_key.as_slice(), public_key.as_slice())
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains(REFERENCE_DIGEST), "unexpected error: {err}");
+    }
+
+    #[test]
+    fn rejects_digest_under_another_domain_separator() {
+        let other_dsep = *b"OTHERDSP";
+        let attested_digest = hash_element(&other_dsep, reference_public_key().as_slice());
+        assert!(
+            check_attested_backup_pk(reference_public_key().as_slice(), &attested_digest).is_err()
+        );
+    }
 }

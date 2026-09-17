@@ -574,6 +574,25 @@ impl KmsV0_11 {
         );
         TestMetadataKMS::CustodianSetupMessage(CUSTODIAN_SETUP_MESSAGE_TEST)
     }
+    */
+}
+
+struct DistributedDecryptionV0_11;
+
+impl DistributedDecryptionV0_11 {
+    fn gen_prss_setup_rpoly_64(dir: &PathBuf) -> TestMetadataDD {
+        let role = Role::indexed_from_one(PRSS_SETUP_RPOLY_64_TEST.role_i);
+        let base_session = get_networkless_base_session_for_parties(
+            PRSS_SETUP_RPOLY_64_TEST.amount,
+            PRSS_SETUP_RPOLY_64_TEST.threshold,
+            role,
+        );
+        let prss_setup = get_dummy_prss_setup::<ResiduePolyF4Z64>(base_session);
+
+        store_versioned_test!(&prss_setup, dir, &PRSS_SETUP_RPOLY_64_TEST.test_filename);
+
+        TestMetadataDD::PRSSSetup(PRSS_SETUP_RPOLY_64_TEST)
+    }
 
     fn gen_prss_setup_rpoly_128(dir: &PathBuf) -> TestMetadataDD {
         let role = Role::indexed_from_one(PRSS_SETUP_RPOLY_128_TEST.role_i);
@@ -676,7 +695,7 @@ impl KMSCoreVersion for V0_11 {
             KmsV0_11::gen_kms_fhe_key_handles(&dir),
             KmsV0_11::gen_threshold_fhe_keys(&dir),
             // KmsV0_11::gen_custodian_setup_message(&dir),
-            //        ]
+        ]
     }
 
     fn gen_threshold_fhe_data() -> Vec<TestMetadataDD> {
