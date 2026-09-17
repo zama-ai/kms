@@ -11,8 +11,8 @@
 //! (`sha256sum` line format); each repository commits the same two files and CI compares digests,
 //! catching both locally edited and stale copies.
 //!
-//! Conventions: every 64-bit value is a decimal string, because every chain id sets bit 63 and a
-//! JSON number would be silently rounded by a TypeScript consumer. Every rejecting record names
+//! Conventions: every 64-bit value is a decimal string, because every chain id has type byte
+//! `0x01` and a JSON number would be silently rounded by a TypeScript consumer. Every rejecting record names
 //! its rule and derives from a named accepted base with exactly one mutation. `cluster_registry`
 //! is the reviewed registry of public-cluster chain ids, derived by the same code as every
 //! record's chain id. The file deliberately does not use `tests/common`: a published reference
@@ -52,22 +52,11 @@ const DIGEST_FILE: &str = "solana_linker_v1.sha256";
 /// Set to any value to rewrite the committed set instead of checking it.
 const UPDATE_ENV: &str = "ZAMA_UPDATE_SOLANA_LINKER_VECTORS";
 
-/// Frozen tag of the deployment-time chain-id derivation rule.
+/// Prose form of the deployment-time encoding, written into the file for non-Rust consumers.
 ///
-/// The rule is a *test-side* artifact here: production KMS never derives a chain id, it receives one
-/// as data embedded in the handles. The vectors record the genesis hash and the derived id together
-/// so that the layers which do derive it — cluster configuration, the SDK — can be checked against
-/// the same pairs.
-const CHAIN_ID_DERIVATION_TAG: &str = "zama-solana-chain-id-v1";
-
-/// Prose form of the same rule, written into the file for non-Rust consumers.
-const CHAIN_ID_DERIVATION_RULE: &str = concat!(
-    "digest = SHA-256(ASCII(\"zama-solana-chain-id-v1\") || base58_decode(genesis_hash)); ",
-    "chain_id = 0x8000000000000000 | (be_u64(digest[0..8]) & 0x7fffffffffffffff)",
-);
-
-/// Bit 63 marks a Solana-kind host chain.
-const CHAIN_KIND_BIT: u64 = 1 << 63;
+/// Test-side only. Production KMS never derives a chain id — it reads the one the handles embed.
+const CHAIN_ID_DERIVATION_RULE: &str =
+    "chain_id = be_u64(0x01 || base58_decode(genesis_hash)[0..7])";
 
 /// Width of the link, and of every identity the binding accepts.
 const LINK_LEN: usize = 32;
@@ -204,6 +193,16 @@ const PUBLIC_CLUSTERS: &[(&str, &str)] = &[
     ("testnet", "4uhcVJyU9pJkvQyS88uRDiswHXSCkY3zQawwpjk2NsNY"),
 ];
 
+/// Reviewed public-cluster ids, hard-coded so a registry test cannot prove `f(g) == f(g)`.
+const PUBLIC_CLUSTER_CHAIN_IDS: &[(&str, u64)] = &[
+    ("mainnet-beta", 0x0145_2969_98a6_f8e2),
+    ("devnet", 0x01ce_59db_5080_fc2c),
+    ("testnet", 0x013a_132e_ce10_305e),
+];
+
+/// Chain id of [`REFERENCE_GENESIS`]: type byte `0x01` and that hash's first seven bytes.
+const REFERENCE_CHAIN_ID: u64 = 0x0145_39cf_79f6_6704;
+
 /// What the registry is for, written into the file for non-Rust consumers.
 const CLUSTER_REGISTRY_NOTE: &str = concat!(
     "The reviewed registry of public-cluster chain ids, published here rather than in a ",
@@ -212,8 +211,9 @@ const CLUSTER_REGISTRY_NOTE: &str = concat!(
     "entry is the chain_id_derivation_rule applied to the genesis hash beside it. Genesis hashes ",
     "were read from each cluster's public RPC (getGenesisHash), not transcribed from ",
     "documentation. Registering a further cluster means adding it here and regenerating; these ",
-    "three are the ones a deployment review is expected to check against. No KMS code path derives ",
-    "a chain id — a party reads the one the handles embed — so this section is a deployment-time ",
+    "three are the ones a deployment review is expected to check against. The seven-byte tag is a ",
+    "label, not evidence of cluster identity: KMS never derives a chain id or checks one against ",
+    "configuration — a party reads the one the handles embed — so this section is a deployment-time ",
     "and SDK-side surface, not an input to the linker.",
 );
 
@@ -224,8 +224,8 @@ const SHARED_INPUTS: &str = concat!(
     "fhevm permit set's (test-fixtures/permit/permit_v1.json, record ",
     "reference-permit-two-domains): the two halves of the specification's fixture set bind the ",
     "same objects. Handles are this layer's own — the permit carries none. Two deliberate ",
-    "divergences from the permit set as it stands today: (1) chain ids here are derived by the ",
-    "settled zama-solana-chain-id-v1 rule, while the permit set still records a stand-in ",
+    "divergences from the permit set as it stands today: (1) chain ids here are ",
+    "be_u64(0x01 || genesis[0..7]), while the permit set still records a stand-in ",
     "derivation, so the same genesis hash yields a different id there and that set is due for ",
     "regeneration; (2) the canonical transport key here is the 869-byte serialized ",
     "UnifiedPublicEncKey::MlKem512 container a KMS request actually carries — the selected ",
@@ -297,8 +297,6 @@ struct VectorFile {
     set_digest_contract: String,
     /// Which inputs are shared with the permit set, and where the two diverge today.
     shared_inputs: String,
-    /// Frozen tag of the chain-id derivation rule.
-    chain_id_derivation: String,
     /// The rule itself, in prose.
     chain_id_derivation_rule: String,
     /// What the registry below is, and who else reads it.
@@ -425,7 +423,7 @@ mod rule {
     // construction-reject
     pub const EMPTY_HANDLE_LIST: &str = "empty-handle-list";
     pub const HANDLE_WIDTH: &str = "handle-width";
-    pub const HANDLE_CHAIN_KIND_BIT: &str = "handle-chain-kind-bit";
+    pub const HANDLE_CHAIN_TYPE_BYTE: &str = "handle-chain-type-byte";
     pub const MIXED_EMBEDDED_CHAIN_IDS: &str = "mixed-embedded-chain-ids";
     pub const DECLARED_CHAIN_ID_MISMATCH: &str = "declared-chain-id-mismatch";
     pub const IDENTITY_WIDTH: &str = "identity-width";
@@ -446,7 +444,7 @@ mod rule {
         DUPLICATED_HANDLE,
         EMPTY_HANDLE_LIST,
         HANDLE_WIDTH,
-        HANDLE_CHAIN_KIND_BIT,
+        HANDLE_CHAIN_TYPE_BYTE,
         MIXED_EMBEDDED_CHAIN_IDS,
         DECLARED_CHAIN_ID_MISMATCH,
         IDENTITY_WIDTH,
@@ -490,21 +488,21 @@ fn base58_decode(text: &str) -> Option<Vec<u8>> {
     Some(decoded)
 }
 
-/// The settled deployment-time rule: `0x8000000000000000 | (be_u64(SHA-256(tag ‖ genesis)[0..8]) &
-/// 0x7fffffffffffffff)`.
+/// The settled deployment-time rule: `be_u64(0x01 || genesis[0..7])`.
 ///
 /// Test-side only. Production KMS never derives a chain id — it reads the one the handles embed —
 /// which is why this lives in the vector generator and not in the crate.
 fn derive_chain_id(genesis_hash_base58: &str) -> u64 {
     let genesis = base58_decode(genesis_hash_base58).expect("a base58 genesis hash");
+    assert!(
+        genesis.len() >= 7,
+        "a Solana genesis hash is 32 bytes; need seven for the cluster tag",
+    );
 
-    let mut hasher = Sha256::new();
-    hasher.update(CHAIN_ID_DERIVATION_TAG.as_bytes());
-    hasher.update(&genesis);
-    let digest = hasher.finalize();
-
-    let leading = u64::from_be_bytes(digest[..8].try_into().expect("eight bytes"));
-    CHAIN_KIND_BIT | (leading & !CHAIN_KIND_BIT)
+    let mut bytes = [0u8; 8];
+    bytes[0] = kms_grpc::solana_binding::SOLANA_CHAIN_TYPE;
+    bytes[1..8].copy_from_slice(&genesis[..7]);
+    u64::from_be_bytes(bytes)
 }
 
 // ---------------------------------------------------------------------------
@@ -975,16 +973,21 @@ fn drafts() -> Vec<Draft> {
             Inputs::reference().with_handles(vec![h(1), h(2)[..31].to_vec()]),
         ),
         Draft::invalid(
-            "handle-without-the-chain-kind-bit",
+            "handle-without-the-solana-type-byte",
             "An EVM-kind handle mixed into a Solana batch, at index 1 rather than 0 so that a \
-             check which trusts the first handle fails here. The chain-kind bit is the only \
+             check which trusts the first handle fails here. The type byte is the only \
              structural separator between the two request families.",
             VectorClass::ConstructionReject,
-            rule::HANDLE_CHAIN_KIND_BIT,
+            rule::HANDLE_CHAIN_TYPE_BYTE,
             "reference-two-handles",
-            "the second handle's embedded chain id stripped of bit 63",
-            Inputs::reference()
-                .with_handles(vec![h(1), handle(reference_chain_id & !CHAIN_KIND_BIT, 2)]),
+            "the second handle's embedded chain id stripped of type byte 0x01",
+            Inputs::reference().with_handles(vec![
+                h(1),
+                handle(
+                    reference_chain_id & kms_grpc::solana_binding::CLUSTER_TAG_MASK,
+                    2,
+                ),
+            ]),
         ),
         Draft::invalid(
             "mixed-embedded-chain-ids",
@@ -1138,7 +1141,6 @@ fn build() -> VectorFile {
              adjusted or stale copy changes the digest and fails."
                 .to_string(),
         shared_inputs: SHARED_INPUTS.to_string(),
-        chain_id_derivation: CHAIN_ID_DERIVATION_TAG.to_string(),
         chain_id_derivation_rule: CHAIN_ID_DERIVATION_RULE.to_string(),
         cluster_registry_note: CLUSTER_REGISTRY_NOTE.to_string(),
         cluster_registry: cluster_registry(),
@@ -1274,7 +1276,7 @@ fn rejection_matches(rule: &str, error: &SolanaUserDecryptBindingError) -> bool 
     match rule {
         rule::EMPTY_HANDLE_LIST => matches!(error, Error::EmptyHandles),
         rule::HANDLE_WIDTH => matches!(error, Error::InvalidHandleLength { .. }),
-        rule::HANDLE_CHAIN_KIND_BIT => matches!(error, Error::InvalidHandleChainId { .. }),
+        rule::HANDLE_CHAIN_TYPE_BYTE => matches!(error, Error::InvalidHandleChainId { .. }),
         rule::MIXED_EMBEDDED_CHAIN_IDS => matches!(error, Error::MixedChainIds { .. }),
         rule::DECLARED_CHAIN_ID_MISMATCH => matches!(
             error,
@@ -1348,7 +1350,6 @@ fn header_pins_frozen_constants() {
     assert_eq!(file.scheme_tag, "SolanaUserDecryptionLinker:v1");
     assert_eq!(file.dsep, "SOLLNK01");
     assert_eq!(file.dsep_list, "HASH_LST");
-    assert_eq!(file.chain_id_derivation, CHAIN_ID_DERIVATION_TAG);
     assert_eq!(file.scheme_tag.len(), 29);
 }
 
@@ -1675,8 +1676,8 @@ fn set_contains_no_json_numbers() {
 
 #[test]
 fn chain_ids_exceed_javascript_safe_integer() {
-    // Not an accident to be preserved by luck: the chain-kind bit is bit 63, so a Solana chain id
-    // is always above 2^53. The canary is the whole set, not one record.
+    // Not an accident to be preserved by luck: type byte 0x01 puts every Solana chain id
+    // above 2^53. The canary is the whole set, not one record.
     let file = committed();
 
     for record in &file.records {
@@ -1694,7 +1695,6 @@ fn three_chain_id_forms_agree_with_recomputed_rule() {
     // The rule is recomputed here from the record's own genesis hash rather than trusted from the
     // file.
     let file = committed();
-    assert_eq!(file.chain_id_derivation, CHAIN_ID_DERIVATION_TAG);
 
     for record in &file.records {
         let decimal: u64 = record.chain_id();
@@ -1719,7 +1719,11 @@ fn three_chain_id_forms_agree_with_recomputed_rule() {
             "{} records two disagreeing forms of its genesis hash",
             record.name,
         );
-        assert_ne!(decimal & CHAIN_KIND_BIT, 0, "{}", record.name);
+        assert!(
+            kms_grpc::solana_binding::is_solana_host_chain_id(decimal),
+            "{} must have Solana type byte 0x01",
+            record.name,
+        );
     }
 }
 
@@ -1802,32 +1806,10 @@ fn base58_round_trips_known_solana_values() {
     assert_eq!(base58_decode("0"), None, "0 is not in the alphabet");
 }
 
-/// The rule, spelled out a second time from the specification rather than by calling
-/// [`derive_chain_id`].
-///
-/// An assertion of the form `derive_chain_id(x) == derive_chain_id(x)` would hold for any rule at
-/// all, including a wrong one. This is the independent reading the derived values are checked
-/// against — the tag is written as a literal here on purpose, not taken from the constant the
-/// generator uses — and it is shared so that the record check and the registry check compare
-/// against the same second opinion.
-fn recomputed_chain_id(genesis_hash_base58: &str) -> u64 {
-    let genesis = base58_decode(genesis_hash_base58).expect("base58");
-
-    let mut hasher = Sha256::new();
-    hasher.update(b"zama-solana-chain-id-v1");
-    hasher.update(&genesis);
-    let digest = hasher.finalize();
-
-    0x8000_0000_0000_0000u64
-        | (u64::from_be_bytes(digest[..8].try_into().expect("eight")) & 0x7fff_ffff_ffff_ffff)
-}
-
 #[test]
 fn cluster_registry_matches_rule_on_each_genesis_hash() {
-    // This table is what a deployment review checks a cluster configuration against, so it has to
-    // be right *and* has to be visibly the same rule the records use. Every id is recomputed
-    // here from the entry's own base58 genesis hash by the independent reading above; nothing in
-    // the entry is taken on trust, including the hex form of the genesis hash.
+    // This table is what a deployment review checks a cluster configuration against. Each id is
+    // pinned to a reviewed constant, not recomputed by the same function that filled the table.
     let file = committed();
 
     assert_eq!(
@@ -1852,6 +1834,11 @@ fn cluster_registry_matches_rule_on_each_genesis_hash() {
             16,
         )
         .expect("hex chain id");
+        let reviewed = PUBLIC_CLUSTER_CHAIN_IDS
+            .iter()
+            .find(|(name, _)| *name == cluster.as_str())
+            .map(|(_, id)| *id)
+            .unwrap_or_else(|| panic!("{cluster} is not a reviewed public cluster"));
 
         assert_eq!(decimal, hex_form, "{cluster}");
         assert_eq!(
@@ -1860,8 +1847,12 @@ fn cluster_registry_matches_rule_on_each_genesis_hash() {
             "{cluster}",
         );
         assert_eq!(
+            decimal, reviewed,
+            "{cluster} records a chain id that is not the reviewed public-cluster id",
+        );
+        assert_eq!(
             decimal,
-            recomputed_chain_id(&entry.genesis_hash),
+            derive_chain_id(&entry.genesis_hash),
             "{cluster} records a chain id that is not the rule applied to its genesis hash",
         );
 
@@ -1873,10 +1864,9 @@ fn cluster_registry_matches_rule_on_each_genesis_hash() {
             "{cluster} records two disagreeing forms of its genesis hash",
         );
 
-        assert_ne!(
-            decimal & CHAIN_KIND_BIT,
-            0,
-            "{cluster} is a Solana-kind chain and must carry bit 63",
+        assert!(
+            kms_grpc::solana_binding::is_solana_host_chain_id(decimal),
+            "{cluster} is a Solana-kind chain and must have type byte 0x01",
         );
         assert!(
             seen_ids.insert(decimal),
@@ -1904,12 +1894,16 @@ fn registry_mainnet_entry_matches_wrong_chain_id_record() {
 }
 
 #[test]
-fn derivation_rule_sets_chain_kind_bit_and_keeps_lower_bits() {
-    // The rule is two operations: take the leading 63 bits of the digest, force bit 63. Checked
-    // against a digest computed here rather than against another call to the same function.
-    let expected = recomputed_chain_id(REFERENCE_GENESIS);
-
-    assert_eq!(derive_chain_id(REFERENCE_GENESIS), expected);
+fn derivation_rule_sets_type_byte_and_keeps_genesis_prefix() {
+    // The rule is two operations: type byte 0x01, then the first seven genesis bytes. The expected
+    // id is a reviewed constant, not a second copy of `derive_chain_id`.
+    assert_eq!(derive_chain_id(REFERENCE_GENESIS), REFERENCE_CHAIN_ID);
+    assert_eq!(
+        kms_grpc::solana_binding::chain_type_byte(REFERENCE_CHAIN_ID),
+        0x01,
+    );
+    let genesis = base58_decode(REFERENCE_GENESIS).expect("base58");
+    assert_eq!(&REFERENCE_CHAIN_ID.to_be_bytes()[1..], &genesis[..7]);
     assert_ne!(
         derive_chain_id(REFERENCE_GENESIS),
         derive_chain_id(OTHER_GENESIS),

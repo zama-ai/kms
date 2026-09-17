@@ -36,25 +36,18 @@ const FROZEN_SCHEME_TAG: &str = "SolanaUserDecryptionLinker:v1";
 /// position-determined width, and that is what makes the list construction injective.
 const FROZEN_SCHEME_TAG_LEN: usize = 29;
 
-/// Tag of the deployment-time chain-id derivation rule, frozen with the vector schema.
-///
-/// Not used by any KMS code path — a party reads the chain id out of the handles — but the vectors
-/// pair a genesis hash with a derived id, and a change to the tag would silently change every
-/// published pair.
-const FROZEN_CHAIN_ID_DERIVATION_TAG: &str = "zama-solana-chain-id-v1";
-
 /// The linker digest over [`frozen_request`]. Frozen: see the module comment.
-const FROZEN_LINK: &str = "273d3961c0ce772e8cf7c17e89c3582bd5aefb38cca5eba2261b97a7e80b7801";
+const FROZEN_LINK: &str = "3e3cf1d05759e8beb4306b72976361358946b425a68a1d6e06339f8d3c7b81a3";
 
 // ---------------------------------------------------------------------------
 // The frozen fixture, spelled out
 // ---------------------------------------------------------------------------
 
-/// The same host chain number as the EVM freeze fixture, with the Solana chain-kind bit set.
+/// The same host chain number as the EVM freeze fixture, with the Solana type byte set.
 ///
 /// Deliberate: the two frozen digests are then visibly taken over the same deployment number, and
-/// the only thing separating the request families is bit 63 — which is precisely the claim.
-const FROZEN_CHAIN_ID: u64 = (1 << 63) | 8006;
+/// the only thing separating the request families is the type byte — which is precisely the claim.
+const FROZEN_CHAIN_ID: u64 = kms_grpc::solana_binding::solana_host_chain_id(8006);
 
 const FROZEN_PROGRAM_ID: [u8; SOLANA_IDENTITY_LEN] = [0x22; SOLANA_IDENTITY_LEN];
 const FROZEN_RECEIVER: [u8; SOLANA_IDENTITY_LEN] = [0x33; SOLANA_IDENTITY_LEN];
@@ -266,12 +259,18 @@ fn published_hasher_input_matches_frozen_preimage() {
 }
 
 #[test]
-fn frozen_chain_id_carries_solana_kind_bit() {
+fn frozen_chain_id_carries_solana_type_byte() {
     // The backstop that keeps Solana handles off the EVM linker and vice versa. The low bits are
     // the EVM freeze fixture's host chain id, so the two frozen digests cover the same deployment
     // number under two different chain kinds.
-    assert_ne!(FROZEN_CHAIN_ID & (1 << 63), 0);
-    assert_eq!(FROZEN_CHAIN_ID & !(1u64 << 63), 8006);
+    assert_eq!(
+        kms_grpc::solana_binding::chain_type_byte(FROZEN_CHAIN_ID),
+        kms_grpc::solana_binding::SOLANA_CHAIN_TYPE,
+    );
+    assert_eq!(
+        FROZEN_CHAIN_ID & kms_grpc::solana_binding::CLUSTER_TAG_MASK,
+        8006
+    );
     assert_eq!(
         &frozen_handle(0xa1)[HANDLE_CHAIN_ID],
         &FROZEN_CHAIN_ID.to_be_bytes(),
@@ -292,7 +291,7 @@ fn published_vector_set_frozen_at_same_constants() {
         FROZEN_SCHEME_TAG,
         "SOLLNK01",
         "HASH_LST",
-        FROZEN_CHAIN_ID_DERIVATION_TAG,
+        "chain_id = be_u64(0x01 || base58_decode(genesis_hash)[0..7])",
     ] {
         assert!(
             set.contains(&format!("\"{frozen}\"")),

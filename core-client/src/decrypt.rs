@@ -1975,7 +1975,7 @@ pub struct SolanaDecryptIdentity {
     pub user_pubkey: [u8; 32],
     /// The host deployment's 32-byte verifying program id.
     pub verifying_program_id: [u8; 32],
-    /// The Solana host chain id every handle of the batch embeds (bit 63 set).
+    /// The Solana host chain id every handle of the batch embeds (type byte `0x01`).
     pub host_chain_id: u64,
 }
 

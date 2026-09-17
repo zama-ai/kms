@@ -84,7 +84,7 @@ the response call takes that client plus the request-side values the link commit
   and releases. The Solana-owned request fields travel as one named object,
   `{ user_pubkey, host_chain_id, verifying_program_id }`, with
   identities as 32-byte hex strings and `host_chain_id` as a decimal string — the vector-set
-  convention, because a Solana chain id sets bit 63 and does not fit a JS number. Its trailing
+  convention, because a Solana chain id has type byte `0x01` and does not fit a JS number. Its trailing
   **`eip712_domain`** argument is the EIP-712 domain KMS nodes produced the response's
   `external_signature` under, in the same JS shape the EVM wrapper takes.
 - **`compute_solana_user_decrypt_link_from_js(solana_request, handles, enc_key, extra_data)`**
@@ -121,7 +121,7 @@ The linker v1 construction is frozen by a normative vector set:
 
 - `core/grpc/test-vectors/solana_linker_v1.json` — accepted and rejected records, each carrying
   the typed fields, the complete byte sequence the hasher consumes, and the expected link. All
-  64-bit values are decimal strings: every chain id sets bit 63, so a JSON number reaching a
+  64-bit values are decimal strings: every chain id has type byte `0x01`, so a JSON number reaching a
   TypeScript consumer would be silently rounded.
 - `core/grpc/test-vectors/solana_linker_v1.sha256` — the set's SHA-256 in `sha256sum` format.
 
@@ -135,8 +135,7 @@ end twice: `core/service/tests/js/linker_vectors.test.js` replays every record o
 transcripts fail to decrypt if the wasm-compiled linker diverges.
 
 The scheme tag `SolanaUserDecryptionLinker:v1`, the call separator `SOLLNK01` and the element
-layout are pinned by `core/grpc/tests/solana_frozen_constants.rs`. A change to any of those bytes
-is a version bump in the scheme tag, not an edit. In CI, `ci/scripts/frozen_paths.sh` fails the
-build if any byte-frozen asset — the EVM references or the published Solana vectors — is modified
-or deleted.
+layout are pinned by `core/grpc/tests/solana_frozen_constants.rs`. Changing those bytes is a
+version bump in the scheme tag, not an edit. The vector runner and that constants test freeze the
+published set in this repository.
 

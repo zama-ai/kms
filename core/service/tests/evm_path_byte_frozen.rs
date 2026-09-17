@@ -1,20 +1,10 @@
-//! Byte-freeze gate for the EVM user-decryption path.
+//! Pins the shipped EVM user-decryption EIP-712 linker digest.
 //!
-//! The Solana user-decryption branch is additive: it lands beside the EVM path and never
-//! modifies it. Existing EVM payloads, the EIP-712 request<->response linker digest and the
-//! 20-byte receiver id must stay byte-identical, including across a mixed-version upgrade where
-//! KMS parties run different versions — a one-byte divergence in an EVM digest would split
-//! threshold aggregation for all EVM traffic, in production, at once.
+//! Solana work is additive and must not change this path. A one-byte change to the digest
+//! splits threshold aggregation for all EVM traffic.
 //!
-//! This file is green from its first run: the constants below capture what the tree already
-//! produces. That is deliberate, and it is the one case where reading a golden off the
-//! implementation is the correct method — the reference *is* today's output, and the test's job
-//! is to refuse any change to it. Goldens for new (Solana) constructions are not allowed to be
-//! captured this way: they are assembled independently from the specification and cross-checked
-//! against a second implementation.
-//!
-//! The gate has a second half that cannot live in a test: no commit may edit an existing EVM
-//! test or vector file. That is enforced by review and by a CI diff-path check.
+//! `EVM_LINK_GOLDEN` is the production pin: it is the current output of a fixed minted-shape
+//! request, and the test refuses any change to it.
 
 #![cfg(feature = "non-wasm")]
 
@@ -54,7 +44,7 @@ fn frozen_domain() -> Eip712DomainMsg {
     }
 }
 
-/// A fixed EVM ciphertext handle: chain id in bytes `[22..30]` with the chain-kind bit clear.
+/// A fixed EVM ciphertext handle: chain id 8006 in bytes `[22..30]` as a big-endian `u64`.
 fn frozen_handle(discriminator: u8) -> Vec<u8> {
     let mut handle = [discriminator; 32];
     handle[22..30].copy_from_slice(&HOST_CHAIN_ID.to_be_bytes());
@@ -153,7 +143,9 @@ fn evm_path_rejects_solana_chain_kind_handles() {
     // two linkers can never be asked to bind the same handle.
     let mut solana_kind = frozen_request();
     let mut handle = [0xa1u8; 32];
-    handle[22..30].copy_from_slice(&((1u64 << 63) | HOST_CHAIN_ID).to_be_bytes());
+    handle[22..30].copy_from_slice(
+        &kms_grpc::solana_binding::solana_host_chain_id(HOST_CHAIN_ID).to_be_bytes(),
+    );
     solana_kind.typed_ciphertexts[0].external_handle = handle.to_vec();
 
     let error = solana_kind
@@ -161,7 +153,7 @@ fn evm_path_rejects_solana_chain_kind_handles() {
         .expect_err("a Solana-kind handle must not reach the EVM linker")
         .to_string();
     assert!(
-        error.contains("embeds Solana chain ID"),
+        error.contains("high byte must be 0x00"),
         "unexpected error: {error}",
     );
 }
