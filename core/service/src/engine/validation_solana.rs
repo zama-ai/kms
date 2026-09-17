@@ -259,11 +259,12 @@ mod tests {
         // request cannot reach the wrong linker by carrying the wrong field. The two rejecting
         // cells live in two crates — `validate_solana_request` here and `compute_link_checked` in
         // kms-grpc — and this is the one place they are read as one table.
-        let evm_handle = |discriminator: u8| {
+        let embed = |discriminator: u8, chain_id: u64| {
             let mut handle = [discriminator; 32];
-            handle[22..30].copy_from_slice(&(CHAIN_ID & CLUSTER_TAG_MASK).to_be_bytes());
+            handle[22..30].copy_from_slice(&chain_id.to_be_bytes());
             handle.to_vec()
         };
+        let evm_id = CHAIN_ID & CLUSTER_TAG_MASK;
 
         // pubkey present + Solana-kind handles: the Solana branch accepts.
         assert!(
@@ -274,7 +275,7 @@ mod tests {
 
         // pubkey present + EVM-kind handles: the Solana branch rejects at the handle's own index.
         let mut wrong_kind = solana_request();
-        wrong_kind.typed_ciphertexts[1].external_handle = evm_handle(0xa2);
+        wrong_kind.typed_ciphertexts[1].external_handle = embed(0xa2, evm_id);
         assert!(error_of(&wrong_kind).contains("does not have Solana type byte 0x01"));
 
         // pubkey absent + EVM-kind handles: left to the EVM path, which accepts them.
@@ -284,7 +285,7 @@ mod tests {
         evm.typed_ciphertexts
             .iter_mut()
             .enumerate()
-            .for_each(|(i, ct)| ct.external_handle = evm_handle(0xa1 + i as u8));
+            .for_each(|(i, ct)| ct.external_handle = embed(0xa1 + i as u8, evm_id));
         assert!(validate_solana_request(&evm).expect("no error").is_none());
         evm.compute_link_checked()
             .expect("the EVM linker accepts EVM-kind handles");
@@ -299,12 +300,6 @@ mod tests {
                 .to_string()
                 .contains("embeds non-EVM chain ID")
         );
-
-        let embed = |discriminator: u8, chain_id: u64| {
-            let mut handle = [discriminator; 32];
-            handle[22..30].copy_from_slice(&chain_id.to_be_bytes());
-            handle.to_vec()
-        };
 
         // Type byte 0x02 is neither family.
         let unknown_type = (0x02u64 << 56) | 12_345;

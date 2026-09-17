@@ -1295,8 +1295,7 @@ fn dummy_domain() -> alloy_sol_types::Eip712Domain {
     )
 }
 
-/// Placeholder ciphertext handle for EVM tests. Bytes 22–29 must be an EVM chain id
-/// (type byte `0x00`); filling the handle with `23` put `0x17` there and the EVM linker rejected it.
+/// Placeholder EVM handle. Bytes 22–29 must carry type byte `0x00`.
 fn dummy_handle() -> Vec<u8> {
     let mut handle = vec![23_u8; 32];
     handle[22..30].copy_from_slice(&DUMMY_EVM_CHAIN_ID.to_be_bytes());

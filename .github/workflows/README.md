@@ -193,7 +193,7 @@ Generates WASM test fixtures from Rust tests, builds `tkms` and `node-tkms` pack
 
 ### `rust-lint.yml`
 
-`cargo fmt --all -- --check`, `cargo clippy --workspace --all-targets --all-features -- -D warnings`, `make lint-dylint`, and the `ci/scripts/frozen_paths.sh` gate, which fails the PR if a byte-frozen reference asset (backward-compatibility data, the EVM goldens, the published Solana linker vectors) is modified or deleted. Runs on every PR. The Makefile centralizes the `DYLINT_RUSTFLAGS` passed to the Dylint rustc driver, turning Dylint warnings to errors while disabling the broad tfhe-rs `serialize_without_versionize` lint.
+`cargo fmt --all -- --check`, `cargo clippy --workspace --all-targets --all-features -- -D warnings`, `make lint-dylint`, and the `ci/scripts/frozen_paths.sh` gate, which fails the PR if a backward-compatibility snapshot is modified or deleted. EVM goldens and Solana linker vectors are frozen by in-repo digest tests, not by that path list. Runs on every PR. The Makefile centralizes the `DYLINT_RUSTFLAGS` passed to the Dylint rustc driver, turning Dylint warnings to errors while disabling the broad tfhe-rs `serialize_without_versionize` lint.
 
 ### `docker-build.yml`
 

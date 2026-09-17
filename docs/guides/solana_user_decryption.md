@@ -136,8 +136,7 @@ transcripts fail to decrypt if the wasm-compiled linker diverges.
 
 The scheme tag `SolanaUserDecryptionLinker:v1`, the call separator `SOLLNK01` and the element
 layout are pinned by `core/grpc/tests/solana_frozen_constants.rs`. Changing those bytes is a
-version bump in the scheme tag, not an edit. The published chain-id numbers were replaced once,
-under the same scheme tag, when the kind marker moved from bit 63 to type byte `0x01`. In CI,
-`ci/scripts/frozen_paths.sh` allows that replacement only when the base and head blobs match the
-pinned hashes of that change; any later edit of a frozen asset fails.
+version bump in the scheme tag, not an edit. The vector runner and that constants test freeze the
+published set in this repository. `ci/scripts/frozen_paths.sh` does not path-deny the Solana
+files: nothing else has copied this set yet.
 
