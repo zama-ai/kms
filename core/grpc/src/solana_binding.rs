@@ -45,11 +45,11 @@ const CHAIN_ID_LEN: usize = size_of::<u64>();
 /// handle count, which is what lets a reader recover the handle count from the count alone.
 const FIXED_ELEMENTS: usize = 6;
 
-/// High byte of a host chain id: `0x01` is Solana. The remaining seven bytes are the cluster tag.
+/// High byte of the eight-byte chain-id field (handle bytes 22–29).
 ///
-/// EVM chain ids have no type byte. The same eight handle bytes are a big-endian integer, which
-/// may use fewer than 64 bits, so a leading `0x00` is padding, not a kind marker. The EVM linker
-/// rejects Solana type byte `0x01` and accepts every other value.
+/// `0x00` is EVM: the host writes `uint64(chainId)`, which zero-extends, so a minted EVM handle
+/// always has this byte clear. `0x01` is Solana. Any other value is refused on both paths.
+pub const EVM_CHAIN_TYPE: u8 = 0x00;
 pub const SOLANA_CHAIN_TYPE: u8 = 0x01;
 const CHAIN_TYPE_SHIFT: u32 = 56;
 pub const CLUSTER_TAG_MASK: u64 = 0x00ff_ffff_ffff_ffff;
@@ -57,6 +57,10 @@ pub const CLUSTER_TAG_MASK: u64 = 0x00ff_ffff_ffff_ffff;
 /// High byte of `chain_id` (bits 56..63).
 pub const fn chain_type_byte(chain_id: u64) -> u8 {
     (chain_id >> CHAIN_TYPE_SHIFT) as u8
+}
+
+pub const fn is_evm_host_chain_id(chain_id: u64) -> bool {
+    chain_type_byte(chain_id) == EVM_CHAIN_TYPE
 }
 
 pub const fn is_solana_host_chain_id(chain_id: u64) -> bool {
@@ -359,7 +363,8 @@ pub(crate) fn handle_chain_id(handle: &[u8; SOLANA_IDENTITY_LEN]) -> u64 {
 mod tests {
     use super::{
         SOLANA_IDENTITY_LEN, SOLANA_LINKER_SCHEME_TAG, SolanaHostChainId, SolanaUserDecryptBinding,
-        SolanaUserDecryptBindingError, handle_chain_id, solana_host_chain_id,
+        SolanaUserDecryptBindingError, handle_chain_id, is_evm_host_chain_id,
+        is_solana_host_chain_id, solana_host_chain_id,
     };
 
     const CHAIN_ID: u64 = solana_host_chain_id(12_345);
@@ -604,6 +609,17 @@ mod tests {
     fn identity_width_constant_matches_handle_layout() {
         assert_eq!(SOLANA_IDENTITY_LEN, 32);
         assert_eq!(handle(CHAIN_ID, 1).len(), SOLANA_IDENTITY_LEN);
+    }
+
+    #[test]
+    fn high_byte_is_the_chain_kind() {
+        assert!(is_evm_host_chain_id(8006));
+        assert!(is_evm_host_chain_id(0));
+        assert!(is_solana_host_chain_id(solana_host_chain_id(8006)));
+        assert!(!is_evm_host_chain_id(0x1717_1717_1717_1717));
+        assert!(!is_solana_host_chain_id(0x1717_1717_1717_1717));
+        assert!(!is_evm_host_chain_id(1u64 << 56));
+        assert!(!is_evm_host_chain_id((0x02u64 << 56) | 12_345));
     }
 
     #[test]

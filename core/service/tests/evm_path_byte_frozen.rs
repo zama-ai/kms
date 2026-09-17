@@ -163,7 +163,7 @@ fn evm_path_rejects_solana_chain_kind_handles() {
         .expect_err("a Solana-kind handle must not reach the EVM linker")
         .to_string();
     assert!(
-        error.contains("embeds Solana chain ID"),
+        error.contains("high byte must be 0x00"),
         "unexpected error: {error}",
     );
 }

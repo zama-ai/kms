@@ -1635,8 +1635,8 @@ mod tests {
             assert!(unpack_user_decrypt_req(&req).is_ok());
         }
 
-        // EVM routing rejects Solana type-byte handles. Other values in the eight-byte field,
-        // including chain ids that do not fill 64 bits, stay on the EVM path.
+        // EVM routing accepts only uint64-padded chain ids (high byte 0x00). Solana type byte
+        // 0x01 and any other high byte are refused.
         {
             let mut evm_handle = [0xabu8; 32];
             let solana_chain_id = kms_grpc::solana_binding::solana_host_chain_id(12_345);
@@ -1663,7 +1663,7 @@ mod tests {
                 unpack_user_decrypt_req(&evm_req)
                     .unwrap_err()
                     .to_string()
-                    .contains("embeds Solana chain ID")
+                    .contains("high byte must be 0x00")
             );
         }
 
