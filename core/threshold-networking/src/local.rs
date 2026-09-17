@@ -15,7 +15,7 @@ use threshold_types::role::RoleTrait;
 
 use async_trait::async_trait;
 use dashmap::DashMap;
-use futures_util::future::{join, join3, join4};
+use futures_util::future::{join, join4};
 use tokio::sync::{
     Mutex,
     mpsc::{UnboundedReceiver, UnboundedSender, unbounded_channel},
@@ -236,7 +236,7 @@ impl<R: RoleTrait> Networking<R> for LocalNetworking<R> {
     }
 
     async fn round_clock_snapshot(&self) -> RoundClock {
-        let (max_elapsed_time, current_network_timeout, next_round_timeout, round) = join4(
+        let (max_elapsed_time, current_round_timeout, next_round_timeout, net_round) = join4(
             self.max_elapsed_time.lock(),
             self.current_network_timeout.lock(),
             self.next_network_timeout.lock(),
@@ -245,31 +245,38 @@ impl<R: RoleTrait> Networking<R> for LocalNetworking<R> {
         .await;
         RoundClock {
             init_time: self.init_time.load(),
-            round: *round,
+            round: *net_round,
             max_elapsed_time: *max_elapsed_time,
-            current_network_timeout: *current_network_timeout,
+            current_network_timeout: *current_round_timeout,
             next_network_timeout: *next_round_timeout,
         }
     }
 
     async fn restore_round_clock(&self, clock: RoundClock) {
-        let (mut round, mut max_elapsed_time, mut current_network_timeout) = join3(
-            self.network_round.lock(),
+        let (
+            mut max_elapsed_time,
+            mut current_round_timeout,
+            mut next_round_timeout,
+            mut net_round,
+        ) = join4(
             self.max_elapsed_time.lock(),
             self.current_network_timeout.lock(),
+            self.next_network_timeout.lock(),
+            self.network_round.lock(),
         )
         .await;
         // A round clock only ever moves forward.
         assert!(
-            clock.round >= *round,
+            clock.round >= *net_round,
             "restore_round_clock: refusing to move round backwards from {} to {}",
-            *round,
+            *net_round,
             clock.round
         );
         self.init_time.store(clock.init_time);
-        *round = clock.round;
+        *net_round = clock.round;
         *max_elapsed_time = clock.max_elapsed_time;
-        *current_network_timeout = clock.current_network_timeout;
+        *current_round_timeout = clock.current_network_timeout;
+        *next_round_timeout = clock.next_network_timeout;
     }
 
     async fn set_timeout_for_next_round(&self, timeout: Duration) {
