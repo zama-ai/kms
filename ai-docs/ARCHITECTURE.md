@@ -106,8 +106,8 @@ The service crate is the main surface area. Key subdirectories under
   and the operator's per-context backup vault key — selected in one place,
   `backup::BACKUP_PKE_SCHEME`. Nothing rejects a peer that advertises a weaker
   scheme: the signcryption carries its own `pke_type` tag, so a mixed-scheme
-  custodian context works. User decryption accepts ML-KEM-512 only. Every MLKEM1024-P384
-  keypair is drawn from a 256-bit-seeded CSPRNG. Signing lives under
+  custodian context works. User decryption accepts ML-KEM-512 only. Randomly generated MLKEM1024-P384
+  keypairs use a 256-bit-seeded CSPRNG. The custodian key derives directly from 256-bit mnemonic entropy. Signing lives under
   [cryptography/signing/](../core/service/src/cryptography/signing/): a
   scheme-tagged `Signature` plus one backend per scheme — ECDSA/secp256k1
   (`ecdsa`, the legacy default and EIP-712 home), EdDSA/ed25519 (`eddsa`), and
