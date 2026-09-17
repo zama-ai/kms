@@ -2,21 +2,20 @@ use crate::{
     backup::custodian::Custodian,
     consts::{CUSTODIAN_ENTROPY_SIZE, RND_SIZE},
     cryptography::{
-        composite_mlkem1024_p384::{self, PRIVATE_KEY_LENGTH},
+        composite_mlkem1024_p384::{self, COMPOSITE_NIST_LEVEL_5_PRIVATE_KEY_LENGTH},
         encryption::{UnifiedPrivateEncKey, UnifiedPublicEncKey},
         signatures::gen_sig_keys,
     },
 };
 use aes_prng::AesRng;
 use bip39::Mnemonic;
-use hashing::{DomainSep, hash_element, hash_element_w_size};
+use hashing::{DomainSep, hash_element_w_size};
 use rand::{CryptoRng, Rng, SeedableRng};
 use std::str::FromStr;
 use threshold_types::role::Role;
 use zeroize::Zeroizing;
 
-pub const DSEP_MNEMONIC_ENC: DomainSep = *b"MNEM_ENC";
-pub const DSEP_MNEMONIC_SIG: DomainSep = *b"MNEM_SIG";
+pub const DSEP_MNEMONIC: DomainSep = *b"MNEMONIC";
 
 // Allow the rng to be used even if an error happens later on
 #[allow(unknown_lints)]
@@ -57,14 +56,18 @@ pub fn custodian_from_seed_phrase(seed_phrase: &str, role: Role) -> anyhow::Resu
         );
     }
 
-    // Derive the encryption key's seed straight from the phrase. The seed *is*
-    // the MLKEM1024-P384 private key.
-    let mut enc_seed = Zeroizing::new([0u8; PRIVATE_KEY_LENGTH]);
-    enc_seed.copy_from_slice(&hash_element_w_size(
-        &DSEP_MNEMONIC_ENC,
+    // Expand the phrase's entropy once, then split the stream. The phrase is the only input to
+    // both keys, so a single SHAKE-256 draw separates them and the raw entropy is read once.
+    let key_material = Zeroizing::new(hash_element_w_size(
+        &DSEP_MNEMONIC,
         &*entropy,
-        PRIVATE_KEY_LENGTH,
+        COMPOSITE_NIST_LEVEL_5_PRIVATE_KEY_LENGTH + RND_SIZE,
     ));
+    let (enc_bytes, sig_bytes) = key_material.split_at(COMPOSITE_NIST_LEVEL_5_PRIVATE_KEY_LENGTH);
+
+    // The encryption key's seed *is* the MLKEM1024-P384 private key.
+    let mut enc_seed = Zeroizing::new([0u8; COMPOSITE_NIST_LEVEL_5_PRIVATE_KEY_LENGTH]);
+    enc_seed.copy_from_slice(enc_bytes);
     let (dec_key, enc_key) = composite_mlkem1024_p384::keygen_from_seed(&enc_seed)
         .map_err(|e| anyhow::anyhow!("Failed to generate custodian keys from seed phrase: {e}"))?;
 
@@ -72,8 +75,11 @@ pub fn custodian_from_seed_phrase(seed_phrase: &str, role: Role) -> anyhow::Resu
     // offers about 128 bits of security itself, so widening its seed would buy nothing.
     //
     // TODO(https://github.com/zama-ai/kms-internal/issues/3168): this will
-    // change to a composite scheme too.
-    let mut sig_rng = rng_from_dsep_entropy::<AesRng>(&DSEP_MNEMONIC_SIG, &entropy)?;
+    // change to a composite scheme too, so RND_SIZE needs to change to
+    // COMPOSITE_NIST_LEVEL_5_PRIVATE_KEY_LENGTH perhaps.
+    let mut sig_seed = Zeroizing::new([0u8; RND_SIZE]);
+    sig_seed.copy_from_slice(sig_bytes);
+    let mut sig_rng = AesRng::from_seed(*sig_seed);
     let (_verf_key, sig_key) = gen_sig_keys(&mut sig_rng);
 
     Custodian::new(
@@ -83,22 +89,6 @@ pub fn custodian_from_seed_phrase(seed_phrase: &str, role: Role) -> anyhow::Resu
         UnifiedPrivateEncKey::MlKem1024P384(dec_key),
     )
     .map_err(|e| anyhow::anyhow!("Failed to create custodian from seed phrase: {e}"))
-}
-
-#[allow(dead_code)]
-fn rng_from_dsep_entropy<R>(dsep: &DomainSep, entropy: &[u8]) -> anyhow::Result<R>
-where
-    R: SeedableRng<Seed = [u8; RND_SIZE]> + Rng + CryptoRng,
-{
-    let dsep_entropy: Vec<u8> = hash_element(dsep, entropy);
-    assert!(
-        dsep_entropy.len() >= RND_SIZE,
-        "DSEP entropy must be at least {RND_SIZE} bytes long",
-    );
-    // Observe that the [`AesRng`] requires a 16-byte seed which is `RND_SIZE` in our case.
-    let mut rng_entropy = [0u8; RND_SIZE];
-    rng_entropy.copy_from_slice(&dsep_entropy[..RND_SIZE]);
-    Ok(R::from_seed(rng_entropy))
 }
 
 #[cfg(test)]

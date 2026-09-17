@@ -95,7 +95,7 @@ The alternative backup mode — wrapping the same key under an AWS KMS CMK — i
 | DEM | AES-256-GCM, keyed directly on the 32-byte KEM shared secret |
 | Signature | ECDSA over secp256k1, for both operator and custodian identities |
 | Commitment | SHAKE-256 over the versioned `BackupMaterial` |
-| Seed-phrase derivation | 24-word BIP39 (256 bits) → SHAKE-256 with domain separators `MNEM_ENC` / `MNEM_SIG` |
+| Seed-phrase derivation | 24-word BIP39 (256 bits) → one SHAKE-256 draw under the domain separator `MNEMONIC`, split into the encryption seed and the signing seed |
 
 User decryption is unaffected by any of this and remains ML-KEM-512.
 
@@ -109,7 +109,7 @@ initiated using built-in tools from KMS, MLKEM1024-P384 will be used.
 
 | Party | What it does |
 |---|---|
-| **Custodian `B_j`** (`j = 1..n`) | Human-held, offline party. Owns a long-term signing key `sk^{S_j}` (ECDSA/secp256k1) and a post-quantum encryption key `sk^{E_j}` (MLKEM1024-P384, the composite of ML-KEM-1024 and P-384), both deterministically derived from a 24-word BIP39 seed phrase. `sk^{E_j}` is the 32-byte seed `SHAKE256("MNEM_ENC" ‖ entropy)`, derived without an intervening PRNG so that none of the phrase's 256 bits are lost. Stores nothing online beyond its public-key published in the `CustodianSetupMessage`. Re-signcrypts its share of the backup key on request. |
+| **Custodian `B_j`** (`j = 1..n`) | Human-held, offline party. Owns a long-term signing key `sk^{S_j}` (ECDSA/secp256k1) and a post-quantum encryption key `sk^{E_j}` (MLKEM1024-P384, the composite of ML-KEM-1024 and P-384), both deterministically derived from a 24-word BIP39 seed phrase. A single draw `SHAKE256("MNEMONIC" ‖ entropy)` of 48 bytes gives both keys: the first 32 bytes are the seed of `sk^{E_j}`, derived without an intervening PRNG so that none of the phrase's 256 bits are lost, and the last 16 bytes seed the PRNG of `sk^{S_j}`. Stores nothing online beyond its public-key published in the `CustodianSetupMessage`. Re-signcrypts its share of the backup key on request. |
 | **Operator `P_i`** (KMS node) | Online KMS server. Holds a long-term signing key `sk^{P_i}`, a TFHE secret key, and other private material that needs backing up. Receives `NewCustodianContext` and, later, `CustodianRecoveryInit` / `CustodianBackupRecovery` gRPC calls from the core-client. |
 | **core-client** | The CLI that drives every gRPC call into the KMS for custodian-based backup. It bundles the operator-bound RPCs (`NewCustodianContext`, `CustodianRecoveryInit`, `CustodianBackupRecovery`, `RestoreFromBackup`) and shuttles the resulting `RecoveryRequest` / `InternalCustodianRecoveryOutput` files between the operator and the custodians out-of-band. Documented in [docs/guides/core_client.md](core_client.md). |
 | **Recovering operator `P_i'`** | A fresh operator recovers the content of the private storage of a previous operator. Reads only the public storage (for the operator verification key) and the backup vault; coordinates with custodians (via the core-client) to rebuild private state. |
