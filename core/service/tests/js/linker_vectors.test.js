@@ -226,7 +226,7 @@ test('the host chain id crosses the wasm boundary as an exact decimal string', (
 
     for (const record of lossy) {
         const chainId = BigInt(record.chain_id_decimal);
-        assert.equal(chainId >> 63n, 1n, `${record.name} does not set the chain-kind bit`);
+        assert.equal(chainId >> 56n, 1n, `${record.name} does not have Solana type byte 0x01`);
         // Routing this id through Number would change it, silently binding a different chain.
         assert.notEqual(BigInt(Number(chainId)), chainId, `${record.name} survives a Number`);
     }

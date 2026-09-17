@@ -769,7 +769,7 @@ pub struct SolanaDecryptParameters {
     #[clap(long, value_parser = solana_identity_arg)]
     pub verifying_program_id: [u8; 32],
     /// The Solana host chain id to embed in every ciphertext handle — decimal or 0x-prefixed
-    /// hex. Bit 63 must be set: it is what marks the handles (and so the request) as
+    /// hex. Type byte `0x01` must be set: it is what marks the handles (and so the request) as
     /// Solana-kind.
     #[clap(long, value_parser = solana_chain_id_arg)]
     pub host_chain_id: u64,
