@@ -40,11 +40,11 @@
 //! use kms_lib::client::solana_response::SolanaUserDecryptionRequest;
 //!
 //! let mut handle = [0xabu8; 32];
-//! handle[22..30].copy_from_slice(&((1u64 << 63) | 12_345).to_be_bytes());
+//! handle[22..30].copy_from_slice(&kms_grpc::solana_binding::solana_host_chain_id(12_345).to_be_bytes());
 //!
 //! let request = SolanaUserDecryptionRequest {
 //!     user_pubkey: [0x11; 32],
-//!     host_chain_id: (1 << 63) | 12_345,
+//!     host_chain_id: kms_grpc::solana_binding::solana_host_chain_id(12_345),
 //!     verifying_program_id: [0x22; 32],
 //!     handles: vec![handle.to_vec()],
 //!     enc_key: vec![0x66; 869],
@@ -128,7 +128,7 @@ impl SolanaUserDecryptionRequest {
     /// The canonical binding for this request, or why the request is not one.
     ///
     /// Two checks, in this order: the binding's own constructor validates the Solana-owned fields
-    /// (identity widths, the chain-kind bit of every handle, one common embedded chain id, a
+    /// (identity widths, the type byte of every handle, one common embedded chain id, a
     /// non-empty handle list), and then the declared [`Self::host_chain_id`] is checked against the
     /// id the handles embed.
     pub fn binding(&self) -> Result<SolanaUserDecryptBinding, SolanaUserDecryptBindingError> {
@@ -697,7 +697,7 @@ mod tests {
     use crate::dummy_domain;
     use crate::engine::validation::DSEP_USER_DECRYPTION;
 
-    const CHAIN_ID: u64 = (1 << 63) | 12_345;
+    const CHAIN_ID: u64 = kms_grpc::solana_binding::solana_host_chain_id(12_345);
     const PUBKEY: [u8; 32] = [0x11; 32];
     const PROGRAM_ID: [u8; 32] = [0x22; 32];
     /// The request's opaque `extra_data`. Non-empty on purpose: it is a link input and an input to
@@ -1129,7 +1129,7 @@ mod tests {
 
     #[test]
     fn rejects_invalid_handle_chain_ids_and_widths() {
-        // A handle without the chain-kind bit belongs to the EVM linker, and a handle of the
+        // A handle without the Solana type byte belongs to the EVM linker, and a handle of the
         // wrong width is not a handle at all; neither can reach a link.
         let mut evm_handle = canonical_request();
         evm_handle.host_chain_id = 12_345;
@@ -2129,8 +2129,8 @@ mod tests {
             server_addrs: Vec<StableServerIdAddr>,
             /// The recipient's raw 32-byte ed25519 wallet key, hex.
             solana_user_pubkey: String,
-            /// The host chain id as a decimal string: bit 63 is set, so the value does not fit a
-            /// JS number exactly and must cross the boundary as a `BigInt`.
+            /// The host chain id as a decimal string: type byte `0x01` puts it above 2^53, so the
+            /// value does not fit a JS number exactly and must cross the boundary as a `BigInt`.
             host_chain_id: String,
             /// The on-chain verifying program id, 32 bytes hex.
             verifying_program_id: String,

@@ -189,12 +189,12 @@ test('solana chain ID crosses the WASM boundary as an exact decimal string', (_t
     const { data, enc_pk, enc_sk } = loadVector('test-central-wasm-transcript.8.json');
     const client = new_solana_client(
         [new_server_id_addr(1, "0x66f9664f97F2b50F62D13eA064982f936dE76657")], 'test');
-    const solanaChainId = (1n << 63n) | 12345n;
+    const solanaChainId = (0x01n << 56n) | 12345n;
     const handle = new Uint8Array(32).fill(0xab);
     for (let i = 0; i < 8; i++) {
         handle[29 - i] = Number((solanaChainId >> BigInt(i * 8)) & 0xffn);
     }
-    assert.equal(Buffer.from(handle.slice(22, 30)).toString('hex'), '8000000000003039');
+    assert.equal(Buffer.from(handle.slice(22, 30)).toString('hex'), '0100000000003039');
     const request = {
         ...data.request,
         ciphertext_handles: [Buffer.from(handle).toString('hex')],

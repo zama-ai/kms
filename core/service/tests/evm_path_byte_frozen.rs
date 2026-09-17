@@ -153,7 +153,9 @@ fn evm_path_rejects_solana_chain_kind_handles() {
     // two linkers can never be asked to bind the same handle.
     let mut solana_kind = frozen_request();
     let mut handle = [0xa1u8; 32];
-    handle[22..30].copy_from_slice(&((1u64 << 63) | HOST_CHAIN_ID).to_be_bytes());
+    handle[22..30].copy_from_slice(
+        &kms_grpc::solana_binding::solana_host_chain_id(HOST_CHAIN_ID).to_be_bytes(),
+    );
     solana_kind.typed_ciphertexts[0].external_handle = handle.to_vec();
 
     let error = solana_kind
@@ -161,7 +163,7 @@ fn evm_path_rejects_solana_chain_kind_handles() {
         .expect_err("a Solana-kind handle must not reach the EVM linker")
         .to_string();
     assert!(
-        error.contains("embeds Solana chain ID"),
+        error.contains("embeds non-EVM chain ID"),
         "unexpected error: {error}",
     );
 }

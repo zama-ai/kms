@@ -88,7 +88,7 @@ function computeLink(record, declaredChainId) {
 const REJECTION_MESSAGES = {
     'empty-handle-list': /contains no ciphertext handles/,
     'handle-width': /handle at index \d+ must be 32 bytes/,
-    'handle-chain-kind-bit': /does not set bit 63/,
+    'handle-chain-kind-bit': /does not have Solana type byte 0x01/,
     'mixed-embedded-chain-ids': /embeds chain ID \d+, expected \d+/,
     'declared-chain-id-mismatch': /does not match handle chain ID/,
     'identity-width': /must be 32 bytes/,
@@ -217,7 +217,7 @@ test('extra_data is bound verbatim, including when it is empty', (_t) => {
 
 test('the host chain id crosses the wasm boundary as an exact decimal string', (_t) => {
     // Why the set stores chain ids as decimal *strings* and why this suite passes them through
-    // unchanged: a Solana chain id is a u64 with bit 63 set, so it is far past the range JS numbers
+    // unchanged: a Solana chain id is a u64 with type byte 0x01, so it is far past the range JS numbers
     // represent exactly.
     const lossy = vectors.records.filter(
         (record) => BigInt(record.chain_id_decimal) > BigInt(Number.MAX_SAFE_INTEGER),

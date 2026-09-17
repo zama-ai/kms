@@ -129,11 +129,11 @@ mod tests {
     use kms_grpc::{
         kms::v1::{RequestId, TypedCiphertext, UserDecryptionRequest},
         rpc_types::{PlaintextReceiver, alloy_to_protobuf_domain},
-        solana_binding::SolanaUserDecryptBinding,
+        solana_binding::{CLUSTER_TAG_MASK, SolanaUserDecryptBinding, solana_host_chain_id},
     };
     use rand::SeedableRng;
 
-    const CHAIN_ID: u64 = (1 << 63) | 12_345;
+    const CHAIN_ID: u64 = solana_host_chain_id(12_345);
     const PUBKEY: [u8; 32] = [0x11; 32];
     const PROGRAM_ID: [u8; 32] = [0x22; 32];
     const CONTEXT_ID: [u8; 32] = [0x44; 32];
@@ -254,14 +254,14 @@ mod tests {
 
     #[test]
     fn dispatch_table_is_closed() {
-        // The dispatch field (`signing_metadata`) and the load-bearing invariant (bit 63 of the
+        // The dispatch field (`signing_metadata`) and the load-bearing invariant (type byte of the
         // chain id embedded in every handle) are pinned together, in all four combinations, so a
         // request cannot reach the wrong linker by carrying the wrong field. The two rejecting
         // cells live in two crates — `validate_solana_request` here and `compute_link_checked` in
         // kms-grpc — and this is the one place they are read as one table.
         let evm_handle = |discriminator: u8| {
             let mut handle = [discriminator; 32];
-            handle[22..30].copy_from_slice(&(CHAIN_ID & !(1u64 << 63)).to_be_bytes());
+            handle[22..30].copy_from_slice(&(CHAIN_ID & CLUSTER_TAG_MASK).to_be_bytes());
             handle.to_vec()
         };
 
@@ -275,7 +275,7 @@ mod tests {
         // pubkey present + EVM-kind handles: the Solana branch rejects at the handle's own index.
         let mut wrong_kind = solana_request();
         wrong_kind.typed_ciphertexts[1].external_handle = evm_handle(0xa2);
-        assert!(error_of(&wrong_kind).contains("does not set bit 63"));
+        assert!(error_of(&wrong_kind).contains("does not have Solana type byte 0x01"));
 
         // pubkey absent + EVM-kind handles: left to the EVM path, which accepts them.
         let mut evm = solana_request();
@@ -297,7 +297,7 @@ mod tests {
                 .compute_link_checked()
                 .expect_err("a Solana-kind handle must not reach the EVM linker")
                 .to_string()
-                .contains("embeds Solana chain ID")
+                .contains("embeds non-EVM chain ID")
         );
     }
 

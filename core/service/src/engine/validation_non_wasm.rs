@@ -1639,7 +1639,7 @@ mod tests {
         // existing EVM handle-padding behavior.
         {
             let mut evm_handle = [0xabu8; 32];
-            let solana_chain_id = (1u64 << 63) | 12_345;
+            let solana_chain_id = kms_grpc::solana_binding::solana_host_chain_id(12_345);
             evm_handle[22..30].copy_from_slice(&solana_chain_id.to_be_bytes());
             let evm_req = UserDecryptionRequest {
                 request_id: Some(request_id.into()),
@@ -1663,13 +1663,13 @@ mod tests {
                 unpack_user_decrypt_req(&evm_req)
                     .unwrap_err()
                     .to_string()
-                    .contains("embeds Solana chain ID")
+                    .contains("embeds non-EVM chain ID")
             );
         }
 
-        // Typed Solana requests require exact 32-byte handles with one common high-bit chain ID.
+        // Typed Solana requests require exact 32-byte handles with one common type-byte chain ID.
         {
-            const SOLANA_CHAIN_ID: u64 = (1 << 63) | 12_345;
+            const SOLANA_CHAIN_ID: u64 = kms_grpc::solana_binding::solana_host_chain_id(12_345);
             let mut handle = [0xabu8; 32];
             handle[22..30].copy_from_slice(&SOLANA_CHAIN_ID.to_be_bytes());
             let solana_req = UserDecryptionRequest {
@@ -1798,7 +1798,8 @@ mod tests {
         .unwrap();
 
         let mut handle = [0xabu8; 32];
-        handle[22..30].copy_from_slice(&((1u64 << 63) | 12_345).to_be_bytes());
+        handle[22..30]
+            .copy_from_slice(&kms_grpc::solana_binding::solana_host_chain_id(12_345).to_be_bytes());
 
         let req = UserDecryptionRequest {
             request_id: Some(derive_request_id("request_id").unwrap().into()),

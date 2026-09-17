@@ -1193,7 +1193,7 @@ async fn integration_test_commands(
             decrypt: ucp("0x2a", FheType::Euint8, 2, false, true),
             user_pubkey: [0x11; 32],
             verifying_program_id: [0x22; 32],
-            host_chain_id: (1 << 63) | 12_345,
+            host_chain_id: kms_grpc::solana_binding::solana_host_chain_id(12_345),
         }),
         // Same public decryption through the synchronous endpoint (single round trip)
         CCCommand::PublicDecrypt(DecryptArguments::FromArgs(DecryptParameters {

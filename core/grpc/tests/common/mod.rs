@@ -6,8 +6,8 @@
 
 use kms_grpc::solana_binding::{SolanaUserDecryptBinding, SolanaUserDecryptBindingError};
 
-/// A Solana-kind host chain id: bit 63 set, as every embedded handle chain id must be.
-pub const CHAIN_ID: u64 = (1 << 63) | 12_345;
+/// A Solana-kind host chain id: type byte `0x01`, as every embedded handle chain id must be.
+pub const CHAIN_ID: u64 = kms_grpc::solana_binding::solana_host_chain_id(12_345);
 
 pub const PROGRAM_ID: [u8; 32] = [0x22; 32];
 pub const RECEIVER: [u8; 32] = [0x33; 32];
