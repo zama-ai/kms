@@ -205,24 +205,33 @@ test('solana chain ID crosses the WASM boundary as an exact decimal string', (_t
         verifying_program_id: '22'.repeat(32),
     };
 
-    // The rules run in order even with no responses: an invalid request reports its own problem.
+    // The domain is a required input of the link, and it is checked before anything else about
+    // the request: without one there is no expected link, so the call is refused by name.
     assert.throws(
         () => process_user_decryption_resp_solana_from_js(
             client, request, fields, [], enc_pk, enc_sk, null),
+        /eip712_domain is required/,
+    );
+
+    // With a domain, the rules run in order even with no responses: an invalid request reports
+    // its own problem.
+    assert.throws(
+        () => process_user_decryption_resp_solana_from_js(
+            client, request, fields, [], enc_pk, enc_sk, data.eip712_domain),
         /Response does not exist/,
     );
     assert.throws(
         () => process_user_decryption_resp_solana_from_js(
             client, request, { ...fields, host_chain_id: (solanaChainId + 1n).toString() },
-            [], enc_pk, enc_sk, null),
+            [], enc_pk, enc_sk, data.eip712_domain),
         /does not match handle chain ID/,
     );
-    // A JS Number cannot carry a bit-63 chain id exactly, so the field is a decimal string and a
-    // Number is a parse error — never a silent rounding.
+    // A JS Number cannot carry a type-byte-0x01 chain id exactly, so the field is a decimal string
+    // and a Number is a parse error — never a silent rounding.
     assert.throws(
         () => process_user_decryption_resp_solana_from_js(
             client, request, { ...fields, host_chain_id: Number(solanaChainId) },
-            [], enc_pk, enc_sk, null),
+            [], enc_pk, enc_sk, data.eip712_domain),
         /solana_request parsing failed/,
     );
 });
@@ -246,6 +255,52 @@ test('solana centralized user decryption response', (_t) => {
         () => processSolanaVector(foreign, data, enc_pk, enc_sk),
         /does not carry that party's trusted key/,
     );
+});
+
+test('solana response is rejected once one bound input of the request changes', (_t) => {
+    // The same authentic response, held against a request that differs in exactly one input the
+    // link binds. The share is real — signed by the trusted node, sealed to the transcript's key —
+    // and every variant must still be refused, through the public entry point, by the rule the
+    // change reaches first: the external signature for the domain, the link for everything else.
+    const { data, client, enc_pk, enc_sk } = loadSolanaVector('test-solana-central-wasm-transcript.json');
+    const fields = solanaRequestFields(data);
+    const call = (request, solanaFields, domain) => process_user_decryption_resp_solana_from_js(
+        client, request, solanaFields, data.responses, enc_pk, enc_sk, domain);
+    const flipFirstHexByte = (hex) => (parseInt(hex.slice(0, 2), 16) ^ 0xff).toString(16).padStart(2, '0') + hex.slice(2);
+
+    // Sanity: unchanged, the response releases.
+    assertExpected(call(data.request, fields, data.eip712_domain), data.expected);
+
+    const LINK_RULE = /not the link recomputed from the request/;
+    const SIGNATURE_RULE = /node signature on the response .* is not valid/;
+
+    // Another recipient, another host program, another handle: the link rule.
+    assert.throws(
+        () => call(data.request, { ...fields, user_pubkey: flipFirstHexByte(fields.user_pubkey) }, data.eip712_domain),
+        LINK_RULE, 'another recipient');
+    assert.throws(
+        () => call(data.request, { ...fields, verifying_program_id: flipFirstHexByte(fields.verifying_program_id) }, data.eip712_domain),
+        LINK_RULE, 'another program on the same cluster');
+    const otherHandle = data.request.ciphertext_handles.map(flipFirstHexByte);
+    assert.throws(
+        () => call({ ...data.request, ciphertext_handles: otherHandle }, fields, data.eip712_domain),
+        LINK_RULE, 'another handle');
+
+    // Another Gateway domain: the external signature was made under the transcript's domain, so
+    // the signature rule fires before the link is even compared.
+    const otherDomain = { ...data.eip712_domain, chain_id: [...data.eip712_domain.chain_id] };
+    otherDomain.chain_id[31] ^= 0x01;
+    assert.throws(() => call(data.request, fields, otherDomain), SIGNATURE_RULE, 'another Gateway domain');
+
+    // No domain at all: refused by name before anything is verified — there is no link without it.
+    assert.throws(() => call(data.request, fields, null), /eip712_domain is required/, 'null domain');
+    assert.throws(() => call(data.request, fields, undefined), /eip712_domain is required/, 'undefined domain');
+
+    // The same program on another cluster is a request whose handles carry the other chain id; a
+    // client declaring that cluster against these handles is stopped before any link is computed.
+    assert.throws(
+        () => call(data.request, { ...fields, host_chain_id: (BigInt(fields.host_chain_id) + 1n).toString() }, data.eip712_domain),
+        /does not match handle chain ID/, 'another cluster declared');
 });
 
 test('solana threshold user decryption response', (_t) => {

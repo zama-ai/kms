@@ -1,6 +1,6 @@
 //! Framing canary for the transport-key container published in the Solana linker vectors.
 //!
-//! The vector set (`core/grpc/test-vectors/solana_linker_v1.json`) carries its canonical transport
+//! The vector set (`core/grpc/test-vectors/solana_linker_v2.json`) carries its canonical transport
 //! key under the name `reference-mlkem-512`: 869 bytes, a genuine tfhe-safe-serialized
 //! `UnifiedPublicEncKey::MlKem512` rather than filler of that width. It has to be genuine, because
 //! the width is a normative claim — a KMS user-decryption request carries a serialized container of
@@ -33,7 +33,7 @@ const CONTAINER_LEN: usize = 869;
 /// The committed set, read as raw text from the sibling crate rather than through any generator.
 fn committed_transport_key(name: &str) -> Vec<u8> {
     let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("../grpc/test-vectors/solana_linker_v1.json");
+        .join("../grpc/test-vectors/solana_linker_v2.json");
     let json = std::fs::read_to_string(&path)
         .unwrap_or_else(|error| panic!("the published vector set must exist at {path:?}: {error}"));
 

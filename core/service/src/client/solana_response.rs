@@ -712,9 +712,9 @@ mod tests {
     const CHAIN_ID: u64 = kms_grpc::solana_binding::solana_host_chain_id(12_345);
     const PUBKEY: [u8; 32] = [0x11; 32];
     const PROGRAM_ID: [u8; 32] = [0x22; 32];
-    /// The request's opaque `extra_data`. Non-empty on purpose: it is a link input and an input to
-    /// the message an external node signature commits to, so an all-empty fixture would let an
-    /// implementation that ignores the field pass by coincidence.
+    /// The request's opaque `extra_data`. Non-empty on purpose: it is an input to the message an
+    /// external node signature commits to, so an all-empty fixture would let an implementation
+    /// that ignores the field pass by coincidence. It is not a link input.
     const EXTRA_DATA: [u8; 3] = [0x9a, 0x9b, 0x9c];
 
     /// A ciphertext handle on the canonical chain, `discriminator` filling every other byte so that
@@ -750,8 +750,8 @@ mod tests {
             verifying_program_id: PROGRAM_ID,
             handles,
             enc_key: transport_key(0).2,
-            response_domain: dummy_domain(),
             extra_data: EXTRA_DATA.to_vec(),
+            gateway_domain: dummy_domain(),
         }
     }
 
@@ -838,7 +838,7 @@ mod tests {
 
     /// A response authenticated the way the wire authenticates one: no internal ECDSA signature at
     /// all, and an EIP-712 `external_signature` over the payload, the request's transport key and
-    /// `extra_data`, under the request's response domain — the very message the server builds.
+    /// `extra_data`, under the request's Gateway domain — the very message the server builds.
     ///
     /// `extra_data` is passed explicitly so a test can sign over bytes other than the request's; the
     /// response carries the same bytes the signature commits to, which is what makes the mismatch a
@@ -851,10 +851,10 @@ mod tests {
     ) -> UserDecryptionResponse {
         // The two steps the server takes, composed here rather than borrowed from a shared shim:
         // build the EIP-712 message from the payload, the request's transport key and `extra_data`,
-        // then sign it under the request's response domain.
+        // then sign it under the request's Gateway domain.
         let message = compute_user_decrypt_message(&payload, &request.enc_key, extra_data)
             .expect("build the external user-decryption message");
-        let external_signature = compute_eip712_signature(sk, &message, &request.response_domain)
+        let external_signature = compute_eip712_signature(sk, &message, &request.gateway_domain)
             .expect("compute an external user decryption signature");
         UserDecryptionResponse {
             signature: vec![],
@@ -1038,7 +1038,7 @@ mod tests {
 
     #[test]
     fn js_pinned_error_messages_still_surface() {
-        // tests/js/test.js asserts on these two strings across the WASM boundary. They are part of
+        // tests/js/test.js asserts on these strings across the WASM boundary. They are part of
         // the published behaviour of the JS export, so they are pinned on the Rust side too rather
         // than only in a suite that needs a wasm build to run.
         assert_eq!(
@@ -1057,6 +1057,22 @@ mod tests {
                 .to_string()
                 .contains("does not match handle chain ID"),
             "the JS-visible chain-id message changed: {declared_mismatch}",
+        );
+
+        // The two rules the JS suite tells apart when one bound input of the request changes.
+        let link_mismatch = SolanaUserDecryptionResponseError::LinkMismatch { party_id: 1 };
+        assert!(
+            link_mismatch
+                .to_string()
+                .contains("not the link recomputed from the request"),
+            "the JS-visible link-rule message changed: {link_mismatch}",
+        );
+        let node_signature = SolanaUserDecryptionResponseError::NodeSignature { party_id: 1 };
+        assert!(
+            node_signature
+                .to_string()
+                .contains("node signature on the response from party 1 is not valid"),
+            "the JS-visible signature-rule message changed: {node_signature}",
         );
     }
 
@@ -1111,13 +1127,12 @@ mod tests {
             &PUBKEY,
             request.handles.iter().map(|handle| handle.as_slice()),
             &request.enc_key,
-            &request.extra_data,
         )
         .expect("a canonical request");
 
         assert_eq!(
             request.expected_link().expect("a canonical request"),
-            binding.compute_link()
+            binding.compute_link(&request.gateway_domain)
         );
     }
 
@@ -1375,7 +1390,7 @@ mod tests {
         // Party 1's own signature over this very payload, made under a different EIP-712 domain: a
         // signature from another deployment is not a signature for this one.
         let mut other_domain = canonical_request();
-        other_domain.response_domain = alloy_sol_types::eip712_domain!(
+        other_domain.gateway_domain = alloy_sol_types::eip712_domain!(
             name: "Authorization token",
             version: "2",
             chain_id: 8006,
@@ -1383,7 +1398,7 @@ mod tests {
                 "66f9664f97F2b50F62D13eA064982f936dE76657"
             ),
         );
-        assert_ne!(other_domain.response_domain, request.response_domain);
+        assert_ne!(other_domain.gateway_domain, request.gateway_domain);
         let foreign_domain = external_signed_response(&other_domain, good, &sks[0]);
 
         for (name, response) in [
@@ -1888,6 +1903,164 @@ mod tests {
     }
 
     // ---------------------------------------------------------------------------------------
+    // What the link binds, seen from the response side: a share computed for a request that
+    // differs in one bound input is authentic and still rejected, by the link rule alone.
+    // ---------------------------------------------------------------------------------------
+
+    /// The canonical request with exactly one bound input changed, named. Every variant must be a
+    /// valid request of its own — the point is that its link is not ours.
+    fn requests_differing_in_one_bound_input() -> Vec<(&'static str, SolanaUserDecryptionRequest)> {
+        let mut other_recipient = canonical_request();
+        other_recipient.user_pubkey[0] ^= 0xff;
+
+        let mut other_transport_key = canonical_request();
+        other_transport_key.enc_key = transport_key(1).2;
+
+        let mut other_program = canonical_request();
+        other_program.verifying_program_id[0] ^= 0xff;
+
+        // The same program on another cluster: the handles carry the other chain id, and the
+        // client's own declared chain id follows, or the request would not build.
+        let mut other_cluster = request_over(vec![handle_for_chain(CHAIN_ID + 1, 0xa1)]);
+        other_cluster.host_chain_id = CHAIN_ID + 1;
+
+        let mut other_gateway = canonical_request();
+        other_gateway.gateway_domain = alloy_sol_types::eip712_domain!(
+            name: "Authorization token",
+            version: "1",
+            chain_id: 8007,
+            verifying_contract: alloy_primitives::address!(
+                "66f9664f97F2b50F62D13eA064982f936dE76657"
+            ),
+        );
+
+        vec![
+            ("another recipient", other_recipient),
+            ("another transport key", other_transport_key),
+            ("another handle", request_over(vec![handle(0xbb)])),
+            (
+                "the same handles in another order",
+                request_over(vec![handle(0xa2), handle(0xa1)]),
+            ),
+            ("another program on the same cluster", other_program),
+            ("the same program on another cluster", other_cluster),
+            ("another Gateway domain", other_gateway),
+        ]
+    }
+
+    #[test]
+    fn share_bound_to_request_differing_in_one_input_is_link_mismatch() {
+        // Internally signed on purpose: the internal signature covers the payload only, so the
+        // link comparison is the one rule left to separate these requests from ours. Under the
+        // external signature the domain variant would already fail the signature rule; here it
+        // must fail the link rule too, which is the internal-only half of the domain guarantee.
+        let (pks, sks) = node_keys(1);
+        let request = canonical_request();
+        let two_handles = request_over(vec![handle(0xa1), handle(0xa2)]);
+
+        for (name, other) in requests_differing_in_one_bound_input() {
+            let foreign_link = other
+                .expected_link()
+                .unwrap_or_else(|error| panic!("{name}: a valid request of its own, got {error}"));
+            // The order variant is a two-handle request, so it is checked against the two-handle
+            // canonical form; everything else against the single-handle one.
+            let ours = if name.contains("order") {
+                &two_handles
+            } else {
+                &request
+            };
+            assert_ne!(
+                foreign_link,
+                ours.expected_link().expect("a canonical request"),
+                "{name} shares a link with the canonical request",
+            );
+
+            let agg_resp = vec![signed_response(
+                payload(1, &pks[&1], foreign_link, 0, dummy_signcrypted()),
+                &sks[0],
+            )];
+            assert_eq!(
+                verify_solana_user_decryption_response(ours, &trusted(&pks), &agg_resp),
+                Err(SolanaUserDecryptionResponseError::LinkMismatch { party_id: 1 }),
+                "{name} must be rejected by the link rule",
+            );
+        }
+    }
+
+    #[test]
+    fn foreign_gateway_domain_fails_under_both_authentication_branches() {
+        // The domain is a link input and the external signature's domain, so a response computed
+        // under another Gateway's domain fails whichever branch authenticates it: the external
+        // signature does not verify under ours, and if a share is internally signed — where the
+        // domain plays no part in authentication — its link is not ours.
+        let (pks, sks) = node_keys(1);
+        let request = canonical_request();
+        let mut other_gateway = canonical_request();
+        other_gateway.gateway_domain.chain_id = Some(alloy_primitives::U256::from(8007u64));
+        let foreign_link = other_gateway
+            .expected_link()
+            .expect("a canonical request under another domain");
+        let good_payload = payload(1, &pks[&1], foreign_link, 0, dummy_signcrypted());
+
+        let externally = vec![external_signed_response(
+            &other_gateway,
+            good_payload.clone(),
+            &sks[0],
+        )];
+        assert_eq!(
+            verify_solana_user_decryption_response(&request, &trusted(&pks), &externally),
+            Err(SolanaUserDecryptionResponseError::NodeSignature { party_id: 1 }),
+            "externally signed under another domain: the signature rule",
+        );
+
+        let internally = vec![signed_response(good_payload, &sks[0])];
+        assert_eq!(
+            verify_solana_user_decryption_response(&request, &trusted(&pks), &internally),
+            Err(SolanaUserDecryptionResponseError::LinkMismatch { party_id: 1 }),
+            "internally signed under another domain: the link rule",
+        );
+    }
+
+    #[test]
+    fn other_extra_data_leaves_link_unchanged() {
+        // Not a link input: a request that differs only in extra_data expects the very same link.
+        // What separates the two requests is the external signature — the message a node signs is
+        // built over extra_data (`external_signature_over_other_extra_data_is_rejected`) — and
+        // nothing else.
+        let request = canonical_request();
+        let mut other = canonical_request();
+        other.extra_data = vec![0xde, 0xad];
+        assert_ne!(other.extra_data, request.extra_data);
+
+        assert_eq!(
+            other.expected_link().expect("a canonical request"),
+            request.expected_link().expect("a canonical request"),
+        );
+    }
+
+    #[test]
+    fn internal_signature_alone_leaves_extra_data_unauthenticated() {
+        // Stated as a fact of the construction, as on EVM: the internal ECDSA signature covers the
+        // serialized payload and the link binds no extra_data, so an internally signed share whose
+        // response carries other extra_data passes both rules. The external signature is the only
+        // thing that authenticates extra_data, which is why the wire never carries an internal
+        // signature alone.
+        let (pks, sks) = node_keys(1);
+        let request = canonical_request();
+        let link = request.expected_link().expect("a canonical request");
+        let mut agg_resp = vec![signed_response(
+            payload(1, &pks[&1], link, 0, dummy_signcrypted()),
+            &sks[0],
+        )];
+        agg_resp[0].extra_data = vec![0xde, 0xad];
+        assert_ne!(agg_resp[0].extra_data, request.extra_data);
+
+        let verified = verify_solana_user_decryption_response(&request, &trusted(&pks), &agg_resp)
+            .expect("the internal branch does not read extra_data");
+        assert_eq!(party_ids(&verified), vec![1]);
+    }
+
+    // ---------------------------------------------------------------------------------------
     // The consistency gate: a multi-share set must be one threshold response.
     // ---------------------------------------------------------------------------------------
 
@@ -2148,7 +2321,8 @@ mod tests {
             verifying_program_id: String,
             /// The request in the hex shape `process_user_decryption_resp_solana_from_js` expects.
             request: ParsedUserDecryptionRequestHex,
-            /// The EIP-712 domain the responses' external signatures were produced under.
+            /// The Gateway domain the link was computed under and the responses' external
+            /// signatures were produced under.
             eip712_domain: kms_grpc::kms::v1::Eip712DomainMsg,
             /// The aggregated responses in hex shape: external signature only, as on the wire.
             responses: Vec<UserDecryptionResponseHex>,
@@ -2179,7 +2353,7 @@ mod tests {
             server_addrs.sort_by_key(|id_addr| id_addr.id);
 
             let verifying_contract = request
-                .response_domain
+                .gateway_domain
                 .verifying_contract
                 .expect("the fixture domain names a verifying contract");
             let request_hex =
@@ -2205,7 +2379,7 @@ mod tests {
                 host_chain_id: request.host_chain_id.to_string(),
                 verifying_program_id: hex::encode(request.verifying_program_id),
                 request: request_hex,
-                eip712_domain: alloy_to_protobuf_domain(&request.response_domain)
+                eip712_domain: alloy_to_protobuf_domain(&request.gateway_domain)
                     .expect("the fixture domain converts"),
                 responses: agg_resp
                     .iter()

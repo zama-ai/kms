@@ -319,7 +319,7 @@ pub(crate) fn handle_chain_id(handle: &[u8; SOLANA_IDENTITY_LEN]) -> u64 {
 #[cfg(test)]
 mod tests {
     use super::{
-        SOLANA_IDENTITY_LEN, SOLANA_LINKER_SCHEME_TAG, SolanaHostChainId, SolanaUserDecryptBinding,
+        SOLANA_IDENTITY_LEN, SolanaHostChainId, SolanaUserDecryptBinding,
         SolanaUserDecryptBindingError, handle_chain_id, is_evm_host_chain_id,
         is_solana_host_chain_id, solana_host_chain_id,
     };
@@ -327,7 +327,6 @@ mod tests {
     const CHAIN_ID: u64 = solana_host_chain_id(12_345);
     const PROGRAM_ID: [u8; 32] = [0x22; 32];
     const RECEIVER: [u8; 32] = [0x33; 32];
-    const EXTRA_DATA: [u8; 4] = [0x77; 4];
 
     /// A handle embedding `chain_id`, with `discriminator` filling every other byte so two
     /// handles of the same request are distinguishable.
@@ -346,19 +345,7 @@ mod tests {
             &RECEIVER,
             handles.iter().map(|handle| handle.as_slice()),
             &[0x66; 800],
-            &EXTRA_DATA,
         )
-    }
-
-    #[test]
-    fn scheme_tag_is_specified_twenty_nine_bytes() {
-        // Length is part of the layout: every element before the trailing variable-length pair
-        // (transport key, extra data) has a position-determined constant length.
-        assert_eq!(SOLANA_LINKER_SCHEME_TAG.len(), 29);
-        assert_eq!(
-            SOLANA_LINKER_SCHEME_TAG.as_slice(),
-            b"SolanaUserDecryptionLinker:v1",
-        );
     }
 
     #[test]
@@ -404,7 +391,6 @@ mod tests {
                 &RECEIVER,
                 std::iter::once(bytes),
                 &[0x66; 800],
-                &EXTRA_DATA,
             )
             .unwrap_err();
 
@@ -489,7 +475,6 @@ mod tests {
                 &RECEIVER,
                 std::iter::once(handle(CHAIN_ID, 1).as_slice()),
                 &[0x66; 800],
-                &EXTRA_DATA,
             )
             .unwrap_err();
 
@@ -510,33 +495,12 @@ mod tests {
                 &vec![0x33; actual],
                 std::iter::once(handle(CHAIN_ID, 1).as_slice()),
                 &[0x66; 800],
-                &EXTRA_DATA,
             )
             .unwrap_err();
 
             assert_eq!(
                 error,
                 SolanaUserDecryptBindingError::InvalidReceiverLength { actual },
-            );
-        }
-    }
-
-    #[test]
-    fn accepts_extra_data_of_any_length_including_empty() {
-        // Opaque bytes, bound verbatim: the binding never parses `extra_data` and puts no width
-        // rule on it, so the host contract can evolve what it carries without a KMS release.
-        for length in [0usize, 1, 32, 512] {
-            let binding = SolanaUserDecryptBinding::new(
-                &PROGRAM_ID,
-                &RECEIVER,
-                std::iter::once(handle(CHAIN_ID, 1).as_slice()),
-                &[0x66; 800],
-                &vec![0x77; length],
-            );
-
-            assert!(
-                binding.is_ok(),
-                "extra_data is opaque and width-free (length {length})",
             );
         }
     }
@@ -552,7 +516,6 @@ mod tests {
                 &RECEIVER,
                 std::iter::once(handle(CHAIN_ID, 1).as_slice()),
                 &vec![0x66; length],
-                &EXTRA_DATA,
             );
 
             assert!(

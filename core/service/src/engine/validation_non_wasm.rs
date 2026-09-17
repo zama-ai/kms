@@ -1832,8 +1832,8 @@ mod tests {
             _key_id,
             _context_id,
             _epoch_id,
-            _domain,
-            extra_data,
+            domain,
+            _extra_data,
             _signing_schemes,
         ) = unpack_user_decrypt_req(&req).unwrap();
 
@@ -1842,14 +1842,14 @@ mod tests {
             &[0x11; 32],
             cts.iter().map(|ct| ct.external_handle.as_slice()),
             &enc_key,
-            &extra_data,
         )
         .unwrap();
 
         assert_eq!(
             link,
-            binding.compute_link(),
-            "the link must bind the extra_data the tuple carries, not a second parse",
+            binding.compute_link(&domain),
+            "the link must be the canonical binding under the domain the tuple carries, not a \
+             second construction",
         );
     }
 
