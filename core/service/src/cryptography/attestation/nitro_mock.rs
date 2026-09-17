@@ -8,12 +8,16 @@ use rand::{RngCore, rngs::OsRng};
 use zeroize::Zeroizing;
 
 impl SecurityModule for DevNitro {
-    async fn attest(&self, pk: Vec<u8>, user_data: Option<Vec<u8>>) -> anyhow::Result<Vec<u8>> {
+    async fn attest(
+        &self,
+        pk_hash: Vec<u8>,
+        user_data: Option<Vec<u8>>,
+    ) -> anyhow::Result<Vec<u8>> {
         // Enforced here too, so a mock-enclave run rejects what a real enclave would.
-        super::check_attestation_field_sizes(&pk, user_data.as_deref())?;
+        super::check_attestation_field_sizes(&pk_hash, user_data.as_deref())?;
 
         let request = Request::Attestation {
-            public_key: Some(pk.into()),
+            public_key: Some(pk_hash.into()),
             user_data: user_data.map(|x| x.into()),
             nonce: None,
         };

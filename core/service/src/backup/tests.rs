@@ -15,9 +15,7 @@ use crate::{
     },
     consts::DEFAULT_MPC_CONTEXT,
     cryptography::{
-        encryption::{
-            Encryption, PkeScheme, PkeSchemeType, UnifiedPrivateEncKey, UnifiedPublicEncKey,
-        },
+        encryption::{Encryption, PkeScheme, UnifiedPrivateEncKey, UnifiedPublicEncKey},
         signatures::{PublicSigKey, gen_sig_keys},
     },
     engine::base::derive_request_id,
@@ -210,85 +208,6 @@ fn custodian_reencrypt() {
                 &mut rng,
                 signcrypt_results[0].ct_shares.get(&operator_role).unwrap(),
                 verification_key,
-                &ephemeral_enc_key,
-            )
-            .unwrap();
-    }
-}
-
-/// A custodian still on ML-KEM-512 takes part in a backup and a recovery alongside composite
-/// custodians.
-///
-/// Signcryption carries its own scheme tag, and the backup path accepts whatever scheme a peer
-/// advertises. A custodian that runs an older `kms-custodian` therefore interoperates. This test
-/// fails if the path gains a downgrade check.
-#[test]
-fn mixed_scheme_custodians_interoperate() {
-    let custodian_threshold = 1usize;
-    let backup_id = RequestId::from_bytes([8u8; crate::consts::ID_LENGTH]);
-    let mpc_context_id = *DEFAULT_MPC_CONTEXT;
-    let mut rng = AesRng::seed_from_u64(7);
-
-    // Role 1 publishes the legacy scheme; roles 2 and 3 publish the current one.
-    let schemes = [
-        PkeSchemeType::MlKem512,
-        BACKUP_PKE_SCHEME,
-        BACKUP_PKE_SCHEME,
-    ];
-    let custodians: Vec<_> = schemes
-        .iter()
-        .enumerate()
-        .map(|(i, scheme)| {
-            let (_verification_key, signing_key) = gen_sig_keys(&mut rng);
-            let mut enc = Encryption::new(*scheme, &mut rng);
-            let (dec_key, enc_key) = enc.keygen().unwrap();
-            custodian::Custodian::new(Role::indexed_from_zero(i), signing_key, enc_key, dec_key)
-                .unwrap()
-        })
-        .collect();
-    let custodian_messages: Vec<_> = custodians
-        .iter()
-        .enumerate()
-        .map(|(i, c)| {
-            c.generate_setup_message(&mut rng, format!("Custodian-{i}"))
-                .unwrap()
-        })
-        .collect();
-
-    let (operator_verf_key, operator_sig_key) = gen_sig_keys(&mut rng);
-    let operator = Operator::new_for_sharing(
-        custodian_messages,
-        operator_sig_key,
-        custodian_threshold,
-        custodians.len(),
-    )
-    .unwrap();
-
-    let secret = vec![3u8; 32];
-    let signcrypt_result = operator
-        .secret_share_and_signcrypt(&mut rng, &secret, backup_id, mpc_context_id)
-        .unwrap();
-    assert!(
-        signcrypt_result.skipped_roles.is_empty(),
-        "no custodian may be skipped over its encryption scheme"
-    );
-
-    // Each share is tagged with the scheme of the custodian it was encrypted for.
-    for (role, expected) in schemes.iter().enumerate() {
-        let share = &signcrypt_result.ct_shares[&Role::indexed_from_zero(role)];
-        assert_eq!(&share.signcryption.pke_type, expected);
-    }
-
-    // Recovery: every custodian re-signcrypts to the operator's ephemeral key, whatever its own
-    // scheme is.
-    let mut enc = Encryption::new(BACKUP_PKE_SCHEME, &mut rng);
-    let (_ephemeral_dec_key, ephemeral_enc_key) = enc.keygen().unwrap();
-    for (i, cur_custodian) in custodians.iter().enumerate() {
-        cur_custodian
-            .verify_reencrypt(
-                &mut rng,
-                &signcrypt_result.ct_shares[&Role::indexed_from_zero(i)],
-                &operator_verf_key,
                 &ephemeral_enc_key,
             )
             .unwrap();

@@ -54,17 +54,17 @@ pub const NSM_ATTESTATION_FIELD_MAX_BYTES: usize = 1024;
 
 /// Reject attestation inputs the NSM would refuse, naming the field and the limit.
 ///
-/// Without this the NSM's own rejection arrives as an undifferentiated failure, which is
-/// particularly unhelpful because it only ever happens inside a real enclave.
+/// Without this the NSM's own rejection arrives as an undifferentiated failure,
+/// which is not particularly helpful.
 pub(crate) fn check_attestation_field_sizes(
-    public_key: &[u8],
+    pk_hash: &[u8],
     user_data: Option<&[u8]>,
 ) -> anyhow::Result<()> {
     ensure!(
-        public_key.len() <= NSM_ATTESTATION_FIELD_MAX_BYTES,
+        pk_hash.len() <= NSM_ATTESTATION_FIELD_MAX_BYTES,
         "Attestation public key is {} bytes, exceeding the {NSM_ATTESTATION_FIELD_MAX_BYTES}-byte \
          limit of the AWS Nitro attestation document",
-        public_key.len()
+        pk_hash.len()
     );
     if let Some(user_data) = user_data {
         ensure!(
@@ -212,7 +212,8 @@ pub trait SecurityModule {
     /// contains PCR values and, at the minimum, an application public
     /// key. Optionally, the attestation document can include some userdata and
     /// a nonce.
-    async fn attest(&self, pk: Vec<u8>, user_data: Option<Vec<u8>>) -> anyhow::Result<Vec<u8>>;
+    async fn attest(&self, pk_hash: Vec<u8>, user_data: Option<Vec<u8>>)
+    -> anyhow::Result<Vec<u8>>;
 
     /// Generate a fresh keypair and issue a new TLS certificate for it.  This
     /// TLS certificate also includes the attestation document for its

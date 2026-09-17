@@ -307,22 +307,9 @@ where
 {
     /// Return the operator's backup encryption key, with an attestation document over its digest.
     ///
-    /// What the attestation proves is narrower than it may appear: the NSM signs opaque bytes
-    /// alongside the enclave's PCR measurements, so the document says only that software measuring
-    /// to those PCRs emitted this digest. It is *not* a proof of possession — the NSM never sees a
-    /// private key, and neither ML-KEM nor the composite KEM can self-sign — and it is not a check
-    /// that the key is the right one. A key that is wrong but validly signed (a context-creation
-    /// bug, a stale anchor, a compromised node signing key) is attested just as faithfully.
-    ///
-    /// The key's integrity comes from elsewhere: it is carried in operator-signed
-    /// [`crate::backup::operator::RecoveryValidationMaterial`], which
-    /// [`crate::engine::storage_material_verification::verify_storage_material`] validates against
-    /// this node's own signing key at boot before `adopt_custodian_context` installs it.
-    ///
     /// A digest is attested rather than the key because the composite key exceeds the attestation
     /// document's [`crate::cryptography::attestation::NSM_ATTESTATION_FIELD_MAX_BYTES`] `public_key`
-    /// field. Since the document carries
-    /// no proof of possession, hashing preserves the binding it does provide.
+    /// field.
     async fn get_operator_public_key(
         &self,
         _request: Request<Empty>,

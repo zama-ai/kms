@@ -22,7 +22,7 @@ $ cargo run --bin kms-custodian generate --randomness <random string of chars> -
 
 Observe that the `randomness` supplied is used along with entropy of the current system to derive keys, and thus the command is *not* idempotent. 
 This will generate a fresh pair of keys for the given custodian and print the base64-encoded *public* setup message to stdout (prefixed with `The custodian setup message is: `). This setup message is what the operator collects (out-of-band) to run `new-custodian-context`.
-Furthermore, this will print a BIP39 seed phrase on the screen. This is a **24-word** phrase, carrying 256 bits of entropy, because every key derived from it — including the MLKEM1024-P384 encryption key — is only as strong as the phrase. A shorter 12-word phrase is rejected rather than stretched. The seed phrase must be copied _exactly_ on to a piece of paper. The paper should be stored securely as this is needed in order to perform recovery.
+Furthermore, this will print a BIP39 seed phrase on the screen. This is a **24-word** phrase, carrying 256 bits of entropy. The seed phrase must be copied _exactly_ on to a piece of paper. The paper should be stored securely as this is needed in order to perform recovery.
 
 Observe the seed phrase and the private keys do not get logged or saved to disc; instead the seed phrase is printed _once_ to stdout. Similarly for the base64-encoded *public* setup message.
 

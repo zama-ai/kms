@@ -41,16 +41,9 @@ pub fn seed_phrase_from_entropy(entropy: &[u8; CUSTODIAN_ENTROPY_SIZE]) -> anyho
 
 /// Re-derive a custodian's keys from its BIP-39 seed phrase.
 ///
-/// The seed phrase is the only durable secret a custodian holds, so every key comes from it and
-/// nothing else. The phrase must carry [`CUSTODIAN_ENTROPY_SIZE`] bytes of entropy — a 24-word
-/// mnemonic. Shorter phrases are rejected rather than stretched, because silently deriving a
-/// 128-bit key for a scheme whose security level assumes 256 bits is exactly the failure this
-/// length check exists to prevent.
-///
-/// Derivation can fail, with probability below 2^-192, if the phrase expands to a P-384 scalar that
-/// rejection sampling refuses; see [`composite_mlkem1024_p384::keygen_from_seed`]. There is no
-/// retry for a phrase already in a custodian's hands, so `kms-custodian generate` regenerates the
-/// mnemonic instead of surfacing it.
+/// The seed phrase is the only durable secret a custodian holds. The phrase
+/// must carry [`CUSTODIAN_ENTROPY_SIZE`] bytes of entropy — a 24-word mnemonic.
+/// Shorter phrases are rejected rather than stretched.
 pub fn custodian_from_seed_phrase(seed_phrase: &str, role: Role) -> anyhow::Result<Custodian> {
     let mnemonic = Mnemonic::from_str(&seed_phrase.trim().to_lowercase())?;
     let entropy = Zeroizing::new(mnemonic.to_entropy());
@@ -64,9 +57,8 @@ pub fn custodian_from_seed_phrase(seed_phrase: &str, role: Role) -> anyhow::Resu
         );
     }
 
-    // Derive the encryption key's seed straight from the phrase. The seed *is* the MLKEM1024-P384
-    // private key, so going through an intermediate `AesRng` would cap the reachable key space at
-    // that RNG's 128-bit seed and waste half the entropy the phrase carries.
+    // Derive the encryption key's seed straight from the phrase. The seed *is*
+    // the MLKEM1024-P384 private key.
     let mut enc_seed = Zeroizing::new([0u8; PRIVATE_KEY_LENGTH]);
     enc_seed.copy_from_slice(&hash_element_w_size(
         &DSEP_MNEMONIC_ENC,
@@ -78,6 +70,9 @@ pub fn custodian_from_seed_phrase(seed_phrase: &str, role: Role) -> anyhow::Resu
 
     // The signing key keeps the narrower `AesRng` derivation: it is ECDSA over secp256k1, which
     // offers about 128 bits of security itself, so widening its seed would buy nothing.
+    //
+    // TODO(https://github.com/zama-ai/kms-internal/issues/3168): this will
+    // change to a composite scheme too.
     let mut sig_rng = rng_from_dsep_entropy::<AesRng>(&DSEP_MNEMONIC_SIG, &entropy)?;
     let (_verf_key, sig_key) = gen_sig_keys(&mut sig_rng);
 
