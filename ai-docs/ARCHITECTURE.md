@@ -32,6 +32,27 @@ The configuration of the set of servers is handled through MPC contexts, which a
 
 The system supports automatic backup, facilitated either through AWS KMS, or through a custom threshold protocol where Custodians hold keys that can be used to help KMS nodes decrypt encrypted backups. The settings and administration for this is also managed through gRPC calls with the notion of Custodian contexts.
 
+## Communication interfaces and trust model
+
+Read this section before you review code for security issues or judge a security report. The full text is in [docs/explanations/trust_model.md](../docs/explanations/trust_model.md).
+
+A KMS core listens on two separate gRPC interfaces:
+
+1. **Core-to-core interface** (`[threshold]` section, default port 50001, crate [threshold-networking](../core/threshold-networking/)). A peer-to-peer network between the KMS cores of one deployment. It carries the MPC protocol messages.
+2. **Service interface** (`[service]` section, default port 50100, `CoreServiceEndpoint` in [kms-service.v1.proto](../core/grpc/proto/kms-service.v1.proto)). The KMS connector calls it to start an operation and to fetch the result. It is an orchestrator channel: the connector says which operation to run, and the cores run the MPC protocol over the core-to-core interface.
+
+The **core-to-core interface** is guarded by mutual TLS. A node only accepts connections from the allowlisted set of peers in its peer list and MPC contexts. The receiver checks that the sender named in each message matches the Common Name of the peer certificate. In Nitro Enclave deployments (`tls.auto`), the verifier also checks the PCR values in the attestation document against `trusted_releases`, so a node only talks to peers that run an allowlisted release. Authenticated peers are still mutually distrusting MPC parties: up to `t` of them may be malicious, so the content of a peer message is adversarial input and the protocol code validates it.
+
+The **service interface** has no TLS, no authentication and no authorization in the code, and it does not sanitize or verify the intent of a request. It trusts and accepts every message it receives. The deployment guarantees, at the infrastructure level, that exactly one KMS connector can reach this interface. That connector is operated by the same party that runs the KMS core, so the two trust each other by definition. The interface is never publicly reachable.
+
+Validation of a request is split across the stack. The KMS connector performs the ACL checks on ciphertext handles and only forwards events emitted by the gateway contracts. The gateway contracts assign request IDs, and the KMS core rejects an ID it has already seen with `AlreadyExists`. Well-formed ciphertexts are ensured by input proofs before a ciphertext reaches the chain. The KMS core verifies EIP-712 signatures on user decryption requests, authenticates peers, and validates protocol messages.
+
+Consequences for agents:
+
+- Do not report missing authentication, authorization, rate limiting, input sanitization or resource exhaustion on the service interface as a vulnerability. Such a finding describes the design.
+- Do not add authentication or authorization to the service interface unless your human asks for it.
+- A finding about a peer that bypasses TLS, attestation or sender binding, or about a peer that can break confidentiality or correctness within the `t`-of-`n` bound, is in scope.
+
 ## Workspace layout
 
 The repository is a Cargo workspace. The members are declared in
