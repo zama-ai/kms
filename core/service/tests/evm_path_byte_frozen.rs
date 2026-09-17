@@ -54,7 +54,7 @@ fn frozen_domain() -> Eip712DomainMsg {
     }
 }
 
-/// A fixed EVM ciphertext handle: chain id in bytes `[22..30]` with the chain-kind bit clear.
+/// A fixed EVM ciphertext handle: chain id in bytes `[22..30]` with type byte `0x00`.
 fn frozen_handle(discriminator: u8) -> Vec<u8> {
     let mut handle = [discriminator; 32];
     handle[22..30].copy_from_slice(&HOST_CHAIN_ID.to_be_bytes());

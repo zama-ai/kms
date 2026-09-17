@@ -1282,19 +1282,25 @@ pub enum KmsType {
     #[serde(rename = "threshold")]
     Threshold,
 }
+/// EIP-712 and handle placeholder used by EVM core-client tests.
+const DUMMY_EVM_CHAIN_ID: u64 = 8006;
+
 /// a dummy Eip-712 domain for testing
 fn dummy_domain() -> alloy_sol_types::Eip712Domain {
     alloy_sol_types::eip712_domain!(
         name: "Authorization token",
         version: "1",
-        chain_id: 8006,
+        chain_id: DUMMY_EVM_CHAIN_ID,
         verifying_contract: alloy_primitives::address!("66f9664f97F2b50F62D13eA064982f936dE76657"),
     )
 }
 
-// dummy ciphertext handle for testing
+/// Placeholder ciphertext handle for EVM tests. Bytes 22–29 must be an EVM chain id
+/// (type byte `0x00`); filling the handle with `23` put `0x17` there and the EVM linker rejected it.
 fn dummy_handle() -> Vec<u8> {
-    vec![23_u8; 32]
+    let mut handle = vec![23_u8; 32];
+    handle[22..30].copy_from_slice(&DUMMY_EVM_CHAIN_ID.to_be_bytes());
+    handle
 }
 
 /// Distinct placeholder ciphertext handles for a public-decryption batch — one entry per

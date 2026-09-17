@@ -135,8 +135,9 @@ end twice: `core/service/tests/js/linker_vectors.test.js` replays every record o
 transcripts fail to decrypt if the wasm-compiled linker diverges.
 
 The scheme tag `SolanaUserDecryptionLinker:v1`, the call separator `SOLLNK01` and the element
-layout are pinned by `core/grpc/tests/solana_frozen_constants.rs`. A change to any of those bytes
-is a version bump in the scheme tag, not an edit. In CI, `ci/scripts/frozen_paths.sh` fails the
-build if any byte-frozen asset — the EVM references or the published Solana vectors — is modified
-or deleted.
+layout are pinned by `core/grpc/tests/solana_frozen_constants.rs`. Changing those bytes is a
+version bump in the scheme tag, not an edit. The published chain-id numbers were replaced once,
+under the same scheme tag, when the kind marker moved from bit 63 to type byte `0x01`. In CI,
+`ci/scripts/frozen_paths.sh` fails a later PR that modifies a byte-frozen asset — the EVM
+references or the published Solana vectors.
 

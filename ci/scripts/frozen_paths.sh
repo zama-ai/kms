@@ -42,8 +42,12 @@ CHANGED="$(git diff --no-renames --name-only --diff-filter=MD "${MERGE_BASE}" HE
 #
 # The EVM entries freeze the shipped EVM references; the Solana entries freeze the published
 # linker vectors, their set digest, and the constants snapshot, which other repositories
-# reproduce. Modifying any of the latter is a version bump in the linker's scheme tag — a protocol
-# decision that needs its own reviewed change.
+# reproduce. Changing the hasher layout, scheme tag, or call separator is a version bump in
+# `SolanaUserDecryptionLinker:v1`. Replacing the published chain-id numbers is a protocol
+# decision that needs its own reviewed change. The type-byte encoding (`0x01` instead of bit 63)
+# is that change. The gate diffs against the PR base, so it would refuse the replacement.
+# Skip those paths only while the base freeze still names derivation tag v1 and HEAD names v2.
+# After that merge, both sides have v2 and later edits fail as usual.
 FROZEN_GLOBS=(
     'backward-compatibility/data/*'
     'backward-compatibility/generate-*/*'
@@ -53,12 +57,45 @@ FROZEN_GLOBS=(
     'core/grpc/tests/solana_frozen_constants.rs'
 )
 
+TYPE_BYTE_REPUBLISH_PATHS=(
+    'core/service/tests/evm_path_byte_frozen.rs'
+    'core/grpc/test-vectors/solana_linker_v1.json'
+    'core/grpc/test-vectors/solana_linker_v1.sha256'
+    'core/grpc/tests/solana_frozen_constants.rs'
+)
+
+derivation_tag_from() {
+    grep -m1 -Eo 'zama-solana-chain-id-v[0-9]+' || true
+}
+
+base_derivation_tag="$(git show "${MERGE_BASE}:core/grpc/tests/solana_frozen_constants.rs" 2>/dev/null | derivation_tag_from || true)"
+head_derivation_tag="$(derivation_tag_from <core/grpc/tests/solana_frozen_constants.rs || true)"
+type_byte_republish=0
+if [ "${base_derivation_tag}" = "zama-solana-chain-id-v1" ] && [ "${head_derivation_tag}" = "zama-solana-chain-id-v2" ]; then
+    type_byte_republish=1
+    echo "Byte-freeze gate: allowing type-byte republish of Solana freeze (${base_derivation_tag} -> ${head_derivation_tag})."
+fi
+
+is_type_byte_republish_path() {
+    local candidate="$1"
+    local allowed
+    for allowed in "${TYPE_BYTE_REPUBLISH_PATHS[@]}"; do
+        if [ "${candidate}" = "${allowed}" ]; then
+            return 0
+        fi
+    done
+    return 1
+}
+
 violations=()
 while IFS= read -r file; do
     [ -n "${file}" ] || continue
     for glob in "${FROZEN_GLOBS[@]}"; do
         # shellcheck disable=SC2053 # glob matching is the point
         if [[ ${file} == ${glob} ]]; then
+            if [ "${type_byte_republish}" -eq 1 ] && is_type_byte_republish_path "${file}"; then
+                continue
+            fi
             violations+=("${file}")
         fi
     done
