@@ -36,13 +36,6 @@ const FROZEN_SCHEME_TAG: &str = "SolanaUserDecryptionLinker:v1";
 /// position-determined width, and that is what makes the list construction injective.
 const FROZEN_SCHEME_TAG_LEN: usize = 29;
 
-/// Tag of the deployment-time chain-id derivation rule, frozen with the vector schema.
-///
-/// Not used by any KMS code path — a party reads the chain id out of the handles — but the vectors
-/// pair a genesis hash with a derived id, and a change to the tag would silently change every
-/// published pair.
-const FROZEN_CHAIN_ID_DERIVATION_TAG: &str = "zama-solana-chain-id-v2";
-
 /// The linker digest over [`frozen_request`]. Frozen: see the module comment.
 const FROZEN_LINK: &str = "3e3cf1d05759e8beb4306b72976361358946b425a68a1d6e06339f8d3c7b81a3";
 
@@ -298,7 +291,7 @@ fn published_vector_set_frozen_at_same_constants() {
         FROZEN_SCHEME_TAG,
         "SOLLNK01",
         "HASH_LST",
-        FROZEN_CHAIN_ID_DERIVATION_TAG,
+        "chain_id = be_u64(0x01 || base58_decode(genesis_hash)[0..7])",
     ] {
         assert!(
             set.contains(&format!("\"{frozen}\"")),

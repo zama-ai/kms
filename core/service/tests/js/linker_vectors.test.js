@@ -88,7 +88,7 @@ function computeLink(record, declaredChainId) {
 const REJECTION_MESSAGES = {
     'empty-handle-list': /contains no ciphertext handles/,
     'handle-width': /handle at index \d+ must be 32 bytes/,
-    'handle-chain-kind-bit': /does not have Solana type byte 0x01/,
+    'handle-chain-type-byte': /does not have Solana type byte 0x01/,
     'mixed-embedded-chain-ids': /embeds chain ID \d+, expected \d+/,
     'declared-chain-id-mismatch': /does not match handle chain ID/,
     'identity-width': /must be 32 bytes/,

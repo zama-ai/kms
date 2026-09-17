@@ -46,8 +46,8 @@ CHANGED="$(git diff --no-renames --name-only --diff-filter=MD "${MERGE_BASE}" HE
 # `SolanaUserDecryptionLinker:v1`. Replacing the published chain-id numbers is a protocol
 # decision that needs its own reviewed change. The type-byte encoding (`0x01` instead of bit 63)
 # is that change. The gate diffs against the PR base, so it would refuse the replacement.
-# Skip those paths only while the base freeze still names derivation tag v1 and HEAD names v2.
-# After that merge, both sides have v2 and later edits fail as usual.
+# Skip a listed path only when sha256(base) and sha256(head) are this exact pair. After merge the
+# base hash is the new blob, so later edits fail as usual.
 FROZEN_GLOBS=(
     'backward-compatibility/data/*'
     'backward-compatibility/generate-*/*'
@@ -57,32 +57,38 @@ FROZEN_GLOBS=(
     'core/grpc/tests/solana_frozen_constants.rs'
 )
 
-TYPE_BYTE_REPUBLISH_PATHS=(
-    'core/service/tests/evm_path_byte_frozen.rs'
-    'core/grpc/test-vectors/solana_linker_v1.json'
-    'core/grpc/test-vectors/solana_linker_v1.sha256'
-    'core/grpc/tests/solana_frozen_constants.rs'
+# path:sha256(merge-base blob):sha256(head file)
+TYPE_BYTE_REPUBLISH=(
+    'core/grpc/test-vectors/solana_linker_v1.json:7c0297629ca4f465459065810f5b1c72f721376aa7ee25fd8ab84d703164f513:f93384ed57c16d6fcc6aa08d2a42ea86fcc1c95bb0d25792fe62edb0b2562c52'
+    'core/grpc/test-vectors/solana_linker_v1.sha256:0e0de0a37d6fc243c89b7e2c27acbe296d75c69cc10c949c6d3b9bcfc7d6552a:3c225ea33dfb034974a357c570252bb4f8991da9ce9bcd45a1a1d701a66ab104'
+    'core/grpc/tests/solana_frozen_constants.rs:2f4984397255923c68f9a1dc044b1e29181a520eaadc9fe5676dcb42380433e7:700913621825be00fa569d050abbbfde86b7a5d8181424dba597eb0c731b6be0'
+    'core/service/tests/evm_path_byte_frozen.rs:d3ea310a57d53105ec57079be690b9181cae4b843f304dea8030d68978839722:7d54e584caf58789a8fcae01a7fe20558a643a96fa3abcccd2adaa2a77c18dfd'
 )
 
-derivation_tag_from() {
-    grep -m1 -Eo 'zama-solana-chain-id-v[0-9]+' || true
+content_sha256() {
+    openssl dgst -sha256 "$1" | awk '{print $NF}'
 }
 
-base_derivation_tag="$(git show "${MERGE_BASE}:core/grpc/tests/solana_frozen_constants.rs" 2>/dev/null | derivation_tag_from || true)"
-head_derivation_tag="$(derivation_tag_from <core/grpc/tests/solana_frozen_constants.rs || true)"
-type_byte_republish=0
-if [ "${base_derivation_tag}" = "zama-solana-chain-id-v1" ] && [ "${head_derivation_tag}" = "zama-solana-chain-id-v2" ]; then
-    type_byte_republish=1
-    echo "Byte-freeze gate: allowing type-byte republish of Solana freeze (${base_derivation_tag} -> ${head_derivation_tag})."
-fi
+blob_sha256() {
+    git cat-file blob "$1" | openssl dgst -sha256 | awk '{print $NF}'
+}
 
-is_type_byte_republish_path() {
-    local candidate="$1"
-    local allowed
-    for allowed in "${TYPE_BYTE_REPUBLISH_PATHS[@]}"; do
-        if [ "${candidate}" = "${allowed}" ]; then
+is_type_byte_republish() {
+    local file="$1"
+    local entry path rest base_hash head_hash actual_base actual_head
+    for entry in "${TYPE_BYTE_REPUBLISH[@]}"; do
+        path="${entry%%:*}"
+        rest="${entry#*:}"
+        base_hash="${rest%%:*}"
+        head_hash="${rest#*:}"
+        [ "${file}" = "${path}" ] || continue
+        actual_base="$(blob_sha256 "${MERGE_BASE}:${path}")"
+        actual_head="$(content_sha256 "${path}")"
+        if [ "${actual_base}" = "${base_hash}" ] && [ "${actual_head}" = "${head_hash}" ]; then
+            echo "Byte-freeze gate: allowing type-byte republish of ${path}."
             return 0
         fi
+        return 1
     done
     return 1
 }
@@ -93,7 +99,7 @@ while IFS= read -r file; do
     for glob in "${FROZEN_GLOBS[@]}"; do
         # shellcheck disable=SC2053 # glob matching is the point
         if [[ ${file} == ${glob} ]]; then
-            if [ "${type_byte_republish}" -eq 1 ] && is_type_byte_republish_path "${file}"; then
+            if is_type_byte_republish "${file}"; then
                 continue
             fi
             violations+=("${file}")

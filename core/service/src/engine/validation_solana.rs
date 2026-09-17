@@ -299,6 +299,61 @@ mod tests {
                 .to_string()
                 .contains("embeds non-EVM chain ID")
         );
+
+        let embed = |discriminator: u8, chain_id: u64| {
+            let mut handle = [discriminator; 32];
+            handle[22..30].copy_from_slice(&chain_id.to_be_bytes());
+            handle.to_vec()
+        };
+
+        // Type byte 0x02 is neither family.
+        let unknown_type = (0x02u64 << 56) | 12_345;
+        let mut unknown_solana = solana_request();
+        unknown_solana
+            .typed_ciphertexts
+            .iter_mut()
+            .enumerate()
+            .for_each(|(i, ct)| ct.external_handle = embed(0xa1 + i as u8, unknown_type));
+        assert!(error_of(&unknown_solana).contains("does not have Solana type byte 0x01"));
+
+        let mut unknown_evm = evm.clone();
+        unknown_evm
+            .typed_ciphertexts
+            .iter_mut()
+            .enumerate()
+            .for_each(|(i, ct)| ct.external_handle = embed(0xa1 + i as u8, unknown_type));
+        assert!(
+            unknown_evm
+                .compute_link_checked()
+                .expect_err("type byte 0x02 is not EVM")
+                .to_string()
+                .contains("embeds non-EVM chain ID")
+        );
+
+        // EVM is exactly high byte 0x00: the largest 56-bit tag passes, 2^56 (type byte 0x01) fails.
+        let mut evm_max_tag = evm.clone();
+        evm_max_tag
+            .typed_ciphertexts
+            .iter_mut()
+            .enumerate()
+            .for_each(|(i, ct)| ct.external_handle = embed(0xa1 + i as u8, CLUSTER_TAG_MASK));
+        evm_max_tag
+            .compute_link_checked()
+            .expect("type byte 0x00 with a 56-bit tag is EVM");
+
+        let mut evm_two_pow_56 = evm.clone();
+        evm_two_pow_56
+            .typed_ciphertexts
+            .iter_mut()
+            .enumerate()
+            .for_each(|(i, ct)| ct.external_handle = embed(0xa1 + i as u8, 1u64 << 56));
+        assert!(
+            evm_two_pow_56
+                .compute_link_checked()
+                .expect_err("2^56 has type byte 0x01")
+                .to_string()
+                .contains("embeds non-EVM chain ID")
+        );
     }
 
     #[test]
@@ -524,7 +579,7 @@ mod tests {
         let mut evm_kind = solana_request();
         evm_kind.typed_ciphertexts[0].external_handle[22..30]
             .copy_from_slice(&12_345u64.to_be_bytes());
-        assert!(!error_of(&evm_kind).is_empty(), "chain-kind bit");
+        assert!(!error_of(&evm_kind).is_empty(), "type byte");
 
         let mut mixed = solana_request();
         mixed.typed_ciphertexts[1].external_handle[22..30]

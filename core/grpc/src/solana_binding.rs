@@ -67,6 +67,8 @@ pub const fn is_evm_host_chain_id(chain_id: u64) -> bool {
 }
 
 /// A Solana host chain id: type byte `0x01` plus a 56-bit cluster tag.
+///
+/// Bits above the low 56 of `cluster_tag` are masked off, so they cannot overwrite the type byte.
 pub const fn solana_host_chain_id(cluster_tag: u64) -> u64 {
     ((SOLANA_CHAIN_TYPE as u64) << CHAIN_TYPE_SHIFT) | (cluster_tag & CLUSTER_TAG_MASK)
 }

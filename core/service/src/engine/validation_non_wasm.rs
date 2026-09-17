@@ -297,7 +297,7 @@ fn unpack_user_decrypt_req(
         return Err(anyhow::anyhow!(ERR_VALIDATE_USER_DECRYPTION_EMPTY_CTS).into());
     }
 
-    // Dispatch: presence of the Solana identity selects the branch, and the chain-kind bit
+    // Dispatch: presence of the Solana identity selects the branch, and the type byte
     // embedded in every ciphertext handle backstops it — `validate_solana_request` rejects
     // EVM-kind handles, and `compute_link_checked` below rejects Solana-kind ones, so a request
     // cannot cross over by carrying the wrong field. All four field-by-handle-kind combinations
@@ -1635,7 +1635,7 @@ mod tests {
             assert!(unpack_user_decrypt_req(&req).is_ok());
         }
 
-        // EVM routing rejects handles that carry the Solana chain-kind bit while preserving the
+        // EVM routing rejects handles that carry a non-EVM type byte while preserving the
         // existing EVM handle-padding behavior.
         {
             let mut evm_handle = [0xabu8; 32];
