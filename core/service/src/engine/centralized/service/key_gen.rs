@@ -351,7 +351,7 @@ pub async fn abort_key_gen_impl<
         .map_err(|e| MetricedError::new(OP_KEYGEN_ABORT, None, e, tonic::Code::InvalidArgument))?;
     match service.ongoing_key_gen.lock().await.remove(&preproc_id) {
         Some(cancellation_token) => {
-            // The cancel arm of `tokio::select!` handles abort and clean-up.
+            // The cancellation arm records the request as aborted.
             cancellation_token.cancel();
             tracing::info!("Aborted key generation with preprocessing {}", preproc_id);
             Ok(Response::new(Empty {}))
@@ -412,10 +412,7 @@ pub(crate) async fn key_gen_background<
             let keygen_result = match outcome {
                 Ok(result) => result,
                 Err(msg) => {
-                    // Purge any partial key material on cancellation
-                    if cancel_token.is_cancelled() {
-                        crypto_storage.purge_fhe_keys(req_id, epoch_id).await;
-                    }
+                    // Key material is only written after generation succeeds.
                     let _ = update_err_req_in_meta_store(&meta_store, permit, msg, op_tag).await;
                     return;
                 }
@@ -473,9 +470,7 @@ pub(crate) async fn key_gen_background<
             let decompression_key = match outcome {
                 Ok(k) => k,
                 Err(msg) => {
-                    if cancel_token.is_cancelled() {
-                        crypto_storage.purge_fhe_keys(req_id, epoch_id).await;
-                    }
+                    // Key material is only written after generation succeeds.
                     let _ = update_err_req_in_meta_store(&meta_store, permit, msg, op_tag).await;
                     return;
                 }

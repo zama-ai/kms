@@ -17,7 +17,7 @@ use crate::util::meta_store::{
     lock_entry_in_meta_store, update_err_req_in_meta_store,
 };
 use crate::vault::keychain::KeychainProxy;
-use crate::vault::storage::crypto_material::{CryptoMaterialStorage, data_exists};
+use crate::vault::storage::crypto_material::{CryptoMaterialStorage, StorageError, data_exists};
 use crate::vault::storage::{
     StorageExt, delete_context_at_id, delete_custodian_context_at_id, store_context_at_id,
 };
@@ -635,7 +635,8 @@ where
             .write_context_info(new_context.context_id(), &new_context, OP_NEW_MPC_CONTEXT)
             .await;
 
-        {
+        // A backup error leaves the primary write intact, so the cache must include it.
+        if matches!(res, Ok(()) | Err(StorageError::Backup)) {
             let mut write_guard = self.cache.write().await;
             let is_new_insert = (*write_guard).insert(*new_context.context_id());
             if !is_new_insert {
@@ -647,10 +648,17 @@ where
         }
 
         res.map_err(|e| {
+            let message = match e {
+                StorageError::Backup => format!(
+                    "Context {} was stored, but its backup update failed",
+                    new_context.context_id()
+                ),
+                e => format!("Failed to store new context: {e}"),
+            };
             MetricedError::new(
                 OP_NEW_MPC_CONTEXT,
                 Some((*new_context.context_id()).into()),
-                anyhow::anyhow!("Failed to store new context: {}", e),
+                anyhow::anyhow!(message),
                 tonic::Code::Internal,
             )
         })?;
@@ -832,10 +840,10 @@ where
     }
 }
 
-/// Atomically update both the storage and the session maker with the new context info.
-/// If any of the two operations fail, rollback to the original state.
-///
-/// This function should only be used in the threshold setting since SessionMaker does not exist in centralized mode.
+/// Store the new context and register it with the threshold session maker.
+/// A duplicate store leaves existing storage and session state untouched.
+/// A backup-only failure keeps the stored context and its session registration, but returns an error.
+/// Other failures trigger best-effort rollback.
 async fn atomic_update_context<
     PubS: Storage + Sync + Send + 'static,
     PrivS: StorageExt + Sync + Send + 'static,
@@ -850,10 +858,21 @@ async fn atomic_update_context<
         .write_context_info(new_context.context_id(), new_context, OP_NEW_MPC_CONTEXT)
         .await;
 
+    // This call wrote nothing, so neither registration nor rollback is ours to perform.
+    if let Err(StorageError::Duplicate) = res1 {
+        anyhow::bail!("Context {context_id} already exists");
+    }
+
     let res2 = session_maker.add_context_info(my_role, new_context).await;
 
     match (res1, res2) {
         (Ok(_), Ok(_)) => (),
+        (Err(StorageError::Backup), Ok(_)) => {
+            // The primary write and session registration succeeded; only the backup failed.
+            anyhow::bail!(
+                "Context {context_id} was stored and registered, but its backup update failed"
+            );
+        }
         (storage_res, session_res) => {
             // Say which half failed and why; both errors are otherwise lost to the rollback.
             let cause = match (storage_res.err(), session_res.err()) {
@@ -979,10 +998,7 @@ where
 
         let storage_ref = self.inner.crypto_storage.private_storage.clone();
         let mut guarded_priv_storage = storage_ref.lock().await;
-        self.session_maker.remove_context(&context_id).await;
-
-        // There is nothing we can do if deletion fails here.
-        // Note that it cannot fail if the context does not exist.
+        // Keep the context registered if storage rejects the deletion.
         delete_context_at_id(&mut *guarded_priv_storage, &context_id)
             .await
             .map_err(|e| {
@@ -993,6 +1009,7 @@ where
                     tonic::Code::Internal,
                 )
             })?;
+        self.session_maker.remove_context(&context_id).await;
         let remaining_contexts = self.session_maker.context_count().await;
         tracing::info!(
             context_id = %context_id,

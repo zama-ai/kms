@@ -315,7 +315,7 @@ impl<
         let mut ongoing = self.ongoing.lock().await;
         match ongoing.remove(&parsed_id) {
             Some(token) => {
-                // Observe that the cancellation arm handles the abortion and clean-up
+                // The cancellation arm records the request as aborted.
                 token.cancel();
             }
             None => {
@@ -433,15 +433,12 @@ impl<
 
         match outcome {
             Err(msg) => {
+                // CRS material is only written after generation succeeds.
                 MetricedError::handle_unreturnable_error(
                     op_tag,
                     Some(*req_id),
                     anyhow::anyhow!(msg.clone()),
                 );
-                let _ = crypto_storage
-                    .inner
-                    .purge_crs_material(req_id, epoch_id)
-                    .await;
                 let _ = update_err_req_in_meta_store(&meta_store, permit, msg, op_tag).await;
             }
             Ok((pp, crs_info)) => {
