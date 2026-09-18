@@ -91,6 +91,7 @@ Issues out of scope:
 - Anything that requires the attacker to reach the service interface.
 - Missing authentication, authorization or rate limiting on the service interface, and any finding in which the connector itself is the attacker.
 - Behavior of the `insecure` cargo feature or of the local docker-compose setup.
+- Code that is not used in production: the experimental BGV/BFV schemes in the [threshold-bgv](../../core/threshold-bgv/) crate, the benchmark and experiment harnesses in [core/experiments/](../../core/experiments/), and any other code marked as experimental.
 
 ### What a report must contain
 

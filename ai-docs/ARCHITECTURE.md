@@ -57,6 +57,7 @@ Consequences for agents:
 - Do not report missing authentication, authorization or rate limiting on the service interface, or any finding in which the connector itself is the attacker, as a vulnerability. Such a finding describes the design.
 - Values inside a request that originate from external clients and pass through the gateway and connector unchanged are untrusted: ciphertexts and handles, user public encryption keys, EIP-712 signatures and domains, and parameter selectors such as the FHE parameter set or keyset configuration. The core must process them without a service outage (crash, stall, unbounded allocation) and without a confidentiality break. Such a finding is in scope even though the request arrives over the service interface.
 - Do not add authentication or authorization to the service interface unless your human asks for it.
+- Code that is not used in production is out of scope for security findings: the experimental BGV/BFV schemes in [core/threshold-bgv/](../core/threshold-bgv/), the benchmark and experiment harnesses in [core/experiments/](../core/experiments/), and any other code marked as experimental.
 - Every security finding you report must cite the commit hash or tag you analyzed and the file path and line numbers of every code location it relies on. Verify each pointer against the checked-out tree before you report it.
 
 ## Workspace layout
