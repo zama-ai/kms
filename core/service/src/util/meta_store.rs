@@ -725,20 +725,30 @@ impl<T> MetaStore<T> {
         // We own the outcome (tombstone) from here on, so a later drop must not reap.
         permit.defuse();
         let req_id = permit.req_id;
+        let prev = {
+            let entry = self
+                .storage
+                .get(&req_id)
+                .ok_or(MetaStoreError::NotFound { req_id })?;
+            if entry.status() == EntryStatus::Deleted {
+                return Err(MetaStoreError::CannotUpdate { req_id });
+            }
+            EntryState::from(entry)
+        };
+        // Drop the completion-queue slot *before* tombstoning, as `redo_failed` does. Eviction
+        // only considers `Done` entries, so a `Deleted` entry left in the queue is never
+        // reclaimed.
+        if matches!(prev, EntryState::Done(_)) {
+            self.remove_completed(&req_id)?;
+        }
+        // Safe: observed above under this same `&mut self`; only `complete_queue` was touched
+        // since.
         let entry = self
             .storage
             .get_mut(&req_id)
-            .ok_or(MetaStoreError::NotFound { req_id })?;
-        if entry.status() == EntryStatus::Deleted {
-            return Err(MetaStoreError::CannotUpdate { req_id });
-        }
-        let prev = EntryState::from(&*entry);
-        let was_done = matches!(prev, EntryState::Done(_));
+            .expect("entry observed under this lock cannot vanish");
         entry.set_deleted();
         self.deleted_set.insert(req_id);
-        if was_done {
-            self.remove_completed(&req_id)?;
-        }
         Ok(prev)
     }
 
@@ -749,7 +759,7 @@ impl<T> MetaStore<T> {
         &mut self,
         request_id: &RequestId,
     ) -> Result<EntryState<T>, MetaStoreError> {
-        {
+        let prev = {
             let entry = self
                 .storage
                 .get(request_id)
@@ -770,16 +780,20 @@ impl<T> MetaStore<T> {
                     });
                 }
             }
-        }
-        // Safe: we just verified the entry exists and is not Deleted.
-        let entry = self.storage.get_mut(request_id).unwrap();
-        let prev = EntryState::from(&*entry);
-        let was_done = matches!(prev, EntryState::Done(_));
-        entry.set_deleted();
-        self.deleted_set.insert(*request_id);
-        if was_done {
+            EntryState::from(entry)
+        };
+        // Queue slot first, then the tombstone: see the same ordering in `delete`.
+        if matches!(prev, EntryState::Done(_)) {
             self.remove_completed(request_id)?;
         }
+        // Safe: observed above under this same `&mut self`; only `complete_queue` was touched
+        // since.
+        let entry = self
+            .storage
+            .get_mut(request_id)
+            .expect("entry observed under this lock cannot vanish");
+        entry.set_deleted();
+        self.deleted_set.insert(*request_id);
         Ok(prev)
     }
 
@@ -1112,13 +1126,6 @@ pub(crate) async fn update_err_req_in_meta_store<T>(
     }
 }
 
-// Dylint flags the `delete` call below: its `MetaStoreError` is logged rather than propagated,
-// and `delete` performs a non-local effect (`HashMap::get_mut`, and its tombstone writes ahead
-// of the `remove_completed` invariant check) before it can return one. Recording the failure is
-// all this fire-and-forget path can do -- `context_manager.rs` has already destroyed the
-// underlying material by the time it runs.
-#[allow(unknown_lints)]
-#[allow(non_local_effect_before_unhandled_error)]
 pub(crate) async fn delete_in_meta_store<'a, T>(
     mut meta_store_guard: RwLockWriteGuard<'a, MetaStore<T>>,
     permit: MetaStorePermit<T>,
