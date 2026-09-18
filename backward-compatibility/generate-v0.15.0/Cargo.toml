@@ -34,7 +34,7 @@ hashing_0_15_0 = { git = "https://github.com/zama-ai/kms.git", package = "thresh
 # modules as much as possible to avoid serialization differences
 cfg-if_1_0_4 = { package = "cfg-if", version = "=1.0.4" }
 tfhe_versionable_0_8 = { package = "tfhe-versionable", version = "=0.8.0" }
-tfhe_1_7_0 = { package = "tfhe", version = "=1.7.0", features = [
+tfhe_1_8_1 = { package = "tfhe", version = "=1.8.1", features = [
     "shortint",
 ] }
 alloy-sol-types-1_7_1 = { package = "alloy-sol-types", version = "=1.7.1" }

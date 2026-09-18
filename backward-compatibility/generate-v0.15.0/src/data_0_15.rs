@@ -57,13 +57,13 @@ use std::collections::BTreeMap;
 use std::num::Wrapping;
 use std::{borrow::Cow, collections::HashMap, fs::create_dir_all, path::PathBuf};
 use strum::IntoEnumIterator;
-use tfhe_1_7_0::safe_serialization::safe_serialize;
-use tfhe_1_7_0::shortint::parameters::{
+use tfhe_1_8_1::safe_serialization::safe_serialize;
+use tfhe_1_8_1::shortint::parameters::{
     AtomicPatternParameters, Backend, LweCiphertextCount, MetaNoiseSquashingParameters,
     MetaParameters, NoiseSquashingClassicParameters, NoiseSquashingCompressionParameters,
     PBSParameters,
 };
-use tfhe_1_7_0::{
+use tfhe_1_8_1::{
     core_crypto::commons::{
         ciphertext_modulus::CiphertextModulus,
         generators::DeterministicSeeder,
@@ -164,6 +164,7 @@ fn convert_dkg_params_sns(value: DKGParamsSnSTest) -> DKGParams {
                 )),
             }),
             rerand_configuration: None,
+            transciphering_parameters: None,
         },
         secret_key_deviations: None,
     }
@@ -196,7 +197,7 @@ fn convert_classic_pbs_parameters(value: ClassicPBSParametersTest) -> ClassicPBS
         },
         // no need to test this as it's from tfhe-rs
         modulus_switch_noise_reduction_params:
-            tfhe_1_7_0::shortint::prelude::ModulusSwitchType::Standard,
+            tfhe_1_8_1::shortint::prelude::ModulusSwitchType::Standard,
     }
 }
 
@@ -209,7 +210,7 @@ fn convert_sns_parameters(value: SwitchAndSquashParametersTest) -> NoiseSquashin
         decomp_level_count: DecompositionLevelCount(value.pbs_level),
         ciphertext_modulus: CiphertextModulus::<u128>::new_native(),
         modulus_switch_noise_reduction_params:
-            tfhe_1_7_0::shortint::prelude::ModulusSwitchType::Standard,
+            tfhe_1_8_1::shortint::prelude::ModulusSwitchType::Standard,
         message_modulus: MessageModulus(value.message_modulus),
         carry_modulus: CarryModulus(value.carry_modulus),
     })
@@ -1555,6 +1556,7 @@ impl KmsV0_15_0 {
             server_key.5,
             server_key.6,
             server_key.7,
+            server_key.8,
             Tag::default(),
         );
 
@@ -1627,7 +1629,7 @@ impl KmsV0_15_0 {
             &THRESHOLD_FHE_KEYS_TEST.private_key_set_filename,
         );
 
-        let (integer_server_key, _, _, _, sns_key, _, _, _, _) =
+        let (integer_server_key, _, _, _, sns_key, _, _, _, _, _) =
             fhe_pub_key_set.server_key.clone().into_raw_parts();
         store_versioned_auxiliary!(
             &sns_key,
