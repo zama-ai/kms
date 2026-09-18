@@ -73,6 +73,12 @@ impl MlKem1024P384PublicKey {
     /// coefficient is out of range, or when the P-384 bytes are not a point on
     /// the curve.
     fn from_bytes(bytes: &[u8]) -> Result<Self, CryptographyError> {
+        if bytes.len() != PUBLIC_KEY_LENGTH {
+            return Err(CryptographyError::LengthError(format!(
+                "MLKEM1024-P384 public key has length {}, expected {PUBLIC_KEY_LENGTH}",
+                bytes.len()
+            )));
+        }
         let key = HpkePublicKey::from_bytes(bytes)
             .map_err(|error| map_hpke_error("MLKEM1024-P384 public key", error))?;
         Ok(Self { key })
@@ -225,14 +231,14 @@ impl Visitor<'_> for MlKem1024P384PrivateKeyVisitor {
     where
         E: serde::de::Error,
     {
-        let seed: [u8; PRIVATE_KEY_LENGTH] = value.try_into().map_err(|_| {
+        let seed = Zeroizing::new(value.try_into().map_err(|_| {
             E::custom(format!(
                 "MLKEM1024-P384 private key has length {}, expected {PRIVATE_KEY_LENGTH}",
                 value.len()
             ))
-        })?;
+        })?);
         validate_private_key_seed(&seed).map_err(E::custom)?;
-        Ok(MlKem1024P384PrivateKey(seed))
+        Ok(MlKem1024P384PrivateKey(*seed))
     }
 }
 
@@ -327,6 +333,12 @@ fn validate_private_key_seed(seed: &[u8; PRIVATE_KEY_LENGTH]) -> Result<(), Cryp
 /// depends on, so this is literally the check hpke runs rather than a second
 /// crate's implementation of the same rule.
 fn validate_p384_scalar(scalar: &[u8]) -> Result<(), CryptographyError> {
+    if scalar.len() != P384_SCALAR_LENGTH {
+        return Err(CryptographyError::LengthError(format!(
+            "P-384 scalar has length {}, expected {P384_SCALAR_LENGTH}",
+            scalar.len()
+        )));
+    }
     p384_hpke::SecretKey::from_slice(scalar)
         .map(|_| ())
         .map_err(|_| {
@@ -350,6 +362,7 @@ mod tests {
     use super::*;
     use aes_prng::AesRng;
     use rand::SeedableRng;
+    use sha2::Digest;
 
     #[test]
     fn round_trip_and_key_sizes() {
@@ -417,6 +430,17 @@ mod tests {
         let public_bytes = bc2wrap::serialize(&public_key).unwrap();
         assert_eq!(private_bytes.len(), PRIVATE_KEY_LENGTH + 8);
         assert_eq!(public_bytes.len(), PUBLIC_KEY_LENGTH + 8);
+        // Keep fixed fingerprints for both key encodings so dependency upgrades cannot silently
+        // change the serialized representation.
+        assert_eq!(
+            hex::encode(&private_bytes),
+            "20000000000000005e13331a9235d9a1fdfd9534e0a65d04aef86e6358fd3c5d4f040f1f26607ac9"
+        );
+        // NOTE: using sha2 instead of sha3 because we don't need to add an extra direct dependency
+        assert_eq!(
+            hex::encode(sha2::Sha256::digest(&public_bytes)),
+            "a7e73738d532cda528eeace7bbfe8b02c9a86ce5ad2f37d73998792cdb6b089f"
+        );
 
         let private_key_2 = bc2wrap::deserialize_slice(&private_bytes).unwrap();
         let public_key_2 = bc2wrap::deserialize_slice(&public_bytes).unwrap();

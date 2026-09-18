@@ -169,9 +169,9 @@ opentelemetry-semantic-conventions = "=0.32.1"  # Semantic conventions - LOW RIS
 opentelemetry-stdout = { version = "=0.32.0", features = ["trace"] }  # Stdout exporter for debugging - LOW RISK: CNCF project
 opentelemetry_sdk = { version = "=0.32.1", features = ["rt-tokio", "logs"] }  # OpenTelemetry SDK - LOW RISK: CNCF project, core functionality
 # NOTE for p384, must stay on the version used by nsm-nitro-enclave-utils and attestation-doc-validation
-p384 = "=0.13.1" # secp384r1 elliptic curve, for the mock-Nitro signing key - LOW RISK: RustCrypto org, 27M+ downloads
+p384 = "=0.13.1" # secp384r1 elliptic curve, for the mock-Nitro signing key - MEDIUM RISK: RustCrypto org, 27M+ downloads, not independently audited
 # NOTE for p384_hpke, MUST be kept in step with whatever p384 `hpke` uses
-p384_hpke = { package = "p384", version = "=0.14.0", default-features = false, features = ["arithmetic"] } # secp384r1 elliptic curve - LOW RISK: RustCrypto org, same crate as p384 above
+p384_hpke = { package = "p384", version = "=0.14.0", default-features = false, features = ["arithmetic"] } # secp384r1 elliptic curve - MEDIUM RISK: RustCrypto org, same crate as p384 above, not independently audited
 paste = "=1.0"  # Token pasting macros -  MEDIUM RISK: Reputable individual maintainer (dtolnay), 251M+ downloads
 peak_alloc = { version = "=0.2.1" }  # Memory allocation tracker - HIGH RISK: Individual maintainer (Imberflur), low popularity, 251K downloads
 prometheus = { version = "=0.14.0", features = ["process"] }  # Prometheus metrics client - LOW RISK: tikv team, 1M+ downloads

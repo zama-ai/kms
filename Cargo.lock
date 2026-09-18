@@ -4541,6 +4541,7 @@ dependencies = [
  "serde",
  "serde-wasm-bindgen",
  "serde_json",
+ "sha2 0.11.0",
  "shake",
  "signature 2.2.0",
  "strum",

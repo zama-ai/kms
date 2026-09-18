@@ -1,4 +1,3 @@
-#[cfg(feature = "non-wasm")]
 use crate::cryptography::{
     composite_mlkem1024_p384::{MlKem1024P384PrivateKey, MlKem1024P384PublicKey},
     hybrid_composite_ml_kem,
@@ -10,8 +9,6 @@ use crate::{
         zeroizing_writer::ZeroizingWriter,
     },
 };
-// Retain the legacy expanded private-key encoding so existing serialized keys
-// stay compatible after upgrading to ml-kem 0.3.
 #[allow(deprecated)]
 use ml_kem::ExpandedKeyEncoding;
 use ml_kem::{Kem, KeyExport, KeyInit, MlKem512, TryKeyInit};
@@ -44,7 +41,6 @@ pub enum UnifiedPublicEncKey {
     )]
     MlKem1024(PublicEncKey<ml_kem::MlKem1024>),
     /// Composite post-quantum KEM combining ML-KEM-1024 and P-384.
-    #[cfg(feature = "non-wasm")]
     MlKem1024P384(MlKem1024P384PublicKey),
 }
 
@@ -63,7 +59,6 @@ impl HasPkeScheme for UnifiedPublicEncKey {
         match self {
             UnifiedPublicEncKey::MlKem512(_) => PkeSchemeType::MlKem512,
             UnifiedPublicEncKey::MlKem1024(_) => PkeSchemeType::MlKem1024,
-            #[cfg(feature = "non-wasm")]
             UnifiedPublicEncKey::MlKem1024P384(_) => PkeSchemeType::MlKem1024P384,
         }
     }
@@ -93,7 +88,6 @@ impl UnifiedPublicEncKey {
         match key {
             UnifiedPublicEncKey::MlKem512(_) => Ok(key),
             UnifiedPublicEncKey::MlKem1024(_) => Err(CryptographyError::MlKem1024Unsupported),
-            #[cfg(feature = "non-wasm")]
             UnifiedPublicEncKey::MlKem1024P384(_) => Err(CryptographyError::UnsupportedPkeScheme(
                 key.encryption_scheme_type(),
             )),
@@ -242,7 +236,6 @@ impl Encrypt for UnifiedPublicEncKey {
             UnifiedPublicEncKey::MlKem1024(_) => {
                 return Err(CryptographyError::MlKem1024Unsupported);
             }
-            #[cfg(feature = "non-wasm")]
             UnifiedPublicEncKey::MlKem1024P384(public_enc_key) => (
                 hybrid_composite_ml_kem::enc_ml_kem_1024_p384(
                     rng,
@@ -272,7 +265,6 @@ pub enum UnifiedPrivateEncKeyVersions {
 pub enum UnifiedPrivateEncKey {
     MlKem512(PrivateEncKey<ml_kem::MlKem512>),
     MlKem1024(PrivateEncKey<ml_kem::MlKem1024>),
-    #[cfg(feature = "non-wasm")]
     MlKem1024P384(MlKem1024P384PrivateKey),
     // WARNING: Do not modify the order of the variants or remove any variant as this will break deserialization of existing keys!
     // Only acceptable if you make a new version
@@ -302,7 +294,6 @@ impl From<UnifiedPrivateEncKey> for PkeSchemeType {
         match value {
             UnifiedPrivateEncKey::MlKem512(_) => PkeSchemeType::MlKem512,
             UnifiedPrivateEncKey::MlKem1024(_) => PkeSchemeType::MlKem1024,
-            #[cfg(feature = "non-wasm")]
             UnifiedPrivateEncKey::MlKem1024P384(_) => PkeSchemeType::MlKem1024P384,
         }
     }
@@ -312,7 +303,6 @@ impl From<&UnifiedPrivateEncKey> for PkeSchemeType {
         match value {
             UnifiedPrivateEncKey::MlKem512(_) => PkeSchemeType::MlKem512,
             UnifiedPrivateEncKey::MlKem1024(_) => PkeSchemeType::MlKem1024,
-            #[cfg(feature = "non-wasm")]
             UnifiedPrivateEncKey::MlKem1024P384(_) => PkeSchemeType::MlKem1024P384,
         }
     }
@@ -333,7 +323,6 @@ impl HasPkeScheme for UnifiedPrivateEncKey {
         match self {
             UnifiedPrivateEncKey::MlKem512(_) => PkeSchemeType::MlKem512,
             UnifiedPrivateEncKey::MlKem1024(_) => PkeSchemeType::MlKem1024,
-            #[cfg(feature = "non-wasm")]
             UnifiedPrivateEncKey::MlKem1024P384(_) => PkeSchemeType::MlKem1024P384,
         }
     }
@@ -511,7 +500,6 @@ impl Decrypt for UnifiedPrivateEncKey {
             UnifiedPrivateEncKey::MlKem1024(_) => {
                 return Err(CryptographyError::MlKem1024Unsupported);
             }
-            #[cfg(feature = "non-wasm")]
             UnifiedPrivateEncKey::MlKem1024P384(private_enc_key) => {
                 hybrid_composite_ml_kem::dec_ml_kem_1024_p384(
                     cipher.cipher.to_owned(),
@@ -609,7 +597,6 @@ impl<'a, R: CryptoRng + RngCore + Send + Sync> PkeScheme for Encryption<'a, R> {
             PkeSchemeType::MlKem1024 => {
                 return Err(CryptographyError::MlKem1024Unsupported);
             }
-            #[cfg(feature = "non-wasm")]
             PkeSchemeType::MlKem1024P384 => {
                 let (private_key, public_key) =
                     crate::cryptography::composite_mlkem1024_p384::keygen(&mut self.rng)?;
@@ -617,12 +604,6 @@ impl<'a, R: CryptoRng + RngCore + Send + Sync> PkeScheme for Encryption<'a, R> {
                     UnifiedPrivateEncKey::MlKem1024P384(private_key),
                     UnifiedPublicEncKey::MlKem1024P384(public_key),
                 )
-            }
-            #[cfg(not(feature = "non-wasm"))]
-            PkeSchemeType::MlKem1024P384 => {
-                return Err(CryptographyError::UnsupportedPkeScheme(
-                    PkeSchemeType::MlKem1024P384,
-                ));
             }
         };
         Ok((sk, pk))
