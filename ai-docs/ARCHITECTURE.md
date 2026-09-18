@@ -252,6 +252,14 @@ end-to-end tests live at
 and
 [core/service/src/client/tests/threshold/custodian_backup_tests.rs](core/service/src/client/tests/threshold/custodian_backup_tests.rs).
 
+## File writes
+
+File storage writes raw bytes and versioned values into sibling temporary files, syncs them,
+then atomically renames them into place. A process crash during a write cannot expose a partial
+destination file. This does not make a multi-file operation atomic or guarantee rename durability
+after power loss; the writers do not sync the parent directory. A hard crash can leave hidden
+temporary files, which this release does not automatically remove.
+
 ## Writing generated keys and CRSes
 
 A newly generated FHE key is rejected if any public key artifact already exists at its ID,

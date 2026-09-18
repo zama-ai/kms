@@ -7,13 +7,42 @@ use tfhe::{Unversionize, Versionize};
 
 use crate::consts::SAFE_SER_SIZE_LIMIT;
 
-/// Write some bytes to a file without serialization. Works for ASCII text without extra thought too.
+/// Writes bytes without serialization and atomically replaces the destination.
+/// The bytes are synced in a sibling temporary file before the rename. Errors leave the
+/// destination unchanged and remove the temporary file. This does not sync the parent directory.
 pub async fn write_bytes<P: AsRef<Path>>(file_path: P, bytes: &[u8]) -> anyhow::Result<()> {
-    // Create the parent directories of the file path if they don't exist
-    if let Some(p) = file_path.as_ref().parent() {
-        tokio::fs::create_dir_all(p).await?
+    use tokio::io::AsyncWriteExt;
+
+    let file_path = file_path.as_ref();
+    if file_path.file_name().is_none() {
+        anyhow::bail!("invalid file path: {}", file_path.display());
+    }
+    let parent = match file_path.parent() {
+        Some(p) if !p.as_os_str().is_empty() => {
+            tokio::fs::create_dir_all(p).await?;
+            p
+        }
+        _ => Path::new("."),
     };
-    tokio::fs::write(file_path, bytes).await?;
+    let tmp = tempfile::NamedTempFile::new_in(parent)
+        .map_err(|e| anyhow::anyhow!("failed to create temp file in {}: {e}", parent.display()))?;
+    let mut writer = tokio::fs::File::from_std(tmp.reopen()?);
+    writer
+        .write_all(bytes)
+        .await
+        .map_err(|e| anyhow::anyhow!("failed to write {}: {e}", tmp.path().display()))?;
+    // Tokio can report a background write error on flush rather than on write_all.
+    writer
+        .flush()
+        .await
+        .map_err(|e| anyhow::anyhow!("failed to flush {}: {e}", tmp.path().display()))?;
+    writer
+        .sync_all()
+        .await
+        .map_err(|e| anyhow::anyhow!("failed to sync {}: {e}", tmp.path().display()))?;
+    drop(writer);
+    tmp.persist(file_path)
+        .map_err(|e| anyhow::anyhow!("failed to persist {}: {e}", file_path.display()))?;
     Ok(())
 }
 
@@ -36,9 +65,12 @@ pub async fn safe_write_element_versioned<
     if file_path.file_name().is_none() {
         anyhow::bail!("invalid file path: {}", file_path.display());
     }
-    // Create the parent directories of the file path if they don't exist
-    if let Some(p) = file_path.parent() {
-        tokio::fs::create_dir_all(p).await?
+    let parent = match file_path.parent() {
+        Some(p) if !p.as_os_str().is_empty() => {
+            tokio::fs::create_dir_all(p).await?;
+            p
+        }
+        _ => Path::new("."),
     };
     // Serialize into a sibling temp file, fsync it, then atomically rename it
     // over `file_path`, so a crash mid-write cannot leave a partial file there
@@ -47,10 +79,6 @@ pub async fn safe_write_element_versioned<
     // name is skipped by directory listings (`FileStorage::all_data_ids`
     // parses every non-hidden name as a `RequestId`) and is unique per writer,
     // so concurrent writers to the same path cannot collide.
-    let parent = match file_path.parent() {
-        Some(p) if !p.as_os_str().is_empty() => p,
-        _ => Path::new("."),
-    };
     let tmp = tempfile::NamedTempFile::new_in(parent)
         .map_err(|e| anyhow::anyhow!("failed to create temp file in {}: {e}", parent.display()))?;
     let mut writer = std::io::BufWriter::new(tmp);
@@ -172,6 +200,46 @@ mod tests {
         // Only the final file remains; the temp was renamed, not left behind.
         let stranded = leftovers(path.parent().unwrap(), "element");
         assert!(stranded.is_empty(), "leftover temp files: {stranded:?}");
+    }
+
+    /// A replacement leaves an already-open reader on the complete old file, not a truncated file.
+    #[cfg(unix)]
+    #[rstest::rstest]
+    #[case::nonempty(b"replacement bytes".as_slice())]
+    #[case::empty(b"".as_slice())]
+    #[tokio::test]
+    async fn raw_write_replaces_the_file_atomically(#[case] replacement: &[u8]) {
+        use std::io::Read;
+
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("nested/element");
+        write_bytes(&path, b"original bytes").await.unwrap();
+        let mut original_file = std::fs::File::open(&path).unwrap();
+
+        write_bytes(&path, replacement).await.unwrap();
+
+        let mut original_bytes = Vec::new();
+        original_file.read_to_end(&mut original_bytes).unwrap();
+        assert_eq!(original_bytes, b"original bytes");
+        assert_eq!(std::fs::read(&path).unwrap(), replacement);
+        assert!(leftovers(path.parent().unwrap(), "element").is_empty());
+    }
+
+    /// A failed rename preserves the destination and removes the fully written temporary file.
+    #[tokio::test]
+    async fn raw_write_cleans_up_after_a_failed_rename() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("element");
+        std::fs::create_dir(&path).unwrap();
+        let control = path.join("keep");
+        std::fs::write(&control, b"original bytes").unwrap();
+
+        // The destination is a directory, so renaming a file over it must fail.
+        assert!(write_bytes(&path, b"replacement bytes").await.is_err());
+
+        assert_eq!(std::fs::read(&control).unwrap(), b"original bytes");
+        assert!(leftovers(dir.path(), "element").is_empty());
+        assert!(leftovers(&path, "keep").is_empty());
     }
 
     #[tokio::test]
