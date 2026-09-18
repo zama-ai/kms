@@ -536,6 +536,14 @@ mod tests {
         tokio::time::sleep(Duration::from_millis(50)).await;
         let target = net_producer.user_net(bob, NetworkMode::Sync, None);
         assert_ne!(target.init_time.load(), source.init_time.load());
+        assert_ne!(
+            target.get_timeout_current_round().await,
+            source.get_timeout_current_round().await
+        );
+        assert_ne!(
+            *target.next_network_timeout.lock().await,
+            *source.next_network_timeout.lock().await
+        );
 
         target.synchronize_from(&source).await;
 
@@ -557,6 +565,10 @@ mod tests {
         assert_eq!(
             target.get_timeout_current_round().await,
             source.get_timeout_current_round().await
+        );
+        assert_eq!(
+            target_clock.next_network_timeout,
+            source_clock.next_network_timeout
         );
 
         // Synchronizing to the same round is allowed (idempotent).
