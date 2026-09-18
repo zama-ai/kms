@@ -31,7 +31,7 @@ use tfhe::xof_key_set::CompressedXofKeySet;
 use threshold_execution::{
     endpoints::keygen::{
         OnlineDistributedKeyGen, distributed_decompression_keygen_z128,
-        ensure_oprf_secret_key_share_z128,
+        ensure_oprf_secret_key_share_z128, ensure_transciphering_secret_key_share_z128,
     },
     keyset_config as ddec_keyset_config,
     online::preprocessing::DKGPreprocessing,
@@ -49,7 +49,7 @@ use tracing::Instrument;
 
 // === Internal Crate Imports ===
 use crate::{
-    cryptography::{signatures::PrivateSigKey, signing::SigningSchemeType},
+    cryptography::{signing::SigningSchemeType, signing::identity::NodeSigningIdentity},
     engine::{
         base::{
             BaseKmsStruct, DSEP_PUBDATA_KEY, KeyGenMetadata, compute_info_compressed_keygen,
@@ -65,7 +65,7 @@ use crate::{
             },
             traits::KeyGenerator,
         },
-        utils::MetricedError,
+        utils::{MetricedError, signing_identity_for},
         validation::{
             RequestIdParsingErr, parse_grpc_request_id, parse_optional_grpc_request_id,
             validate_key_gen_request,
@@ -173,7 +173,7 @@ impl<
     pub async fn from_real_keygen(value: &RealKeyGenerator<PubS, PrivS, KG>) -> Self {
         Self {
             real_key_generator: RealKeyGenerator {
-                base_kms: value.base_kms.new_instance().await,
+                base_kms: value.base_kms.new_instance(),
                 crypto_storage: value.crypto_storage.clone(),
                 preproc_buckets: Arc::clone(&value.preproc_buckets),
                 dkg_pubinfo_meta_store: Arc::clone(&value.dkg_pubinfo_meta_store),
@@ -367,9 +367,7 @@ impl<
 
         // Clone all the Arcs to give them to the tokio thread
         let meta_store = Arc::clone(&self.dkg_pubinfo_meta_store);
-        let sk = self.base_kms.sig_key().map_err(|e| {
-            MetricedError::new(op_tag, Some(req_id), e, tonic::Code::FailedPrecondition)
-        })?;
+        let sk = signing_identity_for(&self.base_kms, &signing_schemes, op_tag, Some(req_id))?;
         let crypto_storage = self.crypto_storage.clone();
         let eip712_domain_copy = eip712_domain.clone();
         let ongoing = Arc::clone(&self.ongoing);
@@ -828,7 +826,8 @@ impl<
                     // since no domain separation is used
                     key_digests: Vec::new(),
                     external_signature: vec![],
-                    // TODO(#3078): populate multi-scheme signatures (replication step).
+                    // A legacy result predates the per-scheme signatures, so it
+                    // has none to report.
                     signatures: vec![],
                 }))
             }
@@ -1037,7 +1036,7 @@ impl<
                     )
                 });
 
-                let (client_key, _, _, _, _, _, _, _) = to_hl_client_key(
+                let (client_key, _, _, _, _, _, _, _, _) = to_hl_client_key(
                     &params,
                     req_id.into(),
                     dummy_lwe_secret_key,
@@ -1045,6 +1044,7 @@ impl<
                     None,
                     None,
                     dummy_sns_secret_key,
+                    None,
                     None,
                     None,
                 )?
@@ -1080,7 +1080,7 @@ impl<
         meta_store: Arc<RwLock<MetaStore<KeyGenMetadata>>>,
         crypto_storage: ThresholdCryptoMaterialStorage<PubS, PrivS>,
         preproc_handle_w_mode: PreprocHandleWithMode,
-        sk: Arc<PrivateSigKey>,
+        sk: Arc<NodeSigningIdentity>,
         params: DKGParams,
         keyset_added_info: KeySetAddedInfo,
         eip712_domain: alloy_sol_types::Eip712Domain,
@@ -1153,7 +1153,7 @@ impl<
         let (prep_id, dkg_res) = match outcome {
             Some(res) => res,
             None => {
-                crypto_storage.purge_fhe_keys(req_id, epoch_id).await;
+                // Persistent writes start after generation, so this branch has nothing to purge.
                 let _ = update_err_req_in_meta_store(
                     &meta_store,
                     meta_permit,
@@ -1260,6 +1260,13 @@ impl<
             &mut dkg_sessions.session_z128,
         )
         .await?;
+        ensure_transciphering_secret_key_share_z128(
+            &mut existing_private_keys,
+            params,
+            preprocessing,
+            &mut dkg_sessions.session_z128,
+        )
+        .await?;
 
         let compressed_keyset = KG::compressed_keygen_from_existing_private_keyset(
             &mut dkg_sessions.session_z128,
@@ -1310,6 +1317,13 @@ impl<
             &mut dkg_sessions.session_z128,
         )
         .await?;
+        ensure_transciphering_secret_key_share_z128(
+            &mut existing_private_keys,
+            params,
+            preprocessing,
+            &mut dkg_sessions.session_z128,
+        )
+        .await?;
 
         let pub_keyset = KG::keygen_from_existing_private_keyset(
             &mut dkg_sessions.session_z128,
@@ -1330,7 +1344,7 @@ impl<
         meta_store: Arc<RwLock<MetaStore<KeyGenMetadata>>>,
         crypto_storage: ThresholdCryptoMaterialStorage<PubS, PrivS>,
         preproc_handle_w_mode: PreprocHandleWithMode,
-        sk: Arc<PrivateSigKey>,
+        sk: Arc<NodeSigningIdentity>,
         params: DKGParams,
         keyset_config: ddec_keyset_config::StandardKeySetConfig,
         internal_keyset_config: &InternalKeySetConfig,
@@ -1531,7 +1545,7 @@ impl<
         let (prep_id, dkg_res) = match outcome {
             Some(res) => res,
             None => {
-                crypto_storage.purge_fhe_keys(req_id, epoch_id).await;
+                // Persistent writes start after generation, so this branch has nothing to purge.
                 let _ = update_err_req_in_meta_store(
                     &meta_store,
                     meta_permit,
@@ -1597,6 +1611,7 @@ impl<
                         _raw_noise_squashing_compression_key,
                         _raw_rerandomization_key,
                         _raw_oprf_key,
+                        _raw_transciphering_key,
                         _raw_tag,
                     ) = pub_key_set.server_key.clone().into_raw_parts();
                     (
@@ -1727,7 +1742,7 @@ impl<
                             epoch_id,
                             &old_key_id,
                             epoch_id,
-                            &sk,
+                            sk.ecdsa(),
                             &eip712_domain,
                             Arc::clone(&meta_store),
                         )
@@ -1883,12 +1898,14 @@ impl<
 
 #[cfg(test)]
 mod tests {
+    use crate::engine::rng_source::test_rng_source;
     use aes_prng::AesRng;
     use kms_grpc::{
         kms::v1::{FheParameter, KeySetConfig},
-        rpc_types::{KMSType, alloy_to_protobuf_domain},
+        rpc_types::{KMSType, PrivDataType, PubDataType, alloy_to_protobuf_domain},
     };
     use rand::SeedableRng;
+    use rstest::rstest;
     use threshold_execution::{
         malicious_execution::endpoints::keygen::{
             DroppingOnlineDistributedKeyGen128, FailingOnlineDistributedKeyGen128,
@@ -1906,7 +1923,11 @@ mod tests {
         dummy_domain,
         engine::threshold::service::session::SessionMaker,
         util::meta_store::update_ok_req_in_meta_store,
-        vault::storage::ram,
+        vault::storage::{
+            ram, read_versioned_at_request_and_epoch_id, read_versioned_at_request_id,
+            store_versioned_at_request_and_epoch_id, store_versioned_at_request_id,
+            tests::TestType,
+        },
     };
 
     use super::*;
@@ -1978,7 +1999,11 @@ mod tests {
         use crate::cryptography::signatures::gen_sig_keys;
         let mut rng = AesRng::seed_from_u64(13371);
         let (_pk, sk) = gen_sig_keys(&mut rng);
-        let base_kms = BaseKmsStruct::new(KMSType::Threshold, sk).unwrap();
+        let base_kms = BaseKmsStruct::new(
+            KMSType::Threshold,
+            NodeSigningIdentity::ecdsa_only(sk),
+            test_rng_source(),
+        );
         let epoch_id = *DEFAULT_EPOCH_ID;
         let prss_setup_z128 = Some(PRSSSetup::new_testing_prss(vec![], vec![]));
         let prss_setup_z64 = Some(PRSSSetup::new_testing_prss(vec![], vec![]));
@@ -1986,7 +2011,7 @@ mod tests {
             prss_setup_z128,
             prss_setup_z64,
             &epoch_id,
-            base_kms.new_rng().await,
+            base_kms.new_rng(),
         );
         let kg = RealKeyGenerator::<ram::RamStorage, ram::RamStorage, KG>::init_ram_keygen(
             base_kms,
@@ -2593,10 +2618,21 @@ mod tests {
         );
     }
 
-    /// Dummy preprocessing (pre-populated into the bucket by [`setup_key_generator`]) is
-    /// consumed by the key generation, after which the slow DKG is aborted mid-execution.
+    /// Which storage plane contains old key material when generation begins.
+    #[derive(Clone, Copy)]
+    enum ExistingKeyMaterial {
+        Public,
+        Private,
+    }
+
+    /// A slow key generation abort preserves material stored before the request.
+    ///
+    /// Dummy preprocessing from [`setup_key_generator`] is consumed before the abort.
+    #[rstest]
+    #[case::public(ExistingKeyMaterial::Public)]
+    #[case::private(ExistingKeyMaterial::Private)]
     #[tokio::test]
-    async fn abort_during_key_gen() {
+    async fn abort_during_key_gen(#[case] existing_material: ExistingKeyMaterial) {
         let (prep_ids, kg) = setup_key_generator::<
             SlowOnlineDistributedKeyGen128<{ ResiduePolyF4Z128::EXTENSION_DEGREE }>,
         >()
@@ -2604,6 +2640,39 @@ mod tests {
         let prep_id = prep_ids[0];
         let mut rng = AesRng::seed_from_u64(8);
         let key_id = RequestId::new_random(&mut rng);
+        let epoch_id = *DEFAULT_EPOCH_ID;
+        let existing = TestType { i: 3183 };
+        match existing_material {
+            ExistingKeyMaterial::Public => {
+                let mut public = kg.crypto_storage.inner.public_storage.lock().await;
+                for data_type in [
+                    PubDataType::PublicKey,
+                    PubDataType::ServerKey,
+                    PubDataType::CompressedXofKeySet,
+                ] {
+                    store_versioned_at_request_id(
+                        &mut *public,
+                        &key_id,
+                        &existing,
+                        &data_type.to_string(),
+                    )
+                    .await
+                    .unwrap();
+                }
+            }
+            ExistingKeyMaterial::Private => {
+                let mut private = kg.crypto_storage.inner.private_storage.lock().await;
+                store_versioned_at_request_and_epoch_id(
+                    &mut *private,
+                    &key_id,
+                    &epoch_id,
+                    &existing,
+                    &PrivDataType::FheKeyInfo.to_string(),
+                )
+                .await
+                .unwrap();
+            }
+        }
 
         let domain = alloy_to_protobuf_domain(&dummy_domain()).unwrap();
         let tonic_req = tonic::Request::new(KeyGenRequest {
@@ -2633,5 +2702,34 @@ mod tests {
         .await
         .unwrap_err();
         assert_eq!(err.code(), tonic::Code::Aborted);
+
+        match existing_material {
+            ExistingKeyMaterial::Public => {
+                let public = kg.crypto_storage.inner.public_storage.lock().await;
+                for data_type in [
+                    PubDataType::PublicKey,
+                    PubDataType::ServerKey,
+                    PubDataType::CompressedXofKeySet,
+                ] {
+                    let stored: TestType =
+                        read_versioned_at_request_id(&*public, &key_id, &data_type.to_string())
+                            .await
+                            .unwrap();
+                    assert_eq!(stored, existing);
+                }
+            }
+            ExistingKeyMaterial::Private => {
+                let private = kg.crypto_storage.inner.private_storage.lock().await;
+                let stored: TestType = read_versioned_at_request_and_epoch_id(
+                    &*private,
+                    &key_id,
+                    &epoch_id,
+                    &PrivDataType::FheKeyInfo.to_string(),
+                )
+                .await
+                .unwrap();
+                assert_eq!(stored, existing);
+            }
+        }
     }
 }

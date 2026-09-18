@@ -1,4 +1,4 @@
-use super::{Storage, StorageReader, StoreWriteOutcome};
+use super::{RootEntries, Storage, StorageReader, StoreWriteOutcome};
 use crate::consts::SAFE_SER_SIZE_LIMIT;
 use crate::vault::storage::{StorageExt, all_data_ids_from_all_epochs_impl};
 use crate::{anyhow_error_and_log, vault::storage::StorageReaderExt};
@@ -11,6 +11,11 @@ use tfhe::{
     named::Named,
     safe_serialization::{safe_deserialize, safe_serialize},
 };
+
+#[cfg(test)]
+mod failing;
+#[cfg(test)]
+pub use failing::FailingRamStorage;
 
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct RamStorage {
@@ -83,6 +88,18 @@ impl StorageReader for RamStorage {
             }
         }
         Ok(res)
+    }
+
+    async fn all_data_types(&self) -> anyhow::Result<RootEntries> {
+        // Every entry sits under a data type, so the root holds folders only.
+        Ok(RootEntries {
+            folders: self
+                .internal_storage
+                .keys()
+                .map(|(_, cur_data_type)| cur_data_type.clone())
+                .collect(),
+            objects: HashSet::new(),
+        })
     }
 
     fn info(&self) -> String {
@@ -314,194 +331,6 @@ impl StorageExt for RamStorage {
     }
 }
 
-/// This is a storage that fails after a predetermined number of writes.
-///
-/// It uses a [RamStorage] internally
-/// and make it fail after a configurable number of operations.
-#[cfg(test)]
-pub struct FailingRamStorage {
-    available_writes: usize,
-    /// When set, every deletion (epoch-scoped or not) fails. Used to exercise the
-    /// partial-failure retry logic in epoch/context destruction.
-    fail_deletes: bool,
-    inner: RamStorage,
-}
-
-#[cfg(test)]
-impl FailingRamStorage {
-    pub fn new(writes_before_failure: usize) -> Self {
-        Self {
-            available_writes: writes_before_failure,
-            fail_deletes: false,
-            inner: RamStorage::new(),
-        }
-    }
-
-    pub fn set_available_writes(&mut self, available_writes: usize) {
-        self.available_writes = available_writes
-    }
-
-    pub fn set_fail_deletes(&mut self, fail_deletes: bool) {
-        self.fail_deletes = fail_deletes
-    }
-}
-
-#[cfg(test)]
-impl StorageReader for FailingRamStorage {
-    async fn data_exists(&self, data_id: &RequestId, data_type: &str) -> anyhow::Result<bool> {
-        self.inner.data_exists(data_id, data_type).await
-    }
-
-    async fn read_data<T: DeserializeOwned + Unversionize + Named + Send>(
-        &self,
-        data_id: &RequestId,
-        data_type: &str,
-    ) -> anyhow::Result<T> {
-        self.inner.read_data(data_id, data_type).await
-    }
-
-    async fn load_bytes(&self, data_id: &RequestId, data_type: &str) -> anyhow::Result<Vec<u8>> {
-        self.inner.load_bytes(data_id, data_type).await
-    }
-
-    async fn all_data_ids(&self, data_type: &str) -> anyhow::Result<HashSet<RequestId>> {
-        self.inner.all_data_ids(data_type).await
-    }
-
-    fn info(&self) -> String {
-        "FailingRamStorage".to_string()
-    }
-}
-
-#[cfg(test)]
-impl Storage for FailingRamStorage {
-    async fn store_data<T: Serialize + Versionize + Named + Send + Sync>(
-        &mut self,
-        data: &T,
-        data_id: &RequestId,
-        data_type: &str,
-    ) -> anyhow::Result<StoreWriteOutcome> {
-        if self.available_writes < 1 {
-            anyhow::bail!("storage failed!")
-        } else {
-            self.available_writes -= 1;
-            self.inner.store_data(data, data_id, data_type).await
-        }
-    }
-
-    async fn store_bytes(
-        &mut self,
-        bytes: &[u8],
-        data_id: &RequestId,
-        data_type: &str,
-    ) -> anyhow::Result<StoreWriteOutcome> {
-        self.inner.store_bytes(bytes, data_id, data_type).await
-    }
-
-    async fn delete_data(&mut self, data_id: &RequestId, data_type: &str) -> anyhow::Result<()> {
-        if self.fail_deletes {
-            anyhow::bail!("storage delete failed!")
-        }
-        self.inner.delete_data(data_id, data_type).await
-    }
-}
-
-#[cfg(test)]
-impl StorageReaderExt for FailingRamStorage {
-    async fn read_data_at_epoch<T: DeserializeOwned + Unversionize + Named + Send>(
-        &self,
-        data_id: &RequestId,
-        epoch_id: &EpochId,
-        data_type: &str,
-    ) -> anyhow::Result<T> {
-        self.inner
-            .read_data_at_epoch(data_id, epoch_id, data_type)
-            .await
-    }
-
-    async fn all_epoch_ids_for_data(&self, data_type: &str) -> anyhow::Result<HashSet<EpochId>> {
-        self.inner.all_epoch_ids_for_data(data_type).await
-    }
-
-    async fn data_exists_at_epoch(
-        &self,
-        data_id: &RequestId,
-        epoch_id: &EpochId,
-        data_type: &str,
-    ) -> anyhow::Result<bool> {
-        self.inner
-            .data_exists_at_epoch(data_id, epoch_id, data_type)
-            .await
-    }
-
-    async fn all_data_ids_at_epoch(
-        &self,
-        epoch_id: &EpochId,
-        data_type: &str,
-    ) -> anyhow::Result<HashSet<RequestId>> {
-        self.inner.all_data_ids_at_epoch(epoch_id, data_type).await
-    }
-
-    async fn all_data_ids_from_all_epochs(
-        &self,
-        data_type: &str,
-    ) -> anyhow::Result<HashSet<RequestId>> {
-        self.inner.all_data_ids_from_all_epochs(data_type).await
-    }
-
-    async fn load_bytes_at_epoch(
-        &self,
-        data_id: &RequestId,
-        epoch_id: &EpochId,
-        data_type: &str,
-    ) -> anyhow::Result<Vec<u8>> {
-        self.inner
-            .load_bytes_at_epoch(data_id, epoch_id, data_type)
-            .await
-    }
-}
-
-#[cfg(test)]
-impl StorageExt for FailingRamStorage {
-    async fn store_data_at_epoch<T: Serialize + Versionize + Named + Send + Sync>(
-        &mut self,
-        data: &T,
-        data_id: &RequestId,
-        epoch_id: &EpochId,
-        data_type: &str,
-    ) -> anyhow::Result<StoreWriteOutcome> {
-        self.inner
-            .store_data_at_epoch(data, data_id, epoch_id, data_type)
-            .await
-    }
-
-    async fn store_bytes_at_epoch(
-        &mut self,
-        bytes: &[u8],
-        data_id: &RequestId,
-        epoch_id: &EpochId,
-        data_type: &str,
-    ) -> anyhow::Result<StoreWriteOutcome> {
-        self.inner
-            .store_bytes_at_epoch(bytes, data_id, epoch_id, data_type)
-            .await
-    }
-
-    async fn delete_data_at_epoch(
-        &mut self,
-        data_id: &RequestId,
-        epoch_id: &EpochId,
-        data_type: &str,
-    ) -> anyhow::Result<()> {
-        if self.fail_deletes {
-            anyhow::bail!("storage delete failed!")
-        }
-        self.inner
-            .delete_data_at_epoch(data_id, epoch_id, data_type)
-            .await
-    }
-}
-
 #[cfg(test)]
 pub mod tests {
     use super::*;
@@ -524,6 +353,12 @@ pub mod tests {
     async fn test_all_data_ids_from_all_epochs_ram() {
         let mut storage = RamStorage::new();
         test_all_data_ids_from_all_epochs(&mut storage).await;
+    }
+
+    #[tokio::test]
+    async fn test_crs_public_key_data_types_ram() {
+        let mut storage = RamStorage::new();
+        test_crs_public_key_data_types(&mut storage).await;
     }
 
     #[tokio::test]

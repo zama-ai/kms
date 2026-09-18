@@ -36,7 +36,8 @@ fn bench_lagrange_poly(c: &mut Criterion) {
 
         group.bench_function(BenchmarkId::new("lagrange_mem", p_str.clone()), |b| {
             b.iter(|| {
-                let interpolated = lagrange_interpolation_with_polys(&lagrange_polys, &ys);
+                let interpolated =
+                    lagrange_interpolation_with_polys(&lagrange_polys, ys.iter().copied());
                 assert_eq!(interpolated.unwrap().eval(&LevelOne::from_u128(0)), secret);
             });
         });

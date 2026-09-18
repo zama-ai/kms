@@ -85,7 +85,7 @@ use crate::cryptography::signatures::PublicSigKey;
 use crate::cryptography::signcryption::{UnifiedUnsigncryptionKey, UnsigncryptFHEPlaintext};
 use crate::engine::validation::{
     DSEP_USER_DECRYPTION, ShareAuthenticationError, UserDecTrustedValidationContext,
-    authenticate_user_decrypt_share, validate_user_decrypt_responses,
+    authenticate_solana_user_decrypt_share, validate_user_decrypt_responses,
 };
 
 /// A Solana user-decryption request, in the client's own typed terms.
@@ -382,11 +382,11 @@ fn verify_share(
 
     // One copy of the authentication rule for every user-decryption flavor: the key is admitted
     // by its address binding to the caller's signer set, then whichever signature the share
-    // carries is the one verified — see `authenticate_user_decrypt_share`. Both address failures
+    // carries is the one verified — see `authenticate_solana_user_decrypt_share`. Both address failures
     // fold into the malformed-key rejection, everything after the key into the node-signature
     // rejection: the counters record which of this module's rules failed, not the shared rule's
     // internals.
-    let advertised = authenticate_user_decrypt_share(
+    let advertised = authenticate_solana_user_decrypt_share(
         payload,
         trusted_addr,
         &response.signatures,
@@ -402,11 +402,8 @@ fn verify_share(
         | ShareAuthenticationError::WrongAddress => {
             ShareRejection::MalformedVerificationKey { party_id }
         }
-        ShareAuthenticationError::MissingSignature
-        | ShareAuthenticationError::InvalidInternalSignature
-        | ShareAuthenticationError::InvalidExternalSignature
-        | ShareAuthenticationError::UnsupportedTypedSignatureScheme
-        | ShareAuthenticationError::InvalidTypedSignature => {
+        ShareAuthenticationError::InvalidSignature
+        | ShareAuthenticationError::UnsupportedTypedSignatureScheme => {
             ShareRejection::NodeSignature { party_id }
         }
     })?;
@@ -526,8 +523,10 @@ pub fn verify_solana_user_decryption_response(
         );
         // The expected link is the Solana binding recomputed above, not the EVM EIP-712 link the
         // validation would otherwise derive from the parsed request.
+        let scheme_keys = HashMap::new();
         let trusted_ctx = UserDecTrustedValidationContext::new_with_expected_link(
             trusted_signers,
+            &scheme_keys,
             &parsed,
             &request.gateway_domain,
             None,
@@ -1089,6 +1088,7 @@ mod tests {
         let zero_address = Client::new_solana(trusted(&pks), TEST_PARAM, None);
         let other_address = Client::new(
             pks,
+            HashMap::new(),
             alloy_primitives::address!("66f9664f97F2b50F62D13eA064982f936dE76657"),
             None,
             TEST_PARAM,
@@ -1206,7 +1206,7 @@ mod tests {
     // Whichever node signature the share carries is verified, before its link is read.
     //
     // The rule is the EVM one, shared through `engine::validation_wasm`'s
-    // `authenticate_user_decrypt_share`: a non-empty typed `signatures` list is the
+    // `authenticate_solana_user_decrypt_share`: a non-empty typed `signatures` list is the
     // authentication; otherwise a non-empty internal `signature` is checked as ECDSA over the
     // serialized payload, an empty one falls back to the EIP-712 `external_signature`, and
     // neither means unauthenticated.
@@ -2058,6 +2058,27 @@ mod tests {
         let verified = verify_solana_user_decryption_response(&request, &trusted(&pks), &agg_resp)
             .expect("the internal branch does not read extra_data");
         assert_eq!(party_ids(&verified), vec![1]);
+    }
+
+    #[test]
+    fn threshold_internal_signatures_require_matching_extra_data() {
+        let (pks, sks) = node_keys(4);
+        let request = canonical_request();
+        let link = request.expected_link().unwrap();
+        let responses: Vec<_> = (1..=4)
+            .map(|id| {
+                let mut response = signed_response(
+                    payload(id, &pks[&id], link.clone(), 1, dummy_signcrypted()),
+                    &sks[id as usize - 1],
+                );
+                response.extra_data = vec![0xde, 0xad];
+                response
+            })
+            .collect();
+        assert!(matches!(
+            verify_solana_user_decryption_response(&request, &trusted(&pks), &responses),
+            Err(SolanaUserDecryptionResponseError::InconsistentShares { .. })
+        ));
     }
 
     // ---------------------------------------------------------------------------------------

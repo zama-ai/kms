@@ -109,8 +109,8 @@ message KeyGenPreprocRequest {
   bytes extra_data = 7;
 
   // The signature schemes to include in the response `signatures` field.
-  // If empty, the response `signatures` list is empty; legacy ECDSA signatures
-  // remain available via the deprecated scalar fields for backward compatibility.
+  // If empty, it defaults to ECDSA256K1, so the response carries a single ECDSA
+  // entry.
   repeated SigningSchemeType signing_schemes = 8;
 }
 
@@ -214,8 +214,8 @@ message KeyGenRequest {
   bytes extra_data = 9;
 
   // The signature schemes to include in the response `signatures` field.
-  // If empty, the response `signatures` list is empty; legacy ECDSA signatures
-  // remain available via the deprecated scalar fields for backward compatibility.
+  // If empty, it defaults to ECDSA256K1, so the response carries a single ECDSA
+  // entry.
   repeated SigningSchemeType signing_schemes = 10;
 }
 
@@ -306,8 +306,8 @@ message CrsGenRequest {
   bytes extra_data = 7;
 
   // The signature schemes to include in the response `signatures` field.
-  // If empty, the response `signatures` list is empty; legacy ECDSA signatures
-  // remain available via the deprecated scalar fields for backward compatibility.
+  // If empty, it defaults to ECDSA256K1, so the response carries a single ECDSA
+  // entry.
   repeated SigningSchemeType signing_schemes = 8;
 }
 
@@ -397,8 +397,8 @@ message PublicDecryptionRequest {
   RequestId epoch_id = 7;
 
   // The signature schemes to include in the response `signatures` field.
-  // If empty, the response `signatures` list is empty; legacy ECDSA signatures
-  // remain available via the deprecated scalar fields for backward compatibility.
+  // If empty, it defaults to ECDSA256K1, so the response carries a single ECDSA
+  // entry.
   repeated SigningSchemeType signing_schemes = 8;
 }
 
@@ -494,8 +494,8 @@ message UserDecryptionRequest {
   RequestId epoch_id = 9;
 
   // The signature schemes to include in the response `signatures` field.
-  // If empty, the response `signatures` list is empty; legacy ECDSA signatures
-  // remain available via the deprecated scalar fields for backward compatibility.
+  // If empty, it defaults to ECDSA256K1, so the response carries a single ECDSA
+  // entry.
   repeated SigningSchemeType signing_schemes = 10;
 
   // 11 and 12 briefly carried the Solana identity and program id as two loose bytes fields, on
@@ -783,6 +783,9 @@ message OperatorPublicKey {
 message CustodianRecoveryInitRequest {
   // Allow overwriting in case an ephemeral key has already been set
   bool overwrite_ephemeral_key = 1;
+  // Which custodian context to recover under. Required when the node has none installed and its
+  // backup vault holds more than one, which is the normal state after a context rotation.
+  optional RequestId custodian_context_id = 2;
 }
 
 // The data constructed by a single custodian to help a single operator recover their private master decryption key.
@@ -991,9 +994,8 @@ message NewMpcEpochRequest {
   // Extra data used in the EIP712 signature - external_signature - for the newly signed key and CRS info
   bytes extra_data = 5;
   // The signature schemes to include in the `signatures` field of the reshared
-  // key and CRS results. If empty, those `signatures` lists are empty; legacy
-  // ECDSA signatures remain available via the deprecated scalar fields for
-  // backward compatibility.
+  // key and CRS results. If empty, it defaults to ECDSA256K1, so those lists
+  // each carry a single ECDSA entry.
   repeated SigningSchemeType signing_schemes = 6;
 }
 

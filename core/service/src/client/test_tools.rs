@@ -7,13 +7,16 @@ use crate::consts::{DEC_CAPACITY, DEFAULT_PROTOCOL, DEFAULT_URL, MAX_TRIES, MIN_
 use crate::engine::base::BaseKmsStruct;
 use crate::engine::centralized::central_kms::RealCentralizedKms;
 use crate::engine::context_manager::create_default_centralized_context_in_storage;
+use crate::engine::rng_source::test_rng_source;
 use crate::engine::threshold::service::{RealThresholdKms, new_real_threshold_kms};
 use crate::engine::{Shutdown, run_server};
 use crate::grpc::MetaStoreStatusServiceImpl;
 use crate::util::rate_limiter::RateLimiterConfig;
 use crate::vault::Vault;
 use crate::vault::storage::StorageExt;
-use crate::vault::storage::{Storage, crypto_material::get_core_signing_key, file::FileStorage};
+use crate::vault::storage::{
+    Storage, crypto_material::get_core_signing_identity, file::FileStorage,
+};
 use futures_util::FutureExt;
 use itertools::Itertools;
 use kms_grpc::kms_service::v1::core_service_endpoint_client::CoreServiceEndpointClient;
@@ -23,6 +26,7 @@ use std::collections::HashMap;
 use std::str::FromStr;
 use std::sync::Arc;
 use test_utils::random_free_port::get_listeners_random_free_ports;
+use thread_handles::init_rayon_thread_pool;
 use threshold_execution::endpoints::decryption::DecryptionMode;
 use threshold_networking::grpc::GrpcServer;
 use tokio::task::{JoinHandle, JoinSet};
@@ -36,6 +40,18 @@ use tonic_health::server::HealthReporter;
 // Put gRPC size limit to 100 MB.
 // We need a high limit because ciphertexts may be large after SnS.
 const GRPC_MAX_MESSAGE_SIZE: usize = 100 * 1024 * 1024;
+// The in-process harness runs all MPC parties together, so concurrent protocols can exceed the default deadline on CI.
+const IN_PROCESS_TEST_NETWORK_TIMEOUT_SECS: u64 = 60;
+
+/// Size the global MPC rayon pool the same way the `kms-server` does, i.e. from
+/// [`InternalConfig`]: `tokio = ceil(#CPUs / 8)` and `rayon = #CPUs - tokio`.
+async fn init_test_rayon_pool() {
+    let num_threads = crate::conf::InternalConfig::default().num_rayon_threads;
+    match init_rayon_thread_pool(num_threads).await {
+        Ok(n) => tracing::info!("Test MPC rayon pool has {n} threads"),
+        Err(e) => tracing::warn!("Could not initialize the test MPC rayon pool: {e}"),
+    }
+}
 
 pub async fn setup_threshold_no_client<
     PubS: Storage + Clone + Sync + Send + 'static,
@@ -45,10 +61,10 @@ pub async fn setup_threshold_no_client<
     pub_storage: Vec<PubS>,
     priv_storage: Vec<PrivS>,
     vaults: Vec<Option<Vault>>,
-    ensure_default_prss: bool,
     rate_limiter_conf: Option<RateLimiterConfig>,
     decryption_mode: Option<DecryptionMode>,
 ) -> HashMap<u32, ServerHandle> {
+    init_test_rayon_pool().await;
     let mut handles = JoinSet::new();
     tracing::info!("Spawning servers...");
     let num_parties = priv_storage.len();
@@ -112,6 +128,12 @@ pub async fn setup_threshold_no_client<
         // Make a configuration based on the default, but customized with the needed changes for the test setup
         let config_path = format!("{}/config/default_1", env!("CARGO_MANIFEST_DIR"));
         let mut core_config: CoreConfig = init_conf(&config_path).expect("config must parse");
+        let mut core_to_core_net = core_config
+            .threshold
+            .as_ref()
+            .map(|t| t.core_to_core_net)
+            .unwrap_or_default();
+        core_to_core_net.network_timeout = Some(IN_PROCESS_TEST_NETWORK_TIMEOUT_SECS);
         let threshold_party_config = ThresholdPartyConf {
             listen_address: mpc_conf[i - 1].address.clone(),
             listen_port: mpc_conf[i - 1].port,
@@ -124,19 +146,15 @@ pub async fn setup_threshold_no_client<
             num_sessions_preproc: Some(5),
             tls: None,
             peers: Some(mpc_conf),
-            core_to_core_net: core_config
-                .threshold
-                .as_ref()
-                .map(|t| t.core_to_core_net)
-                .unwrap_or_default(),
+            core_to_core_net,
             decryption_mode,
         };
         core_config.threshold = Some(threshold_party_config);
         core_config.rate_limiter_conf = rate_limiter_conf.clone();
 
         handles.spawn(async move {
-            let sk = get_core_signing_key(&cur_priv_storage).await.unwrap();
-            let base_kms = BaseKmsStruct::new(KMSType::Threshold, sk).unwrap();
+            let sk = get_core_signing_identity(&cur_priv_storage).await.unwrap();
+            let base_kms = BaseKmsStruct::new(KMSType::Threshold, sk, test_rng_source());
 
             // TODO pass in cert_paths for testing TLS
             let server = new_real_threshold_kms(
@@ -148,7 +166,6 @@ pub async fn setup_threshold_no_client<
                 mpc_listener,
                 base_kms,
                 None,
-                ensure_default_prss,
                 mpc_core_rx.map(drop),
             )
             .await;
@@ -230,7 +247,6 @@ pub async fn setup_threshold_no_client<
 /// * `pub_storage` - Public storage for each server
 /// * `priv_storage` - Private storage for each server
 /// * `vaults` - Optional backup vaults for each server
-/// * `ensure_default_prss` - Whether to run PRSS initialization for the default epoch if no PRSS info is found in storage
 /// * `rate_limiter_conf` - Optional rate limiter configuration
 /// * `decryption_mode` - Optional decryption mode
 ///
@@ -258,10 +274,10 @@ pub async fn setup_threshold_with_custom_peers<
     pub_storage: Vec<PubS>,
     priv_storage: Vec<PrivS>,
     vaults: Vec<Option<Vault>>,
-    ensure_default_prss: bool,
     rate_limiter_conf: Option<RateLimiterConfig>,
     decryption_mode: Option<DecryptionMode>,
 ) -> HashMap<u32, ServerHandle> {
+    init_test_rayon_pool().await;
     let mut handles: Vec<JoinHandle<_>> = Vec::new();
     tracing::info!("Spawning servers with custom peer configs...");
     let num_servers = server_configs.len();
@@ -340,6 +356,12 @@ pub async fn setup_threshold_with_custom_peers<
 
         let config_path = format!("{}/config/default_1", env!("CARGO_MANIFEST_DIR"));
         let mut core_config: CoreConfig = init_conf(&config_path).expect("config must parse");
+        let mut core_to_core_net = core_config
+            .threshold
+            .as_ref()
+            .map(|t| t.core_to_core_net)
+            .unwrap_or_default();
+        core_to_core_net.network_timeout = Some(IN_PROCESS_TEST_NETWORK_TIMEOUT_SECS);
         let threshold_party_config = ThresholdPartyConf {
             listen_address: ip_addr.to_string(),
             listen_port: mpc_ports[idx],
@@ -350,11 +372,7 @@ pub async fn setup_threshold_with_custom_peers<
             num_sessions_preproc: Some(5),
             tls: None,
             peers: Some(updated_peers),
-            core_to_core_net: core_config
-                .threshold
-                .as_ref()
-                .map(|t| t.core_to_core_net)
-                .unwrap_or_default(),
+            core_to_core_net,
             decryption_mode,
         };
         core_config.threshold = Some(threshold_party_config);
@@ -363,8 +381,8 @@ pub async fn setup_threshold_with_custom_peers<
         let my_id_copy = *my_id;
         let server_idx = idx; // Track the physical server index
         handles.push(tokio::spawn(async move {
-            let sk = get_core_signing_key(&cur_priv_storage).await.unwrap();
-            let base_kms = BaseKmsStruct::new(KMSType::Threshold, sk).unwrap();
+            let sk = get_core_signing_identity(&cur_priv_storage).await.unwrap();
+            let base_kms = BaseKmsStruct::new(KMSType::Threshold, sk, test_rng_source());
 
             // Note: explicit some of the types to avoid clippy complaining
             let server: anyhow::Result<(
@@ -380,7 +398,6 @@ pub async fn setup_threshold_with_custom_peers<
                 mpc_listener,
                 base_kms,
                 None,
-                ensure_default_prss,
                 mpc_core_rx.map(drop),
             )
             .await;
@@ -603,7 +620,6 @@ impl ServerHandle {
 ///
 /// Used by `setup_threshold_isolated` to configure the threshold test environment.
 pub struct ThresholdTestConfig<'a> {
-    pub ensure_default_prss: bool,
     pub rate_limiter_conf: Option<RateLimiterConfig>,
     pub decryption_mode: Option<DecryptionMode>,
     pub test_material_path: Option<&'a std::path::Path>,
@@ -634,7 +650,6 @@ pub async fn setup_threshold_isolated<
         pub_storage,
         priv_storage,
         vaults,
-        config.ensure_default_prss,
         config.rate_limiter_conf,
         config.decryption_mode,
     )
@@ -664,7 +679,6 @@ pub async fn setup_threshold<
     pub_storage: Vec<PubS>,
     priv_storage: Vec<PrivS>,
     vaults: Vec<Option<Vault>>,
-    ensure_default_prss: bool,
     rate_limiter_conf: Option<RateLimiterConfig>,
     decryption_mode: Option<DecryptionMode>,
 ) -> (
@@ -672,13 +686,12 @@ pub async fn setup_threshold<
     HashMap<u32, CoreServiceEndpointClient<Channel>>,
 ) {
     let num_parties = priv_storage.len();
-    // Setup the threshold scheme with lazy PRSS generation
+    // Setup the threshold scheme
     let server_handles = setup_threshold_no_client::<PubS, PrivS>(
         threshold,
         pub_storage,
         priv_storage,
         vaults,
-        ensure_default_prss,
         rate_limiter_conf,
         decryption_mode,
     )
@@ -718,9 +731,9 @@ pub async fn setup_centralized_no_client<
         .pop()
         .unwrap();
     let (tx, rx) = tokio::sync::oneshot::channel();
-    let sk = get_core_signing_key(&priv_storage).await.unwrap();
+    let sk = get_core_signing_identity(&priv_storage).await.unwrap();
 
-    create_default_centralized_context_in_storage(&mut priv_storage, &sk)
+    create_default_centralized_context_in_storage(&mut priv_storage, sk.ecdsa())
         .await
         .unwrap();
     let config_path = format!("{}/config/default_centralized", env!("CARGO_MANIFEST_DIR"));

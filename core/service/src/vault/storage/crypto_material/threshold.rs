@@ -11,7 +11,7 @@ use super::base::CryptoMaterialStorage;
 use crate::{
     cryptography::signatures::{PrivateSigKey, compute_eip712_signature},
     engine::{
-        base::{CrsGenMetadata, KeyGenMetadata},
+        base::{CrsGenMetadata, KeyGenMetadata, StoredTypedSignature},
         material_integrity::verify_public_key_digest_from_bytes,
         threshold::service::{ThresholdFheKeys, epoch_manager::EpochData},
     },
@@ -60,11 +60,7 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: StorageExt + Send + Sync + 's
         fhe_keys: HashMap<(RequestId, EpochId), ThresholdFheKeys>,
     ) -> Self {
         Self {
-            inner: CryptoMaterialStorage {
-                public_storage: Arc::new(Mutex::new(public_storage)),
-                private_storage: Arc::new(Mutex::new(private_storage)),
-                backup_vault: backup_vault.map(|x| Arc::new(Mutex::new(x))),
-            },
+            inner: CryptoMaterialStorage::from(public_storage, private_storage, backup_vault),
             fhe_keys: Arc::new(RwLock::new(fhe_keys)),
         }
     }
@@ -198,27 +194,6 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: StorageExt + Send + Sync + 's
             op_metric_tag,
         )
         .await
-    }
-
-    /// Purge threshold FHE key material from disk **and** from the in-memory
-    /// cache.
-    pub(crate) async fn purge_fhe_keys(&self, req_id: &RequestId, epoch_id: &EpochId) -> bool {
-        let storage_ok = self
-            .inner
-            .purge_material(
-                req_id,
-                Some(epoch_id),
-                &[
-                    PubDataType::PublicKey,
-                    PubDataType::ServerKey,
-                    PubDataType::CompressedXofKeySet,
-                ],
-                &[PrivDataType::FheKeyInfo],
-            )
-            .await;
-        // Lock-order: cache is acquired after pub/priv have been released.
-        self.fhe_keys.write().await.remove(&(*req_id, *epoch_id));
-        storage_ok
     }
 
     /// Drop all cached FHE keys for the given epoch, returning the number of
@@ -389,15 +364,18 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: StorageExt + Send + Sync + 's
                     extra_data.clone(),
                 );
                 let new_signature = compute_eip712_signature(sk, &sol_type, eip712_domain)?;
-                // The canonical ECDSA signature lives in `external_signature` and the opt-in `signatures`
-                // set stays empty.
+                // The re-signed metadata carries the same ECDSA signature in
+                // `external_signature` and in the ECDSA entry of `signatures`,
+                // which is what a request naming no scheme asks for. The
+                // migrated entries of the other schemes are deliberately not
+                // carried over.
                 let new_metadata = KeyGenMetadata::new(
                     *old_key_id,
                     migrated_inner.preprocessing_id,
                     migrated_inner.key_digest_map.clone(),
                     eip712_domain,
-                    new_signature,
-                    Vec::new(),
+                    new_signature.clone(),
+                    StoredTypedSignature::ecdsa_only(new_signature),
                     extra_data,
                 );
 

@@ -165,8 +165,8 @@ pub(crate) async fn crs_gen(
 ) {
     let dkg_param: WrappedDKGParams = parameter.into();
 
-    // CRS gen needs signing keys (for request auth) but not FHE keys. PRSS is bootstrapped
-    // at runtime via `.with_prss()` below.
+    // CRS gen needs signing keys (for request auth) but not FHE keys. The default epoch
+    // (PRSS) comes from the fixture via `.with_prss()` below.
     let mut spec = TestMaterialSpec::threshold_signing_only(amount_parties);
     if matches!(parameter, FheParameter::Default) {
         spec.material_type = MaterialType::Default;

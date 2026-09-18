@@ -130,6 +130,18 @@ impl DockerComposeCmd {
             },
         }
 
+        if build_docker == "1" {
+            let status = Command::new("make")
+                .current_dir(self.root_path.clone())
+                .arg("build-compose-kms-binaries")
+                .status()
+                .expect("failed to build the shared KMS binaries image");
+            assert!(
+                status.success(),
+                "failed to build the shared KMS binaries image"
+            );
+        }
+
         // build the docker compose command
         let mut build = Command::new("docker");
         build

@@ -23,12 +23,12 @@ pub use preprocessing::*;
 #[cfg(test)]
 mod tests {
     use crate::conf::{CoreConfig, init_conf};
-    use crate::consts::{DEFAULT_MPC_CONTEXT, SIGNING_KEY_ID};
+    use crate::consts::DEFAULT_MPC_CONTEXT;
     use crate::engine::context::{NodeInfo, SchemeDigests, SoftwareVersion};
     use crate::engine::traits::ContextManager;
     use crate::util::key_setup::store_server_signing_keys;
     use crate::{
-        cryptography::signatures::{PublicSigKey, gen_sig_keys},
+        cryptography::signatures::{NodeSigningIdentity, PublicSigKey, gen_sig_keys},
         engine::centralized::central_kms::RealCentralizedKms,
         vault::storage::ram::RamStorage,
     };
@@ -45,14 +45,9 @@ mod tests {
 
         // Store the signing key privately and its verification key / address publicly, the
         // same shape `kms-gen-keys` leaves behind in production.
-        store_server_signing_keys(
-            &mut public_storage,
-            &mut private_storage,
-            &SIGNING_KEY_ID,
-            &sig_key,
-        )
-        .await
-        .unwrap();
+        store_server_signing_keys(&mut public_storage, &mut private_storage, &sig_key)
+            .await
+            .unwrap();
         let core_config: CoreConfig = init_conf("config/default_centralized.toml").unwrap();
         let (kms, _health_service) = RealCentralizedKms::new(
             core_config,
@@ -60,7 +55,7 @@ mod tests {
             private_storage,
             None,
             None,
-            sig_key,
+            NodeSigningIdentity::ecdsa_only(sig_key),
         )
         .await
         .expect("Could not create KMS");
