@@ -10,17 +10,54 @@ use crate::{
 use aes_prng::AesRng;
 use bip39::Mnemonic;
 use hashing::{DomainSep, hash_element_w_size};
-use rand::{CryptoRng, Rng, SeedableRng};
+#[cfg(test)]
+use rand::{CryptoRng, Rng};
+use rand::{RngCore, SeedableRng, rngs::OsRng};
 use std::str::FromStr;
 use threshold_types::role::Role;
 use zeroize::Zeroizing;
 
 pub const DSEP_MNEMONIC: DomainSep = *b"MNEMONIC";
+const DSEP_ENTROPY: DomainSep = *b"ENTROPY_";
 
+/// Draw [`CUSTODIAN_ENTROPY_SIZE`] bytes of system entropy, folding in a user-supplied string.
+///
+/// This is the entropy source for everything a custodian keeps: its seed phrase, and the RNG the
+/// CLI uses for setup messages and recovery re-signcryption. It goes to the OS rather than to a
+/// caller's RNG because a phrase can never carry more entropy than whatever it was drawn from,
+/// and the keys derived from it must reach the full key space the encryption scheme assumes.
+///
+/// The optional user-supplied string is folded in over the full width with SHAKE-256, so providing
+/// it can only add entropy and never replaces the system's.
+pub fn system_entropy_for_custodian(
+    randomness: Option<&str>,
+) -> anyhow::Result<Zeroizing<[u8; CUSTODIAN_ENTROPY_SIZE]>> {
+    let mut entropy = Zeroizing::new([0u8; CUSTODIAN_ENTROPY_SIZE]);
+    OsRng.try_fill_bytes(&mut *entropy)?;
+    let Some(user_seed) = randomness else {
+        return Ok(entropy);
+    };
+    let user_bytes = Zeroizing::new(hash_element_w_size(
+        &DSEP_ENTROPY,
+        user_seed,
+        CUSTODIAN_ENTROPY_SIZE,
+    ));
+    for (byte, user_byte) in entropy.iter_mut().zip(user_bytes.iter()) {
+        *byte ^= user_byte;
+    }
+    Ok(entropy)
+}
+
+/// Draw a seed phrase from `rng`, for tests that need a reproducible custodian.
+///
+/// Test-only: a phrase carries no more entropy than the RNG it was drawn from, and the seeded
+/// RNGs tests use are narrower than [`CUSTODIAN_ENTROPY_SIZE`]. Production phrases come from
+/// [`system_entropy_for_custodian`].
 // Allow the rng to be used even if an error happens later on
 #[allow(unknown_lints)]
 #[allow(non_local_effect_before_error_return)]
-pub fn seed_phrase_from_rng<R>(rng: &mut R) -> anyhow::Result<String>
+#[cfg(test)]
+pub(crate) fn seed_phrase_from_rng<R>(rng: &mut R) -> anyhow::Result<String>
 where
     R: Rng + CryptoRng,
 {
@@ -31,8 +68,8 @@ where
 
 /// Encode `entropy` as a BIP-39 seed phrase.
 ///
-/// Callers that must not narrow the phrase's entropy use this instead of [`seed_phrase_from_rng`],
-/// which is only as wide as the RNG handed to it.
+/// The phrase is exactly as wide as `entropy`, so callers draw it from
+/// [`system_entropy_for_custodian`] rather than from an RNG of their own, whose seed would cap it.
 pub fn seed_phrase_from_entropy(entropy: &[u8; CUSTODIAN_ENTROPY_SIZE]) -> anyhow::Result<String> {
     let mnemonic = Mnemonic::from_entropy(entropy)?;
     Ok(mnemonic.to_string())
@@ -96,6 +133,7 @@ mod tests {
     use crate::backup::BACKUP_PKE_SCHEME;
     use crate::backup::seed_phrase::{
         custodian_from_seed_phrase, seed_phrase_from_entropy, seed_phrase_from_rng,
+        system_entropy_for_custodian,
     };
     use crate::consts::CUSTODIAN_ENTROPY_SIZE;
     use crate::cryptography::encryption::HasPkeScheme;
@@ -201,5 +239,14 @@ mod tests {
             regeneratred_custodian.verification_key(),
             prune_custodian.verification_key()
         );
+    }
+
+    /// The user-supplied string is folded into system entropy, never a replacement for it: two
+    /// draws with the same string must still differ.
+    #[test]
+    fn user_randomness_does_not_fix_the_entropy() {
+        let first = system_entropy_for_custodian(Some("the same string")).unwrap();
+        let second = system_entropy_for_custodian(Some("the same string")).unwrap();
+        assert_ne!(*first, *second);
     }
 }

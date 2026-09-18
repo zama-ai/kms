@@ -1,12 +1,15 @@
-//! Shared random seed source per KMS instance. Services clone its `Arc`; tasks own forked RNGs.
+//! Shared random seed source per KMS instance. Services clone its `Arc`; tasks
+//! own forked RNGs.
 //!
-//! The source keeps two independent parents, because a fork can never carry more entropy than the
-//! parent it is drawn from. [`RngSource::fork_rng`] serves the general case from a 128-bit-seeded
-//! `AesRng`. [`RngSource::fork_rng_256`] serves custodian backup from a 256-bit-seeded
+//! The source keeps two independent parents, because a fork can never carry
+//! more entropy than the parent it is drawn from. [`RngSource::fork_rng_128`]
+//! serves the general case from a 128-bit-seeded `AesRng`.
+//! [`RngSource::fork_rng_256`] serves custodian backup from a 256-bit-seeded
 //! `ChaCha20Rng`.
 //!
-//! Reseeding protects future forks after fresh entropy arrives. It does not refresh
-//! existing children or provide backtracking resistance within a reseeding interval (i.e. one epoch).
+//! Reseeding protects future forks after fresh entropy arrives. It does not
+//! refresh existing children or provide backtracking resistance within a
+//! reseeding interval (i.e. one epoch).
 
 use crate::cryptography::attestation::{SecurityModule, SecurityModuleProxy};
 use aes_prng::AesRng;

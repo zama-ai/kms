@@ -661,8 +661,9 @@ pub mod tests {
     mod backup_cleanup;
 
     use super::{Vault, VaultDataType, adopt_custodian_context};
+    use crate::backup::BACKUP_PKE_SCHEME;
     use crate::backup::custodian::CustodianContextAnchor;
-    use crate::cryptography::encryption::{Encryption, PkeScheme, PkeSchemeType};
+    use crate::cryptography::encryption::{Encryption, PkeScheme};
     use crate::cryptography::signatures::{PrivateSigKey, gen_sig_keys};
     use crate::engine::base::derive_request_id;
     use crate::vault::keychain::KeychainProxy;
@@ -889,7 +890,7 @@ pub mod tests {
     /// Build a secret-sharing keychain whose current backup id is `current_backup_id`.
     pub(crate) fn make_secret_share_keychain(current_backup_id: RequestId) -> KeychainProxy {
         let mut rng = ChaCha20Rng::seed_from_u64(42);
-        let mut enc = Encryption::new(PkeSchemeType::MlKem512, &mut rng);
+        let mut enc = Encryption::new(BACKUP_PKE_SCHEME, &mut rng);
         let (_dec_key, enc_key) = enc.keygen().unwrap();
         let mut keychain = SecretShareKeychain::new(rng);
         keychain.set_backup_enc_key(current_backup_id, enc_key);
