@@ -152,9 +152,12 @@ impl SigningSchemeType {
     ///
     /// Only the parsing lives here; the resolution itself is [`Self::resolve`].
     pub fn resolve_requested(requested: &[i32]) -> Result<Vec<Self>, SigningError> {
-        let mut parsed = Vec::with_capacity(requested.len());
+        let mut parsed = Vec::with_capacity(requested.len().min(SigningSchemeType::COUNT));
         for &raw in requested {
-            parsed.push(SigningSchemeType::try_from(raw)?);
+            let scheme = SigningSchemeType::try_from(raw)?;
+            if !parsed.contains(&scheme) {
+                parsed.push(scheme);
+            }
         }
         Ok(Self::resolve(&parsed))
     }
