@@ -1083,13 +1083,13 @@ pub(crate) async fn update_req_in_meta_store<
     }
 }
 
-// The `MetaStoreError` is recorded through `handle_unreturnable_error` and collapsed into a
-// bool instead of being propagated, which is what Dylint flags. The effect it names is
-// `update_arc`'s `HashMap::get_mut` (line 608), a `&mut` borrow that writes nothing: both of
-// that method's error paths -- the id is gone, or the entry is no longer `Pending` -- leave
-// the store unchanged, so there is no partial state for a caller to unwind.
-#[allow(unknown_lints)]
-#[allow(non_local_effect_before_unhandled_error)]
+// Dylint flags this call site: the `MetaStoreError` from [`MetaStore::update_arc`] is recorded
+// through `handle_unreturnable_error` and collapsed into a bool instead of being propagated.
+// The effect it names is the `HashMap::get_mut` in `update_arc`, a `&mut` borrow that writes
+// nothing: both of that method's error paths -- the id is gone, or the entry is no longer
+// `Pending` -- leave the store unchanged, so there is no partial state for a caller to unwind.
+#[allow(unknown_lints, reason = "only known when running cargo dylint")]
+#[expect(non_local_effect_before_unhandled_error)]
 pub(crate) async fn update_ok_req_in_meta_store<T>(
     meta_store: &RwLock<MetaStore<T>>,
     permit: MetaStorePermit<T>,

@@ -23,11 +23,9 @@ use tfhe::{
 };
 use tracing::instrument;
 
-// If for some reason we fail in forking the mask generator, during encryption
-// we will return an error, after having changed some of the state of the lwe_keyswitch_key
-// but it seems hard to prevent it
-#[allow(unknown_lints)]
-#[allow(non_local_effect_before_unhandled_error)]
+// Failing to fork the mask generator returns an error part-way through encryption, after some
+// of the `lwe_keyswitch_key` state has already been written. That is hard to avoid here, so the
+// key must be treated as spoiled on error rather than reused.
 pub fn generate_lwe_keyswitch_key<Z, Gen, const EXTENSION_DEGREE: usize>(
     input_lwe_sk: &LweSecretKeyShare<Z, EXTENSION_DEGREE>,
     output_lwe_sk: &LweSecretKeyShare<Z, EXTENSION_DEGREE>,
@@ -69,8 +67,6 @@ where
             *message = input_key_element << shift;
         }
 
-        // NOTE: This causes potential non local effect before error return
-        // but it seems hard to prevent it
         encrypt_lwe_ciphertext_list(
             output_lwe_sk,
             key_switch_key_block,
