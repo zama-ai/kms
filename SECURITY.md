@@ -14,7 +14,7 @@ Read the [trust model of the KMS core](docs/explanations/trust_model.md) before 
 - The service interface has no authentication, authorization or input sanitization in the code. The deployment ensures that exactly one KMS connector, run by the same operator as the core, can reach it, and that it is never publicly reachable. Reports that require an attacker to reach the service interface are out of scope.
 - ACL checks happen in the [KMS connector](https://github.com/zama-ai/fhevm/tree/main/kms-connector). Request IDs are assigned by the gateway contracts, which bind each ID to its ciphertexts. A core tracks every ID it has accepted: key generation, CRS generation and context management reject a known ID; decryption retries a known ID only if the earlier attempt failed, and the synchronous decryption endpoints return the result of the earlier attempt. Retrying a decryption under a known ID is by design, because the ID carries the same ciphertexts.
 
-In scope: a bypass of peer authentication or attestation, a malicious peer that breaks confidentiality or correctness within the threshold bound, leaked secrets, and incorrect cryptography.
+The threat model assumes that at most `t` of the `n` parties are malicious; an attack that needs more than `t` corrupted parties is out of scope. In scope: a bypass of peer authentication, attestation or sender binding, at most `t` corrupted parties breaking confidentiality or correctness, leaked secrets, incorrect cryptography, and any client-supplied value that the core processes as a parameter (a ciphertext, a user public key, an EIP-712 payload, a parameter selector) that causes a service outage or a confidentiality break, even though it arrives through the connector.
 
 ## Reporting a Vulnerability
 
