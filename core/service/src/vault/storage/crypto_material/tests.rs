@@ -1857,6 +1857,7 @@ async fn refresh_fhe_private_material_paths() {
     assert!(cache_guard.get(&(miss_req, miss_epoch)).is_none());
 }
 
+mod crs_write_side_effects;
 mod fhe_write_side_effects;
 mod migration;
 mod storage_side_effects;
