@@ -2,63 +2,14 @@ pub use crate::client::local_crypto::{
     EncryptionConfig, TestingPlaintext, compute_cipher, compute_cipher_from_stored_key,
     load_material_from_pub_storage, load_pk_from_pub_storage,
 };
-use crate::conf::{self, Keychain};
-use crate::vault::Vault;
-use crate::vault::keychain::make_keychain_proxy;
 #[cfg(test)]
 use crate::vault::storage::StorageReader;
 #[cfg(test)]
+use crate::vault::storage::StorageType;
+#[cfg(test)]
 use crate::vault::storage::file::FileStorage;
-use crate::vault::storage::{StorageType, make_storage};
 #[cfg(test)]
 use kms_grpc::rpc_types::PubDataType;
-use std::path::Path;
-
-/// Helper method to construct a backup vault for testing. That is either without encryption (no `Keychain`) or using custodians.
-pub async fn file_backup_vault(
-    keychain_conf: Option<&Keychain>,
-    pub_path: Option<&Path>,
-    backup_path: Option<&Path>,
-    pub_storage_prefix: Option<&str>,
-    backup_storage_prefix: Option<&str>,
-) -> Vault {
-    let create_storage_conf =
-        |path: Option<&Path>, storage_prefix: Option<&str>| match (path, storage_prefix) {
-            (None, None) => None,
-            (None, Some(prefix)) => Some(conf::Storage::File(conf::FileStorage {
-                path: std::env::current_dir()
-                    .unwrap()
-                    .join(crate::consts::KEY_PATH_PREFIX),
-                prefix: Some(prefix.to_string()),
-            })),
-            (Some(path), None) => Some(conf::Storage::File(conf::FileStorage {
-                path: path.to_path_buf(),
-                prefix: None,
-            })),
-            (Some(path), Some(prefix)) => Some(conf::Storage::File(conf::FileStorage {
-                path: path.to_path_buf(),
-                prefix: Some(prefix.to_string()),
-            })),
-        };
-    let backup_storage_conf = create_storage_conf(backup_path, backup_storage_prefix);
-    let pub_storage_conf = create_storage_conf(pub_path, pub_storage_prefix);
-
-    let pub_proxy_storage = make_storage(pub_storage_conf, StorageType::PUB, None).unwrap();
-    let backup_proxy_storage =
-        make_storage(backup_storage_conf, StorageType::BACKUP, None).unwrap();
-    let keychain = match keychain_conf {
-        Some(conf) => Some(
-            make_keychain_proxy(conf, None, None, Some(&pub_proxy_storage), false)
-                .await
-                .unwrap(),
-        ),
-        None => None,
-    };
-    Vault {
-        storage: backup_proxy_storage,
-        keychain,
-    }
-}
 
 #[cfg(any(test, feature = "testing"))]
 pub mod setup {

@@ -60,11 +60,7 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: StorageExt + Send + Sync + 's
         fhe_keys: HashMap<(RequestId, EpochId), ThresholdFheKeys>,
     ) -> Self {
         Self {
-            inner: CryptoMaterialStorage {
-                public_storage: Arc::new(Mutex::new(public_storage)),
-                private_storage: Arc::new(Mutex::new(private_storage)),
-                backup_vault: backup_vault.map(|x| Arc::new(Mutex::new(x))),
-            },
+            inner: CryptoMaterialStorage::from(public_storage, private_storage, backup_vault),
             fhe_keys: Arc::new(RwLock::new(fhe_keys)),
         }
     }

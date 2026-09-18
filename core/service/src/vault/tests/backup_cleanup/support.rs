@@ -42,7 +42,7 @@ impl BackupRemovalFixture {
         let control_entries = entries(control_id);
         let mut vault = Vault {
             storage,
-            keychain: Some(make_secret_share_keychain(retired_id).await),
+            keychain: Some(make_secret_share_keychain(retired_id)),
         };
         let enc_key = match vault.keychain.as_ref() {
             Some(KeychainProxy::SecretSharing(keychain)) => keychain.get_backup_enc_key().unwrap(),

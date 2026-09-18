@@ -43,9 +43,9 @@ use tokio_util::sync::CancellationToken;
 
 use crate::util::rate_limiter::RateLimiter;
 use crate::vault::storage::{
-    crypto_material::CentralizedCryptoMaterialStorage, read_all_data_versioned,
+    crypto_material::CentralizedCryptoMaterialStorage, read_all_recovery_material,
 };
-use crate::vault::{Vault, storage::Storage};
+use crate::vault::{Vault, adopt_custodian_context, storage::Storage};
 use aes_prng::AesRng;
 use hashing::DomainSep;
 use kms_grpc::RequestId;
@@ -56,7 +56,6 @@ use kms_grpc::kms::v1::{CiphertextFormat, TypedCiphertext, TypedPlaintext};
 use kms_grpc::kms_service::v1::core_service_endpoint_server::CoreServiceEndpointServer;
 use kms_grpc::rpc_types::KMSType;
 use kms_grpc::rpc_types::PrivDataType;
-use kms_grpc::rpc_types::PubDataType;
 use observability::metrics::METRICS;
 use rand::{CryptoRng, Rng, RngCore};
 use serde::Serialize;
@@ -922,7 +921,7 @@ impl<
         config: CoreConfig,
         public_storage: PubS,
         private_storage: PrivS,
-        backup_vault: Option<Vault>,
+        mut backup_vault: Option<Vault>,
         security_module: Option<Arc<SecurityModuleProxy>>,
         signing_identity: NodeSigningIdentity,
     ) -> anyhow::Result<(
@@ -956,8 +955,10 @@ impl<
             .await?,
         );
         let validation_material: HashMap<RequestId, RecoveryValidationMaterial> =
-            read_all_data_versioned(&public_storage, &PubDataType::RecoveryMaterial.to_string())
-                .await?;
+            match backup_vault.as_ref() {
+                Some(vault) => read_all_recovery_material(&vault.storage).await?,
+                None => HashMap::new(),
+            };
 
         // Verify the private layout first: a centralized node must hold no threshold key shares.
         verify_private_storage_layout(&private_storage, PrivateLayout::Centralized).await?;
@@ -972,6 +973,9 @@ impl<
             &signing_identity,
         )
         .await?;
+        if let Some(vault) = backup_vault.as_mut() {
+            adopt_custodian_context(&private_storage, vault, &validation_material).await?;
+        }
         let custodian_meta_store = MetaStore::new_from_map(validation_material);
         let tracker = Arc::new(TaskTracker::new());
 
@@ -989,6 +993,7 @@ impl<
                 base_kms.new_instance(),
                 crypto_storage.inner.clone(),
                 Arc::clone(&custodian_meta_store),
+                Arc::clone(&tracker),
             );
         // Load existing MPC contexts from storage into the cache
         context_manager.load_mpc_context_from_storage().await?;
@@ -1009,7 +1014,6 @@ impl<
         {
             anyhow::bail!("Failed to update backup vault when booting");
         }
-        tracing::info!("Successfully updated backup vault when booting");
         let rate_limiter = RateLimiter::new(config.rate_limiter_conf.unwrap_or_default());
         let user_dec_meta_store = MetaStore::new(DEC_CAPACITY, MIN_DEC_CACHE);
         let pub_dec_meta_store = MetaStore::new(DEC_CAPACITY, MIN_DEC_CACHE);

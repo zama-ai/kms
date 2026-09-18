@@ -165,8 +165,9 @@ kubectl get pvc -n <NAMESPACE>
 
 Every node verifies its public storage against private storage during startup and refuses to
 serve if they disagree. Public storage can drift out of a consistent state — a misconfigured
-bucket or prefix pointing at the wrong material, or a crash part-way through a non-atomic write
-leaving an entry missing, truncated, or stale. Private storage holds the digests and signatures
+bucket or prefix pointing at the wrong material, or a crash between writes leaving material
+missing or stale. Individual file writes are atomic, but operations across multiple files are not.
+Private storage holds the digests and signatures
 describing what should be published, so it is the reference.
 
 **Symptoms:** the pod exits during startup with one of these log lines, before any request is

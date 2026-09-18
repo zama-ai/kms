@@ -26,7 +26,7 @@ async fn test_purge_backup_custodian_vault_scoped_to_backup_id() {
     let old_id = derive_request_id("purge_backup_old").unwrap();
     let mut vault = Vault {
         storage: StorageProxy::from(RamStorage::new()),
-        keychain: Some(make_secret_share_keychain(current_id).await),
+        keychain: Some(make_secret_share_keychain(current_id)),
     };
 
     let data_id = derive_request_id("purge_backup_data").unwrap();

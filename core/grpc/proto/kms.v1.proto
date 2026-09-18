@@ -727,6 +727,9 @@ message OperatorPublicKey {
 message CustodianRecoveryInitRequest {
   // Allow overwriting in case an ephemeral key has already been set
   bool overwrite_ephemeral_key = 1;
+  // Which custodian context to recover under. Required when the node has none installed and its
+  // backup vault holds more than one, which is the normal state after a context rotation.
+  optional RequestId custodian_context_id = 2;
 }
 
 // The data constructed by a single custodian to help a single operator recover their private master decryption key.

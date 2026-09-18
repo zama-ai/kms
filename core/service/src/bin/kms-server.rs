@@ -506,13 +506,10 @@ async fn main_exec() -> anyhow::Result<()> {
             .as_ref()
             .and_then(|v| v.keychain.as_ref())
             .map(|k| {
-                // Observe that the public storage is used to load a backup_id and backup key
-                // in the case where the custodian based secret sharing is used
                 make_keychain_proxy(
                     k,
                     awskms_client.clone(),
                     security_module.as_ref().map(Arc::clone),
-                    Some(&public_vault.storage),
                     attest_private_vault_root_key_policy,
                 )
             }),
@@ -559,7 +556,6 @@ async fn main_exec() -> anyhow::Result<()> {
                     k,
                     awskms_client.clone(),
                     security_module.as_ref().map(Arc::clone),
-                    Some(&public_vault),
                     false,
                 )
             }),
@@ -623,25 +619,6 @@ async fn main_exec() -> anyhow::Result<()> {
             )
         }
     };
-
-    // Validate keychain recovery material at startup only when the private signing key is
-    // available. In recovery mode the verification key came from public storage; the recovery
-    // operation validates its selected material when it is used instead.
-    if let Ok(signing_key) = base_kms.signing_identity() {
-        let verf_key = signing_key.verf_key();
-        if let Some(ref keychain) = private_vault.keychain {
-            keychain.validate_recovery_material(&verf_key)?;
-        }
-        if let Some(ref vault) = backup_vault
-            && let Some(ref keychain) = vault.keychain
-        {
-            keychain.validate_recovery_material(&verf_key)?;
-        }
-    } else {
-        tracing::info!(
-            "Recovery mode: deferring keychain recovery-material validation until recovery is initiated"
-        );
-    }
 
     // compute corresponding public key and derive address from private sig key
     let pk_bytes = base_kms.verf_key().to_uncompressed_bytes();

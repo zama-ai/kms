@@ -124,17 +124,20 @@ pub(crate) async fn do_destroy_custodian_context(
 pub(crate) async fn do_custodian_recovery_init(
     core_endpoints: &HashMap<CoreConf, CoreServiceEndpointClient<Channel>>,
     overwrite_ephemeral_key: bool,
+    custodian_context_id: Option<kms_grpc::kms::v1::RequestId>,
 ) -> anyhow::Result<Vec<InternalRecoveryRequest>> {
     let mut req_tasks = JoinSet::new();
     for (core_conf, ce) in core_endpoints.iter() {
         let mut cur_client = ce.clone();
         let core_conf = core_conf.clone();
+        let custodian_context_id = custodian_context_id.clone();
         req_tasks.spawn(async move {
             (
                 core_conf,
                 cur_client
                     .custodian_recovery_init(tonic::Request::new(CustodianRecoveryInitRequest {
                         overwrite_ephemeral_key,
+                        custodian_context_id,
                     }))
                     .await,
             )
