@@ -26,7 +26,8 @@ use tfhe_versionable::{
 };
 use zeroize::{Zeroize, ZeroizeOnDrop, Zeroizing};
 
-const PRIVATE_KEY_LENGTH: usize = 32;
+/// Length of the seed that is the canonical MLKEM1024-P384 private key.
+pub(crate) const COMPOSITE_NIST_LEVEL_5_PRIVATE_KEY_LENGTH: usize = 32;
 const ML_KEM_SEED_LENGTH: usize = 64;
 const P384_SCALAR_LENGTH: usize = 48;
 const EXPANDED_SEED_LENGTH: usize = ML_KEM_SEED_LENGTH + P384_SCALAR_LENGTH;
@@ -186,7 +187,7 @@ impl Unversionize for MlKem1024P384PublicKey {
 /// are re-derived when they are needed, keeping the serialized key compact.
 #[derive(Clone, Eq, PartialEq, Zeroize, ZeroizeOnDrop, Versionize)]
 #[versionize(MlKem1024P384PrivateKeyVersions)]
-pub struct MlKem1024P384PrivateKey([u8; PRIVATE_KEY_LENGTH]);
+pub struct MlKem1024P384PrivateKey([u8; COMPOSITE_NIST_LEVEL_5_PRIVATE_KEY_LENGTH]);
 
 impl std::fmt::Debug for MlKem1024P384PrivateKey {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -223,7 +224,7 @@ impl Visitor<'_> for MlKem1024P384PrivateKeyVisitor {
     fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
         write!(
             formatter,
-            "a {PRIVATE_KEY_LENGTH}-byte MLKEM1024-P384 private key seed"
+            "a {COMPOSITE_NIST_LEVEL_5_PRIVATE_KEY_LENGTH}-byte MLKEM1024-P384 private key seed"
         )
     }
 
@@ -233,7 +234,7 @@ impl Visitor<'_> for MlKem1024P384PrivateKeyVisitor {
     {
         let seed = Zeroizing::new(value.try_into().map_err(|_| {
             E::custom(format!(
-                "MLKEM1024-P384 private key has length {}, expected {PRIVATE_KEY_LENGTH}",
+                "MLKEM1024-P384 private key has length {}, expected {COMPOSITE_NIST_LEVEL_5_PRIVATE_KEY_LENGTH}",
                 value.len()
             ))
         })?);
@@ -251,22 +252,37 @@ pub enum MlKem1024P384PrivateKeyVersions {
     V0(MlKem1024P384PrivateKey),
 }
 
-/// Generate a fresh MLKEM1024-P384 key pair.
-pub(crate) fn keygen(
-    rng: &mut (impl CryptoRng + RngCore),
+/// Derive an MLKEM1024-P384 key pair from a seed.
+///
+/// The seed *is* the private key, so a caller deriving a key deterministically (from a BIP-39
+/// mnemonic, say) should reach the key pair through here rather than seeding an intermediate RNG,
+/// which would cap the reachable key space at that RNG's own seed width.
+pub(crate) fn keygen_from_seed(
+    seed: &[u8; COMPOSITE_NIST_LEVEL_5_PRIVATE_KEY_LENGTH],
 ) -> Result<(MlKem1024P384PrivateKey, MlKem1024P384PublicKey), CryptographyError> {
-    let mut seed = Zeroizing::new([0_u8; PRIVATE_KEY_LENGTH]);
-    rng.fill_bytes(&mut *seed);
-    // This seed is fresh CSPRNG output, so key generation does not pre-validate its P-384 scalar.
-    // `rust-hpke` panics if its single candidate is rejected. This event has probability below 2^-192:
+    // `rust-hpke` panics instead of erroring when its single P-384 scalar candidate is rejected,
+    // so screen the seed before handing it over. The rejection has probability below 2^-192 for a
+    // uniformly random seed:
     // <https://www.ietf.org/archive/id/draft-irtf-cfrg-concrete-hybrid-kems-03.html#section-3.1.1>.
-    let hpke_private_key = HpkePrivateKey::from_bytes(&*seed)
+    // A caller that derives its seed deterministically cannot draw a fresh one, so the rejection
+    // has to reach it as an error.
+    validate_private_key_seed(seed)?;
+    let hpke_private_key = HpkePrivateKey::from_bytes(seed)
         .map_err(|error| map_hpke_error("MLKEM1024-P384 private key", error))?;
     let public_key = MlKem1024P384PublicKey {
         key: HpkeMlKem1024P384::sk_to_pk(&hpke_private_key),
     };
 
     Ok((MlKem1024P384PrivateKey(*seed), public_key))
+}
+
+/// Generate a fresh MLKEM1024-P384 key pair.
+pub(crate) fn keygen(
+    rng: &mut (impl CryptoRng + RngCore),
+) -> Result<(MlKem1024P384PrivateKey, MlKem1024P384PublicKey), CryptographyError> {
+    let mut seed = Zeroizing::new([0_u8; COMPOSITE_NIST_LEVEL_5_PRIVATE_KEY_LENGTH]);
+    rng.fill_bytes(&mut *seed);
+    keygen_from_seed(&seed)
 }
 
 /// Encapsulate a shared secret to an MLKEM1024-P384 public key.
@@ -316,7 +332,9 @@ pub(crate) fn decapsulate(
 
 /// Validate the P-384 scalar derived by rust-hpke before calling its expansion
 /// routine, which panics when rejection sampling exhausts its single attempt.
-fn validate_private_key_seed(seed: &[u8; PRIVATE_KEY_LENGTH]) -> Result<(), CryptographyError> {
+fn validate_private_key_seed(
+    seed: &[u8; COMPOSITE_NIST_LEVEL_5_PRIVATE_KEY_LENGTH],
+) -> Result<(), CryptographyError> {
     let mut expanded_seed = Zeroizing::new([0_u8; EXPANDED_SEED_LENGTH]);
     let mut xof = Shake256::default();
     xof.update(seed);
@@ -372,7 +390,10 @@ mod tests {
         let receiver_secret = decapsulate(&ciphertext, &private_key).unwrap();
 
         assert_eq!(public_key.to_bytes().len(), PUBLIC_KEY_LENGTH);
-        assert_eq!(private_key.0.len(), PRIVATE_KEY_LENGTH);
+        assert_eq!(
+            private_key.0.len(),
+            COMPOSITE_NIST_LEVEL_5_PRIVATE_KEY_LENGTH
+        );
         assert_eq!(ciphertext.len(), CIPHERTEXT_LENGTH);
         assert_eq!(*sender_secret, *receiver_secret);
     }
@@ -402,7 +423,7 @@ mod tests {
         // the scalar the guard inspects, derive its public key, and check that it is the P-384 half
         // of the public key hpke derived from the same seed. Boundary values alone would not catch
         // the guard drifting onto the wrong slice of the expanded seed.
-        let seed = [7_u8; PRIVATE_KEY_LENGTH];
+        let seed = [7_u8; COMPOSITE_NIST_LEVEL_5_PRIVATE_KEY_LENGTH];
         let hpke_public_key = MlKem1024P384PublicKey {
             key: HpkeMlKem1024P384::sk_to_pk(&HpkePrivateKey::from_bytes(&seed).unwrap()),
         };
@@ -428,7 +449,10 @@ mod tests {
 
         let private_bytes = bc2wrap::serialize(&private_key).unwrap();
         let public_bytes = bc2wrap::serialize(&public_key).unwrap();
-        assert_eq!(private_bytes.len(), PRIVATE_KEY_LENGTH + 8);
+        assert_eq!(
+            private_bytes.len(),
+            COMPOSITE_NIST_LEVEL_5_PRIVATE_KEY_LENGTH + 8
+        );
         assert_eq!(public_bytes.len(), PUBLIC_KEY_LENGTH + 8);
         // Keep fixed fingerprints for both key encodings so dependency upgrades cannot silently
         // change the serialized representation.
@@ -514,7 +538,7 @@ mod tests {
 
     #[test]
     fn a_wrong_length_private_key_seed_is_rejected() {
-        let short_seed = vec![0_u8; PRIVATE_KEY_LENGTH - 1];
+        let short_seed = vec![0_u8; COMPOSITE_NIST_LEVEL_5_PRIVATE_KEY_LENGTH - 1];
         let bytes = bc2wrap::serialize(&short_seed).unwrap();
         assert!(bc2wrap::deserialize_slice::<MlKem1024P384PrivateKey>(&bytes).is_err());
     }

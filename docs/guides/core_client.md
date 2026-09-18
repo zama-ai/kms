@@ -222,7 +222,7 @@ path = "./backup_vault"
 #### Setup
 
 For the custodian backup approach to work, and start doing backups, a custodian context first needs to be setup. To setup this, first a set of custodians must be selected. Each of this must complete an initialization step resulting in each of them holding a *seed phrase* and some public key material. 
-The key material of each custodian must then be communicated with operators (which happens during custodian context construction). Once this is done, the operators will automatically backup private key material in a secret-shared manner, signcrypted under the custodians' public keys.
+The key material of each custodian must then be communicated with operators (which happens during custodian context construction). Once this is done, the operators will automatically backup private key material in a secret-shared manner, signcrypted under the custodians' MLKEM1024-P384 public keys.
 More specifically the following steps must be done:
 
 1. Set up custodians.
@@ -350,9 +350,9 @@ To further make this a manual test, make sure a [key is generated](#Key-generati
 4. Custodians do partial decryption.
   Each custodian decrypts the base64 recovery request from step 3 and prints a base64 recovery output (prefixed with `The custodian recovery output is: `). The recovery request already carries the operator's verification key, so it no longer needs to be supplied separately. Execute the following in the root of the KMS project, replacing the seed phrases with the ones from step 1 and `<recovery request>` with the base64 string from step 3:
   ```{bash}
-  cargo run --bin kms-custodian decrypt --seed-phrase "prosper wool oak moon light situate end palm sick monster clever solid" --randomness 123 --custodian-role 1 --recovery-request "<operator recovery request>"
-  cargo run --bin kms-custodian decrypt --seed-phrase "swallow around patrol toe bottom very pulse habit boy couch guide vendor" --randomness 123 --custodian-role 2 --recovery-request "<operator recovery request>"
-  cargo run --bin kms-custodian decrypt --seed-phrase "two often advance excite shiver speed vessel melt panther fiction giraffe voyage" --randomness 123 --custodian-role 3 --recovery-request "<operator recovery request>"
+  cargo run --bin kms-custodian decrypt --seed-phrase "bonus shaft long pony ramp often sight throw snack profit shock violin erosion obtain venue purchase minute inquiry sausage idea cinnamon kiwi own essence" --randomness 123 --custodian-role 1 --recovery-request "<operator recovery request>"
+  cargo run --bin kms-custodian decrypt --seed-phrase "pitch similar street card daughter cabin high off obvious grab duck deputy again verb obscure major exchange travel law grid wave asthma poverty panel" --randomness 123 --custodian-role 2 --recovery-request "<operator recovery request>"
+  cargo run --bin kms-custodian decrypt --seed-phrase "hazard you grow arena tail victory pretty rival roast august rifle useless chalk skin actress scan cereal remind super obey client entry relax fiber" --randomness 123 --custodian-role 3 --recovery-request "<operator recovery request>"
   ```
 5. KMS node recovers the backup decryption key.
   Execute the following from `core-client`, replacing the ID following `-i` with the custodian-context ID from step 3 and each `<custodian recovery output>` with a base64 output from step 4 (at least `t + 1` of them):
@@ -758,7 +758,26 @@ To retrieve the operator public keys from the KMS cores:
 $ cargo run --bin kms-core-client -- -f <path-to-toml-config-file> get-operator-public-key
 ```
 
-This prints the public key for each configured core.
+This prints the operator's backup encryption key (MLKEM1024-P384) for each configured core, after
+checking it against the AWS Nitro attestation document each core returns.
+
+The attestation document carries a **digest** of the key, `SHAKE256("ATTESTPK" ‖ key)`, not the key
+itself: the composite key exceeds the 1024-byte `public_key` field of a Nitro attestation document.
+The command hashes the returned key and compares.
+
+Be precise about what that check establishes. The NSM signs opaque bytes alongside the enclave's PCR
+measurements, so a valid document proves only that *software measuring to those PCRs emitted this
+digest*. It is not a proof of possession — the NSM never sees a private key, and a KEM key cannot
+self-sign — and it is not evidence that the key is the correct one. The key's integrity comes from
+elsewhere: it travels inside operator-signed `RecoveryValidationMaterial`, which each node validates
+against its own signing key at boot before installing it. A key that is wrong but validly signed is
+attested just as faithfully.
+
+Note also that the document's nonce is chosen by the enclave rather than by the caller, and AWS
+permits attestation reuse, so the document offers no freshness guarantee.
+
+Cores with no security module configured return an empty attestation document, which this command
+rejects; it only works against enclave-backed deployments.
 
 ## Example Commands
 

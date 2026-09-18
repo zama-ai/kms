@@ -70,8 +70,8 @@ impl TryFrom<CustodianRecoveryOutput> for InternalCustodianRecoveryOutput {
         Ok(InternalCustodianRecoveryOutput {
             signcryption: UnifiedSigncryption::new(
                 backup_output.signcryption.clone(),
-                backup_output.pke_type().into(),
-                backup_output.signing_type().into(),
+                backup_output.pke_type.try_into()?,
+                backup_output.signing_type.try_into()?,
             ),
             custodian_role: Role::indexed_from_one(value.custodian_role as usize),
         })
@@ -327,12 +327,14 @@ pub struct Custodian {
 /// The custodian is the entity can sign and decrypt messages,
 /// which are usually secret shares that are needed for recovery.
 /// Since the secrets should be kept safe for a long time, the
-/// public key encryption scheme should be post quantum.
+/// public key encryption scheme is post quantum: MLKEM1024-P384, the composite of ML-KEM-1024 and
+/// P-384 (see [`crate::backup::BACKUP_PKE_SCHEME`]). Both keys are derived from the custodian's
+/// BIP-39 seed phrase by [`crate::backup::seed_phrase::custodian_from_seed_phrase`].
 ///
 /// The signing key is stored on AWS KMS
 ///
 /// For decryption, there are two keys, the RSA OAEP decryption
-/// is stored on AWS KMS, the ML-KEM decryption key is stored on
+/// is stored on AWS KMS, the post-quantum decryption key is stored on
 /// AWS Secret Manager because post quantum algorithms are not
 /// supported on AWS KMS at the moment.
 impl Custodian {
@@ -510,8 +512,9 @@ impl Custodian {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::backup::BACKUP_PKE_SCHEME;
     use crate::cryptography::{
-        encryption::{Encryption, PkeScheme, PkeSchemeType},
+        encryption::{Encryption, PkeScheme},
         signatures::gen_sig_keys,
     };
     use aes_prng::AesRng;
@@ -520,7 +523,7 @@ mod tests {
     #[test]
     fn internal_custodian_context_zero_role_should_fail() {
         let mut rng = AesRng::seed_from_u64(40);
-        let mut enc = Encryption::new(PkeSchemeType::MlKem512, &mut rng);
+        let mut enc = Encryption::new(BACKUP_PKE_SCHEME, &mut rng);
         let (_, backup_pk) = enc.keygen().unwrap();
         let setup_msg1 = CustodianSetupMessage {
             custodian_role: 0, // Invalid role
@@ -555,7 +558,7 @@ mod tests {
     #[test]
     fn invalid_threshold_should_fail() {
         let mut rng = AesRng::seed_from_u64(40);
-        let mut enc = Encryption::new(PkeSchemeType::MlKem512, &mut rng);
+        let mut enc = Encryption::new(BACKUP_PKE_SCHEME, &mut rng);
         let (_, backup_pk) = enc.keygen().unwrap();
         let setup_msg1 = CustodianSetupMessage {
             custodian_role: 1,
@@ -586,7 +589,7 @@ mod tests {
     #[test]
     fn internal_custodian_context_duplicate_role_should_fail() {
         let mut rng = AesRng::seed_from_u64(40);
-        let mut enc = Encryption::new(PkeSchemeType::MlKem512, &mut rng);
+        let mut enc = Encryption::new(BACKUP_PKE_SCHEME, &mut rng);
         let (_, backup_pk) = enc.keygen().unwrap();
         let (_, payload_pk) = enc.keygen().unwrap();
         let (payload_verf_key, _) = gen_sig_keys(&mut rng);
@@ -634,13 +637,13 @@ mod tests {
     fn internal_custodian_context_duplicate_cryptographic_identity_should_fail() {
         let mut rng = AesRng::seed_from_u64(41);
         let (_, backup_pk) = {
-            let mut enc = Encryption::new(PkeSchemeType::MlKem512, &mut rng);
+            let mut enc = Encryption::new(BACKUP_PKE_SCHEME, &mut rng);
             enc.keygen().unwrap()
         };
         let mut setup_messages = Vec::new();
         for role in 1..=3 {
             let (_, public_enc_key) = {
-                let mut enc = Encryption::new(PkeSchemeType::MlKem512, &mut rng);
+                let mut enc = Encryption::new(BACKUP_PKE_SCHEME, &mut rng);
                 enc.keygen().unwrap()
             };
             let (public_verf_key, _) = gen_sig_keys(&mut rng);
@@ -691,7 +694,7 @@ mod tests {
     #[test]
     fn internal_custodian_context_role_greater_than_nodes_should_fail() {
         let mut rng = AesRng::seed_from_u64(40);
-        let mut enc = Encryption::new(PkeSchemeType::MlKem512, &mut rng);
+        let mut enc = Encryption::new(BACKUP_PKE_SCHEME, &mut rng);
         let (_, backup_pk) = enc.keygen().unwrap();
         let setup_msg1 = CustodianSetupMessage {
             custodian_role: 5, // Greater than number of nodes

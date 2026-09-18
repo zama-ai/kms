@@ -11,6 +11,7 @@ use kms_0_15_0::backup::custodian::{
     Custodian, CustodianContextAnchor, CustodianSetupMessagePayload, InternalCustodianContext,
 };
 use kms_0_15_0::backup::{
+    BACKUP_PKE_SCHEME,
     custodian::{InternalCustodianRecoveryOutput, InternalCustodianSetupMessage},
     operator::{
         BackupMaterial, InnerOperatorBackupOutput, InternalRecoveryRequest, Operator,
@@ -619,7 +620,6 @@ const INTERNAL_RECOVERY_REQUEST_TEST: InternalRecoveryRequestTest = InternalReco
 // KMS test
 const INTERNAL_CUS_CONTEXT_TEST: InternalCustodianContextTest = InternalCustodianContextTest {
     test_filename: Cow::Borrowed("internal_cus_context"),
-    internal_cus_setup_filename: Cow::Borrowed("internal_cus_setup_handle"),
     unified_enc_key_filename: Cow::Borrowed("unified_enc_key_handle"),
     state: 300,
     custodian_count: 5,
@@ -1147,7 +1147,7 @@ impl KmsV0_15_0 {
                 kem_ct: kem_ct.to_vec(),
                 payload_ct: payload_ct.to_vec(),
             },
-            pke_type: PkeSchemeType::MlKem512,
+            pke_type: BACKUP_PKE_SCHEME,
         };
         store_versioned_auxiliary!(
             &ciphertext,
@@ -1204,7 +1204,7 @@ impl KmsV0_15_0 {
         );
         let cipher = UnifiedCipher {
             cipher: kem,
-            pke_type: PkeSchemeType::MlKem512,
+            pke_type: BACKUP_PKE_SCHEME,
         };
 
         store_versioned_test!(&cipher, dir, &UNIFIED_CIPHER_TEST.test_filename);
@@ -1420,7 +1420,7 @@ impl KmsV0_15_0 {
             let cts_out = InnerOperatorBackupOutput {
                 signcryption: UnifiedSigncryption {
                     payload: payload.to_vec(),
-                    pke_type: PkeSchemeType::MlKem512,
+                    pke_type: BACKUP_PKE_SCHEME,
                     signing_type: SigningSchemeType::Ecdsa256k1,
                 },
             };
@@ -1430,11 +1430,11 @@ impl KmsV0_15_0 {
         // Dummy payload; but needs to be a properly serialized payload
         // This must be generated after the commitment stuff, since the test will regenerate the commitment stuff,
         // but read the custodian context from disk
-        let mut outer_encryption = Encryption::new(PkeSchemeType::MlKem512, &mut rng);
+        let mut outer_encryption = Encryption::new(BACKUP_PKE_SCHEME, &mut rng);
         let (_dec_key, outer_enc_key) = outer_encryption.keygen().unwrap();
         let mut custodian_nodes = Vec::new();
         for role_j in 1..=RECOVERY_MATERIAL_TEST.custodian_count {
-            let mut encryption = Encryption::new(PkeSchemeType::MlKem512, &mut rng);
+            let mut encryption = Encryption::new(BACKUP_PKE_SCHEME, &mut rng);
             let (_dec_key, enc_key) = encryption.keygen().unwrap();
             let (cus_pk, _) = gen_sig_keys(&mut rng);
             let payload = CustodianSetupMessagePayload {
@@ -1484,7 +1484,7 @@ impl KmsV0_15_0 {
 
     fn gen_internal_recovery_request(dir: &PathBuf) -> TestMetadataKMS {
         let mut rng = AesRng::seed_from_u64(INTERNAL_RECOVERY_REQUEST_TEST.state);
-        let mut encryption = Encryption::new(PkeSchemeType::MlKem512, &mut rng);
+        let mut encryption = Encryption::new(BACKUP_PKE_SCHEME, &mut rng);
         let (_dec_key, enc_key) = encryption.keygen().unwrap();
         let (operator_verf_key, _operator_sig_key) = gen_sig_keys(&mut rng);
         let mut cts = BTreeMap::new();
@@ -1494,7 +1494,7 @@ impl KmsV0_15_0 {
             rng.fill_bytes(&mut payload);
             let signcryption = UnifiedSigncryption {
                 payload: payload.to_vec(),
-                pke_type: PkeSchemeType::MlKem512,
+                pke_type: BACKUP_PKE_SCHEME,
                 signing_type: SigningSchemeType::Ecdsa256k1,
             };
             cts.insert(cur_role, InnerOperatorBackupOutput { signcryption });
@@ -1516,7 +1516,7 @@ impl KmsV0_15_0 {
         for role_j in 1..=INTERNAL_CUS_CONTEXT_TEST.custodian_count {
             let cus_role = Role::indexed_from_one(role_j);
             let (custodian_verf_key, _) = gen_sig_keys(&mut rng);
-            let mut encryption = Encryption::new(PkeSchemeType::MlKem512, &mut rng);
+            let mut encryption = Encryption::new(BACKUP_PKE_SCHEME, &mut rng);
             let (_, cus_enc_key) = encryption.keygen().unwrap();
             let mut rnd = [0_u8; 32];
             rng.fill_bytes(&mut rnd);
@@ -1533,7 +1533,7 @@ impl KmsV0_15_0 {
         }
         // Generate the extra encryption key last since it will be loaded from file and
         // thus we should avoid using the RNG for the things that it will be used to generate in the test
-        let mut encryption = Encryption::new(PkeSchemeType::MlKem512, &mut rng);
+        let mut encryption = Encryption::new(BACKUP_PKE_SCHEME, &mut rng);
         let (_, cus_enc_key) = encryption.keygen().unwrap();
         let internal_cus_context = InternalCustodianContext {
             threshold: 1,
@@ -1732,7 +1732,7 @@ impl KmsV0_15_0 {
     fn gen_internal_cus_setup_msg(dir: &PathBuf) -> TestMetadataKMS {
         let mut rng = AesRng::seed_from_u64(INTERNAL_CUS_SETUP_MSG_TEST.state);
         let (_verification_key, signing_key) = gen_sig_keys(&mut rng);
-        let mut encryption = Encryption::new(PkeSchemeType::MlKem512, &mut rng);
+        let mut encryption = Encryption::new(BACKUP_PKE_SCHEME, &mut rng);
         let (private_key, public_key) = encryption.keygen().unwrap();
         let custodian = Custodian::new(
             Role::indexed_from_one(1),
@@ -1760,7 +1760,7 @@ impl KmsV0_15_0 {
         rng.fill_bytes(&mut buf);
         let signcryption = UnifiedSigncryption {
             payload: buf.to_vec(),
-            pke_type: PkeSchemeType::MlKem512,
+            pke_type: BACKUP_PKE_SCHEME,
             signing_type: SigningSchemeType::Ecdsa256k1,
         };
         let icro = InternalCustodianRecoveryOutput {
@@ -1777,7 +1777,7 @@ impl KmsV0_15_0 {
         let custodians: Vec<_> = (1..=OPERATOR_BACKUP_OUTPUT_TEST.custodian_count)
             .map(|i| {
                 let (_verification_key, signing_key) = gen_sig_keys(&mut rng);
-                let mut encryption = Encryption::new(PkeSchemeType::MlKem512, &mut rng);
+                let mut encryption = Encryption::new(BACKUP_PKE_SCHEME, &mut rng);
                 let (private_key, public_key) = encryption.keygen().unwrap();
                 Custodian::new(
                     Role::indexed_from_one(i),
