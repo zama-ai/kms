@@ -167,7 +167,7 @@ async fn destroy_epoch(
 /// Requires all four parties to delete `epoch_id`.
 ///
 /// Panics on failure.
-pub(super) async fn assert_destroy_success(
+pub(super) async fn destroy_epochs_and_assert_success(
     clients: &HashMap<u32, CoreServiceEndpointClient<Channel>>,
     epoch_id: EpochId,
 ) {

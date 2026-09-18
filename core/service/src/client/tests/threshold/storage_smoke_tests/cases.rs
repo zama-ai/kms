@@ -1,8 +1,9 @@
 //! Four-party file-storage checks for epoch deletion and restart.
 
 use super::support::{
-    PARTY_COUNT, assert_destroy_error, assert_destroy_success, assert_epoch_delete_delta,
-    assert_restart_state, create_prss_epoch, seed_fhe_storage_layout, threshold_storage_state,
+    PARTY_COUNT, assert_destroy_error, assert_epoch_delete_delta, assert_restart_state,
+    create_prss_epoch, destroy_epochs_and_assert_success, seed_fhe_storage_layout,
+    threshold_storage_state,
 };
 use crate::consts::{DEFAULT_EPOCH_ID, DEFAULT_MPC_CONTEXT, TEST_PARAM};
 use crate::engine::base::derive_request_id;
@@ -47,7 +48,7 @@ async fn epoch_destruction_changes_only_the_target_epoch_on_disk() {
     seed_fhe_storage_layout(&material_path, second_epoch).await;
 
     let before_successful_delete = threshold_storage_state(&material_path);
-    assert_destroy_success(&env.clients, second_epoch).await;
+    destroy_epochs_and_assert_success(&env.clients, second_epoch).await;
     let after_successful_delete = threshold_storage_state(&material_path);
     assert_epoch_delete_delta(
         &before_successful_delete,
