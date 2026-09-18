@@ -486,7 +486,7 @@ async fn partially_completed_crs_migration_is_retryable() {
         request_id("partial_crs_migration_first"),
         request_id("partial_crs_migration_second"),
     ];
-    crs_ids.sort_by(|left, right| left.as_bytes().cmp(right.as_bytes()));
+    crs_ids.sort();
     let [first_id, second_id] = crs_ids;
     for crs_id in crs_ids {
         storage
