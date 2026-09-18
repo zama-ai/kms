@@ -12,7 +12,7 @@ Read the [trust model of the KMS core](docs/explanations/trust_model.md) before 
 
 - The KMS core has two gRPC interfaces. The core-to-core interface talks to other KMS cores over mutual TLS, accepts only an allowlisted set of peers, and in enclave deployments also checks the PCR values of the peer release. The service interface is called by the KMS connector to start operations.
 - The service interface has no authentication, authorization or input sanitization in the code. The deployment ensures that exactly one KMS connector, run by the same operator as the core, can reach it, and that it is never publicly reachable. Reports that require an attacker to reach the service interface are out of scope.
-- ACL checks happen in the KMS connector. Request IDs are assigned by the gateway contracts, and a core rejects an ID it has already seen.
+- ACL checks happen in the KMS connector. Request IDs are assigned by the gateway contracts, which bind each ID to its ciphertexts. A core tracks every ID it has accepted: key generation, CRS generation and context management reject a known ID; decryption retries a known ID only if the earlier attempt failed, and the synchronous decryption endpoints return the result of the earlier attempt. Retrying a decryption under a known ID is by design, because the ID carries the same ciphertexts.
 
 In scope: a bypass of peer authentication or attestation, a malicious peer that breaks confidentiality or correctness within the threshold bound, leaked secrets, and incorrect cryptography.
 

@@ -40,12 +40,26 @@ Validation of a request is split over the components of the protocol stack. The 
 | --- | --- |
 | A ciphertext handle is allowed for public or user decryption (ACL) | KMS connector, against the gateway ACL contract, before it forwards the request |
 | A request originates from the gateway contracts | KMS connector, which only forwards events that the gateway contracts emit |
-| A request ID is unique | Gateway contracts assign the IDs; a KMS core also rejects an ID it has already seen with `AlreadyExists` |
+| A request ID is not reused for different work | Gateway contracts assign the IDs and bind each ID to its ciphertexts; a KMS core tracks every ID in its meta store, see [Request IDs and replay](#request-ids-and-replay) |
 | A ciphertext is well formed | Input proofs on the gateway and the coprocessor, before a ciphertext exists on chain |
 | A user decryption request is authorized by the user | KMS core, EIP-712 signature verification |
 | A peer is a legitimate KMS core that runs an allowlisted release | KMS core, mutual TLS and attestation on the core-to-core interface |
 | A malicious peer cannot learn the key or corrupt a result | KMS core, the MPC protocol (see [Noah's Ark](https://eprint.iacr.org/2023/815)) |
 | Stored material is consistent and untampered | KMS core, boot-time storage verification |
+
+### Request IDs and replay
+
+Every operation is keyed by a request ID that the caller supplies. The gateway contracts assign these IDs from a counter and store the ciphertext handles or the user decryption payload under the ID. The KMS connector forwards the request with that ID and, on a retry, sends the same payload again. A request ID therefore names one fixed piece of work. The KMS core relies on this binding: if it sees a known request ID again, it assumes the request carries the same ciphertexts as before. The core does not compare the payload with the first attempt; the gateway contracts and the connector enforce the binding outside the core.
+
+Inside the core, a meta store per operation type records every request ID it has accepted, together with the state of the work: pending, done with a result, done with an error, or deleted. In the threshold KMS the MPC session IDs are derived from the request ID, so the meta store also stops a second MPC session from running under a session ID that an accepted request already used. The meta store keeps completed entries until it runs out of capacity, and it never evicts a pending entry.
+
+What the core does with a known request ID depends on the endpoint:
+
+- **Key generation, preprocessing, CRS generation, context and epoch management** reject a known ID with `AlreadyExists`, whatever the state of the earlier attempt. Key and CRS generation also reject an ID for which material already exists in storage.
+- **Public and user decryption** (`PublicDecrypt`, `UserDecrypt`) reject a known ID whose earlier attempt is pending, succeeded or deleted with `AlreadyExists`. If the earlier attempt failed, the core resets the entry and runs the decryption again. This is safe because the retried ID carries the same ciphertexts, so the second run produces the same plaintext, and the first run produced nothing.
+- **Synchronous decryption** (`PublicDecryptSync`, `UserDecryptSync`) treats a known ID as a request to attach: it returns the stored result, waits for the pending attempt, or retries a failed attempt, instead of returning `AlreadyExists`.
+
+A report that a decryption request ID can be "replayed" therefore describes this design. Decrypting the same ciphertexts twice under the same ID reveals nothing new. A report that a known ID can be reused for different ciphertexts must show a path around the gateway contracts and the connector, which is outside the KMS core.
 
 ## Scope of a security report
 
