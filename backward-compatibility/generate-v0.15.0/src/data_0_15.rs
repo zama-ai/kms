@@ -20,7 +20,10 @@ use kms_0_15_0::backup::{
 };
 use kms_0_15_0::consts::SAFE_SER_SIZE_LIMIT;
 use kms_0_15_0::cryptography::{
-    encryption::{Encryption, PkeScheme, PkeSchemeType, UnifiedCipher},
+    encryption::{
+        Encryption, PkeScheme, PkeSchemeType, UnifiedCipher, UnifiedPrivateEncKey,
+        UnifiedPublicEncKey,
+    },
     hybrid_ml_kem::HybridKemCt,
     signatures::{
         compute_eip712_signature, gen_sig_keys, NodeSigningIdentity, RootSigningSeed,
@@ -105,16 +108,17 @@ use backward_compatibility::{
     Eip712DomainTest, EpochDataTest, HybridKemCtTest, InternalCustodianContextTest,
     InternalCustodianRecoveryOutputTest, InternalCustodianSetupMessageTest,
     InternalRecoveryRequestTest, KeyGenMetadataTest, KeyGenMetadataWithExtraDataTest,
-    KeygenSignedPayloadTest, KmsFheKeyHandlesTest, NodeInfoTest, OperatorBackupOutputTest,
-    PRSSSetupTest, PrepKeygenSignedPayloadTest, PrfKeyTest, PrivDataTypeTest, PrivateSigKeyTest,
-    PrssSetTest, PrssSetupCombinedTest, PubDataTypeTest, PublicDecSignedPayloadTest,
-    PublicSigKeyTest, RecoveryValidationMaterialTest, ReleasePCRValuesTest, RootSigningSeedTest,
-    SchemeDigestsTest, ShareTest, SigncryptionPayloadTest, SignedPubDataHandleInternalTest,
-    SoftwareVersionTest, StoredEip712DomainTest, StoredTypedSignatureTest, TestMetadataDD,
-    TestMetadataKMS, TestMetadataKmsGrpc, ThresholdFheKeysTest, TypedPlaintextTest,
-    UnifiedCipherTest, UnifiedPublicSigKeyTest, UnifiedSigncryptionKeyTest,
-    UnifiedSigncryptionTest, UnifiedUnsigncryptionKeyTest, UserDecSignedPayloadTest,
-    DISTRIBUTED_DECRYPTION_MODULE_NAME, KMS_GRPC_MODULE_NAME, KMS_MODULE_NAME,
+    KeygenSignedPayloadTest, KmsFheKeyHandlesTest, MlKem1024P384PrivateKeyTest,
+    MlKem1024P384PublicKeyTest, NodeInfoTest, OperatorBackupOutputTest, PRSSSetupTest,
+    PrepKeygenSignedPayloadTest, PrfKeyTest, PrivDataTypeTest, PrivateSigKeyTest, PrssSetTest,
+    PrssSetupCombinedTest, PubDataTypeTest, PublicDecSignedPayloadTest, PublicSigKeyTest,
+    RecoveryValidationMaterialTest, ReleasePCRValuesTest, RootSigningSeedTest, SchemeDigestsTest,
+    ShareTest, SigncryptionPayloadTest, SignedPubDataHandleInternalTest, SoftwareVersionTest,
+    StoredEip712DomainTest, StoredTypedSignatureTest, TestMetadataDD, TestMetadataKMS,
+    TestMetadataKmsGrpc, ThresholdFheKeysTest, TypedPlaintextTest, UnifiedCipherTest,
+    UnifiedPublicSigKeyTest, UnifiedSigncryptionKeyTest, UnifiedSigncryptionTest,
+    UnifiedUnsigncryptionKeyTest, UserDecSignedPayloadTest, DISTRIBUTED_DECRYPTION_MODULE_NAME,
+    KMS_GRPC_MODULE_NAME, KMS_MODULE_NAME,
 };
 use hashing_0_15_0::hash_versioned;
 use kms_0_15_0::cryptography::signcryption::SigncryptionPayload;
@@ -484,6 +488,16 @@ const SIGNCRYPTION_KEY_TEST: UnifiedSigncryptionKeyTest = UnifiedSigncryptionKey
 const UNSIGNCRYPTION_KEY_TEST: UnifiedUnsigncryptionKeyTest = UnifiedUnsigncryptionKeyTest {
     test_filename: Cow::Borrowed("designcryption_key"),
     state: 200,
+};
+
+const MLKEM1024_P384_PUBLIC_KEY_TEST: MlKem1024P384PublicKeyTest = MlKem1024P384PublicKeyTest {
+    test_filename: Cow::Borrowed("mlkem1024_p384_public_key"),
+    state: 384,
+};
+
+const MLKEM1024_P384_PRIVATE_KEY_TEST: MlKem1024P384PrivateKeyTest = MlKem1024P384PrivateKeyTest {
+    test_filename: Cow::Borrowed("mlkem1024_p384_private_key"),
+    state: 384,
 };
 
 // KMS test
@@ -1084,6 +1098,38 @@ impl KmsV0_15_0 {
         );
         store_versioned_test!(&signcrypt_key, dir, &UNSIGNCRYPTION_KEY_TEST.test_filename);
         TestMetadataKMS::UnifiedUnsigncryptionKeyOwned(UNSIGNCRYPTION_KEY_TEST)
+    }
+
+    fn gen_mlkem1024_p384_public_key(dir: &PathBuf) -> TestMetadataKMS {
+        let mut rng = AesRng::seed_from_u64(MLKEM1024_P384_PUBLIC_KEY_TEST.state);
+        let mut encryption = Encryption::new(PkeSchemeType::MlKem1024P384, &mut rng);
+        let (_, public_key) = encryption.keygen().unwrap();
+        let UnifiedPublicEncKey::MlKem1024P384(public_key) = public_key else {
+            panic!("MLKEM1024-P384 key generation returned the wrong public-key variant");
+        };
+        store_versioned_test!(
+            &public_key,
+            dir,
+            &MLKEM1024_P384_PUBLIC_KEY_TEST.test_filename
+        );
+
+        TestMetadataKMS::MlKem1024P384PublicKey(MLKEM1024_P384_PUBLIC_KEY_TEST)
+    }
+
+    fn gen_mlkem1024_p384_private_key(dir: &PathBuf) -> TestMetadataKMS {
+        let mut rng = AesRng::seed_from_u64(MLKEM1024_P384_PRIVATE_KEY_TEST.state);
+        let mut encryption = Encryption::new(PkeSchemeType::MlKem1024P384, &mut rng);
+        let (private_key, _) = encryption.keygen().unwrap();
+        let UnifiedPrivateEncKey::MlKem1024P384(private_key) = private_key else {
+            panic!("MLKEM1024-P384 key generation returned the wrong private-key variant");
+        };
+        store_versioned_test!(
+            &private_key,
+            dir,
+            &MLKEM1024_P384_PRIVATE_KEY_TEST.test_filename
+        );
+
+        TestMetadataKMS::MlKem1024P384PrivateKey(MLKEM1024_P384_PRIVATE_KEY_TEST)
     }
 
     fn gen_backup_ciphertext(dir: &PathBuf) -> TestMetadataKMS {
@@ -2130,6 +2176,8 @@ impl KMSCoreVersion for V0_15_0 {
             KmsV0_15_0::gen_signcryption_payload(&dir),
             KmsV0_15_0::gen_signcryption_key(&dir),
             KmsV0_15_0::gen_designcryption_key(&dir),
+            KmsV0_15_0::gen_mlkem1024_p384_public_key(&dir),
+            KmsV0_15_0::gen_mlkem1024_p384_private_key(&dir),
             KmsV0_15_0::gen_unified_signcryption(&dir),
             KmsV0_15_0::gen_backup_ciphertext(&dir),
             KmsV0_15_0::gen_unified_cipher(&dir),

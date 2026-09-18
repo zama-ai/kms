@@ -127,8 +127,11 @@ The service crate is the main surface area. Key subdirectories under
   of long-term signing / root keys, used for disaster recovery. See
   [Backup and recovery](#backup-and-recovery) below.
 - [cryptography/](../core/service/src/cryptography/) — AES-GCM-SIV, signcryption,
-  hybrid ML-KEM (post-quantum), and attestation (Nitro NSM + certificate
-  chain verification). Signing lives under
+  hybrid ML-KEM (post-quantum), MLKEM1024-P384 (a composite of post-quantum
+  ML-KEM-1024 and classical P-384), and attestation (Nitro NSM + certificate
+  chain verification). The MLKEM1024-P384 scheme is available through the
+  lower-level encryption and signcryption types. User decryption accepts
+  ML-KEM-512 only. Signing lives under
   [cryptography/signing/](../core/service/src/cryptography/signing/): a
   scheme-tagged `Signature` plus one backend per scheme — ECDSA/secp256k1
   (`ecdsa`, the legacy default and EIP-712 home), EdDSA/ed25519 (`eddsa`), and
@@ -425,6 +428,13 @@ The public half has no epoch. The private half has an epoch and contains one par
 Initial generation writes both halves through `CryptoMaterialStorage::write_all`. The method also
 accepts one-sided writes. Resharing writes only the private half for the new epoch and reuses the
 public half. A `ContextInfo` write stores one request-scoped private entry with no public half.
+
+Complete FHE key writes reject any public key, server key, or compressed keyset at the key ID,
+and any private entry at the requested epoch, before writing material. They cannot combine an old pair half with newly generated keys
+or cache private material that storage skipped. Resharing uses a separate private-only write path.
+
+Complete CRS writes likewise reject an existing public CRS or private `CrsInfo` at the requested
+epoch. Rejection leaves storage untouched and records a failed request in the meta store.
 
 Storage never overwrites an entry. If one requested half exists, storage keeps its bytes and writes
 the missing half. The caller must ensure that the two halves belong together. If either write

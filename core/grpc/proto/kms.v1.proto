@@ -754,8 +754,11 @@ message OperatorBackupOutput {
 }
 
 enum PkeSchemeType {
+  // WARNING: only append to this type. Keep values in lock-step with the
+  // `PkeSchemeType` enum in core/service/src/cryptography/encryption.rs.
   MLKEM512 = 0;
   MLKEM1024 = 1;
+  MLKEM1024_P384 = 2;
 }
 
 // A signing *suite*: the signature algorithm together, which will implicitely also define the serialization approach
