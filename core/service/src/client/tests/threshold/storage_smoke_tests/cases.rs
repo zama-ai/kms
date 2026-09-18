@@ -64,7 +64,6 @@ async fn epoch_destruction_changes_only_the_target_epoch_on_disk() {
     let (restarted_servers, restarted_clients) = ThresholdTestEnv::builder()
         .with_party_count(PARTY_COUNT)
         .with_threshold(1)
-        .with_prss()
         .from_path(&material_path)
         .await
         .unwrap();

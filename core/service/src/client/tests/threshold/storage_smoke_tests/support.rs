@@ -65,6 +65,15 @@ pub(super) async fn seed_fhe_storage_layout(material_path: &Path, target_epoch: 
         store_versioned_at_request_id(&mut storage, &key_id, &TestType { i: 1 }, &public_type)
             .await
             .unwrap();
+        let path = material_path
+            .join(prefix.as_deref().expect("threshold storage prefix is set"))
+            .join(&public_type)
+            .join(key_id.to_string());
+        assert!(
+            path.is_file(),
+            "missing public-key fixture: {}",
+            path.display()
+        );
     }
     for prefix in &PRIVATE_STORAGE_PREFIX_THRESHOLD_ALL[..PARTY_COUNT] {
         let mut storage =
@@ -78,6 +87,16 @@ pub(super) async fn seed_fhe_storage_layout(material_path: &Path, target_epoch: 
         )
         .await
         .unwrap();
+        let path = material_path
+            .join(prefix.as_deref().expect("threshold storage prefix is set"))
+            .join(&private_type)
+            .join(target_epoch.to_string())
+            .join(key_id.to_string());
+        assert!(
+            path.is_file(),
+            "missing FHE-share fixture: {}",
+            path.display()
+        );
     }
 }
 
