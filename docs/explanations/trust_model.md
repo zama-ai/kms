@@ -58,6 +58,8 @@ Every operation is keyed by a request ID that the caller supplies. The gateway c
 
 Inside the core, a meta store per operation type records every request ID it has accepted, together with the state of the work: pending, done with a result, done with an error, or deleted. In the threshold KMS the MPC session IDs are derived from the request ID, so the meta store also stops a second MPC session from running under a session ID that an accepted request already used. The meta store keeps completed entries until it runs out of capacity, and it never evicts a pending entry.
 
+The meta store lives in memory only. In this sense the KMS core is stateless: a reboot empties every meta store, and the core then accepts request IDs and session IDs it had processed before the reboot. The protection against a second run under a known ID is therefore lost on reboot. The KMS connector compensates for this. It keeps the state of every request in its own persistent database, marks a request as sent once the core has accepted it, and on a retry only polls for the result instead of submitting the request again. The connector thus ensures that a request is retried when needed and is not run more often than necessary, across reboots of the core.
+
 What the core does with a known request ID depends on the endpoint:
 
 - **Key generation, preprocessing, CRS generation, context and epoch management** reject a known ID with `AlreadyExists`, whatever the state of the earlier attempt. Key and CRS generation also reject an ID for which material already exists in storage.
