@@ -76,7 +76,7 @@ A report that a decryption request ID can be "replayed" therefore describes this
 
 The threat model assumes that at most `t` of the `n` parties are malicious. An attack that needs more than `t` malicious parties is out of scope. Every attack that works with at most `t` malicious parties is in scope.
 
-Issues in scope of the [security policy](../../SECURITY.md) include:
+Issues in scope of the [security policy](../../SECURITY.md) include for example:
 
 - A KMS core accepts a core-to-core connection from a certificate outside its peer set, or a peer whose PCR values are not in `trusted_releases`, or a message whose sender does not match the peer certificate.
 - Up to `t` malicious parties can learn key material or make an honest party output a wrong result.
