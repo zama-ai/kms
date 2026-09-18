@@ -23,23 +23,23 @@ The core-to-core interface is reachable by other KMS cores, which other operator
   A peer must match all three values of one entry in the list. When the deployment signs its enclave images (`eif_signing_cert` in `tls.auto`), the verifier also checks PCR8, the hash of the certificate that signed the image. Its reference value comes from the signing certificate bundled in the peer's TLS certificate, not from configuration.
 - **TLS is always on in production.** Every production deployment runs the core-to-core interface with mutual TLS enabled. A configuration without TLS requires the `insecure` cargo feature, which permits plaintext transport and mock attestation. That configuration is used only for debugging and testing, for example in the local docker-compose setup, and never in a production deployment.
 
-Authentication does not make a peer honest. The MPC protocol is maliciously secure: up to `t` of the `n` parties may misbehave, and the protocol still protects the secret key and produces correct results. The content of a message from an authenticated peer is therefore adversarial input, and the protocol code validates it. A bug that lets one authenticated peer break confidentiality or correctness is a real vulnerability.
+Authentication does not make a peer honest. The MPC protocol is maliciously secure: up to `t` of the `n` parties may be malicious, and the protocol still protects the secret key and produces correct results. The content of a message from an authenticated peer is therefore adversarial input, and the protocol code validates it. A bug that lets one authenticated peer break confidentiality or correctness is a real vulnerability.
 
 ## Service interface: one trusted caller
 
-The service interface accepts every well-formed gRPC message that reaches its socket. The code has no TLS, no client authentication and no authorization for this interface, and it is not designed to sanitize or verify the intent of a request. This is by design, because the deployment restricts who can reach the socket:
+The service interface accepts every well-formed gRPC message that reaches its socket. The code has no TLS, no client authentication and no authorization for this interface, and it does not verify the intent of a request. This is by design, because the deployment restricts who can reach the socket:
 
 - Exactly one KMS connector reaches the service interface. Deployments co-locate the connector with the core, or restrict the port with network policies and firewall rules. The [security best practices](../operations/advanced/security.md) and the [production deployment guide](../operations/production-deployment.md) describe these restrictions.
 - The service interface is never reachable from the public internet.
 - The same operator runs the KMS core and its KMS connector. By definition the two trust each other.
 
-A finding that requires an attacker to send messages to the service interface therefore describes a broken deployment, not a vulnerability in the KMS core. Examples of such non-findings: "any client can call `KeyGen` or `DestroyMpcContext`", "the endpoint has no authentication", "the connector can flood the endpoint with requests", or "input from the connector is not sanitized".
+A finding that requires an attacker to send messages to the service interface therefore describes a broken deployment, not a vulnerability in the KMS core. Examples of such non-findings: "any client can call `KeyGen` or `DestroyMpcContext`", "the endpoint has no authentication", "the connector can flood the endpoint with requests", or "requests from the connector are not authorized".
 
 The core still validates the shape of a request. It rejects a malformed request ID, unknown parameters or an inconsistent request with `InvalidArgument`. These checks protect against bugs in the caller. They are not a security boundary.
 
 ### Client-supplied values are untrusted
 
-The trust in the connector does not extend to every value inside a request. Some request fields originate from external clients of the protocol and reach the core unchanged through the gateway and the connector: ciphertexts and their handles, the public encryption key and the EIP-712 signature and domain of a user decryption request, and parameter selectors such as the FHE parameter set or the keyset configuration. The connector checks that a request is legitimate; it does not, and cannot, check that such a value is benign. The core must therefore process every client-supplied value that it uses as a parameter without a service outage and without a confidentiality break. A value that crashes a party, stalls it, makes it allocate without bound, or makes it reveal key material or another user's plaintext is a vulnerability in the KMS core, even though the request arrives over the trusted service interface. Reports with such findings are in scope.
+Trust in the connector does not extend to every value inside a request. Some request fields originate from external clients of the protocol and reach the core unchanged through the gateway and the connector: ciphertexts and their handles, the public encryption key and the EIP-712 signature and domain of a user decryption request, and parameter selectors such as the FHE parameter set or the keyset configuration. The connector checks that a request is legitimate; it cannot check that such a value is benign. The core must therefore process every client-supplied value that it uses as a parameter without a service outage and without a confidentiality break. A value that crashes a party, stalls it, makes it allocate without bound, or makes it reveal key material or another user's plaintext is a vulnerability in the KMS core, even though the request arrives over the trusted service interface. Such findings are in scope.
 
 ## Where validation happens
 
@@ -74,12 +74,12 @@ A report that a decryption request ID can be "replayed" therefore describes this
 
 ## Scope of a security report
 
-The threat model assumes that at most `t` of the `n` parties are malicious. Any attack that needs more than `t` corrupted parties is out of scope. Every attack that works with at most `t` corrupted parties is in scope.
+The threat model assumes that at most `t` of the `n` parties are malicious. An attack that needs more than `t` malicious parties is out of scope. Every attack that works with at most `t` malicious parties is in scope.
 
 Issues in scope of the [security policy](../../SECURITY.md) include:
 
 - A KMS core accepts a core-to-core connection from a certificate outside its peer set, or a peer whose PCR values are not in `trusted_releases`, or a message whose sender does not match the peer certificate.
-- At most `t` corrupted parties can learn key material or make an honest party output a wrong result.
+- Up to `t` malicious parties can learn key material or make an honest party output a wrong result.
 - A client-supplied value that the core processes as a parameter, such as a ciphertext, a user public key, an EIP-712 payload or a parameter selector, causes a service outage or a confidentiality break (see [Client-supplied values are untrusted](#client-supplied-values-are-untrusted)).
 - Key material or other secrets reach logs, public storage or the wire in plaintext.
 - Incorrect cryptography, incorrect signature verification, or a deviation from the specification.
@@ -87,9 +87,11 @@ Issues in scope of the [security policy](../../SECURITY.md) include:
 
 Issues out of scope:
 
-- Anything that requires more than `t` corrupted parties.
+- Anything that requires more than `t` malicious parties.
 - Anything that requires the attacker to reach the service interface.
-
-A report must be verifiable against the code. State the commit hash or release tag of this repository that you analyzed, and give the file path and line numbers of every code location the finding relies on, for example `core/service/src/util/meta_store.rs:1019-1030` at `v0.15.0`. A claim about behavior that does not point to the code that implements it is not accepted as a finding.
 - Missing authentication, authorization or rate limiting on the service interface, and any finding in which the connector itself is the attacker.
 - Behavior of the `insecure` cargo feature or of the local docker-compose setup.
+
+### What a report must contain
+
+A report must be verifiable against the code. State the commit hash or release tag of this repository that you analyzed, and give the file path and line numbers of every code location the finding relies on, for example `core/service/src/util/meta_store.rs:1019-1030` at `v0.15.0`. A claim about behavior that does not point to the code that implements it is not accepted as a finding.

@@ -9,7 +9,7 @@ import "kms.v1.proto";
 // is operated by the same party that runs the KMS core, and the deployment
 // ensures at the infrastructure level that no other client can reach this
 // service. It is never publicly reachable. The service therefore has no
-// authentication or authorization and does not sanitize the intent of a request;
+// authentication or authorization and does not verify the intent of a request;
 // it accepts every message it receives. MPC messages between KMS
 // cores do not use this service; they use the separate, mutually authenticated
 // core-to-core interface. More details in docs/explanations/trust_model.md.
