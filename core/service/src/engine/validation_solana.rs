@@ -6,7 +6,8 @@ use kms_grpc::{
 };
 
 /// What the adapter hands to the shared engine: the request's link, the recipient the result is
-/// sealed to, and the domain the response signature is produced under.
+/// sealed to, and the Gateway domain — the one the link was computed under and the one the
+/// response signature is produced under.
 type SolanaValidation = (Vec<u8>, PlaintextReceiver, alloy_sol_types::Eip712Domain);
 
 /// Builds the canonical binding for a Solana user-decryption request, or returns `Ok(None)` for a
@@ -15,8 +16,8 @@ type SolanaValidation = (Vec<u8>, PlaintextReceiver, alloy_sol_types::Eip712Doma
 /// The adapter is where host knowledge ends: it reads the request's Solana envelope, hands it to
 /// the checked binding, and returns bytes. Wallet signatures, PDAs, ACL/MMR evidence and
 /// delegation are all settled upstream, by the connector that verified the signed request;
-/// `extra_data` is the host-side metadata of that settled request, bound verbatim by the linker
-/// and never parsed here.
+/// `extra_data` is the host-side metadata of that settled request. It is not a link input and is
+/// never parsed here: the external response signature is what authenticates it, as on EVM.
 pub(super) fn validate_solana_request(
     req: &UserDecryptionRequest,
 ) -> Result<Option<SolanaValidation>, Box<dyn std::error::Error + Send + Sync>> {
@@ -45,6 +46,10 @@ pub(super) fn validate_solana_request(
         })?;
     require_mlkem512_transport_key(&transport_key)?;
 
+    // The Gateway `Decryption` domain the request carries: a required input of the link, and the
+    // domain the response signature is produced under. A request without one has no link.
+    let domain = optional_protobuf_to_alloy_domain(req.domain.as_ref())?;
+
     // The one construction, given the request's own bytes.
     let binding = SolanaUserDecryptBinding::new(
         verifying_program_id,
@@ -53,17 +58,14 @@ pub(super) fn validate_solana_request(
             .iter()
             .map(|ciphertext| ciphertext.external_handle.as_slice()),
         &req.enc_key,
-        &req.extra_data,
     )?;
-
-    let response_domain = optional_protobuf_to_alloy_domain(req.domain.as_ref())?;
 
     // Read back off the binding, not the request: a value that failed validation has no path to
     // signcryption.
     Ok(Some((
-        binding.compute_link(),
+        binding.compute_link(&domain),
         PlaintextReceiver::Solana(*binding.receiver_id()),
-        response_domain,
+        domain,
     )))
 }
 
