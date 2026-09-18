@@ -433,7 +433,8 @@ pub enum CurrentPublicMaterialLayout {
     Compressed,
 }
 
-/// Classify the supported current keygen metadata layouts.
+/// Classify the supported current keygen metadata layouts, i.e., whether it's
+/// compressed or uncompressed.
 pub(crate) fn classify_current_public_material(
     key_digest_map: &BTreeMap<PubDataType, Vec<u8>>,
 ) -> anyhow::Result<CurrentPublicMaterialLayout> {
