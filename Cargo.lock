@@ -4530,6 +4530,7 @@ dependencies = [
  "p384 0.14.0",
  "proptest",
  "rand 0.8.6",
+ "rand_chacha 0.3.1",
  "rand_core 0.10.1",
  "rasn",
  "rasn-cms",

@@ -81,6 +81,7 @@ observability = { workspace = true, optional = true }
 p384.workspace = true
 p384_hpke.workspace = true
 rand = { workspace = true, features = ["std", "std_rng"] }
+rand_chacha.workspace = true
 rand_core_0_10.workspace = true
 rasn-cms.workspace = true
 rasn.workspace = true

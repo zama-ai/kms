@@ -31,8 +31,10 @@ pub enum UnifiedPublicEncKeyVersions {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, Versionize)]
 #[versionize(UnifiedPublicEncKeyVersions)]
 pub enum UnifiedPublicEncKey {
+    /// The scheme user decryption uses, and the only one it accepts.
     MlKem512(PublicEncKey<ml_kem::MlKem512>),
-    /// LEGACY: Note that this should ONLY be used for legacy reasons, new code should use MlKem512.
+    /// LEGACY: Note that this should ONLY be used for legacy reasons, new code should use MlKem512
+    /// for user decryption or MlKem1024P384 for custodian backup.
     /// If used in current code, then take care to NOT use to_legacy_bytes or from_legacy_bytes on this variant
     /// as this will do bincode serialization instead of safe serialization.
     #[deprecated(
@@ -40,7 +42,8 @@ pub enum UnifiedPublicEncKey {
         note = "Use MlKem512 instead. MlKem1024 is only for legacy compatibility with relayer-sdk v0.2.0-0 and older."
     )]
     MlKem1024(PublicEncKey<ml_kem::MlKem1024>),
-    /// Composite post-quantum KEM combining ML-KEM-1024 and P-384.
+    /// Composite post-quantum KEM combining ML-KEM-1024 and P-384, used by custodian backup.
+    /// See [`crate::backup::BACKUP_PKE_SCHEME`].
     MlKem1024P384(MlKem1024P384PublicKey),
 }
 
@@ -65,7 +68,8 @@ impl HasPkeScheme for UnifiedPublicEncKey {
 }
 
 impl UnifiedPublicEncKey {
-    /// Expect the inner type to be the default MlKem512 and return it, otherwise panic
+    /// Expect the inner type to be MlKem512, the user-decryption scheme, and return it,
+    /// otherwise panic. Not for use on backup keys, which are MlKem1024P384.
     pub fn unwrap_ml_kem_512(self) -> PublicEncKey<ml_kem::MlKem512> {
         match self {
             UnifiedPublicEncKey::MlKem512(pk) => pk,
@@ -257,7 +261,9 @@ pub enum UnifiedPrivateEncKeyVersions {
 }
 
 /// # Current Usage
-/// - `user_decryption_wasm.rs`, `user_decryption_non_wasm.rs`, and custodian based backup (`core/service/src/backup`)
+/// - User decryption (`user_decryption_wasm.rs`, `user_decryption_non_wasm.rs`), always ML-KEM-512.
+/// - Custodian based backup (`core/service/src/backup`), always MLKEM1024-P384; see
+///   `backup::BACKUP_PKE_SCHEME`.
 /// - Lifetime: Lifetime of a custodian context
 /// - Scope: Lifetime of a backup (i.e. lifetime of a custodian context), but local to client application
 #[derive(Clone, Debug, Serialize, Deserialize, Zeroize, Versionize)]
@@ -309,7 +315,8 @@ impl From<&UnifiedPrivateEncKey> for PkeSchemeType {
 }
 
 impl UnifiedPrivateEncKey {
-    /// Expect the inner type to be the default MlKem512 and return it, otherwise panic
+    /// Expect the inner type to be MlKem512, the user-decryption scheme, and return it,
+    /// otherwise panic. Not for use on backup keys, which are MlKem1024P384.
     pub fn unwrap_ml_kem_512(self) -> PrivateEncKey<ml_kem::MlKem512> {
         match self {
             UnifiedPrivateEncKey::MlKem512(pk) => pk,
@@ -532,7 +539,8 @@ pub enum PkeSchemeType {
         note = "Use MlKem512 instead. MlKem1024 is only for legacy compatibility with relayer-sdk v0.2.0-0 and older."
     )]
     MlKem1024,
-    /// Composite post-quantum KEM combining ML-KEM-1024 and P-384.
+    /// Composite post-quantum KEM combining ML-KEM-1024 and P-384, used by custodian backup.
+    /// See `backup::BACKUP_PKE_SCHEME`.
     MlKem1024P384,
 }
 

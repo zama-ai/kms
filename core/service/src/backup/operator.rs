@@ -543,6 +543,10 @@ impl Operator {
             // 256 bits of pseudorandom values per shares.
             // There are shares.len() shares, each has 256 bits and 64 bits for the role
             // the extra 8 bytes is used by bincode to encode the length.
+            //
+            // This is a shape check, not an entropy floor. `bc2wrap` encodes integers at fixed
+            // width, so both sides are equal by construction at any secret size. The check
+            // therefore catches a change of encoding, not a short secret.
             let minimum_expected_length = shares.len() * (32 + 8) + 8;
             let actual_length = bc2wrap::serialize(&shares)?.len();
             if actual_length < minimum_expected_length {
@@ -915,11 +919,12 @@ fn validate_custodian_messages(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::backup::BACKUP_PKE_SCHEME;
     use crate::{
         backup::{custodian::CustodianSetupMessagePayload, operator::RecoveryValidationMaterial},
         consts::DEFAULT_MPC_CONTEXT,
         cryptography::{
-            encryption::{Encryption, PkeScheme, PkeSchemeType},
+            encryption::{Encryption, PkeScheme},
             signatures::{SigningSchemeType, gen_sig_keys},
         },
         engine::base::derive_request_id,
@@ -934,14 +939,14 @@ mod tests {
         let mut rng = AesRng::seed_from_u64(0);
         let (verf_key, sig_key) = gen_sig_keys(&mut rng);
         let (_dec_key, enc_key) = {
-            let mut encryption = Encryption::new(PkeSchemeType::MlKem512, &mut rng);
+            let mut encryption = Encryption::new(BACKUP_PKE_SCHEME, &mut rng);
             encryption.keygen().unwrap()
         };
         let backup_id = derive_request_id("test").unwrap();
         let mut custodian_nodes = Vec::new();
         for role in 1..=3 {
             let (_, custodian_enc_key) = {
-                let mut encryption = Encryption::new(PkeSchemeType::MlKem512, &mut rng);
+                let mut encryption = Encryption::new(BACKUP_PKE_SCHEME, &mut rng);
                 encryption.keygen().unwrap()
             };
             let (custodian_verf_key, _) = gen_sig_keys(&mut rng);
@@ -968,7 +973,7 @@ mod tests {
         let cts_out = InnerOperatorBackupOutput {
             signcryption: UnifiedSigncryption {
                 payload: vec![1, 2, 3],
-                pke_type: PkeSchemeType::MlKem512,
+                pke_type: BACKUP_PKE_SCHEME,
                 signing_type: SigningSchemeType::Ecdsa256k1,
             },
         };
@@ -1051,7 +1056,7 @@ mod tests {
     #[test]
     fn operator_new_fails_with_insufficient_messages() {
         let mut rng = AesRng::seed_from_u64(4);
-        let mut encryption = Encryption::new(PkeSchemeType::MlKem512, &mut rng);
+        let mut encryption = Encryption::new(BACKUP_PKE_SCHEME, &mut rng);
         let (_dec_key, enc_key) = encryption.keygen().unwrap();
         let (verf_key, _) = gen_sig_keys(&mut rng);
         let msg = valid_custodian_msg(Role::indexed_from_one(1), enc_key.clone(), verf_key.clone());
@@ -1069,7 +1074,7 @@ mod tests {
     #[test]
     fn operator_new_fails_with_invalid_header() {
         let mut rng = AesRng::seed_from_u64(5);
-        let mut encryption = Encryption::new(PkeSchemeType::MlKem512, &mut rng);
+        let mut encryption = Encryption::new(BACKUP_PKE_SCHEME, &mut rng);
         let (_dec_key, enc_key) = encryption.keygen().unwrap();
         let (verf_key, _) = gen_sig_keys(&mut rng);
         let mut msg1 =
@@ -1097,7 +1102,7 @@ mod tests {
     #[test]
     fn operator_new_fails_with_invalid_timestamp_past() {
         let mut rng = AesRng::seed_from_u64(6);
-        let mut encryption = Encryption::new(PkeSchemeType::MlKem512, &mut rng);
+        let mut encryption = Encryption::new(BACKUP_PKE_SCHEME, &mut rng);
         let (_dec_key, enc_key) = encryption.keygen().unwrap();
         let (verf_key, _) = gen_sig_keys(&mut rng);
         let mut msg1 =
@@ -1125,7 +1130,7 @@ mod tests {
     #[test]
     fn operator_new_fails_with_invalid_timestamp_future() {
         let mut rng = AesRng::seed_from_u64(6);
-        let mut encryption = Encryption::new(PkeSchemeType::MlKem512, &mut rng);
+        let mut encryption = Encryption::new(BACKUP_PKE_SCHEME, &mut rng);
         let (_dec_key, enc_key) = encryption.keygen().unwrap();
         let (verf_key, _) = gen_sig_keys(&mut rng);
         let mut msg1 =
@@ -1154,7 +1159,7 @@ mod tests {
     #[test]
     fn operator_timestamp_validation() {
         let mut rng = AesRng::seed_from_u64(5);
-        let mut encryption = Encryption::new(PkeSchemeType::MlKem512, &mut rng);
+        let mut encryption = Encryption::new(BACKUP_PKE_SCHEME, &mut rng);
         let (_dec_key, enc_key) = encryption.keygen().unwrap();
         let (verf_key, _) = gen_sig_keys(&mut rng);
         let present = SystemTime::now();
@@ -1179,7 +1184,7 @@ mod tests {
     #[test]
     fn operator_new_fails_with_invalid_role() {
         let mut rng = AesRng::seed_from_u64(7);
-        let mut encryption = Encryption::new(PkeSchemeType::MlKem512, &mut rng);
+        let mut encryption = Encryption::new(BACKUP_PKE_SCHEME, &mut rng);
         let (_dec_key, enc_key) = encryption.keygen().unwrap();
         let (verf_key, _) = gen_sig_keys(&mut rng);
         let msg1 = valid_custodian_msg(
@@ -1210,7 +1215,7 @@ mod tests {
     #[test]
     fn operator_new_fails_with_duplicate_roles() {
         let mut rng = AesRng::seed_from_u64(8);
-        let mut encryption = Encryption::new(PkeSchemeType::MlKem512, &mut rng);
+        let mut encryption = Encryption::new(BACKUP_PKE_SCHEME, &mut rng);
         let (_dec_key, enc_key) = encryption.keygen().unwrap();
         let (verf_key, _) = gen_sig_keys(&mut rng);
         let msg1 =
@@ -1301,7 +1306,7 @@ mod tests {
     #[test]
     fn operator_new_fails_with_not_enough() {
         let mut rng = AesRng::seed_from_u64(8);
-        let mut encryption = Encryption::new(PkeSchemeType::MlKem512, &mut rng);
+        let mut encryption = Encryption::new(BACKUP_PKE_SCHEME, &mut rng);
         let (_dec_key, enc_key) = encryption.keygen().unwrap();
         let (verf_key, _) = gen_sig_keys(&mut rng);
         let msg1 =

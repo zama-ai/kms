@@ -39,6 +39,8 @@ use threshold_networking::grpc::CoreToCoreNetworkConfig;
 use threshold_types::role::{DualRole, Role, TwoSetsRole, TwoSetsThreshold};
 
 #[cfg(test)]
+use crate::engine::rng_source::TaskRngs;
+#[cfg(test)]
 use rand::SeedableRng;
 use serde::{Deserialize, Serialize};
 use tfhe::Versionize;
@@ -325,7 +327,7 @@ impl SessionMaker {
     }
 
     #[cfg(test)]
-    pub(crate) fn empty_dummy_session(rng: AesRng) -> Self {
+    pub(crate) fn empty_dummy_session(rngs: TaskRngs) -> Self {
         let networking_manager = Arc::new(RwLock::new(
             GrpcNetworkingManager::new(None, CoreToCoreNetworkConfig::default()).unwrap(),
         ));
@@ -335,7 +337,7 @@ impl SessionMaker {
             epoch_map: Arc::new(RwLock::new(HashMap::new())),
             lifecycle: LifecycleCoordinator::default(),
             verifier: None,
-            rng_source: Arc::new(RngSource::from_rng(rng)),
+            rng_source: Arc::new(RngSource::from_rngs(rngs)),
         }
     }
 
@@ -358,7 +360,7 @@ impl SessionMaker {
         prss_setup_z128: Option<PRSSSetup<ResiduePolyF4Z128>>,
         prss_setup_z64: Option<PRSSSetup<ResiduePolyF4Z64>>,
         epoch_id: &EpochId,
-        rng: AesRng,
+        rngs: TaskRngs,
     ) -> Self {
         let role_assignment = four_party_dummy_role_assignment();
         let networking_manager = Arc::new(RwLock::new(
@@ -397,7 +399,7 @@ impl SessionMaker {
             })),
             lifecycle: LifecycleCoordinator::default(),
             verifier: None,
-            rng_source: Arc::new(RngSource::from_rng(rng)),
+            rng_source: Arc::new(RngSource::from_rngs(rngs)),
         }
     }
 
@@ -626,7 +628,8 @@ impl SessionMaker {
             context_info.role_assignment.keys().cloned().collect(),
         )?;
 
-        let base_session = BaseSession::new(parameters, networking?, self.rng_source.fork_rng())?;
+        let base_session =
+            BaseSession::new(parameters, networking?, self.rng_source.fork_rng_128())?;
         Ok(base_session)
     }
 
@@ -747,7 +750,7 @@ impl SessionMaker {
             )
             .await?;
 
-        TwoSetsBaseSession::new(session_params, network, self.rng_source.fork_rng())
+        TwoSetsBaseSession::new(session_params, network, self.rng_source.fork_rng_128())
     }
 
     async fn get_networking(
@@ -1143,7 +1146,7 @@ mod tests {
     #[tokio::test]
     async fn epochs_for_context_filters_by_context() {
         let mut rng = AesRng::seed_from_u64(1);
-        let session_maker = SessionMaker::empty_dummy_session(AesRng::seed_from_u64(2));
+        let session_maker = SessionMaker::empty_dummy_session(TaskRngs::insecure_seed_from_u64(2));
 
         let context_a = ContextId::new_random(&mut rng);
         let context_b = ContextId::new_random(&mut rng);
@@ -1185,7 +1188,7 @@ mod tests {
     #[tokio::test]
     async fn epochs_for_context_unknown_context_is_empty() {
         let mut rng = AesRng::seed_from_u64(3);
-        let session_maker = SessionMaker::empty_dummy_session(AesRng::seed_from_u64(4));
+        let session_maker = SessionMaker::empty_dummy_session(TaskRngs::insecure_seed_from_u64(4));
 
         let known_context = ContextId::new_random(&mut rng);
         session_maker
@@ -1205,7 +1208,7 @@ mod tests {
         );
 
         // An entirely empty session maker also returns empty.
-        let empty_session = SessionMaker::empty_dummy_session(AesRng::seed_from_u64(5));
+        let empty_session = SessionMaker::empty_dummy_session(TaskRngs::insecure_seed_from_u64(5));
         assert!(
             empty_session
                 .epochs_for_context(&known_context)
@@ -1219,7 +1222,7 @@ mod tests {
     #[tokio::test]
     async fn epoch_creation_lease_blocks_matching_destruction_only() {
         let mut rng = AesRng::seed_from_u64(6);
-        let session_maker = SessionMaker::empty_dummy_session(AesRng::seed_from_u64(7));
+        let session_maker = SessionMaker::empty_dummy_session(TaskRngs::insecure_seed_from_u64(7));
         let context_id = ContextId::new_random(&mut rng);
         let epoch_id = EpochId::new_random(&mut rng);
         let endpoint_session_maker = session_maker.make_immutable();
@@ -1272,7 +1275,7 @@ mod tests {
     #[tokio::test]
     async fn destruction_leases_block_epoch_creation_until_drop() {
         let mut rng = AesRng::seed_from_u64(8);
-        let session_maker = SessionMaker::empty_dummy_session(AesRng::seed_from_u64(9));
+        let session_maker = SessionMaker::empty_dummy_session(TaskRngs::insecure_seed_from_u64(9));
         let context_id = ContextId::new_random(&mut rng);
         let epoch_id = EpochId::new_random(&mut rng);
 
@@ -1326,7 +1329,7 @@ mod tests {
         let session_maker = SessionMaker::new_uninitialized(
             networking_manager,
             Some(Arc::clone(&verifier)),
-            Arc::new(RngSource::from_rng(AesRng::seed_from_u64(6))),
+            Arc::new(RngSource::from_rngs(TaskRngs::insecure_seed_from_u64(6))),
         );
 
         let identity = "shared.example.com";

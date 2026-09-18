@@ -179,6 +179,7 @@ proptest = "=1.6.0"  # Property-based testing - MEDIUM RISK: Individual maintain
 prost = "=0.14.4"  # Protocol Buffers - LOW RISK: tokio-rs team, 10M+ downloads
 quote = "=1.0.45"  # Quote macro utilities - MEDIUM RISK: Reputable individual maintainer (dtolnay), 722M downloads
 rand = "=0.8.6"  # Random number generation - LOW RISK: rust-random, 100M+ downloads
+rand_chacha = "=0.3.1"  # ChaCha20 CSPRNG with a 256-bit seed - LOW RISK: rust-random, already in the tree via rand
 rand_core_0_10 = { package = "rand_core", version = "=0.10.1" } # Trait bridge required by hpke 0.14 while KMS remains on Rand 0.8 - LOW RISK: maintained by the rust-random team.
 rasn = "=0.28.13"  # ASN.1 encoding/decoding - HIGH RISK: Individual maintainer (XAMPPRocky), security-critical ASN.1 handling
 rasn-cms = "=0.28.13"  # CMS (Cryptographic Message Syntax) - HIGH RISK: Individual maintainer (XAMPPRocky), security-critical

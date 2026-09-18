@@ -129,9 +129,13 @@ The service crate is the main surface area. Key subdirectories under
 - [cryptography/](../core/service/src/cryptography/) — AES-GCM-SIV, signcryption,
   hybrid ML-KEM (post-quantum), MLKEM1024-P384 (a composite of post-quantum
   ML-KEM-1024 and classical P-384), and attestation (Nitro NSM + certificate
-  chain verification). The MLKEM1024-P384 scheme is available through the
-  lower-level encryption and signcryption types. User decryption accepts
-  ML-KEM-512 only. Signing lives under
+  chain verification). Custodian backup uses MLKEM1024-P384 for all three of its
+  keypairs — the custodian's long-term key, the operator's ephemeral recovery key,
+  and the operator's per-context backup vault key — selected in one place,
+  `backup::BACKUP_PKE_SCHEME`. Nothing rejects a peer that advertises a weaker
+  scheme: the signcryption carries its own `pke_type` tag, so a mixed-scheme
+  custodian context works. User decryption accepts ML-KEM-512 only. Randomly generated MLKEM1024-P384
+  keypairs use a 256-bit-seeded CSPRNG. The custodian key derives directly from 256-bit mnemonic entropy. Signing lives under
   [cryptography/signing/](../core/service/src/cryptography/signing/): a
   scheme-tagged `Signature` plus one backend per scheme — ECDSA/secp256k1
   (`ecdsa`, the legacy default and EIP-712 home), EdDSA/ed25519 (`eddsa`), and
@@ -176,12 +180,15 @@ The service crate is the main surface area. Key subdirectories under
 
 ### Task randomness
 
-[`RngSource`](../core/service/src/engine/rng_source.rs) supplies task seeds from
-one shared AES RNG per KMS instance. `BaseKmsStruct` instances and `SessionMaker`
-share the source through `Arc`. Each task receives an owned RNG with a separate seed.
-Source initialization combines OS entropy with entropy from the configured security module.
-Refresh also mixes output from the existing source. Entropy failures return errors and leave
-the source unchanged. Refresh logs report success or failure without seed values.
+[`RngSource`](../core/service/src/engine/rng_source.rs) supplies task seeds from two parent
+RNGs per KMS instance: a 128-bit-seeded `AesRng` and a 256-bit-seeded `ChaCha20Rng`. A fork never
+carries more entropy than its parent. The wide path therefore needs its own parent, rather than a
+wider fork of the narrow one. `BaseKmsStruct` instances and `SessionMaker` share the source
+through `Arc`. Each task receives an owned RNG with a separate seed. Initialization seeds each
+parent from an independent draw, which combines OS entropy with entropy from the configured
+security module. Refresh also mixes output from the existing parents. Entropy failures return
+errors and leave both parents unchanged. Refresh logs report success or failure without seed
+values.
 
 Threshold epoch creation refreshes once in `new_mpc_epoch`, before either the resharing
 or PRSS session forks its RNG. This includes old-committee parties that skip PRSS initialization.
@@ -342,6 +349,12 @@ in server config and unified behind `KeychainProxy`
   has installed a context, so a node configured for it makes no backups until
   its first context exists. New custodian contexts are rejected unless every custodian
   encryption key and every custodian verification key is unique.
+  Every key in this path is MLKEM1024-P384 (`backup::BACKUP_PKE_SCHEME`), and the
+  custodian's is derived from 256 bits of seed-phrase entropy — a 24-word mnemonic —
+  so the phrase does not cap the scheme's security level. A vault written under an
+  older ML-KEM-512 context is not readable by a node holding a composite key, but
+  each ciphertext carries its own `pke_type`, so a vault spanning both schemes
+  decrypts as long as the matching key is installed.
 
 Custodian workflows are driven through the
 [kms-custodian](../core/service/src/bin/kms-custodian.rs) CLI and the
@@ -585,6 +598,11 @@ indexed by per-module `.ron` manifests. The loader in
 [backward-compatibility/src/](../backward-compatibility/src/) replays every
 entry through the current-version `Unversionize` and asserts the expected
 metadata.
+
+Custodian-backup fixtures exist for 0.15.0 only. The feature ships first in 0.15
+and no deployment uses it, so adopting MLKEM1024-P384 for it broke its persisted
+and wire formats, and the fixtures for 0.14.0 and earlier were dropped rather
+than kept as a compatibility target.
 
 To add support for a new release, follow
 [backward-compatibility/ADDING_NEW_VERSIONS.md](../backward-compatibility/ADDING_NEW_VERSIONS.md).

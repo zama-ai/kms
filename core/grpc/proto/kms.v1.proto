@@ -756,6 +756,11 @@ message OperatorBackupOutput {
 enum PkeSchemeType {
   // WARNING: only append to this type. Keep values in lock-step with the
   // `PkeSchemeType` enum in core/service/src/cryptography/encryption.rs.
+  //
+  // Which scheme is used where:
+  //   MLKEM512       - user decryption, and the only scheme it accepts.
+  //   MLKEM1024      - deprecated; only for relayer-sdk v0.2.0-0 and older.
+  //   MLKEM1024_P384 - custodian backup, all of its keys.
   MLKEM512 = 0;
   MLKEM1024 = 1;
   MLKEM1024_P384 = 2;

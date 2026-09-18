@@ -8,8 +8,9 @@
 use aes_prng::AesRng;
 use kms_grpc::RequestId;
 use kms_grpc::rpc_types::PubDataType;
+use kms_lib::backup::BACKUP_PKE_SCHEME;
 use kms_lib::backup::custodian::Custodian;
-use kms_lib::cryptography::encryption::{Encryption, PkeScheme, PkeSchemeType};
+use kms_lib::cryptography::encryption::{Encryption, PkeScheme};
 use kms_lib::cryptography::signatures::gen_sig_keys;
 use kms_lib::engine::base::{KeyGenMetadata, KeyGenMetadataInner};
 use rand::SeedableRng;
@@ -92,7 +93,7 @@ fn internal_custodian_setup_message_serialization_is_deterministic() {
         .map(|_| {
             let mut rng = AesRng::seed_from_u64(SEED);
             let (_verification_key, signing_key) = gen_sig_keys(&mut rng);
-            let mut encryption = Encryption::new(PkeSchemeType::MlKem512, &mut rng);
+            let mut encryption = Encryption::new(BACKUP_PKE_SCHEME, &mut rng);
             let (private_key, public_key) = encryption.keygen().expect("keygen");
             let custodian = Custodian::new(
                 Role::indexed_from_one(1),
