@@ -55,7 +55,7 @@ pub fn system_entropy_for_custodian(
 /// [`system_entropy_for_custodian`].
 // Allow the rng to be used even if an error happens later on
 #[allow(unknown_lints)]
-#[allow(non_local_effect_before_error_return)]
+#[allow(non_local_effect_before_unhandled_error)]
 #[cfg(test)]
 pub(crate) fn seed_phrase_from_rng<R>(rng: &mut R) -> anyhow::Result<String>
 where
