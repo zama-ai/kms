@@ -46,7 +46,7 @@ authors = ["Zama"]
 publish = true
 edition = "2024"
 license = "BSD-3-Clause-Clear"
-version = "0.15.0-0"
+version = "0.15.0-1"
 repository = "https://github.com/zama-ai/kms"
 description = "Key Management System for the Zama Protocol."
 
@@ -147,15 +147,17 @@ futures-util = "=0.3.32"  # Futures utilities - LOW RISK: rust-lang team
 getrandom = "=0.4.3" # OS entropy for RNG reseeding - LOW RISK: maintained by the rust-random team
 g2p = "=1.2.2"  # Galois field arithmetic (GF(2^p)) - LOW RISK: Essential for threshold cryptography, finite field operations
 hex = "=0.4.3"  # Hex encoding/decoding - HIGH RISK: Individual maintainer (KokaKiwi), despite 284M downloads
+# NOTE for hpke: this needs to be consistent with `p384_hpke` below.
+hpke = { version = "=0.14.1", default-features = false, features = ["aes", "mlkem", "nistp"] } # Implementation of various composite/hybrid KEM/PKE - MEDIUM RISK: security-critical pure-Rust crypto crate. Not independently audited, 8M+ downloads.
 http = "=1.3.1"  # HTTP types - LOW RISK: hyperium team, 100M+ downloads
-hybrid-array = { version = "=0.2.3", features = ["zeroize"] }  # Transitive dependency of ml-kem for zeroizing shared secrets - MEDIUM RISK: follows ml-kem risk profile
+hybrid-array = { version = "=0.4.13", features = ["zeroize"] }  # Array types used by ml-kem 0.3 for ciphertexts and shared secrets - MEDIUM RISK: follows ml-kem risk profile
 hyper-rustls-ring = { package = "hyper-rustls", version = "=0.27.7", default-features = false, features = ["http2", "ring"] }  # TLS for hyper (newer version) - LOW RISK: rustls team, uses ring backend
 iam-rs = { version = "=0.0.23" } # AWS IAM policy parser/generator - HIGH RISK: individual maintainer, 10K downloads
 itertools = "=0.14.0"  # Iterator utilities - LOW RISK: bluss/rust-itertools, 100M+ downloads
 k256 = "=0.13.4"  # secp256k1 elliptic curve - LOW RISK: RustCrypto org, 33M+ downloads
 minijinja = { version = "=2.20.0", features = ["loader"] }  # Template engine - HIGH RISK: Individual maintainer (mitsuhiko), despite exceptional track record
-ml-dsa = { version = "=0.1.1", default-features = false, features = ["alloc", "zeroize"] }  # ML-DSA (FIPS 204) post-quantum signatures for hybrid PQ signing - MEDIUM RISK: RustCrypto org, new standard implementation, but no security audit
-ml-kem = { version = "=0.2.3", features = ["zeroize"] }  # ML-KEM (Kyber) post-quantum KEM - MEDIUM RISK: New standard implementation, needs security audit
+ml-dsa = { version = "=0.1.1", default-features = false, features = ["alloc", "zeroize"] }  # ML-DSA (FIPS 204) post-quantum signatures for composite PQ signing - MEDIUM RISK: RustCrypto org, new standard implementation, but no security audit
+ml-kem = { version = "=0.3.2", features = ["zeroize"] }  # ML-KEM (Kyber) post-quantum KEM - MEDIUM RISK: new standard implementation without a completed KMS-specific security audit. Version 0.3 aligns the existing ML-KEM-512 path with hpke's MLKEM1024-P384 implementation.
 mockall = "=0.13.1"  # Mocking for tests - HIGH RISK: Individual maintainer (asomers), test-only dependency
 num-integer = "=0.1.46"  # Integer utilities - LOW RISK: rust-num team
 num-traits = "=0.2.19"  # Numeric traits - LOW RISK: rust-num team
@@ -166,7 +168,10 @@ opentelemetry-otlp = { version = "=0.32.0", features = ["tokio", "grpc-tonic"] }
 opentelemetry-semantic-conventions = "=0.32.1"  # Semantic conventions - LOW RISK: CNCF project, standard definitions
 opentelemetry-stdout = { version = "=0.32.0", features = ["trace"] }  # Stdout exporter for debugging - LOW RISK: CNCF project
 opentelemetry_sdk = { version = "=0.32.1", features = ["rt-tokio", "logs"] }  # OpenTelemetry SDK - LOW RISK: CNCF project, core functionality
-p384 = "=0.13.1" # secp384r1 elliptic curvi - LOW RISK: RustCrypto org, 27M+ downloads
+# NOTE for p384, must stay on the version used by nsm-nitro-enclave-utils and attestation-doc-validation
+p384 = "=0.13.1" # secp384r1 elliptic curve, for the mock-Nitro signing key - MEDIUM RISK: RustCrypto org, 27M+ downloads, not independently audited
+# NOTE for p384_hpke, MUST be kept in step with whatever p384 `hpke` uses
+p384_hpke = { package = "p384", version = "=0.14.0", default-features = false, features = ["arithmetic"] } # secp384r1 elliptic curve - MEDIUM RISK: RustCrypto org, same crate as p384 above, not independently audited
 paste = "=1.0"  # Token pasting macros -  MEDIUM RISK: Reputable individual maintainer (dtolnay), 251M+ downloads
 peak_alloc = { version = "=0.2.1" }  # Memory allocation tracker - HIGH RISK: Individual maintainer (Imberflur), low popularity, 251K downloads
 prometheus = { version = "=0.14.0", features = ["process"] }  # Prometheus metrics client - LOW RISK: tikv team, 1M+ downloads
@@ -174,6 +179,8 @@ proptest = "=1.6.0"  # Property-based testing - MEDIUM RISK: Individual maintain
 prost = "=0.14.4"  # Protocol Buffers - LOW RISK: tokio-rs team, 10M+ downloads
 quote = "=1.0.45"  # Quote macro utilities - MEDIUM RISK: Reputable individual maintainer (dtolnay), 722M downloads
 rand = "=0.8.6"  # Random number generation - LOW RISK: rust-random, 100M+ downloads
+rand_chacha = "=0.3.1"  # ChaCha20 CSPRNG with a 256-bit seed - LOW RISK: rust-random, already in the tree via rand
+rand_core_0_10 = { package = "rand_core", version = "=0.10.1" } # Trait bridge required by hpke 0.14 while KMS remains on Rand 0.8 - LOW RISK: maintained by the rust-random team.
 rasn = "=0.28.13"  # ASN.1 encoding/decoding - HIGH RISK: Individual maintainer (XAMPPRocky), security-critical ASN.1 handling
 rasn-cms = "=0.28.13"  # CMS (Cryptographic Message Syntax) - HIGH RISK: Individual maintainer (XAMPPRocky), security-critical
 rayon = "=1.12.0"  # Data parallelism - LOW RISK: rayon-rs team

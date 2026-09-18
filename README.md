@@ -156,6 +156,10 @@ The default parameters for the Zama KMS are chosen to ensure a failure probabili
 
 Mitigation for side-channel attacks has not been implemented directly in the Zama KMS. The smart contract of the blockchain from which calls originate is responsible to ensure the validity of calls. In particular that new ciphertexts are correctly constructed (through a proof of knowledge).
 
+#### Trust model
+
+A KMS core has two gRPC interfaces. The core-to-core interface carries MPC messages between KMS cores. It uses mutual TLS, accepts only an allowlisted set of peers, and in enclave deployments checks the PCR values of the peer release. The service interface is called by the KMS connector to start operations. It has no authentication in the code; the deployment ensures that only the operator's own KMS connector can reach it, and it is never publicly reachable. See the [trust model](docs/explanations/trust_model.md) before you review or report security issues.
+
 ### Citations
 To cite KMS in academic papers, please use the following entry:
 ```
