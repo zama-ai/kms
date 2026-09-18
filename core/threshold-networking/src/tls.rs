@@ -841,10 +841,84 @@ mod tests {
         verifier
             .add_context(context_id, HashMap::new(), None)
             .unwrap();
-        let error = verifier
+      let error = verifier
             .add_context(context_id, HashMap::new(), None)
             .unwrap_err();
 
         assert!(error.to_string().contains("already exists"));
     }
+
+    #[test]
+    fn pcr_values_are_validated_against_correct_context() {
+        _ = default_provider().install_default();
+        let verifier = AttestedVerifier::new(
+            None,
+            false,
+            #[cfg(feature = "insecure")]
+            true,
+        )
+        .unwrap();
+        let identity = "pcr-binding-test.example.com";
+        let (certificate_a, ca_a) = test_ca(identity);
+        let (certificate_b, ca_b) = test_ca(identity);
+        let context_a = SessionId::from(7u128);
+        let context_b = SessionId::from(8u128);
+        let pcr_a = test_pcr(7);
+        let pcr_b = test_pcr(8);
+
+        verifier
+            .add_context(
+                context_a,
+                HashMap::from([(MpcIdentity(identity.to_string()), ca_a.clone())]),
+                Some(HashSet::from([pcr_a.clone()])),
+            )
+            .unwrap();
+        verifier
+            .add_context(
+                context_b,
+                HashMap::from([(MpcIdentity(identity.to_string()), ca_b.clone())]),
+                Some(HashSet::from([pcr_b.clone()])),
+            )
+            .unwrap();
+
+        let (_, cert_der_a) = parse_x509_certificate(certificate_a.der()).unwrap();
+        let _cert_der_b = parse_x509_certificate(certificate_b.der()).unwrap();
+
+        let verifiers = verifier
+            .get_verifiers_and_pcrs_for_x509_cert(&cert_der_a)
+            .unwrap();
+        
+        let candidate_a = verifiers
+            .candidates
+            .iter()
+            .find(|c| c.context_id == context_a)
+            .expect("Should find context A");
+        let candidate_b = verifiers
+            .candidates
+            .iter()
+            .find(|c| c.context_id == context_b)
+            .expect("Should find context B");
+
+        assert_eq!(candidate_a.pcrs.len(), 1);
+        assert_eq!(candidate_b.pcrs.len(), 1);
+
+        assert!(
+            candidate_a.pcrs.contains(&pcr_a),
+            "Context A should have its own PCR values"
+        );
+        assert!(
+            !candidate_a.pcrs.contains(&pcr_b),
+            "Context A should NOT have context B's PCR values"
+        );
+
+        assert!(
+            candidate_b.pcrs.contains(&pcr_b),
+            "Context B should have its own PCR values"
+        );
+        assert!(
+            !candidate_b.pcrs.contains(&pcr_a),
+            "Context B should NOT have context A's PCR values"
+        );
+    }
 }
+
