@@ -4,7 +4,7 @@ use crate::{
     conf::{AwsKmsKeySpec, AwsKmsKeychain, Keychain as KeychainConf, SecretSharingKeychain},
     cryptography::attestation::SecurityModuleProxy,
 };
-use aes_gcm_siv::{AeadInPlace, Aes256GcmSiv, KeyInit, Nonce};
+use aes_gcm_siv::{AeadInOut, Aes256GcmSiv, KeyInit, Nonce, Tag};
 use aes_prng::AesRng;
 use aws_sdk_kms::Client as AWSKMSClient;
 use enum_dispatch::enum_dispatch;
@@ -182,7 +182,7 @@ pub fn encrypt_under_data_key(
     #[allow(deprecated)]
     let nonce = Nonce::from_slice(iv);
     let auth_tag = cipher
-        .encrypt_in_place_detached(nonce, b"", plaintext)
+        .encrypt_inout_detached(nonce, b"", plaintext.into())
         .map_err(|e| anyhow_error_and_log(format!("Cannot encrypt application key: {e}")))?;
     Ok(auth_tag.to_vec())
 }
@@ -209,8 +209,11 @@ pub fn decrypt_under_data_key(
     }
     #[allow(deprecated)]
     let nonce = Nonce::from_slice(iv);
+    // The length is checked above, so the conversion cannot fail.
+    let auth_tag = Tag::try_from(auth_tag.as_slice())
+        .map_err(|e| anyhow_error_and_log(format!("Invalid auth tag length: {e}")))?;
     cipher
-        .decrypt_in_place_detached(nonce, b"", ciphertext, auth_tag.as_slice().into())
+        .decrypt_inout_detached(nonce, b"", ciphertext.into(), &auth_tag)
         .map_err(|e| anyhow_error_and_log(format!("{e}")))?;
     Ok(())
 }

@@ -191,7 +191,7 @@ where
             }
         };
 
-        // One `write_all` so `non_local_effect_before_error_return` is satisfied: a failed
+        // One `write_all` so `non_local_effect_before_unhandled_error` is satisfied: a failed
         // marker write must not follow a successful payload write to the same sink.
         let mut out =
             Vec::with_capacity(to_write.saturating_add(if remaining_before < buf.len() {

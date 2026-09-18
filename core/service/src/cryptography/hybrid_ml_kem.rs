@@ -1,7 +1,10 @@
 //! Hybrid PKE built from ML-KEM as the KEM and AES-GCM as the DEM.
 
 use super::{error::CryptographyError, rand_compat::RandCore010Adapter};
-use aes_gcm::{AeadCore, Aes256Gcm, Key, KeyInit, KeySizeUser, aead::Aead};
+use aes_gcm::{
+    Aes256Gcm, Key, KeyInit, KeySizeUser,
+    aead::{Aead, Nonce},
+};
 use hybrid_array::{Array, typenum::Unsigned};
 use ml_kem::{Encapsulate, Kem, kem::TryDecapsulate};
 use rand::{CryptoRng, Rng};
@@ -101,7 +104,9 @@ pub(crate) fn enc<C: Kem, R: Rng + CryptoRng>(
     #[allow(deprecated)]
     let aead_key = Key::<Aes256Gcm>::from_slice(&kem_shared_secret[0..key_size]);
     let cipher = Aes256Gcm::new(aead_key);
-    let nonce = Aes256Gcm::generate_nonce(rng);
+    // `AeadCore::generate_nonce` requires a rand_core 0.10 RNG, and callers pass rand 0.8 RNGs.
+    let mut nonce = Nonce::<Aes256Gcm>::default();
+    rng.fill_bytes(&mut nonce);
     let payload_ct = cipher.encrypt(&nonce, msg)?;
 
     Ok(InnerHybridKemCt::<C> {
