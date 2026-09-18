@@ -46,14 +46,14 @@ aes.workspace = true
 aes-gcm-siv.workspace = true
 aes-gcm.workspace = true
 aes-prng.workspace = true
-algebra = { workspace= true }
+algebra = { workspace = true }
 alloy-dyn-abi.workspace = true
 alloy-primitives = { workspace = true, features = ["k256"] }
 alloy-signer-local.workspace = true
 alloy-signer.workspace = true
 alloy-sol-types = { workspace = true, features = ["eip712-serde"] }
 anyhow.workspace = true
-attestation-doc-validation = { workspace = true, optional = true}
+attestation-doc-validation = { workspace = true, optional = true }
 aws-config = { workspace = true, optional = true }
 aws-nitro-enclaves-nsm-api = { workspace = true, optional = true }
 aws-sdk-kms = { workspace = true, optional = true }
@@ -81,7 +81,9 @@ k256.workspace = true
 kms-grpc = { workspace = true, default-features = false }
 ml-dsa.workspace = true
 ml-kem.workspace = true
-nsm-nitro-enclave-utils = { version = "0.1.2", features = ["pki"], optional = true }
+nsm-nitro-enclave-utils = { version = "0.1.2", features = [
+    "pki",
+], optional = true }
 observability = { workspace = true, optional = true }
 p384.workspace = true
 p384_hpke.workspace = true
@@ -149,7 +151,10 @@ aws-smithy-mocks = { workspace = true }
 backward-compatibility = { workspace = true, features = ["load", "tests"] }
 cargo_metadata = { workspace = true }
 criterion.workspace = true
-threshold-execution = { workspace = true, features = ["testing", "malicious_strategies"] }
+threshold-execution = { workspace = true, features = [
+    "testing",
+    "malicious_strategies",
+] }
 # Self-import for integration tests
 kms = { workspace = true, features = ["insecure", "testing"] }
 proptest.workspace = true
@@ -174,7 +179,11 @@ default = ["non-wasm"]
 # `aws-sdk-s3?/test-util` is required by aws-smithy-mocks' `mock_client!`. The weak-dependency
 # (`?`) syntax only enables it when aws-sdk-s3 is already pulled in (i.e. via `non-wasm`), so
 # wasm / `--no-default-features` builds are unaffected and production never gets test-util.
-testing = ["dep:tempfile", "threshold-execution/testing", "aws-sdk-s3?/test-util"]
+testing = [
+    "dep:tempfile",
+    "threshold-execution/testing",
+    "aws-sdk-s3?/test-util",
+]
 non-wasm = [
     "kms-grpc/non-wasm",
     "threshold-execution/non-wasm",

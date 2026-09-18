@@ -96,8 +96,13 @@ thread-handles = { path = "./core/thread-handles" }
 
 # External dependencies (alphabetically sorted)
 aes = "=0.9.3"  # AES block cipher for direct hot-path use - LOW RISK: RustCrypto org, very popular, actively maintained
-aes-gcm = { version = "=0.11.1", features = ["zeroize"] }  # AES-GCM authenticated encryption - LOW RISK: RustCrypto org, 62M+ downloads
-aes-gcm-siv = { version = "=0.12.1", features = ["zeroize"] }  # AES-GCM-SIV authenticated encryption - LOW RISK: RustCrypto org, nonce misuse resistant, 9M+ downloads
+# NOTE for aes-gcm and aes-gcm-siv: default features are off on purpose. Their default set includes
+# `getrandom`, which reaches `getrandom` 0.4 through `aead` and `crypto-common`. That crate fails to
+# compile for `wasm32-unknown-unknown` unless its `wasm_js` feature is on, which breaks the WASM
+# build of this crate. We never use the getrandom-backed helpers (`AeadCore::generate_nonce` and
+# friends); nonces are filled from our own RNG. Keep `aes`, `alloc` and `zeroize` only.
+aes-gcm = { version = "=0.11.1", default-features = false, features = ["aes", "alloc", "zeroize"] }  # AES-GCM authenticated encryption - LOW RISK: RustCrypto org, 62M+ downloads
+aes-gcm-siv = { version = "=0.12.1", default-features = false, features = ["aes", "alloc", "zeroize"] }  # AES-GCM-SIV authenticated encryption - LOW RISK: RustCrypto org, nonce misuse resistant, 9M+ downloads
 aes-prng = "=0.2.1"  # AES-based PRNG for deterministic randomness - LOW RISK: Maintained by @mortendahl (Zama) and Dragos (ex Zama)
 alloy-dyn-abi = "=1.7.1"  # Ethereum ABI encoding - LOW RISK: Alloy/Paradigm team, reputable, growing ecosystem
 alloy-primitives = "=1.7.1"  # Ethereum primitives - LOW RISK: Alloy/Paradigm team
