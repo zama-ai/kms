@@ -40,6 +40,10 @@ pub fn start_sys_metrics_collection(refresh_interval: Duration) -> anyhow::Resul
             tracing::debug!("CPU Load Average over all cores within 1 min {cpus_load_avg}");
             METRICS.record_cpu_load(cpus_load_avg);
 
+            let runtime_metrics = tokio::runtime::Handle::current().metrics();
+            METRICS.record_tokio_alive_tasks(runtime_metrics.num_alive_tasks());
+            METRICS.record_tokio_global_queue_depth(runtime_metrics.global_queue_depth());
+
             if let Ok(pid) = sysinfo::get_current_pid() {
                 if let Some(process) = system.process(pid) {
                     METRICS.record_process_memory_usage(process.memory());

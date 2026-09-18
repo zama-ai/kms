@@ -22,6 +22,31 @@ NAMESPACE="${NAMESPACE:-kms-test}"
 KUBE_CONFIG="${HOME}/.kube/kind_config_${DEPLOYMENT_TYPE:-threshold}"
 
 #=============================================================================
+# Dump Cluster State
+# When a pod never becomes Ready, the setup log stops at "helm --wait" and does
+# not say why. The cluster does.
+#=============================================================================
+dump_cluster_state() {
+    echo "### Pods in ${NAMESPACE}"
+    kubectl get pods --request-timeout=30s -n "${NAMESPACE}" -o wide 2>&1 || true
+    echo "### Recent events"
+    kubectl get events --request-timeout=30s -n "${NAMESPACE}" --sort-by=.lastTimestamp 2>&1 | tail -n 60 || true
+    echo "### Pod descriptions"
+    kubectl describe pods --request-timeout=30s -n "${NAMESPACE}" 2>&1 || true
+    echo "### Container logs, previous instance first where one exists"
+    # kms-core-init-load-env is skipped: it prints the rendered config, TLS private key included.
+    for pod in $(kubectl get pods --request-timeout=30s -n "${NAMESPACE}" -o name 2>/dev/null); do
+        for container in $(kubectl get "${pod}" --request-timeout=30s -n "${NAMESPACE}" \
+            -o jsonpath='{.spec.initContainers[*].name} {.spec.containers[*].name}' 2>/dev/null); do
+            [[ "${container}" == "kms-core-init-load-env" ]] && continue
+            echo "### ${pod} ${container}"
+            kubectl logs "${pod}" --request-timeout=30s -n "${NAMESPACE}" -c "${container}" --previous --tail=100 2>/dev/null || true
+            kubectl logs "${pod}" --request-timeout=30s -n "${NAMESPACE}" -c "${container}" --tail=200 2>&1 || true
+        done
+    done
+}
+
+#=============================================================================
 # Start Setup
 #=============================================================================
 start_setup() {
@@ -86,6 +111,7 @@ start_setup() {
         if ! kill -0 ${SETUP_PID} 2>/dev/null; then
             echo "Setup script terminated unexpectedly!"
             cat "${SETUP_LOG}"
+            dump_cluster_state
             return 1
         fi
 
@@ -96,6 +122,7 @@ start_setup() {
     # Timeout reached
     echo "Timeout waiting for KMS setup to complete"
     cat "${SETUP_LOG}"
+    dump_cluster_state
     kill -TERM ${SETUP_PID} 2>/dev/null || true
     return 1
 }

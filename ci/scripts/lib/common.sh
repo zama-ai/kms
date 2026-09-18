@@ -49,10 +49,12 @@ Options:
   --enable-tls             Explicitly enable TLS (default for threshold mode)
   --disable-tls            Explicitly disable TLS (overrides default for threshold mode)
   --enable-metrics         Expose KMS metrics to Prometheus. On kind, installs
-                           kube-prometheus-stack and remote-writes to Grafana Cloud
-                           (reads GRAFANA_CLOUD_PROM_* from env). On aws targets,
-                           only enables the kms-core ServiceMonitor and lets the
-                           cluster's own Prometheus scrape it.
+                           kube-prometheus-stack, prefixes metric names with ci_,
+                           and remote-writes to Grafana Cloud (reads
+                           GRAFANA_CLOUD_PROM_* from env). On aws targets, only
+                           enables the kms-core ServiceMonitor (unprefixed names;
+                           distinguish by namespace) and lets the cluster's own
+                           Prometheus scrape it.
   --tracing-endpoint <url> Enable kms-core tracing and send OTLP traces to <url>
                            (e.g. http://jaeger:4317; default: disabled)
   --debug                  Enable debug logging (port-forward logs to ./logs/port-forward/)

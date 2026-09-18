@@ -1,4 +1,4 @@
-use self::threshold::ThresholdPartyConf;
+use self::threshold::{ThresholdPartyConf, TlsConf};
 use crate::util::rate_limiter::RateLimiterConfig;
 use clap::ValueEnum;
 use observability::{
@@ -9,7 +9,7 @@ use serde::{Deserialize, Serialize};
 use std::{cmp, path::PathBuf};
 use strum_macros::EnumIs;
 use url::Url;
-use validator::{Validate, ValidationErrors};
+use validator::{Validate, ValidationError, ValidationErrors};
 
 pub mod threshold;
 
@@ -29,7 +29,7 @@ pub struct CoreConfig {
     pub aws: Option<AWSConfig>,
     #[validate(nested)]
     pub public_vault: Option<VaultConfig>,
-    #[validate(nested)]
+    #[validate(nested, custom(function = reject_secret_sharing))]
     pub private_vault: Option<VaultConfig>,
     #[validate(nested)]
     pub backup_vault: Option<VaultConfig>,
@@ -45,6 +45,24 @@ pub struct CoreConfig {
     pub migration: Option<MigrationConfig>,
     #[cfg(feature = "insecure")]
     pub mock_enclave: Option<bool>,
+}
+
+impl CoreConfig {
+    /// Whether MPC contexts must contain trusted PCR values.
+    pub(crate) fn requires_pcr_allowlist(&self) -> bool {
+        let uses_auto_tls = self
+            .threshold
+            .as_ref()
+            .and_then(|threshold| threshold.tls.as_ref())
+            .is_some_and(TlsConf::is_auto);
+
+        #[cfg(feature = "insecure")]
+        if self.mock_enclave.is_some_and(|mock_enclave| mock_enclave) {
+            return false;
+        }
+
+        uses_auto_tls
+    }
 }
 
 /// One-time migration input associating existing epochs with the context they belong to.
@@ -219,6 +237,16 @@ pub struct VaultConfig {
     pub keychain: Option<Keychain>,
 }
 
+/// A secret-sharing keychain decrypts only once custodians have reconstructed its key, so it
+/// cannot guard the private vault: that content must be readable at boot.
+pub fn reject_secret_sharing(vault: &VaultConfig) -> Result<(), ValidationError> {
+    if matches!(vault.keychain, Some(Keychain::SecretSharing(_))) {
+        return Err(ValidationError::new("secret_sharing_private_vault")
+            .with_message("private storage must be readable at boot".into()));
+    }
+    Ok(())
+}
+
 /// How to store the key material
 /// WARNING: this may be printed for debugging and hence should NOT contain any secrets, such as private keys.
 /// If minor secrets needs to be added, then ensure fields are annotated with `#[serde(skip_serializing)]` to avoid accidentally diclosing them.
@@ -338,6 +366,46 @@ mod tests {
         conf::threshold::{TlsCert, TlsConf, TlsKey},
         util::rate_limiter::RateLimiterConfig,
     };
+
+    fn vault_with(keychain: Option<Keychain>) -> VaultConfig {
+        VaultConfig {
+            storage: Storage::Ram(RamStorage {}),
+            keychain,
+        }
+    }
+
+    #[test]
+    fn private_vault_rejects_a_secret_sharing_keychain() {
+        assert!(
+            reject_secret_sharing(&vault_with(Some(Keychain::SecretSharing(
+                SecretSharingKeychain {}
+            ))))
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn private_vault_accepts_other_keychains() {
+        assert!(reject_secret_sharing(&vault_with(None)).is_ok());
+        assert!(
+            reject_secret_sharing(&vault_with(Some(Keychain::AwsKms(AwsKmsKeychain {
+                root_key_id: "key".to_string(),
+                root_key_spec: AwsKmsKeySpec::Symm,
+            }))))
+            .is_ok()
+        );
+    }
+
+    /// The rule is enforced by `validate()`, so every entry point that loads a config gets it.
+    #[test]
+    fn config_validation_rejects_a_secret_sharing_private_vault() {
+        let mut config: CoreConfig =
+            init_conf("config/default_centralized.toml").expect("config must parse");
+        config.private_vault = Some(vault_with(Some(Keychain::SecretSharing(
+            SecretSharingKeychain {},
+        ))));
+        assert!(config.validate().is_err());
+    }
 
     #[test]
     fn test_threshold_config() {
@@ -518,6 +586,27 @@ mod tests {
             core_config.threshold.is_none(),
             "threshold section should be absent in centralized config"
         );
+    }
+
+    #[test]
+    fn test_requires_pcr_allowlist() {
+        let mut core_config: CoreConfig = init_conf("config/default_2").unwrap();
+        assert!(!core_config.requires_pcr_allowlist());
+
+        core_config.threshold.as_mut().unwrap().tls = Some(TlsConf::Auto {
+            eif_signing_cert: None,
+            trusted_releases: vec![],
+            attest_private_vault_root_key: None,
+            renew_slack_after_expiration: None,
+            renew_fail_retry_timeout: None,
+        });
+        assert!(core_config.requires_pcr_allowlist());
+
+        #[cfg(feature = "insecure")]
+        {
+            core_config.mock_enclave = Some(true);
+            assert!(!core_config.requires_pcr_allowlist());
+        }
     }
 
     #[test]

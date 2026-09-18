@@ -1,0 +1,90 @@
+##############################################################################
+# ghcr-cleanup workflow
+#
+# Prunes old versions of the kms/rust-golden-image package on GHCR.
+#
+# The package holds ~20k versions because, before #556, effectively every CI
+# run rebuilt and pushed the golden image. Nothing pins a specific golden tag
+# -- all consumers reference the mutable `rust-golden-image:latest`:
+#
+#   docker/core/service/Dockerfile           (x2, kms-core + enclave-utils)
+#   docker/core/service/local.dockerfile
+#   docker/core-client/Dockerfile
+#   core/experiments/docker/local.dockerfile
+#
+# so old versions are dead weight rather than a dependency. Deleting them
+# cannot break already-published core-service / core-client images: those
+# manifests reference their layer blobs directly. The worst case is deleting
+# the currently-cached content hash, which costs one ~2.5 min golden rebuild
+# on the next docker-build run.
+##############################################################################
+name: ghcr-cleanup
+
+on:
+  schedule:
+    - cron: '0 3 * * 0' # Sundays 03:00 UTC, clear of the midnight build
+  workflow_dispatch:
+    inputs:
+      dry-run:
+        description: 'Simulate only: report what would be deleted, delete nothing'
+        type: boolean
+        default: true
+
+permissions: {}
+
+concurrency:
+  # Deleting package versions is not safe to run concurrently with itself.
+  group: ghcr-cleanup
+  cancel-in-progress: false
+
+jobs:
+  ############################################################################
+  # Prunes the golden image package.
+  #
+  # Deliberately scoped to rust-golden-image. core-service / core-client are
+  # referenced by digest and by commit-SHA tag from gitops and from perf reruns
+  # ("Build new Docker images: unchecked" + an explicit image tag), so pruning
+  # those needs a separate retention policy worked out with whoever owns the
+  # deployments.
+  ############################################################################
+  golden-image:
+    name: ghcr-cleanup/golden-image
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    permissions:
+      packages: write # Required to delete package versions
+    steps:
+      - name: Prune rust-golden-image versions
+        uses: dataaxiom/ghcr-cleanup-action@d52806a0dc70b430571a37da1fde39733ffd640f # v1.2.2
+        with:
+          owner: zama-ai
+          packages: kms/rust-golden-image
+          # Strictly preserved, and takes priority over every rule below.
+          #
+          # `latest` is the only golden tag anything consumes -- every Dockerfile
+          # listed in the header builds FROM rust-golden-image:latest. Everything
+          # else is a cache key or history rather than a dependency:
+          # golden-<hash> is the content-addressed lookup key from #556, the bare
+          # 7-char tags are the pre-#556 commit-SHA scheme, and the release tags
+          # (v0.13.11) are not reproducible bases anyway since release builds
+          # also start FROM :latest.
+          #
+          # `latest-dev` is deliberately NOT excluded: golden-image-latest in
+          # docker-build.yml only ever retags `latest`, so `latest-dev` has been
+          # frozen on the v0.13.11-dev build since 2026-06-30 and is referenced
+          # nowhere in this repo.
+          exclude-tags: latest
+          # The bulk of the backlog. Multi-arch platform children and
+          # attestation referrers belonging to images we keep are resolved out
+          # of the working set first, so this only removes genuine orphans.
+          delete-untagged: true
+          # Of the tagged versions older than the window below, keep the newest
+          # 60. One build publishes up to 6 tags (index, -dev, and per-arch
+          # prod/dev), so this is roughly the last 10 golden builds. This is
+          # what removes the legacy commit-SHA-tagged versions (d5b5a67, ...).
+          keep-n-tagged: 60
+          # Nothing younger than this is considered at all.
+          older-than: 30 days
+          # Verify multi-arch manifests against the registry before acting.
+          validate: true
+          dry-run: ${{ inputs.dry-run || false }}

@@ -1,9 +1,6 @@
 //! ECDSA over secp256k1 signing backend.
 
-use super::{
-    HasSigningScheme, Signature, SigningError, SigningScheme, SigningSchemeType,
-    UnifiedPrivateSigKey,
-};
+use super::{HasSigningScheme, Signature, SigningError, SigningScheme, SigningSchemeType};
 use crate::anyhow_tracked;
 use crate::cryptography::error::CryptographyError;
 use crate::cryptography::internal_crypto_types::LegacySerialization;
@@ -14,13 +11,13 @@ use alloy_signer_local::PrivateKeySigner;
 use alloy_sol_types::{Eip712Domain, SolStruct};
 use hashing::DomainSep;
 use k256::ecdsa::{SigningKey, VerifyingKey};
+use k256::pkcs8::EncodePrivateKey;
 use serde::{Deserialize, Serialize, de::Visitor};
-use std::sync::{Arc, OnceLock};
-use strum::EnumCount;
+use std::sync::Arc;
 use tfhe::named::Named;
 use tfhe_versionable::{Versionize, VersionsDispatch};
 use wasm_bindgen::prelude::wasm_bindgen;
-use zeroize::{Zeroize, ZeroizeOnDrop};
+use zeroize::{Zeroize, ZeroizeOnDrop, Zeroizing};
 
 pub const SIG_SIZE: usize = 64; // a 32 byte r value and a 32 byte s value
 
@@ -78,11 +75,15 @@ impl PublicSigKey {
         &self.pk.0
     }
 
-    #[deprecated(
-        note = "This is legacy code and should not be used for new development. Will be handled in #2781"
-    )]
-    pub fn pk(&self) -> &k256::ecdsa::VerifyingKey {
-        &self.pk.0
+    /// The SEC1 encoding of this key, which is the form Ethereum uses and the
+    /// form the WASM client exchanges with JavaScript.
+    pub fn to_sec1_bytes(&self) -> Vec<u8> {
+        self.pk.0.to_sec1_bytes().to_vec()
+    }
+
+    /// The uncompressed SEC1 point of this key, for logging the node identity.
+    pub fn to_uncompressed_bytes(&self) -> Vec<u8> {
+        self.pk.0.to_encoded_point(false).as_bytes().to_vec()
     }
 }
 
@@ -175,8 +176,7 @@ impl Visitor<'_> for PublicSigKeyVisitor {
     }
 }
 
-// Drop manually implemented due to conflict with Versionize macro
-// TODO(#3078) Rename in the last subissue
+// Drop manually implemented due to conflict with Versionize macro.
 #[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize, Zeroize, VersionsDispatch)]
 pub enum PrivateSigKeyVersions {
     V0(PrivateSigKey),
@@ -189,12 +189,6 @@ pub enum PrivateSigKeyVersions {
 #[versionize(PrivateSigKeyVersions)]
 pub struct PrivateSigKey {
     sk: WrappedSigningKey,
-    /// Memoized per-scheme signing keys derived from `sk`.
-    /// Skipped from (de)serialization and versioning, so the persisted format is unchanged and old
-    /// data deserializes with an empty (cold) cache.
-    #[serde(skip)]
-    #[versionize(skip)]
-    cache: DerivedKeyCache,
 }
 
 impl Named for PrivateSigKey {
@@ -202,26 +196,26 @@ impl Named for PrivateSigKey {
 }
 
 impl PrivateSigKey {
+    /// An ECDSA signing key.
     pub fn new(sk: k256::ecdsa::SigningKey) -> Self {
         Self {
             sk: WrappedSigningKey(sk),
-            cache: DerivedKeyCache::default(),
         }
     }
 
-    pub(super) fn derived_key_slot(
-        &self,
-        scheme: SigningSchemeType,
-    ) -> &OnceLock<UnifiedPrivateSigKey> {
-        self.cache.slot(scheme)
-    }
-
-    /// TODO(#2781) DEPRECATED: code should be refactored to not use this outside on this class
-    #[deprecated(
-        note = "This is legacy code and should not be used for new development. Will be handled in #2781"
-    )]
-    pub fn sk(&self) -> &k256::ecdsa::SigningKey {
-        &self.sk.0
+    /// The PKCS#8 DER encoding of this key.
+    ///
+    /// This is what [`rcgen`] takes to build the key pair that issues a party's
+    /// mTLS certificates, and the only reason the raw scalar leaves this module.
+    ///
+    /// [`rcgen`]: https://docs.rs/rcgen
+    pub fn to_pkcs8_der(&self) -> Result<Zeroizing<Vec<u8>>, CryptographyError> {
+        let document = EncodePrivateKey::to_pkcs8_der(&self.sk.0).map_err(|e| {
+            CryptographyError::SerializationError(format!(
+                "Could not encode the signing key as PKCS#8: {e}"
+            ))
+        })?;
+        Ok(Zeroizing::new(document.as_bytes().to_vec()))
     }
 
     pub fn verf_key(&self) -> PublicSigKey {
@@ -264,69 +258,14 @@ impl HasSigningScheme for PrivateSigKey {
 // (this is why the zeroizing `Drop` lives on the `WrappedSigningKey` newtype).
 impl ZeroizeOnDrop for PrivateSigKey {}
 
-#[derive(Clone, PartialEq, Eq, Debug, ZeroizeOnDrop)]
+#[derive(Clone, PartialEq, Eq, ZeroizeOnDrop)]
 struct WrappedSigningKey(k256::ecdsa::SigningKey);
 impl_generic_versionize!(WrappedSigningKey);
 
-/// Per-scheme cache of signing keys derived from a [`PrivateSigKey`].
-///
-/// Deriving a non-ECDSA key runs a KDF plus a (for ML-DSA, non-trivial) key
-/// expansion, so each scheme's key is derived once and memoized here.
-struct DerivedKeyCache {
-    /// One slot per [`SigningSchemeType`], indexed by `scheme as usize`. The
-    /// [`SigningSchemeType::Ecdsa256k1`] slot always stays empty: that scheme
-    /// signs with the [`PrivateSigKey`] itself, so there is nothing to derive.
-    slots: Arc<[OnceLock<UnifiedPrivateSigKey>; SigningSchemeType::COUNT]>,
-}
-
-impl DerivedKeyCache {
-    fn slot(&self, scheme: SigningSchemeType) -> &OnceLock<UnifiedPrivateSigKey> {
-        &self.slots[scheme as usize]
-    }
-}
-
-impl Default for DerivedKeyCache {
-    fn default() -> Self {
-        Self {
-            slots: Arc::new(std::array::from_fn(|_| OnceLock::new())),
-        }
-    }
-}
-
-// Warm clone: sharing the `Arc` is deliberate, so clones of a signing key share
-// one warmed cache rather than each re-deriving.
-impl Clone for DerivedKeyCache {
-    fn clone(&self) -> Self {
-        Self {
-            slots: Arc::clone(&self.slots),
-        }
-    }
-}
-
-// Ignore the key cache when doing equality comparision.
-// Instead we only care about the underlying `sk` in `PrivateSigKey` when comparing.
-impl PartialEq for DerivedKeyCache {
-    fn eq(&self, _other: &Self) -> bool {
-        true
-    }
-}
-impl Eq for DerivedKeyCache {}
-
-// Never render cached secret-key material.
-impl std::fmt::Debug for DerivedKeyCache {
+// Deliberately never render secret-key material to avoid it accidentally leaking in logs or debug output.
+impl std::fmt::Debug for WrappedSigningKey {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str("DerivedKeyCache(..)")
-    }
-}
-
-impl Zeroize for DerivedKeyCache {
-    fn zeroize(&mut self) {
-        // Drop this handle to the shared cache. If it is the last one, the slots
-        // drop and each cached key wipes itself in place
-        // (`UnifiedPrivateSigKey: ZeroizeOnDrop`); if other clones still share
-        // the cache, the derived keys are wiped once the final clone drops. The
-        // root secret in `PrivateSigKey::sk` is wiped in place regardless.
-        *self = Self::default();
+        f.write_str("WrappedSigningKey(REDACTED)")
     }
 }
 
@@ -514,6 +453,22 @@ pub fn recover_address_from_ext_signature<S: SolStruct>(
     domain: &Eip712Domain,
     external_sig: &[u8],
 ) -> anyhow::Result<alloy_primitives::Address> {
+    let hash = data.eip712_signing_hash(domain);
+    tracing::debug!("Public Data EIP-712 Message hash: {:?}", hash);
+    recover_address_from_eip712_hash(&hash, external_sig)
+}
+
+/// Recover the address that signed a precomputed EIP-712 signing hash (the value
+/// [`SolStruct::eip712_signing_hash`] returns).
+///
+/// # Errors
+///
+/// Errors when `external_sig` is not 65 bytes, and when no address can be recovered
+/// from it.
+pub fn recover_address_from_eip712_hash(
+    message_hash: &alloy_primitives::B256,
+    external_sig: &[u8],
+) -> anyhow::Result<alloy_primitives::Address> {
     // convert received data into proper format for EIP-712 verification
     if external_sig.len() != 65 {
         return Err(anyhow::anyhow!(
@@ -528,16 +483,12 @@ pub fn recover_address_from_ext_signature<S: SolStruct>(
     );
 
     tracing::debug!(
-        "ext. signature bytes: {:x?}, ext. signature: {:?}, EIP-712 domain: {:?}",
+        "ext. signature bytes: {:x?}, ext. signature: {:?}",
         external_sig,
-        sig,
-        domain
+        sig
     );
 
-    let hash = data.eip712_signing_hash(domain);
-    tracing::debug!("Public Data EIP-712 Message hash: {:?}", hash);
-
-    let addr = sig.recover_address_from_prehash(&hash)?;
+    let addr = sig.recover_address_from_prehash(message_hash)?;
     tracing::debug!("Reconstructed address: {}", addr);
 
     Ok(addr)
@@ -550,6 +501,7 @@ impl SigningScheme for Ecdsa256k1 {
     type SigningKey = PrivateSigKey;
     type VerificationKey = PublicSigKey;
 
+    #[cfg(feature = "non-wasm")]
     fn sign(dsep: &DomainSep, msg: &[u8], sk: &PrivateSigKey) -> Result<Vec<u8>, SigningError> {
         internal_sign(dsep, msg, sk)
             .map(|s| s.to_bytes())
@@ -575,8 +527,18 @@ impl SigningScheme for Ecdsa256k1 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::consts::SAFE_SER_SIZE_LIMIT;
     use aes_prng::AesRng;
     use rand::SeedableRng;
+    use tfhe::safe_serialization::{safe_deserialize, safe_serialize};
+
+    /// The bytes this key is persisted as, in the format storage and the backup
+    /// vault hold.
+    fn persisted_bytes(sk: &PrivateSigKey) -> Vec<u8> {
+        let mut buf = Vec::new();
+        safe_serialize(sk, &mut buf, SAFE_SER_SIZE_LIMIT).unwrap();
+        buf
+    }
 
     #[test]
     fn plain_signing() {
@@ -653,6 +615,30 @@ mod tests {
         assert!(verf_id == signing_id);
     }
 
+    /// The persisted key is exactly the secp256k1 scalar.
+    ///
+    /// Persisting anything beside the scalar would make every key stored by an
+    /// earlier release unreadable, so this pins the size of the serialized form:
+    /// the safe-serialization header, then the 32 secret bytes.
+    #[test]
+    fn the_persisted_key_holds_the_scalar_alone() {
+        let mut rng = AesRng::seed_from_u64(3078);
+        let (_pk, sk) = gen_sig_keys(&mut rng);
+        let bytes = persisted_bytes(&sk);
+
+        let restored: PrivateSigKey =
+            safe_deserialize(std::io::Cursor::new(&bytes), SAFE_SER_SIZE_LIMIT).unwrap();
+        assert_eq!(restored, sk);
+        assert_eq!(persisted_bytes(&restored), bytes);
+
+        let (_other_pk, other_sk) = gen_sig_keys(&mut rng);
+        assert_eq!(
+            bytes.len(),
+            persisted_bytes(&other_sk).len(),
+            "the persisted size depends on the key material"
+        );
+    }
+
     #[test]
     fn sunshine_verf_key_legacy_serialization() {
         let mut rng = AesRng::seed_from_u64(42);
@@ -660,5 +646,40 @@ mod tests {
         let serialized_key = verf_key.to_legacy_bytes().unwrap();
         let deserialized_key = PublicSigKey::from_legacy_bytes(&serialized_key).unwrap();
         assert_eq!(verf_key, deserialized_key);
+    }
+
+    /// The PKCS#8 encoding round-trips, which is what the mTLS certificate path
+    /// relies on.
+    #[test]
+    fn pkcs8_der_round_trips() {
+        use k256::pkcs8::DecodePrivateKey;
+
+        let mut rng = AesRng::seed_from_u64(11);
+        let (_pk, sk) = gen_sig_keys(&mut rng);
+
+        let der = sk.to_pkcs8_der().unwrap();
+        let restored = SigningKey::from_pkcs8_der(&der).expect("the DER encoding must parse back");
+        assert_eq!(PrivateSigKey::new(restored), sk);
+    }
+
+    /// Both SEC1 encodings of a verification key parse back to the same key.
+    #[test]
+    fn sec1_encodings_round_trip() {
+        let mut rng = AesRng::seed_from_u64(12);
+        let (pk, _sk) = gen_sig_keys(&mut rng);
+
+        let compressed = pk.to_sec1_bytes();
+        let uncompressed = pk.to_uncompressed_bytes();
+        assert_eq!(uncompressed.len(), 65, "an uncompressed point is 65 bytes");
+        assert_eq!(
+            uncompressed.first(),
+            Some(&0x04),
+            "an uncompressed point starts with the 0x04 tag"
+        );
+
+        for encoding in [compressed, uncompressed] {
+            let restored = PublicSigKey::new(VerifyingKey::from_sec1_bytes(&encoding).unwrap());
+            assert_eq!(restored, pk);
+        }
     }
 }

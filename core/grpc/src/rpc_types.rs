@@ -230,7 +230,11 @@ pub enum PubDataType {
     VerfAddress, // DEPRECATED (superseded by [`PubDataType::TypedVerfAddress`]): The ethereum address of the KMS core, needed for KMS signature verification
     DecompressionKey,
     CACert, // Certificate that signs TLS certificates used by MPC nodes // TODO will change in connection with #2491, also see #2723
-    RecoveryMaterial, // Recovery material for the backup vault
+    #[deprecated(
+        since = "0.15.0",
+        note = "recovery material lives in the backup vault under VaultDataType::RecoveryMaterial; public storage only holds copies left by earlier releases"
+    )]
+    RecoveryMaterial,
     CompressedXofKeySet, // Compressed xof keyset
     /// A signature scheme's public verification key, holding one object per scheme.
     TypedVerfKey,
@@ -298,10 +302,24 @@ pub enum PrivDataTypeVersions {
 /// Data stored with this type either need to be kept secret and/or need to be kept authentic.
 /// Thus some data may indeed be safe to release publicly, but a malicious replacement could completely
 /// compromise the entire system.
-#[derive(Clone, Copy, Debug, Hash, PartialEq, Eq, Serialize, Deserialize, EnumIter, Versionize)]
+#[derive(
+    Clone,
+    Copy,
+    Debug,
+    Hash,
+    PartialEq,
+    Eq,
+    PartialOrd,
+    Ord,
+    Serialize,
+    Deserialize,
+    EnumIter,
+    Versionize,
+)]
 #[versionize(PrivDataTypeVersions)]
 pub enum PrivDataType {
-    SigningKey,
+    // WARNING: Do not reorder or remove variants; only append.
+    SigningKey, // LEGACY ECDSA signing key
     FheKeyInfo, // Only for the threshold case
     CrsInfo,
     FhePrivateKey, // Only used for the centralized case
@@ -315,6 +333,10 @@ pub enum PrivDataType {
     PrssSetupCombined,
     ContextInfo,
     EpochData,
+    /// The root secret signing keys (may or may not include ECDSA) of a KMS node are derived from.
+    SigningSeed,
+    /// Names the custodian context this node backs up under.
+    CustodianContextAnchor,
 }
 
 #[derive(Clone, Copy, Debug, Hash, PartialEq, Eq, Serialize, Deserialize, EnumIter, Version)]
@@ -384,6 +406,8 @@ impl fmt::Display for PrivDataType {
             PrivDataType::PrssSetupCombined => write!(f, "PrssSetupCombined"),
             PrivDataType::ContextInfo => write!(f, "Context"),
             PrivDataType::EpochData => write!(f, "EpochData"),
+            PrivDataType::SigningSeed => write!(f, "SigningSeed"),
+            PrivDataType::CustodianContextAnchor => write!(f, "CustodianContextAnchor"),
         }
     }
 }
@@ -543,6 +567,20 @@ pub fn ecdsa_signatures(signature: Vec<u8>) -> Vec<crate::kms::v1::TypedSignatur
         scheme: crate::kms::v1::SigningSchemeType::Ecdsa256k1 as i32,
         signature,
     }]
+}
+
+/// The first entry of `signatures` for `scheme`, if there is one.
+///
+/// A list the KMS built holds each scheme at most once, so the tie-break only
+/// matters for a malformed list.
+pub fn first_signature_with_scheme(
+    signatures: &[crate::kms::v1::TypedSignature],
+    scheme: crate::kms::v1::SigningSchemeType,
+) -> Option<&[u8]> {
+    signatures
+        .iter()
+        .find(|typed| typed.scheme == scheme as i32)
+        .map(|typed| typed.signature.as_slice())
 }
 
 #[cfg(feature = "non-wasm")]
@@ -1181,6 +1219,62 @@ mod tests {
     use crate::kms::v1;
     use std::str::FromStr;
     use strum::IntoEnumIterator;
+
+    /// The lookup returns the entry of the scheme asked for, `None` when the list has
+    /// no such entry, and the first entry when a scheme appears more than once.
+    #[test]
+    fn first_signature_with_scheme_finds_the_entry_of_a_scheme() {
+        let ecdsa = v1::SigningSchemeType::Ecdsa256k1;
+        let mldsa = v1::SigningSchemeType::Mldsa65;
+        let signatures = vec![
+            v1::TypedSignature {
+                scheme: ecdsa as i32,
+                signature: vec![1, 2, 3],
+            },
+            v1::TypedSignature {
+                scheme: mldsa as i32,
+                signature: vec![4, 5, 6],
+            },
+            v1::TypedSignature {
+                scheme: ecdsa as i32,
+                signature: vec![7, 8, 9],
+            },
+        ];
+
+        assert_eq!(
+            first_signature_with_scheme(&signatures, mldsa),
+            Some(&[4u8, 5, 6][..])
+        );
+        // A duplicated scheme resolves to its first entry.
+        assert_eq!(
+            first_signature_with_scheme(&signatures, ecdsa),
+            Some(&[1u8, 2, 3][..])
+        );
+        assert_eq!(
+            first_signature_with_scheme(&signatures, v1::SigningSchemeType::Ed25519),
+            None
+        );
+        assert_eq!(first_signature_with_scheme(&[], ecdsa), None);
+        // `ecdsa_signatures` builds the list this lookup reads back.
+        assert_eq!(
+            first_signature_with_scheme(&ecdsa_signatures(vec![9]), ecdsa),
+            Some(&[9u8][..])
+        );
+    }
+
+    /// Every `PrivDataType` round-trips through its `Display` form. That form is
+    /// the name of the type's storage folder.
+    #[test]
+    fn priv_data_type_round_trips_through_its_storage_name() {
+        for cur_type in PrivDataType::iter() {
+            let rendered = cur_type.to_string();
+            assert_eq!(
+                PrivDataType::try_from(rendered.as_str()).unwrap(),
+                cur_type,
+                "{cur_type:?} did not round-trip through \"{rendered}\""
+            );
+        }
+    }
 
     #[test]
     fn idempotent_plaintext() {

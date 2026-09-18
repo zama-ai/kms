@@ -9,16 +9,18 @@ use aes_prng::AesRng;
 use algebra::galois_rings::degree_4::{ResiduePolyF4Z64, ResiduePolyF4Z128};
 use backward_compatibility::{
     AppKeyBlobTest, BackupCiphertextTest, ContextInfoTest, CrsGenMetadataTest,
-    CrsGenMetadataWithExtraDataTest, CrsSignedPayloadTest, EpochDataTest, HybridKemCtTest,
-    InternalCustodianContextTest, InternalCustodianRecoveryOutputTest,
-    InternalCustodianSetupMessageTest, InternalRecoveryRequestTest, KeyGenMetadataTest,
-    KeyGenMetadataWithExtraDataTest, KeygenSignedPayloadTest, KmsFheKeyHandlesTest, NodeInfoTest,
-    OperatorBackupOutputTest, PrepKeygenSignedPayloadTest, PrivateSigKeyTest,
-    PrssSetupCombinedTest, PublicSigKeyTest, RecoveryValidationMaterialTest, SchemeDigestsTest,
-    SigncryptionPayloadTest, SoftwareVersionTest, StoredTypedSignatureTest, TestMetadataKMS,
-    TestType, Testcase, ThresholdFheKeysTest, TypedPlaintextTest, UnifiedCipherTest,
-    UnifiedPublicSigKeyTest, UnifiedSigncryptionKeyTest, UnifiedSigncryptionTest,
-    UnifiedUnsigncryptionKeyTest, data_dir,
+    CrsGenMetadataWithExtraDataTest, CrsSignedPayloadTest, CustodianContextAnchorTest,
+    Eip712DomainTest, EpochDataTest, HybridKemCtTest, InternalCustodianContextTest,
+    InternalCustodianRecoveryOutputTest, InternalCustodianSetupMessageTest,
+    InternalRecoveryRequestTest, KeyGenMetadataTest, KeyGenMetadataWithExtraDataTest,
+    KeygenSignedPayloadTest, KmsFheKeyHandlesTest, NodeInfoTest, OperatorBackupOutputTest,
+    PrepKeygenSignedPayloadTest, PrivateSigKeyTest, PrssSetupCombinedTest,
+    PublicDecSignedPayloadTest, PublicSigKeyTest, RecoveryValidationMaterialTest,
+    RootSigningSeedTest, SchemeDigestsTest, SigncryptionPayloadTest, SoftwareVersionTest,
+    StoredEip712DomainTest, StoredTypedSignatureTest, TestMetadataKMS, TestType, Testcase,
+    ThresholdFheKeysTest, TypedPlaintextTest, UnifiedCipherTest, UnifiedPublicSigKeyTest,
+    UnifiedSigncryptionKeyTest, UnifiedSigncryptionTest, UnifiedUnsigncryptionKeyTest,
+    UserDecSignedPayloadTest, data_dir,
     load::{DataFormat, TestFailure, TestResult, TestSuccess},
     tests::{TestedModule, run_all_tests},
 };
@@ -36,8 +38,8 @@ use kms_lib::{
     backup::{
         BackupCiphertext,
         custodian::{
-            Custodian, InternalCustodianContext, InternalCustodianRecoveryOutput,
-            InternalCustodianSetupMessage,
+            Custodian, CustodianContextAnchor, InternalCustodianContext,
+            InternalCustodianRecoveryOutput, InternalCustodianSetupMessage,
         },
         operator::{
             BackupMaterial, DSEP_BACKUP_COMMITMENT, InnerOperatorBackupOutput,
@@ -48,8 +50,8 @@ use kms_lib::{
         encryption::{Encryption, PkeScheme, PkeSchemeType, UnifiedCipher, UnifiedPublicEncKey},
         hybrid_ml_kem::HybridKemCt,
         signatures::{
-            PrivateSigKey, PublicSigKey, SigningSchemeType, UnifiedPublicSigKey,
-            compute_eip712_signature, gen_sig_keys,
+            NodeSigningIdentity, PrivateSigKey, PublicSigKey, RootSigningSeed, SigningSchemeType,
+            UnifiedPublicSigKey, compute_eip712_signature, gen_sig_keys,
         },
         signcryption::{
             Signcrypt, SigncryptionPayload, UnifiedSigncryption, UnifiedSigncryptionKeyOwned,
@@ -58,8 +60,10 @@ use kms_lib::{
     },
     engine::{
         base::{
-            CrsGenMetadata, CrsSignedPayload, KeyGenMetadata, KeyGenMetadataInner,
-            KeygenSignedPayload, KmsFheKeyHandles, PrepKeygenSignedPayload, StoredTypedSignature,
+            CrsGenMetadata, CrsGenMetadataInner, CrsGenMetadataInnerV2, CrsSignedPayload,
+            KeyGenMetadata, KeyGenMetadataInner, KeygenSignedPayload, KmsFheKeyHandles,
+            PrepKeygenSignedPayload, PublicDecSignedPayload, StoredEip712Domain,
+            StoredTypedSignature, UserDecSignedPayload,
         },
         context::{ContextInfo, NodeInfo, SchemeDigests, SignerAddress, SoftwareVersion},
         threshold::service::{
@@ -79,6 +83,7 @@ use std::{
 };
 use strum::IntoEnumIterator;
 use tfhe::integer::compression_keys::DecompressionKey;
+use tfhe_versionable::Upgrade;
 use threshold_execution::{
     small_execution::prss::PRSSSetup, tfhe_internals::public_keysets::FhePubKeySet,
 };
@@ -95,6 +100,42 @@ fn dummy_domain() -> alloy_sol_types::Eip712Domain {
     )
 }
 
+/// The `signatures` list that the current code has to hold after it loads a keygen or
+/// CRS metadata vector that version `stored_version` wrote.
+///
+/// The versions up to 0.14.0 keep no per-scheme signature list. Their upgrade steps
+/// (`Upgrade<KeyGenMetadataInnerV3> for KeyGenMetadataInnerV2`, and the CRS twin)
+/// rebuild the single ECDSA entry from `external_signature`. Version 0.15.0 keeps the
+/// list, and its generator writes it empty.
+///
+/// A version without an entry here is an error: every new fixture has to name the value
+/// that its stored bytes must produce.
+fn expected_scheme_signatures(
+    stored_version: &str,
+    external_signature: &[u8],
+) -> Result<Vec<StoredTypedSignature>, String> {
+    match stored_version {
+        "0.13.0" | "0.13.10" | "0.13.20" | "0.14.0" => Ok(StoredTypedSignature::ecdsa_only(
+            external_signature.to_vec(),
+        )),
+        "0.15.0" => Ok(Vec::new()),
+        other => Err(format!(
+            "no expected per-scheme signature list for stored version {other}"
+        )),
+    }
+}
+
+/// Rebuilds the EIP-712 domain that `test` describes.
+fn domain_from_test(test: &Eip712DomainTest) -> alloy_sol_types::Eip712Domain {
+    alloy_sol_types::Eip712Domain::new(
+        Some(test.name.to_string().into()),
+        Some(test.version.to_string().into()),
+        Some(alloy_primitives::U256::from(test.chain_id)),
+        Some(alloy_primitives::Address::from(test.verifying_contract)),
+        test.salt.map(alloy_primitives::B256::from),
+    )
+}
+
 fn test_private_sig_key(
     dir: &Path,
     test: &PrivateSigKeyTest,
@@ -106,15 +147,64 @@ fn test_private_sig_key(
     let (_, new_versionized) = gen_sig_keys(&mut rng);
 
     if original_versionized != new_versionized {
-        Err(test.failure(
+        return Err(test.failure(
             format!(
                 "Invalid private sig key:\n Expected :\n{original_versionized:?}\nGot:\n{new_versionized:?}"
             ),
             format,
-        ))
-    } else {
-        Ok(test.success(format))
+        ));
     }
+
+    // The persisted key holds the ECDSA scalar and nothing else. The root seed is a
+    // separate object (`PrivDataType::SigningSeed`, pinned by `test_root_signing_seed`),
+    // and the two are only brought together in memory, by `NodeSigningIdentity`.
+    Ok(test.success(format))
+}
+
+/// The root signing seed's stored format must never drift: it is the only copy of
+/// every non-ECDSA identity a node holds, so a node that cannot read back the seed
+/// it wrote has permanently lost those identities.
+fn test_root_signing_seed(
+    dir: &Path,
+    test: &RootSigningSeedTest,
+    format: DataFormat,
+) -> Result<TestSuccess, TestFailure> {
+    let original: RootSigningSeed = load_and_unversionize(dir, test, format)?;
+
+    let mut rng = AesRng::seed_from_u64(test.state);
+    let expected = RootSigningSeed::random(&mut rng);
+
+    if original != expected {
+        return Err(test.failure(
+            "the stored root signing seed does not match the one the current code derives",
+            format,
+        ));
+    }
+
+    Ok(test.success(format))
+}
+
+fn test_custodian_context_anchor(
+    dir: &Path,
+    test: &CustodianContextAnchorTest,
+    format: DataFormat,
+) -> Result<TestSuccess, TestFailure> {
+    let original: CustodianContextAnchor = load_and_unversionize(dir, test, format)?;
+    let expected = CustodianContextAnchor {
+        context_id: RequestId::from_bytes(test.context_id),
+        sequence: test.sequence,
+    };
+
+    if original != expected {
+        return Err(test.failure(
+            format!(
+                "Invalid CustodianContextAnchor test:\n Expected :\n{expected:?}\nGot:\n{original:?}"
+            ),
+            format,
+        ));
+    }
+
+    Ok(test.success(format))
 }
 
 fn test_typed_plaintext(
@@ -190,6 +280,7 @@ fn test_key_gen_metadata(
     dir: &Path,
     test: &KeyGenMetadataTest,
     format: DataFormat,
+    stored_version: &str,
 ) -> Result<TestSuccess, TestFailure> {
     let original_versionized: KeyGenMetadataInner = load_and_unversionize(dir, test, format)?;
 
@@ -235,11 +326,15 @@ fn test_key_gen_metadata(
         },
     );
 
+    let signatures = expected_scheme_signatures(stored_version, &external_signature)
+        .map_err(|e| test.failure(e, format))?;
+
     let new_versionized = KeyGenMetadataInner {
-        signatures: vec![],
+        signatures,
         key_id,
         preprocessing_id,
         key_digest_map,
+        eip712_domain: None,
         external_signature,
         extra_data: None, // Legacy approach
     };
@@ -269,6 +364,7 @@ fn test_crs_gen_metadata(
     dir: &Path,
     test: &CrsGenMetadataTest,
     format: DataFormat,
+    stored_version: &str,
 ) -> Result<TestSuccess, TestFailure> {
     let original_current: CrsGenMetadata = load_and_unversionize(dir, test, format)?;
     let original_legacy: CrsGenMetadata =
@@ -291,14 +387,19 @@ fn test_crs_gen_metadata(
                 format,
             )
         })?;
-    let new_current = CrsGenMetadata::new(
+    let signatures = expected_scheme_signatures(stored_version, &external_signature)
+        .map_err(|e| test.failure(e, format))?;
+    let new_inner: CrsGenMetadataInner = CrsGenMetadataInnerV2 {
         crs_id,
-        digest,
+        crs_digest: digest,
         max_num_bits,
-        external_signature.clone(),
-        vec![],
-        vec![],
-    );
+        extra_data: None,
+        external_signature: external_signature.clone(),
+        signatures,
+    }
+    .upgrade()
+    .unwrap();
+    let new_current = CrsGenMetadata::Current(new_inner);
     match &new_current {
         CrsGenMetadata::LegacyV0(_) => {
             return Err(test.failure(
@@ -352,6 +453,7 @@ fn test_key_gen_metadata_with_extra_data(
     dir: &Path,
     test: &KeyGenMetadataWithExtraDataTest,
     format: DataFormat,
+    stored_version: &str,
 ) -> Result<TestSuccess, TestFailure> {
     let original_versionized: KeyGenMetadataInner = load_and_unversionize(dir, test, format)?;
 
@@ -374,14 +476,23 @@ fn test_key_gen_metadata_with_extra_data(
     );
     key_digest_map.insert(PubDataType::ServerKey, server_key_digest);
     key_digest_map.insert(PubDataType::PublicKey, pub_key_digest);
+    // The versions that predate the stored domain signed with `dummy_domain` and kept
+    // no domain. The later versions name their domain in the fixture metadata, and the
+    // same domain signs the external signature.
+    let stored_domain = test.eip712_domain.as_ref().map(domain_from_test);
+    let signing_domain = stored_domain.clone().unwrap_or_else(dummy_domain);
     let external_signature =
-        compute_eip712_signature(&sig_key, &sol_type, &dummy_domain()).unwrap();
+        compute_eip712_signature(&sig_key, &sol_type, &signing_domain).unwrap();
+
+    let signatures = expected_scheme_signatures(stored_version, &external_signature)
+        .map_err(|e| test.failure(e, format))?;
 
     let new_versionized = KeyGenMetadataInner {
-        signatures: vec![],
+        signatures,
         key_id,
         preprocessing_id,
         key_digest_map,
+        eip712_domain: stored_domain.as_ref().map(StoredEip712Domain::from),
         external_signature,
         extra_data: Some(extra_data),
     };
@@ -403,6 +514,7 @@ fn test_crs_gen_metadata_with_extra_data(
     dir: &Path,
     test: &CrsGenMetadataWithExtraDataTest,
     format: DataFormat,
+    stored_version: &str,
 ) -> Result<TestSuccess, TestFailure> {
     let original_current: CrsGenMetadata = load_and_unversionize(dir, test, format)?;
 
@@ -425,14 +537,19 @@ fn test_crs_gen_metadata_with_extra_data(
                 format,
             )
         })?;
-    let new_current = CrsGenMetadata::new(
+    let signatures = expected_scheme_signatures(stored_version, &external_signature)
+        .map_err(|e| test.failure(e, format))?;
+    let new_inner: CrsGenMetadataInner = CrsGenMetadataInnerV2 {
         crs_id,
-        digest,
+        crs_digest: digest,
         max_num_bits,
-        external_signature.clone(),
-        vec![],
-        extra_data,
-    );
+        extra_data: Some(extra_data),
+        external_signature: external_signature.clone(),
+        signatures,
+    }
+    .upgrade()
+    .unwrap();
+    let new_current = CrsGenMetadata::Current(new_inner);
     match &new_current {
         CrsGenMetadata::LegacyV0(_) => {
             return Err(test.failure(
@@ -536,10 +653,11 @@ fn test_unified_public_sig_key(
 ) -> Result<TestSuccess, TestFailure> {
     let mut rng = AesRng::seed_from_u64(test.state);
     let (_pk, sk) = gen_sig_keys(&mut rng);
+    let identity = NodeSigningIdentity::new(sk, RootSigningSeed::random(&mut rng));
 
     // Primary file: the ECDSA variant.
     let original: UnifiedPublicSigKey = load_and_unversionize(dir, test, format)?;
-    let expected_ecdsa = sk
+    let expected_ecdsa = identity
         .unified_verifying_key(SigningSchemeType::Ecdsa256k1)
         .map_err(|e| {
             test.failure(
@@ -561,7 +679,7 @@ fn test_unified_public_sig_key(
         let aux_filename = format!("{}_{scheme}", test.test_filename());
         let stored: UnifiedPublicSigKey =
             load_and_unversionize_auxiliary(dir, test, &aux_filename, format)?;
-        let expected = sk.unified_verifying_key(scheme).map_err(|e| {
+        let expected = identity.unified_verifying_key(scheme).map_err(|e| {
             test.failure(
                 format!("could not derive {scheme} verification key: {e}"),
                 format,
@@ -1148,7 +1266,7 @@ fn test_kms_fhe_key_handles(
     let original_versionized: KmsFheKeyHandles = load_and_unversionize(dir, test, format)?;
 
     // Retrieve the key parameters from the original KMS handle
-    let (original_integer_key, _, _, _, _, _, _, _) =
+    let (original_integer_key, _, _, _, _, _, _, _, _) =
         original_versionized.client_key.clone().into_raw_parts();
     let original_key_params = original_integer_key.parameters();
 
@@ -1175,7 +1293,7 @@ fn test_kms_fhe_key_handles(
     let key_id = RequestId::zeros();
     let preproc_id = RequestId::zeros();
     let new_versionized = KmsFheKeyHandles::new(
-        &private_sig_key,
+        &NodeSigningIdentity::ecdsa_only(private_sig_key),
         &[SigningSchemeType::Ecdsa256k1],
         client_key,
         &key_id,
@@ -1188,7 +1306,7 @@ fn test_kms_fhe_key_handles(
     .unwrap();
 
     // Retrieve the key parameters from the new KMS handle
-    let (new_integer_key, _, _, _, _, _, _, _) =
+    let (new_integer_key, _, _, _, _, _, _, _, _) =
         new_versionized.client_key.clone().into_raw_parts();
     let new_key_params = new_integer_key.parameters();
 
@@ -1374,6 +1492,46 @@ fn scheme_from_name(name: &str) -> SigningSchemeType {
     }
 }
 
+fn test_stored_eip712_domain(
+    dir: &Path,
+    test: &StoredEip712DomainTest,
+    format: DataFormat,
+) -> Result<TestSuccess, TestFailure> {
+    let original_versionized: StoredEip712Domain = load_and_unversionize(dir, test, format)?;
+
+    let domain = alloy_sol_types::Eip712Domain::new(
+        Some(test.name.to_string().into()),
+        Some(test.version.to_string().into()),
+        Some(alloy_primitives::U256::from(test.chain_id)),
+        Some(alloy_primitives::Address::from(test.verifying_contract)),
+        Some(alloy_primitives::B256::from(test.salt)),
+    );
+    let new_versionized = StoredEip712Domain::from(&domain);
+
+    if original_versionized != new_versionized {
+        return Err(test.failure(
+            format!(
+                "Invalid StoredEip712Domain:\n Expected :\n{original_versionized:?}\nGot:\n{new_versionized:?}"
+            ),
+            format,
+        ));
+    }
+
+    // Boot-time signature verification runs on the domain converted back from
+    // storage, so the stored form must round-trip to the domain it was built from.
+    let round_trip = alloy_sol_types::Eip712Domain::from(&original_versionized);
+    if round_trip != domain {
+        Err(test.failure(
+            format!(
+                "StoredEip712Domain does not convert back to its domain:\n Expected :\n{domain:?}\nGot:\n{round_trip:?}"
+            ),
+            format,
+        ))
+    } else {
+        Ok(test.success(format))
+    }
+}
+
 fn test_stored_scheme_signature(
     dir: &Path,
     test: &StoredTypedSignatureTest,
@@ -1491,6 +1649,54 @@ fn test_crs_signed_payload(
     }
 }
 
+fn test_public_dec_signed_payload(
+    dir: &Path,
+    test: &PublicDecSignedPayloadTest,
+    format: DataFormat,
+) -> Result<TestSuccess, TestFailure> {
+    let original_versionized: PublicDecSignedPayload = load_and_unversionize(dir, test, format)?;
+
+    let new_versionized = PublicDecSignedPayload {
+        response_bytes: test.response_bytes.to_vec(),
+        extra_data: test.extra_data.to_vec(),
+    };
+
+    if original_versionized != new_versionized {
+        Err(test.failure(
+            format!(
+                "Invalid PublicDecSignedPayload:\n Expected :\n{original_versionized:?}\nGot:\n{new_versionized:?}"
+            ),
+            format,
+        ))
+    } else {
+        Ok(test.success(format))
+    }
+}
+
+fn test_user_dec_signed_payload(
+    dir: &Path,
+    test: &UserDecSignedPayloadTest,
+    format: DataFormat,
+) -> Result<TestSuccess, TestFailure> {
+    let original_versionized: UserDecSignedPayload = load_and_unversionize(dir, test, format)?;
+
+    let new_versionized = UserDecSignedPayload {
+        response_bytes: test.response_bytes.to_vec(),
+        extra_data: test.extra_data.to_vec(),
+    };
+
+    if original_versionized != new_versionized {
+        Err(test.failure(
+            format!(
+                "Invalid UserDecSignedPayload:\n Expected :\n{original_versionized:?}\nGot:\n{new_versionized:?}"
+            ),
+            format,
+        ))
+    } else {
+        Ok(test.success(format))
+    }
+}
+
 pub struct KMS;
 
 impl TestedModule for KMS {
@@ -1512,6 +1718,12 @@ impl TestedModule for KMS {
             Self::Metadata::PrivateSigKey(test) => {
                 test_private_sig_key(test_dir.as_ref(), test, format).into()
             }
+            Self::Metadata::RootSigningSeed(test) => {
+                test_root_signing_seed(test_dir.as_ref(), test, format).into()
+            }
+            Self::Metadata::CustodianContextAnchor(test) => {
+                test_custodian_context_anchor(test_dir.as_ref(), test, format).into()
+            }
             Self::Metadata::TypedPlaintext(test) => {
                 test_typed_plaintext(test_dir.as_ref(), test, format).into()
             }
@@ -1524,17 +1736,40 @@ impl TestedModule for KMS {
             Self::Metadata::AppKeyBlob(test) => {
                 test_app_key_blob(test_dir.as_ref(), test, format).into()
             }
-            Self::Metadata::KeyGenMetadata(test) => {
-                test_key_gen_metadata(test_dir.as_ref(), test, format).into()
-            }
-            Self::Metadata::CrsGenMetadata(test) => {
-                test_crs_gen_metadata(test_dir.as_ref(), test, format).into()
-            }
+            Self::Metadata::KeyGenMetadata(test) => test_key_gen_metadata(
+                test_dir.as_ref(),
+                test,
+                format,
+                &testcase.kms_core_version_min,
+            )
+            .into(),
+            Self::Metadata::CrsGenMetadata(test) => test_crs_gen_metadata(
+                test_dir.as_ref(),
+                test,
+                format,
+                &testcase.kms_core_version_min,
+            )
+            .into(),
             Self::Metadata::KeyGenMetadataWithExtraData(test) => {
-                test_key_gen_metadata_with_extra_data(test_dir.as_ref(), test, format).into()
+                test_key_gen_metadata_with_extra_data(
+                    test_dir.as_ref(),
+                    test,
+                    format,
+                    &testcase.kms_core_version_min,
+                )
+                .into()
             }
             Self::Metadata::CrsGenMetadataWithExtraData(test) => {
-                test_crs_gen_metadata_with_extra_data(test_dir.as_ref(), test, format).into()
+                test_crs_gen_metadata_with_extra_data(
+                    test_dir.as_ref(),
+                    test,
+                    format,
+                    &testcase.kms_core_version_min,
+                )
+                .into()
+            }
+            Self::Metadata::StoredEip712Domain(test) => {
+                test_stored_eip712_domain(test_dir.as_ref(), test, format).into()
             }
             Self::Metadata::SigncryptionPayload(test) => {
                 test_signcryption_payload(test_dir.as_ref(), test, format).into()
@@ -1604,6 +1839,12 @@ impl TestedModule for KMS {
             }
             Self::Metadata::CrsSignedPayload(test) => {
                 test_crs_signed_payload(test_dir.as_ref(), test, format).into()
+            }
+            Self::Metadata::PublicDecSignedPayload(test) => {
+                test_public_dec_signed_payload(test_dir.as_ref(), test, format).into()
+            }
+            Self::Metadata::UserDecSignedPayload(test) => {
+                test_user_dec_signed_payload(test_dir.as_ref(), test, format).into()
             }
         }
     }

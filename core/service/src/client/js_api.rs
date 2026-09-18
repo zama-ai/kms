@@ -78,6 +78,7 @@ use crate::cryptography::encryption::{
 };
 use crate::cryptography::hybrid_ml_kem;
 use crate::cryptography::signatures::{PrivateSigKey, PublicSigKey};
+use crate::cryptography::signing::SigningSchemeType;
 use aes_prng::AesRng;
 use bc2wrap::deserialize_slice;
 use kms_grpc::kms::v1::FheParameter;
@@ -112,8 +113,7 @@ pub fn ml_kem_pke_sk_len() -> usize {
 
 #[wasm_bindgen]
 pub fn public_sig_key_to_u8vec(pk: &PublicSigKey) -> Vec<u8> {
-    #[allow(deprecated)]
-    pk.pk().to_sec1_bytes().to_vec()
+    pk.to_sec1_bytes()
 }
 
 #[wasm_bindgen]
@@ -193,10 +193,16 @@ pub fn new_client(
 
     Ok(Client {
         server_identities,
+        // The browser has no access to the servers' public storage, so it can only
+        // verify the ECDSA entry of a response's `signatures`.
+        scheme_verf_keys: HashMap::new(),
         client_address,
         client_sk: None,
         params,
         decryption_mode: DecryptionMode::default(),
+        // The browser can verify only the ECDSA entry (see `scheme_verf_keys`), so it
+        // requests no other scheme.
+        signing_schemes: vec![SigningSchemeType::Ecdsa256k1],
     })
 }
 
@@ -304,10 +310,11 @@ fn js_to_resp(json: JsValue) -> anyhow::Result<Vec<UserDecryptionResponse>> {
     // then convert the hex type into the type we need
     let mut out = vec![];
     for hex_resp in hex_resps {
+        let ecdsa_signature = hex::decode(&hex_resp.signature)?;
         out.push(UserDecryptionResponse {
             signature: vec![],
-            signatures: vec![], // there is no ECDSA signature in the wasm use case
-            external_signature: hex::decode(&hex_resp.signature)?,
+            signatures: kms_grpc::rpc_types::ecdsa_signatures(ecdsa_signature.clone()),
+            external_signature: ecdsa_signature,
             payload: match hex_resp.payload {
                 Some(inner) => {
                     let buf = hex::decode(&inner)?;

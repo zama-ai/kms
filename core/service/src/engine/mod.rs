@@ -20,7 +20,9 @@ pub mod material_integrity;
 #[cfg(feature = "non-wasm")]
 pub mod migration;
 #[cfg(feature = "non-wasm")]
-pub(crate) mod public_material_verification;
+pub mod rng_source;
+#[cfg(feature = "non-wasm")]
+pub(crate) mod storage_material_verification;
 #[cfg(feature = "non-wasm")]
 pub mod threshold;
 #[cfg(feature = "non-wasm")]
@@ -31,6 +33,8 @@ pub mod utils;
 #[cfg(feature = "non-wasm")]
 mod validation_non_wasm;
 mod validation_wasm;
+
+pub(crate) mod signed_payload;
 
 /// Client-side validation of aggregated decryption responses.
 ///
@@ -55,7 +59,7 @@ mod validation_wasm;
 /// here (`validate_user_decrypt_responses`) can therefore be run by a party that does
 /// not hold the decryption key.
 ///
-// This is the only one that is allowed to be compiled with wasm
+// This and `signed_payload` are the only ones that are allowed to be compiled with wasm
 pub(crate) mod validation {
     #[cfg(feature = "non-wasm")]
     pub(crate) use super::validation_non_wasm::*;

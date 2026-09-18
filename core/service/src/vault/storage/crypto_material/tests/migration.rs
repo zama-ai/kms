@@ -1,5 +1,6 @@
 use super::*;
 use crate::{
+    cryptography::signing::identity::NodeSigningIdentity,
     engine::base::{
         DSEP_PUBDATA_KEY, compute_info_compressed_keygen, compute_info_uncompressed_keygen,
     },
@@ -26,7 +27,7 @@ fn threshold_fhe_keys_for_compressed_keyset(
     extra_data: Vec<u8>,
 ) -> ThresholdFheKeys {
     let info = compute_info_compressed_keygen(
-        sk,
+        &NodeSigningIdentity::ecdsa_only(sk.clone()),
         &[crate::cryptography::signing::SigningSchemeType::Ecdsa256k1],
         &DSEP_PUBDATA_KEY,
         prep_id,
@@ -226,7 +227,7 @@ async fn setup_pre_migration_uncompressed(
 
     // Compute real metadata that matches what we'll actually store in pub storage.
     let info = compute_info_uncompressed_keygen(
-        sk,
+        &NodeSigningIdentity::ecdsa_only(sk.clone()),
         &[crate::cryptography::signing::SigningSchemeType::Ecdsa256k1],
         &DSEP_PUBDATA_KEY,
         prep_id,
@@ -663,7 +664,15 @@ async fn test_copy_compressed_key_validation_failure_is_atomic() {
     let bad_fhe_keys = ThresholdFheKeys::new(
         old_fhe_keys.private_keys.clone(),
         PublicKeyMaterial::new(compressed_keyset.clone()),
-        KeyGenMetadata::new(new_key_id, prep_id, BTreeMap::new(), vec![], vec![], vec![]),
+        KeyGenMetadata::new(
+            new_key_id,
+            prep_id,
+            BTreeMap::new(),
+            &domain,
+            vec![],
+            vec![],
+            vec![],
+        ),
     );
     store_migrated_compressed_material(
         &crypto_storage,

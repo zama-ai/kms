@@ -27,6 +27,13 @@ on:
       image-enclave-name:
         type: string
         required: true
+      image-tag:
+        type: string
+        required: true
+      eif-info-name:
+        type: string
+        required: false
+        default: 'eif-info-enclave.txt'
       push_image:
         type: boolean
         default: true
@@ -89,8 +96,11 @@ jobs:
           EVENT_NAME: ${{ github.event_name }}
           REF_NAME: ${{ github.ref_name }}
           COMMIT_HASH: ${{ github.event.pull_request.head.sha || github.sha }}
+          IMAGE_TAG: ${{ inputs.image-tag }}
         run: |
-          if [[ "${EVENT_NAME}" == "release" ]]; then
+          if [[ -n "${IMAGE_TAG}" ]]; then
+            TAG="${IMAGE_TAG}"
+          elif [[ "${EVENT_NAME}" == "release" ]]; then
             TAG="${REF_NAME}"
           elif [[ "${EVENT_NAME}" == "schedule" ]]; then
             TAG="nightly-$(git rev-parse --short "$COMMIT_HASH")"
@@ -230,6 +240,13 @@ jobs:
             echo "eif_pcr2=${EIF_MEASUREMENT_PCR2}"
           } >> "$GITHUB_OUTPUT"
 
+      - name: Prepare EIF release metadata
+        if: github.event_name == 'release'
+        env:
+          EIF_INFO_NAME: ${{ inputs.eif-info-name }}
+          EIF_OUTPUT_DIR: ${{ env.EIF_OUTPUT_DIR }}
+        run: cp "${EIF_OUTPUT_DIR}/eif-info.txt" "${EIF_OUTPUT_DIR}/${EIF_INFO_NAME}"
+
       - name: Docker Build and Push Enclave Image
         id: push
         uses: ./.github/actions/docker-build-push
@@ -246,7 +263,7 @@ jobs:
           pull: false
           tags: |
             ghcr.io/zama-ai/${{ inputs.image-enclave-name }}:${{ needs.determine-tag.outputs.docker_tag }}
-            ghcr.io/zama-ai/${{ inputs.image-enclave-name }}:latest
+            ${{ github.event_name == 'release' && format('ghcr.io/zama-ai/{0}:latest', inputs.image-enclave-name) || '' }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
           labels: |
@@ -258,7 +275,7 @@ jobs:
       - name: Export image name
         id: export-image
         env:
-          IMAGE_NAME: ${{ inputs.image-name }}
+          IMAGE_NAME: ${{ inputs.image-enclave-name }}
           DOCKER_TAG: ${{ needs.determine-tag.outputs.docker_tag }}
           DIGEST: ${{ steps.push.outputs.digest }}
         run: |
@@ -273,8 +290,7 @@ jobs:
         if: github.event_name == 'release'
         uses: softprops/action-gh-release@da05d552573ad5aba039eaac05058a918a7bf631 # v2.2.2
         with:
-          files: |
-            ${{ env.EIF_OUTPUT_DIR }}/eif-info.txt
+          files: ${{ env.EIF_OUTPUT_DIR }}/${{ inputs.eif-info-name }}
 
   sign-image:
     permissions:

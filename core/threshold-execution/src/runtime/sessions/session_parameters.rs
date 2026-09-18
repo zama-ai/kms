@@ -23,7 +23,7 @@ pub trait GenericParameterHandles<R: RoleTrait>: Sync + Send {
     fn num_parties(&self) -> usize;
     fn roles(&self) -> &HashSet<R>;
     fn roles_mut(&mut self) -> &mut HashSet<R>;
-    fn to_parameters(&self) -> GenericSessionParameters<R>;
+    fn parameters(&self) -> &GenericSessionParameters<R>;
     fn get_all_sorted_roles(&self) -> &Vec<R>;
     fn get_deserialization_runtime(&self) -> DeSerializationRunTime;
     fn set_deserialization_runtime(&mut self, serialization_runtime: DeSerializationRunTime);
@@ -103,8 +103,8 @@ impl<R: RoleTrait> GenericParameterHandles<R> for GenericSessionParameters<R> {
         &mut self.roles
     }
 
-    fn to_parameters(&self) -> GenericSessionParameters<R> {
-        self.clone()
+    fn parameters(&self) -> &GenericSessionParameters<R> {
+        self
     }
 
     fn get_all_sorted_roles(&self) -> &Vec<R> {
@@ -117,6 +117,16 @@ impl<R: RoleTrait> GenericParameterHandles<R> for GenericSessionParameters<R> {
 
     fn set_deserialization_runtime(&mut self, serialization_runtime: DeSerializationRunTime) {
         self.deserialization_runtime = serialization_runtime;
+    }
+}
+
+impl TwoSetsSessionParameters {
+    pub fn num_parties_in_set1(&self) -> usize {
+        self.roles.iter().filter(|r| r.is_set1()).count()
+    }
+
+    pub fn num_parties_in_set2(&self) -> usize {
+        self.roles.iter().filter(|r| r.is_set2()).count()
     }
 }
 

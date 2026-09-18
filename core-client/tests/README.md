@@ -5,7 +5,7 @@
 | Test Type | Command |
 |-----------|---------|
 | **Native (fast)** | `cargo test --test integration_test --features testing` |
-| **Native (slow threshold tests)** | `cargo nextest run --test integration_test --features slow_tests -- threshold` |
+| **Native (slow threshold tests)** | `cargo nextest run --test integration_test --features e2e,slow_tests -- threshold` |
 | **K8s Threshold (kind)** | `cargo test --test kubernetes_test_threshold --features kind_tests` |
 | **K8s Centralized (kind)** | `cargo test --test kubernetes_test_centralized --features kind_tests` |
 
@@ -19,20 +19,25 @@
 - `testing`
   - Enables test helper code used by integration tests. Most threshold tests
     (preproc+keygen, reshare, MPC context init/switch) run under this feature.
+- `insecure`
+  - Enables the client-side `InsecureKeyGen*` and `InsecureCrsGen*` CLI commands.
+- `e2e`
+  - Implies `testing` and `insecure`.
+  - Enables the full native/K8s e2e surface, including insecure-only fast-path commands.
 - `slow_tests`
   - Implies `testing`.
   - Compiles&runs the threshold tests that are too slow to run locally.
   - **Does not** enable Kind/Kubernetes tests.
 - `kind_tests`
-  - Implies `testing`.
+  - Implies `e2e`.
   - Enables Kubernetes/Kind test binaries under `tests/kind-testing/`.
   - Requires a running Kind cluster.
 
 ### Pre-generated material
 
-- PRSS-based keygen tests require PRSS to be available at server startup (`ensure_default_prss=true` ensures it is generated/reused) and, for `nightly_full_gen_tests_default_*`, pre-generated keygen preprocessing material (offline DKG phase).
-- For **Test** params, missing PRSS can be initialized live. For **Default** params, both PRSS and keygen preprocessing material must be pre-generated — missing either is a hard error.
-- Some tests generate PRSS live during the test (via `new_prss`) — these do not require pre-generated PRSS. Used by MPC context init/switch and reshare tests.
+- PRSS-based keygen tests require the default epoch (PRSS setup) from the pre-generated test material and, for `nightly_full_gen_tests_default_*`, pre-generated keygen preprocessing material (offline DKG phase).
+- Tests that use pre-generated material require the default epoch (PRSS setup) and, for **Default** params, keygen preprocessing material. Missing material causes a hard error.
+- Tests that call `new_prss` initialize PRSS live and do not require a pre-generated default epoch.
 - Generate the production-like required secure material (aka "default") with:
   `cargo run -p generate-test-material -- --output ./test-material --profile secure --parties 4,13`.
 
@@ -51,6 +56,8 @@ CI uses `--skip` prefix matching to exclude certain test groups from regular run
 ### CLI commands (`CCCommand`)
 
 The client binary accepts these commands (passed as `CCCommand` in tests via `execute_cmd`). The `execute_cmd` helper automatically polls the corresponding `*Result` variant — test code only needs the initiating command.
+
+`InsecureKeyGen` and `InsecureCrsGen` are only available when `kms-core-client` is built with the `insecure` feature (or feature bundles such as `e2e`/`kind_tests`).
 
 | Command | Description | Requires epoch | Requires PRSS |
 |---------|-------------|----------------|---------------|
@@ -102,11 +109,11 @@ async fn test_my_feature() -> Result<()> {
 **Threshold setup variants** (all take `party_count: usize`):
 - `setup_isolated_threshold_cli_test` — basic threshold test
 - `setup_isolated_threshold_cli_test_signing_only` — signing without pre-loaded PRSS
-- `setup_isolated_threshold_cli_test_with_prss` — PRSS-enabled setup (`ensure_default_prss=true`) for preprocessing/keygen flows
+- `setup_isolated_threshold_cli_test_with_prss` — copies the fixture's default epoch (PRSS) for preprocessing/keygen flows
 - `setup_isolated_threshold_cli_test_with_backup` — with backup vault
 - `setup_isolated_threshold_cli_test_with_custodian_backup` — with custodian backup vault
-- `setup_isolated_threshold_cli_test_default` — Default FHE params, no PRSS (`ensure_default_prss=false`)
-- `setup_isolated_threshold_cli_test_with_prss_default` — Default FHE + PRSS-enabled setup (`ensure_default_prss=true`; requires `slow_tests` and pre-generated Default test material)
+- `setup_isolated_threshold_cli_test_default` — Default FHE params, no default epoch (PRSS)
+- `setup_isolated_threshold_cli_test_with_prss_default` — Default FHE + PRSS-enabled setup (requires `slow_tests` and pre-generated Default test material)
 
 ---
 

@@ -126,7 +126,26 @@ these operations therefore work unchanged whether clients use the async or the s
 - **Description**: Total number of bytes sent over the network by KMS.
 - **Alarm**: If the counter stops increasing during expected traffic periods.
 
+#### Threshold transport diagnostics
+- `kms_network_debug_events_total{event}` counts a fixed set of queue, session, send, retry,
+  timeout, and late-message outcomes. Use it to diagnose transport backpressure.
+- `kms_network_sender_tasks` is the number of active sender tasks;
+  `kms_network_sender_tasks_{spawned,completed}_total` make leaks or growing backlogs visible.
+- `kms_completed_sessions` counts completed MPC sessions retained so late peer messages are
+  acknowledged as completed instead of reopening the session. Retention is controlled by
+  `session_cleanup_interval_secs` (24 hours by default), so this measures recent session churn
+  over that window, not active work or a processing backlog.
+
 ### Performance Metrics
+
+#### Threshold user-decryption stages
+- `kms_user_decrypt_stage_duration_microseconds_total{stage}` and
+  `kms_user_decrypt_stage_observations_total{stage}` expose cumulative wall time and observation
+  count for admission, scheduler delay, deserialization, session creation, partial decryption,
+  signcryption, result signing, and meta-store update. Divide the totals to obtain the mean stage
+  duration over a chosen interval.
+- `kms_user_decrypt_background_tasks` is the number of submitted UDEC background tasks that have
+  not finished.
 
 #### Metric Name: `kms_operation_duration_ms`
 - **Type**: Histogram
@@ -159,7 +178,7 @@ these operations therefore work unchanged whether clients use the async or the s
 
 #### Other Gauges
 - **Type**: Gauge
-- **Description**: Point-in-time gauges (default `kms` prefix): `kms_active_sessions` / `kms_inactive_sessions`, `kms_tasks`, `kms_rate_limiter_usage`, `kms_meta_storage_{user,pub}_decryptions` and `..._in_store`, `kms_file_descriptors`, `kms_socat_file_descriptors` / `kms_socat_tasks`, `kms_total_cpus`, `kms_total_memory`, `kms_process_cpu_usage`, `kms_process_memory_usage`, and `kms_version` (build info; value always 1).
+- **Description**: Point-in-time gauges (default `kms` prefix): `kms_active_sessions` / `kms_inactive_sessions`, `kms_tasks`, `kms_rate_limiter_usage`, `kms_meta_storage_{user,pub}_decryptions` and `..._in_store`, `kms_file_descriptors`, `kms_socat_file_descriptors` / `kms_socat_tasks`, `kms_tokio_alive_tasks`, `kms_tokio_global_queue_depth`, `kms_total_cpus`, `kms_total_memory`, `kms_process_cpu_usage`, `kms_process_memory_usage`, and `kms_version` (build info; value always 1).
 - **Alarm**: e.g. alert if `kms_rate_limiter_usage` saturates or `kms_active_sessions` looks abnormal.
 
 ### Metric Tags

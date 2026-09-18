@@ -7,10 +7,9 @@ use crate::grpc::{
     TlsExtensionGetter,
 };
 use crate::health_check::HealthCheckSession;
-use crate::sending_service::{
-    GrpcSendingService, NetworkSession, SendingService, now_activity_millis,
-};
+use crate::sending_service::{GrpcSendingService, NetworkSession, SendingService};
 use dashmap::DashMap;
+use observability::metrics::{self, NetworkDebugEvent};
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -34,7 +33,7 @@ pub struct GrpcNetworkingManager {
     pub opened_sessions_tracker: Arc<DashMap<MpcIdentity, u64>>,
     conf: CoreToCoreNetworkConfig,
     pub sending_service: GrpcSendingService,
-    #[cfg(feature = "testing")]
+    #[cfg(feature = "insecure")]
     pub force_tls: bool,
 }
 
@@ -54,7 +53,7 @@ impl GrpcNetworkingManager {
             self.conf.get_max_opened_inactive_sessions_per_party(),
             self.conf.get_max_waiting_time_for_message_queue(),
             tls_extension,
-            #[cfg(feature = "testing")]
+            #[cfg(feature = "insecure")]
             self.force_tls,
         ))
         .max_decoding_message_size(self.conf.get_max_en_decode_message_size())
@@ -84,6 +83,7 @@ impl GrpcNetworkingManager {
                 interval.tick().await;
                 let mut internal_inactive_sessions_count = 0;
                 let mut internal_active_sessions_count = 0;
+                let mut internal_completed_sessions_count = 0;
                 let mut to_remove = Vec::new();
                 for mut cur in session_store.iter_mut() {
                     let (session_id, status) = cur.pair_mut();
@@ -91,16 +91,19 @@ impl GrpcNetworkingManager {
                         SessionStatus::Completed(started) => {
                             // Remove completed sessions that have been completed for a very long time
                             if started.elapsed() > cleanup_interval {
+                                metrics::METRICS.increment_network_event(
+                                    NetworkDebugEvent::SessionCompletedRemoved,
+                                );
                                 to_remove.push(*session_id);
+                            } else {
+                                internal_completed_sessions_count += 1;
                             }
                         }
                         SessionStatus::Inactive((_, started)) => {
                             // Remove inactive sessions that have been inactive for awhile
                             if started.elapsed() > discard_inactive_interval {
-                                tracing::warn!(
-                                    "Discarding Inactive session {:?} after {:?} seconds. We never heard about such session.",
-                                    session_id,
-                                    started.elapsed().as_secs()
+                                metrics::METRICS.increment_network_event(
+                                    NetworkDebugEvent::SessionInactiveDiscarded,
                                 );
                                 to_remove.push(*session_id);
                                 continue;
@@ -109,27 +112,14 @@ impl GrpcNetworkingManager {
                             }
                         }
                         SessionStatus::Active(session) => match session.upgrade() {
-                            Some(network_session) => {
-                                let time_since_last_rec = Duration::from_millis(
-                                    now_activity_millis().saturating_sub(
-                                        network_session
-                                            .last_rec_activity_time
-                                            .load(Ordering::Relaxed),
-                                    ),
-                                );
-                                if time_since_last_rec > discard_inactive_interval {
-                                    tracing::warn!(
-                                        "Discarding Active session {:?} after {:?} seconds.",
-                                        session_id,
-                                        time_since_last_rec.as_secs()
-                                    );
-                                    to_remove.push(*session_id);
-                                    continue;
-                                }
+                            Some(_) => {
                                 internal_active_sessions_count += 1;
                             }
                             None => {
                                 *status = SessionStatus::Completed(Instant::now());
+                                internal_completed_sessions_count += 1;
+                                metrics::METRICS
+                                    .increment_network_event(NetworkDebugEvent::SessionCompleted);
                             }
                         },
                     };
@@ -139,6 +129,7 @@ impl GrpcNetworkingManager {
                 }
                 inactive_session_count.store(internal_inactive_sessions_count, Ordering::Relaxed);
                 active_session_count.store(internal_active_sessions_count, Ordering::Relaxed);
+                metrics::METRICS.record_completed_sessions(internal_completed_sessions_count);
             }
         });
     }
@@ -148,19 +139,19 @@ impl GrpcNetworkingManager {
         tls_conf: Option<tokio_rustls::rustls::client::ClientConfig>,
         conf: CoreToCoreNetworkConfig,
     ) -> anyhow::Result<Self> {
-        #[cfg(feature = "testing")]
+        #[cfg(feature = "insecure")]
         let force_tls = tls_conf.is_some();
-        #[cfg(feature = "testing")]
+        #[cfg(feature = "insecure")]
         if !force_tls {
             tracing::warn!(
-                "force_tls is DISABLED. Testing feature is enabled - this is NOT recommended in production environments."
+                "force_tls is DISABLED. Insecure feature is enabled - this is NOT recommended in production environments."
             );
         }
 
-        #[cfg(not(any(test, feature = "testing")))]
+        #[cfg(not(any(test, feature = "insecure")))]
         if tls_conf.is_none() {
             return Err(error_utils::anyhow_error_and_log(
-                "TLS configuration must be provided in non-testing environments",
+                "TLS configuration must be provided in secure builds",
             ));
         }
 
@@ -191,7 +182,7 @@ impl GrpcNetworkingManager {
             opened_sessions_tracker: Arc::new(DashMap::new()),
             conf,
             sending_service: GrpcSendingService::new(tls_conf, conf)?,
-            #[cfg(feature = "testing")]
+            #[cfg(feature = "insecure")]
             force_tls,
         })
     }
@@ -245,7 +236,6 @@ impl GrpcNetworkingManager {
         my_role: R,
         network_mode: NetworkMode,
     ) -> anyhow::Result<Arc<impl Networking<R> + use<R>>> {
-        let party_count = role_assignment.len();
         let mut others = role_assignment.clone();
 
         // Removing self from the role_assignment map
@@ -297,6 +287,7 @@ impl GrpcNetworkingManager {
                 ));
 
                 *mutable_status = SessionStatus::Active(Arc::downgrade(&session));
+                metrics::METRICS.increment_network_event(NetworkDebugEvent::SessionActivated);
 
                 session
             }
@@ -318,17 +309,11 @@ impl GrpcNetworkingManager {
                 ));
 
                 vacant.insert(SessionStatus::Active(Arc::downgrade(&session)));
+                metrics::METRICS.increment_network_event(NetworkDebugEvent::SessionActiveCreated);
 
                 session
             }
         };
-
-        tracing::info!(
-            "[SESSION_CREATION] Starting session {:?} with {} parties. (Owner: {:?})",
-            session_id,
-            party_count,
-            owner,
-        );
 
         Ok(session)
     }
@@ -339,5 +324,104 @@ impl GrpcNetworkingManager {
 
     pub async fn inactive_session_count(&self) -> u64 {
         self.inactive_session_count.load(Ordering::Relaxed)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use threshold_types::party::Identity;
+    use threshold_types::role::Role;
+
+    /// Name of a session store entry's status, for assertion messages.
+    fn status_name(status: Option<&SessionStatus>) -> &'static str {
+        match status {
+            Some(SessionStatus::Active(_)) => "active",
+            Some(SessionStatus::Inactive(_)) => "inactive",
+            Some(SessionStatus::Completed(_)) => "completed",
+            None => "absent",
+        }
+    }
+
+    /// Regression test: the task used to discard an active session that had not
+    /// received anything for `discard_inactive_sessions_interval`. Sessions that
+    /// legitimately idle would thus be discarded, which turned out to be an issue.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn test_active_session_is_never_discarded() {
+        let conf = CoreToCoreNetworkConfig {
+            network_timeout: Some(1),
+            session_update_interval_secs: Some(1),
+            session_cleanup_interval_secs: Some(1),
+            discard_inactive_sessions_interval: Some(1),
+            ..Default::default()
+        };
+        let manager = GrpcNetworkingManager::new(None, conf).unwrap();
+
+        let role_1 = Role::indexed_from_one(1);
+        let role_2 = Role::indexed_from_one(2);
+        let mut role_assignment = RoleAssignment::default();
+        role_assignment.insert(role_1, Identity::new("127.0.0.1".to_string(), 1, None));
+        role_assignment.insert(role_2, Identity::new("127.0.0.1".to_string(), 2, None));
+
+        // An idle session at round 0, whose 1s round deadline passes right away.
+        let idle_id = SessionId::from(7);
+        let idle = manager
+            .make_network_session(idle_id, &role_assignment, role_1, NetworkMode::Sync)
+            .await
+            .unwrap();
+        // A session budgeted 20 rounds ahead, whose deadline outlasts the test.
+        let ahead_id = SessionId::from(8);
+        let ahead = manager
+            .make_network_session(ahead_id, &role_assignment, role_1, NetworkMode::Sync)
+            .await
+            .unwrap();
+        let advance = 20;
+        for _ in 0..advance {
+            ahead.increase_round_counter().await;
+        }
+
+        // Several sweeps of the cleanup task at a 1s update interval, well past the
+        // 1s discard and cleanup intervals and past the idle session's deadline.
+        tokio::time::sleep(Duration::from_millis(3500)).await;
+
+        assert!(
+            idle.get_timeout_current_round().await < std::time::Instant::now(),
+            "the idle session must be past its own round deadline for the test to be meaningful"
+        );
+        for (id, session) in [(idle_id, &idle), (ahead_id, &ahead)] {
+            let entry = manager.session_store.get(&id);
+            match entry.as_deref() {
+                Some(SessionStatus::Active(weak)) => {
+                    let routed = weak.upgrade().unwrap_or_else(|| {
+                        panic!("the entry of session {id} must point at a live session")
+                    });
+                    assert_eq!(
+                        Arc::as_ptr(&routed) as *const (),
+                        Arc::as_ptr(session) as *const (),
+                        "the entry of session {id} must still route to the protocol's session"
+                    );
+                }
+                other => panic!(
+                    "session {id} must still be active while the protocol holds it, got {}",
+                    status_name(other)
+                ),
+            }
+        }
+        assert_eq!(manager.active_session_count().await, 2);
+        assert_eq!(ahead.get_current_round().await, advance);
+
+        // Dropping the handles is the only way out of `Active`: the next sweep marks
+        // the entries completed and the cleanup interval then removes them.
+        drop(idle);
+        drop(ahead);
+        tokio::time::sleep(Duration::from_millis(3500)).await;
+        for id in [idle_id, ahead_id] {
+            assert!(
+                manager.session_store.get(&id).is_none(),
+                "session {id} must be removed once dropped and past the cleanup interval, got {}",
+                status_name(manager.session_store.get(&id).as_deref())
+            );
+        }
+        assert_eq!(manager.active_session_count().await, 0);
     }
 }

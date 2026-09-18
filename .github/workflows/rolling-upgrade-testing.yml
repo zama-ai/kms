@@ -45,10 +45,12 @@
 # Workflow inputs (workflow_dispatch)
 # -------------------------------------
 #   old_image_tag          (string, required)
-#                            Baseline KMS Core image tag for initial deploy.
+#                            Baseline KMS Core image tag for initial deploy from
+#                            the legacy, pre-split repositories.
 #   new_image_tag          (string, required)
-#                            Target KMS Core image tag after upgrades (ignored if
-#                            build=true; then docker-build output is used).
+#                            Target KMS Core image tag from the new insecure
+#                            repositories (ignored if build=true; then the
+#                            docker-build output is used).
 #   core_client_image_tag  (string, optional, default = new_image_tag)
 #                            Core-client (test harness) image tag for the mixed-
 #                            state runs, decoupled from the core versions under
@@ -200,6 +202,12 @@ jobs:
       TLS: 'true'
       NAMESPACE: 'kms-ci'
       PATH_SUFFIX: 'kms-enclave-ci'
+      OLD_KMS_CORE_IMAGE_NAME: 'hub.zama.org/ghcr/zama-ai/kms/core-service'
+      OLD_KMS_CORE_CLIENT_IMAGE_NAME: 'hub.zama.org/ghcr/zama-ai/kms/core-client'
+      OLD_KMS_CORE_ENCLAVE_IMAGE_NAME: 'hub.zama.org/ghcr/zama-ai/kms/core-service-enclave'
+      NEW_KMS_CORE_IMAGE_NAME: 'hub.zama.org/ghcr/zama-ai/kms/core-service-insecure'
+      NEW_KMS_CORE_CLIENT_IMAGE_NAME: 'hub.zama.org/ghcr/zama-ai/kms/core-client-insecure'
+      NEW_KMS_CORE_ENCLAVE_IMAGE_NAME: 'hub.zama.org/ghcr/zama-ai/kms/core-service-enclave-insecure'
     steps:
       - name: Setup Runs-on
         uses: runs-on/action@cd2b598b0515d39d78c38a02d529db87d2196d1e # v2.0.3
@@ -387,6 +395,9 @@ jobs:
         run: |
           echo "Deploying all 13 nodes with old tag: ${OLD_IMAGE_TAG}"
           chmod +x ci/scripts/deploy.sh
+          KMS_CORE_IMAGE_NAME="${OLD_KMS_CORE_IMAGE_NAME}" \
+          KMS_CORE_CLIENT_IMAGE_NAME="${OLD_KMS_CORE_CLIENT_IMAGE_NAME}" \
+          KMS_CORE_ENCLAVE_IMAGE_NAME="${OLD_KMS_CORE_ENCLAVE_IMAGE_NAME}" \
           ./ci/scripts/deploy.sh \
             --target aws-perf \
             --namespace "${NAMESPACE}" \
@@ -419,6 +430,7 @@ jobs:
           # The generated key-id is reused by the mixed-state decrypt runs below.
           cp ./ci/perf-testing/argo-workflow/"${DEPLOYMENT_TYPE}"-test-suite-workflow-"${PATH_SUFFIX}".yaml \
              /tmp/baseline-workflow.yaml
+          sed -i "s|core-client-insecure:<client-version>|core-client:<client-version>|g" /tmp/baseline-workflow.yaml
           # Baseline pins the core-client (<client-version>) to OLD too, so the
           # test harness matches the all-old cluster; <version> is the displayed
           # server version, also OLD while the whole cluster is old. (The mixed-

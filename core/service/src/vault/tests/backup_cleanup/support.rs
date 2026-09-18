@@ -14,7 +14,7 @@ use crate::{
 };
 use kms_grpc::{EpochId, RequestId, rpc_types::PrivDataType};
 
-/// Holds one retired backup and two control namespaces.
+/// Holds one retired backup plus current and unrelated backup entries.
 pub(super) struct BackupRemovalFixture {
     pub(super) vault: Vault,
     pub(super) retired_id: RequestId,
@@ -42,7 +42,7 @@ impl BackupRemovalFixture {
         let control_entries = entries(control_id);
         let mut vault = Vault {
             storage,
-            keychain: Some(make_secret_share_keychain(retired_id).await),
+            keychain: Some(make_secret_share_keychain(retired_id)),
         };
         let enc_key = match vault.keychain.as_ref() {
             Some(KeychainProxy::SecretSharing(keychain)) => keychain.get_backup_enc_key().unwrap(),
@@ -56,14 +56,31 @@ impl BackupRemovalFixture {
         store_backup_entries(&mut vault, &control_entries).await;
         set_current_backup_id(&mut vault, current_id, enc_key);
 
-        Self {
+        let fixture = Self {
             vault,
             retired_id,
             current_id,
             retired_entries,
             current_entries,
             control_entries,
-        }
+        };
+        fixture
+            .assert_entries_present(&fixture.retired_entries)
+            .await;
+        fixture
+            .assert_entries_present(&fixture.current_entries)
+            .await;
+        fixture
+            .assert_entries_present(&fixture.control_entries)
+            .await;
+        let Some(KeychainProxy::SecretSharing(keychain)) = fixture.vault.keychain.as_ref() else {
+            panic!("fixture requires a custodian keychain");
+        };
+        assert_eq!(
+            keychain.get_current_backup_id().unwrap(),
+            fixture.current_id
+        );
+        fixture
     }
 
     /// Panics if an entry is absent.
@@ -119,11 +136,7 @@ async fn store_backup_entries(vault: &mut Vault, entries: &[BackupEntry]) {
 }
 
 /// Points the vault's keychain at `backup_id`.
-pub(super) fn set_current_backup_id(
-    vault: &mut Vault,
-    backup_id: RequestId,
-    enc_key: UnifiedPublicEncKey,
-) {
+fn set_current_backup_id(vault: &mut Vault, backup_id: RequestId, enc_key: UnifiedPublicEncKey) {
     match vault.keychain.as_mut() {
         Some(KeychainProxy::SecretSharing(keychain)) => {
             keychain.set_backup_enc_key(backup_id, enc_key)

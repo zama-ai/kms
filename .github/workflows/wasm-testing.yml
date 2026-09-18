@@ -69,9 +69,10 @@ jobs:
         with:
           rust-toolchain: ${{ env.RUST_IMAGE_VERSION }}
 
-      # WASM handling
-      - name: Install
-        run: curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
+      - name: Install wasm-pack
+        uses: taiki-e/install-action@b6ff580856c41316412a0b9b60540fbc6f8c82cc # v2.86.7
+        with:
+          tool: wasm-pack@0.15.0
 
       # Build the same artifact that gets published (no `wasm_tests`): the JS tests load a
       # stable JSON vector and only exercise the stable public API, so the transcript helpers
@@ -81,17 +82,17 @@ jobs:
         run: wasm-pack build --target nodejs . --no-default-features
 
       - name: Install node
-        uses: actions/setup-node@39370e3970a6d050c480ffad4ff0ed4d3fdee5af # v4.1.0
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: 24.16.0
+          node-version: 24.19.0
 
       # Generate the insecure test material set for parties 4, 10.
       - name: Generate Test Material
         id: generate-test-material
         env:
           # Distinct leaf dir from the `insecure_secure_4_13` set used by
-          # parallel-testing.yml: the set name + hash prefix keep the two from
-          # colliding on a shared path or `ready` flag (see parallel-testing.yml).
+          # generate-test-material.yml: the set name + hash prefix keep the two
+          # from colliding on a shared path or `ready` flag.
           MATERIAL_PROFILE: insecure
           MATERIAL_PARTIES: 4,10
           MATERIAL_SET_NAME: insecure_4_10
@@ -107,7 +108,7 @@ jobs:
             echo "Reusing existing test material at ${EFS_ROOT}"
           else
             # Generate into a temp dir, then publish-if-absent via atomic
-            # `mv -T` (see parallel-testing.yml for the full rationale). We
+            # `mv -T` (see generate-test-material.yml for the full rationale). We
             # never overwrite an existing EFS_ROOT, so a concurrent first-time
             # run only wastes work; it can't clobber a live directory.
             TMP_DIR="$(mktemp -d "${BASE}/.tmp.XXXXXX")"
@@ -134,7 +135,6 @@ jobs:
             exit 1
           fi
 
-          rm -rf ./test-material
           ln -s "${EFS_TEST_MATERIAL_PATH}" ./test-material
           echo "Linked ./test-material -> ${EFS_TEST_MATERIAL_PATH}"
           du -shL ./test-material || true
@@ -163,12 +163,10 @@ jobs:
         run: |
           echo "NPM_TAG=prerelease" >> "${GITHUB_ENV}"
 
-      # Node package build and publish
-      - name: NPM build node package
+      # Node package preparation and publish
+      - name: Prepare Node package
         working-directory: ./core/service
         run: |
-          rm -rf pkg
-          wasm-pack build --target nodejs . --no-default-features
           sed -i 's/"kms"/"node-tkms"/g' pkg/package.json
           echo "# node-tkms" > pkg/README.md
 
@@ -184,19 +182,14 @@ jobs:
       - name: NPM build web package
         working-directory: ./core/service
         run: |
-          rm -rf pkg
-          wasm-pack build --target web . --no-default-features
-          sed -i 's/"kms"/"tkms"/g' pkg/package.json
-          echo "# tkms" > pkg/README.md
+          wasm-pack build --target web --out-dir pkg-web . --no-default-features
+          sed -i 's/"kms"/"tkms"/g' pkg-web/package.json
+          echo "# tkms" > pkg-web/README.md
 
       - name: NPM publish web package
         uses: JS-DevTools/npm-publish@7f8fe47b3bea1be0c3aec2b717c5ec1f3e03410b # v4.1.1
         with:
-          package: ./core/service/pkg/package.json
+          package: ./core/service/pkg-web/package.json
           dry-run: true
           provenance: true
           tag: ${{ env.NPM_TAG }}
-
-      - name: Remove aws credentials file
-        run: |
-          rm -rf ~/.aws

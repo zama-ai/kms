@@ -1,4 +1,4 @@
-use super::{Storage, StorageReader, StoreWriteOutcome};
+use super::{RootEntries, Storage, StorageReader, StoreWriteOutcome};
 use crate::consts::SAFE_SER_SIZE_LIMIT;
 use crate::vault::storage::{StorageExt, all_data_ids_from_all_epochs_impl};
 use crate::{anyhow_error_and_log, vault::storage::StorageReaderExt};
@@ -88,6 +88,18 @@ impl StorageReader for RamStorage {
             }
         }
         Ok(res)
+    }
+
+    async fn all_data_types(&self) -> anyhow::Result<RootEntries> {
+        // Every entry sits under a data type, so the root holds folders only.
+        Ok(RootEntries {
+            folders: self
+                .internal_storage
+                .keys()
+                .map(|(_, cur_data_type)| cur_data_type.clone())
+                .collect(),
+            objects: HashSet::new(),
+        })
     }
 
     fn info(&self) -> String {
@@ -341,6 +353,12 @@ pub mod tests {
     async fn test_all_data_ids_from_all_epochs_ram() {
         let mut storage = RamStorage::new();
         test_all_data_ids_from_all_epochs(&mut storage).await;
+    }
+
+    #[tokio::test]
+    async fn test_crs_public_key_data_types_ram() {
+        let mut storage = RamStorage::new();
+        test_crs_public_key_data_types(&mut storage).await;
     }
 
     #[tokio::test]

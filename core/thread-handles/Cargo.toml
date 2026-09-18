@@ -10,7 +10,6 @@ description = "Utilities for managing OS threads, Tokio tasks, and a global Rayo
 [dependencies]
 anyhow.workspace = true
 error-utils.workspace = true
-futures.workspace = true
 rayon.workspace = true
 tokio.workspace = true
 tracing.workspace = true

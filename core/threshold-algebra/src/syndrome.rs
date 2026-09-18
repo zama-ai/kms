@@ -252,7 +252,7 @@ mod tests {
         assert!(syndrome.is_zero());
 
         // with no errors we can just do plain Lagrange interpolation
-        let l_poly = lagrange_interpolation(&xs, &ys).unwrap();
+        let l_poly = lagrange_interpolation(&xs, ys.iter().copied()).unwrap();
         for i in 1..=n {
             let l_i = l_poly.eval(&BaseField::from_u128(i));
             tracing::info!("interpolated L({i}) = {l_i:?}",);
@@ -264,7 +264,7 @@ mod tests {
         tracing::info!("cis ERROR: {:?}", ys);
 
         // check that we can correct with one error
-        let polynomial = gao_decoding(&xs, &ys, v, 1).unwrap();
+        let polynomial = gao_decoding(&xs, ys.iter().copied(), v, 1).unwrap();
         assert_eq!(
             polynomial.eval(&BaseField::from_u128(0)),
             BaseField::from_u128(7)

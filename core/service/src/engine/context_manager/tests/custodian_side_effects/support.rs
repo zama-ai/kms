@@ -10,8 +10,8 @@ use crate::vault::{
         StorageReader,
         ram::FailingRamStorage,
         test_support::{
-            BackupEntry, FaultPhase, StorageEntry, StorageEvent, failing_ram_storage,
-            failing_ram_storage_mut,
+            BackupEntry, FaultPhase, StorageEntry, StorageEvent, StorageOp, StorageOutcome,
+            StorageState, failing_ram_storage, failing_ram_storage_mut,
         },
     },
 };
@@ -21,7 +21,7 @@ use strum::IntoEnumIterator;
 type TestStorage = CryptoMaterialStorage<FailingRamStorage, RamStorage>;
 type TestManager = ThresholdContextManager<FailingRamStorage, RamStorage>;
 
-const TARGET_CONTEXT_BYTE: u8 = 31;
+const RETIRED_CONTEXT_BYTE: u8 = 31;
 const CURRENT_CONTEXT_BYTE: u8 = 32;
 pub(super) const SETUP_CONTEXT_BYTE: u8 = 35;
 
@@ -29,10 +29,10 @@ pub(super) const SETUP_CONTEXT_BYTE: u8 = 35;
 pub(super) struct CustodianFixture {
     pub(super) manager: TestManager,
     storage: TestStorage,
-    pub(super) target_id: RequestId,
+    pub(super) retired_id: RequestId,
     pub(super) current_id: RequestId,
-    target_backup_entry: BackupEntry,
-    target_recovery_entry: StorageEntry,
+    pub(super) retired_backup_entry: StorageEntry,
+    pub(super) retired_recovery_entry: StorageEntry,
 }
 
 impl CustodianFixture {
@@ -45,23 +45,28 @@ impl CustodianFixture {
             StorageProxy::from(FailingRamStorage::new()),
         )
         .await;
-        let base_kms = BaseKmsStruct::new(KMSType::Threshold, signing_key).unwrap();
+        let base_kms = BaseKmsStruct::new(KMSType::Threshold, signing_key, test_rng_source());
         let session_maker = SessionMaker::four_party_dummy_session(
             None,
             None,
             &DEFAULT_EPOCH_ID,
-            base_kms.new_rng().await,
+            base_kms.new_rng(),
         );
         let manager = ThresholdContextManager::new(
             base_kms,
             storage.clone(),
             MetaStore::new(100, 10),
             session_maker,
+            false,
+            Arc::new(TaskTracker::new()),
         );
-        let target_id = RequestId::from_bytes([TARGET_CONTEXT_BYTE; 32]);
+        let retired_id = RequestId::from_bytes([RETIRED_CONTEXT_BYTE; 32]);
         let current_id = RequestId::from_bytes([CURRENT_CONTEXT_BYTE; 32]);
         manager
-            .new_custodian_context(custodian_request(target_id, u64::from(TARGET_CONTEXT_BYTE)))
+            .new_custodian_context(custodian_request(
+                retired_id,
+                u64::from(RETIRED_CONTEXT_BYTE),
+            ))
             .await
             .unwrap();
         manager
@@ -72,48 +77,96 @@ impl CustodianFixture {
             .await
             .unwrap();
 
-        let target_backup_entry = BackupEntry::new(
-            target_id,
+        let retired_backup_entry = BackupEntry::new(
+            retired_id,
             RequestId::from_bytes(DUMMY_SIGNING_KEY_REQ_ID),
             None,
             PrivDataType::SigningKey,
+        )
+        .storage_entry();
+        let retired_recovery_entry = StorageEntry::new(
+            retired_id,
+            None,
+            VaultDataType::RecoveryMaterial.to_string(),
         );
-        let target_recovery_entry =
-            StorageEntry::new(target_id, None, PubDataType::RecoveryMaterial.to_string());
         let fixture = Self {
             manager,
             storage,
-            target_id,
+            retired_id,
             current_id,
-            target_backup_entry,
-            target_recovery_entry,
+            retired_backup_entry,
+            retired_recovery_entry,
         };
+        for context_id in [fixture.retired_id, fixture.current_id] {
+            assert!(
+                fixture.context_is_complete(context_id).await,
+                "fixture context {context_id} is not successful"
+            );
+            assert!(
+                fixture.recovery_exists(context_id).await,
+                "fixture context {context_id} has no recovery material"
+            );
+        }
+        {
+            let backup_vault = fixture.storage.backup_vault.as_ref().unwrap().lock().await;
+            let backup_state = failing_ram_storage(&backup_vault).state();
+            let signing_key_id = RequestId::from_bytes(DUMMY_SIGNING_KEY_REQ_ID);
+            let mpc_context_id: RequestId = (*DEFAULT_MPC_CONTEXT).into();
+            let expected_items = [
+                (signing_key_id, PrivDataType::SigningKey),
+                (mpc_context_id, PrivDataType::ContextInfo),
+            ];
+            for context_id in [fixture.retired_id, fixture.current_id] {
+                for (data_id, data_type) in expected_items {
+                    let entry =
+                        BackupEntry::new(context_id, data_id, None, data_type).storage_entry();
+                    assert!(
+                        backup_state.contains_key(&entry),
+                        "fixture backup entry is absent: {entry:?}"
+                    );
+                }
+            }
+            let Some(KeychainProxy::SecretSharing(keychain)) = backup_vault.keychain.as_ref()
+            else {
+                panic!("fixture requires a custodian keychain");
+            };
+            assert_eq!(
+                keychain.get_current_backup_id().unwrap(),
+                fixture.current_id
+            );
+        }
         fixture.clear_events().await;
         fixture
     }
 
-    /// Rejects one target backup deletion at `phase`.
+    /// Fails deletion of the retired context's signing-key backup at `phase`.
     pub(super) async fn fail_backup_delete(&self, phase: FaultPhase) {
         let backup_vault = self.storage.backup_vault.as_ref().unwrap();
         let mut backup_vault = backup_vault.lock().await;
         let storage = failing_ram_storage_mut(&mut backup_vault);
         match phase {
             FaultPhase::BeforeMutation => {
-                storage.set_fail_delete_at(self.target_backup_entry.storage_entry())
+                storage.set_fail_delete_at(self.retired_backup_entry.clone())
             }
             FaultPhase::AfterMutation => {
-                storage.set_fail_delete_after_mutation_at(self.target_backup_entry.storage_entry())
+                storage.set_fail_delete_after_mutation_at(self.retired_backup_entry.clone())
             }
         }
     }
 
-    /// Rejects deletion of the target's public recovery material.
-    pub(super) async fn fail_recovery_delete(&self) {
-        self.storage
-            .public_storage
-            .lock()
-            .await
-            .set_fail_delete_at(self.target_recovery_entry.clone());
+    /// Fails deletion of the retired context's recovery material at `phase`.
+    pub(super) async fn fail_recovery_delete(&self, phase: FaultPhase) {
+        let backup_vault = self.storage.backup_vault.as_ref().unwrap();
+        let mut backup_vault = backup_vault.lock().await;
+        let storage = failing_ram_storage_mut(&mut backup_vault);
+        match phase {
+            FaultPhase::BeforeMutation => {
+                storage.set_fail_delete_at(self.retired_recovery_entry.clone())
+            }
+            FaultPhase::AfterMutation => {
+                storage.set_fail_delete_after_mutation_at(self.retired_recovery_entry.clone())
+            }
+        }
     }
 
     /// Removes all fault points and recorded events from both mutable stores.
@@ -138,6 +191,17 @@ impl CustodianFixture {
         failing_ram_storage_mut(&mut backup_vault).clear_events();
     }
 
+    /// Deletes the anchor record, so private storage names no current context.
+    pub(super) async fn delete_anchor(&self) {
+        crate::vault::storage::delete_at_request_id(
+            &mut *self.storage.private_storage.lock().await,
+            &self.current_id,
+            &PrivDataType::CustodianContextAnchor.to_string(),
+        )
+        .await
+        .unwrap();
+    }
+
     /// Requests destruction of `context_id`.
     pub(super) async fn destroy(
         &self,
@@ -150,13 +214,12 @@ impl CustodianFixture {
             .await
     }
 
-    /// Returns whether public recovery material exists for `context_id`.
+    /// Returns whether the backup vault holds recovery material for `context_id`.
     pub(super) async fn recovery_exists(&self, context_id: RequestId) -> bool {
-        self.storage
-            .public_storage
-            .lock()
-            .await
-            .data_exists(&context_id, &PubDataType::RecoveryMaterial.to_string())
+        let backup_vault = self.storage.backup_vault.as_ref().unwrap().lock().await;
+        backup_vault
+            .storage
+            .data_exists(&context_id, &VaultDataType::RecoveryMaterial.to_string())
             .await
             .unwrap()
     }
@@ -172,7 +235,7 @@ impl CustodianFixture {
             .any(|stored_id| stored_id == context_id)
     }
 
-    /// Returns whether the backup namespace for `context_id` is empty.
+    /// Returns whether all backup entries for `context_id` are absent.
     pub(super) async fn backup_is_empty(&self, context_id: RequestId) -> bool {
         let backup_vault = self.storage.backup_vault.as_ref().unwrap();
         let backup_vault = backup_vault.lock().await;
@@ -210,14 +273,33 @@ impl CustodianFixture {
         failing_ram_storage(&backup_vault).events().to_vec()
     }
 
-    /// Returns the target backup coordinate used by fault assertions.
-    pub(super) fn target_backup_entry(&self) -> StorageEntry {
-        self.target_backup_entry.storage_entry()
+    /// Returns the expected deletes for all backup entries stored under `context_id`.
+    pub(super) async fn expected_backup_deletes(&self, context_id: RequestId) -> Vec<StorageEvent> {
+        let backup_vault = self.storage.backup_vault.as_ref().unwrap().lock().await;
+        let state = failing_ram_storage(&backup_vault).state();
+        let data_types: Vec<_> = PrivDataType::iter()
+            .map(|data_type| VaultDataType::CustodianBackupData(context_id, data_type).to_string())
+            .collect();
+        state
+            .into_keys()
+            .filter(|entry| data_types.contains(&entry.data_type))
+            .map(|entry| StorageEvent::new(entry, StorageOp::Delete, StorageOutcome::Deleted))
+            .collect()
     }
 
-    /// Returns the target recovery coordinate used by fault assertions.
-    pub(super) fn target_recovery_entry(&self) -> StorageEntry {
-        self.target_recovery_entry.clone()
+    /// Returns a digest for every entry in backup storage.
+    pub(super) async fn backup_state(&self) -> StorageState {
+        let backup_vault = self.storage.backup_vault.as_ref().unwrap().lock().await;
+        failing_ram_storage(&backup_vault).state()
+    }
+
+    /// Returns the context whose key encrypts new backups.
+    pub(super) async fn active_backup_context_id(&self) -> RequestId {
+        let backup_vault = self.storage.backup_vault.as_ref().unwrap().lock().await;
+        let Some(KeychainProxy::SecretSharing(keychain)) = backup_vault.keychain.as_ref() else {
+            panic!("fixture requires a custodian keychain");
+        };
+        keychain.get_current_backup_id().unwrap()
     }
 }
 
@@ -264,7 +346,7 @@ pub(super) fn custodian_request(
 pub(super) async fn assert_pending<F: std::future::Future>(mut future: std::pin::Pin<&mut F>) {
     std::future::poll_fn(|context| match future.as_mut().poll(context) {
         Poll::Pending => Poll::Ready(()),
-        Poll::Ready(_) => panic!("custodian setup bypassed the setup lock"),
+        Poll::Ready(_) => panic!("custodian operation completed while it should be blocked"),
     })
     .await;
 }

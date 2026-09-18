@@ -1,6 +1,6 @@
 // === Standard Library ===
 use std::{
-    collections::HashMap,
+    collections::{BTreeMap, HashMap},
     convert::Infallible,
     marker::PhantomData,
     sync::{Arc, OnceLock},
@@ -10,7 +10,7 @@ use std::{
 use algebra::{galois_rings::degree_4::ResiduePolyF4Z128, structure_traits::Ring};
 use kms_grpc::{
     RequestId,
-    identifiers::EpochId,
+    identifiers::{ContextId, EpochId},
     kms_service::v1::core_service_endpoint_server::CoreServiceEndpointServer,
     rpc_types::{PrivDataType, PubDataType, SignedPubDataHandleInternal},
 };
@@ -58,13 +58,13 @@ use tonic_health::{
 };
 use tonic_tls::rustls::TlsIncoming;
 
-use crate::engine::threshold::service::epoch_manager::RealThresholdEpochManager;
+use crate::engine::threshold::service::epoch_manager::{EpochData, RealThresholdEpochManager};
 // === Internal Crate ===
 use crate::{
     anyhow_error_and_log,
     backup::operator::RecoveryValidationMaterial,
     conf::CoreConfig,
-    consts::{DEFAULT_EPOCH_ID, DEFAULT_MPC_CONTEXT, MINIMUM_SESSIONS_PREPROC},
+    consts::MINIMUM_SESSIONS_PREPROC,
     cryptography::attestation::SecurityModuleProxy,
     engine::{
         backup_operator::RealBackupOperator,
@@ -73,7 +73,9 @@ use crate::{
         },
         context_manager::{ThresholdContextManager, ensure_default_threshold_context_in_storage},
         prepare_shutdown_signals,
-        public_material_verification::verify_public_storage_material,
+        storage_material_verification::{
+            PrivateLayout, verify_private_storage_layout, verify_storage_material,
+        },
         threshold::{
             service::{
                 public_decryptor::SecureNoiseFloodDecryptor,
@@ -87,11 +89,11 @@ use crate::{
     grpc::metastore_status_service::MetaStoreStatusServiceImpl,
     util::{meta_store::MetaStore, rate_limiter::RateLimiter},
     vault::{
-        Vault,
+        Vault, adopt_custodian_context,
         storage::{
             Storage, StorageExt, crypto_material::ThresholdCryptoMaterialStorage,
             read_all_data_from_all_epochs_versioned, read_all_data_versioned,
-            select_data_from_max_epoch,
+            read_all_recovery_material, select_data_from_max_epoch,
         },
     },
 };
@@ -341,7 +343,7 @@ impl ThresholdFheKeys {
             },
             PublicKeyMaterial::Compressed { keyset } => {
                 let (_pk, sk) = keyset.decompress().into_raw_parts();
-                let (isk, _, _, decompk, snsk, _, _, _, _) = sk.into_raw_parts();
+                let (isk, _, _, decompk, snsk, _, _, _, _, _) = sk.into_raw_parts();
                 UncompressedKeys {
                     integer_server_key: Arc::new(isk),
                     sns_key: snsk.map(Arc::new),
@@ -442,7 +444,7 @@ pub enum PreprocMaterial {
 /// no material is generated, only the external signature is computed.
 #[cfg(feature = "insecure")]
 pub(crate) fn new_insecure_preproc_bucket(
-    sk: &crate::cryptography::signatures::PrivateSigKey,
+    sk: &crate::cryptography::signing::identity::NodeSigningIdentity,
     schemes: &[crate::cryptography::signing::SigningSchemeType],
     preprocessing_id: RequestId,
     dkg_param: DKGParams,
@@ -508,12 +510,11 @@ pub async fn new_real_threshold_kms<PubS, PrivS, F>(
     config: CoreConfig,
     public_storage: PubS,
     mut private_storage: PrivS,
-    backup_storage: Option<Vault>,
+    mut backup_storage: Option<Vault>,
     security_module: Option<Arc<SecurityModuleProxy>>,
     mpc_listener: TcpListener,
     base_kms: BaseKmsStruct,
     tls_config: Option<(ServerConfig, ClientConfig, Arc<AttestedVerifier>)>,
-    ensure_default_prss: bool,
     shutdown_signal: F,
 ) -> anyhow::Result<(
     RealThresholdKms<PubS, PrivS>,
@@ -525,6 +526,7 @@ where
     PrivS: StorageExt + Send + Sync + 'static,
     F: std::future::Future<Output = ()> + Send + 'static,
 {
+    let require_pcr_allowlist = config.requires_pcr_allowlist();
     let threshold_config = config.threshold.as_ref().ok_or_else(|| {
         anyhow_error_and_log("Threshold party configuration is required for threshold KMS")
     })?;
@@ -532,6 +534,15 @@ where
     let telemetry_conf = config
         .telemetry
         .unwrap_or_else(|| TelemetryConfig::builder().build());
+
+    // TODO(zama-ai/kms-internal/issues/2758)
+    // Peer configuration defines the default context until context management replaces it.
+    ensure_default_threshold_context_in_storage(
+        &mut private_storage,
+        threshold_config,
+        &base_kms.verf_key(),
+    )
+    .await?;
 
     // load keys from storage
     let key_info_versioned: HashMap<(RequestId, EpochId), ThresholdFheKeys> =
@@ -542,8 +553,10 @@ where
         .await?;
 
     let recovery_validation_material: HashMap<RequestId, RecoveryValidationMaterial> =
-        read_all_data_versioned(&public_storage, &PubDataType::RecoveryMaterial.to_string())
-            .await?;
+        match backup_storage.as_ref() {
+            Some(vault) => read_all_recovery_material(&vault.storage).await?,
+            None => HashMap::new(),
+        };
 
     // Build public_key_info map using the chronologically latest epoch for each key ID.
     // Epoch IDs are ordered chronologically by comparing their raw bytes as a
@@ -568,24 +581,50 @@ where
         .await?,
     );
 
-    // Verify public material and recovery validation material when the signing key is available.
-    // Recovery mode only supports backup recovery operations, so it skips both startup checks.
-    // Private storage is the reference; extra material in public storage is ignored.
-    match base_kms.sig_key() {
+    // The epoch registry: every epoch this node serves, keyed by the ID it is stored under. It is
+    // read once here; it anchors the private storage checks below and seeds the session maker.
+    // Storage must not change while validation runs, so this snapshot stays consistent with the
+    // checks that use it.
+    let all_epochs: HashMap<EpochId, EpochData> = read_all_data_versioned::<_, EpochData>(
+        &private_storage,
+        &PrivDataType::EpochData.to_string(),
+    )
+    .await?
+    .into_iter()
+    .map(|(epoch_id, epoch_data)| (epoch_id.into(), epoch_data))
+    .collect();
+    let epoch_contexts: BTreeMap<EpochId, ContextId> = all_epochs
+        .iter()
+        .map(|(epoch_id, epoch_data)| (*epoch_id, epoch_data.context_id))
+        .collect();
+
+    // Recovery mode skips storage verification and adopts no custodian context.
+    match base_kms.signing_identity() {
         Ok(signing_key) => {
-            verify_public_storage_material(
+            verify_private_storage_layout(
+                &private_storage,
+                PrivateLayout::Threshold {
+                    epoch_contexts: &epoch_contexts,
+                },
+            )
+            .await?;
+            verify_storage_material(
                 &public_storage,
                 &key_info,
                 &crs_info,
                 &recovery_validation_material,
-                signing_key.as_ref(),
+                &signing_key,
             )
             .await?;
+            if let Some(vault) = backup_storage.as_mut() {
+                adopt_custodian_context(&private_storage, vault, &recovery_validation_material)
+                    .await?;
+            }
         }
         Err(_) => {
             tracing::warn!(
-                "No signing key available (recovery mode): skipping public material and recovery \
-                 validation material verification"
+                "No signing key available (recovery mode): skipping private storage, public \
+                 material and recovery validation material verification"
             );
         }
     }
@@ -699,18 +738,6 @@ where
     );
     let custodian_meta_store = MetaStore::new_from_map(recovery_validation_material);
 
-    // TODO(zama-ai/kms-internal/issues/2758)
-    // If we're still using peer config, we need to manually write the default context into storage.
-    // This way we can load it into SessionMaker later when creating the ThresholdContextManager.
-    ensure_default_threshold_context_in_storage(
-        &mut private_storage,
-        threshold_config,
-        &base_kms.verf_key(),
-    )
-    .await?;
-
-    let private_storage_info = private_storage.info();
-
     let crypto_storage = ThresholdCryptoMaterialStorage::new(
         public_storage,
         private_storage,
@@ -737,9 +764,10 @@ where
     let session_maker = SessionMaker::new_initialized(
         threshold_config.my_id.map(Role::indexed_from_one),
         &crypto_storage,
+        all_epochs,
         networking_manager,
         verifier,
-        base_kms.new_rng().await,
+        base_kms.rng_source(),
     )
     .await?;
     let immutable_session_maker = session_maker.make_immutable();
@@ -750,10 +778,12 @@ where
     // NOTE: context must be loaded before attempting to automatically start the PRSS
     // since the PRSS requires a context to be present.
     let context_manager = ThresholdContextManager::new(
-        base_kms.new_instance().await,
+        base_kms.new_instance(),
         crypto_storage.inner.clone(),
         custodian_meta_store,
         session_maker.clone(),
+        require_pcr_allowlist,
+        Arc::clone(&tracker),
     );
     if let Err(e) = context_manager.load_mpc_context_from_storage().await {
         tracing::warn!(
@@ -766,36 +796,17 @@ where
     let epoch_manager = RealThresholdEpochManager {
         crypto_storage: crypto_storage.clone(),
         session_maker: session_maker.clone(),
-        base_kms: base_kms.new_instance().await,
+        base_kms: base_kms.new_instance(),
         reshare_pubinfo_meta_store: MetaStore::new_unlimited(),
         tracker: Arc::clone(&tracker),
         rate_limiter: rate_limiter.clone(),
         _init: PhantomData,
         _reshare: PhantomData,
     };
-    if ensure_default_prss {
-        let epoch_id_prss = *DEFAULT_EPOCH_ID;
-        let default_context_id = *DEFAULT_MPC_CONTEXT;
-        if session_maker.epoch_exists(&epoch_id_prss).await {
-            tracing::warn!(
-                "Default epoch {} already exists. Skipping regeneration",
-                epoch_id_prss
-            );
-        } else {
-            tracing::info!(
-                "Initializing threshold KMS server and generating a new PRSS Setup for private storage {:?}",
-                private_storage_info
-            );
-            epoch_manager
-                .init_epoch(&default_context_id, &epoch_id_prss)
-                .await?;
-        }
-    }
-
     let slow_events = Arc::new(Mutex::new(HashMap::new()));
 
     let user_decryptor = RealUserDecryptor {
-        base_kms: base_kms.new_instance().await,
+        base_kms: base_kms.new_instance(),
         crypto_storage: crypto_storage.clone(),
         user_decrypt_meta_store: user_decrypt_meta_store.clone(),
         session_maker: immutable_session_maker.clone(),
@@ -806,7 +817,7 @@ where
     };
 
     let public_decryptor = RealPublicDecryptor {
-        base_kms: base_kms.new_instance().await,
+        base_kms: base_kms.new_instance(),
         crypto_storage: crypto_storage.clone(),
         pub_dec_meta_store: pub_dec_meta_store.clone(),
         session_maker: immutable_session_maker.clone(),
@@ -817,7 +828,7 @@ where
     };
 
     let keygenerator = RealKeyGenerator {
-        base_kms: base_kms.new_instance().await,
+        base_kms: base_kms.new_instance(),
         crypto_storage: crypto_storage.clone(),
         preproc_buckets: Arc::clone(&preproc_buckets),
         dkg_pubinfo_meta_store,
@@ -833,7 +844,7 @@ where
     let insecure_keygenerator = RealInsecureKeyGenerator::from_real_keygen(&keygenerator).await;
 
     let keygen_preprocessor = RealPreprocessor {
-        base_kms: base_kms.new_instance().await,
+        base_kms: base_kms.new_instance(),
         session_maker: immutable_session_maker.clone(),
         preproc_buckets,
         preproc_factory,
@@ -845,7 +856,7 @@ where
     };
 
     let crs_generator = RealCrsGenerator {
-        base_kms: base_kms.new_instance().await,
+        base_kms: base_kms.new_instance(),
         crypto_storage: crypto_storage.clone(),
         crs_meta_store,
         session_maker: immutable_session_maker.clone(),
@@ -859,7 +870,7 @@ where
     let insecure_crs_generator = RealInsecureCrsGenerator::from_real_crsgen(&crs_generator).await;
 
     let backup_operator = RealBackupOperator::new(
-        base_kms.new_instance().await,
+        base_kms.new_instance(),
         crypto_storage.inner.clone(),
         security_module,
     );
@@ -876,7 +887,6 @@ where
     {
         anyhow::bail!("Failed to update backup vault when booting");
     }
-    tracing::info!("Successfully updated backup vault when booting");
     // Start updating system metrics
     update_threshold_kms_system_metrics(
         rate_limiter.clone(),
@@ -1025,6 +1035,7 @@ mod tests {
         }
 
         #[derive(Clone, Serialize, Deserialize, VersionsDispatch)]
+        #[expect(clippy::large_enum_variant)]
         pub enum ThresholdFheKeysVersions {
             V0(PlaceholderV0),
             V1(PlaceholderV1),
@@ -1071,6 +1082,7 @@ mod tests {
                 _sns_compression_key,
                 _rerand_key,
                 _oprf_key,
+                _transciphering_key,
                 _tag,
             ) = keyset.public_keys.server_key.into_raw_parts();
 
@@ -1092,6 +1104,7 @@ mod tests {
                     RequestId::zeros(),
                     RequestId::zeros(),
                     BTreeMap::new(),
+                    &crate::dummy_domain(),
                     vec![],
                     vec![],
                     vec![],
@@ -1112,7 +1125,7 @@ mod tests {
         let (keyset, compressed_keyset) =
             gen_key_set(TEST_PARAM, tfhe::Tag::default(), &mut rng).unwrap();
 
-        let (integer_server_key, _, _, decompression_key, sns_key, _, _, _, _) =
+        let (integer_server_key, _, _, decompression_key, sns_key, _, _, _, _, _) =
             keyset.public_keys.server_key.into_raw_parts();
 
         let v0 = PublicKeyMaterialV0::Compressed {
@@ -1141,6 +1154,7 @@ mod tests {
                 RequestId::zeros(),
                 RequestId::zeros(),
                 BTreeMap::new(),
+                &crate::dummy_domain(),
                 vec![],
                 vec![],
                 vec![],
@@ -1193,7 +1207,7 @@ mod tests {
         let mut rng = AesRng::seed_from_u64(42);
         let (keyset, compressed_keyset) =
             gen_key_set(TEST_PARAM, tfhe::Tag::default(), &mut rng).unwrap();
-        let (integer_server_key, _, _, decompression_key, sns_key, _, _, _, _) =
+        let (integer_server_key, _, _, decompression_key, sns_key, _, _, _, _, _) =
             keyset.public_keys.server_key.into_raw_parts();
 
         // V3 control
@@ -1216,6 +1230,7 @@ mod tests {
                 RequestId::zeros(),
                 RequestId::zeros(),
                 BTreeMap::new(),
+                &crate::dummy_domain(),
                 vec![],
                 vec![],
                 vec![],

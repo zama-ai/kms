@@ -11,6 +11,7 @@ use crate::grpc::{
 use crate::tls::extract_subject_from_cert;
 use async_trait::async_trait;
 use dashmap::DashMap;
+use observability::metrics::{self, NetworkDebugEvent};
 use serde::{Deserialize, Serialize};
 use std::sync::{Arc, LazyLock};
 use threshold_types::party::MpcIdentity;
@@ -42,9 +43,8 @@ pub struct NetworkingImpl {
     max_opened_inactive_sessions: u64,
     max_waiting_time_for_message_queue: Duration,
     tls_extension: TlsExtensionGetter,
-    // We gate this behind the testing feature because in non-testing environments
-    // we want to ALWAYS use TLS for security reasons.
-    #[cfg(feature = "testing")]
+    // Secure builds always require TLS. Development builds can permit plaintext transport.
+    #[cfg(feature = "insecure")]
     force_tls: bool,
 }
 
@@ -56,7 +56,7 @@ impl NetworkingImpl {
         max_opened_inactive_sessions: u64,
         max_waiting_time_for_message_queue: Duration,
         tls_extension: TlsExtensionGetter,
-        #[cfg(feature = "testing")] force_tls: bool,
+        #[cfg(feature = "insecure")] force_tls: bool,
     ) -> Self {
         Self {
             session_store: session_store.clone(),
@@ -65,7 +65,7 @@ impl NetworkingImpl {
             max_opened_inactive_sessions,
             max_waiting_time_for_message_queue,
             tls_extension,
-            #[cfg(feature = "testing")]
+            #[cfg(feature = "insecure")]
             force_tls,
         }
     }
@@ -107,6 +107,7 @@ impl NetworkingImpl {
     ) -> Result<Option<Arc<Sender<NetworkRoundValue>>>, tonic::Status> {
         match session_status {
             SessionStatus::Completed(_) => {
+                metrics::METRICS.increment_network_event(NetworkDebugEvent::MessageToCompleted);
                 tracing::debug!(
                     "Session {:?} found in session_store but is completed. Will be removed by background cleanup.",
                     tag.session_id
@@ -117,6 +118,7 @@ impl NetworkingImpl {
             }
             // Session is inactive, we may need to create a new channel for the sender
             SessionStatus::Inactive(message_queue) => {
+                metrics::METRICS.increment_network_event(NetworkDebugEvent::MessageToInactive);
                 tracing::debug!(
                     "Session {:?} found in session_store but is inactive.",
                     tag.session_id
@@ -208,6 +210,8 @@ impl NetworkingImpl {
                     }
                 } else {
                     // Session has been dropped, accept the message even if we won't do anything with it
+                    metrics::METRICS
+                        .increment_network_event(NetworkDebugEvent::MessageToDroppedActive);
                     Ok(None)
                 }
             }
@@ -241,7 +245,7 @@ fn parse_identity_from_cert(
 
 // Verify that the sender in the tag matches the identity extracted from the TLS certificate
 fn sender_verification(
-    #[cfg(feature = "testing")] force_tls: bool,
+    #[cfg(feature = "insecure")] force_tls: bool,
     tag_sender: &MpcIdentity,
     valid_tls_sender: Option<String>,
 ) -> Result<(), Box<tonic::Status>> {
@@ -258,8 +262,8 @@ fn sender_verification(
         }
         tracing::debug!("TLS Check went fine for sender: {:?}", sender);
     } else {
-        // With testing feature, TLS is optional
-        #[cfg(feature = "testing")]
+        // With the insecure feature, TLS is optional
+        #[cfg(feature = "insecure")]
         {
             if force_tls {
                 // If force_tls is enabled, we require a TLS certificate
@@ -270,13 +274,13 @@ fn sender_verification(
                         .to_string(),
                 )));
             } else {
-                // since we log this on _every_ send call and only use this for testing builds, we use debug level to reduce log spam
+                // since we log this on _every_ send call and only use this for insecure builds, we use debug level to reduce log spam
                 tracing::debug!("Force TLS is disabled, and no certificate found in the request.");
             }
         }
 
-        // Without testing feature, TLS is mandatory
-        #[cfg(not(any(test, feature = "testing")))]
+        // Without the insecure feature, TLS is mandatory
+        #[cfg(not(any(test, feature = "insecure")))]
         {
             tracing::error!(
                 "Could not find a TLS certificate in the request to verify user's identity."
@@ -308,7 +312,7 @@ impl Gnetworking for NetworkingImpl {
         })?;
 
         sender_verification(
-            #[cfg(feature = "testing")]
+            #[cfg(feature = "insecure")]
             self.force_tls,
             &health_tag.sender,
             valid_tls_sender,
@@ -341,7 +345,7 @@ impl Gnetworking for NetworkingImpl {
         })?;
 
         sender_verification(
-            #[cfg(feature = "testing")]
+            #[cfg(feature = "insecure")]
             self.force_tls,
             &tag.sender,
             valid_tls_sender,
@@ -433,6 +437,8 @@ impl Gnetworking for NetworkingImpl {
                         Instant::now(),
                     )));
                     *opened_session_tracker_entry += 1;
+                    metrics::METRICS
+                        .increment_network_event(NetworkDebugEvent::SessionInactiveCreated);
                     tx
                 }
             }
@@ -450,13 +456,7 @@ impl Gnetworking for NetworkingImpl {
         .await;
 
         if let Err(e) = send_result {
-            tracing::warn!(
-                "Failed to process value for session {:?}, sender {:?}, round {}. Queue has been full for {} seconds.",
-                tag.session_id,
-                &tag.sender,
-                tag.round_counter,
-                self.max_waiting_time_for_message_queue.as_secs()
-            );
+            metrics::METRICS.increment_network_event(NetworkDebugEvent::QueueFull);
 
             return Err(tonic::Status::new(
                 tonic::Code::ResourceExhausted,
@@ -466,6 +466,8 @@ impl Gnetworking for NetworkingImpl {
                 ),
             ));
         }
+
+        metrics::METRICS.increment_network_event(NetworkDebugEvent::MessageEnqueued);
 
         Ok(tonic::Response::new(SendValueResponse {
             status: Status::Active.into(),
@@ -500,6 +502,41 @@ mod tests {
     use tokio::sync::mpsc::channel;
 
     #[test]
+    fn sender_identity_must_match_certificate() {
+        let sender = MpcIdentity("party1".to_string());
+        assert!(
+            sender_verification(
+                #[cfg(feature = "insecure")]
+                true,
+                &sender,
+                Some("party1".to_string()),
+            )
+            .is_ok()
+        );
+
+        let error = sender_verification(
+            #[cfg(feature = "insecure")]
+            true,
+            &sender,
+            Some("party2".to_string()),
+        )
+        .unwrap_err();
+        assert_eq!(error.code(), tonic::Code::Unauthenticated);
+    }
+
+    #[cfg(feature = "insecure")]
+    #[test]
+    fn plaintext_requires_explicit_opt_out_of_tls() {
+        let sender = MpcIdentity("party1".to_string());
+        let error = sender_verification(true, &sender, None).unwrap_err();
+        assert_eq!(error.code(), tonic::Code::Unauthenticated);
+        assert!(sender_verification(false, &sender, None).is_ok());
+
+        let error = sender_verification(false, &sender, Some("party2".to_string())).unwrap_err();
+        assert_eq!(error.code(), tonic::Code::Unauthenticated);
+    }
+
+    #[test]
     fn test_fetch_tx_channel_completed_session() {
         let session_store: Arc<SessionStore> = Arc::new(DashMap::new());
         let opened_sessions_tracker: Arc<DashMap<MpcIdentity, u64>> = Arc::new(DashMap::new());
@@ -515,7 +552,7 @@ mod tests {
             50,
             Duration::from_secs(60),
             TlsExtensionGetter::default(),
-            #[cfg(feature = "testing")]
+            #[cfg(feature = "insecure")]
             false,
         );
 
@@ -556,7 +593,7 @@ mod tests {
             50,
             Duration::from_secs(60),
             TlsExtensionGetter::default(),
-            #[cfg(feature = "testing")]
+            #[cfg(feature = "insecure")]
             false,
         );
 
@@ -613,7 +650,7 @@ mod tests {
             50,
             Duration::from_secs(60),
             TlsExtensionGetter::default(),
-            #[cfg(feature = "testing")]
+            #[cfg(feature = "insecure")]
             false,
         );
 
@@ -661,7 +698,7 @@ mod tests {
             50, // max_opened_inactive_sessions
             Duration::from_secs(60),
             TlsExtensionGetter::default(),
-            #[cfg(feature = "testing")]
+            #[cfg(feature = "insecure")]
             false,
         );
 
@@ -697,7 +734,7 @@ mod tests {
             50,
             Duration::from_secs(60),
             TlsExtensionGetter::default(),
-            #[cfg(feature = "testing")]
+            #[cfg(feature = "insecure")]
             false,
         );
 

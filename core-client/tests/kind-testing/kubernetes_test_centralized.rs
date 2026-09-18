@@ -110,6 +110,7 @@ impl K8sTestContext {
             max_iter: 200,
             expect_all_responses: true,
             download_all: false,
+            signing_schemes: vec![],
         };
 
         execute_cmd(&config, self.workspace()).await.unwrap()

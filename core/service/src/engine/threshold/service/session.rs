@@ -7,12 +7,16 @@ use std::{
 
 use crate::{
     engine::{
-        context::ContextInfo, threshold::service::epoch_manager::EpochData, utils::MetricedError,
+        context::ContextInfo,
+        rng_source::{RngSource, RngSourceError},
+        threshold::service::epoch_manager::EpochData,
+        utils::MetricedError,
     },
     vault::storage::{Storage, StorageExt, crypto_material::ThresholdCryptoMaterialStorage},
 };
 
 // === External Crates ===
+#[cfg(test)]
 use aes_prng::AesRng;
 use algebra::galois_rings::degree_4::{ResiduePolyF4Z64, ResiduePolyF4Z128};
 use kms_grpc::{EpochId, RequestId, identifiers::ContextId};
@@ -34,7 +38,8 @@ use threshold_networking::{
 use threshold_networking::grpc::CoreToCoreNetworkConfig;
 use threshold_types::role::{DualRole, Role, TwoSetsRole, TwoSetsThreshold};
 
-use rand::{RngCore, SeedableRng};
+#[cfg(test)]
+use rand::SeedableRng;
 use serde::{Deserialize, Serialize};
 use tfhe::Versionize;
 use tfhe_versionable::VersionsDispatch;
@@ -156,7 +161,7 @@ pub(crate) struct SessionMaker {
     epoch_map: Arc<RwLock<HashMap<EpochId, EpochData>>>,
     lifecycle: LifecycleCoordinator,
     verifier: Option<Arc<AttestedVerifier>>, // optional as it's not used when there's no TLS
-    rng: Arc<Mutex<AesRng>>,
+    rng_source: Arc<RngSource>,
 }
 
 /// The role assignment shared by all dummy contexts used in tests: four parties on localhost.
@@ -173,19 +178,21 @@ fn four_party_dummy_role_assignment() -> RoleAssignment<Role> {
 }
 
 impl SessionMaker {
+    /// Builds a session maker that serves `all_epochs`, the epoch data read from private
+    /// storage, and every MPC context stored in `crypto_storage`.
     pub(crate) async fn new_initialized<
         PubS: Storage + Sync + Send + 'static,
         PrivS: StorageExt + Sync + Send + 'static,
     >(
         my_id: Option<Role>,
         crypto_storage: &ThresholdCryptoMaterialStorage<PubS, PrivS>,
+        all_epochs: HashMap<EpochId, EpochData>,
         networking_manager: Arc<RwLock<GrpcNetworkingManager>>,
         verifier: Option<Arc<AttestedVerifier>>,
-        rng: AesRng,
+        rng_source: Arc<RngSource>,
     ) -> anyhow::Result<Self> {
         let session_maker: SessionMaker =
-            Self::new_uninitialized(networking_manager, verifier, rng);
-        let all_epochs = crypto_storage.read_all_epoch_data().await?;
+            Self::new_uninitialized(networking_manager, verifier, rng_source);
         if all_epochs.is_empty() {
             tracing::warn!(
                 "No epoch data found in storage. You may need to call the init end-point later before you can use the KMS server"
@@ -217,7 +224,7 @@ impl SessionMaker {
     pub(crate) fn new_uninitialized(
         networking_manager: Arc<RwLock<GrpcNetworkingManager>>,
         verifier: Option<Arc<AttestedVerifier>>,
-        rng: AesRng,
+        rng_source: Arc<RngSource>,
     ) -> Self {
         Self {
             networking_manager,
@@ -225,7 +232,7 @@ impl SessionMaker {
             epoch_map: Arc::new(RwLock::new(HashMap::new())),
             lifecycle: LifecycleCoordinator::default(),
             verifier,
-            rng: Arc::new(Mutex::new(rng)),
+            rng_source,
         }
     }
 
@@ -328,7 +335,7 @@ impl SessionMaker {
             epoch_map: Arc::new(RwLock::new(HashMap::new())),
             lifecycle: LifecycleCoordinator::default(),
             verifier: None,
-            rng: Arc::new(Mutex::new(rng)),
+            rng_source: Arc::new(RngSource::from_rng(rng)),
         }
     }
 
@@ -390,7 +397,7 @@ impl SessionMaker {
             })),
             lifecycle: LifecycleCoordinator::default(),
             verifier: None,
-            rng: Arc::new(Mutex::new(rng)),
+            rng_source: Arc::new(RngSource::from_rng(rng)),
         }
     }
 
@@ -550,9 +557,22 @@ impl SessionMaker {
         Ok(())
     }
 
-    pub(crate) async fn remove_context(&self, context_id: &ContextId) {
+    /// Removes a context from both the TLS verifier and the session context map.
+    pub(crate) async fn remove_context(&self, context_id: &ContextId) -> anyhow::Result<()> {
+        if let Some(verifier) = &self.verifier {
+            let verifier_context_id = context_id.derive_session_id().map_err(|e| {
+                anyhow::anyhow!(
+                    "Failed to derive verifier context ID for context {context_id}: {e}"
+                )
+            })?;
+            verifier.remove_context(verifier_context_id).map_err(|e| {
+                anyhow::anyhow!("Failed to remove context {context_id} from verifier: {e}")
+            })?;
+        }
+
         let mut context_map = self.context_map.write().await;
         context_map.remove(context_id);
+        Ok(())
     }
 
     pub(crate) async fn add_epoch(&self, epoch_id: EpochId, epoch_data: EpochData) {
@@ -575,14 +595,11 @@ impl SessionMaker {
         context_map.contains_key(context_id)
     }
 
-    async fn new_rng(&self) -> AesRng {
-        let mut seed = [0u8; crate::consts::RND_SIZE];
-        // Make a seperate scope for the rng so that it is dropped before the lock is released
-        {
-            let mut base_rng = self.rng.lock().await;
-            base_rng.fill_bytes(seed.as_mut());
-        }
-        AesRng::from_seed(seed)
+    pub(crate) fn reseed_rng(&self) -> Result<(), RngSourceError> {
+        self.rng_source.reseed()?;
+
+        tracing::info!("RNG Reseeded with fresh entropy");
+        Ok(())
     }
 
     pub(crate) async fn make_base_session(
@@ -591,12 +608,6 @@ impl SessionMaker {
         context_id: ContextId,
         network_mode: NetworkMode,
     ) -> anyhow::Result<BaseSession> {
-        tracing::info!(
-            "Making base session: session_id={}, context_id={}, network_mode={:?}",
-            session_id,
-            context_id,
-            network_mode
-        );
         let networking = self
             .get_networking(session_id, context_id, network_mode)
             .await;
@@ -615,7 +626,7 @@ impl SessionMaker {
             context_info.role_assignment.keys().cloned().collect(),
         )?;
 
-        let base_session = BaseSession::new(parameters, networking?, self.new_rng().await)?;
+        let base_session = BaseSession::new(parameters, networking?, self.rng_source.fork_rng())?;
         Ok(base_session)
     }
 
@@ -736,7 +747,7 @@ impl SessionMaker {
             )
             .await?;
 
-        TwoSetsBaseSession::new(session_params, network, self.new_rng().await)
+        TwoSetsBaseSession::new(session_params, network, self.rng_source.fork_rng())
     }
 
     async fn get_networking(
@@ -958,6 +969,10 @@ impl ImmutableSessionMaker {
         self.inner.epoch_exists(epoch_id).await
     }
 
+    pub(crate) async fn epochs_for_context(&self, context_id: &ContextId) -> Vec<EpochId> {
+        self.inner.epochs_for_context(context_id).await
+    }
+
     pub(crate) async fn make_base_session(
         &self,
         session_id: SessionId,
@@ -1087,10 +1102,22 @@ pub(crate) async fn validate_context_and_epoch(
         .map_err(|e| MetricedError::new(op_tag, req_id, e, Code::NotFound))?;
 
     if !session_maker.epoch_exists(epoch_id).await {
+        // Name the epochs this context does have: the usual cause is a request still pointing at an
+        // epoch that a completed epoch change replaced. `EpochId`'s `Debug` is the raw byte array,
+        // so format through `Display` to keep the list readable.
+        let known_epochs = session_maker
+            .epochs_for_context(context_id)
+            .await
+            .iter()
+            .map(|epoch| epoch.to_string())
+            .collect::<Vec<_>>()
+            .join(", ");
         return Err(MetricedError::new(
             op_tag,
             req_id,
-            anyhow::anyhow!("Epoch {epoch_id} not found"),
+            anyhow::anyhow!(
+                "Epoch {epoch_id} not found for context {context_id}, which currently has epochs [{known_epochs}]"
+            ),
             Code::NotFound,
         ));
     }
@@ -1100,7 +1127,16 @@ pub(crate) async fn validate_context_and_epoch(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::engine::threshold::service::epoch_manager::tests::dummy_epoch_data;
+    use crate::engine::{
+        context::{NodeInfo, SchemeDigests, SoftwareVersion},
+        threshold::service::epoch_manager::tests::dummy_epoch_data,
+    };
+    use rcgen::{KeyPair, PKCS_ECDSA_P256_SHA256};
+    use tokio_rustls::rustls::{
+        client::danger::ServerCertVerifier,
+        crypto::aws_lc_rs::default_provider,
+        pki_types::{ServerName, UnixTime},
+    };
 
     /// Sunshine: `epochs_for_context` returns exactly the epochs whose `EpochData` carries the
     /// requested context ID, and excludes epochs belonging to other contexts.
@@ -1270,5 +1306,89 @@ mod tests {
             .try_get_epoch_creation_lease(&context_id, &epoch_id)
             .await
             .unwrap();
+    }
+
+    #[tokio::test]
+    async fn remove_context_updates_attested_verifier_references() {
+        _ = default_provider().install_default();
+        let verifier = Arc::new(
+            AttestedVerifier::new(
+                None,
+                false,
+                #[cfg(feature = "insecure")]
+                true,
+            )
+            .unwrap(),
+        );
+        let networking_manager = Arc::new(RwLock::new(
+            GrpcNetworkingManager::new(None, CoreToCoreNetworkConfig::default()).unwrap(),
+        ));
+        let session_maker = SessionMaker::new_uninitialized(
+            networking_manager,
+            Some(Arc::clone(&verifier)),
+            Arc::new(RngSource::from_rng(AesRng::seed_from_u64(6))),
+        );
+
+        let identity = "shared.example.com";
+        let keypair = KeyPair::generate_for(&PKCS_ECDSA_P256_SHA256).unwrap();
+        let (_, certificate, _) =
+            threshold_networking::tls_certs::create_selfsigned_cert_from_keypair(
+                identity, false, false, &keypair,
+            )
+            .unwrap();
+        let certificate_pem = certificate.pem().into_bytes();
+        let make_context = |context_id| ContextInfo {
+            mpc_nodes: vec![NodeInfo {
+                mpc_identity: identity.to_string(),
+                party_id: 1,
+                external_url: format!("https://{identity}:8443"),
+                ca_cert: Some(certificate_pem.clone()),
+                public_storage_url: String::new(),
+                public_storage_prefix: None,
+                extra_signer_addresses: vec![],
+                scheme_digests: SchemeDigests::new(),
+            }],
+            context_id,
+            software_version: SoftwareVersion {
+                major: 0,
+                minor: 1,
+                patch: 0,
+                tag: None,
+            },
+            threshold: 0,
+            pcr_values: vec![],
+        };
+        let mut rng = AesRng::seed_from_u64(7);
+        let context_a = ContextId::new_random(&mut rng);
+        let context_b = ContextId::new_random(&mut rng);
+        session_maker
+            .add_context_info(None, &make_context(context_a))
+            .await
+            .unwrap();
+        session_maker
+            .add_context_info(None, &make_context(context_b))
+            .await
+            .unwrap();
+
+        let server_name = ServerName::try_from(identity).unwrap();
+        let verify_certificate = || {
+            verifier.verify_server_cert(certificate.der(), &[], &server_name, &[], UnixTime::now())
+        };
+        assert!(verify_certificate().is_ok());
+
+        session_maker.remove_context(&context_a).await.unwrap();
+        assert!(!session_maker.context_exists(&context_a).await);
+        assert!(session_maker.context_exists(&context_b).await);
+        assert!(
+            verify_certificate().is_ok(),
+            "the shared trust root must remain while another live context references it"
+        );
+
+        session_maker.remove_context(&context_b).await.unwrap();
+        assert!(!session_maker.context_exists(&context_b).await);
+        assert!(
+            verify_certificate().is_err(),
+            "the trust root must be removed after its last live context is removed"
+        );
     }
 }

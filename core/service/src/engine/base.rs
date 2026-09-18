@@ -1,17 +1,21 @@
+pub use super::signed_payload::UserDecSignedPayload;
+use super::signed_payload::{signed_payload_bytes, user_dec_payload_bytes};
 use super::traits::BaseKms;
 use crate::consts::ID_LENGTH;
 use crate::consts::SAFE_SER_SIZE_LIMIT;
 use crate::cryptography::decompression;
 use crate::cryptography::internal_crypto_types::WrappedDKGParams;
 use crate::cryptography::signatures::internal_sign;
-use crate::cryptography::signatures::{PrivateSigKey, PublicSigKey, Signature};
+use crate::cryptography::signatures::{PublicSigKey, Signature};
 use crate::cryptography::signing::SigningSchemeType;
+use crate::cryptography::signing::identity::NodeSigningIdentity;
+use crate::engine::rng_source::RngSource;
 use crate::engine::traits::PrivateKeyMaterialMetadata;
 use crate::util::key_setup::FhePrivateKey;
 use aes_prng::AesRng;
 use alloy_dyn_abi::DynSolValue;
 use alloy_primitives::U256;
-use alloy_primitives::{Bytes, FixedBytes, Uint};
+use alloy_primitives::{Address, B256, Bytes, FixedBytes, Uint};
 use alloy_sol_types::Eip712Domain;
 use alloy_sol_types::SolStruct;
 use hashing::{DomainSep, hash_element, hash_versioned, serialize_hash_element};
@@ -30,7 +34,6 @@ use kms_grpc::solidity_types::{
     PublicDecryptVerification,
 };
 use kms_grpc::utils::tonic_result::BoxedStatus;
-use rand::{RngCore, SeedableRng};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::collections::HashMap;
@@ -42,7 +45,7 @@ use tfhe::FheUint80;
 use tfhe::integer::BooleanBlock;
 use tfhe::integer::compression_keys::DecompressionKey;
 use tfhe::named::Named;
-use tfhe::safe_serialization::{safe_deserialize, safe_serialize};
+use tfhe::safe_serialization::safe_deserialize;
 use tfhe::xof_key_set::CompressedXofKeySet;
 use tfhe::zk::CompactPkeCrs;
 use tfhe::{
@@ -58,7 +61,6 @@ use threshold_execution::endpoints::decryption::{LowLevelCiphertext, SnsRadixOrB
 use threshold_execution::tfhe_internals::parameters::DKGParams;
 use threshold_execution::tfhe_internals::public_keysets::FhePubKeySet;
 use threshold_execution::zk::ceremony::max_num_bits_from_crs;
-use tokio::sync::Mutex;
 use tracing::error;
 
 // Domain separators for cryptographic operations to ensure domain separation
@@ -71,11 +73,14 @@ pub(crate) const DSEP_HANDLE: DomainSep = *b"_HANDLE_";
 pub const DSEP_PUBDATA_KEY: DomainSep = *b"PDAT_KEY";
 /// Domain separator for CRS (Common Reference String) data
 pub const DSEP_PUBDATA_CRS: DomainSep = *b"PDAT_CRS";
+/// Domain separator for public decryption operations
+pub const DSEP_PUBLIC_DECRYPTION: DomainSep = *b"PUBL_DEC";
 
 pub static INSECURE_PREPROCESSING_ID: LazyLock<RequestId> =
     LazyLock::new(|| crate::engine::base::derive_request_id("INSECURE_PREPROCESSING_ID").unwrap());
 
 #[derive(Clone, Serialize, Deserialize, VersionsDispatch)]
+#[expect(clippy::large_enum_variant)]
 pub enum KmsFheKeyHandlesVersions {
     V0(KmsFheKeyHandlesV0),
     V1(KmsFheKeyHandles),
@@ -132,7 +137,7 @@ impl KmsFheKeyHandles {
     /// Signatures are computed over versionized keys to ensure consistency.
     #[expect(clippy::too_many_arguments)]
     pub fn new(
-        sig_key: &PrivateSigKey,
+        sig_key: &NodeSigningIdentity,
         schemes: &[SigningSchemeType],
         client_key: FhePrivateKey,
         key_id: &RequestId,
@@ -171,7 +176,7 @@ impl KmsFheKeyHandles {
     /// - Version upgrades will invalidate signatures
     #[expect(clippy::too_many_arguments)]
     pub fn new_compressed(
-        sig_key: &PrivateSigKey,
+        sig_key: &NodeSigningIdentity,
         schemes: &[SigningSchemeType],
         client_key: FhePrivateKey,
         key_id: &RequestId,
@@ -257,10 +262,21 @@ pub struct StoredTypedSignature {
     pub signature: Vec<u8>,
 }
 
+impl StoredTypedSignature {
+    /// The `signatures` list of a result that carries nothing but its
+    /// ECDSA/EIP-712 signature.
+    pub fn ecdsa_only(external_signature: Vec<u8>) -> Vec<Self> {
+        vec![StoredTypedSignature {
+            scheme: SigningSchemeType::Ecdsa256k1,
+            signature: external_signature,
+        }]
+    }
+}
+
 impl From<&StoredTypedSignature> for TypedSignature {
     fn from(value: &StoredTypedSignature) -> Self {
         TypedSignature {
-            scheme: kms_grpc::kms::v1::SigningSchemeType::from(value.scheme) as i32,
+            scheme: value.scheme.as_wire(),
             signature: value.signature.clone(),
         }
     }
@@ -326,33 +342,12 @@ impl Named for CrsSignedPayload {
     const NAME: &'static str = "CrsSignedPayload";
 }
 
-/// The canonical bytes a non-ECDSA scheme signs for a public result.
-///
-/// Serialized with `safe_serialize`, so the type name and version are part of
-/// what gets signed: changing a payload's layout later produces a new version
-/// tag rather than silently making old signatures unverifiable against the new
-/// reconstruction.
-///
-/// Decryption is the exception — it signs `bc2wrap::serialize` of the gRPC
-/// response payload, because those exact bytes are also what the deprecated
-/// scalar `signature` field covers and are already part of the released wire
-/// contract. TODO(0.16): once that field is gone, decryption can move onto this
-/// helper too.
-fn signed_payload_bytes<T>(payload: &T) -> anyhow::Result<Vec<u8>>
-where
-    T: Serialize + Versionize + Named,
-{
-    let mut buf = Vec::new();
-    safe_serialize(payload, &mut buf, SAFE_SER_SIZE_LIMIT)?;
-    Ok(buf)
-}
-
 /// The canonical bytes a non-ECDSA scheme signs for a keygen result.
 ///
 /// Shared between signing and after-the-fact verification (see
-/// [`crate::engine::public_material_verification`]) so there is exactly one definition of
+/// [`crate::engine::storage_material_verification`]) so there is exactly one definition of
 /// what was signed.
-pub(crate) fn keygen_payload_bytes(
+pub fn keygen_payload_bytes(
     prep_id: &RequestId,
     key_id: &RequestId,
     key_digests: &BTreeMap<PubDataType, Vec<u8>>,
@@ -366,12 +361,55 @@ pub(crate) fn keygen_payload_bytes(
     })
 }
 
+/// The result payload that every non-ECDSA scheme signs for a public decryption
+/// result.
+#[derive(Clone, Serialize, Deserialize, VersionsDispatch)]
+pub enum PublicDecSignedPayloadVersions {
+    V0(PublicDecSignedPayload),
+}
+
+/// The public decryption result, in the form non-ECDSA schemes sign it.
+///
+/// `response_bytes` are the serialized [`PublicDecryptionResponsePayload`].
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, Versionize)]
+#[versionize(PublicDecSignedPayloadVersions)]
+pub struct PublicDecSignedPayload {
+    pub response_bytes: Vec<u8>,
+    pub extra_data: Vec<u8>,
+}
+
+impl Named for PublicDecSignedPayload {
+    const NAME: &'static str = "PublicDecSignedPayload";
+}
+
+/// The canonical bytes a non-ECDSA scheme signs for a public decryption result.
+pub fn public_dec_payload_bytes(
+    response_bytes: &[u8],
+    extra_data: &[u8],
+) -> anyhow::Result<Vec<u8>> {
+    signed_payload_bytes(&PublicDecSignedPayload {
+        response_bytes: response_bytes.to_vec(),
+        extra_data: extra_data.to_vec(),
+    })
+}
+
+/// The canonical bytes a non-ECDSA scheme signs for a preprocessing result.
+pub(crate) fn preproc_payload_bytes(
+    prep_id: &RequestId,
+    extra_data: &[u8],
+) -> anyhow::Result<Vec<u8>> {
+    signed_payload_bytes(&PrepKeygenSignedPayload {
+        prep_id: *prep_id,
+        extra_data: extra_data.to_vec(),
+    })
+}
+
 /// The canonical bytes a non-ECDSA scheme signs for a CRS result.
 ///
 /// Shared between signing and after-the-fact verification (see
-/// [`crate::engine::public_material_verification`]) so there is exactly one definition of
+/// [`crate::engine::storage_material_verification`]) so there is exactly one definition of
 /// what was signed.
-pub(crate) fn crs_payload_bytes(
+pub fn crs_payload_bytes(
     crs_id: &RequestId,
     max_num_bits: u32,
     crs_digest: &[u8],
@@ -383,6 +421,102 @@ pub(crate) fn crs_payload_bytes(
         crs_digest: crs_digest.to_vec(),
         extra_data: extra_data.to_vec(),
     })
+}
+
+pub(crate) const ERR_INVALID_CURRENT_PUBLIC_KEY_SHAPE: &str =
+    "Invalid current public key metadata shape";
+
+/// Which shape of public keygen material a result describes.
+#[derive(Clone, Copy)]
+pub enum CurrentPublicMaterialLayout {
+    Standard,
+    Compressed,
+}
+
+/// Classify the supported current keygen metadata layouts.
+pub(crate) fn classify_current_public_material(
+    key_digest_map: &BTreeMap<PubDataType, Vec<u8>>,
+) -> anyhow::Result<CurrentPublicMaterialLayout> {
+    let has_public_key = key_digest_map.contains_key(&PubDataType::PublicKey);
+    let has_server_key = key_digest_map.contains_key(&PubDataType::ServerKey);
+    let has_compressed_keyset = key_digest_map.contains_key(&PubDataType::CompressedXofKeySet);
+
+    match (
+        has_public_key,
+        has_server_key,
+        has_compressed_keyset,
+        key_digest_map.len(),
+    ) {
+        (true, true, false, 2) => Ok(CurrentPublicMaterialLayout::Standard),
+        (true, false, true, 2) => Ok(CurrentPublicMaterialLayout::Compressed),
+        _ => anyhow::bail!(
+            "{ERR_INVALID_CURRENT_PUBLIC_KEY_SHAPE}: expected either \
+             {{PublicKey, ServerKey}} or {{PublicKey, CompressedXofKeySet}}, got {:?}",
+            key_digest_map.keys().collect::<Vec<_>>()
+        ),
+    }
+}
+
+/// Build the EIP-712 struct signed for a keygen result.
+///
+/// Shared between signing and after-the-fact verification so there is exactly one definition of
+/// the message represented by keygen metadata.
+///
+/// `layout` decides which of the two messages is built. Signing sites pass the layout they are
+/// generating for, so the choice stays static there; verification has only the stored metadata
+/// to go on and derives it with [`classify_current_public_material`].
+pub fn keygen_sol_type(
+    layout: CurrentPublicMaterialLayout,
+    prep_id: &RequestId,
+    key_id: &RequestId,
+    key_digest_map: &BTreeMap<PubDataType, Vec<u8>>,
+    extra_data: &[u8],
+) -> anyhow::Result<KeygenVerification> {
+    let digest = |data_type: PubDataType| {
+        key_digest_map
+            .get(&data_type)
+            .cloned()
+            .ok_or_else(|| anyhow::anyhow!("missing {data_type} digest"))
+    };
+    let public_key_digest = digest(PubDataType::PublicKey)?;
+
+    Ok(match layout {
+        CurrentPublicMaterialLayout::Standard => KeygenVerification::new_uncompressed(
+            prep_id,
+            key_id,
+            digest(PubDataType::ServerKey)?,
+            public_key_digest,
+            extra_data.to_vec(),
+        ),
+        CurrentPublicMaterialLayout::Compressed => KeygenVerification::new_compressed(
+            prep_id,
+            key_id,
+            digest(PubDataType::CompressedXofKeySet)?,
+            public_key_digest,
+            extra_data.to_vec(),
+        ),
+    })
+}
+
+/// Build the EIP-712 struct signed for a CRS result.
+///
+/// Shared between signing and after-the-fact verification so there is exactly one definition of
+/// the message represented by CRS metadata.
+///
+/// Public for the same reason as [`keygen_sol_type`]: an out-of-crate verifier
+/// rebuilds the struct the KMS signed rather than a second expression of it.
+pub fn crs_sol_type(
+    crs_id: &RequestId,
+    crs_digest: &[u8],
+    max_num_bits: u32,
+    extra_data: &[u8],
+) -> CrsgenVerification {
+    CrsgenVerification::new(
+        crs_id,
+        max_num_bits as usize,
+        crs_digest.to_vec(),
+        extra_data.to_vec(),
+    )
 }
 
 /// Convert stored per-scheme signatures into their gRPC representation.
@@ -402,7 +536,7 @@ struct SchemeSigningJob {
 /// Sign a result under each requested `(scheme, message)` job, returning the
 /// per-scheme signatures to persist in result metadata.
 fn compute_result_signatures(
-    sk: &PrivateSigKey,
+    identity: &NodeSigningIdentity,
     dsep: &DomainSep,
     jobs: &[SchemeSigningJob],
 ) -> anyhow::Result<Vec<StoredTypedSignature>> {
@@ -417,15 +551,15 @@ fn compute_result_signatures(
                                 job.message.len()
                             )
                         })?;
-                    crate::cryptography::signatures::eip712_sign_hash(sk, &hash)?
+                    crate::cryptography::signatures::eip712_sign_hash(identity.ecdsa(), &hash)?
                 }
                 // Raw primitive signature over `dsep ‖ message`.
                 scheme @ (SigningSchemeType::Ed25519
                 | SigningSchemeType::MlDsa44
                 | SigningSchemeType::MlDsa65
-                | SigningSchemeType::MlDsa87) => {
-                    sk.unified_sign_with(scheme, dsep, &job.message)?.to_bytes()
-                }
+                | SigningSchemeType::MlDsa87) => identity
+                    .unified_sign_with(scheme, dsep, &job.message)?
+                    .to_bytes(),
             };
             Ok(StoredTypedSignature {
                 scheme: job.scheme,
@@ -437,16 +571,19 @@ fn compute_result_signatures(
 
 /// Build the per-scheme signing jobs for a result's `signatures` list.
 ///
-/// ECDSA signs `eip712_hash`, producing the same on-chain-verifiable signature
-/// the fhevm contracts verify — byte-identical to the result's
-/// `external_signature` — so that once the deprecated `external_signature` field
-/// goes away, `signatures` still carries it.
+/// **A scheme determines what its signature covers.** This mapping is the contract
+/// every verifier relies on, so it lives here alone:
 ///
-/// Every other scheme signs `payload_bytes`, the serialized result payload:
-/// EIP-712 is an EVM/secp256k1 construction, and a post-quantum scheme has no
-/// reason to be bound to it. Each job carries its own message, so a
-/// scheme-specific serialization can be introduced here without touching callers
-/// or [`compute_result_signatures`].
+/// - [`SigningSchemeType::Ecdsa256k1`] signs `eip712_hash`, producing the
+///   recoverable, on-chain-verifiable signature the fhevm contracts verify. It is
+///   byte-identical to the result's deprecated `external_signature`, so that
+///   `signatures` still carries it once that field goes away.
+/// - Every other scheme signs `payload_bytes`, the serialized result payload,
+///   because EIP-712 is an EVM and secp256k1 construction that a post-quantum
+///   scheme has no reason to be bound to.
+///
+/// Each job carries its own message, so such a scheme is added here without
+/// touching callers or [`compute_result_signatures`].
 fn scheme_signing_jobs(
     schemes: &[SigningSchemeType],
     eip712_hash: &[u8],
@@ -465,11 +602,14 @@ fn scheme_signing_jobs(
         .collect()
 }
 
-/// Sign a public result: the canonical ECDSA/EIP-712 `external_signature`, and —
+/// Sign a public result: the deprecated ECDSA/EIP-712 `external_signature`, and —
 /// independently — the per-scheme `signatures` for exactly the schemes the
 /// client requested.
+///
+/// `external_signature` is produced whether or not ECDSA was requested, because
+/// it is part of the released wire contract until it goes away in 0.16.
 fn sign_result<D: SolStruct>(
-    sk: &PrivateSigKey,
+    identity: &NodeSigningIdentity,
     schemes: &[SigningSchemeType],
     payload_bytes: &[u8],
     sol_type: &D,
@@ -477,14 +617,15 @@ fn sign_result<D: SolStruct>(
     dsep: &DomainSep,
 ) -> anyhow::Result<(Vec<u8>, Vec<StoredTypedSignature>)> {
     let eip712_hash = sol_type.eip712_signing_hash(domain);
-    let external_signature = crate::cryptography::signatures::eip712_sign_hash(sk, &eip712_hash)?;
+    let external_signature =
+        crate::cryptography::signatures::eip712_sign_hash(identity.ecdsa(), &eip712_hash)?;
     let jobs = scheme_signing_jobs(schemes, eip712_hash.as_slice(), payload_bytes);
-    let signatures = compute_result_signatures(sk, dsep, &jobs)?;
+    let signatures = compute_result_signatures(identity, dsep, &jobs)?;
     Ok((external_signature, signatures))
 }
 
 pub(crate) fn compute_info_crs(
-    sk: &PrivateSigKey,
+    identity: &NodeSigningIdentity,
     schemes: &[SigningSchemeType],
     domain_separator: &DomainSep,
     crs_id: &RequestId,
@@ -495,7 +636,7 @@ pub(crate) fn compute_info_crs(
     let crs_digest = hash_versioned(domain_separator, pp)?;
     let max_num_bits = max_num_bits_from_crs(pp);
     compute_info_crs_from_digest(
-        sk,
+        identity,
         schemes,
         crs_id,
         crs_digest,
@@ -507,7 +648,7 @@ pub(crate) fn compute_info_crs(
 
 /// Sign a CRS using a precomputed digest, under each requested scheme.
 pub(crate) fn compute_info_crs_from_digest(
-    sk: &PrivateSigKey,
+    identity: &NodeSigningIdentity,
     schemes: &[SigningSchemeType],
     crs_id: &RequestId,
     crs_digest: Vec<u8>,
@@ -515,11 +656,10 @@ pub(crate) fn compute_info_crs_from_digest(
     domain: &alloy_sol_types::Eip712Domain,
     extra_data: Vec<u8>,
 ) -> anyhow::Result<CrsGenMetadata> {
-    let sol_type =
-        CrsgenVerification::new(crs_id, max_num_bits, crs_digest.clone(), extra_data.clone());
+    let sol_type = crs_sol_type(crs_id, &crs_digest, max_num_bits as u32, &extra_data);
     let payload_bytes = crs_payload_bytes(crs_id, max_num_bits as u32, &crs_digest, &extra_data)?;
     let (external_signature, signatures) = sign_result(
-        sk,
+        identity,
         schemes,
         &payload_bytes,
         &sol_type,
@@ -531,29 +671,25 @@ pub(crate) fn compute_info_crs_from_digest(
         *crs_id,
         crs_digest,
         max_num_bits as u32,
+        domain,
         external_signature,
         signatures,
         extra_data,
     ))
 }
 
-/// Sign a preprocessing result: the always-present ECDSA/EIP-712
-/// `external_signature`, plus the per-scheme `signatures` for exactly the
-/// requested schemes.
+/// Sign a preprocessing result; see [`sign_result`] for what each field carries.
 pub(crate) fn compute_preprocessing_signatures(
-    sk: &PrivateSigKey,
+    identity: &NodeSigningIdentity,
     schemes: &[SigningSchemeType],
     prep_id: &RequestId,
     domain: &alloy_sol_types::Eip712Domain,
     extra_data: Vec<u8>,
 ) -> anyhow::Result<(Vec<u8>, Vec<StoredTypedSignature>)> {
-    let payload_bytes = signed_payload_bytes(&PrepKeygenSignedPayload {
-        prep_id: *prep_id,
-        extra_data: extra_data.clone(),
-    })?;
+    let payload_bytes = preproc_payload_bytes(prep_id, &extra_data)?;
     let sol_type = PrepKeygenVerification::new(prep_id, extra_data);
     sign_result(
-        sk,
+        identity,
         schemes,
         &payload_bytes,
         &sol_type,
@@ -564,7 +700,7 @@ pub(crate) fn compute_preprocessing_signatures(
 
 #[expect(clippy::too_many_arguments)]
 pub(crate) fn compute_info_uncompressed_keygen(
-    sk: &PrivateSigKey,
+    identity: &NodeSigningIdentity,
     schemes: &[SigningSchemeType],
     domain_separator: &DomainSep,
     prep_id: &RequestId,
@@ -575,7 +711,7 @@ pub(crate) fn compute_info_uncompressed_keygen(
 ) -> anyhow::Result<KeyGenMetadata> {
     let (server_key_digest, public_key_digest) = compute_keygen_digests(domain_separator, keyset)?;
     compute_info_standard_keygen_from_digests(
-        sk,
+        identity,
         schemes,
         prep_id,
         key_id,
@@ -603,32 +739,22 @@ pub(crate) fn compute_keygen_digests(
     Ok((server_key_digest, public_key_digest))
 }
 
-/// Sign an uncompressed keygen using precomputed digests.
+/// Sign a keygen result of `layout` from its precomputed digests.
 #[expect(clippy::too_many_arguments)]
-pub(crate) fn compute_info_standard_keygen_from_digests(
-    sk: &PrivateSigKey,
+pub(crate) fn compute_info_keygen_from_digests(
+    identity: &NodeSigningIdentity,
     schemes: &[SigningSchemeType],
+    layout: CurrentPublicMaterialLayout,
     prep_id: &RequestId,
     key_id: &RequestId,
-    server_key_digest: Vec<u8>,
-    public_key_digest: Vec<u8>,
+    key_digests: BTreeMap<PubDataType, Vec<u8>>,
     domain: &alloy_sol_types::Eip712Domain,
     extra_data: Vec<u8>,
 ) -> anyhow::Result<KeyGenMetadata> {
-    let sol_type = KeygenVerification::new_uncompressed(
-        prep_id,
-        key_id,
-        server_key_digest.clone(),
-        public_key_digest.clone(),
-        extra_data.clone(),
-    );
-    let key_digests = BTreeMap::from([
-        (PubDataType::ServerKey, server_key_digest),
-        (PubDataType::PublicKey, public_key_digest),
-    ]);
+    let sol_type = keygen_sol_type(layout, prep_id, key_id, &key_digests, &extra_data)?;
     let payload_bytes = keygen_payload_bytes(prep_id, key_id, &key_digests, &extra_data)?;
     let (external_signature, signatures) = sign_result(
-        sk,
+        identity,
         schemes,
         &payload_bytes,
         &sol_type,
@@ -640,15 +766,43 @@ pub(crate) fn compute_info_standard_keygen_from_digests(
         *key_id,
         *prep_id,
         key_digests,
+        domain,
         external_signature,
         signatures,
         extra_data,
     ))
 }
 
+/// Sign an uncompressed keygen using precomputed digests.
+#[expect(clippy::too_many_arguments)]
+pub(crate) fn compute_info_standard_keygen_from_digests(
+    identity: &NodeSigningIdentity,
+    schemes: &[SigningSchemeType],
+    prep_id: &RequestId,
+    key_id: &RequestId,
+    server_key_digest: Vec<u8>,
+    public_key_digest: Vec<u8>,
+    domain: &alloy_sol_types::Eip712Domain,
+    extra_data: Vec<u8>,
+) -> anyhow::Result<KeyGenMetadata> {
+    compute_info_keygen_from_digests(
+        identity,
+        schemes,
+        CurrentPublicMaterialLayout::Standard,
+        prep_id,
+        key_id,
+        BTreeMap::from([
+            (PubDataType::ServerKey, server_key_digest),
+            (PubDataType::PublicKey, public_key_digest),
+        ]),
+        domain,
+        extra_data,
+    )
+}
+
 #[expect(clippy::too_many_arguments)]
 pub(crate) fn compute_info_decompression_keygen(
-    sk: &PrivateSigKey,
+    identity: &NodeSigningIdentity,
     schemes: &[SigningSchemeType],
     domain_separator: &DomainSep,
     prep_id: &RequestId,
@@ -666,7 +820,7 @@ pub(crate) fn compute_info_decompression_keygen(
     let key_digests = BTreeMap::from([(PubDataType::DecompressionKey, key_digest)]);
     let payload_bytes = keygen_payload_bytes(prep_id, key_id, &key_digests, &extra_data)?;
     let (external_signature, signatures) = sign_result(
-        sk,
+        identity,
         schemes,
         &payload_bytes,
         &sol_type,
@@ -678,6 +832,7 @@ pub(crate) fn compute_info_decompression_keygen(
         *key_id,
         *prep_id,
         key_digests,
+        domain,
         external_signature,
         signatures,
         extra_data,
@@ -688,7 +843,7 @@ pub(crate) fn compute_info_decompression_keygen(
 /// This is similar to compute_info_standard_keygen but for CompressedXofKeySet.
 #[expect(clippy::too_many_arguments)]
 pub(crate) fn compute_info_compressed_keygen(
-    sk: &PrivateSigKey,
+    identity: &NodeSigningIdentity,
     schemes: &[SigningSchemeType],
     domain_separator: &DomainSep,
     prep_id: &RequestId,
@@ -701,7 +856,7 @@ pub(crate) fn compute_info_compressed_keygen(
     let compressed_keyset_digest = hash_versioned(domain_separator, compressed_keyset)?;
     let public_key_digest = hash_versioned(domain_separator, compact_public_key)?;
     compute_info_compressed_keygen_from_digests(
-        sk,
+        identity,
         schemes,
         prep_id,
         key_id,
@@ -715,7 +870,7 @@ pub(crate) fn compute_info_compressed_keygen(
 /// Sign a compressed keygen using precomputed digests.
 #[expect(clippy::too_many_arguments)]
 pub(crate) fn compute_info_compressed_keygen_from_digests(
-    sk: &PrivateSigKey,
+    identity: &NodeSigningIdentity,
     schemes: &[SigningSchemeType],
     prep_id: &RequestId,
     key_id: &RequestId,
@@ -730,35 +885,19 @@ pub(crate) fn compute_info_compressed_keygen_from_digests(
         hex::encode(&public_key_digest),
     );
 
-    let sol_type = KeygenVerification::new_compressed(
+    compute_info_keygen_from_digests(
+        identity,
+        schemes,
+        CurrentPublicMaterialLayout::Compressed,
         prep_id,
         key_id,
-        compressed_keyset_digest.clone(),
-        public_key_digest.clone(),
-        extra_data.clone(),
-    );
-    let key_digests = BTreeMap::from([
-        (PubDataType::CompressedXofKeySet, compressed_keyset_digest),
-        (PubDataType::PublicKey, public_key_digest),
-    ]);
-    let payload_bytes = keygen_payload_bytes(prep_id, key_id, &key_digests, &extra_data)?;
-    let (external_signature, signatures) = sign_result(
-        sk,
-        schemes,
-        &payload_bytes,
-        &sol_type,
+        BTreeMap::from([
+            (PubDataType::CompressedXofKeySet, compressed_keyset_digest),
+            (PubDataType::PublicKey, public_key_digest),
+        ]),
         domain,
-        &DSEP_PUBDATA_KEY,
-    )?;
-
-    Ok(KeyGenMetadata::new(
-        *key_id,
-        *prep_id,
-        key_digests,
-        external_signature,
-        signatures,
         extra_data,
-    ))
+    )
 }
 
 /// Computes a unique handle for an element using its hash digest.
@@ -981,7 +1120,7 @@ pub fn deserialize_to_low_level(
 
 /// Sign a public decryption result under every requested scheme.
 pub(crate) fn sign_public_decryption_result(
-    server_sk: &PrivateSigKey,
+    server_sk: &NodeSigningIdentity,
     schemes: &[SigningSchemeType],
     payload: PublicDecryptionResponsePayload,
     ext_handles_bytes: &[Vec<u8>],
@@ -1002,13 +1141,14 @@ pub(crate) fn sign_public_decryption_result(
         extra_data,
         &sol_type,
         eip712_domain,
-        &crate::engine::validation::DSEP_PUBLIC_DECRYPTION,
+        &DSEP_PUBLIC_DECRYPTION,
+        public_dec_payload_bytes,
     )
 }
 
 /// Sign a user decryption result under every requested scheme.
 pub(crate) fn sign_user_decryption_result(
-    server_sk: &PrivateSigKey,
+    server_sk: &NodeSigningIdentity,
     schemes: &[SigningSchemeType],
     payload: UserDecryptionResponsePayload,
     user_pk_buf: &[u8],
@@ -1026,28 +1166,30 @@ pub(crate) fn sign_user_decryption_result(
         &sol_type,
         eip712_domain,
         &crate::engine::validation::DSEP_USER_DECRYPTION,
+        user_dec_payload_bytes,
     )
 }
 
 /// Shared body of [`sign_public_decryption_result`] and
 /// [`sign_user_decryption_result`].
 ///
-/// Adds the deprecated scalar `signature` to what [`sign_result`] produces. The
-/// payload bytes are `bc2wrap::serialize` rather than [`signed_payload_bytes`]
-/// because that scalar signature covers exactly these bytes and they are part of
-/// the released wire contract. TODO(0.16): once the deprecated fields are gone,
-/// this can use [`signed_payload_bytes`] like every other result.
+/// Adds the deprecated internal `signature` to what [`sign_result`] produces. That
+/// signature covers `bc2wrap::serialize` of the response payload alone, because
+/// those exact bytes are part of the released wire contract.
+#[expect(clippy::too_many_arguments)]
 fn sign_decryption_result<P: Serialize, D: SolStruct>(
-    server_sk: &PrivateSigKey,
+    server_sk: &NodeSigningIdentity,
     schemes: &[SigningSchemeType],
     payload: P,
     extra_data: Vec<u8>,
     sol_type: &D,
     eip712_domain: &Eip712Domain,
     dsep: &DomainSep,
+    signed_payload: fn(&[u8], &[u8]) -> anyhow::Result<Vec<u8>>,
 ) -> anyhow::Result<DecryptionCallValues<P>> {
-    let payload_bytes = bc2wrap::serialize(&payload)?;
-    let signature = internal_sign(dsep, &payload_bytes, server_sk)?.to_bytes();
+    let response_bytes = bc2wrap::serialize(&payload)?;
+    let signature = internal_sign(dsep, &response_bytes, server_sk.ecdsa())?.to_bytes();
+    let payload_bytes = signed_payload(&response_bytes, &extra_data)?;
     let (external_signature, stored) = sign_result(
         server_sk,
         schemes,
@@ -1067,30 +1209,41 @@ fn sign_decryption_result<P: Serialize, D: SolStruct>(
 
 pub struct BaseKmsStruct {
     kms_type: KMSType,
-    sig_key: Option<Arc<PrivateSigKey>>,
+    signing_identity: Option<Arc<NodeSigningIdentity>>,
     verf_key: Arc<PublicSigKey>,
-    rng: Arc<Mutex<AesRng>>,
+    rng_source: Arc<RngSource>,
 }
 
 impl BaseKmsStruct {
-    pub fn new(kms_type: KMSType, sig_key: PrivateSigKey) -> anyhow::Result<Self> {
-        Ok(BaseKmsStruct {
+    /// Constructs a service with an explicitly supplied seed source.
+    pub fn new(
+        kms_type: KMSType,
+        signing_identity: impl Into<NodeSigningIdentity>,
+        rng_source: Arc<RngSource>,
+    ) -> Self {
+        let signing_identity = signing_identity.into();
+        BaseKmsStruct {
             kms_type,
-            verf_key: Arc::new(sig_key.verf_key()),
-            sig_key: Some(Arc::new(sig_key)),
-            rng: Arc::new(Mutex::new(AesRng::from_entropy())),
-        })
+            verf_key: Arc::new(signing_identity.verf_key()),
+            signing_identity: Some(Arc::new(signing_identity)),
+            rng_source,
+        }
     }
 
-    pub fn new_no_signing_key(kms_type: KMSType, verf_key: PublicSigKey) -> Self {
+    /// Constructs a recovery service with an explicitly supplied seed source.
+    pub fn new_no_signing_key(
+        kms_type: KMSType,
+        verf_key: PublicSigKey,
+        rng_source: Arc<RngSource>,
+    ) -> Self {
         tracing::warn!(
             "Initializing KMS without a signing key. ONLY BACKUP RECOVERY OPERATIONS WILL BE POSSIBLE."
         );
         BaseKmsStruct {
             kms_type,
-            sig_key: None,
+            signing_identity: None,
             verf_key: Arc::new(verf_key),
-            rng: Arc::new(Mutex::new(AesRng::from_entropy())),
+            rng_source,
         }
     }
 
@@ -1098,9 +1251,11 @@ impl BaseKmsStruct {
         self.kms_type
     }
 
-    pub fn sig_key(&self) -> anyhow::Result<Arc<PrivateSigKey>> {
-        match &self.sig_key {
-            Some(sk) => Ok(Arc::clone(sk)),
+    /// The identity this KMS signs with, or an error in recovery mode, where it
+    /// runs without one.
+    pub fn signing_identity(&self) -> anyhow::Result<Arc<NodeSigningIdentity>> {
+        match &self.signing_identity {
+            Some(identity) => Ok(Arc::clone(identity)),
             None => anyhow::bail!("No signing key available"),
         }
     }
@@ -1109,28 +1264,25 @@ impl BaseKmsStruct {
         Arc::clone(&self.verf_key)
     }
 
-    /// Make a clone of this struct with a newly initialized RNG s.t. that both the new and old struct are safe to use.
-    pub async fn new_instance(&self) -> Self {
-        let sig_key = match &self.sig_key {
-            Some(sk) => Some(Arc::clone(sk)),
-            None => None,
-        };
+    /// Shares the seed source; each task receives its own RNG from [`Self::new_rng`].
+    // This method is cloning `BaseKmsStruct` but we prefer not to impl `Clone` to avoid accidental misuse.
+    pub fn new_instance(&self) -> Self {
         Self {
             kms_type: self.kms_type,
             verf_key: Arc::clone(&self.verf_key),
-            sig_key,
-            rng: Arc::new(Mutex::new(self.new_rng().await)),
+            signing_identity: self.signing_identity.as_ref().map(Arc::clone),
+            rng_source: Arc::clone(&self.rng_source),
         }
     }
 
-    pub async fn new_rng(&self) -> AesRng {
-        let mut seed = [0u8; crate::consts::RND_SIZE];
-        // Make a seperate scope for the rng so that it is dropped before the lock is released
-        {
-            let mut base_rng = self.rng.lock().await;
-            base_rng.fill_bytes(seed.as_mut());
-        }
-        AesRng::from_seed(seed)
+    /// Returns a task RNG seeded from the shared source.
+    pub fn new_rng(&self) -> AesRng {
+        self.rng_source.fork_rng()
+    }
+
+    /// Returns the shared source for session construction and refresh.
+    pub(crate) fn rng_source(&self) -> Arc<RngSource> {
+        Arc::clone(&self.rng_source)
     }
 }
 
@@ -1140,9 +1292,9 @@ impl BaseKms for BaseKmsStruct {
     where
         T: Serialize + AsRef<[u8]>,
     {
-        match self.sig_key.as_ref() {
+        match self.signing_identity.as_ref() {
             None => anyhow::bail!("KMS has no signing key"),
-            Some(sk) => internal_sign(dsep, msg, sk),
+            Some(identity) => internal_sign(dsep, msg, identity.ecdsa()),
         }
     }
 
@@ -1314,17 +1466,76 @@ pub(crate) fn retrieve_parameters(fhe_parameter: Option<i32>) -> Result<DKGParam
     Ok(params)
 }
 
+/// Version dispatch for [`StoredEip712Domain`].
+#[derive(Clone, Serialize, Deserialize, VersionsDispatch)]
+pub enum StoredEip712DomainVersions {
+    /// Initial canonical domain representation.
+    V0(StoredEip712Domain),
+}
+
+/// Canonical persisted representation of an EIP-712 domain.
+///
+/// Alloy and protobuf domain types are kept out of persisted metadata so dependency or wire
+/// representation changes cannot silently alter the on-disk format.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, Versionize)]
+#[versionize(StoredEip712DomainVersions)]
+pub struct StoredEip712Domain {
+    name: Option<String>,
+    version: Option<String>,
+    chain_id: Option<[u8; 32]>,
+    verifying_contract: Option<[u8; 20]>,
+    salt: Option<[u8; 32]>,
+}
+
+impl From<&Eip712Domain> for StoredEip712Domain {
+    fn from(domain: &Eip712Domain) -> Self {
+        Self {
+            name: domain.name.as_ref().map(ToString::to_string),
+            version: domain.version.as_ref().map(ToString::to_string),
+            chain_id: domain.chain_id.map(|chain_id| chain_id.to_be_bytes()),
+            verifying_contract: domain
+                .verifying_contract
+                .map(alloy_primitives::Address::into_array),
+            salt: domain.salt.map(|salt| salt.0),
+        }
+    }
+}
+
+impl From<&StoredEip712Domain> for Eip712Domain {
+    fn from(domain: &StoredEip712Domain) -> Self {
+        Eip712Domain::new(
+            domain.name.clone().map(Into::into),
+            domain.version.clone().map(Into::into),
+            domain.chain_id.map(U256::from_be_bytes),
+            domain.verifying_contract.map(Address::from),
+            domain.salt.map(B256::from),
+        )
+    }
+}
+
 #[derive(Clone, Serialize, Deserialize, VersionsDispatch)]
 pub enum KeyGenMetadataInnerVersions {
     V0(KeyGenMetadataInnerV0),
     V1(KeyGenMetadataInnerV1),
     V2(KeyGenMetadataInnerV2),
-    V3(KeyGenMetadataInner),
+    V3(KeyGenMetadataInnerV3),
+    V4(KeyGenMetadataInner),
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, Versionize)]
 #[versionize(KeyGenMetadataInnerVersions)]
 pub struct KeyGenMetadataInner {
+    pub key_id: RequestId,
+    pub preprocessing_id: RequestId,
+    pub key_digest_map: BTreeMap<PubDataType, Vec<u8>>,
+    pub extra_data: Option<Vec<u8>>,
+    pub eip712_domain: Option<StoredEip712Domain>,
+    pub external_signature: Vec<u8>,
+    pub signatures: Vec<StoredTypedSignature>,
+}
+
+#[derive(Clone, Serialize, Deserialize, Version)]
+pub struct KeyGenMetadataInnerV3 {
     pub key_id: RequestId,
     pub preprocessing_id: RequestId,
     pub key_digest_map: BTreeMap<PubDataType, Vec<u8>>,
@@ -1379,7 +1590,22 @@ impl Upgrade<KeyGenMetadataInnerV2> for KeyGenMetadataInnerV1 {
     }
 }
 
-impl Upgrade<KeyGenMetadataInner> for KeyGenMetadataInnerV2 {
+impl Upgrade<KeyGenMetadataInnerV3> for KeyGenMetadataInnerV2 {
+    type Error = std::convert::Infallible;
+
+    fn upgrade(self) -> Result<KeyGenMetadataInnerV3, Self::Error> {
+        Ok(KeyGenMetadataInnerV3 {
+            key_id: self.key_id,
+            preprocessing_id: self.preprocessing_id,
+            key_digest_map: self.key_digest_map,
+            extra_data: self.extra_data,
+            signatures: StoredTypedSignature::ecdsa_only(self.external_signature.clone()),
+            external_signature: self.external_signature,
+        })
+    }
+}
+
+impl Upgrade<KeyGenMetadataInner> for KeyGenMetadataInnerV3 {
     type Error = std::convert::Infallible;
 
     fn upgrade(self) -> Result<KeyGenMetadataInner, Self::Error> {
@@ -1388,10 +1614,9 @@ impl Upgrade<KeyGenMetadataInner> for KeyGenMetadataInnerV2 {
             preprocessing_id: self.preprocessing_id,
             key_digest_map: self.key_digest_map,
             extra_data: self.extra_data,
-            // The ECDSA/EIP-712 signature is preserved in `external_signature`;
-            // `signatures` is an opt-in per-scheme, so stays empty here.
+            eip712_domain: None,
             external_signature: self.external_signature,
-            signatures: Vec::new(),
+            signatures: self.signatures,
         })
     }
 }
@@ -1410,9 +1635,12 @@ pub enum KeyGenMetadataVersions {
     V0(KeyGenMetadata),
 }
 
-// Values that need to be stored temporarily as part of an async key generation call.
+/// Values that need to be stored temporarily as part of an async key generation call.
+// We marked it as a large enum variant because the LegacyV0 variant (~48 B) is
+// much smaller than the Current variant (nearly 300 B) at the time of writing.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, Versionize)]
 #[versionize(KeyGenMetadataVersions)]
+#[expect(clippy::large_enum_variant)]
 pub enum KeyGenMetadata {
     Current(KeyGenMetadataInner),
     LegacyV0(HashMap<PubDataType, SignedPubDataHandleInternal>),
@@ -1424,11 +1652,12 @@ impl Named for KeyGenMetadata {
 }
 
 impl KeyGenMetadata {
-    /// Create a new KeyGenMetadata instance with the provided parameters.
+    /// Create a new KeyGenMetadata instance with the provided parameters and EIP-712 domain.
     pub fn new(
         key_id: RequestId,
         preprocessing_id: RequestId,
         key_digest_map: BTreeMap<PubDataType, Vec<u8>>,
+        eip712_domain: &Eip712Domain,
         external_signature: Vec<u8>,
         signatures: Vec<StoredTypedSignature>,
         extra_data: Vec<u8>,
@@ -1442,6 +1671,7 @@ impl KeyGenMetadata {
             key_id,
             preprocessing_id,
             key_digest_map,
+            eip712_domain: Some(eip712_domain.into()),
             external_signature,
             signatures,
             extra_data: parsed_extra_data,
@@ -1486,7 +1716,8 @@ impl KeyGenMetadata {
 pub enum CrsGenMetadataInnerVersions {
     V0(CrsGenMetadataInnerV0),
     V1(CrsGenMetadataInnerV1),
-    V2(CrsGenMetadataInner),
+    V2(CrsGenMetadataInnerV2),
+    V3(CrsGenMetadataInner),
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, Versionize)]
@@ -1496,8 +1727,32 @@ pub struct CrsGenMetadataInner {
     pub(crate) crs_digest: Vec<u8>,
     pub(crate) max_num_bits: u32,
     pub(crate) extra_data: Option<Vec<u8>>,
+    pub(crate) eip712_domain: Option<StoredEip712Domain>,
     pub(crate) external_signature: Vec<u8>,
     pub(crate) signatures: Vec<StoredTypedSignature>,
+}
+
+impl CrsGenMetadataInner {
+    /// The deprecated ECDSA/EIP-712 signature over the CRS metadata.
+    pub fn external_signature(&self) -> &[u8] {
+        &self.external_signature
+    }
+
+    /// The per-scheme signatures over the CRS metadata.
+    pub fn scheme_signatures(&self) -> &[StoredTypedSignature] {
+        &self.signatures
+    }
+}
+
+#[derive(Clone, Serialize, Deserialize, Version)]
+/// Previous current CRS metadata layout, before retaining the EIP-712 domain.
+pub struct CrsGenMetadataInnerV2 {
+    pub crs_id: RequestId,
+    pub crs_digest: Vec<u8>,
+    pub max_num_bits: u32,
+    pub extra_data: Option<Vec<u8>>,
+    pub external_signature: Vec<u8>,
+    pub signatures: Vec<StoredTypedSignature>,
 }
 
 #[derive(Clone, Serialize, Deserialize, Version)]
@@ -1523,7 +1778,24 @@ impl Upgrade<CrsGenMetadataInnerV1> for CrsGenMetadataInnerV0 {
     }
 }
 
-impl Upgrade<CrsGenMetadataInner> for CrsGenMetadataInnerV1 {
+impl Upgrade<CrsGenMetadataInnerV2> for CrsGenMetadataInnerV1 {
+    type Error = std::convert::Infallible;
+
+    fn upgrade(self) -> Result<CrsGenMetadataInnerV2, Self::Error> {
+        Ok(CrsGenMetadataInnerV2 {
+            crs_id: self.crs_id,
+            crs_digest: self.crs_digest,
+            max_num_bits: self.max_num_bits,
+            extra_data: self.extra_data,
+            // See the keygen upgrade above: the ECDSA entry is rebuilt from
+            // `external_signature`, which holds the same bytes.
+            signatures: StoredTypedSignature::ecdsa_only(self.external_signature.clone()),
+            external_signature: self.external_signature,
+        })
+    }
+}
+
+impl Upgrade<CrsGenMetadataInner> for CrsGenMetadataInnerV2 {
     type Error = std::convert::Infallible;
 
     fn upgrade(self) -> Result<CrsGenMetadataInner, Self::Error> {
@@ -1532,11 +1804,9 @@ impl Upgrade<CrsGenMetadataInner> for CrsGenMetadataInnerV1 {
             crs_digest: self.crs_digest,
             max_num_bits: self.max_num_bits,
             extra_data: self.extra_data,
-            // The ECDSA/EIP-712 signature is preserved in `external_signature`;
-            // `signatures` is an opt-in per-scheme set that pre-#3078 data never
-            // populated, so it upgrades to empty.
+            eip712_domain: None,
             external_signature: self.external_signature,
-            signatures: Vec::new(),
+            signatures: self.signatures,
         })
     }
 }
@@ -1570,10 +1840,12 @@ impl Upgrade<CrsGenMetadata> for CrsGenMetadataV0 {
 }
 
 impl CrsGenMetadata {
+    /// Create a new CRS metadata value with the provided EIP-712 domain.
     pub fn new(
         crs_id: RequestId,
         crs_digest: Vec<u8>,
         max_num_bits: u32,
+        eip712_domain: &Eip712Domain,
         external_signature: Vec<u8>,
         signatures: Vec<StoredTypedSignature>,
         extra_data: Vec<u8>,
@@ -1588,6 +1860,7 @@ impl CrsGenMetadata {
             crs_digest,
             max_num_bits,
             extra_data: parsed_extra_data,
+            eip712_domain: Some(eip712_domain.into()),
             external_signature,
             signatures,
         })
@@ -1642,13 +1915,17 @@ pub type UserDecryptCallValues = DecryptionCallValues<UserDecryptionResponsePayl
 #[cfg(test)]
 pub(crate) mod tests {
     use super::{
-        CrsGenMetadataInner, CrsGenMetadataInnerV0, KeyGenMetadata, KeyGenMetadataInner,
-        KeyGenMetadataInnerV0, KeyGenMetadataInnerV1,
+        CrsGenMetadata, CrsGenMetadataInner, CrsGenMetadataInnerV0, KeyGenMetadata,
+        KeyGenMetadataInner, KeyGenMetadataInnerV0, KeyGenMetadataInnerV1, StoredEip712Domain,
+        StoredTypedSignature,
     };
     use super::{TypedPlaintext, deserialize_to_low_level};
     use crate::cryptography::signatures::compute_eip712_signature;
     use crate::cryptography::signatures::internal_sign;
+    use crate::cryptography::signing::identity::NodeSigningIdentity;
+    use crate::cryptography::signing::seed::RootSigningSeed;
     use crate::cryptography::signing::{Signature, SigningSchemeType, unified_verify};
+    use crate::engine::base::DSEP_PUBLIC_DECRYPTION;
     use crate::{
         consts::{SAFE_SER_SIZE_LIMIT, TEST_PARAM},
         cryptography::signatures::{gen_sig_keys, recover_address_from_ext_signature},
@@ -1667,6 +1944,7 @@ pub(crate) mod tests {
     };
     use aes_prng::AesRng;
     use alloy_sol_types::SolStruct;
+    use kms_grpc::kms::v1::PublicDecryptionResponsePayload;
     use kms_grpc::rpc_types::PubDataType;
     use kms_grpc::solidity_types::{CrsgenVerificationQ126, KeygenVerificationQ126};
     use kms_grpc::{
@@ -1677,18 +1955,41 @@ pub(crate) mod tests {
     use rand::{RngCore, SeedableRng};
     use std::collections::BTreeMap;
     use std::collections::HashMap;
+    use strum::IntoEnumIterator;
     use tfhe::{
         FheTypes, FheUint32, Seed, prelude::SquashNoise, safe_serialization::safe_serialize,
     };
-    use tfhe_versionable::Upgrade;
+    use tfhe_versionable::{Unversionize, Upgrade, VersionizeOwned};
     use threshold_execution::{
         keyset_config::StandardKeySetConfig,
         tfhe_internals::{public_keysets::FhePubKeySet, utils::expanded_encrypt},
     };
 
+    #[test]
+    fn stored_eip712_domain_roundtrip_preserves_all_fields() {
+        let domain = alloy_sol_types::Eip712Domain::new(
+            Some("KMS domain".to_owned().into()),
+            Some("42".to_owned().into()),
+            Some(alloy_primitives::U256::from(8006)),
+            Some(alloy_primitives::address!(
+                "66f9664f97F2b50F62D13eA064982f936dE76657"
+            )),
+            Some(alloy_primitives::B256::from([0xA5; 32])),
+        );
+        let stored = StoredEip712Domain::from(&domain);
+        let versioned = stored.clone().versionize_owned();
+        let bytes = bc2wrap::serialize(&versioned).unwrap();
+        let decoded_versioned: <StoredEip712Domain as VersionizeOwned>::VersionedOwned =
+            bc2wrap::deserialize_slice(&bytes).unwrap();
+        let decoded = StoredEip712Domain::unversionize(decoded_versioned).unwrap();
+
+        assert_eq!(decoded, stored);
+        assert_eq!(alloy_sol_types::Eip712Domain::from(&decoded), domain);
+    }
+
     /// Round-trip test for every signature on a decryption response, as the
     /// async decryption job produces them:
-    /// - the deprecated scalar `signature` is the raw signature over the payload,
+    /// - the deprecated internal `signature` is the raw signature over the payload,
     /// - `external_signature` is the EIP-712 signature the fhevm contracts verify,
     /// - the ECDSA entry of `signatures` is byte-identical to `external_signature`,
     /// - every other scheme signs the raw payload.
@@ -1698,11 +1999,9 @@ pub(crate) mod tests {
     /// TODO(0.16): remove the deprecated fields and unify the ECDSA entry of `signatures` with `external_signature`.
     #[test]
     fn decryption_scheme_signatures_round_trip() {
-        use crate::engine::validation::DSEP_PUBLIC_DECRYPTION;
-        use kms_grpc::kms::v1::PublicDecryptionResponsePayload;
-
         let mut rng = AesRng::seed_from_u64(0xABCD);
         let (pk, sk) = gen_sig_keys(&mut rng);
+        let sk = NodeSigningIdentity::new(sk, RootSigningSeed::random(&mut rng));
         let domain = dummy_domain();
         let handles = vec![vec![0xAAu8; 32]];
         let extra_data = b"extra";
@@ -1715,6 +2014,14 @@ pub(crate) mod tests {
         let payload_bytes = bc2wrap::serialize(&payload).unwrap();
         let sol_type =
             compute_public_decryption_message(&handles, &payload.plaintexts, extra_data).unwrap();
+
+        // What a pre-multi-scheme node produced, and a pre-multi-scheme client checks.
+        let expected = crate::cryptography::signatures::compute_eip712_signature(
+            sk.ecdsa(),
+            &sol_type,
+            &domain,
+        )
+        .unwrap();
 
         // Several choices of schemes, including a classic + post-quantum hybrid.
         let choices: Vec<Vec<SigningSchemeType>> = vec![
@@ -1744,9 +2051,17 @@ pub(crate) mod tests {
             assert_eq!(sigs.payload, payload);
             assert_eq!(sigs.extra_data, extra_data);
 
-            // The deprecated scalar field is the raw signature over the payload.
-            let legacy = internal_sign(&DSEP_PUBLIC_DECRYPTION, &payload_bytes, &sk).unwrap();
+            // The deprecated internal field is the raw signature over the payload.
+            let legacy =
+                internal_sign(&DSEP_PUBLIC_DECRYPTION, &payload_bytes, sk.ecdsa()).unwrap();
             assert_eq!(sigs.signature, legacy.as_bytes());
+
+            // Populated for every choice of schemes, the ed25519-only one included.
+            assert!(
+                !sigs.external_signature.is_empty(),
+                "external_signature must stay populated until 0.16"
+            );
+            assert_eq!(sigs.external_signature, expected);
 
             // `external_signature` recovers to the signer on-chain.
             let recovered =
@@ -1767,11 +2082,22 @@ pub(crate) mod tests {
                     assert_eq!(scheme_sig.signature, sigs.external_signature);
                     assert_ne!(scheme_sig.signature, sigs.signature);
                 } else {
-                    // Every other scheme signs the raw payload.
+                    // Every other scheme signs the versioned payload, which carries
+                    // the response bytes together with the extra data.
+                    let signed =
+                        super::public_dec_payload_bytes(&payload_bytes, extra_data).unwrap();
                     let vk = sk.unified_verifying_key(*scheme).unwrap();
                     let sig = Signature::new(*scheme, scheme_sig.signature.clone());
-                    unified_verify(&DSEP_PUBLIC_DECRYPTION, &payload_bytes, &sig, &vk)
+                    unified_verify(&DSEP_PUBLIC_DECRYPTION, &signed, &sig, &vk)
                         .unwrap_or_else(|e| panic!("{scheme:?} signature should verify: {e}"));
+
+                    // The extra data is part of what that entry covers.
+                    let other =
+                        super::public_dec_payload_bytes(&payload_bytes, b"other extra").unwrap();
+                    assert!(
+                        unified_verify(&DSEP_PUBLIC_DECRYPTION, &other, &sig, &vk).is_err(),
+                        "{scheme:?} signature did not cover the extra data"
+                    );
 
                     // A tampered message must fail.
                     assert!(
@@ -1792,6 +2118,7 @@ pub(crate) mod tests {
 
         let mut rng = AesRng::seed_from_u64(0x9E11);
         let (_pk, sk) = gen_sig_keys(&mut rng);
+        let sk = NodeSigningIdentity::new(sk, RootSigningSeed::random(&mut rng));
         let dsep = b"PERSCHEM";
 
         let ed_msg = b"serialization chosen for ed25519".to_vec();
@@ -1830,13 +2157,14 @@ pub(crate) mod tests {
     }
 
     /// `external_signature` is always the EIP-712 signature, independent of the
-    /// requested schemes, while `signatures` is opt-in on exactly the schemes
-    /// requested: ECDSA carries the EIP-712 signature verbatim and every other
-    /// scheme signs the serialized CRS payload — the same split decryption uses.
+    /// requested schemes, while `signatures` holds exactly the schemes requested:
+    /// ECDSA carries the EIP-712 signature verbatim and every other scheme signs
+    /// the serialized CRS payload — the same split decryption uses.
     #[test]
     fn crs_result_signatures_multi_scheme() {
         let mut rng = AesRng::seed_from_u64(0x5C15);
         let (_pk, sk) = gen_sig_keys(&mut rng);
+        let sk = NodeSigningIdentity::new(sk, RootSigningSeed::random(&mut rng));
         let domain = dummy_domain();
 
         let crs_id = RequestId::new_random(&mut rng);
@@ -1849,7 +2177,7 @@ pub(crate) mod tests {
             crs_digest.clone(),
             extra_data.clone(),
         );
-        let expected_external = compute_eip712_signature(&sk, &sol_type, &domain).unwrap();
+        let expected_external = compute_eip712_signature(sk.ecdsa(), &sol_type, &domain).unwrap();
         let eip712_hash = sol_type.eip712_signing_hash(&domain);
         let payload_bytes = super::signed_payload_bytes(&super::CrsSignedPayload {
             crs_id,
@@ -1930,6 +2258,7 @@ pub(crate) mod tests {
     fn keygen_result_signatures_sign_the_payload() {
         let mut rng = AesRng::seed_from_u64(0x4E67);
         let (_pk, sk) = gen_sig_keys(&mut rng);
+        let sk = NodeSigningIdentity::new(sk, RootSigningSeed::random(&mut rng));
         let domain = dummy_domain();
 
         let prep_id = RequestId::new_random(&mut rng);
@@ -1979,6 +2308,52 @@ pub(crate) mod tests {
                         |e| panic!("{scheme:?} keygen signature should verify: {e}"),
                     );
                 }
+            }
+        }
+    }
+
+    /// An ECDSA-only node keeps serving the requests it can, and rejects the ones it
+    /// cannot.
+    #[test]
+    fn seedless_node_rejects_pq_schemes_and_still_serves_ecdsa() {
+        let mut rng = AesRng::seed_from_u64(0x5EED1E55);
+        let (_pk, sk) = gen_sig_keys(&mut rng);
+        let sk = NodeSigningIdentity::ecdsa_only(sk);
+        assert!(!sk.has_root_seed(), "this node is meant to be seedless");
+        let domain = dummy_domain();
+        let prep_id = RequestId::new_random(&mut rng);
+        let extra_data = b"extra".to_vec();
+
+        let signatures_for = |schemes: &[SigningSchemeType]| {
+            compute_preprocessing_signatures(&sk, schemes, &prep_id, &domain, extra_data.clone())
+        };
+
+        // ECDSA needs no seed, so an ECDSA-only request still succeed
+        for schemes in [vec![], vec![SigningSchemeType::Ecdsa256k1]] {
+            let (external_signature, sigs) = signatures_for(&schemes)
+                .unwrap_or_else(|e| panic!("{schemes:?} must not need a root seed: {e}"));
+            assert_eq!(sigs.len(), schemes.len());
+            let sol_type = PrepKeygenVerification::new(&prep_id, extra_data.clone());
+            assert_eq!(
+                recover_address_from_ext_signature(&sol_type, &domain, &external_signature)
+                    .unwrap(),
+                sk.verf_key().address()
+            );
+            for stored in &sigs {
+                assert_eq!(stored.signature, external_signature);
+            }
+        }
+
+        // Every other scheme fails, whether asked for alone or beside ECDSA, and the
+        // error names what the node is missing.
+        for scheme in SigningSchemeType::iter().filter(|s| *s != SigningSchemeType::Ecdsa256k1) {
+            for schemes in [vec![scheme], vec![SigningSchemeType::Ecdsa256k1, scheme]] {
+                let err = signatures_for(&schemes)
+                    .expect_err("a seedless node signed under a derived scheme");
+                assert!(
+                    err.to_string().contains("no root signing seed"),
+                    "{schemes:?} failed for an unexpected reason: {err}"
+                );
             }
         }
     }
@@ -2153,7 +2528,7 @@ pub(crate) mod tests {
         let key_id = RequestId::new_random(&mut rng);
         let preproc_id = RequestId::new_random(&mut rng);
         let (pubkeyset, _sk) = generate_uncompressed_fhe_keys(
-            &sig_sk,
+            &NodeSigningIdentity::ecdsa_only(sig_sk),
             &[crate::cryptography::signing::SigningSchemeType::Ecdsa256k1],
             TEST_PARAM,
             StandardKeySetConfig::default().secret_key_config,
@@ -2203,7 +2578,7 @@ pub(crate) mod tests {
         let key_id = RequestId::new_random(&mut rng);
         let preproc_id = RequestId::new_random(&mut rng);
         let (pubkeyset, _sk) = generate_uncompressed_fhe_keys(
-            &sig_sk,
+            &NodeSigningIdentity::ecdsa_only(sig_sk),
             &[crate::cryptography::signing::SigningSchemeType::Ecdsa256k1],
             TEST_PARAM,
             StandardKeySetConfig::default().secret_key_config,
@@ -2280,7 +2655,7 @@ pub(crate) mod tests {
         let key_id = RequestId::new_random(&mut rng);
         let preproc_id = RequestId::new_random(&mut rng);
         let (pubkeyset, _sk) = generate_uncompressed_fhe_keys(
-            &sig_sk,
+            &NodeSigningIdentity::ecdsa_only(sig_sk),
             &[crate::cryptography::signing::SigningSchemeType::Ecdsa256k1],
             TEST_PARAM,
             StandardKeySetConfig::default().secret_key_config,
@@ -2301,6 +2676,7 @@ pub(crate) mod tests {
             _noise_squashing_compression_key,
             _rerand_key,
             _oprf_key,
+            _transciphering_key,
             _tag,
         ) = pubkeyset.server_key.clone().into_raw_parts();
         assert!(compression_key.is_some());
@@ -2360,7 +2736,7 @@ pub(crate) mod tests {
         let domain = dummy_domain();
         let extra_data = vec![0x01u8, 0x02, 0x03, 0x04];
         let meta_data = compute_info_uncompressed_keygen(
-            &sk,
+            &NodeSigningIdentity::ecdsa_only(sk.clone()),
             &[crate::cryptography::signing::SigningSchemeType::Ecdsa256k1],
             &crate::engine::base::DSEP_PUBDATA_KEY,
             &prep_id,
@@ -2483,7 +2859,7 @@ pub(crate) mod tests {
 
             let (_, bad_sk) = gen_sig_keys(&mut rng);
             let meta_data = compute_info_uncompressed_keygen(
-                &bad_sk,
+                &NodeSigningIdentity::ecdsa_only(bad_sk.clone()),
                 &[crate::cryptography::signing::SigningSchemeType::Ecdsa256k1],
                 &crate::engine::base::DSEP_PUBDATA_KEY,
                 &prep_id,
@@ -2540,7 +2916,7 @@ pub(crate) mod tests {
         let extra_data = vec![0x10u8, 0x20, 0x30];
 
         let (crs, meta_data) = gen_centralized_crs(
-            &sk,
+            &NodeSigningIdentity::ecdsa_only(sk.clone()),
             &[SigningSchemeType::Ecdsa256k1],
             &params,
             Some(max_num_bits),
@@ -2661,7 +3037,7 @@ pub(crate) mod tests {
             // shold fail if we use the wrong signature
             let (_, bad_sk) = gen_sig_keys(&mut rng);
             let (crs, meta_data) = gen_centralized_crs(
-                &bad_sk, // using bad_sk
+                &NodeSigningIdentity::ecdsa_only(bad_sk.clone()), // using bad_sk
                 &[SigningSchemeType::Ecdsa256k1],
                 &params,
                 Some(max_num_bits),
@@ -2801,9 +3177,14 @@ pub(crate) mod tests {
         let domain = dummy_domain();
         let extra_data = vec![0x0Au8, 0x0B, 0x0C];
         // `external_signature` is always produced regardless of requested schemes.
-        let (sig, _signatures) =
-            compute_preprocessing_signatures(&sk, &[], &preproc_id, &domain, extra_data.clone())
-                .unwrap();
+        let (sig, _signatures) = compute_preprocessing_signatures(
+            &NodeSigningIdentity::ecdsa_only(sk.clone()),
+            &[],
+            &preproc_id,
+            &domain,
+            extra_data.clone(),
+        )
+        .unwrap();
 
         {
             // happy path
@@ -2840,7 +3221,7 @@ pub(crate) mod tests {
             // wrong signature
             let (_, bad_sk) = gen_sig_keys(&mut rng);
             let (sig, _signatures) = compute_preprocessing_signatures(
-                &bad_sk,
+                &NodeSigningIdentity::ecdsa_only(bad_sk.clone()),
                 &[],
                 &preproc_id,
                 &domain,
@@ -2914,22 +3295,36 @@ pub(crate) mod tests {
             q126.external_signature
         );
 
-        // V1 -> V2 -> V3: the HashMap is converted to a BTreeMap (V2) and the
-        // per-scheme `signatures` list is added (V3) and upgrades to empty.
+        // V1 -> V2 -> V3 -> V4: the HashMap is converted to a BTreeMap (V2), the
+        // per-scheme `signatures` list is added (V3), and the optional EIP-712 domain is
+        // added (V4).
         // Field-by-field structural equality remains, modulo container type.
-        let upgraded_v3: KeyGenMetadataInner = upgraded.upgrade().unwrap().upgrade().unwrap();
-        assert_eq!(upgraded_v3.extra_data, None);
-        assert_eq!(upgraded_v3.key_id, q126.key_id);
-        assert_eq!(upgraded_v3.preprocessing_id, q126.preprocessing_id);
+        let upgraded_v4: KeyGenMetadataInner = upgraded
+            .upgrade()
+            .unwrap()
+            .upgrade()
+            .unwrap()
+            .upgrade()
+            .unwrap();
+        assert_eq!(upgraded_v4.extra_data, None);
+        assert_eq!(upgraded_v4.key_id, q126.key_id);
+        assert_eq!(upgraded_v4.preprocessing_id, q126.preprocessing_id);
         assert_eq!(
-            upgraded_v3.key_digest_map,
+            upgraded_v4.key_digest_map,
             q126.key_digest_map
                 .iter()
                 .map(|(k, v)| (*k, v.clone()))
                 .collect::<BTreeMap<_, _>>(),
         );
-        assert_eq!(upgraded_v3.external_signature, q126.external_signature);
-        assert!(upgraded_v3.signatures.is_empty());
+        assert_eq!(upgraded_v4.external_signature, q126.external_signature);
+        // The upgrade rebuilds the ECDSA entry of `signatures` from
+        // `external_signature`, so a client that asked for the default scheme
+        // finds the entry it requires on a result this old.
+        assert_eq!(
+            upgraded_v4.signatures,
+            StoredTypedSignature::ecdsa_only(q126.external_signature.clone())
+        );
+        assert_eq!(upgraded_v4.eip712_domain, None);
     }
 
     #[test]
@@ -2937,16 +3332,29 @@ pub(crate) mod tests {
         let mut rng = AesRng::seed_from_u64(890);
         let key_id = RequestId::new_random(&mut rng);
         let preprocessing_id = RequestId::new_random(&mut rng);
+        let domain = dummy_domain();
+        let expected_domain = StoredEip712Domain::from(&domain);
 
         let current = KeyGenMetadata::new(
             key_id,
             preprocessing_id,
             BTreeMap::new(),
+            &domain,
             vec![],
             vec![],
             vec![],
         );
         assert_eq!(current.preprocessing_id(), Some(&preprocessing_id));
+        let KeyGenMetadata::Current(current_inner) = &current else {
+            panic!("KeyGenMetadata::new must produce current metadata");
+        };
+        assert_eq!(current_inner.eip712_domain.as_ref(), Some(&expected_domain));
+
+        let crs = CrsGenMetadata::new(key_id, vec![], 64, &domain, vec![], vec![], vec![]);
+        let CrsGenMetadata::Current(crs_inner) = &crs else {
+            panic!("CrsGenMetadata::new must produce current metadata");
+        };
+        assert_eq!(crs_inner.eip712_domain.as_ref(), Some(&expected_domain));
 
         // Legacy metadata predates the field, so there is nothing to report.
         let legacy = KeyGenMetadata::LegacyV0(HashMap::new());
@@ -2974,12 +3382,23 @@ pub(crate) mod tests {
             external_signature: external_signature.clone(),
         };
 
-        // Verify upgrade (V0 -> V1 -> V2) sets extra_data as None; `signatures`
-        // is opt-in, so it upgrades to empty (the ECDSA/EIP-712 signature stays
-        // in `external_signature`).
-        let upgraded: CrsGenMetadataInner = q126.clone().upgrade().unwrap().upgrade().unwrap();
+        // Verify upgrade (V0 -> V1 -> V2 -> V3) sets extra_data as None, rebuilds
+        // the ECDSA entry of `signatures` from `external_signature`, and leaves
+        // the EIP-712 domain unavailable.
+        let upgraded: CrsGenMetadataInner = q126
+            .clone()
+            .upgrade()
+            .unwrap()
+            .upgrade()
+            .unwrap()
+            .upgrade()
+            .unwrap();
         assert_eq!(upgraded.extra_data, None);
-        assert!(upgraded.signatures.is_empty());
+        assert_eq!(
+            upgraded.signatures,
+            StoredTypedSignature::ecdsa_only(q126.external_signature.clone())
+        );
+        assert_eq!(upgraded.eip712_domain, None);
         // Upgraded serialization
         let upgraded_bytes = bc2wrap::serialize(&upgraded).unwrap();
 
