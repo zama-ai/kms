@@ -1,37 +1,38 @@
-//! The normative Solana linker v1 vectors, and the runner that consumes them.
+//! The normative Solana linker vectors (v2), and the runner that consumes them.
 //!
 //! One code path builds the set and checks it: `cargo test` builds every record in memory from
 //! the canonical binding and compares byte-for-byte with the committed
-//! `core/grpc/test-vectors/solana_linker_v1.json`; `make generate-solana-linker-vectors` runs the
+//! `core/grpc/test-vectors/solana_linker_v2.json`; `make generate-solana-linker-vectors` runs the
 //! same binary with `ZAMA_UPDATE_SOLANA_LINKER_VECTORS=1` set to rewrite that file and its digest
 //! instead. There is no second generator to drift from the runner.
 //!
 //! The vectors are shared across repositories (SDK TypeScript, relayer, Connector Rust, KMS Core
-//! Rust, KMS client/WASM), so the set carries its own SHA-256 in `solana_linker_v1.sha256`
+//! Rust, KMS client/WASM), so the set carries its own SHA-256 in `solana_linker_v2.sha256`
 //! (`sha256sum` line format); each repository commits the same two files and CI compares digests,
 //! catching both locally edited and stale copies.
 //!
-//! Conventions: every 64-bit value is a decimal string, because every chain id has type byte
-//! `0x01` and a JSON number would be silently rounded by a TypeScript consumer. Every rejecting record names
-//! its rule and derives from a named accepted base with exactly one mutation. `cluster_registry`
-//! is the reviewed registry of public-cluster chain ids, derived by the same code as every
-//! record's chain id. The file deliberately does not use `tests/common`: a published reference
-//! must not move because a shared test helper was edited.
+//! Conventions: every 64-bit value is a decimal string, because every host chain id has type byte
+//! `0x01` and a JSON number would be silently rounded by a TypeScript consumer. Every rejecting
+//! record names its rule and derives from a named accepted base with exactly one mutation. Every
+//! record that has a link carries the Gateway domain it was computed under. `cluster_registry` is
+//! the reviewed registry of public-cluster chain ids, derived by the same code as every record's
+//! chain id. The file deliberately does not use `tests/common`: a published reference must not
+//! move because a shared test helper was edited.
 //!
-//! The scheme tag `SolanaUserDecryptionLinker:v1`, the call separator `SOLLNK01` and the element
-//! layout are frozen by this set and pinned independently by `solana_frozen_constants.rs`;
-//! changing any of those bytes is a version bump in the scheme tag, not an edit.
+//! The type string, its keccak-256 type hash and the EIP-712 encoding of every field are frozen by
+//! this set and pinned independently by `solana_frozen_constants.rs`; changing any of those bytes
+//! is a new type name, not an edit.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::PathBuf;
 use std::sync::LazyLock;
 
-use hashing::{DSEP_LIST, unsafe_hash_list_w_size};
-use kms_grpc::solana_binding::{
-    DSEP_SOLANA_LINKER, SOLANA_LINKER_SCHEME_TAG, SolanaUserDecryptBinding,
-    SolanaUserDecryptBindingError,
-};
+use alloy_primitives::{Address, U256, address, keccak256};
+use alloy_sol_types::{Eip712Domain, SolStruct};
+use hashing::{DomainSep, unsafe_hash_list_w_size};
+use kms_grpc::solana_binding::{SolanaUserDecryptBinding, SolanaUserDecryptBindingError};
+use kms_grpc::solidity_types::SolanaUserDecryptionLinker;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use sha2::{Digest, Sha256};
@@ -41,16 +42,41 @@ use sha2::{Digest, Sha256};
 // ---------------------------------------------------------------------------
 
 /// Schema identifier. A consumer that does not recognize it must refuse the file rather than guess.
-const SCHEMA: &str = "zama-solana-linker-vectors/v1";
+const SCHEMA: &str = "zama-solana-linker-vectors/v2";
 
 /// Which generator produced the set, so a diverging copy can be traced to its source.
 const GENERATOR: &str = "kms:core/grpc/tests/solana_linker_vectors.rs";
 
-const VECTOR_FILE: &str = "solana_linker_v1.json";
-const DIGEST_FILE: &str = "solana_linker_v1.sha256";
+const VECTOR_FILE: &str = "solana_linker_v2.json";
+const DIGEST_FILE: &str = "solana_linker_v2.sha256";
 
 /// Set to any value to rewrite the committed set instead of checking it.
 const UPDATE_ENV: &str = "ZAMA_UPDATE_SOLANA_LINKER_VECTORS";
+
+/// The EIP-712 type string of the linker: the versioned name of the construction. Written as a
+/// literal here — the runner requires the library's own encoding of the type to agree with it.
+const TYPE_STRING: &str = "SolanaUserDecryptionLinker(bytes publicKey,bytes32[] handles,bytes32 userPubkey,bytes32 verifyingProgramId)";
+
+/// The EIP-712 domain type the Gateway `Decryption` contract's domain is hashed as: name, version,
+/// chain id and verifying contract, no salt.
+const DOMAIN_TYPE_STRING: &str =
+    "EIP712Domain(string name,string version,uint256 chainId,address verifyingContract)";
+
+/// The construction, in prose, for non-Rust consumers.
+const CONSTRUCTION_RULE: &str = concat!(
+    "link = keccak256(0x19 || 0x01 || domainSeparator || hashStruct); ",
+    "hashStruct = keccak256(type_hash || keccak256(publicKey) || keccak256(handles[0] || ... || ",
+    "handles[n-1]) || userPubkey || verifyingProgramId), one 32-byte word per field, publicKey being ",
+    "the transport key bytes exactly as the request carries them and the handles in request order ",
+    "with duplicates preserved; domainSeparator = keccak256(keccak256(domain_type_string) || ",
+    "keccak256(name) || keccak256(version) || uint256(chainId) || uint256(uint160(verifyingContract))). ",
+    "extra_data is not an input; the host chain id is not a separate input, it enters through bytes ",
+    "22..30 of every handle.",
+);
+
+/// Per-record `construction` values.
+const CONSTRUCTION_EIP712: &str = "eip712";
+const CONSTRUCTION_RETIRED_LIST_HASH: &str = "shake256-list-hash-v1";
 
 /// Prose form of the deployment-time encoding, written into the file for non-Rust consumers.
 ///
@@ -93,22 +119,47 @@ const VERIFYING_PROGRAM_ID_HEX: &str =
     "4cd3022dff504a675caf2d9b4f4014d0b3dc3ea17ffb97ba355cec5a933a30ee";
 
 /// The permit set's signed `extra_data`, verbatim: the kms-routing envelope — version byte `0x02`,
-/// then the KMS context id and the KMS epoch id, 32 bytes each. The linker binds these 65 bytes
-/// opaquely; the routing structure inside them is the permit layer's concern, not this scheme's.
+/// then the KMS context id and the KMS epoch id, 32 bytes each.
+///
+/// Not a linker input: the external response signature is what authenticates it. It survives in
+/// this file for one record, `cross-version-replay`, because the retired list-hash linker bound it
+/// and that record reproduces the retired link over these very bytes.
 const REFERENCE_EXTRA_DATA_HEX: &str = concat!(
     "02",
     "bb801121e2ea198af189c9331dfc57f675802c35206f96a5964deeac39f79d18",
     "7772d6a5c7fc28db485c51abbe18cba52b775baf1015b59ac363e5bf5827a3f2",
 );
 
+/// The Gateway `Decryption` contract's EIP-712 domain the reference records are hashed under: the
+/// contract's name and version as `Decryption.sol` declares them, the chain id of the Gateway the
+/// contract is deployed on, and the contract's address. The chain id here is the local test
+/// gateway's; a deployment substitutes its own, and its links then differ from these by design —
+/// the link is specific to the Gateway that answers.
+const REFERENCE_DOMAIN_NAME: &str = "Decryption";
+const REFERENCE_DOMAIN_VERSION: &str = "1";
+const REFERENCE_GATEWAY_CHAIN_ID: u64 = 54_321;
+const REFERENCE_VERIFYING_CONTRACT: Address = address!("66f9664f97F2b50F62D13eA064982f936dE76657");
+
+/// What the domain is, written into the file for non-Rust consumers.
+const DOMAIN_NOTE: &str = concat!(
+    "Every record with a link carries the EIP-712 domain it was hashed under: the Gateway ",
+    "Decryption contract's domain (name and version as the contract declares them, the Gateway ",
+    "chain id, the contract address; no salt). The reference records use the local test gateway's ",
+    "chain id and a fixed contract address; a consumer recomputing a record's link uses the ",
+    "record's domain, never its own deployment's. A request without a domain has no link ",
+    "(record missing-domain).",
+);
+
 /// Derivation of the handle filler, so a regenerating implementation reproduces these bytes.
 ///
 /// Handles are the one input the permit layer does not carry, so there is nothing to align them to.
 /// A hash-derived filler is used rather than a repeated byte so that no accidental structure —
-/// a run of zeros, an ascending pattern — can make a layout bug look correct.
+/// a run of zeros, an ascending pattern — can make a layout bug look correct. The tag is the v1
+/// set's on purpose: the handle bytes of every record are the ones v1 published, so that only the
+/// hash over them changed between the two sets.
 const HANDLE_DERIVATION_TAG: &str = "zama-solana-linker-vectors/v1 handle ";
 
-/// Name of the canonical transport key: the 869-byte serialized `UnifiedPublicEncKey::MlKem512`
+/// Name of the canonical transport key: the 869-byte safe-serialized `UnifiedPublicEncKey::MlKem512`
 /// container a KMS user-decryption request actually carries. The name is the one the permit set's
 /// `transport_keys` table uses; that set still records the bare 800-byte encapsulation key under it
 /// and regenerates to this container under the settled permit-v1 representation, after which the
@@ -141,7 +192,7 @@ const BARE_MLKEM_512_HEX: &str = concat!(
     "8bfdd3c82d8e64cf6d91e5b1815df57d2791eb20bc6c0bc208eb7db167f454e0",
 );
 
-/// The canonical reference transport key: a genuine serialized `UnifiedPublicEncKey::MlKem512`
+/// The canonical reference transport key: a genuine safe-serialized `UnifiedPublicEncKey::MlKem512`
 /// container, 869 bytes, the width and representation a KMS user-decryption request actually
 /// carries. Every reference record binds these bytes.
 ///
@@ -161,7 +212,7 @@ const BARE_MLKEM_512_HEX: &str = concat!(
 /// `core/service/tests/solana_vector_container.rs`, which reads these committed bytes back out of
 /// the JSON and safe-deserializes them on the side of the tree that can.
 ///
-/// The linker itself is indifferent: it hashes the transport key verbatim and enforces no
+/// The linker itself is indifferent: it hashes the transport key as `bytes` and enforces no
 /// structure. A real container is used anyway so that every reference record is a request a
 /// consumer could actually have sent, not a width with arbitrary bytes behind it.
 const REFERENCE_CONTAINER_MLKEM_512_HEX: &str = concat!(
@@ -220,14 +271,16 @@ const CLUSTER_REGISTRY_NOTE: &str = concat!(
 /// Provenance of the shared inputs, written into the file so a reader of the JSON alone can tell
 /// which values are supposed to match the permit set and which are this layer's own.
 const SHARED_INPUTS: &str = concat!(
-    "Recipient, verifying program id, signed extra_data and the reference cluster are the ",
-    "fhevm permit set's (test-fixtures/permit/permit_v1.json, record ",
-    "reference-permit-two-domains): the two halves of the specification's fixture set bind the ",
-    "same objects. Handles are this layer's own — the permit carries none. Two deliberate ",
-    "divergences from the permit set as it stands today: (1) chain ids here are ",
-    "be_u64(0x01 || genesis[0..7]), while the permit set still records a stand-in ",
+    "Recipient, verifying program id and the reference cluster are the fhevm permit set's ",
+    "(test-fixtures/permit/permit_v1.json, record reference-permit-two-domains): the two halves of ",
+    "the specification's fixture set bind the same objects. Handles are this layer's own — the ",
+    "permit carries none — and their filler bytes are the v1 set's; only the embedded chain id ",
+    "and the hash over them changed. The permit's signed extra_data is not a linker input in this ",
+    "version; it appears in one record only, cross-version-replay, which reproduces the retired ",
+    "v1 link over it. Two deliberate divergences from the permit set as it stands today: (1) chain ",
+    "ids here are be_u64(0x01 || genesis[0..7]), while the permit set still records a stand-in ",
     "derivation, so the same genesis hash yields a different id there and that set is due for ",
-    "regeneration; (2) the canonical transport key here is the 869-byte serialized ",
+    "regeneration; (2) the canonical transport key here is the 869-byte safe-serialized ",
     "UnifiedPublicEncKey::MlKem512 container a KMS request actually carries — the selected ",
     "permit-v1 representation, which the permit signs as well — while the permit set still ",
     "records the bare 800-byte encapsulation key under the shared name reference-mlkem-512 and ",
@@ -235,6 +288,21 @@ const SHARED_INPUTS: &str = concat!(
     "negative record: production request validation rejects that width, and the linker's ",
     "indifference to it is the one thing the record shows.",
 );
+
+// ---------------------------------------------------------------------------
+// The retired construction and the type this version did not adopt
+// ---------------------------------------------------------------------------
+
+/// The retired list-hash linker's scheme tag and call separator. Gone from the implementation,
+/// they appear here only as the thing a response must not be believed for.
+const RETIRED_SCHEME_TAG: &str = "SolanaUserDecryptionLinker:v1";
+const RETIRED_DSEP: DomainSep = *b"SOLLNK01";
+
+/// The layout this specification considered and did not adopt: an explicit host chain id field
+/// after the program id. Hashed as the type it would be, it is a different type string and so a
+/// different link — the type string is the version boundary, and this is the record that shows
+/// it. No consumer defines this type; the record's only normative content is inequality.
+const UNKNOWN_TYPE_STRING: &str = "SolanaUserDecryptionLinker(bytes publicKey,bytes32[] handles,bytes32 userPubkey,bytes32 verifyingProgramId,uint64 hostChainId)";
 
 // ---------------------------------------------------------------------------
 // Schema
@@ -261,12 +329,13 @@ enum VectorClass {
     /// Constructible, but its link differs from its base's: a response carrying this link answers a
     /// different request, and the client's byte-equality rule rejects it.
     LinkDivergence,
-    /// The canonical constructor refuses these fields; no link exists for them.
+    /// No link exists for these fields: the canonical constructor refuses them, the declared chain
+    /// id disagrees with the handles, or there is no domain to hash under.
     ConstructionReject,
-    /// A 32-byte value computed over the same fields under a scheme tag this version does not
-    /// define. It is not the v1 link, and byte inequality alone must reject it — no consumer may
-    /// parse the tag out of a response to decide.
-    ForeignSchemeLink,
+    /// A 32-byte value that is not this version's link for the same fields — computed under a type
+    /// string this version does not define, or by the retired list-hash construction. Byte
+    /// inequality alone must reject it: no consumer may parse a version out of a response to decide.
+    ForeignLink,
 }
 
 /// Which check refuses a `construction-reject` record.
@@ -278,6 +347,9 @@ enum RejectedBy {
     /// `SolanaUserDecryptBinding::validate_declared_chain_id`, for a caller that holds a chain id
     /// of its own alongside the request.
     DeclaredChainIdCheck,
+    /// The caller: the fields validate, but without a Gateway domain there is nothing to hash
+    /// under, and `compute_link` cannot be called. A consumer must refuse to produce a link.
+    DomainRequired,
 }
 
 /// A vector file.
@@ -297,6 +369,16 @@ struct VectorFile {
     set_digest_contract: String,
     /// Which inputs are shared with the permit set, and where the two diverge today.
     shared_inputs: String,
+    /// The EIP-712 type string every `eip712` record under this version's type is computed with.
+    type_string: String,
+    /// `keccak256(type_string)`, hex — the first word of every `hashStruct` preimage.
+    type_hash: String,
+    /// The EIP-712 domain type the Gateway domain is hashed as.
+    domain_type_string: String,
+    /// The construction, in prose.
+    construction_rule: String,
+    /// What the per-record domain is, in prose.
+    domain_note: String,
     /// The rule itself, in prose.
     chain_id_derivation_rule: String,
     /// What the registry below is, and who else reads it.
@@ -308,17 +390,11 @@ struct VectorFile {
     /// the records derive their ids by one call to one function, so an entry that disagreed with a
     /// record's derivation would be a bug in the rule, not a stale table.
     cluster_registry: BTreeMap<String, ClusterEntry>,
-    /// The linker scheme tag every `valid` record is computed under.
-    scheme_tag: String,
-    /// The linker call separator, ASCII.
-    dsep: String,
-    /// The list-setting separator the KMS list hash prepends ahead of the call separator, ASCII.
-    dsep_list: String,
-    /// Transport keys by name. Kept out of the records because one key is 1600 hex characters and
+    /// Transport keys by name. Kept out of the records because one key is 1738 hex characters and
     /// would make every diff unreadable.
     transport_keys: BTreeMap<String, String>,
     /// The records, in a fixed order: valid, then link divergences, then construction rejects, then
-    /// foreign-scheme links.
+    /// foreign links.
     records: Vec<Record>,
 }
 
@@ -336,8 +412,21 @@ struct ClusterEntry {
     chain_id_decimal: String,
     /// Chain id, `0x`-prefixed hex.
     chain_id_hex: String,
-    /// Chain id as the eight big-endian bytes the handles embed and the linker hashes, hex.
+    /// Chain id as the eight big-endian bytes the handles embed, hex.
     chain_id_be_bytes: String,
+}
+
+/// The Gateway `Decryption` domain a record was hashed under.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+struct DomainEntry {
+    /// `EIP712Domain.name`.
+    name: String,
+    /// `EIP712Domain.version`.
+    version: String,
+    /// `EIP712Domain.chainId`, decimal string — the Gateway chain, not the Solana host chain.
+    chain_id_decimal: String,
+    /// `EIP712Domain.verifyingContract`, EIP-55.
+    verifying_contract: String,
 }
 
 /// One record.
@@ -367,11 +456,11 @@ struct Record {
     genesis_hash: String,
     /// The same genesis hash as bytes, hex.
     genesis_hash_bytes: String,
-    /// Chain id, decimal string.
+    /// Host chain id, decimal string.
     chain_id_decimal: String,
-    /// Chain id, `0x`-prefixed hex.
+    /// Host chain id, `0x`-prefixed hex.
     chain_id_hex: String,
-    /// Chain id as the eight big-endian bytes the handles embed and the linker hashes, hex.
+    /// Host chain id as the eight big-endian bytes the handles embed, hex.
     chain_id_be_bytes: String,
     /// A chain id declared separately from the request, decimal string. Present only where a record
     /// exists to exercise that check; the linker does not hash it.
@@ -385,19 +474,27 @@ struct Record {
     handles: Vec<String>,
     /// Name of this record's transport key in the file's `transport_keys` table.
     transport_key: String,
-    /// The request's `extra_data`, hex, bound verbatim and possibly empty.
-    extra_data: String,
-    /// The scheme tag this record's preimage opens with.
-    scheme_tag: String,
-    /// The call separator this record's preimage uses.
-    dsep: String,
-    /// The full byte sequence the hasher consumes — `HASH_LST ‖ dsep ‖ u64le(count) ‖ elements` —
-    /// hex. Absent exactly when no link exists for the record. Present so that five implementations
-    /// can compare their construction before comparing digests, which is where a one-byte
-    /// disagreement is actually diagnosable.
+    /// The Gateway domain this record is hashed under. `null` exactly for the record that has none.
+    domain: Option<DomainEntry>,
+    /// Which construction produced `link`: `eip712` for this version's, or the retired list hash.
+    construction: String,
+    /// For an `eip712` record: the type string it was hashed with — the file's for every record of
+    /// this version, a foreign one for the unknown-type record.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    linker_hasher_input: Option<String>,
-    /// SHAKE-256 of `linker_hasher_input`, 32 bytes, hex.
+    type_string: Option<String>,
+    /// Only for the retired-construction record: the `extra_data` the retired linker bound, hex.
+    /// Not an input to this version's link.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    extra_data: Option<String>,
+    /// `hashStruct(EIP712Domain)` of `domain`, hex. Present for every `eip712` record with a domain.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    domain_separator: Option<String>,
+    /// `hashStruct(linker)`, hex. Present exactly when an `eip712` link exists, so that five
+    /// implementations can compare their struct hash before comparing the link, which is where a
+    /// one-word disagreement is actually diagnosable.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    hash_struct: Option<String>,
+    /// The link, 32 bytes, hex. Absent exactly when no link exists for the record.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     link: Option<String>,
 }
@@ -416,9 +513,9 @@ mod rule {
     pub const WRONG_TRANSPORT_KEY: &str = "wrong-transport-key";
     pub const WRONG_RECIPIENT: &str = "wrong-recipient";
     pub const WRONG_VERIFYING_PROGRAM_ID: &str = "wrong-verifying-program-id";
-    pub const WRONG_EXTRA_DATA: &str = "wrong-extra-data";
     pub const WRONG_CHAIN_ID: &str = "wrong-chain-id";
     pub const DUPLICATED_HANDLE: &str = "duplicated-handle";
+    pub const WRONG_GATEWAY_DOMAIN: &str = "wrong-gateway-domain";
 
     // construction-reject
     pub const EMPTY_HANDLE_LIST: &str = "empty-handle-list";
@@ -427,9 +524,10 @@ mod rule {
     pub const MIXED_EMBEDDED_CHAIN_IDS: &str = "mixed-embedded-chain-ids";
     pub const DECLARED_CHAIN_ID_MISMATCH: &str = "declared-chain-id-mismatch";
     pub const IDENTITY_WIDTH: &str = "identity-width";
+    pub const MISSING_DOMAIN: &str = "missing-domain";
 
-    // foreign-scheme-link
-    pub const UNKNOWN_SCHEME_VERSION: &str = "unknown-scheme-version";
+    // foreign-link
+    pub const UNKNOWN_TYPE_STRING: &str = "unknown-type-string";
     pub const CROSS_VERSION_REPLAY: &str = "cross-version-replay";
 
     /// Every rule name, for coverage checks in both directions.
@@ -439,16 +537,17 @@ mod rule {
         WRONG_TRANSPORT_KEY,
         WRONG_RECIPIENT,
         WRONG_VERIFYING_PROGRAM_ID,
-        WRONG_EXTRA_DATA,
         WRONG_CHAIN_ID,
         DUPLICATED_HANDLE,
+        WRONG_GATEWAY_DOMAIN,
         EMPTY_HANDLE_LIST,
         HANDLE_WIDTH,
         HANDLE_CHAIN_TYPE_BYTE,
         MIXED_EMBEDDED_CHAIN_IDS,
         DECLARED_CHAIN_ID_MISMATCH,
         IDENTITY_WIDTH,
-        UNKNOWN_SCHEME_VERSION,
+        MISSING_DOMAIN,
+        UNKNOWN_TYPE_STRING,
         CROSS_VERSION_REPLAY,
     ];
 }
@@ -525,7 +624,7 @@ fn handle(chain_id: u64, index: u8) -> Vec<u8> {
 
 /// The transport keys, by name.
 fn transport_keys() -> BTreeMap<String, Vec<u8>> {
-    // A real serialized UnifiedPublicEncKey::MlKem512, not a filler of the right width: see
+    // A real safe-serialized UnifiedPublicEncKey::MlKem512, not a filler of the right width: see
     // REFERENCE_CONTAINER_MLKEM_512_HEX for the seed and the expression that produced it.
     let reference = bytes(REFERENCE_CONTAINER_MLKEM_512_HEX);
     assert_eq!(
@@ -554,6 +653,49 @@ fn transport_keys() -> BTreeMap<String, Vec<u8>> {
     ])
 }
 
+/// The Gateway domain of one record, before it is rendered.
+#[derive(Clone, Debug)]
+struct DomainInputs {
+    name: &'static str,
+    version: &'static str,
+    chain_id: u64,
+    verifying_contract: Address,
+}
+
+impl DomainInputs {
+    fn reference() -> Self {
+        Self {
+            name: REFERENCE_DOMAIN_NAME,
+            version: REFERENCE_DOMAIN_VERSION,
+            chain_id: REFERENCE_GATEWAY_CHAIN_ID,
+            verifying_contract: REFERENCE_VERIFYING_CONTRACT,
+        }
+    }
+
+    fn to_alloy(&self) -> Eip712Domain {
+        Eip712Domain::new(
+            Some(self.name.into()),
+            Some(self.version.into()),
+            Some(U256::from(self.chain_id)),
+            Some(self.verifying_contract),
+            None,
+        )
+    }
+
+    fn separator(&self) -> [u8; 32] {
+        self.to_alloy().separator().0
+    }
+
+    fn entry(&self) -> DomainEntry {
+        DomainEntry {
+            name: self.name.to_string(),
+            version: self.version.to_string(),
+            chain_id_decimal: self.chain_id.to_string(),
+            verifying_contract: self.verifying_contract.to_checksum(None),
+        }
+    }
+}
+
 /// The request fields of one record, before they are rendered as hex.
 #[derive(Clone, Debug)]
 struct Inputs {
@@ -562,12 +704,13 @@ struct Inputs {
     receiver_id: Vec<u8>,
     handles: Vec<Vec<u8>>,
     transport_key: &'static str,
-    extra_data: Vec<u8>,
     declared_chain_id: Option<u64>,
+    domain: Option<DomainInputs>,
 }
 
 impl Inputs {
-    /// The reference request: the permit set's identities, two handles, the shared transport key.
+    /// The reference request: the permit set's identities, two handles, the shared transport key,
+    /// the reference Gateway domain.
     fn reference() -> Self {
         let chain_id = derive_chain_id(REFERENCE_GENESIS);
         Self {
@@ -576,8 +719,8 @@ impl Inputs {
             receiver_id: bytes(RECEIVER_ID_HEX),
             handles: vec![handle(chain_id, 1), handle(chain_id, 2)],
             transport_key: TRANSPORT_REFERENCE,
-            extra_data: bytes(REFERENCE_EXTRA_DATA_HEX),
             declared_chain_id: None,
+            domain: Some(DomainInputs::reference()),
         }
     }
 
@@ -587,6 +730,11 @@ impl Inputs {
 
     fn with_handles(mut self, handles: Vec<Vec<u8>>) -> Self {
         self.handles = handles;
+        self
+    }
+
+    fn with_domain(mut self, domain: DomainInputs) -> Self {
+        self.domain = Some(domain);
         self
     }
 
@@ -602,7 +750,6 @@ impl Inputs {
             &self.receiver_id,
             self.handles.iter().map(|handle| handle.as_slice()),
             &self.transport_key_bytes(),
-            &self.extra_data,
         )
     }
 }
@@ -611,15 +758,16 @@ impl Inputs {
 // Building the set
 // ---------------------------------------------------------------------------
 
-/// The retired v0 scheme tag: gone from the implementation, it appears here only as the thing a
-/// response must not be believed for. The JSON carries it in full — that is the vector.
-fn retired_scheme_tag() -> String {
-    ["SolanaUserDecryptionLinker", ":v0"].concat()
-}
-
-/// A scheme version this implementation does not define.
-fn unknown_scheme_tag() -> String {
-    ["SolanaUserDecryptionLinker", ":v2"].concat()
+/// Which construction a record's link comes from.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum LinkSource {
+    /// This version's construction, through the canonical binding.
+    Canonical,
+    /// This version's construction under [`UNKNOWN_TYPE_STRING`], assembled by hand: no library
+    /// path knows that type.
+    UnknownType,
+    /// The retired list hash, assembled by hand from the retired specification.
+    RetiredListHash,
 }
 
 /// A record before its bytes are computed.
@@ -632,7 +780,7 @@ struct Draft {
     derived_from: Option<&'static str>,
     mutation: Option<&'static str>,
     rejected_by: Option<RejectedBy>,
-    scheme_tag: String,
+    link_source: LinkSource,
     inputs: Inputs,
 }
 
@@ -647,7 +795,7 @@ impl Draft {
             derived_from: None,
             mutation: None,
             rejected_by: None,
-            scheme_tag: canonical_scheme_tag(),
+            link_source: LinkSource::Canonical,
             inputs,
         }
     }
@@ -671,7 +819,7 @@ impl Draft {
             mutation: Some(mutation),
             rejected_by: matches!(class, VectorClass::ConstructionReject)
                 .then_some(RejectedBy::Constructor),
-            scheme_tag: canonical_scheme_tag(),
+            link_source: LinkSource::Canonical,
             inputs,
         }
     }
@@ -681,69 +829,138 @@ impl Draft {
         self
     }
 
-    fn under_scheme_tag(mut self, scheme_tag: String) -> Self {
-        self.scheme_tag = scheme_tag;
+    fn with_source(mut self, link_source: LinkSource) -> Self {
+        self.link_source = link_source;
         self
     }
 }
 
-fn canonical_scheme_tag() -> String {
-    String::from_utf8(SOLANA_LINKER_SCHEME_TAG.to_vec()).expect("the scheme tag is ASCII")
+/// `encodeData` for the fields under `type_string`, written out field by field: the type hash,
+/// then one 32-byte word per field — `bytes` and `bytes32[]` as the keccak-256 of their contents,
+/// `bytes32` as itself.
+fn encode_data(inputs: &Inputs, type_string: &str) -> Vec<u8> {
+    let handles: Vec<u8> = inputs.handles.concat();
+
+    let mut encoded = Vec::with_capacity(5 * 32);
+    encoded.extend_from_slice(keccak256(type_string.as_bytes()).as_slice());
+    encoded.extend_from_slice(keccak256(inputs.transport_key_bytes()).as_slice());
+    encoded.extend_from_slice(keccak256(&handles).as_slice());
+    encoded.extend_from_slice(&inputs.receiver_id);
+    encoded.extend_from_slice(&inputs.verifying_program_id);
+    encoded
 }
 
-fn canonical_dsep() -> String {
-    String::from_utf8(DSEP_SOLANA_LINKER.to_vec()).expect("the separator is ASCII")
+/// `hashStruct` of the canonical type, through the library's own EIP-712 implementation of the
+/// very struct `compute_link` hashes.
+fn canonical_hash_struct(inputs: &Inputs) -> [u8; 32] {
+    let linker = SolanaUserDecryptionLinker {
+        publicKey: inputs.transport_key_bytes().into(),
+        handles: inputs
+            .handles
+            .iter()
+            .map(|handle| {
+                alloy_primitives::FixedBytes::<32>::try_from(handle.as_slice())
+                    .expect("a constructible record has 32-byte handles")
+            })
+            .collect(),
+        userPubkey: alloy_primitives::FixedBytes::<32>::try_from(inputs.receiver_id.as_slice())
+            .expect("a constructible record has a 32-byte recipient"),
+        verifyingProgramId: alloy_primitives::FixedBytes::<32>::try_from(
+            inputs.verifying_program_id.as_slice(),
+        )
+        .expect("a constructible record has a 32-byte program id"),
+    };
+    linker.eip712_hash_struct().0
 }
 
-/// The specified preimage and its digest, for a scheme tag other than v1.
-///
-/// Assembled here rather than through the canonical function, which only knows v1. Everything but
-/// the first element is identical to what the canonical function would hash for the same fields,
-/// which is precisely the point: the *only* thing that differs is the tag, and the resulting 32
-/// bytes must still not be mistaken for the v1 link.
-fn foreign_scheme_bytes(inputs: &Inputs, scheme_tag: &str) -> (Vec<u8>, Vec<u8>) {
+/// `hashStruct` under the type this version did not adopt: the four words of the canonical type,
+/// then the host chain id as a `uint64` word.
+fn unknown_type_hash_struct(inputs: &Inputs) -> [u8; 32] {
+    let mut encoded = encode_data(inputs, UNKNOWN_TYPE_STRING);
+    encoded.extend_from_slice(&U256::from(inputs.chain_id()).to_be_bytes::<32>());
+    keccak256(encoded).0
+}
+
+/// `keccak256(0x1901 ‖ domainSeparator ‖ hashStruct)`.
+fn eip712_link(domain_separator: &[u8; 32], hash_struct: &[u8; 32]) -> [u8; 32] {
+    let mut preimage = Vec::with_capacity(66);
+    preimage.extend_from_slice(&[0x19, 0x01]);
+    preimage.extend_from_slice(domain_separator);
+    preimage.extend_from_slice(hash_struct);
+    keccak256(preimage).0
+}
+
+/// The retired list-hash linker over the same fields, assembled from its specification:
+/// `SHAKE256("HASH_LST" ‖ "SOLLNK01" ‖ u64le(6 + n) ‖ tag ‖ program ‖ chain_id_be ‖ recipient ‖
+/// handles… ‖ transport key ‖ extra_data, 32)`. The list hash itself is the codebase's helper; the
+/// element list is written out here because no production code knows it any more.
+fn retired_list_hash_link(inputs: &Inputs, extra_data: &[u8]) -> Vec<u8> {
     let chain_id = inputs.chain_id().to_be_bytes();
     let transport_key = inputs.transport_key_bytes();
 
     let mut elements: Vec<&[u8]> = vec![
-        scheme_tag.as_bytes(),
+        RETIRED_SCHEME_TAG.as_bytes(),
         &inputs.verifying_program_id,
         &chain_id,
         &inputs.receiver_id,
     ];
     elements.extend(inputs.handles.iter().map(|handle| handle.as_slice()));
     elements.push(&transport_key);
-    elements.push(&inputs.extra_data);
+    elements.push(extra_data);
 
-    let mut hasher_input = Vec::new();
-    hasher_input.extend_from_slice(&DSEP_LIST);
-    hasher_input.extend_from_slice(&DSEP_SOLANA_LINKER);
-    hasher_input.extend_from_slice(&(elements.len() as u64).to_le_bytes());
-    for element in &elements {
-        hasher_input.extend_from_slice(element);
-    }
-
-    (
-        hasher_input,
-        unsafe_hash_list_w_size(&DSEP_SOLANA_LINKER, &elements, LINK_LEN),
-    )
+    unsafe_hash_list_w_size(&RETIRED_DSEP, &elements, LINK_LEN)
 }
 
 fn finish(draft: Draft) -> Record {
     let chain_id = draft.inputs.chain_id();
-    let canonical = draft.scheme_tag == canonical_scheme_tag();
+    let buildable = draft.inputs.try_build();
+    let domain = draft.inputs.domain.as_ref();
 
-    let (hasher_input, link) = match (canonical, draft.inputs.try_build()) {
-        (true, Ok(binding)) => (
-            Some(hex::encode(binding.linker_hasher_input())),
-            Some(hex::encode(binding.compute_link())),
-        ),
-        (false, Ok(_)) => {
-            let (input, link) = foreign_scheme_bytes(&draft.inputs, &draft.scheme_tag);
-            (Some(hex::encode(input)), Some(hex::encode(link)))
-        }
-        // The fields do not form a request, so no link exists for them. That absence is the record.
-        (_, Err(_)) => (None, None),
+    let (construction, type_string, extra_data, hash_struct, link) =
+        match (draft.link_source, &buildable, domain) {
+            // The fields do not form a request, or there is no domain to hash under: no link exists
+            // for them. That absence is the record.
+            (_, Err(_), _) | (LinkSource::Canonical, Ok(_), None) => {
+                (CONSTRUCTION_EIP712, Some(TYPE_STRING), None, None, None)
+            }
+            (LinkSource::Canonical, Ok(binding), Some(domain)) => (
+                CONSTRUCTION_EIP712,
+                Some(TYPE_STRING),
+                None,
+                Some(hex::encode(canonical_hash_struct(&draft.inputs))),
+                Some(hex::encode(binding.compute_link(&domain.to_alloy()))),
+            ),
+            (LinkSource::UnknownType, Ok(_), Some(domain)) => {
+                let hash_struct = unknown_type_hash_struct(&draft.inputs);
+                (
+                    CONSTRUCTION_EIP712,
+                    Some(UNKNOWN_TYPE_STRING),
+                    None,
+                    Some(hex::encode(hash_struct)),
+                    Some(hex::encode(eip712_link(&domain.separator(), &hash_struct))),
+                )
+            }
+            (LinkSource::UnknownType, Ok(_), None) => {
+                panic!("{}: a foreign-type record needs a domain", draft.name)
+            }
+            (LinkSource::RetiredListHash, Ok(_), _) => {
+                let extra_data = bytes(REFERENCE_EXTRA_DATA_HEX);
+                let link = retired_list_hash_link(&draft.inputs, &extra_data);
+                (
+                    CONSTRUCTION_RETIRED_LIST_HASH,
+                    None,
+                    Some(hex::encode(extra_data)),
+                    None,
+                    Some(hex::encode(link)),
+                )
+            }
+        };
+
+    // The separator is a fact about the domain alone, so every eip712 record with a domain carries
+    // it — a consumer diagnosing a link mismatch checks it before the struct hash.
+    let domain_separator = match (construction, domain) {
+        (CONSTRUCTION_EIP712, Some(domain)) => Some(hex::encode(domain.separator())),
+        _ => None,
     };
 
     Record {
@@ -770,10 +987,12 @@ fn finish(draft: Draft) -> Record {
         verifying_program_id: hex::encode(&draft.inputs.verifying_program_id),
         handles: draft.inputs.handles.iter().map(hex::encode).collect(),
         transport_key: draft.inputs.transport_key.to_string(),
-        extra_data: hex::encode(&draft.inputs.extra_data),
-        scheme_tag: draft.scheme_tag,
-        dsep: canonical_dsep(),
-        linker_hasher_input: hasher_input,
+        domain: domain.map(DomainInputs::entry),
+        construction: construction.to_string(),
+        type_string: type_string.map(str::to_string),
+        extra_data,
+        domain_separator,
+        hash_struct,
         link,
     }
 }
@@ -789,16 +1008,17 @@ fn drafts() -> Vec<Draft> {
         // --- valid ---------------------------------------------------------
         Draft::valid(
             "reference-two-handles",
-            "The reference request: the permit set's recipient, program id and signed extra_data, \
-             two handles on the permit set's cluster, and the canonical transport key — the 869-byte \
-             serialized UnifiedPublicEncKey::MlKem512 container a KMS request actually carries. \
-             Every record below that names a base names this one unless it says otherwise.",
+            "The reference request: the permit set's recipient and program id, two handles on the \
+             permit set's cluster, the canonical transport key — the 869-byte safe-serialized \
+             UnifiedPublicEncKey::MlKem512 container a KMS request actually carries — and the \
+             reference Gateway domain. Every record below that names a base names this one unless \
+             it says otherwise.",
             Inputs::reference(),
         ),
         Draft::valid(
             "single-handle",
-            "One handle. Base for the duplication record, and the smallest element count the \
-             construction admits (7 = 6 + 1).",
+            "One handle. Base for the duplication record, and the smallest handle list the \
+             construction admits.",
             Inputs::reference().with_handles(vec![h(1)]),
         ),
         Draft::valid(
@@ -811,8 +1031,9 @@ fn drafts() -> Vec<Draft> {
         ),
         Draft::valid(
             "eight-handles",
-            "A batch: element count 14 = 6 + 8, well past a single-byte count, so a consumer that \
-             wrote the count as anything narrower than u64 little-endian still agrees here.",
+            "A batch of eight: the handles word is keccak256 over 256 bytes of concatenated \
+             handles, so a consumer that hashed the handles one at a time, or the array's ABI \
+             encoding with its length word, disagrees here.",
             Inputs::reference().with_handles((1..=8).map(h).collect()),
         ),
         // --- link divergence -----------------------------------------------
@@ -883,8 +1104,8 @@ fn drafts() -> Vec<Draft> {
         ),
         Draft::invalid(
             "wrong-verifying-program-id",
-            "One half of the deployment domain: the same handles under a different program are a \
-             different deployment, even on the same cluster.",
+            "The host program is bound explicitly: the same handles under a different program are \
+             a different deployment, even on the same cluster.",
             VectorClass::LinkDivergence,
             rule::WRONG_VERIFYING_PROGRAM_ID,
             "reference-two-handles",
@@ -895,41 +1116,12 @@ fn drafts() -> Vec<Draft> {
             },
         ),
         Draft::invalid(
-            "wrong-extra-data",
-            "The request's host-side metadata — here the permit set's kms-routing envelope, with \
-             one byte flipped inside the context id it carries. The linker never parses these \
-             bytes, but it binds them: a response computed under different extra_data answers a \
-             different request, so a routing substitution surfaces as a link mismatch.",
-            VectorClass::LinkDivergence,
-            rule::WRONG_EXTRA_DATA,
-            "reference-two-handles",
-            "one byte of the extra_data flipped",
-            Inputs {
-                extra_data: flip_first(&bytes(REFERENCE_EXTRA_DATA_HEX)),
-                ..Inputs::reference()
-            },
-        ),
-        Draft::invalid(
-            "emptied-extra-data",
-            "The same request with its extra_data removed. Length is bound, not just content: the \
-             length-prefixed encoding keeps an empty element from being absorbed by its neighbour, \
-             and this record is the vector that pins it.",
-            VectorClass::LinkDivergence,
-            rule::WRONG_EXTRA_DATA,
-            "reference-two-handles",
-            "the extra_data emptied",
-            Inputs {
-                extra_data: Vec::new(),
-                ..Inputs::reference()
-            },
-        ),
-        Draft::invalid(
             "wrong-chain-id",
-            "The other half of the deployment domain, and it does not travel as its own field: it \
-             is read out of the handles, so a second cluster necessarily changes the handles too. \
-             One program id deployed to two clusters yields two distinct links. The cluster here is \
-             Solana mainnet-beta, so the derived id is a value other implementations can check \
-             against their own configuration.",
+            "The host chain does not travel as its own field: it is read out of the handles, so a \
+             second cluster necessarily changes the handles too. One program id deployed to two \
+             clusters yields two distinct links. The cluster here is Solana mainnet-beta, so the \
+             derived id is a value other implementations can check against their own \
+             configuration.",
             VectorClass::LinkDivergence,
             rule::WRONG_CHAIN_ID,
             "reference-two-handles",
@@ -951,6 +1143,58 @@ fn drafts() -> Vec<Draft> {
             "the single handle named a second time",
             Inputs::reference().with_handles(vec![h(1), h(1)]),
         ),
+        Draft::invalid(
+            "wrong-gateway-domain-name",
+            "The Gateway domain is a link input, field by field. A response computed under a \
+             domain with another contract name answers a different request.",
+            VectorClass::LinkDivergence,
+            rule::WRONG_GATEWAY_DOMAIN,
+            "reference-two-handles",
+            "the domain's name replaced",
+            Inputs::reference().with_domain(DomainInputs {
+                name: "NotDecryption",
+                ..DomainInputs::reference()
+            }),
+        ),
+        Draft::invalid(
+            "wrong-gateway-domain-version",
+            "The same domain with another version string.",
+            VectorClass::LinkDivergence,
+            rule::WRONG_GATEWAY_DOMAIN,
+            "reference-two-handles",
+            "the domain's version replaced",
+            Inputs::reference().with_domain(DomainInputs {
+                version: "2",
+                ..DomainInputs::reference()
+            }),
+        ),
+        Draft::invalid(
+            "wrong-gateway-chain-id",
+            "The same contract on another Gateway chain. This is the domain's chain id — the \
+             Gateway's — not the Solana host chain id the handles carry; the two are different \
+             inputs and this record moves only the first.",
+            VectorClass::LinkDivergence,
+            rule::WRONG_GATEWAY_DOMAIN,
+            "reference-two-handles",
+            "the domain's chain id incremented",
+            Inputs::reference().with_domain(DomainInputs {
+                chain_id: REFERENCE_GATEWAY_CHAIN_ID + 1,
+                ..DomainInputs::reference()
+            }),
+        ),
+        Draft::invalid(
+            "wrong-gateway-verifying-contract",
+            "Another Decryption contract address on the same Gateway chain: a second deployment of \
+             the Gateway is a second domain.",
+            VectorClass::LinkDivergence,
+            rule::WRONG_GATEWAY_DOMAIN,
+            "reference-two-handles",
+            "the domain's verifying contract replaced",
+            Inputs::reference().with_domain(DomainInputs {
+                verifying_contract: Address::repeat_byte(0x11),
+                ..DomainInputs::reference()
+            }),
+        ),
         // --- construction reject -------------------------------------------
         Draft::invalid(
             "empty-handle-list",
@@ -964,8 +1208,9 @@ fn drafts() -> Vec<Draft> {
         ),
         Draft::invalid(
             "handle-of-wrong-width",
-            "A 31-byte handle. Every element before the transport key has a position-determined \
-             width; admitting a short one would break the injectivity the element count relies on.",
+            "A 31-byte handle. keccak256 over the concatenated handles would accept it, which is \
+             exactly why the width is checked before the hash: a short handle would shift every \
+             byte after it and still produce a 32-byte link.",
             VectorClass::ConstructionReject,
             rule::HANDLE_WIDTH,
             "reference-two-handles",
@@ -1042,35 +1287,58 @@ fn drafts() -> Vec<Draft> {
                 ..Inputs::reference()
             },
         ),
-        // --- foreign scheme link -------------------------------------------
         Draft::invalid(
-            "unknown-scheme-version",
-            "The reference fields hashed under a scheme version this specification does not define. \
-             A consumer must reject it on byte inequality with its own recomputed v1 link and must \
-             not parse the tag out of the response to decide — the embedded link is never a source \
-             of any value (l1).",
-            VectorClass::ForeignSchemeLink,
-            rule::UNKNOWN_SCHEME_VERSION,
+            "missing-domain",
+            "The reference fields with no Gateway domain. The fields validate, but the domain is \
+             an input of the link, so there is nothing to hash under: a consumer must refuse to \
+             produce a link rather than substitute a default or empty domain. The check is the \
+             caller's — a KMS party rejects a request without a domain before it builds the \
+             binding, the WASM entry points throw, and a client has no expected link.",
+            VectorClass::ConstructionReject,
+            rule::MISSING_DOMAIN,
             "reference-two-handles",
-            "the scheme tag element replaced by an undefined later version",
+            "the domain removed",
+            Inputs {
+                domain: None,
+                ..Inputs::reference()
+            },
+        )
+        .rejected_by(RejectedBy::DomainRequired),
+        // --- foreign link --------------------------------------------------
+        Draft::invalid(
+            "unknown-type-string",
+            "The reference fields hashed under the layout this specification considered and did \
+             not adopt — an explicit uint64 hostChainId after the program id — as the EIP-712 type \
+             it would be. The host chain is bound through the handles instead, and this record is \
+             the version boundary made concrete: another type string is another type hash is \
+             another link. A consumer must reject it on byte inequality with its own recomputed \
+             link and must not parse a type out of a response to decide — the embedded link is \
+             never a source of any value.",
+            VectorClass::ForeignLink,
+            rule::UNKNOWN_TYPE_STRING,
+            "reference-two-handles",
+            "the type string replaced by one with an explicit host chain id field, and that field \
+             appended to encodeData",
             Inputs::reference(),
         )
-        .under_scheme_tag(unknown_scheme_tag()),
+        .with_source(LinkSource::UnknownType),
         Draft::invalid(
             "cross-version-replay",
-            "A response built for the retired scheme version, replayed against a v1 request. Stated \
-             plainly: this is not v0's construction — v0 hashed keccak256 over ad-hoc u32-BE length \
-             prefixes and is deleted, not reimplemented here. It is the v1 construction under the \
-             v0 tag, which makes it the *closest* a retired-version value can get to the v1 link. \
-             The normative content is only that it is not equal to it. Rejection itself happens at \
-             l3 in the client, which is a core/service concern; this record supplies the bytes.",
-            VectorClass::ForeignSchemeLink,
+            "A response built by a party still on the retired list-hash linker, replayed against \
+             this version's request: the same fields under SHAKE256(\"HASH_LST\" || \"SOLLNK01\" \
+             || u64le(count) || tag || program || chain id || recipient || handles || transport \
+             key || extra_data). This is the mixed-version window during a rollout, and what the \
+             client rule that discards a share whose link is not the recomputed one is for. The \
+             record carries the extra_data the retired linker bound so that the value is \
+             reproducible; the normative content is only that it is not equal to this version's \
+             link.",
+            VectorClass::ForeignLink,
             rule::CROSS_VERSION_REPLAY,
             "reference-two-handles",
-            "the scheme tag element replaced by the retired v0 tag",
+            "the link replaced by the retired list-hash construction over the same fields",
             Inputs::reference(),
         )
-        .under_scheme_tag(retired_scheme_tag()),
+        .with_source(LinkSource::RetiredListHash),
     ];
 
     drafts.sort_by_key(|draft| class_order(draft.class));
@@ -1083,7 +1351,7 @@ fn class_order(class: VectorClass) -> u8 {
         VectorClass::Valid => 0,
         VectorClass::LinkDivergence => 1,
         VectorClass::ConstructionReject => 2,
-        VectorClass::ForeignSchemeLink => 3,
+        VectorClass::ForeignLink => 3,
     }
 }
 
@@ -1125,10 +1393,12 @@ fn build() -> VectorFile {
     VectorFile {
         schema: SCHEMA.to_string(),
         description:
-            "Normative vectors for Solana user-decryption linker v1: the specified preimage and its \
-             32-byte digest, the fields the linker binds, and the negatives that must not share a \
-             link with them. Authorization rules — the wallet permit, its validity window, \
-             delegation, ACL and lineage resolution — are a separate layer and are not covered here."
+            "Normative vectors for the Solana user-decryption linker: the EIP-712 typed struct \
+             SolanaUserDecryptionLinker hashed under the Gateway Decryption domain, the fields the \
+             linker binds, and the negatives that must not share a link with them. Authorization \
+             rules — the wallet permit, its validity window, delegation, ACL and lineage \
+             resolution — are a separate layer and are not covered here; so is extra_data, which \
+             the external response signature authenticates and the linker does not bind."
                 .to_string(),
         generator: GENERATOR.to_string(),
         regenerate_with: format!(
@@ -1141,12 +1411,14 @@ fn build() -> VectorFile {
              adjusted or stale copy changes the digest and fails."
                 .to_string(),
         shared_inputs: SHARED_INPUTS.to_string(),
+        type_string: TYPE_STRING.to_string(),
+        type_hash: hex::encode(keccak256(TYPE_STRING.as_bytes())),
+        domain_type_string: DOMAIN_TYPE_STRING.to_string(),
+        construction_rule: CONSTRUCTION_RULE.to_string(),
+        domain_note: DOMAIN_NOTE.to_string(),
         chain_id_derivation_rule: CHAIN_ID_DERIVATION_RULE.to_string(),
         cluster_registry_note: CLUSTER_REGISTRY_NOTE.to_string(),
         cluster_registry: cluster_registry(),
-        scheme_tag: canonical_scheme_tag(),
-        dsep: canonical_dsep(),
-        dsep_list: String::from_utf8(DSEP_LIST.to_vec()).expect("the list separator is ASCII"),
         transport_keys: transport_keys()
             .into_iter()
             .map(|(name, key)| (name, hex::encode(key)))
@@ -1229,25 +1501,74 @@ impl VectorFile {
     }
 }
 
+impl DomainEntry {
+    /// The domain as the library takes it — the path every consuming implementation takes.
+    fn to_alloy(&self) -> Eip712Domain {
+        Eip712Domain::new(
+            Some(self.name.clone().into()),
+            Some(self.version.clone().into()),
+            Some(U256::from(
+                self.chain_id_decimal
+                    .parse::<u64>()
+                    .expect("a decimal gateway chain id"),
+            )),
+            Some(
+                Address::parse_checksummed(&self.verifying_contract, None)
+                    .expect("an EIP-55 verifying contract"),
+            ),
+            None,
+        )
+    }
+
+    /// `hashStruct(EIP712Domain)`, spelled out from the specification rather than through the
+    /// library: the domain type hash, the keccak-256 of the two strings, the chain id as a 32-byte
+    /// big-endian word, the address left-padded to 32 bytes.
+    fn hand_assembled_separator(&self) -> [u8; 32] {
+        let chain_id: u64 = self
+            .chain_id_decimal
+            .parse()
+            .expect("a decimal gateway chain id");
+        let verifying_contract = Address::parse_checksummed(&self.verifying_contract, None)
+            .expect("an EIP-55 verifying contract");
+
+        let mut encoded = Vec::with_capacity(5 * 32);
+        encoded.extend_from_slice(keccak256(DOMAIN_TYPE_STRING.as_bytes()).as_slice());
+        encoded.extend_from_slice(keccak256(self.name.as_bytes()).as_slice());
+        encoded.extend_from_slice(keccak256(self.version.as_bytes()).as_slice());
+        encoded.extend_from_slice(&U256::from(chain_id).to_be_bytes::<32>());
+        encoded.extend_from_slice(&[0u8; 12]);
+        encoded.extend_from_slice(verifying_contract.as_slice());
+        keccak256(encoded).0
+    }
+}
+
 impl Record {
     /// Rebuilds the binding from the record alone — the path every consuming implementation takes.
     fn try_build(
         &self,
         file: &VectorFile,
     ) -> Result<SolanaUserDecryptBinding, SolanaUserDecryptBindingError> {
-        let handles: Vec<Vec<u8>> = self
-            .handles
-            .iter()
-            .map(|handle| hex::decode(handle).expect("a hex handle"))
-            .collect();
+        let handles: Vec<Vec<u8>> = self.handle_bytes();
 
         SolanaUserDecryptBinding::new(
             &hex::decode(&self.verifying_program_id).expect("hex"),
             &hex::decode(&self.receiver_id).expect("hex"),
             handles.iter().map(|handle| handle.as_slice()),
             &file.transport_key_bytes(self),
-            &hex::decode(&self.extra_data).expect("hex"),
         )
+    }
+
+    fn handle_bytes(&self) -> Vec<Vec<u8>> {
+        self.handles
+            .iter()
+            .map(|handle| hex::decode(handle).expect("a hex handle"))
+            .collect()
+    }
+
+    fn domain(&self) -> &DomainEntry {
+        self.domain
+            .as_ref()
+            .unwrap_or_else(|| panic!("{} has no domain, but one was asked for", self.name))
     }
 
     fn link_bytes(&self) -> Vec<u8> {
@@ -1259,10 +1580,36 @@ impl Record {
         .expect("a hex link")
     }
 
+    fn word(&self, field: &Option<String>, what: &str) -> [u8; 32] {
+        hex::decode(
+            field
+                .as_ref()
+                .unwrap_or_else(|| panic!("{} has no {what}, but one was asked for", self.name)),
+        )
+        .expect("hex")
+        .try_into()
+        .unwrap_or_else(|_| panic!("{}: {what} is not 32 bytes", self.name))
+    }
+
     fn chain_id(&self) -> u64 {
         self.chain_id_decimal
             .parse()
             .unwrap_or_else(|_| panic!("{} has an unparseable chain id", self.name))
+    }
+
+    /// `encodeData` of this record's fields under its own type string, spelled out from the
+    /// specification rather than through the library. Only for records of the file's type: a
+    /// foreign type's layout is that record's own business.
+    fn hand_assembled_encode_data(&self, file: &VectorFile) -> Vec<u8> {
+        let handles: Vec<u8> = self.handle_bytes().concat();
+
+        let mut encoded = Vec::with_capacity(5 * 32);
+        encoded.extend_from_slice(keccak256(file.type_string.as_bytes()).as_slice());
+        encoded.extend_from_slice(keccak256(file.transport_key_bytes(self)).as_slice());
+        encoded.extend_from_slice(keccak256(&handles).as_slice());
+        encoded.extend_from_slice(&hex::decode(&self.receiver_id).expect("hex"));
+        encoded.extend_from_slice(&hex::decode(&self.verifying_program_id).expect("hex"));
+        encoded
     }
 }
 
@@ -1309,8 +1656,8 @@ fn committed_set_matches_canonical_output() {
         committed_json(),
         rendered(&build()),
         "the committed set no longer matches the tree. If the change is intended, regenerate with \
-         {UPDATE_ENV}=1 and remember that these bytes are frozen: a layout change is a version bump \
-         in the scheme tag, not an edit.",
+         {UPDATE_ENV}=1 and remember that these bytes are frozen: a layout change is a new type \
+         name, not an edit.",
     );
 }
 
@@ -1342,33 +1689,50 @@ fn digest_file_is_single_sha256sum_line() {
 
 #[test]
 fn header_pins_frozen_constants() {
-    // The scheme tag and the separator are frozen by this set, so the set has to say which
-    // values it was frozen at — a consumer reading the JSON alone gets them from here.
+    // The type string and its hash are frozen by this set, so the set has to say which values it
+    // was frozen at — a consumer reading the JSON alone gets them from here. The library's own
+    // encoding of the type must agree with the literal, and so must the frozen-constants gate.
     let file = committed();
 
     assert_eq!(file.schema, SCHEMA);
-    assert_eq!(file.scheme_tag, "SolanaUserDecryptionLinker:v1");
-    assert_eq!(file.dsep, "SOLLNK01");
-    assert_eq!(file.dsep_list, "HASH_LST");
-    assert_eq!(file.scheme_tag.len(), 29);
+    assert_eq!(file.type_string, TYPE_STRING);
+    assert_eq!(
+        file.type_string,
+        SolanaUserDecryptionLinker::eip712_encode_type(),
+        "the library encodes the type differently from the published string",
+    );
+    assert_eq!(
+        file.type_hash,
+        hex::encode(keccak256(file.type_string.as_bytes()))
+    );
+    assert_eq!(file.domain_type_string, DOMAIN_TYPE_STRING);
+    assert!(!file.construction_rule.is_empty());
+    assert!(!file.domain_note.is_empty());
 }
 
 #[test]
 fn valid_records_carry_binding_computed_link() {
     // The positive half: `valid` means the canonical constructor accepts these fields and the
-    // recorded 32 bytes are what a conforming response must carry.
+    // recorded 32 bytes are what a conforming response must carry, under the record's own domain.
     let file = committed();
     let valid = records_of(&file, VectorClass::Valid);
     assert!(valid.len() >= 4, "the set lost its positive records");
 
     for record in valid {
         assert_eq!(record.result, VectorResult::Valid, "{}", record.name);
+        assert_eq!(record.construction, CONSTRUCTION_EIP712, "{}", record.name);
+        assert_eq!(
+            record.type_string.as_deref(),
+            Some(file.type_string.as_str()),
+            "{}",
+            record.name
+        );
         let binding = record
             .try_build(&file)
             .unwrap_or_else(|error| panic!("{} must validate, got {error}", record.name));
 
         assert_eq!(
-            binding.compute_link(),
+            binding.compute_link(&record.domain().to_alloy()),
             record.link_bytes(),
             "{}",
             record.name
@@ -1406,7 +1770,7 @@ fn link_divergence_records_differ_from_base() {
             )
         });
         assert_eq!(
-            binding.compute_link(),
+            binding.compute_link(&record.domain().to_alloy()),
             record.link_bytes(),
             "{}",
             record.name
@@ -1420,6 +1784,52 @@ fn link_divergence_records_differ_from_base() {
             record.name,
             base.name,
         );
+    }
+}
+
+#[test]
+fn gateway_domain_records_move_one_domain_field_each() {
+    // The four domain records are the four fields of the domain, one at a time; the domain
+    // separator moves with each, and the request fields do not.
+    let file = committed();
+    let reference = file.record("reference-two-handles");
+    let domain_records: Vec<&Record> = file
+        .records
+        .iter()
+        .filter(|record| record.rule.as_deref() == Some(rule::WRONG_GATEWAY_DOMAIN))
+        .collect();
+    assert_eq!(domain_records.len(), 4, "one record per domain field");
+
+    for record in domain_records {
+        let base_domain = reference.domain();
+        let domain = record.domain();
+        let changed = [
+            domain.name != base_domain.name,
+            domain.version != base_domain.version,
+            domain.chain_id_decimal != base_domain.chain_id_decimal,
+            domain.verifying_contract != base_domain.verifying_contract,
+        ]
+        .iter()
+        .filter(|changed| **changed)
+        .count();
+        assert_eq!(
+            changed, 1,
+            "{} changes more than one domain field",
+            record.name
+        );
+
+        assert_ne!(
+            record.domain_separator, reference.domain_separator,
+            "{} keeps the reference domain separator",
+            record.name
+        );
+        assert_eq!(
+            record.hash_struct, reference.hash_struct,
+            "{} changes the struct hash, but only the domain moved",
+            record.name
+        );
+        assert_eq!(record.handles, reference.handles, "{}", record.name);
+        assert_eq!(record.receiver_id, reference.receiver_id, "{}", record.name);
     }
 }
 
@@ -1465,8 +1875,8 @@ fn construction_reject_records_refused_by_named_rule() {
             RejectedBy::Constructor => {
                 assert!(record.link.is_none(), "{} must have no link", record.name);
                 assert!(
-                    record.linker_hasher_input.is_none(),
-                    "{} must have no hasher input",
+                    record.hash_struct.is_none(),
+                    "{} must have no struct hash",
                     record.name,
                 );
                 let error = record
@@ -1500,26 +1910,38 @@ fn construction_reject_records_refused_by_named_rule() {
                     record.name,
                 );
             }
+            RejectedBy::DomainRequired => {
+                // Constructible, and there is nothing wrong with the fields: the record has no
+                // domain, so `compute_link` has nothing to be called with. The refusal is the
+                // caller's, and the record pins that no link, struct hash or separator exists.
+                assert_eq!(named, rule::MISSING_DOMAIN, "{}", record.name);
+                assert!(
+                    record.domain.is_none(),
+                    "{} must have no domain",
+                    record.name
+                );
+                assert!(record.link.is_none(), "{} must have no link", record.name);
+                assert!(record.hash_struct.is_none(), "{}", record.name);
+                assert!(record.domain_separator.is_none(), "{}", record.name);
+                record
+                    .try_build(&file)
+                    .unwrap_or_else(|error| panic!("{} must build, got {error}", record.name));
+            }
         }
     }
 }
 
 #[test]
-fn foreign_scheme_records_never_match_v1_link() {
-    // Cross-version replay needs no rule of its own — a foreign-tag value fails byte equality
-    // with the recomputed v1 link. The assertion is inequality with the link the canonical
-    // function computes for exactly these fields.
+fn foreign_link_records_never_match_this_versions_link() {
+    // Cross-version replay and an undefined type need no rule of their own — a foreign value fails
+    // byte equality with the recomputed link. The assertion is inequality with the link the
+    // canonical function computes for exactly these fields under the record's own domain.
     let file = committed();
-    let foreign = records_of(&file, VectorClass::ForeignSchemeLink);
-    assert!(
-        !foreign.is_empty(),
-        "the set lost its foreign-scheme records"
-    );
+    let foreign = records_of(&file, VectorClass::ForeignLink);
+    assert!(!foreign.is_empty(), "the set lost its foreign-link records");
 
     for record in foreign {
         assert_eq!(record.result, VectorResult::Invalid, "{}", record.name);
-        assert_ne!(record.scheme_tag, file.scheme_tag, "{}", record.name);
-
         let binding = record
             .try_build(&file)
             .unwrap_or_else(|error| panic!("{} must build, got {error}", record.name));
@@ -1527,36 +1949,106 @@ fn foreign_scheme_records_never_match_v1_link() {
         assert_eq!(record.link_bytes().len(), LINK_LEN, "{}", record.name);
         assert_ne!(
             record.link_bytes(),
-            binding.compute_link(),
-            "{} equals the v1 link for its own fields",
+            binding.compute_link(&record.domain().to_alloy()),
+            "{} equals this version's link for its own fields",
             record.name,
         );
+
+        match record.construction.as_str() {
+            CONSTRUCTION_EIP712 => assert_ne!(
+                record.type_string.as_deref(),
+                Some(file.type_string.as_str()),
+                "{} is an eip712 record under the file's own type",
+                record.name,
+            ),
+            CONSTRUCTION_RETIRED_LIST_HASH => assert!(
+                record.type_string.is_none() && record.extra_data.is_some(),
+                "{} must carry the retired linker's extra_data and no type string",
+                record.name,
+            ),
+            other => panic!("{}: unknown construction {other}", record.name),
+        }
     }
 }
 
 #[test]
-fn hasher_inputs_match_canonical_function() {
-    // The published "hasher input" field is the byte sequence the digest is actually taken over,
-    // so a consumer that reproduces the input and gets a different digest knows the disagreement
-    // is in the hash, not in the layout.
+fn cross_version_replay_record_is_the_retired_link() {
+    // Reproducible, not just different: the retired construction is spelled out here from its
+    // specification, over the record's own fields and the extra_data it carries, and must yield
+    // exactly the published value. A consumer that still had the retired linker would compute
+    // this; the client rule discards it.
+    let file = committed();
+    let record = file.record("cross-version-replay");
+    let extra_data = hex::decode(record.extra_data.as_ref().expect("the bound extra_data"))
+        .expect("hex extra_data");
+    let chain_id = record.chain_id().to_be_bytes();
+    let transport_key = file.transport_key_bytes(record);
+    let receiver = hex::decode(&record.receiver_id).expect("hex");
+    let program = hex::decode(&record.verifying_program_id).expect("hex");
+    let handles = record.handle_bytes();
+
+    let mut elements: Vec<&[u8]> = vec![
+        RETIRED_SCHEME_TAG.as_bytes(),
+        &program,
+        &chain_id,
+        &receiver,
+    ];
+    elements.extend(handles.iter().map(|handle| handle.as_slice()));
+    elements.push(&transport_key);
+    elements.push(&extra_data);
+
+    assert_eq!(
+        unsafe_hash_list_w_size(&RETIRED_DSEP, &elements, LINK_LEN),
+        record.link_bytes(),
+    );
+    assert_eq!(record.construction, CONSTRUCTION_RETIRED_LIST_HASH);
+}
+
+#[test]
+fn struct_hashes_and_links_match_hand_assembly() {
+    // The published `hash_struct` and `domain_separator` are the two halves of the preimage, so a
+    // consumer that reproduces them and gets a different link knows the disagreement is in the
+    // final hash, not in the layout. Both are recomputed here from the specification, not from
+    // the library; the link must then be keccak256 over `0x1901`, the separator and the struct hash.
     let file = committed();
     let mut checked = 0;
 
     for record in &file.records {
-        let Some(expected) = &record.linker_hasher_input else {
+        let Some(link) = &record.link else {
             continue;
         };
-        if record.scheme_tag != file.scheme_tag {
+        if record.construction != CONSTRUCTION_EIP712 {
             continue;
         }
 
-        let binding = record
-            .try_build(&file)
-            .unwrap_or_else(|error| panic!("{} must build, got {error}", record.name));
+        let separator = record.word(&record.domain_separator, "domain separator");
         assert_eq!(
-            &hex::encode(binding.linker_hasher_input()),
-            expected,
-            "{}",
+            separator,
+            record.domain().hand_assembled_separator(),
+            "{}: the published domain separator is not hashStruct(EIP712Domain) of its domain",
+            record.name,
+        );
+        assert_eq!(
+            separator,
+            record.domain().to_alloy().separator().0,
+            "{}: the library's separator disagrees with the specification",
+            record.name,
+        );
+
+        let hash_struct = record.word(&record.hash_struct, "struct hash");
+        if record.type_string.as_deref() == Some(file.type_string.as_str()) {
+            assert_eq!(
+                hash_struct,
+                keccak256(record.hand_assembled_encode_data(&file)).0,
+                "{}: the published struct hash is not keccak256(encodeData) of its fields",
+                record.name,
+            );
+        }
+
+        assert_eq!(
+            hex::encode(eip712_link(&separator, &hash_struct)),
+            *link,
+            "{}: the link is not keccak256(0x1901 || domainSeparator || hashStruct)",
             record.name,
         );
         checked += 1;
@@ -1564,8 +2056,33 @@ fn hasher_inputs_match_canonical_function() {
 
     assert!(
         checked >= 15,
-        "only {checked} records carried a hasher input"
+        "only {checked} records carried an eip712 struct hash"
     );
+}
+
+#[test]
+fn every_linked_record_carries_its_domain() {
+    // "Every record carries the domain it was computed under" is a rule of the file, not a habit
+    // of the reference records: a consumer must never have to guess a domain to reproduce a link.
+    let file = committed();
+
+    for record in &file.records {
+        if record.link.is_none() {
+            continue;
+        }
+        assert!(
+            record.domain.is_some(),
+            "{} has a link but no domain",
+            record.name
+        );
+        if record.construction == CONSTRUCTION_EIP712 {
+            assert!(
+                record.domain_separator.is_some() && record.hash_struct.is_some(),
+                "{} is an eip712 record without both halves of its preimage",
+                record.name,
+            );
+        }
+    }
 }
 
 #[test]
@@ -1649,7 +2166,8 @@ fn rule_dictionary_is_covered_in_both_directions() {
 #[test]
 fn set_contains_no_json_numbers() {
     // Every 64-bit value is a decimal string. A JSON number reaches a TypeScript consumer as a
-    // double, and every chain id here is above 2^53, so the rounding would be silent.
+    // double, and every host chain id here is above 2^53, so the rounding would be silent. The
+    // gateway chain id is small today; it is a string anyway, so one parser serves both.
     fn numbers(value: &Value, path: &str, found: &mut Vec<String>) {
         match value {
             Value::Number(number) => found.push(format!("{path} = {number}")),
@@ -1743,7 +2261,6 @@ fn reference_cluster_matches_permit_set() {
     assert_eq!(reference.genesis_hash_bytes, PERMIT_GENESIS_HASH_HEX);
     assert_eq!(reference.receiver_id, RECEIVER_ID_HEX);
     assert_eq!(reference.verifying_program_id, VERIFYING_PROGRAM_ID_HEX);
-    assert_eq!(reference.extra_data, REFERENCE_EXTRA_DATA_HEX);
     assert_eq!(reference.transport_key, TRANSPORT_REFERENCE);
     assert_eq!(
         file.transport_keys
@@ -1759,6 +2276,36 @@ fn reference_cluster_matches_permit_set() {
             .get(TRANSPORT_BARE)
             .expect("the demoted permit-width key"),
         BARE_MLKEM_512_HEX,
+    );
+    // The permit's signed extra_data is bound by the retired linker only, and the one record that
+    // reproduces that linker carries exactly the permit set's bytes.
+    assert_eq!(
+        file.record("cross-version-replay").extra_data.as_deref(),
+        Some(REFERENCE_EXTRA_DATA_HEX),
+    );
+}
+
+#[test]
+fn reference_domain_is_the_gateway_decryption_domain() {
+    // The domain is the Gateway Decryption contract's, not one built from the Solana host chain:
+    // the contract's declared name and version, a Gateway chain id, a contract address.
+    let file = committed();
+    let domain = file.record("reference-two-handles").domain();
+
+    assert_eq!(domain.name, REFERENCE_DOMAIN_NAME);
+    assert_eq!(domain.version, REFERENCE_DOMAIN_VERSION);
+    assert_eq!(
+        domain.chain_id_decimal,
+        REFERENCE_GATEWAY_CHAIN_ID.to_string()
+    );
+    assert_eq!(
+        domain.verifying_contract,
+        REFERENCE_VERIFYING_CONTRACT.to_checksum(None)
+    );
+    assert_ne!(
+        domain.chain_id_decimal,
+        file.record("reference-two-handles").chain_id_decimal,
+        "the Gateway chain id and the Solana host chain id are different inputs",
     );
 }
 

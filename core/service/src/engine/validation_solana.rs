@@ -6,7 +6,8 @@ use kms_grpc::{
 };
 
 /// What the adapter hands to the shared engine: the request's link, the recipient the result is
-/// sealed to, and the domain the response signature is produced under.
+/// sealed to, and the Gateway domain — the one the link was computed under and the one the
+/// response signature is produced under.
 type SolanaValidation = (Vec<u8>, PlaintextReceiver, alloy_sol_types::Eip712Domain);
 
 /// Builds the canonical binding for a Solana user-decryption request, or returns `Ok(None)` for a
@@ -15,8 +16,8 @@ type SolanaValidation = (Vec<u8>, PlaintextReceiver, alloy_sol_types::Eip712Doma
 /// The adapter is where host knowledge ends: it reads the request's Solana envelope, hands it to
 /// the checked binding, and returns bytes. Wallet signatures, PDAs, ACL/MMR evidence and
 /// delegation are all settled upstream, by the connector that verified the signed request;
-/// `extra_data` is the host-side metadata of that settled request, bound verbatim by the linker
-/// and never parsed here.
+/// `extra_data` is the host-side metadata of that settled request. It is not a link input and is
+/// never parsed here: the external response signature is what authenticates it, as on EVM.
 pub(super) fn validate_solana_request(
     req: &UserDecryptionRequest,
 ) -> Result<Option<SolanaValidation>, Box<dyn std::error::Error + Send + Sync>> {
@@ -45,6 +46,10 @@ pub(super) fn validate_solana_request(
         })?;
     require_mlkem512_transport_key(&transport_key)?;
 
+    // The Gateway `Decryption` domain the request carries: a required input of the link, and the
+    // domain the response signature is produced under. A request without one has no link.
+    let domain = optional_protobuf_to_alloy_domain(req.domain.as_ref())?;
+
     // The one construction, given the request's own bytes.
     let binding = SolanaUserDecryptBinding::new(
         verifying_program_id,
@@ -53,17 +58,14 @@ pub(super) fn validate_solana_request(
             .iter()
             .map(|ciphertext| ciphertext.external_handle.as_slice()),
         &req.enc_key,
-        &req.extra_data,
     )?;
-
-    let response_domain = optional_protobuf_to_alloy_domain(req.domain.as_ref())?;
 
     // Read back off the binding, not the request: a value that failed validation has no path to
     // signcryption.
     Ok(Some((
-        binding.compute_link(),
+        binding.compute_link(&domain),
         PlaintextReceiver::Solana(*binding.receiver_id()),
-        response_domain,
+        domain,
     )))
 }
 
@@ -372,6 +374,9 @@ mod tests {
         // merely agrees today. If this test can be satisfied without calling the binding, the
         // property it is meant to protect is already gone.
         let req = solana_request();
+        let (link, _receiver, domain) = validate_solana_request(&req)
+            .expect("no error")
+            .expect("a Solana request");
 
         let binding = SolanaUserDecryptBinding::new(
             &PROGRAM_ID,
@@ -380,11 +385,10 @@ mod tests {
                 .iter()
                 .map(|ciphertext| ciphertext.external_handle.as_slice()),
             &req.enc_key,
-            &req.extra_data,
         )
         .expect("canonical");
 
-        assert_eq!(link_of(&req), binding.compute_link());
+        assert_eq!(link, binding.compute_link(&domain));
     }
 
     #[test]
@@ -513,14 +517,14 @@ mod tests {
     }
 
     #[test]
-    fn extra_data_is_bound_verbatim_never_parsed() {
+    fn extra_data_does_not_change_link() {
         // The KMS is agnostic to `extra_data` content by design, and the Solana path does not get
         // its own stricter copy of that rule: any bytes validate, because the connector — not this
-        // adapter — is the authority on what the wallet signed. But the bytes are bound: they are
-        // part of what the client asked for, so a response computed under different extra_data
-        // must surface as a link mismatch, exactly as on the EVM path where extra_data is an
-        // EIP-712 input.
-        let mut links = vec![("canonical", link_of(&solana_request()))];
+        // adapter — is the authority on what the wallet signed. And the bytes are not a link
+        // input: as on the EVM path, `extra_data` is authenticated by the external response
+        // signature alone, so every variant below shares the canonical link and a routing
+        // substitution surfaces at the signature rule, never as a link mismatch.
+        let canonical = link_of(&solana_request());
 
         for (name, extra_data) in [
             ("one zero byte", vec![0x00]),
@@ -530,14 +534,23 @@ mod tests {
         ] {
             let mut variant = solana_request();
             variant.extra_data = extra_data;
-            links.push((name, link_of(&variant)));
+            assert_eq!(link_of(&variant), canonical, "{name} changed the link");
         }
+    }
 
-        for (i, (left_name, left)) in links.iter().enumerate() {
-            for (right_name, right) in &links[i + 1..] {
-                assert_ne!(left, right, "{left_name} and {right_name} share a link");
-            }
-        }
+    #[test]
+    fn request_without_domain_rejected() {
+        // The Gateway domain is a required input of the link. A party that computed a link under
+        // a substitute domain would embed a commitment no client can recompute, so the request is
+        // refused before any binding is built.
+        let mut req = solana_request();
+        req.domain = None;
+
+        let error = error_of(&req);
+        assert!(
+            error.contains("domain"),
+            "a request without a domain must be refused by name, got: {error}",
+        );
     }
 
     #[test]
@@ -596,9 +609,10 @@ mod tests {
     }
 
     #[test]
-    fn response_domain_is_carried_through_unchanged() {
-        // The Solana path does not invent a response domain: the gateway domain the connector
-        // configured is what the response signature is produced under, exactly as on the EVM path.
+    fn gateway_domain_is_carried_through_unchanged() {
+        // The Solana path does not invent a domain: the Gateway domain the connector configured is
+        // what the link is computed under and what the response signature is produced under,
+        // exactly as on the EVM path.
         let (_link, _receiver, domain) = validate_solana_request(&solana_request())
             .expect("no error")
             .expect("a Solana request");

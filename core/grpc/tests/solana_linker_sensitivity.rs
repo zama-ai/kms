@@ -1,19 +1,24 @@
 //! What the Solana linker binds, demonstrated by changing one thing at a time.
 //!
 //! The linker exists to make response substitution detectable: a response computed for request A
-//! must not verify against request B. Every bound field therefore needs a test showing that
-//! changing it alone moves the 32 bytes. A field with no such test is a field that could quietly
+//! must not verify against request B. Every bound input therefore needs a test showing that
+//! changing it alone moves the 32 bytes. An input with no such test is an input that could quietly
 //! stop being bound.
 //!
-//! These tests assert difference, never a particular digest. The layout is frozen now that the
-//! vectors are published (`core/grpc/test-vectors/solana_linker_v1.json`,
-//! `solana_frozen_constants.rs`), but this suite stays digest-free on purpose: difference is the
-//! property that survives a deliberate version bump, and it is the property a reviewer can check by
-//! reading. Every class enumerated here has a matching negative record in the published set — this
-//! file says the link *moves*, the vectors say *to what*.
+//! These tests assert difference, never a particular digest. The bytes are frozen by the published
+//! vectors (`core/grpc/test-vectors/solana_linker_v2.json`, `solana_frozen_constants.rs`), but
+//! this suite stays digest-free on purpose: difference is the property that survives a deliberate
+//! type change, and it is the property a reviewer can check by reading. Every class enumerated here
+//! has a matching negative record in the published set — this file says the link *moves*, the
+//! vectors say *to what*.
+//!
+//! What is deliberately absent: `extra_data`. It is not a linker input, so there is no difference
+//! to show here; that a change to it leaves the link alone and fails the external response
+//! signature instead is tested where that signature is verified, in core/service.
 
 mod common;
 
+use alloy_primitives::{Address, U256};
 use common::{CHAIN_ID, RECEIVER, Request, handle, handle_for_chain};
 
 /// Every variant below must produce a link distinct from the canonical one *and* from each other.
@@ -77,6 +82,7 @@ fn changing_transport_key_changes_link() {
 
 #[test]
 fn different_length_transport_key_changes_link() {
+    // The key is hashed as `bytes`, so its length is part of what is bound, not just its content.
     let canonical = Request::canonical();
     let mut shorter = Request::canonical();
     shorter.transport_key.pop();
@@ -94,8 +100,8 @@ fn changing_recipient_changes_link() {
 }
 
 #[test]
-fn changing_verifying_program_id_changes_link() {
-    // One half of the deployment domain: the same handles under a different program are a
+fn same_cluster_other_program_changes_link() {
+    // The host program is bound explicitly: the same handles under a different program are a
     // different deployment, even on the same cluster.
     let canonical = Request::canonical();
     let mut other = Request::canonical();
@@ -105,10 +111,10 @@ fn changing_verifying_program_id_changes_link() {
 }
 
 #[test]
-fn changing_chain_id_changes_link() {
-    // The other half, and it does not travel as its own field: it is read out of the handles, so
-    // this variant necessarily changes the handles too. That is the deployment pair working as
-    // intended — one program id deployed to two clusters yields two distinct links.
+fn same_program_other_cluster_changes_link() {
+    // The host chain has no field of its own: it is bound through bytes [22..30] of every handle,
+    // so a second cluster necessarily changes the handles too. That is the deployment identity
+    // working as intended — one program id deployed to two clusters yields two distinct links.
     let canonical = Request::canonical();
     let other_cluster = Request::canonical().with_handles(vec![
         handle_for_chain(CHAIN_ID + 1, 1),
@@ -119,26 +125,29 @@ fn changing_chain_id_changes_link() {
 }
 
 #[test]
-fn changing_extra_data_changes_link() {
-    // The request's host-side metadata rides through the KMS opaquely, but it is still part of
-    // what the client asked for: a response computed under different extra_data answers a
-    // different request.
-    let canonical = Request::canonical();
-    let mut other = Request::canonical();
-    other.extra_data[0] ^= 0xff;
+fn changing_domain_changes_link() {
+    // The Gateway domain is a link input. A response computed for another Gateway — another
+    // contract name, version, chain id or address — answers a different request, and each of the
+    // four domain fields must move the link on its own.
+    let mut other_name = Request::canonical();
+    other_name.domain.name = Some("NotDecryption".into());
 
-    assert_ne!(canonical.link(), other.link());
-}
+    let mut other_version = Request::canonical();
+    other_version.domain.version = Some("2".into());
 
-#[test]
-fn emptying_extra_data_changes_link() {
-    // Length is bound, not just content — the length-prefixed encoding is what keeps an empty
-    // element from being absorbed by its neighbour.
-    let canonical = Request::canonical();
-    let mut emptied = Request::canonical();
-    emptied.extra_data.clear();
+    let mut other_gateway_chain = Request::canonical();
+    other_gateway_chain.domain.chain_id = Some(U256::from(54_322u64));
 
-    assert_ne!(canonical.link(), emptied.link());
+    let mut other_contract = Request::canonical();
+    other_contract.domain.verifying_contract = Some(Address::ZERO);
+
+    assert_all_distinct(&[
+        ("canonical", Request::canonical().link()),
+        ("other domain name", other_name.link()),
+        ("other domain version", other_version.link()),
+        ("other gateway chain id", other_gateway_chain.link()),
+        ("other verifying contract", other_contract.link()),
+    ]);
 }
 
 #[test]
@@ -167,14 +176,11 @@ fn single_field_variant_links_are_unique() {
     let mut other_program = Request::canonical();
     other_program.verifying_program_id[0] ^= 0xff;
 
-    let mut other_extra_data = Request::canonical();
-    other_extra_data.extra_data[0] ^= 0xff;
-
-    let mut empty_extra_data = Request::canonical();
-    empty_extra_data.extra_data.clear();
-
     let mut other_transport = Request::canonical();
     other_transport.transport_key[0] ^= 0xff;
+
+    let mut other_domain = Request::canonical();
+    other_domain.domain.chain_id = Some(U256::from(54_322u64));
 
     assert_all_distinct(&[
         ("canonical", Request::canonical().link()),
@@ -211,9 +217,8 @@ fn single_field_variant_links_are_unique() {
         ),
         ("other receiver", other_receiver.link()),
         ("other program", other_program.link()),
-        ("other extra_data", other_extra_data.link()),
-        ("empty extra_data", empty_extra_data.link()),
         ("other transport key", other_transport.link()),
+        ("other gateway domain", other_domain.link()),
     ]);
 }
 

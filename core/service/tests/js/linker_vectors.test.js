@@ -1,12 +1,12 @@
 // The Solana user-decryption linker's normative vectors, run through the WASM boundary.
 //
-// The set this suite loads — core/grpc/test-vectors/solana_linker_v1.json — is the same committed
+// The set this suite loads — core/grpc/test-vectors/solana_linker_v2.json — is the same committed
 // file the KMS Core Rust runner (core/grpc/tests/solana_linker_vectors.rs) checks itself against.
 // It is read from that path, not copied here: one byte-identical source, two consumers. A record
-// carries its inputs as typed fields (recipient, chain id, verifying program id, handles, transport
-// key, extra_data) and, where one exists, the 32-byte `link` those fields must produce.
-// Recomputing the link from the fields is the whole test; agreeing with a copy of the digest would
-// not be.
+// carries its inputs as typed fields (recipient, host chain id, verifying program id, handles,
+// transport key), the Gateway domain it was hashed under and, where one exists, the 32-byte `link`
+// those inputs must produce. Recomputing the link from the fields is the whole test; agreeing with
+// a copy of the digest would not be.
 //
 // Unlike tests/js/test.js this suite needs no transcript: it depends only on the committed JSON and
 // on a wasm package built with `wasm-pack build --target nodejs . --no-default-features`.
@@ -38,8 +38,8 @@ function bytesToHex(bytes) {
 // The vectors live in the kms-grpc crate, which owns the canonical construction. Resolved from this
 // file so the suite passes regardless of the cwd `node --test` is invoked from.
 const VECTOR_DIR = path.join(__dirname, '..', '..', '..', 'grpc', 'test-vectors');
-const VECTOR_PATH = path.join(VECTOR_DIR, 'solana_linker_v1.json');
-const DIGEST_PATH = path.join(VECTOR_DIR, 'solana_linker_v1.sha256');
+const VECTOR_PATH = path.join(VECTOR_DIR, 'solana_linker_v2.json');
+const DIGEST_PATH = path.join(VECTOR_DIR, 'solana_linker_v2.sha256');
 
 const VECTOR_BYTES = fs.readFileSync(VECTOR_PATH);
 const vectors = JSON.parse(VECTOR_BYTES.toString('utf8'));
@@ -52,7 +52,7 @@ function recordsOf(...classes) {
     return vectors.records.filter((record) => classes.includes(record.class));
 }
 
-// Transport keys are held in a table rather than inline: one of them is 1600 hex characters.
+// Transport keys are held in a table rather than inline: one of them is 1738 hex characters.
 function transportKey(record) {
     const hex = vectors.transport_keys[record.transport_key];
     assert.ok(hex, `record ${record.name} names an unknown transport key ${record.transport_key}`);
@@ -70,20 +70,43 @@ function solanaRequestFields(record, declaredChainId) {
     };
 }
 
-// The link this build computes for a record's fields. The export always computes the v1
-// construction, so this is the v1 link for these fields whatever tag the record itself was written
-// under.
-function computeLink(record, declaredChainId) {
+// A record's Gateway domain in the JS shape the WASM entry points take — the protobuf
+// `Eip712DomainMsg`: the two strings, the chain id as big-endian bytes, the EIP-55 contract
+// address, no salt. The chain id crosses as bytes for the same reason the host chain id crosses as
+// a decimal string: nothing here goes through a JS Number.
+function domainOf(record) {
+    if (record.domain === null) {
+        return null;
+    }
+    let chainId = BigInt(record.domain.chain_id_decimal);
+    const chainIdBytes = new Array(32).fill(0);
+    for (let i = 31; i >= 0 && chainId > 0n; i--) {
+        chainIdBytes[i] = Number(chainId & 0xffn);
+        chainId >>= 8n;
+    }
+    return {
+        name: record.domain.name,
+        version: record.domain.version,
+        chain_id: chainIdBytes,
+        verifying_contract: record.domain.verifying_contract,
+        salt: null,
+    };
+}
+
+// The link this build computes for a record's fields under the record's own domain. The export
+// always computes this version's construction, so this is *the* link for these inputs whatever
+// construction the record itself was written under.
+function computeLink(record, declaredChainId, domain) {
     return compute_solana_user_decrypt_link_from_js(
         solanaRequestFields(record, declaredChainId),
         record.handles,
         transportKey(record),
-        hexToBytes(record.extra_data),
+        domain === undefined ? domainOf(record) : domain,
     );
 }
 
 // The rule name each rejecting record carries, and the message the export must fail with. Matched
-// loosely — these are the stable fragments of the binding errors and of the wrapper's width guard,
+// loosely — these are the stable fragments of the binding errors and of the wrapper's own guards,
 // not the whole rendering.
 const REJECTION_MESSAGES = {
     'empty-handle-list': /contains no ciphertext handles/,
@@ -92,7 +115,14 @@ const REJECTION_MESSAGES = {
     'mixed-embedded-chain-ids': /embeds chain ID \d+, expected \d+/,
     'declared-chain-id-mismatch': /does not match handle chain ID/,
     'identity-width': /must be 32 bytes/,
+    'missing-domain': /eip712_domain is required/,
 };
+
+// Records whose link this version's export computes directly: the eip712 construction under the
+// file's own type string.
+function isThisVersion(record) {
+    return record.construction === 'eip712' && record.type_string === vectors.type_string;
+}
 
 test('the committed vector set is the one this suite claims to load', (_t) => {
     // The cross-repository contract: every copy of this set writes the same two files, so a locally
@@ -101,8 +131,17 @@ test('the committed vector set is the one this suite claims to load', (_t) => {
     const committed = fs.readFileSync(DIGEST_PATH, 'utf8').trim();
 
     assert.equal(committed, `${digest}  ${path.basename(VECTOR_PATH)}`);
-    assert.equal(vectors.schema, 'zama-solana-linker-vectors/v1');
-    assert.equal(vectors.scheme_tag, 'SolanaUserDecryptionLinker:v1');
+    assert.equal(vectors.schema, 'zama-solana-linker-vectors/v2');
+    assert.equal(
+        vectors.type_string,
+        'SolanaUserDecryptionLinker(bytes publicKey,bytes32[] handles,bytes32 userPubkey,bytes32 verifyingProgramId)',
+    );
+    // Node ships no keccak-256, so the type hash is pinned here as the value the Rust freeze gate
+    // (core/grpc/tests/solana_frozen_constants.rs) computes and freezes.
+    assert.equal(
+        vectors.type_hash,
+        '295b0d606d30fca99f65a509411d7fbe11187e2c4414905bea1b41b9880619dc',
+    );
     // A suite that reads nothing passes forever.
     assert.ok(
         vectors.records.length >= 20,
@@ -110,16 +149,18 @@ test('the committed vector set is the one this suite claims to load', (_t) => {
     );
 });
 
-test('every v1 record with a link is recomputed byte for byte across the wasm boundary', (_t) => {
+test('every record with a link of this version is recomputed byte for byte across the wasm boundary', (_t) => {
     // The claim the whole set exists to make: this build, reached through JS, produces exactly the
-    // published link for the published fields. Divergences are included on purpose — each is a
-    // valid request in its own right, and its link is as normative as the reference's.
+    // published link for the published fields under the published domain. Divergences are included
+    // on purpose — each is a valid request in its own right, and its link is as normative as the
+    // reference's.
     const linked = recordsOf('valid', 'link-divergence').filter(
-        (record) => record.link && record.scheme_tag === vectors.scheme_tag,
+        (record) => record.link && isThisVersion(record),
     );
-    assert.ok(linked.length >= 13, `only ${linked.length} records carried a v1 link`);
+    assert.ok(linked.length >= 15, `only ${linked.length} records carried a link of this version`);
 
     for (const record of linked) {
+        assert.ok(record.domain, `${record.name} has a link but no domain`);
         const link = computeLink(record);
         assert.equal(link.length, LINK_LEN, `${record.name} produced a ${link.length}-byte link`);
         assert.equal(bytesToHex(link), record.link, `${record.name} does not match its link`);
@@ -130,21 +171,21 @@ test('every v1 record with a link is recomputed byte for byte across the wasm bo
     assert.equal(links.size, linked.length, 'two records share a link');
 });
 
-test('a foreign-scheme link is not the v1 link for its own fields', (_t) => {
-    // Cross-version replay needs no rule of its own. A value computed under a tag this version does
-    // not define simply is not the link, and byte inequality is what rejects it — no consumer parses
-    // a tag out of a response to decide. The export cannot even express those tags, which is the
-    // point: it computes v1, and v1 is not what these records carry.
-    const foreign = recordsOf('foreign-scheme-link');
-    assert.ok(foreign.length >= 2, `only ${foreign.length} foreign-scheme records`);
+test('a foreign link is not this version\'s link for its own fields', (_t) => {
+    // Cross-version replay and an undefined type need no rule of their own. A value computed under
+    // a type this version does not define, or by the retired list hash, simply is not the link, and
+    // byte inequality is what rejects it — no consumer parses a version out of a response to
+    // decide. The export cannot even express those constructions, which is the point.
+    const foreign = recordsOf('foreign-link');
+    assert.ok(foreign.length >= 2, `only ${foreign.length} foreign-link records`);
 
     for (const record of foreign) {
-        assert.notEqual(record.scheme_tag, vectors.scheme_tag, `${record.name} is not foreign`);
+        assert.ok(!isThisVersion(record), `${record.name} is not foreign`);
         assert.equal(hexToBytes(record.link).length, LINK_LEN, `${record.name} is not 32 bytes`);
         assert.notEqual(
             bytesToHex(computeLink(record)),
             record.link,
-            `${record.name} equals the v1 link for its own fields`,
+            `${record.name} equals this version's link for its own fields`,
         );
     }
 });
@@ -154,17 +195,23 @@ test('every construction-reject record makes the wasm linker throw', (_t) => {
     // whatever it was handed. The rule name says which check has to fire; a negative that fails
     // "somehow" tests nothing.
     const rejects = recordsOf('construction-reject');
-    assert.ok(rejects.length >= 7, `only ${rejects.length} rejecting records`);
+    assert.ok(rejects.length >= 8, `only ${rejects.length} rejecting records`);
 
     for (const record of rejects) {
         const expected = REJECTION_MESSAGES[record.rule];
         assert.ok(expected, `${record.name} names an unknown rule ${record.rule}`);
 
         // Only the declared-chain-id record is constructible: its rejection comes from the caller's
-        // own chain id, which is not part of the request the constructor sees.
+        // own chain id, which is not part of the request the constructor sees — and not part of the
+        // link either, which is why that record alone carries one, equal to its base's.
         const declared = record.rejected_by === 'declared-chain-id-check'
             ? record.declared_chain_id_decimal
             : undefined;
+        if (declared === undefined) {
+            assert.equal(record.link, undefined, `${record.name} carries a link`);
+        } else {
+            assert.equal(record.link, recordsByName.get(record.derived_from).link);
+        }
 
         assert.throws(
             () => computeLink(record, declared),
@@ -174,12 +221,41 @@ test('every construction-reject record makes the wasm linker throw', (_t) => {
     }
 });
 
+test('a request without a domain has no link, under either spelling of absence', (_t) => {
+    // The domain is a required input: `null` and `undefined` are both refused by name, and the
+    // refusal comes before any field is hashed. The record pins the JSON form — `domain: null` —
+    // and the export's contract covers the other JS spelling too.
+    const record = recordsByName.get('missing-domain');
+    assert.ok(record, 'the missing-domain record is not in the set');
+    assert.equal(record.domain, null);
+    assert.equal(record.rejected_by, 'domain-required');
+
+    // `null` is the record's own spelling and travels through the helper unchanged. `undefined`
+    // cannot: to the helper it means "use the record's domain", which for this record is `null`
+    // again — so the export is called directly for that spelling.
+    assert.throws(() => computeLink(record, undefined, null), /eip712_domain is required/);
+    assert.throws(
+        () => compute_solana_user_decrypt_link_from_js(
+            solanaRequestFields(record),
+            record.handles,
+            transportKey(record),
+            undefined,
+        ),
+        /eip712_domain is required/,
+    );
+
+    // The same fields under the reference domain are the reference link: nothing but the domain
+    // was missing.
+    const reference = recordsByName.get('reference-two-handles');
+    assert.equal(bytesToHex(computeLink(record, undefined, domainOf(reference))), reference.link);
+});
+
 test('every link divergence differs from the link of the record it was derived from', (_t) => {
-    // Anti-substitution: each divergence changes exactly one field of an accepted base,
-    // and the point of the record is that the change is visible in the link. Both the published
-    // links and the ones this build recomputes must differ.
+    // Anti-substitution: each divergence changes exactly one input of an accepted base, and the
+    // point of the record is that the change is visible in the link. Both the published links and
+    // the ones this build recomputes must differ.
     const divergences = recordsOf('link-divergence');
-    assert.ok(divergences.length >= 8, `only ${divergences.length} divergence records`);
+    assert.ok(divergences.length >= 12, `only ${divergences.length} divergence records`);
 
     for (const record of divergences) {
         const base = recordsByName.get(record.derived_from);
@@ -195,24 +271,25 @@ test('every link divergence differs from the link of the record it was derived f
     }
 });
 
-test('extra_data is bound verbatim, including when it is empty', (_t) => {
-    // The set carries two extra_data divergences from the reference: one flipped byte and an
-    // emptied field. Both must be visible in the link this build computes, and the empty case must
-    // be a *different* valid link rather than a rejection — the linker binds bytes, it does not
-    // demand any.
+test('the Gateway domain is a link input, one field at a time', (_t) => {
+    // The four domain records each move one field of the reference domain and nothing else. The
+    // export must reproduce each of them, and the reference fields under the reference domain must
+    // be the reference link — so it is the domain argument alone that moved the bytes.
     const reference = recordsByName.get('reference-two-handles');
-    const flipped = recordsByName.get('wrong-extra-data');
-    const emptied = recordsByName.get('emptied-extra-data');
-    assert.ok(reference && flipped && emptied, 'the extra_data records are missing from the set');
-    assert.equal(emptied.extra_data, '');
+    const domainRecords = vectors.records.filter((record) => record.rule === 'wrong-gateway-domain');
+    assert.equal(domainRecords.length, 4, 'one record per domain field');
 
-    const referenceLink = bytesToHex(computeLink(reference));
-    assert.equal(referenceLink, reference.link);
-    assert.notEqual(bytesToHex(computeLink(flipped)), referenceLink);
-    const emptiedLink = computeLink(emptied);
-    assert.equal(emptiedLink.length, LINK_LEN);
-    assert.notEqual(bytesToHex(emptiedLink), referenceLink);
-    assert.equal(bytesToHex(emptiedLink), emptied.link);
+    for (const record of domainRecords) {
+        assert.deepEqual(record.handles, reference.handles, `${record.name} moved the handles too`);
+        assert.equal(bytesToHex(computeLink(record)), record.link, `${record.name} does not match`);
+        // The reference fields under this record's domain are this record's link: the domain is
+        // the only input that differs.
+        assert.equal(
+            bytesToHex(computeLink(reference, undefined, domainOf(record))),
+            record.link,
+            `${record.name}: the domain alone does not account for the difference`,
+        );
+    }
 });
 
 test('the host chain id crosses the wasm boundary as an exact decimal string', (_t) => {
