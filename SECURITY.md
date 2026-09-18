@@ -23,6 +23,8 @@ appropriate time to react, analyze and develop a fix to mitigate the found secur
 
 Please report any vulnerability privately using the [GitHub security advisory report](https://github.com/zama-ai/kms/security/advisories/new).
 
+A report must point to the code it describes. Name the commit hash or the release tag of this repository that you analyzed, and give the file path and line numbers of every code location the finding relies on, for example `core/service/src/util/meta_store.rs:1019-1030` at `v0.15.0`. A report without these pointers cannot be verified and will be sent back for completion before triage.
+
 ## Recognition
 
 We appreciate and acknowledge responsible reporters publicly (unless requested otherwise) in our security advisories and contributors list.

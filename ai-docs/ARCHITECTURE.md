@@ -51,6 +51,7 @@ Consequences for agents:
 
 - Do not report missing authentication, authorization or rate limiting on the service interface, or any finding in which the connector itself is the attacker, as a vulnerability. Such a finding describes the design.
 - Values inside a request that originate from external clients and pass through the gateway and connector unchanged are untrusted: ciphertexts and handles, user public encryption keys, EIP-712 signatures and domains, and parameter selectors such as the FHE parameter set or keyset configuration. The core must process them without a service outage (crash, stall, unbounded allocation) and without a confidentiality break. Such a finding is in scope even though the request arrives over the service interface.
+- Every security finding you report must cite the commit hash or tag you analyzed and the file path and line numbers of every code location it relies on. Verify each pointer against the checked-out tree before you report it.
 - Do not add authentication or authorization to the service interface unless your human asks for it.
 - The threat model assumes that at most `t` of the `n` parties are malicious. Any attack that needs more than `t` corrupted parties is out of scope. Every attack that works with at most `t` corrupted parties is in scope: bypassing TLS, attestation or sender binding on the core-to-core interface, or breaking the confidentiality of the key material or the correctness of a result.
 

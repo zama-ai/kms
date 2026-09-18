@@ -89,5 +89,7 @@ Issues out of scope:
 
 - Anything that requires more than `t` corrupted parties.
 - Anything that requires the attacker to reach the service interface.
+
+A report must be verifiable against the code. State the commit hash or release tag of this repository that you analyzed, and give the file path and line numbers of every code location the finding relies on, for example `core/service/src/util/meta_store.rs:1019-1030` at `v0.15.0`. A claim about behavior that does not point to the code that implements it is not accepted as a finding.
 - Missing authentication, authorization or rate limiting on the service interface, and any finding in which the connector itself is the attacker.
 - Behavior of the `insecure` cargo feature or of the local docker-compose setup.
