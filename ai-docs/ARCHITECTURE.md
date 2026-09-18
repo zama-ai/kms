@@ -398,6 +398,13 @@ Initial generation writes both halves through `CryptoMaterialStorage::write_all`
 accepts one-sided writes. Resharing writes only the private half for the new epoch and reuses the
 public half. A `ContextInfo` write stores one request-scoped private entry with no public half.
 
+Complete FHE key writes reject any public key, server key, or compressed keyset at the key ID,
+and any private entry at the requested epoch, before writing material. They cannot combine an old pair half with newly generated keys
+or cache private material that storage skipped. Resharing uses a separate private-only write path.
+
+Complete CRS writes likewise reject an existing public CRS or private `CrsInfo` at the requested
+epoch. Rejection leaves storage untouched and records a failed request in the meta store.
+
 Storage never overwrites an entry. If one requested half exists, storage keeps its bytes and writes
 the missing half. The caller must ensure that the two halves belong together. If either write
 fails, cleanup removes only entries created by that call. It retains each entry that existed
