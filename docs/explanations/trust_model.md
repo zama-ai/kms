@@ -39,7 +39,7 @@ The core still validates the shape of a request. It rejects a malformed request 
 
 ### Client-supplied values are untrusted
 
-Trust in the connector does not extend to every value inside a request. Some request fields originate from external clients of the protocol and reach the core unchanged through the gateway and the connector: ciphertexts and their handles, the public encryption key and the EIP-712 signature and domain of a user decryption request, and parameter selectors such as the FHE parameter set or the keyset configuration. The connector checks that a request is legitimate; it cannot check that such a value is benign. The core must therefore process every client-supplied value that it uses as a parameter without a service outage and without a confidentiality break. A value that crashes a party, stalls it, makes it allocate without bound, or makes it reveal key material or another user's plaintext is a vulnerability in the KMS core, even though the request arrives over the trusted service interface. Such findings are in scope.
+Trust in the connector does not extend to every value inside a request. Some request fields originate from external clients of the protocol and reach the core unchanged through the smart contracts and the connector: ciphertexts and their handles, the public encryption key and the EIP-712 signature and domain of a user decryption request, and parameter selectors such as the FHE parameter set or the keyset configuration. The connector checks that a request is legitimate; it cannot check that such a value is benign. The core must therefore process every client-supplied value that it uses as a parameter without a service outage and without a confidentiality break. A value that crashes a party, stalls it, makes it allocate without bound, or makes it reveal key material or another user's plaintext is a vulnerability in the KMS core, even though the request arrives over the trusted service interface. Such findings are in scope.
 
 ## Where validation happens
 
@@ -47,10 +47,10 @@ Validation of a request is split over the components of the protocol stack. The 
 
 | Check | Where |
 | --- | --- |
-| A ciphertext handle is allowed for public or user decryption (ACL) | KMS connector ([kms-worker event processor](https://github.com/zama-ai/fhevm/tree/main/kms-connector/crates/kms-worker/src/core/event_processor)), against the gateway ACL contract, before it forwards the request |
+| A ciphertext handle is allowed for public or user decryption (ACL) | KMS connector ([kms-worker event processor](https://github.com/zama-ai/fhevm/tree/main/kms-connector/crates/kms-worker/src/core/event_processor)), against the ACL smart contract, before it forwards the request |
 | A request originates from the gateway contracts | KMS connector ([gw-listener](https://github.com/zama-ai/fhevm/tree/main/kms-connector/crates/gw-listener)), which only forwards events that the gateway contracts emit |
 | A request ID is not reused for different work | Gateway contracts assign the IDs and bind each ID to its ciphertexts; a KMS core tracks every ID in its meta store, see [Request IDs and replay](#request-ids-and-replay) |
-| A ciphertext is well formed | Input proofs on the gateway and the coprocessor, before a ciphertext exists on chain |
+| A ciphertext is well formed | Input proofs, verified on smart contract level and by the coprocessor, before a ciphertext exists on chain |
 | A user decryption request is authorized by the user | KMS core, EIP-712 signature verification |
 | A peer is a legitimate KMS core that runs an allowlisted release | KMS core, mutual TLS and attestation on the core-to-core interface |
 | A malicious peer cannot learn the key or corrupt a result | KMS core, the MPC protocol (see [Noah's Ark](https://eprint.iacr.org/2023/815)) |
@@ -70,7 +70,7 @@ What the core does with a known request ID depends on the endpoint:
 - **Public and user decryption** (`PublicDecrypt`, `UserDecrypt`) reject a known ID whose earlier attempt is pending, succeeded or deleted with `AlreadyExists`. If the earlier attempt failed, the core resets the entry and runs the decryption again. This is safe because the retried ID carries the same ciphertexts, so the second run produces the same plaintext, and the first run produced nothing.
 - **Synchronous decryption** (`PublicDecryptSync`, `UserDecryptSync`) treats a known ID as a request to attach: it returns the stored result, waits for the pending attempt, or retries a failed attempt, instead of returning `AlreadyExists`.
 
-A report that a decryption request ID can be "replayed" therefore describes this design. Decrypting the same ciphertexts twice under the same ID reveals nothing new. A report that a known ID can be reused for different ciphertexts must show a path around the gateway contracts and the connector, which is outside the KMS core.
+A report that a decryption request ID can be "replayed" therefore describes this design. Decrypting the same ciphertexts twice under the same ID reveals nothing new. A report that a known ID can be reused for different ciphertexts must show a path around the smart contracts and the connector, which is outside the KMS core.
 
 ## Scope of a security report
 
