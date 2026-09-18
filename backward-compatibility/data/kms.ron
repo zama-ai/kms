@@ -1914,6 +1914,22 @@
     (
         kms_core_version_min: "0.15.0",
         kms_core_module: "kms",
+        metadata: MlKem1024P384PublicKey((
+            test_filename: "mlkem1024_p384_public_key",
+            state: 384,
+        )),
+    ),
+    (
+        kms_core_version_min: "0.15.0",
+        kms_core_module: "kms",
+        metadata: MlKem1024P384PrivateKey((
+            test_filename: "mlkem1024_p384_private_key",
+            state: 384,
+        )),
+    ),
+    (
+        kms_core_version_min: "0.15.0",
+        kms_core_module: "kms",
         metadata: UnifiedSigncryption((
             test_filename: "unified_signcryption",
             state: 202,
