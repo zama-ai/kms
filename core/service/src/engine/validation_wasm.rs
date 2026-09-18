@@ -436,10 +436,13 @@ pub(crate) fn verify_response_signatures(
     expected: &ExpectedSigner,
     keys: &SchemeVerfKeys,
 ) -> anyhow::Result<(u32, Address)> {
-    debug_assert!(
-        !requested.is_empty(),
-        "a caller asked for no scheme at all, which no signature can fail to satisfy"
-    );
+    if requested.is_empty() {
+        return Err(anyhow_tracked(
+            "the response was measured against no signing scheme at all, which any signature would \
+             satisfy and none would fail"
+                .to_string(),
+        ));
+    }
     let mut verified: Vec<SigningSchemeType> = Vec::with_capacity(sigs.list.len() + 1);
     let mut signer: Option<(u32, Address)> = None;
 
