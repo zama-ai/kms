@@ -205,7 +205,11 @@ statrs = "=0.18.0"  # Statistical functions - LOW RISK: starts-dev team
 strum = "=0.27.2"  # Enum utilities - MEDIUM RISK: Reputable individual maintainer (Peternator7), 251M+ downloads
 strum_macros = "=0.27.2"  # Enum derive macros - MEDIUM RISK: Reputable individual maintainer (Peternator7)
 syn = { version = "2.0", features = ["full"] }  # Syn macro parsing - MEDIUM RISK: Reputable individual maintainer (dtolnay), 993M downloads
-sysinfo = "0.39.6"  # System information gathering - MEDIUM RISK: Reputable individual maintainer (GuillaumeGomez), 71M+ downloads
+# NOTE for sysinfo: pinned to 0.38.x on purpose. 0.39 raises the MSRV to 1.95 and uses `cfg_select!`,
+# which the Dylint driver cannot compile: its nightly comes from the `tfhe-lints` library at the
+# tfhe-rs tag in `dylint.toml`, currently nightly-2026-01-22, where `cfg_select` is still unstable.
+# Revisit once that lint toolchain moves past Rust 1.95.
+sysinfo = "=0.38.4"  # System information gathering - MEDIUM RISK: Reputable individual maintainer (GuillaumeGomez), 71M+ downloads
 tempfile = "=3.27.0"  # Temporary file handling - MEDIUM RISK: Individual maintainers (Stebalien, KodrAus), 345M+ downloads
 test-context = "=0.4.1"  # Test context utilities - MEDIUM RISK: Individual maintainers (markhildreth, JasperV), test-only dependency
 # NOTE: when changing the tfhe dependency, consider also updating the pinned version of dylint lints from tfhe (see dylint.toml)
