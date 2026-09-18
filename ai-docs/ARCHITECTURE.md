@@ -39,28 +39,28 @@ The repository is a Cargo workspace. The members are declared in
 
 ### Core cryptography / MPC
 
-| Crate | Path | Responsibility |
-|---|---|---|
-| `threshold-algebra` | [core/threshold-algebra/](../core/threshold-algebra/) | Finite-field and group primitives used by the MPC protocols |
-| `threshold-execution` | [core/threshold-execution/](../core/threshold-execution/) | Threshold FHE protocol execution: DKG, preprocessing, online protocols |
-| `threshold-bgv` | [core/threshold-bgv/](../core/threshold-bgv/) | Experimental BGV/BFV schemes with distributed keygen and threshold decryption |
-| `threshold-networking` | [core/threshold-networking/](../core/threshold-networking/) | Inter-party gRPC transport and choreography |
-| `threshold-hashing` | [core/threshold-hashing/](../core/threshold-hashing/) | Hashing primitives used across the MPC stack |
-| `threshold-types` | [core/threshold-types/](../core/threshold-types/) | Shared types and constants |
-| `experiments` | [core/experiments/](../core/experiments/) | Benchmark and experiment harnesses (see [docs/guides/threshold-benchmark.md](../docs/guides/threshold-benchmark.md)) |
+| Crate                  | Path                                                        | Responsibility                                                                                                       |
+| ---------------------- | ----------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------- |
+| `threshold-algebra`    | [core/threshold-algebra/](../core/threshold-algebra/)       | Finite-field and group primitives used by the MPC protocols                                                          |
+| `threshold-execution`  | [core/threshold-execution/](../core/threshold-execution/)   | Threshold FHE protocol execution: DKG, preprocessing, online protocols                                               |
+| `threshold-bgv`        | [core/threshold-bgv/](../core/threshold-bgv/)               | Experimental BGV/BFV schemes with distributed keygen and threshold decryption                                        |
+| `threshold-networking` | [core/threshold-networking/](../core/threshold-networking/) | Inter-party gRPC transport and choreography                                                                          |
+| `threshold-hashing`    | [core/threshold-hashing/](../core/threshold-hashing/)       | Hashing primitives used across the MPC stack                                                                         |
+| `threshold-types`      | [core/threshold-types/](../core/threshold-types/)           | Shared types and constants                                                                                           |
+| `experiments`          | [core/experiments/](../core/experiments/)                   | Benchmark and experiment harnesses (see [docs/guides/threshold-benchmark.md](../docs/guides/threshold-benchmark.md)) |
 
 ### Service layer
 
-| Crate | Path | Responsibility |
-|---|---|---|
-| `kms` | [core/service/](../core/service/) | KMS service library and binaries — the packaging around the core crypto |
-| `kms-grpc` | [core/grpc/](../core/grpc/) | Protobuf definitions + generated types and client stubs |
-| `core-client` | [core-client/](../core-client/) | CLI client that drives the gRPC API |
-| `observability` | [observability/](../observability/) | OpenTelemetry / Prometheus wiring |
-| `vsocktun` | [vsocktun/](vsocktun/) | Multi-queue, offload-aware TUN-to-VSOCK relay used by Nitro enclave deployment scripts to preserve end-to-end peer TCP while bridging enclave IP traffic through the parent, including raw virtio-net TUN frames when both ends support offload metadata; the parent side also bootstraps the enclave-side tunnel CIDR, MTU, shard count, and rewritten resolver config over the same VSOCK control port |
-| `bc2wrap` | [bc2wrap/](../bc2wrap/) | Version-pinned `bincode` wrapper used for on-disk and on-wire encoding |
-| `error-utils` | [core/error-utils/](../core/error-utils/) | Shared error types and helpers |
-| `thread-handles` | [core/thread-handles/](../core/thread-handles/) | Rayon thread-pool management |
+| Crate            | Path                                            | Responsibility                                                                                                                                                                                                                                                                                                                                                                                           |
+| ---------------- | ----------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `kms`            | [core/service/](../core/service/)               | KMS service library and binaries — the packaging around the core crypto                                                                                                                                                                                                                                                                                                                                  |
+| `kms-grpc`       | [core/grpc/](../core/grpc/)                     | Protobuf definitions + generated types and client stubs                                                                                                                                                                                                                                                                                                                                                  |
+| `core-client`    | [core-client/](../core-client/)                 | CLI client that drives the gRPC API                                                                                                                                                                                                                                                                                                                                                                      |
+| `observability`  | [observability/](../observability/)             | OpenTelemetry / Prometheus wiring                                                                                                                                                                                                                                                                                                                                                                        |
+| `vsocktun`       | [vsocktun/](vsocktun/)                          | Multi-queue, offload-aware TUN-to-VSOCK relay used by Nitro enclave deployment scripts to preserve end-to-end peer TCP while bridging enclave IP traffic through the parent, including raw virtio-net TUN frames when both ends support offload metadata; the parent side also bootstraps the enclave-side tunnel CIDR, MTU, shard count, and rewritten resolver config over the same VSOCK control port |
+| `bc2wrap`        | [bc2wrap/](../bc2wrap/)                         | Version-pinned `bincode` wrapper used for on-disk and on-wire encoding                                                                                                                                                                                                                                                                                                                                   |
+| `error-utils`    | [core/error-utils/](../core/error-utils/)       | Shared error types and helpers                                                                                                                                                                                                                                                                                                                                                                           |
+| `thread-handles` | [core/thread-handles/](../core/thread-handles/) | Rayon thread-pool management                                                                                                                                                                                                                                                                                                                                                                             |
 
 Auxiliary tools live under [tools/](../tools/): `kms-health-check` is a gRPC
 health probe and `generate-test-material` produces reproducible crypto test
@@ -110,11 +110,11 @@ The service crate is the main surface area. Key subdirectories under
   private objects: its ECDSA signing key (`PrivDataType::SigningKey`, the
   authoritative on-chain identity) and an independent, CSPRNG-generated
   `RootSigningSeed` (`PrivDataType::SigningSeed`), both under `SIGNING_KEY_ID`.
-  The seed will eventually be the root of *every* signing key of the node, ECDSA
-  included: keys are derived on demand from the *seed*. To keep backward
+  The seed will eventually be the root of _every_ signing key of the node, ECDSA
+  included: keys are derived on demand from the _seed_. To keep backward
   compatibility, and to avoid making nodes roll their ECDSA keys, an ECDSA key is
   also stored on its own, and the seed serves every non-ECDSA scheme. That is, if
-  a stored ECDSA key exists, then the seed does *not* derive the ECDSA material.
+  a stored ECDSA key exists, then the seed does _not_ derive the ECDSA material.
   The two halves come together in memory as `signing::identity::NodeSigningIdentity`,
   which `get_core_signing_identity` assembles and `BaseKmsStruct::signing_identity`
   hands out. `NodeSigningIdentity` is never persisted, and it is the only type with
@@ -130,10 +130,10 @@ The service crate is the main surface area. Key subdirectories under
   verification material — ECDSA's included —
   is stored under the handle `consts::signing_material_id(scheme)` gives, in the
   data types `key_setup::NON_LEGACY_VERF_MATERIAL_TYPES` names:
-  `PubDataType::TypedVerfKey` holds the scheme's *own* verification key type
+  `PubDataType::TypedVerfKey` holds the scheme's _own_ verification key type
   (`PublicSigKey`, `Ed25519VerfKey`, `MlDsaVerfKey<P>`), and `TypedVerfAddress` its
   `address_text()` (`0x`-prefixed hex; for ECDSA the EIP-55 address).
-  ECDSA's material is *additionally* written to the deprecated `key_setup::LEGACY_VERF_MATERIAL_TYPES`
+  ECDSA's material is _additionally_ written to the deprecated `key_setup::LEGACY_VERF_MATERIAL_TYPES`
   (`PubDataType::VerfKey`/`VerfAddress`, a bare `PublicSigKey` and the same
   address text) for existing external consumers; those two are scheduled for
   removal and nothing new should read them. Both copies are validated against the
@@ -212,7 +212,7 @@ The primary service is `CoreServiceEndpoint`. Its RPCs group into:
   field are upgraded with the OPRF share absent; `UseExisting` keygen generates
   and persists a fresh OPRF share for such legacy material before regenerating
   public keys. When the parameter set carries transciphering parameters, keygen
-  additionally persists a *second*, independently sampled LWE secret-key share
+  additionally persists a _second_, independently sampled LWE secret-key share
   and includes the matching transciphering server key; as for the OPRF key,
   `UseExisting` keygen generates a fresh transciphering share when the existing
   keyset has none. Key generation and CRS generation write persistent material
@@ -343,7 +343,7 @@ custodian context and creates a new one. Nothing reads that folder, so its conte
 steer the node nor stall it; the startup sweep lists it only to report leftovers.
 
 `NewCustodianContext` points the keychain at the new context and re-encrypts the whole
-vault under it *before* persisting the recovery material, so it is rolled back if any later
+vault under it _before_ persisting the recovery material, so it is rolled back if any later
 step fails: the keychain is restored to its pre-setup `(context_id, backup_enc_key)` and the
 vault entries written under the failed id are purged
 (`rollback_failed_custodian_setup` in
@@ -458,22 +458,22 @@ and `verify_storage_material`. The checks follow three rules:
 
 What it verifies, and how failures are treated:
 
-| Check | On failure |
-|---|---|
-| Published keysets and CRSes are present, and their raw stored bytes hash to the digests in `KeyGenMetadata` / `CrsGenMetadata` | boot fails |
-| Current private keygen and CRS metadata with a stored domain reconstruct a valid EIP-712 signature from the node's signing key | boot fails |
-| Every non-ECDSA entry of the per-scheme `signatures` in current private keygen and CRS metadata verifies, under the key the node derives for that scheme, over the rebuilt result payload | boot fails |
-| `VerfKey` and `VerfAddress` at `SIGNING_KEY_ID` match the key derived from the private `SigningKey` | boot fails |
-| Every entry in a `PubDataType` folder is accounted for by private storage or by a fixed-ID convention | error logged, boot continues |
-| Every top-level name in public storage is a `PubDataType` folder, and every folder can be listed | error logged, boot continues |
-| The node has no foreign material (`FhePrivateKey` or legacy `PrssSetup` on a threshold node; `FheKeyInfo`, `PrssSetup`, `PrssSetupCombined`, or `EpochData` on a centralized node) | boot fails if foreign material exists |
-| Every `FheKeyInfo` and `CrsInfo` epoch folder has an `EpochData` entry | boot fails |
-| Every `EpochData` has a `Context` entry | boot fails |
-| Every `Context` entry uses its declared context ID as its storage handle | boot fails |
-| No unexpected non-epoched files exist | error logged, boot continues |
-| No epoch folder exists under `Context` or `EpochData` | error logged, boot continues |
-| Every top-level name in private storage is a `PrivDataType` folder, and every inspected folder can be listed | error logged, boot continues |
-| `SigningKey` and `SigningSeed` each hold nothing or exactly one flat entry at `SIGNING_KEY_ID`, and at least one of them holds an entry | serving boot fails; recovery mode remains available |
+| Check                                                                                                                                                                                     | On failure                                          |
+| ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------- |
+| Published keysets and CRSes are present, and their raw stored bytes hash to the digests in `KeyGenMetadata` / `CrsGenMetadata`                                                            | boot fails                                          |
+| Current private keygen and CRS metadata with a stored domain reconstruct a valid EIP-712 signature from the node's signing key                                                            | boot fails                                          |
+| Every non-ECDSA entry of the per-scheme `signatures` in current private keygen and CRS metadata verifies, under the key the node derives for that scheme, over the rebuilt result payload | boot fails                                          |
+| `VerfKey` and `VerfAddress` at `SIGNING_KEY_ID` match the key derived from the private `SigningKey`                                                                                       | boot fails                                          |
+| Every entry in a `PubDataType` folder is accounted for by private storage or by a fixed-ID convention                                                                                     | error logged, boot continues                        |
+| Every top-level name in public storage is a `PubDataType` folder, and every folder can be listed                                                                                          | error logged, boot continues                        |
+| The node has no foreign material (`FhePrivateKey` or legacy `PrssSetup` on a threshold node; `FheKeyInfo`, `PrssSetup`, `PrssSetupCombined`, or `EpochData` on a centralized node)        | boot fails if foreign material exists               |
+| Every `FheKeyInfo` and `CrsInfo` epoch folder has an `EpochData` entry                                                                                                                    | boot fails                                          |
+| Every `EpochData` has a `Context` entry                                                                                                                                                   | boot fails                                          |
+| Every `Context` entry uses its declared context ID as its storage handle                                                                                                                  | boot fails                                          |
+| No unexpected non-epoched files exist                                                                                                                                                     | error logged, boot continues                        |
+| No epoch folder exists under `Context` or `EpochData`                                                                                                                                     | error logged, boot continues                        |
+| Every top-level name in private storage is a `PrivDataType` folder, and every inspected folder can be listed                                                                              | error logged, boot continues                        |
+| `SigningKey` and `SigningSeed` each hold nothing or exactly one flat entry at `SIGNING_KEY_ID`, and at least one of them holds an entry                                                   | serving boot fails; recovery mode remains available |
 
 The signing material lives at `SIGNING_KEY_ID` as the ECDSA `SigningKey`, the root `SigningSeed`,
 or both. A node that predates the seed has only the key. Neither type is epoch-scoped, and neither
@@ -486,7 +486,7 @@ until the 0.16 migration removes them. A centralized node rejects both PRSS type
 The 0.16 cleanup re-lists flat `PrssSetupCombined` entries after deletion and returns an error if any remain.
 A successful delete response alone does not count as completed cleanup.
 
-Custodian backup readiness is deliberately *not* part of this. It is a property of the vault's
+Custodian backup readiness is deliberately _not_ part of this. It is a property of the vault's
 keychain rather than of the published material, and the backup path already reports it:
 `keychain_initialized` ([backup_operator.rs](../core/service/src/engine/backup_operator.rs)) asks
 the keychain directly whether a backup encryption key is set, and `inner_update_backup_vault`
@@ -544,8 +544,16 @@ on-wire encoding goes through the pinned-`bincode` wrapper
 versioned types: `BackupCiphertextVersions`,
 `InternalCustodianContextVersions`, `AppKeyBlobVersions`.
 
-**Freeze-and-replay harness.** [backward-compatibility/](../backward-compatibility/)
-is a separate Cargo workspace (excluded from the root — see [Cargo.toml](../Cargo.toml)
+**Startup migrations.** The service moves material when a release changes its storage path. The
+v0.15 migration moves legacy private `CrsInfo` into `DEFAULT_EPOCH_ID` after the other startup migrations succeed.
+It accepts the copy kept by v0.14 or creates one for an older installation. It removes the non-epoched entry only after the two
+copies match, and it stops startup if they differ or if the legacy entry remains after deletion. If
+the copies differ, an operator must inspect them and remove the incorrect copy before restarting.
+Once the migration completes, releases older than v0.14 can no longer load that CRS metadata because
+they only know the removed non-epoched path.
+
+**Freeze-and-replay harness.** [backward-compatibility/](backward-compatibility/)
+is a separate Cargo workspace (excluded from the root — see [Cargo.toml](Cargo.toml)
 — because each pinned historical version drags in a conflicting dependency
 graph). Per-version `generate-vX.Y.Z/` crates serialize a catalogue of types
 using that release's dependencies; the artifacts land under
