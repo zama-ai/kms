@@ -32,14 +32,14 @@ pub(crate) struct UserDecTrustedValidationContext<'a> {
     /// The link every honest response's `digest` must equal. `None` means "the EVM EIP-712 link,
     /// recomputed from `client_request` during the sanity check" — the default. A caller whose
     /// request family links differently (the Solana path) supplies its own recomputed link via
-    /// [`Self::new_with_expected_link`]; the consensus rule itself is family-agnostic.
+    /// [`Self::new_for_solana`]; the consensus rule itself is family-agnostic.
     expected_link: Option<Vec<u8>>,
     /// How many authenticated responses the validation demands before voting on the invariants.
     /// [`Self::new`] sets `2t + 1`: it guarantees a pivot group of `t + 1` *forms* even when `t`
     /// registered parties lie, which the EVM client needs because it discovers the link from the
     /// responses. Safety never depends on this floor — the vote needs `t + 1` agreeing payloads,
     /// and any such group contains an honest one whenever at most `t` parties are corrupt — so
-    /// [`Self::new_with_expected_link`], whose caller pins the link from its own request and
+    /// [`Self::new_for_solana`], whose caller pins the link from its own request and
     /// prefers failing closed over robustness, lowers it to its release quorum of `t + 1`.
     min_authenticated: usize,
 }
@@ -93,10 +93,9 @@ impl<'a> UserDecTrustedValidationContext<'a> {
         })
     }
 
-    /// Like [`Self::new`], but the request link the consensus must carry is supplied by the
-    /// caller instead of being recomputed as the EVM EIP-712 link. Used by the Solana path, whose
-    /// link is the Solana user-decryption binding, already recomputed during share verification.
-    pub fn new_with_expected_link(
+    /// Selects Solana signature rules and requires `t + 1` authenticated responses.
+    /// The caller supplies the Solana link computed from its own request.
+    pub fn new_for_solana(
         server_addresses: &'a HashMap<u32, Address>,
         scheme_verf_keys: &'a SchemeVerfKeys,
         client_request: &'a ParsedUserDecryptionRequest,
@@ -1503,10 +1502,8 @@ mod tests {
         }
     }
 
-    /// A non-empty typed `signatures` list is the response's authentication: its ECDSA entry is
-    /// verified like the deprecated `external_signature` it duplicates, entries for schemes this
-    /// client holds no key for reject, and the deprecated scalar fields are never consulted next
-    /// to the list — a wrong list is not rescued by a valid legacy signature sitting beside it.
+    /// A non-empty typed list must contain exactly one valid ECDSA signature.
+    /// The verifier ignores unrequested schemes and legacy signatures beside that list.
     #[test]
     fn solana_typed_signatures_list_is_the_authentication_when_present() {
         let mut rng = AesRng::seed_from_u64(0);
@@ -1564,7 +1561,7 @@ mod tests {
         .unwrap()
         .to_bytes();
         let scheme_keys = HashMap::new();
-        let trusted_ctx = UserDecTrustedValidationContext::new_with_expected_link(
+        let trusted_ctx = UserDecTrustedValidationContext::new_for_solana(
             &server_addresses,
             &scheme_keys,
             &client_request,
@@ -1581,20 +1578,34 @@ mod tests {
         let typed = |scheme: i32, signature: Vec<u8>| TypedSignature { scheme, signature };
         let ecdsa = SigningSchemeType::Ecdsa256k1 as i32;
 
-        // A valid typed ECDSA entry authenticates on its own: both deprecated fields empty.
+        // Only ECDSA is requested, so malformed entries for other schemes must not affect authentication.
         let empty_params = Eip712VerificationParams {
             response_external_signature: &[],
             response_extra_data: &extra_data,
             trusted_eip712_domain: &domain,
         };
-        authenticate_user_decrypt_and_check_meta_data(
-            &trusted_ctx,
-            &pivot_resp,
-            &[],
-            &[typed(ecdsa, ecdsa_signature.clone())],
-            &empty_params,
-        )
-        .unwrap();
+        for list in [
+            vec![typed(ecdsa, ecdsa_signature.clone())],
+            vec![
+                typed(SigningSchemeType::Ed25519 as i32, vec![]),
+                typed(ecdsa, ecdsa_signature.clone()),
+            ],
+            vec![typed(ecdsa, ecdsa_signature.clone()), typed(999, vec![])],
+            vec![
+                typed(999, vec![]),
+                typed(ecdsa, ecdsa_signature.clone()),
+                typed(SigningSchemeType::Ed25519 as i32, vec![]),
+            ],
+        ] {
+            authenticate_user_decrypt_and_check_meta_data(
+                &trusted_ctx,
+                &pivot_resp,
+                &[],
+                &list,
+                &empty_params,
+            )
+            .unwrap();
+        }
 
         // A wrong typed ECDSA entry is not rescued by the valid legacy signatures beside it.
         let mut tampered = ecdsa_signature.clone();
@@ -1604,7 +1615,11 @@ mod tests {
                 &trusted_ctx,
                 &pivot_resp,
                 &valid_internal,
-                &[typed(ecdsa, tampered)],
+                &[
+                    typed(SigningSchemeType::Ed25519 as i32, vec![]),
+                    typed(ecdsa, tampered),
+                    typed(999, vec![]),
+                ],
                 &params,
             )
             .unwrap_err()

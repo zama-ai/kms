@@ -524,7 +524,7 @@ pub fn verify_solana_user_decryption_response(
         // The expected link is the Solana binding recomputed above, not the EVM EIP-712 link the
         // validation would otherwise derive from the parsed request.
         let scheme_keys = HashMap::new();
-        let trusted_ctx = UserDecTrustedValidationContext::new_with_expected_link(
+        let trusted_ctx = UserDecTrustedValidationContext::new_for_solana(
             trusted_signers,
             &scheme_keys,
             &parsed,
