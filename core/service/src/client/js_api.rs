@@ -501,8 +501,8 @@ fn solana_identity(
 /// The Solana-owned request fields, as one named JS object.
 ///
 /// Identities are hex strings, and `host_chain_id` is a decimal string — the same convention as
-/// the published vector set and the stable transcripts: a Solana chain id sets bit 63, so it does
-/// not fit a JS number, and a `Number` in this field is a parse error, never a silent rounding.
+/// the published vector set and the stable transcripts: a Solana chain id has type byte `0x01`, so
+/// it does not fit a JS number, and a `Number` in this field is a parse error, never a silent rounding.
 #[derive(serde::Deserialize)]
 #[serde(deny_unknown_fields)]
 struct SolanaRequestFieldsJs {
@@ -576,7 +576,7 @@ fn required_gateway_domain(eip712_domain: JsValue) -> Result<Eip712Domain, JsErr
 /// * `solana_request` - the Solana-owned request fields, as one named object:
 /// `{ user_pubkey, host_chain_id, verifying_program_id }`.
 /// Identities are 32-byte hex strings; `host_chain_id` is a decimal string, the vector-set
-/// convention, because a Solana chain id sets bit 63 and does not fit a JS number.
+/// convention, because a Solana chain id has type byte `0x01` and does not fit a JS number.
 ///
 /// * `eip712_domain` - the Gateway `Decryption` contract's EIP-712 domain, in the same JS shape
 /// [process_user_decryption_resp_from_js] takes it. It is an input to the link and the domain a
@@ -655,7 +655,7 @@ pub fn process_user_decryption_resp_solana_from_js(
 /// * `solana_request` - the Solana-owned request fields, as one named object:
 /// `{ user_pubkey, host_chain_id, verifying_program_id }`, in exactly the shape
 /// [process_user_decryption_resp_solana_from_js] takes them. Identities are 32-byte hex strings;
-/// `host_chain_id` is a decimal string, because a Solana chain id sets bit 63 and does not fit a
+/// `host_chain_id` is a decimal string, because a Solana chain id has type byte `0x01` and does not fit a
 /// JS number.
 ///
 /// * `handles` - the ciphertext handles as an array of hex strings (with or without a leading

@@ -19,7 +19,7 @@ use tfhe_versionable::{
 cfg_if::cfg_if! {
     if #[cfg(feature = "non-wasm")] {
         use crate::anyhow_error_and_log;
-        use crate::solana_binding::{SOLANA_CHAIN_TYPE_BIT, handle_chain_id};
+        use crate::solana_binding::{handle_chain_id, is_evm_host_chain_id};
         use alloy_sol_types::SolStruct;
         use alloy_primitives::{Bytes};
         use alloy_dyn_abi::DynSolValue;
@@ -650,9 +650,9 @@ impl crate::kms::v1::UserDecryptionRequest {
 
         for (index, handle) in handles.iter().enumerate() {
             let chain_id = handle_chain_id(handle);
-            if chain_id & SOLANA_CHAIN_TYPE_BIT != 0 {
+            if !is_evm_host_chain_id(chain_id) {
                 anyhow::bail!(
-                    "EVM ciphertext handle at index {index} embeds Solana chain ID {chain_id}"
+                    "EVM ciphertext handle at index {index} embeds chain ID {chain_id}, which is not a uint64-padded EVM chain id (high byte must be 0x00)"
                 );
             }
         }

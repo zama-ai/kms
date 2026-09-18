@@ -297,7 +297,7 @@ fn unpack_user_decrypt_req(
         return Err(anyhow::anyhow!(ERR_VALIDATE_USER_DECRYPTION_EMPTY_CTS).into());
     }
 
-    // Dispatch: presence of the Solana identity selects the branch, and the chain-kind bit
+    // Dispatch: presence of the Solana identity selects the branch, and the type byte
     // embedded in every ciphertext handle backstops it — `validate_solana_request` rejects
     // EVM-kind handles, and `compute_link_checked` below rejects Solana-kind ones, so a request
     // cannot cross over by carrying the wrong field. All four field-by-handle-kind combinations
@@ -1635,11 +1635,11 @@ mod tests {
             assert!(unpack_user_decrypt_req(&req).is_ok());
         }
 
-        // EVM routing rejects handles that carry the Solana chain-kind bit while preserving the
-        // existing EVM handle-padding behavior.
+        // EVM routing accepts only uint64-padded chain ids (high byte 0x00). Solana type byte
+        // 0x01 and any other high byte are refused.
         {
             let mut evm_handle = [0xabu8; 32];
-            let solana_chain_id = (1u64 << 63) | 12_345;
+            let solana_chain_id = kms_grpc::solana_binding::solana_host_chain_id(12_345);
             evm_handle[22..30].copy_from_slice(&solana_chain_id.to_be_bytes());
             let evm_req = UserDecryptionRequest {
                 request_id: Some(request_id.into()),
@@ -1663,13 +1663,13 @@ mod tests {
                 unpack_user_decrypt_req(&evm_req)
                     .unwrap_err()
                     .to_string()
-                    .contains("embeds Solana chain ID")
+                    .contains("high byte must be 0x00")
             );
         }
 
-        // Typed Solana requests require exact 32-byte handles with one common high-bit chain ID.
+        // Typed Solana requests require exact 32-byte handles with one common type-byte chain ID.
         {
-            const SOLANA_CHAIN_ID: u64 = (1 << 63) | 12_345;
+            const SOLANA_CHAIN_ID: u64 = kms_grpc::solana_binding::solana_host_chain_id(12_345);
             let mut handle = [0xabu8; 32];
             handle[22..30].copy_from_slice(&SOLANA_CHAIN_ID.to_be_bytes());
             let solana_req = UserDecryptionRequest {
@@ -1798,7 +1798,8 @@ mod tests {
         .unwrap();
 
         let mut handle = [0xabu8; 32];
-        handle[22..30].copy_from_slice(&((1u64 << 63) | 12_345).to_be_bytes());
+        handle[22..30]
+            .copy_from_slice(&kms_grpc::solana_binding::solana_host_chain_id(12_345).to_be_bytes());
 
         let req = UserDecryptionRequest {
             request_id: Some(derive_request_id("request_id").unwrap().into()),

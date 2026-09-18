@@ -44,6 +44,15 @@ tracing = { workspace = true, features = ["log"] }
 wasm-bindgen.workspace = true
 zeroize.workspace = true
 
+[dev-dependencies]
+# ⚠️ IMPORTANT: Add new dependencies to workspace root Cargo.toml, NOT here!
+# Both are already workspace dependencies and are used only by the Solana linker vector
+# generator/runner (tests/solana_linker_vectors.rs): serde_json reads and writes the committed
+# normative vector set, and sha2 supplies the SHA-256 the set digest and the chain-id derivation
+# rule are defined in terms of. The linker itself hashes with SHAKE-256 and does not use either.
+serde_json.workspace = true
+sha2.workspace = true
+
 [build-dependencies]
 tonic-prost-build.workspace = true
 

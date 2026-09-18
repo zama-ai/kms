@@ -650,8 +650,8 @@ The three extra flags are the values the KMS Connector reads out of the settled 
    tooling prints it, or 32 bytes of hex (optionally `0x`-prefixed).
  - `--verifying-program-id`: the host deployment's program id, same formats.
  - `--host-chain-id`: the Solana host chain id embedded in every ciphertext handle, decimal or
-   `0x`-prefixed hex. Bit 63 must be set — it marks the request family — and a deployed id
-   always carries it by derivation.
+   `0x`-prefixed hex. Type byte `0x01` must be set — it marks the request family — and a
+   deployed id is `0x01` plus the first seven bytes of the cluster genesis hash.
 
 The request travels with the `SigningMetadata` envelope and Solana-shaped handles, and the
 responses come back through the library's real Solana verifier: the link is recomputed from the

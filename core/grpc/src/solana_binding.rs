@@ -27,15 +27,40 @@ use crate::solidity_types::SolanaUserDecryptionLinker;
 /// Width of every identity the binding accepts: handles, the recipient, and the program id.
 pub const SOLANA_IDENTITY_LEN: usize = 32;
 
-/// Bit 63 of the embedded chain id marks a Solana-kind host chain. It is the KMS-side backstop
-/// that keeps Solana handles off the EVM linker and vice versa.
-pub(crate) const SOLANA_CHAIN_TYPE_BIT: u64 = 1 << 63;
+/// High byte of the eight-byte chain-id field (handle bytes 22–29).
+///
+/// `0x00` is EVM: the host writes `uint64(chainId)`, which zero-extends, so a minted EVM handle
+/// always has this byte clear. `0x01` is Solana. Any other value is refused on both paths.
+pub const EVM_CHAIN_TYPE: u8 = 0x00;
+pub const SOLANA_CHAIN_TYPE: u8 = 0x01;
+const CHAIN_TYPE_SHIFT: u32 = 56;
+pub const CLUSTER_TAG_MASK: u64 = 0x00ff_ffff_ffff_ffff;
+
+/// High byte of `chain_id` (bits 56..63).
+pub const fn chain_type_byte(chain_id: u64) -> u8 {
+    (chain_id >> CHAIN_TYPE_SHIFT) as u8
+}
+
+pub const fn is_evm_host_chain_id(chain_id: u64) -> bool {
+    chain_type_byte(chain_id) == EVM_CHAIN_TYPE
+}
+
+pub const fn is_solana_host_chain_id(chain_id: u64) -> bool {
+    chain_type_byte(chain_id) == SOLANA_CHAIN_TYPE
+}
+
+/// A Solana host chain id: type byte `0x01` plus a 56-bit cluster tag.
+///
+/// Bits above the low 56 of `cluster_tag` are masked off, so they cannot overwrite the type byte.
+pub const fn solana_host_chain_id(cluster_tag: u64) -> u64 {
+    ((SOLANA_CHAIN_TYPE as u64) << CHAIN_TYPE_SHIFT) | (cluster_tag & CLUSTER_TAG_MASK)
+}
 
 /// Byte range of the chain id embedded in a ciphertext handle.
 const HANDLE_CHAIN_ID_START: usize = 22;
 const HANDLE_CHAIN_ID_END: usize = 30;
 
-/// A host chain id that is valid for the Solana request path: bit 63 is set.
+/// A host chain id that is valid for the Solana request path: type byte `0x01`.
 ///
 /// The binding keeps it for the declared-value check only. The link binds the host chain through
 /// the handle bytes this value was read from, not through the value itself.
@@ -52,7 +77,7 @@ impl TryFrom<u64> for SolanaHostChainId {
     type Error = SolanaUserDecryptBindingError;
 
     fn try_from(chain_id: u64) -> Result<Self, Self::Error> {
-        if chain_id & SOLANA_CHAIN_TYPE_BIT == 0 {
+        if !is_solana_host_chain_id(chain_id) {
             return Err(SolanaUserDecryptBindingError::InvalidDeclaredChainId { chain_id });
         }
         Ok(Self(chain_id))
@@ -83,10 +108,10 @@ impl TryFrom<u64> for SolanaHostChainId {
 /// ```
 /// use alloy_primitives::{Address, U256};
 /// use alloy_sol_types::Eip712Domain;
-/// use kms_grpc::solana_binding::SolanaUserDecryptBinding;
+/// use kms_grpc::solana_binding::{SolanaUserDecryptBinding, solana_host_chain_id};
 ///
 /// let mut handle = [0x11u8; 32];
-/// handle[22..30].copy_from_slice(&((1u64 << 63) | 12_345).to_be_bytes());
+/// handle[22..30].copy_from_slice(&solana_host_chain_id(12_345).to_be_bytes());
 ///
 /// let binding = SolanaUserDecryptBinding::new(
 ///     &[0x22u8; 32],                       // verifying_program_id
@@ -119,7 +144,7 @@ pub struct SolanaUserDecryptBinding {
 impl SolanaUserDecryptBinding {
     /// Validates the Solana-owned fields of a user-decryption request.
     ///
-    /// Checked here: the width of every identity, the chain-kind bit of each handle's embedded
+    /// Checked here: the width of every identity, the type byte of each handle's embedded
     /// chain id, that all handles embed one common chain id, and that the handle list is not
     /// empty. Duplicate handles are legal — each occurrence is authorized independently upstream
     /// and the linker binds every occurrence at its position. These checks are the part of the
@@ -165,7 +190,7 @@ impl SolanaUserDecryptBinding {
             // Per handle rather than once for the batch: a foreign handle mixed into an otherwise
             // valid batch must be caught at its own index, not hidden behind the first one.
             let chain_id = handle_chain_id(&canonical);
-            if chain_id & SOLANA_CHAIN_TYPE_BIT == 0 {
+            if !is_solana_host_chain_id(chain_id) {
                 return Err(SolanaUserDecryptBindingError::InvalidHandleChainId {
                     index,
                     chain_id,
@@ -185,7 +210,7 @@ impl SolanaUserDecryptBinding {
             canonical_handles.push(canonical);
         }
 
-        // The chain-kind bit was checked for every handle above, which is why this wraps the value
+        // The Solana type byte was checked for every handle above, which is why this wraps the value
         // directly: the fallible conversion exists for a chain id a caller declares separately.
         let chain_id = common_chain_id
             .map(SolanaHostChainId)
@@ -226,7 +251,7 @@ impl SolanaUserDecryptBinding {
     ///
     /// Used by callers that hold a declared value of their own — the client recomputing a link
     /// from its signed permit fields. A KMS party has no declared value in the request and relies
-    /// on the constructor's chain-kind and common-id checks instead.
+    /// on the constructor's type-byte and common-id checks instead.
     pub fn validate_declared_chain_id(
         &self,
         declared: u64,
@@ -258,7 +283,7 @@ pub enum SolanaUserDecryptBindingError {
     #[error("Solana ciphertext handle at index {index} must be 32 bytes, got {actual}")]
     InvalidHandleLength { index: usize, actual: usize },
     #[error(
-        "Solana ciphertext handle at index {index} embeds chain ID {chain_id}, which does not set bit 63"
+        "Solana ciphertext handle at index {index} embeds chain ID {chain_id}, which does not have Solana type byte 0x01"
     )]
     InvalidHandleChainId { index: usize, chain_id: u64 },
     #[error(
@@ -269,7 +294,7 @@ pub enum SolanaUserDecryptBindingError {
         expected: u64,
         actual: u64,
     },
-    #[error("declared Solana host chain ID {chain_id} does not set bit 63")]
+    #[error("declared Solana host chain ID {chain_id} does not have Solana type byte 0x01")]
     InvalidDeclaredChainId { chain_id: u64 },
     #[error("declared Solana host chain ID {declared} does not match handle chain ID {embedded}")]
     DeclaredChainIdMismatch { declared: u64, embedded: u64 },
@@ -289,4 +314,243 @@ pub(crate) fn handle_chain_id(handle: &[u8; SOLANA_IDENTITY_LEN]) -> u64 {
     let mut chain_id = [0u8; size_of::<u64>()];
     chain_id.copy_from_slice(&handle[HANDLE_CHAIN_ID_START..HANDLE_CHAIN_ID_END]);
     u64::from_be_bytes(chain_id)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        SOLANA_IDENTITY_LEN, SolanaHostChainId, SolanaUserDecryptBinding,
+        SolanaUserDecryptBindingError, handle_chain_id, is_evm_host_chain_id,
+        is_solana_host_chain_id, solana_host_chain_id,
+    };
+
+    const CHAIN_ID: u64 = solana_host_chain_id(12_345);
+    const PROGRAM_ID: [u8; 32] = [0x22; 32];
+    const RECEIVER: [u8; 32] = [0x33; 32];
+
+    /// A handle embedding `chain_id`, with `discriminator` filling every other byte so two
+    /// handles of the same request are distinguishable.
+    fn handle(chain_id: u64, discriminator: u8) -> [u8; 32] {
+        let mut handle = [discriminator; 32];
+        handle[22..30].copy_from_slice(&chain_id.to_be_bytes());
+        handle
+    }
+
+    /// The canonical request every negative below deviates from in exactly one field.
+    fn canonical(
+        handles: &[[u8; 32]],
+    ) -> Result<SolanaUserDecryptBinding, SolanaUserDecryptBindingError> {
+        SolanaUserDecryptBinding::new(
+            &PROGRAM_ID,
+            &RECEIVER,
+            handles.iter().map(|handle| handle.as_slice()),
+            &[0x66; 800],
+        )
+    }
+
+    #[test]
+    fn handle_chain_id_is_read_from_bytes_twenty_two_to_thirty() {
+        assert_eq!(handle_chain_id(&handle(CHAIN_ID, 0xab)), CHAIN_ID);
+    }
+
+    #[test]
+    fn accepts_canonical_request() {
+        let binding = canonical(&[handle(CHAIN_ID, 1), handle(CHAIN_ID, 2)])
+            .expect("a canonical request must validate");
+
+        assert_eq!(binding.chain_id.get(), CHAIN_ID);
+        assert_eq!(binding.receiver_id(), &RECEIVER);
+        assert_eq!(binding.handles.len(), 2);
+    }
+
+    #[test]
+    fn accepts_duplicate_handles() {
+        // Duplicates are legal: the EVM gateway performs no deduplication either, each occurrence
+        // is authorized independently, and the linker binds every occurrence at its position.
+        let repeated = handle(CHAIN_ID, 7);
+        let binding = canonical(&[repeated, repeated]).expect("duplicates are legal");
+
+        assert_eq!(binding.handles, &[repeated, repeated]);
+    }
+
+    #[test]
+    fn rejects_empty_handle_list() {
+        assert_eq!(
+            canonical(&[]).unwrap_err(),
+            SolanaUserDecryptBindingError::EmptyHandles
+        );
+    }
+
+    #[test]
+    fn rejects_wrong_width_handle() {
+        let valid = handle(CHAIN_ID, 1);
+
+        for (bytes, actual) in [(&valid[..31], 31usize), (&[0u8; 33][..], 33)] {
+            let error = SolanaUserDecryptBinding::new(
+                &PROGRAM_ID,
+                &RECEIVER,
+                std::iter::once(bytes),
+                &[0x66; 800],
+            )
+            .unwrap_err();
+
+            assert_eq!(
+                error,
+                SolanaUserDecryptBindingError::InvalidHandleLength { index: 0, actual },
+            );
+        }
+    }
+
+    #[test]
+    fn rejects_handle_without_solana_type_byte() {
+        // An EVM-kind handle must not be bindable by the Solana linker: the type byte is the
+        // structural separator between the two request families.
+        let low_bit = handle(12_345, 1);
+
+        assert_eq!(
+            canonical(&[low_bit]).unwrap_err(),
+            SolanaUserDecryptBindingError::InvalidHandleChainId {
+                index: 0,
+                chain_id: 12_345,
+            },
+        );
+    }
+
+    #[test]
+    fn rejects_chain_kind_violation_at_later_index() {
+        // "First handle is the source of truth" is the failure mode this guards: the check runs
+        // per handle, so a foreign handle mixed into a valid batch is caught at its own index.
+        assert_eq!(
+            canonical(&[handle(CHAIN_ID, 1), handle(12_345, 2)]).unwrap_err(),
+            SolanaUserDecryptBindingError::InvalidHandleChainId {
+                index: 1,
+                chain_id: 12_345,
+            },
+        );
+    }
+
+    #[test]
+    fn rejects_mixed_embedded_chain_ids() {
+        // Same program id on two clusters: without this check a batch could mix deployments and
+        // still produce one link.
+        assert_eq!(
+            canonical(&[handle(CHAIN_ID, 1), handle(CHAIN_ID + 1, 2)]).unwrap_err(),
+            SolanaUserDecryptBindingError::MixedChainIds {
+                index: 1,
+                expected: CHAIN_ID,
+                actual: CHAIN_ID + 1,
+            },
+        );
+    }
+
+    #[test]
+    fn rejects_declared_chain_id_without_solana_type_byte() {
+        assert_eq!(
+            SolanaHostChainId::try_from(12_345).unwrap_err(),
+            SolanaUserDecryptBindingError::InvalidDeclaredChainId { chain_id: 12_345 },
+        );
+    }
+
+    #[test]
+    fn rejects_declared_chain_id_disagreeing_with_handles() {
+        let binding = canonical(&[handle(CHAIN_ID, 1)]).expect("canonical");
+
+        assert_eq!(
+            binding
+                .validate_declared_chain_id(CHAIN_ID + 1)
+                .unwrap_err(),
+            SolanaUserDecryptBindingError::DeclaredChainIdMismatch {
+                declared: CHAIN_ID + 1,
+                embedded: CHAIN_ID,
+            },
+        );
+        assert_eq!(binding.validate_declared_chain_id(CHAIN_ID), Ok(()));
+    }
+
+    #[test]
+    fn rejects_wrong_width_program_id() {
+        for actual in [31usize, 33] {
+            let error = SolanaUserDecryptBinding::new(
+                &vec![0x22; actual],
+                &RECEIVER,
+                std::iter::once(handle(CHAIN_ID, 1).as_slice()),
+                &[0x66; 800],
+            )
+            .unwrap_err();
+
+            assert_eq!(
+                error,
+                SolanaUserDecryptBindingError::InvalidProgramIdLength { actual },
+            );
+        }
+    }
+
+    #[test]
+    fn rejects_wrong_width_recipient() {
+        // The recipient is a checked 32-byte value end to end. A 20-byte value reaching here
+        // would mean an EVM address, or a truncated key, was accepted as a Solana identity.
+        for actual in [20usize, 31, 33] {
+            let error = SolanaUserDecryptBinding::new(
+                &PROGRAM_ID,
+                &vec![0x33; actual],
+                std::iter::once(handle(CHAIN_ID, 1).as_slice()),
+                &[0x66; 800],
+            )
+            .unwrap_err();
+
+            assert_eq!(
+                error,
+                SolanaUserDecryptBindingError::InvalidReceiverLength { actual },
+            );
+        }
+    }
+
+    #[test]
+    fn accepts_transport_key_of_any_length() {
+        // The 869-byte rule lives in the wallet permit and the connector, not here: the KMS takes
+        // the transport key as the request carries it, exactly as the EVM linker takes publicKey.
+        // A width check here would be a second, diverging copy of a rule enforced upstream.
+        for length in [1usize, 800, 868, 869, 870, 1_568] {
+            let binding = SolanaUserDecryptBinding::new(
+                &PROGRAM_ID,
+                &RECEIVER,
+                std::iter::once(handle(CHAIN_ID, 1).as_slice()),
+                &vec![0x66; length],
+            );
+
+            assert!(
+                binding.is_ok(),
+                "transport key width is not this layer's rule (length {length})",
+            );
+        }
+    }
+
+    #[test]
+    fn identity_width_constant_matches_handle_layout() {
+        assert_eq!(SOLANA_IDENTITY_LEN, 32);
+        assert_eq!(handle(CHAIN_ID, 1).len(), SOLANA_IDENTITY_LEN);
+    }
+
+    #[test]
+    fn high_byte_is_the_chain_kind() {
+        assert!(is_evm_host_chain_id(8006));
+        assert!(is_evm_host_chain_id(0));
+        assert!(is_solana_host_chain_id(solana_host_chain_id(8006)));
+        assert!(!is_evm_host_chain_id(0x1717_1717_1717_1717));
+        assert!(!is_solana_host_chain_id(0x1717_1717_1717_1717));
+        assert!(!is_evm_host_chain_id(1u64 << 56));
+        assert!(!is_evm_host_chain_id((0x02u64 << 56) | 12_345));
+    }
+
+    #[test]
+    fn rejects_legacy_bit_63_marker() {
+        let legacy = (1u64 << 63) | 12_345;
+        assert_eq!(
+            canonical(&[handle(legacy, 1)]).unwrap_err(),
+            SolanaUserDecryptBindingError::InvalidHandleChainId {
+                index: 0,
+                chain_id: legacy,
+            },
+        );
+    }
 }

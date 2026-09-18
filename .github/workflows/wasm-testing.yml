@@ -144,6 +144,7 @@ jobs:
         run: |
           cargo test test_user_decryption_threshold_and_write_transcript -F wasm_tests --lib
           cargo test test_user_decryption_centralized_and_write_transcript -F wasm_tests --lib
+          cargo test test_user_decryption_solana_and_write_transcript -F wasm_tests --lib
 
       - name: Test wasm
         # Run from inside the test dir so `node --test` searches cwd recursively.

@@ -54,9 +54,9 @@ What the link binds, and how:
 
 - The **host program** is bound explicitly, as `verifyingProgramId`.
 - The **host chain** is bound through the handles: bytes `[22..30]` of every handle carry the host
-  chain id with bit 63 set, the binding rejects a handle without that bit or a batch whose handles
-  disagree, and a client compares that chain id with the one its permit signed before it computes
-  the link. The same program on another cluster therefore answers under different handle bytes
+  chain id with type byte `0x01`, the binding rejects a handle without that type byte or a batch
+  whose handles disagree, and a client compares that chain id with the one its permit signed
+  before it computes the link. The same program on another cluster therefore answers under different handle bytes
   and a different link. There is no separate chain-id field: it would repeat a value the handles
   already carry.
 - The **Gateway domain** is a required input on every side: the KMS computes the link under the
@@ -118,10 +118,10 @@ the response call takes that client plus the request-side values the link commit
   verifies and releases. The Solana-owned request fields travel as one named object,
   `{ user_pubkey, host_chain_id, verifying_program_id }`, with
   identities as 32-byte hex strings and `host_chain_id` as a decimal string — the vector-set
-  convention, because a Solana chain id sets bit 63 and does not fit a JS number. The trailing
-  **`eip712_domain`** argument is the Gateway `Decryption` contract's EIP-712 domain, in the same
-  JS shape the EVM wrapper takes: the link is computed under it, and it is the domain KMS nodes
-  produced the response's `external_signature` under.
+  convention, because a Solana chain id has type byte `0x01` and does not fit a JS number. The
+  trailing **`eip712_domain`** argument is the Gateway `Decryption` contract's EIP-712 domain, in
+  the same JS shape the EVM wrapper takes: the link is computed under it, and it is the domain KMS
+  nodes produced the response's `external_signature` under.
 - **`compute_solana_user_decrypt_link_from_js(solana_request, handles, enc_key, eip712_domain)`**
   is the request half of the same contract: from the fields the client already holds — the same
   named `solana_request` object, the handles as hex strings in request order, the serialized
@@ -155,8 +155,9 @@ The linker construction is frozen by a normative vector set:
 
 - `core/grpc/test-vectors/solana_linker_v2.json` — accepted and rejected records, each carrying
   the typed fields, the Gateway domain the record was computed under, the type string and type
-  hash, the struct hash and the expected link. All 64-bit values are decimal strings: every chain
-  id sets bit 63, so a JSON number reaching a TypeScript consumer would be silently rounded.
+  hash, the struct hash and the expected link. All 64-bit values are decimal strings: every host
+  chain id has type byte `0x01`, so a JSON number reaching a TypeScript consumer would be silently
+  rounded.
 - `core/grpc/test-vectors/solana_linker_v2.sha256` — the set's SHA-256 in `sha256sum` format.
 
 Five implementations (SDK TypeScript, relayer, Connector Rust, KMS Core Rust, KMS client/WASM)
@@ -172,9 +173,8 @@ The type string
 `SolanaUserDecryptionLinker(bytes publicKey,bytes32[] handles,bytes32 userPubkey,bytes32 verifyingProgramId)`,
 its keccak-256 type hash and the EIP-712 encoding of every field are pinned by
 `core/grpc/tests/solana_frozen_constants.rs`, which rebuilds the preimage by hand and requires the
-library to agree. A change to any of those bytes is a new type name, not an edit. In CI,
-`ci/scripts/frozen_paths.sh` fails the build if any byte-frozen asset — the EVM references or the
-published Solana vectors — is modified or deleted.
+library to agree. A change to any of those bytes is a new type name, not an edit. The vector
+runner and that constants test freeze the published set in this repository.
 
 The list-hash linker v1 (SHAKE256 under the scheme tag `SolanaUserDecryptionLinker:v1` and the
 call separator `SOLLNK01`) and its `solana_linker_v1` set are removed rather than kept alongside:

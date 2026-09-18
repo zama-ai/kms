@@ -769,7 +769,7 @@ pub struct SolanaDecryptParameters {
     #[clap(long, value_parser = solana_identity_arg)]
     pub verifying_program_id: [u8; 32],
     /// The Solana host chain id to embed in every ciphertext handle — decimal or 0x-prefixed
-    /// hex. Bit 63 must be set: it is what marks the handles (and so the request) as
+    /// hex. Type byte `0x01` must be set: it is what marks the handles (and so the request) as
     /// Solana-kind.
     #[clap(long, value_parser = solana_chain_id_arg)]
     pub host_chain_id: u64,
@@ -793,7 +793,7 @@ fn solana_identity_arg(text: &str) -> Result<[u8; 32], String> {
         .map_err(|_| format!("a Solana identity is 32 bytes, got {}", bytes.len()))
 }
 
-/// A Solana host chain id from the command line, decimal or 0x-prefixed hex, bit 63 required.
+/// A Solana host chain id from the command line, decimal or 0x-prefixed hex, type byte `0x01`.
 fn solana_chain_id_arg(text: &str) -> Result<u64, String> {
     let text = text.trim();
     let chain_id = match text.strip_prefix("0x") {
@@ -802,11 +802,10 @@ fn solana_chain_id_arg(text: &str) -> Result<u64, String> {
     }
     .map_err(|error| format!("invalid chain id: {error}"))?;
 
-    if chain_id & (1 << 63) == 0 {
+    if !kms_grpc::solana_binding::is_solana_host_chain_id(chain_id) {
         return Err(format!(
-            "a Solana host chain id sets bit 63; {chain_id} (0x{chain_id:016x}) does not. The \
-             deployed ids are derived as 0x8000000000000000 | (SHA-256 of the genesis hash), so \
-             a real one always carries the bit."
+            "a Solana host chain id has type byte 0x01; {chain_id} (0x{chain_id:016x}) does not. \
+             Public-cluster ids are 0x01 plus the first seven bytes of the cluster genesis hash."
         ));
     }
     Ok(chain_id)
@@ -1283,19 +1282,24 @@ pub enum KmsType {
     #[serde(rename = "threshold")]
     Threshold,
 }
+/// EIP-712 and handle placeholder used by EVM core-client tests.
+const DUMMY_EVM_CHAIN_ID: u64 = 8006;
+
 /// a dummy Eip-712 domain for testing
 fn dummy_domain() -> alloy_sol_types::Eip712Domain {
     alloy_sol_types::eip712_domain!(
         name: "Authorization token",
         version: "1",
-        chain_id: 8006,
+        chain_id: DUMMY_EVM_CHAIN_ID,
         verifying_contract: alloy_primitives::address!("66f9664f97F2b50F62D13eA064982f936dE76657"),
     )
 }
 
-// dummy ciphertext handle for testing
+/// Placeholder EVM handle. Bytes 22–29 are chain id 8006 as a big-endian `u64`.
 fn dummy_handle() -> Vec<u8> {
-    vec![23_u8; 32]
+    let mut handle = vec![23_u8; 32];
+    handle[22..30].copy_from_slice(&DUMMY_EVM_CHAIN_ID.to_be_bytes());
+    handle
 }
 
 /// Distinct placeholder ciphertext handles for a public-decryption batch — one entry per
@@ -1315,7 +1319,7 @@ pub fn integration_test_handles(count: usize) -> Vec<Vec<u8>> {
 }
 
 /// Distinct ciphertext handles for a Solana user-decryption batch: the Solana rules require
-/// every handle to embed the host chain id at bytes 22..30 (big-endian, bit 63 set) and all
+/// every handle to embed the host chain id at bytes 22..30 (big-endian, type byte `0x01`) and all
 /// handles of one request to agree on it, so the placeholder handles embed it too and stay
 /// distinct through their leading bytes.
 pub fn solana_test_handles(host_chain_id: u64, count: usize) -> Vec<Vec<u8>> {
@@ -2331,7 +2335,7 @@ pub async fn execute_cmd(
             .await?;
 
             // Solana-shaped handles: the server-side binding requires every handle to embed the
-            // declared host chain id with bit 63 set, one distinct handle per batch entry.
+            // declared host chain id with type byte 0x01, one distinct handle per batch entry.
             let ct_batch: Vec<TypedCiphertext> =
                 solana_test_handles(solana_args.host_chain_id, cipher_parameters.batch_size)
                     .into_iter()
