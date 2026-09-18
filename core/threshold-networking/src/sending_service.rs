@@ -406,12 +406,6 @@ pub struct NetworkSession {
     /// Anchor of the round clock, stamped at session creation. Stored lock-free
     /// (an [`AtomicInstant`]) so `synchronize_from` can overwrite it from `&self`.
     pub(crate) init_time: AtomicInstant,
-    /// When the last message was received, or when the session was made active if
-    /// no message has been received yet. Used to discard inactive sessions. Stored
-    /// lock-free (an [`AtomicInstant`]) so it can be read and written without
-    /// awaiting — in particular from the session cleanup task while it holds a
-    /// `DashMap` shard guard.
-    pub(crate) last_rec_activity_time: AtomicInstant,
     pub(crate) current_network_timeout: RwLock<Duration>,
     pub(crate) next_network_timeout: RwLock<Duration>,
     pub(crate) max_elapsed_time: RwLock<Duration>,
@@ -510,8 +504,6 @@ impl<R: RoleTrait> Networking<R> for NetworkSession {
             }
         }
         .ok_or_else(|| anyhow_error_and_log("Trying to receive from a closed channel."))?;
-        // Update the time we received a message
-        self.last_rec_activity_time.store(Instant::now());
         // drop old messages
         let network_round = *counter_lock;
         while returned_packet.round_counter < network_round {
@@ -959,7 +951,6 @@ mod tests {
             network_mode: NetworkMode::Async,
             conf: OptionConfigWrapper { conf: None },
             init_time: AtomicInstant::now(),
-            last_rec_activity_time: AtomicInstant::now(),
             current_network_timeout: RwLock::new(Duration::from_secs(10)),
             next_network_timeout: RwLock::new(Duration::from_secs(10)),
             max_elapsed_time: RwLock::new(Duration::from_secs(0)),
@@ -1045,7 +1036,6 @@ mod tests {
             network_mode: NetworkMode::Sync,
             conf: OptionConfigWrapper { conf: None },
             init_time: AtomicInstant::now(),
-            last_rec_activity_time: AtomicInstant::now(),
             current_network_timeout: RwLock::new(timeout),
             next_network_timeout: RwLock::new(timeout),
             max_elapsed_time: RwLock::new(Duration::ZERO),
@@ -1524,7 +1514,6 @@ mod tests {
                 conf: Some(test_config(1)),
             },
             init_time: AtomicInstant::now(),
-            last_rec_activity_time: AtomicInstant::now(),
             current_network_timeout: RwLock::new(wait),
             next_network_timeout: RwLock::new(wait),
             max_elapsed_time: RwLock::new(Duration::from_secs(0)),
