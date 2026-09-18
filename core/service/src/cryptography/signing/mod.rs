@@ -150,21 +150,36 @@ impl SigningSchemeType {
 
     /// The schemes a request asks its response to be signed under.
     ///
-    /// An explicit list is honoured as given, so a caller that wants only
-    /// [`SigningSchemeType::Ed25519`] gets exactly that. An empty list resolves to
-    /// [`SigningSchemeType::Ecdsa256k1`].
+    /// Only the parsing lives here; the resolution itself is [`Self::resolve`].
     pub fn resolve_requested(requested: &[i32]) -> Result<Vec<Self>, SigningError> {
-        if requested.is_empty() {
-            return Ok(vec![SigningSchemeType::Ecdsa256k1]);
-        }
-        let mut resolved = Vec::with_capacity(SigningSchemeType::COUNT);
+        let mut parsed = Vec::with_capacity(requested.len().min(SigningSchemeType::COUNT));
         for &raw in requested {
             let scheme = SigningSchemeType::try_from(raw)?;
+            if !parsed.contains(&scheme) {
+                parsed.push(scheme);
+            }
+        }
+        Ok(Self::resolve(&parsed))
+    }
+
+    /// The canonical form of a list of requested schemes.
+    ///
+    /// An explicit list is honoured as given, so a caller that wants only
+    /// [`SigningSchemeType::Ed25519`] gets exactly that; duplicates are dropped, keeping
+    /// first-seen order.
+    ///
+    /// An empty list resolves to [`SigningSchemeType::Ecdsa256k1`] rather than to nothing.
+    pub fn resolve(requested: &[Self]) -> Vec<Self> {
+        if requested.is_empty() {
+            return vec![SigningSchemeType::Ecdsa256k1];
+        }
+        let mut resolved = Vec::with_capacity(requested.len().min(SigningSchemeType::COUNT));
+        for &scheme in requested {
             if !resolved.contains(&scheme) {
                 resolved.push(scheme);
             }
         }
-        Ok(resolved)
+        resolved
     }
 
     /// The schemes named by `requested`, for command-line and config input.
@@ -791,6 +806,44 @@ mod tests {
 
         // An unknown scheme is an error.
         assert!(SigningSchemeType::resolve_requested(&[9999]).is_err());
+    }
+
+    /// The typed form follows the same rules as the gRPC form, so a caller that already
+    /// holds `SigningSchemeType` values does not have to launder them through the wire
+    /// discriminants to get the canonical list.
+    #[test]
+    fn resolve_matches_resolve_requested() {
+        // Naming nothing asks for ECDSA, exactly as an empty gRPC field does. This is the
+        // case that matters: an empty result would be a yardstick no response could fail.
+        assert_eq!(
+            SigningSchemeType::resolve(&[]),
+            SigningSchemeType::resolve_requested(&[]).unwrap()
+        );
+        assert_eq!(
+            SigningSchemeType::resolve(&[]),
+            vec![SigningSchemeType::Ecdsa256k1]
+        );
+
+        // Order is kept and duplicates are dropped, as in the gRPC form.
+        let requested = [
+            SigningSchemeType::MlDsa65,
+            SigningSchemeType::Ecdsa256k1,
+            SigningSchemeType::MlDsa65,
+        ];
+        let raw: Vec<i32> = requested.iter().map(|scheme| scheme.as_wire()).collect();
+        assert_eq!(
+            SigningSchemeType::resolve(&requested),
+            SigningSchemeType::resolve_requested(&raw).unwrap()
+        );
+        assert_eq!(
+            SigningSchemeType::resolve(&requested),
+            vec![SigningSchemeType::MlDsa65, SigningSchemeType::Ecdsa256k1]
+        );
+
+        // Every scheme named on its own resolves to itself, and ECDSA is not added to it.
+        for scheme in SigningSchemeType::iter() {
+            assert_eq!(SigningSchemeType::resolve(&[scheme]), vec![scheme]);
+        }
     }
 
     /// The string form a command line supplies follows the same rules as the

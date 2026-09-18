@@ -16,22 +16,27 @@ crate-type = ["lib", "cdylib"]
 [[bin]] # Bin to generate signing keys and TLS material
 name = "kms-gen-keys"
 path = "src/bin/kms-gen-keys.rs"
+required-features = ["non-wasm"]
 
 [[bin]] # Bin to generate TLS certificates for the service
 name = "kms-gen-tls-certs"
 path = "src/bin/kms-gen-tls-certs.rs"
+required-features = ["non-wasm"]
 
 [[bin]] # Bin to run the gRPC server
 name = "kms-server"
 path = "src/bin/kms-server.rs"
+required-features = ["non-wasm"]
 
 [[bin]] # Bin to initialize the threshold KMS cluster after all nodes are up and running.
 name = "kms-init"
 path = "src/bin/kms-init.rs"
+required-features = ["non-wasm"]
 
 [[bin]] # Bin for the custodians to generate keys and help in recovery
 name = "kms-custodian"
 path = "src/bin/kms-custodian.rs"
+required-features = ["non-wasm"]
 
 [dependencies]
 # ⚠️ IMPORTANT: Add new dependencies to workspace root Cargo.toml, NOT here!

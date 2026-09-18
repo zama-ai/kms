@@ -224,6 +224,8 @@ pub(crate) fn verify_scheme_entry(
 /// Check that every scheme the request asked for was actually *verified*, not
 /// merely present in the list.
 ///
+/// If `requested` is empty, the request is also rejected.
+///
 /// `party_id` is the party the response was attributed to, if any signature identified
 /// one. The error is unlogged.
 pub(crate) fn ensure_requested_verified(
@@ -231,16 +233,22 @@ pub(crate) fn ensure_requested_verified(
     requested: &[SigningSchemeType],
     party_id: Option<u32>,
 ) -> anyhow::Result<()> {
+    let response = || match party_id {
+        Some(party_id) => format!("the response of party {party_id}"),
+        None => "the response".to_string(),
+    };
+    if requested.is_empty() {
+        return Err(anyhow_tracked(format!(
+            "{} was measured against no signing scheme at all, which any signature would \
+             satisfy and none would fail",
+            response()
+        )));
+    }
     match requested.iter().find(|scheme| !verified.contains(scheme)) {
-        Some(missing) => {
-            let response = match party_id {
-                Some(party_id) => format!("the response of party {party_id}"),
-                None => "the response".to_string(),
-            };
-            Err(anyhow_tracked(format!(
-                "{response} carries no verified {missing} signature, but {missing} was requested"
-            )))
-        }
+        Some(missing) => Err(anyhow_tracked(format!(
+            "{} carries no verified {missing} signature, but {missing} was requested",
+            response()
+        ))),
         None => Ok(()),
     }
 }
@@ -414,7 +422,8 @@ fn attribute_scheme_entry(
 ///   on one party.
 ///
 /// A result whose `list` is empty is still authenticated by the deprecated fields, which
-/// is what a node from a release before the list sends.
+/// is what a node from a release before the list sends. A `requested` that is empty, by
+/// contrast, is a rejection rather than a lenient request.
 ///
 /// # Errors
 ///
@@ -427,6 +436,13 @@ pub(crate) fn verify_response_signatures(
     expected: &ExpectedSigner,
     keys: &SchemeVerfKeys,
 ) -> anyhow::Result<(u32, Address)> {
+    if requested.is_empty() {
+        return Err(anyhow_tracked(
+            "the response was measured against no signing scheme at all, which any signature would \
+             satisfy and none would fail"
+                .to_string(),
+        ));
+    }
     let mut verified: Vec<SigningSchemeType> = Vec::with_capacity(sigs.list.len() + 1);
     let mut signer: Option<(u32, Address)> = None;
 
@@ -918,6 +934,7 @@ mod tests {
         TypedSigncryptedCiphertext, UserDecryptionResponse, UserDecryptionResponsePayload,
     };
     use rand::SeedableRng;
+    use strum::IntoEnumIterator;
 
     use crate::{
         client::user_decryption_wasm::{
@@ -929,6 +946,7 @@ mod tests {
                 ERR_EXT_USER_DECRYPTION_SIG_BAD_LENGTH, NodeSigningIdentity, PrivateSigKey,
                 PublicSigKey, gen_sig_keys, internal_sign,
             },
+            signing::SigningSchemeType,
         },
         dummy_domain,
         engine::{
@@ -949,6 +967,29 @@ mod tests {
         UserDecryptionInvariants, user_decrypt_eip712_hash, validate_user_decrypt_responses,
         verify_response_signatures,
     };
+
+    /// Asking for no scheme at all is a rejection, whatever the response verified
+    /// under.
+    #[test]
+    fn no_requested_scheme_is_a_rejection() {
+        let every_scheme: Vec<_> = SigningSchemeType::iter().collect();
+
+        for verified in [&[][..], &[SigningSchemeType::Ecdsa256k1][..], &every_scheme] {
+            for party_id in [None, Some(1)] {
+                let err = super::ensure_requested_verified(verified, &[], party_id)
+                    .unwrap_err()
+                    .to_string();
+                assert!(
+                    err.contains("no signing scheme at all"),
+                    "the error does not name the cause: {err}"
+                );
+            }
+        }
+
+        // A scheme that was asked for and verified still passes, so the new rejection
+        // did not swallow the ordinary case.
+        super::ensure_requested_verified(&every_scheme, &every_scheme, Some(1)).unwrap();
+    }
 
     /// Helper method to be removed in 0.16 when the external signature is no longer used in production.
     /// TODO(0.16)
@@ -1009,6 +1050,7 @@ mod tests {
             enc_key_buf,
             vec![CiphertextHandle::new(ciphertext_handle.clone())],
             domain.verifying_contract.unwrap(),
+            vec![SigningSchemeType::Ecdsa256k1],
             extra_data,
         );
 
@@ -1161,6 +1203,7 @@ mod tests {
             enc_key_buf,
             vec![CiphertextHandle::new(ciphertext_handle.clone())],
             dummy_domain.verifying_contract.unwrap(),
+            vec![SigningSchemeType::Ecdsa256k1],
             extra_data.clone(),
         );
 
@@ -1395,6 +1438,7 @@ mod tests {
             enc_key_buf,
             vec![CiphertextHandle::new(ciphertext_handle.clone())],
             dummy_domain.verifying_contract.unwrap(),
+            vec![SigningSchemeType::Ecdsa256k1],
             vec![],
         );
         let scheme_verf_keys = HashMap::new();
@@ -1753,6 +1797,7 @@ mod tests {
             enc_key_buf.clone(),
             vec![CiphertextHandle::new(ciphertext_handle.clone())],
             dummy_domain.verifying_contract.unwrap(),
+            vec![SigningSchemeType::Ecdsa256k1],
             vec![],
         );
 
@@ -1861,6 +1906,7 @@ mod tests {
                 enc_key_buf,
                 vec![CiphertextHandle::new(ciphertext_handle.clone())],
                 dummy_domain.verifying_contract.unwrap(),
+                vec![SigningSchemeType::Ecdsa256k1],
                 vec![],
             );
             let bad_ctx = UserDecTrustedValidationContext::new(
@@ -2077,6 +2123,7 @@ mod tests {
             enc_key_buf,
             vec![CiphertextHandle::new(ciphertext_handle.clone())],
             dummy_domain.verifying_contract.unwrap(),
+            vec![SigningSchemeType::Ecdsa256k1],
             vec![],
         );
 
@@ -2196,6 +2243,7 @@ mod tests {
             enc_key_buf,
             vec![CiphertextHandle::new(vec![5, 6, 7, 8])],
             dummy_domain.verifying_contract.unwrap(),
+            vec![SigningSchemeType::Ecdsa256k1],
             vec![],
         );
 

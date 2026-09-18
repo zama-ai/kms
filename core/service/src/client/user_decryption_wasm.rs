@@ -1038,11 +1038,13 @@ impl ParsedUserDecryptionRequest {
         &self.signing_schemes
     }
 
-    /// Builds a request that only asks for an ECDSA signature.
+    /// Builds a request directly, which only a test does.
     ///
-    /// The real scheme list comes from the gRPC request, through
-    /// `TryFrom<&UserDecryptionRequest>`. This constructor pins one scheme, so it stays
-    /// out of the public API and out of non-test code.
+    /// In production the request comes from gRPC, through
+    /// `TryFrom<&UserDecryptionRequest>`. Both paths resolve `signing_schemes` the same
+    /// way ([`SigningSchemeType::resolve`]), so a list built here means exactly what the
+    /// same list means on the wire — naming nothing asks for
+    /// [`SigningSchemeType::Ecdsa256k1`], not for nothing at all.
     #[cfg(test)]
     pub(crate) fn new(
         signature: Option<alloy_primitives::Signature>,
@@ -1050,6 +1052,7 @@ impl ParsedUserDecryptionRequest {
         enc_key: Vec<u8>,
         ciphertext_handles: Vec<CiphertextHandle>,
         eip712_verifying_contract: alloy_primitives::Address,
+        signing_schemes: Vec<SigningSchemeType>,
         extra_data: Vec<u8>,
     ) -> Self {
         Self {
@@ -1059,7 +1062,7 @@ impl ParsedUserDecryptionRequest {
             ciphertext_handles,
             eip712_verifying_contract,
             extra_data,
-            signing_schemes: vec![SigningSchemeType::Ecdsa256k1],
+            signing_schemes: SigningSchemeType::resolve(&signing_schemes),
         }
     }
 
