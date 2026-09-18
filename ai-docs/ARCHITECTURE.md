@@ -238,6 +238,15 @@ destination file. This does not make a multi-file operation atomic or guarantee 
 after power loss; the writers do not sync the parent directory. A hard crash can leave hidden
 temporary files, which this release does not automatically remove.
 
+## Writing generated keys and CRSes
+
+A newly generated FHE key is rejected if any public key artifact already exists at its ID,
+or if private key material exists at the requested epoch. CRS writes similarly reject an existing
+public CRS or private metadata at that epoch. This prevents combining old and new material after
+an incomplete write. Rejection leaves storage and the FHE cache unchanged and records an error
+in the request's meta store. Resharing still reuses public material and writes only the new epoch's
+private material. Retained flat CRS metadata from older releases does not block an epoch-scoped write.
+
 ## Backward compatibility
 
 The KMS must read material produced by earlier releases: a fresh binary
