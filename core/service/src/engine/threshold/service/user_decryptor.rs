@@ -57,6 +57,7 @@ use crate::{
         internal_crypto_types::LegacySerialization,
         signcryption::{SigncryptFHEPlaintext, UnifiedSigncryptionKeyOwned},
         signing::SigningSchemeType,
+        signing::identity::NodeSigningIdentity,
         zeroizing_writer::ZeroizingWriter,
     },
     engine::{
@@ -68,7 +69,7 @@ use crate::{
             service::session::{ImmutableSessionMaker, validate_context_and_epoch},
             traits::UserDecryptor,
         },
-        utils::MetricedError,
+        utils::{MetricedError, format_handle, format_unvalidated_id, signing_identity_for},
         validation::{
             DSEP_USER_DECRYPTION, RequestIdParsingErr, parse_grpc_request_id,
             parse_optional_grpc_request_id, validate_user_decrypt_req,
@@ -182,6 +183,7 @@ impl<
         typed_ciphertexts: Vec<TypedCiphertext>,
         link: Vec<u8>,
         signcryption_key: Arc<UnifiedSigncryptionKeyOwned>,
+        identity: Arc<NodeSigningIdentity>,
         client_enc_key_bytes_orig: Vec<u8>,
         fhe_keys: OwnedRwLockReadGuard<
             HashMap<(RequestId, EpochId), ThresholdFheKeys>,
@@ -219,11 +221,12 @@ impl<
             let decimal_req_id = U256::try_from_be_slice(req_id.as_bytes())
                 .unwrap_or(U256::ZERO)
                 .to_string();
+            // The context and epoch come from the request span; only the per-value session ID is new here.
             tracing::debug!(
                 request_id = hex_req_id,
                 request_id_decimal = decimal_req_id,
-                "User Decrypt Request: Decrypting ciphertext #{ctr} with internal session ID: {session_id} and context ID: {context_id}. Handle: {}",
-                hex::encode(&typed_ciphertext.external_handle)
+                "User Decrypt Request: Decrypting ciphertext #{ctr}. sid: {session_id}, handle: {}",
+                format_handle(&typed_ciphertext.external_handle)
             );
 
             // Only the SmallCompressed format needs the decompression key to deserialize.
@@ -415,7 +418,7 @@ impl<
             metrics::METRICS.time_user_decrypt_stage(UserDecryptStage::ResultSign);
         let signed = spawn_compute_bound(move || {
             sign_user_decryption_result(
-                &signcryption_key.signing_key,
+                &identity,
                 &signing_schemes,
                 payload,
                 &client_enc_key_bytes_orig,
@@ -476,6 +479,15 @@ impl<
         > + 'static,
 > UserDecryptor for RealUserDecryptor<PubS, PrivS, Dec>
 {
+    // Mirrors the public decryption span: `context_id`/`epoch_id` are only known after request
+    // validation, so they start empty and are recorded below. The spawned decryption task inherits
+    // this span, so its events carry both without extra log lines.
+    #[tracing::instrument(skip_all, fields(
+        request_id = %format_unvalidated_id(&request.get_ref().request_id),
+        operation = "user_decrypt",
+        context_id = tracing::field::Empty,
+        epoch_id = tracing::field::Empty
+    ))]
     async fn user_decrypt(
         &self,
         request: Request<UserDecryptionRequest>,
@@ -506,7 +518,23 @@ impl<
             domain,
             extra_data,
             signing_schemes,
-        ) = validate_user_decrypt_req(inner.as_ref())?;
+        ) = validate_user_decrypt_req(inner.as_ref()).inspect_err(|_| {
+            // As in public decryption: the unvalidated ids are the only record of what the caller
+            // sent once validation rejects the request, and nothing else logs them on that path.
+            // The IDs are unvalidated here, so they are size-bounded rather than printed verbatim.
+            tracing::warn!(
+                "Rejected UserDecryptionRequest {{ request_id: {}, key_id: {}, context_id: {}, epoch_id: {}, ciphertext_count: {} }}",
+                format_unvalidated_id(&inner.request_id),
+                format_unvalidated_id(&inner.key_id),
+                format_unvalidated_id(&inner.context_id),
+                format_unvalidated_id(&inner.epoch_id),
+                inner.typed_ciphertexts.len()
+            );
+        })?;
+        // Recorded before the context/epoch check so that a rejection there is attributed too.
+        let span = tracing::Span::current();
+        span.record("context_id", tracing::field::display(&context_id));
+        span.record("epoch_id", tracing::field::display(&epoch_id));
         let my_role = validate_context_and_epoch(
             OP_USER_DECRYPT_REQUEST,
             &self.session_maker,
@@ -524,17 +552,14 @@ impl<
 
         let meta_store = Arc::clone(&self.user_decrypt_meta_store);
         let crypto_storage = self.crypto_storage.clone();
-        let rng = self.base_kms.new_rng().await;
+        let rng = self.base_kms.new_rng();
 
-        let sk = (*self.base_kms.sig_key().map_err(|e| {
-            MetricedError::new(
-                OP_USER_DECRYPT_REQUEST,
-                Some(req_id),
-                e,
-                tonic::Code::FailedPrecondition,
-            )
-        })?)
-        .clone();
+        let identity = signing_identity_for(
+            &self.base_kms,
+            &signing_schemes,
+            OP_USER_DECRYPT_REQUEST,
+            Some(req_id),
+        )?;
         let client_enc_key = UnifiedPublicEncKey::deserialize_and_validate(
             &client_enc_key_bytes_orig,
         )
@@ -547,7 +572,7 @@ impl<
             )
         })?;
         let signcryption_key = Arc::new(UnifiedSigncryptionKeyOwned::new(
-            sk,
+            identity.ecdsa().clone(),
             client_enc_key,
             receiver.as_bytes().to_vec(),
         ));
@@ -594,6 +619,7 @@ impl<
                 typed_ciphertexts,
                 link,
                 signcryption_key,
+                identity,
                 client_enc_key_bytes_orig,
                 fhe_keys_rlock,
                 dec_mode,
@@ -689,6 +715,7 @@ impl<
 
 #[cfg(test)]
 mod tests {
+    use crate::engine::rng_source::test_rng_source;
     use aes_prng::AesRng;
     use kms_grpc::{
         kms::v1::{CiphertextFormat, SigningSchemeType},
@@ -806,7 +833,11 @@ mod tests {
     ) {
         let (_pk, sk) = gen_sig_keys(rng);
         let param = TEST_PARAM;
-        let base_kms = BaseKmsStruct::new(KMSType::Threshold, sk.clone()).unwrap();
+        let base_kms = BaseKmsStruct::new(
+            KMSType::Threshold,
+            NodeSigningIdentity::ecdsa_only(sk.clone()),
+            test_rng_source(),
+        );
 
         let epoch_id = EpochId::new_random(rng);
         let prss_setup_z128 = Some(PRSSSetup::new_testing_prss(vec![], vec![]));
@@ -816,7 +847,7 @@ mod tests {
             prss_setup_z128,
             prss_setup_z64,
             &epoch_id,
-            base_kms.new_rng().await,
+            base_kms.new_rng(),
         );
 
         let key_id = RequestId::new_random(rng);

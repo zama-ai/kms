@@ -37,25 +37,69 @@ All three flags default to `false` and are mutually exclusive —
 pick at most one per run:
 
 - `overwrite`: delete any existing signing material at the fixed signing-key
-  handle (private key, and every scheme's verification material in public
-  storage) before generating a fresh key. Required to rotate a key; without it,
-  generation fails if storage already holds material for that handle.
+  handle (the private signing key, the root signing seed, and every scheme's
+  verification material in public storage) before generating a fresh identity.
+  Required to rotate a key; without it, generation fails if storage already holds
+  material for that handle. **This destroys every post-quantum identity of the
+  node**, since they are derived from the seed and stored nowhere else.
 - `show_existing`: print the existing signing-material handles and exit, without
-  generating or deleting anything.
+  generating or deleting anything. Each per-scheme line names its scheme, and the
+  address folders print the stored text, so this is what an operator reads to learn
+  which identifiers to register for a node.
 - `repopulate`: derive and store every piece of missing verification material
   — each scheme's key and digest, ECDSA's included, plus the two deprecated
-  ECDSA-only objects — from the ECDSA signing key already present in private
-  storage, then exit without touching the signing key itself. Material that is
-  already published is validated against that key rather than overwritten. Use
-  this to restore verification material after a partial purge.
+  ECDSA-only objects — from the signing identity already present in private
+  storage, then exit without touching that identity. Requires both the ECDSA
+  signing key and the root signing seed to already exist. Material that is
+  already published is validated against that identity rather than overwritten.
+  Use this to restore verification material after a partial purge.
+
+### What is written to private storage
+
+A node's signing identity is two objects, both under the fixed `SIGNING_KEY_ID`
+handle:
+
+| Folder | Contents |
+| --- | --- |
+| `SigningKey` | The ECDSA/secp256k1 signing key. This is the node's authoritative identity: it is the one registered on-chain, and it is what the node signs ECDSA with. It stays authoritative for ECDSA until operators rotate onto their seed-derived ECDSA key. Unchanged from earlier releases. |
+| `SigningSeed` | A 32-byte root secret drawn from the CSPRNG, which the node's signing keys are derived from eventually. |
+
+The seed is generated independently of the ECDSA key, so recovering the secp256k1
+scalar does not reveal any post-quantum key. **Losing the seed loses every
+seed-derived identity of the node** — they exist nowhere else — so it is part of
+the backup set, handled exactly like `SigningKey`.
+
+The seed is meant to root *all* of a node's signing keys, ECDSA included, and on a
+freshly generated node it already does: its ECDSA key is derived from the seed. An
+existing operator is the exception, and only temporarily — its ECDSA key is
+registered on-chain and cannot be rotated by a software upgrade, so the
+`SigningKey` object above remains the authoritative ECDSA identity and the seed
+serves the other schemes, until a later release rotates ECDSA onto the seed as
+well.
+
+A seed is only ever created by an explicit `kms-gen-keys` run, never silently at
+boot:
+
+- On a **fresh** node (no `SigningKey`), the seed is generated first and the ECDSA
+  key is derived from it, so the whole identity descends from the seed.
+- On an **upgraded** node (a `SigningKey` from an earlier release, no seed), the
+  ECDSA key is left byte-for-byte untouched — operator identities are registered
+  on-chain and cannot be rotated by a software upgrade — and a seed is generated
+  beside it, then the non-ECDSA verification material is backfilled.
+- A node started with no seed logs a warning and runs **ECDSA-only**: it boots and
+  serves normally, but a request asking for a non-ECDSA scheme fails with a signing
+  error until `kms-gen-keys` has been run. The boot-time migration deliberately does
+  not mint a seed of its own.
+- If public storage already holds non-ECDSA verification material and the seed is
+  missing, `kms-gen-keys` fails instead of generating a replacement: a new seed
+  would rotate every published post-quantum identity. Restore the seed from the
+  backup vault, or use `overwrite` to regenerate the whole identity.
 
 ### What is written to public storage
 
-A node signs with a single persisted ECDSA signing key, and the verification keys
-of the other supported signature schemes are derived from it. Every scheme's public
-material — including ECDSA's — is written to the two `Scheme*` folders below, each
-under its own scheme-specific handle, so that a folder holds exactly one kind of
-object and can be read whole:
+Every scheme's public material — including ECDSA's — is written to the two `Typed*`
+folders below, each under its own scheme-specific handle, so that a folder holds
+exactly one kind of object and can be read whole:
 
 | Folder | Contents |
 | --- | --- |
@@ -70,6 +114,40 @@ release: new readers should take the ECDSA entry from `TypedVerfKey` /
 `TypedVerfAddress` instead.
 
 For local test/dev runs that need pre-baked FHE keys + CRS, use `generate-test-material` instead (see the `generate-test-material-*` targets in the top-level `Makefile`).
+
+### Moving a cluster onto seed-rooted identities
+
+An operator that upgraded from a release without the root signing seed keeps its
+original ECDSA key, so only its non-ECDSA keys descend from the seed. The cluster
+reaches the end state — every key of every node derived from one seed — at an **MPC
+context switch**, with new nodes generated from scratch. No node ever rewrites the
+ECDSA key it is live under, so this is an operational procedure and not a
+KMS-side key rotation.
+
+Per node, in this order:
+
+1. **Generate the identity** with `kms-gen-keys` against empty storage. The seed is
+   drawn first and the ECDSA key is derived from it, so the whole identity descends
+   from one secret. Do not use `overwrite` on a live node for this: it deletes the
+   seed and destroys every post-quantum identity the node already published.
+2. **Start the node once**, and confirm the seed reached the backup vault. The boot
+   pass copies new private objects into the vault, so a freshly generated seed is
+   only protected after that start. A node whose seed is not yet backed up must not
+   be registered: losing the seed loses every key derived from it.
+3. **Read the identifiers to register**: run `kms-gen-keys` with
+   `[keygen] show_existing = true`. Every per-scheme line names its scheme, so the
+   `TypedVerfAddress` lines give the ECDSA address to register on-chain and each
+   other scheme's digest to put in the new context.
+4. **Register the node** in the new context's per-scheme digests, and its ECDSA
+   address on-chain.
+
+Once every node of the new context is registered, activate the context and only
+then decommission the old nodes. Each old node keeps its own key until it is
+retired, so there is no window in which a node signs under an identity nobody has
+registered.
+
+A further rotation follows the same route: a further context switch, with a fresh
+seed per node.
 
 ## Threshold KMS TLS Certificates
 

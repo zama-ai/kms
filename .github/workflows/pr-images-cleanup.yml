@@ -1,0 +1,81 @@
+##############################################################################
+# pr-images-cleanup workflow
+#
+# build-and-test tags the images it builds for a PR with the head commit sha
+# and keeps them, so a rerun of a failed kind job can still pull them. This
+# workflow deletes the tags of a head once nothing runs on it any more: when a
+# push replaces it, and when the PR closes, unless another open PR still has
+# that head. PRs labelled `docker` or `pr-preview-*` keep their images.
+##############################################################################
+name: pr-images-cleanup
+
+on:
+  pull_request:
+    types: [synchronize, closed]
+
+permissions: {}
+
+jobs:
+  delete-head-images:
+    name: pr-images-cleanup/delete-head-images
+    if: >-
+      !contains(github.event.pull_request.labels.*.name, 'docker') &&
+      !contains(toJSON(github.event.pull_request.labels.*.name), 'pr-preview-')
+    runs-on: ubuntu-latest
+    permissions:
+      actions: write # Required to cancel the head's build-and-test run
+      packages: write # Required to delete package versions
+      pull-requests: read # Required to see whether another open PR has the same head
+    steps:
+      - name: Delete the images tagged with the replaced or closed head
+        shell: bash # -o pipefail: a failed gh api or jq must not pass as "nothing to delete"
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          # `before` is the head a push replaced; `closed` events have none.
+          COMMIT_HASH: ${{ github.event.before || github.event.pull_request.head.sha }}
+        run: |
+          # Tags name a commit, not a PR. Another open PR at the same head still builds, reruns
+          # and pulls them, so they are left to that PR's own cleanup.
+          others=$(gh api "repos/${GH_REPO}/commits/${COMMIT_HASH}/pulls" \
+            | jq --arg sha "${COMMIT_HASH}" --argjson pr "${PR_NUMBER}" \
+                '[.[] | select(.state == "open" and .head.sha == $sha and .number != $pr)] | length')
+          if [ "${others}" != 0 ]; then
+            echo "Another open PR has head ${COMMIT_HASH}; its images stay"
+            exit 0
+          fi
+          # A build-and-test run still working on this head would push images after the deletion
+          # or pull them during it. Its result no longer matters, so end it first.
+          for run in $(gh run list --workflow build-and-test.yml --commit "${COMMIT_HASH}" \
+              --json databaseId,status --jq '.[] | select(.status != "completed") | .databaseId'); do
+            gh run cancel "${run}" || true
+            gh run watch "${run}" >/dev/null
+          done
+          delete_package_versions_by_tag() {
+            local package_name="$1"
+            local tag="$2"
+
+            # URL-encode package name (slashes -> %2F)
+            local encoded_name
+            encoded_name="$(jq -rn --arg v "$package_name" '$v|@uri')"
+
+            local package_path="/orgs/zama-ai/packages/container/${encoded_name}"
+
+            gh api --paginate -H "Accept: application/vnd.github+json" "${package_path}/versions?per_page=100" \
+            | jq -r --arg tag "$tag" '
+                .[]
+                | [(.metadata.container.tags[]? // empty | select(startswith($tag)))] as $matched
+                | select(($matched | length) > 0)
+                | [.id, ($matched | join(","))] | @tsv
+              ' \
+            | while IFS=$'\t' read -r id matched_tags; do
+                [ -z "$id" ] && continue
+                echo "Deleting ${package_name} version_id=${id} tags=${matched_tags}"
+                gh api --method DELETE -H "Accept: application/vnd.github+json" "${package_path}/versions/${id}"
+              done
+          }
+          for package in core-service-enclave-insecure core-service-enclave core-service-insecure core-service \
+              core-client-insecure core-client kms-binaries-insecure kms-binaries; do
+            delete_package_versions_by_tag "kms/${package}" "${COMMIT_HASH:0:7}"
+          done

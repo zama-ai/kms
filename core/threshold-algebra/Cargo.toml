@@ -44,3 +44,11 @@ harness = false
 [[bench]]
 name = "syndrome"
 harness = false
+
+[[bench]]
+name = "reconstruction"
+harness = false
+
+[[bench]]
+name = "gao_decoding"
+harness = false

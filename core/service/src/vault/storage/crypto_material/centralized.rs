@@ -4,13 +4,9 @@
 //! used in the centralized KMS variant.
 
 use std::{collections::HashMap, sync::Arc};
-use tokio::sync::{Mutex, OwnedRwLockReadGuard, RwLock};
+use tokio::sync::{OwnedRwLockReadGuard, RwLock};
 
-use kms_grpc::{
-    RequestId,
-    identifiers::EpochId,
-    rpc_types::{PrivDataType, PubDataType},
-};
+use kms_grpc::{RequestId, identifiers::EpochId, rpc_types::PrivDataType};
 
 use crate::{
     engine::base::{KeyGenMetadata, KmsFheKeyHandles},
@@ -50,11 +46,7 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: StorageExt + Send + Sync + 's
         fhe_keys: HashMap<(RequestId, EpochId), KmsFheKeyHandles>,
     ) -> Self {
         Self {
-            inner: CryptoMaterialStorage {
-                public_storage: Arc::new(Mutex::new(public_storage)),
-                private_storage: Arc::new(Mutex::new(private_storage)),
-                backup_vault: backup_vault.map(|x| Arc::new(Mutex::new(x))),
-            },
+            inner: CryptoMaterialStorage::from(public_storage, private_storage, backup_vault),
             fhe_keys: Arc::new(RwLock::new(fhe_keys)),
         }
     }
@@ -103,27 +95,6 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: StorageExt + Send + Sync + 's
             op_metric_tag,
         )
         .await
-    }
-
-    /// Purge centralized FHE key material from disk **and** from the in-memory
-    /// cache.
-    pub(crate) async fn purge_fhe_keys(&self, req_id: &RequestId, epoch_id: &EpochId) -> bool {
-        let storage_ok = self
-            .inner
-            .purge_material(
-                req_id,
-                Some(epoch_id),
-                &[
-                    PubDataType::PublicKey,
-                    PubDataType::ServerKey,
-                    PubDataType::CompressedXofKeySet,
-                ],
-                &[PrivDataType::FhePrivateKey],
-            )
-            .await;
-        // Lock-order: cache is acquired after pub/priv have been released.
-        self.fhe_keys.write().await.remove(&(*req_id, *epoch_id));
-        storage_ok
     }
 
     /// Number of cached FHE key entries (feeds the `fhe_key_cache_size` gauge).

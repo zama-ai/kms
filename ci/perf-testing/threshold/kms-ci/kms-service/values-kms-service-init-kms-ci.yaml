@@ -62,7 +62,7 @@ kmsCoreClient:
   enabled: true
   nameOverride: kms-core-client-threshold-staging
   image:
-    name: hub.zama.org/ghcr/zama-ai/kms/core-client
+    name: hub.zama.org/ghcr/zama-ai/kms/core-client-insecure
     tag: <version>
   envFrom:
     configmap:

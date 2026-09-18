@@ -2,8 +2,10 @@
 
 use super::{SigningError, SigningScheme};
 use crate::impl_generic_versionize;
+#[cfg(feature = "non-wasm")]
+use ed25519_dalek::Signer;
 use ed25519_dalek::{
-    PUBLIC_KEY_LENGTH, Signature as Ed25519Signature, Signer, SigningKey as Ed25519SigningKey,
+    PUBLIC_KEY_LENGTH, Signature as Ed25519Signature, SigningKey as Ed25519SigningKey,
     VerifyingKey as Ed25519VerifyingKey,
 };
 use hashing::DomainSep;
@@ -20,9 +22,14 @@ pub const SEED_LEN: usize = 32;
 pub struct Ed25519;
 
 impl SigningScheme for Ed25519 {
-    type SigningKey = Ed25519SigningKey; // TODO(#3078) Should this be a wrapped type? Consider in the last subissue.
+    // The dalek type is used directly, unlike the ECDSA key, which a newtype
+    // wraps. The wrapper exists for the three things this key does not need: a
+    // custom serde impl for the persisted format, a redacted `Debug`, and a
+    // zeroizing `Drop`.
+    type SigningKey = Ed25519SigningKey;
     type VerificationKey = Ed25519VerifyingKey;
 
+    #[cfg(feature = "non-wasm")]
     fn sign(dsep: &DomainSep, msg: &[u8], sk: &Ed25519SigningKey) -> Result<Vec<u8>, SigningError> {
         let signed = [&dsep[..], msg].concat();
         let sig: Ed25519Signature = sk
@@ -62,11 +69,6 @@ impl Ed25519 {
     /// Deterministically derive the signing key from a 32-byte seed.
     pub fn keygen_from_seed(seed: &[u8; SEED_LEN]) -> Ed25519SigningKey {
         Ed25519SigningKey::from_bytes(seed)
-    }
-
-    /// The identifier of `vk`: the raw public key, which is also its Solana address.
-    pub fn digest(vk: &Ed25519VerifyingKey) -> Vec<u8> {
-        vk.as_bytes().to_vec()
     }
 }
 
@@ -127,55 +129,41 @@ impl Visitor<'_> for Ed25519VerfKeyVisitor {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::cryptography::signing::test_support::{exercise_backend, random_seed};
     use aes_prng::AesRng;
-    use rand::{RngCore, SeedableRng};
+    use rand::SeedableRng;
 
     const DSEP: &DomainSep = b"EDDSATST";
 
-    fn seed<R: RngCore>(rng: &mut R) -> [u8; SEED_LEN] {
-        let mut s = [0u8; SEED_LEN];
-        rng.fill_bytes(&mut s);
-        s
-    }
-
+    /// The shared backend contract — round-trip plus every rejection case — and the
+    /// scheme's fixed signature length on top of it.
     #[test]
-    fn round_trip() {
+    fn backend_contract() {
         let mut rng = AesRng::seed_from_u64(1);
-        let sk = Ed25519::keygen_from_seed(&seed(&mut rng));
-        let vk = Ed25519::verifying_key(&sk).unwrap();
+        let sk = Ed25519::keygen_from_seed(&random_seed(&mut rng));
+        exercise_backend::<Ed25519>(DSEP, &sk);
+
         let sig = Ed25519::sign(DSEP, b"hello", &sk).unwrap();
         assert_eq!(sig.len(), SIG_SIZE);
-        Ed25519::verify(DSEP, b"hello", &sig, &vk).unwrap();
     }
 
-    /// A signature of the wrong byte length is rejected before any curve work.
+    /// ed25519 pins the length before any curve work, so a signature that is one byte
+    /// short *or* one byte long is rejected as a length error rather than a bad signature.
     #[test]
     fn rejects_wrong_length_signature() {
         let mut rng = AesRng::seed_from_u64(2);
-        let sk = Ed25519::keygen_from_seed(&seed(&mut rng));
+        let sk = Ed25519::keygen_from_seed(&random_seed(&mut rng));
         let vk = Ed25519::verifying_key(&sk).unwrap();
 
-        let err = Ed25519::verify(DSEP, b"hello", &[0u8; SIG_SIZE - 1], &vk).unwrap_err();
-        assert!(matches!(err, SigningError::InvalidSignatureLength { .. }));
-        assert!(matches!(
-            Ed25519::verify(DSEP, b"hello", &[0u8; SIG_SIZE + 1], &vk),
-            Err(SigningError::InvalidSignatureLength { .. })
-        ));
-    }
-
-    /// A tampered message, a tampered signature, and a wrong domain separator all reject.
-    #[test]
-    fn rejects_tampering() {
-        let mut rng = AesRng::seed_from_u64(3);
-        let sk = Ed25519::keygen_from_seed(&seed(&mut rng));
-        let vk = Ed25519::verifying_key(&sk).unwrap();
-        let sig = Ed25519::sign(DSEP, b"hello", &sk).unwrap();
-
-        assert!(Ed25519::verify(DSEP, b"HELLO", &sig, &vk).is_err());
-        assert!(Ed25519::verify(b"OTHERDSP", b"hello", &sig, &vk).is_err());
-
-        let mut bad = sig.clone();
-        bad[0] ^= 0x01;
-        assert!(Ed25519::verify(DSEP, b"hello", &bad, &vk).is_err());
+        for bad in [&[0u8; SIG_SIZE - 1][..], &[0u8; SIG_SIZE + 1][..]] {
+            assert!(
+                matches!(
+                    Ed25519::verify(DSEP, b"hello", bad, &vk),
+                    Err(SigningError::InvalidSignatureLength { .. })
+                ),
+                "a {}-byte signature was not rejected as a length error",
+                bad.len()
+            );
+        }
     }
 }

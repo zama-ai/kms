@@ -1,9 +1,13 @@
+use crate::backup::operator::RecoveryValidationMaterial;
 use anyhow::anyhow;
 use keychain::{EnvelopeLoad, EnvelopeStore, Keychain, KeychainProxy};
 use kms_grpc::{RequestId, identifiers::EpochId, rpc_types::PrivDataType};
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use std::{collections::HashSet, fmt, path::MAIN_SEPARATOR};
-use storage::{Storage, StorageProxy, StorageReader, StoreWriteOutcome};
+use storage::{
+    RootEntries, Storage, StorageProxy, StorageReader, StoreWriteOutcome,
+    read_custodian_context_anchor,
+};
 use strum::IntoEnumIterator;
 use strum_macros::EnumIter;
 use tfhe::{Unversionize, Versionize, named::Named};
@@ -24,6 +28,9 @@ pub enum VaultDataType {
     EncryptedPrivData(PrivDataType),
     // Unencrypted data. May be either private or public data.
     UnencryptedData(String),
+    /// Custodian recovery material at `RecoveryMaterial/<context_id>`, outside every backup id.
+    /// The keychain does not encrypt it; see `store_recovery_material`.
+    RecoveryMaterial,
 }
 
 impl fmt::Display for VaultDataType {
@@ -38,6 +45,7 @@ impl fmt::Display for VaultDataType {
                 write!(f, "{priv_data_type}")
             }
             VaultDataType::UnencryptedData(data_type) => write!(f, "{data_type}"),
+            VaultDataType::RecoveryMaterial => write!(f, "RecoveryMaterial"),
         }
     }
 }
@@ -109,8 +117,13 @@ impl Vault {
         // when erasing a retired context.
         self.delete_custodian_backup_data(backup_id).await?;
 
-        // confirm nothing survived before the caller is allowed to delete the
-        // recovery material and drop lifecycle state.
+        // A backend can report a successful delete without removing the object. Check all entries
+        // for this backup ID before the caller removes recovery material and lifecycle state.
+        self.ensure_custodian_backup_removed(backup_id).await
+    }
+
+    /// Confirm that no custodian backup data remains under `backup_id`.
+    async fn ensure_custodian_backup_removed(&self, backup_id: &RequestId) -> anyhow::Result<()> {
         let mut residual = Vec::new();
         for cur_type in PrivDataType::iter() {
             let vault_data_type =
@@ -143,7 +156,7 @@ impl Vault {
         }
         if !residual.is_empty() {
             return Err(anyhow!(
-                "remove_old_backup did not fully erase backup id {backup_id}; residual data remains: {}",
+                "custodian backup cleanup did not fully erase backup id {backup_id}; residual data remains: {}",
                 residual.join(", ")
             ));
         }
@@ -210,7 +223,10 @@ impl Vault {
     pub(crate) async fn purge_backup(&mut self, backup_id: &RequestId) -> anyhow::Result<()> {
         match self.keychain.as_ref() {
             Some(KeychainProxy::SecretSharing(_)) => {
-                self.delete_custodian_backup_data(backup_id).await
+                self.delete_custodian_backup_data(backup_id).await?;
+                // Detect leftover entries even when every delete reports success. Rollback callers
+                // log this error without replacing the original setup or write error.
+                self.ensure_custodian_backup_removed(backup_id).await
             }
             _ => storage::delete_all_at_request_id(self, backup_id).await,
         }
@@ -218,6 +234,45 @@ impl Vault {
 }
 
 #[cfg(feature = "non-wasm")]
+/// Point the backup vault's keychain at the custodian context that private storage anchors.
+///
+/// The vault also holds material for retired contexts and public storage is modifiable, so the
+/// anchor is the only input; nothing here reads either store to decide. A node with no anchor, or
+/// whose anchored material is gone from the vault, ends with an uninitialized keychain: it serves
+/// but makes no new backups and says so.
+///
+/// `material` is the vault's recovery material, already checked against the node's signing key by
+/// [`crate::engine::storage_material_verification::verify_storage_material`].
+pub async fn adopt_custodian_context<PrivS: StorageReader>(
+    priv_storage: &PrivS,
+    backup_vault: &mut Vault,
+    material: &std::collections::HashMap<RequestId, RecoveryValidationMaterial>,
+) -> anyhow::Result<()> {
+    let Some(KeychainProxy::SecretSharing(keychain)) = backup_vault.keychain.as_mut() else {
+        return Ok(());
+    };
+    // Whatever the caller's keychain held, only the anchor decides.
+    keychain.restore_backup_enc_key(None);
+    let Some(context_id) = read_custodian_context_anchor(priv_storage).await? else {
+        tracing::info!("No custodian context anchored; no backups will be made");
+        return Ok(());
+    };
+    match material.get(&context_id) {
+        Some(material) => {
+            keychain.set_backup_enc_key(
+                context_id,
+                material.custodian_context().backup_enc_key.clone(),
+            );
+            tracing::info!("Backing up under custodian context {context_id}");
+        }
+        None => tracing::error!(
+            "Custodian context {context_id} is anchored but its recovery material is missing from \
+             the backup vault; no backups will be made. Restore the vault or create a new context."
+        ),
+    }
+    Ok(())
+}
+
 impl StorageReader for Vault {
     async fn read_data<T: DeserializeOwned + Unversionize + Named + Send>(
         &self,
@@ -284,6 +339,16 @@ impl StorageReader for Vault {
             .all_data_ids(&backup_type)
             .await
             .map_err(|e| anyhow!("Getting all ids failed: {e}"))
+    }
+
+    /// Returns the top-level entries of the wrapped storage. For a custodian backup vault the
+    /// folders are backup IDs rather than data types, because
+    /// [`VaultDataType::CustodianBackupData`] nests each data type under its backup ID.
+    async fn all_data_types(&self) -> anyhow::Result<RootEntries> {
+        self.storage
+            .all_data_types()
+            .await
+            .map_err(|e| anyhow!("Getting all data types failed: {e}"))
     }
 
     fn info(&self) -> String {
@@ -593,28 +658,239 @@ pub(crate) fn storage_prefix_safety(
 
 #[cfg(test)]
 pub mod tests {
-    use super::{Vault, VaultDataType};
+    mod backup_cleanup;
+
+    use super::{Vault, VaultDataType, adopt_custodian_context};
+    use crate::backup::custodian::CustodianContextAnchor;
     use crate::cryptography::encryption::{Encryption, PkeScheme, PkeSchemeType};
+    use crate::cryptography::signatures::{PrivateSigKey, gen_sig_keys};
     use crate::engine::base::derive_request_id;
     use crate::vault::keychain::KeychainProxy;
     use crate::vault::keychain::secretsharing::SecretShareKeychain;
     use crate::vault::storage::file::FileStorage;
     use crate::vault::storage::ram::RamStorage;
     use crate::vault::storage::{
-        Storage, StorageExt, StorageProxy, StorageReader, StorageReaderExt, StorageType,
+        Storage, StorageProxy, StorageType, read_custodian_context_anchor,
+        store_custodian_context_anchor, store_versioned_at_request_id,
+        tests::dummy_recovery_material_at_id,
     };
     use aes_prng::AesRng;
-    use kms_grpc::{EpochId, RequestId, rpc_types::PrivDataType};
+    use kms_grpc::{RequestId, rpc_types::PrivDataType};
     use rand::SeedableRng;
+    use std::collections::HashMap;
+
+    /// An uninitialized secret-sharing vault, an empty private storage and a signing key.
+    fn unanchored_fixture() -> (RamStorage, Vault, PrivateSigKey) {
+        let (_verf_key, sig_key) = gen_sig_keys(&mut AesRng::seed_from_u64(7));
+        let vault = Vault {
+            storage: StorageProxy::from(RamStorage::new()),
+            keychain: Some(KeychainProxy::SecretSharing(SecretShareKeychain::new(
+                AesRng::seed_from_u64(42),
+            ))),
+        };
+        (RamStorage::new(), vault, sig_key)
+    }
+
+    fn keychain_backup_id(vault: &Vault) -> anyhow::Result<RequestId> {
+        match vault.keychain.as_ref() {
+            Some(KeychainProxy::SecretSharing(k)) => k.get_current_backup_id(),
+            _ => panic!("expected a secret-sharing keychain"),
+        }
+    }
+
+    /// The anchored context is adopted, whatever else the vault holds.
+    #[tokio::test]
+    async fn adopts_the_anchored_context() {
+        let (mut priv_storage, mut vault, sig_key) = unanchored_fixture();
+        let anchored = RequestId::from_bytes([1; 32]);
+        let material = HashMap::from([
+            (anchored, dummy_recovery_material_at_id(&anchored, &sig_key)),
+            // Sorts above the anchored one, and is just as validly signed.
+            (
+                RequestId::from_bytes([9; 32]),
+                dummy_recovery_material_at_id(&RequestId::from_bytes([9; 32]), &sig_key),
+            ),
+        ]);
+        store_custodian_context_anchor(&mut priv_storage, &anchored)
+            .await
+            .unwrap();
+
+        adopt_custodian_context(&priv_storage, &mut vault, &material)
+            .await
+            .unwrap();
+
+        assert_eq!(keychain_backup_id(&vault).unwrap(), anchored);
+    }
+
+    /// Without an anchor nothing in the vault may be adopted, so no backup can be written under a
+    /// context the node never installed.
+    #[tokio::test]
+    async fn adopts_nothing_without_an_anchor() {
+        let (priv_storage, mut vault, sig_key) = unanchored_fixture();
+        let id = RequestId::from_bytes([9; 32]);
+        let material = HashMap::from([(id, dummy_recovery_material_at_id(&id, &sig_key))]);
+
+        adopt_custodian_context(&priv_storage, &mut vault, &material)
+            .await
+            .unwrap();
+
+        assert!(keychain_backup_id(&vault).is_err());
+    }
+
+    /// A keychain that arrives initialized is reset: without an anchor it keeps no context, whatever
+    /// the caller put there.
+    #[tokio::test]
+    async fn adopting_without_an_anchor_resets_an_initialized_keychain() {
+        let (priv_storage, _, sig_key) = unanchored_fixture();
+        let id = RequestId::from_bytes([9; 32]);
+        let mut vault = Vault {
+            storage: StorageProxy::from(RamStorage::new()),
+            keychain: Some(make_secret_share_keychain(id)),
+        };
+        let material = HashMap::from([(id, dummy_recovery_material_at_id(&id, &sig_key))]);
+
+        adopt_custodian_context(&priv_storage, &mut vault, &material)
+            .await
+            .unwrap();
+
+        assert!(keychain_backup_id(&vault).is_err());
+    }
+
+    /// An anchor whose material is gone leaves the node without a backup key rather than falling
+    /// back to another context.
+    #[tokio::test]
+    async fn adopts_nothing_when_the_anchored_material_is_missing() {
+        let (mut priv_storage, mut vault, sig_key) = unanchored_fixture();
+        let other = RequestId::from_bytes([9; 32]);
+        let material = HashMap::from([(other, dummy_recovery_material_at_id(&other, &sig_key))]);
+        store_custodian_context_anchor(&mut priv_storage, &RequestId::from_bytes([1; 32]))
+            .await
+            .unwrap();
+
+        adopt_custodian_context(&priv_storage, &mut vault, &material)
+            .await
+            .unwrap();
+
+        assert!(keychain_backup_id(&vault).is_err());
+    }
+
+    /// Replacing an anchor adds the new record before removing the old, so an interruption leaves
+    /// the previous context anchored rather than none.
+    #[tokio::test]
+    async fn a_failed_anchor_replacement_keeps_the_previous_context() {
+        use crate::vault::storage::ram::FailingRamStorage;
+        use crate::vault::storage::test_support::StorageEntry;
+        let first = RequestId::from_bytes([1; 32]);
+        let second = RequestId::from_bytes([2; 32]);
+        let mut storage = FailingRamStorage::new();
+        store_custodian_context_anchor(&mut storage, &first)
+            .await
+            .unwrap();
+        storage.set_fail_store_at(StorageEntry::new(
+            second,
+            None,
+            PrivDataType::CustodianContextAnchor.to_string(),
+        ));
+
+        assert!(
+            store_custodian_context_anchor(&mut storage, &second)
+                .await
+                .is_err()
+        );
+        assert_eq!(
+            read_custodian_context_anchor(&storage).await.unwrap(),
+            Some(first)
+        );
+    }
+
+    /// A sequence that cannot grow fails the replacement before anything is deleted.
+    #[tokio::test]
+    async fn an_exhausted_sequence_fails_closed() {
+        let first = RequestId::from_bytes([1; 32]);
+        let mut storage = RamStorage::new();
+        store_versioned_at_request_id(
+            &mut storage,
+            &first,
+            &CustodianContextAnchor {
+                context_id: first,
+                sequence: u64::MAX,
+            },
+            &PrivDataType::CustodianContextAnchor.to_string(),
+        )
+        .await
+        .unwrap();
+
+        assert!(
+            store_custodian_context_anchor(&mut storage, &RequestId::from_bytes([2; 32]))
+                .await
+                .is_err()
+        );
+        assert_eq!(
+            read_custodian_context_anchor(&storage).await.unwrap(),
+            Some(first)
+        );
+    }
+
+    /// A record under an id other than the context it names would survive every replacement, so
+    /// both reading and replacing the anchor refuse it.
+    #[tokio::test]
+    async fn a_misfiled_anchor_fails_closed() {
+        let mut storage = RamStorage::new();
+        store_versioned_at_request_id(
+            &mut storage,
+            &RequestId::from_bytes([1; 32]),
+            &CustodianContextAnchor {
+                context_id: RequestId::from_bytes([2; 32]),
+                sequence: 1,
+            },
+            &PrivDataType::CustodianContextAnchor.to_string(),
+        )
+        .await
+        .unwrap();
+
+        assert!(read_custodian_context_anchor(&storage).await.is_err());
+        assert!(
+            store_custodian_context_anchor(&mut storage, &RequestId::from_bytes([3; 32]))
+                .await
+                .is_err()
+        );
+    }
+
+    #[tokio::test]
+    async fn anchor_round_trips_and_is_replaced() {
+        let mut storage = RamStorage::new();
+        assert!(
+            read_custodian_context_anchor(&storage)
+                .await
+                .unwrap()
+                .is_none()
+        );
+
+        let first = RequestId::from_bytes([1; 32]);
+        store_custodian_context_anchor(&mut storage, &first)
+            .await
+            .unwrap();
+        assert_eq!(
+            read_custodian_context_anchor(&storage).await.unwrap(),
+            Some(first)
+        );
+
+        let second = RequestId::from_bytes([2; 32]);
+        store_custodian_context_anchor(&mut storage, &second)
+            .await
+            .unwrap();
+        assert_eq!(
+            read_custodian_context_anchor(&storage).await.unwrap(),
+            Some(second)
+        );
+    }
 
     /// Build a secret-sharing keychain whose current backup id is `current_backup_id`.
-    pub(crate) async fn make_secret_share_keychain(current_backup_id: RequestId) -> KeychainProxy {
+    pub(crate) fn make_secret_share_keychain(current_backup_id: RequestId) -> KeychainProxy {
         let mut rng = AesRng::seed_from_u64(42);
         let mut enc = Encryption::new(PkeSchemeType::MlKem512, &mut rng);
         let (_dec_key, enc_key) = enc.keygen().unwrap();
-        let mut keychain = SecretShareKeychain::<AesRng>::new::<FileStorage>(rng, None)
-            .await
-            .unwrap();
+        let mut keychain = SecretShareKeychain::new(rng);
         keychain.set_backup_enc_key(current_backup_id, enc_key);
         KeychainProxy::SecretSharing(keychain)
     }
@@ -654,7 +930,7 @@ pub mod tests {
         let custodian_context_id = derive_request_id("test_custodian_context").unwrap();
         let mut vault = Vault {
             storage: StorageProxy::from(backup_storage),
-            keychain: Some(make_secret_share_keychain(custodian_context_id).await),
+            keychain: Some(make_secret_share_keychain(custodian_context_id)),
         };
 
         // Store some data through the vault
@@ -681,363 +957,5 @@ pub mod tests {
             "Backup data file should be at <backup_root>/<custodian_context_id>/<data_type>/<request_id>, \
              expected: {expected_file:?}"
         );
-    }
-
-    /// `purge_backup` on a custodian vault must delete exactly the entries stored
-    /// under the given backup id — including the _current_ one, which
-    /// `remove_old_backup` refuses to touch (this is the cleanup path for a failed
-    /// backup setup) — and leave other backups intact.
-    #[tokio::test]
-    async fn test_purge_backup_custodian_vault_scoped_to_backup_id() {
-        let current_id = derive_request_id("purge_backup_current").unwrap();
-        let old_id = derive_request_id("purge_backup_old").unwrap();
-        let mut vault = Vault {
-            storage: StorageProxy::from(RamStorage::new()),
-            keychain: Some(make_secret_share_keychain(current_id).await),
-        };
-
-        let data_id = derive_request_id("purge_backup_data").unwrap();
-        let data_type = PrivDataType::SigningKey;
-        // Entry under the current backup id, written through the vault
-        vault
-            .store_bytes(b"current", &data_id, &data_type.to_string())
-            .await
-            .unwrap();
-        // Epoched entry under the current backup id
-        let mut rng = AesRng::seed_from_u64(44);
-        let epoch_id = EpochId::new_random(&mut rng);
-        vault
-            .store_bytes_at_epoch(
-                b"current_epoched",
-                &data_id,
-                &epoch_id,
-                &data_type.to_string(),
-            )
-            .await
-            .unwrap();
-        // Entry under an old backup id, written directly at its per-context path
-        let old_path = VaultDataType::CustodianBackupData(old_id, data_type).to_string();
-        vault
-            .storage
-            .store_bytes(b"old", &data_id, &old_path)
-            .await
-            .unwrap();
-
-        // Purging the old backup must not touch the current one
-        vault.purge_backup(&old_id).await.unwrap();
-        assert!(
-            !vault
-                .storage
-                .data_exists(&data_id, &old_path)
-                .await
-                .unwrap()
-        );
-        let current_path = VaultDataType::CustodianBackupData(current_id, data_type).to_string();
-        assert!(
-            vault
-                .storage
-                .data_exists(&data_id, &current_path)
-                .await
-                .unwrap()
-        );
-
-        // remove_old_backup refuses the current backup id, but purge_backup handles it
-        assert!(vault.remove_old_backup(&current_id).await.is_err());
-        vault.purge_backup(&current_id).await.unwrap();
-        assert!(
-            !vault
-                .storage
-                .data_exists(&data_id, &current_path)
-                .await
-                .unwrap()
-        );
-        assert!(
-            !vault
-                .storage
-                .data_exists_at_epoch(&data_id, &epoch_id, &current_path)
-                .await
-                .unwrap()
-        );
-
-        // Purging an id with no data is not an error
-        vault.purge_backup(&current_id).await.unwrap();
-    }
-
-    /// On a vault without a custodian keychain, `purge_backup` falls back to
-    /// deleting the data stored directly under the given id, leaving other ids intact.
-    #[tokio::test]
-    async fn test_purge_backup_unencrypted_vault() {
-        let backup_id = derive_request_id("purge_backup_unencrypted").unwrap();
-        let other_id = derive_request_id("purge_backup_unencrypted_other").unwrap();
-        let mut vault = Vault {
-            storage: StorageProxy::from(RamStorage::new()),
-            keychain: None,
-        };
-        let data_type = PrivDataType::SigningKey.to_string();
-        vault
-            .store_bytes(b"mine", &backup_id, &data_type)
-            .await
-            .unwrap();
-        vault
-            .store_bytes(b"other", &other_id, &data_type)
-            .await
-            .unwrap();
-
-        vault.purge_backup(&backup_id).await.unwrap();
-        assert!(
-            !vault
-                .storage
-                .data_exists(&backup_id, &data_type)
-                .await
-                .unwrap()
-        );
-        assert!(
-            vault
-                .storage
-                .data_exists(&other_id, &data_type)
-                .await
-                .unwrap()
-        );
-    }
-
-    /// Shared scenario: `remove_old_backup` must delete both non-epoched and epoched
-    /// entries under the old backup id, leave the current backup untouched and refuse
-    /// to delete the current backup id.
-    async fn remove_old_backup_scenario(storage: StorageProxy) {
-        let mut rng = AesRng::seed_from_u64(43);
-        let epoch_id = EpochId::new_random(&mut rng);
-        let old_backup_id = derive_request_id("old_custodian_context").unwrap();
-        let mut vault = Vault {
-            storage,
-            keychain: Some(make_secret_share_keychain(old_backup_id).await),
-        };
-
-        // Store a non-epoched and an epoched entry under the old backup id.
-        // Use store_bytes since it doesn't require encryption (just wraps the path)
-        let data_id = derive_request_id("test_backup_data").unwrap();
-        let non_epoched_type = PrivDataType::SigningKey.to_string();
-        let epoched_type = PrivDataType::FheKeyInfo.to_string();
-        vault
-            .store_bytes(b"old_non_epoched", &data_id, &non_epoched_type)
-            .await
-            .unwrap();
-        vault
-            .store_bytes_at_epoch(b"old_epoched", &data_id, &epoch_id, &epoched_type)
-            .await
-            .unwrap();
-
-        // Switch the keychain to a new custodian context and store the same entries under it
-        let current_backup_id = derive_request_id("current_custodian_context").unwrap();
-        if let Some(KeychainProxy::SecretSharing(keychain)) = vault.keychain.as_mut() {
-            let enc_key = keychain.get_backup_enc_key().unwrap();
-            keychain.set_backup_enc_key(current_backup_id, enc_key);
-        }
-        vault
-            .store_bytes(b"cur_non_epoched", &data_id, &non_epoched_type)
-            .await
-            .unwrap();
-        vault
-            .store_bytes_at_epoch(b"cur_epoched", &data_id, &epoch_id, &epoched_type)
-            .await
-            .unwrap();
-
-        // Removing the current backup id must fail
-        assert!(vault.remove_old_backup(&current_backup_id).await.is_err());
-
-        vault.remove_old_backup(&old_backup_id).await.unwrap();
-
-        // Everything under the old backup id must be gone
-        for cur_type in [PrivDataType::SigningKey, PrivDataType::FheKeyInfo] {
-            let old_prefix =
-                VaultDataType::CustodianBackupData(old_backup_id, cur_type).to_string();
-            assert!(
-                vault
-                    .storage
-                    .all_data_ids(&old_prefix)
-                    .await
-                    .unwrap()
-                    .is_empty(),
-                "non-epoched data for {cur_type} should be deleted"
-            );
-            assert!(
-                vault
-                    .storage
-                    .all_data_ids_from_all_epochs(&old_prefix)
-                    .await
-                    .unwrap()
-                    .is_empty(),
-                "epoched data for {cur_type} should be deleted"
-            );
-        }
-
-        // The current backup must be untouched
-        let cur_non_epoched =
-            VaultDataType::CustodianBackupData(current_backup_id, PrivDataType::SigningKey)
-                .to_string();
-        let cur_epoched =
-            VaultDataType::CustodianBackupData(current_backup_id, PrivDataType::FheKeyInfo)
-                .to_string();
-        assert!(
-            vault
-                .storage
-                .data_exists(&data_id, &cur_non_epoched)
-                .await
-                .unwrap()
-        );
-        assert!(
-            vault
-                .storage
-                .data_exists_at_epoch(&data_id, &epoch_id, &cur_epoched)
-                .await
-                .unwrap()
-        );
-    }
-
-    #[tokio::test]
-    async fn test_remove_old_backup_file() {
-        let temp_dir = tempfile::tempdir().unwrap();
-        let storage = FileStorage::new(Some(temp_dir.path()), StorageType::BACKUP, None).unwrap();
-        remove_old_backup_scenario(StorageProxy::from(storage)).await;
-    }
-
-    #[tokio::test]
-    async fn test_remove_old_backup_ram() {
-        remove_old_backup_scenario(StorageProxy::from(RamStorage::new())).await;
-    }
-
-    // Runs against the in-process S3 mock (see `storage::s3::mock_s3`), so it needs the
-    // features that gate `create_s3_storage` rather than the removed `s3_tests` feature.
-    #[cfg(all(feature = "non-wasm", feature = "testing"))]
-    #[tokio::test]
-    async fn test_remove_old_backup_s3() {
-        let storage = crate::vault::storage::s3::create_s3_storage(
-            StorageType::BACKUP,
-            std::stringify!(test_remove_old_backup_s3),
-        )
-        .await;
-        remove_old_backup_scenario(StorageProxy::from(storage)).await;
-    }
-
-    #[tokio::test]
-    async fn test_remove_old_backup_requires_custodian_vault() {
-        let mut vault = Vault {
-            storage: StorageProxy::from(RamStorage::new()),
-            keychain: None,
-        };
-        let backup_id = derive_request_id("some_backup").unwrap();
-        assert!(vault.remove_old_backup(&backup_id).await.is_err());
-    }
-
-    /// Regression test for the epoch-namespace gap in custodian context destruction.
-    /// Details can be found in https://github.com/zama-ai/kms-internal/issues/3110.
-    #[tokio::test]
-    async fn test_remove_old_backup_deletes_epoch_scoped_data() {
-        let temp_dir = tempfile::tempdir().unwrap();
-        let backup_storage =
-            FileStorage::new(Some(temp_dir.path()), StorageType::BACKUP, None).unwrap();
-
-        // Build a secret-sharing backup vault.
-        let mut rng = AesRng::seed_from_u64(42);
-        let mut enc = Encryption::new(PkeSchemeType::MlKem512, &mut rng);
-        let (_dec_key, enc_key) = enc.keygen().unwrap();
-        let keychain = SecretShareKeychain::<AesRng>::new::<FileStorage>(rng, None)
-            .await
-            .unwrap();
-        let mut vault = Vault {
-            storage: crate::vault::storage::StorageProxy::from(backup_storage),
-            keychain: Some(KeychainProxy::SecretSharing(keychain)),
-        };
-
-        // The custodian context we will retire, and the one that becomes current after rotation.
-        let old_backup_id = derive_request_id("old_custodian_context").unwrap();
-        let current_backup_id = derive_request_id("current_custodian_context").unwrap();
-
-        // `FheKeyInfo` is one of the epoch-scoped private data types.
-        let data_type = PrivDataType::FheKeyInfo;
-        let epoch_id = EpochId::from_bytes([7u8; 32]);
-
-        // While `old_backup_id` is the current context, back up two objects: one epoch-scoped
-        // (as the real backup-sync path does via `store_data_at_epoch`) and one non-epoch object
-        // (a positive control proving `remove_old_backup` actually runs and deletes what it sees).
-        set_current_backup_id(&mut vault, old_backup_id, enc_key.clone());
-        let epoch_id_item = derive_request_id("epoch_backup_item").unwrap();
-        vault
-            .store_bytes_at_epoch(
-                b"epoch_secret",
-                &epoch_id_item,
-                &epoch_id,
-                &data_type.to_string(),
-            )
-            .await
-            .unwrap();
-        let non_epoch_item = derive_request_id("non_epoch_backup_item").unwrap();
-        vault
-            .store_bytes(b"non_epoch_secret", &non_epoch_item, &data_type.to_string())
-            .await
-            .unwrap();
-
-        // Sanity: both objects are present under the old context before retirement.
-        let old_data_type =
-            VaultDataType::CustodianBackupData(old_backup_id, data_type).to_string();
-        assert!(
-            vault
-                .storage
-                .data_exists(&non_epoch_item, &old_data_type)
-                .await
-                .unwrap(),
-            "non-epoch backup should exist before destruction"
-        );
-        assert!(
-            vault
-                .storage
-                .data_exists_at_epoch(&epoch_id_item, &epoch_id, &old_data_type)
-                .await
-                .unwrap(),
-            "epoch-scoped backup should exist before destruction"
-        );
-
-        // Rotate: a new custodian context becomes current so the old one is allowed to be retired.
-        set_current_backup_id(&mut vault, current_backup_id, enc_key);
-
-        // Retire the old context. This is exactly what `delete_custodian_context_at_id` calls
-        // before deleting the recovery material and reporting a successful destruction.
-        vault.remove_old_backup(&old_backup_id).await.unwrap();
-
-        // Positive control: the non-epoch object was deleted, so `remove_old_backup` did run.
-        assert!(
-            vault
-                .storage
-                .all_data_ids(&old_data_type)
-                .await
-                .unwrap()
-                .is_empty(),
-            "non-epoch backup should have been deleted by remove_old_backup"
-        );
-
-        // The retirement guarantee: no backup object for the retired context may remain.
-        // The epoch namespace is enumerated separately from the non-epoch one, so this is
-        // what catches a regression back to deleting only what `all_data_ids` reports.
-        let leftover = vault
-            .storage
-            .all_data_ids_from_all_epochs(&old_data_type)
-            .await
-            .unwrap();
-        assert!(
-            leftover.is_empty(),
-            "destroying a custodian context must erase epoch-scoped backups, \
-             but these survived: {leftover:?}"
-        );
-    }
-
-    /// Point the vault's secret-sharing keychain at `backup_id` as the current custodian context.
-    fn set_current_backup_id(
-        vault: &mut Vault,
-        backup_id: RequestId,
-        enc_key: crate::cryptography::encryption::UnifiedPublicEncKey,
-    ) {
-        match vault.keychain.as_mut() {
-            Some(KeychainProxy::SecretSharing(kc)) => kc.set_backup_enc_key(backup_id, enc_key),
-            _ => panic!("expected a secret sharing keychain"),
-        }
     }
 }

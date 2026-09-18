@@ -188,7 +188,7 @@ async fn test_largecipher() -> Result<()> {
     let ct = Vec::from([1_u8; 100000]);
     let fhe_type = FheTypes::Uint32;
     let ct_format = kms_grpc::kms::v1::CiphertextFormat::default();
-    let client_address = alloy_primitives::Address::from_public_key(keys.client_pk.pk());
+    let client_address = keys.client_pk.address();
     let mut internal_client = Client::new(
         HashMap::from_iter(
             keys.server_keys
@@ -196,6 +196,7 @@ async fn test_largecipher() -> Result<()> {
                 .enumerate()
                 .map(|(i, key)| (i as u32 + 1, key.clone())),
         ),
+        HashMap::new(),
         client_address,
         Some(keys.client_sk.clone()),
         keys.params,

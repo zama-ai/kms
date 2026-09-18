@@ -28,6 +28,10 @@ impl ProtocolDescription for MaliciousRobustOpenDrop {
 
 #[async_trait]
 impl RobustOpen for MaliciousRobustOpenDrop {
+    fn num_rounds(_num_parties: usize) -> usize {
+        1
+    }
+
     async fn execute<Z: ErrorCorrect, B: BaseSessionHandles>(
         &self,
         _session: &B,
@@ -61,6 +65,10 @@ impl ProtocolDescription for MaliciousRobustOpenLie {
 }
 #[async_trait]
 impl RobustOpen for MaliciousRobustOpenLie {
+    fn num_rounds(_num_parties: usize) -> usize {
+        1
+    }
+
     async fn execute<Z: Ring + ErrorCorrect, B: BaseSessionHandles>(
         &self,
         session: &B,

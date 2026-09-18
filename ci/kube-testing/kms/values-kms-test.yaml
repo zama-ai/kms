@@ -7,7 +7,7 @@ kmsCore:
   # deployment_type/ci_run_id, escape commas for `helm --set` (`\,`) or layer another `-f` override.
   metricsLabels: "deployment_profile=kind-ci"
   image:
-    name: hub.zama.org/ghcr/zama-ai/kms/core-service
+    name: hub.zama.org/ghcr/zama-ai/kms/core-service-insecure
     tag:
   envFrom:
     configmap:

@@ -1,0 +1,178 @@
+use crate::vault::storage::{StorageProxy, ram::FailingRamStorage};
+use crate::vault::{Vault, VaultDataType};
+use kms_grpc::{RequestId, identifiers::EpochId, rpc_types::PrivDataType};
+use std::collections::HashMap;
+
+const DSEP_STORAGE_TEST: hashing::DomainSep = *b"STOR_TST";
+
+/// Identifies one stored item using the components of its path on disk.
+///
+/// Tests use these coordinates to configure fault points and describe expected storage events.
+///
+/// The containing storage supplies the `PUB` or `PRIV` root. The entry itself contains the remaining path parts. The
+/// writes covered by these tests use:
+///
+/// - `PUB/PublicKey/ae0…037` maps to `StorageEntry(ae0…037, None, "PublicKey")`.
+/// - `PRIV/FheKeyInfo/080…001/ae0…037` maps to `StorageEntry(ae0…037, Some(080…001), "FheKeyInfo")`.
+/// - `PUB/CRS/b91…30f` maps to `StorageEntry(b91…30f, None, "CRS")`.
+/// - `PRIV/CrsInfo/080…001/b91…30f` maps to `StorageEntry(b91…30f, Some(080…001), "CrsInfo")`.
+///
+/// In these pairs, the public half has no epoch and is shared across epochs. Each private half belongs to one epoch.
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+pub(crate) struct StorageEntry {
+    pub(crate) data_id: RequestId,
+    pub(crate) epoch_id: Option<EpochId>,
+    pub(crate) data_type: String,
+}
+
+impl StorageEntry {
+    pub(crate) fn new(
+        data_id: RequestId,
+        epoch_id: Option<EpochId>,
+        data_type: impl Into<String>,
+    ) -> Self {
+        Self {
+            data_id,
+            epoch_id,
+            data_type: data_type.into(),
+        }
+    }
+}
+
+/// Identifies one private backup item before the vault maps it to a backend data type.
+///
+/// For example, `testing/BACKUP/<backup>/FheKeyInfo/<epoch>/<data>` retains each path component
+/// here. [`Self::storage_entry`] maps the backup ID and private type to one backend type string.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub(crate) struct BackupEntry {
+    /// Custodian context whose backup contains the item.
+    pub(crate) backup_id: RequestId,
+    /// Request ID of the backed-up private item.
+    pub(crate) data_id: RequestId,
+    /// Epoch of the private item, when its type uses epoch storage.
+    pub(crate) epoch_id: Option<EpochId>,
+    /// Source private type before the vault adds the custodian context to the backend type.
+    pub(crate) data_type: PrivDataType,
+}
+
+impl BackupEntry {
+    /// Creates a structured private backup coordinate.
+    pub(crate) fn new(
+        backup_id: RequestId,
+        data_id: RequestId,
+        epoch_id: Option<EpochId>,
+        data_type: PrivDataType,
+    ) -> Self {
+        Self {
+            backup_id,
+            data_id,
+            epoch_id,
+            data_type,
+        }
+    }
+
+    /// Maps the backup coordinate to the flattened path components received by a backend.
+    pub(crate) fn storage_entry(self) -> StorageEntry {
+        StorageEntry::new(
+            self.data_id,
+            self.epoch_id,
+            VaultDataType::CustodianBackupData(self.backup_id, self.data_type).to_string(),
+        )
+    }
+}
+
+/// Returns the fault-injecting RAM backend inside `vault`.
+pub(crate) fn failing_ram_storage(vault: &Vault) -> &FailingRamStorage {
+    match &vault.storage {
+        StorageProxy::FailingRam(storage) => storage,
+        _ => panic!("expected a fault-injecting RAM backup vault"),
+    }
+}
+
+/// Returns the mutable fault-injecting RAM backend inside `vault`.
+pub(crate) fn failing_ram_storage_mut(vault: &mut Vault) -> &mut FailingRamStorage {
+    match &mut vault.storage {
+        StorageProxy::FailingRam(storage) => storage,
+        _ => panic!("expected a fault-injecting RAM backup vault"),
+    }
+}
+
+pub(crate) type EntryDigest = [u8; hashing::DIGEST_BYTES];
+
+pub(crate) fn digest_entry(bytes: &[u8]) -> EntryDigest {
+    hashing::hash_element(&DSEP_STORAGE_TEST, bytes)
+        .try_into()
+        .expect("SHAKE256 digest must have the configured length")
+}
+
+pub(crate) type StorageState = HashMap<StorageEntry, EntryDigest>;
+
+/// The mutating operations exposed by [`super::Storage`]. Stores never overwrite existing data.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub(crate) enum StorageOp {
+    Store,
+    Delete,
+}
+
+/// When an injected fault fires, relative to the mutation it guards.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum FaultPhase {
+    /// Reject the operation without touching the wrapped storage.
+    BeforeMutation,
+    /// Let the wrapped storage apply the change, then return an error. This models an
+    /// ambiguous result from a remote backend, where the caller cannot tell whether its
+    /// write or delete took effect.
+    AfterMutation,
+}
+
+/// What a storage operation did to the entry it named.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub(crate) enum StorageOutcome {
+    /// A store wrote new data.
+    Created,
+    /// A store found existing data and kept it.
+    SkippedExisting,
+    /// A delete removed data.
+    Deleted,
+    /// A delete returned success but left the intended entry intact, as when S3 receives the wrong, nonexistent key.
+    SucceededWithoutMutation,
+    /// The operation returned an error without changing storage.
+    FailedBeforeMutation,
+    /// The operation changed storage and then returned an error.
+    FailedAfterMutation,
+}
+
+/// A single store or delete, with the entry it named and what it did.
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+pub(crate) struct StorageEvent {
+    pub(crate) entry: StorageEntry,
+    pub(crate) operation: StorageOp,
+    pub(crate) outcome: StorageOutcome,
+}
+
+impl StorageEvent {
+    pub(crate) fn new(entry: StorageEntry, operation: StorageOp, outcome: StorageOutcome) -> Self {
+        Self {
+            entry,
+            operation,
+            outcome,
+        }
+    }
+}
+
+/// Assert that two event slices contain the same events, including duplicates, in any order.
+pub(crate) fn assert_same_events(actual: &[StorageEvent], expected: &[StorageEvent]) {
+    assert_eq!(
+        event_counts(actual),
+        event_counts(expected),
+        "actual events: {actual:#?}"
+    );
+}
+
+fn event_counts(events: &[StorageEvent]) -> HashMap<StorageEvent, usize> {
+    let mut counts = HashMap::new();
+    for event in events {
+        *counts.entry(event.clone()).or_default() += 1;
+    }
+    counts
+}

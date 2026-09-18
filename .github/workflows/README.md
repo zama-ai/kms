@@ -36,6 +36,7 @@ Release
 | [`rolling-upgrade-testing.yml`](rolling-upgrade-testing.yml) | Mixed-version perf tests for `thresholdWithEnclave` | Manual |
 | [`pr-preview-deploy.yml`](pr-preview-deploy.yml) | Ephemeral PR environments | Workflow call |
 | [`pr-preview-destroy.yml`](pr-preview-destroy.yml) | Cleanup PR environments | PR close, label removal, scheduled |
+| [`pr-images-cleanup.yml`](pr-images-cleanup.yml) | Cleanup PR images | PR push, PR close |
 | [`rust-lint.yml`](rust-lint.yml) | `cargo fmt --check` + `cargo clippy -D warnings` + `make lint-dylint` | PRs |
 | [`common-testing.yml`](common-testing.yml) | Reusable test runner | Workflow call |
 | [`wasm-testing.yml`](wasm-testing.yml) | WASM test pipeline | Workflow call |
@@ -160,6 +161,19 @@ Most test jobs depend on pre-generated FHE / signing material under `./test-mate
 
 ## Reusable Workflows
 
+### `rust-testing.yml`
+
+Calls `common-testing.yml` for the main sharded Rust test matrix and shares one
+EFS-backed test-material set across its jobs. On scheduled runs, it also runs the
+slow `kms` library tests whose names contain `nightly` in five shards and sends
+one aggregate Slack notification.
+
+### `kms-nightly.yml`
+
+Provides a manually dispatchable version of the same five-shard `kms` nightly
+suite for validation and test-timing investigations.
+
+
 ### `common-testing.yml`
 
 Steps (subset):
@@ -172,7 +186,7 @@ Steps (subset):
 | Swatinem rust-cache | Saves only on `main` |
 | Generate Test Material | Unless `skip-test-material: true` |
 | Build `kms-custodian` binary | Required by integration tests |
-| Run Tests | `cargo nextest --profile <ci\|ci-nightly> run …` |
+| Run Tests | `cargo nextest --profile ci run …` |
 | Upload JUnit + integration logs | On PR runs |
 | Slack notification | Scheduled runs only |
 
@@ -180,7 +194,7 @@ Inputs of note:
 - `crate-names` — `-p <crate> [-p …]` forwarded to cargo
 - `args-tests` — extra cargo / nextest args
 - `nextest-test-threads` — parallelism cap (empty = nextest default ≈ num-CPUs)
-- `nextest-profile` — `ci` (default) or `ci-nightly`
+- `notify-slack` — post the result for a scheduled caller, defaulting to `true`
 - `lfs` — pull Git-LFS objects on checkout
 - `skip-test-material` — skip material generation + custodian build
 - `runs-on`, `runner-volume` — runs-on slab selector
@@ -201,19 +215,34 @@ Coordinated build of all KMS images.
 
 ```mermaid
 graph LR
-    A[golden-image] --> B[core-client]
-    A --> C[core-service]
-    C --> D[enclave]
+    A[golden-image] --> B[kms-binaries]
+    A --> F[kms-binaries-insecure]
+    B --> C[core-client]
+    B --> D[core-service]
+    D --> E[core-service-enclave]
+    F --> G[core-client-insecure]
+    F --> H[core-service-insecure]
+    H --> I[core-service-enclave-insecure]
 ```
 
 | Job | Image | Runner |
 |-----|-------|--------|
-| `golden-image` | `kms/rust-golden-image` | 64cpu (x64/arm64) |
-| `core-client` | `kms/core-client` | 64cpu (x64/arm64) |
-| `core-service` | `kms/core-service` | 64cpu (x64/arm64) |
+| `golden-image` | `kms/rust-golden-image` | 64cpu AMD64 |
+| `kms-binaries` | `kms/kms-binaries` | 64cpu AMD64 |
+| `kms-binaries-insecure` | `kms/kms-binaries-insecure` | 64cpu AMD64 |
+| `core-client` | `kms/core-client` | 64cpu AMD64 |
+| `core-client-insecure` | `kms/core-client-insecure` | 64cpu AMD64 |
+| `core-service` | `kms/core-service` | 64cpu AMD64 |
+| `core-service-insecure` | `kms/core-service-insecure` | 64cpu AMD64 |
 | `enclave` | `kms/core-service-enclave` | AMD64 only |
+| `enclave-insecure` | `kms/core-service-enclave-insecure` | AMD64 only |
 
-Multi-arch builds, OIDC auth, GHCR + CGR publishing, S3-backed cache. Outputs `image_tag` plus enclave PCR values.
+The two binaries jobs compile the secure production flavor and the insecure test
+flavor. The downstream jobs only assemble runtime layers around the matching
+binaries. All published service and client jobs build the `prod` target. Release
+tags use fat LTO and other builds use thin LTO. Builds use OIDC auth, GHCR + CGR
+publishing, and an S3-backed cache. The workflow outputs `image_tag` and the
+insecure test enclave PCR values.
 
 ---
 
@@ -294,7 +323,7 @@ Two jobs: optional `docker-build`, then performance test execution against `aws-
 
 ## Rolling Upgrade Testing (`rolling-upgrade-testing.yml`)
 
-End-to-end test of partial rolling upgrades for `thresholdWithEnclave`: deploy 13 parties on an old image, upgrade two configurable batches to a new image, run Argo perf workflows in mixed-version states. Validates per-party AWS KMS policies, dual `trustedReleases` PCRs for TLS, and selective Helm upgrades via [`ci/scripts/rolling_upgrade.sh`](../../ci/scripts/rolling_upgrade.sh).
+End-to-end test of partial rolling upgrades for `thresholdWithEnclave`: deploy 13 parties from the legacy, pre-split repositories, upgrade two configurable batches to images from the insecure repositories, and run Argo perf workflows in mixed-version states. Validates per-party AWS KMS policies, dual `trustedReleases` PCRs for TLS, and selective Helm upgrades via [`ci/scripts/rolling_upgrade.sh`](../../ci/scripts/rolling_upgrade.sh).
 
 Manual dispatch only.
 

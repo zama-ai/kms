@@ -1,5 +1,5 @@
-use crate::cryptography::signatures::PrivateSigKey;
 use crate::cryptography::signing::SigningSchemeType;
+use crate::cryptography::signing::identity::NodeSigningIdentity;
 use crate::engine::base::{
     DSEP_PUBDATA_KEY, KeyGenMetadata, compute_info_decompression_keygen,
     stored_scheme_signatures_to_proto,
@@ -10,7 +10,7 @@ use crate::engine::centralized::central_kms::{
 };
 use crate::engine::keyset_configuration::InternalKeySetConfig;
 use crate::engine::traits::{BackupOperator, ContextManager};
-use crate::engine::utils::MetricedError;
+use crate::engine::utils::{MetricedError, signing_identity_for};
 use crate::engine::validation::{
     RequestIdParsingErr, parse_grpc_request_id, validate_key_gen_request,
 };
@@ -163,17 +163,7 @@ pub async fn key_gen_impl<
     };
 
     let meta_store = Arc::clone(&service.key_meta_map);
-    let sk = service
-            .base_kms
-            .sig_key()
-            .map_err(|e| {
-        MetricedError::new(
-            op_tag,
-            Some(req_id),
-            anyhow::anyhow!("Signing key is not present. This should only happen when server is booted in recovery mode: {}", e),
-            tonic::Code::FailedPrecondition,
-        )
-    })?;
+    let sk = signing_identity_for(&service.base_kms, &signing_schemes, op_tag, Some(req_id))?;
 
     let token = CancellationToken::new();
     {
@@ -340,7 +330,8 @@ pub async fn get_key_gen_result_impl<
                 // since no domain separation is used
                 key_digests: Vec::new(),
                 external_signature: vec![],
-                // TODO(#3078): populate multi-scheme signatures (replication step).
+                // A legacy result predates the per-scheme signatures, so it has
+                // none to report.
                 signatures: vec![],
             }))
         }
@@ -393,7 +384,7 @@ pub(crate) async fn key_gen_background<
     epoch_id: &EpochId,
     meta_store: Arc<RwLock<MetaStore<KeyGenMetadata>>>,
     crypto_storage: CentralizedCryptoMaterialStorage<PubS, PrivS>,
-    sk: Arc<PrivateSigKey>,
+    sk: Arc<NodeSigningIdentity>,
     schemes: Vec<SigningSchemeType>,
     params: DKGParams,
     internal_keyset_config: InternalKeySetConfig,
@@ -423,10 +414,7 @@ pub(crate) async fn key_gen_background<
             let keygen_result = match outcome {
                 Ok(result) => result,
                 Err(msg) => {
-                    // Purge any partial key material on cancellation
-                    if cancel_token.is_cancelled() {
-                        crypto_storage.purge_fhe_keys(req_id, epoch_id).await;
-                    }
+                    // Persistent writes start after generation, so this branch has nothing to purge.
                     let _ = update_err_req_in_meta_store(&meta_store, permit, msg, op_tag).await;
                     return;
                 }
@@ -484,9 +472,7 @@ pub(crate) async fn key_gen_background<
             let decompression_key = match outcome {
                 Ok(k) => k,
                 Err(msg) => {
-                    if cancel_token.is_cancelled() {
-                        crypto_storage.purge_fhe_keys(req_id, epoch_id).await;
-                    }
+                    // Persistent writes start after generation, so this branch has nothing to purge.
                     let _ = update_err_req_in_meta_store(&meta_store, permit, msg, op_tag).await;
                     return;
                 }
@@ -536,9 +522,10 @@ pub(crate) mod tests {
     use aes_prng::AesRng;
     use kms_grpc::{
         kms::v1::{FheParameter, KeyGenPreprocRequest},
-        rpc_types::alloy_to_protobuf_domain,
+        rpc_types::{PrivDataType, PubDataType, alloy_to_protobuf_domain},
     };
     use rand::SeedableRng;
+    use std::collections::HashMap;
 
     use crate::{
         cryptography::signatures::PublicSigKey,
@@ -550,7 +537,11 @@ pub(crate) mod tests {
                 service::{preprocessing_impl, tests::setup_central_test_kms},
             },
         },
-        vault::storage::ram::RamStorage,
+        vault::storage::{
+            ram::{FailingRamStorage, RamStorage},
+            store_versioned_at_request_and_epoch_id, store_versioned_at_request_id,
+            tests::TestType,
+        },
     };
 
     use super::*;
@@ -1057,6 +1048,111 @@ pub(crate) mod tests {
             .await
             .unwrap_err();
         assert_eq!(err.code(), tonic::Code::NotFound);
+    }
+
+    /// Cancellation does not remove key material that was present before generation started.
+    #[tokio::test]
+    async fn cancelled_keygen_keeps_pre_existing_material() {
+        let req_id = derive_request_id("cancelled_keygen_existing_material").unwrap();
+        let preproc_id = derive_request_id("cancelled_keygen_existing_preproc").unwrap();
+        let control_id = derive_request_id("cancelled_keygen_control").unwrap();
+        let epoch_id = *crate::consts::DEFAULT_EPOCH_ID;
+        let existing = TestType { i: 3183 };
+        let storage = CentralizedCryptoMaterialStorage::new(
+            FailingRamStorage::new(),
+            FailingRamStorage::new(),
+            None,
+            HashMap::new(),
+        );
+        {
+            let mut public = storage.inner.public_storage.lock().await;
+            for data_type in [
+                PubDataType::PublicKey,
+                PubDataType::ServerKey,
+                PubDataType::CompressedXofKeySet,
+            ] {
+                store_versioned_at_request_id(
+                    &mut *public,
+                    &req_id,
+                    &existing,
+                    &data_type.to_string(),
+                )
+                .await
+                .unwrap();
+            }
+            store_versioned_at_request_id(
+                &mut *public,
+                &control_id,
+                &TestType { i: 99 },
+                &PubDataType::CACert.to_string(),
+            )
+            .await
+            .unwrap();
+            public.clear_events();
+        }
+        {
+            let mut private = storage.inner.private_storage.lock().await;
+            store_versioned_at_request_and_epoch_id(
+                &mut *private,
+                &req_id,
+                &epoch_id,
+                &existing,
+                &PrivDataType::FhePrivateKey.to_string(),
+            )
+            .await
+            .unwrap();
+            store_versioned_at_request_id(
+                &mut *private,
+                &control_id,
+                &TestType { i: 99 },
+                &PrivDataType::ContextInfo.to_string(),
+            )
+            .await
+            .unwrap();
+            private.clear_events();
+        }
+        let public_before = storage.inner.public_storage.lock().await.state();
+        let private_before = storage.inner.private_storage.lock().await.state();
+
+        let meta_store = MetaStore::new_unlimited();
+        let permit = add_req_to_meta_store(&meta_store, &req_id, OP_KEYGEN_REQUEST)
+            .await
+            .unwrap();
+        let cancel_token = CancellationToken::new();
+        cancel_token.cancel();
+        let mut rng = AesRng::seed_from_u64(3183);
+        let (_, signing_key) = crate::cryptography::signatures::gen_sig_keys(&mut rng);
+
+        key_gen_background(
+            permit,
+            cancel_token,
+            &req_id,
+            &preproc_id,
+            &epoch_id,
+            meta_store.clone(),
+            storage.clone(),
+            Arc::new(signing_key.into()),
+            vec![SigningSchemeType::Ecdsa256k1],
+            crate::consts::TEST_PARAM,
+            InternalKeySetConfig::new(None, None).unwrap(),
+            dummy_domain(),
+            vec![],
+            OP_KEYGEN_REQUEST,
+        )
+        .await;
+
+        let public = storage.inner.public_storage.lock().await;
+        assert_eq!(public.state(), public_before);
+        assert!(public.events().is_empty());
+        drop(public);
+        let private = storage.inner.private_storage.lock().await;
+        assert_eq!(private.state(), private_before);
+        assert!(private.events().is_empty());
+        drop(private);
+        assert!(matches!(
+            meta_store.read().await.retrieve(&req_id),
+            Some(EntryState::Done(Err(message))) if message.contains("aborted")
+        ));
     }
 
     /// Preprocessing alone does not register an ongoing key generation, so an abort

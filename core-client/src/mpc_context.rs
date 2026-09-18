@@ -1,5 +1,3 @@
-#[cfg(feature = "testing")]
-use k256::pkcs8::EncodePrivateKey;
 use kms_grpc::{
     identifiers::ContextId,
     kms::v1::{DestroyMpcContextRequest, NewMpcContextRequest},
@@ -112,14 +110,9 @@ pub async fn create_test_context_info_from_core_config(
         let sk = signing_keys.get(&role.one_based()).ok_or_else(|| {
             anyhow::anyhow!("No signing key found for party ID {}", role.one_based())
         })?;
-        let sk_der = {
-            // Will be fixed as part of [#2781](https://github.com/zama-ai/kms-internal/issues/2781).
-            #[expect(deprecated)]
-            let ecdsa_sk = sk.sk();
-            ecdsa_sk.to_pkcs8_der()?
-        };
+        let sk_der = sk.to_pkcs8_der()?;
         let ca_keypair = rcgen::KeyPair::from_pkcs8_der_and_sign_algo(
-            &sk_der.as_bytes().into(),
+            &sk_der.as_slice().into(),
             &rcgen::PKCS_ECDSA_P256K1_SHA256,
         )?;
 
