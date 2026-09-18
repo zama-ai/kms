@@ -230,8 +230,19 @@ test('a request without a domain has no link, under either spelling of absence',
     assert.equal(record.domain, null);
     assert.equal(record.rejected_by, 'domain-required');
 
+    // `null` is the record's own spelling and travels through the helper unchanged. `undefined`
+    // cannot: to the helper it means "use the record's domain", which for this record is `null`
+    // again — so the export is called directly for that spelling.
     assert.throws(() => computeLink(record, undefined, null), /eip712_domain is required/);
-    assert.throws(() => computeLink(record, undefined, undefined), /eip712_domain is required/);
+    assert.throws(
+        () => compute_solana_user_decrypt_link_from_js(
+            solanaRequestFields(record),
+            record.handles,
+            transportKey(record),
+            undefined,
+        ),
+        /eip712_domain is required/,
+    );
 
     // The same fields under the reference domain are the reference link: nothing but the domain
     // was missing.
