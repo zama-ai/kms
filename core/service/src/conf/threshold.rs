@@ -12,6 +12,15 @@ use threshold_types::role::Role;
 use validator::{Validate, ValidationError};
 use x509_parser::pem::{Pem, parse_x509_pem};
 
+/// Configuration of the core-to-core interface, the peer-to-peer network between the KMS cores
+/// of one deployment that carries the MPC protocol messages.
+///
+/// With `tls` set, the node accepts connections only from the allowlisted peers whose
+/// certificates appear in `peers` or in an MPC context, and it rejects a message whose sender
+/// does not match the peer certificate. With [`TlsConf::Auto`], the node also checks the PCR
+/// values of the peer's attestation document against `trusted_releases`, so it only talks to
+/// peers that run an allowlisted release. See `docs/explanations/trust_model.md`.
+///
 /// WARNING: this may be printed for debugging and hence should NOT contain any secrets, such as private keys.
 /// If minor secrets needs to be added, then ensure fields are annotated with `#[serde(skip_serializing)]` to avoid accidentally diclosing them.
 #[derive(Serialize, Deserialize, Validate, Clone, Debug)]

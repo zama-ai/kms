@@ -123,6 +123,14 @@ impl Default for InternalConfig {
     }
 }
 
+/// Configuration of the service interface, the gRPC endpoint that the KMS connector calls.
+///
+/// This interface has no TLS, authentication or authorization. The deployment ensures that only
+/// the operator's own KMS connector can reach it and that it is never publicly reachable, so the
+/// server trusts every message it receives. MPC traffic between KMS cores uses the separate,
+/// mutually authenticated core-to-core interface in [`crate::conf::threshold::ThresholdPartyConf`].
+/// See `docs/explanations/trust_model.md`.
+///
 /// WARNING: this may be printed for debugging and hence should NOT contain any secrets, such as private keys.
 /// If minor secrets needs to be added, then ensure fields are annotated with `#[serde(skip_serializing)]` to avoid accidentally logging them.
 #[derive(Serialize, Deserialize, Validate, Clone, Debug)]
