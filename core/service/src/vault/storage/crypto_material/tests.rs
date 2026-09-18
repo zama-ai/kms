@@ -1,3 +1,5 @@
+mod write_guards;
+
 use crate::{
     backup::{
         custodian::{CustodianSetupMessagePayload, HEADER, InternalCustodianContext},
