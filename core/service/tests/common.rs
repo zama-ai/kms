@@ -1,8 +1,3 @@
-#![allow(
-    dead_code,
-    reason = "shared by several backward-compatibility test binaries, not all of which use every helper"
-)]
-
 use {
     backward_compatibility::TestType,
     backward_compatibility::load::{DataFormat, TestFailure, load_versioned_auxiliary},
@@ -10,6 +5,8 @@ use {
     tfhe_versionable::Unversionize,
 };
 
+// shared by several backward-compatibility test binaries, not all of which use every helper, so we allow dead code
+#[allow(dead_code)]
 pub(crate) fn load_and_unversionize<Data: Unversionize, P: AsRef<Path>, T: TestType>(
     dir: P,
     test: &T,
@@ -20,6 +17,8 @@ pub(crate) fn load_and_unversionize<Data: Unversionize, P: AsRef<Path>, T: TestT
     Data::unversionize(versioned).map_err(|e| test.failure(e, format))
 }
 
+// shared by several backward-compatibility test binaries, not all of which use every helper, so we allow dead code
+#[allow(dead_code)]
 pub(crate) fn load_and_unversionize_auxiliary<Data: Unversionize, P: AsRef<Path>, T: TestType>(
     dir: P,
     test: &T,

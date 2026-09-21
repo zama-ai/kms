@@ -18,6 +18,7 @@ use experiments::zk_utils::{
     nist_gen_crs, nist_gen_crs_from_params, nist_gen_proof, nist_gen_proof_inputs,
     nist_pke_params_from_dkg, nist_seeded_rng, nist_verify_batched, nist_verify_two_steps,
 };
+use std::hint::black_box;
 use threshold_execution::tfhe_internals::parameters::DKGParams;
 use utilities::{ALL_PARAMS, SAMPLE_SIZE};
 
@@ -28,7 +29,7 @@ fn bench_crs_gen(group: &mut BenchmarkGroup<'_, WallTime>, params: DKGParams) {
     group.bench_function("crs_gen", |b| {
         b.iter(|| {
             let mut rng = nist_seeded_rng(*b"BENCHCRS");
-            std::hint::black_box(nist_gen_crs_from_params(&pke_params, &mut rng));
+            black_box(nist_gen_crs_from_params(&pke_params, &mut rng));
         });
     });
 }
@@ -41,7 +42,7 @@ fn bench_proof_gen(group: &mut BenchmarkGroup<'_, WallTime>, params: DKGParams) 
 
     group.bench_function("load_verify_proof_gen", |b| {
         b.iter(|| {
-            std::hint::black_box(nist_gen_proof(
+            black_box(nist_gen_proof(
                 &crs,
                 &public_commit,
                 &private_commit,
@@ -53,7 +54,7 @@ fn bench_proof_gen(group: &mut BenchmarkGroup<'_, WallTime>, params: DKGParams) 
 
     group.bench_function("load_proof_proof_gen", |b| {
         b.iter(|| {
-            std::hint::black_box(nist_gen_proof(
+            black_box(nist_gen_proof(
                 &crs,
                 &public_commit,
                 &private_commit,
@@ -79,7 +80,7 @@ fn bench_verify_two_steps(group: &mut BenchmarkGroup<'_, WallTime>, params: DKGP
 
     group.bench_function("load_verify_verify_two_steps", |b| {
         b.iter(|| {
-            std::hint::black_box(nist_verify_two_steps(
+            black_box(nist_verify_two_steps(
                 &proof,
                 &crs,
                 &public_commit,
@@ -99,7 +100,7 @@ fn bench_verify_two_steps(group: &mut BenchmarkGroup<'_, WallTime>, params: DKGP
 
     group.bench_function("load_proof_verify_two_steps", |b| {
         b.iter(|| {
-            std::hint::black_box(nist_verify_two_steps(
+            black_box(nist_verify_two_steps(
                 &proof,
                 &crs,
                 &public_commit,
@@ -125,8 +126,7 @@ fn bench_verify_batched(group: &mut BenchmarkGroup<'_, WallTime>, params: DKGPar
 
     group.bench_function("load_proof_verify_batched", |b| {
         b.iter(|| {
-            std::hint::black_box(nist_verify_batched(&proof, &crs, &public_commit, &metadata))
-                .unwrap();
+            black_box(nist_verify_batched(&proof, &crs, &public_commit, &metadata)).unwrap();
         });
     });
 
@@ -140,8 +140,7 @@ fn bench_verify_batched(group: &mut BenchmarkGroup<'_, WallTime>, params: DKGPar
 
     group.bench_function("load_verify_verify_batched", |b| {
         b.iter(|| {
-            std::hint::black_box(nist_verify_batched(&proof, &crs, &public_commit, &metadata))
-                .unwrap();
+            black_box(nist_verify_batched(&proof, &crs, &public_commit, &metadata)).unwrap();
         });
     });
 }
