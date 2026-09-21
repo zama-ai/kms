@@ -4,7 +4,6 @@
 //! test environments with automatic cleanup.
 use crate::client::test_tools::setup_centralized;
 use crate::conf::{Keychain, SecretSharingKeychain};
-use crate::consts::SIGNING_KEY_ID;
 use crate::testing::helpers::create_test_material_manager;
 use crate::testing::material::{TestMaterialManager, TestMaterialSpec};
 use crate::testing::types::ServerHandle;
@@ -153,7 +152,7 @@ impl CentralizedTestEnvBuilder {
         let priv_storage = FileStorage::new(Some(material_dir.path()), StorageType::PRIV, None)?;
 
         // Ensure client signing/verification keys exist
-        ensure_client_keys_exist(Some(material_dir.path()), &SIGNING_KEY_ID, true).await;
+        ensure_client_keys_exist(Some(material_dir.path()), true).await;
 
         let backup_vault = if self.with_backup_vault {
             Some(build_backup_vault(material_dir.path(), self.with_custodian_keychain).await?)
@@ -212,17 +211,11 @@ async fn build_backup_vault(material_path: &Path, with_custodian_keychain: bool)
     )?);
 
     let keychain = if with_custodian_keychain {
-        let pub_proxy = StorageProxy::from(FileStorage::new(
-            Some(material_path),
-            StorageType::PUB,
-            None,
-        )?);
         Some(
             make_keychain_proxy(
                 &Keychain::SecretSharing(SecretSharingKeychain {}),
                 None,
                 None,
-                Some(&pub_proxy),
                 false,
             )
             .await?,

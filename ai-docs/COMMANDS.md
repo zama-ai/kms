@@ -42,13 +42,25 @@ make lint-dylint
 
 ## Testing
 
-Typical test run — uses the `testing` feature, includes unit and integration tests:
+Typical test run for the secure/default client surface — uses the `testing` feature and includes unit plus integration tests that do not rely on insecure client commands (some integration tests need Redis running locally):
 
 ```
 cargo test -F testing
 ```
 
-Skip the integration tests (unit tests only):
+Full `kms-core-client` e2e coverage, including insecure keygen/CRS client commands:
+
+```
+cargo test -p kms-core-client -F e2e
+```
+
+Threshold-heavy `kms-core-client` e2e coverage (PRSS + preprocessing + insecure fast paths):
+
+```
+cargo test -p kms-core-client -F e2e,slow_tests
+```
+
+Skip the integration tests that need Redis (unit tests only):
 
 ```
 cargo test -F testing --lib
@@ -143,7 +155,6 @@ Background and authoring workflow: [docs/developer/backward_compatibility.md](..
 make generate-test-material-all       # insecure + secure profiles, all party counts
 make generate-test-material-default   # secure profile, parties 4,13
 make generate-test-material-testing   # insecure profile, parties 4
-make validate-test-material           # validate material on disk
 make clean-test-material              # remove ./test-material
 ```
 
@@ -156,6 +167,10 @@ make build-compose-base
 make build-compose-threshold
 make build-compose-centralized
 ```
+
+`make build-compose-threshold` and `make build-compose-centralized` build a
+shared `kms-binaries-insecure:latest-dev` image first. They pass this image to
+the package Dockerfile through `KMS_BINARIES_IMAGE` to reuse the Rust build.
 
 Start / stop a 4-party threshold cluster (detached, waits for readiness; `stop` removes volumes and orphans):
 

@@ -156,8 +156,8 @@ pub enum InnerOperatorBackupOutputVersions {
 }
 
 /// The output from the operator after it has completed a backup.
-/// This data needs to be persisted on some public storage so that
-/// new operators can download and recover.
+/// It is persisted in the backup vault as part of [`RecoveryValidationMaterial`], so that a new
+/// operator can recover.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, Versionize)]
 #[versionize(InnerOperatorBackupOutputVersions)]
 pub struct InnerOperatorBackupOutput {

@@ -215,8 +215,8 @@ pub async fn decryption_threshold(
         new_epoch: 1,
     };
 
-    // Decryption needs pre-generated FHE keys (identified by `key_id`) plus signing keys. PRSS is bootstrapped at
-    // runtime via `.with_prss()` below.
+    // Decryption needs pre-generated FHE keys (identified by `key_id`) plus signing keys. The
+    // default epoch (PRSS) comes from the fixture with the key shares.
     let spec = if dkg_params == TEST_PARAM {
         TestMaterialSpec::threshold_basic(amount_parties)
     } else {
@@ -458,18 +458,18 @@ pub async fn run_decryption_threshold_optionally_fail(
             crate::client::tests::common::assert_plaintext(&msgs[i], plaintext);
         }
 
-        // A response without the deprecated scalar signature must be tolerated, as long as
+        // A response without the deprecated internal signature must be tolerated, as long as
         // enough of the remaining responses still carry a valid one.
         // TODO(0.16) remove along with the deprecated fields.
         if responses.len() > min_count_agree as usize {
-            let mut responses_wo_scalar_sig = responses.clone();
-            responses_wo_scalar_sig[0].signature = vec![];
+            let mut responses_wo_internal_sig = responses.clone();
+            responses_wo_internal_sig[0].signature = vec![];
             assert_eq!(
                 internal_client
                     .process_decryption_resp(
                         Some(req.clone()),
                         min_count_agree,
-                        &responses_wo_scalar_sig
+                        &responses_wo_internal_sig
                     )
                     .unwrap(),
                 received_plaintexts

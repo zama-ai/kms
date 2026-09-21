@@ -8,11 +8,11 @@ use crate::util::meta_store::{
     MetaStorePermit, update_err_req_in_meta_store, update_ok_req_in_meta_store,
 };
 use crate::vault::storage::crypto_material::{data_exists, data_exists_at_epoch};
-use crate::vault::storage::store_versioned_at_request_and_epoch_id;
 use crate::{
     anyhow_error_and_warn_log,
     backup::operator::RecoveryValidationMaterial,
     cryptography::signatures::PrivateSigKey,
+    cryptography::signing::seed::RootSigningSeed,
     engine::{
         base::{CrsGenMetadata, KeyGenMetadata, KmsFheKeyHandles},
         context::ContextInfo,
@@ -23,12 +23,13 @@ use crate::{
     vault::{
         Vault,
         storage::{
-            Storage, StorageExt,
+            Storage, StorageExt, StoreWriteOutcome,
             crypto_material::{
                 log_storage_success_optional_variant, traits::PrivateCryptoMaterialReader,
             },
-            delete_at_request_and_epoch_id, delete_at_request_id, read_all_data_versioned,
-            read_context_at_id, store_versioned_at_request_id,
+            delete_at_request_and_epoch_id, delete_at_request_id, delete_recovery_material_at_id,
+            read_all_data_versioned, read_context_at_id, read_custodian_context_anchor,
+            store_custodian_context_anchor, store_recovery_material,
         },
     },
 };
@@ -57,6 +58,8 @@ pub enum StorageError {
     Duplicate,
     #[error("Writing error")]
     Writing,
+    #[error("Write outcome could not be read back")]
+    Unresolved,
     #[error("Reading error")]
     Reading,
     #[error("Purging error")]
@@ -67,6 +70,66 @@ pub enum StorageError {
     Backup,
     #[error("Other error: {0}")]
     Other(String),
+}
+
+/// Result of one public or private store requested by [`CryptoMaterialStorage::write_all`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum MaterialWriteOutcome {
+    /// The caller supplied no value for this public or private slot.
+    NotRequested,
+    /// The backend either created the entry or kept an entry that already existed.
+    Stored(StoreWriteOutcome),
+    /// The backend returned an error and may or may not have applied the write.
+    Failed,
+}
+
+impl MaterialWriteOutcome {
+    /// Whether this public or private store completed without an error.
+    fn succeeded(self) -> bool {
+        !matches!(self, Self::Failed)
+    }
+
+    /// Whether rollback should remove this public or private entry.
+    fn should_purge(self, existed_before: bool) -> bool {
+        match self {
+            Self::Stored(StoreWriteOutcome::Created) => true,
+            Self::Stored(StoreWriteOutcome::SkippedExisting) | Self::NotRequested => false,
+            // A backend error may arrive after the write took effect. Never delete an entry that
+            // was already there; otherwise cleanup must remove any partial result.
+            Self::Failed => !existed_before,
+        }
+    }
+}
+
+/// Store outcomes for the optional public and private entries passed to `write_all`.
+///
+/// Threshold callers pair `PublicKey` with `FheKeyInfo`, or `CRS` with `CrsInfo`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct PairWriteOutcome {
+    public: MaterialWriteOutcome,
+    private: MaterialWriteOutcome,
+}
+
+impl PairWriteOutcome {
+    /// Whether both halves completed without a storage error.
+    fn succeeded(self) -> bool {
+        self.public.succeeded() && self.private.succeeded()
+    }
+}
+
+/// Returns whether private data is stored under both an epoch ID and a request ID.
+fn private_data_is_epoch_scoped(data_type: PrivDataType) -> bool {
+    match data_type {
+        PrivDataType::FheKeyInfo | PrivDataType::FhePrivateKey | PrivDataType::CrsInfo => true,
+        #[expect(deprecated)]
+        PrivDataType::SigningKey
+        | PrivDataType::SigningSeed
+        | PrivDataType::PrssSetup
+        | PrivDataType::PrssSetupCombined
+        | PrivDataType::ContextInfo
+        | PrivDataType::EpochData
+        | PrivDataType::CustodianContextAnchor => false,
+    }
 }
 
 /// How a caller of [`update_meta_store`] wants a failed backup to be recorded.
@@ -125,6 +188,10 @@ pub struct CryptoMaterialStorage<
 
     /// Optional backup vault for recovery purposes
     pub(crate) backup_vault: Option<Arc<Mutex<Vault>>>,
+
+    /// Serializes setup, destruction and recovery of the custodian context: each reads the anchor,
+    /// the keychain and the vault, then rewrites some of them.
+    pub(crate) custodian_context_lock: Arc<Mutex<()>>,
 }
 
 impl<PubS, PrivS> CryptoMaterialStorage<PubS, PrivS>
@@ -148,6 +215,7 @@ where
             public_storage,
             private_storage,
             backup_vault,
+            custodian_context_lock: Arc::new(Mutex::new(())),
         }
     }
 
@@ -221,7 +289,12 @@ where
         for cur_pub_data in pub_data_type {
             if !data_exists(&*pub_storage, req_id, &cur_pub_data.to_string())
                 .await
-                .map_err(|_| StorageError::Reading)?
+                .map_err(|e| {
+                    tracing::warn!(
+                        "Failed to check public {cur_pub_data} for request {req_id}: {e}"
+                    );
+                    StorageError::Reading
+                })?
             {
                 return Ok(false);
             }
@@ -229,7 +302,10 @@ where
         for cur_priv_data in priv_data_type {
             if !data_exists_at_epoch(&*priv_storage, req_id, epoch_id, &cur_priv_data.to_string())
                 .await
-                .map_err(|_| StorageError::Reading)?
+                .map_err(|e| {
+                    tracing::warn!("Failed to check private {cur_priv_data} for request {req_id} at epoch {epoch_id}: {e}");
+                    StorageError::Reading
+                })?
             {
                 return Ok(false);
             }
@@ -299,48 +375,14 @@ where
         .await
     }
 
-    /// Handle the storage of data after generation, and update the meta store accordingly.
-    /// This methods assumes that `req_id` has already been added to the meta store and will fail if not.
+    /// Stores up to one public entry and one private entry, then optionally updates the backup.
     ///
-    /// WARNING: this method is not safe to call concurrently with the _same_ arguments.
-    /// However, this should never happen, since since any `req_id` should have been added
-    /// to the meta store as pending before this call, which can only be done for a fresh `req_id`.
-    #[expect(clippy::too_many_arguments)]
-    async fn handle_persistent_and_meta_storage<
-        'a,
-        PubData: Serialize + Versionize + Named + Send + Sync,
-        PrivData: Serialize + Versionize + Named + Send + Sync,
-        MetaT: Clone,
-    >(
-        &self,
-        req_id: &RequestId,
-        epoch_id: Option<&EpochId>,
-        pub_data: Option<(&'a PubData, PubDataType)>,
-        priv_data: Option<(&'a PrivData, PrivDataType)>,
-        meta_data: MetaT,
-        meta_store: Arc<RwLock<MetaStore<MetaT>>>,
-        permit: MetaStorePermit<MetaT>,
-        op_metric_tag: &'static str,
-    ) -> Result<(), StorageError>
-    where
-        <PubData as Versionize>::Versioned<'a>: Send + Sync,
-        <PrivData as Versionize>::Versioned<'a>: Send + Sync,
-    {
-        let res = self
-            .write_all(req_id, epoch_id, pub_data, priv_data, true, op_metric_tag)
-            .await;
-        update_meta_store(
-            res,
-            meta_data,
-            &meta_store,
-            permit,
-            BackupPolicy::BackupIsBestEffort,
-            op_metric_tag,
-        )
-        .await
-    }
-
-    /// General method for handling the storage of both public and private material along with the backup.
+    /// Threshold callers use this for `PublicKey`/`FheKeyInfo` and `CRS`/`CrsInfo` pairs.
+    /// If one requested half exists, the method preserves it and stores the missing half. The
+    /// caller must ensure that the two halves belong together.
+    /// Resharing passes only the new epoch's private half. If a store fails, cleanup preserves
+    /// entries that existed before the call and removes entries created during the call.
+    /// Callers must serialize calls that can write the same entries until this method returns.
     pub(in crate::vault::storage::crypto_material) async fn write_all<
         'a,
         PubData: Serialize + Versionize + Named + Send + Sync,
@@ -381,11 +423,40 @@ where
         {
             return Err(StorageError::Duplicate);
         }
+
+        // Capture existence before either store starts. A backend can apply a write and then
+        // return an error, so a later query cannot tell whether this call created the entry.
+        let public_existed = if pub_type.is_empty() {
+            false
+        } else {
+            self.data_exists(req_id, &pub_type, &[])
+                .await
+                .map_err(|e| StorageError::Other(e.to_string()))?
+        };
+        let private_existed = match priv_type.first() {
+            None => false,
+            Some(private_type) => {
+                if private_data_is_epoch_scoped(*private_type) {
+                    match epoch_id {
+                        Some(epoch_id) => {
+                            self.data_exists_at_epoch(req_id, epoch_id, &[], &priv_type)
+                                .await?
+                        }
+                        None => false,
+                    }
+                } else {
+                    self.data_exists(req_id, &[], &priv_type)
+                        .await
+                        .map_err(|e| StorageError::Other(e.to_string()))?
+                }
+            }
+        };
+
         // Now proceed with writing
-        if self
+        let write_outcome = self
             .write_data_pair(req_id, epoch_id, pub_data, priv_data)
-            .await
-        {
+            .await;
+        if write_outcome.succeeded() {
             if update_backup {
                 // If storage is ok, then update the backup
                 if !self.update_backup_vault(false, op_metric_tag).await {
@@ -394,11 +465,25 @@ where
                 }
             }
         } else {
-            // If storage write failed then purge
-            let pub_types: Vec<PubDataType> = pub_type.into_iter().collect();
-            let priv_types: Vec<PrivDataType> = priv_type.into_iter().collect();
+            let public_types_to_purge: &[PubDataType] =
+                if write_outcome.public.should_purge(public_existed) {
+                    &pub_type
+                } else {
+                    &[]
+                };
+            let private_types_to_purge: &[PrivDataType] =
+                if write_outcome.private.should_purge(private_existed) {
+                    &priv_type
+                } else {
+                    &[]
+                };
             if !self
-                .purge_material(req_id, epoch_id, &pub_types, &priv_types)
+                .purge_material(
+                    req_id,
+                    epoch_id,
+                    public_types_to_purge,
+                    private_types_to_purge,
+                )
                 .await
             {
                 return Err(StorageError::Purging);
@@ -409,16 +494,6 @@ where
             "Successfully stored public data element {pub_type:?} and private data element {priv_type:?} under the handle {req_id} with epoch {epoch_id:?} for metric {op_metric_tag}",
         );
         Ok(())
-    }
-
-    pub(crate) async fn purge_crs_material(&self, req_id: &RequestId, epoch_id: &EpochId) -> bool {
-        self.purge_material(
-            req_id,
-            Some(epoch_id),
-            &[PubDataType::CRS],
-            &[PrivDataType::CrsInfo],
-        )
-        .await
     }
 
     /// Helper method to purge material.
@@ -455,52 +530,39 @@ where
         let f_priv = async {
             let mut failed = false;
             for cur_priv_type in private_types {
-                match cur_priv_type {
-                    // For FHE keys and CRS info, we need to delete at epoch level
-                    PrivDataType::FheKeyInfo
-                    | PrivDataType::FhePrivateKey
-                    | PrivDataType::CrsInfo => {
-                        if let Some(inner_epoch) = epoch_id {
-                            let del_res = delete_at_request_and_epoch_id(
-                                &mut (*priv_storage),
-                                req_id,
-                                inner_epoch,
-                                &cur_priv_type.to_string(),
-                            )
-                            .await;
-                            if let Err(e) = &del_res {
-                                failed = true;
-                                tracing::warn!(
-                                    "Failed to delete private type {cur_priv_type} for request {req_id} and epoch {inner_epoch}: {e}"
-                                );
-                            }
-                        } else {
-                            failed = true;
-                            tracing::error!(
-                                "Epoch ID is required for deleting private type {cur_priv_type} for request {req_id}, but it is not provided. Skipping deletion of this type."
-                            );
-                        }
-                    }
-                    // For other private data, we can delete at request level
-                    // Observe we make the types explicit to ensure a compile error when a new type is added
-                    #[expect(deprecated)]
-                    PrivDataType::SigningKey
-                    | PrivDataType::PrssSetup
-                    | PrivDataType::PrssSetupCombined
-                    | PrivDataType::ContextInfo
-                    | PrivDataType::EpochData => {
-                        let del_res = delete_at_request_id(
+                if private_data_is_epoch_scoped(*cur_priv_type) {
+                    if let Some(inner_epoch) = epoch_id {
+                        let del_res = delete_at_request_and_epoch_id(
                             &mut (*priv_storage),
                             req_id,
+                            inner_epoch,
                             &cur_priv_type.to_string(),
                         )
                         .await;
                         if let Err(e) = &del_res {
                             failed = true;
                             tracing::warn!(
-                                "Failed to delete private type {cur_priv_type} for request {req_id}: {e}"
+                                "Failed to delete private type {cur_priv_type} for request {req_id} and epoch {inner_epoch}: {e}"
                             );
                         }
+                    } else {
+                        failed = true;
+                        tracing::error!(
+                            "Epoch ID is required for deleting private type {cur_priv_type} for request {req_id}, but it is not provided. Skipping deletion of this type."
+                        );
+                    }
+                } else {
+                    let del_res = delete_at_request_id(
+                        &mut (*priv_storage),
+                        req_id,
+                        &cur_priv_type.to_string(),
+                    )
+                    .await;
+                    if let Err(e) = &del_res {
+                        failed = true;
+                        tracing::warn!(
+                            "Failed to delete private type {cur_priv_type} for request {req_id}: {e}"
+                        );
                     }
                 }
             }
@@ -512,10 +574,9 @@ where
         !(pub_failed || priv_failed)
     }
 
-    /// Write both public and private data to storage.
-    /// Returns true if both writes are successful, false otherwise.
+    /// Stores the optional public and private entries and retains each store outcome.
     /// WARNING: Does NOT validate the type of `pub_data` matches the `pub_data_type` nor `priv_data` matches `priv_data_type`.
-    pub(in crate::vault::storage::crypto_material) async fn write_data_pair<
+    async fn write_data_pair<
         'a,
         PubData: Serialize + Versionize + Named + Send + Sync,
         PrivData: Serialize + Versionize + Named + Send + Sync,
@@ -525,30 +586,38 @@ where
         epoch_id: Option<&EpochId>,
         pub_data: Option<(&'a PubData, PubDataType)>,
         priv_data: Option<(&'a PrivData, PrivDataType)>,
-    ) -> bool
+    ) -> PairWriteOutcome
     where
         <PubData as Versionize>::Versioned<'a>: Send + Sync,
         <PrivData as Versionize>::Versioned<'a>: Send + Sync,
     {
         let pub_write = async {
             let Some((pub_d, pub_t)) = pub_data else {
-                return true;
+                return MaterialWriteOutcome::NotRequested;
             };
-            self.write_pub_data(req_id, pub_d, &pub_t).await
+            match self.write_pub_data(req_id, pub_d, &pub_t).await {
+                Some(outcome) => MaterialWriteOutcome::Stored(outcome),
+                None => MaterialWriteOutcome::Failed,
+            }
         };
         let priv_write = async {
             let Some((priv_d, priv_t)) = priv_data else {
-                return true;
+                return MaterialWriteOutcome::NotRequested;
             };
-            self.write_priv_data(req_id, epoch_id, priv_d, &priv_t)
+            match self
+                .write_priv_data(req_id, epoch_id, priv_d, &priv_t)
                 .await
+            {
+                Some(outcome) => MaterialWriteOutcome::Stored(outcome),
+                None => MaterialWriteOutcome::Failed,
+            }
         };
-        let (pub_ok, priv_ok) = tokio::join!(pub_write, priv_write);
-        pub_ok && priv_ok
+        let (public, private) = tokio::join!(pub_write, priv_write);
+        PairWriteOutcome { public, private }
     }
 
     /// Write data to the public storage backend.
-    /// Returns true if the write is successful, false otherwise.
+    /// Returns the store outcome, or `None` if the write fails.
     /// WARNING: Does NOT validate the type of `pub_data` matches the `pub_data_type`.
     pub(in crate::vault::storage::crypto_material) async fn write_pub_data<
         'a,
@@ -558,30 +627,28 @@ where
         req_id: &RequestId,
         pub_data: &'a PubData,
         pub_data_type: &PubDataType,
-    ) -> bool
+    ) -> Option<StoreWriteOutcome>
     where
         <PubData as Versionize>::Versioned<'a>: Send + Sync,
     {
         let mut pub_storage = self.public_storage.lock().await;
         // Observe that there is no epoched version for public data
-        if let Err(e) = store_versioned_at_request_id(
-            &mut *pub_storage,
-            req_id,
-            pub_data,
-            &pub_data_type.to_string(),
-        )
-        .await
+        match pub_storage
+            .store_data(pub_data, req_id, &pub_data_type.to_string())
+            .await
         {
-            tracing::error!(
-                "Failed to store public type {pub_data_type} for request {req_id}: {e}"
-            );
-            return false;
+            Ok(outcome) => Some(outcome),
+            Err(e) => {
+                tracing::error!(
+                    "Failed to store public type {pub_data_type} for request {req_id}: {e}"
+                );
+                None
+            }
         }
-        true
     }
 
     /// Write data to the private storage backend.
-    /// Returns true if the write is successful, false otherwise.
+    /// Returns the store outcome, or `None` if the write fails.
     /// WARNING: Does NOT validate the type of `priv_data` matches the `priv_data_type`.
     pub(in crate::vault::storage::crypto_material) async fn write_priv_data<
         'a,
@@ -592,63 +659,55 @@ where
         epoch_id: Option<&EpochId>,
         priv_data: &'a PrivData,
         priv_data_type: &PrivDataType,
-    ) -> bool
+    ) -> Option<StoreWriteOutcome>
     where
         <PrivData as Versionize>::Versioned<'a>: Send + Sync,
     {
         let mut priv_storage = self.private_storage.lock().await;
-        match priv_data_type {
-            // For FHE keys and CRS info, we need to delete at epoch level
-            PrivDataType::FheKeyInfo | PrivDataType::FhePrivateKey | PrivDataType::CrsInfo => {
-                if let Some(inner_epoch) = epoch_id {
-                    if let Err(e) = store_versioned_at_request_and_epoch_id(
-                        &mut *priv_storage,
+        if private_data_is_epoch_scoped(*priv_data_type) {
+            if let Some(inner_epoch) = epoch_id {
+                match priv_storage
+                    .store_data_at_epoch(
+                        priv_data,
                         req_id,
                         inner_epoch,
-                        priv_data,
                         &priv_data_type.to_string(),
                     )
                     .await
-                    {
+                {
+                    Ok(outcome) => Some(outcome),
+                    Err(e) => {
                         tracing::error!(
                             "Failed to store private type {priv_data_type} for request {req_id} and epoch {inner_epoch}: {e}"
                         );
-                        return false;
+                        None
                     }
-                } else {
-                    tracing::error!(
-                        "Epoch ID is required for writing private type {priv_data_type} for request {req_id}, but it is not provided. Skipping writing this type."
-                    );
-                    return false;
                 }
+            } else {
+                tracing::error!(
+                    "Epoch ID is required for writing private type {priv_data_type} for request {req_id}, but it is not provided. Skipping writing this type."
+                );
+                None
             }
-            // For other private data, we can delete at request level
-            // Observe we make the types explicit to ensure a compile error when a new type is added
-            #[expect(deprecated)]
-            PrivDataType::SigningKey
-            | PrivDataType::PrssSetup
-            | PrivDataType::PrssSetupCombined
-            | PrivDataType::ContextInfo
-            | PrivDataType::EpochData => {
-                if let Err(e) = store_versioned_at_request_id(
-                    &mut *priv_storage,
-                    req_id,
-                    priv_data,
-                    &priv_data_type.to_string(),
-                )
+        } else {
+            match priv_storage
+                .store_data(priv_data, req_id, &priv_data_type.to_string())
                 .await
-                {
+            {
+                Ok(outcome) => Some(outcome),
+                Err(e) => {
                     tracing::error!(
                         "Failed to store private type {priv_data_type} for request {req_id}: {e}"
                     );
-                    return false;
+                    None
                 }
             }
-        };
-        true
+        }
     }
 
-    /// Helper function to write the FHE keys to storage, along with updating the cache if the storage operation was successful.
+    /// Stores a newly generated FHE key and caches its private material.
+    /// Rejects existing FHE public material or a private entry at this epoch rather than mixing key material.
+    /// Callers must serialize writes to the same key until this method returns.
     ///
     /// Note that backup errors are not treated as fatal since the keys are safely stored.
     #[expect(clippy::too_many_arguments)]
@@ -668,6 +727,36 @@ where
     where
         for<'a> <PrivKeyData as Versionize>::Versioned<'a>: Send + Sync,
     {
+        // Unlike resharing, a complete key write must not reuse either half of an old pair.
+        for public_type in [
+            PubDataType::PublicKey,
+            PubDataType::ServerKey,
+            PubDataType::CompressedXofKeySet,
+        ] {
+            if self
+                .data_exists(key_id, &[public_type], &[])
+                .await
+                .map_err(|e| {
+                    tracing::warn!("Failed to check {public_type} for key {key_id}: {e}");
+                    StorageError::Other(e.to_string())
+                })?
+            {
+                tracing::warn!(
+                    "Refusing FHE key write: {public_type} already exists for key {key_id}"
+                );
+                return Err(StorageError::Duplicate);
+            }
+        }
+        let private_exists = self
+            .data_exists_at_epoch(key_id, epoch_id, &[], &[priv_data_type])
+            .await?;
+        if private_exists {
+            tracing::warn!(
+                "Refusing FHE key write: {priv_data_type} already exists for key {key_id} at epoch {epoch_id}"
+            );
+            return Err(StorageError::Duplicate);
+        }
+
         let special_pub_type = match &fhe_key_set {
             PublicKeySet::Uncompressed(_) => PubDataType::ServerKey,
             PublicKeySet::Compressed { .. } => PubDataType::CompressedXofKeySet,
@@ -732,7 +821,8 @@ where
                 }
             }
             Err(_) => {
-                // Clean up the "special" key data stored in the first step, in case the second storage step fails, to avoid having orphaned data
+                // The first write created the special public key; an existing entry would have
+                // made `write_all` return `Duplicate`. Remove it if the paired write fails.
                 if !self
                     .purge_material(key_id, Some(epoch_id), &[special_pub_type], &[])
                     .await
@@ -748,9 +838,9 @@ where
         res
     }
 
-    /// Write the CRS to public and private storage and update the meta
-    /// store with the outcome. On a write failure the partial data is
-    /// purged before the error is returned.
+    /// Stores a newly generated CRS and records the outcome in the meta store.
+    /// Rejects an existing public CRS or private metadata at the requested epoch.
+    /// The request must be pending in the meta store; callers must serialize writes to the same CRS.
     #[allow(clippy::too_many_arguments)]
     pub(crate) async fn write_crs(
         &self,
@@ -762,14 +852,42 @@ where
         permit: MetaStorePermit<CrsGenMetadata>,
         op_metric_tag: &'static str,
     ) -> Result<(), StorageError> {
-        self.handle_persistent_and_meta_storage(
-            crs_id,
-            Some(epoch_id),
-            Some((&pp, PubDataType::CRS)),
-            Some((&crs_info.clone(), PrivDataType::CrsInfo)),
+        let res = async {
+            if self
+                .data_exists(crs_id, &[PubDataType::CRS], &[])
+                .await
+                .map_err(|e| {
+                    tracing::warn!("Failed to check public CRS {crs_id}: {e}");
+                    StorageError::Other(e.to_string())
+                })?
+            {
+                tracing::warn!("Refusing CRS write: public CRS {crs_id} already exists");
+                return Err(StorageError::Duplicate);
+            }
+            if self
+                .data_exists_at_epoch(crs_id, epoch_id, &[], &[PrivDataType::CrsInfo])
+                .await?
+            {
+                tracing::warn!("Refusing CRS write: CrsInfo already exists for CRS {crs_id} at epoch {epoch_id}");
+                return Err(StorageError::Duplicate);
+            }
+            self.write_all(
+                crs_id,
+                Some(epoch_id),
+                Some((&pp, PubDataType::CRS)),
+                Some((&crs_info, PrivDataType::CrsInfo)),
+                true,
+                op_metric_tag,
+            )
+            .await
+        }
+        .await;
+        update_meta_store(
+            res,
             crs_info,
-            meta_store,
+            &meta_store,
             permit,
+            BackupPolicy::BackupIsBestEffort,
             op_metric_tag,
         )
         .await
@@ -804,27 +922,22 @@ where
         .await
     }
 
-    /// Write the backup keys to the storage and update the meta store.
-    /// This methods writes all the material associated with backups to storage,
-    /// and updates the meta store accordingly.
+    /// Persist the recovery material of a new custodian context and update the meta store.
     ///
-    /// This means that the public encryption key for backup is written to the public storage.
-    /// The same goes for the commitments to the custodian shares and the recovery request.
-    /// Finally the custodian context, with the information about the custodian nodes, is also written to public storage.
-    /// The private key for decrypting backups is written to the private storage.
+    /// The material goes to the backup vault unencrypted; see [`store_recovery_material`].
     ///
-    /// NOTE: Unlike most other storage methods, this one WILL fail if there is no backup vault or if backup fails,
-    /// since the goal of this method is exactly to setup a backup. On failure the material of the
-    /// failed setup — both the backup-vault entries and the public recovery material — is purged,
-    /// except on a duplicate, where nothing was written and what is stored under `req_id`
-    /// pre-existed this call. Callers that also need the keychain rolled back must do that
-    /// themselves; see `rollback_failed_custodian_setup`.
+    /// The anchor in private storage is written last: it is what makes this context the one the
+    /// node adopts after a restart, so an earlier failure leaves the previous context in place.
     ///
-    /// Precondition: when the backup vault is configured with a `SecretSharing`
-    /// keychain, the caller is expected to have set the backup encryption key
-    /// for `req_id` on the keychain before calling this method (see
-    /// `inner_new_custodian_context`); the backup pass inside
-    /// `write_all` requires it to be in place to encrypt private data.
+    /// NOTE: Unlike most other storage methods, this one WILL fail if there is no backup vault,
+    /// since the goal of this method is exactly to setup a backup. The caller claims `req_id`
+    /// before writing under it, so nothing there predates this call. On failure the material of
+    /// the failed setup is purged. Two cases keep it. On a duplicate nothing was written, so what
+    /// is stored under `req_id` pre-existed this call. When a failed anchor write cannot be read
+    /// back, the anchor may name this context: the call fails with [`StorageError::Unresolved`]
+    /// and the caller must make no backups until a restart reads the anchor. An anchor write that
+    /// reports an error but took effect is a success. Callers that also need the keychain rolled
+    /// back must do that themselves; see `rollback_failed_custodian_setup`.
     pub async fn write_backup_keys(
         &self,
         recovery_material: RecoveryValidationMaterial,
@@ -842,46 +955,60 @@ where
                 return Err(StorageError::Backup);
             }
         };
-        let res = self
-            .write_all::<RecoveryValidationMaterial, RecoveryValidationMaterial>(
-                &req_id,
-                None,
-                Some((&recovery_material, PubDataType::RecoveryMaterial)),
-                None,
-                true,
-                OP_NEW_CUSTODIAN_CONTEXT,
-            )
-            .await;
-        if let Err(write_err) = &res {
-            // Note that we also care about a BackupError here, since we are actually setting up the initial backup.
-            // Purge what this setup wrote to the backup vault — the caller re-encrypts the current
-            // material into the vault under `req_id` before this method, so on failure those entries
-            // must be rolled back. The one exception is a duplicate: then this call wrote nothing and
-            // the material under `req_id` pre-existed (possibly a live backup), so it must be kept.
-            // The write error is kept in all cases: neither a successful purge nor a purge failure
-            // (which is only logged) may mask the root cause recorded in the meta store.
-            if !matches!(write_err, StorageError::Duplicate)
-                && let Err(e) = vault.lock().await.purge_backup(&req_id).await
-            {
+        let (res, purge) = match self
+            .write_recovery_material(vault, &req_id, &recovery_material)
+            .await
+        {
+            Ok(()) => {
+                let mut private_storage = self.private_storage.lock().await;
+                match store_custodian_context_anchor(&mut *private_storage, &req_id).await {
+                    Ok(()) => (Ok(()), false),
+                    // Storage may apply a write and still report an error, so the anchor decides.
+                    // If it names this context, the setup succeeded. If it names another, the
+                    // material can go. If it cannot be read, the material stays so whichever anchor
+                    // wins still resolves.
+                    Err(e) => match read_custodian_context_anchor(&*private_storage).await {
+                        Ok(Some(anchored)) if anchored == req_id => {
+                            tracing::warn!(
+                                "Anchoring custodian context {req_id} reported an error but took effect: {e}"
+                            );
+                            (Ok(()), false)
+                        }
+                        Ok(_) => {
+                            tracing::error!("Failed to anchor custodian context {req_id}: {e}");
+                            (Err(StorageError::Writing), true)
+                        }
+                        Err(read_err) => {
+                            tracing::error!(
+                                "Failed to anchor custodian context {req_id} ({e}) and to read the anchor back ({read_err}); its material is kept and no backups are made until the next boot reads the anchor"
+                            );
+                            (Err(StorageError::Unresolved), false)
+                        }
+                    },
+                }
+            }
+            // A duplicate means nothing was written and what is stored under `req_id` pre-existed
+            // (possibly a live backup), so it must be kept.
+            Err(write_err) => {
+                let purge = !matches!(write_err, StorageError::Duplicate);
+                (Err(write_err), purge)
+            }
+        };
+        // Roll back both the entries the caller re-encrypted under `req_id` and any recovery
+        // material this call wrote. Purge failures are only logged: they must not mask the root
+        // cause in the meta store.
+        if purge {
+            let mut guarded_vault = vault.lock().await;
+            if let Err(e) = guarded_vault.purge_backup(&req_id).await {
                 tracing::error!(
                     "Failed to purge backup vault after failed backup setup for request {req_id}: {e}"
                 );
             }
-            // These are the two outcomes that can leave the recovery material in public storage:
-            // `Backup` means the write itself succeeded, and `Purging` means `write_all`'s own
-            // compensating purge failed. On a plain `Writing` error that purge succeeded, on a
-            // duplicate the material pre-existed and must be kept, and on the remaining variants
-            // nothing was written at all. A leftover would be picked as the active custodian
-            // context on restart (the latest RecoveryMaterial id wins) and would block retrying
-            // the same context id via the duplicate check, so purge it here. Like the vault purge
-            // above, a failure is only logged and never masks the write error.
-            if matches!(write_err, StorageError::Backup | StorageError::Purging)
-                && !self
-                    .purge_material(&req_id, None, &[PubDataType::RecoveryMaterial], &[])
-                    .await
+            if let Err(e) =
+                delete_recovery_material_at_id(&mut guarded_vault.storage, &req_id).await
             {
                 tracing::error!(
-                    "Failed to purge recovery material for {req_id} after failed backup setup"
+                    "Failed to purge recovery material for {req_id} after failed backup setup: {e}"
                 );
             }
         }
@@ -894,6 +1021,30 @@ where
             OP_NEW_CUSTODIAN_CONTEXT,
         )
         .await
+    }
+
+    /// Record the recovery material of a new custodian context.
+    ///
+    /// The caller backs up private storage under the context first, and anchors the context after,
+    /// so a failure here leaves the previous context anchored and intact.
+    async fn write_recovery_material(
+        &self,
+        vault: &Arc<Mutex<Vault>>,
+        req_id: &RequestId,
+        recovery_material: &RecoveryValidationMaterial,
+    ) -> Result<(), StorageError> {
+        let mut guarded_vault = vault.lock().await;
+        match store_recovery_material(&mut guarded_vault.storage, recovery_material).await {
+            Ok(StoreWriteOutcome::SkippedExisting) => Err(StorageError::Duplicate),
+            Ok(_) => {
+                tracing::info!("Stored recovery material for custodian context {req_id}");
+                Ok(())
+            }
+            Err(e) => {
+                tracing::error!("Failed to store recovery material for request {req_id}: {e}");
+                Err(StorageError::Writing)
+            }
+        }
     }
 
     // TODO(#2849) should be changed to KeyId
@@ -1004,14 +1155,22 @@ where
     /// custodian context). When `false`, existing entries are skipped.
     ///
     /// Returns `true` if the update succeeded, `false` if it failed (in which case the error is also logged and the metrics are updated).
+    ///
+    /// A node with no vault, or one whose keychain has no custodian context, backs nothing up. That
+    /// is not a failure the caller can act on, so it still returns `true` — but it is not a success
+    /// either, and saying so would bury the line that says why nothing was written.
     pub async fn update_backup_vault(&self, overwrite: bool, op_metric_tag: &'static str) -> bool {
-        if let Err(e) = self.inner_update_backup_vault(overwrite).await {
-            tracing::error!("Failed to update backup vault for operation {op_metric_tag}: {e}",);
-            METRICS.increment_backup_error_counter(op_metric_tag, ERR_BACKUP);
-            false
-        } else {
-            tracing::info!("Successfully updated backup vault for {op_metric_tag}",);
-            true
+        match self.inner_update_backup_vault(overwrite).await {
+            Err(e) => {
+                tracing::error!("Failed to update backup vault for operation {op_metric_tag}: {e}",);
+                METRICS.increment_backup_error_counter(op_metric_tag, ERR_BACKUP);
+                false
+            }
+            Ok(true) => {
+                tracing::info!("Successfully updated backup vault for {op_metric_tag}",);
+                true
+            }
+            Ok(false) => true,
         }
     }
 
@@ -1023,10 +1182,12 @@ where
     /// When `overwrite` is `true`, existing backup entries are deleted and
     /// re-written (used when the backup encryption key changes, e.g. on a new
     /// custodian context). When `false`, existing entries are skipped.
+    /// `Ok(false)` when there was nothing to update: no backup vault, or a keychain with no
+    /// custodian context; the latter is logged with the reason.
     pub(in crate::vault::storage::crypto_material) async fn inner_update_backup_vault(
         &self,
         overwrite: bool,
-    ) -> anyhow::Result<()> {
+    ) -> anyhow::Result<bool> {
         match self.backup_vault {
             Some(ref backup_vault) => {
                 let private_storage = self.get_private_storage();
@@ -1034,9 +1195,9 @@ where
                 let mut backup_vault = backup_vault.lock().await;
                 if !crate::engine::backup_operator::keychain_initialized(&backup_vault).await {
                     tracing::warn!(
-                        "Secret sharing keychain in the backup vault has not been initialized yet. Skipping backup update."
+                        "Secret sharing keychain in the backup vault has not been initialized yet. Skipping backup update; no backups are made until a custodian context is created or recovered."
                     );
-                    return Ok(());
+                    return Ok(false);
                 }
                 for cur_type in PrivDataType::iter() {
                     match cur_type {
@@ -1079,11 +1240,24 @@ where
                             )
                             .await?;
                         }
+                        // Not backed up. A rotation re-encrypts the vault before the anchor is
+                        // rewritten, so a copy would name the context the node is leaving;
+                        // recovery anchors the context it restores.
+                        PrivDataType::CustodianContextAnchor => {}
                         PrivDataType::SigningKey => {
                             // TODO(#2862) will eventually be epoched
                             crate::engine::backup_operator::update_specific_backup_vault::<
                                 PrivS,
                                 PrivateSigKey,
+                            >(
+                                &private_storage, &mut backup_vault, cur_type, overwrite
+                            )
+                            .await?;
+                        }
+                        PrivDataType::SigningSeed => {
+                            crate::engine::backup_operator::update_specific_backup_vault::<
+                                PrivS,
+                                RootSigningSeed,
                             >(
                                 &private_storage, &mut backup_vault, cur_type, overwrite
                             )
@@ -1118,9 +1292,9 @@ where
                         }
                     }
                 }
-                Ok(())
+                Ok(true)
             }
-            None => Ok(()),
+            None => Ok(false),
         }
     }
 }
@@ -1184,6 +1358,7 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: StorageExt + Send + Sync + 's
             public_storage: Arc::clone(&self.public_storage),
             private_storage: Arc::clone(&self.private_storage),
             backup_vault: self.backup_vault.as_ref().map(Arc::clone),
+            custodian_context_lock: Arc::clone(&self.custodian_context_lock),
         }
     }
 }

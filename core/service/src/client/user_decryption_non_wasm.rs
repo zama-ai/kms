@@ -3,10 +3,10 @@ use crate::consts::SAFE_SER_SIZE_LIMIT;
 use crate::cryptography::encryption::{
     Encryption, PkeScheme, PkeSchemeType, UnifiedPrivateEncKey, UnifiedPublicEncKey,
 };
+use crate::cryptography::signing::SigningSchemeType;
 use crate::{anyhow_error_and_log, some_or_err};
 use alloy_sol_types::Eip712Domain;
 use kms_grpc::RequestId;
-use kms_grpc::kms::v1::SigningSchemeType;
 use kms_grpc::kms::v1::{SigningMetadata, TypedCiphertext, UserDecryptionRequest};
 use kms_grpc::rpc_types::alloy_to_protobuf_domain;
 use kms_grpc::{ContextId, EpochId};
@@ -72,7 +72,7 @@ impl Client {
                 extra_data: extra_data.to_vec(),
                 context_id: context_id.map(|c| (*c).into()),
                 epoch_id: epoch_id.map(|e| (*e).into()),
-                signing_schemes: vec![SigningSchemeType::Ecdsa256k1 as i32],
+                signing_schemes: self.signing_schemes_proto(),
                 // This builder is the EVM shape; a Solana request is built by
                 // [`Self::solana_user_decryption_request`] instead.
                 signing_metadata: vec![],
@@ -143,7 +143,7 @@ impl Client {
                 extra_data: extra_data.to_vec(),
                 context_id: context_id.map(|c| (*c).into()),
                 epoch_id: epoch_id.map(|e| (*e).into()),
-                signing_schemes: vec![SigningSchemeType::Ecdsa256k1 as i32],
+                signing_schemes: vec![SigningSchemeType::Ecdsa256k1.as_wire()],
                 signing_metadata: vec![SigningMetadata::solana(
                     user_pubkey.to_vec(),
                     verifying_program_id.to_vec(),
@@ -152,5 +152,36 @@ impl Client {
             enc_pk,
             enc_sk,
         ))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::collections::HashMap;
+
+    #[test]
+    fn solana_builder_requests_only_supported_ecdsa() {
+        let mut client = Client::new_solana(HashMap::new(), crate::consts::TEST_PARAM, None);
+        client.signing_schemes = vec![SigningSchemeType::Ecdsa256k1, SigningSchemeType::Ed25519];
+        let (request, _, _) = client
+            .solana_user_decryption_request(
+                &crate::dummy_domain(),
+                Vec::new(),
+                &RequestId::from_bytes([1; 32]),
+                &RequestId::from_bytes([2; 32]),
+                None,
+                None,
+                &[],
+                [3; 32],
+                [4; 32],
+            )
+            .unwrap();
+        assert_eq!(
+            request.signing_schemes,
+            vec![SigningSchemeType::Ecdsa256k1.as_wire()]
+        );
+        assert!(request.client_address.is_empty());
+        assert_eq!(request.signing_metadata.len(), 1);
     }
 }

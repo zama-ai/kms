@@ -19,6 +19,7 @@ use tfhe::shortint::oprf::CompressedOprfServerKey;
 use tfhe::shortint::server_key::{
     CompressedModulusSwitchConfiguration, ShortintCompressedBootstrappingKey,
 };
+use tfhe::transciphering::CompressedTranscipheringServerKey;
 use tfhe::{
     XofSeed,
     shortint::ciphertext::{MaxDegree, MaxNoiseLevel},
@@ -71,6 +72,9 @@ pub(crate) struct RawCompressedPubKeySet {
     pub sns_compression_key: Option<CompressedNoiseSquashingCompressionKey>,
     pub cpk_re_randomization: Option<CompressedReRandomizationRawKey>,
     pub oprf_key: Option<CompressedOprfServerKey>,
+    /// Dedicated bootstrap key of the transciphering subsystem, present only when the parameter
+    /// set enables transciphering. Independent of `oprf_key`.
+    pub transciphering_key: Option<CompressedTranscipheringServerKey>,
     pub seed: u128,
 }
 
@@ -221,6 +225,7 @@ CompressedAtomicPatternNoiseSquashingKey::Standard(CompressedStandardAtomicPatte
             self.oprf_key.as_ref().map(|oprf_key| {
                 tfhe::integer::oprf::CompressedOprfServerKey::from_raw_parts(oprf_key.clone())
             }),
+            self.transciphering_key.clone(),
             tag,
         )
     }

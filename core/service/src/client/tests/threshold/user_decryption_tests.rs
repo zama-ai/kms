@@ -17,7 +17,7 @@ use crate::util::key_setup::max_threshold;
 use crate::util::key_setup::test_tools::{
     EncryptionConfig, TestingPlaintext, compute_cipher_from_stored_key,
 };
-use crate::vault::storage::crypto_material::get_core_signing_key;
+use crate::vault::storage::crypto_material::get_core_signing_identity;
 use crate::vault::storage::{StorageType, file::FileStorage};
 use kms_grpc::RequestId;
 #[cfg(feature = "wasm_tests")]
@@ -350,8 +350,8 @@ pub(crate) async fn user_decryption_threshold(
 ) {
     assert!(parallelism > 0);
 
-    // Spec: pre-gen FHE keys for `key_id` plus signing. PRSS is bootstrapped
-    // at runtime via `.with_prss()`. Material type follows the DKG params.
+    // Spec: pre-gen FHE keys for `key_id` plus signing. The default epoch (PRSS) comes from
+    // the fixture with the key shares. Material type follows the DKG params.
     let spec = if dkg_params == TEST_PARAM {
         TestMaterialSpec::threshold_basic(amount_parties)
     } else {
@@ -677,13 +677,13 @@ async fn get_server_private_keys(
         // Read from the per-test isolated material path populated by the builder.
         let priv_storage =
             FileStorage::new(Some(material_path), StorageType::PRIV, prefix.as_deref()).unwrap();
-        let sk = get_core_signing_key(&priv_storage)
+        let sk = get_core_signing_identity(&priv_storage)
             .await
             .inspect_err(|e| {
                 tracing::error!("signing key hashmap is not exactly 1, {}", e);
             })
             .unwrap();
-        server_private_keys.insert(i as u32 + 1, sk);
+        server_private_keys.insert(i as u32 + 1, sk.ecdsa().clone());
     }
     server_private_keys
 }

@@ -188,13 +188,44 @@ fn collect_partial_files(dir: &Path, depth: usize, out: &mut Vec<(PathBuf, u32)>
     }
 }
 
-/// Write some bytes to a file without serialization. Works for ASCII text without extra thought too.
+/// Writes bytes without serialization and atomically replaces the destination.
+/// The bytes are synced in a sibling temporary file before the rename. Errors leave the
+/// destination unchanged and remove the temporary file. This does not sync the parent directory.
 pub async fn write_bytes<P: AsRef<Path>>(file_path: P, bytes: &[u8]) -> anyhow::Result<()> {
-    // Create the parent directories of the file path if they don't exist
-    if let Some(p) = file_path.as_ref().parent() {
-        tokio::fs::create_dir_all(p).await?
+    use tokio::io::AsyncWriteExt;
+
+    let file_path = file_path.as_ref();
+    let Some(file_name) = file_path.file_name() else {
+        anyhow::bail!("invalid file path: {}", file_path.display());
     };
-    tokio::fs::write(file_path, bytes).await?;
+    let parent = match file_path.parent() {
+        Some(p) if !p.as_os_str().is_empty() => {
+            tokio::fs::create_dir_all(p).await?;
+            p
+        }
+        _ => Path::new("."),
+    };
+    // Share the versioned writer's hidden names and crash-cleanup rules.
+    let seq = PARTIAL_SEQ.fetch_add(1, Ordering::Relaxed);
+    let tmp = create_partial_tempfile(parent, file_name, std::process::id(), seq)
+        .map_err(|e| anyhow::anyhow!("failed to create temp file in {}: {e}", parent.display()))?;
+    let mut writer = tokio::fs::File::from_std(tmp.reopen()?);
+    writer
+        .write_all(bytes)
+        .await
+        .map_err(|e| anyhow::anyhow!("failed to write {}: {e}", tmp.path().display()))?;
+    // Tokio can report a background write error on flush rather than on write_all.
+    writer
+        .flush()
+        .await
+        .map_err(|e| anyhow::anyhow!("failed to flush {}: {e}", tmp.path().display()))?;
+    writer
+        .sync_all()
+        .await
+        .map_err(|e| anyhow::anyhow!("failed to sync {}: {e}", tmp.path().display()))?;
+    drop(writer);
+    tmp.persist(file_path)
+        .map_err(|e| anyhow::anyhow!("failed to persist {}: {e}", file_path.display()))?;
     Ok(())
 }
 
@@ -217,9 +248,12 @@ pub async fn safe_write_element_versioned<
     let Some(file_name) = file_path.file_name() else {
         anyhow::bail!("invalid file path: {}", file_path.display());
     };
-    // Create the parent directories of the file path if they don't exist
-    if let Some(p) = file_path.parent() {
-        tokio::fs::create_dir_all(p).await?
+    let parent = match file_path.parent() {
+        Some(p) if !p.as_os_str().is_empty() => {
+            tokio::fs::create_dir_all(p).await?;
+            p
+        }
+        _ => Path::new("."),
     };
     // Serialize into a sibling temp file, fsync it, then atomically rename it
     // over `file_path`, so a crash mid-write cannot leave a partial file there
@@ -229,10 +263,6 @@ pub async fn safe_write_element_versioned<
     // (`FileStorage::all_data_ids` parses every non-hidden name as a
     // `RequestId`), unique among live writers, and pid-attributable so
     // `sweep_stale_partials` can reclaim it if this process hard-crashes.
-    let parent = match file_path.parent() {
-        Some(p) if !p.as_os_str().is_empty() => p,
-        _ => Path::new("."),
-    };
     let seq = PARTIAL_SEQ.fetch_add(1, Ordering::Relaxed);
     let tmp = create_partial_tempfile(parent, file_name, std::process::id(), seq)
         .map_err(|e| anyhow::anyhow!("failed to create temp file in {}: {e}", parent.display()))?;
@@ -277,28 +307,12 @@ pub async fn safe_read_element_versioned<
     safe_deserialize(&mut buf, SAFE_SER_SIZE_LIMIT).map_err(|e| anyhow::anyhow!(e))
 }
 
-/// Write a generic element to a file by serializing it. This is hidden behind the testing flag to ensure only the
-/// versioned writing method is used in production code.
+/// Legacy compatibility path for generic file IO used by tests.
 ///
-/// Thin async wrapper around [`test_utils::write_element`] (blocking IO, fine under the testing flag).
-#[cfg(any(test, feature = "testing"))]
-pub async fn write_element<T: serde::Serialize, P: AsRef<Path>>(
-    file_path: P,
-    element: &T,
-) -> anyhow::Result<()> {
-    test_utils::write_element(file_path, element)
-}
-
-/// Read a generic element from a file. This is hidden behind the testing flag to ensure only the versioned reading
-/// method is used in production code.
-///
-/// Thin async wrapper around [`test_utils::read_element`] (blocking IO, fine under the testing flag).
-#[cfg(any(test, feature = "testing"))]
-pub async fn read_element<T: DeserializeOwned + Serialize, P: AsRef<Path>>(
-    file_path: P,
-) -> anyhow::Result<T> {
-    test_utils::read_element(file_path)
-}
+/// Keeping this behind the testing gate ensures production service code keeps
+/// using the explicit safe/versioned helpers above.
+#[cfg(any(test, feature = "testing", feature = "insecure"))]
+pub use test_utils::{read_element, write_element};
 
 #[cfg(test)]
 mod tests {
@@ -338,10 +352,8 @@ mod tests {
     async fn read_write_element() {
         let msg = "I am a teacup!".to_owned();
         let file_name = "temp/test_element.bin".to_string();
-        write_element(file_name.clone(), &msg.clone())
-            .await
-            .unwrap();
-        let read_element: String = read_element(file_name.clone()).await.unwrap();
+        write_element(file_name.clone(), &msg.clone()).unwrap();
+        let read_element: String = read_element(file_name.clone()).unwrap();
         assert_eq!(read_element, msg);
         remove_file(file_name).await.unwrap();
     }
@@ -354,6 +366,46 @@ mod tests {
             .map(|e| e.file_name().to_string_lossy().into_owned())
             .filter(|n| n != expected)
             .collect()
+    }
+
+    /// A replacement leaves an already-open reader on the complete old file, not a truncated file.
+    #[cfg(unix)]
+    #[rstest::rstest]
+    #[case::nonempty(b"replacement bytes".as_slice())]
+    #[case::empty(b"".as_slice())]
+    #[tokio::test]
+    async fn raw_write_replaces_the_file_atomically(#[case] replacement: &[u8]) {
+        use std::io::Read;
+
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("nested/element");
+        write_bytes(&path, b"original bytes").await.unwrap();
+        let mut original_file = std::fs::File::open(&path).unwrap();
+
+        write_bytes(&path, replacement).await.unwrap();
+
+        let mut original_bytes = Vec::new();
+        original_file.read_to_end(&mut original_bytes).unwrap();
+        assert_eq!(original_bytes, b"original bytes");
+        assert_eq!(std::fs::read(&path).unwrap(), replacement);
+        assert!(leftovers(path.parent().unwrap(), "element").is_empty());
+    }
+
+    /// A failed rename preserves the destination and removes the fully written temporary file.
+    #[tokio::test]
+    async fn raw_write_cleans_up_after_a_failed_rename() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("element");
+        std::fs::create_dir(&path).unwrap();
+        let control = path.join("keep");
+        std::fs::write(&control, b"original bytes").unwrap();
+
+        // The destination is a directory, so renaming a file over it must fail.
+        assert!(write_bytes(&path, b"replacement bytes").await.is_err());
+
+        assert_eq!(std::fs::read(&control).unwrap(), b"original bytes");
+        assert!(leftovers(dir.path(), "element").is_empty());
+        assert!(leftovers(&path, "keep").is_empty());
     }
 
     #[tokio::test]

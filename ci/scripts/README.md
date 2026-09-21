@@ -154,6 +154,7 @@ The build process will:
 - `build_container()` - Build and load Docker images (Kind)
 - `setup_port_forwarding()` - Local port forwarding (Kind)
 - `wait_indefinitely()` - Keep script running
+- `kms_pod_logs()` - Logs of every container in a KMS pod, TLS key excluded
 - `collect_logs()` - Pod log collection for debugging
 
 ## Testing

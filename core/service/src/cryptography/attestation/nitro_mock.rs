@@ -5,6 +5,7 @@ use nsm_nitro_enclave_utils::{
     driver::{Driver, dev::DevNitro},
 };
 use rand::{RngCore, rngs::OsRng};
+use zeroize::Zeroizing;
 
 impl SecurityModule for DevNitro {
     async fn attest(&self, pk: Vec<u8>, user_data: Option<Vec<u8>>) -> anyhow::Result<Vec<u8>> {
@@ -20,8 +21,14 @@ impl SecurityModule for DevNitro {
     }
 
     async fn get_random(&self, num_bytes: usize) -> anyhow::Result<Vec<u8>> {
-        let mut vec = Vec::with_capacity(num_bytes);
+        let mut vec = vec![0u8; num_bytes];
         OsRng.try_fill_bytes(&mut vec)?;
         Ok(vec)
+    }
+
+    fn get_random_sync<const N: usize>(&self) -> anyhow::Result<Zeroizing<[u8; N]>> {
+        let mut buf = Zeroizing::new([0u8; N]);
+        OsRng.try_fill_bytes(buf.as_mut())?;
+        Ok(buf)
     }
 }
