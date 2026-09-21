@@ -322,6 +322,13 @@ A single `RealCentralizedKms` instance holds all key material. No MPC; keys
 live in the configured vault backend. Preprocessing / reshare RPCs are not
 applicable.
 
+A centralized node keeps no epoch registry and stores no `EpochData`, so every
+epoch-scoped entry it holds belongs to the default epoch. `KeyGen`, `CrsGen`,
+`KeyGenPreproc`, `NewMpcEpoch`, `PublicDecrypt` and `UserDecrypt` reject any
+other epoch ID with `InvalidArgument`. A request that omits the epoch ID still
+falls back to the default epoch, so a caller that never sets the field is
+unaffected.
+
 ### Threshold
 
 `n` parties each run a `ThresholdKms` server. Each party holds a secret share

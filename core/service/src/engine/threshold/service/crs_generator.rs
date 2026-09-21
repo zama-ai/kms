@@ -112,20 +112,20 @@ impl<
         let inner = request.into_inner();
         let max_bits = inner.max_num_bits;
         let verified = validate_crs_gen_request(inner, op_tag)?;
+        // The ceremony runs long after the epoch check, so reserve the epoch for the whole run.
+        let epoch_lease = reserve_epoch_for_write(
+            op_tag,
+            &self.session_maker,
+            verified.req_id,
+            &verified.epoch_id,
+        )
+        .await?;
         // Find the role of the current server and validate that the context and the epoch exist.
         let my_role = validate_context_and_epoch(
             op_tag,
             &self.session_maker,
             Some(verified.req_id),
             &verified.context_id,
-            &verified.epoch_id,
-        )
-        .await?;
-        // The ceremony runs long after this check, so reserve the epoch for the whole run.
-        let epoch_lease = reserve_epoch_for_write(
-            op_tag,
-            &self.session_maker,
-            verified.req_id,
             &verified.epoch_id,
         )
         .await?;

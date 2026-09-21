@@ -584,6 +584,9 @@ impl<
             extra_data,
             signing_schemes,
         ) = validate_key_gen_request(inner, op_tag)?;
+        // The DKG runs long after the epoch check, so reserve the epoch for the whole run.
+        let epoch_lease =
+            reserve_epoch_for_write(op_tag, &self.session_maker, req_id, &epoch_id).await?;
         let my_role = validate_context_and_epoch(
             op_tag,
             &self.session_maker,
@@ -592,9 +595,6 @@ impl<
             &epoch_id,
         )
         .await?;
-        // The DKG runs long after this check, so reserve the epoch for the whole run.
-        let epoch_lease =
-            reserve_epoch_for_write(op_tag, &self.session_maker, req_id, &epoch_id).await?;
         let metric_tags = vec![(TAG_PARTY_ID, my_role.to_string())];
         timer.tags(metric_tags);
 
