@@ -23,8 +23,7 @@ use crate::{
 use aes_prng::AesRng;
 use itertools::Itertools;
 use kms_grpc::{ContextId, RequestId, kms::v1::CustodianContext};
-use proptest::prelude::*;
-use rand::{SeedableRng, rngs::OsRng};
+use rand::{RngCore, SeedableRng, rngs::OsRng};
 use std::{collections::BTreeMap, time::Duration};
 use threshold_types::role::Role;
 

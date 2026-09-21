@@ -1,7 +1,10 @@
 //! Hybrid PKE built from ML-KEM as the KEM and AES-GCM as the DEM.
 
 use super::{error::CryptographyError, rand_compat::RandCore010Adapter};
-use aes_gcm::{AeadCore, Aes256Gcm, Key, KeyInit, KeySizeUser, aead::Aead};
+use aes_gcm::{
+    Aes256Gcm, Key, KeyInit, KeySizeUser,
+    aead::{Aead, Nonce},
+};
 use hybrid_array::{Array, typenum::Unsigned};
 use ml_kem::{Encapsulate, Kem, kem::TryDecapsulate};
 use rand::{CryptoRng, Rng};
@@ -98,10 +101,12 @@ pub(crate) fn enc<C: Kem, R: Rng + CryptoRng>(
     let kem_shared_secret = Zeroizing::new(kem_shared_secret);
 
     let key_size = <Aes256Gcm as KeySizeUser>::key_size();
-    #[allow(deprecated)]
+    #[expect(deprecated)]
     let aead_key = Key::<Aes256Gcm>::from_slice(&kem_shared_secret[0..key_size]);
     let cipher = Aes256Gcm::new(aead_key);
-    let nonce = Aes256Gcm::generate_nonce(rng);
+    // `AeadCore::generate_nonce` requires a rand_core 0.10 RNG, and callers pass rand 0.8 RNGs.
+    let mut nonce = Nonce::<Aes256Gcm>::default();
+    rng.fill_bytes(&mut nonce);
     let payload_ct = cipher.encrypt(&nonce, msg)?;
 
     Ok(InnerHybridKemCt::<C> {
@@ -133,7 +138,7 @@ pub(crate) fn dec<C: Kem>(
     let kem_shared_secret = Zeroizing::new(kem_shared_secret);
 
     let key_size = <Aes256Gcm as KeySizeUser>::key_size();
-    #[allow(deprecated)]
+    #[expect(deprecated)]
     let aead_key = Key::<Aes256Gcm>::from_slice(&kem_shared_secret[0..key_size]);
 
     let cipher = Aes256Gcm::new(aead_key);
@@ -144,11 +149,10 @@ pub(crate) fn dec<C: Kem>(
 
 #[cfg(test)]
 mod tests {
-    #![allow(deprecated)]
-
     use super::*;
     use crate::cryptography::encryption::{PrivateEncKey, PublicEncKey};
     use crate::cryptography::hybrid_ml_kem;
+    #[expect(deprecated)]
     use ml_kem::ExpandedKeyEncoding;
     use ml_kem::KeyExport;
     use proptest::prelude::*;
@@ -206,7 +210,9 @@ mod tests {
             let mut rng = OsRng;
             let (sk, pk) = keygen::<ml_kem::MlKem512, _>(&mut rng);
             assert_eq!(pk.to_bytes().len(), ML_KEM_512_PK_LENGTH);
-            assert_eq!(sk.to_expanded_bytes().len(), ML_KEM_512_SK_LEN);
+            #[expect(deprecated)]
+            let expanded_sk_len = sk.to_expanded_bytes().len();
+            assert_eq!(expanded_sk_len, ML_KEM_512_SK_LEN);
 
             let ct = enc::<ml_kem::MlKem512, _>(&mut rng, &msg, &pk).unwrap();
             assert_eq!(ct.kem_ct.len(), ML_KEM_512_CT_LENGTH);

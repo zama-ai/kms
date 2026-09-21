@@ -202,7 +202,7 @@ pub fn validate_ca_cert(ca_cert_bytes: &[u8], signing_key: &PrivateSigKey) -> an
     Ok(ca_cert_pem)
 }
 
-#[allow(async_fn_in_trait)]
+#[expect(async_fn_in_trait)]
 #[enum_dispatch]
 pub trait SecurityModule {
     /// Get enthropy from the hardware RNG
@@ -409,7 +409,7 @@ pub trait SecurityModule {
     fn get_random_sync<const N: usize>(&self) -> anyhow::Result<Zeroizing<[u8; N]>>;
 }
 
-#[allow(clippy::large_enum_variant)]
+#[expect(clippy::large_enum_variant)]
 #[enum_dispatch(SecurityModule)]
 pub enum SecurityModuleProxy {
     Nitro(nitro::Nitro),
