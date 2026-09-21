@@ -1,4 +1,3 @@
-#![allow(clippy::unit_arg)]
 //! Speed benchmarks for ZK proof-of-knowledge operations.
 //!
 //! Measures wall-clock time for:
@@ -80,9 +79,13 @@ fn bench_verify_two_steps(group: &mut BenchmarkGroup<'_, WallTime>, params: DKGP
 
     group.bench_function("load_verify_verify_two_steps", |b| {
         b.iter(|| {
-            std::hint::black_box(
-                nist_verify_two_steps(&proof, &crs, &public_commit, &metadata).unwrap(),
-            );
+            std::hint::black_box(nist_verify_two_steps(
+                &proof,
+                &crs,
+                &public_commit,
+                &metadata,
+            ))
+            .unwrap();
         });
     });
 
@@ -96,9 +99,13 @@ fn bench_verify_two_steps(group: &mut BenchmarkGroup<'_, WallTime>, params: DKGP
 
     group.bench_function("load_proof_verify_two_steps", |b| {
         b.iter(|| {
-            std::hint::black_box(
-                nist_verify_two_steps(&proof, &crs, &public_commit, &metadata).unwrap(),
-            );
+            std::hint::black_box(nist_verify_two_steps(
+                &proof,
+                &crs,
+                &public_commit,
+                &metadata,
+            ))
+            .unwrap();
         });
     });
 }
@@ -118,9 +125,8 @@ fn bench_verify_batched(group: &mut BenchmarkGroup<'_, WallTime>, params: DKGPar
 
     group.bench_function("load_proof_verify_batched", |b| {
         b.iter(|| {
-            std::hint::black_box(
-                nist_verify_batched(&proof, &crs, &public_commit, &metadata).unwrap(),
-            );
+            std::hint::black_box(nist_verify_batched(&proof, &crs, &public_commit, &metadata))
+                .unwrap();
         });
     });
 
@@ -134,9 +140,8 @@ fn bench_verify_batched(group: &mut BenchmarkGroup<'_, WallTime>, params: DKGPar
 
     group.bench_function("load_verify_verify_batched", |b| {
         b.iter(|| {
-            std::hint::black_box(
-                nist_verify_batched(&proof, &crs, &public_commit, &metadata).unwrap(),
-            );
+            std::hint::black_box(nist_verify_batched(&proof, &crs, &public_commit, &metadata))
+                .unwrap();
         });
     });
 }
