@@ -55,6 +55,7 @@ zeroize.workspace = true
 tempfile = { workspace = true, optional = true }
 
 [dev-dependencies]
+criterion = { workspace = true, features = ["async_tokio", "html_reports"] }
 futures-util.workspace = true
 futures.workspace = true
 paste.workspace = true
@@ -76,3 +77,8 @@ non-wasm = [
 testing = ["non-wasm", "dep:tokio", "dep:futures-util", "dep:futures", "dep:test-utils", "dep:tempfile"]
 slow_tests = ["testing"]
 malicious_strategies = ["testing"]
+
+[[bench]]
+name = "prss"
+harness = false
+required-features = ["testing"]

@@ -20,7 +20,12 @@ parties are malicious.
 The crate at `core/experiments` is **not** a production crate: it is the
 testing/benchmarking harness that wires the `threshold-*` crates together, ships
 the MPC party and choreographer binaries used to drive end-to-end runs, and
-contains the benchmark suite. This page describes how to run those benchmarks in
+contains protocol and comparative benchmarks. Component benchmarks can live in their
+owning crate: PRSS, PRZS, and mask benchmarks live in
+[`threshold-execution/benches`](../../core/threshold-execution/benches/).
+Run them from the repository root with
+`cargo bench -p threshold-execution --bench prss --features testing`.
+This page describes how to run the `experiments` benchmarks in
 a wide range of configurations.  For the rest of this page, we assume the user
 is working under the `core/experiments` directory.
 

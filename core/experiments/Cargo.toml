@@ -117,11 +117,6 @@ name = "bench_switch_and_squash"
 harness = false
 
 [[bench]]
-name = "bench_prss"
-harness = false
-required-features = ["extension_degree_8"]
-
-[[bench]]
 name = "prep"
 harness = false
 required-features = ["extension_degree_8"]
