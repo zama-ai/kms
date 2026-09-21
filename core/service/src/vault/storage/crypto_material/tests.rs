@@ -536,8 +536,6 @@ async fn write_threshold_keys_meta_update() {
     assert!(refreshed.is_ok(), "threshold read path should succeed");
 }
 
-/// A complete FHE key write refuses a key ID whose public material is already published, and
-/// that refusal must leave the published entry alone.
 /// Test to ensure that we do not accidentally overwrite or delete already published material for repeated requests.
 #[tokio::test]
 async fn write_fhe_keys_duplicate_keeps_published_material() {
