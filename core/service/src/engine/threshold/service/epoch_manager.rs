@@ -1575,24 +1575,21 @@ impl<
         new_context_id: &ContextId,
         new_epoch_id: &EpochId,
         new_extra_data: &[u8],
-        previous_epoch: PreviousEpochInfo,
+        verified_previous_epoch: VerifiedPreviousEpochInfo,
         eip712_domain: Eip712Domain,
         signing_schemes: Vec<SigningSchemeType>,
     ) -> Result<BoxFuture<'static, anyhow::Result<EpochOutput>>, MetricedError> {
         tracing::info!(
             "Received initiate resharing request from context {:?} to context {:?} for Key IDs {:?} for epoch ID {:?}",
-            previous_epoch.context_id,
+            verified_previous_epoch.context_id,
             new_context_id,
-            previous_epoch
+            verified_previous_epoch
                 .keys_info
                 .iter()
                 .map(|k| &k.key_id)
                 .collect::<Vec<_>>(),
             new_epoch_id
         );
-
-        let verified_previous_epoch = verify_epoch_info(&new_epoch_id.into(), previous_epoch)?;
-
         let new_epoch_id_as_request_id = (*new_epoch_id).into();
 
         let session_maker_immutable = self.session_maker.make_immutable();
@@ -1766,11 +1763,25 @@ impl<
             signing_schemes,
         } = validate_new_mpc_epoch_request(inner)?;
 
-        // Retain both shared leases until the background task has completed every write. Context
-        // and epoch destruction acquire the corresponding exclusive lease before mutating state.
+        let resharing_params = match resharing_params {
+            Some(ResharingParams {
+                previous_epoch,
+                signing_domain,
+            }) => Some((
+                verify_epoch_info(&epoch_id.into(), previous_epoch)?,
+                signing_domain,
+            )),
+            None => None,
+        };
+        let resharing_source = resharing_params
+            .as_ref()
+            .map(|(previous_epoch, _)| (&previous_epoch.context_id, &previous_epoch.epoch_id));
+
+        // Retain the target and source leases until the background task finishes every write.
+        // Destruction acquires exclusive leases for the same resources before it mutates state.
         let creation_lease = self
             .session_maker
-            .try_get_epoch_creation_lease(&context_id, &epoch_id)
+            .try_get_epoch_creation_lease(&context_id, &epoch_id, resharing_source)
             .await
             .map_err(|e| {
                 MetricedError::new(
@@ -1801,10 +1812,7 @@ impl<
         })?;
 
         let resharing_task = match resharing_params {
-            Some(ResharingParams {
-                previous_epoch,
-                signing_domain,
-            }) => Some(
+            Some((previous_epoch, signing_domain)) => Some(
                 self.initiate_resharing_and_crs_resign(
                     &context_id,
                     &epoch_id,
@@ -3371,7 +3379,7 @@ pub(crate) mod tests {
         // Mirror a creation task that has registered its epoch after PRSS but is still resharing.
         let creation_lease = epoch_manager
             .session_maker
-            .try_get_epoch_creation_lease(&DEFAULT_MPC_CONTEXT, &epoch_id)
+            .try_get_epoch_creation_lease(&DEFAULT_MPC_CONTEXT, &epoch_id, None)
             .await
             .unwrap();
 
