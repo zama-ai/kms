@@ -1229,7 +1229,6 @@ mod tests {
         context::{NodeInfo, SchemeDigests, SoftwareVersion},
         threshold::service::epoch_manager::tests::dummy_epoch_data,
     };
-    use rand_chacha::ChaCha20Rng;
     use rcgen::{KeyPair, PKCS_ECDSA_P256_SHA256};
     use tokio_rustls::rustls::{
         client::danger::ServerCertVerifier,
