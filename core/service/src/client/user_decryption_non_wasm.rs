@@ -19,7 +19,7 @@ impl Client {
     /// and must be kept to process the responses.
     ///
     /// Note that we only support MlKem512 in the latest version and not other variants of MlKem.
-    #[expect(unknown_lints)]
+    #[allow(unknown_lints)]
     // We allow modifying the internal rng before return
     #[expect(non_local_effect_before_unhandled_error, clippy::too_many_arguments)]
     pub fn user_decryption_request(

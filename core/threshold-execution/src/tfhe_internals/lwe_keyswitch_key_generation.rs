@@ -26,8 +26,8 @@ use tracing::instrument;
 // If for some reason we fail in forking the mask generator, during encryption
 // we will return an error, after having changed some of the state of the lwe_keyswitch_key
 // but it seems hard to prevent it
-#[expect(unknown_lints)]
-#[expect(non_local_effect_before_unhandled_error)]
+#[allow(unknown_lints)]
+#[allow(non_local_effect_before_unhandled_error)]
 pub fn generate_lwe_keyswitch_key<Z, Gen, const EXTENSION_DEGREE: usize>(
     input_lwe_sk: &LweSecretKeyShare<Z, EXTENSION_DEGREE>,
     output_lwe_sk: &LweSecretKeyShare<Z, EXTENSION_DEGREE>,

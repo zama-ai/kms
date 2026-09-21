@@ -216,9 +216,9 @@ pub trait Encrypt {
 }
 
 impl Encrypt for UnifiedPublicEncKey {
-    #[expect(unknown_lints)]
+    #[allow(unknown_lints)]
     // We allow modifying the rng before an error return
-    #[expect(non_local_effect_before_unhandled_error)]
+    #[allow(non_local_effect_before_unhandled_error)]
     fn encrypt<T: Serialize + tfhe::Versionize + tfhe::named::Named>(
         &self,
         rng: &mut (impl CryptoRng + RngCore),
