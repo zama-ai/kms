@@ -39,6 +39,8 @@ use threshold_networking::grpc::CoreToCoreNetworkConfig;
 use threshold_types::role::{DualRole, Role, TwoSetsRole, TwoSetsThreshold};
 
 #[cfg(test)]
+use crate::engine::rng_source::TaskRngs;
+#[cfg(test)]
 use rand::SeedableRng;
 use serde::{Deserialize, Serialize};
 use tfhe::Versionize;
@@ -127,19 +129,20 @@ struct LifecycleCoordinator {
 /// Identifies the lifecycle resource that is already held by a conflicting operation.
 #[derive(Debug, Error, PartialEq, Eq)]
 pub(crate) enum LifecycleConflict {
-    /// A context is being destroyed while an epoch creation wants to use it, or vice versa.
+    /// A context is in use while destruction starts, or destruction already holds it.
     #[error("MPC context {0} has a conflicting lifecycle operation in progress")]
     Context(ContextId),
-    /// An epoch is being created while it is being destroyed, or vice versa.
+    /// An epoch is in use while destruction starts, or destruction already holds it.
     #[error("epoch {0} has a conflicting lifecycle operation in progress")]
     Epoch(EpochId),
 }
 
-/// Keeps an epoch creation mutually exclusive with destruction of its epoch and context.
+/// Keeps an epoch creation and its resharing source mutually exclusive with destruction.
 #[derive(Debug)]
 pub(crate) struct EpochCreationLease {
-    _context: OwnedRwLockReadGuard<()>,
-    _epoch: OwnedRwLockReadGuard<()>,
+    _target_context: OwnedRwLockReadGuard<()>,
+    _target_epoch: OwnedRwLockReadGuard<()>,
+    _resharing_source: Option<(OwnedRwLockReadGuard<()>, OwnedRwLockReadGuard<()>)>,
 }
 
 /// Prevents epoch creation for a context while that context and its epochs are destroyed.
@@ -148,7 +151,7 @@ pub(crate) struct ContextDestructionLease {
     _context: OwnedRwLockWriteGuard<()>,
 }
 
-/// Prevents creation of an epoch while that epoch is destroyed.
+/// Prevents creation or resharing use of an epoch while that epoch is destroyed.
 #[derive(Debug)]
 pub(crate) struct EpochDestructionLease {
     _epoch: OwnedRwLockWriteGuard<()>,
@@ -236,15 +239,15 @@ impl SessionMaker {
         }
     }
 
-    /// Reserve `context_id` and `epoch_id` for an epoch creation.
+    /// Reserves a target context and epoch for an epoch creation.
     ///
-    /// The returned lease must live until the creation task has finished every persistent write.
-    /// Destruction uses exclusive leases for the same IDs and therefore fails while this lease is
-    /// alive.
+    /// When `resharing_source` is present, the lease also protects its context and epoch.
+    /// The returned lease must live until the creation task finishes every persistent write.
     pub(crate) async fn try_get_epoch_creation_lease(
         &self,
         context_id: &ContextId,
         epoch_id: &EpochId,
+        resharing_source: Option<(&ContextId, &EpochId)>,
     ) -> Result<EpochCreationLease, LifecycleConflict> {
         let context = self.lifecycle.context_locks.lock(context_id).await;
         let context = context
@@ -256,9 +259,27 @@ impl SessionMaker {
             .try_read_owned()
             .map_err(|_| LifecycleConflict::Epoch(*epoch_id))?;
 
+        let resharing_source = if let Some((source_context_id, source_epoch_id)) = resharing_source
+        {
+            let source_context = self.lifecycle.context_locks.lock(source_context_id).await;
+            let source_context = source_context
+                .try_read_owned()
+                .map_err(|_| LifecycleConflict::Context(*source_context_id))?;
+
+            let source_epoch = self.lifecycle.epoch_locks.lock(source_epoch_id).await;
+            let source_epoch = source_epoch
+                .try_read_owned()
+                .map_err(|_| LifecycleConflict::Epoch(*source_epoch_id))?;
+
+            Some((source_context, source_epoch))
+        } else {
+            None
+        };
+
         Ok(EpochCreationLease {
-            _context: context,
-            _epoch: epoch,
+            _target_context: context,
+            _target_epoch: epoch,
+            _resharing_source: resharing_source,
         })
     }
 
@@ -325,7 +346,7 @@ impl SessionMaker {
     }
 
     #[cfg(test)]
-    pub(crate) fn empty_dummy_session(rng: AesRng) -> Self {
+    pub(crate) fn empty_dummy_session(rngs: TaskRngs) -> Self {
         let networking_manager = Arc::new(RwLock::new(
             GrpcNetworkingManager::new(None, CoreToCoreNetworkConfig::default()).unwrap(),
         ));
@@ -335,7 +356,7 @@ impl SessionMaker {
             epoch_map: Arc::new(RwLock::new(HashMap::new())),
             lifecycle: LifecycleCoordinator::default(),
             verifier: None,
-            rng_source: Arc::new(RngSource::from_rng(rng)),
+            rng_source: Arc::new(RngSource::from_rngs(rngs)),
         }
     }
 
@@ -358,7 +379,7 @@ impl SessionMaker {
         prss_setup_z128: Option<PRSSSetup<ResiduePolyF4Z128>>,
         prss_setup_z64: Option<PRSSSetup<ResiduePolyF4Z64>>,
         epoch_id: &EpochId,
-        rng: AesRng,
+        rngs: TaskRngs,
     ) -> Self {
         let role_assignment = four_party_dummy_role_assignment();
         let networking_manager = Arc::new(RwLock::new(
@@ -397,7 +418,7 @@ impl SessionMaker {
             })),
             lifecycle: LifecycleCoordinator::default(),
             verifier: None,
-            rng_source: Arc::new(RngSource::from_rng(rng)),
+            rng_source: Arc::new(RngSource::from_rngs(rngs)),
         }
     }
 
@@ -626,7 +647,8 @@ impl SessionMaker {
             context_info.role_assignment.keys().cloned().collect(),
         )?;
 
-        let base_session = BaseSession::new(parameters, networking?, self.rng_source.fork_rng())?;
+        let base_session =
+            BaseSession::new(parameters, networking?, self.rng_source.fork_rng_128())?;
         Ok(base_session)
     }
 
@@ -747,7 +769,7 @@ impl SessionMaker {
             )
             .await?;
 
-        TwoSetsBaseSession::new(session_params, network, self.rng_source.fork_rng())
+        TwoSetsBaseSession::new(session_params, network, self.rng_source.fork_rng_128())
     }
 
     async fn get_networking(
@@ -1143,7 +1165,7 @@ mod tests {
     #[tokio::test]
     async fn epochs_for_context_filters_by_context() {
         let mut rng = AesRng::seed_from_u64(1);
-        let session_maker = SessionMaker::empty_dummy_session(AesRng::seed_from_u64(2));
+        let session_maker = SessionMaker::empty_dummy_session(TaskRngs::insecure_seed_from_u64(2));
 
         let context_a = ContextId::new_random(&mut rng);
         let context_b = ContextId::new_random(&mut rng);
@@ -1185,7 +1207,7 @@ mod tests {
     #[tokio::test]
     async fn epochs_for_context_unknown_context_is_empty() {
         let mut rng = AesRng::seed_from_u64(3);
-        let session_maker = SessionMaker::empty_dummy_session(AesRng::seed_from_u64(4));
+        let session_maker = SessionMaker::empty_dummy_session(TaskRngs::insecure_seed_from_u64(4));
 
         let known_context = ContextId::new_random(&mut rng);
         session_maker
@@ -1205,7 +1227,7 @@ mod tests {
         );
 
         // An entirely empty session maker also returns empty.
-        let empty_session = SessionMaker::empty_dummy_session(AesRng::seed_from_u64(5));
+        let empty_session = SessionMaker::empty_dummy_session(TaskRngs::insecure_seed_from_u64(5));
         assert!(
             empty_session
                 .epochs_for_context(&known_context)
@@ -1219,13 +1241,13 @@ mod tests {
     #[tokio::test]
     async fn epoch_creation_lease_blocks_matching_destruction_only() {
         let mut rng = AesRng::seed_from_u64(6);
-        let session_maker = SessionMaker::empty_dummy_session(AesRng::seed_from_u64(7));
+        let session_maker = SessionMaker::empty_dummy_session(TaskRngs::insecure_seed_from_u64(7));
         let context_id = ContextId::new_random(&mut rng);
         let epoch_id = EpochId::new_random(&mut rng);
         let endpoint_session_maker = session_maker.make_immutable();
 
         let creation = session_maker
-            .try_get_epoch_creation_lease(&context_id, &epoch_id)
+            .try_get_epoch_creation_lease(&context_id, &epoch_id, None)
             .await
             .unwrap();
 
@@ -1267,14 +1289,64 @@ mod tests {
             .unwrap();
     }
 
+    /// An epoch creation lease keeps both parts of its resharing source available until the
+    /// creation task releases the lease.
+    #[tokio::test]
+    async fn epoch_creation_lease_protects_resharing_source() {
+        let mut rng = AesRng::seed_from_u64(100);
+        let session_maker =
+            SessionMaker::empty_dummy_session(TaskRngs::insecure_seed_from_u64(101));
+        let source_context_id = ContextId::new_random(&mut rng);
+        let source_epoch_id = EpochId::new_random(&mut rng);
+        let new_context_id = ContextId::new_random(&mut rng);
+        let new_epoch_id = EpochId::new_random(&mut rng);
+        let endpoint_session_maker = session_maker.make_immutable();
+
+        let creation = session_maker
+            .try_get_epoch_creation_lease(
+                &new_context_id,
+                &new_epoch_id,
+                Some((&source_context_id, &source_epoch_id)),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(
+            endpoint_session_maker
+                .try_start_context_destruction(&source_context_id)
+                .await
+                .unwrap_err(),
+            LifecycleConflict::Context(source_context_id)
+        );
+        assert_eq!(
+            session_maker
+                .try_get_epoch_destruction_lease(&source_epoch_id)
+                .await
+                .unwrap_err(),
+            LifecycleConflict::Epoch(source_epoch_id)
+        );
+
+        drop(creation);
+        endpoint_session_maker
+            .try_start_context_destruction(&source_context_id)
+            .await
+            .unwrap();
+        session_maker
+            .try_get_epoch_destruction_lease(&source_epoch_id)
+            .await
+            .unwrap();
+    }
+
     /// Whichever destructive operation acquires its exclusive lease first prevents a conflicting
     /// epoch creation from beginning until that lease is released.
     #[tokio::test]
     async fn destruction_leases_block_epoch_creation_until_drop() {
         let mut rng = AesRng::seed_from_u64(8);
-        let session_maker = SessionMaker::empty_dummy_session(AesRng::seed_from_u64(9));
+        let session_maker = SessionMaker::empty_dummy_session(TaskRngs::insecure_seed_from_u64(9));
         let context_id = ContextId::new_random(&mut rng);
         let epoch_id = EpochId::new_random(&mut rng);
+        let source_context_id = ContextId::new_random(&mut rng);
+        let source_epoch_id = EpochId::new_random(&mut rng);
 
         let context_destruction = session_maker
             .try_get_context_destruction_lease(&context_id)
@@ -1282,7 +1354,7 @@ mod tests {
             .unwrap();
         assert_eq!(
             session_maker
-                .try_get_epoch_creation_lease(&context_id, &epoch_id)
+                .try_get_epoch_creation_lease(&context_id, &epoch_id, None)
                 .await
                 .unwrap_err(),
             LifecycleConflict::Context(context_id)
@@ -1295,7 +1367,7 @@ mod tests {
             .unwrap();
         assert_eq!(
             session_maker
-                .try_get_epoch_creation_lease(&context_id, &epoch_id)
+                .try_get_epoch_creation_lease(&context_id, &epoch_id, None)
                 .await
                 .unwrap_err(),
             LifecycleConflict::Epoch(epoch_id)
@@ -1303,7 +1375,50 @@ mod tests {
         drop(epoch_destruction);
 
         session_maker
-            .try_get_epoch_creation_lease(&context_id, &epoch_id)
+            .try_get_epoch_creation_lease(&context_id, &epoch_id, None)
+            .await
+            .unwrap();
+
+        let source_context_destruction = session_maker
+            .try_get_context_destruction_lease(&source_context_id)
+            .await
+            .unwrap();
+        assert_eq!(
+            session_maker
+                .try_get_epoch_creation_lease(
+                    &context_id,
+                    &epoch_id,
+                    Some((&source_context_id, &source_epoch_id)),
+                )
+                .await
+                .unwrap_err(),
+            LifecycleConflict::Context(source_context_id)
+        );
+        drop(source_context_destruction);
+
+        let source_epoch_destruction = session_maker
+            .try_get_epoch_destruction_lease(&source_epoch_id)
+            .await
+            .unwrap();
+        assert_eq!(
+            session_maker
+                .try_get_epoch_creation_lease(
+                    &context_id,
+                    &epoch_id,
+                    Some((&source_context_id, &source_epoch_id)),
+                )
+                .await
+                .unwrap_err(),
+            LifecycleConflict::Epoch(source_epoch_id)
+        );
+        drop(source_epoch_destruction);
+
+        session_maker
+            .try_get_epoch_creation_lease(
+                &context_id,
+                &epoch_id,
+                Some((&source_context_id, &source_epoch_id)),
+            )
             .await
             .unwrap();
     }
@@ -1326,7 +1441,7 @@ mod tests {
         let session_maker = SessionMaker::new_uninitialized(
             networking_manager,
             Some(Arc::clone(&verifier)),
-            Arc::new(RngSource::from_rng(AesRng::seed_from_u64(6))),
+            Arc::new(RngSource::from_rngs(TaskRngs::insecure_seed_from_u64(6))),
         );
 
         let identity = "shared.example.com";

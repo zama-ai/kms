@@ -15,6 +15,7 @@ use crate::cryptography::encryption::{
     HasPkeScheme, PkeSchemeType, UnifiedPrivateEncKey, UnifiedPublicEncKey,
 };
 use crate::cryptography::error::CryptographyError;
+use crate::cryptography::hybrid_composite_ml_kem;
 use crate::cryptography::hybrid_ml_kem::{self, HybridKemCt};
 use crate::cryptography::signatures::{
     HasSigningScheme, PrivateSigKey, PublicSigKey, SIG_SIZE, Signature, SigningSchemeType,
@@ -475,6 +476,10 @@ fn inner_signcryption(
         UnifiedPublicEncKey::MlKem1024(_) => {
             return Err(CryptographyError::MlKem1024Unsupported);
         }
+        UnifiedPublicEncKey::MlKem1024P384(public_enc_key) => {
+            serialize_hash_element(&DSEP_SIGNCRYPTION, public_enc_key)
+                .map_err(|e| CryptographyError::DeserializationError(e.to_string()))?
+        }
     };
     // Wipe the temporary signed message after signing.
     let to_sign = Zeroizing::new([msg, signcrypt_key.receiver_id, &serialized_enc_key].concat());
@@ -502,6 +507,9 @@ fn inner_signcryption(
         }
         UnifiedPublicEncKey::MlKem1024(_) => {
             return Err(CryptographyError::MlKem1024Unsupported);
+        }
+        UnifiedPublicEncKey::MlKem1024P384(public_enc_key) => {
+            hybrid_composite_ml_kem::enc_ml_kem_1024_p384(rng, &to_encrypt, public_enc_key)
         }
     }?;
     // LEGACY: approach to serialization
@@ -621,6 +629,9 @@ fn inner_unsigncrypt(
         UnifiedPrivateEncKey::MlKem1024(_) => {
             return Err(CryptographyError::MlKem1024Unsupported);
         }
+        UnifiedPrivateEncKey::MlKem1024P384(dec_key) => {
+            hybrid_composite_ml_kem::dec_ml_kem_1024_p384(deserialized_payload, dec_key)
+        }
     }?;
     let (msg, sig) = parse_msg(decrypted_plaintext, unsign_key.sender_verf_key)?;
     check_format_and_signature(dsep, &msg, &sig, unsign_key)?;
@@ -682,6 +693,10 @@ fn check_format_and_signature(
         UnifiedPublicEncKey::MlKem1024(_) => {
             return Err(CryptographyError::MlKem1024Unsupported);
         }
+        UnifiedPublicEncKey::MlKem1024P384(public_enc_key) => {
+            serialize_hash_element(&DSEP_SIGNCRYPTION, public_enc_key)
+                .map_err(|e| CryptographyError::DeserializationError(e.to_string()))?
+        }
     };
 
     let msg_signed = Zeroizing::new(
@@ -725,6 +740,9 @@ pub(crate) fn insecure_decrypt_ignoring_signature(
         }
         UnifiedPrivateEncKey::MlKem1024(_) => {
             return Err(CryptographyError::MlKem1024Unsupported);
+        }
+        UnifiedPrivateEncKey::MlKem1024P384(dk) => {
+            hybrid_composite_ml_kem::dec_ml_kem_1024_p384(cipher, dk)?
         }
     };
 
@@ -784,7 +802,10 @@ pub struct UnifiedSigncryptionKeyPairOwned {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::cryptography::{encryption::PkeSchemeType, signatures::gen_sig_keys};
+    use crate::cryptography::{
+        encryption::{Encryption, PkeScheme, PkeSchemeType},
+        signatures::gen_sig_keys,
+    };
     use crate::vault::storage::tests::TestType;
     use aes_prng::AesRng;
     use kms_grpc::kms::v1::TypedPlaintext;
@@ -802,6 +823,29 @@ mod tests {
         (rng, keys)
     }
 
+    fn test_setup_with_scheme(scheme: PkeSchemeType) -> (AesRng, UnifiedSigncryptionKeyPairOwned) {
+        let mut rng = AesRng::seed_from_u64(1);
+        let (client_verf_key, _) = gen_sig_keys(&mut rng);
+        let (server_verf_key, server_sig_key) = gen_sig_keys(&mut rng);
+        let mut encryption = Encryption::new(scheme, &mut rng);
+        let (dec_key, enc_key) = encryption.keygen().unwrap();
+        let receiver_id = client_verf_key.verf_key_id();
+        let keys = UnifiedSigncryptionKeyPairOwned {
+            signcrypt_key: UnifiedSigncryptionKeyOwned::new(
+                server_sig_key,
+                enc_key.clone(),
+                receiver_id.clone(),
+            ),
+            unsigncryption_key: UnifiedUnsigncryptionKeyOwned::new(
+                dec_key,
+                enc_key,
+                server_verf_key,
+                receiver_id,
+            ),
+        };
+        (rng, keys)
+    }
+
     #[test]
     fn sunshine() {
         let (mut rng, client_signcryption_keys) = test_setup();
@@ -810,11 +854,46 @@ mod tests {
             .signcrypt_key
             .signcrypt(&mut rng, b"TESTTEST", &msg)
             .unwrap();
+        assert_eq!(cipher.pke_type, PkeSchemeType::MlKem512);
         let decrypted_msg = client_signcryption_keys
             .unsigncryption_key
             .unsigncrypt(b"TESTTEST", &cipher)
             .unwrap();
         assert_eq!(msg, decrypted_msg);
+    }
+
+    #[test]
+    fn sunshine_mlkem1024_p384() {
+        let (mut rng, keys) = test_setup_with_scheme(PkeSchemeType::MlKem1024P384);
+        let msg = TestType { i: 1333 };
+        let cipher = keys
+            .signcrypt_key
+            .signcrypt(&mut rng, b"TESTTEST", &msg)
+            .unwrap();
+        assert_eq!(cipher.pke_type, PkeSchemeType::MlKem1024P384);
+
+        let decrypted_msg = keys
+            .unsigncryption_key
+            .unsigncrypt(b"TESTTEST", &cipher)
+            .unwrap();
+        assert_eq!(msg, decrypted_msg);
+    }
+
+    #[test]
+    fn mlkem1024_p384_cipher_is_rejected_by_an_ml_kem_512_key() {
+        let (mut rng, p384_keys) = test_setup_with_scheme(PkeSchemeType::MlKem1024P384);
+        let (_, ml_kem_512_keys) = test_setup();
+        let msg = TestType { i: 1333 };
+        let cipher = p384_keys
+            .signcrypt_key
+            .signcrypt(&mut rng, b"TESTTEST", &msg)
+            .unwrap();
+
+        let err = ml_kem_512_keys
+            .unsigncryption_key
+            .unsigncrypt::<TestType>(b"TESTTEST", &cipher)
+            .unwrap_err();
+        assert!(matches!(err, CryptographyError::VerificationError(_)));
     }
 
     #[test]

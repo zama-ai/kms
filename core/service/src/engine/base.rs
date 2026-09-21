@@ -34,6 +34,7 @@ use kms_grpc::solidity_types::{
     PublicDecryptVerification,
 };
 use kms_grpc::utils::tonic_result::BoxedStatus;
+use rand_chacha::ChaCha20Rng;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::collections::HashMap;
@@ -1278,7 +1279,22 @@ impl BaseKmsStruct {
 
     /// Returns a task RNG seeded from the shared source.
     pub fn new_rng(&self) -> AesRng {
-        self.rng_source.fork_rng()
+        self.rng_source.fork_rng_128()
+    }
+
+    /// Returns a task RNG whose seed is wide enough for
+    /// [`BACKUP_PKE_SCHEME`](crate::backup::BACKUP_PKE_SCHEME) key material.
+    ///
+    /// [`Self::new_rng`] seeds over 128 bits, which is narrower than the security level
+    /// MLKEM1024-P384 claims. Key material for that scheme must come from here.
+    pub fn new_rng_256(&self) -> ChaCha20Rng {
+        self.rng_source.fork_rng_256()
+    }
+
+    /// Returns one task RNG of each width from the shared source.
+    #[cfg(test)]
+    pub(crate) fn new_rngs(&self) -> crate::engine::rng_source::TaskRngs {
+        self.rng_source.fork_all()
     }
 
     /// Returns the shared source for session construction and refresh.
@@ -2024,7 +2040,7 @@ pub(crate) mod tests {
         )
         .unwrap();
 
-        // Several choices of schemes, including a classic + post-quantum hybrid.
+        // Several choices of schemes, including a classic + post-quantum composite.
         let choices: Vec<Vec<SigningSchemeType>> = vec![
             vec![SigningSchemeType::Ecdsa256k1],
             vec![SigningSchemeType::Ed25519],

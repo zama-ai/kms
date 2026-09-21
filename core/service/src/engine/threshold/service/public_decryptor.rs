@@ -925,7 +925,7 @@ mod tests {
             prss_setup_z128,
             prss_setup_z64,
             &epoch_id,
-            base_kms.new_rng(),
+            base_kms.new_rngs(),
         );
 
         let key_id = RequestId::new_random(rng);

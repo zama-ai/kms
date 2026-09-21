@@ -50,7 +50,7 @@ impl CustodianFixture {
             None,
             None,
             &DEFAULT_EPOCH_ID,
-            base_kms.new_rng(),
+            base_kms.new_rngs(),
         );
         let manager = ThresholdContextManager::new(
             base_kms,
@@ -312,7 +312,7 @@ pub(super) fn custodian_request(
     let mut rng = AesRng::seed_from_u64(seed);
     let mut custodian_nodes = Vec::new();
     for index in 1..=3 {
-        let mut encryption = Encryption::new(PkeSchemeType::MlKem512, &mut rng);
+        let mut encryption = Encryption::new(BACKUP_PKE_SCHEME, &mut rng);
         let (_, public_enc_key) = encryption.keygen().unwrap();
         let (public_verf_key, _) = gen_sig_keys(&mut rng);
         custodian_nodes.push(

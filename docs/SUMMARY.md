@@ -48,6 +48,7 @@
 - [KMS node](explanations/node.md)
 - [Keychain DA](explanations/keychain.md)
 - [MPC node P2P communication](explanations/network_doc.md)
+- [Trust model of the KMS core](explanations/trust_model.md)
 
 ## Developers
 

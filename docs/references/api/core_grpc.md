@@ -3,6 +3,8 @@
 Interactions with KMS core happens through a gRPC service.
 In the following we document all the exposed endpoints, detailing for each endpoint the expected input and the expected output of the RPC.
 
+This service is the service interface of a KMS core. Its only caller is the KMS connector of the same operator, and the deployment ensures that no other client can reach it. The service has no authentication or authorization of its own and accepts every message it receives. See the [trust model](../../explanations/trust_model.md).
+
 ## gRPC data types
 
 <details>
