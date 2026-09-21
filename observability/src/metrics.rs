@@ -1203,8 +1203,9 @@ mod tests {
         let mut names: Vec<&str> = families.iter().map(|f| f.name()).collect();
         names.sort();
 
-        // Exhaustive allowlist — update this when adding/removing metrics
-        #[expect(unused_mut)]
+        // Exhaustive allowlist — update this when adding/removing metrics.
+        // Only the linux-specific extension below mutates the vector.
+        #[cfg_attr(not(target_os = "linux"), expect(unused_mut))]
         let mut expected_metrics = vec![
             "kms_active_sessions",
             "kms_backup_errors_total",
