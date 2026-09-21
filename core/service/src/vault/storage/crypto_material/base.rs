@@ -841,7 +841,7 @@ where
     /// Stores a newly generated CRS and records the outcome in the meta store.
     /// Rejects an existing public CRS or private metadata at the requested epoch.
     /// The request must be pending in the meta store; callers must serialize writes to the same CRS.
-    #[allow(clippy::too_many_arguments)]
+    #[expect(clippy::too_many_arguments)]
     pub(crate) async fn write_crs(
         &self,
         crs_id: &RequestId,

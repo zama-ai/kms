@@ -6,9 +6,9 @@ use crate::{
     anyhow_error_and_log, consts::SAFE_SER_SIZE_LIMIT, cryptography::attestation::SecurityModule,
     some_or_err,
 };
-use aes08::{
+use aes::{
     Aes256,
-    cipher::{BlockDecryptMut, IvSizeUser, KeyIvInit, KeySizeUser, block_padding::Pkcs7},
+    cipher::{BlockModeDecrypt, IvSizeUser, KeyIvInit, KeySizeUser, block_padding::Pkcs7},
 };
 use anyhow::{anyhow, bail, ensure};
 use aws_config::SdkConfig;
@@ -549,7 +549,7 @@ pub fn decrypt_ciphertext_for_recipient(
     // decrypt the ciphertext for recipient enclave
     // AES256-CBC is the only choice supported by AWS KMS
     let plaintext = cbc::Decryptor::<Aes256>::new_from_slices(session_key.as_slice(), iv.as_ref())?
-        .decrypt_padded_vec_mut::<Pkcs7>(enc_payload.as_ref())
+        .decrypt_padded_vec::<Pkcs7>(enc_payload.as_ref())
         .map_err(|e| {
             anyhow_error_and_log(format!("Cannot decrypt ciphertext for recipient: {e}"))
         })?;
