@@ -1419,8 +1419,8 @@ mod tests {
     #[tokio::test]
     async fn epoch_creation_lease_protects_resharing_source() {
         let mut rng = AesRng::seed_from_u64(100);
-        let task_rng = TaskRngs::new(AesRng::seed_from_u64(42), ChaCha20Rng::seed_from_u64(43));
-        let session_maker = SessionMaker::empty_dummy_session(task_rng);
+        let session_maker =
+            SessionMaker::empty_dummy_session(TaskRngs::insecure_seed_from_u64(101));
         let source_context_id = ContextId::new_random(&mut rng);
         let source_epoch_id = EpochId::new_random(&mut rng);
         let new_context_id = ContextId::new_random(&mut rng);
