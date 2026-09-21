@@ -111,9 +111,12 @@ The service crate is the main surface area. Key subdirectories under
   [keyset_configuration.rs](../core/service/src/engine/keyset_configuration.rs),
   [material_integrity.rs](../core/service/src/engine/material_integrity.rs) (digest
   primitives over raw stored bytes, depended on by both the storage layer and the
-  startup checks) and
+  startup checks),
+  [public_material_sync.rs](../core/service/src/engine/public_material_sync.rs) (the
+  digest-verified peer fetcher shared with resharing, and the boot-time repair of public
+  storage built on it) and
   [storage_material_verification.rs](../core/service/src/engine/storage_material_verification.rs)
-  (the startup orchestration built on top of them — see
+  (the read-only startup checks on top of both — see
   [Boot-time storage verification](#boot-time-storage-verification)),
   [validation_non_wasm.rs](../core/service/src/engine/validation_non_wasm.rs) and
   [validation_wasm.rs](../core/service/src/engine/validation_wasm.rs) (the
@@ -287,9 +290,9 @@ The primary service is `CoreServiceEndpoint`. Its RPCs group into:
   root remains if another live context uses it. This order leaves no usable key
   shares after the party set retires. Its response lists the deleted epoch IDs. In-memory
   lifecycle leases serialize creation against destruction: `NewMpcEpoch` holds
-  shared leases for its target context and epoch through all PRSS, resharing and
-  persistence work,
-  while `DestroyMpcEpoch` and `DestroyMpcContext` require exclusive leases before
+  shared leases for its target context and epoch. A reshare also holds shared
+  leases for its source context and epoch through all PRSS, resharing, and persistence work.
+  `DestroyMpcEpoch` and `DestroyMpcContext` require exclusive leases before
   taking snapshots or deleting data. A conflicting destruction is refused with
   `FailedPrecondition`, including while PRSS is still running and the new epoch
   has not yet been registered in the session maker; callers retry once creation
@@ -459,7 +462,7 @@ backup failure does not purge the primary material.
 ## Boot-time storage verification
 
 Every node checks its storage during service construction, before it serves any request.
-Three independent things happen.
+Four independent things happen.
 Boot-time verification lets us ensure the public and private storage are
 consistent, and detect any malicious behaviour and/or misconfiguration before
 the KMS party boots up.
@@ -477,11 +480,31 @@ account for is logged as an error without stopping boot. On a threshold node the
 (`EpochData`) is read once before the checks, then handed to `SessionMaker::new_initialized`. In
 recovery mode, the private and public checks are skipped so that the node can repair storage.
 
-**Public storage is verified but never touched.** Public storage can drift out of a
-consistent state: a misconfigured bucket or prefix can point a node at the wrong material, and
-writes across multiple entries are not atomic, so a crash mid-operation can leave material missing
-or stale. Private storage holds the digests and signatures describing what should be published,
-so it is the reference.
+**Public storage is verified, and the verification itself never touches it.** It is the
+authority on what is wrong: it names the offending entry, and it reads and hashes each
+published object exactly once, which is all a node with intact storage ever pays.
+
+**A failed verification is repaired from peers and verified again (threshold nodes only).**
+Public storage can drift out of a consistent state: a misconfigured bucket or prefix can point
+a node at the wrong material, and writes across multiple entries are not atomic, so a crash
+mid-operation can leave material missing or stale. Private storage holds the digests and
+signatures describing what should be published, so it is the reference; its own signatures are
+checked before anything else consults it. Every party in an MPC context publishes the same
+keysets and CRSes, so when `verify_storage_material` fails, `sync_public_material_from_peers`
+([public_material_sync.rs](../core/service/src/engine/public_material_sync.rs)) compares the
+digests that current private metadata records — one metadata entry per ID, the one from the
+greatest epoch that holds it — against the raw bytes in public storage, and downloads any
+missing or mismatched entry from the public storage of the peers in the material's epoch
+context (S3 URLs from the `ContextInfo` in private storage, tried in random order; a peer
+recorded with a `file://` URL or no URL at all is logged and skipped). Downloaded bytes are
+accepted only when they hash to the recorded digest and are stored verbatim, and verification
+then runs a second time so that whatever was written is re-checked independently. Material that
+cannot be validated is never fetched: legacy metadata (no digest), decompression keys (no
+private counterpart), and node-specific material (a peer publishes its own verification keys,
+CA certificate, and recovery material, not this node's). A needed entry that no peer can supply
+fails boot, carrying the original verification failure as its context so the log still names
+what was wrong locally. Centralized nodes skip the sync — no peer publishes their material —
+and recovery mode skips it along with the other checks.
 
 The code is split by level. [material_integrity.rs](../core/service/src/engine/material_integrity.rs)
 holds the digest primitives — pure functions over raw stored bytes, with no storage or
@@ -498,13 +521,15 @@ and `verify_storage_material`. The checks follow three rules:
    write access. The node cannot tell these apart, so once the integrity checks pass,
    `report_unexpected_public_material` lists public storage and logs an error for every entry
    that private storage does not account for. Boot continues regardless.
-3. **Read-only.** Nothing is written, repaired, or fetched from peers.
+3. **Read-only.** The verification writes nothing; every repair happens in the peer-sync step,
+   which runs only after a verification failure, and whatever that step wrote is re-checked by
+   a second verification pass from scratch.
 
 What it verifies, and how failures are treated:
 
 | Check | On failure |
 |---|---|
-| Published keysets and CRSes are present, and their raw stored bytes hash to the digests in `KeyGenMetadata` / `CrsGenMetadata` | boot fails |
+| Published keysets and CRSes are present, and their raw stored bytes hash to the digests in `KeyGenMetadata` / `CrsGenMetadata` | repaired from peers and verified again when possible (threshold only); otherwise boot fails |
 | Current private keygen and CRS metadata with a stored domain reconstruct a valid EIP-712 signature from the node's signing key | boot fails |
 | Every non-ECDSA entry of the per-scheme `signatures` in current private keygen and CRS metadata verifies, under the key the node derives for that scheme, over the rebuilt result payload | boot fails |
 | `VerfKey` and `VerfAddress` at `SIGNING_KEY_ID` match the key derived from the private `SigningKey` | boot fails |

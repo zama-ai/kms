@@ -13,4 +13,5 @@ mod mpc_context_tests;
 mod mpc_epoch_tests;
 mod public_decryption_tests;
 mod restore_from_backup_tests;
+mod storage_smoke_tests;
 mod user_decryption_tests;
