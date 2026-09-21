@@ -582,11 +582,8 @@ where
             &PrivDataType::CrsInfo.to_string(),
         )
         .await?;
-    let crs_info: HashMap<RequestId, CrsGenMetadata> = select_data_from_max_epoch(
-        crs_info_versioned
-            .iter()
-            .map(|((id, epoch_id), metadata)| ((*id, *epoch_id), metadata.clone())),
-    );
+    let crs_info: HashMap<RequestId, CrsGenMetadata> =
+        select_data_from_max_epoch(crs_info_versioned.clone());
 
     // The epoch registry: every epoch this node serves, keyed by the ID it is stored under. It is
     // read once here; it anchors the private storage checks below and seeds the session maker.

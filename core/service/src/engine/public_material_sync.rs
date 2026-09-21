@@ -59,7 +59,9 @@ where
     let url = format!("{protocol}{domain}");
     let region = find_region_from_s3_url(&node.public_storage_url)?;
 
-    // This is not an operation that is frequently used, so we can create a new s3 client each time.
+    // A fresh client per peer, per item. The sync only runs at boot, over the handful of IDs
+    // that are out of sync, and building an anonymous client is local work with no credential
+    // lookup, not really worth caching the client.
     let s3_client = build_anonymous_s3_client(&url, region).await?;
     ro_storage_getter.get_storage(
         s3_client,
