@@ -118,32 +118,6 @@ impl<Id: Copy + Eq + Hash> LockRegistry<Id> {
         locks.insert(*id, Arc::downgrade(&lock));
         lock
     }
-
-    /// Reserves `id` alongside the other holders of a shared reservation, and refuses while an
-    /// exclusive reservation is held. `conflict` names the resource in the refusal.
-    async fn try_share(
-        &self,
-        id: &Id,
-        conflict: fn(Id) -> LifecycleConflict,
-    ) -> Result<OwnedRwLockReadGuard<()>, LifecycleConflict> {
-        self.lock(id)
-            .await
-            .try_read_owned()
-            .map_err(|_| conflict(*id))
-    }
-
-    /// Reserves `id` exclusively, and refuses while any other reservation is held.
-    /// `conflict` names the resource in the refusal.
-    async fn try_reserve(
-        &self,
-        id: &Id,
-        conflict: fn(Id) -> LifecycleConflict,
-    ) -> Result<OwnedRwLockWriteGuard<()>, LifecycleConflict> {
-        self.lock(id)
-            .await
-            .try_write_owned()
-            .map_err(|_| conflict(*id))
-    }
 }
 
 #[derive(Clone, Default)]
@@ -181,12 +155,6 @@ pub(crate) struct ContextDestructionLease {
 #[derive(Debug)]
 pub(crate) struct EpochDestructionLease {
     _epoch: OwnedRwLockWriteGuard<()>,
-}
-
-/// Prevents destruction of an epoch while an operation stores material under it.
-#[derive(Debug)]
-pub(crate) struct EpochUseLease {
-    _epoch: OwnedRwLockReadGuard<()>,
 }
 
 #[derive(Clone)]
@@ -281,29 +249,31 @@ impl SessionMaker {
         epoch_id: &EpochId,
         resharing_source: Option<(&ContextId, &EpochId)>,
     ) -> Result<EpochCreationLease, LifecycleConflict> {
-        let context = self
-            .lifecycle
-            .context_locks
-            .try_share(context_id, LifecycleConflict::Context)
-            .await?;
-        let epoch = self
-            .lifecycle
-            .epoch_locks
-            .try_share(epoch_id, LifecycleConflict::Epoch)
-            .await?;
+        let context = self.lifecycle.context_locks.lock(context_id).await;
+        let context = context
+            .try_read_owned()
+            .map_err(|_| LifecycleConflict::Context(*context_id))?;
 
-        let resharing_source = match resharing_source {
-            Some((source_context_id, source_epoch_id)) => Some((
-                self.lifecycle
-                    .context_locks
-                    .try_share(source_context_id, LifecycleConflict::Context)
-                    .await?,
-                self.lifecycle
-                    .epoch_locks
-                    .try_share(source_epoch_id, LifecycleConflict::Epoch)
-                    .await?,
-            )),
-            None => None,
+        let epoch = self.lifecycle.epoch_locks.lock(epoch_id).await;
+        let epoch = epoch
+            .try_read_owned()
+            .map_err(|_| LifecycleConflict::Epoch(*epoch_id))?;
+
+        let resharing_source = if let Some((source_context_id, source_epoch_id)) = resharing_source
+        {
+            let source_context = self.lifecycle.context_locks.lock(source_context_id).await;
+            let source_context = source_context
+                .try_read_owned()
+                .map_err(|_| LifecycleConflict::Context(*source_context_id))?;
+
+            let source_epoch = self.lifecycle.epoch_locks.lock(source_epoch_id).await;
+            let source_epoch = source_epoch
+                .try_read_owned()
+                .map_err(|_| LifecycleConflict::Epoch(*source_epoch_id))?;
+
+            Some((source_context, source_epoch))
+        } else {
+            None
         };
 
         Ok(EpochCreationLease {
@@ -322,13 +292,11 @@ impl SessionMaker {
         &self,
         context_id: &ContextId,
     ) -> Result<ContextDestructionLease, LifecycleConflict> {
-        Ok(ContextDestructionLease {
-            _context: self
-                .lifecycle
-                .context_locks
-                .try_reserve(context_id, LifecycleConflict::Context)
-                .await?,
-        })
+        let context = self.lifecycle.context_locks.lock(context_id).await;
+        let context = context
+            .try_write_owned()
+            .map_err(|_| LifecycleConflict::Context(*context_id))?;
+        Ok(ContextDestructionLease { _context: context })
     }
 
     /// Exclusively reserve an epoch for destruction.
@@ -339,27 +307,11 @@ impl SessionMaker {
         &self,
         epoch_id: &EpochId,
     ) -> Result<EpochDestructionLease, LifecycleConflict> {
-        Ok(EpochDestructionLease {
-            _epoch: self
-                .lifecycle
-                .epoch_locks
-                .try_reserve(epoch_id, LifecycleConflict::Epoch)
-                .await?,
-        })
-    }
-
-    /// Reserves an epoch for an operation that stores private material under it.
-    pub(crate) async fn try_get_epoch_use_lease(
-        &self,
-        epoch_id: &EpochId,
-    ) -> Result<EpochUseLease, LifecycleConflict> {
-        Ok(EpochUseLease {
-            _epoch: self
-                .lifecycle
-                .epoch_locks
-                .try_share(epoch_id, LifecycleConflict::Epoch)
-                .await?,
-        })
+        let epoch = self.lifecycle.epoch_locks.lock(epoch_id).await;
+        let epoch = epoch
+            .try_write_owned()
+            .map_err(|_| LifecycleConflict::Epoch(*epoch_id))?;
+        Ok(EpochDestructionLease { _epoch: epoch })
     }
 
     /// Returns the number of active sessions.
@@ -1030,15 +982,6 @@ impl ImmutableSessionMaker {
             .await
     }
 
-    /// Reserves an epoch while this node stores material under it, see
-    /// [`SessionMaker::try_get_epoch_use_lease`].
-    pub(crate) async fn try_use_epoch(
-        &self,
-        epoch_id: &EpochId,
-    ) -> Result<EpochUseLease, LifecycleConflict> {
-        self.inner.try_get_epoch_use_lease(epoch_id).await
-    }
-
     #[allow(dead_code)]
     pub(crate) async fn context_exists(&self, context_id: &ContextId) -> bool {
         self.inner.context_exists(context_id).await
@@ -1203,25 +1146,6 @@ pub(crate) async fn validate_context_and_epoch(
     Ok(my_role)
 }
 
-/// Reserves `epoch_id` for an operation that stores private material under it.
-///
-/// The returned lease must live until the operation has finished every persistent write.
-pub(crate) async fn reserve_epoch_for_write(
-    op_tag: &'static str,
-    session_maker: &ImmutableSessionMaker,
-    req_id: RequestId,
-    epoch_id: &EpochId,
-) -> Result<EpochUseLease, MetricedError> {
-    session_maker.try_use_epoch(epoch_id).await.map_err(|e| {
-        MetricedError::new(
-            op_tag,
-            Some(req_id),
-            anyhow::anyhow!("Cannot store material under epoch ID {epoch_id}: {e}"),
-            Code::FailedPrecondition,
-        )
-    })
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1310,54 +1234,6 @@ mod tests {
                 .await
                 .is_empty()
         );
-    }
-
-    /// A key generation or a CRS generation holds a use lease across its whole run, so a
-    /// destruction that would strand its material under a forgotten epoch is refused until it
-    /// finishes. An epoch creation shares the same epoch, so the two must not exclude each other.
-    #[tokio::test]
-    async fn epoch_use_lease_blocks_destruction_but_not_creation() {
-        let mut rng = AesRng::seed_from_u64(8);
-        let session_maker = SessionMaker::empty_dummy_session(TaskRngs::insecure_seed_from_u64(9));
-        let context_id = ContextId::new_random(&mut rng);
-        let epoch_id = EpochId::new_random(&mut rng);
-        let endpoint_session_maker = session_maker.make_immutable();
-
-        let use_lease = endpoint_session_maker
-            .try_use_epoch(&epoch_id)
-            .await
-            .unwrap();
-
-        assert_eq!(
-            session_maker
-                .try_get_epoch_destruction_lease(&epoch_id)
-                .await
-                .unwrap_err(),
-            LifecycleConflict::Epoch(epoch_id)
-        );
-
-        // Both leases are shared, so an epoch creation and a second writer still get through.
-        let creation = session_maker
-            .try_get_epoch_creation_lease(&context_id, &epoch_id, None)
-            .await
-            .unwrap();
-        let second_use = endpoint_session_maker
-            .try_use_epoch(&epoch_id)
-            .await
-            .unwrap();
-
-        // An unrelated epoch is unaffected.
-        let other_epoch_id = EpochId::new_random(&mut rng);
-        session_maker
-            .try_get_epoch_destruction_lease(&other_epoch_id)
-            .await
-            .unwrap();
-
-        drop((use_lease, creation, second_use));
-        session_maker
-            .try_get_epoch_destruction_lease(&epoch_id)
-            .await
-            .unwrap();
     }
 
     /// An epoch creation is visible to lifecycle coordination before it is registered in

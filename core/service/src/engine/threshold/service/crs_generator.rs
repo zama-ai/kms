@@ -38,10 +38,7 @@ use crate::{
             stored_scheme_signatures_to_proto,
         },
         threshold::{
-            service::session::{
-                EpochUseLease, ImmutableSessionMaker, reserve_epoch_for_write,
-                validate_context_and_epoch,
-            },
+            service::session::{ImmutableSessionMaker, validate_context_and_epoch},
             traits::CrsGenerator,
         },
         validation::{RequestIdParsingErr, parse_grpc_request_id, validate_crs_gen_request},
@@ -112,14 +109,6 @@ impl<
         let inner = request.into_inner();
         let max_bits = inner.max_num_bits;
         let verified = validate_crs_gen_request(inner, op_tag)?;
-        // The ceremony runs long after the epoch check, so reserve the epoch for the whole run.
-        let epoch_lease = reserve_epoch_for_write(
-            op_tag,
-            &self.session_maker,
-            verified.req_id,
-            &verified.epoch_id,
-        )
-        .await?;
         // Find the role of the current server and validate that the context and the epoch exist.
         let my_role = validate_context_and_epoch(
             op_tag,
@@ -180,7 +169,6 @@ impl<
             rate_limiter_permit,
             meta_permit,
             verified.epoch_id,
-            epoch_lease,
             verified.context_id,
             sigkey,
             timer,
@@ -204,7 +192,6 @@ impl<
         rate_limiter_permit: OwnedSemaphorePermit,
         meta_permit: MetaStorePermit<CrsGenMetadata>,
         epoch_id: EpochId,
-        epoch_lease: EpochUseLease,
         context_id: ContextId,
         sk: Arc<NodeSigningIdentity>,
         timer: DurationGuard<'static>,
@@ -236,8 +223,6 @@ impl<
                 // task exits, the timer is dropped and thus exported.
                 let _inner_timer = timer;
                 let _inner_rate_limiter_permit = rate_limiter_permit;
-                // Held until the last persistent write.
-                let _epoch_lease = epoch_lease;
                 Self::crs_gen_background(
                     meta_permit,
                     token,

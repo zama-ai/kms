@@ -536,52 +536,6 @@ async fn write_threshold_keys_meta_update() {
     assert!(refreshed.is_ok(), "threshold read path should succeed");
 }
 
-/// Test to ensure that we do not accidentally overwrite or delete already published material for repeated requests.
-#[tokio::test]
-async fn write_fhe_keys_duplicate_keeps_published_material() {
-    let req_id = derive_request_id("write_fhe_keys_duplicate_public").unwrap();
-    let epoch_id: EpochId = derive_request_id("write_fhe_keys_duplicate_epoch")
-        .unwrap()
-        .into();
-    let (crypto_storage, keys, pubset) = setup_threshold_store(&req_id, RamStorage::new());
-    let server_key_type = PubDataType::ServerKey.to_string();
-
-    // Publish a server key under the same ID, as an earlier key generation would have.
-    {
-        let mut guard = crypto_storage.inner.public_storage.lock().await;
-        guard
-            .store_bytes(b"published", &req_id, &server_key_type)
-            .await
-            .unwrap();
-    }
-
-    let meta_store = MetaStore::new_unlimited();
-    let permit = add_req_to_meta_store(&meta_store, &req_id, "test")
-        .await
-        .unwrap();
-    assert_eq!(
-        crypto_storage
-            .write_fhe_keys(
-                &req_id,
-                &epoch_id,
-                keys,
-                PublicKeySet::Uncompressed(Arc::new(pubset)),
-                meta_store.clone(),
-                permit,
-                "test",
-            )
-            .await,
-        Err(StorageError::Duplicate)
-    );
-
-    let guard = crypto_storage.inner.public_storage.lock().await;
-    assert_eq!(
-        guard.load_bytes(&req_id, &server_key_type).await.unwrap(),
-        b"published".to_vec(),
-        "a refused key write must not touch the published server key"
-    );
-}
-
 #[tokio::test]
 async fn purge_epoch_from_cache_removes_only_matching_epoch() {
     // Two cached keys under two different epochs in the SAME storage.

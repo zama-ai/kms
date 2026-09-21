@@ -61,10 +61,7 @@ use crate::{
         threshold::{
             service::{
                 PublicKeyMaterial, ThresholdFheKeys,
-                session::{
-                    EpochUseLease, ImmutableSessionMaker, reserve_epoch_for_write,
-                    validate_context_and_epoch,
-                },
+                session::{ImmutableSessionMaker, validate_context_and_epoch},
             },
             traits::KeyGenerator,
         },
@@ -289,7 +286,6 @@ impl<
         signing_schemes: Vec<SigningSchemeType>,
         context_id: ContextId,
         epoch_id: EpochId,
-        epoch_lease: EpochUseLease,
         permit: OwnedSemaphorePermit,
         meta_permit: MetaStorePermit<KeyGenMetadata>,
     ) -> Result<(), MetricedError> {
@@ -537,8 +533,6 @@ impl<
             async move {
                 //Start the metric timer, it will end on drop
                 let _timer = timer.start();
-                // Held until the last persistent write.
-                let _epoch_lease = epoch_lease;
                 keygen_background.await;
                 tracing::info!(
                     "Key generation of request {} with preproc id {} exiting.",
@@ -584,9 +578,6 @@ impl<
             extra_data,
             signing_schemes,
         ) = validate_key_gen_request(inner, op_tag)?;
-        // The DKG runs long after the epoch check, so reserve the epoch for the whole run.
-        let epoch_lease =
-            reserve_epoch_for_write(op_tag, &self.session_maker, req_id, &epoch_id).await?;
         let my_role = validate_context_and_epoch(
             op_tag,
             &self.session_maker,
@@ -647,7 +638,6 @@ impl<
             signing_schemes,
             context_id,
             epoch_id,
-            epoch_lease,
             permit,
             meta_permit,
         )
