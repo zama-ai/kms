@@ -279,8 +279,7 @@ The primary service is `CoreServiceEndpoint`. Its RPCs group into:
   keyset, and every party must agree. A storage failure during
   resharing rolls the new epoch back on the party that fails. That party deletes
   the key shares and the CRS metadata that its own resharing wrote under the new
-  epoch. A write that fails because the entry already exists leaves that entry
-  alone. The party deletes the epoch data and forgets the epoch only once
+  epoch. The party deletes the epoch data and forgets the epoch only once
   the epoch holds no key share and no CRS metadata. Public data remains because
   an epoch change does not affect it. A failed deletion keeps the epoch
   registered so that deletion can be retried. `DestroyMpcEpoch` erases a whole
