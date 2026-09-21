@@ -933,7 +933,7 @@ impl SessionMaker {
         Ok(context_info.threshold)
     }
 
-    #[allow(dead_code)]
+    #[expect(dead_code)]
     pub(crate) async fn num_parties(&self, context_id: &ContextId) -> anyhow::Result<usize> {
         let context_map_guard = self.context_map.read().await;
         let context_info = context_map_guard
@@ -963,7 +963,7 @@ impl ImmutableSessionMaker {
             .await
     }
 
-    #[allow(dead_code)]
+    #[expect(dead_code)]
     pub(crate) async fn context_exists(&self, context_id: &ContextId) -> bool {
         self.inner.context_exists(context_id).await
     }

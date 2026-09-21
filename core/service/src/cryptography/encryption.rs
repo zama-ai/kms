@@ -9,7 +9,7 @@ use crate::{
         zeroizing_writer::ZeroizingWriter,
     },
 };
-#[allow(deprecated)]
+#[expect(deprecated)]
 use ml_kem::ExpandedKeyEncoding;
 use ml_kem::{Kem, KeyExport, KeyInit, MlKem512, TryKeyInit};
 use rand::{CryptoRng, RngCore};
@@ -216,9 +216,9 @@ pub trait Encrypt {
 }
 
 impl Encrypt for UnifiedPublicEncKey {
-    #[allow(unknown_lints)]
+    #[expect(unknown_lints)]
     // We allow modifying the rng before an error return
-    #[allow(non_local_effect_before_unhandled_error)]
+    #[expect(non_local_effect_before_unhandled_error)]
     fn encrypt<T: Serialize + tfhe::Versionize + tfhe::named::Named>(
         &self,
         rng: &mut (impl CryptoRng + RngCore),
@@ -801,7 +801,7 @@ mod tests {
         use crate::cryptography::hybrid_ml_kem;
         let mut rng = AesRng::seed_from_u64(0);
         let (_dk, ek) = hybrid_ml_kem::keygen::<ml_kem::MlKem1024, _>(&mut rng);
-        #[allow(deprecated)]
+        #[expect(deprecated)]
         let key = CrateUnifiedPublicEncKey::MlKem1024(PublicEncKey(ek));
 
         let mut buf = Vec::new();

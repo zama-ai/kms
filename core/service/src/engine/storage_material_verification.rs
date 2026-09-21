@@ -292,7 +292,6 @@ where
             PubDataType::CRS => {
                 verify_crses(public_storage, crs_entries).await?;
             }
-            #[allow(deprecated)]
             PubDataType::VerfKey => {
                 // Verifies both the legacy verification key and address together.
                 verify_signing_key_material(public_storage, identity.ecdsa()).await?;
@@ -314,7 +313,7 @@ where
                 // DecompressionKey is not used in production at the moment and it does not have a private component.
                 // TypedVerfAddress is checked by validate_slots above.
             }
-            #[allow(deprecated)]
+            #[expect(deprecated)]
             PubDataType::VerfAddress | PubDataType::PublicKeyMetadata => {
                 // VerfAddress is checked by verify_signing_key_material above. PublicKeyMetadata
                 // is deprecated and no longer stored.
@@ -1917,7 +1916,7 @@ mod tests {
     }
 
     #[tokio::test]
-    #[allow(deprecated)]
+    #[expect(deprecated)]
     async fn public_key_metadata_is_reported_only_under_unknown_ids() {
         let mut storage = RamStorage::new();
         let material = setup_standard_keys(&mut storage, 184).await;
@@ -2043,7 +2042,7 @@ mod tests {
     }
 
     #[test]
-    #[allow(deprecated)]
+    #[expect(deprecated)]
     fn expected_public_material_covers_fixed_id_signing_material() {
         let expected = expected_public_material(&[], &HashMap::new());
         for data_type in [
@@ -2076,7 +2075,7 @@ mod tests {
     }
 
     #[tokio::test]
-    #[allow(deprecated)]
+    #[expect(deprecated)]
     async fn expected_public_material_follows_keyset_layout() {
         let mut storage = RamStorage::new();
         let standard = setup_standard_keys(&mut storage, 189).await;

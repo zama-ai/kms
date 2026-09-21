@@ -1204,7 +1204,7 @@ mod tests {
         names.sort();
 
         // Exhaustive allowlist — update this when adding/removing metrics
-        #[allow(unused_mut)]
+        #[expect(unused_mut)]
         let mut expected_metrics = vec![
             "kms_active_sessions",
             "kms_backup_errors_total",

@@ -878,8 +878,8 @@ impl<
 
     // We allow the following lints because we are fine with mutating the rng even if
     // the function fails serializing the singcrypted message.
-    #[allow(unknown_lints)]
-    #[allow(non_local_effect_before_unhandled_error)]
+    #[expect(unknown_lints)]
+    #[expect(non_local_effect_before_unhandled_error)]
     fn user_decrypt(
         keys: &KmsFheKeyHandles,
         sig_key: &PrivateSigKey,
@@ -1317,7 +1317,7 @@ pub(crate) mod tests {
                     // that way we won't forget to update the code here appropriately
                     //
                     // VerfKey / VerfAddress are written once above, outside this per-key loop.
-                    #[allow(deprecated)]
+                    #[expect(deprecated)]
                     PubDataType::PublicKeyMetadata
                     | PubDataType::CRS
                     | PubDataType::VerfKey

@@ -101,7 +101,7 @@ pub(crate) fn enc<C: Kem, R: Rng + CryptoRng>(
     let kem_shared_secret = Zeroizing::new(kem_shared_secret);
 
     let key_size = <Aes256Gcm as KeySizeUser>::key_size();
-    #[allow(deprecated)]
+    #[expect(deprecated)]
     let aead_key = Key::<Aes256Gcm>::from_slice(&kem_shared_secret[0..key_size]);
     let cipher = Aes256Gcm::new(aead_key);
     // `AeadCore::generate_nonce` requires a rand_core 0.10 RNG, and callers pass rand 0.8 RNGs.
@@ -138,7 +138,7 @@ pub(crate) fn dec<C: Kem>(
     let kem_shared_secret = Zeroizing::new(kem_shared_secret);
 
     let key_size = <Aes256Gcm as KeySizeUser>::key_size();
-    #[allow(deprecated)]
+    #[expect(deprecated)]
     let aead_key = Key::<Aes256Gcm>::from_slice(&kem_shared_secret[0..key_size]);
 
     let cipher = Aes256Gcm::new(aead_key);

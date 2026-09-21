@@ -461,7 +461,7 @@ pub enum FheType {
 
 impl FheType {
     // We don't use it for now, but useful to have
-    #[allow(dead_code)]
+    #[expect(dead_code)]
     fn as_str_name(self) -> &'static str {
         match self {
             FheType::Ebool => "Ebool",

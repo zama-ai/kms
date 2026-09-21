@@ -41,7 +41,7 @@ impl Named for AppKeyBlob {
     const NAME: &'static str = "AppKeyBlob";
 }
 
-#[allow(async_fn_in_trait)]
+#[expect(async_fn_in_trait)]
 #[enum_dispatch]
 pub trait Keychain {
     /// Encrypt some data. The `data_type` is used to identify the type of data being encrypted must be of the `PrivDataType` type.
@@ -179,7 +179,7 @@ pub fn encrypt_under_data_key(
             "Invalid IV length: must be exactly 96 bits for AES-256-GCM-SIV",
         ));
     }
-    #[allow(deprecated)]
+    #[expect(deprecated)]
     let nonce = Nonce::from_slice(iv);
     let auth_tag = cipher
         .encrypt_inout_detached(nonce, b"", plaintext.into())
@@ -194,7 +194,6 @@ pub fn decrypt_under_data_key(
     iv: &[u8],
     auth_tag: &Vec<u8>,
 ) -> anyhow::Result<()> {
-    #[allow(deprecated)]
     let cipher = Aes256GcmSiv::new_from_slice(key)
         .map_err(|_| anyhow_error_and_log("Invalid data key length: must be 256 bits"))?;
     if iv.len() != 12 {
@@ -207,7 +206,7 @@ pub fn decrypt_under_data_key(
             "Invalid auth tag length: must be exactly 128 bits for AES-256-GCM-SIV",
         ));
     }
-    #[allow(deprecated)]
+    #[expect(deprecated)]
     let nonce = Nonce::from_slice(iv);
     // The length is checked above, so the conversion cannot fail.
     let auth_tag = Tag::try_from(auth_tag.as_slice())

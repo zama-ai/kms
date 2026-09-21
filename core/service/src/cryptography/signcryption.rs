@@ -380,9 +380,9 @@ impl Zeroize for SigncryptionPayload {
 /// `ClientRequest` and validated to be consistent with the blockchain identity of the client BEFORE
 /// calling this method. IF THIS HAS NOT BEEN DONE THEN ANYONE CAN IMPERSONATE ANY CLIENT!!!
 impl<'a> Signcrypt for UnifiedSigncryptionKey<'a> {
-    #[allow(unknown_lints)]
+    #[expect(unknown_lints)]
     // We allow modifying the rng before return
-    #[allow(non_local_effect_before_unhandled_error)]
+    #[expect(non_local_effect_before_unhandled_error)]
     fn signcrypt<T>(
         &self,
         rng: &mut (impl CryptoRng + RngCore),
@@ -403,9 +403,9 @@ impl<'a> Signcrypt for UnifiedSigncryptionKey<'a> {
 }
 
 impl Signcrypt for UnifiedSigncryptionKeyOwned {
-    #[allow(unknown_lints)]
+    #[expect(unknown_lints)]
     // We allow modifying the rng before return
-    #[allow(non_local_effect_before_unhandled_error)]
+    #[expect(non_local_effect_before_unhandled_error)]
     fn signcrypt<T>(
         &self,
         rng: &mut (impl CryptoRng + RngCore),
