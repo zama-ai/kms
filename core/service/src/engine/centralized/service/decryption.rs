@@ -74,6 +74,7 @@ pub async fn user_decrypt_impl<
     let span = tracing::Span::current();
     span.record("context_id", tracing::field::display(&context_id));
     span.record("epoch_id", tracing::field::display(&epoch_id));
+    super::ensure_default_epoch(OP_USER_DECRYPT_REQUEST, request_id, &epoch_id)?;
     if !service
         .context_manager
         .mpc_context_exists_in_cache(&context_id)
@@ -278,6 +279,7 @@ pub async fn public_decrypt_impl<
     let span = tracing::Span::current();
     span.record("context_id", tracing::field::display(&context_id));
     span.record("epoch_id", tracing::field::display(&epoch_id));
+    super::ensure_default_epoch(OP_PUBLIC_DECRYPT_REQUEST, request_id, &epoch_id)?;
 
     if !service
         .context_manager
@@ -291,7 +293,6 @@ pub async fn public_decrypt_impl<
             tonic::Code::NotFound,
         ));
     }
-    // Observe we accept any epoch ID
     let start = tokio::time::Instant::now();
 
     tracing::info!(
