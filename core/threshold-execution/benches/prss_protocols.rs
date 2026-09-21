@@ -5,21 +5,26 @@ use algebra::{
     structure_traits::{ErrorCorrect, Invert},
 };
 use criterion::{
-    BenchmarkId, Criterion, SamplingMode, Throughput, criterion_group, criterion_main,
+    BatchSize, BenchmarkId, Criterion, SamplingMode, Throughput, criterion_group, criterion_main,
 };
 use rand::SeedableRng;
 use std::{hint::black_box, sync::Arc};
-use tfhe::{FheUint8, set_server_key, shortint::atomic_pattern::AtomicPatternServerKey};
+use tfhe::{
+    FheUint8, prelude::SquashNoise, set_server_key,
+    shortint::atomic_pattern::AtomicPatternServerKey,
+};
 use threshold_execution::{
-    config::BatchParams,
     constants::REAL_KEY_PATH,
-    endpoints::decryption::{DecryptionMode, RadixOrBoolCiphertext, threshold_decrypt64},
+    endpoints::decryption::{
+        DecryptionMode, LowLevelCiphertextAndKeys, OfflineNoiseFloodSession, RadixOrBoolCiphertext,
+        SecureOnlineNoiseFloodDecryption, SmallOfflineNoiseFloodSession, SnsRadixOrBoolCiphertext,
+        decrypt_using_noiseflooding, partial_decrypt_using_noiseflooding, threshold_decrypt64,
+    },
     runtime::{
-        sessions::small_session::SmallSession,
+        sessions::session_parameters::GenericParameterHandles,
         test_runtime::{DistributedTestRuntime, generate_fixed_roles},
     },
-    small_execution::offline::{Preprocessing, SecureSmallPreprocessing},
-    tests::{ensure_real_keys_setup, helper::tests_and_benches::execute_protocol_small},
+    tests::ensure_real_keys_setup,
     tfhe_internals::{
         test_feature::{KeySet, keygen_all_party_shares_from_client_key},
         utils::expanded_encrypt,
@@ -27,35 +32,32 @@ use threshold_execution::{
 };
 use threshold_types::network::NetworkMode;
 
+#[path = "support/protocol.rs"]
+mod protocol;
+
 fn bench_preprocessing<Z: ErrorCorrect + Invert + PRSSConversions>(c: &mut Criterion, ring: &str) {
     let rt = tokio::runtime::Runtime::new().unwrap();
-    let mut group = c.benchmark_group(format!("prss_protocols/preprocessing/{ring}"));
+    let mut group = c.benchmark_group(format!("prss_protocols/preprocessing_prepared/{ring}"));
     group.sampling_mode(SamplingMode::Flat);
     group.sample_size(10);
     group.throughput(Throughput::Elements(10_000));
     for (parties, threshold) in [(4, 1), (13, 4)] {
+        let mut setup = protocol::ProtocolSetup::<Z>::new(&rt, parties, threshold);
         group.bench_function(
             BenchmarkId::new(format!("parties_{parties}_threshold_{threshold}"), 10_000),
             |b| {
-                b.iter(|| {
-                let mut preprocess = |mut session: SmallSession<Z>, _: Option<String>| async move {
-                    black_box(SecureSmallPreprocessing::default()
-                        .execute(&mut session, BatchParams { triples: 10_000, randoms: 0 })
-                        .await.unwrap());
-                };
-                // Include local session setup and protocol communication; setup uses the test runtime.
-                let completed = rt.block_on(execute_protocol_small::<_, _, Z, 4>(
-                    parties, threshold, None, NetworkMode::Sync, None, &mut preprocess, None,
-                ));
-                assert_eq!(completed.len(), parties, "a preprocessing party failed");
-            });
+                b.iter_batched(
+                    || setup.sessions(),
+                    |sessions| rt.block_on(protocol::preprocess(sessions, 10_000)),
+                    BatchSize::PerIteration,
+                );
             },
         );
     }
     group.finish();
 }
 
-fn bench_decryption<Z: ErrorCorrect + Invert + PRSSConversions>(
+fn bench_bit_decryption<Z: ErrorCorrect + Invert + PRSSConversions>(
     c: &mut Criterion,
     ring: &str,
     mode: DecryptionMode,
@@ -103,7 +105,7 @@ fn bench_decryption<Z: ErrorCorrect + Invert + PRSSConversions>(
             };
             runtime.setup_ks(Arc::new(key.key_switching_key.clone()));
         }
-        // Key material and encryption are outside timing; decryption includes its preprocessing.
+        // This secondary test-helper comparison includes session setup and bit preprocessing.
         group.bench_function(
             BenchmarkId::new(format!("parties_{parties}_threshold_{threshold}"), "uint8"),
             |b| {
@@ -123,15 +125,121 @@ fn bench_decryption<Z: ErrorCorrect + Invert + PRSSConversions>(
     group.finish();
 }
 
+fn bench_noise_flood_decryption(c: &mut Criterion) {
+    ensure_real_keys_setup();
+    let keyset: KeySet = test_utils::read_element(REAL_KEY_PATH).unwrap();
+    set_server_key(keyset.public_keys.server_key.clone());
+    let encrypted: FheUint8 = expanded_encrypt(&keyset.public_keys.public_key, 42_u64, 8).unwrap();
+    // Match BigCompressed input and its compression key, as in PR #667. All upstream work is untimed.
+    let compressed = tfhe::CompressedSquashedNoiseCiphertextListBuilder::new()
+        .push(encrypted.squash_noise().unwrap())
+        .build()
+        .unwrap();
+    let squashed: tfhe::SquashedNoiseFheUint = compressed.get(0).unwrap().unwrap();
+    let ciphertext =
+        SnsRadixOrBoolCiphertext::Radix(squashed.underlying_squashed_noise_ciphertext().clone());
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    let _guard = rt.enter();
+    let mut rng = AesRng::seed_from_u64(42);
+    for (parties, threshold) in [(4, 1), (13, 4)] {
+        let keys: Vec<_> = keygen_all_party_shares_from_client_key::<_, 4>(
+            &keyset.client_key,
+            keyset.get_cpu_params().unwrap(),
+            &mut rng,
+            parties,
+            threshold,
+        )
+        .unwrap()
+        .into_iter()
+        .map(Arc::new)
+        .collect();
+        let mut setup =
+            protocol::ProtocolSetup::<ResiduePolyF4Z128>::new(&rt, parties, threshold as u8);
+        let mut group = c.benchmark_group(format!(
+            "prss_protocols/noise_flood_big_compressed/parties_{parties}_threshold_{threshold}"
+        ));
+        group.sampling_mode(SamplingMode::Flat);
+        group.sample_size(10);
+        group.throughput(Throughput::Elements(1));
+        // Udec compute is local to one party; pdec opens the result across all parties.
+        group.bench_function("udec_one_party/uint8", |b| {
+            let mut session = SmallOfflineNoiseFloodSession::new(setup.sessions().remove(0));
+            b.iter_batched(
+                || ciphertext.clone(),
+                |ct| {
+                    let (partials, packing, _) = rt
+                        .block_on(partial_decrypt_using_noiseflooding(
+                            &mut session,
+                            LowLevelCiphertextAndKeys::BigCompressed(ct),
+                            &keys[0],
+                        ))
+                        .unwrap();
+                    assert_eq!(partials.len(), 1);
+                    assert!(packing > 0);
+                    black_box(partials)
+                },
+                BatchSize::PerIteration,
+            );
+        });
+        group.bench_function("pdec_all_parties/uint8", |b| {
+            b.iter_batched(
+                || {
+                    setup
+                        .sessions()
+                        .into_iter()
+                        .map(|session| {
+                            let key = keys[session.my_role().one_based() - 1].clone();
+                            (
+                                SmallOfflineNoiseFloodSession::new(session),
+                                ciphertext.clone(),
+                                key,
+                            )
+                        })
+                        .collect::<Vec<_>>()
+                },
+                |inputs| {
+                    rt.block_on(async {
+                        let mut tasks = tokio::task::JoinSet::new();
+                        for (mut session, ct, key) in inputs {
+                            tasks.spawn(async move {
+                                let (plaintexts, _) = decrypt_using_noiseflooding::<
+                                    4,
+                                    _,
+                                    SecureOnlineNoiseFloodDecryption,
+                                    u64,
+                                >(
+                                    &mut session,
+                                    LowLevelCiphertextAndKeys::BigCompressed(ct),
+                                    key,
+                                )
+                                .await
+                                .unwrap();
+                                assert_eq!(plaintexts.len(), 1);
+                                assert_eq!(*plaintexts.values().next().unwrap(), 42);
+                                black_box(plaintexts);
+                            });
+                        }
+                        let mut completed = 0;
+                        while let Some(result) = tasks.join_next().await {
+                            result.unwrap();
+                            completed += 1;
+                        }
+                        assert_eq!(completed, parties);
+                    })
+                },
+                BatchSize::PerIteration,
+            );
+        });
+        group.finish();
+    }
+}
+
 fn bench_protocols(c: &mut Criterion) {
     bench_preprocessing::<ResiduePolyF4Z64>(c, "f4_z64");
     bench_preprocessing::<ResiduePolyF4Z128>(c, "f4_z128");
-    bench_decryption::<ResiduePolyF4Z64>(c, "f4_z64_bitdec", DecryptionMode::BitDecSmall);
-    bench_decryption::<ResiduePolyF4Z128>(
-        c,
-        "f4_z128_noise_flood",
-        DecryptionMode::NoiseFloodSmall,
-    );
+    // Bit decomposition is a secondary comparison, not a production optimization target.
+    bench_bit_decryption::<ResiduePolyF4Z64>(c, "f4_z64_bitdec", DecryptionMode::BitDecSmall);
+    bench_noise_flood_decryption(c);
 }
 criterion_group!(protocols, bench_protocols);
 criterion_main!(protocols);

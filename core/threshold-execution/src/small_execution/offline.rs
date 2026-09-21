@@ -25,6 +25,9 @@ use thread_handles::spawn_compute_bound;
 use threshold_types::protocol::ProtocolDescription;
 use threshold_types::role::Role;
 
+#[cfg(feature = "testing")]
+mod benchmark_timings;
+
 #[async_trait]
 pub trait Preprocessing<Z: Clone, S: BaseSessionHandles>:
     ProtocolDescription + Send + Sync
@@ -156,14 +159,21 @@ async fn next_triple_batch<Z: ErrorCorrect, Ses: SmallSessionHandles<Z>, BCast: 
     let prss_base_ctr = counters.prss_ctr;
     let przs_base_ctr = counters.przs_ctr;
 
+    #[cfg(feature = "testing")]
+    let mut timings = benchmark_timings::StageTimings::new();
+
     let all_prss = session
         .prss_as_mut()
         .prss_next_vec(my_role, 3 * amount)
         .await?;
+    #[cfg(feature = "testing")]
+    timings.finish_stage("prss");
     let vec_z_double: Vec<_> = session
         .prss_as_mut()
         .przs_next_vec(my_role, threshold, amount)
         .await?;
+    #[cfg(feature = "testing")]
+    timings.finish_stage("przs");
 
     let (vec_x_single, vec_y_single, vec_v_single, vec_d_double) = spawn_compute_bound( move ||{
     let mut all_prss = all_prss.into_iter();
@@ -196,13 +206,19 @@ async fn next_triple_batch<Z: ErrorCorrect, Ses: SmallSessionHandles<Z>, BCast: 
 
     Ok((vec_x_single, vec_y_single, vec_v_single, res))
     }).await??;
+    #[cfg(feature = "testing")]
+    timings.finish_stage("local_d_arithmetic");
 
     let broadcast_res = broadcast
         .broadcast_from_all_w_corrupt_set_update(session, vec_d_double.into())
         .await?;
+    #[cfg(feature = "testing")]
+    timings.finish_stage("broadcast");
 
     //Try reconstructing 2t sharings of d, a None means reconstruction failed.
     let recons_vec_d = reconstruct_d_values(session, amount, broadcast_res.clone()).await?;
+    #[cfg(feature = "testing")]
+    timings.finish_stage("reconstruction");
 
     let mut triples = Vec::with_capacity(amount);
     let mut bad_triples_idx = Vec::new();
@@ -226,6 +242,8 @@ async fn next_triple_batch<Z: ErrorCorrect, Ses: SmallSessionHandles<Z>, BCast: 
             bad_triples_idx.push(i);
         }
     }
+    #[cfg(feature = "testing")]
+    timings.finish_stage("triple_assembly");
     // If non-correctable malicious behaviour has been detected
     if !bad_triples_idx.is_empty() {
         // Recover the individual d shares from broadcast
@@ -245,6 +263,8 @@ async fn next_triple_batch<Z: ErrorCorrect, Ses: SmallSessionHandles<Z>, BCast: 
             .await?;
         }
     }
+    #[cfg(feature = "testing")]
+    timings.emit::<Z>(session, amount);
     Ok(triples)
 }
 
