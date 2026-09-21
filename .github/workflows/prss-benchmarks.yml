@@ -1,0 +1,108 @@
+# ============================================================================
+# TEMP: REMOVE BEFORE MERGE
+# Delete this entire workflow after the PRSS optimization investigation.
+# ============================================================================
+name: prss-benchmarks
+
+on:
+  workflow_dispatch:
+  workflow_call:
+
+permissions: {}
+
+jobs:
+  components:
+    permissions:
+      contents: read
+    runs-on: runs-on=${{ github.run_id }}/runner=64cpu-linux-x64/spot=false/volume=400gb/extras=s3-cache
+    timeout-minutes: 240
+    env:
+      RUSTFLAGS: '-C debuginfo=0'
+      MPC_PRSS_PAR_MIN_CHUNK: '1024'
+      CRITERION_HOME: ${{ github.workspace }}/artifacts/prss-server/criterion
+    steps:
+      - uses: runs-on/action@cd2b598b0515d39d78c38a02d529db87d2196d1e # v2.0.3
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          persist-credentials: false
+      - name: Read toolchain
+        run: |
+          version="$(sed -n 's/^channel = "\(.*\)"/\1/p' rust-toolchain.toml)"
+          echo "RUST_IMAGE_VERSION=$version" >> "$GITHUB_ENV"
+      - uses: ./.github/actions/setup-rust-and-protoc
+        with:
+          rust-toolchain: ${{ env.RUST_IMAGE_VERSION }}
+          rust-cache: 'false'
+      - uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5 # v2.8.2
+        with:
+          shared-key: prss-benchmarks
+      - name: Build and record provenance
+        run: |
+          mkdir -p artifacts/prss-server
+          lscpu > artifacts/prss-server/cpu.txt
+          rustc -Vv > artifacts/prss-server/compiler.txt
+          git rev-parse HEAD > artifacts/prss-server/commit.txt
+          cp Cargo.lock artifacts/prss-server/Cargo.lock
+          cargo bench -p threshold-execution --features testing --no-run \
+            --bench prss --bench prf --bench concurrent_prss --bench prss_protocols \
+            --message-format=json > artifacts/prss-server/build.jsonl
+      - name: Measure sequentially on this allocation
+        run: |
+          for repeat in a b; do
+            for bench in prf prss concurrent_prss prss_protocols; do
+              RAYON_NUM_THREADS=56 cargo bench -p threshold-execution --features testing \
+                --bench "$bench" -- --save-baseline "before-t56-$repeat" \
+                --sample-size 20 --warm-up-time 1 --measurement-time 3 --noplot \
+                > "artifacts/prss-server/$bench-t56-$repeat.log" 2>&1
+            done
+          done
+          for threads in 1 2 4 8 15 28; do
+            RAYON_NUM_THREADS="$threads" cargo bench -p threshold-execution --features testing \
+              --bench prss -- --save-baseline "before-t$threads-a" \
+              --sample-size 20 --warm-up-time 1 --measurement-time 3 --noplot \
+              'prss/f4_z(64|128)/parties_13_threshold_4/(.*/30000|triple_inputs/10000|new_prss_session_state)$' \
+              > "artifacts/prss-server/prss-t$threads-a.log" 2>&1
+          done
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: always()
+        with:
+          name: prss-server-before
+          path: artifacts/prss-server
+
+  test-material:
+    permissions:
+      checks: write
+      packages: read
+      issues: write
+      pull-requests: write
+      actions: read
+      contents: read
+    uses: ./.github/workflows/generate-test-material.yml
+
+  concurrent-keygen:
+    needs: test-material
+    permissions:
+      checks: write
+      packages: read
+      issues: write
+      pull-requests: write
+      actions: read
+      contents: read
+    strategy:
+      fail-fast: false
+      max-parallel: 1
+      matrix:
+        repeat: [1, 2, 3]
+    name: concurrent-keygen-${{ matrix.repeat }}
+    uses: ./.github/workflows/common-testing.yml
+    with:
+      crate-names: '-p kms'
+      args-tests: '-F slow_tests -F insecure --lib -E test(/nightly_secure_threshold_concurrent_keygen_test::case_2/)'
+      efs-test-material-path: ${{ needs.test-material.outputs.efs-test-material-path }}
+      lfs: true
+      runs-on: '64cpu-linux-x64'
+      runner-volume: '400gb'
+      nextest-test-threads: '1'
+      rust-log-level: 'info'
+      notify-slack: false
+    secrets: inherit

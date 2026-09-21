@@ -82,3 +82,23 @@ malicious_strategies = ["testing"]
 name = "prss"
 harness = false
 required-features = ["testing"]
+
+[[bench]]
+name = "prf"
+harness = false
+required-features = ["testing"]
+
+[[bench]]
+name = "allocations"
+harness = false
+required-features = ["testing"]
+
+[[bench]]
+name = "concurrent_prss"
+harness = false
+required-features = ["testing"]
+
+[[bench]]
+name = "prss_protocols"
+harness = false
+required-features = ["testing"]

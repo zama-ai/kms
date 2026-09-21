@@ -70,7 +70,7 @@ The repository is a Cargo workspace. The members are declared in
 | Crate | Path | Responsibility |
 |---|---|---|
 | `threshold-algebra` | [core/threshold-algebra/](../core/threshold-algebra/) | Finite-field and group primitives used by the MPC protocols |
-| `threshold-execution` | [core/threshold-execution/](../core/threshold-execution/) | Threshold FHE protocol execution: DKG, preprocessing, online protocols; PRSS/PRZS component benchmarks |
+| `threshold-execution` | [core/threshold-execution/](../core/threshold-execution/) | Threshold FHE protocol execution: DKG, preprocessing, online protocols |
 | `threshold-bgv` | [core/threshold-bgv/](../core/threshold-bgv/) | Experimental BGV/BFV schemes with distributed keygen and threshold decryption |
 | `threshold-networking` | [core/threshold-networking/](../core/threshold-networking/) | Inter-party gRPC transport and choreography |
 | `threshold-hashing` | [core/threshold-hashing/](../core/threshold-hashing/) | Hashing primitives used across the MPC stack |

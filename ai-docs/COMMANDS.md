@@ -84,18 +84,6 @@ Run the focused metastore microbenchmarks:
 cargo bench -p kms --bench meta_store --features testing
 ```
 
-Run the PRSS, PRZS, and mask microbenchmarks with a fixed Rayon thread count:
-
-```
-RAYON_NUM_THREADS=15 cargo bench -p threshold-execution --bench prss --features testing
-```
-
-These benchmarks measure one session at a time, with 7-party/threshold-2 and
-13-party/threshold-4 configurations. Sizes include small requests
-and 30,000-value requests. Use the same thread count and benchmark
-source when comparing revisions; these measurements do not assess fairness
-between competing sessions.
-
 Save and compare a local Criterion baseline:
 
 ```

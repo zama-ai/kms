@@ -230,6 +230,58 @@ pub(crate) fn chi<Z: Ring + PRSSConversions>(pa: &ChiAes, ctr: u128, j: u8) -> a
     }))
 }
 
+/// Access to PRF kernels for component benchmarks.
+#[cfg(feature = "testing")]
+pub mod benchmarking {
+    pub use super::PrfKey;
+    use super::*;
+
+    /// Holds the expanded key for the mask PRF.
+    pub struct PhiAes(super::PhiAes);
+    impl PhiAes {
+        /// Expands a session key outside benchmark timing.
+        pub fn new(key: &PrfKey, sid: SessionId) -> Self {
+            Self(super::PhiAes::new(key, sid))
+        }
+    }
+    /// Holds the expanded key for the PRSS PRF.
+    pub struct PsiAes(super::PsiAes);
+    impl PsiAes {
+        /// Expands a session key outside benchmark timing.
+        pub fn new(key: &PrfKey, sid: SessionId) -> Self {
+            Self(super::PsiAes::new(key, sid))
+        }
+    }
+    /// Holds the expanded key for the PRZS PRF.
+    pub struct ChiAes(super::ChiAes);
+    impl ChiAes {
+        /// Expands a session key outside benchmark timing.
+        pub fn new(key: &PrfKey, sid: SessionId) -> Self {
+            Self(super::ChiAes::new(key, sid))
+        }
+    }
+    /// Evaluates the PRSS PRF at one counter.
+    #[inline]
+    pub fn psi<Z: Ring + PRSSConversions>(pa: &PsiAes, ctr: u128) -> anyhow::Result<Z> {
+        super::psi(&pa.0, ctr)
+    }
+    /// Evaluates the PRZS PRF at one counter and index.
+    #[inline]
+    pub fn chi<Z: Ring + PRSSConversions>(pa: &ChiAes, ctr: u128, j: u8) -> anyhow::Result<Z> {
+        super::chi(&pa.0, ctr, j)
+    }
+    /// Evaluates the mask PRF over a counter range.
+    #[inline]
+    pub fn phi_range(
+        pa: &PhiAes,
+        start: u128,
+        count: usize,
+        bd1: u128,
+    ) -> anyhow::Result<Vec<i128>> {
+        super::phi_range(&pa.0, start, count, bd1)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

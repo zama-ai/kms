@@ -1,7 +1,18 @@
+# ============================================================================
+# TEMP: REMOVE BEFORE MERGE
+# Remove the prss-benchmarks dispatch input, job, and nightly-job guards below.
+# Keep the normal nightly workflow.
+# ============================================================================
 name: kms-nightly
 
 on:
   workflow_dispatch:
+    inputs:
+      # TEMP: REMOVE BEFORE MERGE
+      prss-benchmarks:
+        description: Run PRSS benchmarks and repeated keygen instead of all nightly tests
+        type: boolean
+        default: false
   workflow_call:
     secrets:
       SLACK_CHANNEL:
@@ -23,6 +34,8 @@ permissions: {}
 
 jobs:
   generate-test-material:
+    # TEMP: REMOVE BEFORE MERGE (remove this guard).
+    if: ${{ ! inputs.prss-benchmarks }}
     name: kms-nightly/generate-test-material
     permissions:
       checks: write # Required to write to the GitHub Actions check suite
@@ -34,6 +47,8 @@ jobs:
     uses: ./.github/workflows/generate-test-material.yml
 
   kms-nightly:
+    # TEMP: REMOVE BEFORE MERGE (remove this guard).
+    if: ${{ ! inputs.prss-benchmarks }}
     name: kms-nightly/p${{ matrix.partition }}
     needs: [generate-test-material]
     permissions:
@@ -63,3 +78,16 @@ jobs:
       SLACK_WEBHOOK: ${{ secrets.SLACK_WEBHOOK }}
       CGR_USERNAME: ${{ secrets.CGR_USERNAME }}
       CGR_PASSWORD: ${{ secrets.CGR_PASSWORD }}
+
+  # TEMP: REMOVE BEFORE MERGE (remove this entire job).
+  prss-benchmarks:
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.prss-benchmarks }}
+    permissions:
+      checks: write
+      packages: read
+      issues: write
+      pull-requests: write
+      actions: read
+      contents: read
+    uses: ./.github/workflows/prss-benchmarks.yml
+    secrets: inherit
