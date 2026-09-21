@@ -1465,6 +1465,36 @@ mod tests {
     }
 
     #[test]
+    fn delete_leaves_done_entry_untouched_when_queue_slot_is_missing() {
+        // A `Done` entry without a completion-queue slot already breaks the queue
+        // invariant. Deleting it must fail before the tombstone is written, or the
+        // entry would sit in `deleted_set` while still counted as queued, and no
+        // eviction path could ever reclaim it.
+        let mut store: MetaStore<String> = MetaStore::new_unlimited_inner();
+        let id = derive_request_id("del-missing-slot").unwrap();
+        insert_done_ok(&mut store, &id, "v");
+        store.complete_queue.clear();
+
+        let permit = store.lock_entry(&id).unwrap();
+        assert!(matches!(
+            store.delete(permit),
+            Err(MetaStoreError::Invariant(_))
+        ));
+        assert_done_ok(&store, &id, &"v".to_string());
+        assert_eq!(store.get_deleted_count(), 0);
+        assert!(store.verify_invariant());
+
+        // The failed `delete` consumed its permit, so the permit-less path is reachable too.
+        assert!(matches!(
+            store.try_delete(&id),
+            Err(MetaStoreError::Invariant(_))
+        ));
+        assert_done_ok(&store, &id, &"v".to_string());
+        assert_eq!(store.get_deleted_count(), 0);
+        assert!(store.verify_invariant());
+    }
+
+    #[test]
     fn sunshine() {
         let mut meta_store: MetaStore<String> = MetaStore::new_inner(2, 1);
         let request_id: RequestId = derive_request_id("meta_store").unwrap();
