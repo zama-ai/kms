@@ -38,7 +38,10 @@ use crate::{
             stored_scheme_signatures_to_proto,
         },
         threshold::{
-            service::session::{ImmutableSessionMaker, validate_context_and_epoch},
+            service::session::{
+                EpochUseLease, ImmutableSessionMaker, reserve_epoch_for_write,
+                validate_context_and_epoch,
+            },
             traits::CrsGenerator,
         },
         validation::{RequestIdParsingErr, parse_grpc_request_id, validate_crs_gen_request},
@@ -118,6 +121,14 @@ impl<
             &verified.epoch_id,
         )
         .await?;
+        // The ceremony runs long after this check, so reserve the epoch for the whole run.
+        let epoch_lease = reserve_epoch_for_write(
+            op_tag,
+            &self.session_maker,
+            verified.req_id,
+            &verified.epoch_id,
+        )
+        .await?;
         let metric_tags = vec![(TAG_PARTY_ID, my_role.to_string())];
         timer.tags(metric_tags);
 
@@ -169,6 +180,7 @@ impl<
             rate_limiter_permit,
             meta_permit,
             verified.epoch_id,
+            epoch_lease,
             verified.context_id,
             sigkey,
             timer,
@@ -192,6 +204,7 @@ impl<
         rate_limiter_permit: OwnedSemaphorePermit,
         meta_permit: MetaStorePermit<CrsGenMetadata>,
         epoch_id: EpochId,
+        epoch_lease: EpochUseLease,
         context_id: ContextId,
         sk: Arc<NodeSigningIdentity>,
         timer: DurationGuard<'static>,
@@ -223,6 +236,8 @@ impl<
                 // task exits, the timer is dropped and thus exported.
                 let _inner_timer = timer;
                 let _inner_rate_limiter_permit = rate_limiter_permit;
+                // Held until the last persistent write.
+                let _epoch_lease = epoch_lease;
                 Self::crs_gen_background(
                     meta_permit,
                     token,

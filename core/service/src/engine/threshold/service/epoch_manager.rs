@@ -3522,6 +3522,77 @@ pub(crate) mod tests {
         }
     }
 
+    /// A key share can end up under an epoch the session maker never learned of, for instance
+    /// when a write outlives the destruction of its epoch. An epoch that holds nothing is still reported as not found.
+    #[tokio::test]
+    async fn destroy_epoch_clears_an_unregistered_epoch() {
+        let mut rng = AesRng::seed_from_u64(21);
+        let epoch_manager = make_epoch_manager::<EmptyPrss>(&mut rng).await;
+        let crypto_storage = &epoch_manager.crypto_storage;
+        let session_maker = &epoch_manager.session_maker;
+
+        // A served epoch, so the dangling one below is not mistaken for the last epoch.
+        let served_epoch_id = EpochId::new_random(&mut rng);
+        seed_epoch(&epoch_manager, served_epoch_id, *DEFAULT_MPC_CONTEXT).await;
+
+        let dangling_epoch_id = EpochId::new_random(&mut rng);
+        let data_id = derive_request_id("dangling_epoch_key").unwrap();
+        {
+            let priv_storage = crypto_storage.get_private_storage();
+            let mut guard = priv_storage.lock().await;
+            store_versioned_at_request_and_epoch_id(
+                &mut (*guard),
+                &data_id,
+                &dangling_epoch_id,
+                &TestType { i: 5 },
+                &PrivDataType::FheKeyInfo.to_string(),
+            )
+            .await
+            .unwrap();
+        }
+        assert!(!session_maker.epoch_exists(&dangling_epoch_id).await);
+
+        RealThresholdEpochManager::<
+            ram::RamStorage,
+            ram::RamStorage,
+            EmptyPrss,
+            SecureReshareSecretKeys,
+        >::destroy_epoch(&dangling_epoch_id, crypto_storage, session_maker)
+        .await
+        .unwrap();
+
+        {
+            let priv_storage = crypto_storage.get_private_storage();
+            let guard = priv_storage.lock().await;
+            assert!(
+                guard
+                    .all_data_ids_at_epoch(
+                        &dangling_epoch_id,
+                        &PrivDataType::FheKeyInfo.to_string()
+                    )
+                    .await
+                    .unwrap()
+                    .is_empty(),
+                "the leftover key share must be erased"
+            );
+        }
+        assert!(
+            session_maker.epoch_exists(&served_epoch_id).await,
+            "clearing leftovers must not touch a served epoch"
+        );
+
+        // The same epoch now holds nothing, so a repeated destruction reports it as unknown.
+        let err = RealThresholdEpochManager::<
+            ram::RamStorage,
+            ram::RamStorage,
+            EmptyPrss,
+            SecureReshareSecretKeys,
+        >::destroy_epoch(&dangling_epoch_id, crypto_storage, session_maker)
+        .await
+        .unwrap_err();
+        assert_eq!(err.code(), tonic::Code::NotFound);
+    }
+
     #[tokio::test]
     async fn test_destroy_mpc_epochs() {
         use crate::vault::storage::{
