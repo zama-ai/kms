@@ -15,15 +15,16 @@ import sys
 import tempfile
 import unittest
 from collections import defaultdict
+from collections.abc import Iterable
 from datetime import datetime, timedelta
+from itertools import pairwise
 from pathlib import Path
-from typing import Any, Iterable
-
+from typing import Any
 
 ANSI_RE = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]")
 TIME_RE = re.compile(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z")
 RATE_RE = re.compile(r"\b(PUBLIC|USER)_DECRYPT_METRICS\s+(\{.*\})")
-METRIC_RE = re.compile(r'^(?P<name>[a-zA-Z_:][a-zA-Z0-9_:]*)(?:\{(?P<labels>.*)\})?$')
+METRIC_RE = re.compile(r"^(?P<name>[a-zA-Z_:][a-zA-Z0-9_:]*)(?:\{(?P<labels>.*)\})?$")
 KEY_VALUE_RE = re.compile(r"([a-z_]+)=([^ ]+)")
 
 GAUGES = (
@@ -76,8 +77,12 @@ def run_command(*args: str) -> str:
 
 
 def find_file(root: Path, names: Iterable[str]) -> Path | None:
-    matches = [path for path in root.rglob("*") if path.is_file() and path.name in names]
-    return min(matches, key=lambda path: (len(path.parts), str(path))) if matches else None
+    matches = [
+        path for path in root.rglob("*") if path.is_file() and path.name in names
+    ]
+    return (
+        min(matches, key=lambda path: (len(path.parts), str(path))) if matches else None
+    )
 
 
 def read_file(root: Path, *names: str) -> str:
@@ -89,7 +94,9 @@ def read_files(root: Path, *names: str) -> str:
     paths = sorted(
         path for path in root.rglob("*") if path.is_file() and path.name in names
     )
-    return "\n".join(path.read_text(encoding="utf-8", errors="replace") for path in paths)
+    return "\n".join(
+        path.read_text(encoding="utf-8", errors="replace") for path in paths
+    )
 
 
 def parse_labels(raw: str | None) -> dict[str, str]:
@@ -103,30 +110,43 @@ def parse_labels(raw: str | None) -> dict[str, str]:
 
 def parse_rate_metrics(text: str) -> list[dict[str, Any]]:
     rates: list[dict[str, Any]] = []
-    seen: set[str] = set()
+    seen: set[tuple[str, str]] = set()
     for raw_line in text.splitlines():
         line = ANSI_RE.sub("", raw_line)
         match = RATE_RE.search(line)
-        if not match or match.group(2) in seen:
+        if not match or (match.group(1), match.group(2)) in seen:
             continue
         try:
             metrics = json.loads(match.group(2))
         except json.JSONDecodeError:
             continue
-        seen.add(match.group(2))
+        seen.add((match.group(1), match.group(2)))
         timestamps = TIME_RE.findall(line[: match.start()])
         emitted = parse_time(timestamps[-1]) if timestamps else None
         measurement = float(
             metrics.get("measurement_elapsed_seconds", metrics.get("duration", 0))
         )
         drain = float(metrics.get("drain_elapsed_seconds", 0))
-        post_process = metrics.get("verification_ms") or metrics.get("reconstruction_ms") or {}
+        post_process = (
+            metrics.get("verification_ms") or metrics.get("reconstruction_ms") or {}
+        )
         post_process_seconds = float(post_process.get("wall", 0)) / 1000
-        end = emitted - timedelta(seconds=drain + post_process_seconds) if emitted else None
+        end = (
+            emitted - timedelta(seconds=drain + post_process_seconds)
+            if emitted
+            else None
+        )
         start = end - timedelta(seconds=measurement) if end else None
+        kind = "pdec" if match.group(1) == "PUBLIC" else "udec"
+        scenario = metrics.get("scenario", f"{kind}-async")
+        if scenario not in (f"{kind}-async", f"{kind}-sync"):
+            raise ValueError(
+                f"Invalid scenario {scenario!r} for {match.group(1)} metrics"
+            )
         rates.append(
             {
-                "kind": "pdec" if match.group(1) == "PUBLIC" else "udec",
+                "kind": kind,
+                "endpoint": scenario.rsplit("-", 1)[1],
                 "metrics": metrics,
                 "emitted_at": iso(emitted),
                 "window_start": iso(start),
@@ -139,12 +159,13 @@ def parse_rate_metrics(text: str) -> list[dict[str, Any]]:
 def has_sequential_windows(rates: list[dict[str, Any]]) -> bool:
     """Reject timestamps added while replaying several completed Argo pod logs."""
     windows = [
-        (parse_time(rate["window_start"]), parse_time(rate["window_end"])) for rate in rates
+        (parse_time(rate["window_start"]), parse_time(rate["window_end"]))
+        for rate in rates
     ]
     if not windows or any(start is None or end is None for start, end in windows):
         return False
     ordered = sorted(windows)
-    return all(current[0] >= previous[1] for previous, current in zip(ordered, ordered[1:]))
+    return all(current[0] >= previous[1] for previous, current in pairwise(ordered))
 
 
 def parse_cpu(text: str) -> list[dict[str, Any]]:
@@ -208,18 +229,28 @@ def parse_ena(text: str) -> list[dict[str, Any]]:
             }
         except ValueError:
             continue
-        samples.append({
-            "time": time_match.group(0),
-            "node": values["node"],
-            "iface": values["iface"],
-            **numeric,
-        })
+        samples.append(
+            {
+                "time": time_match.group(0),
+                "node": values["node"],
+                "iface": values["iface"],
+                **numeric,
+            }
+        )
     return samples
 
 
 def parse_placement(text: str) -> list[dict[str, str]]:
     rows = []
-    fields = ("time", "pod", "workflow_node", "node", "zone", "instance_type", "nodepool")
+    fields = (
+        "time",
+        "pod",
+        "workflow_node",
+        "node",
+        "zone",
+        "instance_type",
+        "nodepool",
+    )
     for line in text.splitlines():
         values = line.split("\t")
         if len(values) == len(fields) and values[0] != "timestamp":
@@ -274,9 +305,18 @@ def parse_ena_lifecycle(text: str) -> dict[str, Any]:
                 state["waiting_reasons"].add(fields[10])
             if fields[11]:
                 state["terminated_reasons"].add(fields[11])
-        elif len(fields) >= 5 and fields[2] == "Warning" and fields[1].startswith("ena-probe-"):
+        elif (
+            len(fields) >= 5
+            and fields[2] == "Warning"
+            and fields[1].startswith("ena-probe-")
+        ):
             warning_events.append(
-                {"time": fields[0], "pod": fields[1], "reason": fields[3], "message": fields[4]}
+                {
+                    "time": fields[0],
+                    "pod": fields[1],
+                    "reason": fields[3],
+                    "message": fields[4],
+                }
             )
 
     first_all_ready = next(
@@ -297,7 +337,9 @@ def parse_ena_lifecycle(text: str) -> dict[str, Any]:
     }
     return {
         "samples": len(daemonset_samples),
-        "max_desired": max((sample["desired"] for sample in daemonset_samples), default=0),
+        "max_desired": max(
+            (sample["desired"] for sample in daemonset_samples), default=0
+        ),
         "max_ready": max((sample["ready"] for sample in daemonset_samples), default=0),
         "max_unavailable": max(
             (sample["unavailable"] for sample in daemonset_samples), default=0
@@ -461,10 +503,14 @@ def summarize_window(
     stages = {}
     for stage in stage_names:
         duration = sum(
-            value for (pod, sample_stage), value in stage_duration.items() if sample_stage == stage
+            value
+            for (pod, sample_stage), value in stage_duration.items()
+            if sample_stage == stage
         )
         observations = sum(
-            value for (pod, sample_stage), value in stage_count.items() if sample_stage == stage
+            value
+            for (pod, sample_stage), value in stage_count.items()
+            if sample_stage == stage
         )
         if observations:
             stages[stage] = {
@@ -552,7 +598,9 @@ def summarize_window(
             }
             for operation, count in sorted(total_calls.items())
         },
-        "errors": dict(sorted((key, value) for key, value in total_errors.items() if value)),
+        "errors": dict(
+            sorted((key, value) for key, value in total_errors.items() if value)
+        ),
         "durations": {
             operation: {
                 "observations": total_duration_counts[operation],
@@ -583,10 +631,16 @@ def summarize_window(
         last = parse_time(values[-1]["time"])
         sample_seconds = (last - first).total_seconds() if first and last else 0.0
         ena_by_interface[f"{node}/{iface}"] = {
-            "rx_gbps": deltas_for_interface["rx_bytes"] * 8 / sample_seconds / 1_000_000_000
+            "rx_gbps": deltas_for_interface["rx_bytes"]
+            * 8
+            / sample_seconds
+            / 1_000_000_000
             if sample_seconds > 0
             else 0.0,
-            "tx_gbps": deltas_for_interface["tx_bytes"] * 8 / sample_seconds / 1_000_000_000
+            "tx_gbps": deltas_for_interface["tx_bytes"]
+            * 8
+            / sample_seconds
+            / 1_000_000_000
             if sample_seconds > 0
             else 0.0,
             "sample_seconds": sample_seconds,
@@ -781,8 +835,10 @@ def markdown_report(report: dict[str, Any]) -> str:
     output.extend(
         [
             "",
-            "| Rung | Offered | Achieved | Window done | Drain done | Total done | Failed | Shed | "
-            "Saturated | p50 | p99 | RPC submit peak | RPC result peak |",
+            (
+                "| Rung | Offered | Achieved | Window done | Drain done | Total done | Failed | Shed | "
+                "Saturated | p50 | p99 | RPC submit peak | RPC result peak |"
+            ),
             "|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|",
         ]
     )
@@ -791,7 +847,7 @@ def markdown_report(report: dict[str, Any]) -> str:
         latency = metrics.get("latency_ms", {})
         rpc = metrics.get("rpc_diagnostics", {})
         output.append(
-            f"| {rate['kind']}-{metrics.get('target_rate', '?')} | "
+            f"| {rate['kind']}-{rate['endpoint']}-{metrics.get('target_rate', '?')} | "
             f"{metrics.get('offered', '-')} | {number(metrics.get('achieved_rate'))}/s | "
             f"{metrics.get('completed_in_window', metrics.get('completed', '-'))} | "
             f"{metrics.get('completed_during_drain', '-')} | {metrics.get('completed', '-')} | "
@@ -804,13 +860,23 @@ def markdown_report(report: dict[str, Any]) -> str:
     for rate in report["rates"]:
         metrics = rate["metrics"]
         correlation = rate["correlation"]
-        output.extend(["", f"## {rate['kind']}-{metrics.get('target_rate', '?')}", ""])
+        output.extend(
+            [
+                "",
+                f"## {rate['kind']}-{rate['endpoint']}-{metrics.get('target_rate', '?')}",
+                "",
+            ]
+        )
         output.append(
             f"Window: `{rate.get('window_start') or '?'} .. "
             f"{rate.get('window_end') or '?'}`"
         )
         rpc = metrics.get("rpc_diagnostics")
         if rpc:
+            if rate["endpoint"] == "sync":
+                output.append(
+                    "Sync calls count as result RPCs; submit counters remain zero."
+                )
             output.append(
                 f"RPC statuses: submit={json.dumps(rpc.get('submit_status', {}), sort_keys=True)}; "
                 f"result={json.dumps(rpc.get('result_status', {}), sort_keys=True)}; "
@@ -878,15 +944,21 @@ def markdown_report(report: dict[str, Any]) -> str:
                 f"{number(pending['max'] if pending else None, 0)}; total stored "
                 f"{number(stored['max'] if stored else None, 0)}."
             )
-        queue = correlation["core_gauges"].get(
-            "kms_tokio_global_queue_depth", {}
-        ).get("all_samples")
-        alive = correlation["core_gauges"].get("kms_tokio_alive_tasks", {}).get(
-            "all_samples"
+        queue = (
+            correlation["core_gauges"]
+            .get("kms_tokio_global_queue_depth", {})
+            .get("all_samples")
         )
-        background = correlation["core_gauges"].get(
-            "kms_user_decrypt_background_tasks", {}
-        ).get("all_samples")
+        alive = (
+            correlation["core_gauges"]
+            .get("kms_tokio_alive_tasks", {})
+            .get("all_samples")
+        )
+        background = (
+            correlation["core_gauges"]
+            .get("kms_user_decrypt_background_tasks", {})
+            .get("all_samples")
+        )
         output.append(
             f"Tokio queue max: {number(queue['max'] if queue else None, 0)}; "
             f"alive tasks max: {number(alive['max'] if alive else None, 0)}; "
@@ -928,7 +1000,9 @@ def markdown_report(report: dict[str, Any]) -> str:
                 f"`{json.dumps(duration_means, sort_keys=True)}`."
             )
         if correlation["missing"]:
-            output.append("Missing in this window: " + ", ".join(correlation["missing"]) + ".")
+            output.append(
+                "Missing in this window: " + ", ".join(correlation["missing"]) + "."
+            )
 
         cpu_by_pod = correlation["core_pod_cpu"]["by_pod"]
         network_by_pod = correlation["core_network"]["by_pod"]
@@ -936,24 +1010,22 @@ def markdown_report(report: dict[str, Any]) -> str:
         pods = sorted(
             set(cpu_by_pod)
             | set(network_by_pod)
-            | {
-                pod
-                for gauge in gauges.values()
-                for pod in gauge.get("by_pod", {})
-            }
+            | {pod for gauge in gauges.values() for pod in gauge.get("by_pod", {})}
         )
         if pods:
             output.extend(
                 [
                     "",
-                    "| KMS core pod | CPU avg | CPU max | Net rx | Net tx | "
-                    f"{rate['kind'].upper()} pending max | {rate['kind'].upper()} stored max | "
-                    "Tokio queue max | Alive tasks max |",
+                    (
+                        "| KMS core pod | CPU avg | CPU max | Net rx | Net tx | "
+                        f"{rate['kind'].upper()} pending max | {rate['kind'].upper()} stored max | "
+                        "Tokio queue max | Alive tasks max |"
+                    ),
                     "|---|---:|---:|---:|---:|---:|---:|---:|---:|",
                 ]
             )
 
-            def gauge_max(name: str, pod: str) -> Any:
+            def gauge_max(gauges: dict[str, Any], name: str, pod: str) -> Any:
                 return gauges.get(name, {}).get("by_pod", {}).get(pod, {}).get("max")
 
             for pod in pods:
@@ -964,18 +1036,20 @@ def markdown_report(report: dict[str, Any]) -> str:
                     f"{number(pod_cpu.get('max'), 2)} | "
                     f"{number(pod_network.get('rx_gbps'), 3)} Gbps | "
                     f"{number(pod_network.get('tx_gbps'), 3)} Gbps | "
-                    f"{number(gauge_max(pending_metric, pod), 0)} | "
-                    f"{number(gauge_max(stored_metric, pod), 0)} | "
-                    f"{number(gauge_max('kms_tokio_global_queue_depth', pod), 0)} | "
-                    f"{number(gauge_max('kms_tokio_alive_tasks', pod), 0)} |"
+                    f"{number(gauge_max(gauges, pending_metric, pod), 0)} | "
+                    f"{number(gauge_max(gauges, stored_metric, pod), 0)} | "
+                    f"{number(gauge_max(gauges, 'kms_tokio_global_queue_depth', pod), 0)} | "
+                    f"{number(gauge_max(gauges, 'kms_tokio_alive_tasks', pod), 0)} |"
                 )
 
         if service["by_pod"]:
             output.extend(
                 [
                     "",
-                    "| KMS core pod | Submit calls/s | Result calls/s | Service errors | "
-                    "Request mean | Inner mean |",
+                    (
+                        "| KMS core pod | Submit calls/s | Result calls/s | Service errors | "
+                        "Request mean | Inner mean |"
+                    ),
                     "|---|---:|---:|---:|---:|---:|",
                 ]
             )
@@ -1002,14 +1076,18 @@ def markdown_report(report: dict[str, Any]) -> str:
             "",
             "## Instrumentation",
             "",
-            f"CPU samples: {instrumentation['cpu_samples']}; core metric samples: "
-            f"{instrumentation['core_metric_samples']}; ENA samples: "
-            f"{instrumentation['ena_samples']}; "
-            f"placement rows: {instrumentation['placement_rows']}.",
+            (
+                f"CPU samples: {instrumentation['cpu_samples']}; core metric samples: "
+                f"{instrumentation['core_metric_samples']}; ENA samples: "
+                f"{instrumentation['ena_samples']}; "
+                f"placement rows: {instrumentation['placement_rows']}."
+            ),
         ]
     )
     if instrumentation["missing"]:
-        output.append("Missing or unusable: " + ", ".join(instrumentation["missing"]) + ".")
+        output.append(
+            "Missing or unusable: " + ", ".join(instrumentation["missing"]) + "."
+        )
     if instrumentation["degraded_samples"]:
         output.append(
             f"Sampler warnings/errors: {len(instrumentation['degraded_samples'])} "
@@ -1022,9 +1100,7 @@ def markdown_report(report: dict[str, Any]) -> str:
         )
     lifecycle = instrumentation["ena_lifecycle"]
     if lifecycle["samples"]:
-        restarts = sum(
-            int(pod["max_restarts"]) for pod in lifecycle["pods"].values()
-        )
+        restarts = sum(int(pod["max_restarts"]) for pod in lifecycle["pods"].values())
         output.append(
             f"ENA probe lifecycle: peak ready {lifecycle['max_ready']}/"
             f"{lifecycle['max_desired']}; first all-ready sample "
@@ -1065,8 +1141,16 @@ def download_run(repo: str, run_id: int, destination: Path) -> list[str]:
         artifact_dir.mkdir(exist_ok=True)
         try:
             run_command(
-                "gh", "run", "download", str(run_id), "--repo", repo,
-                "--name", name, "--dir", str(artifact_dir),
+                "gh",
+                "run",
+                "download",
+                str(run_id),
+                "--repo",
+                repo,
+                "--name",
+                name,
+                "--dir",
+                str(artifact_dir),
             )
         except RuntimeError as error:
             warnings.append(str(error))
@@ -1075,7 +1159,13 @@ def download_run(repo: str, run_id: int, destination: Path) -> list[str]:
         try:
             run_json.write_text(
                 run_command(
-                    "gh", "run", "view", str(run_id), "--repo", repo, "--json",
+                    "gh",
+                    "run",
+                    "view",
+                    str(run_id),
+                    "--repo",
+                    repo,
+                    "--json",
                     "databaseId,url,conclusion,headBranch,headSha,createdAt,updatedAt,jobs",
                 ),
                 encoding="utf-8",
@@ -1099,24 +1189,60 @@ def download_run(repo: str, run_id: int, destination: Path) -> list[str]:
 
 
 class AnalyzerTests(unittest.TestCase):
+    def test_rejects_scenario_that_disagrees_with_operation(self) -> None:
+        for scenario in ("udec-sync", "pdec-sunc"):
+            with self.subTest(scenario=scenario), self.assertRaises(ValueError):
+                parse_rate_metrics(
+                    "PUBLIC_DECRYPT_METRICS "
+                    + json.dumps({"scenario": scenario, "duration": 60})
+                )
+
+    def test_same_rate_preserves_operation_and_endpoint(self) -> None:
+        lines = [
+            f"{operation}_DECRYPT_METRICS "
+            + json.dumps(
+                {
+                    "target_rate": 1100,
+                    "duration": 60,
+                    "scenario": f"{'pdec' if operation == 'PUBLIC' else 'udec'}-{endpoint}",
+                }
+            )
+            for operation in ("PUBLIC", "USER")
+            for endpoint in ("async", "sync")
+        ]
+        rates = parse_rate_metrics("\n".join(lines + lines))
+        self.assertEqual(
+            [(rate["kind"], rate["endpoint"]) for rate in rates],
+            [("pdec", "async"), ("pdec", "sync"), ("udec", "async"), ("udec", "sync")],
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "argo-workflow-logs.txt").write_text("\n".join(lines))
+            report = analyze_directory(root)
+            markdown = markdown_report(report)
+        for kind, endpoint in ((r["kind"], r["endpoint"]) for r in rates):
+            self.assertIn(f"| {kind}-{endpoint}-1100 |", markdown)
+            self.assertIn(f"## {kind}-{endpoint}-1100", markdown)
+
     def test_parses_clean_and_collapsed_rungs(self) -> None:
-        log = "\n".join(
-            [
-                'job\tstep\t2026-08-24T10:01:02Z pod: USER_DECRYPT_METRICS '
-                '{"target_rate":2400,"duration":60,"measurement_elapsed_seconds":60,'
-                '"drain_elapsed_seconds":2,"completed":144000,"completed_in_window":143900,'
-                '"completed_during_drain":100,"failed":0,"shed":0,"achieved_rate":2400,'
-                '"latency_ms":{"p50":7,"p99":10},"rpc_diagnostics":'
-                '{"submit_status":{"ok":1872000},"result_status":{"ok":1296000},'
-                '"submit_peak_in_flight":100,"result_peak_in_flight":200}}',
-                'job\tstep\t2026-08-24T10:03:02Z pod: USER_DECRYPT_METRICS '
-                '{"target_rate":2800,"duration":60,"completed":60000,"failed":10,"shed":90000,'
-                '"achieved_rate":1000,"latency_ms":{"p50":9000,"p99":12000}}',
-            ]
+        log = (
+            "job\tstep\t2026-08-24T10:01:02Z pod: USER_DECRYPT_METRICS "
+            '{"target_rate":2400,"duration":60,"measurement_elapsed_seconds":60,'
+            '"drain_elapsed_seconds":2,"completed":144000,"completed_in_window":143900,'
+            '"completed_during_drain":100,"failed":0,"shed":0,"achieved_rate":2400,'
+            '"latency_ms":{"p50":7,"p99":10},"rpc_diagnostics":'
+            '{"submit_status":{"ok":1872000},"result_status":{"ok":1296000},'
+            '"submit_peak_in_flight":100,"result_peak_in_flight":200}}\n'
+            "job\tstep\t2026-08-24T10:03:02Z pod: USER_DECRYPT_METRICS "
+            '{"target_rate":2800,"duration":60,"completed":60000,"failed":10,"shed":90000,'
+            '"achieved_rate":1000,"latency_ms":{"p50":9000,"p99":12000}}'
         )
         rates = parse_rate_metrics(log)
-        self.assertEqual([rate["metrics"]["achieved_rate"] for rate in rates], [2400, 1000])
+        self.assertEqual(
+            [rate["metrics"]["achieved_rate"] for rate in rates], [2400, 1000]
+        )
         self.assertEqual(rates[1]["metrics"]["shed"], 90000)
+        self.assertEqual(rates[0]["endpoint"], "async")
         self.assertEqual(rates[0]["window_start"], "2026-08-24T10:00:00Z")
         self.assertEqual(rates[0]["window_end"], "2026-08-24T10:01:00Z")
         self.assertEqual(rates[0]["metrics"]["completed_during_drain"], 100)
@@ -1173,7 +1299,9 @@ class AnalyzerTests(unittest.TestCase):
         deltas = counter_deltas(samples, start, end, ["kms_network_rx_bytes_total"])
         self.assertEqual(deltas[("p1", "kms_network_rx_bytes_total", ())], (150, 60))
         self.assertEqual(deltas[("p2", "kms_network_rx_bytes_total", ())], (40, 60))
-        self.assertEqual(parse_cpu("2026-08-24T10:00:00Z p1 1250m 1Gi")[0]["cores"], 1.25)
+        self.assertEqual(
+            parse_cpu("2026-08-24T10:00:00Z p1 1250m 1Gi")[0]["cores"], 1.25
+        )
         self.assertEqual(cumulative_increase([100, 150, 5, 10]), 60)
 
     def test_window_correlation_preserves_per_core_outliers(self) -> None:
@@ -1255,10 +1383,16 @@ class AnalyzerTests(unittest.TestCase):
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     source = parser.add_mutually_exclusive_group()
-    source.add_argument("--run-id", type=int, help="GitHub Actions run to download and analyze")
-    source.add_argument("--artifacts", type=Path, help="Already-downloaded artifact directory")
+    source.add_argument(
+        "--run-id", type=int, help="GitHub Actions run to download and analyze"
+    )
+    source.add_argument(
+        "--artifacts", type=Path, help="Already-downloaded artifact directory"
+    )
     parser.add_argument("--repo", default="zama-ai/kms", help="GitHub OWNER/REPO")
-    parser.add_argument("--download-dir", type=Path, help="Directory used with --run-id")
+    parser.add_argument(
+        "--download-dir", type=Path, help="Directory used with --run-id"
+    )
     parser.add_argument("--format", choices=("markdown", "json"), default="markdown")
     parser.add_argument("--output", type=Path)
     parser.add_argument("--self-test", action="store_true")
@@ -1269,7 +1403,9 @@ def main() -> int:
     args = parse_args()
     if args.self_test:
         suite = unittest.defaultTestLoader.loadTestsFromTestCase(AnalyzerTests)
-        return 0 if unittest.TextTestRunner(verbosity=2).run(suite).wasSuccessful() else 1
+        return (
+            0 if unittest.TextTestRunner(verbosity=2).run(suite).wasSuccessful() else 1
+        )
     if args.run_id is None and args.artifacts is None:
         raise SystemExit("provide --run-id, --artifacts, or --self-test")
     if args.run_id is not None and args.run_id <= 0:

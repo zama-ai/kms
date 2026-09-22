@@ -668,6 +668,11 @@ The [Cargo.toml](../Cargo.toml) should be considered the ground truth.
   and mock enclave support. It forwards `threshold-networking/insecure`, which permits
   plaintext transport and mock attestation.
 
+The [performance suite](../ci/perf-testing/PERF_TEST_README.md) measures public and user
+decryption through both sync and async endpoints. The scenario configuration selects each
+operation, endpoint, and rate ladder. Client metrics identify the scenario; Slack and the
+Python analyzer report the ladders separately.
+
 See the "Building and testing" section of [README.md](../README.md) for the
 exact commands.
 
