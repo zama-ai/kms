@@ -1326,6 +1326,48 @@ mod tests {
     }
 
     #[test]
+    fn test_typed_plaintext_little_endian_scalar() {
+        let bytes = vec![1, 2, 3, 4, 5, 6, 7, 8];
+        let value = 0x0807_0605_0403_0201;
+        assert_eq!(TypedPlaintext::from_u64(value).bytes, bytes);
+        assert_eq!(
+            TypedPlaintext::from_bytes(bytes, FheTypes::Uint64).as_u64(),
+            value
+        );
+
+        let short = TypedPlaintext::from_bytes(vec![0x34, 0x12], FheTypes::Uint32);
+        assert_eq!(short.as_u32(), 0x1234);
+        let oversized = TypedPlaintext::from_bytes(vec![1, 2, 3, 4, 0xaa], FheTypes::Uint32);
+        assert_eq!(oversized.as_u32(), 0x0403_0201);
+        assert_eq!(Vec::<u8>::try_from(oversized).unwrap(), vec![1, 2, 3, 4]);
+    }
+
+    #[test]
+    fn test_typed_plaintext_little_endian_limbs() {
+        let low = 0x100f_0e0d_0c0b_0a09_0807_0605_0403_0201_u128;
+        let high = 0x201f_1e1d_1c1b_1a19_1817_1615_1413_1211_u128;
+        let value = tfhe::integer::U256::from((low, high));
+        let bytes: Vec<u8> = (1..=32).collect();
+        assert_eq!(TypedPlaintext::from_u256(value).bytes, bytes);
+        assert_eq!(
+            TypedPlaintext::from_bytes(bytes, FheTypes::Uint256).as_u256(),
+            value
+        );
+
+        let bytes: Vec<u8> = (1..=20).collect();
+        let value = tfhe::integer::U256::from((low, 0x1413_1211_u128));
+        assert_eq!(TypedPlaintext::from_u160(value).bytes, bytes);
+        assert_eq!(
+            TypedPlaintext::from_u160_low_high((low, 0x1413_1211)).bytes,
+            bytes
+        );
+        assert_eq!(
+            TypedPlaintext::from_bytes(bytes, FheTypes::Uint160).as_u160(),
+            value
+        );
+    }
+
+    #[test]
     fn test_typed_plaintext_short_bytes_do_not_panic() {
         // Robustness: a malformed (too-short) `bytes` vec must not panic on indexed access.
         let empty_u256 = TypedPlaintext {
@@ -1355,6 +1397,75 @@ mod tests {
         // A well-formed value still round-trips through TryFrom.
         let ok = Vec::<u8>::try_from(TypedPlaintext::from_u32(0x0403_0201)).unwrap();
         assert_eq!(ok, vec![0x01, 0x02, 0x03, 0x04]);
+    }
+
+    #[test]
+    fn test_typed_plaintext_byte_length_boundaries() {
+        for (fhe_type, width) in [
+            (FheTypes::Bool, 1),
+            (FheTypes::Uint4, 1),
+            (FheTypes::Uint8, 1),
+            (FheTypes::Uint16, 2),
+            (FheTypes::Uint32, 4),
+            (FheTypes::Uint64, 8),
+            (FheTypes::Uint128, 16),
+            (FheTypes::Uint160, 20),
+            (FheTypes::Uint256, 32),
+            (FheTypes::Uint512, 64),
+            (FheTypes::Uint1024, 128),
+            (FheTypes::Uint2048, 256),
+        ] {
+            for len in [0, width - 1, width, width + 1] {
+                let plaintext = TypedPlaintext {
+                    bytes: vec![0xab; len],
+                    fhe_type: fhe_type as i32,
+                };
+                let result = Vec::<u8>::try_from(plaintext);
+                // Short inputs are rejected (no padding); oversized inputs are truncated to the type's width.
+                if len < width {
+                    assert!(result.is_err(), "{fhe_type:?}, length {len}");
+                } else {
+                    let expected = match fhe_type {
+                        FheTypes::Bool => vec![1],
+                        FheTypes::Uint4 => vec![11],
+                        _ => vec![0xab; width],
+                    };
+                    assert_eq!(result.unwrap(), expected, "{fhe_type:?}, length {len}");
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn test_abi_encoding_little_endian_input() {
+        let plaintext = TypedPlaintext::from_bytes(vec![0x34, 0x12], FheTypes::Uint16);
+        assert_eq!(
+            hex::encode(abi_encode_plaintexts(&[plaintext]).unwrap()),
+            "0000000000000000000000000000000000000000000000000000000000001234"
+        );
+    }
+
+    #[test]
+    fn test_abi_encoding_byte_length_boundary() {
+        for len in [31, 32] {
+            let plaintext = TypedPlaintext {
+                bytes: vec![0xab; len],
+                fhe_type: FheTypes::Uint256 as i32,
+            };
+            // ABI encoding places the zero padding before the little-endian input's most significant byte.
+            let mut expected = vec![0; 32 - len];
+            expected.extend(vec![0xab; len]);
+            assert_eq!(
+                abi_encode_plaintexts(&[plaintext]).unwrap().as_ref(),
+                expected
+            );
+        }
+        let oversized = TypedPlaintext {
+            bytes: vec![0xab; 33],
+            fhe_type: FheTypes::Uint256 as i32,
+        };
+        let error = abi_encode_plaintexts(&[oversized]).unwrap_err().to_string();
+        assert!(error.contains("Byte length too large for U256"), "{error}");
     }
 
     #[test]
@@ -1574,8 +1685,6 @@ mod tests {
 
         let u256_val1 = tfhe::integer::U256::from((1, 256));
         let u256_val2 = tfhe::integer::U256::from((222, 256));
-        let u512_val = tfhe::integer::bigint::U512::from(512_u64);
-        let u2048_val = tfhe::integer::bigint::U2048::from(257_u64);
 
         // a batch of multiple supported plaintexts of different types
         let pts_mix1: Vec<TypedPlaintext> = vec![
@@ -1613,28 +1722,31 @@ mod tests {
         // reference encoding of the same list of plaintexts (pts_mix2).
         let reference_mix2 = "000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000de000000000000000000000000000000000000000000000000000000000000ea6000000000000000000000000000000000000000000000000000000000000003e7000000000000000000000000000000000000000000000000000000000009fbf10000000000000000000000000000004500000000000000000000000000000007000000000000000000000000000001000000000000000000000000000000000100000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000";
         assert_eq!(reference_mix2, hexbytes_mix2.as_str());
+    }
 
-        // test that unsupported cause an encoding error
-        let pts_mix3: Vec<TypedPlaintext> = vec![
-            TypedPlaintext::from_u2048(u2048_val),
-            TypedPlaintext::from_u512(u512_val),
-            TypedPlaintext::from_u32(32),
-            TypedPlaintext::from_u512(u512_val),
-        ];
-
-        // encode plaintexts into a list of solidity bytes using `alloy`, this should fail and return an error due to unsupported types
-        let err_msg = super::abi_encode_plaintexts(&pts_mix3)
-            .unwrap_err()
-            .to_string();
-        assert!(
-            err_msg.contains("Received unsupported FHE type for ABI encoding"),
-            "expected unsupported type error: {err_msg}"
-        );
-        // check that we also log an error when trying to encode unsupported types in pts_mix3
-        assert!(
-            err_msg.contains("Error in"),
-            "expected error to be logged (via anyhow_error_and_log): {err_msg}"
-        );
+    #[test]
+    fn test_abi_encoding_rejects_unsupported_types() {
+        for fhe_type in [
+            FheTypes::Uint4,
+            FheTypes::Uint80,
+            FheTypes::Uint512,
+            FheTypes::Uint1024,
+            FheTypes::Uint2048,
+        ] {
+            let plaintexts = [
+                TypedPlaintext::from_u32(32),
+                TypedPlaintext {
+                    bytes: vec![0],
+                    fhe_type: fhe_type as i32,
+                },
+            ];
+            let error = abi_encode_plaintexts(&plaintexts).unwrap_err().to_string();
+            assert!(
+                error.contains("Received unsupported FHE type for ABI encoding"),
+                "{fhe_type:?}: {error}"
+            );
+            assert!(error.contains("Error in"), "{error}");
+        }
     }
 
     #[test]

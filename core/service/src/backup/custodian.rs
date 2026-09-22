@@ -1,4 +1,4 @@
-use crate::backup::operator::DSEP_BACKUP_RECOVERY;
+use crate::backup::operator::DSEP_BACKUP_MATERIAL;
 use crate::cryptography::{
     encryption::{UnifiedPrivateEncKey, UnifiedPublicEncKey},
     signatures::PrivateSigKey,
@@ -443,7 +443,7 @@ impl Custodian {
             &operator_verf_id,
         );
         let signcryption =
-            signcrypt_key.signcrypt(rng, &DSEP_BACKUP_RECOVERY, &*backup_material)?;
+            signcrypt_key.signcrypt(rng, &DSEP_BACKUP_MATERIAL, &*backup_material)?;
         tracing::debug!(
             "Signed re-encrypted share for operator: {}",
             operator_verification_key.address()

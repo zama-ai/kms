@@ -47,7 +47,12 @@ use threshold_types::role::Role;
 use zeroize::{Zeroize, Zeroizing};
 
 pub const DSEP_BACKUP_COMMITMENT: DomainSep = *b"BKUPCOMM";
+/// Domain separator for the operator signature on [RecoveryValidationMaterial].
 pub(crate) const DSEP_BACKUP_RECOVERY: DomainSep = *b"BKUPRECO";
+/// Domain separator for the signcryption of [BackupMaterial] from a custodian to an operator.
+///
+/// The backup direction uses [DSEP_BACKUP_CUSTODIAN] instead.
+pub(crate) const DSEP_BACKUP_MATERIAL: DomainSep = *b"BKUPMATL";
 const TIMESTAMP_VALIDATION_WINDOW: Duration = Duration::from_hours(24);
 
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize, VersionsDispatch)]
@@ -634,7 +639,7 @@ impl Operator {
         );
         let backup_material: Zeroizing<BackupMaterial> = Zeroizing::new(
             unsign_key
-                .unsigncrypt(&DSEP_BACKUP_RECOVERY, &output.signcryption)
+                .unsigncrypt(&DSEP_BACKUP_MATERIAL, &output.signcryption)
                 .map_err(|e| {
                     tracing::warn!(
                         "Could not unsigncrypt backup share for custodian role {} (wrong operator or tampered): {e}",
