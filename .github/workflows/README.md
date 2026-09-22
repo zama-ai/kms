@@ -264,6 +264,9 @@ Calls `docker-build.yml` with release tags. Runs on GitHub release publish or `w
 
 `actionlint` + `zizmor` over all workflow files. Validates SHA-pinned actions and runs SAST.
 
+The lint job also runs the Python tests for performance orchestration, diagnostics,
+workflow generation, and artifact analysis on pull requests.
+
 ### Dependency Analysis ([`dependencies_analysis.yml`](dependencies_analysis.yml))
 
 `cargo deny` (license whitelist), `cargo audit` (vulnerabilities), Cargo.lock integrity check. `cargo-binstall` for fast tool install.

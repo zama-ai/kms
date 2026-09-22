@@ -17,6 +17,11 @@ uses this to measure how many decryptions per second the deployment can handle.
 
 ## Managing rate scenarios
 
+The GitHub runner uses `ci/scripts/perf_runner.py` for Argo submission, reports,
+and cleanup. The diagnostic scripts in `ci/scripts/` also run on that runner.
+These tools use the Python standard library and require no image changes.
+The Argo test commands and summaries retain their existing shell scripts.
+
 The rates to test and their pass/fail limits live in [`perf-scenarios.toml`](perf-scenarios.toml). At submit time
 `generate-perf-workflow.py` expands it into the Argo workflow (filling the `# <<GENERATED:…>>` markers). That TOML
 file is the source of truth for both public- and user-decrypt rate ladders.
