@@ -11,7 +11,7 @@ pub mod scheme_set;
 pub mod seed;
 pub mod verf_key_set;
 
-pub use scheme_set::{SigningSchemeSet, SigningSchemeSetVersions};
+pub use scheme_set::SigningSchemeSet;
 pub use verf_key_set::VerfKeySet;
 
 use alloy_primitives::Address;

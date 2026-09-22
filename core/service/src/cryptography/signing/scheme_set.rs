@@ -6,14 +6,9 @@
 //! out one or more of the composite signature elements.
 
 use super::{SigningError, SigningSchemeType};
+use crate::impl_generic_versionize;
 use serde::{Deserialize, Deserializer, Serialize};
 use std::fmt;
-use tfhe_versionable::{Versionize, VersionsDispatch};
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, VersionsDispatch)]
-pub enum SigningSchemeSetVersions {
-    V0(SigningSchemeSet),
-}
 
 /// A non-empty, ascending, duplicate-free set of signature schemes.
 ///
@@ -24,10 +19,16 @@ pub enum SigningSchemeSetVersions {
 ///
 /// Ordering by wire discriminant is the same as ordering by the derived [`Ord`]
 /// on [`SigningSchemeType`], which follows declaration order.
-#[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Versionize)]
-#[versionize(SigningSchemeSetVersions)]
+///
+/// # Versioning
+///
+/// Versioned through [`impl_generic_versionize`] rather than a dispatch enum of
+/// its own, because `Vec<SigningSchemeType>` is not `Versionize`.
+#[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize)]
 #[serde(transparent)]
 pub struct SigningSchemeSet(Vec<SigningSchemeType>);
+
+impl_generic_versionize!(SigningSchemeSet);
 
 impl SigningSchemeSet {
     /// Creates a canonical set of `schemes`, sorting and de-duplicating the input.
