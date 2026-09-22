@@ -40,8 +40,10 @@
 //! [`CryptographyError::UnsupportedSigncryptionFormat`].
 
 mod common;
+pub mod composite_v1;
 mod ecdsa_v0;
 
+pub use composite_v1::{CompositeSigncryptionKey, CompositeUnsigncryptionKey};
 pub(crate) use ecdsa_v0::insecure_decrypt_ignoring_signature;
 
 use crate::consts::SAFE_SER_SIZE_LIMIT;

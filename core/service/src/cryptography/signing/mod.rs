@@ -3,6 +3,7 @@
 //! Every backend signs `dsep ‖ msg` and applies its own normalization/encoding
 //! internally.
 
+pub mod composite;
 pub mod ecdsa;
 mod eddsa;
 pub mod identity;
@@ -11,6 +12,7 @@ pub mod scheme_set;
 pub mod seed;
 pub mod verf_key_set;
 
+pub use composite::{CompositeSignature, CompositeSignatureVersions};
 pub use scheme_set::SigningSchemeSet;
 pub use verf_key_set::VerfKeySet;
 
@@ -101,6 +103,24 @@ pub enum SigningError {
     /// A set of signing schemes was not in its canonical encoding.
     #[error("signing scheme set is not canonical: {0}")]
     NonCanonicalSchemeSet(String),
+    /// A composite signature carried a different set of schemes than the
+    /// verifier required.
+    #[error("signature was made under schemes {actual}, but {expected} were required")]
+    UnexpectedSchemeSet {
+        /// The set the verifier demanded.
+        expected: String,
+        /// The set the signature claims.
+        actual: String,
+    },
+    /// A composite signature carried a number of signatures that does not match
+    /// its scheme set.
+    #[error("composite signature has {schemes} schemes but {signatures} signatures")]
+    SignatureCountMismatch {
+        /// How many schemes the signature names.
+        schemes: usize,
+        /// How many signature blobs it carries.
+        signatures: usize,
+    },
 }
 
 /// Trait for any value that is tied to a concrete signature scheme.
