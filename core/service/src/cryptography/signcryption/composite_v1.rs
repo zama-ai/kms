@@ -147,7 +147,7 @@ pub(super) fn seal(
     };
     let mut plaintext = Vec::new();
     safe_serialize(&envelope, &mut plaintext, SAFE_SER_SIZE_LIMIT)
-        .map_err(CryptographyError::SerializationError)?;
+        .map_err(|e| CryptographyError::SerializationError(e.to_string()))?;
     let plaintext = Zeroizing::new(plaintext);
 
     let ciphertext = hybrid_encrypt(rng, &plaintext, signcrypt_key.receiver_enc_key)?;
