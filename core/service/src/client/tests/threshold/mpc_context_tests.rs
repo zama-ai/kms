@@ -42,11 +42,15 @@ async fn do_context_switch(
     decryption_mode: Option<DecryptionMode>,
 ) {
     // 1. setup the threshold handles
-    // 2. do a context switch
-    // 3. verify that the context switch was successful by doing a decryption
+    // 2. register a new context
+    // 3. verify that every party persisted it, and that it serves nothing while it owns no epoch
     // 4. delete the context
     // 5. verify that the context is deleted and decryption should fail
     // 6. decrypt with the old context to verify it's still there
+    //
+    // `NewMpcContext` registers a party set and nothing else. Key shares live under an epoch, and
+    // only an epoch change reshares them into an epoch that the new context owns. This test stops
+    // short of that epoch change, because resharing needs a key from a full DKG.
 
     let rate_limiter_conf = RateLimiterConfig {
         bucket_size: 100,
@@ -87,7 +91,7 @@ async fn do_context_switch(
     //
     // NOTE: once we remove the default context (zama-ai/kms-internal/issues/2758),
     // we need to change this test to create a new context first before switching contexts.
-    let previous_epoch_id = *DEFAULT_MPC_CONTEXT;
+    let previous_context_id = *DEFAULT_MPC_CONTEXT;
 
     let pub_storage_prefixes = &PUBLIC_STORAGE_PREFIX_THRESHOLD_ALL[0..amount_parties];
     let priv_storage_prefixes = &PRIVATE_STORAGE_PREFIX_THRESHOLD_ALL[0..amount_parties];
@@ -105,13 +109,13 @@ async fn do_context_switch(
         })
         .collect::<Vec<_>>();
 
-    let previous_epoch = read_context_at_id(&all_private_storage[0], &previous_epoch_id)
+    let previous_context = read_context_at_id(&all_private_storage[0], &previous_context_id)
         .await
         .unwrap();
-    println!("previous context: {:?}", previous_epoch);
+    println!("previous context: {:?}", previous_context);
 
     let new_context = {
-        let mut new_context = previous_epoch.clone();
+        let mut new_context = previous_context.clone();
         let mut rng = AesRng::seed_from_u64(78);
         let context_id = RequestId::new_random(&mut rng);
         new_context.context_id = context_id.into();
@@ -153,13 +157,22 @@ async fn do_context_switch(
         assert_eq!(req_response_vec.len(), kms_clients.len());
     }
 
-    // run a decryption test
+    // Every party stores the context it registers. That is the only observable effect of the
+    // switch here, because a context that owns no epoch serves no request.
+    for storage in &all_private_storage {
+        read_context_at_id(storage, &new_context_id)
+            .await
+            .expect("every party must persist the new context");
+    }
+
     let enc_config = EncryptionConfig {
         compression: true,
         precompute_sns: true,
     };
     let key_id = &TEST_THRESHOLD_KEY_ID_4P;
-    run_decryption_threshold(
+
+    // The new context owns no epoch, so it holds no key shares either.
+    run_decryption_threshold_optionally_fail(
         amount_parties,
         &mut kms_servers,
         &mut kms_clients,
@@ -172,13 +185,13 @@ async fn do_context_switch(
         None,
         1,
         Some(&material_path),
+        true,
     )
     .await;
 
     // delete the new context
     {
-        // This context was created without an epoch transition of its own (decryption above reused
-        // the existing key/epoch), so it has no associated epochs to remove.
+        // This context owns no epoch, so the destruction has no epoch material to remove.
         let req = internal_client
             .destroy_mpc_context_request(&new_context_id)
             .unwrap();
@@ -197,8 +210,16 @@ async fn do_context_switch(
         assert_eq!(req_response_vec.len(), kms_clients.len());
     }
 
+    // The destruction removes the context from the storage of every party.
+    for storage in &all_private_storage {
+        assert!(
+            read_context_at_id(storage, &new_context_id).await.is_err(),
+            "the destroyed context must be gone from storage"
+        );
+    }
+
     // run the request again with the new context ID (which is deleted)
-    // this should fail.
+    // this should fail because the context is unknown to every party.
     run_decryption_threshold_optionally_fail(
         amount_parties,
         &mut kms_servers,
@@ -224,7 +245,7 @@ async fn do_context_switch(
         &mut internal_client,
         None,
         key_id,
-        Some(&previous_epoch_id),
+        Some(&previous_context_id),
         vec![TestingPlaintext::Bool(false); 3],
         enc_config,
         None,

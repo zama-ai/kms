@@ -1122,9 +1122,6 @@ pub(crate) async fn validate_context_and_epoch(
 
     let context_epochs = session_maker.epochs_for_context(context_id).await;
     if !context_epochs.contains(epoch_id) {
-        // Name the epochs this context does have: the usual cause is a request still pointing at an
-        // epoch that a completed epoch change replaced. `EpochId`'s `Debug` is the raw byte array,
-        // so format through `Display` to keep the list readable.
         let known_epochs = context_epochs
             .iter()
             .map(|epoch| epoch.to_string())
