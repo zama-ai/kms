@@ -131,12 +131,12 @@ use rand::SeedableRng;
 
 #[cfg(test)]
 pub(super) struct LockFixture {
-    rng: AesRng,
-    dec_key: UnifiedPrivateEncKey,
-    enc_key: UnifiedPublicEncKey,
-    sender_verf_key: PublicSigKey,
-    signing_key: PrivateSigKey,
-    receiver_id: Vec<u8>,
+    pub(super) rng: AesRng,
+    pub(super) dec_key: UnifiedPrivateEncKey,
+    pub(super) enc_key: UnifiedPublicEncKey,
+    pub(super) sender_verf_key: PublicSigKey,
+    pub(super) signing_key: PrivateSigKey,
+    pub(super) receiver_id: Vec<u8>,
 }
 
 #[cfg(test)]
@@ -162,7 +162,6 @@ pub(super) fn lock_fixture(scheme: PkeSchemeType, seed: u64) -> LockFixture {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use strum::IntoEnumIterator;
 
     /// The binding must separate recipients on *both* of its inputs, since it is
     /// the only thing tying a signature to who may open it.

@@ -7,7 +7,7 @@ use kms_grpc::{
     kms::v1::{
         CustodianContext, CustodianRecoveryInitRequest, CustodianRecoveryOutput,
         CustodianRecoveryRequest, DestroyCustodianContextRequest, Empty,
-        NewCustodianContextRequest, OperatorBackupOutput,
+        NewCustodianContextRequest,
     },
     kms_service::v1::core_service_endpoint_client::CoreServiceEndpointClient,
 };
@@ -178,15 +178,8 @@ pub(crate) async fn do_custodian_backup_recovery(
     }
     let proto_outputs: Vec<CustodianRecoveryOutput> = custodian_recovery_outputs
         .into_iter()
-        .map(|out| CustodianRecoveryOutput {
-            backup_output: Some(OperatorBackupOutput {
-                signcryption: out.signcryption.payload,
-                pke_type: out.signcryption.pke_type as i32,
-                signing_type: out.signcryption.signing_type as i32,
-            }),
-            custodian_role: out.custodian_role.one_based() as u64,
-        })
-        .collect();
+        .map(CustodianRecoveryOutput::try_from)
+        .collect::<anyhow::Result<Vec<_>>>()?;
 
     let mut req_tasks = JoinSet::new();
     for ce in core_endpoints.values() {

@@ -190,7 +190,7 @@ mod tests {
     use super::super::{Signcrypt, Unsigncrypt};
     use super::*;
     use crate::consts::SAFE_SER_SIZE_LIMIT;
-    use crate::cryptography::encryption::{PkeSchemeType, UnifiedPublicEncKey};
+    use crate::cryptography::encryption::PkeSchemeType;
     use crate::cryptography::signatures::{SigningSchemeSet, SigningSchemeType, gen_sig_keys};
     use crate::vault::storage::tests::TestType;
     use aes_prng::AesRng;
