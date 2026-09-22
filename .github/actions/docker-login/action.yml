@@ -1,5 +1,5 @@
 name: Docker Login
-description: Reusable wrapper around docker/login-action
+description: Login to a container registry with retry on transient timeouts
 
 inputs:
   registry:
@@ -11,18 +11,16 @@ inputs:
   password:
     description: Registry password or token
     required: true
-  logout:
-    description: Log out at the end of the job
-    required: false
-    default: "true"
 
 runs:
   using: composite
   steps:
     - name: Login to registry
-      uses: docker/login-action@4907a6ddec9925e35a0a9e82d7399ccc52663121 # v4.1.0
+      uses: zama-ai/ci-templates/.github/actions/retry@d13c806c229167a30eab20c228b87467d0e2e470 # v1.0.12
+      env:
+        REGISTRY: ${{ inputs.registry }}
+        USERNAME: ${{ inputs.username }}
+        PASSWORD: ${{ inputs.password }}
       with:
-        registry: ${{ inputs.registry }}
-        username: ${{ inputs.username }}
-        password: ${{ inputs.password }}
-        logout: ${{ inputs.logout }}
+        command: |
+          echo "$PASSWORD" | docker login "$REGISTRY" -u "$USERNAME" --password-stdin

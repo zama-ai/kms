@@ -123,7 +123,6 @@ impl MetaStoreStatusServiceImpl {
 
     /// Compile-time exhaustiveness check - ensures all MetaStoreType variants are handled.
     /// Adding a new MetaStoreType will cause a compile error here, forcing updates.
-    #[allow(dead_code)]
     const fn ensure_all_store_types_handled() {
         match MetaStoreType::KeyGeneration {
             MetaStoreType::KeyGeneration => {}

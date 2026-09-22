@@ -1,3 +1,9 @@
+//! Helpers shared by the non-threshold benches through `#[path]` includes.
+#![allow(
+    unused,
+    reason = "each bench binary that includes this file uses a different subset of the helpers"
+)]
+
 #[cfg(feature = "measure_memory")]
 use experiments::allocator::MEM_ALLOCATOR;
 use tfhe::core_crypto::fft_impl::fft64::math::fft::{FftAlgo, Method, Plan, setup_custom_fft_plan};
@@ -12,7 +18,6 @@ use threshold_execution::tfhe_internals::parameters::{
     NIST_PARAMS_P32_SNS_LWE,
 };
 
-#[allow(unused)]
 pub const SAMPLE_SIZE: usize = 100;
 
 #[cfg(feature = "measure_memory")]
@@ -42,7 +47,6 @@ fn print_memory_usage(bench_name: String, results: Vec<usize>) {
 }
 
 #[cfg(feature = "measure_memory")]
-#[allow(unused)]
 pub fn bench_memory<
     I: Clone + Send + Sync + 'static,
     O: Send + 'static,
@@ -73,7 +77,6 @@ pub fn bench_memory<
     print_memory_usage(bench_name, results);
 }
 
-#[allow(unused)]
 pub const ALL_PARAMS: [(&str, DKGParams); 5] = [
     ("NIST_PARAMS_P32_SNS_LWE", NIST_PARAMS_P32_SNS_LWE),
     ("NIST_PARAMS_P32_SNS_FGLWE", NIST_PARAMS_P32_SNS_FGLWE),
@@ -82,7 +85,6 @@ pub const ALL_PARAMS: [(&str, DKGParams); 5] = [
     ("BC_PARAMS_SNS", BC_PARAMS_SNS),
 ];
 
-#[allow(unused)]
 pub fn set_plan() {
     for n in [512, 1024, 2048] {
         let my_plan = Plan::new(
@@ -99,7 +101,6 @@ pub fn set_plan() {
     }
 }
 
-#[allow(unused)]
 pub fn generate_tfhe_keys(params: &DKGParams) -> (ClientKey, CompressedXofKeySet) {
     let config = params.to_tfhe_config();
 

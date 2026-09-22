@@ -11,7 +11,10 @@
 use super::composite_mlkem1024_p384::{self, MlKem1024P384PrivateKey, MlKem1024P384PublicKey};
 use super::error::CryptographyError;
 use super::hybrid_ml_kem::HybridKemCt;
-use aes_gcm::{AeadCore, Aes256Gcm, Key, KeyInit, aead::Aead};
+use aes_gcm::{
+    Aes256Gcm, Key, KeyInit,
+    aead::{Aead, Nonce},
+};
 use rand::{CryptoRng, Rng};
 use zeroize::Zeroizing;
 
@@ -26,7 +29,9 @@ pub(crate) fn enc_ml_kem_1024_p384<R: Rng + CryptoRng>(
     // unwiped duplicate on the stack.
     let aead_key: &Key<Aes256Gcm> = (&*kem_shared_secret).into();
     let cipher = Aes256Gcm::new(aead_key);
-    let nonce = Aes256Gcm::generate_nonce(rng);
+    // `AeadCore::generate_nonce` requires a rand_core 0.10 RNG, and callers pass rand 0.8 RNGs.
+    let mut nonce = Nonce::<Aes256Gcm>::default();
+    rng.fill_bytes(&mut nonce);
     let payload_ct = cipher.encrypt(&nonce, msg)?;
 
     Ok(HybridKemCt {
