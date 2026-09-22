@@ -1,3 +1,7 @@
+use crate::cryptography::{
+    composite_mlkem1024_p384::{MlKem1024P384PrivateKey, MlKem1024P384PublicKey},
+    hybrid_composite_ml_kem,
+};
 use crate::{
     consts::SAFE_SER_SIZE_LIMIT,
     cryptography::{
@@ -5,9 +9,9 @@ use crate::{
         zeroizing_writer::ZeroizingWriter,
     },
 };
-use ml_kem::EncodedSizeUser;
-use ml_kem::KemCore;
-use ml_kem::MlKem512;
+#[expect(deprecated)]
+use ml_kem::ExpandedKeyEncoding;
+use ml_kem::{Kem, KeyExport, KeyInit, MlKem512, TryKeyInit};
 use rand::{CryptoRng, RngCore};
 use serde::{Deserialize, Deserializer, Serialize, de::Visitor};
 use strum_macros::Display;
@@ -17,7 +21,7 @@ use tfhe::{
     safe_serialization::{safe_deserialize, safe_serialize},
 };
 use tfhe_versionable::VersionsDispatch;
-use zeroize::{Zeroize, ZeroizeOnDrop};
+use zeroize::{Zeroize, ZeroizeOnDrop, Zeroizing};
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, VersionsDispatch)]
 pub enum UnifiedPublicEncKeyVersions {
@@ -26,10 +30,11 @@ pub enum UnifiedPublicEncKeyVersions {
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, Versionize)]
 #[versionize(UnifiedPublicEncKeyVersions)]
-#[expect(clippy::large_enum_variant)]
 pub enum UnifiedPublicEncKey {
+    /// The scheme user decryption uses, and the only one it accepts.
     MlKem512(PublicEncKey<ml_kem::MlKem512>),
-    /// LEGACY: Note that this should ONLY be used for legacy reasons, new code should use MlKem512.
+    /// LEGACY: Note that this should ONLY be used for legacy reasons, new code should use MlKem512
+    /// for user decryption or MlKem1024P384 for custodian backup.
     /// If used in current code, then take care to NOT use to_legacy_bytes or from_legacy_bytes on this variant
     /// as this will do bincode serialization instead of safe serialization.
     #[deprecated(
@@ -37,6 +42,9 @@ pub enum UnifiedPublicEncKey {
         note = "Use MlKem512 instead. MlKem1024 is only for legacy compatibility with relayer-sdk v0.2.0-0 and older."
     )]
     MlKem1024(PublicEncKey<ml_kem::MlKem1024>),
+    /// Composite post-quantum KEM combining ML-KEM-1024 and P-384, used by custodian backup.
+    /// See [`crate::backup::BACKUP_PKE_SCHEME`].
+    MlKem1024P384(MlKem1024P384PublicKey),
 }
 
 impl Zeroize for UnifiedPublicEncKey {
@@ -54,12 +62,14 @@ impl HasPkeScheme for UnifiedPublicEncKey {
         match self {
             UnifiedPublicEncKey::MlKem512(_) => PkeSchemeType::MlKem512,
             UnifiedPublicEncKey::MlKem1024(_) => PkeSchemeType::MlKem1024,
+            UnifiedPublicEncKey::MlKem1024P384(_) => PkeSchemeType::MlKem1024P384,
         }
     }
 }
 
 impl UnifiedPublicEncKey {
-    /// Expect the inner type to be the default MlKem512 and return it, otherwise panic
+    /// Expect the inner type to be MlKem512, the user-decryption scheme, and return it,
+    /// otherwise panic. Not for use on backup keys, which are MlKem1024P384.
     pub fn unwrap_ml_kem_512(self) -> PublicEncKey<ml_kem::MlKem512> {
         match self {
             UnifiedPublicEncKey::MlKem512(pk) => pk,
@@ -67,62 +77,69 @@ impl UnifiedPublicEncKey {
         }
     }
 
-    /// Deserialize from bytes and reject MlKem1024 keys.
-    pub fn deserialize_and_validate(bytes: &[u8]) -> Result<Self, CryptographyError> {
+    /// Deserialize a client-supplied public encryption key for user decryption.
+    ///
+    /// User decryption accepts ML-KEM-512 and nothing else. Every other scheme is
+    /// rejected at this edge, so no other variant reaches the signcryption code.
+    pub fn deserialize_and_validate_hybrid_ml_kem_512(
+        bytes: &[u8],
+    ) -> Result<Self, CryptographyError> {
         let key: Self = tfhe::safe_serialization::safe_deserialize(
             std::io::Cursor::new(bytes),
             SAFE_SER_SIZE_LIMIT,
         )
         .map_err(|e| CryptographyError::DeserializationError(e.to_string()))?;
-        if matches!(key, UnifiedPublicEncKey::MlKem1024(_)) {
-            return Err(CryptographyError::MlKem1024Unsupported);
+        match key {
+            UnifiedPublicEncKey::MlKem512(_) => Ok(key),
+            UnifiedPublicEncKey::MlKem1024(_) => Err(CryptographyError::MlKem1024Unsupported),
+            UnifiedPublicEncKey::MlKem1024P384(_) => Err(CryptographyError::UnsupportedPkeScheme(
+                key.encryption_scheme_type(),
+            )),
         }
-        Ok(key)
     }
 }
 
 // Alias wrapping the ephemeral public encryption key the user's wallet constructs and the server
 // uses to encrypt its payload
 // The only reason this format is not private is that it is needed to handle the legacy case, as we do this by distinguishing between 512 and 1024 bit keys
-pub struct PublicEncKey<C: KemCore>(pub(crate) C::EncapsulationKey);
+pub struct PublicEncKey<C: Kem>(pub(crate) C::EncapsulationKey);
 
-impl<C: KemCore> Eq for PublicEncKey<C> {}
-impl<C: KemCore> PartialEq for PublicEncKey<C> {
+impl<C: Kem> Eq for PublicEncKey<C> {}
+impl<C: Kem> PartialEq for PublicEncKey<C> {
     fn eq(&self, other: &Self) -> bool {
-        self.0.as_bytes().as_slice() == other.0.as_bytes().as_slice()
+        self.0.to_bytes().as_slice() == other.0.to_bytes().as_slice()
     }
 }
 
-impl<C: KemCore> Serialize for PublicEncKey<C> {
+impl<C: Kem> Serialize for PublicEncKey<C> {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where
         S: serde::Serializer,
     {
-        serializer.serialize_bytes(&self.0.as_bytes())
+        serializer.serialize_bytes(&self.0.to_bytes())
     }
 }
 
-impl<C: KemCore> Named for PublicEncKey<C> {
+impl<C: Kem> Named for PublicEncKey<C> {
     const NAME: &'static str = "PublicEncKey";
 }
 
 /// workaround because clone doesn't get derived for this type
-impl<C: KemCore> Clone for PublicEncKey<C> {
+impl<C: Kem> Clone for PublicEncKey<C> {
     fn clone(&self) -> Self {
-        let buf = self.0.as_bytes();
-        PublicEncKey(C::EncapsulationKey::from_bytes(&buf))
+        PublicEncKey(self.0.clone())
     }
 }
 
-impl<C: KemCore> std::fmt::Debug for PublicEncKey<C> {
+impl<C: Kem> std::fmt::Debug for PublicEncKey<C> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("PublicEncKey")
-            .field("encapsulation_key", &self.0.as_bytes())
+            .field("encapsulation_key", &self.0.to_bytes())
             .finish()
     }
 }
 
-impl<C: KemCore> tfhe_versionable::Versionize for PublicEncKey<C> {
+impl<C: Kem> tfhe_versionable::Versionize for PublicEncKey<C> {
     type Versioned<'vers>
         = &'vers PublicEncKey<C>
     where
@@ -133,14 +150,14 @@ impl<C: KemCore> tfhe_versionable::Versionize for PublicEncKey<C> {
     }
 }
 
-impl<C: KemCore> tfhe_versionable::VersionizeOwned for PublicEncKey<C> {
+impl<C: Kem> tfhe_versionable::VersionizeOwned for PublicEncKey<C> {
     type VersionedOwned = PublicEncKey<C>;
     fn versionize_owned(self) -> Self::VersionedOwned {
         self
     }
 }
 
-impl<C: KemCore> tfhe_versionable::Unversionize for PublicEncKey<C> {
+impl<C: Kem> tfhe_versionable::Unversionize for PublicEncKey<C> {
     fn unversionize(
         versioned: Self::VersionedOwned,
     ) -> Result<Self, tfhe_versionable::UnversionizeError> {
@@ -150,9 +167,9 @@ impl<C: KemCore> tfhe_versionable::Unversionize for PublicEncKey<C> {
 
 // See this issue: https://github.com/zama-ai/kms-internal/issues/2781
 // We basically need to use standard serialization fo ecdsa keys to remain compatible with the KMS verifier contract
-impl<C: KemCore> tfhe_versionable::NotVersioned for PublicEncKey<C> {}
+impl<C: Kem> tfhe_versionable::NotVersioned for PublicEncKey<C> {}
 
-impl<'de, C: KemCore> Deserialize<'de> for PublicEncKey<C> {
+impl<'de, C: Kem> Deserialize<'de> for PublicEncKey<C> {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
     where
         D: serde::Deserializer<'de>,
@@ -161,8 +178,8 @@ impl<'de, C: KemCore> Deserialize<'de> for PublicEncKey<C> {
     }
 }
 
-struct PublicEncKeyVisitor<C: KemCore>(std::marker::PhantomData<C>);
-impl<C: KemCore> Visitor<'_> for PublicEncKeyVisitor<C> {
+struct PublicEncKeyVisitor<C: Kem>(std::marker::PhantomData<C>);
+impl<C: Kem> Visitor<'_> for PublicEncKeyVisitor<C> {
     type Value = PublicEncKey<C>;
 
     fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
@@ -180,7 +197,7 @@ impl<C: KemCore> Visitor<'_> for PublicEncKeyVisitor<C> {
                 return Err(serde::de::Error::custom(msg));
             }
         };
-        let ek = C::EncapsulationKey::from_bytes(array);
+        let ek = C::EncapsulationKey::new(array).map_err(E::custom)?;
         Ok(PublicEncKey(ek))
     }
 }
@@ -201,7 +218,7 @@ pub trait Encrypt {
 impl Encrypt for UnifiedPublicEncKey {
     #[allow(unknown_lints)]
     // We allow modifying the rng before an error return
-    #[allow(non_local_effect_before_error_return)]
+    #[allow(non_local_effect_before_unhandled_error)]
     fn encrypt<T: Serialize + tfhe::Versionize + tfhe::named::Named>(
         &self,
         rng: &mut (impl CryptoRng + RngCore),
@@ -223,6 +240,14 @@ impl Encrypt for UnifiedPublicEncKey {
             UnifiedPublicEncKey::MlKem1024(_) => {
                 return Err(CryptographyError::MlKem1024Unsupported);
             }
+            UnifiedPublicEncKey::MlKem1024P384(public_enc_key) => (
+                hybrid_composite_ml_kem::enc_ml_kem_1024_p384(
+                    rng,
+                    serialized_msg.as_slice(),
+                    public_enc_key,
+                )?,
+                PkeSchemeType::MlKem1024P384,
+            ),
         };
         Ok(UnifiedCipher::new(inner_ct, scheme))
     }
@@ -236,15 +261,17 @@ pub enum UnifiedPrivateEncKeyVersions {
 }
 
 /// # Current Usage
-/// - `user_decryption_wasm.rs`, `user_decryption_non_wasm.rs`, and custodian based backup (`core/service/src/backup`)
+/// - User decryption (`user_decryption_wasm.rs`, `user_decryption_non_wasm.rs`), always ML-KEM-512.
+/// - Custodian based backup (`core/service/src/backup`), always MLKEM1024-P384; see
+///   `backup::BACKUP_PKE_SCHEME`.
 /// - Lifetime: Lifetime of a custodian context
 /// - Scope: Lifetime of a backup (i.e. lifetime of a custodian context), but local to client application
 #[derive(Clone, Debug, Serialize, Deserialize, Zeroize, Versionize)]
-#[expect(clippy::large_enum_variant)]
 #[versionize(UnifiedPrivateEncKeyVersions)]
 pub enum UnifiedPrivateEncKey {
     MlKem512(PrivateEncKey<ml_kem::MlKem512>),
     MlKem1024(PrivateEncKey<ml_kem::MlKem1024>),
+    MlKem1024P384(MlKem1024P384PrivateKey),
     // WARNING: Do not modify the order of the variants or remove any variant as this will break deserialization of existing keys!
     // Only acceptable if you make a new version
 }
@@ -273,6 +300,7 @@ impl From<UnifiedPrivateEncKey> for PkeSchemeType {
         match value {
             UnifiedPrivateEncKey::MlKem512(_) => PkeSchemeType::MlKem512,
             UnifiedPrivateEncKey::MlKem1024(_) => PkeSchemeType::MlKem1024,
+            UnifiedPrivateEncKey::MlKem1024P384(_) => PkeSchemeType::MlKem1024P384,
         }
     }
 }
@@ -281,12 +309,14 @@ impl From<&UnifiedPrivateEncKey> for PkeSchemeType {
         match value {
             UnifiedPrivateEncKey::MlKem512(_) => PkeSchemeType::MlKem512,
             UnifiedPrivateEncKey::MlKem1024(_) => PkeSchemeType::MlKem1024,
+            UnifiedPrivateEncKey::MlKem1024P384(_) => PkeSchemeType::MlKem1024P384,
         }
     }
 }
 
 impl UnifiedPrivateEncKey {
-    /// Expect the inner type to be the default MlKem512 and return it, otherwise panic
+    /// Expect the inner type to be MlKem512, the user-decryption scheme, and return it,
+    /// otherwise panic. Not for use on backup keys, which are MlKem1024P384.
     pub fn unwrap_ml_kem_512(self) -> PrivateEncKey<ml_kem::MlKem512> {
         match self {
             UnifiedPrivateEncKey::MlKem512(pk) => pk,
@@ -300,6 +330,7 @@ impl HasPkeScheme for UnifiedPrivateEncKey {
         match self {
             UnifiedPrivateEncKey::MlKem512(_) => PkeSchemeType::MlKem512,
             UnifiedPrivateEncKey::MlKem1024(_) => PkeSchemeType::MlKem1024,
+            UnifiedPrivateEncKey::MlKem1024P384(_) => PkeSchemeType::MlKem1024P384,
         }
     }
 }
@@ -309,7 +340,7 @@ impl HasPkeScheme for UnifiedPrivateEncKey {
 // The only reason this format is not private is that it is needed to handle the legacy case, as we do this by distinguishing between 512 and 1024 bit keys.
 //
 // The `where C::DecapsulationKey: zeroize::ZeroizeOnDrop` clause on the
-// struct itself makes `PrivateEncKey<C>` un-instantiable for any `KemCore`
+// struct itself makes `PrivateEncKey<C>` un-instantiable for any `Kem`
 // whose inner key doesn't wipe on drop — the wipe-on-drop guarantee is
 // enforced at type construction rather than only at `.zeroize()` call sites.
 // `#[derive(zeroize::ZeroizeOnDrop)]` then expands to a `Drop` impl calling
@@ -318,37 +349,40 @@ impl HasPkeScheme for UnifiedPrivateEncKey {
 #[derive(zeroize::ZeroizeOnDrop)]
 pub struct PrivateEncKey<C>(pub(crate) C::DecapsulationKey)
 where
-    C: KemCore,
-    C::DecapsulationKey: zeroize::ZeroizeOnDrop;
+    C: Kem,
+    C::DecapsulationKey: ExpandedKeyEncoding + KeyInit + zeroize::ZeroizeOnDrop;
 
 // `Zeroize` provides the wipe primitive called from the derived `Drop`.
 // The inner `DecapsulationKey` only impls `ZeroizeOnDrop` (marker) — not
 // `Zeroize` (method) — so we can't call `self.0.zeroize()`; instead, the
 // `mem::replace`-then-drop pattern lets the inner's `Drop` do the actual
 // zeroing.
-impl<C: KemCore> Zeroize for PrivateEncKey<C>
+impl<C: Kem> Zeroize for PrivateEncKey<C>
 where
-    C::DecapsulationKey: zeroize::ZeroizeOnDrop,
+    C::DecapsulationKey: ExpandedKeyEncoding + KeyInit + zeroize::ZeroizeOnDrop,
 {
     fn zeroize(&mut self) {
-        let dummy = C::DecapsulationKey::from_bytes(&Default::default());
+        let dummy = C::DecapsulationKey::new(&Default::default());
         let _wiped = std::mem::replace(&mut self.0, dummy);
     }
 }
 
-impl<C: KemCore> Clone for PrivateEncKey<C>
+impl<C: Kem> Clone for PrivateEncKey<C>
 where
-    C::DecapsulationKey: zeroize::ZeroizeOnDrop,
+    C::DecapsulationKey: ExpandedKeyEncoding + KeyInit + zeroize::ZeroizeOnDrop,
 {
     fn clone(&self) -> Self {
-        let buf = self.0.as_bytes();
-        PrivateEncKey(C::DecapsulationKey::from_bytes(&buf))
+        let buf = Zeroizing::new(self.0.to_expanded_bytes());
+        PrivateEncKey(
+            C::DecapsulationKey::from_expanded_bytes(&buf)
+                .expect("an exported ML-KEM private key must remain valid"),
+        )
     }
 }
 
-impl<C: KemCore> std::fmt::Debug for PrivateEncKey<C>
+impl<C: Kem> std::fmt::Debug for PrivateEncKey<C>
 where
-    C::DecapsulationKey: zeroize::ZeroizeOnDrop,
+    C::DecapsulationKey: ExpandedKeyEncoding + KeyInit + zeroize::ZeroizeOnDrop,
 {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("PrivateEncKey")
@@ -357,9 +391,9 @@ where
     }
 }
 
-impl<C: KemCore> tfhe_versionable::Versionize for PrivateEncKey<C>
+impl<C: Kem> tfhe_versionable::Versionize for PrivateEncKey<C>
 where
-    C::DecapsulationKey: zeroize::ZeroizeOnDrop,
+    C::DecapsulationKey: ExpandedKeyEncoding + KeyInit + zeroize::ZeroizeOnDrop,
 {
     type Versioned<'vers>
         = &'vers PrivateEncKey<C>
@@ -371,9 +405,9 @@ where
     }
 }
 
-impl<C: KemCore> tfhe_versionable::VersionizeOwned for PrivateEncKey<C>
+impl<C: Kem> tfhe_versionable::VersionizeOwned for PrivateEncKey<C>
 where
-    C::DecapsulationKey: zeroize::ZeroizeOnDrop,
+    C::DecapsulationKey: ExpandedKeyEncoding + KeyInit + zeroize::ZeroizeOnDrop,
 {
     type VersionedOwned = PrivateEncKey<C>;
     fn versionize_owned(self) -> Self::VersionedOwned {
@@ -381,9 +415,9 @@ where
     }
 }
 
-impl<C: KemCore> tfhe_versionable::Unversionize for PrivateEncKey<C>
+impl<C: Kem> tfhe_versionable::Unversionize for PrivateEncKey<C>
 where
-    C::DecapsulationKey: zeroize::ZeroizeOnDrop,
+    C::DecapsulationKey: ExpandedKeyEncoding + KeyInit + zeroize::ZeroizeOnDrop,
 {
     fn unversionize(
         versioned: Self::VersionedOwned,
@@ -392,21 +426,22 @@ where
     }
 }
 
-impl<C: KemCore> Serialize for PrivateEncKey<C>
+impl<C: Kem> Serialize for PrivateEncKey<C>
 where
-    C::DecapsulationKey: zeroize::ZeroizeOnDrop,
+    C::DecapsulationKey: ExpandedKeyEncoding + KeyInit + zeroize::ZeroizeOnDrop,
 {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where
         S: serde::Serializer,
     {
-        serializer.serialize_bytes(&self.0.as_bytes())
+        let bytes = Zeroizing::new(self.0.to_expanded_bytes());
+        serializer.serialize_bytes(&bytes)
     }
 }
 
-impl<'de, C: KemCore> Deserialize<'de> for PrivateEncKey<C>
+impl<'de, C: Kem> Deserialize<'de> for PrivateEncKey<C>
 where
-    C::DecapsulationKey: zeroize::ZeroizeOnDrop,
+    C::DecapsulationKey: ExpandedKeyEncoding + KeyInit + zeroize::ZeroizeOnDrop,
 {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
     where
@@ -416,10 +451,10 @@ where
     }
 }
 
-struct PrivateEncKeyVisitor<C: KemCore>(std::marker::PhantomData<C>);
-impl<C: KemCore> Visitor<'_> for PrivateEncKeyVisitor<C>
+struct PrivateEncKeyVisitor<C: Kem>(std::marker::PhantomData<C>);
+impl<C: Kem> Visitor<'_> for PrivateEncKeyVisitor<C>
 where
-    C::DecapsulationKey: zeroize::ZeroizeOnDrop,
+    C::DecapsulationKey: ExpandedKeyEncoding + KeyInit + zeroize::ZeroizeOnDrop,
 {
     type Value = PrivateEncKey<C>;
 
@@ -438,7 +473,7 @@ where
                 return Err(serde::de::Error::custom(msg));
             }
         };
-        let dk = C::DecapsulationKey::from_bytes(array);
+        let dk = C::DecapsulationKey::from_expanded_bytes(array).map_err(E::custom)?;
         Ok(PrivateEncKey(dk))
     }
 }
@@ -460,12 +495,23 @@ impl Decrypt for UnifiedPrivateEncKey {
         &self,
         cipher: &UnifiedCipher,
     ) -> Result<T, CryptographyError> {
+        if cipher.pke_type != self.encryption_scheme_type() {
+            return Err(CryptographyError::VerificationError(
+                "encryption type of cipher does not match the decryption key type".to_string(),
+            ));
+        }
         let raw_plaintext = match self {
             UnifiedPrivateEncKey::MlKem512(private_enc_key) => {
                 hybrid_ml_kem::dec::<MlKem512>(cipher.cipher.to_owned(), &private_enc_key.0)?
             }
             UnifiedPrivateEncKey::MlKem1024(_) => {
                 return Err(CryptographyError::MlKem1024Unsupported);
+            }
+            UnifiedPrivateEncKey::MlKem1024P384(private_enc_key) => {
+                hybrid_composite_ml_kem::dec_ml_kem_1024_p384(
+                    cipher.cipher.to_owned(),
+                    private_enc_key,
+                )?
             }
         };
         // Keep plaintext guarded through deserialization.
@@ -493,6 +539,9 @@ pub enum PkeSchemeType {
         note = "Use MlKem512 instead. MlKem1024 is only for legacy compatibility with relayer-sdk v0.2.0-0 and older."
     )]
     MlKem1024,
+    /// Composite post-quantum KEM combining ML-KEM-1024 and P-384, used by custodian backup.
+    /// See `backup::BACKUP_PKE_SCHEME`.
+    MlKem1024P384,
 }
 
 // Observe that since we serialize this enum, we need to implement a separate variant to keep it versioned properly
@@ -502,6 +551,7 @@ impl From<kms_grpc::kms::v1::PkeSchemeType> for PkeSchemeType {
         match value {
             kms_grpc::kms::v1::PkeSchemeType::Mlkem512 => PkeSchemeType::MlKem512,
             kms_grpc::kms::v1::PkeSchemeType::Mlkem1024 => PkeSchemeType::MlKem1024,
+            kms_grpc::kms::v1::PkeSchemeType::Mlkem1024P384 => PkeSchemeType::MlKem1024P384,
         }
     }
 }
@@ -513,6 +563,7 @@ impl TryFrom<i32> for PkeSchemeType {
         match value {
             0 => Ok(PkeSchemeType::MlKem512),
             1 => Err(CryptographyError::MlKem1024Unsupported.into()),
+            2 => Ok(PkeSchemeType::MlKem1024P384),
             // Future encryption schemes can be added here
             _ => Err(anyhow::anyhow!("Unsupported PkeSchemeType: {:?}", value)),
         }
@@ -553,6 +604,14 @@ impl<'a, R: CryptoRng + RngCore + Send + Sync> PkeScheme for Encryption<'a, R> {
             }
             PkeSchemeType::MlKem1024 => {
                 return Err(CryptographyError::MlKem1024Unsupported);
+            }
+            PkeSchemeType::MlKem1024P384 => {
+                let (private_key, public_key) =
+                    crate::cryptography::composite_mlkem1024_p384::keygen(&mut self.rng)?;
+                (
+                    UnifiedPrivateEncKey::MlKem1024P384(private_key),
+                    UnifiedPublicEncKey::MlKem1024P384(public_key),
+                )
             }
         };
         Ok((sk, pk))
@@ -625,6 +684,73 @@ mod tests {
     }
 
     #[test]
+    fn nested_mlkem1024_p384_sunshine() {
+        let msg = TestType { i: 42 };
+        let mut rng = AesRng::seed_from_u64(0);
+        let mut enc = Encryption::new(PkeSchemeType::MlKem1024P384, &mut rng);
+        let (sk, pk) = enc.keygen().unwrap();
+
+        assert!(matches!(sk, UnifiedPrivateEncKey::MlKem1024P384(_)));
+        assert!(matches!(pk, UnifiedPublicEncKey::MlKem1024P384(_)));
+
+        let ct = pk.encrypt(&mut rng, &msg).unwrap();
+        assert_eq!(ct.pke_type, PkeSchemeType::MlKem1024P384);
+        let pt = sk.decrypt(&ct).unwrap();
+        assert_eq!(msg, pt);
+
+        let mut pk_buf = Vec::new();
+        tfhe::safe_serialization::safe_serialize(&pk, &mut pk_buf, SAFE_SER_SIZE_LIMIT).unwrap();
+        let pk2: UnifiedPublicEncKey = tfhe::safe_serialization::safe_deserialize(
+            std::io::Cursor::new(pk_buf.as_slice()),
+            SAFE_SER_SIZE_LIMIT,
+        )
+        .unwrap();
+        assert_eq!(pk, pk2);
+        let ct2 = pk2.encrypt(&mut rng, &msg).unwrap();
+
+        let mut sk_buf = Vec::new();
+        tfhe::safe_serialization::safe_serialize(&sk, &mut sk_buf, SAFE_SER_SIZE_LIMIT).unwrap();
+        let sk2: UnifiedPrivateEncKey = tfhe::safe_serialization::safe_deserialize(
+            std::io::Cursor::new(sk_buf),
+            SAFE_SER_SIZE_LIMIT,
+        )
+        .unwrap();
+        let pt2 = sk2.decrypt(&ct2).unwrap();
+        assert_eq!(msg, pt2);
+    }
+
+    #[test]
+    fn decrypt_rejects_a_relabelled_scheme_tag() {
+        let msg = TestType { i: 42 };
+        let mut rng = AesRng::seed_from_u64(0);
+        let mut enc = Encryption::new(PkeSchemeType::MlKem1024P384, &mut rng);
+        let (sk, pk) = enc.keygen().unwrap();
+
+        let mut ct = pk.encrypt(&mut rng, &msg).unwrap();
+        ct.pke_type = PkeSchemeType::MlKem512;
+
+        let err = sk.decrypt::<TestType>(&ct).unwrap_err();
+        assert!(matches!(err, CryptographyError::VerificationError(_)));
+    }
+
+    #[test]
+    fn deserialize_and_validate_rejects_mlkem1024_p384() {
+        let mut rng = AesRng::seed_from_u64(0);
+        let mut enc = Encryption::new(PkeSchemeType::MlKem1024P384, &mut rng);
+        let (_sk, pk) = enc.keygen().unwrap();
+
+        let mut buf = Vec::new();
+        tfhe::safe_serialization::safe_serialize(&pk, &mut buf, SAFE_SER_SIZE_LIMIT).unwrap();
+
+        let err =
+            UnifiedPublicEncKey::deserialize_and_validate_hybrid_ml_kem_512(&buf).unwrap_err();
+        assert!(matches!(
+            err,
+            CryptographyError::UnsupportedPkeScheme(PkeSchemeType::MlKem1024P384)
+        ));
+    }
+
+    #[test]
     fn pke_wrong_kem_key() {
         let msg = TestType { i: 42 };
         let mut rng = AesRng::seed_from_u64(0);
@@ -658,7 +784,7 @@ mod tests {
         let mut buf = Vec::new();
         tfhe::safe_serialization::safe_serialize(&pk, &mut buf, SAFE_SER_SIZE_LIMIT).unwrap();
 
-        let pk2 = UnifiedPublicEncKey::deserialize_and_validate(&buf).unwrap();
+        let pk2 = UnifiedPublicEncKey::deserialize_and_validate_hybrid_ml_kem_512(&buf).unwrap();
         assert_eq!(pk, pk2);
     }
 
@@ -672,23 +798,25 @@ mod tests {
         use crate::cryptography::encryption::{
             PublicEncKey, UnifiedPublicEncKey as CrateUnifiedPublicEncKey,
         };
-        use ml_kem::KemCore;
-
+        use crate::cryptography::hybrid_ml_kem;
         let mut rng = AesRng::seed_from_u64(0);
-        let (_dk, ek) = ml_kem::MlKem1024::generate(&mut rng);
-        #[allow(deprecated)]
+        let (_dk, ek) = hybrid_ml_kem::keygen::<ml_kem::MlKem1024, _>(&mut rng);
+        #[expect(deprecated)]
         let key = CrateUnifiedPublicEncKey::MlKem1024(PublicEncKey(ek));
 
         let mut buf = Vec::new();
         tfhe::safe_serialization::safe_serialize(&key, &mut buf, SAFE_SER_SIZE_LIMIT).unwrap();
 
-        let err = UnifiedPublicEncKey::deserialize_and_validate(&buf).unwrap_err();
+        let err =
+            UnifiedPublicEncKey::deserialize_and_validate_hybrid_ml_kem_512(&buf).unwrap_err();
         assert!(matches!(err, CryptographyError::MlKem1024Unsupported));
     }
 
     #[test]
     fn deserialize_and_validate_rejects_invalid_bytes() {
-        let err = UnifiedPublicEncKey::deserialize_and_validate(b"not a valid key").unwrap_err();
+        let err =
+            UnifiedPublicEncKey::deserialize_and_validate_hybrid_ml_kem_512(b"not a valid key")
+                .unwrap_err();
         assert!(matches!(err, CryptographyError::DeserializationError(..)));
     }
 }

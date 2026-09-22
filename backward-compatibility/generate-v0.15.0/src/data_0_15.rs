@@ -11,6 +11,7 @@ use kms_0_15_0::backup::custodian::{
     Custodian, CustodianContextAnchor, CustodianSetupMessagePayload, InternalCustodianContext,
 };
 use kms_0_15_0::backup::{
+    BACKUP_PKE_SCHEME,
     custodian::{InternalCustodianRecoveryOutput, InternalCustodianSetupMessage},
     operator::{
         BackupMaterial, InnerOperatorBackupOutput, InternalRecoveryRequest, Operator,
@@ -20,7 +21,10 @@ use kms_0_15_0::backup::{
 };
 use kms_0_15_0::consts::SAFE_SER_SIZE_LIMIT;
 use kms_0_15_0::cryptography::{
-    encryption::{Encryption, PkeScheme, PkeSchemeType, UnifiedCipher},
+    encryption::{
+        Encryption, PkeScheme, PkeSchemeType, UnifiedCipher, UnifiedPrivateEncKey,
+        UnifiedPublicEncKey,
+    },
     hybrid_ml_kem::HybridKemCt,
     signatures::{
         compute_eip712_signature, gen_sig_keys, NodeSigningIdentity, RootSigningSeed,
@@ -57,13 +61,13 @@ use std::collections::BTreeMap;
 use std::num::Wrapping;
 use std::{borrow::Cow, collections::HashMap, fs::create_dir_all, path::PathBuf};
 use strum::IntoEnumIterator;
-use tfhe_1_7_0::safe_serialization::safe_serialize;
-use tfhe_1_7_0::shortint::parameters::{
+use tfhe_1_8_1::safe_serialization::safe_serialize;
+use tfhe_1_8_1::shortint::parameters::{
     AtomicPatternParameters, Backend, LweCiphertextCount, MetaNoiseSquashingParameters,
     MetaParameters, NoiseSquashingClassicParameters, NoiseSquashingCompressionParameters,
     PBSParameters,
 };
-use tfhe_1_7_0::{
+use tfhe_1_8_1::{
     core_crypto::commons::{
         ciphertext_modulus::CiphertextModulus,
         generators::DeterministicSeeder,
@@ -105,16 +109,17 @@ use backward_compatibility::{
     Eip712DomainTest, EpochDataTest, HybridKemCtTest, InternalCustodianContextTest,
     InternalCustodianRecoveryOutputTest, InternalCustodianSetupMessageTest,
     InternalRecoveryRequestTest, KeyGenMetadataTest, KeyGenMetadataWithExtraDataTest,
-    KeygenSignedPayloadTest, KmsFheKeyHandlesTest, NodeInfoTest, OperatorBackupOutputTest,
-    PRSSSetupTest, PrepKeygenSignedPayloadTest, PrfKeyTest, PrivDataTypeTest, PrivateSigKeyTest,
-    PrssSetTest, PrssSetupCombinedTest, PubDataTypeTest, PublicDecSignedPayloadTest,
-    PublicSigKeyTest, RecoveryValidationMaterialTest, ReleasePCRValuesTest, RootSigningSeedTest,
-    SchemeDigestsTest, ShareTest, SigncryptionPayloadTest, SignedPubDataHandleInternalTest,
-    SoftwareVersionTest, StoredEip712DomainTest, StoredTypedSignatureTest, TestMetadataDD,
-    TestMetadataKMS, TestMetadataKmsGrpc, ThresholdFheKeysTest, TypedPlaintextTest,
-    UnifiedCipherTest, UnifiedPublicSigKeyTest, UnifiedSigncryptionKeyTest,
-    UnifiedSigncryptionTest, UnifiedUnsigncryptionKeyTest, UserDecSignedPayloadTest,
-    DISTRIBUTED_DECRYPTION_MODULE_NAME, KMS_GRPC_MODULE_NAME, KMS_MODULE_NAME,
+    KeygenSignedPayloadTest, KmsFheKeyHandlesTest, MlKem1024P384PrivateKeyTest,
+    MlKem1024P384PublicKeyTest, NodeInfoTest, OperatorBackupOutputTest, PRSSSetupTest,
+    PrepKeygenSignedPayloadTest, PrfKeyTest, PrivDataTypeTest, PrivateSigKeyTest, PrssSetTest,
+    PrssSetupCombinedTest, PubDataTypeTest, PublicDecSignedPayloadTest, PublicSigKeyTest,
+    RecoveryValidationMaterialTest, ReleasePCRValuesTest, RootSigningSeedTest, SchemeDigestsTest,
+    ShareTest, SigncryptionPayloadTest, SignedPubDataHandleInternalTest, SoftwareVersionTest,
+    StoredEip712DomainTest, StoredTypedSignatureTest, TestMetadataDD, TestMetadataKMS,
+    TestMetadataKmsGrpc, ThresholdFheKeysTest, TypedPlaintextTest, UnifiedCipherTest,
+    UnifiedPublicSigKeyTest, UnifiedSigncryptionKeyTest, UnifiedSigncryptionTest,
+    UnifiedUnsigncryptionKeyTest, UserDecSignedPayloadTest, DISTRIBUTED_DECRYPTION_MODULE_NAME,
+    KMS_GRPC_MODULE_NAME, KMS_MODULE_NAME,
 };
 use hashing_0_15_0::hash_versioned;
 use kms_0_15_0::cryptography::signcryption::SigncryptionPayload;
@@ -164,6 +169,7 @@ fn convert_dkg_params_sns(value: DKGParamsSnSTest) -> DKGParams {
                 )),
             }),
             rerand_configuration: None,
+            transciphering_parameters: None,
         },
         secret_key_deviations: None,
     }
@@ -196,7 +202,7 @@ fn convert_classic_pbs_parameters(value: ClassicPBSParametersTest) -> ClassicPBS
         },
         // no need to test this as it's from tfhe-rs
         modulus_switch_noise_reduction_params:
-            tfhe_1_7_0::shortint::prelude::ModulusSwitchType::Standard,
+            tfhe_1_8_1::shortint::prelude::ModulusSwitchType::Standard,
     }
 }
 
@@ -209,7 +215,7 @@ fn convert_sns_parameters(value: SwitchAndSquashParametersTest) -> NoiseSquashin
         decomp_level_count: DecompositionLevelCount(value.pbs_level),
         ciphertext_modulus: CiphertextModulus::<u128>::new_native(),
         modulus_switch_noise_reduction_params:
-            tfhe_1_7_0::shortint::prelude::ModulusSwitchType::Standard,
+            tfhe_1_8_1::shortint::prelude::ModulusSwitchType::Standard,
         message_modulus: MessageModulus(value.message_modulus),
         carry_modulus: CarryModulus(value.carry_modulus),
     })
@@ -485,6 +491,16 @@ const UNSIGNCRYPTION_KEY_TEST: UnifiedUnsigncryptionKeyTest = UnifiedUnsigncrypt
     state: 200,
 };
 
+const MLKEM1024_P384_PUBLIC_KEY_TEST: MlKem1024P384PublicKeyTest = MlKem1024P384PublicKeyTest {
+    test_filename: Cow::Borrowed("mlkem1024_p384_public_key"),
+    state: 384,
+};
+
+const MLKEM1024_P384_PRIVATE_KEY_TEST: MlKem1024P384PrivateKeyTest = MlKem1024P384PrivateKeyTest {
+    test_filename: Cow::Borrowed("mlkem1024_p384_private_key"),
+    state: 384,
+};
+
 // KMS test
 const UNIFIED_SIGNCRYPTION_TEST: UnifiedSigncryptionTest = UnifiedSigncryptionTest {
     test_filename: Cow::Borrowed("unified_signcryption"),
@@ -604,7 +620,6 @@ const INTERNAL_RECOVERY_REQUEST_TEST: InternalRecoveryRequestTest = InternalReco
 // KMS test
 const INTERNAL_CUS_CONTEXT_TEST: InternalCustodianContextTest = InternalCustodianContextTest {
     test_filename: Cow::Borrowed("internal_cus_context"),
-    internal_cus_setup_filename: Cow::Borrowed("internal_cus_setup_handle"),
     unified_enc_key_filename: Cow::Borrowed("unified_enc_key_handle"),
     state: 300,
     custodian_count: 5,
@@ -1085,6 +1100,38 @@ impl KmsV0_15_0 {
         TestMetadataKMS::UnifiedUnsigncryptionKeyOwned(UNSIGNCRYPTION_KEY_TEST)
     }
 
+    fn gen_mlkem1024_p384_public_key(dir: &PathBuf) -> TestMetadataKMS {
+        let mut rng = AesRng::seed_from_u64(MLKEM1024_P384_PUBLIC_KEY_TEST.state);
+        let mut encryption = Encryption::new(PkeSchemeType::MlKem1024P384, &mut rng);
+        let (_, public_key) = encryption.keygen().unwrap();
+        let UnifiedPublicEncKey::MlKem1024P384(public_key) = public_key else {
+            panic!("MLKEM1024-P384 key generation returned the wrong public-key variant");
+        };
+        store_versioned_test!(
+            &public_key,
+            dir,
+            &MLKEM1024_P384_PUBLIC_KEY_TEST.test_filename
+        );
+
+        TestMetadataKMS::MlKem1024P384PublicKey(MLKEM1024_P384_PUBLIC_KEY_TEST)
+    }
+
+    fn gen_mlkem1024_p384_private_key(dir: &PathBuf) -> TestMetadataKMS {
+        let mut rng = AesRng::seed_from_u64(MLKEM1024_P384_PRIVATE_KEY_TEST.state);
+        let mut encryption = Encryption::new(PkeSchemeType::MlKem1024P384, &mut rng);
+        let (private_key, _) = encryption.keygen().unwrap();
+        let UnifiedPrivateEncKey::MlKem1024P384(private_key) = private_key else {
+            panic!("MLKEM1024-P384 key generation returned the wrong private-key variant");
+        };
+        store_versioned_test!(
+            &private_key,
+            dir,
+            &MLKEM1024_P384_PRIVATE_KEY_TEST.test_filename
+        );
+
+        TestMetadataKMS::MlKem1024P384PrivateKey(MLKEM1024_P384_PRIVATE_KEY_TEST)
+    }
+
     fn gen_backup_ciphertext(dir: &PathBuf) -> TestMetadataKMS {
         let mut rng = AesRng::seed_from_u64(BACKUP_CIPHERTEXT_TEST.state);
         let backup_id: RequestId = RequestId::new_random(&mut rng);
@@ -1100,7 +1147,7 @@ impl KmsV0_15_0 {
                 kem_ct: kem_ct.to_vec(),
                 payload_ct: payload_ct.to_vec(),
             },
-            pke_type: PkeSchemeType::MlKem512,
+            pke_type: BACKUP_PKE_SCHEME,
         };
         store_versioned_auxiliary!(
             &ciphertext,
@@ -1157,7 +1204,7 @@ impl KmsV0_15_0 {
         );
         let cipher = UnifiedCipher {
             cipher: kem,
-            pke_type: PkeSchemeType::MlKem512,
+            pke_type: BACKUP_PKE_SCHEME,
         };
 
         store_versioned_test!(&cipher, dir, &UNIFIED_CIPHER_TEST.test_filename);
@@ -1373,7 +1420,7 @@ impl KmsV0_15_0 {
             let cts_out = InnerOperatorBackupOutput {
                 signcryption: UnifiedSigncryption {
                     payload: payload.to_vec(),
-                    pke_type: PkeSchemeType::MlKem512,
+                    pke_type: BACKUP_PKE_SCHEME,
                     signing_type: SigningSchemeType::Ecdsa256k1,
                 },
             };
@@ -1383,11 +1430,11 @@ impl KmsV0_15_0 {
         // Dummy payload; but needs to be a properly serialized payload
         // This must be generated after the commitment stuff, since the test will regenerate the commitment stuff,
         // but read the custodian context from disk
-        let mut outer_encryption = Encryption::new(PkeSchemeType::MlKem512, &mut rng);
+        let mut outer_encryption = Encryption::new(BACKUP_PKE_SCHEME, &mut rng);
         let (_dec_key, outer_enc_key) = outer_encryption.keygen().unwrap();
         let mut custodian_nodes = Vec::new();
         for role_j in 1..=RECOVERY_MATERIAL_TEST.custodian_count {
-            let mut encryption = Encryption::new(PkeSchemeType::MlKem512, &mut rng);
+            let mut encryption = Encryption::new(BACKUP_PKE_SCHEME, &mut rng);
             let (_dec_key, enc_key) = encryption.keygen().unwrap();
             let (cus_pk, _) = gen_sig_keys(&mut rng);
             let payload = CustodianSetupMessagePayload {
@@ -1437,7 +1484,7 @@ impl KmsV0_15_0 {
 
     fn gen_internal_recovery_request(dir: &PathBuf) -> TestMetadataKMS {
         let mut rng = AesRng::seed_from_u64(INTERNAL_RECOVERY_REQUEST_TEST.state);
-        let mut encryption = Encryption::new(PkeSchemeType::MlKem512, &mut rng);
+        let mut encryption = Encryption::new(BACKUP_PKE_SCHEME, &mut rng);
         let (_dec_key, enc_key) = encryption.keygen().unwrap();
         let (operator_verf_key, _operator_sig_key) = gen_sig_keys(&mut rng);
         let mut cts = BTreeMap::new();
@@ -1447,7 +1494,7 @@ impl KmsV0_15_0 {
             rng.fill_bytes(&mut payload);
             let signcryption = UnifiedSigncryption {
                 payload: payload.to_vec(),
-                pke_type: PkeSchemeType::MlKem512,
+                pke_type: BACKUP_PKE_SCHEME,
                 signing_type: SigningSchemeType::Ecdsa256k1,
             };
             cts.insert(cur_role, InnerOperatorBackupOutput { signcryption });
@@ -1469,7 +1516,7 @@ impl KmsV0_15_0 {
         for role_j in 1..=INTERNAL_CUS_CONTEXT_TEST.custodian_count {
             let cus_role = Role::indexed_from_one(role_j);
             let (custodian_verf_key, _) = gen_sig_keys(&mut rng);
-            let mut encryption = Encryption::new(PkeSchemeType::MlKem512, &mut rng);
+            let mut encryption = Encryption::new(BACKUP_PKE_SCHEME, &mut rng);
             let (_, cus_enc_key) = encryption.keygen().unwrap();
             let mut rnd = [0_u8; 32];
             rng.fill_bytes(&mut rnd);
@@ -1486,7 +1533,7 @@ impl KmsV0_15_0 {
         }
         // Generate the extra encryption key last since it will be loaded from file and
         // thus we should avoid using the RNG for the things that it will be used to generate in the test
-        let mut encryption = Encryption::new(PkeSchemeType::MlKem512, &mut rng);
+        let mut encryption = Encryption::new(BACKUP_PKE_SCHEME, &mut rng);
         let (_, cus_enc_key) = encryption.keygen().unwrap();
         let internal_cus_context = InternalCustodianContext {
             threshold: 1,
@@ -1555,6 +1602,7 @@ impl KmsV0_15_0 {
             server_key.5,
             server_key.6,
             server_key.7,
+            server_key.8,
             Tag::default(),
         );
 
@@ -1627,7 +1675,7 @@ impl KmsV0_15_0 {
             &THRESHOLD_FHE_KEYS_TEST.private_key_set_filename,
         );
 
-        let (integer_server_key, _, _, _, sns_key, _, _, _, _) =
+        let (integer_server_key, _, _, _, sns_key, _, _, _, _, _) =
             fhe_pub_key_set.server_key.clone().into_raw_parts();
         store_versioned_auxiliary!(
             &sns_key,
@@ -1684,7 +1732,7 @@ impl KmsV0_15_0 {
     fn gen_internal_cus_setup_msg(dir: &PathBuf) -> TestMetadataKMS {
         let mut rng = AesRng::seed_from_u64(INTERNAL_CUS_SETUP_MSG_TEST.state);
         let (_verification_key, signing_key) = gen_sig_keys(&mut rng);
-        let mut encryption = Encryption::new(PkeSchemeType::MlKem512, &mut rng);
+        let mut encryption = Encryption::new(BACKUP_PKE_SCHEME, &mut rng);
         let (private_key, public_key) = encryption.keygen().unwrap();
         let custodian = Custodian::new(
             Role::indexed_from_one(1),
@@ -1712,7 +1760,7 @@ impl KmsV0_15_0 {
         rng.fill_bytes(&mut buf);
         let signcryption = UnifiedSigncryption {
             payload: buf.to_vec(),
-            pke_type: PkeSchemeType::MlKem512,
+            pke_type: BACKUP_PKE_SCHEME,
             signing_type: SigningSchemeType::Ecdsa256k1,
         };
         let icro = InternalCustodianRecoveryOutput {
@@ -1729,7 +1777,7 @@ impl KmsV0_15_0 {
         let custodians: Vec<_> = (1..=OPERATOR_BACKUP_OUTPUT_TEST.custodian_count)
             .map(|i| {
                 let (_verification_key, signing_key) = gen_sig_keys(&mut rng);
-                let mut encryption = Encryption::new(PkeSchemeType::MlKem512, &mut rng);
+                let mut encryption = Encryption::new(BACKUP_PKE_SCHEME, &mut rng);
                 let (private_key, public_key) = encryption.keygen().unwrap();
                 Custodian::new(
                     Role::indexed_from_one(i),
@@ -2128,6 +2176,8 @@ impl KMSCoreVersion for V0_15_0 {
             KmsV0_15_0::gen_signcryption_payload(&dir),
             KmsV0_15_0::gen_signcryption_key(&dir),
             KmsV0_15_0::gen_designcryption_key(&dir),
+            KmsV0_15_0::gen_mlkem1024_p384_public_key(&dir),
+            KmsV0_15_0::gen_mlkem1024_p384_private_key(&dir),
             KmsV0_15_0::gen_unified_signcryption(&dir),
             KmsV0_15_0::gen_backup_ciphertext(&dir),
             KmsV0_15_0::gen_unified_cipher(&dir),

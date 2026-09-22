@@ -10,6 +10,5 @@ pub mod tls;
 pub mod tls_certs;
 
 mod ggen {
-    #![allow(clippy::derive_partial_eq_without_eq)]
     tonic::include_proto!("ddec_networking");
 }

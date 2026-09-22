@@ -16,39 +16,44 @@ crate-type = ["lib", "cdylib"]
 [[bin]] # Bin to generate signing keys and TLS material
 name = "kms-gen-keys"
 path = "src/bin/kms-gen-keys.rs"
+required-features = ["non-wasm"]
 
 [[bin]] # Bin to generate TLS certificates for the service
 name = "kms-gen-tls-certs"
 path = "src/bin/kms-gen-tls-certs.rs"
+required-features = ["non-wasm"]
 
 [[bin]] # Bin to run the gRPC server
 name = "kms-server"
 path = "src/bin/kms-server.rs"
+required-features = ["non-wasm"]
 
 [[bin]] # Bin to initialize the threshold KMS cluster after all nodes are up and running.
 name = "kms-init"
 path = "src/bin/kms-init.rs"
+required-features = ["non-wasm"]
 
 [[bin]] # Bin for the custodians to generate keys and help in recovery
 name = "kms-custodian"
 path = "src/bin/kms-custodian.rs"
+required-features = ["non-wasm"]
 
 [dependencies]
 # ⚠️ IMPORTANT: Add new dependencies to workspace root Cargo.toml, NOT here!
 # Use .workspace = true to reference workspace dependencies
 # Maintain alphabetical order
+aes.workspace = true
 aes-gcm-siv.workspace = true
 aes-gcm.workspace = true
 aes-prng.workspace = true
-aes08.workspace = true
-algebra = { workspace= true }
+algebra = { workspace = true }
 alloy-dyn-abi.workspace = true
 alloy-primitives = { workspace = true, features = ["k256"] }
 alloy-signer-local.workspace = true
 alloy-signer.workspace = true
 alloy-sol-types = { workspace = true, features = ["eip712-serde"] }
 anyhow.workspace = true
-attestation-doc-validation = { workspace = true, optional = true}
+attestation-doc-validation = { workspace = true, optional = true }
 aws-config = { workspace = true, optional = true }
 aws-nitro-enclaves-nsm-api = { workspace = true, optional = true }
 aws-sdk-kms = { workspace = true, optional = true }
@@ -68,6 +73,7 @@ futures-util.workspace = true
 getrandom = { workspace = true, optional = true }
 hashing.workspace = true
 hex.workspace = true
+hpke.workspace = true
 hybrid-array.workspace = true
 iam-rs = { workspace = true, optional = true }
 itertools.workspace = true
@@ -75,10 +81,15 @@ k256.workspace = true
 kms-grpc = { workspace = true, default-features = false }
 ml-dsa.workspace = true
 ml-kem.workspace = true
-nsm-nitro-enclave-utils = { version = "0.1.2", features = ["pki"], optional = true }
+nsm-nitro-enclave-utils = { version = "0.1.2", features = [
+    "pki",
+], optional = true }
 observability = { workspace = true, optional = true }
 p384.workspace = true
+p384_hpke.workspace = true
 rand = { workspace = true, features = ["std", "std_rng"] }
+rand_chacha.workspace = true
+rand_core_0_10.workspace = true
 rasn-cms.workspace = true
 rasn.workspace = true
 rayon.workspace = true
@@ -88,6 +99,7 @@ rustls-webpki = { workspace = true, optional = true }
 serde = { workspace = true, features = ["derive", "rc"] }
 serde-wasm-bindgen.workspace = true
 serde_json.workspace = true
+shake.workspace = true
 signature.workspace = true
 strum.workspace = true
 strum_macros.workspace = true
@@ -139,11 +151,15 @@ aws-smithy-mocks = { workspace = true }
 backward-compatibility = { workspace = true, features = ["load", "tests"] }
 cargo_metadata = { workspace = true }
 criterion.workspace = true
-threshold-execution = { workspace = true, features = ["testing", "malicious_strategies"] }
+threshold-execution = { workspace = true, features = [
+    "testing",
+    "malicious_strategies",
+] }
 # Self-import for integration tests
 kms = { workspace = true, features = ["insecure", "testing"] }
 proptest.workspace = true
 rstest.workspace = true
+sha2.workspace = true
 serde = { workspace = true, features = ["derive"] }
 syn = { workspace = true }
 tempfile.workspace = true
@@ -163,7 +179,11 @@ default = ["non-wasm"]
 # `aws-sdk-s3?/test-util` is required by aws-smithy-mocks' `mock_client!`. The weak-dependency
 # (`?`) syntax only enables it when aws-sdk-s3 is already pulled in (i.e. via `non-wasm`), so
 # wasm / `--no-default-features` builds are unaffected and production never gets test-util.
-testing = ["dep:tempfile", "threshold-execution/testing", "aws-sdk-s3?/test-util"]
+testing = [
+    "dep:tempfile",
+    "threshold-execution/testing",
+    "aws-sdk-s3?/test-util",
+]
 non-wasm = [
     "kms-grpc/non-wasm",
     "threshold-execution/non-wasm",

@@ -212,7 +212,6 @@ where
 }
 
 /// TODO Placeholder method to ensure we remember to clean up upgraded material at the next version (0.16.0)
-#[allow(dead_code)]
 pub async fn migrate_to_0_16_x<PrivS>(
     priv_storage: &mut PrivS,
     kms_type: KMSType,
@@ -1946,7 +1945,6 @@ mod tests {
         assert!(
             !storage
                 .data_exists(
-                    #[allow(deprecated)]
                     &(*LEGACY_DEFAULT_EPOCH_ID).into(),
                     #[expect(deprecated)]
                     &PrivDataType::PrssSetupCombined.to_string(),

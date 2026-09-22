@@ -34,7 +34,7 @@ alloy_sol_types::sol! {
         bytes extraData;
     }
 }
-#[allow(dead_code)]
+
 // Ensure PublicDecryptVerification implements Debug for test assertions
 impl std::fmt::Debug for PublicDecryptVerification {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {

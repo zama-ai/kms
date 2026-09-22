@@ -73,8 +73,10 @@ use crate::{
         },
         context_manager::{ThresholdContextManager, ensure_default_threshold_context_in_storage},
         prepare_shutdown_signals,
+        public_material_sync::sync_public_material_from_peers,
         storage_material_verification::{
-            PrivateLayout, verify_private_storage_layout, verify_storage_material,
+            PrivateLayout, verify_private_metadata, verify_private_storage_layout,
+            verify_storage_material,
         },
         threshold::{
             service::{
@@ -93,7 +95,8 @@ use crate::{
         storage::{
             Storage, StorageExt, crypto_material::ThresholdCryptoMaterialStorage,
             read_all_data_from_all_epochs_versioned, read_all_data_versioned,
-            read_all_recovery_material, select_data_from_max_epoch,
+            read_all_recovery_material, s3::RealReadOnlyS3StorageGetter,
+            select_data_from_max_epoch,
         },
     },
 };
@@ -508,7 +511,7 @@ pub type RealThresholdKms<PubS, PrivS> = ThresholdKms<
 #[expect(clippy::too_many_arguments)]
 pub async fn new_real_threshold_kms<PubS, PrivS, F>(
     config: CoreConfig,
-    public_storage: PubS,
+    mut public_storage: PubS,
     mut private_storage: PrivS,
     mut backup_storage: Option<Vault>,
     security_module: Option<Arc<SecurityModuleProxy>>,
@@ -573,13 +576,14 @@ where
         .collect();
 
     // load crs_info (roughly hashes of CRS) from storage
-    let crs_info: HashMap<RequestId, CrsGenMetadata> = select_data_from_max_epoch(
+    let crs_info_versioned: HashMap<(RequestId, EpochId), CrsGenMetadata> =
         read_all_data_from_all_epochs_versioned(
             &private_storage,
             &PrivDataType::CrsInfo.to_string(),
         )
-        .await?,
-    );
+        .await?;
+    let crs_info: HashMap<RequestId, CrsGenMetadata> =
+        select_data_from_max_epoch(crs_info_versioned.clone());
 
     // The epoch registry: every epoch this node serves, keyed by the ID it is stored under. It is
     // read once here; it anchors the private storage checks below and seeds the session maker.
@@ -598,7 +602,7 @@ where
         .map(|(epoch_id, epoch_data)| (*epoch_id, epoch_data.context_id))
         .collect();
 
-    // Recovery mode skips storage verification and adopts no custodian context.
+    // Recovery mode skips storage verification, the peer sync, and adopts no custodian context.
     match base_kms.signing_identity() {
         Ok(signing_key) => {
             verify_private_storage_layout(
@@ -608,14 +612,55 @@ where
                 },
             )
             .await?;
-            verify_storage_material(
+            // Validate the metadata before it becomes the authority for public-storage repair.
+            let key_metadata_versioned: HashMap<(RequestId, EpochId), KeyGenMetadata> =
+                key_info_versioned
+                    .iter()
+                    .map(|((id, epoch_id), info)| ((*id, *epoch_id), info.meta_data.clone()))
+                    .collect();
+
+            // Make sure private material is verified before using it as the
+            // reference to verify/restore public material.
+            verify_private_metadata(&key_info, &crs_info, signing_key.as_ref())?;
+
+            // Verify the public material, if it fails attempt to fetch from other peers.
+            if let Err(verify_err) = verify_storage_material(
                 &public_storage,
                 &key_info,
                 &crs_info,
                 &recovery_validation_material,
                 &signing_key,
             )
-            .await?;
+            .await
+            {
+                tracing::warn!(
+                    "Public storage failed verification at boot ({verify_err:#}); attempting to \
+                     repair it from peers"
+                );
+                let sync_report = sync_public_material_from_peers(
+                    &mut public_storage,
+                    &private_storage,
+                    &key_metadata_versioned,
+                    &crs_info_versioned,
+                    &epoch_contexts,
+                    &RealReadOnlyS3StorageGetter {},
+                )
+                .await
+                // The verification failure is the diagnosis; carry it so a node that cannot
+                // reach its peers still reports what was actually wrong with its storage.
+                .map_err(|e| e.context(format!("storage verification failed: {verify_err:#}")))?;
+                tracing::info!("Synced public material against peers at boot: {sync_report}");
+                // Re-run the same read-only verification so that whatever the sync wrote is
+                // checked independently of the sync's own digest comparison.
+                verify_storage_material(
+                    &public_storage,
+                    &key_info,
+                    &crs_info,
+                    &recovery_validation_material,
+                    &signing_key,
+                )
+                .await?;
+            }
             if let Some(vault) = backup_storage.as_mut() {
                 adopt_custodian_context(&private_storage, vault, &recovery_validation_material)
                     .await?;
@@ -623,8 +668,9 @@ where
         }
         Err(_) => {
             tracing::warn!(
-                "No signing key available (recovery mode): skipping private storage, public \
-                 material and recovery validation material verification"
+                "No signing key available (recovery mode): skipping private storage \
+                 verification, the public material sync from peers, and public material and \
+                 recovery validation material verification"
             );
         }
     }

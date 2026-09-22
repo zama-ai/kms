@@ -108,7 +108,7 @@ struct MetaParameterV1 {
 
 /// These are the parameters except the g_list in ZkCompactPkeV2PublicParams.
 // we allow non_snake_case to be unified with tfhe-rs
-#[allow(non_snake_case)]
+#[expect(non_snake_case)]
 struct MetaParameterV2 {
     n: usize,
     d: usize,
@@ -127,7 +127,7 @@ fn checked_sqr(x: u128) -> Option<u128> {
 }
 
 // we allow non_snake_case to be unified with tfhe-rs
-#[allow(non_snake_case)]
+#[expect(non_snake_case)]
 fn inf_norm_bound_to_euclidean_squared(B_inf: u64, dim: usize) -> u128 {
     checked_sqr(B_inf as u128)
         .and_then(|norm_squared| norm_squared.checked_mul(dim as u128))
@@ -163,7 +163,7 @@ pub fn max_num_messages(
 }
 
 // we allow non_snake_case to be unified with tfhe-rs
-#[allow(non_snake_case)]
+#[expect(non_snake_case)]
 fn compute_meta_parameter(
     params: &CompactPublicKeyEncryptionParameters,
     max_num_bits: Option<usize>,
@@ -1130,7 +1130,7 @@ mod tests {
     // maintained), but it is deliberately what this test uses: it exercises the CRS produced by
     // the ceremony with the cheapest proof system to set up, and swapping it for pke/pke_v2 is a
     // separate change.
-    #[allow(deprecated)]
+    #[expect(deprecated)]
     fn test_honest_crs_ceremony<F, C>(ceremony_f: F)
     where
         F: Fn() -> C,

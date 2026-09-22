@@ -868,7 +868,7 @@ impl<T> MetaStore<T> {
     }
 
     /// Get the number of deleted (tombstoned) items
-    #[allow(dead_code)]
+    #[cfg(test)]
     pub(crate) fn get_deleted_count(&self) -> usize {
         self.deleted_set.len()
     }
@@ -1069,6 +1069,13 @@ pub(crate) async fn update_req_in_meta_store<
     }
 }
 
+// The `MetaStoreError` is recorded through `handle_unreturnable_error` and collapsed into a
+// bool instead of being propagated, which is what Dylint flags. The effect it names is
+// `update_arc`'s `HashMap::get_mut` (line 608), a `&mut` borrow that writes nothing: both of
+// that method's error paths -- the id is gone, or the entry is no longer `Pending` -- leave
+// the store unchanged, so there is no partial state for a caller to unwind.
+#[allow(unknown_lints)]
+#[allow(non_local_effect_before_unhandled_error)]
 pub(crate) async fn update_ok_req_in_meta_store<T>(
     meta_store: &RwLock<MetaStore<T>>,
     permit: MetaStorePermit<T>,
@@ -1105,6 +1112,13 @@ pub(crate) async fn update_err_req_in_meta_store<T>(
     }
 }
 
+// Dylint flags the `delete` call below: its `MetaStoreError` is logged rather than propagated,
+// and `delete` performs a non-local effect (`HashMap::get_mut`, and its tombstone writes ahead
+// of the `remove_completed` invariant check) before it can return one. Recording the failure is
+// all this fire-and-forget path can do -- `context_manager.rs` has already destroyed the
+// underlying material by the time it runs.
+#[allow(unknown_lints)]
+#[allow(non_local_effect_before_unhandled_error)]
 pub(crate) async fn delete_in_meta_store<'a, T>(
     mut meta_store_guard: RwLockWriteGuard<'a, MetaStore<T>>,
     permit: MetaStorePermit<T>,

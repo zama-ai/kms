@@ -45,6 +45,38 @@ pub mod nitro_mock;
 
 const SECP256K1_OID: &str = "1.3.132.0.10";
 
+/// Maximum size of the `public_key` and `user_data` fields of an AWS Nitro attestation document.
+///
+/// The NSM device rejects an oversize field itself, and the rejection reaches us only as a generic
+/// "attestation request failed", so callers check against this first to produce a diagnosable
+/// error instead.
+pub const NSM_ATTESTATION_FIELD_MAX_BYTES: usize = 1024;
+
+/// Reject attestation inputs the NSM would refuse, naming the field and the limit.
+///
+/// Without this the NSM's own rejection arrives as an undifferentiated failure,
+/// which is not particularly helpful.
+pub(crate) fn check_attestation_field_sizes(
+    pk_hash: &[u8],
+    user_data: Option<&[u8]>,
+) -> anyhow::Result<()> {
+    ensure!(
+        pk_hash.len() <= NSM_ATTESTATION_FIELD_MAX_BYTES,
+        "Attestation public key is {} bytes, exceeding the {NSM_ATTESTATION_FIELD_MAX_BYTES}-byte \
+         limit of the AWS Nitro attestation document",
+        pk_hash.len()
+    );
+    if let Some(user_data) = user_data {
+        ensure!(
+            user_data.len() <= NSM_ATTESTATION_FIELD_MAX_BYTES,
+            "Attestation user data is {} bytes, exceeding the \
+             {NSM_ATTESTATION_FIELD_MAX_BYTES}-byte limit of the AWS Nitro attestation document",
+            user_data.len()
+        );
+    }
+    Ok(())
+}
+
 /// Validate the threshold CA certificate against the node's private signing key.
 ///
 /// The certificate is expected to be the self-signed, secp256k1 CA certificate produced by
@@ -170,7 +202,7 @@ pub fn validate_ca_cert(ca_cert_bytes: &[u8], signing_key: &PrivateSigKey) -> an
     Ok(ca_cert_pem)
 }
 
-#[allow(async_fn_in_trait)]
+#[expect(async_fn_in_trait)]
 #[enum_dispatch]
 pub trait SecurityModule {
     /// Get enthropy from the hardware RNG
@@ -180,7 +212,8 @@ pub trait SecurityModule {
     /// contains PCR values and, at the minimum, an application public
     /// key. Optionally, the attestation document can include some userdata and
     /// a nonce.
-    async fn attest(&self, pk: Vec<u8>, user_data: Option<Vec<u8>>) -> anyhow::Result<Vec<u8>>;
+    async fn attest(&self, pk_hash: Vec<u8>, user_data: Option<Vec<u8>>)
+    -> anyhow::Result<Vec<u8>>;
 
     /// Generate a fresh keypair and issue a new TLS certificate for it.  This
     /// TLS certificate also includes the attestation document for its
@@ -210,15 +243,17 @@ pub trait SecurityModule {
         // storage root key policy that the peers can mutually validate
         let private_vault_root_key_measurements_bytes = match private_vault_root_key_measurements {
             Some(private_vault_root_key_measurements) => {
-                // user data section in the AWS Nitro attestation document
-                // should not exceed 1024 bytes
-                let mut private_vault_root_key_measurements_bytes = Vec::with_capacity(1024);
+                // The user data section of an AWS Nitro attestation document is capped; see
+                // `NSM_ATTESTATION_FIELD_MAX_BYTES`.
+                let mut private_vault_root_key_measurements_bytes =
+                    Vec::with_capacity(NSM_ATTESTATION_FIELD_MAX_BYTES);
                 ciborium::into_writer(
                     &private_vault_root_key_measurements,
                     &mut private_vault_root_key_measurements_bytes,
                 )?;
                 ensure!(
-                    private_vault_root_key_measurements_bytes.len() <= 1024,
+                    private_vault_root_key_measurements_bytes.len()
+                        <= NSM_ATTESTATION_FIELD_MAX_BYTES,
                     "Private vault root key measurements length too long for inclusion into attestation document, impossible to continue"
                 );
                 Some(private_vault_root_key_measurements_bytes)
@@ -374,7 +409,7 @@ pub trait SecurityModule {
     fn get_random_sync<const N: usize>(&self) -> anyhow::Result<Zeroizing<[u8; N]>>;
 }
 
-#[allow(clippy::large_enum_variant)]
+#[expect(clippy::large_enum_variant)]
 #[enum_dispatch(SecurityModule)]
 pub enum SecurityModuleProxy {
     Nitro(nitro::Nitro),

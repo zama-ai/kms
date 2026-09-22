@@ -461,7 +461,7 @@ pub enum FheType {
 
 impl FheType {
     // We don't use it for now, but useful to have
-    #[allow(dead_code)]
+    #[expect(dead_code)]
     fn as_str_name(self) -> &'static str {
         match self {
             FheType::Ebool => "Ebool",
@@ -1231,7 +1231,7 @@ pub struct CmdConfig {
     /// repeated or comma-separated list of scheme names.
     ///
     /// Names are matched case-insensitively, so `--signing-schemes
-    /// ecdsa256k1,mldsa65` asks for a hybrid classic + post-quantum pair. Every
+    /// ecdsa256k1,mldsa65` asks for a composite classic + post-quantum pair. Every
     /// response is then required to carry a valid signature for each scheme
     /// named. Leaving this out asks for `Ecdsa256k1` alone, which is what the
     /// KMS defaults to.

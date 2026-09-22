@@ -4,12 +4,13 @@ use crate::{
     conf::{AwsKmsKeySpec, AwsKmsKeychain, Keychain as KeychainConf, SecretSharingKeychain},
     cryptography::attestation::SecurityModuleProxy,
 };
-use aes_gcm_siv::{AeadInPlace, Aes256GcmSiv, KeyInit, Nonce};
+use aes_gcm_siv::{AeadInOut, Aes256GcmSiv, KeyInit, Nonce, Tag};
 use aes_prng::AesRng;
 use aws_sdk_kms::Client as AWSKMSClient;
 use enum_dispatch::enum_dispatch;
 use iam_rs::IAMPolicy;
 use rand::SeedableRng;
+use rand_chacha::ChaCha20Rng;
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use std::{convert::Into, sync::Arc};
 use strum_macros::EnumTryAs;
@@ -40,7 +41,7 @@ impl Named for AppKeyBlob {
     const NAME: &'static str = "AppKeyBlob";
 }
 
-#[allow(async_fn_in_trait)]
+#[expect(async_fn_in_trait)]
 #[enum_dispatch]
 pub trait Keychain {
     /// Encrypt some data. The `data_type` is used to identify the type of data being encrypted must be of the `PrivDataType` type.
@@ -59,12 +60,11 @@ pub trait Keychain {
     fn root_key_measurements(&self) -> Arc<RootKeyMeasurements>;
 }
 
-#[expect(clippy::large_enum_variant)]
 #[enum_dispatch(Keychain)]
 pub enum KeychainProxy {
     AwsKmsSymm(awskms::AWSKMSKeychain<SecurityModuleProxy, awskms::Symm, AesRng>),
     AwsKmsAsymm(awskms::AWSKMSKeychain<SecurityModuleProxy, awskms::Asymm, AesRng>),
-    SecretSharing(secretsharing::SecretShareKeychain<AesRng>),
+    SecretSharing(secretsharing::SecretShareKeychain<ChaCha20Rng>),
 }
 
 #[derive(EnumTryAs, Clone)]
@@ -129,6 +129,9 @@ pub async fn make_keychain_proxy(
     security_module: Option<Arc<SecurityModuleProxy>>,
     attest_key_policy: bool,
 ) -> anyhow::Result<KeychainProxy> {
+    // The AWS KMS keychains take their IVs and data keys from the security module, so a 128-bit
+    // seed is enough there. The secret-sharing keychain encapsulates under MLKEM1024-P384 for
+    // every backup blob, which needs the wider seed.
     let rng = AesRng::from_entropy();
     let keychain = match keychain_conf {
         KeychainConf::AwsKms(AwsKmsKeychain {
@@ -156,9 +159,9 @@ pub async fn make_keychain_proxy(
         }
         // Starts uninitialized and can only encrypt once `NewCustodianContext` has installed a
         // context, which in turn requires the vault to be configured with this keychain already.
-        KeychainConf::SecretSharing(SecretSharingKeychain {}) => {
-            KeychainProxy::from(secretsharing::SecretShareKeychain::new(rng))
-        }
+        KeychainConf::SecretSharing(SecretSharingKeychain {}) => KeychainProxy::from(
+            secretsharing::SecretShareKeychain::new(ChaCha20Rng::from_entropy()),
+        ),
     };
     Ok(keychain)
 }
@@ -176,10 +179,10 @@ pub fn encrypt_under_data_key(
             "Invalid IV length: must be exactly 96 bits for AES-256-GCM-SIV",
         ));
     }
-    #[allow(deprecated)]
+    #[expect(deprecated)]
     let nonce = Nonce::from_slice(iv);
     let auth_tag = cipher
-        .encrypt_in_place_detached(nonce, b"", plaintext)
+        .encrypt_inout_detached(nonce, b"", plaintext.into())
         .map_err(|e| anyhow_error_and_log(format!("Cannot encrypt application key: {e}")))?;
     Ok(auth_tag.to_vec())
 }
@@ -191,7 +194,6 @@ pub fn decrypt_under_data_key(
     iv: &[u8],
     auth_tag: &Vec<u8>,
 ) -> anyhow::Result<()> {
-    #[allow(deprecated)]
     let cipher = Aes256GcmSiv::new_from_slice(key)
         .map_err(|_| anyhow_error_and_log("Invalid data key length: must be 256 bits"))?;
     if iv.len() != 12 {
@@ -204,10 +206,13 @@ pub fn decrypt_under_data_key(
             "Invalid auth tag length: must be exactly 128 bits for AES-256-GCM-SIV",
         ));
     }
-    #[allow(deprecated)]
+    #[expect(deprecated)]
     let nonce = Nonce::from_slice(iv);
+    // The length is checked above, so the conversion cannot fail.
+    let auth_tag = Tag::try_from(auth_tag.as_slice())
+        .map_err(|e| anyhow_error_and_log(format!("Invalid auth tag length: {e}")))?;
     cipher
-        .decrypt_in_place_detached(nonce, b"", ciphertext, auth_tag.as_slice().into())
+        .decrypt_inout_detached(nonce, b"", ciphertext.into(), &auth_tag)
         .map_err(|e| anyhow_error_and_log(format!("{e}")))?;
     Ok(())
 }

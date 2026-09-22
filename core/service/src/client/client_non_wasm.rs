@@ -436,14 +436,14 @@ mod tests {
     #[test]
     fn set_signing_schemes_needs_a_key_for_every_non_ecdsa_scheme() {
         let identity = seeded_identity(21);
-        let hybrid = [SigningSchemeType::Ecdsa256k1, SigningSchemeType::MlDsa65];
+        let composite = [SigningSchemeType::Ecdsa256k1, SigningSchemeType::MlDsa65];
 
         client_for(&identity, &[])
             .set_signing_schemes(&[SigningSchemeType::Ecdsa256k1])
             .unwrap();
 
         let err = client_for(&identity, &[])
-            .set_signing_schemes(&hybrid)
+            .set_signing_schemes(&composite)
             .unwrap_err();
         assert!(
             matches!(
@@ -454,8 +454,8 @@ mod tests {
         );
 
         let mut client = client_for(&identity, &[SigningSchemeType::MlDsa65]);
-        client.set_signing_schemes(&hybrid).unwrap();
-        assert_eq!(client.signing_schemes(), &hybrid);
+        client.set_signing_schemes(&composite).unwrap();
+        assert_eq!(client.signing_schemes(), &composite);
     }
 
     /// An entry of a scheme this release does not know is passed over, so a newer node
@@ -545,15 +545,15 @@ mod tests {
         let identity = seeded_identity(10);
         let every_scheme: Vec<_> = SigningSchemeType::iter().collect();
         let signatures = signatures_for(&identity, &every_scheme, PAYLOAD);
-        let hybrid = vec![SigningSchemeType::Ecdsa256k1, SigningSchemeType::MlDsa65];
+        let composite = vec![SigningSchemeType::Ecdsa256k1, SigningSchemeType::MlDsa65];
 
         for (case, requested, offered) in [
             (
                 "default ECDSA with unrequested MLDSA",
                 vec![],
-                hybrid.clone(),
+                composite.clone(),
             ),
-            ("hybrid", hybrid.clone(), hybrid),
+            ("composite", composite.clone(), composite),
             ("all schemes", every_scheme.clone(), every_scheme),
         ] {
             let mut client = client_for(&identity, &requested);

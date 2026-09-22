@@ -5,7 +5,7 @@
 //! threshold session maker. Tests can then compare storage state and lifecycle state.
 
 use super::super::*;
-use crate::engine::rng_source::{RngSource, test_rng_source};
+use crate::engine::rng_source::{RngSource, TaskRngs, test_rng_source};
 use crate::{
     cryptography::signatures::{PublicSigKey, gen_sig_keys},
     util::meta_store::MetaStore,
@@ -172,7 +172,7 @@ impl ContextFixture {
                 TestContextManager::Centralized(manager)
             }
             KMSType::Threshold => {
-                let session_maker = SessionMaker::empty_dummy_session(base_kms.new_rng());
+                let session_maker = SessionMaker::empty_dummy_session(base_kms.new_rngs());
                 let manager = ThresholdContextManager::new(
                     base_kms,
                     self.storage.clone(),
@@ -229,7 +229,7 @@ impl ContextFixture {
 }
 
 /// Returns an empty session maker with attested TLS verification enabled.
-pub(super) fn attested_session_maker(rng: AesRng) -> SessionMaker {
+pub(super) fn attested_session_maker(rngs: TaskRngs) -> SessionMaker {
     let _ = default_provider().install_default();
     let verifier = Arc::new(
         AttestedVerifier::new(
@@ -246,7 +246,7 @@ pub(super) fn attested_session_maker(rng: AesRng) -> SessionMaker {
     SessionMaker::new_uninitialized(
         networking_manager,
         Some(verifier),
-        Arc::new(RngSource::from_rng(rng)),
+        Arc::new(RngSource::from_rngs(rngs)),
     )
 }
 
