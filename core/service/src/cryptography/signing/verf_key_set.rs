@@ -176,7 +176,10 @@ mod tests {
 
         for scheme in schemes.iter() {
             let mut swapped = base.keys.clone();
-            swapped.insert(scheme, other_identity.unified_verifying_key(scheme).unwrap());
+            swapped.insert(
+                scheme,
+                other_identity.unified_verifying_key(scheme).unwrap(),
+            );
             let swapped = VerfKeySet::new(swapped).unwrap();
             assert_ne!(
                 base_id,
