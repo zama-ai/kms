@@ -104,9 +104,22 @@ pub(super) fn hybrid_decrypt(
     }
 }
 
+#[allow(dead_code)]
+pub(super) fn expected_enc_key_digest(enc_key: &UnifiedPublicEncKey) -> Vec<u8> {
+    match enc_key {
+        UnifiedPublicEncKey::MlKem512(inner) => {
+            serialize_hash_element(&DSEP_SIGNCRYPTION, inner).unwrap()
+        }
+        UnifiedPublicEncKey::MlKem1024P384(inner) => {
+            serialize_hash_element(&DSEP_SIGNCRYPTION, inner).unwrap()
+        }
+        _ => unreachable!("only the two locked schemes are exercised"),
+    }
+}
+
 // Test scaffolding shared with `super::ecdsa_v0`, which locks the frozen layout
-// against the same keys. Kept at module level rather than inside `tests` so both
-// modules can reach it without either copying it.
+// against the same keys. At module level rather than inside `tests` so that
+// `ecdsa_v0`'s tests can reach it without a copy.
 #[cfg(test)]
 use crate::cryptography::encryption::{Encryption, PkeScheme, PkeSchemeType};
 #[cfg(test)]
@@ -116,13 +129,7 @@ use aes_prng::AesRng;
 #[cfg(test)]
 use rand::SeedableRng;
 
-/// The two schemes the frozen layout is actually used with: ML-KEM-512 for
-/// user decryption, MLKEM1024-P384 for custodian backup.
-#[allow(dead_code)]
-pub(super) const LOCKED_SCHEMES: [PkeSchemeType; 2] =
-    [PkeSchemeType::MlKem512, PkeSchemeType::MlKem1024P384];
-
-#[allow(dead_code)]
+#[cfg(test)]
 pub(super) struct LockFixture {
     rng: AesRng,
     dec_key: UnifiedPrivateEncKey,
@@ -132,7 +139,7 @@ pub(super) struct LockFixture {
     receiver_id: Vec<u8>,
 }
 
-#[allow(dead_code)]
+#[cfg(test)]
 pub(super) fn lock_fixture(scheme: PkeSchemeType, seed: u64) -> LockFixture {
     let mut rng = AesRng::seed_from_u64(seed);
     let (sender_verf_key, signing_key) = gen_sig_keys(&mut rng);
@@ -152,23 +159,11 @@ pub(super) fn lock_fixture(scheme: PkeSchemeType, seed: u64) -> LockFixture {
     }
 }
 
-#[allow(dead_code)]
-pub(super) fn expected_enc_key_digest(enc_key: &UnifiedPublicEncKey) -> Vec<u8> {
-    match enc_key {
-        UnifiedPublicEncKey::MlKem512(inner) => {
-            serialize_hash_element(&DSEP_SIGNCRYPTION, inner).unwrap()
-        }
-        UnifiedPublicEncKey::MlKem1024P384(inner) => {
-            serialize_hash_element(&DSEP_SIGNCRYPTION, inner).unwrap()
-        }
-        _ => unreachable!("only the two locked schemes are exercised"),
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use strum::IntoEnumIterator;
+
     /// The binding must separate recipients on *both* of its inputs, since it is
     /// the only thing tying a signature to who may open it.
     #[test]

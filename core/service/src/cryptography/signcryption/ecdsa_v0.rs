@@ -21,7 +21,7 @@ use ::signature::Verifier;
 use hashing::{DIGEST_BYTES, DomainSep, serialize_hash_element};
 use kms_grpc::kms::v1::TypedPlaintext;
 use rand::{CryptoRng, RngCore};
-use zeroize::{Zeroize, Zeroizing};
+use zeroize::Zeroizing;
 
 /// The digest of the sender's verification key, as it appears in the encrypted
 /// plaintext's tail.
@@ -186,7 +186,7 @@ pub(crate) fn insecure_decrypt_ignoring_signature(
 
 #[cfg(test)]
 mod tests {
-    use super::super::common::{LOCKED_SCHEMES, expected_enc_key_digest, lock_fixture};
+    use super::super::common::{expected_enc_key_digest, lock_fixture};
     use super::super::{Signcrypt, Unsigncrypt};
     use super::*;
     use crate::consts::SAFE_SER_SIZE_LIMIT;
@@ -222,7 +222,7 @@ mod tests {
     #[test]
     fn ecdsa_v0_signed_preimage_is_locked() {
         const DSEP: &DomainSep = b"ECDSAV0T";
-        for scheme in LOCKED_SCHEMES {
+        for scheme in [PkeSchemeType::MlKem512, PkeSchemeType::MlKem1024P384] {
             let f = lock_fixture(scheme, 100);
             let msg = b"the message a signcryption signs over";
 
@@ -266,7 +266,7 @@ mod tests {
     #[test]
     fn ecdsa_v0_envelope_layout_is_locked() {
         const DSEP: &DomainSep = b"ECDSAV0T";
-        for scheme in LOCKED_SCHEMES {
+        for scheme in [PkeSchemeType::MlKem512, PkeSchemeType::MlKem1024P384] {
             let mut f = lock_fixture(scheme, 200);
             let payload = TestType { i: 4711 };
             let signcrypt_key =

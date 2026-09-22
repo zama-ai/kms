@@ -21,4 +21,6 @@ pub use crate::cryptography::signing::{
     SigningSchemeTypeVersions, UnifiedPublicSigKey, UnifiedPublicSigKeyVersions, VerfKeySet,
 };
 
-pub(crate) use crate::cryptography::signing::ecdsa::{internal_sign, internal_verify_sig};
+pub(crate) use crate::cryptography::signing::ecdsa::{
+    check_normalized, internal_sign, internal_verify_sig,
+};
