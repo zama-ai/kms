@@ -11,13 +11,12 @@ use kms_0_15_0::backup::custodian::{
     Custodian, CustodianContextAnchor, CustodianSetupMessagePayload, InternalCustodianContext,
 };
 use kms_0_15_0::backup::{
-    BACKUP_PKE_SCHEME,
     custodian::{InternalCustodianRecoveryOutput, InternalCustodianSetupMessage},
     operator::{
         BackupMaterial, InnerOperatorBackupOutput, InternalRecoveryRequest, Operator,
         RecoveryValidationMaterial, DSEP_BACKUP_COMMITMENT,
     },
-    BackupCiphertext,
+    BackupCiphertext, BACKUP_PKE_SCHEME,
 };
 use kms_0_15_0::consts::SAFE_SER_SIZE_LIMIT;
 use kms_0_15_0::cryptography::{
@@ -1448,7 +1447,7 @@ impl KmsV0_15_0 {
                 signcryption: UnifiedSigncryption {
                     payload: payload.to_vec(),
                     pke_type: BACKUP_PKE_SCHEME,
-                    signing_type: SigningSchemeType::Ecdsa256k1,
+                    signing_schemes: SigningSchemeSet::single(SigningSchemeType::Ecdsa256k1),
                 },
             };
             cts.insert(cus_role, cts_out);
@@ -1522,7 +1521,7 @@ impl KmsV0_15_0 {
             let signcryption = UnifiedSigncryption {
                 payload: payload.to_vec(),
                 pke_type: BACKUP_PKE_SCHEME,
-                signing_type: SigningSchemeType::Ecdsa256k1,
+                signing_schemes: SigningSchemeSet::single(SigningSchemeType::Ecdsa256k1),
             };
             cts.insert(cur_role, InnerOperatorBackupOutput { signcryption });
         }
@@ -1788,7 +1787,7 @@ impl KmsV0_15_0 {
         let signcryption = UnifiedSigncryption {
             payload: buf.to_vec(),
             pke_type: BACKUP_PKE_SCHEME,
-            signing_type: SigningSchemeType::Ecdsa256k1,
+            signing_schemes: SigningSchemeSet::single(SigningSchemeType::Ecdsa256k1),
         };
         let icro = InternalCustodianRecoveryOutput {
             signcryption,
