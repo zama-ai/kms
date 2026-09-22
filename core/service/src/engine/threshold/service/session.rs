@@ -987,10 +987,6 @@ impl ImmutableSessionMaker {
         self.inner.context_exists(context_id).await
     }
 
-    pub(crate) async fn epoch_exists(&self, epoch_id: &EpochId) -> bool {
-        self.inner.epoch_exists(epoch_id).await
-    }
-
     pub(crate) async fn epochs_for_context(&self, context_id: &ContextId) -> Vec<EpochId> {
         self.inner.epochs_for_context(context_id).await
     }
@@ -1109,7 +1105,8 @@ impl ImmutableSessionMaker {
     }
 }
 
-/// Validates that a context and epoch ID exists and returns the role of the current server in this context.
+/// Validates that the context exists and that the epoch belongs to that same context, then returns
+/// the role of the current server in this context.
 pub(crate) async fn validate_context_and_epoch(
     op_tag: &'static str,
     session_maker: &ImmutableSessionMaker,
@@ -1123,13 +1120,12 @@ pub(crate) async fn validate_context_and_epoch(
         .await
         .map_err(|e| MetricedError::new(op_tag, req_id, e, Code::NotFound))?;
 
-    if !session_maker.epoch_exists(epoch_id).await {
+    let context_epochs = session_maker.epochs_for_context(context_id).await;
+    if !context_epochs.contains(epoch_id) {
         // Name the epochs this context does have: the usual cause is a request still pointing at an
         // epoch that a completed epoch change replaced. `EpochId`'s `Debug` is the raw byte array,
         // so format through `Display` to keep the list readable.
-        let known_epochs = session_maker
-            .epochs_for_context(context_id)
-            .await
+        let known_epochs = context_epochs
             .iter()
             .map(|epoch| epoch.to_string())
             .collect::<Vec<_>>()
@@ -1153,6 +1149,7 @@ mod tests {
         context::{NodeInfo, SchemeDigests, SoftwareVersion},
         threshold::service::epoch_manager::tests::dummy_epoch_data,
     };
+    use observability::metrics_names::OP_CRS_GEN_REQUEST;
     use rcgen::{KeyPair, PKCS_ECDSA_P256_SHA256};
     use tokio_rustls::rustls::{
         client::danger::ServerCertVerifier,
@@ -1234,6 +1231,89 @@ mod tests {
                 .await
                 .is_empty()
         );
+    }
+
+    /// Register a context that this node belongs to.
+    async fn add_member_context(session_maker: &SessionMaker, context_id: ContextId) {
+        session_maker
+            .add_context(
+                context_id,
+                Some(Role::indexed_from_one(1)),
+                RoleAssignment::empty(),
+                1,
+            )
+            .await;
+    }
+
+    /// Sunshine: an epoch registered under the requested context validates, and the call returns
+    /// the role of this node in that context.
+    #[tokio::test]
+    async fn validate_context_and_epoch_accepts_own_epoch() {
+        let mut rng = AesRng::seed_from_u64(200);
+        let session_maker =
+            SessionMaker::empty_dummy_session(TaskRngs::insecure_seed_from_u64(201));
+
+        let context_id = ContextId::new_random(&mut rng);
+        let epoch_id = EpochId::new_random(&mut rng);
+        add_member_context(&session_maker, context_id).await;
+        session_maker
+            .add_epoch(epoch_id, dummy_epoch_data(context_id))
+            .await;
+
+        let my_role = validate_context_and_epoch(
+            OP_CRS_GEN_REQUEST,
+            &session_maker.make_immutable(),
+            None,
+            &context_id,
+            &epoch_id,
+        )
+        .await
+        .unwrap();
+        assert_eq!(my_role, Role::indexed_from_one(1));
+    }
+
+    /// Negative: an epoch that belongs to another context must not validate against the requested
+    /// context, even though the epoch map holds it.
+    #[tokio::test]
+    async fn validate_context_and_epoch_rejects_epoch_of_other_context() {
+        let mut rng = AesRng::seed_from_u64(202);
+        let session_maker =
+            SessionMaker::empty_dummy_session(TaskRngs::insecure_seed_from_u64(203));
+
+        let context_a = ContextId::new_random(&mut rng);
+        let context_b = ContextId::new_random(&mut rng);
+        let epoch_a = EpochId::new_random(&mut rng);
+        let epoch_b = EpochId::new_random(&mut rng);
+
+        add_member_context(&session_maker, context_a).await;
+        add_member_context(&session_maker, context_b).await;
+        session_maker
+            .add_epoch(epoch_a, dummy_epoch_data(context_a))
+            .await;
+        session_maker
+            .add_epoch(epoch_b, dummy_epoch_data(context_b))
+            .await;
+
+        // A check on epoch existence alone accepts the mismatched pair below.
+        assert!(session_maker.epoch_exists(&epoch_b).await);
+
+        let err = validate_context_and_epoch(
+            OP_CRS_GEN_REQUEST,
+            &session_maker.make_immutable(),
+            None,
+            &context_a,
+            &epoch_b,
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(err.code(), Code::NotFound);
+        // The error lists the epochs of the requested context, not the epoch of the other context.
+        let message = err.to_string();
+        assert!(
+            message.contains(&epoch_a.to_string()),
+            "the error must name the epochs of context A: {message}"
+        );
+        err.defuse();
     }
 
     /// An epoch creation is visible to lifecycle coordination before it is registered in
