@@ -262,7 +262,7 @@ impl<Z: BaseRing, Gen: ParallelByteRandomGenerator, const EXTENSION_DEGREE: usiz
     // We allow the following lints because we are fine with mutating the rng
     // since we only care about the protocol state and reproducibility when it executes correctly.
     #[allow(unknown_lints)]
-    #[allow(non_local_effect_before_error_return)]
+    #[allow(non_local_effect_before_unhandled_error)]
     pub fn fork_bsk_to_ggsw(
         &mut self,
         lwe_dimension: LweDimension,
@@ -287,7 +287,7 @@ impl<Z: BaseRing, Gen: ParallelByteRandomGenerator, const EXTENSION_DEGREE: usiz
     // We allow the following lints because we are fine with mutating the rng
     // since we only care about the protocol state and reproducibility when it executes correctly.
     #[allow(unknown_lints)]
-    #[allow(non_local_effect_before_error_return)]
+    #[allow(non_local_effect_before_unhandled_error)]
     pub fn fork_lwe_list_to_lwe(
         &mut self,
         lwe_count: LweCiphertextCount,
@@ -304,7 +304,7 @@ impl<Z: BaseRing, Gen: ParallelByteRandomGenerator, const EXTENSION_DEGREE: usiz
     // We allow the following lints because we are fine with mutating the rng
     // since we only care about the protocol state and reproducibility when it executes correctly.
     #[allow(unknown_lints)]
-    #[allow(non_local_effect_before_error_return)]
+    #[allow(non_local_effect_before_unhandled_error)]
     pub fn fork_ggsw_level_to_glwe(
         &mut self,
         glwe_size: GlweSize,
@@ -324,7 +324,7 @@ impl<Z: BaseRing, Gen: ParallelByteRandomGenerator, const EXTENSION_DEGREE: usiz
     // We allow the following lints because we are fine with mutating the rng
     // since we only care about the protocol state and reproducibility when it executes correctly.
     #[allow(unknown_lints)]
-    #[allow(non_local_effect_before_error_return)]
+    #[allow(non_local_effect_before_unhandled_error)]
     pub fn fork_ggsw_to_ggsw_levels(
         &mut self,
         level: DecompositionLevelCount,

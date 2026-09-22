@@ -40,7 +40,7 @@ mod secure_requests {
     use threshold_types::{party::MpcIdentity, session_id::SessionId};
     use tonic::Code;
 
-    #[allow(dead_code)]
+    #[expect(dead_code)]
     mod proto {
         tonic::include_proto!("ddec_networking");
     }

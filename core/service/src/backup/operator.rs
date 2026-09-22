@@ -47,7 +47,12 @@ use threshold_types::role::Role;
 use zeroize::{Zeroize, Zeroizing};
 
 pub const DSEP_BACKUP_COMMITMENT: DomainSep = *b"BKUPCOMM";
+/// Domain separator for the operator signature on [RecoveryValidationMaterial].
 pub(crate) const DSEP_BACKUP_RECOVERY: DomainSep = *b"BKUPRECO";
+/// Domain separator for the signcryption of [BackupMaterial] from a custodian to an operator.
+///
+/// The backup direction uses [DSEP_BACKUP_CUSTODIAN] instead.
+pub(crate) const DSEP_BACKUP_MATERIAL: DomainSep = *b"BKUPMATL";
 const TIMESTAMP_VALIDATION_WINDOW: Duration = Duration::from_hours(24);
 
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize, VersionsDispatch)]
@@ -493,7 +498,7 @@ impl Operator {
     // We allow the following lints because we are fine with mutating the rng even if
     // the function fails afterwards.
     #[allow(unknown_lints)]
-    #[allow(non_local_effect_before_error_return)]
+    #[allow(non_local_effect_before_unhandled_error)]
     /// Construct a secret sharing of a `secret` and return a map of the basic backup recovery material,
     /// indexed by the role of each custodian. Also return a map of each commitment to the secret share,
     /// indexed by the role of each custodian.
@@ -653,7 +658,7 @@ impl Operator {
         );
         let backup_material: Zeroizing<BackupMaterial> = Zeroizing::new(
             unsign_key
-                .unsigncrypt(&DSEP_BACKUP_RECOVERY, &output.signcryption)
+                .unsigncrypt(&DSEP_BACKUP_MATERIAL, &output.signcryption)
                 .map_err(|e| {
                     tracing::warn!(
                         "Could not unsigncrypt backup share for custodian role {} (wrong operator or tampered): {e}",

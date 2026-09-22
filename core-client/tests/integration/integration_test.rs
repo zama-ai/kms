@@ -2175,7 +2175,7 @@ fn extract_custodian_decryption_payload(output_string: &str) -> String {
 /// Mirror of shipped client TOML layout: unknown top-level or `[[cores]]` keys fail the test.
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
-#[allow(dead_code)] // Presence validated by deny_unknown_fields; only some fields asserted in tests
+#[expect(dead_code)] // Presence validated by deny_unknown_fields; only some fields asserted in tests
 struct StrictCheckedInCoreClientToml {
     kms_type: String,
     num_parties: usize,
@@ -2189,7 +2189,7 @@ struct StrictCheckedInCoreClientToml {
 
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
-#[allow(dead_code)] // Presence validated by deny_unknown_fields
+#[expect(dead_code)] // Presence validated by deny_unknown_fields
 struct StrictCheckedInDomainToml {
     name: String,
     version: String,
@@ -2200,7 +2200,7 @@ struct StrictCheckedInDomainToml {
 
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
-#[allow(dead_code)] // Presence validated by deny_unknown_fields; only party_id asserted in tests
+#[expect(dead_code)] // Presence validated by deny_unknown_fields; only party_id asserted in tests
 struct StrictCheckedInCoreToml {
     party_id: usize,
     address: String,

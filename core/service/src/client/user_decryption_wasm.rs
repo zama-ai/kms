@@ -1021,9 +1021,7 @@ impl CiphertextHandle {
 #[wasm_bindgen]
 pub struct ParsedUserDecryptionRequest {
     // We allow dead_code because these are required to parse from JSON
-    #[allow(dead_code)]
     signature: Option<alloy_primitives::Signature>,
-    #[allow(dead_code)]
     client_address: alloy_primitives::Address,
     enc_key: Vec<u8>,
     ciphertext_handles: Vec<CiphertextHandle>,

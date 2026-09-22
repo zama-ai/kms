@@ -53,6 +53,27 @@ kubectl describe pod -n <NAMESPACE> <POD_NAME>
 
 ---
 
+### CRS migration stops startup
+
+The v0.15 migration copies private CRS metadata from `CrsInfo/<crs_id>` to
+`CrsInfo/<DEFAULT_EPOCH_ID>/<crs_id>`. It verifies the copy before it removes the flat entry.
+These paths are relative to the configured private store, not public CRS storage.
+
+**`CRS metadata … does not match its legacy entry`**
+
+The two copies contain different bytes. The migration keeps the legacy entry and stops startup.
+It also keeps a pre-existing epoch copy. If this attempt created the epoch copy, it attempts to delete that copy.
+A separate delete error can follow the mismatch in the error logs.
+
+Stop the node and preserve both copies before any manual changes. Ask the KMS maintainers to determine which copy is correct.
+Do not choose a copy by its age or path alone. Correct the conflicting data only after that investigation, then restart.
+
+**`Legacy CRS metadata … remains after deletion`**
+
+The delete returned success, but a subsequent check still found the flat entry. The verified epoch copy remains available.
+Check the configured private store, its delete permissions, and its error logs with the storage administrator.
+Keep both copies until the storage problem is understood. Restart after the problem is resolved; the migration checks the copies again.
+
 ### Connectivity Issues
 
 **Symptoms:**

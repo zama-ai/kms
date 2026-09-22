@@ -3,11 +3,63 @@
 use super::super::super::*;
 use crate::{
     engine::context::{ContextInfo, NodeInfo, SchemeDigests, SoftwareVersion},
-    vault::storage::{Storage, ram::FailingRamStorage, test_support::StorageEntry},
+    vault::storage::{
+        Storage, StorageExt,
+        ram::FailingRamStorage,
+        test_support::{StorageEntry, StorageState},
+    },
 };
 use kms_grpc::RequestId;
 
 const CONTROL_TYPE: &str = "MigrationControl";
+pub(super) const LEGACY_CRS_DATA: &[u8] = b"legacy CRS metadata";
+
+/// Holds one legacy CRS entry, its epoch target, and unrelated private entries.
+pub(super) struct CrsMigrationFixture {
+    pub(super) storage: FailingRamStorage,
+    pub(super) legacy_entry: StorageEntry,
+    pub(super) target_entry: StorageEntry,
+    pub(super) control_entries: [StorageEntry; 2],
+    pub(super) before: StorageState,
+}
+
+impl CrsMigrationFixture {
+    pub(super) async fn new(name: &str, target_data: Option<&[u8]>) -> Self {
+        let mut storage = FailingRamStorage::new();
+        let crs_id = request_id(name);
+        let data_type = PrivDataType::CrsInfo.to_string();
+        let legacy_entry = StorageEntry::new(crs_id, None, &data_type);
+        let target_entry = StorageEntry::new(crs_id, Some(*DEFAULT_EPOCH_ID), &data_type);
+        storage
+            .store_bytes(LEGACY_CRS_DATA, &crs_id, &data_type)
+            .await
+            .unwrap();
+        if let Some(target_data) = target_data {
+            storage
+                .store_bytes_at_epoch(target_data, &crs_id, &DEFAULT_EPOCH_ID, &data_type)
+                .await
+                .unwrap();
+        }
+        let control_entries = seed_controls(&mut storage).await;
+        storage.clear_events();
+        let before = storage.state();
+
+        Self {
+            storage,
+            legacy_entry,
+            target_entry,
+            control_entries,
+            before,
+        }
+    }
+
+    pub(super) fn assert_controls_unchanged(&self) {
+        let state = self.storage.state();
+        for entry in &self.control_entries {
+            assert_eq!(state.get(entry), self.before.get(entry));
+        }
+    }
+}
 
 pub(super) fn request_id(name: &str) -> RequestId {
     derive_request_id(name).unwrap()

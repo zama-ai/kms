@@ -810,7 +810,6 @@ impl fmt::Display for StorageType {
 )]
 pub enum StorageProxy {
     File(file::FileStorage),
-    #[allow(dead_code)]
     Ram(ram::RamStorage),
     #[cfg(test)]
     /// Test-only RAM storage with entry-specific faults and event recording.
