@@ -11,10 +11,6 @@ inputs:
   password:
     description: Registry password or token
     required: true
-  logout:
-    description: Unused. Kept so existing callers keep compiling. Runners are ephemeral.
-    required: false
-    default: "true"
 
 runs:
   using: composite
