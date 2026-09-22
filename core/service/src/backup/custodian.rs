@@ -1,3 +1,4 @@
+use crate::backup::BACKUP_PKE_SCHEME;
 use crate::backup::operator::DSEP_BACKUP_MATERIAL;
 use crate::cryptography::{
     encryption::{HasPkeScheme, UnifiedPrivateEncKey, UnifiedPublicEncKey},
