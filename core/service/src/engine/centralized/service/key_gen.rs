@@ -80,6 +80,7 @@ pub async fn key_gen_impl<
         extra_data,
         signing_schemes,
     ) = validate_key_gen_request(inner, op_tag)?;
+    super::ensure_default_epoch(op_tag, req_id, &epoch_id)?;
 
     tracing::info!("centralized key-gen with request id: {:?}", req_id);
 

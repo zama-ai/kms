@@ -35,7 +35,8 @@ use tonic::{Request, Response};
 /// * `Err(Status)` if the request is invalid or preprocessing already exists.
 ///
 /// # Errors
-/// Returns a gRPC `Status::InvalidArgument` if the domain or request ID is missing.
+/// Returns a gRPC `Status::InvalidArgument` if the domain or request ID is missing, or if the
+/// request names an epoch other than the default epoch.
 /// Returns a gRPC `Status::AlreadyExists` if preprocessing for the request ID already exists.
 ///
 /// # Note
@@ -59,13 +60,14 @@ pub async fn preprocessing_impl<
     let (
         req_id,
         _context_id,
-        _epoch_id,
+        epoch_id,
         dkg_param,
         _key_set_config,
         eip712_domain,
         extra_data,
         signing_schemes,
     ) = validate_preproc_request(inner)?;
+    super::ensure_default_epoch(OP_KEYGEN_PREPROC_REQUEST, req_id, &epoch_id)?;
 
     let sk = signing_identity_for(
         &service.base_kms,
