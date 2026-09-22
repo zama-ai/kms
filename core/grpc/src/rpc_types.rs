@@ -1319,6 +1319,48 @@ mod tests {
     }
 
     #[test]
+    fn test_typed_plaintext_little_endian_scalar() {
+        let bytes = vec![1, 2, 3, 4, 5, 6, 7, 8];
+        let value = 0x0807_0605_0403_0201;
+        assert_eq!(TypedPlaintext::from_u64(value).bytes, bytes);
+        assert_eq!(
+            TypedPlaintext::from_bytes(bytes, FheTypes::Uint64).as_u64(),
+            value
+        );
+
+        let short = TypedPlaintext::from_bytes(vec![0x34, 0x12], FheTypes::Uint32);
+        assert_eq!(short.as_u32(), 0x1234);
+        let oversized = TypedPlaintext::from_bytes(vec![1, 2, 3, 4, 0xaa], FheTypes::Uint32);
+        assert_eq!(oversized.as_u32(), 0x0403_0201);
+        assert_eq!(Vec::<u8>::try_from(oversized).unwrap(), vec![1, 2, 3, 4]);
+    }
+
+    #[test]
+    fn test_typed_plaintext_little_endian_limbs() {
+        let low = 0x100f_0e0d_0c0b_0a09_0807_0605_0403_0201_u128;
+        let high = 0x201f_1e1d_1c1b_1a19_1817_1615_1413_1211_u128;
+        let value = tfhe::integer::U256::from((low, high));
+        let bytes: Vec<u8> = (1..=32).collect();
+        assert_eq!(TypedPlaintext::from_u256(value).bytes, bytes);
+        assert_eq!(
+            TypedPlaintext::from_bytes(bytes, FheTypes::Uint256).as_u256(),
+            value
+        );
+
+        let bytes: Vec<u8> = (1..=20).collect();
+        let value = tfhe::integer::U256::from((low, 0x1413_1211_u128));
+        assert_eq!(TypedPlaintext::from_u160(value).bytes, bytes);
+        assert_eq!(
+            TypedPlaintext::from_u160_low_high((low, 0x1413_1211)).bytes,
+            bytes
+        );
+        assert_eq!(
+            TypedPlaintext::from_bytes(bytes, FheTypes::Uint160).as_u160(),
+            value
+        );
+    }
+
+    #[test]
     fn test_typed_plaintext_short_bytes_do_not_panic() {
         // Robustness: a malformed (too-short) `bytes` vec must not panic on indexed access.
         let empty_u256 = TypedPlaintext {
@@ -1385,6 +1427,15 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn test_abi_encoding_little_endian_input() {
+        let plaintext = TypedPlaintext::from_bytes(vec![0x34, 0x12], FheTypes::Uint16);
+        assert_eq!(
+            hex::encode(abi_encode_plaintexts(&[plaintext]).unwrap()),
+            "0000000000000000000000000000000000000000000000000000000000001234"
+        );
     }
 
     #[test]
