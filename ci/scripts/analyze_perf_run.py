@@ -156,6 +156,24 @@ def parse_rate_metrics(text: str) -> list[dict[str, Any]]:
     return rates
 
 
+def parse_skipped_rates(text: str) -> list[dict[str, Any]]:
+    skipped = {}
+    for line in ANSI_RE.sub("", text).splitlines():
+        match = re.search(
+            r"\bSkipping (pdec|udec)(?:-(async|sync))?-rate-(\d+) because (.+)$",
+            line,
+        )
+        if match:
+            kind, endpoint, rate, reason = match.groups()
+            scenario = f"{kind}-{endpoint or 'async'}"
+            skipped[(scenario, int(rate))] = {
+                "scenario": scenario,
+                "target_rate": int(rate),
+                "reason": reason,
+            }
+    return list(skipped.values())
+
+
 def has_sequential_windows(rates: list[dict[str, Any]]) -> bool:
     """Reject timestamps added while replaying several completed Argo pod logs."""
     windows = [
@@ -801,6 +819,7 @@ def analyze_directory(root: Path, run_id: int | None = None) -> dict[str, Any]:
             "failed_steps": failed_steps,
         },
         "rates": rates,
+        "skipped_rates": parse_skipped_rates(combined_log),
         "placement": placement,
         "instrumentation": {
             "cpu_samples": len(cpu),
@@ -856,6 +875,13 @@ def markdown_report(report: dict[str, Any]) -> str:
             f"{number(latency.get('p50'))} ms | {number(latency.get('p99'))} ms | "
             f"{rpc.get('submit_peak_in_flight', '-')} | {rpc.get('result_peak_in_flight', '-')} |"
         )
+
+    if report.get("skipped_rates"):
+        output.extend(["", "## Skipped rungs", ""])
+        for skipped in report["skipped_rates"]:
+            output.append(
+                f"- {skipped['scenario']}-{skipped['target_rate']}: {skipped['reason']}."
+            )
 
     for rate in report["rates"]:
         metrics = rate["metrics"]
@@ -1043,6 +1069,7 @@ def markdown_report(report: dict[str, Any]) -> str:
                 )
 
         if service["by_pod"]:
+            operation = "public_decrypt" if rate["kind"] == "pdec" else "user_decrypt"
             output.extend(
                 [
                     "",
@@ -1056,16 +1083,16 @@ def markdown_report(report: dict[str, Any]) -> str:
             for pod, pod_service in service["by_pod"].items():
                 calls = pod_service["calls"]
                 durations = pod_service["durations"]
-                request_mean = durations.get("user_decrypt_request", {}).get(
+                request_mean = durations.get(f"{operation}_request", {}).get(
                     "mean_milliseconds"
                 )
-                inner_mean = durations.get("user_decrypt_inner", {}).get(
+                inner_mean = durations.get(f"{operation}_inner", {}).get(
                     "mean_milliseconds"
                 )
                 output.append(
                     f"| {pod} | "
-                    f"{number(calls.get('user_decrypt_request', {}).get('rate'), 1)} | "
-                    f"{number(calls.get('user_decrypt_result', {}).get('rate'), 1)} | "
+                    f"{number(calls.get(f'{operation}_request', {}).get('rate'), 1)} | "
+                    f"{number(calls.get(f'{operation}_result', {}).get('rate'), 1)} | "
                     f"{number(sum(pod_service['errors'].values()), 0)} | "
                     f"{number(request_mean, 3)} ms | {number(inner_mean, 3)} ms |"
                 )
@@ -1189,6 +1216,65 @@ def download_run(repo: str, run_id: int, destination: Path) -> list[str]:
 
 
 class AnalyzerTests(unittest.TestCase):
+    def test_skipped_rungs_survive_duplicate_logs(self) -> None:
+        lines = (
+            "pod: \x1b[33mSkipping udec-sync-rate-2800 because a lower rate failed\x1b[0m\n"
+            "pod: Skipping udec-sync-rate-3200 because a lower rate failed\n"
+            "pod: Skipping pdec-rate-1500 because a lower rate failed\n"
+            'echo "Skipping ${scenario}-rate-${rate} because a lower rate failed"\n'
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "argo-workflow-logs.txt").write_text(lines)
+            (root / "github-run.log").write_text(lines)
+            report = analyze_directory(root)
+        self.assertEqual(report["rates"], [])
+        self.assertEqual(
+            [(r["scenario"], r["target_rate"]) for r in report["skipped_rates"]],
+            [("udec-sync", 2800), ("udec-sync", 3200), ("pdec-async", 1500)],
+        )
+        self.assertIn("- udec-sync-2800: a lower rate failed.", markdown_report(report))
+        self.assertEqual(parse_skipped_rates("unrelated log line"), [])
+
+    def test_service_table_selects_the_decrypt_operation(self) -> None:
+        for kind, prefix in (("pdec", "PUBLIC"), ("udec", "USER")):
+            for endpoint in ("async", "sync"):
+                with self.subTest(kind=kind, endpoint=endpoint):
+                    with tempfile.TemporaryDirectory() as directory:
+                        root = Path(directory)
+                        (root / "argo-workflow-logs.txt").write_text(
+                            f"2026-09-22T15:00:00Z {prefix}_DECRYPT_METRICS "
+                            + json.dumps(
+                                {"scenario": f"{kind}-{endpoint}", "duration": 60}
+                            )
+                        )
+                        report = analyze_directory(root)
+                    report["rates"][0]["correlation"]["service_operations"][
+                        "by_pod"
+                    ] = {
+                        "p1": {
+                            "calls": {
+                                "public_decrypt_request": {"rate": 11},
+                                "public_decrypt_result": {"rate": 12},
+                                "user_decrypt_request": {"rate": 21},
+                                "user_decrypt_result": {"rate": 22},
+                            },
+                            "durations": {
+                                "public_decrypt_request": {"mean_milliseconds": 3},
+                                "public_decrypt_inner": {"mean_milliseconds": 4},
+                                "user_decrypt_request": {"mean_milliseconds": 5},
+                                "user_decrypt_inner": {"mean_milliseconds": 6},
+                            },
+                            "errors": {},
+                        }
+                    }
+                    expected = (
+                        "| p1 | 11.0 | 12.0 | 0 | 3.000 ms | 4.000 ms |"
+                        if kind == "pdec"
+                        else "| p1 | 21.0 | 22.0 | 0 | 5.000 ms | 6.000 ms |"
+                    )
+                    self.assertIn(expected, markdown_report(report))
+
     def test_rejects_scenario_that_disagrees_with_operation(self) -> None:
         for scenario in ("udec-sync", "pdec-sunc"):
             with self.subTest(scenario=scenario), self.assertRaises(ValueError):

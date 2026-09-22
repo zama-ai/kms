@@ -317,6 +317,8 @@ python3 ci/scripts/analyze_perf_run.py \
 Run-ID mode requires an authenticated `gh` CLI. The analyzer reports missing or
 partial instrumentation while retaining any rate results it can parse.
 Report rows identify the operation, endpoint, and rate, such as `udec-sync-2400`.
+Skipped rungs appear with their reasons in Markdown and in the JSON `skipped_rates` list.
+Per-core service tables use the public or user decryption metrics for each scenario.
 For older metrics without a `scenario` field, the analyzer assumes the async variant of the operation.
 Sync analysis requires a client image that emits the `scenario` field.
 
