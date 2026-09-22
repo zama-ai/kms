@@ -1178,7 +1178,7 @@ fn test_recovery_material(
             signcryption: UnifiedSigncryption::new(
                 payload.to_vec(),
                 BACKUP_PKE_SCHEME,
-                SigningSchemeType::Ecdsa256k1,
+                SigningSchemeSet::single(SigningSchemeType::Ecdsa256k1),
             ),
         };
         cts.insert(cus_role, cts_out.clone());
@@ -1223,7 +1223,7 @@ fn test_internal_recovery_request(
         let signcryption = UnifiedSigncryption::new(
             payload.to_vec(),
             BACKUP_PKE_SCHEME,
-            SigningSchemeType::Ecdsa256k1,
+            SigningSchemeSet::single(SigningSchemeType::Ecdsa256k1),
         );
         cts.insert(cur_role, InnerOperatorBackupOutput { signcryption });
     }
@@ -1310,7 +1310,7 @@ fn test_internal_custodian_recovery_output(
     let signcryption = UnifiedSigncryption::new(
         buf.to_vec(),
         BACKUP_PKE_SCHEME,
-        SigningSchemeType::Ecdsa256k1,
+        SigningSchemeSet::single(SigningSchemeType::Ecdsa256k1),
     );
 
     let new_versionized = InternalCustodianRecoveryOutput {

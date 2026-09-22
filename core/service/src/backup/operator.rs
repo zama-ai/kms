@@ -7,7 +7,7 @@ use crate::{
     anyhow_error_and_log,
     consts::SAFE_SER_SIZE_LIMIT,
     cryptography::encryption::{UnifiedPrivateEncKey, UnifiedPublicEncKey},
-    cryptography::signatures::{PrivateSigKey, PublicSigKey, Signature},
+    cryptography::signatures::{PrivateSigKey, PublicSigKey, Signature, SigningSchemeSet},
     cryptography::signcryption::{
         Signcrypt, UnifiedSigncryption, UnifiedSigncryptionKey, UnifiedUnsigncryptionKey,
         Unsigncrypt,
@@ -181,7 +181,7 @@ impl TryFrom<OperatorBackupOutput> for InnerOperatorBackupOutput {
             signcryption: UnifiedSigncryption::new(
                 value.signcryption,
                 value.pke_type.try_into()?,
-                value.signing_type.try_into()?,
+                SigningSchemeSet::single(value.signing_type.try_into()?),
             ),
         })
     }
@@ -994,7 +994,7 @@ mod tests {
             signcryption: UnifiedSigncryption::new(
                 vec![1, 2, 3],
                 BACKUP_PKE_SCHEME,
-                SigningSchemeType::Ecdsa256k1,
+                SigningSchemeSet::single(SigningSchemeType::Ecdsa256k1),
             ),
         };
         cts.insert(Role::indexed_from_one(1), cts_out.clone());

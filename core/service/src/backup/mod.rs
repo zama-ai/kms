@@ -8,6 +8,7 @@ pub mod error;
 pub mod operator;
 pub mod secretsharing;
 pub mod seed_phrase;
+use crate::cryptography::signatures::SigningSchemeSet;
 use crate::cryptography::signcryption::UnifiedSigncryption;
 use kms_grpc::RequestId;
 use kms_grpc::kms::v1::OperatorBackupOutput;
@@ -67,7 +68,7 @@ impl TryFrom<OperatorBackupOutput> for UnifiedSigncryption {
         Ok(UnifiedSigncryption::new(
             value.signcryption,
             pke_type,
-            signing_type,
+            SigningSchemeSet::single(signing_type),
         ))
     }
 }
@@ -81,7 +82,7 @@ impl TryFrom<&OperatorBackupOutput> for UnifiedSigncryption {
         Ok(UnifiedSigncryption::new(
             value.signcryption.clone(),
             pke_type,
-            signing_type,
+            SigningSchemeSet::single(signing_type),
         ))
     }
 }

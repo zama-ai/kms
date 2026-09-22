@@ -9,7 +9,10 @@ use crate::cryptography::{
     },
 };
 use crate::engine::validation::{RequestIdParsingErr, parse_optional_grpc_request_id};
-use crate::{consts::SAFE_SER_SIZE_LIMIT, cryptography::signatures::PublicSigKey};
+use crate::{
+    consts::SAFE_SER_SIZE_LIMIT,
+    cryptography::signatures::{PublicSigKey, SigningSchemeSet},
+};
 use hashing::DomainSep;
 use kms_grpc::RequestId;
 use kms_grpc::kms::v1::{
@@ -76,7 +79,7 @@ impl TryFrom<CustodianRecoveryOutput> for InternalCustodianRecoveryOutput {
             signcryption: UnifiedSigncryption::new(
                 backup_output.signcryption.clone(),
                 backup_output.pke_type.try_into()?,
-                backup_output.signing_type.try_into()?,
+                SigningSchemeSet::single(backup_output.signing_type.try_into()?),
             ),
             custodian_role: Role::indexed_from_one(value.custodian_role as usize),
         })

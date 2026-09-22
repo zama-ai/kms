@@ -15,7 +15,7 @@ use crate::cryptography::encryption::{HasPkeScheme, UnifiedPrivateEncKey};
 use crate::cryptography::error::CryptographyError;
 use crate::cryptography::hybrid_ml_kem::HybridKemCt;
 use crate::cryptography::signatures::{
-    HasSigningScheme, PublicSigKey, SIG_SIZE, Signature, check_normalized, internal_sign,
+    PublicSigKey, SIG_SIZE, Signature, check_normalized, internal_sign,
 };
 use ::signature::Verifier;
 use hashing::{DIGEST_BYTES, DomainSep, serialize_hash_element};
@@ -69,7 +69,7 @@ pub(super) fn inner_signcryption(
         bc2wrap::serialize(&ciphertext)
             .map_err(|e| CryptographyError::BincodeError(e.to_string()))?,
         signcrypt_key.encryption_scheme_type(),
-        signcrypt_key.signing_scheme_type(),
+        signcrypt_key.signing_schemes(),
     ))
 }
 
@@ -391,7 +391,7 @@ mod tests {
             let frozen_cipher = UnifiedSigncryption::new(
                 frozen_payload.clone(),
                 scheme,
-                SigningSchemeType::Ecdsa256k1,
+                SigningSchemeSet::single(SigningSchemeType::Ecdsa256k1),
             );
             let opened: TestType = unsign_key
                 .unsigncrypt(DSEP, &frozen_cipher)

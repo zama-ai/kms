@@ -363,17 +363,8 @@ pub struct UnifiedSigncryption {
     pub signing_schemes: SigningSchemeSet,
 }
 impl UnifiedSigncryption {
-    /// A signcryption protected by the single scheme `signing_type`.
-    pub fn new(payload: Vec<u8>, pke_type: PkeSchemeType, signing_type: SigningSchemeType) -> Self {
-        Self {
-            payload,
-            pke_type,
-            signing_schemes: SigningSchemeSet::single(signing_type),
-        }
-    }
-
     /// A signcryption protected by every scheme in `signing_schemes`.
-    pub fn new_multi(
+    pub fn new(
         payload: Vec<u8>,
         pke_type: PkeSchemeType,
         signing_schemes: SigningSchemeSet,
@@ -633,7 +624,7 @@ impl<'a> UnsigncryptFHEPlaintext for UnifiedUnsigncryptionKey<'a> {
         let parsed_signcryption = UnifiedSigncryption::new(
             signcryption.to_owned(),
             self.encryption_key.encryption_scheme_type(),
-            self.sender_verf_key.signing_scheme_type(),
+            self.signing_schemes(),
         );
         let decrypted_signcryption = ecdsa_v0::inner_unsigncrypt(self, dsep, &parsed_signcryption)?;
         // LEGACY should be using safe_deserialization from tfhe-rs
@@ -1014,7 +1005,7 @@ mod tests {
             // regenerated artifact still compares equal to a frozen one.
             assert_eq!(
                 upgraded,
-                UnifiedSigncryption::new(v0.payload, v0.pke_type, scheme)
+                UnifiedSigncryption::new(v0.payload, v0.pke_type, SigningSchemeSet::single(scheme))
             );
         }
     }

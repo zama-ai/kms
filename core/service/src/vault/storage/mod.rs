@@ -858,7 +858,7 @@ pub mod tests {
         consts::{DEFAULT_MPC_CONTEXT, SAFE_SER_SIZE_LIMIT},
         cryptography::{
             encryption::{Encryption, PkeScheme, UnifiedPublicEncKey},
-            signatures::{PrivateSigKey, SigningSchemeType, gen_sig_keys},
+            signatures::{PrivateSigKey, SigningSchemeSet, SigningSchemeType, gen_sig_keys},
             signcryption::UnifiedSigncryption,
         },
     };
@@ -936,7 +936,7 @@ pub mod tests {
             signcryption: UnifiedSigncryption::new(
                 vec![1, 2, 3],
                 BACKUP_PKE_SCHEME,
-                SigningSchemeType::Ecdsa256k1,
+                SigningSchemeSet::single(SigningSchemeType::Ecdsa256k1),
             ),
         };
         let mut cts = BTreeMap::new();
