@@ -154,13 +154,13 @@ jobs:
         with:
           persist-credentials: false
       - name: Login to Chainguard Container Registry
-        uses: docker/login-action@4907a6ddec9925e35a0a9e82d7399ccc52663121 # v4.1.0
+        uses: ./.github/actions/docker-login
         with:
           registry: cgr.dev
           username: ${{ secrets.CGR_USERNAME }} # zizmor: ignore[secrets-outside-env] CGR creds are shared by docker-build workflows.
           password: ${{ secrets.CGR_PASSWORD }} # zizmor: ignore[secrets-outside-env] CGR creds are shared by docker-build workflows.
       - name: Login to GitHub Container Registry
-        uses: docker/login-action@4907a6ddec9925e35a0a9e82d7399ccc52663121 # v4.1.0
+        uses: ./.github/actions/docker-login
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
@@ -288,11 +288,13 @@ jobs:
           fi
 
       - name: Login to GitHub Container Registry
-        uses: docker/login-action@4907a6ddec9925e35a0a9e82d7399ccc52663121 # v4.1.0
+        uses: zama-ai/ci-templates/.github/actions/retry@d13c806c229167a30eab20c228b87467d0e2e470 # v1.0.12
+        env:
+          GHCR_USERNAME: ${{ github.actor }}
+          GHCR_PASSWORD: ${{ secrets.GITHUB_TOKEN }}
         with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
+          command: |
+            echo "$GHCR_PASSWORD" | docker login ghcr.io -u "$GHCR_USERNAME" --password-stdin
 
       - name: Retag golden image as latest
         env:
