@@ -197,7 +197,6 @@ mod tests {
     use rand::SeedableRng;
     use tfhe::safe_serialization::safe_serialize;
 
-    const DSEP: &DomainSep = b"ECDSAV0T";
     #[test]
     fn incorrect_server_verf_key() {
         let mut rng = AesRng::seed_from_u64(42);
