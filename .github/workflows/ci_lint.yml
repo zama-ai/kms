@@ -46,6 +46,15 @@ jobs:
           allowlist: |
             slsa-framework/slsa-github-generator
 
+      - name: Test runner orchestration and diagnostics
+        run: python3 -m unittest discover -s ci/scripts/tests -v
+
+      - name: Test workflow generation
+        run: python3 ci/perf-testing/generate-perf-workflow.py --self-test
+
+      - name: Test artifact analysis
+        run: python3 ci/scripts/analyze_perf_run.py --self-test
+
   sast-check:
     name: ci_lint/sast-check (bpr)
     # job permissions
