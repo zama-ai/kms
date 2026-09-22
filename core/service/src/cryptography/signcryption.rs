@@ -382,7 +382,7 @@ impl Zeroize for SigncryptionPayload {
 impl<'a> Signcrypt for UnifiedSigncryptionKey<'a> {
     #[allow(unknown_lints)]
     // We allow modifying the rng before return
-    #[allow(non_local_effect_before_error_return)]
+    #[allow(non_local_effect_before_unhandled_error)]
     fn signcrypt<T>(
         &self,
         rng: &mut (impl CryptoRng + RngCore),
@@ -405,7 +405,7 @@ impl<'a> Signcrypt for UnifiedSigncryptionKey<'a> {
 impl Signcrypt for UnifiedSigncryptionKeyOwned {
     #[allow(unknown_lints)]
     // We allow modifying the rng before return
-    #[allow(non_local_effect_before_error_return)]
+    #[allow(non_local_effect_before_unhandled_error)]
     fn signcrypt<T>(
         &self,
         rng: &mut (impl CryptoRng + RngCore),
