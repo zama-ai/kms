@@ -9,6 +9,35 @@
 //! must be compatible with EVM on-chain verification.
 //!
 //! For encryption a hybrid encryption scheme is used based on ML-KEM and AES GCM.
+//!
+//! # Envelope formats
+//!
+//! A signcryption's encrypted plaintext has a layout, and there is more than
+//! one. Which one applies is a total function of the signcryption's scheme set.
+//!
+//! [`SigncryptionFormat::EcdsaV0`] is the original layout and is **frozen**:
+//! every user-decryption ciphertext produced since 0.11 uses it, the deployed
+//! browser-side verifier in `crate::client::user_decryption_wasm` parses it, and
+//! because it carries no version tag of its own and is recovered by subtracting
+//! two fixed-size tail fields, it cannot be made self-describing after the fact
+//! either. What is locked, and by what:
+//!
+//! - The plaintext layout `msg ‖ sig ‖ H(sender verification key)`, by
+//!   `tests::ecdsa_v0_envelope_layout_is_locked`.
+//! - The signed preimage `dsep ‖ msg ‖ receiver_id ‖ H(receiver enc key)`, by
+//!   `tests::ecdsa_v0_signed_preimage_is_locked`.
+//! - The [`SigncryptionPayload`] bincode layout, by
+//!   `tests::test_signcryption_payload_v0_serialization_locked`.
+//! - The whole artifact, including **the order in which the RNG is drawn from**,
+//!   by the backward-compatibility harness: `test_unified_signcryption` in
+//!   `core/service/tests/backward_compatibility_kms.rs` regenerates a
+//!   signcryption from a seeded RNG and compares it byte-for-byte against a
+//!   fixture frozen at 0.13.0. Moving an RNG draw in [`inner_signcryption`]
+//!   breaks it.
+//!
+//! [`SigncryptionFormat::CompositeV1`] will carry one signature per scheme, for
+//! the custodian-backup chain. Not implemented yet: asking for it is a
+//! [`CryptographyError::UnsupportedSigncryptionFormat`].
 
 use crate::consts::SAFE_SER_SIZE_LIMIT;
 use crate::cryptography::encryption::{
@@ -18,8 +47,8 @@ use crate::cryptography::error::CryptographyError;
 use crate::cryptography::hybrid_composite_ml_kem;
 use crate::cryptography::hybrid_ml_kem::{self, HybridKemCt};
 use crate::cryptography::signatures::{
-    HasSigningScheme, PrivateSigKey, PublicSigKey, SIG_SIZE, Signature, SigningSchemeType,
-    check_normalized, internal_sign,
+    HasSigningScheme, PrivateSigKey, PublicSigKey, SIG_SIZE, Signature, SigningSchemeSet,
+    SigningSchemeType, check_normalized, internal_sign,
 };
 use crate::cryptography::zeroizing_writer::ZeroizingWriter;
 use ::signature::Verifier;
@@ -30,7 +59,7 @@ use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use tfhe::FheTypes;
 use tfhe::safe_serialization::{safe_deserialize, safe_serialize};
-use tfhe_versionable::{Versionize, VersionsDispatch};
+use tfhe_versionable::{Upgrade, Version, Versionize, VersionsDispatch};
 use zeroize::{Zeroize, ZeroizeOnDrop, Zeroizing};
 
 const DSEP_SIGNCRYPTION: DomainSep = *b"SIGNCRYP";
@@ -165,6 +194,14 @@ impl<'a> UnifiedSigncryptionKey<'a> {
             receiver_id,
         }
     }
+
+    /// The schemes this key signs under.
+    ///
+    /// A single scheme today, because the key it holds is the ECDSA
+    /// [`PrivateSigKey`].
+    pub fn signing_schemes(&self) -> SigningSchemeSet {
+        SigningSchemeSet::single(self.signing_key.signing_scheme_type())
+    }
 }
 
 impl HasPkeScheme for UnifiedSigncryptionKey<'_> {
@@ -201,6 +238,14 @@ impl<'a> UnifiedUnsigncryptionKey<'a> {
             encryption_key,
             receiver_id,
         }
+    }
+
+    /// The schemes this key accepts a signature under.
+    ///
+    /// The counterpart of [`UnifiedSigncryptionKey::signing_schemes`], and a
+    /// single scheme for the same reason.
+    pub fn signing_schemes(&self) -> SigningSchemeSet {
+        SigningSchemeSet::single(self.sender_verf_key.signing_scheme_type())
     }
 
     //  TODO this file should be split up and this moved to signcryption
@@ -281,24 +326,100 @@ impl HasSigningScheme for UnifiedUnsigncryptionKeyOwned {
 
 #[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize, VersionsDispatch)]
 pub enum UnifiedSigncryptionVersions {
-    V0(UnifiedSigncryption),
+    V0(UnifiedSigncryptionV0),
+    V1(UnifiedSigncryption),
 }
 
+/// A signcryption as it was stored and sent before composite signing, carrying
+/// exactly one signature scheme.
+///
+/// Kept so that legacy material can still be read.
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize, Debug, Version)]
+pub struct UnifiedSigncryptionV0 {
+    pub payload: Vec<u8>,
+    pub pke_type: PkeSchemeType,
+    pub signing_type: SigningSchemeType,
+}
+
+impl Upgrade<UnifiedSigncryption> for UnifiedSigncryptionV0 {
+    type Error = std::convert::Infallible;
+
+    fn upgrade(self) -> Result<UnifiedSigncryption, Self::Error> {
+        Ok(UnifiedSigncryption {
+            payload: self.payload,
+            pke_type: self.pke_type,
+            signing_schemes: SigningSchemeSet::single(self.signing_type),
+        })
+    }
+}
+
+/// A signcrypted message, tagged with the schemes used to protect it.
+///
+/// `signing_schemes` names every scheme whose signature is inside `payload`.
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize, Debug, Versionize)]
 #[versionize(UnifiedSigncryptionVersions)]
 pub struct UnifiedSigncryption {
     pub payload: Vec<u8>,
     pub pke_type: PkeSchemeType,
-    pub signing_type: SigningSchemeType,
+    pub signing_schemes: SigningSchemeSet,
 }
 impl UnifiedSigncryption {
+    /// A signcryption protected by the single scheme `signing_type`.
     pub fn new(payload: Vec<u8>, pke_type: PkeSchemeType, signing_type: SigningSchemeType) -> Self {
         Self {
             payload,
             pke_type,
-            signing_type,
+            signing_schemes: SigningSchemeSet::single(signing_type),
         }
     }
+
+    /// A signcryption protected by every scheme in `signing_schemes`.
+    pub fn new_multi(
+        payload: Vec<u8>,
+        pke_type: PkeSchemeType,
+        signing_schemes: SigningSchemeSet,
+    ) -> Self {
+        Self {
+            payload,
+            pke_type,
+            signing_schemes,
+        }
+    }
+
+    /// The one scheme protecting this signcryption, or `None` if several do.
+    pub fn sole_signing_scheme(&self) -> Option<SigningSchemeType> {
+        self.signing_schemes.sole()
+    }
+}
+
+/// The layout of a signcryption's encrypted plaintext.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum SigncryptionFormat {
+    /// `msg ‖ sig ‖ H(sender verification key)`, ECDSA only. Frozen; see the
+    /// module documentation.
+    EcdsaV0,
+    /// A self-describing, versioned, multi-signature envelope.
+    CompositeV1,
+}
+
+/// The format a signcryption under `schemes` uses.
+///
+/// A total function of the scheme set, deliberately. The alternative — sniffing
+/// the decrypted bytes for a magic prefix — cannot work: an
+/// [`SigncryptionFormat::EcdsaV0`] plaintext begins with attacker-influenced
+/// message content and has no tag to find, so detection would be a heuristic, in
+/// a parser sitting directly under a decryption key.
+fn format_for(schemes: &SigningSchemeSet) -> SigncryptionFormat {
+    if schemes.as_slice() == [SigningSchemeType::Ecdsa256k1].as_slice() {
+        SigncryptionFormat::EcdsaV0
+    } else {
+        SigncryptionFormat::CompositeV1
+    }
+}
+
+/// The error for a scheme set no implemented envelope format covers.
+fn unsupported_format(schemes: &SigningSchemeSet) -> CryptographyError {
+    CryptographyError::UnsupportedSigncryptionFormat(schemes.to_string())
 }
 
 #[derive(Clone, Serialize, Deserialize, Hash, PartialEq, Eq, Debug, VersionsDispatch)]
@@ -398,7 +519,13 @@ impl<'a> Signcrypt for UnifiedSigncryptionKey<'a> {
                 "Could not serialize message for signcryption: {e}",
             ))
         })?;
-        inner_signcryption(self, rng, dsep, serialized_msg.as_slice())
+        let schemes = self.signing_schemes();
+        match format_for(&schemes) {
+            SigncryptionFormat::EcdsaV0 => {
+                inner_signcryption(self, rng, dsep, serialized_msg.as_slice())
+            }
+            SigncryptionFormat::CompositeV1 => Err(unsupported_format(&schemes)),
+        }
     }
 }
 
@@ -439,6 +566,10 @@ impl<'a> SigncryptFHEPlaintext for UnifiedSigncryptionKey<'a> {
         let mut serialized_msg = ZeroizingWriter::new();
         bc2wrap::serialize_into(&*signcryption_msg, &mut serialized_msg)
             .map_err(|e| CryptographyError::BincodeError(e.to_string()))?;
+        // Deliberately not routed through `format_for`: the wire type this
+        // produces, `TypedSigncryptedCiphertext.signcrypted_ciphertext`, is a
+        // bare `bytes` field with nowhere to record a format, so the only
+        // layout its readers can parse is the frozen one.
         inner_signcryption(self, rng, dsep, serialized_msg.as_slice())
     }
 }
@@ -457,7 +588,79 @@ impl SigncryptFHEPlaintext for UnifiedSigncryptionKeyOwned {
     }
 }
 
+/// The digest of the receiver's public encryption key, as it appears in the
+/// signed preimage.
+fn receiver_enc_key_digest(enc_key: &UnifiedPublicEncKey) -> Result<Vec<u8>, CryptographyError> {
+    match enc_key {
+        UnifiedPublicEncKey::MlKem512(public_enc_key) => {
+            serialize_hash_element(&DSEP_SIGNCRYPTION, public_enc_key)
+                .map_err(|e| CryptographyError::DeserializationError(e.to_string()))
+        }
+        UnifiedPublicEncKey::MlKem1024(_) => Err(CryptographyError::MlKem1024Unsupported),
+        UnifiedPublicEncKey::MlKem1024P384(public_enc_key) => {
+            serialize_hash_element(&DSEP_SIGNCRYPTION, public_enc_key)
+                .map_err(|e| CryptographyError::DeserializationError(e.to_string()))
+        }
+    }
+}
+
+/// `receiver_id ‖ H(receiver public encryption key)`: the suffix that binds a
+/// signcryption to who it was made for.
+fn receiver_binding(
+    receiver_id: &[u8],
+    enc_key: &UnifiedPublicEncKey,
+) -> Result<Vec<u8>, CryptographyError> {
+    Ok([receiver_id, receiver_enc_key_digest(enc_key)?.as_slice()].concat())
+}
+
+/// The digest of the sender's verification key, as it appears in the encrypted
+/// plaintext's tail.
+///
+/// LEGACY: this is horrible! The receiver is bound into the signed preimage by
+/// its *address*, but the sender is bound here by a digest of its serialized
+/// key. This should be changed to use the notion of a key id.
+fn sender_verf_key_digest(verf_key: &PublicSigKey) -> Result<Vec<u8>, CryptographyError> {
+    serialize_hash_element(&DSEP_SIGNCRYPTION, verf_key)
+        .map_err(|e| CryptographyError::DeserializationError(e.to_string()))
+}
+
+/// Encrypt `msg` under `enc_key` with the hybrid KEM/DEM matching its scheme.
+fn hybrid_encrypt(
+    rng: &mut (impl CryptoRng + RngCore),
+    msg: &[u8],
+    enc_key: &UnifiedPublicEncKey,
+) -> Result<HybridKemCt, CryptographyError> {
+    match enc_key {
+        UnifiedPublicEncKey::MlKem512(public_enc_key) => {
+            hybrid_ml_kem::enc::<ml_kem::MlKem512, _>(rng, msg, &public_enc_key.0)
+        }
+        UnifiedPublicEncKey::MlKem1024(_) => Err(CryptographyError::MlKem1024Unsupported),
+        UnifiedPublicEncKey::MlKem1024P384(public_enc_key) => {
+            hybrid_composite_ml_kem::enc_ml_kem_1024_p384(rng, msg, public_enc_key)
+        }
+    }
+}
+
+/// Decrypt `ct` under `dec_key` with the hybrid KEM/DEM matching its scheme.
+fn hybrid_decrypt(
+    ct: HybridKemCt,
+    dec_key: &UnifiedPrivateEncKey,
+) -> Result<Zeroizing<Vec<u8>>, CryptographyError> {
+    match dec_key {
+        UnifiedPrivateEncKey::MlKem512(dec_key) => {
+            hybrid_ml_kem::dec::<ml_kem::MlKem512>(ct, &dec_key.0)
+        }
+        UnifiedPrivateEncKey::MlKem1024(_) => Err(CryptographyError::MlKem1024Unsupported),
+        UnifiedPrivateEncKey::MlKem1024P384(dec_key) => {
+            hybrid_composite_ml_kem::dec_ml_kem_1024_p384(ct, dec_key)
+        }
+    }
+}
+
 // Implements the actual signcryption but without serialization
+//
+// This is the FROZEN `SigncryptionFormat::EcdsaV0` layout; see the module
+// documentation for what depends on its bytes and on its RNG usage.
 fn inner_signcryption(
     signcrypt_key: &UnifiedSigncryptionKey,
     rng: &mut (impl CryptoRng + RngCore),
@@ -468,21 +671,9 @@ fn inner_signcryption(
     // Sign msg || H(client_verf_key) || H(client_pub_key)
     // Note that H(client_verf_key) = client_address
     // Only serialize the inner structure to ensure backwards compatibility!!!
-    let serialized_enc_key = match &signcrypt_key.receiver_enc_key {
-        UnifiedPublicEncKey::MlKem512(public_enc_key) => {
-            serialize_hash_element(&DSEP_SIGNCRYPTION, public_enc_key)
-                .map_err(|e| CryptographyError::DeserializationError(e.to_string()))?
-        }
-        UnifiedPublicEncKey::MlKem1024(_) => {
-            return Err(CryptographyError::MlKem1024Unsupported);
-        }
-        UnifiedPublicEncKey::MlKem1024P384(public_enc_key) => {
-            serialize_hash_element(&DSEP_SIGNCRYPTION, public_enc_key)
-                .map_err(|e| CryptographyError::DeserializationError(e.to_string()))?
-        }
-    };
+    let binding = receiver_binding(signcrypt_key.receiver_id, signcrypt_key.receiver_enc_key)?;
     // Wipe the temporary signed message after signing.
-    let to_sign = Zeroizing::new([msg, signcrypt_key.receiver_id, &serialized_enc_key].concat());
+    let to_sign = Zeroizing::new([msg, binding.as_slice()].concat());
     let sig = internal_sign(dsep, &to_sign, signcrypt_key.signing_key)
         .map_err(|e| CryptographyError::SigningError(e.to_string()))?;
 
@@ -490,35 +681,31 @@ fn inner_signcryption(
     // OBSERVE: serialization is simply r concatenated with s. That is NOT an Ethereum compatible
     // signature since we preclude the v value.
     // The verification key is serialized based on the SEC1 standard.
-    let verf_key_hash = serialize_hash_element(
-        &DSEP_SIGNCRYPTION,
-        // LEGACY: this is horrible! We are using address above be here we use digest! This should be changed to use  &self.signing_key.verf_key().verf_key_id(),
-        // Idem below
-        &PublicSigKey::from_sk(signcrypt_key.signing_key),
-    )
-    .map_err(|e| CryptographyError::DeserializationError(e.to_string()))?;
+    let verf_key_hash = sender_verf_key_digest(&PublicSigKey::from_sk(signcrypt_key.signing_key))?;
     // Wipe the temporary encrypted message after encryption.
     let to_encrypt =
         Zeroizing::new([msg, sig.to_bytes().as_ref(), verf_key_hash.as_ref()].concat());
 
-    let ciphertext = match &signcrypt_key.receiver_enc_key {
-        UnifiedPublicEncKey::MlKem512(public_enc_key) => {
-            hybrid_ml_kem::enc::<ml_kem::MlKem512, _>(rng, &to_encrypt, &public_enc_key.0)
-        }
-        UnifiedPublicEncKey::MlKem1024(_) => {
-            return Err(CryptographyError::MlKem1024Unsupported);
-        }
-        UnifiedPublicEncKey::MlKem1024P384(public_enc_key) => {
-            hybrid_composite_ml_kem::enc_ml_kem_1024_p384(rng, &to_encrypt, public_enc_key)
-        }
-    }?;
+    let ciphertext = hybrid_encrypt(rng, &to_encrypt, signcrypt_key.receiver_enc_key)?;
     // LEGACY: approach to serialization
-    Ok(UnifiedSigncryption {
-        payload: bc2wrap::serialize(&ciphertext)
+    Ok(UnifiedSigncryption::new(
+        bc2wrap::serialize(&ciphertext)
             .map_err(|e| CryptographyError::BincodeError(e.to_string()))?,
-        pke_type: signcrypt_key.encryption_scheme_type(),
-        signing_type: signcrypt_key.signing_scheme_type(),
-    })
+        signcrypt_key.encryption_scheme_type(),
+        signcrypt_key.signing_scheme_type(),
+    ))
+}
+
+/// Open `cipher` in whichever format its scheme set names.
+fn open_dispatch(
+    unsign_key: &UnifiedUnsigncryptionKey,
+    dsep: &DomainSep,
+    cipher: &UnifiedSigncryption,
+) -> Result<Zeroizing<Vec<u8>>, CryptographyError> {
+    match format_for(&cipher.signing_schemes) {
+        SigncryptionFormat::EcdsaV0 => inner_unsigncrypt(unsign_key, dsep, cipher),
+        SigncryptionFormat::CompositeV1 => Err(unsupported_format(&cipher.signing_schemes)),
+    }
 }
 
 impl<'a> Unsigncrypt for UnifiedUnsigncryptionKey<'a> {
@@ -527,7 +714,7 @@ impl<'a> Unsigncrypt for UnifiedUnsigncryptionKey<'a> {
         dsep: &DomainSep,
         cipher: &UnifiedSigncryption,
     ) -> Result<T, CryptographyError> {
-        let msg_vec = inner_unsigncrypt(self, dsep, cipher)?;
+        let msg_vec = open_dispatch(self, dsep, cipher)?;
         safe_deserialize(std::io::Cursor::new(&*msg_vec), SAFE_SER_SIZE_LIMIT)
             .map_err(CryptographyError::SerializationError)
     }
@@ -538,7 +725,7 @@ impl<'a> Unsigncrypt for UnifiedUnsigncryptionKey<'a> {
         signcryption: &UnifiedSigncryption,
     ) -> Result<(), CryptographyError> {
         // Since we use sign-then-encrypt, we need to decrypt first to get the message for signature verification
-        let _ = inner_unsigncrypt(self, dsep, signcryption).map_err(|e| {
+        let _ = open_dispatch(self, dsep, signcryption).map_err(|e| {
             CryptographyError::VerificationError(format!(
                 "failed to decrypt signcryption for validation: {}",
                 e
@@ -575,11 +762,14 @@ impl<'a> UnsigncryptFHEPlaintext for UnifiedUnsigncryptionKey<'a> {
         signcryption: &[u8],
         link: &[u8],
     ) -> Result<SigncryptionPayload, CryptographyError> {
-        let parsed_signcryption = UnifiedSigncryption {
-            payload: signcryption.to_owned(),
-            pke_type: self.encryption_key.encryption_scheme_type(),
-            signing_type: self.sender_verf_key.signing_scheme_type(),
-        };
+        // The legacy user-decryption path. See the note in `signcrypt_plaintext`
+        // for why the format is fixed here rather than chosen: the raw bytes
+        // this receives have nowhere to record one.
+        let parsed_signcryption = UnifiedSigncryption::new(
+            signcryption.to_owned(),
+            self.encryption_key.encryption_scheme_type(),
+            self.sender_verf_key.signing_scheme_type(),
+        );
         let decrypted_signcryption = inner_unsigncrypt(self, dsep, &parsed_signcryption)?;
         // LEGACY should be using safe_deserialization from tfhe-rs
         let mut signcrypted_msg: SigncryptionPayload =
@@ -609,6 +799,9 @@ impl UnsigncryptFHEPlaintext for UnifiedUnsigncryptionKeyOwned {
 }
 
 /// Implements the actual unsigncryption process, but without any deserialization
+///
+/// This is the FROZEN `SigncryptionFormat::EcdsaV0` layout; see the module
+/// documentation.
 fn inner_unsigncrypt(
     unsign_key: &UnifiedUnsigncryptionKey,
     dsep: &DomainSep,
@@ -622,17 +815,7 @@ fn inner_unsigncrypt(
     // LEGACY Code: should be using safe_deserialization from tfhe-rs
     let deserialized_payload: HybridKemCt = bc2wrap::deserialize_slice(&cipher.payload)
         .map_err(|e| CryptographyError::BincodeError(e.to_string()))?;
-    let decrypted_plaintext = match &unsign_key.decryption_key {
-        UnifiedPrivateEncKey::MlKem512(dec_key) => {
-            hybrid_ml_kem::dec::<ml_kem::MlKem512>(deserialized_payload, &dec_key.0)
-        }
-        UnifiedPrivateEncKey::MlKem1024(_) => {
-            return Err(CryptographyError::MlKem1024Unsupported);
-        }
-        UnifiedPrivateEncKey::MlKem1024P384(dec_key) => {
-            hybrid_composite_ml_kem::dec_ml_kem_1024_p384(deserialized_payload, dec_key)
-        }
-    }?;
+    let decrypted_plaintext = hybrid_decrypt(deserialized_payload, unsign_key.decryption_key)?;
     let (msg, sig) = parse_msg(decrypted_plaintext, unsign_key.sender_verf_key)?;
     check_format_and_signature(dsep, &msg, &sig, unsign_key)?;
     Ok(msg)
@@ -662,10 +845,7 @@ fn parse_msg(
         &decrypted_plaintext[(msg_len + SIG_SIZE)..(msg_len + SIG_SIZE + DIGEST_BYTES)];
     // LEGACY: this should just be based on key id. Again legacy code that could be done more proper by using the notion of an id!
     // Verify verification key digest
-    if serialize_hash_element(&DSEP_SIGNCRYPTION, server_verf_key)
-        .map_err(|e| CryptographyError::BincodeError(e.to_string()))?
-        != server_ver_key_digest
-    {
+    if sender_verf_key_digest(server_verf_key)? != server_ver_key_digest {
         return Err(CryptographyError::VerificationError(format!(
             "unexpected verification key digest {server_ver_key_digest:X?} was part of the decryption",
         )));
@@ -685,29 +865,12 @@ fn check_format_and_signature(
     unsigncryption_key: &UnifiedUnsigncryptionKey,
 ) -> Result<(), CryptographyError> {
     // What should be signed is dsep || msg || H(client_verification_key) || H(client_enc_key)
-    let serialized_enc_key = match &unsigncryption_key.encryption_key {
-        UnifiedPublicEncKey::MlKem512(public_enc_key) => {
-            serialize_hash_element(&DSEP_SIGNCRYPTION, public_enc_key)
-                .map_err(|e| CryptographyError::DeserializationError(e.to_string()))?
-        }
-        UnifiedPublicEncKey::MlKem1024(_) => {
-            return Err(CryptographyError::MlKem1024Unsupported);
-        }
-        UnifiedPublicEncKey::MlKem1024P384(public_enc_key) => {
-            serialize_hash_element(&DSEP_SIGNCRYPTION, public_enc_key)
-                .map_err(|e| CryptographyError::DeserializationError(e.to_string()))?
-        }
-    };
+    let binding = receiver_binding(
+        unsigncryption_key.receiver_id,
+        unsigncryption_key.encryption_key,
+    )?;
 
-    let msg_signed = Zeroizing::new(
-        [
-            &dsep[..],
-            msg,
-            unsigncryption_key.receiver_id,
-            &serialized_enc_key,
-        ]
-        .concat(),
-    );
+    let msg_signed = Zeroizing::new([&dsep[..], msg, binding.as_slice()].concat());
 
     check_normalized(sig)?;
 
@@ -734,17 +897,7 @@ pub(crate) fn insecure_decrypt_ignoring_signature(
     // LEGACY should be using safe_deserialization from tfhe-rs
     let cipher: HybridKemCt = bc2wrap::deserialize_slice(cipher)
         .map_err(|e| CryptographyError::BincodeError(e.to_string()))?;
-    let decrypted_plaintext = match dec_key {
-        UnifiedPrivateEncKey::MlKem512(dk) => {
-            hybrid_ml_kem::dec::<ml_kem::MlKem512>(cipher.clone(), &dk.0)?
-        }
-        UnifiedPrivateEncKey::MlKem1024(_) => {
-            return Err(CryptographyError::MlKem1024Unsupported);
-        }
-        UnifiedPrivateEncKey::MlKem1024P384(dk) => {
-            hybrid_composite_ml_kem::dec_ml_kem_1024_p384(cipher, dk)?
-        }
-    };
+    let decrypted_plaintext = hybrid_decrypt(cipher, dec_key)?;
 
     // strip off the signature bytes (these are ignored here)
     let msg_len = decrypted_plaintext.len() - DIGEST_BYTES - SIG_SIZE;
@@ -1044,6 +1197,379 @@ mod tests {
             .unsigncryption_key
             .unsigncrypt_plaintext(b"TESTTEST", &cipher.payload, &bad_link)
             .unwrap_err();
+    }
+
+    // ============================================================================
+    // Format locks and scheme-set plumbing
+    // ============================================================================
+
+    /// The two schemes the frozen layout is actually used with: ML-KEM-512 for
+    /// user decryption, MLKEM1024-P384 for custodian backup.
+    const LOCKED_SCHEMES: [PkeSchemeType; 2] =
+        [PkeSchemeType::MlKem512, PkeSchemeType::MlKem1024P384];
+
+    struct LockFixture {
+        rng: AesRng,
+        dec_key: UnifiedPrivateEncKey,
+        enc_key: UnifiedPublicEncKey,
+        sender_verf_key: PublicSigKey,
+        signing_key: PrivateSigKey,
+        receiver_id: Vec<u8>,
+    }
+
+    fn lock_fixture(scheme: PkeSchemeType, seed: u64) -> LockFixture {
+        let mut rng = AesRng::seed_from_u64(seed);
+        let (sender_verf_key, signing_key) = gen_sig_keys(&mut rng);
+        let (receiver_verf_key, _) = gen_sig_keys(&mut rng);
+        // Scoped so that `rng` is no longer borrowed once the keys are out.
+        let (dec_key, enc_key) = {
+            let mut encryption = Encryption::new(scheme, &mut rng);
+            encryption.keygen().unwrap()
+        };
+        LockFixture {
+            rng,
+            dec_key,
+            enc_key,
+            sender_verf_key,
+            signing_key,
+            receiver_id: receiver_verf_key.verf_key_id(),
+        }
+    }
+
+    fn expected_enc_key_digest(enc_key: &UnifiedPublicEncKey) -> Vec<u8> {
+        match enc_key {
+            UnifiedPublicEncKey::MlKem512(inner) => {
+                serialize_hash_element(&DSEP_SIGNCRYPTION, inner).unwrap()
+            }
+            UnifiedPublicEncKey::MlKem1024P384(inner) => {
+                serialize_hash_element(&DSEP_SIGNCRYPTION, inner).unwrap()
+            }
+            _ => unreachable!("only the two locked schemes are exercised"),
+        }
+    }
+
+    /// The signed preimage is exactly `dsep ‖ msg ‖ receiver_id ‖ H(enc key)`.
+    ///
+    /// Rebuilt here from the hashing primitive rather than from
+    /// [`receiver_binding`], so that a reordering of the concatenation is caught
+    /// at the preimage level instead of only by a whole-artifact comparison.
+    #[test]
+    fn ecdsa_v0_signed_preimage_is_locked() {
+        const DSEP: &DomainSep = b"ECDSAV0T";
+        for scheme in LOCKED_SCHEMES {
+            let f = lock_fixture(scheme, 100);
+            let msg = b"the message a signcryption signs over";
+
+            let expected = [
+                &DSEP[..],
+                msg.as_slice(),
+                f.receiver_id.as_slice(),
+                expected_enc_key_digest(&f.enc_key).as_slice(),
+            ]
+            .concat();
+
+            // What `inner_signcryption` signs: `dsep` (prepended by
+            // `internal_sign`) followed by the message and the receiver binding.
+            let binding = receiver_binding(&f.receiver_id, &f.enc_key).unwrap();
+            let signed = [&DSEP[..], msg.as_slice(), binding.as_slice()].concat();
+            assert_eq!(signed, expected, "{scheme}: signed preimage changed");
+
+            // ...and the verifier rebuilds exactly those bytes.
+            let sig = internal_sign(
+                DSEP,
+                &[msg.as_slice(), binding.as_slice()].concat(),
+                &f.signing_key,
+            )
+            .unwrap();
+            let unsign_key = UnifiedUnsigncryptionKey::new(
+                &f.dec_key,
+                &f.enc_key,
+                &f.sender_verf_key,
+                &f.receiver_id,
+            );
+            check_format_and_signature(DSEP, msg, &sig, &unsign_key).unwrap();
+        }
+    }
+
+    /// The encrypted plaintext is exactly `msg ‖ sig(64) ‖ H(sender key)(32)`,
+    /// with the two tail fields fixed-size and in that order.
+    ///
+    /// This is the contract [`parse_msg`] relies on when it recovers `msg_len`
+    /// by subtracting from the end. Before this test, the layout was implied by
+    /// that arithmetic alone.
+    #[test]
+    fn ecdsa_v0_envelope_layout_is_locked() {
+        const DSEP: &DomainSep = b"ECDSAV0T";
+        for scheme in LOCKED_SCHEMES {
+            let mut f = lock_fixture(scheme, 200);
+            let payload = TestType { i: 4711 };
+            let signcrypt_key =
+                UnifiedSigncryptionKey::new(&f.signing_key, &f.enc_key, &f.receiver_id);
+
+            let mut expected_msg = Vec::new();
+            safe_serialize(&payload, &mut expected_msg, SAFE_SER_SIZE_LIMIT).unwrap();
+
+            let cipher = signcrypt_key.signcrypt(&mut f.rng, DSEP, &payload).unwrap();
+            assert_eq!(cipher.pke_type, scheme);
+            assert_eq!(
+                cipher.signing_schemes,
+                SigningSchemeSet::single(SigningSchemeType::Ecdsa256k1)
+            );
+
+            let kem_ct: HybridKemCt = bc2wrap::deserialize_slice(&cipher.payload).unwrap();
+            let plaintext = hybrid_decrypt(kem_ct, &f.dec_key).unwrap();
+
+            // Exactly three fields, the last two of fixed size.
+            assert_eq!(
+                plaintext.len(),
+                expected_msg.len() + SIG_SIZE + DIGEST_BYTES,
+                "{scheme}: plaintext is not msg ‖ sig ‖ digest"
+            );
+            let msg_len = expected_msg.len();
+            assert_eq!(&plaintext[..msg_len], expected_msg.as_slice());
+
+            // The middle field is the ECDSA signature over the locked preimage.
+            let binding = receiver_binding(&f.receiver_id, &f.enc_key).unwrap();
+            let signed = [expected_msg.as_slice(), binding.as_slice()].concat();
+            let sig = Signature::from_ecdsa(
+                k256::ecdsa::Signature::from_slice(&plaintext[msg_len..msg_len + SIG_SIZE])
+                    .unwrap(),
+            );
+            check_normalized(&sig).expect("the signature must be low-s normalized");
+            f.sender_verf_key
+                .raw_verifying_key()
+                .verify(
+                    &[&DSEP[..], signed.as_slice()].concat(),
+                    &sig.ecdsa_sig().unwrap(),
+                )
+                .expect("the middle field must sign the locked preimage");
+
+            // The tail field is the digest of the sender's verification key.
+            assert_eq!(
+                &plaintext[msg_len + SIG_SIZE..],
+                sender_verf_key_digest(&f.sender_verf_key)
+                    .unwrap()
+                    .as_slice(),
+                "{scheme}: tail is not H(sender verification key)"
+            );
+        }
+    }
+
+    /// The binding must separate recipients on *both* of its inputs, since it is
+    /// the only thing tying a signature to who may open it.
+    #[test]
+    fn receiver_binding_separates_recipients() {
+        let f = lock_fixture(PkeSchemeType::MlKem512, 500);
+        let other = lock_fixture(PkeSchemeType::MlKem512, 501);
+
+        let base = receiver_binding(&f.receiver_id, &f.enc_key).unwrap();
+        assert_eq!(base, receiver_binding(&f.receiver_id, &f.enc_key).unwrap());
+        assert_ne!(
+            base,
+            receiver_binding(&other.receiver_id, &f.enc_key).unwrap()
+        );
+        assert_ne!(
+            base,
+            receiver_binding(&f.receiver_id, &other.enc_key).unwrap()
+        );
+    }
+
+    /// Truncating the plaintext below the two fixed tail fields is a length
+    /// error, not a panic. The arithmetic in [`parse_msg`] is the only thing
+    /// standing between a short plaintext and an out-of-bounds slice.
+    #[test]
+    fn a_short_plaintext_is_a_length_error() {
+        let f = lock_fixture(PkeSchemeType::MlKem512, 400);
+        for len in 0..(SIG_SIZE + DIGEST_BYTES) {
+            let short = Zeroizing::new(vec![0u8; len]);
+            assert!(
+                matches!(
+                    parse_msg(short, &f.sender_verf_key),
+                    Err(CryptographyError::LengthError(_))
+                ),
+                "a {len}-byte plaintext must be rejected as too short"
+            );
+        }
+    }
+
+    /// The singleton ECDSA set — and only it — selects the frozen layout. This
+    /// is what keeps user decryption on `EcdsaV0` without a dedicated branch.
+    #[test]
+    fn only_the_ecdsa_singleton_is_the_legacy_format() {
+        use strum::IntoEnumIterator;
+
+        assert_eq!(
+            format_for(&SigningSchemeSet::single(SigningSchemeType::Ecdsa256k1)),
+            SigncryptionFormat::EcdsaV0
+        );
+
+        for scheme in SigningSchemeType::iter().filter(|s| *s != SigningSchemeType::Ecdsa256k1) {
+            assert_eq!(
+                format_for(&SigningSchemeSet::single(scheme)),
+                SigncryptionFormat::CompositeV1,
+                "{scheme} alone must not select the frozen ECDSA layout"
+            );
+        }
+
+        // Adding any scheme to ECDSA leaves the legacy format behind, which is
+        // what stops a composite signcryption being parsed as a legacy one.
+        assert_eq!(
+            format_for(
+                &SigningSchemeSet::new([SigningSchemeType::Ecdsa256k1, SigningSchemeType::MlDsa87])
+                    .unwrap()
+            ),
+            SigncryptionFormat::CompositeV1
+        );
+    }
+
+    /// Everything produced by the pre-composite path must be tagged with the
+    /// singleton ECDSA set, because that is what keeps it on the frozen layout.
+    #[test]
+    fn the_legacy_path_produces_the_ecdsa_singleton() {
+        let (mut rng, keys) = test_setup();
+        let expected = SigningSchemeSet::single(SigningSchemeType::Ecdsa256k1);
+
+        let cipher = keys
+            .signcrypt_key
+            .signcrypt(&mut rng, b"TESTTEST", &TestType { i: 7 })
+            .unwrap();
+        assert_eq!(cipher.signing_schemes, expected);
+        assert_eq!(
+            cipher.sole_signing_scheme(),
+            Some(SigningSchemeType::Ecdsa256k1)
+        );
+
+        let plaintext_cipher = keys
+            .signcrypt_key
+            .signcrypt_plaintext(&mut rng, b"TESTTEST", &[1], FheTypes::Bool, &[9u8; 4])
+            .unwrap();
+        assert_eq!(plaintext_cipher.signing_schemes, expected);
+
+        assert_eq!(keys.signcrypt_key.reference().signing_schemes(), expected);
+        assert_eq!(
+            keys.unsigncryption_key.reference().signing_schemes(),
+            expected
+        );
+    }
+
+    /// A signcryption claiming a composite scheme set must be refused rather
+    /// than parsed as a legacy one. Until the composite envelope lands that is
+    /// an "unsupported format" error; once it lands, the composite opener takes
+    /// over and this must still never reach [`inner_unsigncrypt`].
+    #[test]
+    fn a_composite_scheme_set_does_not_reach_the_legacy_opener() {
+        let (mut rng, keys) = test_setup();
+        let mut cipher = keys
+            .signcrypt_key
+            .signcrypt(&mut rng, b"TESTTEST", &TestType { i: 11 })
+            .unwrap();
+        cipher.signing_schemes =
+            SigningSchemeSet::new([SigningSchemeType::Ecdsa256k1, SigningSchemeType::MlDsa87])
+                .unwrap();
+
+        let err = keys
+            .unsigncryption_key
+            .unsigncrypt::<TestType>(b"TESTTEST", &cipher)
+            .unwrap_err();
+        assert!(
+            matches!(err, CryptographyError::UnsupportedSigncryptionFormat(_)),
+            "a composite tag must not be handled by the legacy opener: {err}"
+        );
+    }
+
+    /// Material written before composite signing must still read, and must mean
+    /// the same thing: one scheme, spelled as a set of one.
+    #[test]
+    fn v0_upgrades_to_the_singleton_set() {
+        use strum::IntoEnumIterator;
+
+        for scheme in SigningSchemeType::iter() {
+            let v0 = UnifiedSigncryptionV0 {
+                payload: vec![1, 2, 3],
+                pke_type: PkeSchemeType::MlKem512,
+                signing_type: scheme,
+            };
+            let upgraded = v0.clone().upgrade().unwrap();
+            assert_eq!(upgraded.payload, v0.payload);
+            assert_eq!(upgraded.pke_type, v0.pke_type);
+            assert_eq!(upgraded.signing_schemes, SigningSchemeSet::single(scheme));
+            assert_eq!(upgraded.sole_signing_scheme(), Some(scheme));
+
+            // The upgrade is exactly what the singleton constructor builds, so a
+            // regenerated artifact still compares equal to a frozen one.
+            assert_eq!(
+                upgraded,
+                UnifiedSigncryption::new(v0.payload, v0.pke_type, scheme)
+            );
+        }
+    }
+
+    /// Captures the frozen byte vectors the layout is locked against.
+    ///
+    /// Ignored by default because the constants below still have to be filled in
+    /// once, by hand: they are the output of the very code under test, so they
+    /// cannot be written before it has run. Run
+    ///
+    /// ```text
+    /// cargo test -p kms --lib \
+    ///   cryptography::signcryption::tests::ecdsa_v0_frozen_byte_vectors \
+    ///   -- --ignored --nocapture
+    /// ```
+    ///
+    /// paste the printed literals into the constants, and delete the
+    /// `#[ignore]`. From then on this is the strongest guard here: it pins a
+    /// real ciphertext together with the key that opens it, so it proves current
+    /// code still *opens* material produced earlier. Every other test
+    /// establishes that only transitively, by regenerating and comparing.
+    #[test]
+    #[ignore = "golden vectors must be captured once; see the doc comment"]
+    fn ecdsa_v0_frozen_byte_vectors() {
+        const DSEP: &DomainSep = b"ECDSAV0T";
+        // Hex of a `UnifiedSigncryption.payload` for ML-KEM-512, seed 200.
+        const FROZEN_MLKEM512: &str = "";
+        // Hex of a `UnifiedSigncryption.payload` for MLKEM1024-P384, seed 200.
+        const FROZEN_MLKEM1024P384: &str = "";
+
+        for (scheme, frozen) in [
+            (PkeSchemeType::MlKem512, FROZEN_MLKEM512),
+            (PkeSchemeType::MlKem1024P384, FROZEN_MLKEM1024P384),
+        ] {
+            let mut f = lock_fixture(scheme, 200);
+            let payload = TestType { i: 4711 };
+            let signcrypt_key =
+                UnifiedSigncryptionKey::new(&f.signing_key, &f.enc_key, &f.receiver_id);
+            let cipher = signcrypt_key.signcrypt(&mut f.rng, DSEP, &payload).unwrap();
+
+            assert!(
+                !frozen.is_empty(),
+                "{scheme}: paste this into the constant, then drop #[ignore]:\n{}",
+                hex::encode(&cipher.payload)
+            );
+
+            // The frozen ciphertext must still open under the same key...
+            let frozen_payload = hex::decode(frozen).expect("the constant must be valid hex");
+            let unsign_key = UnifiedUnsigncryptionKey::new(
+                &f.dec_key,
+                &f.enc_key,
+                &f.sender_verf_key,
+                &f.receiver_id,
+            );
+            let frozen_cipher = UnifiedSigncryption::new(
+                frozen_payload.clone(),
+                scheme,
+                SigningSchemeType::Ecdsa256k1,
+            );
+            let opened: TestType = unsign_key
+                .unsigncrypt(DSEP, &frozen_cipher)
+                .expect("current code must still open the frozen ciphertext");
+            assert_eq!(opened, payload, "{scheme}");
+
+            // ...and today's code must still produce it bit for bit.
+            assert_eq!(
+                cipher.payload, frozen_payload,
+                "{scheme}: the produced envelope no longer matches the frozen vector"
+            );
+        }
     }
 
     // ============================================================================

@@ -786,6 +786,37 @@ impl TestType for MlKem1024P384PrivateKeyTest {
     }
 }
 
+/// Test metadata for SigningSchemeSet backward compatibility.
+///
+/// A `SigningSchemeSet` is a field of the persisted `UnifiedSigncryption` and is
+/// what a composite signature commits to, so a set written by one release has to
+/// stay readable by the next.
+///
+/// The set is described by the wire discriminants of its schemes rather than by
+/// a seed, so the fixture states exactly which schemes it holds and the loader
+/// can rebuild it without depending on any generator-side helper.
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct SigningSchemeSetTest {
+    pub test_filename: Cow<'static, str>,
+    /// The wire discriminants of the schemes the stored set holds, in canonical
+    /// order.
+    pub schemes: Cow<'static, [i32]>,
+}
+
+impl TestType for SigningSchemeSetTest {
+    fn module(&self) -> String {
+        KMS_MODULE_NAME.to_string()
+    }
+
+    fn target_type(&self) -> String {
+        "SigningSchemeSet".to_string()
+    }
+
+    fn test_filename(&self) -> String {
+        self.test_filename.to_string()
+    }
+}
+
 // KMS test
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct UnifiedSigncryptionTest {
@@ -1315,6 +1346,7 @@ pub enum TestMetadataKMS {
     MlKem1024P384PublicKey(MlKem1024P384PublicKeyTest),
     MlKem1024P384PrivateKey(MlKem1024P384PrivateKeyTest),
     UnifiedSigncryption(UnifiedSigncryptionTest),
+    SigningSchemeSet(SigningSchemeSetTest),
     BackupCiphertext(BackupCiphertextTest),
     UnifiedCipher(UnifiedCipherTest),
     HybridKemCt(HybridKemCtTest),

@@ -1820,11 +1820,11 @@ mod tests {
             InternalCustodianContext::new(custodian_context, enc_key.clone()).unwrap();
         let mut cts = BTreeMap::new();
         let cts_out = InnerOperatorBackupOutput {
-            signcryption: UnifiedSigncryption {
-                payload: vec![1, 2, 3],
-                pke_type: BACKUP_PKE_SCHEME,
-                signing_type: SigningSchemeType::Ecdsa256k1,
-            },
+            signcryption: UnifiedSigncryption::new(
+                vec![1, 2, 3],
+                BACKUP_PKE_SCHEME,
+                SigningSchemeType::Ecdsa256k1,
+            ),
         };
         cts.insert(Role::indexed_from_one(1), cts_out.clone());
         cts.insert(Role::indexed_from_one(2), cts_out.clone());

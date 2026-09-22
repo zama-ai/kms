@@ -7,7 +7,12 @@ pub mod ecdsa;
 mod eddsa;
 pub mod identity;
 mod mldsa;
+pub mod scheme_set;
 pub mod seed;
+pub mod verf_key_set;
+
+pub use scheme_set::{SigningSchemeSet, SigningSchemeSetVersions};
+pub use verf_key_set::VerfKeySet;
 
 use alloy_primitives::Address;
 use ecdsa::Ecdsa256k1;
@@ -89,6 +94,13 @@ pub enum SigningError {
         expected = SigningSchemeType::VARIANTS.join(", ")
     )]
     UnknownSchemeName(String),
+    /// A set of signing schemes was empty, which would make "every signature
+    /// verified" vacuously true.
+    #[error("a signing scheme set must name at least one scheme")]
+    EmptySchemeSet,
+    /// A set of signing schemes was not in its canonical encoding.
+    #[error("signing scheme set is not canonical: {0}")]
+    NonCanonicalSchemeSet(String),
 }
 
 /// Trait for any value that is tied to a concrete signature scheme.
@@ -750,6 +762,39 @@ mod tests {
         assert!(
             kms_grpc::kms::v1::SigningSchemeType::try_from(past_last).is_err(),
             "kms_grpc has a scheme with discriminant {past_last} that SigningSchemeType lacks"
+        );
+    }
+
+    /// Declaration order is ascending wire order.
+    ///
+    /// Two things depend on this and neither would fail loudly if it broke.
+    /// [`SigningSchemeSet`] treats "canonical" as ascending wire order, but
+    /// sorts with the derived [`Ord`], which follows declaration order;
+    /// so its digest walks the members in derived-`Ord` order
+    /// while the set it reports is ordered by wire value. If the two orders ever
+    /// disagreed, a key set's identifier would be computed over a different
+    /// ordering than the scheme set naming it, silently.
+    #[test]
+    fn declaration_order_is_wire_order() {
+        // `EnumIter` yields variants in declaration order, so the index is the
+        // position the derived `Ord` sorts by.
+        for (index, scheme) in SigningSchemeType::iter().enumerate() {
+            assert_eq!(
+                scheme.as_wire(),
+                index as i32,
+                "{scheme} is declared at position {index} but travels as {}",
+                scheme.as_wire()
+            );
+        }
+
+        // Stated once more as the property the rest of the crate relies on,
+        // so a failure names the consequence rather than an index mismatch.
+        let declared: Vec<_> = SigningSchemeType::iter().collect();
+        let mut by_wire = declared.clone();
+        by_wire.sort_by_key(|scheme| scheme.as_wire());
+        assert_eq!(
+            declared, by_wire,
+            "sorting by wire value reorders the schemes"
         );
     }
 

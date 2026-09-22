@@ -28,7 +28,7 @@ use kms_0_15_0::cryptography::{
     hybrid_ml_kem::HybridKemCt,
     signatures::{
         compute_eip712_signature, gen_sig_keys, NodeSigningIdentity, RootSigningSeed,
-        SigningSchemeType, UnifiedPublicSigKey,
+        SigningSchemeSet, SigningSchemeType, UnifiedPublicSigKey,
     },
     signcryption::{
         Signcrypt, UnifiedSigncryption, UnifiedSigncryptionKeyOwned, UnifiedUnsigncryptionKeyOwned,
@@ -114,12 +114,12 @@ use backward_compatibility::{
     PrepKeygenSignedPayloadTest, PrfKeyTest, PrivDataTypeTest, PrivateSigKeyTest, PrssSetTest,
     PrssSetupCombinedTest, PubDataTypeTest, PublicDecSignedPayloadTest, PublicSigKeyTest,
     RecoveryValidationMaterialTest, ReleasePCRValuesTest, RootSigningSeedTest, SchemeDigestsTest,
-    ShareTest, SigncryptionPayloadTest, SignedPubDataHandleInternalTest, SoftwareVersionTest,
-    StoredEip712DomainTest, StoredTypedSignatureTest, TestMetadataDD, TestMetadataKMS,
-    TestMetadataKmsGrpc, ThresholdFheKeysTest, TypedPlaintextTest, UnifiedCipherTest,
-    UnifiedPublicSigKeyTest, UnifiedSigncryptionKeyTest, UnifiedSigncryptionTest,
-    UnifiedUnsigncryptionKeyTest, UserDecSignedPayloadTest, DISTRIBUTED_DECRYPTION_MODULE_NAME,
-    KMS_GRPC_MODULE_NAME, KMS_MODULE_NAME,
+    ShareTest, SigncryptionPayloadTest, SignedPubDataHandleInternalTest, SigningSchemeSetTest,
+    SoftwareVersionTest, StoredEip712DomainTest, StoredTypedSignatureTest, TestMetadataDD,
+    TestMetadataKMS, TestMetadataKmsGrpc, ThresholdFheKeysTest, TypedPlaintextTest,
+    UnifiedCipherTest, UnifiedPublicSigKeyTest, UnifiedSigncryptionKeyTest,
+    UnifiedSigncryptionTest, UnifiedUnsigncryptionKeyTest, UserDecSignedPayloadTest,
+    DISTRIBUTED_DECRYPTION_MODULE_NAME, KMS_GRPC_MODULE_NAME, KMS_MODULE_NAME,
 };
 use hashing_0_15_0::hash_versioned;
 use kms_0_15_0::cryptography::signcryption::SigncryptionPayload;
@@ -505,6 +505,14 @@ const MLKEM1024_P384_PRIVATE_KEY_TEST: MlKem1024P384PrivateKeyTest = MlKem1024P3
 const UNIFIED_SIGNCRYPTION_TEST: UnifiedSigncryptionTest = UnifiedSigncryptionTest {
     test_filename: Cow::Borrowed("unified_signcryption"),
     state: 202,
+};
+
+// KMS test
+const SIGNING_SCHEME_SET_TEST: SigningSchemeSetTest = SigningSchemeSetTest {
+    test_filename: Cow::Borrowed("signing_scheme_set"),
+    // The composite pair custodian backup signs under, given as wire
+    // discriminants: Ecdsa256k1 and MlDsa87.
+    schemes: Cow::Borrowed(&[0, 4]),
 };
 
 // KMS test
@@ -1183,6 +1191,25 @@ impl KmsV0_15_0 {
 
         store_versioned_test!(&signcryption, dir, &UNIFIED_SIGNCRYPTION_TEST.test_filename);
         TestMetadataKMS::UnifiedSigncryption(UNIFIED_SIGNCRYPTION_TEST)
+    }
+
+    fn gen_signing_scheme_set(dir: &PathBuf) -> TestMetadataKMS {
+        // Built from the declared wire discriminants rather than from a
+        // constructor shortcut, so the fixture freezes the set the metadata
+        // names and a later reordering of the enum cannot silently change it.
+        let schemes = SIGNING_SCHEME_SET_TEST
+            .schemes
+            .iter()
+            .map(|wire| {
+                SigningSchemeType::try_from(*wire)
+                    .expect("the test metadata names a known signing scheme")
+            })
+            .collect::<Vec<_>>();
+        let set =
+            SigningSchemeSet::new(schemes).expect("the test metadata names at least one scheme");
+
+        store_versioned_test!(&set, dir, &SIGNING_SCHEME_SET_TEST.test_filename);
+        TestMetadataKMS::SigningSchemeSet(SIGNING_SCHEME_SET_TEST)
     }
 
     fn gen_unified_cipher(dir: &PathBuf) -> TestMetadataKMS {
@@ -2179,6 +2206,7 @@ impl KMSCoreVersion for V0_15_0 {
             KmsV0_15_0::gen_mlkem1024_p384_public_key(&dir),
             KmsV0_15_0::gen_mlkem1024_p384_private_key(&dir),
             KmsV0_15_0::gen_unified_signcryption(&dir),
+            KmsV0_15_0::gen_signing_scheme_set(&dir),
             KmsV0_15_0::gen_backup_ciphertext(&dir),
             KmsV0_15_0::gen_unified_cipher(&dir),
             KmsV0_15_0::gen_hybrid_kem_ct(&dir),

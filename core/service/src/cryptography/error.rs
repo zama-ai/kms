@@ -34,6 +34,8 @@ pub enum CryptographyError {
     VerificationError(String),
     #[error(transparent)]
     Signing(#[from] SigningError),
+    #[error("unsupported signcryption format for signing schemes {0}")]
+    UnsupportedSigncryptionFormat(String),
     #[error("Other: {0}")]
     Other(String),
 }

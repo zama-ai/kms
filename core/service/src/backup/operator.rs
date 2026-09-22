@@ -173,11 +173,11 @@ impl TryFrom<OperatorBackupOutput> for InnerOperatorBackupOutput {
 
     fn try_from(value: OperatorBackupOutput) -> Result<Self, Self::Error> {
         Ok(Self {
-            signcryption: UnifiedSigncryption {
-                payload: value.signcryption,
-                pke_type: value.pke_type.try_into()?,
-                signing_type: value.signing_type.try_into()?,
-            },
+            signcryption: UnifiedSigncryption::new(
+                value.signcryption,
+                value.pke_type.try_into()?,
+                value.signing_type.try_into()?,
+            ),
         })
     }
 }
@@ -185,10 +185,25 @@ impl TryFrom<InnerOperatorBackupOutput> for OperatorBackupOutput {
     type Error = anyhow::Error;
 
     fn try_from(value: InnerOperatorBackupOutput) -> Result<Self, Self::Error> {
+        // TODO stop gap
+        // `OperatorBackupOutput` has room for a single signing scheme, so a
+        // composite signcryption cannot be described by it. Fail rather than
+        // name one of its schemes and silently drop the rest.
+        let signing_type = value
+            .signcryption
+            .sole_signing_scheme()
+            .ok_or_else(|| {
+                anyhow::anyhow!(
+                    "cannot represent a signcryption signed under {} in an OperatorBackupOutput, \
+                     which carries a single signing scheme",
+                    value.signcryption.signing_schemes
+                )
+            })?
+            .as_wire();
         Ok(Self {
             signcryption: value.signcryption.payload,
             pke_type: value.signcryption.pke_type as i32,
-            signing_type: value.signcryption.signing_type as i32,
+            signing_type,
         })
     }
 }
@@ -971,11 +986,11 @@ mod tests {
         commitments.insert(Role::indexed_from_one(3), vec![3_u8; 32]);
         let mut cts = BTreeMap::new();
         let cts_out = InnerOperatorBackupOutput {
-            signcryption: UnifiedSigncryption {
-                payload: vec![1, 2, 3],
-                pke_type: BACKUP_PKE_SCHEME,
-                signing_type: SigningSchemeType::Ecdsa256k1,
-            },
+            signcryption: UnifiedSigncryption::new(
+                vec![1, 2, 3],
+                BACKUP_PKE_SCHEME,
+                SigningSchemeType::Ecdsa256k1,
+            ),
         };
         cts.insert(Role::indexed_from_one(1), cts_out.clone());
         cts.insert(Role::indexed_from_one(2), cts_out.clone());

@@ -82,11 +82,26 @@ impl TryFrom<InternalCustodianRecoveryOutput> for CustodianRecoveryOutput {
     type Error = anyhow::Error;
 
     fn try_from(value: InternalCustodianRecoveryOutput) -> Result<Self, Self::Error> {
+        // TODO stop gap
+        // `OperatorBackupOutput` has room for a single signing scheme, so a
+        // composite signcryption cannot be described by it. Fail rather than
+        // name one of its schemes and silently drop the rest.
+        let signing_type = value
+            .signcryption
+            .sole_signing_scheme()
+            .ok_or_else(|| {
+                anyhow::anyhow!(
+                    "cannot represent a signcryption signed under {} in an OperatorBackupOutput, \
+                     which carries a single signing scheme",
+                    value.signcryption.signing_schemes
+                )
+            })?
+            .as_wire();
         Ok(CustodianRecoveryOutput {
             backup_output: Some(OperatorBackupOutput {
                 signcryption: value.signcryption.payload,
                 pke_type: value.signcryption.pke_type as i32,
-                signing_type: value.signcryption.signing_type as i32,
+                signing_type,
             }),
             custodian_role: value.custodian_role.one_based() as u64,
         })

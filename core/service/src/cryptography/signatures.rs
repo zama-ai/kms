@@ -17,8 +17,9 @@ pub use crate::cryptography::signing::ecdsa::{
 pub use crate::cryptography::signing::identity::NodeSigningIdentity;
 pub use crate::cryptography::signing::seed::{RootSigningSeed, RootSigningSeedVersions};
 pub use crate::cryptography::signing::{
-    HasSigningScheme, SchemeVerfKeys, Signature, SigningError, SigningSchemeType,
-    SigningSchemeTypeVersions, UnifiedPublicSigKey, UnifiedPublicSigKeyVersions,
+    HasSigningScheme, SchemeVerfKeys, Signature, SigningError, SigningSchemeSet,
+    SigningSchemeSetVersions, SigningSchemeType, SigningSchemeTypeVersions, UnifiedPublicSigKey,
+    UnifiedPublicSigKeyVersions, VerfKeySet,
 };
 
 pub(crate) use crate::cryptography::signing::ecdsa::{
