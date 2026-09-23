@@ -101,6 +101,10 @@ impl<P: MlDsaParams> PartialEq for MlDsaVerfKey<P> {
     }
 }
 
+/// Equality on the inner verifying key is exact, so it is a genuine equivalence
+/// relation and this marker is sound.
+impl<P: MlDsaParams> Eq for MlDsaVerfKey<P> {}
+
 /// The FIPS-204 parameter set's own name.
 pub trait MlDsaParamSet {
     const PARAM_SET_NAME: &'static str;

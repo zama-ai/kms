@@ -435,13 +435,13 @@ const _: () = {
     assert_zeroize_on_drop::<MlDsaSigningKey<MlDsa87>>();
 };
 
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, VersionsDispatch)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, VersionsDispatch)]
 pub enum UnifiedPublicSigKeyVersions {
     V0(UnifiedPublicSigKey),
 }
 
 /// A verification key tagged with the scheme it belongs to.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, Versionize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, Versionize)]
 #[versionize(UnifiedPublicSigKeyVersions)]
 pub enum UnifiedPublicSigKey {
     Ecdsa256k1(PublicSigKey),

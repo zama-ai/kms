@@ -58,6 +58,13 @@ const ALLOW_UNCOVERED: &[&str] = &[
     // a struct field.)
     // Covered via StoredTypedSignatureTest, and via UnifiedSigncryptionTest.
     "SigningSchemeType",
+    // Not yet a field of any persisted type. It is versioned ahead of the
+    // custodian-backup composite-signing work, which puts it inside
+    // InternalCustodianSetupMessage, CustodianSetupMessagePayload,
+    // BackupMaterial and InternalRecoveryRequest.
+    // TODO: give it a real fixture when the generator's pinned rev is next
+    // bumped; the pinned crate cannot versionize it today.
+    "VerfKeySet",
     // Map value in RecoveryValidationMaterialPayload.cts.
     // Covered via RecoveryValidationMaterialTest.
     "InnerOperatorBackupOutput",

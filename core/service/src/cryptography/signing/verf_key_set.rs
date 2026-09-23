@@ -3,11 +3,17 @@
 use super::identity::NodeSigningIdentity;
 use super::{SigningError, SigningSchemeType, UnifiedPublicSigKey};
 use hashing::{DomainSep, hash_element};
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize};
 use std::collections::BTreeMap;
+use tfhe_versionable::{Versionize, VersionsDispatch};
 
 /// Domain separator for the digest that identifies a whole verification-key set.
 const DSEP_VERF_KEY_SET: DomainSep = *b"VKEYSET_";
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, VersionsDispatch)]
+pub enum VerfKeySetVersions {
+    V0(VerfKeySet),
+}
 
 /// One party's verification keys, keyed by the scheme each belongs to.
 ///
@@ -15,10 +21,25 @@ const DSEP_VERF_KEY_SET: DomainSep = *b"VKEYSET_";
 /// signs under several schemes, so a verifier needs several keys, and needs them
 /// to travel together.
 ///
-/// Not versioned since this is an in-memory only structure.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+/// # Invariants
+///
+/// The set is non-empty, and every key is filed under the scheme it actually
+/// belongs to.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Versionize)]
+#[versionize(VerfKeySetVersions)]
+#[serde(transparent)]
 pub struct VerfKeySet {
     keys: BTreeMap<SigningSchemeType, UnifiedPublicSigKey>,
+}
+
+impl<'de> Deserialize<'de> for VerfKeySet {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let keys = BTreeMap::<SigningSchemeType, UnifiedPublicSigKey>::deserialize(deserializer)?;
+        Self::new(keys).map_err(serde::de::Error::custom)
+    }
 }
 
 impl VerfKeySet {
@@ -154,6 +175,40 @@ mod tests {
             VerfKeySet::new(BTreeMap::new()),
             Err(SigningError::EmptySchemeSet)
         ));
+    }
+
+    /// The invariants must hold for a set that is *read back*, not only for one
+    /// built in process. `#[serde(transparent)]` makes the encoding of a
+    /// `VerfKeySet` identical to that of its map, so a hand-crafted map is
+    /// exactly what an attacker would be able to present.
+    #[test]
+    fn a_deserialized_set_is_validated() {
+        let mut rng = AesRng::seed_from_u64(4);
+        let identity = seeded_identity(&mut rng);
+        let ecdsa = identity
+            .unified_verifying_key(SigningSchemeType::Ecdsa256k1)
+            .unwrap();
+
+        let good = VerfKeySet::new(BTreeMap::from([(
+            SigningSchemeType::Ecdsa256k1,
+            ecdsa.clone(),
+        )]))
+        .unwrap();
+        let bytes = bc2wrap::serialize(&good).unwrap();
+        assert_eq!(
+            bc2wrap::deserialize_slice::<VerfKeySet>(&bytes).unwrap(),
+            good
+        );
+
+        // A key filed under a scheme it does not belong to.
+        let misfiled = BTreeMap::from([(SigningSchemeType::MlDsa87, ecdsa)]);
+        let bytes = bc2wrap::serialize(&misfiled).unwrap();
+        assert!(bc2wrap::deserialize_slice::<VerfKeySet>(&bytes).is_err());
+
+        // An empty set, which would verify a signature against no keys at all.
+        let empty = BTreeMap::<SigningSchemeType, UnifiedPublicSigKey>::new();
+        let bytes = bc2wrap::serialize(&empty).unwrap();
+        assert!(bc2wrap::deserialize_slice::<VerfKeySet>(&bytes).is_err());
     }
 
     /// The id names the whole set: swapping any single member key changes it.
