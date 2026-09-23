@@ -1,7 +1,6 @@
 //! The verification keys one party publishes, one per signature scheme.
 
 use super::identity::NodeSigningIdentity;
-use super::scheme_set::SigningSchemeSet;
 use super::{HasSigningScheme, SigningError, SigningSchemeType, UnifiedPublicSigKey};
 use hashing::{DomainSep, hash_element};
 use serde::{Deserialize, Serialize};
@@ -46,18 +45,19 @@ impl VerfKeySet {
     /// The key set `identity` publishes for `schemes`.
     pub fn from_identity(
         identity: &NodeSigningIdentity,
-        schemes: &SigningSchemeSet,
+        schemes: &[SigningSchemeType],
     ) -> Result<Self, SigningError> {
         let mut keys = BTreeMap::new();
-        for scheme in schemes.iter() {
+        for &scheme in schemes {
             keys.insert(scheme, identity.unified_verifying_key(scheme)?);
         }
         Self::new(keys)
     }
 
-    /// The schemes this set holds keys for.
-    pub fn schemes(&self) -> Result<SigningSchemeSet, SigningError> {
-        SigningSchemeSet::new(self.keys.keys().copied())
+    /// The schemes this set holds keys for, in canonical order.
+    pub fn schemes(&self) -> Vec<SigningSchemeType> {
+        // Canonical order is based on the underlying BTreeMap order
+        self.keys.keys().copied().collect()
     }
 
     /// The key for `scheme`, if the set holds one.
@@ -107,11 +107,11 @@ mod tests {
     fn from_identity_covers_every_requested_scheme() {
         let mut rng = AesRng::seed_from_u64(1);
         let identity = seeded_identity(&mut rng);
-        let schemes = SigningSchemeSet::new(SigningSchemeType::iter()).unwrap();
+        let schemes: Vec<_> = SigningSchemeType::iter().collect();
         let set = VerfKeySet::from_identity(&identity, &schemes).unwrap();
 
-        assert_eq!(set.schemes().unwrap(), schemes);
-        for scheme in schemes.iter() {
+        assert_eq!(set.schemes(), schemes);
+        for &scheme in &schemes {
             let key = set.require(scheme).unwrap();
             assert_eq!(key.signing_scheme_type(), scheme);
             assert_eq!(key, &identity.unified_verifying_key(scheme).unwrap());
@@ -126,17 +126,11 @@ mod tests {
         let (_pk, sk) = crate::cryptography::signatures::gen_sig_keys(&mut rng);
         let identity = NodeSigningIdentity::ecdsa_only(sk);
 
-        VerfKeySet::from_identity(
-            &identity,
-            &SigningSchemeSet::single(SigningSchemeType::Ecdsa256k1),
-        )
-        .unwrap();
+        VerfKeySet::from_identity(&identity, &[SigningSchemeType::Ecdsa256k1]).unwrap();
 
+        let all: Vec<_> = SigningSchemeType::iter().collect();
         assert!(matches!(
-            VerfKeySet::from_identity(
-                &identity,
-                &SigningSchemeSet::new(SigningSchemeType::iter()).unwrap()
-            ),
+            VerfKeySet::from_identity(&identity, &all),
             Err(SigningError::MissingRootSeed(_))
         ));
     }
@@ -168,13 +162,13 @@ mod tests {
         let mut rng = AesRng::seed_from_u64(4);
         let identity = seeded_identity(&mut rng);
         let other_identity = seeded_identity(&mut rng);
-        let schemes = SigningSchemeSet::new(SigningSchemeType::iter()).unwrap();
+        let schemes: Vec<_> = SigningSchemeType::iter().collect();
 
         let base = VerfKeySet::from_identity(&identity, &schemes).unwrap();
         let base_id = base.id().unwrap();
         assert_eq!(base_id, base.id().unwrap(), "the id is not deterministic");
 
-        for scheme in schemes.iter() {
+        for &scheme in &schemes {
             let mut swapped = base.keys.clone();
             swapped.insert(
                 scheme,

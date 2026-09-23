@@ -9,7 +9,8 @@
 
 use super::common::{DSEP_SIGNCRYPTION, hybrid_decrypt, hybrid_encrypt, receiver_binding};
 use super::{
-    SigncryptionPayload, UnifiedSigncryption, UnifiedSigncryptionKey, UnifiedUnsigncryptionKey,
+    SigncryptionFormat, SigncryptionPayload, UnifiedSigncryption, UnifiedSigncryptionKey,
+    UnifiedUnsigncryptionKey,
 };
 use crate::cryptography::encryption::{HasPkeScheme, UnifiedPrivateEncKey};
 use crate::cryptography::error::CryptographyError;
@@ -69,7 +70,7 @@ pub(super) fn inner_signcryption(
         bc2wrap::serialize(&ciphertext)
             .map_err(|e| CryptographyError::BincodeError(e.to_string()))?,
         signcrypt_key.encryption_scheme_type(),
-        signcrypt_key.signing_schemes(),
+        SigncryptionFormat::EcdsaV0,
     ))
 }
 
@@ -191,7 +192,7 @@ mod tests {
     use super::*;
     use crate::consts::SAFE_SER_SIZE_LIMIT;
     use crate::cryptography::encryption::PkeSchemeType;
-    use crate::cryptography::signatures::{SigningSchemeSet, SigningSchemeType, gen_sig_keys};
+    use crate::cryptography::signatures::gen_sig_keys;
     use crate::vault::storage::tests::TestType;
     use aes_prng::AesRng;
     use rand::SeedableRng;
@@ -277,8 +278,8 @@ mod tests {
             let cipher = signcrypt_key.signcrypt(&mut f.rng, DSEP, &payload).unwrap();
             assert_eq!(cipher.pke_type, scheme);
             assert_eq!(
-                cipher.signing_schemes,
-                SigningSchemeSet::single(SigningSchemeType::Ecdsa256k1)
+                cipher.format,
+                SigncryptionFormat::EcdsaV0
             );
 
             let kem_ct: HybridKemCt = bc2wrap::deserialize_slice(&cipher.payload).unwrap();
@@ -391,7 +392,7 @@ mod tests {
             let frozen_cipher = UnifiedSigncryption::new(
                 frozen_payload.clone(),
                 scheme,
-                SigningSchemeSet::single(SigningSchemeType::Ecdsa256k1),
+                SigncryptionFormat::EcdsaV0,
             );
             let opened: TestType = unsign_key
                 .unsigncrypt(DSEP, &frozen_cipher)

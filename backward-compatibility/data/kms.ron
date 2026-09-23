@@ -1806,17 +1806,6 @@
     (
         kms_core_version_min: "0.15.0",
         kms_core_module: "kms",
-        metadata: SigningSchemeSet((
-            test_filename: "signing_scheme_set",
-            schemes: [
-                0,
-                4,
-            ],
-        )),
-    ),
-    (
-        kms_core_version_min: "0.15.0",
-        kms_core_module: "kms",
         metadata: BackupCiphertext((
             test_filename: "backup_ciphertext",
             unified_cipher_filename: "unified_ciphertext_handle",

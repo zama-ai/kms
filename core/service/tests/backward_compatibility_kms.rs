@@ -17,7 +17,7 @@ use backward_compatibility::{
     MlKem1024P384PublicKeyTest, NodeInfoTest, OperatorBackupOutputTest,
     PrepKeygenSignedPayloadTest, PrivateSigKeyTest, PrssSetupCombinedTest,
     PublicDecSignedPayloadTest, PublicSigKeyTest, RecoveryValidationMaterialTest,
-    RootSigningSeedTest, SchemeDigestsTest, SigncryptionPayloadTest, SigningSchemeSetTest,
+    RootSigningSeedTest, SchemeDigestsTest, SigncryptionPayloadTest,
     SoftwareVersionTest, StoredEip712DomainTest, StoredTypedSignatureTest, TestMetadataKMS,
     TestType, Testcase, ThresholdFheKeysTest, TypedPlaintextTest, UnifiedCipherTest,
     UnifiedPublicSigKeyTest, UnifiedSigncryptionKeyTest, UnifiedSigncryptionTest,
@@ -55,13 +55,13 @@ use kms_lib::{
         },
         hybrid_ml_kem::HybridKemCt,
         signatures::{
-            NodeSigningIdentity, PrivateSigKey, PublicSigKey, RootSigningSeed, SigningSchemeSet,
+            NodeSigningIdentity, PrivateSigKey, PublicSigKey, RootSigningSeed,
             SigningSchemeType, StoredTypedSignature, UnifiedPublicSigKey, compute_eip712_signature,
             gen_sig_keys,
         },
         signcryption::{
-            Signcrypt, SigncryptionPayload, UnifiedSigncryption, UnifiedSigncryptionKeyOwned,
-            UnifiedUnsigncryptionKeyOwned,
+            Signcrypt, SigncryptionFormat, SigncryptionPayload, UnifiedSigncryption,
+            UnifiedSigncryptionKeyOwned, UnifiedUnsigncryptionKeyOwned,
         },
     },
     engine::{
@@ -807,35 +807,6 @@ fn test_mlkem1024_p384_private_key(
     Ok(test.success(format))
 }
 
-/// A `SigningSchemeSet` written by an earlier release must still load, and must
-/// still hold the schemes it was written with.
-///
-/// The expected value is rebuilt from the wire discriminants in the test
-/// metadata rather than from any constructor shortcut, so a reordering of
-/// `SigningSchemeType` would be caught here rather than quietly reinterpreting
-/// the stored bytes as a different set.
-fn test_signing_scheme_set(
-    dir: &Path,
-    test: &SigningSchemeSetTest,
-    format: DataFormat,
-) -> Result<TestSuccess, TestFailure> {
-    let original: SigningSchemeSet = load_and_unversionize(dir, test, format)?;
-
-    let expected = SigningSchemeSet::new(test.schemes.iter().map(|wire| {
-        SigningSchemeType::try_from(*wire).expect("the test metadata names a known signing scheme")
-    }))
-    .expect("the test metadata names at least one scheme");
-
-    if original != expected {
-        Err(test.failure(
-            format!("Invalid SigningSchemeSet:\n Expected :\n{expected:?}\nGot:\n{original:?}"),
-            format,
-        ))
-    } else {
-        Ok(test.success(format))
-    }
-}
-
 fn test_unified_signcryption(
     dir: &Path,
     test: &UnifiedSigncryptionTest,
@@ -1179,7 +1150,7 @@ fn test_recovery_material(
             signcryption: UnifiedSigncryption::new(
                 payload.to_vec(),
                 BACKUP_PKE_SCHEME,
-                SigningSchemeSet::single(SigningSchemeType::Ecdsa256k1),
+                SigncryptionFormat::EcdsaV0,
             ),
         };
         cts.insert(cus_role, cts_out.clone());
@@ -1224,7 +1195,7 @@ fn test_internal_recovery_request(
         let signcryption = UnifiedSigncryption::new(
             payload.to_vec(),
             BACKUP_PKE_SCHEME,
-            SigningSchemeSet::single(SigningSchemeType::Ecdsa256k1),
+            SigncryptionFormat::EcdsaV0,
         );
         cts.insert(cur_role, InnerOperatorBackupOutput { signcryption });
     }
@@ -1311,7 +1282,7 @@ fn test_internal_custodian_recovery_output(
     let signcryption = UnifiedSigncryption::new(
         buf.to_vec(),
         BACKUP_PKE_SCHEME,
-        SigningSchemeSet::single(SigningSchemeType::Ecdsa256k1),
+        SigncryptionFormat::EcdsaV0,
     );
 
     let new_versionized = InternalCustodianRecoveryOutput {
@@ -1846,9 +1817,6 @@ impl TestedModule for KMS {
             }
             Self::Metadata::SigncryptionPayload(test) => {
                 test_signcryption_payload(test_dir.as_ref(), test, format).into()
-            }
-            Self::Metadata::SigningSchemeSet(test) => {
-                test_signing_scheme_set(test_dir.as_ref(), test, format).into()
             }
             Self::Metadata::UnifiedSigncryptionKeyOwned(test) => {
                 test_signcryption_keys(test_dir.as_ref(), test, format).into()

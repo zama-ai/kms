@@ -9,41 +9,15 @@ use crate::cryptography::encryption::{UnifiedPrivateEncKey, UnifiedPublicEncKey}
 use crate::cryptography::error::CryptographyError;
 use crate::cryptography::hybrid_composite_ml_kem;
 use crate::cryptography::hybrid_ml_kem::{self, HybridKemCt};
-use crate::cryptography::signatures::{SigningSchemeSet, SigningSchemeType};
 use hashing::{DomainSep, serialize_hash_element};
 use rand::{CryptoRng, RngCore};
 use zeroize::Zeroizing;
 
 pub(super) const DSEP_SIGNCRYPTION: DomainSep = *b"SIGNCRYP";
 
-/// The layout of a signcryption's encrypted plaintext.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(super) enum SigncryptionFormat {
-    /// `msg ‖ sig ‖ H(sender verification key)`, ECDSA only. Frozen; see the
-    /// module documentation.
-    EcdsaV0,
-    /// A self-describing, versioned, multi-signature envelope.
-    CompositeV1,
-}
-
-/// The format a signcryption under `schemes` uses.
-///
-/// A total function of the scheme set, deliberately. The alternative — sniffing
-/// the decrypted bytes for a magic prefix — cannot work: an
-/// [`SigncryptionFormat::EcdsaV0`] plaintext begins with attacker-influenced
-/// message content and has no tag to find, so detection would be a heuristic, in
-/// a parser sitting directly under a decryption key.
-pub(super) fn format_for(schemes: &SigningSchemeSet) -> SigncryptionFormat {
-    if schemes.as_slice() == [SigningSchemeType::Ecdsa256k1].as_slice() {
-        SigncryptionFormat::EcdsaV0
-    } else {
-        SigncryptionFormat::CompositeV1
-    }
-}
-
-/// The error for a scheme set no implemented envelope format covers.
-pub(super) fn unsupported_format(schemes: &SigningSchemeSet) -> CryptographyError {
-    CryptographyError::UnsupportedSigncryptionFormat(schemes.to_string())
+/// The error for something no implemented envelope format covers.
+pub(super) fn unsupported_format(what: impl std::fmt::Display) -> CryptographyError {
+    CryptographyError::UnsupportedSigncryptionFormat(what.to_string())
 }
 
 /// The digest of the receiver's public encryption key, as it appears in the
@@ -182,33 +156,4 @@ mod tests {
         );
     }
 
-    /// The singleton ECDSA set — and only it — selects the frozen layout. This
-    /// is what keeps user decryption on `EcdsaV0` without a dedicated branch.
-    #[test]
-    fn only_the_ecdsa_singleton_is_the_legacy_format() {
-        use strum::IntoEnumIterator;
-
-        assert_eq!(
-            format_for(&SigningSchemeSet::single(SigningSchemeType::Ecdsa256k1)),
-            SigncryptionFormat::EcdsaV0
-        );
-
-        for scheme in SigningSchemeType::iter().filter(|s| *s != SigningSchemeType::Ecdsa256k1) {
-            assert_eq!(
-                format_for(&SigningSchemeSet::single(scheme)),
-                SigncryptionFormat::CompositeV1,
-                "{scheme} alone must not select the frozen ECDSA layout"
-            );
-        }
-
-        // Adding any scheme to ECDSA leaves the legacy format behind, which is
-        // what stops a composite signcryption being parsed as a legacy one.
-        assert_eq!(
-            format_for(
-                &SigningSchemeSet::new([SigningSchemeType::Ecdsa256k1, SigningSchemeType::MlDsa87])
-                    .unwrap()
-            ),
-            SigncryptionFormat::CompositeV1
-        );
-    }
 }

@@ -8,13 +8,11 @@ pub mod ecdsa;
 mod eddsa;
 pub mod identity;
 mod mldsa;
-pub mod scheme_set;
 pub mod seed;
 pub mod typed_signature;
 pub mod verf_key_set;
 
-pub use composite::{CompositeSignature, CompositeSignatureVersions};
-pub use scheme_set::SigningSchemeSet;
+pub use composite::{CompositeSignature, CompositeSignatureVersions, canonical_schemes};
 pub use typed_signature::{StoredTypedSignature, StoredTypedSignatureVersions};
 pub use verf_key_set::VerfKeySet;
 
@@ -779,12 +777,12 @@ mod tests {
     /// Declaration order is ascending wire order.
     ///
     /// Two things depend on this and neither would fail loudly if it broke.
-    /// [`SigningSchemeSet`] treats "canonical" as ascending wire order, but
-    /// sorts with the derived [`Ord`], which follows declaration order;
-    /// so its digest walks the members in derived-`Ord` order
-    /// while the set it reports is ordered by wire value. If the two orders ever
-    /// disagreed, a key set's identifier would be computed over a different
-    /// ordering than the scheme set naming it, silently.
+    /// [`composite::canonical_schemes`] calls "canonical" ascending wire order
+    /// but sorts with the derived [`Ord`], which follows declaration order; and
+    /// [`verf_key_set::VerfKeySet`] reports its schemes in `BTreeMap` order, the
+    /// same derived `Ord`. If the two orders ever disagreed, a signature's
+    /// preimage would name its schemes in a different order than the key set
+    /// verifying it reports, silently.
     #[test]
     fn declaration_order_is_wire_order() {
         // `EnumIter` yields variants in declaration order, so the index is the

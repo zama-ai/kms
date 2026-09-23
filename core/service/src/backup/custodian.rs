@@ -1,4 +1,4 @@
-use crate::backup::BACKUP_PKE_SCHEME;
+use crate::backup::{BACKUP_PKE_SCHEME, backup_format_from_wire, backup_format_to_wire};
 use crate::backup::operator::DSEP_BACKUP_MATERIAL;
 use crate::cryptography::{
     encryption::{HasPkeScheme, UnifiedPrivateEncKey, UnifiedPublicEncKey},
@@ -11,7 +11,7 @@ use crate::cryptography::{
 use crate::engine::validation::{RequestIdParsingErr, parse_optional_grpc_request_id};
 use crate::{
     consts::SAFE_SER_SIZE_LIMIT,
-    cryptography::signatures::{PublicSigKey, SigningSchemeSet},
+    cryptography::signatures::PublicSigKey,
 };
 use hashing::DomainSep;
 use kms_grpc::RequestId;
@@ -79,7 +79,7 @@ impl TryFrom<CustodianRecoveryOutput> for InternalCustodianRecoveryOutput {
             signcryption: UnifiedSigncryption::new(
                 backup_output.signcryption.clone(),
                 backup_output.pke_type.try_into()?,
-                SigningSchemeSet::single(backup_output.signing_type.try_into()?),
+                backup_format_from_wire(backup_output.signing_type)?,
             ),
             custodian_role: Role::indexed_from_one(value.custodian_role as usize),
         })
@@ -90,21 +90,7 @@ impl TryFrom<InternalCustodianRecoveryOutput> for CustodianRecoveryOutput {
     type Error = anyhow::Error;
 
     fn try_from(value: InternalCustodianRecoveryOutput) -> Result<Self, Self::Error> {
-        // TODO stop gap
-        // `OperatorBackupOutput` has room for a single signing scheme, so a
-        // composite signcryption cannot be described by it. Fail rather than
-        // name one of its schemes and silently drop the rest.
-        let signing_type = value
-            .signcryption
-            .sole_signing_scheme()
-            .ok_or_else(|| {
-                anyhow::anyhow!(
-                    "cannot represent a signcryption signed under {} in an OperatorBackupOutput, \
-                     which carries a single signing scheme",
-                    value.signcryption.signing_schemes
-                )
-            })?
-            .as_wire();
+        let signing_type = backup_format_to_wire(value.signcryption.format)?;
         Ok(CustodianRecoveryOutput {
             backup_output: Some(OperatorBackupOutput {
                 signcryption: value.signcryption.payload,

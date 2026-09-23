@@ -13,7 +13,8 @@
 //! # Envelope formats
 //!
 //! A signcryption's encrypted plaintext has a layout, and there is more than
-//! one. Which one applies is a total function of the signcryption's scheme set.
+//! one. Which one applies is recorded in [`UnifiedSigncryption::format`]; on the
+//! write path it follows from the scheme set, via [`SigncryptionFormat::for_schemes`].
 //!
 //! [`SigncryptionFormat::EcdsaV0`] is the original layout and is **frozen**:
 //! every user-decryption ciphertext produced since 0.11 uses it, the deployed
@@ -35,15 +36,13 @@
 //!   fixture frozen at 0.13.0. Moving an RNG draw in [`inner_signcryption`]
 //!   breaks it.
 //!
-//! [`SigncryptionFormat::CompositeV1`] will carry one signature per scheme, for
-//! the custodian-backup chain. Not implemented yet: asking for it is a
-//! [`CryptographyError::UnsupportedSigncryptionFormat`].
+//! [`SigncryptionFormat::CompositeV1`] carries one signature per scheme, for the
+//! custodian-backup chain.
 
 mod common;
 pub mod composite_v1;
 mod ecdsa_v0;
 
-pub use composite_v1::{CompositeSigncryptionKey, CompositeUnsigncryptionKey};
 pub(crate) use ecdsa_v0::insecure_decrypt_ignoring_signature;
 
 use crate::consts::SAFE_SER_SIZE_LIMIT;
@@ -52,7 +51,7 @@ use crate::cryptography::encryption::{
 };
 use crate::cryptography::error::CryptographyError;
 use crate::cryptography::signatures::{
-    HasSigningScheme, PrivateSigKey, PublicSigKey, SigningSchemeSet, SigningSchemeType,
+    HasSigningScheme, PrivateSigKey, PublicSigKey, SigningSchemeType,
 };
 use crate::cryptography::zeroizing_writer::ZeroizingWriter;
 use hashing::DomainSep;
@@ -196,12 +195,9 @@ impl<'a> UnifiedSigncryptionKey<'a> {
         }
     }
 
-    /// The schemes this key signs under.
-    ///
-    /// A single scheme today, because the key it holds is the ECDSA
-    /// [`PrivateSigKey`].
-    pub fn signing_schemes(&self) -> SigningSchemeSet {
-        SigningSchemeSet::single(self.signing_key.signing_scheme_type())
+    /// The envelope format this key produces.
+    pub fn format(&self) -> SigncryptionFormat {
+        SigncryptionFormat::for_schemes(&[self.signing_key.signing_scheme_type()])
     }
 }
 
@@ -241,15 +237,10 @@ impl<'a> UnifiedUnsigncryptionKey<'a> {
         }
     }
 
-    /// The schemes this key accepts a signature under.
-    ///
-    /// The counterpart of [`UnifiedSigncryptionKey::signing_schemes`], and a
-    /// single scheme for the same reason.
-    pub fn signing_schemes(&self) -> SigningSchemeSet {
-        SigningSchemeSet::single(self.sender_verf_key.signing_scheme_type())
+    /// The envelope format this key can open.
+    pub fn format(&self) -> SigncryptionFormat {
+        SigncryptionFormat::for_schemes(&[self.sender_verf_key.signing_scheme_type()])
     }
-
-    //  TODO this file should be split up and this moved to signcryption
 }
 
 impl HasPkeScheme for UnifiedUnsigncryptionKey<'_> {
@@ -326,13 +317,49 @@ impl HasSigningScheme for UnifiedUnsigncryptionKeyOwned {
 }
 
 #[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize, VersionsDispatch)]
+pub enum SigncryptionFormatVersions {
+    V0(SigncryptionFormat),
+}
+
+/// The layout of a signcryption's encrypted plaintext.
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Hash, Serialize, Deserialize, Versionize)]
+#[versionize(SigncryptionFormatVersions)]
+pub enum SigncryptionFormat {
+    /// `msg ‖ sig ‖ H(sender verification key)`, ECDSA only. Frozen; see the
+    /// module documentation.
+    EcdsaV0,
+    /// A self-describing, versioned, multi-signature envelope.
+    CompositeV1,
+}
+
+impl SigncryptionFormat {
+    /// The format a signcryption produced under `schemes` must use.
+    pub fn for_schemes(schemes: &[SigningSchemeType]) -> Self {
+        if schemes == [SigningSchemeType::Ecdsa256k1] {
+            Self::EcdsaV0
+        } else {
+            Self::CompositeV1
+        }
+    }
+}
+
+impl std::fmt::Display for SigncryptionFormat {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::EcdsaV0 => write!(f, "EcdsaV0"),
+            Self::CompositeV1 => write!(f, "CompositeV1"),
+        }
+    }
+}
+
+#[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize, VersionsDispatch)]
 pub enum UnifiedSigncryptionVersions {
     V0(UnifiedSigncryptionV0),
     V1(UnifiedSigncryption),
 }
 
-/// A signcryption as it was stored and sent before composite signing, carrying
-/// exactly one signature scheme.
+/// A signcryption as it was stored and sent before multi-signature envelopes,
+/// naming a signing scheme where the current form names a layout.
 ///
 /// Kept so that legacy material can still be read.
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize, Debug, Version)]
@@ -349,38 +376,30 @@ impl Upgrade<UnifiedSigncryption> for UnifiedSigncryptionV0 {
         Ok(UnifiedSigncryption {
             payload: self.payload,
             pke_type: self.pke_type,
-            signing_schemes: SigningSchemeSet::single(self.signing_type),
+            format: SigncryptionFormat::for_schemes(&[self.signing_type]),
         })
     }
 }
 
-/// A signcrypted message, tagged with the schemes used to protect it.
+/// A signcrypted message, tagged with the layout of its encrypted plaintext.
 ///
-/// `signing_schemes` names every scheme whose signature is inside `payload`.
+/// `format` says how to parse `payload` once decrypted. It does *not* say which
+/// schemes signed it: that is inside the envelope, where it is authenticated.
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize, Debug, Versionize)]
 #[versionize(UnifiedSigncryptionVersions)]
 pub struct UnifiedSigncryption {
     pub payload: Vec<u8>,
     pub pke_type: PkeSchemeType,
-    pub signing_schemes: SigningSchemeSet,
+    pub format: SigncryptionFormat,
 }
 impl UnifiedSigncryption {
-    /// A signcryption protected by every scheme in `signing_schemes`.
-    pub fn new(
-        payload: Vec<u8>,
-        pke_type: PkeSchemeType,
-        signing_schemes: SigningSchemeSet,
-    ) -> Self {
+    /// A signcryption whose encrypted plaintext uses `format`.
+    pub fn new(payload: Vec<u8>, pke_type: PkeSchemeType, format: SigncryptionFormat) -> Self {
         Self {
             payload,
             pke_type,
-            signing_schemes,
+            format,
         }
-    }
-
-    /// The one scheme protecting this signcryption, or `None` if several do.
-    pub fn sole_signing_scheme(&self) -> Option<SigningSchemeType> {
-        self.signing_schemes.sole()
     }
 }
 
@@ -481,12 +500,11 @@ impl<'a> Signcrypt for UnifiedSigncryptionKey<'a> {
                 "Could not serialize message for signcryption: {e}",
             ))
         })?;
-        let schemes = self.signing_schemes();
-        match common::format_for(&schemes) {
-            common::SigncryptionFormat::EcdsaV0 => {
+        match self.format() {
+            SigncryptionFormat::EcdsaV0 => {
                 ecdsa_v0::inner_signcryption(self, rng, dsep, serialized_msg.as_slice())
             }
-            common::SigncryptionFormat::CompositeV1 => Err(common::unsupported_format(&schemes)),
+            format @ SigncryptionFormat::CompositeV1 => Err(common::unsupported_format(format)),
         }
     }
 }
@@ -528,7 +546,7 @@ impl<'a> SigncryptFHEPlaintext for UnifiedSigncryptionKey<'a> {
         let mut serialized_msg = ZeroizingWriter::new();
         bc2wrap::serialize_into(&*signcryption_msg, &mut serialized_msg)
             .map_err(|e| CryptographyError::BincodeError(e.to_string()))?;
-        // Deliberately not routed through `format_for`: the wire type this
+        // Deliberately not routed through `SigncryptionFormat::for_schemes`: the wire type this
         // produces, `TypedSigncryptedCiphertext.signcrypted_ciphertext`, is a
         // bare `bytes` field with nowhere to record a format, so the only
         // layout its readers can parse is the frozen one.
@@ -550,19 +568,15 @@ impl SigncryptFHEPlaintext for UnifiedSigncryptionKeyOwned {
     }
 }
 
-/// Open `cipher` in whichever format its scheme set names.
+/// Open `cipher` in whichever format it names.
 fn open_dispatch(
     unsign_key: &UnifiedUnsigncryptionKey,
     dsep: &DomainSep,
     cipher: &UnifiedSigncryption,
 ) -> Result<Zeroizing<Vec<u8>>, CryptographyError> {
-    match common::format_for(&cipher.signing_schemes) {
-        common::SigncryptionFormat::EcdsaV0 => {
-            ecdsa_v0::inner_unsigncrypt(unsign_key, dsep, cipher)
-        }
-        common::SigncryptionFormat::CompositeV1 => {
-            Err(common::unsupported_format(&cipher.signing_schemes))
-        }
+    match cipher.format {
+        SigncryptionFormat::EcdsaV0 => ecdsa_v0::inner_unsigncrypt(unsign_key, dsep, cipher),
+        format @ SigncryptionFormat::CompositeV1 => Err(common::unsupported_format(format)),
     }
 }
 
@@ -626,7 +640,7 @@ impl<'a> UnsigncryptFHEPlaintext for UnifiedUnsigncryptionKey<'a> {
         let parsed_signcryption = UnifiedSigncryption::new(
             signcryption.to_owned(),
             self.encryption_key.encryption_scheme_type(),
-            self.signing_schemes(),
+            SigncryptionFormat::EcdsaV0,
         );
         let decrypted_signcryption = ecdsa_v0::inner_unsigncrypt(self, dsep, &parsed_signcryption)?;
         // LEGACY should be using safe_deserialization from tfhe-rs
@@ -930,50 +944,71 @@ mod tests {
             .unwrap_err();
     }
 
-    /// Everything produced by the pre-composite path must be tagged with the
-    /// singleton ECDSA set, because that is what keeps it on the frozen layout.
+    /// The singleton ECDSA set — and only it — selects the frozen layout. This
+    /// is what keeps user decryption on `EcdsaV0` without a dedicated branch.
     #[test]
-    fn the_legacy_path_produces_the_ecdsa_singleton() {
+    fn only_the_ecdsa_singleton_is_the_legacy_format() {
+        use strum::IntoEnumIterator;
+
+        assert_eq!(
+            SigncryptionFormat::for_schemes(&[SigningSchemeType::Ecdsa256k1]),
+            SigncryptionFormat::EcdsaV0
+        );
+
+        for scheme in SigningSchemeType::iter().filter(|s| *s != SigningSchemeType::Ecdsa256k1) {
+            assert_eq!(
+                SigncryptionFormat::for_schemes(&[scheme]),
+                SigncryptionFormat::CompositeV1,
+                "{scheme} alone must not select the frozen ECDSA layout"
+            );
+        }
+
+        // Adding any scheme to ECDSA leaves the legacy format behind, which is
+        // what stops a composite signcryption being parsed as a legacy one.
+        assert_eq!(
+            SigncryptionFormat::for_schemes(&[
+                SigningSchemeType::Ecdsa256k1,
+                SigningSchemeType::MlDsa87
+            ]),
+            SigncryptionFormat::CompositeV1
+        );
+    }
+
+    /// Everything produced by the single-ECDSA path must be tagged with the
+    /// frozen layout, because that is the only layout its bytes can be read as.
+    #[test]
+    fn the_legacy_path_produces_the_frozen_format() {
         let (mut rng, keys) = test_setup();
-        let expected = SigningSchemeSet::single(SigningSchemeType::Ecdsa256k1);
+        let expected = SigncryptionFormat::EcdsaV0;
 
         let cipher = keys
             .signcrypt_key
             .signcrypt(&mut rng, b"TESTTEST", &TestType { i: 7 })
             .unwrap();
-        assert_eq!(cipher.signing_schemes, expected);
-        assert_eq!(
-            cipher.sole_signing_scheme(),
-            Some(SigningSchemeType::Ecdsa256k1)
-        );
+        assert_eq!(cipher.format, expected);
 
         let plaintext_cipher = keys
             .signcrypt_key
             .signcrypt_plaintext(&mut rng, b"TESTTEST", &[1], FheTypes::Bool, &[9u8; 4])
             .unwrap();
-        assert_eq!(plaintext_cipher.signing_schemes, expected);
+        assert_eq!(plaintext_cipher.format, expected);
 
-        assert_eq!(keys.signcrypt_key.reference().signing_schemes(), expected);
-        assert_eq!(
-            keys.unsigncryption_key.reference().signing_schemes(),
-            expected
-        );
+        assert_eq!(keys.signcrypt_key.reference().format(), expected);
+        assert_eq!(keys.unsigncryption_key.reference().format(), expected);
     }
 
-    /// A signcryption claiming a composite scheme set must be refused rather
-    /// than parsed as a legacy one. Until the composite envelope lands that is
-    /// an "unsupported format" error; once it lands, the composite opener takes
-    /// over and this must still never reach [`inner_unsigncrypt`].
+    /// A signcryption claiming the multi-signature layout must be refused rather
+    /// than parsed as a legacy one. Until that envelope is wired in that is an
+    /// "unsupported format" error; once it is, the composite opener takes over
+    /// and this must still never reach [`ecdsa_v0::inner_unsigncrypt`].
     #[test]
-    fn a_composite_scheme_set_does_not_reach_the_legacy_opener() {
+    fn a_composite_format_does_not_reach_the_legacy_opener() {
         let (mut rng, keys) = test_setup();
         let mut cipher = keys
             .signcrypt_key
             .signcrypt(&mut rng, b"TESTTEST", &TestType { i: 11 })
             .unwrap();
-        cipher.signing_schemes =
-            SigningSchemeSet::new([SigningSchemeType::Ecdsa256k1, SigningSchemeType::MlDsa87])
-                .unwrap();
+        cipher.format = SigncryptionFormat::CompositeV1;
 
         let err = keys
             .unsigncryption_key
@@ -985,10 +1020,14 @@ mod tests {
         );
     }
 
-    /// Material written before composite signing must still read, and must mean
-    /// the same thing: one scheme, spelled as a set of one.
+    /// Material written before multi-signature envelopes must still read, and
+    /// must still name the layout its bytes are actually in.
+    ///
+    /// Only the ECDSA variant was ever written, and it is the one that has to
+    /// land on the frozen layout. The other schemes are exercised to pin what
+    /// the mapping would do rather than because such data exists.
     #[test]
-    fn v0_upgrades_to_the_singleton_set() {
+    fn v0_upgrades_to_the_frozen_format() {
         use strum::IntoEnumIterator;
 
         for scheme in SigningSchemeType::iter() {
@@ -997,17 +1036,22 @@ mod tests {
                 pke_type: PkeSchemeType::MlKem512,
                 signing_type: scheme,
             };
+            let expected = if scheme == SigningSchemeType::Ecdsa256k1 {
+                SigncryptionFormat::EcdsaV0
+            } else {
+                SigncryptionFormat::CompositeV1
+            };
+
             let upgraded = v0.clone().upgrade().unwrap();
             assert_eq!(upgraded.payload, v0.payload);
             assert_eq!(upgraded.pke_type, v0.pke_type);
-            assert_eq!(upgraded.signing_schemes, SigningSchemeSet::single(scheme));
-            assert_eq!(upgraded.sole_signing_scheme(), Some(scheme));
+            assert_eq!(upgraded.format, expected);
 
-            // The upgrade is exactly what the singleton constructor builds, so a
+            // The upgrade is exactly what the constructor builds, so a
             // regenerated artifact still compares equal to a frozen one.
             assert_eq!(
                 upgraded,
-                UnifiedSigncryption::new(v0.payload, v0.pke_type, SigningSchemeSet::single(scheme))
+                UnifiedSigncryption::new(v0.payload, v0.pke_type, expected)
             );
         }
     }

@@ -7,7 +7,7 @@ use crate::{
     anyhow_error_and_log,
     consts::SAFE_SER_SIZE_LIMIT,
     cryptography::encryption::{UnifiedPrivateEncKey, UnifiedPublicEncKey},
-    cryptography::signatures::{PrivateSigKey, PublicSigKey, Signature, SigningSchemeSet},
+    cryptography::signatures::{PrivateSigKey, PublicSigKey, Signature},
     cryptography::signcryption::{
         Signcrypt, UnifiedSigncryption, UnifiedSigncryptionKey, UnifiedUnsigncryptionKey,
         Unsigncrypt,
@@ -15,6 +15,7 @@ use crate::{
 };
 use crate::{
     backup::custodian::DSEP_BACKUP_CUSTODIAN,
+    backup::{backup_format_from_wire, backup_format_to_wire},
     cryptography::signatures::{internal_sign, internal_verify_sig},
 };
 use crate::{
@@ -181,7 +182,7 @@ impl TryFrom<OperatorBackupOutput> for InnerOperatorBackupOutput {
             signcryption: UnifiedSigncryption::new(
                 value.signcryption,
                 value.pke_type.try_into()?,
-                SigningSchemeSet::single(value.signing_type.try_into()?),
+                backup_format_from_wire(value.signing_type)?,
             ),
         })
     }
@@ -190,21 +191,7 @@ impl TryFrom<InnerOperatorBackupOutput> for OperatorBackupOutput {
     type Error = anyhow::Error;
 
     fn try_from(value: InnerOperatorBackupOutput) -> Result<Self, Self::Error> {
-        // TODO stop gap
-        // `OperatorBackupOutput` has room for a single signing scheme, so a
-        // composite signcryption cannot be described by it. Fail rather than
-        // name one of its schemes and silently drop the rest.
-        let signing_type = value
-            .signcryption
-            .sole_signing_scheme()
-            .ok_or_else(|| {
-                anyhow::anyhow!(
-                    "cannot represent a signcryption signed under {} in an OperatorBackupOutput, \
-                     which carries a single signing scheme",
-                    value.signcryption.signing_schemes
-                )
-            })?
-            .as_wire();
+        let signing_type = backup_format_to_wire(value.signcryption.format)?;
         Ok(Self {
             signcryption: value.signcryption.payload,
             pke_type: value.signcryption.pke_type as i32,
@@ -994,7 +981,7 @@ mod tests {
             signcryption: UnifiedSigncryption::new(
                 vec![1, 2, 3],
                 BACKUP_PKE_SCHEME,
-                SigningSchemeSet::single(SigningSchemeType::Ecdsa256k1),
+                SigncryptionFormat::EcdsaV0,
             ),
         };
         cts.insert(Role::indexed_from_one(1), cts_out.clone());

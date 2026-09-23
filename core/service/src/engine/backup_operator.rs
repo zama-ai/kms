@@ -1455,8 +1455,8 @@ mod tests {
     use crate::{
         backup::custodian::{CustodianSetupMessagePayload, HEADER, InternalCustodianContext},
         cryptography::{
-            signatures::{SigningSchemeSet, SigningSchemeType, gen_sig_keys},
-            signcryption::UnifiedSigncryption,
+            signatures::{SigningSchemeType, gen_sig_keys},
+            signcryption::{SigncryptionFormat, UnifiedSigncryption},
         },
         engine::base::derive_request_id,
     };
@@ -1823,7 +1823,7 @@ mod tests {
             signcryption: UnifiedSigncryption::new(
                 vec![1, 2, 3],
                 BACKUP_PKE_SCHEME,
-                SigningSchemeSet::single(SigningSchemeType::Ecdsa256k1),
+                SigncryptionFormat::EcdsaV0,
             ),
         };
         cts.insert(Role::indexed_from_one(1), cts_out.clone());
