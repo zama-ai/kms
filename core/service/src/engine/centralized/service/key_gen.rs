@@ -15,7 +15,7 @@ use crate::engine::validation::{
     RequestIdParsingErr, parse_grpc_request_id, validate_key_gen_request,
 };
 use crate::util::meta_store::{
-    EntryState, MetaStore, MetaStorePermit, add_req_to_meta_store, ensure_not_in_meta_store,
+    MetaStore, MetaStorePermit, add_req_to_meta_store, ensure_not_in_meta_store,
     retrieve_from_meta_store, try_delete_in_meta_store, update_err_req_in_meta_store,
 };
 use crate::vault::storage::crypto_material::{CentralizedCryptoMaterialStorage, PublicKeySet};
@@ -179,6 +179,10 @@ pub async fn key_gen_impl<
                 tonic::Code::AlreadyExists,
             ));
         }
+        // Consume the preprocessing before spawning, so no later request can resolve it.
+        try_delete_in_meta_store(&service.preprocessing_meta_store, &preproc_id)
+            .await
+            .map_err(|e| MetricedError::new(op_tag, Some(req_id), e.to_string(), e.code()))?;
         ongoing_key_gen.insert(preproc_id, token.clone());
     }
 
@@ -196,43 +200,10 @@ pub async fn key_gen_impl<
     let ongoing = Arc::clone(&service.ongoing_key_gen);
     let crypto_storage = service.crypto_storage.clone();
 
-    let preproc_meta_store = Arc::clone(&service.preprocessing_meta_store);
-
     service.tracker.spawn(
         async move {
             let _timer = timer;
             let _permit = permit;
-            // "Remove" the preprocessing material by deleting its entry from the meta store
-            tracing::info!("Deleting preprocessed material with ID {preproc_id} from meta store");
-            let delete_res = try_delete_in_meta_store(&preproc_meta_store, &preproc_id).await;
-            match delete_res {
-                Ok(EntryState::Done(Ok(_))) => {
-                    tracing::info!(
-                        "Successfully deleted preprocessing ID {preproc_id} after keygen completion for request ID {req_id}"
-                    );
-                }
-                Ok(EntryState::Done(Err(e))) => {
-                    MetricedError::handle_unreturnable_error(
-                        op_tag,
-                        Some(req_id),
-                        anyhow::anyhow!(
-                            "Preprocessing ID {preproc_id} finished with error: {e}"
-                        ),
-                    );
-                }
-                Ok(_) => {
-                    MetricedError::handle_unreturnable_error(
-                        op_tag,
-                        Some(req_id),
-                        anyhow::anyhow!(
-                            "Preprocessing ID {preproc_id} deleted but was not in Done state"
-                        ),
-                    );
-                }
-                Err(e) => {
-                    MetricedError::handle_unreturnable_error(op_tag, Some(req_id), e);
-                }
-            }
             key_gen_background(
                 meta_permit,
                 token,
@@ -538,6 +509,7 @@ pub(crate) mod tests {
                 service::{preprocessing_impl, tests::setup_central_test_kms},
             },
         },
+        util::meta_store::EntryState,
         vault::storage::{
             ram::{FailingRamStorage, RamStorage},
             store_versioned_at_request_and_epoch_id, store_versioned_at_request_id,
@@ -611,6 +583,56 @@ pub(crate) mod tests {
         let (kms, _) = setup_test_kms_with_preproc(&mut rng, &preproc_id).await;
         let request_id = derive_request_id("test_keygen_sunshine").unwrap();
         test_standard_keygen(&kms, &request_id, Some(&preproc_id), false).await
+    }
+
+    /// A keygen consumes its preprocessing before it returns, so a second keygen
+    /// with the same preprocessing ID fails with `NotFound`.
+    #[tokio::test]
+    async fn keygen_consumes_preproc() {
+        let mut rng = AesRng::seed_from_u64(42);
+        let preproc_id = derive_request_id("test_keygen_consumes_preproc_preproc").unwrap();
+        let (kms, _) = setup_test_kms_with_preproc(&mut rng, &preproc_id).await;
+        let request = KeyGenRequest {
+            signing_schemes: vec![kms_grpc::kms::v1::SigningSchemeType::Ecdsa256k1 as i32],
+            params: Some(FheParameter::Test.into()),
+            keyset_config: None,
+            keyset_added_info: None,
+            request_id: Some(
+                derive_request_id("test_keygen_consumes_preproc")
+                    .unwrap()
+                    .into(),
+            ),
+            context_id: None,
+            preproc_id: Some(preproc_id.into()),
+            domain: Some(alloy_to_protobuf_domain(&dummy_domain()).unwrap()),
+            epoch_id: None,
+            extra_data: vec![],
+        };
+
+        key_gen_impl(&kms, tonic::Request::new(request.clone()), false)
+            .await
+            .unwrap();
+        // No await point: the background task has not run yet.
+        assert!(matches!(
+            kms.preprocessing_meta_store
+                .try_read()
+                .unwrap()
+                .retrieve(&preproc_id),
+            Some(EntryState::Deleted)
+        ));
+
+        let second = KeyGenRequest {
+            request_id: Some(
+                derive_request_id("test_keygen_consumes_preproc_2")
+                    .unwrap()
+                    .into(),
+            ),
+            ..request
+        };
+        let err = key_gen_impl(&kms, tonic::Request::new(second), false)
+            .await
+            .unwrap_err();
+        assert_eq!(err.code(), tonic::Code::NotFound);
     }
 
     #[cfg(feature = "insecure")]
