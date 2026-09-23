@@ -931,23 +931,23 @@ impl<
             {
                 Ok(true) => tracing::info!(
                     "Rolled epoch {new_epoch_id} back: its reshared material and its epoch data are \
-                 deleted and the epoch is no longer registered."
+                 deleted and the epoch is no longer registered. Retry is safe."
                 ),
                 // An operator has to resolve this: either re-run the resharing, or destroy the
                 // epoch once the other request's material is expendable.
                 Ok(false) => tracing::error!(
                     "Epoch {new_epoch_id} holds material that this resharing did not write, so the \
-                 epoch remains registered and its epoch data remains in storage."
+                 epoch remains registered and its epoch data remains in storage. Do not retry without checking first."
                 ),
                 Err(e) => tracing::error!(
                     "Rollback of epoch {new_epoch_id} failed to delete its private material: {e:?}. The \
-                 epoch remains registered so that the deletion can be retried."
+                 epoch remains registered so that the deletion can be retried. Do not retry without checking first."
                 ),
             }
             // Remove regardless of whether the rollback succeeded or not, to avoid leaving the in-memory cache in a partial state.
             let removed = crypto_storage.purge_epoch_from_cache(&new_epoch_id).await;
             tracing::info!(
-                "Freed {removed} in-memory FHE key cache entries for rolled back epoch {new_epoch_id}"
+                "Freed {removed} in-memory FHE key cache entries for rolled back epoch {new_epoch_id}. Retry is safe."
             );
 
             return Err(anyhow::anyhow!(storage_err_msg));
