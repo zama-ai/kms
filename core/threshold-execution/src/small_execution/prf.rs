@@ -270,6 +270,66 @@ pub mod benchmarking {
     pub fn chi<Z: Ring + PRSSConversions>(pa: &ChiAes, ctr: u128, j: u8) -> anyhow::Result<Z> {
         super::chi(&pa.0, ctr, j)
     }
+
+    /// Encrypts consecutive counters together for the grouped-PRF experiment.
+    /// Panics for invalid counters, group sizes outside 1..=8, or rings other than F4/F8 over Z64/Z128.
+    pub fn psi_group<Z: Ring + PRSSConversions, const N: usize>(
+        pa: &PsiAes,
+        start: u128,
+    ) -> [Z; N] {
+        encrypt_counter_group(&pa.0.aes, start, None)
+    }
+
+    /// Encrypts consecutive counters with one threshold index for the grouped-PRF experiment.
+    /// Panics for invalid counters, group sizes outside 1..=8, or rings other than F4/F8 over Z64/Z128.
+    pub fn chi_group<Z: Ring + PRSSConversions, const N: usize>(
+        pa: &ChiAes,
+        start: u128,
+        j: u8,
+    ) -> [Z; N] {
+        encrypt_counter_group(&pa.0.aes, start, Some(j))
+    }
+
+    fn encrypt_counter_group<Z: Ring + PRSSConversions, const N: usize>(
+        aes: &Aes128,
+        start: u128,
+        threshold_index: Option<u8>,
+    ) -> [Z; N] {
+        assert!((1..=8).contains(&N));
+        assert!(matches!(Z::EXTENSION_DEGREE, 4 | 8));
+        assert!(matches!(Z::NUM_BITS_STAT_SEC_BASE_RING, 64 | 128));
+        let limit = if threshold_index.is_some() {
+            1 << 104
+        } else {
+            1 << 112
+        };
+        assert!(start < limit && (N as u128) <= limit - start);
+
+        // One block per coefficient; keep scratch space off the heap for all measured groups.
+        let mut blocks = [AesBlock::default(); 8 * 8];
+        let blocks = &mut blocks[..N * Z::EXTENSION_DEGREE];
+        for (offset, output_blocks) in blocks.chunks_exact_mut(Z::EXTENSION_DEGREE).enumerate() {
+            for (coefficient, block) in output_blocks.iter_mut().enumerate() {
+                block.copy_from_slice(&(start + offset as u128).to_le_bytes());
+                block[14] = coefficient as u8;
+                block[15] = 0;
+                if let Some(j) = threshold_index {
+                    block[13] = j;
+                }
+            }
+        }
+        aes.encrypt_blocks(blocks);
+        std::array::from_fn(|offset| {
+            let first = offset * Z::EXTENSION_DEGREE;
+            Z::from_u128_chunks(
+                blocks[first..first + Z::EXTENSION_DEGREE]
+                    .iter()
+                    .map(|block| u128::from_le_bytes((*block).into()))
+                    .collect(),
+            )
+        })
+    }
+
     /// Evaluates the mask PRF over a counter range.
     #[inline]
     pub fn phi_range(
@@ -279,6 +339,64 @@ pub mod benchmarking {
         bd1: u128,
     ) -> anyhow::Result<Vec<i128>> {
         super::phi_range(&pa.0, start, count, bd1)
+    }
+    #[cfg(test)]
+    mod grouped_tests {
+        use super::*;
+        use algebra::galois_rings::{
+            degree_4::{ResiduePolyF4Z64, ResiduePolyF4Z128},
+            degree_8::{ResiduePolyF8Z64, ResiduePolyF8Z128},
+        };
+
+        fn check_group<Z: Ring + PRSSConversions, const N: usize>() {
+            let key = PrfKey([23; 16]);
+            let psi_key = PsiAes::new(&key, SessionId::from(42));
+            let chi_key = ChiAes::new(&key, SessionId::from(42));
+            for start in [0, 255, (1 << 64) - 1, (1 << 112) - N as u128] {
+                assert_eq!(
+                    psi_group::<Z, N>(&psi_key, start),
+                    std::array::from_fn(|i| { psi::<Z>(&psi_key, start + i as u128).unwrap() })
+                );
+            }
+            for start in [0, 255, (1 << 64) - 1, (1 << 104) - N as u128] {
+                for j in [1, 4, 255] {
+                    assert_eq!(
+                        chi_group::<Z, N>(&chi_key, start, j),
+                        std::array::from_fn(|i| {
+                            chi::<Z>(&chi_key, start + i as u128, j).unwrap()
+                        })
+                    );
+                }
+            }
+        }
+
+        #[test]
+        fn groups_match_scalar_prfs() {
+            fn check_ring<Z: Ring + PRSSConversions>() {
+                check_group::<Z, 1>();
+                check_group::<Z, 2>();
+                check_group::<Z, 4>();
+                check_group::<Z, 8>();
+            }
+            check_ring::<ResiduePolyF4Z64>();
+            check_ring::<ResiduePolyF4Z128>();
+            check_ring::<ResiduePolyF8Z64>();
+            check_ring::<ResiduePolyF8Z128>();
+        }
+
+        #[test]
+        #[should_panic]
+        fn psi_group_rejects_crossing_limit() {
+            let key = PsiAes::new(&PrfKey([23; 16]), SessionId::from(42));
+            psi_group::<ResiduePolyF4Z128, 2>(&key, (1 << 112) - 1);
+        }
+
+        #[test]
+        #[should_panic]
+        fn chi_group_rejects_counter_overflow() {
+            let key = ChiAes::new(&PrfKey([23; 16]), SessionId::from(42));
+            chi_group::<ResiduePolyF4Z128, 2>(&key, u128::MAX, 1);
+        }
     }
 }
 

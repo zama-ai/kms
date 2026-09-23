@@ -1,12 +1,15 @@
+use aes_prng::AesRng;
 use algebra::{
     PRSSConversions,
+    base_ring::{Z64, Z128},
     galois_rings::{
         degree_4::{ResiduePolyF4Z64, ResiduePolyF4Z128},
         degree_8::{ResiduePolyF8Z64, ResiduePolyF8Z128},
     },
-    structure_traits::Ring,
+    structure_traits::{BaseRing, Ring},
 };
 use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
+use rand::SeedableRng;
 use std::hint::black_box;
 use threshold_types::session_id::SessionId;
 
@@ -47,6 +50,113 @@ fn bench_ring<Z: Ring + PRSSConversions>(c: &mut Criterion, ring: &str) {
         })
     });
     group.finish();
+    bench_counter_group::<Z, 1>(c, ring, &psi, &chi);
+    bench_counter_group::<Z, 2>(c, ring, &psi, &chi);
+    bench_counter_group::<Z, 4>(c, ring, &psi, &chi);
+    bench_counter_group::<Z, 8>(c, ring, &psi, &chi);
+    bench_accumulation::<Z>(c, ring);
+}
+
+fn bench_counter_group<Z: Ring + PRSSConversions, const N: usize>(
+    c: &mut Criterion,
+    ring: &str,
+    psi: &prf::PsiAes,
+    chi: &prf::ChiAes,
+) {
+    let mut group = c.benchmark_group(format!("prf_group/{ring}"));
+    group.throughput(Throughput::Elements(N as u64));
+    let mut counter = 0;
+    group.bench_function(BenchmarkId::new("psi_scalar", N), |b| {
+        b.iter(|| {
+            let start = black_box(counter);
+            let key = black_box(psi);
+            let outputs: [Z; N] =
+                std::array::from_fn(|i| prf::psi(key, start + i as u128).unwrap());
+            counter += N as u128;
+            black_box(outputs);
+        });
+    });
+    group.bench_function(BenchmarkId::new("psi_grouped", N), |b| {
+        b.iter(|| {
+            black_box(prf::psi_group::<Z, N>(black_box(psi), black_box(counter)));
+            counter += N as u128;
+        });
+    });
+    group.bench_function(BenchmarkId::new("chi_scalar", N), |b| {
+        b.iter(|| {
+            let start = black_box(counter);
+            let key = black_box(chi);
+            let j = black_box(1);
+            let outputs: [Z; N] =
+                std::array::from_fn(|i| prf::chi(key, start + i as u128, j).unwrap());
+            counter += N as u128;
+            black_box(outputs);
+        });
+    });
+    group.bench_function(BenchmarkId::new("chi_grouped", N), |b| {
+        b.iter(|| {
+            black_box(prf::chi_group::<Z, N>(
+                black_box(chi),
+                black_box(counter),
+                black_box(1),
+            ));
+            counter += N as u128;
+        });
+    });
+    group.finish();
+}
+
+fn bench_accumulation<Z: Ring>(c: &mut Criterion, ring: &str) {
+    let mut rng = AesRng::seed_from_u64(42);
+    let mut group = c.benchmark_group(format!("prss_arithmetic/{ring}"));
+    // One output visits 495 PRSS terms or 1,980 PRZS terms at 13 parties/t4.
+    for terms in [495, 1980] {
+        let left: Vec<_> = (0..terms).map(|_| Z::sample(&mut rng)).collect();
+        let right: Vec<_> = (0..terms).map(|_| Z::sample(&mut rng)).collect();
+        group.throughput(Throughput::Elements(terms as u64));
+        group.bench_function(BenchmarkId::new("accumulate", terms), |b| {
+            b.iter(|| {
+                let mut sum = Z::ZERO;
+                for (&left, &right) in black_box(left.as_slice())
+                    .iter()
+                    .zip(black_box(right.as_slice()))
+                {
+                    sum += left * right;
+                }
+                black_box(sum);
+            });
+        });
+    }
+    group.finish();
+}
+
+fn bench_operand_preparation<Z: BaseRing>(c: &mut Criterion, ring: &str) {
+    let mut rng = AesRng::seed_from_u64(42);
+    let mut group = c.benchmark_group(format!("prss_arithmetic/{ring}"));
+    for terms in [495, 1980] {
+        let operands: Vec<[Z; 4]> = (0..terms)
+            .map(|_| std::array::from_fn(|_| Z::sample(&mut rng)))
+            .collect();
+        group.throughput(Throughput::Elements(terms as u64));
+        group.bench_function(BenchmarkId::new("prepare_left", terms), |b| {
+            b.iter(|| {
+                // Prototype table: retain raw coefficients and the five fixed-left Karatsuba sums.
+                // Includes table allocation; inputs are prepared outside timing.
+                let prepared: Vec<_> = black_box(operands.as_slice())
+                    .iter()
+                    .map(|&a| {
+                        let low = a[0] + a[1];
+                        let high = a[2] + a[3];
+                        let even = a[0] + a[2];
+                        let odd = a[1] + a[3];
+                        (a, [low, high, even, odd, even + odd])
+                    })
+                    .collect();
+                black_box(prepared);
+            });
+        });
+    }
+    group.finish();
 }
 
 fn bench_prf(c: &mut Criterion) {
@@ -54,6 +164,8 @@ fn bench_prf(c: &mut Criterion) {
     bench_ring::<ResiduePolyF4Z128>(c, "f4_z128");
     bench_ring::<ResiduePolyF8Z64>(c, "f8_z64");
     bench_ring::<ResiduePolyF8Z128>(c, "f8_z128");
+    bench_operand_preparation::<Z64>(c, "f4_z64");
+    bench_operand_preparation::<Z128>(c, "f4_z128");
     let phi = prf::PhiAes::new(&prf::PrfKey([23; 16]), SessionId::from(42));
     let mut group = c.benchmark_group("prf/phi_range");
     let mut counter = 0;
