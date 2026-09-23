@@ -23,9 +23,6 @@ use tfhe::{
 };
 use tracing::instrument;
 
-// Failing to fork the mask generator returns an error part-way through encryption, after some
-// of the `lwe_keyswitch_key` state has already been written. That is hard to avoid here, so the
-// key must be treated as spoiled on error rather than reused.
 pub fn generate_lwe_keyswitch_key<Z, Gen, const EXTENSION_DEGREE: usize>(
     input_lwe_sk: &LweSecretKeyShare<Z, EXTENSION_DEGREE>,
     output_lwe_sk: &LweSecretKeyShare<Z, EXTENSION_DEGREE>,
