@@ -1,0 +1,107 @@
+# ============================================================================
+# TEMP: REMOVE BEFORE MERGE
+# Focused E2 investigation; keep timings and assembly tied to one executable.
+# ============================================================================
+name: prss-e2
+
+on:
+  workflow_dispatch:
+  workflow_call:
+
+permissions: {}
+
+jobs:
+  counter-groups:
+    permissions:
+      contents: read
+    runs-on: runs-on=${{ github.run_id }}/runner=64cpu-linux-x64/spot=false/volume=400gb/extras=s3-cache
+    timeout-minutes: 120
+    env:
+      # Match the previous server timings; symbols do not require DWARF.
+      RUSTFLAGS: '-C debuginfo=0'
+      MPC_PRSS_PAR_MIN_CHUNK: '1024'
+      CRITERION_HOME: ${{ github.workspace }}/artifacts/prss-e2/criterion
+    steps:
+      - uses: runs-on/action@cd2b598b0515d39d78c38a02d529db87d2196d1e # v2.0.3
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          persist-credentials: false
+      - name: Read toolchain
+        run: |
+          version="$(sed -n 's/^channel = "\(.*\)"/\1/p' rust-toolchain.toml)"
+          echo "RUST_IMAGE_VERSION=$version" >> "$GITHUB_ENV"
+      - uses: ./.github/actions/setup-rust-and-protoc
+        with:
+          rust-toolchain: ${{ env.RUST_IMAGE_VERSION }}
+          rust-components: llvm-tools-preview
+          rust-cache: 'false'
+      - uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5 # v2.8.2
+        with:
+          shared-key: prss-e2
+      - name: Build and preserve the measured executable
+        shell: bash
+        run: |
+          set -euo pipefail
+          artifact_dir="$GITHUB_WORKSPACE/artifacts/prss-e2"
+          mkdir -p "$artifact_dir"
+          lscpu --json > "$artifact_dir/cpu.json"
+          uname -a > "$artifact_dir/kernel.txt"
+          rustc -Vv > "$artifact_dir/compiler.txt"
+          cargo -V > "$artifact_dir/cargo.txt"
+          git rev-parse HEAD > "$artifact_dir/commit.txt"
+          jq -n --arg rustflags "$RUSTFLAGS" \
+            --arg min_chunk "$MPC_PRSS_PAR_MIN_CHUNK" \
+            '{RUSTFLAGS: $rustflags, MPC_PRSS_PAR_MIN_CHUNK: $min_chunk, rayon_threads: [1, 56]}' \
+            > "$artifact_dir/settings.json"
+          git archive --format=tar.gz --output="$artifact_dir/source.tar.gz" HEAD \
+            Cargo.toml Cargo.lock rust-toolchain.toml .cargo/config.toml \
+            core/threshold-algebra core/threshold-execution core/thread-handles \
+            .github/workflows/prss-e2.yml
+          cargo tree --locked -p threshold-execution -F testing -e features \
+            > "$artifact_dir/dependency-features.txt"
+          cargo bench --locked -p threshold-execution --features testing \
+            --bench prss_groups --no-run --message-format=json \
+            > "$artifact_dir/build.jsonl" 2> "$artifact_dir/build.log"
+          executable="$(jq -ser '
+            [.[] | select(.reason == "compiler-artifact" and .target.name == "prss_groups")
+              | .executable | select(. != null)] | unique
+            | if length == 1 then .[0] else error("expected one benchmark executable") end
+            ' "$artifact_dir/build.jsonl")"
+          cp "$executable" "$artifact_dir/prss_groups"
+          chmod u+x "$artifact_dir/prss_groups"
+          sha256sum "$artifact_dir/prss_groups" > "$artifact_dir/executable.sha256"
+      - name: Measure the saved executable sequentially
+        shell: bash
+        run: |
+          set -euo pipefail
+          artifact_dir="$GITHUB_WORKSPACE/artifacts/prss-e2"
+          sha256sum --check "$artifact_dir/executable.sha256"
+          for threads in 1 56; do
+            RAYON_NUM_THREADS="$threads" "$artifact_dir/prss_groups" --bench \
+              --save-baseline "e2-groups-t$threads" \
+              --sample-size 20 --warm-up-time 1 --measurement-time 3 --noplot \
+              > "$artifact_dir/t$threads.log" 2>&1
+          done
+          sha256sum --check "$artifact_dir/executable.sha256"
+      - name: Disassemble the saved executable
+        if: ${{ !cancelled() }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          artifact_dir="$GITHUB_WORKSPACE/artifacts/prss-e2"
+          test -f "$artifact_dir/prss_groups"
+          host="$(rustc -Vv | sed -n 's/^host: //p')"
+          llvm_bin="$(rustc --print sysroot)/lib/rustlib/$host/bin"
+          "$llvm_bin/llvm-objdump" --version > "$artifact_dir/disassembler.txt"
+          "$llvm_bin/llvm-nm" --demangle --numeric-sort --print-size \
+            "$artifact_dir/prss_groups" > "$artifact_dir/symbols.txt"
+          # Full disassembly preserves inlined loops even when their helper symbol disappears.
+          "$llvm_bin/llvm-objdump" --disassemble --demangle --no-show-raw-insn \
+            "$artifact_dir/prss_groups" | gzip > "$artifact_dir/disassembly.asm.gz"
+          sha256sum --check "$artifact_dir/executable.sha256"
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: always()
+        with:
+          name: prss-e2-${{ github.run_id }}
+          path: artifacts/prss-e2
+          if-no-files-found: error
