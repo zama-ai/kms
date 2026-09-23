@@ -59,6 +59,7 @@ pub async fn crs_gen_impl<
     let inner = request.into_inner();
     let max_bits = inner.max_num_bits;
     let verified = validate_crs_gen_request(inner, op_tag)?;
+    super::ensure_default_epoch(op_tag, verified.req_id, &verified.epoch_id)?;
 
     if !service
         .context_manager
@@ -310,7 +311,7 @@ mod tests {
         let mut rng = AesRng::seed_from_u64(1234);
         let (kms, _) = setup_central_test_kms(&mut rng).await;
         let req_id = derive_request_id("test_crs_gen_sunshine").unwrap();
-        let epoch_id = derive_request_id("test_crs_gen_sunshine_epoch").unwrap();
+        let epoch_id = *DEFAULT_EPOCH_ID;
         let domain = alloy_to_protobuf_domain(&dummy_domain()).unwrap();
         let request = CrsGenRequest {
             signing_schemes: vec![kms_grpc::kms::v1::SigningSchemeType::Ecdsa256k1 as i32],
@@ -338,7 +339,7 @@ mod tests {
         let mut rng = AesRng::seed_from_u64(1234);
         let (kms, _) = setup_central_test_kms(&mut rng).await;
         let req_id = derive_request_id("test_crs_gen_already_exists").unwrap();
-        let epoch_id = derive_request_id("test_crs_gen_already_exists_epoch").unwrap();
+        let epoch_id = *DEFAULT_EPOCH_ID;
         let domain = alloy_to_protobuf_domain(&dummy_domain()).unwrap();
         let request = CrsGenRequest {
             signing_schemes: vec![kms_grpc::kms::v1::SigningSchemeType::Ecdsa256k1 as i32],
@@ -364,7 +365,7 @@ mod tests {
         let mut rng = AesRng::seed_from_u64(1234);
         let (kms, _) = setup_central_test_kms(&mut rng).await;
         let req_id = derive_request_id("test_crs_gen_invalid_argument").unwrap();
-        let epoch_id = derive_request_id("test_crs_gen_invalid_argument_epoch").unwrap();
+        let epoch_id = *DEFAULT_EPOCH_ID;
         let domain = alloy_to_protobuf_domain(&dummy_domain()).unwrap();
 
         // wrong params
@@ -520,6 +521,44 @@ mod tests {
         // }
     }
 
+    /// A centralized node serves the default epoch only, so an explicit other epoch is refused
+    /// rather than becoming a storage path that nothing else reads.
+    #[tokio::test]
+    async fn non_default_epoch_id() {
+        let mut rng = AesRng::seed_from_u64(54321);
+        let (kms, _) = setup_central_test_kms(&mut rng).await;
+        let req_id = derive_request_id("test_crs_gen_non_default_epoch").unwrap();
+        let other_epoch_id = derive_request_id("test_crs_gen_other_epoch").unwrap();
+        let domain = alloy_to_protobuf_domain(&dummy_domain()).unwrap();
+        let request = CrsGenRequest {
+            signing_schemes: vec![kms_grpc::kms::v1::SigningSchemeType::Ecdsa256k1 as i32],
+            request_id: Some(req_id.into()),
+            epoch_id: Some(other_epoch_id.into()),
+            context_id: None,
+            params: FheParameter::Test.into(),
+            domain: Some(domain),
+            extra_data: vec![],
+            max_num_bits: None,
+        };
+
+        assert_eq!(
+            crs_gen_impl(&kms, Request::new(request), false)
+                .await
+                .unwrap_err()
+                .code(),
+            tonic::Code::InvalidArgument
+        );
+
+        // Nothing is written, so no CRS metadata sits under the refused epoch.
+        assert!(
+            !kms.crypto_storage
+                .inner
+                .crs_exists(&req_id, &other_epoch_id.into())
+                .await
+                .unwrap()
+        );
+    }
+
     // test the missing epoch ID case that is currently allowed with a warning, to make sure the default epoch fallback works, and to prepare for the future removal of the default epoch fallback
     // TODO: remove following tests after the default epoch fallback is no longer used in validation
     // https://github.com/zama-ai/kms-internal/issues/2758
@@ -578,7 +617,7 @@ mod tests {
         let (mut kms, _) = setup_central_test_kms(&mut rng).await;
         kms.set_bucket_size(1); // set bucket size to 1 to trigger resource exhausted error
         let req_id = derive_request_id("test_crs_gen_resource_exhausted").unwrap();
-        let epoch_id = derive_request_id("test_crs_gen_resource_exhausted_epoch").unwrap();
+        let epoch_id = *DEFAULT_EPOCH_ID;
         let domain = alloy_to_protobuf_domain(&dummy_domain()).unwrap();
 
         let request = CrsGenRequest {
@@ -719,7 +758,7 @@ mod tests {
         let mut rng = AesRng::seed_from_u64(1234);
         let (kms, _) = setup_central_test_kms(&mut rng).await;
         let req_id = derive_request_id("test_crs_gen_abort_already_finished").unwrap();
-        let epoch_id = derive_request_id("test_crs_gen_abort_already_finished_epoch").unwrap();
+        let epoch_id = *DEFAULT_EPOCH_ID;
         let domain = alloy_to_protobuf_domain(&dummy_domain()).unwrap();
         let request = CrsGenRequest {
             signing_schemes: vec![kms_grpc::kms::v1::SigningSchemeType::Ecdsa256k1 as i32],
