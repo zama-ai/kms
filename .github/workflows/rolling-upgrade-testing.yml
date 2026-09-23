@@ -48,13 +48,19 @@
 #                            Baseline KMS Core image tag for initial deploy from
 #                            the legacy, pre-split repositories.
 #   new_image_tag          (string, required)
-#                            Target KMS Core image tag from the new insecure
-#                            repositories (ignored if build=true; then the
-#                            docker-build output is used).
+#                            Target KMS Core image tag, from the repositories
+#                            that new_image_repository selects (ignored if
+#                            build=true; then the docker-build output is used).
+#   new_image_repository   (choice insecure|legacy, default insecure)
+#                            Repositories for the new side. insecure = the
+#                            split *-insecure repositories, which hold nightly
+#                            and branch builds. legacy = the pre-split
+#                            repositories, which hold the release tags (e.g.
+#                            v0.14.2-0). build=true requires insecure.
 #   core_client_image_tag  (string, optional, default = old_image_tag)
 #                            Core-client (test harness) image tag for the mixed-
 #                            state runs, decoupled from the core versions under
-#                            test. A set tag comes from the new (insecure)
+#                            test. A set tag comes from the new side's
 #                            repository; the default comes from the old one, so
 #                            the harness is never newer than the oldest core.
 #                            Required for test_profile=prss-threshold. The
@@ -120,8 +126,16 @@ on:
         description: 'New KMS Core image tag to roll out'
         required: true
         type: string
+      new_image_repository:
+        description: 'Repositories for the new side: insecure (nightly and branch builds) or legacy (pre-split repositories with the release tags, e.g. v0.14.2-0). build=true requires insecure.'
+        required: true
+        default: 'insecure'
+        type: choice
+        options:
+          - insecure
+          - legacy
       core_client_image_tag:
-        description: 'Core-client (test harness) image tag from the new (insecure) repository; independent of the core versions under test. Defaults to old_image_tag from the old repository if empty. Required for test_profile=prss-threshold.'
+        description: 'Core-client (test harness) image tag from the new side''s repository (see new_image_repository); independent of the core versions under test. Defaults to old_image_tag from the old repository if empty. Required for test_profile=prss-threshold.'
         required: false
         type: string
       client_logs:
@@ -232,9 +246,11 @@ jobs:
       OLD_KMS_CORE_IMAGE_NAME: 'hub.zama.org/ghcr/zama-ai/kms/core-service'
       OLD_KMS_CORE_CLIENT_IMAGE_NAME: 'hub.zama.org/ghcr/zama-ai/kms/core-client'
       OLD_KMS_CORE_ENCLAVE_IMAGE_NAME: 'hub.zama.org/ghcr/zama-ai/kms/core-service-enclave'
-      NEW_KMS_CORE_IMAGE_NAME: 'hub.zama.org/ghcr/zama-ai/kms/core-service-insecure'
-      NEW_KMS_CORE_CLIENT_IMAGE_NAME: 'hub.zama.org/ghcr/zama-ai/kms/core-client-insecure'
-      NEW_KMS_CORE_ENCLAVE_IMAGE_NAME: 'hub.zama.org/ghcr/zama-ai/kms/core-service-enclave-insecure'
+      # The new side comes from the split *-insecure repositories (nightly and
+      # branch builds) or from the pre-split repositories (release tags).
+      NEW_KMS_CORE_IMAGE_NAME: ${{ inputs.new_image_repository == 'legacy' && 'hub.zama.org/ghcr/zama-ai/kms/core-service' || 'hub.zama.org/ghcr/zama-ai/kms/core-service-insecure' }}
+      NEW_KMS_CORE_CLIENT_IMAGE_NAME: ${{ inputs.new_image_repository == 'legacy' && 'hub.zama.org/ghcr/zama-ai/kms/core-client' || 'hub.zama.org/ghcr/zama-ai/kms/core-client-insecure' }}
+      NEW_KMS_CORE_ENCLAVE_IMAGE_NAME: ${{ inputs.new_image_repository == 'legacy' && 'hub.zama.org/ghcr/zama-ai/kms/core-service-enclave' || 'hub.zama.org/ghcr/zama-ai/kms/core-service-enclave-insecure' }}
     steps:
       - name: Setup Runs-on
         uses: runs-on/action@cd2b598b0515d39d78c38a02d529db87d2196d1e # v2.0.3
@@ -254,8 +270,15 @@ jobs:
           INPUT_NEW_TAG: ${{ inputs.new_image_tag }}
           INPUT_CLIENT_TAG: ${{ inputs.core_client_image_tag }}
           INPUT_TEST_PROFILE: ${{ inputs.test_profile }}
+          INPUT_BUILD: ${{ inputs.build }}
+          INPUT_NEW_REPOSITORY: ${{ inputs.new_image_repository }}
         run: |
           OLD_TAG="${INPUT_OLD_TAG}"
+
+          if [[ "${INPUT_BUILD}" == "true" && "${INPUT_NEW_REPOSITORY}" == "legacy" ]]; then
+            echo "ERROR: build=true pushes the new images to the insecure repositories. Set new_image_repository=insecure, or set build=false to roll out a release tag from the legacy repositories."
+            exit 1
+          fi
 
           if [[ -n "${DOCKER_BUILD_TAG}" ]]; then
             echo "Using freshly built image as new tag"
@@ -296,7 +319,7 @@ jobs:
           fi
 
           echo "Old image tag:         ${OLD_TAG}"
-          echo "New image tag:         ${NEW_TAG}"
+          echo "New image tag:         ${NEW_TAG} (${INPUT_NEW_REPOSITORY} repositories, e.g. ${NEW_KMS_CORE_ENCLAVE_IMAGE_NAME})"
           echo "Core-client (harness): ${CLIENT_IMAGE_NAME}:${CLIENT_TAG}"
 
           {

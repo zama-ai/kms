@@ -251,7 +251,8 @@ Dispatch inputs:
 | Input | Meaning |
 |-------|---------|
 | `old_image_tag` / `new_image_tag` | KMS core image tags before / after the upgrade |
-| `core_client_image_tag` | Core-client (test harness) tag from the new repository; defaults to `old_image_tag` from the old repository. Must be ≤ the oldest server version in the run. Required for `prss-threshold` |
+| `new_image_repository` | Repositories for the new side: `insecure` (default; nightly and branch builds) or `legacy` (pre-split repositories with the release tags, e.g. `v0.14.2-0`). `build=true` requires `insecure` |
+| `core_client_image_tag` | Core-client (test harness) tag from the new side's repository; defaults to `old_image_tag` from the old repository. Must be ≤ the oldest server version in the run. Required for `prss-threshold` |
 | `old_kms_chart_version` / `new_kms_chart_version` | kms-core Helm chart per side (`repository` = in-tree chart) |
 | `first_batch_parties` / `second_batch_parties` | Party IDs upgraded in wave 1 / wave 2 (default `1,2,3,4,5` / `6,7,8,9`) |
 | `test_profile` | `decrypt` (default) or `prss-threshold` — see below |

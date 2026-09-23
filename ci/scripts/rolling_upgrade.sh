@@ -139,10 +139,10 @@ fetch_pcrs_for_tag() {
     local FULL_IMAGE="${image_name}:${tag}"
 
     log_info "Pulling ${FULL_IMAGE}..."
-    docker pull "${FULL_IMAGE}" > /dev/null 2>&1 || {
-        log_error "Failed to pull image: ${FULL_IMAGE}"
+    if ! docker pull --quiet "${FULL_IMAGE}"; then
+        log_error "Failed to pull image: ${FULL_IMAGE}. Check that the tag exists in this repository (see the new_image_repository input)."
         exit 1
-    }
+    fi
 
     local pcr0 pcr1 pcr2
     pcr0=$(docker inspect "${FULL_IMAGE}" | jq -r '.[0].Config.Labels["zama.kms.eif_pcr0"]' || echo "")
