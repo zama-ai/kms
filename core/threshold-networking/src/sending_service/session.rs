@@ -481,6 +481,41 @@ mod tests {
     use threshold_types::role::{Role, RoleTrait, TwoSetsRole};
     use threshold_types::session_id::SessionId;
 
+    /// Starts the networking server of `networking` on `ip_addr:port`. Returns the shutdown
+    /// trigger and the server task.
+    async fn spawn_server(
+        networking: &GrpcNetworkingManager,
+        ip_addr: IpAddr,
+        port: u16,
+    ) -> (
+        tokio::sync::oneshot::Sender<()>,
+        tokio::task::JoinHandle<()>,
+    ) {
+        let (server_terminate_tx, server_terminate_rx) = tokio::sync::oneshot::channel::<()>();
+        let networking_server = networking.new_server(TlsExtensionGetter::default());
+        let core_grpc_layer = tower::ServiceBuilder::new().timeout(Duration::from_secs(300));
+        let core_router = tonic::transport::Server::builder()
+            .timeout(Duration::from_secs(300))
+            .layer(core_grpc_layer)
+            .add_service(networking_server);
+
+        let core_future = core_router.serve_with_shutdown(
+            format!("{ip_addr}:{port}").parse().unwrap(),
+            async move {
+                let _ = server_terminate_rx.await;
+            },
+        );
+
+        (
+            server_terminate_tx,
+            tokio::spawn(async move {
+                tracing::info!("Starting server on port {port}");
+                core_future.await.unwrap();
+                tracing::info!("Server on port {port} shut down");
+            }),
+        )
+    }
+
     #[tokio::test(flavor = "multi_thread")]
     async fn test_network_stack() {
         let ip_addr = "127.0.0.1".parse().unwrap();
@@ -497,40 +532,6 @@ mod tests {
         let id_2 = Identity::new(format!("{ip_addr}"), port_2, None);
         role_assignment.insert(role_1, id_1.clone());
         role_assignment.insert(role_2, id_2.clone());
-
-        // Helper function to create and run a server
-        async fn create_server(
-            networking: &GrpcNetworkingManager,
-            ip_addr: IpAddr,
-            port: u16,
-        ) -> (
-            tokio::sync::oneshot::Sender<()>,
-            tokio::task::JoinHandle<()>,
-        ) {
-            let (server_terminate_tx, server_terminate_rx) = tokio::sync::oneshot::channel::<()>();
-            let networking_server = networking.new_server(TlsExtensionGetter::default());
-            let core_grpc_layer = tower::ServiceBuilder::new().timeout(Duration::from_secs(300));
-            let core_router = tonic::transport::Server::builder()
-                .timeout(Duration::from_secs(300))
-                .layer(core_grpc_layer)
-                .add_service(networking_server);
-
-            let core_future = core_router.serve_with_shutdown(
-                format!("{ip_addr}:{port}").parse().unwrap(),
-                async move {
-                    let _ = server_terminate_rx.await;
-                },
-            );
-
-            (
-                server_terminate_tx,
-                tokio::spawn(async move {
-                    tracing::info!("Starting server on port {port}");
-                    core_future.await.unwrap();
-                    tracing::info!("Server on port {port} shut down");
-                }),
-            )
-        }
 
         // Create channels for coordination
         let (terminate_sender_1, mut terminate_receiver_1) = tokio::sync::mpsc::channel::<()>(100);
@@ -589,7 +590,7 @@ mod tests {
                     .unwrap();
 
                 let (server_terminate_tx, server_handle) =
-                    create_server(&networking, ip_addr, id_2.port()).await;
+                    spawn_server(&networking, ip_addr, id_2.port()).await;
 
                 tracing::info!("Trying to receive");
                 let msg = network_session.receive(&role_1).await.unwrap();
@@ -631,7 +632,7 @@ mod tests {
                     .unwrap();
 
                 let (server_terminate_tx, server_handle) =
-                    create_server(&networking, ip_addr, id_2.port()).await;
+                    spawn_server(&networking, ip_addr, id_2.port()).await;
 
                 // Increase round counter to receive second message
                 network_session.increase_round_counter().await;
@@ -668,6 +669,112 @@ mod tests {
             .unwrap();
         assert_eq!(role, role_1);
         assert_eq!(msg, vec![1u8; 10]);
+    }
+
+    /// Runs one session between party 1 and party 2, in which each party sends one message to the
+    /// other. Party 1 creates its session and sends first, so its message can reach party 2 before
+    /// party 2 creates the session, as between a running party and a party that just restarted.
+    /// Panics if a party gets no message within `timeout`.
+    async fn exchange_in_new_session(
+        networking_1: &GrpcNetworkingManager,
+        networking_2: &GrpcNetworkingManager,
+        sid: SessionId,
+        role_assignment: &RoleAssignment<Role>,
+        timeout: Duration,
+    ) {
+        let role_1 = Role::indexed_from_one(1);
+        let role_2 = Role::indexed_from_one(2);
+        let msg_1 = Arc::new(vec![1u8; 10]);
+        let msg_2 = Arc::new(vec![2u8; 10]);
+
+        let session_1 = networking_1
+            .make_network_session(sid, role_assignment, role_1, NetworkMode::Sync)
+            .await
+            .unwrap();
+        session_1.send(msg_1.clone(), &role_2).await.unwrap();
+
+        tokio::time::sleep(Duration::from_millis(500)).await;
+        let session_2 = networking_2
+            .make_network_session(sid, role_assignment, role_2, NetworkMode::Sync)
+            .await
+            .unwrap();
+        session_2.send(msg_2.clone(), &role_1).await.unwrap();
+
+        let received_by_2 = tokio::time::timeout(timeout, session_2.receive(&role_1))
+            .await
+            .unwrap_or_else(|_| {
+                panic!("party 2 got no message from party 1 in session {sid:?} within {timeout:?}")
+            })
+            .unwrap();
+        let received_by_1 = tokio::time::timeout(timeout, session_1.receive(&role_2))
+            .await
+            .unwrap_or_else(|_| {
+                panic!("party 1 got no message from party 2 in session {sid:?} within {timeout:?}")
+            })
+            .unwrap();
+        assert_eq!(received_by_2, *msg_1);
+        assert_eq!(received_by_1, *msg_2);
+    }
+
+    /// A party that restarts at the same address must get the messages of a peer that kept
+    /// running, in a session that starts after the restart. The running peer keeps its manager,
+    /// and with it the cached channel and the state from the session before the restart.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn test_running_party_reaches_restarted_party() {
+        let timeout = Duration::from_secs(30);
+        let ip_addr: IpAddr = "127.0.0.1".parse().unwrap();
+        let listeners = get_listeners_random_free_ports(&ip_addr, 2).await.unwrap();
+        let port_1 = listeners[0].1;
+        let port_2 = listeners[1].1;
+        drop(listeners);
+
+        let mut role_assignment = RoleAssignment::default();
+        role_assignment.insert(
+            Role::indexed_from_one(1),
+            Identity::new(format!("{ip_addr}"), port_1, None),
+        );
+        role_assignment.insert(
+            Role::indexed_from_one(2),
+            Identity::new(format!("{ip_addr}"), port_2, None),
+        );
+
+        // Party 1 runs for the whole test.
+        let networking_1 =
+            GrpcNetworkingManager::new(None, CoreToCoreNetworkConfig::default()).unwrap();
+        let (stop_1, server_1) = spawn_server(&networking_1, ip_addr, port_1).await;
+
+        let networking_2 =
+            GrpcNetworkingManager::new(None, CoreToCoreNetworkConfig::default()).unwrap();
+        let (stop_2, server_2) = spawn_server(&networking_2, ip_addr, port_2).await;
+        exchange_in_new_session(
+            &networking_1,
+            &networking_2,
+            SessionId::from(1),
+            &role_assignment,
+            timeout,
+        )
+        .await;
+
+        // Restart party 2 at the same address: stop its server and replace its manager.
+        stop_2.send(()).unwrap();
+        server_2.await.unwrap();
+        drop(networking_2);
+        let networking_2 =
+            GrpcNetworkingManager::new(None, CoreToCoreNetworkConfig::default()).unwrap();
+        let (stop_2, server_2) = spawn_server(&networking_2, ip_addr, port_2).await;
+        exchange_in_new_session(
+            &networking_1,
+            &networking_2,
+            SessionId::from(2),
+            &role_assignment,
+            timeout,
+        )
+        .await;
+
+        stop_2.send(()).unwrap();
+        server_2.await.unwrap();
+        stop_1.send(()).unwrap();
+        server_1.await.unwrap();
     }
 
     #[tokio::test()]
