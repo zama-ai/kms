@@ -6,15 +6,17 @@ use super::{
 use crate::{
     anyhow_error_and_log,
     consts::SAFE_SER_SIZE_LIMIT,
-    cryptography::encryption::{UnifiedPrivateEncKey, UnifiedPublicEncKey},
-    cryptography::signatures::{PrivateSigKey, PublicSigKey, Signature},
-    cryptography::signcryption::{
-        Signcrypt, UnifiedSigncryption, UnifiedSigncryptionKey, UnifiedUnsigncryptionKey,
-        Unsigncrypt,
+    cryptography::{
+        encryption::{UnifiedPrivateEncKey, UnifiedPublicEncKey},
+        signatures::{PrivateSigKey, PublicSigKey, Signature},
+        signcryption::{
+            Signcrypt, UnifiedSigncryption, UnifiedSigncryptionKey, UnifiedUnsigncryptionKey,
+            Unsigncrypt,
+        },
+        signing::SigningSchemeType,
     },
 };
 use crate::{
-    backup::VESTIGIAL_BACKUP_SIGNING_TYPE,
     backup::custodian::DSEP_BACKUP_CUSTODIAN,
     cryptography::signatures::{internal_sign, internal_verify_sig},
 };
@@ -190,7 +192,7 @@ impl TryFrom<InnerOperatorBackupOutput> for OperatorBackupOutput {
         Ok(Self {
             signcryption: value.signcryption.payload,
             pke_type: value.signcryption.pke_type as i32,
-            signing_type: VESTIGIAL_BACKUP_SIGNING_TYPE.as_wire(),
+            signing_type: SigningSchemeType::Ecdsa256k1.as_wire(),
         })
     }
 }

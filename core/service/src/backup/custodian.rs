@@ -1,5 +1,6 @@
+use crate::backup::BACKUP_PKE_SCHEME;
 use crate::backup::operator::DSEP_BACKUP_MATERIAL;
-use crate::backup::{BACKUP_PKE_SCHEME, VESTIGIAL_BACKUP_SIGNING_TYPE};
+use crate::cryptography::signing::SigningSchemeType;
 use crate::cryptography::{
     encryption::{HasPkeScheme, UnifiedPrivateEncKey, UnifiedPublicEncKey},
     signatures::PrivateSigKey,
@@ -90,7 +91,7 @@ impl TryFrom<InternalCustodianRecoveryOutput> for CustodianRecoveryOutput {
             backup_output: Some(OperatorBackupOutput {
                 signcryption: value.signcryption.payload,
                 pke_type: value.signcryption.pke_type as i32,
-                signing_type: VESTIGIAL_BACKUP_SIGNING_TYPE.as_wire(),
+                signing_type: SigningSchemeType::Ecdsa256k1.as_wire(),
             }),
             custodian_role: value.custodian_role.one_based() as u64,
         })
