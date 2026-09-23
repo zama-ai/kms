@@ -543,8 +543,7 @@ fn verify_metadata_signatures(
     }
 
     // The set is derived from the stored entries rather than requested from
-    // outside: at boot there is no request, and the question is whether the
-    // stored list is intact.
+    // outside: at boot there is no request to measure against.
     let stored_schemes: Vec<_> = signatures.iter().map(|stored| stored.scheme).collect();
     let signed_bytes = crate::cryptography::signing::composite::scheme_bound_preimage(
         &stored_schemes,

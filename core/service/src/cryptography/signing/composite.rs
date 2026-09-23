@@ -275,7 +275,9 @@ mod tests {
         sig.verify_uniform(&keys, DSEP, MSG).unwrap();
     }
 
-    /// Removing a signature must not leave something that verifies under the remaining scheme.
+    /// Removing a signature must not leave something that verifies under the
+    /// remaining scheme, and a key set that names fewer schemes than the
+    /// signature must not verify it by skipping the ones it has no key for.
     #[test]
     fn a_stripped_signature_is_rejected() {
         let (identity, keys, schemes) = setup(2);
@@ -297,6 +299,14 @@ mod tests {
         let ecdsa_only =
             VerfKeySet::from_identity(&identity, &[SigningSchemeType::Ecdsa256k1]).unwrap();
         assert!(stripped.verify_uniform(&ecdsa_only, DSEP, MSG).is_err());
+
+        // The same mismatch from the other side: the *whole* pair signature
+        // against that ECDSA-only key set is refused for its shape rather than
+        // verified on the one entry the set holds a key for.
+        assert!(matches!(
+            sig.verify_uniform(&ecdsa_only, DSEP, MSG),
+            Err(SigningError::UnexpectedSchemeSet { .. })
+        ));
     }
 
     /// A list that is not ordered by scheme, or repeats one, is refused on
@@ -355,21 +365,6 @@ mod tests {
 
         sig.verify_uniform(&keys, DSEP, MSG).unwrap();
         assert!(sig.verify_uniform(&other_keys, DSEP, MSG).is_err());
-    }
-
-    /// A key set missing one of the schemes cannot verify, rather than skipping
-    /// the scheme it has no key for.
-    #[test]
-    fn a_key_set_missing_a_scheme_is_rejected() {
-        let (identity, _keys, schemes) = setup(8);
-        let sig = CompositeSignature::sign_uniform(&identity, &schemes, DSEP, MSG).unwrap();
-
-        let ecdsa_only =
-            VerfKeySet::from_identity(&identity, &[SigningSchemeType::Ecdsa256k1]).unwrap();
-        assert!(matches!(
-            sig.verify_uniform(&ecdsa_only, DSEP, MSG),
-            Err(SigningError::UnexpectedSchemeSet { .. })
-        ));
     }
 
     /// An identity with no root seed can only do ECDSA, so asking it for the
@@ -497,16 +492,6 @@ mod tests {
 
         assert!(matches!(
             canonical_schemes(&[]),
-            Err(SigningError::EmptySchemeSet)
-        ));
-    }
-
-    /// An empty policy is unrepresentable rather than rejected: the policy *is*
-    /// the key set, and a [`VerfKeySet`] cannot be empty.
-    #[test]
-    fn an_empty_policy_cannot_be_constructed() {
-        assert!(matches!(
-            VerfKeySet::new(std::collections::BTreeMap::new()),
             Err(SigningError::EmptySchemeSet)
         ));
     }

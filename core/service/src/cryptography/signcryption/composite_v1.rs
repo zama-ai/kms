@@ -231,31 +231,6 @@ mod tests {
         assert_eq!(&*opened, b"downgrade me");
     }
 
-    /// The unified reader picks its layout from `sender`, so the same key type
-    /// opens a multi-signature envelope and refuses it when built for ECDSA —
-    /// with no tag on the message involved either way.
-    #[test]
-    fn the_unified_key_dispatches_on_sender_auth() {
-        let mut f = fixture(PkeSchemeType::MlKem512, 270);
-        let cipher = seal_msg(&mut f, b"dispatched by key material");
-
-        let multi =
-            UnifiedUnsigncryptionKey::new_multi(&f.dec_key, &f.enc_key, &f.keys, &f.receiver_id);
-        assert_eq!(
-            &*multi.open(DSEP, &cipher).unwrap(),
-            b"dispatched by key material"
-        );
-
-        // The same envelope, read by a key built for the frozen layout.
-        let ecdsa = match f.keys.require(SigningSchemeType::Ecdsa256k1).unwrap() {
-            crate::cryptography::signatures::UnifiedPublicSigKey::Ecdsa256k1(k) => k.clone(),
-            _ => unreachable!("the ECDSA member of the set is an ECDSA key"),
-        };
-        let frozen_reader =
-            UnifiedUnsigncryptionKey::new(&f.dec_key, &f.enc_key, &ecdsa, &f.receiver_id);
-        assert!(frozen_reader.open(DSEP, &cipher).is_err());
-    }
-
     /// Neither reader accepts the other's envelope.
     ///
     /// This is what lets a [`UnifiedSigncryption`] carry no layout tag: the

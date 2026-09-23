@@ -1984,6 +1984,11 @@ pub(crate) mod tests {
 
             // Entries come back ordered by scheme, whatever order was asked for.
             let ordered = canonical_schemes(&schemes).unwrap();
+            assert_eq!(
+                sigs.signatures.len(),
+                ordered.len(),
+                "expected one entry per requested scheme"
+            );
             for (scheme, scheme_sig) in ordered.iter().zip(&sigs.signatures) {
                 // The wire tag matches the scheme, in canonical order.
                 assert_eq!(

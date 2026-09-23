@@ -45,10 +45,9 @@
 //! two fixed-size tail fields, it cannot be made self-describing after the fact
 //! either. What is locked, and by what:
 //!
-//! - The plaintext layout `msg ‖ sig ‖ H(sender verification key)`, by
-//!   `tests::ecdsa_v0_envelope_layout_is_locked`.
-//! - The signed preimage `dsep ‖ msg ‖ receiver_id ‖ H(receiver enc key)`, by
-//!   `tests::ecdsa_v0_signed_preimage_is_locked`.
+//! - The plaintext layout `msg ‖ sig ‖ H(sender verification key)` and the
+//!   signed preimage `dsep ‖ msg ‖ receiver_id ‖ H(receiver enc key)`, by
+//!   `ecdsa_v0::tests::ecdsa_v0_envelope_layout_is_locked`.
 //! - The [`SigncryptionPayload`] bincode layout, by
 //!   `tests::test_signcryption_payload_v0_serialization_locked`.
 //! - The whole artifact, including **the order in which the RNG is drawn from**,
@@ -60,12 +59,7 @@
 //!
 //! The multi-signature layout carries one signature per scheme, for the
 //! custodian-backup chain. Reading it goes through [`Unsigncrypt`] like the
-//! frozen layout, on a key built with
-//! [`UnifiedUnsigncryptionKey::new_multi`]. Writing it does not yet: it needs a
-//! [`NodeSigningIdentity`](crate::cryptography::signatures::NodeSigningIdentity)
-//! rather than the single [`PrivateSigKey`] the signing key types hold, so it
-//! stays behind [`composite_v1::seal`] until user decryption grows multi-scheme
-//! signing support.
+//! frozen layout, on a key built with [`UnifiedUnsigncryptionKey::new_multi`].
 
 mod common;
 pub mod composite_v1;

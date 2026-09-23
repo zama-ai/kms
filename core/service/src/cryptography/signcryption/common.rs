@@ -2,7 +2,7 @@
 //!
 //! Signing and verifying have to build *identical* receiver bindings or nothing
 //! verifies at all, and both formats encrypt the same way. Anything both
-//! [`super::ecdsa_v0`] and a future composite format need lives here, so the two
+//! [`super::ecdsa_v0`] and [`super::composite_v1`] need lives here, so the two
 //! cannot drift apart and neither has to copy it.
 
 use crate::cryptography::encryption::{UnifiedPrivateEncKey, UnifiedPublicEncKey};
