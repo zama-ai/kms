@@ -179,6 +179,7 @@ main() {
     log_info "Namespace:             ${NAMESPACE}"
     log_info "Deployment type:       ${DEPLOYMENT_TYPE}"
     log_info "Num parties:           ${NUM_PARTIES}"
+    log_info "Epoch migration:       ${EPOCH_MIGRATION:-false}"
     log_info "========================================="
 
     #=========================================================================

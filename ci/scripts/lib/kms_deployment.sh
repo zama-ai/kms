@@ -1005,6 +1005,8 @@ generate_and_upload_tls_certs() {
 #
 # Required env vars: NAMESPACE, TARGET, DEPLOYMENT_TYPE, NUM_PARTIES,
 #                    HELM_RELEASE_PREFIX, ENABLE_TLS
+# Optional env vars: EPOCH_MIGRATION ("true" passes the 0.15 epoch-data
+#                    migration config to the upgraded parties)
 # Arguments:
 #   $1  - new image tag for upgraded parties
 #   $2  - old image tag for non-upgraded parties
@@ -1119,6 +1121,20 @@ upgrade_parties() {
             --set "kmsCore.thresholdMode.tls.trustedReleases[1].pcr1=${new_pcr1}"
             --set "kmsCore.thresholdMode.tls.trustedReleases[1].pcr2=${new_pcr2}"
         )
+
+        # A 0.15+ core refuses to start on legacy PRSS data unless the migration
+        # config maps each epoch to its context. kms-init creates the only CI
+        # epoch under DEFAULT_MPC_CONTEXT / DEFAULT_EPOCH_ID
+        # (core/service/src/consts.rs). Older cores reject the unknown
+        # [migration] section, so only upgraded parties get it. It is needed on
+        # every wave because the legacy data stays until 0.16 and each helm
+        # upgrade restarts the pod.
+        if [[ "${EPOCH_MIGRATION:-false}" == "true" && -n "${upgrade_set[${i}]+_}" ]]; then
+            HELM_ARGS+=(
+                --set-string "kmsCore.migration.contextAssociations[0].contextId=0x0700000000000000000000000000000000000000000000000000000000000001"
+                --set-string "kmsCore.migration.contextAssociations[0].epochIds[0]=0x0800000000000000000000000000000000000000000000000000000000000001"
+            )
+        fi
 
         helm_upgrade_with_version "${release_name}" "${helm_chart_location}" \
             "${HELM_ARGS[@]}" \

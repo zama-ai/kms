@@ -86,6 +86,12 @@
 #                            decrypt = plain pdec/udec correctness on the mixed
 #                            cluster. prss-threshold = legacy-PRSS-mask request-ID
 #                            boundary probe (below/above threshold reqids).
+#   epoch_migration        (boolean, default false)
+#                            Pass the 0.15 epoch-data migration config (default
+#                            context -> default epoch) to the upgraded parties.
+#                            Set it for v0.14.x -> v0.15+ upgrades: a 0.15+ core
+#                            does not start on legacy PRSS data without it, and
+#                            v0.13/v0.14 cores reject it.
 #
 # Jobs
 # ----
@@ -166,6 +172,11 @@ on:
         options:
           - decrypt
           - prss-threshold
+      epoch_migration:
+        description: 'Pass the 0.15 epoch-data migration config to upgraded parties. Set for v0.14.x -> v0.15+ upgrades; v0.13/v0.14 cores reject it.'
+        required: true
+        default: false
+        type: boolean
 
 permissions: {}
 
@@ -299,6 +310,7 @@ jobs:
           SYNC_SECRETS_CHART_VERSION: '0.2.1'
           CLIENT_LOGS: ${{ inputs.client_logs }}
           TEST_PROFILE: ${{ inputs.test_profile }}
+          EPOCH_MIGRATION_INPUT: ${{ inputs.epoch_migration }}
         run: |
           # Map the boolean client_logs input to the argo enabled/disabled value
           # (same convention as performance-testing.yml).
@@ -334,6 +346,7 @@ jobs:
             echo "TEST_PROFILE=${TEST_PROFILE}"
             echo "MIXED_WORKFLOW_FILE=${MIXED_WORKFLOW_FILE}"
             echo "ENABLE_PRSS_THRESHOLD=${ENABLE_PRSS_THRESHOLD}"
+            echo "EPOCH_MIGRATION=${EPOCH_MIGRATION_INPUT}"
           } >> "$GITHUB_ENV"
 
       # ====================================================================

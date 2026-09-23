@@ -255,6 +255,7 @@ Dispatch inputs:
 | `old_kms_chart_version` / `new_kms_chart_version` | kms-core Helm chart per side (`repository` = in-tree chart) |
 | `first_batch_parties` / `second_batch_parties` | Party IDs upgraded in wave 1 / wave 2 (default `1,2,3,4,5` / `6,7,8,9`) |
 | `test_profile` | `decrypt` (default) or `prss-threshold` — see below |
+| `epoch_migration` | Pass the 0.15 epoch-data migration config to the upgraded parties (default off) — see below |
 | `client_logs` | Core-client tracing logs (default off) |
 | `fhe_params` | `Test` (default) or `Default` |
 | `build` / `kms_branch` | Build the new image from a branch instead of using `new_image_tag` |
@@ -277,6 +278,10 @@ mixed stages run four probes: public and user decrypt, each pinned to a request-
 Because `*-reqid-above` failures are expected, the job's correctness gate excludes
 `reqid-above` pods — read each probe's PASS/FAIL from the run summary, not the job
 conclusion. Requires a threshold-aware new image and a request-ID-capable core-client.
+
+#### Epoch-data migration (v0.14 → v0.15+)
+
+A v0.15+ core moves the legacy PRSS setup into per-epoch storage at startup. On a node with legacy PRSS data, it does not start without a migration config that maps each epoch to its context (`kmsCore.migration.contextAssociations`). Set `epoch_migration=true` for a `v0.14.x` → `v0.15+` upgrade. `rolling_upgrade.sh` then gives the upgraded parties the mapping for the only epoch that `kms-init` creates: the default MPC context to the default epoch. Leave it off for other version pairs, because `v0.13.x` and `v0.14.x` cores reject the `[migration]` section.
 
 #### Core-client compatibility
 
