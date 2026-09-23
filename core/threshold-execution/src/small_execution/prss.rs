@@ -722,6 +722,9 @@ where
                 |(chunk_idx, out)| -> anyhow::Result<()> {
                     let lo = chunk_idx * chunk;
                     for (subset, phi_aes) in prfs.prss_subsets.iter().zip(prfs.phi.iter()) {
+                        // Reuse a local coefficient across the output loop. Reading
+                        // subset.f_a there made LLVM reload it for every output.
+                        let f_a = subset.f_a;
                         // One pipelined AES call for the chunk's counter range. Element `idx`
                         // consumes two distinct phi counters, matching one scalar mask_next().
                         let phi_vals =
@@ -735,7 +738,7 @@ where
                             // modulus). Do NOT use mul_by_u128(phi as u128): that mis-reduces
                             // negative phi on such rings (the wrong large mask would wrap mod q and
                             // corrupt the decrypted plaintext).
-                            *out_elem += subset.f_a.mul_by_i128(phi);
+                            *out_elem += f_a.mul_by_i128(phi);
                         }
                     }
                     Ok(())
