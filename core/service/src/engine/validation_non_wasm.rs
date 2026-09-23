@@ -1194,6 +1194,7 @@ fn unpack_new_mpc_epoch_req(req: NewMpcEpochRequest) -> anyhow::Result<VerifiedN
 
 #[cfg(test)]
 mod tests {
+    use crate::cryptography::signing::VerfKeySet;
     use aes_prng::AesRng;
     use alloy_dyn_abi::Eip712Domain;
     use kms_grpc::{
@@ -2387,7 +2388,7 @@ mod tests {
         let server_pks = HashMap::from([(1u32, vk.clone())]);
         let scheme_verf_keys = HashMap::from([(
             1u32,
-            HashMap::from([(scheme, identity.unified_verifying_key(scheme).unwrap())]),
+            VerfKeySet::from_identity(&identity, &[scheme]).unwrap(),
         )]);
         let request_for = |schemes: Vec<i32>| PublicDecryptionRequest {
             signing_schemes: schemes,
