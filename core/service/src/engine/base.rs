@@ -1834,7 +1834,10 @@ pub(crate) mod tests {
     use crate::cryptography::signatures::internal_sign;
     use crate::cryptography::signing::identity::NodeSigningIdentity;
     use crate::cryptography::signing::seed::RootSigningSeed;
-    use crate::cryptography::signing::{Signature, SigningSchemeType, unified_verify};
+    use crate::cryptography::signing::{
+        Signature, SigningSchemeType, canonical_schemes, composite::scheme_bound_preimage,
+        unified_verify,
+    };
     use crate::engine::base::DSEP_PUBLIC_DECRYPTION;
     use crate::{
         consts::{SAFE_SER_SIZE_LIMIT, TEST_PARAM},
@@ -1979,8 +1982,10 @@ pub(crate) mod tests {
                     .unwrap();
             assert_eq!(recovered, sk.verf_key().address());
 
-            for (scheme, scheme_sig) in schemes.iter().zip(&sigs.signatures) {
-                // The wire tag matches the requested scheme, in order.
+            // Entries come back ordered by scheme, whatever order was asked for.
+            let ordered = canonical_schemes(&schemes).unwrap();
+            for (scheme, scheme_sig) in ordered.iter().zip(&sigs.signatures) {
+                // The wire tag matches the scheme, in canonical order.
                 assert_eq!(
                     SigningSchemeType::try_from(scheme_sig.scheme).unwrap(),
                     *scheme
@@ -1992,18 +1997,44 @@ pub(crate) mod tests {
                     assert_eq!(scheme_sig.signature, sigs.external_signature);
                     assert_ne!(scheme_sig.signature, sigs.signature);
                 } else {
-                    // Every other scheme signs the versioned payload, which carries
-                    // the response bytes together with the extra data.
-                    let signed =
+                    // Every other scheme signs the versioned payload — the response
+                    // bytes together with the extra data — prefixed by the scheme
+                    // set, so the entry commits to the set it was produced under.
+                    let payload_signed =
                         super::public_dec_payload_bytes(&payload_bytes, extra_data).unwrap();
+                    let signed = scheme_bound_preimage(&ordered, &payload_signed).unwrap();
                     let vk = sk.unified_verifying_key(*scheme).unwrap();
                     let sig = Signature::new(*scheme, scheme_sig.signature.clone());
                     unified_verify(&DSEP_PUBLIC_DECRYPTION, &signed, &sig, &vk)
                         .unwrap_or_else(|e| panic!("{scheme:?} signature should verify: {e}"));
 
+                    // The unprefixed payload is specifically not what was signed.
+                    assert!(
+                        unified_verify(&DSEP_PUBLIC_DECRYPTION, &payload_signed, &sig, &vk)
+                            .is_err(),
+                        "{scheme:?} signature must be bound to the scheme set"
+                    );
+
+                    // Nor is the same payload under any other scheme set, which is
+                    // what stops an entry being lifted out of a larger response.
+                    for other_set in [
+                        vec![*scheme],
+                        vec![SigningSchemeType::Ecdsa256k1, SigningSchemeType::MlDsa44],
+                    ] {
+                        if other_set == ordered {
+                            continue;
+                        }
+                        let rebound = scheme_bound_preimage(&other_set, &payload_signed).unwrap();
+                        assert!(
+                            unified_verify(&DSEP_PUBLIC_DECRYPTION, &rebound, &sig, &vk).is_err(),
+                            "{scheme:?} signature verified under {other_set:?}"
+                        );
+                    }
+
                     // The extra data is part of what that entry covers.
-                    let other =
+                    let other_extra =
                         super::public_dec_payload_bytes(&payload_bytes, b"other extra").unwrap();
+                    let other = scheme_bound_preimage(&ordered, &other_extra).unwrap();
                     assert!(
                         unified_verify(&DSEP_PUBLIC_DECRYPTION, &other, &sig, &vk).is_err(),
                         "{scheme:?} signature did not cover the extra data"
@@ -2092,17 +2123,24 @@ pub(crate) mod tests {
                 SigningSchemeType::Ecdsa256k1 => {
                     assert_eq!(stored.signature, expected_external);
                 }
-                // Every other scheme signs the serialized CRS payload.
+                // Every other scheme signs the serialized CRS payload, prefixed
+                // by the scheme set the response was produced under.
                 scheme => {
+                    let signed = scheme_bound_preimage(&schemes, &payload_bytes).unwrap();
                     let vk = sk.unified_verifying_key(scheme).unwrap();
                     let sig = Signature::new(scheme, stored.signature.clone());
-                    unified_verify(&DSEP_PUBDATA_CRS, &payload_bytes, &sig, &vk)
+                    unified_verify(&DSEP_PUBDATA_CRS, &signed, &sig, &vk)
                         .unwrap_or_else(|e| panic!("{scheme:?} CRS signature should verify: {e}"));
-                    // Specifically not the EIP-712 hash any more.
+                    // Specifically not the EIP-712 hash any more...
                     assert!(
                         unified_verify(&DSEP_PUBDATA_CRS, eip712_hash.as_slice(), &sig, &vk)
                             .is_err(),
                         "{scheme:?} must sign the payload, not the EIP-712 hash"
+                    );
+                    // ...and not the unprefixed payload either.
+                    assert!(
+                        unified_verify(&DSEP_PUBDATA_CRS, &payload_bytes, &sig, &vk).is_err(),
+                        "{scheme:?} CRS signature must be bound to the scheme set"
                     );
                     assert!(
                         unified_verify(&DSEP_PUBDATA_CRS, b"tampered", &sig, &vk).is_err(),
@@ -2164,10 +2202,17 @@ pub(crate) mod tests {
                     assert_eq!(stored.signature, inner.external_signature);
                 }
                 scheme => {
+                    let signed = scheme_bound_preimage(&schemes, &expected_payload).unwrap();
                     let vk = sk.unified_verifying_key(scheme).unwrap();
                     let sig = Signature::new(scheme, stored.signature.clone());
-                    unified_verify(&DSEP_PUBDATA_KEY, &expected_payload, &sig, &vk).unwrap_or_else(
-                        |e| panic!("{scheme:?} keygen signature should verify: {e}"),
+                    unified_verify(&DSEP_PUBDATA_KEY, &signed, &sig, &vk).unwrap_or_else(|e| {
+                        panic!("{scheme:?} keygen signature should verify: {e}")
+                    });
+                    // The scheme-set prefix is load-bearing: without it the entry
+                    // could be replayed as a complete response under one scheme.
+                    assert!(
+                        unified_verify(&DSEP_PUBDATA_KEY, &expected_payload, &sig, &vk).is_err(),
+                        "{scheme:?} keygen signature must be bound to the scheme set"
                     );
                 }
             }

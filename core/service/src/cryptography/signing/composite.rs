@@ -191,14 +191,24 @@ impl CompositeSignature {
 /// decryption response.
 ///
 /// ECDSA signs `eip712_hash` recoverably, producing the signature the fhevm
-/// contracts verify on chain. Every other scheme signs `dsep ‖ payload_bytes`.
+/// contracts verify on chain. Every other scheme signs
+/// [`scheme_bound_preimage`] over `payload_bytes`, so it commits to the scheme
+/// set as well as to the payload.
 ///
-/// Returns the entries rather than a [`CompositeSignature`] because a result may
-/// legitimately request no schemes at all, which that type refuses to represent.
+/// `schemes` may be given in any order; the entries come back ordered by
+/// scheme.
 ///
-/// WARNING: the non-ECDSA entries here are *not* yet bound to the scheme set, so a
-/// verifier must still check the schemes it receives against the ones it asked
-/// for!
+/// Returns a plain list rather than a [`CompositeSignature`] for two reasons,
+/// and they are the only two places the shapes differ:
+///
+/// - A result may legitimately request no schemes at all, which that type
+///   refuses to represent.
+/// - Its ECDSA entry is **not** scheme-bound. An EIP-712 hash is 32 bytes with
+///   nowhere to put a prefix, and the fhevm contracts must be able to recover
+///   the signer from it, so that entry signs the hash verbatim.
+///
+/// WARNING: that unbound ECDSA entry is why a verifier must still check the
+/// schemes it received against the ones it asked for.
 #[cfg(feature = "non-wasm")]
 pub fn sign_result_entries(
     identity: &NodeSigningIdentity,
@@ -210,9 +220,10 @@ pub fn sign_result_entries(
     if schemes.is_empty() {
         return Ok(Vec::new());
     }
+    let schemes = canonical_schemes(schemes)?;
     // Every non-ECDSA entry commits to the scheme set, so one cannot be lifted
     // out of a larger response and presented as a complete smaller one.
-    let signed = scheme_bound_preimage(schemes, payload_bytes)?;
+    let signed = scheme_bound_preimage(&schemes, payload_bytes)?;
     schemes
         .iter()
         .map(|&scheme| {
@@ -417,6 +428,31 @@ mod tests {
             assert!(unified_verify(DSEP, payload, &sig, &vk).is_err());
             assert!(unified_verify(DSEP, &eip712_hash, &sig, &vk).is_err());
         }
+    }
+
+    /// Result entries use the same ordering convention as [`CompositeSignature`]:
+    /// by scheme, duplicate-free, whatever order the request arrived in.
+    #[test]
+    fn result_entries_are_ordered_by_scheme() {
+        let mut rng = AesRng::seed_from_u64(21);
+        let identity = seeded_identity(&mut rng);
+        let requested = [
+            SigningSchemeType::MlDsa65,
+            SigningSchemeType::Ecdsa256k1,
+            SigningSchemeType::MlDsa65,
+            SigningSchemeType::Ed25519,
+        ];
+        let canonical = canonical_schemes(&requested).unwrap();
+
+        let entries =
+            sign_result_entries(&identity, &requested, DSEP, &[0x11u8; 32], b"payload").unwrap();
+
+        assert_eq!(
+            entries.iter().map(|e| e.scheme).collect::<Vec<_>>(),
+            canonical
+        );
+        // ...and that is exactly the list `CompositeSignature` would accept.
+        CompositeSignature::from_canonical(entries).unwrap();
     }
 
     /// No schemes requested means no per-scheme entries, which is why this
