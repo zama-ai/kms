@@ -378,11 +378,6 @@ pub mod dummy;
 pub mod memory;
 pub mod orchestration;
 
-// The non_local_effect_before_unhandled_error lint complains
-// about as_mut() calls but I believe that's a false positive.
-
-#[allow(unknown_lints)]
-#[allow(non_local_effect_before_unhandled_error)]
 impl<Z: Clone + Send + Sync> RandomPreprocessing<Z> for Box<dyn BasePreprocessing<Z>> {
     fn next_random_vec(&mut self, amount: usize) -> anyhow::Result<Vec<Share<Z>>> {
         self.as_mut().next_random_vec(amount)
@@ -397,8 +392,6 @@ impl<Z: Clone + Send + Sync> RandomPreprocessing<Z> for Box<dyn BasePreprocessin
     }
 }
 
-#[allow(unknown_lints)]
-#[allow(non_local_effect_before_unhandled_error)]
 impl<Z: Clone + Send + Sync> TriplePreprocessing<Z> for Box<dyn BasePreprocessing<Z>> {
     fn next_triple_vec(&mut self, amount: usize) -> anyhow::Result<Vec<Triple<Z>>> {
         self.as_mut().next_triple_vec(amount)
@@ -415,8 +408,6 @@ impl<Z: Clone + Send + Sync> TriplePreprocessing<Z> for Box<dyn BasePreprocessin
 
 impl<Z: Clone + Send + Sync> BasePreprocessing<Z> for Box<dyn BasePreprocessing<Z>> {}
 
-#[allow(unknown_lints)]
-#[allow(non_local_effect_before_unhandled_error)]
 impl<Z: Clone + Send + Sync> TriplePreprocessing<Z> for Box<dyn DKGPreprocessing<Z>> {
     fn next_triple_vec(&mut self, amount: usize) -> anyhow::Result<Vec<Triple<Z>>> {
         self.as_mut().next_triple_vec(amount)
@@ -431,8 +422,6 @@ impl<Z: Clone + Send + Sync> TriplePreprocessing<Z> for Box<dyn DKGPreprocessing
     }
 }
 
-#[allow(unknown_lints)]
-#[allow(non_local_effect_before_unhandled_error)]
 impl<Z: Clone + Send + Sync> RandomPreprocessing<Z> for Box<dyn DKGPreprocessing<Z>> {
     fn next_random_vec(&mut self, amount: usize) -> anyhow::Result<Vec<Share<Z>>> {
         self.as_mut().next_random_vec(amount)
@@ -449,8 +438,6 @@ impl<Z: Clone + Send + Sync> RandomPreprocessing<Z> for Box<dyn DKGPreprocessing
 
 impl<Z: Clone + Send + Sync> BasePreprocessing<Z> for Box<dyn DKGPreprocessing<Z>> {}
 
-#[allow(unknown_lints)]
-#[allow(non_local_effect_before_unhandled_error)]
 impl<Z: Clone + Send + Sync> BitPreprocessing<Z> for Box<dyn DKGPreprocessing<Z>> {
     fn append_bits(&mut self, bits: Vec<Share<Z>>) {
         self.as_mut().append_bits(bits)
@@ -466,8 +453,6 @@ impl<Z: Clone + Send + Sync> BitPreprocessing<Z> for Box<dyn DKGPreprocessing<Z>
     }
 }
 
-#[allow(unknown_lints)]
-#[allow(non_local_effect_before_unhandled_error)]
 #[async_trait]
 impl<Z: Ring> DKGPreprocessing<Z> for Box<dyn DKGPreprocessing<Z>> {
     fn append_noises(&mut self, noises: Vec<Share<Z>>, bound: NoiseBounds) {

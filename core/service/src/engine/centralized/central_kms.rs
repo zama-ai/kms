@@ -876,10 +876,6 @@ impl<
         }
     }
 
-    // We allow the following lints because we are fine with mutating the rng even if
-    // the function fails serializing the singcrypted message.
-    #[allow(unknown_lints)]
-    #[allow(non_local_effect_before_unhandled_error)]
     fn user_decrypt(
         keys: &KmsFheKeyHandles,
         sig_key: &PrivateSigKey,
