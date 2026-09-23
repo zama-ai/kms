@@ -27,7 +27,7 @@ use kms_0_15_0::cryptography::{
     hybrid_ml_kem::HybridKemCt,
     signatures::{
         compute_eip712_signature, gen_sig_keys, NodeSigningIdentity, RootSigningSeed,
-        SigningSchemeSet, SigningSchemeType, UnifiedPublicSigKey,
+        SigningSchemeType, StoredTypedSignature, UnifiedPublicSigKey,
     },
     signcryption::{
         Signcrypt, UnifiedSigncryption, UnifiedSigncryptionKeyOwned, UnifiedUnsigncryptionKeyOwned,
@@ -36,7 +36,7 @@ use kms_0_15_0::cryptography::{
 use kms_0_15_0::engine::base::{
     CrsGenMetadata, CrsGenMetadataInner, CrsGenMetadataInnerV2, CrsSignedPayload,
     KeyGenMetadataInner, KeygenSignedPayload, KmsFheKeyHandles, PrepKeygenSignedPayload,
-    PublicDecSignedPayload, StoredEip712Domain, StoredTypedSignature, UserDecSignedPayload,
+    PublicDecSignedPayload, StoredEip712Domain, UserDecSignedPayload,
 };
 use kms_0_15_0::engine::centralized::central_kms::generate_client_fhe_key;
 use kms_0_15_0::engine::context::{
@@ -1420,7 +1420,6 @@ impl KmsV0_15_0 {
                 signcryption: UnifiedSigncryption {
                     payload: payload.to_vec(),
                     pke_type: BACKUP_PKE_SCHEME,
-                    signing_schemes: SigningSchemeSet::single(SigningSchemeType::Ecdsa256k1),
                 },
             };
             cts.insert(cus_role, cts_out);
@@ -1494,7 +1493,6 @@ impl KmsV0_15_0 {
             let signcryption = UnifiedSigncryption {
                 payload: payload.to_vec(),
                 pke_type: BACKUP_PKE_SCHEME,
-                signing_schemes: SigningSchemeSet::single(SigningSchemeType::Ecdsa256k1),
             };
             cts.insert(cur_role, InnerOperatorBackupOutput { signcryption });
         }
@@ -1760,7 +1758,6 @@ impl KmsV0_15_0 {
         let signcryption = UnifiedSigncryption {
             payload: buf.to_vec(),
             pke_type: BACKUP_PKE_SCHEME,
-            signing_schemes: SigningSchemeSet::single(SigningSchemeType::Ecdsa256k1),
         };
         let icro = InternalCustodianRecoveryOutput {
             signcryption,
