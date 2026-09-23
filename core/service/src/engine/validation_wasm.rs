@@ -445,7 +445,7 @@ pub(crate) fn verify_response_signatures(
     }
     // Bound to the set this verifier requested, so an entry lifted from a
     // response signed under a larger set does not verify here.
-    let signed_bytes = crate::cryptography::signing::composite::result_signed_bytes(
+    let signed_bytes = crate::cryptography::signing::composite::scheme_bound_preimage(
         requested,
         payloads.payload_bytes,
     )

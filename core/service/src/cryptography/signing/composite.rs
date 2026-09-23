@@ -57,6 +57,19 @@ fn render_schemes(schemes: &[SigningSchemeType]) -> String {
     )
 }
 
+/// The bytes a scheme-set-bound signature covers: the canonical scheme set,
+/// length-prefixed, followed by the message.
+///
+/// `schemes` is canonicalised here, so callers may pass it in any order and
+/// still agree on the bytes.
+pub fn scheme_bound_preimage(
+    schemes: &[SigningSchemeType],
+    msg: &[u8],
+) -> Result<Vec<u8>, SigningError> {
+    let schemes = canonical_schemes(schemes)?;
+    Ok([canonical_scheme_bytes(&schemes).as_slice(), msg].concat())
+}
+
 /// Accept `schemes` only if it is already canonical.
 fn ensure_canonical(schemes: &[SigningSchemeType]) -> Result<(), SigningError> {
     let canonical = canonical_schemes(schemes)?;
@@ -114,12 +127,6 @@ impl CompositeSignature {
         &self.0
     }
 
-    /// The bytes every constituent signature is made over.
-    pub fn preimage(schemes: &[SigningSchemeType], msg: &[u8]) -> Result<Vec<u8>, SigningError> {
-        let schemes = canonical_schemes(schemes)?;
-        Ok([canonical_scheme_bytes(&schemes).as_slice(), msg].concat())
-    }
-
     /// Sign `msg` under every scheme in `schemes`, each over the same bytes.
     #[cfg(feature = "non-wasm")]
     pub fn sign_uniform(
@@ -130,7 +137,7 @@ impl CompositeSignature {
     ) -> Result<Self, SigningError> {
         let schemes = canonical_schemes(schemes)?;
         identity.ensure_supported(&schemes)?;
-        let preimage = Self::preimage(&schemes, msg)?;
+        let preimage = scheme_bound_preimage(&schemes, msg)?;
         let entries = schemes
             .iter()
             .map(|&scheme| {
@@ -167,7 +174,7 @@ impl CompositeSignature {
                 actual: render_schemes(&schemes),
             });
         }
-        let preimage = Self::preimage(&schemes, msg)?;
+        let preimage = scheme_bound_preimage(&schemes, msg)?;
         for entry in &self.0 {
             let signature = Signature::new(entry.scheme, entry.signature.clone());
             // Cannot fail: `schemes` equals `keys.schemes()` on this path.
@@ -182,18 +189,6 @@ impl CompositeSignature {
     pub fn schemes(&self) -> Vec<SigningSchemeType> {
         self.0.iter().map(|entry| entry.scheme).collect()
     }
-}
-
-/// The bytes a non-ECDSA result signature covers: the payload, prefixed by the
-/// canonical scheme set.
-///
-/// `schemes` is canonicalised here, so callers may pass it in any order and
-/// still agree on the bytes.
-pub fn result_signed_bytes(
-    schemes: &[SigningSchemeType],
-    payload_bytes: &[u8],
-) -> Result<Vec<u8>, SigningError> {
-    CompositeSignature::preimage(schemes, payload_bytes)
 }
 
 /// The per-scheme signatures of a *result*: a keygen, CRS, preprocessing or
@@ -221,7 +216,7 @@ pub fn sign_result_entries(
     }
     // Every non-ECDSA entry commits to the scheme set, so one cannot be lifted
     // out of a larger response and presented as a complete smaller one.
-    let signed = result_signed_bytes(schemes, payload_bytes)?;
+    let signed = scheme_bound_preimage(schemes, payload_bytes)?;
     schemes
         .iter()
         .map(|&scheme| {
@@ -404,7 +399,7 @@ mod tests {
         ];
         let eip712_hash = [0x11u8; 32];
         let payload = b"the serialized result payload";
-        let bound = result_signed_bytes(&schemes, payload).unwrap();
+        let bound = scheme_bound_preimage(&schemes, payload).unwrap();
 
         let entries =
             sign_result_entries(&identity, &schemes, DSEP, &eip712_hash, payload).unwrap();
@@ -447,14 +442,14 @@ mod tests {
     fn preimages_separate_scheme_sets() {
         let single = vec![SigningSchemeType::Ecdsa256k1];
         assert_ne!(
-            CompositeSignature::preimage(&single, MSG).unwrap(),
-            CompositeSignature::preimage(&pair(), MSG).unwrap()
+            scheme_bound_preimage(&single, MSG).unwrap(),
+            scheme_bound_preimage(&pair(), MSG).unwrap()
         );
 
         // The length prefix is what separates a set from a longer one starting
         // with it.
         assert!(
-            !CompositeSignature::preimage(&pair(), MSG)
+            !scheme_bound_preimage(&pair(), MSG)
                 .unwrap()
                 .starts_with(&canonical_scheme_bytes(&single))
         );
@@ -473,8 +468,8 @@ mod tests {
 
         // So callers may pass any order and still agree on the signed bytes.
         assert_eq!(
-            CompositeSignature::preimage(&reordered, MSG).unwrap(),
-            CompositeSignature::preimage(&pair(), MSG).unwrap()
+            scheme_bound_preimage(&reordered, MSG).unwrap(),
+            scheme_bound_preimage(&pair(), MSG).unwrap()
         );
 
         assert!(matches!(

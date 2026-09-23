@@ -186,7 +186,7 @@ pub(crate) fn insecure_decrypt_ignoring_signature(
 
 #[cfg(test)]
 mod tests {
-    use super::super::common::{expected_enc_key_digest, lock_fixture};
+    use super::super::common::{lock_fixture, receiver_enc_key_digest};
     use super::super::{Signcrypt, Unsigncrypt};
     use super::*;
     use crate::consts::SAFE_SER_SIZE_LIMIT;
@@ -229,7 +229,7 @@ mod tests {
                 &DSEP[..],
                 msg.as_slice(),
                 f.receiver_id.as_slice(),
-                expected_enc_key_digest(&f.enc_key).as_slice(),
+                receiver_enc_key_digest(&f.enc_key).unwrap().as_slice(),
             ]
             .concat();
 

@@ -492,8 +492,8 @@ impl UnifiedPublicSigKey {
 }
 
 /// The verification keys a client or validator holds for its peers: per party
-/// id, one key per scheme that party has published.
-pub type SchemeVerfKeys = HashMap<u32, HashMap<SigningSchemeType, UnifiedPublicSigKey>>;
+/// id, the set of keys that party has published.
+pub type SchemeVerfKeys = HashMap<u32, VerfKeySet>;
 
 /// The verification key `party_id` published for `scheme`, if it published one.
 pub fn verf_key_for(
@@ -501,7 +501,7 @@ pub fn verf_key_for(
     party_id: u32,
     scheme: SigningSchemeType,
 ) -> Option<&UnifiedPublicSigKey> {
-    keys.get(&party_id).and_then(|keys| keys.get(&scheme))
+    keys.get(&party_id).and_then(|keys| keys.get(scheme))
 }
 
 /// Sign `msg` (domain-separated by `dsep`) under the scheme of `sk`.

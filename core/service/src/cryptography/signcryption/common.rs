@@ -22,7 +22,9 @@ pub(super) fn unsupported_format(what: impl std::fmt::Display) -> CryptographyEr
 
 /// The digest of the receiver's public encryption key, as it appears in the
 /// signed preimage.
-fn receiver_enc_key_digest(enc_key: &UnifiedPublicEncKey) -> Result<Vec<u8>, CryptographyError> {
+pub(super) fn receiver_enc_key_digest(
+    enc_key: &UnifiedPublicEncKey,
+) -> Result<Vec<u8>, CryptographyError> {
     match enc_key {
         UnifiedPublicEncKey::MlKem512(public_enc_key) => {
             serialize_hash_element(&DSEP_SIGNCRYPTION, public_enc_key)
@@ -75,19 +77,6 @@ pub(super) fn hybrid_decrypt(
         UnifiedPrivateEncKey::MlKem1024P384(dec_key) => {
             hybrid_composite_ml_kem::dec_ml_kem_1024_p384(ct, dec_key)
         }
-    }
-}
-
-#[allow(dead_code)]
-pub(super) fn expected_enc_key_digest(enc_key: &UnifiedPublicEncKey) -> Vec<u8> {
-    match enc_key {
-        UnifiedPublicEncKey::MlKem512(inner) => {
-            serialize_hash_element(&DSEP_SIGNCRYPTION, inner).unwrap()
-        }
-        UnifiedPublicEncKey::MlKem1024P384(inner) => {
-            serialize_hash_element(&DSEP_SIGNCRYPTION, inner).unwrap()
-        }
-        _ => unreachable!("only the two locked schemes are exercised"),
     }
 }
 
@@ -155,5 +144,4 @@ mod tests {
             receiver_binding(&f.receiver_id, &other.enc_key).unwrap()
         );
     }
-
 }

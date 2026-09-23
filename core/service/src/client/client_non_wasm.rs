@@ -1,7 +1,7 @@
 use crate::anyhow_error_and_log;
 use crate::client::client_wasm::Client;
 use crate::consts::{SIGNING_KEY_ID, signing_material_id};
-use crate::cryptography::signing::{SigningSchemeType, UnifiedPublicSigKey};
+use crate::cryptography::signing::{SigningSchemeType, VerfKeySet};
 use crate::engine::validation::{
     ExpectedSigner, ResponseSignatures, SignedPayloads, verify_response_signatures,
 };
@@ -84,7 +84,9 @@ impl Client {
 
         let mut scheme_verf_keys = HashMap::new();
         for (party_id, cur_storage) in pub_storages.iter() {
-            scheme_verf_keys.insert(*party_id, read_all_verf_keys(cur_storage).await?);
+            if let Some(keys) = read_all_verf_keys(cur_storage).await? {
+                scheme_verf_keys.insert(*party_id, keys);
+            }
         }
 
         Ok(Client::new(
@@ -161,11 +163,10 @@ impl Client {
     }
 }
 
-async fn read_all_verf_keys<S: StorageReader>(
-    storage: &S,
-) -> anyhow::Result<HashMap<SigningSchemeType, UnifiedPublicSigKey>> {
+/// Every typed verification key `storage` holds, or `None` if it holds none.
+async fn read_all_verf_keys<S: StorageReader>(storage: &S) -> anyhow::Result<Option<VerfKeySet>> {
     let data_type = PubDataType::TypedVerfKey.to_string();
-    let mut keys = HashMap::new();
+    let mut keys = std::collections::BTreeMap::new();
     for scheme in SigningSchemeType::iter() {
         let req_id = signing_material_id(scheme);
         if !storage.data_exists(&req_id, &data_type).await? {
@@ -181,7 +182,10 @@ async fn read_all_verf_keys<S: StorageReader>(
             })?;
         keys.insert(scheme, verf_key);
     }
-    Ok(keys)
+    if keys.is_empty() {
+        return Ok(None);
+    }
+    Ok(Some(VerfKeySet::new(keys)?))
 }
 
 #[cfg(test)]
@@ -215,14 +219,12 @@ mod tests {
     /// A client that knows `identity` as party [`PARTY`], with or without that
     /// party's selected per-scheme verification keys.
     fn client_for(identity: &NodeSigningIdentity, key_schemes: &[SigningSchemeType]) -> Client {
-        let scheme_verf_keys = if !key_schemes.is_empty() {
-            let keys = key_schemes
-                .iter()
-                .map(|&scheme| (scheme, identity.unified_verifying_key(scheme).unwrap()))
-                .collect();
-            HashMap::from([(PARTY, keys)])
-        } else {
+        let scheme_verf_keys = if key_schemes.is_empty() {
+            // A party with no published keys is absent, not present-and-empty.
             HashMap::new()
+        } else {
+            let keys = VerfKeySet::from_identity(identity, key_schemes).unwrap();
+            HashMap::from([(PARTY, keys)])
         };
         Client::new(
             HashMap::from([(PARTY, identity.verf_key())]),
