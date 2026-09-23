@@ -777,6 +777,167 @@ mod tests {
         server_1.await.unwrap();
     }
 
+    /// A TCP proxy in front of the server of a party. [`FreezingProxy::restart_behind`] sends new
+    /// connections to a new backend and freezes the existing ones: they stay open but forward
+    /// nothing more, like a connection to a pod that disappeared without closing its connections.
+    struct FreezingProxy {
+        backend: Arc<std::sync::Mutex<std::net::SocketAddr>>,
+        generation: Arc<std::sync::atomic::AtomicU64>,
+    }
+
+    impl FreezingProxy {
+        fn start(listener: tokio::net::TcpListener, backend: std::net::SocketAddr) -> Self {
+            let backend = Arc::new(std::sync::Mutex::new(backend));
+            let generation = Arc::new(std::sync::atomic::AtomicU64::new(0));
+            tokio::spawn({
+                let backend = Arc::clone(&backend);
+                let generation = Arc::clone(&generation);
+                async move {
+                    while let Ok((inbound, _)) = listener.accept().await {
+                        let target = *backend.lock().unwrap();
+                        let connection_generation =
+                            generation.load(std::sync::atomic::Ordering::SeqCst);
+                        let generation = Arc::clone(&generation);
+                        tokio::spawn(async move {
+                            let Ok(outbound) = tokio::net::TcpStream::connect(target).await else {
+                                return;
+                            };
+                            let (inbound_read, inbound_write) = inbound.into_split();
+                            let (outbound_read, outbound_write) = outbound.into_split();
+                            tokio::join!(
+                                forward_until_frozen(
+                                    inbound_read,
+                                    outbound_write,
+                                    Arc::clone(&generation),
+                                    connection_generation,
+                                ),
+                                forward_until_frozen(
+                                    outbound_read,
+                                    inbound_write,
+                                    generation,
+                                    connection_generation,
+                                ),
+                            );
+                        });
+                    }
+                }
+            });
+            Self {
+                backend,
+                generation,
+            }
+        }
+
+        fn restart_behind(&self, backend: std::net::SocketAddr) {
+            *self.backend.lock().unwrap() = backend;
+            self.generation
+                .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        }
+    }
+
+    /// Copies bytes from `from` to `to` while the proxy generation is `connection_generation`.
+    /// After a restart it keeps both halves open without forwarding, on every path, so that
+    /// neither end sees the connection close.
+    async fn forward_until_frozen(
+        mut from: tokio::net::tcp::OwnedReadHalf,
+        mut to: tokio::net::tcp::OwnedWriteHalf,
+        generation: Arc<std::sync::atomic::AtomicU64>,
+        connection_generation: u64,
+    ) {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let frozen =
+            || generation.load(std::sync::atomic::Ordering::SeqCst) != connection_generation;
+        let mut buffer = vec![0u8; 16 * 1024];
+        loop {
+            let read = from.read(&mut buffer).await;
+            if frozen() {
+                std::future::pending::<()>().await;
+            }
+            let Ok(n) = read else { return };
+            if n == 0 || to.write_all(&buffer[..n]).await.is_err() {
+                return;
+            }
+        }
+    }
+
+    /// Like [`test_running_party_reaches_restarted_party`], but the old connection to party 2
+    /// does not close when party 2 restarts. Party 1 reaches party 2 through a
+    /// [`FreezingProxy`], which leaves that connection open without forwarding anything. Party 1
+    /// must detect the dead connection with its HTTP/2 keepalive and connect again.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn test_running_party_reaches_restarted_party_behind_frozen_connection() {
+        let timeout = Duration::from_secs(20);
+        let ip_addr: IpAddr = "127.0.0.1".parse().unwrap();
+        let mut listeners = get_listeners_random_free_ports(&ip_addr, 4).await.unwrap();
+        let (proxy_listener, proxy_port) = listeners.remove(0);
+        let port_1 = listeners[0].1;
+        let backend_port_2 = listeners[1].1;
+        let restarted_backend_port_2 = listeners[2].1;
+        drop(listeners);
+
+        // Party 2 is known under the proxy address, so party 1 always connects through it.
+        let mut role_assignment = RoleAssignment::default();
+        role_assignment.insert(
+            Role::indexed_from_one(1),
+            Identity::new(format!("{ip_addr}"), port_1, None),
+        );
+        role_assignment.insert(
+            Role::indexed_from_one(2),
+            Identity::new(format!("{ip_addr}"), proxy_port, None),
+        );
+        let proxy = FreezingProxy::start(
+            proxy_listener,
+            std::net::SocketAddr::new(ip_addr, backend_port_2),
+        );
+
+        // Party 1 detects the frozen connection by its keepalive. The short values keep the test
+        // well within `timeout`.
+        let keepalive = CoreToCoreNetworkConfig {
+            keepalive_interval_secs: Some(1),
+            keepalive_timeout_secs: Some(2),
+            ..Default::default()
+        };
+        let networking_1 = GrpcNetworkingManager::new(None, keepalive).unwrap();
+        let (stop_1, server_1) = spawn_server(&networking_1, ip_addr, port_1).await;
+
+        let networking_2 =
+            GrpcNetworkingManager::new(None, CoreToCoreNetworkConfig::default()).unwrap();
+        let (stop_2, server_2) = spawn_server(&networking_2, ip_addr, backend_port_2).await;
+        exchange_in_new_session(
+            &networking_1,
+            &networking_2,
+            SessionId::from(1),
+            &role_assignment,
+            timeout,
+        )
+        .await;
+
+        // Restart party 2 behind a new backend. The proxy freezes the existing connection before
+        // the old server stops, so party 1 never sees that connection close.
+        proxy.restart_behind(std::net::SocketAddr::new(ip_addr, restarted_backend_port_2));
+        stop_2.send(()).unwrap();
+        // A graceful shutdown can wait for the frozen connection, which never closes.
+        let _ = tokio::time::timeout(Duration::from_secs(10), server_2).await;
+        drop(networking_2);
+        let networking_2 =
+            GrpcNetworkingManager::new(None, CoreToCoreNetworkConfig::default()).unwrap();
+        let (stop_2, server_2) =
+            spawn_server(&networking_2, ip_addr, restarted_backend_port_2).await;
+        exchange_in_new_session(
+            &networking_1,
+            &networking_2,
+            SessionId::from(2),
+            &role_assignment,
+            timeout,
+        )
+        .await;
+
+        stop_2.send(()).unwrap();
+        server_2.await.unwrap();
+        stop_1.send(()).unwrap();
+        server_1.await.unwrap();
+    }
+
     #[tokio::test()]
     async fn test_network_session() {
         let ip_addr = "127.0.0.1".parse().unwrap();
@@ -1525,6 +1686,8 @@ mod tests {
             max_opened_inactive_sessions_per_party: Some(2000),
             max_future_rounds: Some(16),
             max_buffered_future_msgs: Some(32),
+            keepalive_interval_secs: Some(10),
+            keepalive_timeout_secs: Some(20),
         }
     }
 

@@ -162,7 +162,10 @@ impl GrpcSendingService {
                 // then this should be changed
                 let endpoint = Channel::builder(endpoint)
                     .http2_adaptive_window(true)
-                    .tcp_nodelay(true);
+                    .tcp_nodelay(true)
+                    .http2_keep_alive_interval(self.config.get_keepalive_interval())
+                    .keep_alive_timeout(self.config.get_keepalive_timeout())
+                    .keep_alive_while_idle(true);
                 // we have to pass a custom TLS connector to
                 // tonic::transport::Channel to be able to use a custom rustls
                 // ClientConfig that overrides the certificate verifier for AWS
@@ -183,6 +186,9 @@ impl GrpcSendingService {
                 Channel::builder(endpoint)
                     .http2_adaptive_window(true)
                     .tcp_nodelay(true)
+                    .http2_keep_alive_interval(self.config.get_keepalive_interval())
+                    .keep_alive_timeout(self.config.get_keepalive_timeout())
+                    .keep_alive_while_idle(true)
                     .connect_lazy()
             }
         };
