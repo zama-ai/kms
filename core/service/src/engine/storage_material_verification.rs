@@ -44,9 +44,8 @@ use crate::cryptography::signing::{
 };
 use crate::engine::base::{
     CrsGenMetadata, CrsGenMetadataInner, CurrentPublicMaterialLayout, DSEP_PUBDATA_CRS,
-    DSEP_PUBDATA_KEY, KeyGenMetadata, KeyGenMetadataInner,
-    classify_current_public_material, crs_payload_bytes, crs_sol_type, keygen_payload_bytes,
-    keygen_sol_type,
+    DSEP_PUBDATA_KEY, KeyGenMetadata, KeyGenMetadataInner, classify_current_public_material,
+    crs_payload_bytes, crs_sol_type, keygen_payload_bytes, keygen_sol_type,
 };
 use crate::engine::context::ContextInfo;
 use crate::engine::material_integrity::{

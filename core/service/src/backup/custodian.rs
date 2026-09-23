@@ -1,5 +1,5 @@
-use crate::backup::{BACKUP_PKE_SCHEME, VESTIGIAL_BACKUP_SIGNING_TYPE};
 use crate::backup::operator::DSEP_BACKUP_MATERIAL;
+use crate::backup::{BACKUP_PKE_SCHEME, VESTIGIAL_BACKUP_SIGNING_TYPE};
 use crate::cryptography::{
     encryption::{HasPkeScheme, UnifiedPrivateEncKey, UnifiedPublicEncKey},
     signatures::PrivateSigKey,
@@ -9,10 +9,7 @@ use crate::cryptography::{
     },
 };
 use crate::engine::validation::{RequestIdParsingErr, parse_optional_grpc_request_id};
-use crate::{
-    consts::SAFE_SER_SIZE_LIMIT,
-    cryptography::signatures::PublicSigKey,
-};
+use crate::{consts::SAFE_SER_SIZE_LIMIT, cryptography::signatures::PublicSigKey};
 use hashing::DomainSep;
 use kms_grpc::RequestId;
 use kms_grpc::kms::v1::{

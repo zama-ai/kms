@@ -110,10 +110,7 @@ impl CompositeSignature {
     /// Accept `entries` only if they are already ordered by scheme, carry no
     /// duplicate scheme, and are non-empty.
     pub fn from_canonical(entries: Vec<StoredTypedSignature>) -> Result<Self, SigningError> {
-        let schemes = entries
-            .iter()
-            .map(|entry| entry.scheme)
-            .collect::<Vec<_>>();
+        let schemes = entries.iter().map(|entry| entry.scheme).collect::<Vec<_>>();
         ensure_canonical(&schemes)?;
         Ok(Self(entries))
     }
@@ -345,10 +342,7 @@ mod tests {
             sig.verify_uniform(&keys, DSEP, b"a different message")
                 .is_err()
         );
-        assert!(
-            sig.verify_uniform(&keys, b"OTHERDSP", MSG)
-                .is_err()
-        );
+        assert!(sig.verify_uniform(&keys, b"OTHERDSP", MSG).is_err());
     }
 
     /// Signatures are checked against the key set presented, so another party's
@@ -360,10 +354,7 @@ mod tests {
         let sig = CompositeSignature::sign_uniform(&identity, &schemes, DSEP, MSG).unwrap();
 
         sig.verify_uniform(&keys, DSEP, MSG).unwrap();
-        assert!(
-            sig.verify_uniform(&other_keys, DSEP, MSG)
-                .is_err()
-        );
+        assert!(sig.verify_uniform(&other_keys, DSEP, MSG).is_err());
     }
 
     /// A key set missing one of the schemes cannot verify, rather than skipping

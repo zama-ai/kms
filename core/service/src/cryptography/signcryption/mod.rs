@@ -78,9 +78,7 @@ use crate::cryptography::encryption::{
     HasPkeScheme, PkeSchemeType, UnifiedPrivateEncKey, UnifiedPublicEncKey,
 };
 use crate::cryptography::error::CryptographyError;
-use crate::cryptography::signatures::{
-    PrivateSigKey, PublicSigKey, SigningSchemeType, VerfKeySet,
-};
+use crate::cryptography::signatures::{PrivateSigKey, PublicSigKey, SigningSchemeType, VerfKeySet};
 use crate::cryptography::zeroizing_writer::ZeroizingWriter;
 use hashing::DomainSep;
 use kms_grpc::kms::v1::TypedPlaintext;
@@ -958,10 +956,7 @@ mod tests {
 
             // The upgrade is exactly what the constructor builds, so a
             // regenerated artifact still compares equal to a frozen one.
-            assert_eq!(
-                upgraded,
-                UnifiedSigncryption::new(v0.payload, v0.pke_type)
-            );
+            assert_eq!(upgraded, UnifiedSigncryption::new(v0.payload, v0.pke_type));
         }
     }
 

@@ -127,7 +127,6 @@ impl RootSigningSeed {
     /// use the persisted [`PrivateSigKey`].
     #[cfg(feature = "non-wasm")]
     pub(crate) fn derive_ecdsa_signing_key(&self) -> Result<PrivateSigKey, SigningError> {
-
         match self.derive_signing_key(SigningSchemeType::Ecdsa256k1)? {
             UnifiedPrivateSigKey::Ecdsa256k1(sk) => Ok(sk.clone()),
             other => Err(SigningError::KeyDerivation(format!(

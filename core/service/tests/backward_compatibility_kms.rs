@@ -17,11 +17,11 @@ use backward_compatibility::{
     MlKem1024P384PublicKeyTest, NodeInfoTest, OperatorBackupOutputTest,
     PrepKeygenSignedPayloadTest, PrivateSigKeyTest, PrssSetupCombinedTest,
     PublicDecSignedPayloadTest, PublicSigKeyTest, RecoveryValidationMaterialTest,
-    RootSigningSeedTest, SchemeDigestsTest, SigncryptionPayloadTest,
-    SoftwareVersionTest, StoredEip712DomainTest, StoredTypedSignatureTest, TestMetadataKMS,
-    TestType, Testcase, ThresholdFheKeysTest, TypedPlaintextTest, UnifiedCipherTest,
-    UnifiedPublicSigKeyTest, UnifiedSigncryptionKeyTest, UnifiedSigncryptionTest,
-    UnifiedUnsigncryptionKeyTest, UserDecSignedPayloadTest, data_dir,
+    RootSigningSeedTest, SchemeDigestsTest, SigncryptionPayloadTest, SoftwareVersionTest,
+    StoredEip712DomainTest, StoredTypedSignatureTest, TestMetadataKMS, TestType, Testcase,
+    ThresholdFheKeysTest, TypedPlaintextTest, UnifiedCipherTest, UnifiedPublicSigKeyTest,
+    UnifiedSigncryptionKeyTest, UnifiedSigncryptionTest, UnifiedUnsigncryptionKeyTest,
+    UserDecSignedPayloadTest, data_dir,
     load::{DataFormat, TestFailure, TestResult, TestSuccess},
     tests::{TestedModule, run_all_tests},
 };
@@ -55,9 +55,8 @@ use kms_lib::{
         },
         hybrid_ml_kem::HybridKemCt,
         signatures::{
-            NodeSigningIdentity, PrivateSigKey, PublicSigKey, RootSigningSeed,
-            SigningSchemeType, StoredTypedSignature, UnifiedPublicSigKey, compute_eip712_signature,
-            gen_sig_keys,
+            NodeSigningIdentity, PrivateSigKey, PublicSigKey, RootSigningSeed, SigningSchemeType,
+            StoredTypedSignature, UnifiedPublicSigKey, compute_eip712_signature, gen_sig_keys,
         },
         signcryption::{
             Signcrypt, SigncryptionPayload, UnifiedSigncryption, UnifiedSigncryptionKeyOwned,
@@ -1147,10 +1146,7 @@ fn test_recovery_material(
         let mut payload = [0_u8; 32];
         rng.fill_bytes(&mut payload);
         let cts_out = InnerOperatorBackupOutput {
-            signcryption: UnifiedSigncryption::new(
-                payload.to_vec(),
-                BACKUP_PKE_SCHEME,
-            ),
+            signcryption: UnifiedSigncryption::new(payload.to_vec(), BACKUP_PKE_SCHEME),
         };
         cts.insert(cus_role, cts_out.clone());
     }
@@ -1191,10 +1187,7 @@ fn test_internal_recovery_request(
         let cur_role = Role::indexed_from_one(role_j as usize);
         let mut payload = [0_u8; 32];
         rng.fill_bytes(&mut payload);
-        let signcryption = UnifiedSigncryption::new(
-            payload.to_vec(),
-            BACKUP_PKE_SCHEME,
-        );
+        let signcryption = UnifiedSigncryption::new(payload.to_vec(), BACKUP_PKE_SCHEME);
         cts.insert(cur_role, InnerOperatorBackupOutput { signcryption });
     }
     let new_versionized = InternalRecoveryRequest::new(enc_key, verification_key, cts).unwrap();
@@ -1277,10 +1270,7 @@ fn test_internal_custodian_recovery_output(
     let mut rng = AesRng::seed_from_u64(test.state);
     let mut buf = [0u8; 100];
     rng.fill_bytes(&mut buf);
-    let signcryption = UnifiedSigncryption::new(
-        buf.to_vec(),
-        BACKUP_PKE_SCHEME,
-    );
+    let signcryption = UnifiedSigncryption::new(buf.to_vec(), BACKUP_PKE_SCHEME);
 
     let new_versionized = InternalCustodianRecoveryOutput {
         signcryption,
