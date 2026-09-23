@@ -226,6 +226,7 @@ impl<
                 Self::crs_gen_background(
                     meta_permit,
                     token,
+                    ongoing,
                     &req_id,
                     &epoch_id,
                     witness_dim,
@@ -242,8 +243,6 @@ impl<
                     insecure,
                 )
                 .await;
-                // Cleanup runs on every termination
-                ongoing.lock().await.remove(&req_id);
             }
             .instrument(tracing::Span::current()),
         );
@@ -325,7 +324,7 @@ impl<
         let mut ongoing = self.ongoing.lock().await;
         match ongoing.remove(&parsed_id) {
             Some(token) => {
-                // Observe that the cancellation arm handles the abortion and clean-up
+                // The task records the abort, in its cancel arm or at its claim.
                 token.cancel();
             }
             None => {
@@ -344,6 +343,7 @@ impl<
     async fn crs_gen_background(
         permit: MetaStorePermit<CrsGenMetadata>,
         cancel_token: CancellationToken,
+        ongoing: Arc<Mutex<HashMap<RequestId, CancellationToken>>>,
         req_id: &RequestId,
         epoch_id: &EpochId,
         witness_dim: usize,
@@ -442,6 +442,14 @@ impl<
                     extra_data_for_compute,
                 ).map(|info| (pp, info)))
                 .map_err(|e| e.to_string()),
+        };
+        // An abort that removed the entry before this claim wins, even over a finished run.
+        let outcome = if ongoing.lock().await.remove(req_id).is_some() {
+            outcome
+        } else {
+            outcome.and(Err(format!(
+                "CRS generation of request {req_id} was aborted"
+            )))
         };
 
         match outcome {
@@ -1029,6 +1037,39 @@ mod tests {
         let _crs = poll_result_until_ready(|| crs_gen.get_result(Request::new(req_id.into())))
             .await
             .unwrap();
+    }
+
+    /// An abort that removes the entry after generation finished, but before the claim, wins.
+    #[tokio::test]
+    async fn abort_after_generation_wins() {
+        let mut rng = AesRng::seed_from_u64(124);
+        let crs_gen = make_crs_gen::<InsecureCeremony>(&mut rng).await;
+        let req_id = RequestId::new_random(&mut rng);
+        let req = CrsGenRequest {
+            signing_schemes: vec![kms_grpc::kms::v1::SigningSchemeType::Ecdsa256k1 as i32],
+            params: FheParameter::Default as i32,
+            max_num_bits: None,
+            request_id: Some(req_id.into()),
+            domain: Some(alloy_to_protobuf_domain(&dummy_domain()).unwrap()),
+            extra_data: vec![],
+            context_id: Some((*DEFAULT_MPC_CONTEXT).into()),
+            epoch_id: Some((*DEFAULT_EPOCH_ID).into()),
+        };
+        crs_gen.crs_gen(Request::new(req)).await.unwrap();
+        // Removing the entry without cancelling lets generation finish, as a late abort does.
+        assert!(
+            crs_gen
+                .ongoing
+                .try_lock()
+                .unwrap()
+                .remove(&req_id)
+                .is_some()
+        );
+
+        let err = poll_result_until_ready(|| crs_gen.get_result(Request::new(req_id.into())))
+            .await
+            .unwrap_err();
+        assert_eq!(err.code(), tonic::Code::Aborted);
     }
 
     #[tokio::test]

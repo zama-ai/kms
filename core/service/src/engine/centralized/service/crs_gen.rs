@@ -8,11 +8,12 @@ use observability::metrics_names::{
     CENTRAL_TAG, OP_CRS_GEN_ABORT, OP_CRS_GEN_REQUEST, OP_CRS_GEN_RESULT,
     OP_INSECURE_CRS_GEN_REQUEST, TAG_PARTY_ID,
 };
+use std::collections::HashMap;
 use std::sync::Arc;
 use threshold_execution::tfhe_internals::parameters::DKGParams;
 use tokio_util::sync::CancellationToken;
 
-use tokio::sync::RwLock;
+use tokio::sync::{Mutex, RwLock};
 use tonic::{Request, Response};
 use tracing::Instrument;
 
@@ -108,6 +109,7 @@ pub async fn crs_gen_impl<
             crs_gen_background(
                 meta_permit,
                 token,
+                ongoing,
                 &req_id,
                 &epoch_id,
                 rng,
@@ -122,7 +124,6 @@ pub async fn crs_gen_impl<
                 op_tag,
             )
             .await;
-            ongoing.lock().await.remove(&req_id);
         }
         .instrument(tracing::Span::current()),
     );
@@ -211,7 +212,7 @@ pub async fn abort_crs_gen_impl<
         .map_err(|e| MetricedError::new(OP_CRS_GEN_ABORT, None, e, tonic::Code::InvalidArgument))?;
     match service.ongoing_crs_gen.lock().await.remove(&request_id) {
         Some(cancellation_token) => {
-            // Observe that the cancellation arm handles the abortion and clean-up
+            // The task records the abort, in its cancel arm or at its claim.
             cancellation_token.cancel();
             tracing::info!("Aborted CRS generation with request ID {}", request_id);
             Ok(Response::new(Empty {}))
@@ -236,6 +237,7 @@ pub(crate) async fn crs_gen_background<
 >(
     permit: MetaStorePermit<CrsGenMetadata>,
     cancel_token: CancellationToken,
+    ongoing: Arc<Mutex<HashMap<RequestId, CancellationToken>>>,
     req_id: &RequestId,
     epoch_id: &EpochId,
     rng: AesRng,
@@ -257,6 +259,12 @@ pub(crate) async fn crs_gen_background<
         result = async_generate_crs(
             &sk, &signing_schemes, params, max_number_bits, eip712_domain, extra_data, req_id, rng,
         ) => result.map_err(|e| e.to_string()),
+    };
+    // An abort that removed the entry before this claim wins, even over a finished run.
+    let outcome = if ongoing.lock().await.remove(req_id).is_some() {
+        outcome
+    } else {
+        outcome.and(Err(format!("CRS generation aborted for request {req_id}")))
     };
 
     match outcome {
@@ -781,18 +789,45 @@ mod tests {
         .await
         .unwrap();
 
-        // Wait for the background task to remove the cancellation token after completion.
-        // The meta store is updated before the token removal, so poll until the ongoing map is empty.
-        for _ in 0..100 {
-            if !kms.ongoing_crs_gen.lock().await.contains_key(&req_id) {
-                break;
-            }
-            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
-        }
-
         let err = abort_crs_gen_impl(&kms, Request::new(req_id.into()))
             .await
             .unwrap_err();
         assert_eq!(err.code(), tonic::Code::NotFound);
+    }
+
+    /// An abort that removes the entry after generation finished, but before the claim, wins.
+    #[tokio::test]
+    async fn abort_after_generation_wins() {
+        let mut rng = AesRng::seed_from_u64(1234);
+        let (kms, _) = setup_central_test_kms(&mut rng).await;
+        let req_id = derive_request_id("test_crs_gen_abort_after_generation").unwrap();
+        let request = CrsGenRequest {
+            signing_schemes: vec![kms_grpc::kms::v1::SigningSchemeType::Ecdsa256k1 as i32],
+            request_id: Some(req_id.into()),
+            epoch_id: Some((*DEFAULT_EPOCH_ID).into()),
+            context_id: None,
+            params: FheParameter::Test.into(),
+            domain: Some(alloy_to_protobuf_domain(&dummy_domain()).unwrap()),
+            extra_data: vec![],
+            max_num_bits: Some(2048),
+        };
+        crs_gen_impl(&kms, Request::new(request), false)
+            .await
+            .unwrap();
+        // Removing the entry without cancelling lets generation finish, as a late abort does.
+        assert!(
+            kms.ongoing_crs_gen
+                .try_lock()
+                .unwrap()
+                .remove(&req_id)
+                .is_some()
+        );
+
+        let err = poll_result_until_ready(|| {
+            get_crs_gen_result_impl(&kms, Request::new(req_id.into()), false)
+        })
+        .await
+        .unwrap_err();
+        assert_eq!(err.code(), tonic::Code::Aborted);
     }
 }

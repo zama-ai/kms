@@ -30,12 +30,13 @@ use observability::metrics_names::{
     CENTRAL_TAG, OP_INSECURE_KEYGEN_REQUEST, OP_INSECURE_KEYGEN_RESULT, OP_KEYGEN_ABORT,
     OP_KEYGEN_REQUEST, OP_KEYGEN_RESULT, TAG_PARTY_ID,
 };
+use std::collections::HashMap;
 use std::sync::Arc;
 use threshold_execution::keyset_config::KeySetConfig;
 use threshold_execution::tfhe_internals::parameters::DKGParams;
 use tokio_util::sync::CancellationToken;
 
-use tokio::sync::RwLock;
+use tokio::sync::{Mutex, RwLock};
 use tonic::{Request, Response};
 use tracing::Instrument;
 
@@ -206,6 +207,7 @@ pub async fn key_gen_impl<
             key_gen_background(
                 meta_permit,
                 token,
+                ongoing,
                 &req_id,
                 &preproc_id,
                 &epoch_id,
@@ -220,8 +222,6 @@ pub async fn key_gen_impl<
                 op_tag,
             )
             .await;
-            // Cleanup runs on every termination (normal completion, error, or abort).
-            ongoing.lock().await.remove(&preproc_id);
         }
         .instrument(tracing::Span::current()),
     );
@@ -322,7 +322,7 @@ pub async fn abort_key_gen_impl<
         .map_err(|e| MetricedError::new(OP_KEYGEN_ABORT, None, e, tonic::Code::InvalidArgument))?;
     match service.ongoing_key_gen.lock().await.remove(&preproc_id) {
         Some(cancellation_token) => {
-            // The cancel arm of `tokio::select!` handles abort and clean-up.
+            // The task records the abort, in its cancel arm or at its claim.
             cancellation_token.cancel();
             tracing::info!("Aborted key generation with preprocessing {}", preproc_id);
             Ok(Response::new(Empty {}))
@@ -350,6 +350,7 @@ pub(crate) async fn key_gen_background<
 >(
     permit: MetaStorePermit<KeyGenMetadata>,
     cancel_token: CancellationToken,
+    ongoing: Arc<Mutex<HashMap<RequestId, CancellationToken>>>,
     req_id: &RequestId,
     preproc_id: &RequestId,
     epoch_id: &EpochId,
@@ -380,6 +381,12 @@ pub(crate) async fn key_gen_background<
                     eip712_domain,
                     extra_data,
                 ) => res.map_err(|e| format!("Failed key generation: {e}")),
+            };
+            // An abort that removed the entry before this claim wins, even over a finished run.
+            let outcome = if ongoing.lock().await.remove(preproc_id).is_some() {
+                outcome
+            } else {
+                outcome.and(Err("Key generation was aborted".to_string()))
             };
 
             let keygen_result = match outcome {
@@ -420,6 +427,7 @@ pub(crate) async fn key_gen_background<
             let (from, to) = match internal_keyset_config.get_from_and_to() {
                 Ok((from, to)) => (from, to),
                 Err(e) => {
+                    ongoing.lock().await.remove(preproc_id);
                     let _ = update_err_req_in_meta_store(
                         &meta_store,
                         permit,
@@ -439,6 +447,12 @@ pub(crate) async fn key_gen_background<
                     &from,
                     &to,
                 ) => res.map_err(|e| format!("Failed decompression key generation: {e}")),
+            };
+            // An abort that removed the entry before this claim wins, even over a finished run.
+            let outcome = if ongoing.lock().await.remove(preproc_id).is_some() {
+                outcome
+            } else {
+                outcome.and(Err("Key generation was aborted".to_string()))
             };
             let decompression_key = match outcome {
                 Ok(k) => k,
@@ -632,6 +646,45 @@ pub(crate) mod tests {
             .await
             .unwrap_err();
         assert_eq!(err.code(), tonic::Code::NotFound);
+    }
+
+    /// An abort that removes the entry after generation finished, but before the claim, wins.
+    #[tokio::test]
+    async fn abort_after_generation_wins() {
+        let mut rng = AesRng::seed_from_u64(42);
+        let preproc_id = derive_request_id("test_keygen_abort_after_generation_preproc").unwrap();
+        let (kms, _) = setup_test_kms_with_preproc(&mut rng, &preproc_id).await;
+        let request_id = derive_request_id("test_keygen_abort_after_generation").unwrap();
+        let request = KeyGenRequest {
+            signing_schemes: vec![kms_grpc::kms::v1::SigningSchemeType::Ecdsa256k1 as i32],
+            params: Some(FheParameter::Test.into()),
+            keyset_config: None,
+            keyset_added_info: None,
+            request_id: Some(request_id.into()),
+            context_id: None,
+            preproc_id: Some(preproc_id.into()),
+            domain: Some(alloy_to_protobuf_domain(&dummy_domain()).unwrap()),
+            epoch_id: None,
+            extra_data: vec![],
+        };
+        key_gen_impl(&kms, tonic::Request::new(request), false)
+            .await
+            .unwrap();
+        // Removing the entry without cancelling lets generation finish, as a late abort does.
+        assert!(
+            kms.ongoing_key_gen
+                .try_lock()
+                .unwrap()
+                .remove(&preproc_id)
+                .is_some()
+        );
+
+        let err = crate::testing::utils::poll_result_until_ready(|| {
+            get_key_gen_result_impl(&kms, tonic::Request::new(request_id.into()), false)
+        })
+        .await
+        .unwrap_err();
+        assert_eq!(err.code(), tonic::Code::Aborted);
     }
 
     #[cfg(feature = "insecure")]
@@ -1148,6 +1201,7 @@ pub(crate) mod tests {
         key_gen_background(
             permit,
             cancel_token,
+            Arc::new(Mutex::new(HashMap::new())),
             &req_id,
             &preproc_id,
             &epoch_id,
