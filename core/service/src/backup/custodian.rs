@@ -1,4 +1,4 @@
-use crate::backup::{BACKUP_PKE_SCHEME, backup_format_from_wire, backup_format_to_wire};
+use crate::backup::{BACKUP_PKE_SCHEME, VESTIGIAL_BACKUP_SIGNING_TYPE};
 use crate::backup::operator::DSEP_BACKUP_MATERIAL;
 use crate::cryptography::{
     encryption::{HasPkeScheme, UnifiedPrivateEncKey, UnifiedPublicEncKey},
@@ -79,7 +79,6 @@ impl TryFrom<CustodianRecoveryOutput> for InternalCustodianRecoveryOutput {
             signcryption: UnifiedSigncryption::new(
                 backup_output.signcryption.clone(),
                 backup_output.pke_type.try_into()?,
-                backup_format_from_wire(backup_output.signing_type)?,
             ),
             custodian_role: Role::indexed_from_one(value.custodian_role as usize),
         })
@@ -90,12 +89,11 @@ impl TryFrom<InternalCustodianRecoveryOutput> for CustodianRecoveryOutput {
     type Error = anyhow::Error;
 
     fn try_from(value: InternalCustodianRecoveryOutput) -> Result<Self, Self::Error> {
-        let signing_type = backup_format_to_wire(value.signcryption.format)?;
         Ok(CustodianRecoveryOutput {
             backup_output: Some(OperatorBackupOutput {
                 signcryption: value.signcryption.payload,
                 pke_type: value.signcryption.pke_type as i32,
-                signing_type,
+                signing_type: VESTIGIAL_BACKUP_SIGNING_TYPE.as_wire(),
             }),
             custodian_role: value.custodian_role.one_based() as u64,
         })

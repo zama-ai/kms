@@ -60,8 +60,8 @@ use kms_lib::{
             gen_sig_keys,
         },
         signcryption::{
-            Signcrypt, SigncryptionFormat, SigncryptionPayload, UnifiedSigncryption,
-            UnifiedSigncryptionKeyOwned, UnifiedUnsigncryptionKeyOwned,
+            Signcrypt, SigncryptionPayload, UnifiedSigncryption, UnifiedSigncryptionKeyOwned,
+            UnifiedUnsigncryptionKeyOwned,
         },
     },
     engine::{
@@ -1150,7 +1150,6 @@ fn test_recovery_material(
             signcryption: UnifiedSigncryption::new(
                 payload.to_vec(),
                 BACKUP_PKE_SCHEME,
-                SigncryptionFormat::EcdsaV0,
             ),
         };
         cts.insert(cus_role, cts_out.clone());
@@ -1195,7 +1194,6 @@ fn test_internal_recovery_request(
         let signcryption = UnifiedSigncryption::new(
             payload.to_vec(),
             BACKUP_PKE_SCHEME,
-            SigncryptionFormat::EcdsaV0,
         );
         cts.insert(cur_role, InnerOperatorBackupOutput { signcryption });
     }
@@ -1282,7 +1280,6 @@ fn test_internal_custodian_recovery_output(
     let signcryption = UnifiedSigncryption::new(
         buf.to_vec(),
         BACKUP_PKE_SCHEME,
-        SigncryptionFormat::EcdsaV0,
     );
 
     let new_versionized = InternalCustodianRecoveryOutput {

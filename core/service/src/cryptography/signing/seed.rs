@@ -127,7 +127,6 @@ impl RootSigningSeed {
     /// use the persisted [`PrivateSigKey`].
     #[cfg(feature = "non-wasm")]
     pub(crate) fn derive_ecdsa_signing_key(&self) -> Result<PrivateSigKey, SigningError> {
-        use crate::cryptography::signing::HasSigningScheme;
 
         match self.derive_signing_key(SigningSchemeType::Ecdsa256k1)? {
             UnifiedPrivateSigKey::Ecdsa256k1(sk) => Ok(sk.clone()),
@@ -315,7 +314,7 @@ impl Zeroize for DerivedKeyCache {
 mod tests {
     use super::*;
     use crate::consts::SAFE_SER_SIZE_LIMIT;
-    use crate::cryptography::signing::{HasSigningScheme, unified_sign, unified_verify};
+    use crate::cryptography::signing::{unified_sign, unified_verify};
     use aes_prng::AesRng;
     use hashing::DomainSep;
     use rand::SeedableRng;

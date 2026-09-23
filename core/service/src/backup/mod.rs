@@ -9,7 +9,7 @@ pub mod operator;
 pub mod secretsharing;
 pub mod seed_phrase;
 use crate::cryptography::signatures::SigningSchemeType;
-use crate::cryptography::signcryption::{SigncryptionFormat, UnifiedSigncryption};
+use crate::cryptography::signcryption::UnifiedSigncryption;
 use kms_grpc::RequestId;
 use kms_grpc::kms::v1::OperatorBackupOutput;
 use tfhe::named::Named;
@@ -56,40 +56,26 @@ impl Named for BackupCiphertext {
     const NAME: &'static str = "cryptography::BackupCiphertext";
 }
 
-/// The envelope format an [`OperatorBackupOutput`] describes.
-pub(crate) fn backup_format_from_wire(signing_type: i32) -> anyhow::Result<SigncryptionFormat> {
-    let scheme: SigningSchemeType = signing_type.try_into()?;
-    Ok(SigncryptionFormat::for_schemes(&[scheme]))
-}
-
-/// The `signing_type` an [`OperatorBackupOutput`] must carry for `format`.
+/// The value written to the vestigial `OperatorBackupOutput.signing_type`.
 ///
-/// TODO stop gap: the proto field names a single scheme, so only the frozen
-/// ECDSA layout can be described by it. Fail rather than mislabel a
-/// multi-signature envelope as a single-scheme one. Removing this needs the
-/// proto field to name a layout (or a scheme list) instead.
-pub(crate) fn backup_format_to_wire(format: SigncryptionFormat) -> anyhow::Result<i32> {
-    match format {
-        SigncryptionFormat::EcdsaV0 => Ok(SigningSchemeType::Ecdsa256k1.as_wire()),
-        SigncryptionFormat::CompositeV1 => Err(anyhow::anyhow!(
-            "cannot represent a {format} signcryption in an OperatorBackupOutput, \
-             whose signing_type names a single signing scheme"
-        )),
-    }
-}
+/// A [`UnifiedSigncryption`] names neither a signing scheme nor a layout, so
+/// there is nothing to map onto this field and a reader ignores it.
+///
+/// TODO: drop `signing_type` from `OperatorBackupOutput` when the backup format
+/// is reshaped. Nothing deployed reads it.
+pub(crate) const VESTIGIAL_BACKUP_SIGNING_TYPE: SigningSchemeType = SigningSchemeType::Ecdsa256k1;
 
 impl TryFrom<OperatorBackupOutput> for UnifiedSigncryption {
     type Error = anyhow::Error;
 
     fn try_from(value: OperatorBackupOutput) -> Result<Self, Self::Error> {
-        // As above for `pke_type`: the fallible conversion reports an unknown
-        // discriminant instead of silently relabelling it as ML-KEM-512.
+        // Use the fallible conversion rather than prost's `pke_type()` accessor:
+        // that maps an unrecognised discriminant to the default variant, which
+        // would silently relabel material as ML-KEM-512 instead of reporting the
+        // unknown scheme. `signing_type` is deliberately not read; see
+        // `VESTIGIAL_BACKUP_SIGNING_TYPE`.
         let pke_type = value.pke_type.try_into()?;
-        Ok(UnifiedSigncryption::new(
-            value.signcryption,
-            pke_type,
-            backup_format_from_wire(value.signing_type)?,
-        ))
+        Ok(UnifiedSigncryption::new(value.signcryption, pke_type))
     }
 }
 
@@ -101,7 +87,6 @@ impl TryFrom<&OperatorBackupOutput> for UnifiedSigncryption {
         Ok(UnifiedSigncryption::new(
             value.signcryption.clone(),
             pke_type,
-            backup_format_from_wire(value.signing_type)?,
         ))
     }
 }

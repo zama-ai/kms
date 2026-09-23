@@ -13,10 +13,32 @@
 //! # Envelope formats
 //!
 //! A signcryption's encrypted plaintext has a layout, and there is more than
-//! one. Which one applies is recorded in [`UnifiedSigncryption::format`]; on the
-//! write path it follows from the scheme set, via [`SigncryptionFormat::for_schemes`].
+//! one. **A [`UnifiedSigncryption`] does not say which.** The layout follows from
+//! the key material a reader holds, named by [`SenderAuth`]: a single
+//! [`PublicSigKey`] can only open the frozen layout, and a [`VerfKeySet`] plus a
+//! scheme policy can only open the multi-signature one. Those are the same
+//! choice, so they are the same value, and there is nothing for a tag to
+//! disagree with.
 //!
-//! [`SigncryptionFormat::EcdsaV0`] is the original layout and is **frozen**:
+//! A layout tag on the message was tried and removed: it travels outside the
+//! ciphertext, so it could never be trusted over the caller's own knowledge of
+//! which opener it invoked. The two parsers reject each other's output on their
+//! own — a multi-signature envelope fails the frozen reader's
+//! `H(sender verification key)` check, and a frozen envelope fails
+//! `safe_deserialize` in the multi-signature reader. Both directions are checked
+//! by `composite_v1::tests::the_two_formats_do_not_cross`.
+//!
+//! If a reader ever has to walk stored material of mixed vintage, prefer the
+//! type-name header `safe_serialize` already writes *inside* the ciphertext over
+//! reinstating an outer tag: an attacker cannot forge it without the decryption
+//! key.
+//!
+//! One exception to "a signature names the schemes it was made under": the
+//! frozen layout is **not** scheme-set-bound, because its preimage cannot take a
+//! prefix. A reader of that layout learns the scheme only from the verification
+//! key it chose. Every other layout binds the set into the signed bytes.
+//!
+//! The frozen layout is the original one:
 //! every user-decryption ciphertext produced since 0.11 uses it, the deployed
 //! browser-side verifier in `crate::client::user_decryption_wasm` parses it, and
 //! because it carries no version tag of its own and is recovered by subtracting
@@ -33,11 +55,17 @@
 //!   by the backward-compatibility harness: `test_unified_signcryption` in
 //!   `core/service/tests/backward_compatibility_kms.rs` regenerates a
 //!   signcryption from a seeded RNG and compares it byte-for-byte against a
-//!   fixture frozen at 0.13.0. Moving an RNG draw in [`inner_signcryption`]
+//!   fixture frozen at 0.13.0. Moving an RNG draw in `ecdsa_v0::inner_signcryption`
 //!   breaks it.
 //!
-//! [`SigncryptionFormat::CompositeV1`] carries one signature per scheme, for the
-//! custodian-backup chain.
+//! The multi-signature layout carries one signature per scheme, for the
+//! custodian-backup chain. Reading it goes through [`Unsigncrypt`] like the
+//! frozen layout, on a key built with
+//! [`UnifiedUnsigncryptionKey::new_multi`]. Writing it does not yet: it needs a
+//! [`NodeSigningIdentity`](crate::cryptography::signatures::NodeSigningIdentity)
+//! rather than the single [`PrivateSigKey`] the signing key types hold, so it
+//! stays behind [`composite_v1::seal`] until user decryption grows multi-scheme
+//! signing support.
 
 mod common;
 pub mod composite_v1;
@@ -51,7 +79,7 @@ use crate::cryptography::encryption::{
 };
 use crate::cryptography::error::CryptographyError;
 use crate::cryptography::signatures::{
-    HasSigningScheme, PrivateSigKey, PublicSigKey, SigningSchemeType,
+    PrivateSigKey, PublicSigKey, SigningSchemeType, VerfKeySet,
 };
 use crate::cryptography::zeroizing_writer::ZeroizingWriter;
 use hashing::DomainSep;
@@ -167,11 +195,6 @@ impl HasPkeScheme for UnifiedSigncryptionKeyOwned {
         self.receiver_enc_key.encryption_scheme_type()
     }
 }
-impl HasSigningScheme for UnifiedSigncryptionKeyOwned {
-    fn signing_scheme_type(&self) -> SigningSchemeType {
-        self.signing_key.signing_scheme_type()
-    }
-}
 
 /// Internal type for signcryption keys, storing only references to the real internal keys.
 /// Thus this type should not be serialized instead `UnifiedSigncryptionKeyOwned` should be used.
@@ -194,11 +217,6 @@ impl<'a> UnifiedSigncryptionKey<'a> {
             receiver_id,
         }
     }
-
-    /// The envelope format this key produces.
-    pub fn format(&self) -> SigncryptionFormat {
-        SigncryptionFormat::for_schemes(&[self.signing_key.signing_scheme_type()])
-    }
 }
 
 impl HasPkeScheme for UnifiedSigncryptionKey<'_> {
@@ -206,10 +224,26 @@ impl HasPkeScheme for UnifiedSigncryptionKey<'_> {
         self.receiver_enc_key.encryption_scheme_type()
     }
 }
-impl HasSigningScheme for UnifiedSigncryptionKey<'_> {
-    fn signing_scheme_type(&self) -> SigningSchemeType {
-        self.signing_key.signing_scheme_type()
-    }
+
+/// What a reader authenticates a signcryption with — and therefore which
+/// envelope layout it can open.
+///
+/// The two are the same choice, so they are the same value. There is no way to
+/// build a key that is ambiguous about the layout it reads, and no layout tag on
+/// the message for the two to disagree with.
+#[derive(Clone, Debug)]
+pub enum SenderAuth<'a> {
+    /// A single ECDSA verification key: the frozen layout.
+    Ecdsa(&'a PublicSigKey),
+    /// One verification key per scheme, plus the set every signature must have
+    /// been made under: the multi-signature layout.
+    ///
+    /// `expected_schemes` is the reader's policy, not anything read off the
+    /// message, and an empty one is refused rather than treated as "any".
+    Multi {
+        keys: &'a VerfKeySet,
+        expected_schemes: &'a [SigningSchemeType],
+    },
 }
 
 /// Internal reference type for unsigncryption keys, storing only references to the real internal keys.
@@ -217,12 +251,13 @@ impl HasSigningScheme for UnifiedSigncryptionKey<'_> {
 pub struct UnifiedUnsigncryptionKey<'a> {
     pub decryption_key: &'a UnifiedPrivateEncKey,
     pub encryption_key: &'a UnifiedPublicEncKey, // Needed for validation of the signcrypted payload
-    pub sender_verf_key: &'a PublicSigKey,
+    pub sender: SenderAuth<'a>,
     /// The ID of the receiver of the signcryption, e.g. blockchain address
     pub receiver_id: &'a [u8],
 }
 
 impl<'a> UnifiedUnsigncryptionKey<'a> {
+    /// A reader of the frozen, single-ECDSA layout.
     pub fn new(
         decryption_key: &'a UnifiedPrivateEncKey,
         encryption_key: &'a UnifiedPublicEncKey,
@@ -230,28 +265,64 @@ impl<'a> UnifiedUnsigncryptionKey<'a> {
         receiver_id: &'a [u8],
     ) -> Self {
         Self {
-            sender_verf_key,
+            sender: SenderAuth::Ecdsa(sender_verf_key),
             decryption_key,
             encryption_key,
             receiver_id,
         }
     }
 
-    /// The envelope format this key can open.
-    pub fn format(&self) -> SigncryptionFormat {
-        SigncryptionFormat::for_schemes(&[self.sender_verf_key.signing_scheme_type()])
+    /// A reader of the multi-signature layout, requiring a signature under every
+    /// scheme in `expected_schemes`.
+    pub fn new_multi(
+        decryption_key: &'a UnifiedPrivateEncKey,
+        encryption_key: &'a UnifiedPublicEncKey,
+        keys: &'a VerfKeySet,
+        expected_schemes: &'a [SigningSchemeType],
+        receiver_id: &'a [u8],
+    ) -> Self {
+        Self {
+            sender: SenderAuth::Multi {
+                keys,
+                expected_schemes,
+            },
+            decryption_key,
+            encryption_key,
+            receiver_id,
+        }
+    }
+
+    /// Decrypt and authenticate `cipher`, returning the message bytes.
+    ///
+    /// The layout follows from `sender`; see the module documentation.
+    fn open(
+        &self,
+        dsep: &DomainSep,
+        cipher: &UnifiedSigncryption,
+    ) -> Result<Zeroizing<Vec<u8>>, CryptographyError> {
+        match &self.sender {
+            SenderAuth::Ecdsa(sender_verf_key) => {
+                ecdsa_v0::inner_unsigncrypt(self, sender_verf_key, dsep, cipher)
+            }
+            SenderAuth::Multi {
+                keys,
+                expected_schemes,
+            } => composite_v1::open(
+                self.decryption_key,
+                self.encryption_key,
+                keys,
+                expected_schemes,
+                self.receiver_id,
+                dsep,
+                cipher,
+            ),
+        }
     }
 }
 
 impl HasPkeScheme for UnifiedUnsigncryptionKey<'_> {
     fn encryption_scheme_type(&self) -> PkeSchemeType {
         self.encryption_key.encryption_scheme_type()
-    }
-}
-
-impl HasSigningScheme for UnifiedUnsigncryptionKey<'_> {
-    fn signing_scheme_type(&self) -> SigningSchemeType {
-        self.sender_verf_key.signing_scheme_type()
     }
 }
 
@@ -298,7 +369,7 @@ impl UnifiedUnsigncryptionKeyOwned {
         UnifiedUnsigncryptionKey {
             decryption_key: &self.decryption_key,
             encryption_key: &self.encryption_key,
-            sender_verf_key: &self.sender_verf_key,
+            sender: SenderAuth::Ecdsa(&self.sender_verf_key),
             receiver_id: &self.receiver_id,
         }
     }
@@ -310,48 +381,6 @@ impl HasPkeScheme for UnifiedUnsigncryptionKeyOwned {
     }
 }
 
-impl HasSigningScheme for UnifiedUnsigncryptionKeyOwned {
-    fn signing_scheme_type(&self) -> SigningSchemeType {
-        self.sender_verf_key.signing_scheme_type()
-    }
-}
-
-#[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize, VersionsDispatch)]
-pub enum SigncryptionFormatVersions {
-    V0(SigncryptionFormat),
-}
-
-/// The layout of a signcryption's encrypted plaintext.
-#[derive(Clone, Copy, PartialEq, Eq, Debug, Hash, Serialize, Deserialize, Versionize)]
-#[versionize(SigncryptionFormatVersions)]
-pub enum SigncryptionFormat {
-    /// `msg ‖ sig ‖ H(sender verification key)`, ECDSA only. Frozen; see the
-    /// module documentation.
-    EcdsaV0,
-    /// A self-describing, versioned, multi-signature envelope.
-    CompositeV1,
-}
-
-impl SigncryptionFormat {
-    /// The format a signcryption produced under `schemes` must use.
-    pub fn for_schemes(schemes: &[SigningSchemeType]) -> Self {
-        if schemes == [SigningSchemeType::Ecdsa256k1] {
-            Self::EcdsaV0
-        } else {
-            Self::CompositeV1
-        }
-    }
-}
-
-impl std::fmt::Display for SigncryptionFormat {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::EcdsaV0 => write!(f, "EcdsaV0"),
-            Self::CompositeV1 => write!(f, "CompositeV1"),
-        }
-    }
-}
-
 #[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize, VersionsDispatch)]
 pub enum UnifiedSigncryptionVersions {
     V0(UnifiedSigncryptionV0),
@@ -359,9 +388,11 @@ pub enum UnifiedSigncryptionVersions {
 }
 
 /// A signcryption as it was stored and sent before multi-signature envelopes,
-/// naming a signing scheme where the current form names a layout.
+/// naming the signing scheme that produced it.
 ///
-/// Kept so that legacy material can still be read.
+/// Kept so that legacy material can still be read. The scheme it names is
+/// dropped on upgrade: a reader gets the layout from the opener it calls, not
+/// from the message.
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize, Debug, Version)]
 pub struct UnifiedSigncryptionV0 {
     pub payload: Vec<u8>,
@@ -376,30 +407,24 @@ impl Upgrade<UnifiedSigncryption> for UnifiedSigncryptionV0 {
         Ok(UnifiedSigncryption {
             payload: self.payload,
             pke_type: self.pke_type,
-            format: SigncryptionFormat::for_schemes(&[self.signing_type]),
         })
     }
 }
 
-/// A signcrypted message, tagged with the layout of its encrypted plaintext.
+/// A signcrypted message.
 ///
-/// `format` says how to parse `payload` once decrypted. It does *not* say which
-/// schemes signed it: that is inside the envelope, where it is authenticated.
+/// Carries no indication of which envelope layout `payload` is in, and no
+/// indication of which schemes signed it. Both follow from the opener a reader
+/// calls — see the module documentation.
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize, Debug, Versionize)]
 #[versionize(UnifiedSigncryptionVersions)]
 pub struct UnifiedSigncryption {
     pub payload: Vec<u8>,
     pub pke_type: PkeSchemeType,
-    pub format: SigncryptionFormat,
 }
 impl UnifiedSigncryption {
-    /// A signcryption whose encrypted plaintext uses `format`.
-    pub fn new(payload: Vec<u8>, pke_type: PkeSchemeType, format: SigncryptionFormat) -> Self {
-        Self {
-            payload,
-            pke_type,
-            format,
-        }
+    pub fn new(payload: Vec<u8>, pke_type: PkeSchemeType) -> Self {
+        Self { payload, pke_type }
     }
 }
 
@@ -500,12 +525,10 @@ impl<'a> Signcrypt for UnifiedSigncryptionKey<'a> {
                 "Could not serialize message for signcryption: {e}",
             ))
         })?;
-        match self.format() {
-            SigncryptionFormat::EcdsaV0 => {
-                ecdsa_v0::inner_signcryption(self, rng, dsep, serialized_msg.as_slice())
-            }
-            format @ SigncryptionFormat::CompositeV1 => Err(common::unsupported_format(format)),
-        }
+        // This key holds one ECDSA signing key, so the frozen layout is the only
+        // one it can produce. A multi-signature envelope needs a
+        // `NodeSigningIdentity` and goes through `composite_v1::seal`.
+        ecdsa_v0::inner_signcryption(self, rng, dsep, serialized_msg.as_slice())
     }
 }
 
@@ -546,10 +569,10 @@ impl<'a> SigncryptFHEPlaintext for UnifiedSigncryptionKey<'a> {
         let mut serialized_msg = ZeroizingWriter::new();
         bc2wrap::serialize_into(&*signcryption_msg, &mut serialized_msg)
             .map_err(|e| CryptographyError::BincodeError(e.to_string()))?;
-        // Deliberately not routed through `SigncryptionFormat::for_schemes`: the wire type this
-        // produces, `TypedSigncryptedCiphertext.signcrypted_ciphertext`, is a
-        // bare `bytes` field with nowhere to record a format, so the only
-        // layout its readers can parse is the frozen one.
+        // The wire type this produces,
+        // `TypedSigncryptedCiphertext.signcrypted_ciphertext`, is a bare `bytes`
+        // field, and the deployed browser-side verifier parses exactly one
+        // layout. The frozen one is not a default here, it is the only option.
         ecdsa_v0::inner_signcryption(self, rng, dsep, serialized_msg.as_slice())
     }
 }
@@ -568,25 +591,13 @@ impl SigncryptFHEPlaintext for UnifiedSigncryptionKeyOwned {
     }
 }
 
-/// Open `cipher` in whichever format it names.
-fn open_dispatch(
-    unsign_key: &UnifiedUnsigncryptionKey,
-    dsep: &DomainSep,
-    cipher: &UnifiedSigncryption,
-) -> Result<Zeroizing<Vec<u8>>, CryptographyError> {
-    match cipher.format {
-        SigncryptionFormat::EcdsaV0 => ecdsa_v0::inner_unsigncrypt(unsign_key, dsep, cipher),
-        format @ SigncryptionFormat::CompositeV1 => Err(common::unsupported_format(format)),
-    }
-}
-
 impl<'a> Unsigncrypt for UnifiedUnsigncryptionKey<'a> {
     fn unsigncrypt<T: DeserializeOwned + tfhe::Unversionize + tfhe::named::Named>(
         &self,
         dsep: &DomainSep,
         cipher: &UnifiedSigncryption,
     ) -> Result<T, CryptographyError> {
-        let msg_vec = open_dispatch(self, dsep, cipher)?;
+        let msg_vec = self.open(dsep, cipher)?;
         safe_deserialize(std::io::Cursor::new(&*msg_vec), SAFE_SER_SIZE_LIMIT)
             .map_err(CryptographyError::SerializationError)
     }
@@ -597,7 +608,7 @@ impl<'a> Unsigncrypt for UnifiedUnsigncryptionKey<'a> {
         signcryption: &UnifiedSigncryption,
     ) -> Result<(), CryptographyError> {
         // Since we use sign-then-encrypt, we need to decrypt first to get the message for signature verification
-        let _ = open_dispatch(self, dsep, signcryption).map_err(|e| {
+        let _ = self.open(dsep, signcryption).map_err(|e| {
             CryptographyError::VerificationError(format!(
                 "failed to decrypt signcryption for validation: {}",
                 e
@@ -634,15 +645,12 @@ impl<'a> UnsigncryptFHEPlaintext for UnifiedUnsigncryptionKey<'a> {
         signcryption: &[u8],
         link: &[u8],
     ) -> Result<SigncryptionPayload, CryptographyError> {
-        // The legacy user-decryption path. See the note in `signcrypt_plaintext`
-        // for why the format is fixed here rather than chosen: the raw bytes
-        // this receives have nowhere to record one.
+        // The legacy user-decryption path; see the note in `signcrypt_plaintext`.
         let parsed_signcryption = UnifiedSigncryption::new(
             signcryption.to_owned(),
             self.encryption_key.encryption_scheme_type(),
-            SigncryptionFormat::EcdsaV0,
         );
-        let decrypted_signcryption = ecdsa_v0::inner_unsigncrypt(self, dsep, &parsed_signcryption)?;
+        let decrypted_signcryption = self.open(dsep, &parsed_signcryption)?;
         // LEGACY should be using safe_deserialization from tfhe-rs
         let mut signcrypted_msg: SigncryptionPayload =
             bc2wrap::deserialize_slice(&decrypted_signcryption)
@@ -944,90 +952,12 @@ mod tests {
             .unwrap_err();
     }
 
-    /// The singleton ECDSA set — and only it — selects the frozen layout. This
-    /// is what keeps user decryption on `EcdsaV0` without a dedicated branch.
+    /// Material written before multi-signature envelopes must still read. The
+    /// scheme it named is dropped: a reader gets the layout from the opener it
+    /// calls, and every V0 artifact was written in the frozen layout regardless
+    /// of which scheme the field claimed.
     #[test]
-    fn only_the_ecdsa_singleton_is_the_legacy_format() {
-        use strum::IntoEnumIterator;
-
-        assert_eq!(
-            SigncryptionFormat::for_schemes(&[SigningSchemeType::Ecdsa256k1]),
-            SigncryptionFormat::EcdsaV0
-        );
-
-        for scheme in SigningSchemeType::iter().filter(|s| *s != SigningSchemeType::Ecdsa256k1) {
-            assert_eq!(
-                SigncryptionFormat::for_schemes(&[scheme]),
-                SigncryptionFormat::CompositeV1,
-                "{scheme} alone must not select the frozen ECDSA layout"
-            );
-        }
-
-        // Adding any scheme to ECDSA leaves the legacy format behind, which is
-        // what stops a composite signcryption being parsed as a legacy one.
-        assert_eq!(
-            SigncryptionFormat::for_schemes(&[
-                SigningSchemeType::Ecdsa256k1,
-                SigningSchemeType::MlDsa87
-            ]),
-            SigncryptionFormat::CompositeV1
-        );
-    }
-
-    /// Everything produced by the single-ECDSA path must be tagged with the
-    /// frozen layout, because that is the only layout its bytes can be read as.
-    #[test]
-    fn the_legacy_path_produces_the_frozen_format() {
-        let (mut rng, keys) = test_setup();
-        let expected = SigncryptionFormat::EcdsaV0;
-
-        let cipher = keys
-            .signcrypt_key
-            .signcrypt(&mut rng, b"TESTTEST", &TestType { i: 7 })
-            .unwrap();
-        assert_eq!(cipher.format, expected);
-
-        let plaintext_cipher = keys
-            .signcrypt_key
-            .signcrypt_plaintext(&mut rng, b"TESTTEST", &[1], FheTypes::Bool, &[9u8; 4])
-            .unwrap();
-        assert_eq!(plaintext_cipher.format, expected);
-
-        assert_eq!(keys.signcrypt_key.reference().format(), expected);
-        assert_eq!(keys.unsigncryption_key.reference().format(), expected);
-    }
-
-    /// A signcryption claiming the multi-signature layout must be refused rather
-    /// than parsed as a legacy one. Until that envelope is wired in that is an
-    /// "unsupported format" error; once it is, the composite opener takes over
-    /// and this must still never reach [`ecdsa_v0::inner_unsigncrypt`].
-    #[test]
-    fn a_composite_format_does_not_reach_the_legacy_opener() {
-        let (mut rng, keys) = test_setup();
-        let mut cipher = keys
-            .signcrypt_key
-            .signcrypt(&mut rng, b"TESTTEST", &TestType { i: 11 })
-            .unwrap();
-        cipher.format = SigncryptionFormat::CompositeV1;
-
-        let err = keys
-            .unsigncryption_key
-            .unsigncrypt::<TestType>(b"TESTTEST", &cipher)
-            .unwrap_err();
-        assert!(
-            matches!(err, CryptographyError::UnsupportedSigncryptionFormat(_)),
-            "a composite tag must not be handled by the legacy opener: {err}"
-        );
-    }
-
-    /// Material written before multi-signature envelopes must still read, and
-    /// must still name the layout its bytes are actually in.
-    ///
-    /// Only the ECDSA variant was ever written, and it is the one that has to
-    /// land on the frozen layout. The other schemes are exercised to pin what
-    /// the mapping would do rather than because such data exists.
-    #[test]
-    fn v0_upgrades_to_the_frozen_format() {
+    fn v0_upgrades_by_dropping_the_scheme() {
         use strum::IntoEnumIterator;
 
         for scheme in SigningSchemeType::iter() {
@@ -1036,22 +966,16 @@ mod tests {
                 pke_type: PkeSchemeType::MlKem512,
                 signing_type: scheme,
             };
-            let expected = if scheme == SigningSchemeType::Ecdsa256k1 {
-                SigncryptionFormat::EcdsaV0
-            } else {
-                SigncryptionFormat::CompositeV1
-            };
 
             let upgraded = v0.clone().upgrade().unwrap();
             assert_eq!(upgraded.payload, v0.payload);
             assert_eq!(upgraded.pke_type, v0.pke_type);
-            assert_eq!(upgraded.format, expected);
 
             // The upgrade is exactly what the constructor builds, so a
             // regenerated artifact still compares equal to a frozen one.
             assert_eq!(
                 upgraded,
-                UnifiedSigncryption::new(v0.payload, v0.pke_type, expected)
+                UnifiedSigncryption::new(v0.payload, v0.pke_type)
             );
         }
     }

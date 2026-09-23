@@ -15,7 +15,7 @@ use crate::{
 };
 use crate::{
     backup::custodian::DSEP_BACKUP_CUSTODIAN,
-    backup::{backup_format_from_wire, backup_format_to_wire},
+    backup::VESTIGIAL_BACKUP_SIGNING_TYPE,
     cryptography::signatures::{internal_sign, internal_verify_sig},
 };
 use crate::{
@@ -182,7 +182,6 @@ impl TryFrom<OperatorBackupOutput> for InnerOperatorBackupOutput {
             signcryption: UnifiedSigncryption::new(
                 value.signcryption,
                 value.pke_type.try_into()?,
-                backup_format_from_wire(value.signing_type)?,
             ),
         })
     }
@@ -191,11 +190,10 @@ impl TryFrom<InnerOperatorBackupOutput> for OperatorBackupOutput {
     type Error = anyhow::Error;
 
     fn try_from(value: InnerOperatorBackupOutput) -> Result<Self, Self::Error> {
-        let signing_type = backup_format_to_wire(value.signcryption.format)?;
         Ok(Self {
             signcryption: value.signcryption.payload,
             pke_type: value.signcryption.pke_type as i32,
-            signing_type,
+            signing_type: VESTIGIAL_BACKUP_SIGNING_TYPE.as_wire(),
         })
     }
 }
@@ -981,7 +979,6 @@ mod tests {
             signcryption: UnifiedSigncryption::new(
                 vec![1, 2, 3],
                 BACKUP_PKE_SCHEME,
-                SigncryptionFormat::EcdsaV0,
             ),
         };
         cts.insert(Role::indexed_from_one(1), cts_out.clone());

@@ -1,7 +1,7 @@
 //! The verification keys one party publishes, one per signature scheme.
 
 use super::identity::NodeSigningIdentity;
-use super::{HasSigningScheme, SigningError, SigningSchemeType, UnifiedPublicSigKey};
+use super::{SigningError, SigningSchemeType, UnifiedPublicSigKey};
 use hashing::{DomainSep, hash_element};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;

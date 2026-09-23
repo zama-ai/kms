@@ -859,7 +859,7 @@ pub mod tests {
         cryptography::{
             encryption::{Encryption, PkeScheme, UnifiedPublicEncKey},
             signatures::{PrivateSigKey, SigningSchemeType, gen_sig_keys},
-            signcryption::{SigncryptionFormat, UnifiedSigncryption},
+            signcryption::UnifiedSigncryption,
         },
     };
     use aes_prng::AesRng;
@@ -936,7 +936,6 @@ pub mod tests {
             signcryption: UnifiedSigncryption::new(
                 vec![1, 2, 3],
                 BACKUP_PKE_SCHEME,
-                SigncryptionFormat::EcdsaV0,
             ),
         };
         let mut cts = BTreeMap::new();

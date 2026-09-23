@@ -114,11 +114,6 @@ pub enum SigningError {
     },
 }
 
-/// Trait for any value that is tied to a concrete signature scheme.
-pub trait HasSigningScheme {
-    fn signing_scheme_type(&self) -> SigningSchemeType;
-}
-
 #[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize, VersionsDispatch)]
 pub enum SigningSchemeTypeVersions {
     V0(SigningSchemeType),
@@ -327,12 +322,6 @@ impl Signature {
     }
 }
 
-impl HasSigningScheme for Signature {
-    fn signing_scheme_type(&self) -> SigningSchemeType {
-        self.scheme
-    }
-}
-
 /// A signing key tagged with the scheme it belongs to.
 /// Large types are boxed so the enum remains small to move.
 pub enum UnifiedPrivateSigKey {
@@ -343,8 +332,9 @@ pub enum UnifiedPrivateSigKey {
     MlDsa87(Box<MlDsaSigningKey<MlDsa87>>),
 }
 
-impl HasSigningScheme for UnifiedPrivateSigKey {
-    fn signing_scheme_type(&self) -> SigningSchemeType {
+impl UnifiedPrivateSigKey {
+    /// The scheme this key belongs to.
+    pub fn signing_scheme_type(&self) -> SigningSchemeType {
         match self {
             UnifiedPrivateSigKey::Ecdsa256k1(_) => SigningSchemeType::Ecdsa256k1,
             UnifiedPrivateSigKey::Ed25519(_) => SigningSchemeType::Ed25519,
@@ -353,9 +343,7 @@ impl HasSigningScheme for UnifiedPrivateSigKey {
             UnifiedPrivateSigKey::MlDsa87(_) => SigningSchemeType::MlDsa87,
         }
     }
-}
 
-impl UnifiedPrivateSigKey {
     /// Derive the matching public verification key, when the scheme supports it.
     ///
     /// Currently always `Ok` (every supported scheme can derive it); fallible so
@@ -490,10 +478,9 @@ impl UnifiedPublicSigKey {
             other => format!("0x{}", hex::encode(other.digest())),
         }
     }
-}
 
-impl HasSigningScheme for UnifiedPublicSigKey {
-    fn signing_scheme_type(&self) -> SigningSchemeType {
+    /// The scheme this key belongs to.
+    pub fn signing_scheme_type(&self) -> SigningSchemeType {
         match self {
             UnifiedPublicSigKey::Ecdsa256k1(_) => SigningSchemeType::Ecdsa256k1,
             UnifiedPublicSigKey::Ed25519(_) => SigningSchemeType::Ed25519,

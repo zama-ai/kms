@@ -53,11 +53,8 @@ const ALLOW_UNCOVERED: &[&str] = &[
     // Field of UnifiedCipher.
     // Covered via UnifiedCipherTest.
     "PkeSchemeType",
-    // Field of UnifiedSigncryption.
-    // Covered via UnifiedSigncryptionTest.
-    "SigncryptionFormat",
     // Field of StoredTypedSignature, and of UnifiedSigncryptionV0. (PrivateSigKey /
-    // PublicSigKey expose it only via the HasSigningScheme trait method, not as
+    // PublicSigKey expose it only via the `signing_scheme_type` method, not as
     // a struct field.)
     // Covered via StoredTypedSignatureTest, and via UnifiedSigncryptionTest.
     "SigningSchemeType",

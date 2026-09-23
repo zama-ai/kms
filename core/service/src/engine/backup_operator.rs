@@ -1456,7 +1456,7 @@ mod tests {
         backup::custodian::{CustodianSetupMessagePayload, HEADER, InternalCustodianContext},
         cryptography::{
             signatures::{SigningSchemeType, gen_sig_keys},
-            signcryption::{SigncryptionFormat, UnifiedSigncryption},
+            signcryption::UnifiedSigncryption,
         },
         engine::base::derive_request_id,
     };
@@ -1823,7 +1823,6 @@ mod tests {
             signcryption: UnifiedSigncryption::new(
                 vec![1, 2, 3],
                 BACKUP_PKE_SCHEME,
-                SigncryptionFormat::EcdsaV0,
             ),
         };
         cts.insert(Role::indexed_from_one(1), cts_out.clone());

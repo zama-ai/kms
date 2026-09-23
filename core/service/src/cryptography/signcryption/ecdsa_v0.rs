@@ -9,8 +9,7 @@
 
 use super::common::{DSEP_SIGNCRYPTION, hybrid_decrypt, hybrid_encrypt, receiver_binding};
 use super::{
-    SigncryptionFormat, SigncryptionPayload, UnifiedSigncryption, UnifiedSigncryptionKey,
-    UnifiedUnsigncryptionKey,
+    SigncryptionPayload, UnifiedSigncryption, UnifiedSigncryptionKey, UnifiedUnsigncryptionKey,
 };
 use crate::cryptography::encryption::{HasPkeScheme, UnifiedPrivateEncKey};
 use crate::cryptography::error::CryptographyError;
@@ -37,7 +36,7 @@ fn sender_verf_key_digest(verf_key: &PublicSigKey) -> Result<Vec<u8>, Cryptograp
 
 // Implements the actual signcryption but without serialization
 //
-// This is the FROZEN `SigncryptionFormat::EcdsaV0` layout; see the module
+// This is the FROZEN layout; see the module
 // documentation for what depends on its bytes and on its RNG usage.
 pub(super) fn inner_signcryption(
     signcrypt_key: &UnifiedSigncryptionKey,
@@ -70,16 +69,16 @@ pub(super) fn inner_signcryption(
         bc2wrap::serialize(&ciphertext)
             .map_err(|e| CryptographyError::BincodeError(e.to_string()))?,
         signcrypt_key.encryption_scheme_type(),
-        SigncryptionFormat::EcdsaV0,
     ))
 }
 
 /// Implements the actual unsigncryption process, but without any deserialization
 ///
-/// This is the FROZEN `SigncryptionFormat::EcdsaV0` layout; see the module
+/// This is the FROZEN layout; see the module
 /// documentation.
 pub(super) fn inner_unsigncrypt(
     unsign_key: &UnifiedUnsigncryptionKey,
+    sender_verf_key: &PublicSigKey,
     dsep: &DomainSep,
     cipher: &UnifiedSigncryption,
 ) -> Result<Zeroizing<Vec<u8>>, CryptographyError> {
@@ -92,8 +91,8 @@ pub(super) fn inner_unsigncrypt(
     let deserialized_payload: HybridKemCt = bc2wrap::deserialize_slice(&cipher.payload)
         .map_err(|e| CryptographyError::BincodeError(e.to_string()))?;
     let decrypted_plaintext = hybrid_decrypt(deserialized_payload, unsign_key.decryption_key)?;
-    let (msg, sig) = parse_msg(decrypted_plaintext, unsign_key.sender_verf_key)?;
-    check_format_and_signature(dsep, &msg, &sig, unsign_key)?;
+    let (msg, sig) = parse_msg(decrypted_plaintext, sender_verf_key)?;
+    check_format_and_signature(dsep, &msg, &sig, unsign_key, sender_verf_key)?;
     Ok(msg)
 }
 
@@ -139,6 +138,7 @@ fn check_format_and_signature(
     msg: &[u8],
     sig: &Signature,
     unsigncryption_key: &UnifiedUnsigncryptionKey,
+    sender_verf_key: &PublicSigKey,
 ) -> Result<(), CryptographyError> {
     // What should be signed is dsep || msg || H(client_verification_key) || H(client_enc_key)
     let binding = receiver_binding(
@@ -150,8 +150,7 @@ fn check_format_and_signature(
 
     check_normalized(sig)?;
 
-    unsigncryption_key
-        .sender_verf_key
+    sender_verf_key
         .raw_verifying_key()
         .verify(
             &msg_signed,
@@ -253,7 +252,7 @@ mod tests {
                 &f.sender_verf_key,
                 &f.receiver_id,
             );
-            check_format_and_signature(DSEP, msg, &sig, &unsign_key).unwrap();
+            check_format_and_signature(DSEP, msg, &sig, &unsign_key, &f.sender_verf_key).unwrap();
         }
     }
 
@@ -277,10 +276,6 @@ mod tests {
 
             let cipher = signcrypt_key.signcrypt(&mut f.rng, DSEP, &payload).unwrap();
             assert_eq!(cipher.pke_type, scheme);
-            assert_eq!(
-                cipher.format,
-                SigncryptionFormat::EcdsaV0
-            );
 
             let kem_ct: HybridKemCt = bc2wrap::deserialize_slice(&cipher.payload).unwrap();
             let plaintext = hybrid_decrypt(kem_ct, &f.dec_key).unwrap();
@@ -389,11 +384,7 @@ mod tests {
                 &f.sender_verf_key,
                 &f.receiver_id,
             );
-            let frozen_cipher = UnifiedSigncryption::new(
-                frozen_payload.clone(),
-                scheme,
-                SigncryptionFormat::EcdsaV0,
-            );
+            let frozen_cipher = UnifiedSigncryption::new(frozen_payload.clone(), scheme);
             let opened: TestType = unsign_key
                 .unsigncrypt(DSEP, &frozen_cipher)
                 .expect("current code must still open the frozen ciphertext");
