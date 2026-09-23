@@ -752,49 +752,16 @@ impl<T> MetaStore<T> {
         Ok(prev)
     }
 
-    /// Like [`delete`], but for callers that do not hold a permit. Succeeds
-    /// for any non-Deleted state when no live permit is outstanding. Returns
-    /// the previous state.
+    /// Like [`delete`], but for callers that do not hold a permit: acquires one with
+    /// [`lock_entry`](Self::lock_entry) and passes it to [`delete`]. Fails with
+    /// [`MetaStoreError::Locked`] while another permit is outstanding. Returns the previous
+    /// state.
     pub(crate) fn try_delete(
         &mut self,
         request_id: &RequestId,
     ) -> Result<EntryState<T>, MetaStoreError> {
-        let prev = {
-            let entry = self
-                .storage
-                .get(request_id)
-                .ok_or(MetaStoreError::NotFound {
-                    req_id: *request_id,
-                })?;
-            match entry.status() {
-                EntryStatus::Pending | EntryStatus::Done => {
-                    if entry.is_permit_held() {
-                        return Err(MetaStoreError::Locked {
-                            req_id: *request_id,
-                        });
-                    }
-                }
-                EntryStatus::Deleted => {
-                    return Err(MetaStoreError::CannotUpdate {
-                        req_id: *request_id,
-                    });
-                }
-            }
-            EntryState::from(entry)
-        };
-        // Queue slot first, then the tombstone: see the same ordering in `delete`.
-        if matches!(prev, EntryState::Done(_)) {
-            self.remove_completed(request_id)?;
-        }
-        // Safe: observed above under this same `&mut self`; only `complete_queue` was touched
-        // since.
-        let entry = self
-            .storage
-            .get_mut(request_id)
-            .expect("entry observed under this lock cannot vanish");
-        entry.set_deleted();
-        self.deleted_set.insert(*request_id);
-        Ok(prev)
+        let permit = self.lock_entry(request_id)?;
+        self.delete(permit)
     }
 
     /// Reaper hook: if `req_id` names an *orphaned* `Pending` entry — one whose
