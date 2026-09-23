@@ -56,7 +56,8 @@ use kms_lib::{
         hybrid_ml_kem::HybridKemCt,
         signatures::{
             NodeSigningIdentity, PrivateSigKey, PublicSigKey, RootSigningSeed, SigningSchemeSet,
-            SigningSchemeType, UnifiedPublicSigKey, compute_eip712_signature, gen_sig_keys,
+            SigningSchemeType, StoredTypedSignature, UnifiedPublicSigKey, compute_eip712_signature,
+            gen_sig_keys,
         },
         signcryption::{
             Signcrypt, SigncryptionPayload, UnifiedSigncryption, UnifiedSigncryptionKeyOwned,
@@ -68,7 +69,7 @@ use kms_lib::{
             CrsGenMetadata, CrsGenMetadataInner, CrsGenMetadataInnerV2, CrsSignedPayload,
             KeyGenMetadata, KeyGenMetadataInner, KeygenSignedPayload, KmsFheKeyHandles,
             PrepKeygenSignedPayload, PublicDecSignedPayload, StoredEip712Domain,
-            StoredTypedSignature, UserDecSignedPayload,
+            UserDecSignedPayload,
         },
         context::{ContextInfo, NodeInfo, SchemeDigests, SignerAddress, SoftwareVersion},
         threshold::service::{

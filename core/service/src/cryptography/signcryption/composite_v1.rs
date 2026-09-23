@@ -138,8 +138,12 @@ pub(super) fn seal(
 
     let binding = receiver_binding(signcrypt_key.receiver_id, signcrypt_key.receiver_enc_key)?;
     let signed = Zeroizing::new([msg, binding.as_slice()].concat());
-    let signature =
-        CompositeSignature::sign(signcrypt_key.identity, signcrypt_key.schemes, dsep, &signed)?;
+    let signature = CompositeSignature::sign_uniform(
+        signcrypt_key.identity,
+        signcrypt_key.schemes,
+        dsep,
+        &signed,
+    )?;
 
     let envelope = CompositeEnvelope {
         msg: msg.to_vec(),
@@ -182,7 +186,7 @@ pub(super) fn open(
     let signed = Zeroizing::new([envelope.msg.as_slice(), binding.as_slice()].concat());
     envelope
         .signature
-        .verify(
+        .verify_uniform(
             unsign_key.sender_keys,
             unsign_key.expected_schemes,
             dsep,

@@ -9,6 +9,7 @@ use crate::cryptography::signatures::internal_sign;
 use crate::cryptography::signatures::{PublicSigKey, Signature};
 use crate::cryptography::signing::SigningSchemeType;
 use crate::cryptography::signing::identity::NodeSigningIdentity;
+use crate::cryptography::signing::typed_signature::StoredTypedSignature;
 use crate::engine::rng_source::RngSource;
 use crate::engine::traits::PrivateKeyMaterialMetadata;
 use crate::util::key_setup::FhePrivateKey;
@@ -244,43 +245,6 @@ pub fn derive_request_id(name: &str) -> anyhow::Result<RequestId> {
     digest.truncate(ID_LENGTH);
     let res_hex = hex::encode(digest);
     Ok(RequestId::from_str(&res_hex)?)
-}
-
-/// A single KMS signature together with the scheme that produced it, in the
-/// form persisted inside result metadata.
-///
-/// This is the stored twin of the gRPC [`TypedSignature`].
-#[derive(Clone, Serialize, Deserialize, VersionsDispatch)]
-pub enum StoredTypedSignatureVersions {
-    V0(StoredTypedSignature),
-}
-
-/// A single KMS signature together with the scheme that produced it.
-#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, Versionize)]
-#[versionize(StoredTypedSignatureVersions)]
-pub struct StoredTypedSignature {
-    pub scheme: SigningSchemeType,
-    pub signature: Vec<u8>,
-}
-
-impl StoredTypedSignature {
-    /// The `signatures` list of a result that carries nothing but its
-    /// ECDSA/EIP-712 signature.
-    pub fn ecdsa_only(external_signature: Vec<u8>) -> Vec<Self> {
-        vec![StoredTypedSignature {
-            scheme: SigningSchemeType::Ecdsa256k1,
-            signature: external_signature,
-        }]
-    }
-}
-
-impl From<&StoredTypedSignature> for TypedSignature {
-    fn from(value: &StoredTypedSignature) -> Self {
-        TypedSignature {
-            scheme: value.scheme.as_wire(),
-            signature: value.signature.clone(),
-        }
-    }
 }
 
 /// The result payload that every non-ECDSA scheme signs for a preprocessing
@@ -528,82 +492,6 @@ pub(crate) fn stored_scheme_signatures_to_proto(
     signatures.iter().map(TypedSignature::from).collect()
 }
 
-/// One scheme's contribution to a result's `signatures` list: the message that
-/// scheme signs.
-struct SchemeSigningJob {
-    pub scheme: SigningSchemeType,
-    pub message: Vec<u8>,
-}
-
-/// Sign a result under each requested `(scheme, message)` job, returning the
-/// per-scheme signatures to persist in result metadata.
-fn compute_result_signatures(
-    identity: &NodeSigningIdentity,
-    dsep: &DomainSep,
-    jobs: &[SchemeSigningJob],
-) -> anyhow::Result<Vec<StoredTypedSignature>> {
-    jobs.iter()
-        .map(|job| {
-            let signature = match job.scheme {
-                SigningSchemeType::Ecdsa256k1 => {
-                    let hash =
-                        alloy_primitives::B256::try_from(job.message.as_slice()).map_err(|_| {
-                            anyhow::anyhow!(
-                                "EIP-712 signing hash must be 32 bytes, got {}",
-                                job.message.len()
-                            )
-                        })?;
-                    crate::cryptography::signatures::eip712_sign_hash(identity.ecdsa(), &hash)?
-                }
-                // Raw primitive signature over `dsep ‖ message`.
-                scheme @ (SigningSchemeType::Ed25519
-                | SigningSchemeType::MlDsa44
-                | SigningSchemeType::MlDsa65
-                | SigningSchemeType::MlDsa87) => identity
-                    .unified_sign_with(scheme, dsep, &job.message)?
-                    .to_bytes(),
-            };
-            Ok(StoredTypedSignature {
-                scheme: job.scheme,
-                signature,
-            })
-        })
-        .collect()
-}
-
-/// Build the per-scheme signing jobs for a result's `signatures` list.
-///
-/// **A scheme determines what its signature covers.** This mapping is the contract
-/// every verifier relies on, so it lives here alone:
-///
-/// - [`SigningSchemeType::Ecdsa256k1`] signs `eip712_hash`, producing the
-///   recoverable, on-chain-verifiable signature the fhevm contracts verify. It is
-///   byte-identical to the result's deprecated `external_signature`, so that
-///   `signatures` still carries it once that field goes away.
-/// - Every other scheme signs `payload_bytes`, the serialized result payload,
-///   because EIP-712 is an EVM and secp256k1 construction that a post-quantum
-///   scheme has no reason to be bound to.
-///
-/// Each job carries its own message, so such a scheme is added here without
-/// touching callers or [`compute_result_signatures`].
-fn scheme_signing_jobs(
-    schemes: &[SigningSchemeType],
-    eip712_hash: &[u8],
-    payload_bytes: &[u8],
-) -> Vec<SchemeSigningJob> {
-    schemes
-        .iter()
-        .map(|&scheme| SchemeSigningJob {
-            scheme,
-            message: if scheme == SigningSchemeType::Ecdsa256k1 {
-                eip712_hash.to_vec()
-            } else {
-                payload_bytes.to_vec()
-            },
-        })
-        .collect()
-}
-
 /// Sign a public result: the deprecated ECDSA/EIP-712 `external_signature`, and —
 /// independently — the per-scheme `signatures` for exactly the schemes the
 /// client requested.
@@ -621,8 +509,13 @@ fn sign_result<D: SolStruct>(
     let eip712_hash = sol_type.eip712_signing_hash(domain);
     let external_signature =
         crate::cryptography::signatures::eip712_sign_hash(identity.ecdsa(), &eip712_hash)?;
-    let jobs = scheme_signing_jobs(schemes, eip712_hash.as_slice(), payload_bytes);
-    let signatures = compute_result_signatures(identity, dsep, &jobs)?;
+    let signatures = crate::cryptography::signing::composite::sign_result_entries(
+        identity,
+        schemes,
+        dsep,
+        eip712_hash.as_slice(),
+        payload_bytes,
+    )?;
     Ok((external_signature, signatures))
 }
 
@@ -2122,54 +2015,6 @@ pub(crate) mod tests {
                     );
                 }
             }
-        }
-    }
-
-    /// Each job carries its own message, so schemes can be given distinct
-    /// serializations of the same result. This is what lets a future
-    /// scheme-specific encoding be introduced in [`super::scheme_signing_jobs`]
-    /// without changing [`super::compute_result_signatures`].
-    #[test]
-    fn scheme_signatures_honour_per_scheme_messages() {
-        use super::SchemeSigningJob;
-
-        let mut rng = AesRng::seed_from_u64(0x9E11);
-        let (_pk, sk) = gen_sig_keys(&mut rng);
-        let sk = NodeSigningIdentity::new(sk, RootSigningSeed::random(&mut rng));
-        let dsep = b"PERSCHEM";
-
-        let ed_msg = b"serialization chosen for ed25519".to_vec();
-        let mldsa_msg = b"a different serialization chosen for ml-dsa".to_vec();
-
-        let jobs = vec![
-            SchemeSigningJob {
-                scheme: SigningSchemeType::Ed25519,
-                message: ed_msg.clone(),
-            },
-            SchemeSigningJob {
-                scheme: SigningSchemeType::MlDsa65,
-                message: mldsa_msg.clone(),
-            },
-        ];
-
-        let sigs = super::compute_result_signatures(&sk, dsep, &jobs).unwrap();
-        assert_eq!(sigs.len(), 2);
-
-        for (job, scheme_sig) in jobs.iter().zip(&sigs) {
-            let vk = sk.unified_verifying_key(job.scheme).unwrap();
-            let sig = Signature::new(job.scheme, scheme_sig.signature.clone());
-
-            // Each signature verifies against *its own* message...
-            unified_verify(dsep, &job.message, &sig, &vk)
-                .unwrap_or_else(|e| panic!("{:?} should verify its own message: {e}", job.scheme));
-
-            // ...and not against the other job's message.
-            let other = if job.message == ed_msg {
-                &mldsa_msg
-            } else {
-                &ed_msg
-            };
-            assert!(unified_verify(dsep, other, &sig, &vk).is_err());
         }
     }
 

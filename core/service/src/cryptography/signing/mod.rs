@@ -10,10 +10,12 @@ pub mod identity;
 mod mldsa;
 pub mod scheme_set;
 pub mod seed;
+pub mod typed_signature;
 pub mod verf_key_set;
 
 pub use composite::{CompositeSignature, CompositeSignatureVersions};
 pub use scheme_set::SigningSchemeSet;
+pub use typed_signature::{StoredTypedSignature, StoredTypedSignatureVersions};
 pub use verf_key_set::VerfKeySet;
 
 use alloy_primitives::Address;
@@ -111,15 +113,6 @@ pub enum SigningError {
         expected: String,
         /// The set the signature claims.
         actual: String,
-    },
-    /// A composite signature carried a number of signatures that does not match
-    /// its scheme set.
-    #[error("composite signature has {schemes} schemes but {signatures} signatures")]
-    SignatureCountMismatch {
-        /// How many schemes the signature names.
-        schemes: usize,
-        /// How many signature blobs it carries.
-        signatures: usize,
     },
 }
 
