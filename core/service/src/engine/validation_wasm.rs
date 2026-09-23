@@ -200,7 +200,7 @@ pub(crate) fn verify_scheme_entry(
     scheme: SigningSchemeType,
     signature: &[u8],
     dsep: &DomainSep,
-    payload_bytes: &[u8],
+    signed_bytes: &[u8],
 ) -> anyhow::Result<()> {
     debug_assert_ne!(
         scheme,
@@ -214,7 +214,7 @@ pub(crate) fn verify_scheme_entry(
         ))
     })?;
     let signature = Signature::new(scheme, signature.to_vec());
-    unified_verify(dsep, payload_bytes, &signature, verf_key).map_err(|e| {
+    unified_verify(dsep, signed_bytes, &signature, verf_key).map_err(|e| {
         anyhow_tracked(format!(
             "the {scheme} signature of party {party_id} did not verify: {e}"
         ))
@@ -354,6 +354,7 @@ fn attribute_scheme_entry(
     signature: &[u8],
     scheme: SigningSchemeType,
     payloads: &SignedPayloads,
+    signed_bytes: &[u8],
     expected: &ExpectedSigner,
     keys: &SchemeVerfKeys,
     signer: Option<(u32, Address)>,
@@ -365,7 +366,7 @@ fn attribute_scheme_entry(
             scheme,
             signature,
             payloads.dsep,
-            payloads.payload_bytes,
+            signed_bytes,
         )
     };
     match expected {
@@ -387,8 +388,7 @@ fn attribute_scheme_entry(
                 keys.iter()
                     .find_map(|(party_id, party_keys)| {
                         let verf_key = party_keys.get(&scheme)?;
-                        unified_verify(payloads.dsep, payloads.payload_bytes, &parsed, verf_key)
-                            .ok()?;
+                        unified_verify(payloads.dsep, signed_bytes, &parsed, verf_key).ok()?;
                         addresses.get(party_id).map(|address| (*party_id, *address))
                     })
                     .ok_or_else(|| {
@@ -443,6 +443,13 @@ pub(crate) fn verify_response_signatures(
                 .to_string(),
         ));
     }
+    // Bound to the set this verifier requested, so an entry lifted from a
+    // response signed under a larger set does not verify here.
+    let signed_bytes = crate::cryptography::signing::composite::result_signed_bytes(
+        requested,
+        payloads.payload_bytes,
+    )
+    .map_err(|e| anyhow_tracked(format!("could not build the signed payload: {e}")))?;
     let mut verified: Vec<SigningSchemeType> = Vec::with_capacity(sigs.list.len() + 1);
     let mut signer: Option<(u32, Address)> = None;
 
@@ -528,7 +535,15 @@ pub(crate) fn verify_response_signatures(
             };
             expected.attribute(recover_address_from_eip712_hash(hash, &typed.signature)?)?
         } else {
-            attribute_scheme_entry(&typed.signature, scheme, payloads, expected, keys, signer)?
+            attribute_scheme_entry(
+                &typed.signature,
+                scheme,
+                payloads,
+                &signed_bytes,
+                expected,
+                keys,
+                signer,
+            )?
         };
         signer = Some(agree(signer, found)?);
         push_once(&mut verified, scheme);

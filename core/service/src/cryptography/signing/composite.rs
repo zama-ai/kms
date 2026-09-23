@@ -125,6 +125,19 @@ impl CompositeSignature {
     }
 }
 
+/// The bytes a non-ECDSA result signature covers: the payload, prefixed by the
+/// canonical scheme set.
+///
+/// `schemes` is canonicalised here, so callers may pass it in any order and
+/// still agree on the bytes.
+pub fn result_signed_bytes(
+    schemes: &[SigningSchemeType],
+    payload_bytes: &[u8],
+) -> Result<Vec<u8>, SigningError> {
+    let schemes = SigningSchemeSet::new(schemes.iter().copied())?;
+    Ok(CompositeSignature::preimage(&schemes, payload_bytes))
+}
+
 /// The per-scheme signatures of a *result*: a keygen, CRS, preprocessing or
 /// decryption response.
 ///
@@ -145,6 +158,12 @@ pub fn sign_result_entries(
     eip712_hash: &[u8],
     payload_bytes: &[u8],
 ) -> Result<Vec<StoredTypedSignature>, SigningError> {
+    if schemes.is_empty() {
+        return Ok(Vec::new());
+    }
+    // Every non-ECDSA entry commits to the scheme set, so one cannot be lifted
+    // out of a larger response and presented as a complete smaller one.
+    let signed = result_signed_bytes(schemes, payload_bytes)?;
     schemes
         .iter()
         .map(|&scheme| {
@@ -160,7 +179,7 @@ pub fn sign_result_entries(
                         .map_err(|e| SigningError::Sign(e.to_string()))?
                 }
                 _ => identity
-                    .unified_sign_with(scheme, dsep, payload_bytes)?
+                    .unified_sign_with(scheme, dsep, &signed)?
                     .to_bytes(),
             };
             Ok(StoredTypedSignature { scheme, signature })

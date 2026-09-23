@@ -541,6 +541,15 @@ fn verify_metadata_signatures(
         )?;
     }
 
+    // The set is derived from the stored entries rather than requested from
+    // outside: at boot there is no request, and the question is whether the
+    // stored list is intact.
+    let stored_schemes: Vec<_> = signatures.iter().map(|stored| stored.scheme).collect();
+    let signed_bytes = crate::cryptography::signing::composite::result_signed_bytes(
+        &stored_schemes,
+        payload_bytes,
+    )?;
+
     for stored in signatures {
         match stored.scheme {
             SigningSchemeType::Ecdsa256k1 => {
@@ -561,7 +570,7 @@ fn verify_metadata_signatures(
                     )
                 })?;
                 let signature = Signature::new(scheme, stored.signature.clone());
-                unified_verify(dsep, payload_bytes, &signature, &verf_key).map_err(|e| {
+                unified_verify(dsep, &signed_bytes, &signature, &verf_key).map_err(|e| {
                     anyhow::anyhow!(
                         "Invalid {scheme} signature in private {metadata_kind} metadata for id={metadata_id}: {e}"
                     )
