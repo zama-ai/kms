@@ -2,18 +2,13 @@
 
 use super::identity::NodeSigningIdentity;
 use super::{SigningError, SigningSchemeType, UnifiedPublicSigKey};
+use crate::impl_generic_versionize;
 use hashing::{DomainSep, hash_element};
 use serde::{Deserialize, Deserializer, Serialize};
 use std::collections::BTreeMap;
-use tfhe_versionable::{Versionize, VersionsDispatch};
 
 /// Domain separator for the digest that identifies a whole verification-key set.
 const DSEP_VERF_KEY_SET: DomainSep = *b"VKEYSET_";
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, VersionsDispatch)]
-pub enum VerfKeySetVersions {
-    V0(VerfKeySet),
-}
 
 /// One party's verification keys, keyed by the scheme each belongs to.
 ///
@@ -25,12 +20,21 @@ pub enum VerfKeySetVersions {
 ///
 /// The set is non-empty, and every key is filed under the scheme it actually
 /// belongs to.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Versionize)]
-#[versionize(VerfKeySetVersions)]
+///
+/// # Versioning
+///
+/// Not versioned, for the same reason as [`CompositeSignature`]: a
+/// `#[versionize(..)]` derive requires every field to implement `Version`, and
+/// `BTreeMap<SigningSchemeType, UnifiedPublicSigKey>` does not. The stored form
+/// is therefore the serde form — with `#[serde(transparent)]`, the bare map —
+/// and a later change of shape has to be absorbed by the containing type.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 #[serde(transparent)]
 pub struct VerfKeySet {
     keys: BTreeMap<SigningSchemeType, UnifiedPublicSigKey>,
 }
+
+impl_generic_versionize!(VerfKeySet);
 
 impl<'de> Deserialize<'de> for VerfKeySet {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
