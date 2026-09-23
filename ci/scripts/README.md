@@ -280,10 +280,9 @@ conclusion. Requires a threshold-aware new image and a request-ID-capable core-c
 
 #### Core-client compatibility
 
-The Argo command strings target the **`v0.13.x` core-client CLI**. A main / `v0.14+` client is **not** compatible as-is.
-So set `core_client_image_tag` to a `v0.13.x` tag, and **do not** use `build=true` (it would build a main-based client).
-Making the `decrypt` profile main-compatible means updating those commands; the `prss-threshold` profile is
-`v0.13.x`-only by design (`v0.14` rejects the `legacy_prss_mask_*` config).
+The Argo command strings target the **`v0.13.x` and `v0.14.x` core-client CLIs**. The baseline keygen step detects which insecure keygen form the client supports: one step (`v0.13.x`), or `insecure-preproc-key-gen` followed by `insecure-key-gen -i` (`v0.14.x`). The baseline pins the client to `old_image_tag`, so `old_image_tag` can be a `v0.13.x` or a `v0.14.x` tag.
+A main (`v0.15`) client is **not** compatible as-is, because it has no `--num-requests` option. So set `core_client_image_tag` to a `v0.13.x` or `v0.14.x` tag, and **do not** use `build=true` (it would build a main-based client).
+The `prss-threshold` profile is `v0.13.x`-only by design (`v0.14` rejects the `legacy_prss_mask_*` config).
 
 ### Debugging
 
