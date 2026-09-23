@@ -57,7 +57,8 @@
 #                            test. A set tag comes from the new (insecure)
 #                            repository; the default comes from the old one, so
 #                            the harness is never newer than the oldest core.
-#                            The baseline run always pins the core-client to
+#                            Required for test_profile=prss-threshold. The
+#                            baseline run always pins the core-client to
 #                            old_image_tag so the harness matches the all-old
 #                            cluster.
 #   client_logs            (boolean, default false)
@@ -107,7 +108,7 @@ on:
         required: true
         type: string
       core_client_image_tag:
-        description: 'Core-client (test harness) image tag from the new (insecure) repository; independent of the core versions under test. Defaults to old_image_tag from the old repository if empty.'
+        description: 'Core-client (test harness) image tag from the new (insecure) repository; independent of the core versions under test. Defaults to old_image_tag from the old repository if empty. Required for test_profile=prss-threshold.'
         required: false
         type: string
       client_logs:
@@ -229,6 +230,7 @@ jobs:
           INPUT_OLD_TAG: ${{ inputs.old_image_tag }}
           INPUT_NEW_TAG: ${{ inputs.new_image_tag }}
           INPUT_CLIENT_TAG: ${{ inputs.core_client_image_tag }}
+          INPUT_TEST_PROFILE: ${{ inputs.test_profile }}
         run: |
           OLD_TAG="${INPUT_OLD_TAG}"
 
@@ -257,6 +259,17 @@ jobs:
           if [[ -z "${NEW_TAG}" ]]; then
             echo "ERROR: No new image tag available. Either build or provide new_image_tag"
             exit 1
+          fi
+
+          if [[ "${INPUT_TEST_PROFILE}" == "prss-threshold" ]]; then
+            if [[ "${OLD_TAG}" != v0.13.* ]]; then
+              echo "ERROR: test_profile=prss-threshold needs a v0.13.x old_image_tag, got '${OLD_TAG}'. v0.14+ cores reject the legacy_prss_mask_* config. Use test_profile=decrypt for this upgrade."
+              exit 1
+            fi
+            if [[ -z "${INPUT_CLIENT_TAG}" ]]; then
+              echo "ERROR: test_profile=prss-threshold needs core_client_image_tag. Its probes pass --request-id, which no released core-client supports. Set it to a request-ID-capable core-client build."
+              exit 1
+            fi
           fi
 
           echo "Old image tag:         ${OLD_TAG}"
