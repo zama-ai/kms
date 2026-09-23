@@ -251,7 +251,7 @@ Dispatch inputs:
 | Input | Meaning |
 |-------|---------|
 | `old_image_tag` / `new_image_tag` | KMS core image tags before / after the upgrade |
-| `core_client_image_tag` | Core-client (test harness) tag; defaults to `new_image_tag`. Must be ≤ the oldest server version in the run |
+| `core_client_image_tag` | Core-client (test harness) tag from the new repository; defaults to `old_image_tag` from the old repository. Must be ≤ the oldest server version in the run |
 | `old_kms_chart_version` / `new_kms_chart_version` | kms-core Helm chart per side (`repository` = in-tree chart) |
 | `first_batch_parties` / `second_batch_parties` | Party IDs upgraded in wave 1 / wave 2 (default `1,2,3,4,5` / `6,7,8,9`) |
 | `test_profile` | `decrypt` (default) or `prss-threshold` — see below |
@@ -281,7 +281,7 @@ conclusion. Requires a threshold-aware new image and a request-ID-capable core-c
 #### Core-client compatibility
 
 The Argo command strings target the **`v0.13.x` and `v0.14.x` core-client CLIs**. The baseline keygen step detects which insecure keygen form the client supports: one step (`v0.13.x`), or `insecure-preproc-key-gen` followed by `insecure-key-gen -i` (`v0.14.x`). The baseline pins the client to `old_image_tag`, so `old_image_tag` can be a `v0.13.x` or a `v0.14.x` tag.
-A main (`v0.15`) client is **not** compatible as-is, because it has no `--num-requests` option. So set `core_client_image_tag` to a `v0.13.x` or `v0.14.x` tag, and **do not** use `build=true` (it would build a main-based client).
+A main (`v0.15`) client is **not** compatible as-is, because it has no `--num-requests` option. Its replacement (`--rate`/`--duration`) does not fail the command when a request gets too few responses, so it cannot replace the `-a` correctness check. If `core_client_image_tag` is empty, the mixed-state runs use the `old_image_tag` client, which is compatible when `old_image_tag` is a `v0.13.x` or `v0.14.x` tag. Do not set `core_client_image_tag` to a main or `build=true` tag.
 The `prss-threshold` profile is `v0.13.x`-only by design (`v0.14` rejects the `legacy_prss_mask_*` config).
 
 ### Debugging

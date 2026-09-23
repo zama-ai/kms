@@ -51,11 +51,14 @@
 #                            Target KMS Core image tag from the new insecure
 #                            repositories (ignored if build=true; then the
 #                            docker-build output is used).
-#   core_client_image_tag  (string, optional, default = new_image_tag)
+#   core_client_image_tag  (string, optional, default = old_image_tag)
 #                            Core-client (test harness) image tag for the mixed-
 #                            state runs, decoupled from the core versions under
-#                            test. The baseline run instead pins the core-client
-#                            to old_image_tag so the harness matches the all-old
+#                            test. A set tag comes from the new (insecure)
+#                            repository; the default comes from the old one, so
+#                            the harness is never newer than the oldest core.
+#                            The baseline run always pins the core-client to
+#                            old_image_tag so the harness matches the all-old
 #                            cluster.
 #   client_logs            (boolean, default false)
 #                            Enable core-client tracing logs.
@@ -104,7 +107,7 @@ on:
         required: true
         type: string
       core_client_image_tag:
-        description: 'Core-client (test harness) image tag; independent of the core versions under test. Defaults to new_image_tag if empty.'
+        description: 'Core-client (test harness) image tag from the new (insecure) repository; independent of the core versions under test. Defaults to old_image_tag from the old repository if empty.'
         required: false
         type: string
       client_logs:
@@ -237,8 +240,15 @@ jobs:
           fi
 
           # The core-client is the test harness, deliberately decoupled from the
-          # old/new core images under test. Falls back to the new tag if unset.
-          CLIENT_TAG="${INPUT_CLIENT_TAG:-${NEW_TAG}}"
+          # old/new core images under test. It must not be newer than the oldest
+          # core in the run, so it falls back to the old tag and old repository.
+          if [[ -n "${INPUT_CLIENT_TAG}" ]]; then
+            CLIENT_TAG="${INPUT_CLIENT_TAG}"
+            CLIENT_IMAGE_NAME="${NEW_KMS_CORE_CLIENT_IMAGE_NAME}"
+          else
+            CLIENT_TAG="${OLD_TAG}"
+            CLIENT_IMAGE_NAME="${OLD_KMS_CORE_CLIENT_IMAGE_NAME}"
+          fi
 
           if [[ -z "${OLD_TAG}" ]]; then
             echo "ERROR: old_image_tag is required"
@@ -251,7 +261,7 @@ jobs:
 
           echo "Old image tag:         ${OLD_TAG}"
           echo "New image tag:         ${NEW_TAG}"
-          echo "Core-client (harness): ${CLIENT_TAG}"
+          echo "Core-client (harness): ${CLIENT_IMAGE_NAME}:${CLIENT_TAG}"
 
           {
             echo "OLD_IMAGE_TAG=${OLD_TAG}"
@@ -261,6 +271,7 @@ jobs:
             # (see core_client_image_tag input); used for the mixed-state runs.
             # The baseline run pins the core-client to OLD_IMAGE_TAG instead.
             echo "KMS_CORE_CLIENT_IMAGE_TAG=${CLIENT_TAG}"
+            echo "KMS_CORE_CLIENT_HARNESS_IMAGE_NAME=${CLIENT_IMAGE_NAME}"
           } >> "$GITHUB_ENV"
 
       - name: Configure deployment parameters
@@ -520,11 +531,13 @@ jobs:
           fi
 
           # Mixed-state run: decrypt the pre-upgrade BASELINE_KEY_ID on the mixed
-          # cluster. core-client runs the NEW tag; core images stay mixed.
+          # cluster. core-client runs the harness image (KMS_CORE_CLIENT_*); core
+          # images stay mixed.
           # The Argo workflow file depends on the profile; MIXED_WORKFLOW_FILE is
           # set in "Configure deployment parameters".
           cp ./ci/perf-testing/argo-workflow/"${MIXED_WORKFLOW_FILE}" \
              /tmp/mixed-5-workflow.yaml
+          sed -i "s|hub.zama.org/ghcr/zama-ai/kms/core-client-insecure:<client-version>|${KMS_CORE_CLIENT_HARNESS_IMAGE_NAME}:<client-version>|g" /tmp/mixed-5-workflow.yaml
           sed -i "s/<client-version>/${KMS_CORE_CLIENT_IMAGE_TAG}/g" /tmp/mixed-5-workflow.yaml
           sed -i "s/<version>/${NEW_IMAGE_TAG}/g" /tmp/mixed-5-workflow.yaml
 
@@ -614,11 +627,13 @@ jobs:
           fi
 
           # Mixed-state run: decrypt the pre-upgrade BASELINE_KEY_ID on the mixed
-          # cluster. core-client runs the NEW tag; core images stay mixed.
+          # cluster. core-client runs the harness image (KMS_CORE_CLIENT_*); core
+          # images stay mixed.
           # The Argo workflow file depends on the profile; MIXED_WORKFLOW_FILE is
           # set in "Configure deployment parameters".
           cp ./ci/perf-testing/argo-workflow/"${MIXED_WORKFLOW_FILE}" \
              /tmp/mixed-9-workflow.yaml
+          sed -i "s|hub.zama.org/ghcr/zama-ai/kms/core-client-insecure:<client-version>|${KMS_CORE_CLIENT_HARNESS_IMAGE_NAME}:<client-version>|g" /tmp/mixed-9-workflow.yaml
           sed -i "s/<client-version>/${KMS_CORE_CLIENT_IMAGE_TAG}/g" /tmp/mixed-9-workflow.yaml
           sed -i "s/<version>/${NEW_IMAGE_TAG}/g" /tmp/mixed-9-workflow.yaml
 
