@@ -387,7 +387,7 @@ fn attribute_scheme_entry(
                 let parsed = Signature::new(scheme, signature.to_vec());
                 keys.iter()
                     .find_map(|(party_id, party_keys)| {
-                        let verf_key = party_keys.get(&scheme)?;
+                        let verf_key = party_keys.get(scheme)?;
                         unified_verify(payloads.dsep, signed_bytes, &parsed, verf_key).ok()?;
                         addresses.get(party_id).map(|address| (*party_id, *address))
                     })

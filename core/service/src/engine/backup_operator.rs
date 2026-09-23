@@ -1454,10 +1454,7 @@ mod tests {
     };
     use crate::{
         backup::custodian::{CustodianSetupMessagePayload, HEADER, InternalCustodianContext},
-        cryptography::{
-            signatures::{SigningSchemeType, gen_sig_keys},
-            signcryption::UnifiedSigncryption,
-        },
+        cryptography::{signatures::gen_sig_keys, signcryption::UnifiedSigncryption},
         engine::base::derive_request_id,
     };
     use aes_prng::AesRng;
@@ -1820,10 +1817,7 @@ mod tests {
             InternalCustodianContext::new(custodian_context, enc_key.clone()).unwrap();
         let mut cts = BTreeMap::new();
         let cts_out = InnerOperatorBackupOutput {
-            signcryption: UnifiedSigncryption::new(
-                vec![1, 2, 3],
-                BACKUP_PKE_SCHEME,
-            ),
+            signcryption: UnifiedSigncryption::new(vec![1, 2, 3], BACKUP_PKE_SCHEME),
         };
         cts.insert(Role::indexed_from_one(1), cts_out.clone());
         cts.insert(Role::indexed_from_one(2), cts_out.clone());

@@ -39,10 +39,12 @@ use crate::cryptography::signing::ecdsa::{
     PrivateSigKey, PublicSigKey, recover_address_from_eip712_hash,
 };
 use crate::cryptography::signing::identity::NodeSigningIdentity;
-use crate::cryptography::signing::{Signature, SigningSchemeType, unified_verify};
+use crate::cryptography::signing::{
+    Signature, SigningSchemeType, StoredTypedSignature, unified_verify,
+};
 use crate::engine::base::{
     CrsGenMetadata, CrsGenMetadataInner, CurrentPublicMaterialLayout, DSEP_PUBDATA_CRS,
-    DSEP_PUBDATA_KEY, KeyGenMetadata, KeyGenMetadataInner, StoredTypedSignature,
+    DSEP_PUBDATA_KEY, KeyGenMetadata, KeyGenMetadataInner,
     classify_current_public_material, crs_payload_bytes, crs_sol_type, keygen_payload_bytes,
     keygen_sol_type,
 };

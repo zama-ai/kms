@@ -13,9 +13,9 @@ use super::identity::NodeSigningIdentity;
 use super::typed_signature::StoredTypedSignature;
 use super::verf_key_set::VerfKeySet;
 use super::{Signature, SigningError, SigningSchemeType, unified_verify};
+use crate::impl_generic_versionize;
 use hashing::DomainSep;
 use serde::{Deserialize, Serialize};
-use tfhe_versionable::{Versionize, VersionsDispatch};
 
 /// Sort `schemes` into canonical order and drop duplicates.
 ///
@@ -83,11 +83,6 @@ fn ensure_canonical(schemes: &[SigningSchemeType]) -> Result<(), SigningError> {
     Ok(())
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, VersionsDispatch)]
-pub enum CompositeSignatureVersions {
-    V0(CompositeSignature),
-}
-
 /// One signature per scheme, over a message that commits to the scheme set.
 ///
 /// Entries are ordered by scheme and carry no duplicate scheme.
@@ -95,10 +90,11 @@ pub enum CompositeSignatureVersions {
 /// The [`Deserialize`] impl *rejects* a non-canonical list rather than sorting it:
 /// a value arriving from storage or the wire is attacker-chosen, and silently
 /// reordering it would give one signature more than one encoding.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Versionize)]
-#[versionize(CompositeSignatureVersions)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 #[serde(transparent)]
 pub struct CompositeSignature(Vec<StoredTypedSignature>);
+
+impl_generic_versionize!(CompositeSignature);
 
 impl<'de> Deserialize<'de> for CompositeSignature {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>

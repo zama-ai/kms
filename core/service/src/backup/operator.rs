@@ -14,8 +14,8 @@ use crate::{
     },
 };
 use crate::{
-    backup::custodian::DSEP_BACKUP_CUSTODIAN,
     backup::VESTIGIAL_BACKUP_SIGNING_TYPE,
+    backup::custodian::DSEP_BACKUP_CUSTODIAN,
     cryptography::signatures::{internal_sign, internal_verify_sig},
 };
 use crate::{
@@ -179,10 +179,7 @@ impl TryFrom<OperatorBackupOutput> for InnerOperatorBackupOutput {
 
     fn try_from(value: OperatorBackupOutput) -> Result<Self, Self::Error> {
         Ok(Self {
-            signcryption: UnifiedSigncryption::new(
-                value.signcryption,
-                value.pke_type.try_into()?,
-            ),
+            signcryption: UnifiedSigncryption::new(value.signcryption, value.pke_type.try_into()?),
         })
     }
 }
@@ -930,7 +927,7 @@ mod tests {
         consts::DEFAULT_MPC_CONTEXT,
         cryptography::{
             encryption::{Encryption, PkeScheme},
-            signatures::{SigningSchemeType, gen_sig_keys},
+            signatures::gen_sig_keys,
         },
         engine::base::derive_request_id,
     };
@@ -976,10 +973,7 @@ mod tests {
         commitments.insert(Role::indexed_from_one(3), vec![3_u8; 32]);
         let mut cts = BTreeMap::new();
         let cts_out = InnerOperatorBackupOutput {
-            signcryption: UnifiedSigncryption::new(
-                vec![1, 2, 3],
-                BACKUP_PKE_SCHEME,
-            ),
+            signcryption: UnifiedSigncryption::new(vec![1, 2, 3], BACKUP_PKE_SCHEME),
         };
         cts.insert(Role::indexed_from_one(1), cts_out.clone());
         cts.insert(Role::indexed_from_one(2), cts_out.clone());

@@ -424,7 +424,7 @@ impl std::fmt::Debug for ThresholdFheKeys {
 pub struct BucketMetaStore {
     pub(crate) preprocessing_id: RequestId,
     pub(crate) external_signature: Vec<u8>,
-    pub(crate) signatures: Vec<crate::engine::base::StoredTypedSignature>,
+    pub(crate) signatures: Vec<crate::cryptography::signing::StoredTypedSignature>,
     pub(crate) preprocessing_store: PreprocMaterial,
     pub(crate) dkg_param: DKGParams,
 }

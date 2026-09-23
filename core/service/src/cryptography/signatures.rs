@@ -17,7 +17,7 @@ pub use crate::cryptography::signing::ecdsa::{
 pub use crate::cryptography::signing::identity::NodeSigningIdentity;
 pub use crate::cryptography::signing::seed::{RootSigningSeed, RootSigningSeedVersions};
 pub use crate::cryptography::signing::{
-    CompositeSignature, CompositeSignatureVersions, SchemeVerfKeys, Signature,
+    CompositeSignature, SchemeVerfKeys, Signature,
     SigningError, SigningSchemeType, SigningSchemeTypeVersions, StoredTypedSignature,
     StoredTypedSignatureVersions, UnifiedPublicSigKey, UnifiedPublicSigKeyVersions, VerfKeySet,
     canonical_schemes,

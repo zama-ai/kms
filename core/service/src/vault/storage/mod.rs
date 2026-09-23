@@ -858,7 +858,7 @@ pub mod tests {
         consts::{DEFAULT_MPC_CONTEXT, SAFE_SER_SIZE_LIMIT},
         cryptography::{
             encryption::{Encryption, PkeScheme, UnifiedPublicEncKey},
-            signatures::{PrivateSigKey, SigningSchemeType, gen_sig_keys},
+            signatures::{PrivateSigKey, gen_sig_keys},
             signcryption::UnifiedSigncryption,
         },
     };
@@ -933,10 +933,7 @@ pub mod tests {
         };
 
         let cts_out = InnerOperatorBackupOutput {
-            signcryption: UnifiedSigncryption::new(
-                vec![1, 2, 3],
-                BACKUP_PKE_SCHEME,
-            ),
+            signcryption: UnifiedSigncryption::new(vec![1, 2, 3], BACKUP_PKE_SCHEME),
         };
         let mut cts = BTreeMap::new();
         let mut commitments = BTreeMap::new();

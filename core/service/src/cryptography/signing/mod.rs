@@ -12,7 +12,7 @@ pub mod seed;
 pub mod typed_signature;
 pub mod verf_key_set;
 
-pub use composite::{CompositeSignature, CompositeSignatureVersions, canonical_schemes};
+pub use composite::{CompositeSignature, canonical_schemes};
 pub use typed_signature::{StoredTypedSignature, StoredTypedSignatureVersions};
 pub use verf_key_set::VerfKeySet;
 
