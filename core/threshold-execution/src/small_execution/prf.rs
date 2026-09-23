@@ -158,9 +158,9 @@ pub(crate) fn phi_range(
     Ok(res)
 }
 
-/// Number of AES blocks encrypted per `encrypt_blocks` call in psi/chi. Sized to the AES-NI /
-/// ARMv8 parallel width so a single batch covers the common degree-8 case, while a stack buffer
-/// (rather than a per-call heap allocation) holds the blocks.
+/// Number of AES blocks encrypted per `encrypt_blocks` call in psi/chi.
+/// One stack buffer covers the common degree-8 case. This is not the ARM backend's
+/// parallel width: its AES-128 implementation processes 21 blocks at a time.
 const AES_BATCH: usize = 8;
 
 #[inline(always)]
@@ -209,6 +209,148 @@ pub(crate) fn psi<Z: Ring + PRSSConversions>(pa: &PsiAes, ctr: u128) -> anyhow::
     Ok(encrypt_indexed_prf_blocks(&pa.aes, ctr, |block, i, v| {
         block[15] = v as u8;
         block[14] = i as u8;
+    }))
+}
+
+/// Scalar comparison kernel: keep one counter per encryption call, but avoid the conversion Vec.
+#[cfg(any(test, feature = "testing"))]
+pub(crate) fn psi_iter<Z: Ring + PRSSConversions>(pa: &PsiAes, ctr: u128) -> anyhow::Result<Z> {
+    // Match the paired experiment's ring coverage. Other shapes retain the
+    // original block encoding and conversion rather than broadening this detour.
+    if !matches!(Z::EXTENSION_DEGREE, 4 | 8) || !matches!(Z::NUM_BITS_STAT_SEC_BASE_RING, 64 | 128)
+    {
+        return psi(pa, ctr);
+    }
+    if ctr >= 1 << 112 {
+        return Err(anyhow_error_and_log(format!(
+            "ctr in psi must be smaller than 2^112 but was {ctr}."
+        )));
+    }
+
+    // For these rings, the original helper's outer loop executes once: one
+    // AES block per coefficient, with four or eight coefficients. Keep the same
+    // stack-buffer capacity and one encrypt_blocks call for this counter.
+    let mut blocks = [AesBlock::default(); AES_BATCH];
+    let blocks = &mut blocks[..Z::EXTENSION_DEGREE];
+    for (coefficient, block) in blocks.iter_mut().enumerate() {
+        block.copy_from_slice(&ctr.to_le_bytes());
+        block[14] = coefficient as u8;
+        block[15] = 0;
+    }
+    pa.aes.encrypt_blocks(blocks);
+
+    // The only intended algorithmic difference is direct conversion from the
+    // encrypted blocks. There is no second counter or second accumulator here.
+    Ok(Z::from_u128_iter(
+        blocks
+            .iter()
+            .map(|block| u128::from_le_bytes((*block).into())),
+    ))
+}
+
+/// Experimental full-group kernel for comparing counter counts under the same AES key.
+#[cfg(any(test, feature = "testing"))]
+pub(crate) fn psi_counters<Z: Ring + PRSSConversions, const COUNTERS: usize>(
+    pa: &PsiAes,
+    ctr: u128,
+) -> anyhow::Result<[Z; COUNTERS]> {
+    assert!(
+        COUNTERS > 0,
+        "a PRF group must contain at least one counter"
+    );
+    let limit = 1_u128 << 112;
+    if ctr >= limit || COUNTERS as u128 > limit - ctr {
+        let invalid = ctr.max(limit);
+        return Err(anyhow_error_and_log(format!(
+            "ctr in psi must be smaller than 2^112 but was {invalid}."
+        )));
+    }
+    if !matches!(Z::EXTENSION_DEGREE, 4 | 8) || !matches!(Z::NUM_BITS_STAT_SEC_BASE_RING, 64 | 128)
+    {
+        let mut values = [Z::ZERO; COUNTERS];
+        for (offset, value) in values.iter_mut().enumerate() {
+            *value = psi(pa, ctr + offset as u128)?;
+        }
+        return Ok(values);
+    }
+
+    // Nested arrays allow a const counter count on stable Rust without generic
+    // const arithmetic in the type. Only the first COUNTERS * degree blocks are
+    // used. Nothing is heap-allocated, including the conversion to ring values.
+    let mut storage = [[AesBlock::default(); 8]; COUNTERS];
+    let degree = Z::EXTENSION_DEGREE;
+    let blocks = &mut storage.as_flattened_mut()[..COUNTERS * degree];
+    for (offset, output_blocks) in blocks.chunks_exact_mut(degree).enumerate() {
+        for (coefficient, block) in output_blocks.iter_mut().enumerate() {
+            block.copy_from_slice(&(ctr + offset as u128).to_le_bytes());
+            block[14] = coefficient as u8;
+            block[15] = 0;
+        }
+    }
+    // Present the complete group to the backend. Splitting here at AES_BATCH=8
+    // would prevent the ARM backend from ever reaching its 21-block path.
+    pa.aes.encrypt_blocks(blocks);
+    Ok(std::array::from_fn(|offset| {
+        let first = offset * degree;
+        Z::from_u128_iter(
+            blocks[first..first + degree]
+                .iter()
+                .map(|block| u128::from_le_bytes((*block).into())),
+        )
+    }))
+}
+
+/// Experimental PRSS kernel: encrypt two consecutive counters under the same key.
+/// The outputs have exactly the same encoding as two calls to `psi`.
+pub(crate) fn psi_pair<Z: Ring + PRSSConversions>(
+    pa: &PsiAes,
+    ctr: u128,
+) -> anyhow::Result<[Z; 2]> {
+    // Keep this first experiment limited to the rings covered by our benchmarks.
+    // Other ring shapes retain the scalar implementation and its validation.
+    if !matches!(Z::EXTENSION_DEGREE, 4 | 8) || !matches!(Z::NUM_BITS_STAT_SEC_BASE_RING, 64 | 128)
+    {
+        return Ok([psi(pa, ctr)?, psi(pa, ctr + 1)?]);
+    }
+
+    // A full pair needs both counters to be valid. Checking before addition also
+    // prevents overflow for an invalid starting counter near u128::MAX.
+    // Report the first invalid counter, as sequential scalar calls would do.
+    let limit = 1_u128 << 112;
+    if ctr >= limit - 1 {
+        let invalid = ctr.max(limit);
+        return Err(anyhow_error_and_log(format!(
+            "ctr in psi must be smaller than 2^112 but was {invalid}."
+        )));
+    }
+
+    // Both Z64 and Z128 use one AES block per coefficient. F4 therefore needs
+    // 2 * 4 = 8 blocks, which reaches the AES-NI backend's parallel batch width.
+    // F8 needs 16 blocks. This is one encryption call over the combined slice,
+    // rather than two calls that each present too few blocks on F4.
+    let degree = Z::EXTENSION_DEGREE;
+    let mut blocks = [AesBlock::default(); 16];
+    let blocks = &mut blocks[..2 * degree];
+    for (offset, output_blocks) in blocks.chunks_exact_mut(degree).enumerate() {
+        for (coefficient, block) in output_blocks.iter_mut().enumerate() {
+            block.copy_from_slice(&(ctr + offset as u128).to_le_bytes());
+            block[14] = coefficient as u8;
+            block[15] = 0; // First and only block for this coefficient.
+        }
+    }
+    pa.aes.encrypt_blocks(blocks);
+
+    // Read coefficients straight from the encrypted blocks into
+    // each ring value. The Vec-taking conversion did not get optimized away in
+    // this paired loop: it allocated and freed two buffers for every subset.
+    // The iterator conversion fills the fixed-size ring arrays without that heap traffic.
+    Ok(std::array::from_fn(|offset| {
+        let first = offset * degree;
+        Z::from_u128_iter(
+            blocks[first..first + degree]
+                .iter()
+                .map(|block| u128::from_le_bytes((*block).into())),
+        )
     }))
 }
 

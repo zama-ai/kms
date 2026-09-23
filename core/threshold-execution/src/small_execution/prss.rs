@@ -14,7 +14,7 @@ use crate::{
         runtime::sessions::{
             base_session::BaseSessionHandles, session_parameters::ParameterHandles,
         },
-        small_execution::prf::{PhiAes, chi, phi_range, psi},
+        small_execution::prf::{PhiAes, chi, phi_range, psi, psi_pair},
     },
 };
 use algebra::{
@@ -623,6 +623,218 @@ where
     Ok(compute_powers_list(&parties, threshold))
 }
 
+// Exploration reference: preserve the original implementation for direct output
+// comparisons and adjacent Criterion cases. This is not another protocol primitive.
+#[cfg(any(test, feature = "testing"))]
+impl<Z, B> PRSSState<Z, B>
+where
+    Z: RingWithExceptionalSequence + Invert + PRSSConversions,
+    B: Broadcast,
+{
+    /// PRSS.Next() for a single party
+    ///
+    /// __NOTE__: telemetry is done at the caller because this function isn't batched
+    /// and we want to avoid creating too many telemetry spans
+    #[instrument(name="PRSS.Next",skip_all,fields(batch_size=?amount))]
+    pub async fn prss_next_vec_orig(
+        &mut self,
+        party_role: Role,
+        amount: usize,
+    ) -> anyhow::Result<Vec<Z>> {
+        //Cheap to clone as everything is an Arc or atomic types
+        let prfs = self.prfs.clone();
+        let prss_setup = self.prss_setup.clone();
+        let prss_ctr = self.counters.prss_ctr;
+
+        // Independent per-counter elements, assembled in parallel. Element `idx`
+        // uses `ctr = prss_ctr + idx`.
+        let res = spawn_compute_bound(move || -> anyhow::Result<Vec<Z>> {
+            if amount == 0 {
+                return Ok(Vec::new());
+            }
+
+            // Per-set invariants (membership, PRF key, f_A), computed once instead of per element.
+            let mut set_data: Vec<(&PrfAes, Z)> = Vec::with_capacity(prss_setup.sets.len());
+            for (i, set) in prss_setup.sets.iter().enumerate() {
+                if !set.parties.contains(&party_role) {
+                    return Err(anyhow_error_and_log(format!(
+                        "Called prss.next() with party role {party_role} that is not in a precomputed set of parties!"
+                    )));
+                }
+                let aes_prf = prfs.get(i).ok_or_else(|| {
+                    anyhow_error_and_log("PRFs not properly initialized!".to_string())
+                })?;
+                // f_A(alpha_i): the embedded party ID indexes into f_a_points (from zero)
+                set_data.push((aes_prf, set.f_a_points[&party_role]));
+            }
+
+            (0..amount)
+                .into_par_iter()
+                .with_min_len(*crate::constants::PRSS_GEN_PAR_MIN_CHUNK)
+                .map(|idx| {
+                    let ctr = prss_ctr + idx as u128;
+                    let mut res = Z::ZERO;
+                    for &(aes_prf, f_a) in &set_data {
+                        let psi = psi(&aes_prf.psi_aes, ctr)?;
+                        res += f_a * psi;
+                    }
+                    Ok(res)
+                })
+                .collect::<anyhow::Result<Vec<_>>>()
+        })
+        .instrument(tracing::Span::current())
+        .await??;
+
+        self.counters.prss_ctr += amount as u128;
+
+        Ok(res)
+    }
+
+    /// Exploration control: the original scalar traversal with iterator-based PRF conversion.
+    /// Keep this copy beside `_orig` so the experiment changes only the PRF call.
+    /// Submission, Rayon splitting, accumulation, collection, and counter updates match it.
+    #[instrument(name="PRSS.Next",skip_all,fields(batch_size=?amount))]
+    pub async fn prss_next_vec_iter(
+        &mut self,
+        party_role: Role,
+        amount: usize,
+    ) -> anyhow::Result<Vec<Z>> {
+        //Cheap to clone as everything is an Arc or atomic types
+        let prfs = self.prfs.clone();
+        let prss_setup = self.prss_setup.clone();
+        let prss_ctr = self.counters.prss_ctr;
+
+        // Independent per-counter elements, assembled in parallel. Element `idx`
+        // uses `ctr = prss_ctr + idx`.
+        let res = spawn_compute_bound(move || -> anyhow::Result<Vec<Z>> {
+            if amount == 0 {
+                return Ok(Vec::new());
+            }
+
+            // Per-set invariants (membership, PRF key, f_A), computed once instead of per element.
+            let mut set_data: Vec<(&PrfAes, Z)> = Vec::with_capacity(prss_setup.sets.len());
+            for (i, set) in prss_setup.sets.iter().enumerate() {
+                if !set.parties.contains(&party_role) {
+                    return Err(anyhow_error_and_log(format!(
+                        "Called prss.next() with party role {party_role} that is not in a precomputed set of parties!"
+                    )));
+                }
+                let aes_prf = prfs.get(i).ok_or_else(|| {
+                    anyhow_error_and_log("PRFs not properly initialized!".to_string())
+                })?;
+                // f_A(alpha_i): the embedded party ID indexes into f_a_points (from zero)
+                set_data.push((aes_prf, set.f_a_points[&party_role]));
+            }
+
+            (0..amount)
+                .into_par_iter()
+                .with_min_len(*crate::constants::PRSS_GEN_PAR_MIN_CHUNK)
+                .map(|idx| {
+                    let ctr = prss_ctr + idx as u128;
+                    let mut res = Z::ZERO;
+                    for &(aes_prf, f_a) in &set_data {
+                        let psi = super::prf::psi_iter(&aes_prf.psi_aes, ctr)?;
+                        res += f_a * psi;
+                    }
+                    Ok(res)
+                })
+                .collect::<anyhow::Result<Vec<_>>>()
+        })
+        .instrument(tracing::Span::current())
+        .await??;
+
+        self.counters.prss_ctr += amount as u128;
+
+        Ok(res)
+    }
+
+    /// Compares const-sized PRF counter groups inside the original compute submission.
+    /// Each output keeps the original subset order and counter encoding.
+    /// Short final groups use scalar PRFs; counters commit only after the request succeeds.
+    #[instrument(name="PRSS.Next",skip_all,fields(batch_size=?amount))]
+    pub async fn prss_next_vec_grouped<const COUNTERS: usize>(
+        &mut self,
+        party_role: Role,
+        amount: usize,
+    ) -> anyhow::Result<Vec<Z>> {
+        assert!(
+            COUNTERS > 0,
+            "a PRSS group must contain at least one counter"
+        );
+        //Cheap to clone as everything is an Arc or atomic types
+        let prfs = self.prfs.clone();
+        let prss_setup = self.prss_setup.clone();
+        let prss_ctr = self.counters.prss_ctr;
+
+        // Keep one compute submission and the original per-request subset table.
+        let res = spawn_compute_bound(move || -> anyhow::Result<Vec<Z>> {
+            if amount == 0 {
+                return Ok(Vec::new());
+            }
+
+            // Per-set invariants (membership, PRF key, f_A), computed once instead of per element.
+            let mut set_data: Vec<(&PrfAes, Z)> = Vec::with_capacity(prss_setup.sets.len());
+            for (i, set) in prss_setup.sets.iter().enumerate() {
+                if !set.parties.contains(&party_role) {
+                    return Err(anyhow_error_and_log(format!(
+                        "Called prss.next() with party role {party_role} that is not in a precomputed set of parties!"
+                    )));
+                }
+                let aes_prf = prfs.get(i).ok_or_else(|| {
+                    anyhow_error_and_log("PRFs not properly initialized!".to_string())
+                })?;
+                // f_A(alpha_i): the embedded party ID indexes into f_a_points (from zero)
+                set_data.push((aes_prf, set.f_a_points[&party_role]));
+            }
+
+            let groups = amount.div_ceil(COUNTERS);
+            // Rayon counts groups here, so convert the minimum back from output
+            // values. Rounding can move task boundaries by less than one group.
+            let min_groups = (*crate::constants::PRSS_GEN_PAR_MIN_CHUNK).div_ceil(COUNTERS);
+            (0..groups)
+                .into_par_iter()
+                .with_min_len(min_groups)
+                .flat_map_iter(|group| {
+                    let idx = group * COUNTERS;
+                    let count = (amount - idx).min(COUNTERS);
+                    let ctr = prss_ctr + idx as u128;
+                    let result = (|| -> anyhow::Result<[Z; COUNTERS]> {
+                        let mut sums = [Z::ZERO; COUNTERS];
+                        for &(aes_prf, f_a) in &set_data {
+                            if count == COUNTERS {
+                                let random = super::prf::psi_counters::<Z, COUNTERS>(&aes_prf.psi_aes, ctr)?;
+                                for (sum, random) in sums.iter_mut().zip(random) {
+                                    *sum += f_a * random;
+                                }
+                            } else {
+                                // Only the last group can be short. Evaluate its
+                                // actual counters individually: padding could cross
+                                // the counter limit and would add unused AES work.
+                                for (offset, sum) in sums[..count].iter_mut().enumerate() {
+                                    *sum += f_a * super::prf::psi_iter(&aes_prf.psi_aes, ctr + offset as u128)?;
+                                }
+                            }
+                        }
+                        Ok(sums)
+                    })();
+                    // Yield the group's outputs or one error without allocating
+                    // a Vec per group. The final collector retains output order.
+                    let (values, error) = match result {
+                        Ok(sums) => (Some(sums), None),
+                        Err(error) => (None, Some(error)),
+                    };
+                    values.into_iter().flatten().take(count).map(Ok).chain(error.map(Err))
+                })
+                .collect::<anyhow::Result<Vec<_>>>()
+        })
+        .instrument(tracing::Span::current())
+        .await??;
+
+        self.counters.prss_ctr += amount as u128;
+        Ok(res)
+    }
+}
+
 #[async_trait]
 impl<Z, B> PRSSPrimitives<Z> for PRSSState<Z, B>
 where
@@ -638,6 +850,7 @@ where
     /// __NOTE__ : The output share is not uniformly random,
     /// and this method will panic if executed for Z an extension of Z64.
     #[instrument(name="Mask.Next",skip_all,fields(batch_size=?amount))]
+
     async fn mask_next_vec(
         &mut self,
         party_role: Role,
@@ -709,8 +922,10 @@ where
 
     /// PRSS.Next() for a single party
     ///
-    /// __NOTE__: telemetry is done at the caller because this function isn't batched
-    /// and we want to avoid creating too many telemetry spans
+    /// __NOTE__: telemetry is done at the caller to avoid creating too many telemetry spans.
+    ///
+    /// E2 exploration: encrypt counter pairs inside the request. This is unrelated
+    /// to splitting a request into separately awaited compute submissions.
     #[instrument(name="PRSS.Next",skip_all,fields(batch_size=?amount))]
     async fn prss_next_vec(&mut self, party_role: Role, amount: usize) -> anyhow::Result<Vec<Z>> {
         //Cheap to clone as everything is an Arc or atomic types
@@ -718,8 +933,9 @@ where
         let prss_setup = self.prss_setup.clone();
         let prss_ctr = self.counters.prss_ctr;
 
-        // Independent per-counter elements, assembled in parallel. Element `idx`
-        // uses `ctr = prss_ctr + idx`.
+        // One compute submission for the entire request, as before. AES pairs live
+        // inside it; this does not add awaited submissions or change the counter
+        // commit point after the complete vector succeeds.
         let res = spawn_compute_bound(move || -> anyhow::Result<Vec<Z>> {
             if amount == 0 {
                 return Ok(Vec::new());
@@ -740,17 +956,51 @@ where
                 set_data.push((aes_prf, set.f_a_points[&party_role]));
             }
 
-            (0..amount)
+            // E2 starts with pairs, not a request-wide buffer of PRF results.
+            // The traversal becomes pair -> subset -> the two output counters.
+            // Each subset key encrypts both counters together; each output still
+            // accumulates exactly the same terms in the same subset order.
+            const COUNTERS_PER_GROUP: usize = 2;
+            let groups = amount.div_ceil(COUNTERS_PER_GROUP);
+
+            // Rayon now counts pairs. Keep its minimum expressed in output values:
+            // the default 1024 values becomes 512 pairs, not 1024 pairs.
+            // This keeps splitting comparable; it does not promise identical task
+            // boundaries for every request length or environment override.
+            let min_groups = (*crate::constants::PRSS_GEN_PAR_MIN_CHUNK)
+                .div_ceil(COUNTERS_PER_GROUP);
+            (0..groups)
                 .into_par_iter()
-                .with_min_len(*crate::constants::PRSS_GEN_PAR_MIN_CHUNK)
-                .map(|idx| {
+                .with_min_len(min_groups)
+                .flat_map_iter(|group| {
+                    let idx = group * COUNTERS_PER_GROUP;
+                    let count = (amount - idx).min(COUNTERS_PER_GROUP);
                     let ctr = prss_ctr + idx as u128;
-                    let mut res = Z::ZERO;
-                    for &(aes_prf, f_a) in &set_data {
-                        let psi = psi(&aes_prf.psi_aes, ctr)?;
-                        res += f_a * psi;
-                    }
-                    Ok(res)
+                    let result = (|| -> anyhow::Result<[Z; 2]> {
+                        let mut sums = [Z::ZERO; 2];
+                        for &(aes_prf, f_a) in &set_data {
+                            if count == 2 {
+                                let random = psi_pair(&aes_prf.psi_aes, ctr)?;
+                                sums[0] += f_a * random[0];
+                                sums[1] += f_a * random[1];
+                            } else {
+                                // Do not pad an odd request by evaluating an unused
+                                // counter: it could lie beyond psi's valid range.
+                                sums[0] += f_a * psi(&aes_prf.psi_aes, ctr)?;
+                            }
+                        }
+                        Ok(sums)
+                    })();
+
+                    // Flatten the stack array into the existing fallible collector.
+                    // This adapter adds no Vec per pair and no second full-output copy.
+                    // An error yields one Err; a short final pair yields one value.
+                    // Parallel collection preserves the pair/counter output order.
+                    let values = match result {
+                        Ok([first, second]) => [Some(Ok(first)), (count == 2).then_some(Ok(second))],
+                        Err(error) => [Some(Err(error)), None],
+                    };
+                    values.into_iter().flatten()
                 })
                 .collect::<anyhow::Result<Vec<_>>>()
         })
@@ -1596,6 +1846,154 @@ mod tests {
             batch_state.counters.przs_ctr,
             scalar_state.counters.przs_ctr
         );
+    }
+
+    #[tokio::test]
+    async fn test_prss_group_sizes_match_original() {
+        async fn check<
+            Z: RingWithExceptionalSequence + Invert + PRSSConversions,
+            const N: usize,
+        >() {
+            let role = Role::indexed_from_one(1);
+            let setup = PRSSSetup::<Z>::testing_party_epoch_init(4, 1, role)
+                .await
+                .unwrap();
+            let initial = setup.new_prss_session_state(SessionId::from(23425));
+            // Exercise full groups, short tails, and requests split by Rayon.
+            for amount in [0, 1, N - 1, N, N + 1, 2 * N + 1, 2049] {
+                let mut original = initial.clone();
+                let mut grouped = initial.clone();
+                original.counters.prss_ctr = 255;
+                grouped.counters.prss_ctr = 255;
+                assert_eq!(
+                    grouped
+                        .prss_next_vec_grouped::<N>(role, amount)
+                        .await
+                        .unwrap(),
+                    original.prss_next_vec_orig(role, amount).await.unwrap(),
+                );
+                assert_eq!(grouped.counters.prss_ctr, original.counters.prss_ctr);
+                assert_eq!(grouped.counters.mask_ctr, original.counters.mask_ctr);
+                assert_eq!(grouped.counters.przs_ctr, original.counters.przs_ctr);
+            }
+            for (start, amount) in [
+                ((1_u128 << 112) - N as u128, N),
+                ((1_u128 << 112) - N as u128 - 1, N + 1),
+                ((1_u128 << 112) - N as u128 + 1, N),
+                (1_u128 << 112, 0),
+            ] {
+                let mut original = initial.clone();
+                let mut grouped = initial.clone();
+                original.counters.prss_ctr = start;
+                grouped.counters.prss_ctr = start;
+                let expected = original.prss_next_vec_orig(role, amount).await;
+                let actual = grouped.prss_next_vec_grouped::<N>(role, amount).await;
+                match (expected, actual) {
+                    (Ok(a), Ok(b)) => assert_eq!(a, b),
+                    (Err(a), Err(b)) => assert_eq!(
+                        a.to_string().split_once("ctr in psi").unwrap().1,
+                        b.to_string().split_once("ctr in psi").unwrap().1,
+                    ),
+                    mismatch => panic!("group size {N} disagrees with original: {mismatch:?}"),
+                }
+                assert_eq!(grouped.counters.prss_ctr, original.counters.prss_ctr);
+            }
+        }
+        macro_rules! sizes {
+            ($ring:ty) => {{
+                check::<$ring, 1>().await;
+                check::<$ring, 2>().await;
+                check::<$ring, 4>().await;
+                check::<$ring, 5>().await;
+                check::<$ring, 6>().await;
+                check::<$ring, 8>().await;
+                check::<$ring, 10>().await;
+                check::<$ring, 11>().await;
+                check::<$ring, 16>().await;
+                check::<$ring, 21>().await;
+            }};
+        }
+        sizes!(ResiduePolyF4Z64);
+        sizes!(ResiduePolyF4Z128);
+        // The experiment measures F4, but the shared kernel also supports F8.
+        check::<algebra::galois_rings::degree_8::ResiduePolyF8Z64, 6>().await;
+        check::<algebra::galois_rings::degree_8::ResiduePolyF8Z128, 6>().await;
+    }
+
+    // Compare full vectors against the preserved implementation, not just against
+    // prss_next(), which itself delegates to the modified vector method.
+    #[tokio::test]
+    async fn test_prss_pairs_match_original() {
+        async fn check<Z: RingWithExceptionalSequence + Invert + PRSSConversions>() {
+            let role = Role::indexed_from_one(1);
+            for (parties, threshold) in [(4, 1), (13, 4)] {
+                let setup = PRSSSetup::<Z>::testing_party_epoch_init(parties, threshold, role)
+                    .await
+                    .unwrap();
+                let mut original = setup.new_prss_session_state(SessionId::from(23425));
+                let mut paired = original.clone();
+                let mut iterator = original.clone();
+                // Nonzero counter with a carry inside the first pair.
+                original.counters.prss_ctr = 255;
+                paired.counters.prss_ctr = 255;
+                iterator.counters.prss_ctr = 255;
+                // A 1024-value minimum first permits two tasks at 2048
+                // values. Include both that boundary and a four-task request.
+                for amount in [0, 1, 2, 3, 4, 1023, 1024, 1025, 2047, 2048, 2049, 4097] {
+                    let expected = original.prss_next_vec_orig(role, amount).await.unwrap();
+                    assert_eq!(paired.prss_next_vec(role, amount).await.unwrap(), expected,);
+                    assert_eq!(
+                        iterator.prss_next_vec_iter(role, amount).await.unwrap(),
+                        expected
+                    );
+                    assert_eq!(paired.counters.prss_ctr, original.counters.prss_ctr);
+                    assert_eq!(paired.counters.mask_ctr, original.counters.mask_ctr);
+                    assert_eq!(paired.counters.przs_ctr, original.counters.przs_ctr);
+                    assert_eq!(iterator.counters.prss_ctr, original.counters.prss_ctr);
+                    assert_eq!(iterator.counters.mask_ctr, original.counters.mask_ctr);
+                    assert_eq!(iterator.counters.przs_ctr, original.counters.przs_ctr);
+                }
+                // Empty, paired and odd requests may end exactly at the limit.
+                // An invalid pair must fail without committing any counter change.
+                for (start, amount) in [
+                    ((1 << 112) - 2, 2),
+                    ((1 << 112) - 3, 3),
+                    ((1 << 112) - 1, 2),
+                    (1 << 112, 0),
+                    (1 << 112, 1),
+                ] {
+                    original.counters.prss_ctr = start;
+                    paired.counters.prss_ctr = start;
+                    iterator.counters.prss_ctr = start;
+                    let expected = original.prss_next_vec_orig(role, amount).await;
+                    let actual = paired.prss_next_vec(role, amount).await;
+                    let scalar_iter = iterator.prss_next_vec_iter(role, amount).await;
+                    for result in [&actual, &scalar_iter] {
+                        match (&expected, result) {
+                            (Ok(a), Ok(b)) => assert_eq!(a, b),
+                            (Err(a), Err(b)) => {
+                                // error_utils prefixes diagnostics with the call site's
+                                // file/line. Each helper necessarily has a different
+                                // location; compare the domain/counter error itself.
+                                let a = a.to_string();
+                                let b = b.to_string();
+                                assert_eq!(
+                                    a.split_once("ctr in psi").unwrap().1,
+                                    b.split_once("ctr in psi").unwrap().1,
+                                );
+                            }
+                            mismatch => panic!("PRSS variants disagree: {mismatch:?}"),
+                        }
+                    }
+                    assert_eq!(paired.counters.prss_ctr, original.counters.prss_ctr);
+                    assert_eq!(iterator.counters.prss_ctr, original.counters.prss_ctr);
+                }
+            }
+        }
+        check::<ResiduePolyF4Z64>().await;
+        check::<ResiduePolyF4Z128>().await;
+        check::<algebra::galois_rings::degree_8::ResiduePolyF8Z64>().await;
+        check::<algebra::galois_rings::degree_8::ResiduePolyF8Z128>().await;
     }
 
     #[tokio::test]

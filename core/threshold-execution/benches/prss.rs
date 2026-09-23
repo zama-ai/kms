@@ -12,6 +12,7 @@ use std::hint::black_box;
 mod support;
 use support::PrssWorkload;
 use threshold_execution::small_execution::prss::DerivePRSSState;
+use threshold_types::role::Role;
 use threshold_types::session_id::SessionId;
 
 fn bench_prss(c: &mut Criterion) {
@@ -54,6 +55,39 @@ fn bench_ring<Z: ErrorCorrect + Invert + PRSSConversions>(c: &mut Criterion, rin
                 group.throughput(Throughput::Elements(
                     workload.output_value_count(request_size) as u64,
                 ));
+                if matches!(workload, PrssWorkload::Prss) {
+                    // Compare all three implementations in one binary with identical
+                    // session keys and starting counters. Setup/cloning is untimed;
+                    // output disposal is timed in both cases.
+                    let mut original_state = prss_state.clone();
+                    group.bench_function(BenchmarkId::new("prss_next_orig", request_size), |b| {
+                        b.iter(|| {
+                            rt.block_on(async {
+                                black_box(
+                                    original_state
+                                        .prss_next_vec_orig(Role::indexed_from_one(1), request_size)
+                                        .await
+                                        .unwrap(),
+                                );
+                            })
+                        });
+                    });
+                    // Keep the scalar iterator case adjacent to the original and
+                    // paired cases, with the same keys and initial counter.
+                    let mut iterator_state = prss_state.clone();
+                    group.bench_function(BenchmarkId::new("prss_next_iter", request_size), |b| {
+                        b.iter(|| {
+                            rt.block_on(async {
+                                black_box(
+                                    iterator_state
+                                        .prss_next_vec_iter(Role::indexed_from_one(1), request_size)
+                                        .await
+                                        .unwrap(),
+                                );
+                            })
+                        });
+                    });
+                }
                 group.bench_function(BenchmarkId::new(workload.name(), request_size), |b| {
                     b.iter(|| rt.block_on(workload.run(&mut prss_state, threshold, request_size)));
                 });

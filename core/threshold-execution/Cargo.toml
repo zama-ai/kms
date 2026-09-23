@@ -89,6 +89,11 @@ harness = false
 required-features = ["testing"]
 
 [[bench]]
+name = "prss_groups"
+harness = false
+required-features = ["testing"]
+
+[[bench]]
 name = "allocations"
 harness = false
 required-features = ["testing"]
