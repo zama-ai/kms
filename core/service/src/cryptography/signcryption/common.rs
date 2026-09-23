@@ -15,11 +15,6 @@ use zeroize::Zeroizing;
 
 pub(super) const DSEP_SIGNCRYPTION: DomainSep = *b"SIGNCRYP";
 
-/// The error for something no implemented envelope format covers.
-pub(super) fn unsupported_format(what: impl std::fmt::Display) -> CryptographyError {
-    CryptographyError::UnsupportedSigncryptionFormat(what.to_string())
-}
-
 /// The digest of the receiver's public encryption key, as it appears in the
 /// signed preimage.
 pub(super) fn receiver_enc_key_digest(

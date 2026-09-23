@@ -1,7 +1,7 @@
 //! The composite signcryption envelope: one signature per scheme.
 
 use super::UnifiedSigncryption;
-use super::common::{hybrid_decrypt, hybrid_encrypt, receiver_binding, unsupported_format};
+use super::common::{hybrid_decrypt, hybrid_encrypt, receiver_binding};
 use crate::consts::SAFE_SER_SIZE_LIMIT;
 use crate::cryptography::encryption::{HasPkeScheme, UnifiedPrivateEncKey, UnifiedPublicEncKey};
 use crate::cryptography::error::CryptographyError;
@@ -54,16 +54,6 @@ pub fn seal(
     dsep: &DomainSep,
     msg: &[u8],
 ) -> Result<UnifiedSigncryption, CryptographyError> {
-    // Refuse the ECDSA singleton. Such a signcryption would be indistinguishable
-    // by scheme set from one a caller expects in the frozen layout, and the two
-    // are not interchangeable — so produce nothing rather than something whose
-    // reader is ambiguous.
-    if schemes == [SigningSchemeType::Ecdsa256k1] {
-        return Err(unsupported_format(
-            "a multi-signature envelope under ECDSA alone; use the frozen layout instead",
-        ));
-    }
-
     let binding = receiver_binding(receiver_id, receiver_enc_key)?;
     let signed = Zeroizing::new([msg, binding.as_slice()].concat());
     let signature = CompositeSignature::sign_uniform(identity, schemes, dsep, &signed)?;
@@ -147,10 +137,13 @@ mod tests {
     }
 
     fn fixture(scheme: PkeSchemeType, seed: u64) -> Fixture {
+        fixture_under(scheme, seed, pair())
+    }
+
+    fn fixture_under(scheme: PkeSchemeType, seed: u64, schemes: Vec<SigningSchemeType>) -> Fixture {
         let base = lock_fixture(scheme, seed);
         let mut rng = AesRng::seed_from_u64(seed ^ 0xC0FFEE);
         let identity = seeded_identity(&mut rng);
-        let schemes = pair();
         let keys = VerfKeySet::from_identity(&identity, &schemes).unwrap();
         Fixture {
             rng: base.rng,
@@ -315,24 +308,52 @@ mod tests {
         );
     }
 
-    /// Sealing under ECDSA alone is refused. Such an envelope would be
-    /// indistinguishable by scheme set from one a caller expects in the frozen
-    /// layout, and the two are not interchangeable.
+    /// ECDSA alone is a legitimate scheme set for this layout.
     #[test]
-    fn sealing_under_the_ecdsa_singleton_is_refused() {
-        let mut f = fixture(PkeSchemeType::MlKem512, 400);
-        assert!(matches!(
-            seal(
-                &f.identity,
-                &[SigningSchemeType::Ecdsa256k1],
-                &f.enc_key,
-                &f.receiver_id,
-                &mut f.rng,
-                DSEP,
-                b"nope",
+    fn the_ecdsa_singleton_round_trips_and_still_does_not_cross() {
+        let mut f = fixture_under(
+            PkeSchemeType::MlKem512,
+            400,
+            vec![SigningSchemeType::Ecdsa256k1],
+        );
+        let cipher = seal_msg(&mut f, b"ecdsa alone");
+        let opened = open_with(&f, &cipher).unwrap();
+        assert_eq!(&*opened, b"ecdsa alone");
+
+        // The frozen reader, holding the very key that signed this envelope,
+        // still rejects it: the plaintext is a serialized `CompositeEnvelope`,
+        // so its trailing 32 bytes are not `H(sender verification key)`.
+        let legacy_verf = f
+            .keys
+            .require(SigningSchemeType::Ecdsa256k1)
+            .unwrap()
+            .clone();
+        let legacy_ecdsa = match &legacy_verf {
+            crate::cryptography::signatures::UnifiedPublicSigKey::Ecdsa256k1(k) => k.clone(),
+            _ => unreachable!("the ECDSA member of the set is an ECDSA key"),
+        };
+        let legacy_key =
+            UnifiedUnsigncryptionKey::new(&f.dec_key, &f.enc_key, &legacy_ecdsa, &f.receiver_id);
+        assert!(
+            legacy_key.unsigncrypt::<TestType>(DSEP, &cipher).is_err(),
+            "the frozen reader must not accept a single-ECDSA composite envelope"
+        );
+
+        // ...and the composite reader still rejects a frozen envelope, even now
+        // that the set it demands is exactly {ECDSA}.
+        let base = lock_fixture(PkeSchemeType::MlKem512, 400);
+        let mut rng = base.rng;
+        let frozen =
+            UnifiedSigncryptionKey::new(&base.signing_key, &base.enc_key, &base.receiver_id)
+                .signcrypt(&mut rng, DSEP, &TestType { i: 7 })
+                .unwrap();
+        assert!(
+            matches!(
+                open_with(&f, &frozen),
+                Err(CryptographyError::SerializationError(_))
             ),
-            Err(CryptographyError::UnsupportedSigncryptionFormat(_))
-        ));
+            "the composite reader must reject a frozen envelope on deserialization"
+        );
     }
 
     /// A sender whose key set differs from the one the receiver holds is
@@ -367,17 +388,7 @@ mod tests {
         let cipher = seal_msg(&mut f, b"bound to a receiver");
 
         let other_id = b"a different receiver".to_vec();
-        assert!(
-            open(
-                &f.dec_key,
-                &f.enc_key,
-                &f.keys,
-                &other_id,
-                DSEP,
-                &cipher,
-            )
-            .is_err()
-        );
+        assert!(open(&f.dec_key, &f.enc_key, &f.keys, &other_id, DSEP, &cipher,).is_err());
     }
 
     #[test]
