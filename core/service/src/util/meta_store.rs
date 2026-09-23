@@ -1431,10 +1431,9 @@ mod tests {
 
     #[test]
     fn delete_leaves_done_entry_untouched_when_queue_slot_is_missing() {
-        // A `Done` entry without a completion-queue slot already breaks the queue
-        // invariant. Deleting it must fail before the tombstone is written, or the
-        // entry would sit in `deleted_set` while still counted as queued, and no
-        // eviction path could ever reclaim it.
+        // A `Done` entry without a completion-queue slot breaks the queue invariant. Both delete
+        // paths detect this before they write the tombstone, so the entry stays `Done` and out of
+        // `deleted_set`.
         let mut store: MetaStore<String> = MetaStore::new_unlimited_inner();
         let id = derive_request_id("del-missing-slot").unwrap();
         insert_done_ok(&mut store, &id, "v");
