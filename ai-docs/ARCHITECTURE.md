@@ -280,11 +280,14 @@ The primary service is `CoreServiceEndpoint`. Its RPCs group into:
   sub-protocol is skipped and the reshared private keyset keeps that field
   absent. Which of these optional shares to reshare is decided from the input
   keyset, and every party must agree. A storage failure during
-  resharing rolls the new epoch back on the party that fails. That party attempts
-  to delete the key shares, the CRS metadata and the epoch data of the new epoch.
-  Public data remains because an epoch change does not affect it. If cleanup
-  succeeds, the party forgets the epoch. Otherwise, the party keeps the epoch
-  registered so that deletion can be retried. `DestroyMpcContext` takes a stable
+  resharing rolls the new epoch back on the party that fails. That party deletes
+  the key shares and the CRS metadata that its own resharing wrote under the new
+  epoch. The party deletes the epoch data and forgets the epoch only once
+  the epoch holds no key share and no CRS metadata. Public data remains because
+  an epoch change does not affect it. A failed deletion keeps the epoch
+  registered so that deletion can be retried. `DestroyMpcEpoch` erases a whole
+  epoch instead, and covers the material of every request.
+  `DestroyMpcContext` takes a stable
   snapshot of the context's registered epochs and erases their secret shares
   before it forgets the context and removes its TLS trust-root references. A trust
   root remains if another live context uses it. This order leaves no usable key
