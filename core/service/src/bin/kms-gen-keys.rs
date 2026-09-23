@@ -33,7 +33,7 @@ use strum::IntoEnumIterator;
 use validator::Validate;
 
 #[derive(Parser)]
-#[clap(name = "Zama KMS Signing Key and Certificate Generator")]
+#[clap(name = "Zama KMS Signing Key and Certificate Generator", version)]
 #[clap(
     about = "A CLI tool for generating server signing keys and TLS certificates. \
     In centralized mode it produces a single signing key plus its verification material. \

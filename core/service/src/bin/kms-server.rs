@@ -52,7 +52,7 @@ use tokio_rustls::rustls::{
 };
 
 #[derive(Parser)]
-#[clap(name = "KMS server")]
+#[clap(name = "KMS server", version)]
 #[clap(
     about = "We support two execution modes, `centralized` or `threshold`, that have to be specified with the `mode` parameter in the configuration file. \
     See the help page for additional details (`kms-server --help`). \n

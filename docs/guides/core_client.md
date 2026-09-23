@@ -120,6 +120,7 @@ Other command line options are:
  - `-d`/`--download-all`: if set, the tool downloads the generated keys/CRSes from all KMS cores, rather than only from a single core.
  - `--signing-schemes`: the signature schemes the KMS must sign its responses under, as a comma-separated list of scheme names (`Ecdsa256k1`, `Ed25519`, `MlDsa44`, `MlDsa65`, `MlDsa87`; matched case-insensitively). The tool then requires every response to carry a valid signature for each scheme named, so a missing one is an error rather than something to notice later. Before it sends the request, the tool downloads the verification key each KMS core publishes for every named scheme. If the flag is left out, `Ecdsa256k1` alone is requested, which is what the KMS defaults to. Every scheme other than `Ecdsa256k1` requires the KMS nodes to hold a root signing seed — see [Choosing the signature schemes of a response](./entry_points.md#choosing-the-signature-schemes-of-a-response).
  - `-h`/`--help`: show the CLI help
+ - `-V`/`--version`: show the version of the tool
 
 For example, to ask for a composite classic + post-quantum pair on a CRS generation:
 

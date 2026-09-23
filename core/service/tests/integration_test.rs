@@ -6,6 +6,40 @@ use test_utils_service::persistent_traces;
 const KMS_SERVER: &str = "kms-server";
 const KMS_GEN_KEYS: &str = "kms-gen-keys";
 const KMS_INIT: &str = "kms-init";
+const KMS_GEN_TLS_CERTS: &str = "kms-gen-tls-certs";
+
+#[cfg(test)]
+mod version_flag_test {
+    use super::*;
+    use kms_lib::backup::KMS_CUSTODIAN;
+
+    #[test]
+    #[integration_test]
+    fn version() {
+        for bin in [
+            KMS_SERVER,
+            KMS_GEN_KEYS,
+            KMS_INIT,
+            KMS_GEN_TLS_CERTS,
+            KMS_CUSTODIAN,
+        ] {
+            let output = Command::cargo_bin(bin)
+                .unwrap()
+                .arg("--version")
+                .output()
+                .unwrap();
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            assert!(
+                output.status.success(),
+                "{bin} --version failed: {output:?}"
+            );
+            assert!(
+                stdout.contains(env!("CARGO_PKG_VERSION")),
+                "{bin} --version printed {stdout:?}"
+            );
+        }
+    }
+}
 
 #[cfg(test)]
 mod kms_init_binary_test {

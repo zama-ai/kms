@@ -1206,6 +1206,7 @@ pub enum CCCommand {
 }
 
 #[derive(Debug, Parser, Validate)]
+#[clap(version)]
 pub struct CmdConfig {
     /// Path to the configuration file
     #[clap(long, short = 'f')]
@@ -3049,6 +3050,13 @@ mod tests {
     use tempfile::tempdir;
     use tfhe::core_crypto::prelude::NormalizedHammingWeightBound;
     use tfhe::xof_key_set::CompressedXofKeySet;
+
+    #[test]
+    fn version_flag_prints_package_version() {
+        let err = CmdConfig::try_parse_from(["kms-core-client", "--version"]).unwrap_err();
+        assert_eq!(err.kind(), clap::error::ErrorKind::DisplayVersion);
+        assert!(err.to_string().contains(env!("CARGO_PKG_VERSION")));
+    }
 
     #[test]
     fn test_parse_hex() {
