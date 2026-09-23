@@ -1,12 +1,11 @@
 ##############################################################################
 # pr-images-cleanup workflow
 #
-# build-and-test tags the images it builds for a PR with the head commit sha.
-# They stay while the PR is open, for kind reruns and perf runs. When the PR
-# closes, this workflow deletes the images of all its heads, except heads
-# another open PR has. PRs labelled `docker` or `pr-preview-*` keep their
-# images. pull_request_target: pull_request does not run for a PR closed with
-# merge conflicts. The job checks out nothing and skips forks.
+# Images are kept for as long as the PR is open. When the PR closes, this
+# workflow deletes the images of all its heads. PRs labelled `docker` or
+# `pr-preview-*` keep their images. GitHub does not run pull_request workflows
+# for a PR with merge conflicts, so this workflow uses pull_request_target.
+# The job checks out nothing and skips forks.
 ##############################################################################
 name: pr-images-cleanup
 
@@ -27,32 +26,20 @@ jobs:
     permissions:
       actions: write # Required to cancel the PR's build-and-test runs
       packages: write # Required to delete package versions
-      pull-requests: read # Required to see the branches and heads of the other open PRs
     steps:
       - name: Delete the images tagged with the PR's heads
         shell: bash # -o pipefail: a failed gh api or jq must not pass as "nothing to delete"
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
-          PR_NUMBER: ${{ github.event.pull_request.number }}
           PR_CREATED_AT: ${{ github.event.pull_request.created_at }}
           HEAD_REF: ${{ github.event.pull_request.head.ref }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         run: |
-          # Tags name a commit, not a PR. Another open PR on this branch or at the same head
-          # still builds, reruns and pulls them, so they are left to that PR's own cleanup.
-          others=$(gh api --paginate "repos/${GH_REPO}/pulls?state=open&per_page=100" \
-            | jq -s --argjson pr "${PR_NUMBER}" '[.[][] | select(.number != $pr) | .head]')
-          if jq -e --arg ref "${HEAD_REF}" --arg repo "${GH_REPO}" \
-              'any(.[]; .ref == $ref and .repo.full_name == $repo)' <<<"${others}" >/dev/null; then
-            echo "Another open PR is on ${HEAD_REF}; its images stay"
-            exit 0
-          fi
           # Runs keep the heads a force-push replaced; --created skips earlier PRs on this branch.
           runs=$(gh run list --workflow build-and-test.yml --branch "${HEAD_REF}" --event pull_request \
             --created ">=${PR_CREATED_AT}" --limit 1000 --json databaseId,headSha,status)
-          prefixes=$(jq -c --arg head "${HEAD_SHA}" --argjson others "${others}" \
-            '[.[].headSha, $head] | unique - [$others[].sha] | map(.[0:7])' <<<"${runs}")
+          prefixes=$(jq -c --arg head "${HEAD_SHA}" '[.[].headSha, $head] | unique | map(.[0:7])' <<<"${runs}")
           # A build-and-test run still working on a head would push images after the deletion
           # or pull them during it. Its result no longer matters, so end it first.
           for run in $(jq -r '.[] | select(.status != "completed") | .databaseId' <<<"${runs}"); do
@@ -62,7 +49,7 @@ jobs:
           delete_package_versions_by_tag() {
             local package_name="$1"
             local prefixes="$2"
-            local matches
+            local ids
 
             # URL-encode package name (slashes -> %2F)
             local encoded_name
@@ -70,19 +57,14 @@ jobs:
 
             local package_path="/orgs/zama-ai/packages/container/${encoded_name}"
 
-            # Collect first: a deletion shifts the pages not yet read.
-            matches=$(gh api --paginate -H "Accept: application/vnd.github+json" "${package_path}/versions?per_page=100" \
-              | jq -r --argjson prefixes "$prefixes" '
-                  .[]
-                  | [(.metadata.container.tags[]? // empty | select(.[0:7] | IN($prefixes[])))] as $matched
-                  | select(($matched | length) > 0)
-                  | [.id, ($matched | join(","))] | @tsv
-                ')
-            while IFS=$'\t' read -r id matched_tags; do
-              [ -z "$id" ] && continue
-              echo "Deleting ${package_name} version_id=${id} tags=${matched_tags}"
+            # List all matches before deleting any: a deletion shifts the pages not yet read.
+            ids=$(gh api --paginate -H "Accept: application/vnd.github+json" "${package_path}/versions?per_page=100" \
+              | jq -r --argjson prefixes "$prefixes" \
+                  '.[] | select(any(.metadata.container.tags[]?; .[0:7] | IN($prefixes[]))) | .id')
+            for id in ${ids}; do
+              echo "Deleting ${package_name} version_id=${id}"
               gh api --method DELETE -H "Accept: application/vnd.github+json" "${package_path}/versions/${id}"
-            done <<<"${matches}"
+            done
           }
           for package in core-service-enclave-insecure core-service-enclave core-service-insecure core-service \
               core-client-insecure core-client kms-binaries-insecure kms-binaries; do
