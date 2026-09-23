@@ -16,7 +16,7 @@ fn bench_ring<Z: ErrorCorrect + Invert + PRSSConversions>(c: &mut Criterion, rin
     let rt = tokio::runtime::Runtime::new().unwrap();
     let _guard = rt.enter();
     let setup = support::setup_prss::<Z>(&rt, 13, 4);
-    let initial = setup.new_prss_session_state(SessionId::from(42));
+    let initial = setup.new_prss_reference_state(SessionId::from(42));
     let role = Role::indexed_from_one(1);
     let mut group = c.benchmark_group(format!("prss_groups/{ring}/parties_13_threshold_4"));
     group.throughput(Throughput::Elements(AMOUNT as u64));
@@ -35,7 +35,18 @@ fn bench_ring<Z: ErrorCorrect + Invert + PRSSConversions>(c: &mut Criterion, rin
     }
     measure!("original", prss_next_vec_orig);
     measure!("scalar_iter", prss_next_vec_iter);
-    measure!("pair_control", prss_next_vec);
+    measure!("pair_control", prss_next_vec_pair);
+
+    let mut prepared = setup
+        .new_prss_session_state(SessionId::from(42), role)
+        .unwrap();
+    group.bench_function(BenchmarkId::new("prepared_scalar", AMOUNT), |b| {
+        b.iter(|| {
+            rt.block_on(async {
+                black_box(prepared.prss_next_vec(role, AMOUNT).await.unwrap());
+            })
+        });
+    });
 
     // One and two counters also check the cost of the generalized grouping code
     // against the dedicated scalar and pair controls above.

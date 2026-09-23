@@ -12,7 +12,7 @@ use criterion::{
 use futures::future::join_all;
 use support::PrssWorkload;
 use threshold_execution::small_execution::prss::DerivePRSSState;
-use threshold_types::session_id::SessionId;
+use threshold_types::{role::Role, session_id::SessionId};
 mod support;
 
 const SHARES_PER_REQUEST: usize = 30_000;
@@ -39,7 +39,14 @@ fn bench_ring<Z: ErrorCorrect + Invert + PRSSConversions>(c: &mut Criterion, rin
         // These sessions share one pool; production parties run on separate hosts.
         for sessions in [1_usize, 4, 13] {
             let mut prss_states: Vec<_> = (0..sessions)
-                .map(|i| prss_setup.new_prss_session_state(SessionId::from(42 + i as u128)))
+                .map(|i| {
+                    prss_setup
+                        .new_prss_session_state(
+                            SessionId::from(42 + i as u128),
+                            Role::indexed_from_one(1),
+                        )
+                        .unwrap()
+                })
                 .collect();
             for workload in PrssWorkload::for_ring::<Z>() {
                 // Means triples for TripleInputs, shares for all others.

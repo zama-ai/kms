@@ -38,11 +38,20 @@ fn bench_ring<Z: ErrorCorrect + Invert + PRSSConversions>(c: &mut Criterion, rin
 
         let prss_setup = support::setup_prss::<Z>(&rt, num_parties, threshold);
 
-        let mut prss_state = prss_setup.new_prss_session_state(sid);
+        let role = Role::indexed_from_one(1);
 
         group.throughput(Throughput::Elements(1));
         group.bench_function("new_prss_session_state", |b| {
-            b.iter(|| black_box(prss_setup.new_prss_session_state(black_box(sid))));
+            b.iter(|| {
+                black_box(
+                    prss_setup
+                        .new_prss_session_state(black_box(sid), role)
+                        .unwrap(),
+                )
+            });
+        });
+        group.bench_function("new_prss_reference_state", |b| {
+            b.iter(|| black_box(prss_setup.new_prss_reference_state(black_box(sid))));
         });
         for workload in PrssWorkload::for_ring::<Z>() {
             // Means triples for TripleInputs, shares for all others.
@@ -52,14 +61,15 @@ fn bench_ring<Z: ErrorCorrect + Invert + PRSSConversions>(c: &mut Criterion, rin
                 &sizes
             };
             for &request_size in request_sizes {
+                let mut prss_state = prss_setup.new_prss_session_state(sid, role).unwrap();
                 group.throughput(Throughput::Elements(
                     workload.output_value_count(request_size) as u64,
                 ));
                 if matches!(workload, PrssWorkload::Prss) {
-                    // Compare all three implementations in one binary with identical
+                    // Compare scalar implementations in one binary with identical
                     // session keys and starting counters. Setup/cloning is untimed;
                     // output disposal is timed in both cases.
-                    let mut original_state = prss_state.clone();
+                    let mut original_state = prss_setup.new_prss_reference_state(sid);
                     group.bench_function(BenchmarkId::new("prss_next_orig", request_size), |b| {
                         b.iter(|| {
                             rt.block_on(async {
@@ -73,8 +83,8 @@ fn bench_ring<Z: ErrorCorrect + Invert + PRSSConversions>(c: &mut Criterion, rin
                         });
                     });
                     // Keep the scalar iterator case adjacent to the original and
-                    // paired cases, with the same keys and initial counter.
-                    let mut iterator_state = prss_state.clone();
+                    // prepared cases, with the same keys and initial counter.
+                    let mut iterator_state = prss_setup.new_prss_reference_state(sid);
                     group.bench_function(BenchmarkId::new("prss_next_iter", request_size), |b| {
                         b.iter(|| {
                             rt.block_on(async {
@@ -87,6 +97,17 @@ fn bench_ring<Z: ErrorCorrect + Invert + PRSSConversions>(c: &mut Criterion, rin
                             })
                         });
                     });
+                }
+                if !matches!(workload, PrssWorkload::Prss) {
+                    let mut reference = prss_setup.new_prss_reference_state(sid);
+                    group.bench_function(
+                        BenchmarkId::new(format!("{}_orig", workload.name()), request_size),
+                        |b| {
+                            b.iter(|| {
+                                rt.block_on(workload.run(&mut reference, threshold, request_size))
+                            })
+                        },
+                    );
                 }
                 group.bench_function(BenchmarkId::new(workload.name(), request_size), |b| {
                     b.iter(|| rt.block_on(workload.run(&mut prss_state, threshold, request_size)));

@@ -65,7 +65,7 @@ impl<Z: ErrorCorrect + Invert + PRSSConversions> ProtocolSetup<Z> {
             .map(|(role, setup)| {
                 SmallSession::new_from_prss_state(
                     self.runtime.base_session_for_party(sid, *role, None),
-                    setup.new_prss_session_state(sid),
+                    setup.new_prss_session_state(sid, *role).unwrap(),
                 )
                 .unwrap()
             })

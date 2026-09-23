@@ -716,8 +716,10 @@ where
         .init(&mut base_session)
         .await
         .unwrap();
-    SmallSession::new_from_prss_state(base_session, prss_setup.new_prss_session_state(session_id))
-        .unwrap()
+    let prss_state = prss_setup
+        .new_prss_session_state(session_id, base_session.my_role())
+        .unwrap();
+    SmallSession::new_from_prss_state(base_session, prss_state).unwrap()
 }
 
 /// Generically compute preprocessing information for a bit-decomposition decryption for the given session and number of ciphertexts.

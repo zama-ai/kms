@@ -13,7 +13,7 @@ use std::{
 };
 use support::PrssWorkload;
 use threshold_execution::small_execution::prss::DerivePRSSState;
-use threshold_types::session_id::SessionId;
+use threshold_types::{role::Role, session_id::SessionId};
 mod support;
 use threshold_execution::small_execution::prf::benchmarking as prf;
 
@@ -110,7 +110,9 @@ fn measure_ring<Z: ErrorCorrect + Invert + PRSSConversions>(
     );
     for (parties, threshold) in [(4, 1), (7, 2), (13, 4)] {
         let prss_setup = support::setup_prss::<Z>(rt, parties, threshold);
-        let mut prss_state = prss_setup.new_prss_session_state(SessionId::from(42));
+        let mut prss_state = prss_setup
+            .new_prss_session_state(SessionId::from(42), Role::indexed_from_one(1))
+            .unwrap();
         for workload in PrssWorkload::for_ring::<Z>() {
             // Means triples for TripleInputs, shares for all others.
             let request_sizes: &[usize] = if matches!(workload, PrssWorkload::TripleInputs) {

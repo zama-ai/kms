@@ -16,7 +16,7 @@ use threshold_execution::{
     },
     small_execution::{
         agree_random::DummyAgreeRandomFromShare,
-        prss::{PRSSInit, PRSSPrimitives, PRSSSetup, RobustRealPrssInit, SecurePRSSState},
+        prss::{PRSSInit, PRSSPrimitives, PRSSSetup, RobustRealPrssInit},
     },
 };
 use threshold_networking::local::LocalNetworkingProducer;
@@ -90,7 +90,7 @@ impl PrssWorkload {
     /// Triple inputs contain three PRSS shares and one PRZS share per triple.
     pub async fn run<Z: ErrorCorrect + Invert + PRSSConversions>(
         self,
-        prss_state: &mut SecurePRSSState<Z>,
+        prss_state: &mut impl PRSSPrimitives<Z>,
         threshold: u8,
         request_size: usize,
     ) {
