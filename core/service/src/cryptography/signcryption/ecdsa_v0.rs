@@ -186,8 +186,8 @@ pub(crate) fn insecure_decrypt_ignoring_signature(
 
 #[cfg(test)]
 mod tests {
+    use super::super::Signcrypt;
     use super::super::common::{lock_fixture, receiver_enc_key_digest};
-    use super::super::{Signcrypt, Unsigncrypt};
     use super::*;
     use crate::consts::SAFE_SER_SIZE_LIMIT;
     use crate::cryptography::encryption::PkeSchemeType;
@@ -213,46 +213,21 @@ mod tests {
         );
     }
 
-    /// The signed preimage is exactly `dsep ‖ msg ‖ receiver_id ‖ H(enc key)`.
-    ///
-    /// Rebuilt here from the hashing primitive rather than from
-    /// [`receiver_binding`], so that a reordering of the concatenation is caught
-    /// at the preimage level instead of only by a whole-artifact comparison.
+    /// The receiver binding is exactly `receiver_id ‖ H(receiver enc key)`, in
+    /// that order.
     #[test]
-    fn ecdsa_v0_signed_preimage_is_locked() {
-        const DSEP: &DomainSep = b"ECDSAV0T";
+    fn ecdsa_v0_receiver_binding_is_locked() {
         for scheme in [PkeSchemeType::MlKem512, PkeSchemeType::MlKem1024P384] {
             let f = lock_fixture(scheme, 100);
-            let msg = b"the message a signcryption signs over";
-
-            let expected = [
-                &DSEP[..],
-                msg.as_slice(),
-                f.receiver_id.as_slice(),
-                receiver_enc_key_digest(&f.enc_key).unwrap().as_slice(),
-            ]
-            .concat();
-
-            // What `inner_signcryption` signs: `dsep` (prepended by
-            // `internal_sign`) followed by the message and the receiver binding.
-            let binding = receiver_binding(&f.receiver_id, &f.enc_key).unwrap();
-            let signed = [&DSEP[..], msg.as_slice(), binding.as_slice()].concat();
-            assert_eq!(signed, expected, "{scheme}: signed preimage changed");
-
-            // ...and the verifier rebuilds exactly those bytes.
-            let sig = internal_sign(
-                DSEP,
-                &[msg.as_slice(), binding.as_slice()].concat(),
-                &f.signing_key,
-            )
-            .unwrap();
-            let unsign_key = UnifiedUnsigncryptionKey::new(
-                &f.dec_key,
-                &f.enc_key,
-                &f.sender_verf_key,
-                &f.receiver_id,
+            assert_eq!(
+                receiver_binding(&f.receiver_id, &f.enc_key).unwrap(),
+                [
+                    f.receiver_id.as_slice(),
+                    receiver_enc_key_digest(&f.enc_key).unwrap().as_slice(),
+                ]
+                .concat(),
+                "{scheme}: the receiver binding changed"
             );
-            check_format_and_signature(DSEP, msg, &sig, &unsign_key, &f.sender_verf_key).unwrap();
         }
     }
 
@@ -330,70 +305,6 @@ mod tests {
                     Err(CryptographyError::LengthError(_))
                 ),
                 "a {len}-byte plaintext must be rejected as too short"
-            );
-        }
-    }
-
-    /// Captures the frozen byte vectors the layout is locked against.
-    ///
-    /// Ignored by default because the constants below still have to be filled in
-    /// once, by hand: they are the output of the very code under test, so they
-    /// cannot be written before it has run. Run
-    ///
-    /// ```text
-    /// cargo test -p kms --lib \
-    ///   cryptography::signcryption::tests::ecdsa_v0_frozen_byte_vectors \
-    ///   -- --ignored --nocapture
-    /// ```
-    ///
-    /// paste the printed literals into the constants, and delete the
-    /// `#[ignore]`. From then on this is the strongest guard here: it pins a
-    /// real ciphertext together with the key that opens it, so it proves current
-    /// code still *opens* material produced earlier. Every other test
-    /// establishes that only transitively, by regenerating and comparing.
-    #[test]
-    #[ignore = "golden vectors must be captured once; see the doc comment"]
-    fn ecdsa_v0_frozen_byte_vectors() {
-        const DSEP: &DomainSep = b"ECDSAV0T";
-        // Hex of a `UnifiedSigncryption.payload` for ML-KEM-512, seed 200.
-        const FROZEN_MLKEM512: &str = "";
-        // Hex of a `UnifiedSigncryption.payload` for MLKEM1024-P384, seed 200.
-        const FROZEN_MLKEM1024P384: &str = "";
-
-        for (scheme, frozen) in [
-            (PkeSchemeType::MlKem512, FROZEN_MLKEM512),
-            (PkeSchemeType::MlKem1024P384, FROZEN_MLKEM1024P384),
-        ] {
-            let mut f = lock_fixture(scheme, 200);
-            let payload = TestType { i: 4711 };
-            let signcrypt_key =
-                UnifiedSigncryptionKey::new(&f.signing_key, &f.enc_key, &f.receiver_id);
-            let cipher = signcrypt_key.signcrypt(&mut f.rng, DSEP, &payload).unwrap();
-
-            assert!(
-                !frozen.is_empty(),
-                "{scheme}: paste this into the constant, then drop #[ignore]:\n{}",
-                hex::encode(&cipher.payload)
-            );
-
-            // The frozen ciphertext must still open under the same key...
-            let frozen_payload = hex::decode(frozen).expect("the constant must be valid hex");
-            let unsign_key = UnifiedUnsigncryptionKey::new(
-                &f.dec_key,
-                &f.enc_key,
-                &f.sender_verf_key,
-                &f.receiver_id,
-            );
-            let frozen_cipher = UnifiedSigncryption::new(frozen_payload.clone(), scheme);
-            let opened: TestType = unsign_key
-                .unsigncrypt(DSEP, &frozen_cipher)
-                .expect("current code must still open the frozen ciphertext");
-            assert_eq!(opened, payload, "{scheme}");
-
-            // ...and today's code must still produce it bit for bit.
-            assert_eq!(
-                cipher.payload, frozen_payload,
-                "{scheme}: the produced envelope no longer matches the frozen vector"
             );
         }
     }

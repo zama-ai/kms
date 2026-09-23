@@ -60,7 +60,7 @@ use kms_lib::{
         },
         signcryption::{
             Signcrypt, SigncryptionPayload, UnifiedSigncryption, UnifiedSigncryptionKeyOwned,
-            UnifiedUnsigncryptionKeyOwned,
+            UnifiedUnsigncryptionKeyOwned, Unsigncrypt,
         },
     },
     engine::{
@@ -816,23 +816,46 @@ fn test_unified_signcryption(
     let (verf_key, server_sig_key) = gen_sig_keys(&mut rng);
     let (client_verf_key, _server_sig_key) = gen_sig_keys(&mut rng);
     let mut encryption = Encryption::new(PkeSchemeType::MlKem512, &mut rng);
-    let (_dec_key, enc_key) = encryption.keygen().unwrap();
+    let (dec_key, enc_key) = encryption.keygen().unwrap();
+    let receiver_id = client_verf_key.verf_key_id();
     let signcrypt_key =
-        UnifiedSigncryptionKeyOwned::new(server_sig_key, enc_key, client_verf_key.verf_key_id());
+        UnifiedSigncryptionKeyOwned::new(server_sig_key, enc_key.clone(), receiver_id.clone());
     let new_versionized = signcrypt_key
         .signcrypt(&mut rng, b"TESTTEST", &verf_key)
         .unwrap();
 
     if original_versionized != new_versionized {
-        Err(test.failure(
+        return Err(test.failure(
             format!(
                 "Invalid UnifiedSigncryption:\n Expected :\n{original_versionized:?}\nGot:\n{new_versionized:?}"
             ),
             format,
-        ))
-    } else {
-        Ok(test.success(format))
+        ));
     }
+
+    // Reading the stored bytes, not just reproducing them. The comparison above
+    // locks the writer; this locks the parser, which is the half that decides
+    // whether a node can still open material an earlier release produced. The
+    // frozen layout carries no version tag and is recovered by subtracting two
+    // fixed-size tail fields, so a change there is silent until something tries.
+    let unsign_key =
+        UnifiedUnsigncryptionKeyOwned::new(dec_key, enc_key, verf_key.clone(), receiver_id);
+    let opened: PublicSigKey = unsign_key
+        .unsigncrypt(b"TESTTEST", &original_versionized)
+        .map_err(|e| {
+            test.failure(
+                format!("the stored UnifiedSigncryption no longer opens: {e}"),
+                format,
+            )
+        })?;
+    if opened != verf_key {
+        return Err(test.failure(
+            format!("the stored UnifiedSigncryption opened to the wrong message: {opened:?}"),
+            format,
+        ));
+    }
+
+    Ok(test.success(format))
 }
 
 fn test_prss_setup_combined(

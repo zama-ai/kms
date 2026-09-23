@@ -48,8 +48,6 @@
 //! - The plaintext layout `msg ‖ sig ‖ H(sender verification key)` and the
 //!   signed preimage `dsep ‖ msg ‖ receiver_id ‖ H(receiver enc key)`, by
 //!   `ecdsa_v0::tests::ecdsa_v0_envelope_layout_is_locked`.
-//! - The [`SigncryptionPayload`] bincode layout, by
-//!   `tests::test_signcryption_payload_v0_serialization_locked`.
 //! - The whole artifact, including **the order in which the RNG is drawn from**,
 //!   by the backward-compatibility harness: `test_unified_signcryption` in
 //!   `core/service/tests/backward_compatibility_kms.rs` regenerates a
@@ -454,9 +452,9 @@ pub enum SigncryptionPayloadVersions {
 /// - V0 (current): Initial version with `plaintext: TypedPlaintext` and `link: Vec<u8>`
 ///
 /// ## Testing
-/// - Unit test: `test_signcryption_payload_v0_serialization_locked` locks the binary format
-/// - BC tests: Verify v0.11.x data can be deserialized by current version
-/// - Both tests MUST pass before any changes to this type
+/// - BC tests: `test_signcryption_payload` replays a fixture frozen at 0.13.0, which is
+///   what locks the binary format, and verifies v0.11.x data still deserializes
+/// - It MUST pass before any changes to this type
 //
 // TODO(zama-ai/tfhe-rs-internal/issues/1535)
 // we should also have ZeroizeOnDrop but this requires some changes on tfhe-rs
@@ -707,7 +705,6 @@ mod tests {
     };
     use crate::vault::storage::tests::TestType;
     use aes_prng::AesRng;
-    use kms_grpc::kms::v1::TypedPlaintext;
     use rand::SeedableRng;
     use tfhe::FheTypes;
 
@@ -952,48 +949,5 @@ mod tests {
             // regenerated artifact still compares equal to a frozen one.
             assert_eq!(upgraded, UnifiedSigncryption::new(v0.payload, v0.pke_type));
         }
-    }
-
-    /// This test locks the binary serialization format of SigncryptionPayload.
-    ///
-    /// If this test fails, you have made a BREAKING CHANGE to SigncryptionPayload
-    /// that will prevent users from decrypting existing signcrypted ciphertexts.
-    ///
-    /// Breaking changes include:
-    /// - Reordering fields
-    /// - Changing field types
-    /// - Removing fields
-    /// - Renaming fields
-    ///
-    /// If you need to make changes, you MUST:
-    /// 1. Create a new version of the struct (e.g., SigncryptionPayloadV1)
-    /// 2. Implement migration logic from V0 to V1
-    /// 3. Update all serialization/deserialization code to handle both versions
-    #[test]
-    fn test_signcryption_payload_v0_serialization_locked() {
-        let payload = SigncryptionPayload {
-            plaintext: TypedPlaintext {
-                bytes: vec![1, 2, 3, 4, 5],
-                fhe_type: 8, // FheTypes::Uint8
-            },
-            link: vec![222, 173, 190, 239],
-        };
-
-        let serialized = bc2wrap::serialize(&payload).expect("serialization should succeed");
-
-        // LOCKED V0 FORMAT - DO NOT CHANGE
-        let expected_bytes = vec![
-            5, 0, 0, 0, 0, 0, 0, 0, // plaintext.bytes length
-            1, 2, 3, 4, 5, // plaintext.bytes content
-            8, 0, 0, 0, // plaintext.fhe_type
-            4, 0, 0, 0, 0, 0, 0, 0, // link length
-            222, 173, 190, 239, // link content
-        ];
-
-        assert_eq!(
-            serialized, expected_bytes,
-            "BREAKING CHANGE: SigncryptionPayload format changed!\n\
-             This will break user decryption for existing ciphertexts."
-        );
     }
 }
