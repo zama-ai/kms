@@ -741,8 +741,8 @@ impl<T> MetaStore<T> {
         if matches!(prev, EntryState::Done(_)) {
             self.remove_completed(&req_id)?;
         }
-        // Safe: observed above under this same `&mut self`; only `complete_queue` was touched
-        // since.
+        // Every fallible step above used a shared borrow, so a failure leaves the store unchanged.
+        // The entry is still present: only `complete_queue` changed since the check.
         let entry = self
             .storage
             .get_mut(&req_id)
