@@ -146,10 +146,14 @@ def main():
     parser.add_argument("namespace", nargs="?", default="kms-ci")
     parser.add_argument("interval", nargs="?", type=float, default=5)
     parser.add_argument("port", nargs="?", type=int, default=9646)
+    parser.add_argument("--once", action="store_true", help="take one snapshot and exit")
     args = parser.parse_args()
     timeout = float(os.environ.get("SCRAPE_TIMEOUT", "4"))
     if args.interval <= 0 or timeout <= 0 or not 0 < args.port < 65536:
         parser.error("interval and timeout must be positive; port must be 1..65535")
+    if args.once:
+        scrape_once(args.namespace, args.port, timeout)
+        return
     print(
         f"{timestamp()} sampler_start namespace={args.namespace} "
         f"interval={args.interval:g}s port={args.port}",

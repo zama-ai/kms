@@ -672,6 +672,19 @@ jobs:
             --tkms-infra-version "${TKMS_INFRA_CHART_VERSION}"
 
       # ====================================================================
+      # Network metrics snapshot before the 9/13 tests. Together with the
+      # snapshot after them, it shows which transport events (failed or
+      # retried sends, dropped or late messages) occur during the tests.
+      # ====================================================================
+      - name: 'Snapshot network metrics before 9/13 tests'
+        id: metrics-before
+        continue-on-error: true
+        run: |
+          python3 ci/scripts/sample_core_metrics.py "${NAMESPACE}" --once \
+            > kms-core-network-metrics-before-9of13.txt
+          grep -c "scrape_ok" kms-core-network-metrics-before-9of13.txt | xargs echo "Pods scraped:"
+
+      # ====================================================================
       # STEP 6: Run performance tests with 9/13 upgraded
       # ====================================================================
       - name: 'Step 6: Run performance tests (9/13 mixed state)'
@@ -745,6 +758,30 @@ jobs:
             echo "${FAILED_NODES}"
             exit 1
           fi
+
+      - name: 'Snapshot network metrics after 9/13 tests'
+        if: always() && steps.metrics-before.outcome == 'success'
+        continue-on-error: true
+        run: |
+          BEFORE=kms-core-network-metrics-before-9of13.txt
+          AFTER=kms-core-network-metrics-after-9of13.txt
+          python3 ci/scripts/sample_core_metrics.py "${NAMESPACE}" --once > "${AFTER}"
+          grep -h "scrape_error\|scrape_partial" "${BEFORE}" "${AFTER}" || true
+          # Per pod and event, the change of kms_network_debug_events_total
+          # between the two snapshots. A negative value means that the pod
+          # restarted in between.
+          echo "Network debug events during the 9/13 tests (non-zero changes only):"
+          awk '
+            $3 ~ /^kms_network_debug_events_total[{]/ && match($3, /event="[a-z_]+"/) {
+              key = $2 " " substr($3, RSTART + 7, RLENGTH - 8)
+              if (FILENAME == ARGV[1]) { before[key] = $4 } else { after[key] = $4 }
+            }
+            END {
+              for (key in after) {
+                delta = after[key] - ((key in before) ? before[key] : 0)
+                if (delta != 0) { split(key, k, " "); printf "%-22s %-30s %d\n", k[1], k[2], delta }
+              }
+            }' "${BEFORE}" "${AFTER}" | sort -V
 
       # ====================================================================
       # UPLOAD TEST LOGS

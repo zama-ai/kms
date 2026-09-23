@@ -303,6 +303,14 @@ class DiagnosticTests(TemporaryWorkingDirectory):
             ],
         )
 
+    @patch.object(metrics.time, "sleep", side_effect=AssertionError("--once must not loop"))
+    @patch.object(metrics, "scrape_once")
+    def test_scrape_once_takes_a_single_snapshot(self, scrape, sleep):
+        with patch.object(sys, "argv", ["metrics", "ns", "--once"]):
+            metrics.main()
+        scrape.assert_called_once_with("ns", 9646, 4.0)
+        sleep.assert_not_called()
+
     def test_network_deltas_preserve_missing_and_reset_counter_semantics(self):
         row = dict(zip(network.HEADER, ["p", "c", "eth0", "9001", *(["10"] * 8)]))
         after = dict(row, rx_bytes="25", tx_bytes="2")
