@@ -281,7 +281,7 @@ conclusion. Requires a threshold-aware new image and a request-ID-capable core-c
 
 #### Epoch-data migration (v0.14 → v0.15+)
 
-A v0.15+ core moves the legacy PRSS setup into per-epoch storage at startup. On a node with legacy PRSS data, it does not start without a migration config that maps each epoch to its context (`kmsCore.migration.contextAssociations`). Set `epoch_migration=true` for a `v0.14.x` → `v0.15+` upgrade. `rolling_upgrade.sh` then gives the upgraded parties the mapping for the only epoch that `kms-init` creates: the default MPC context to the default epoch. Leave it off for other version pairs, because `v0.13.x` and `v0.14.x` cores reject the `[migration]` section.
+A v0.15+ core moves the legacy PRSS setup into per-epoch storage at startup. On a node with legacy PRSS data, it does not start without a migration config that maps each epoch to its context (`kmsCore.migration.contextAssociations`). Set `epoch_migration=true` for a `v0.14.x` → `v0.15+` upgrade. `rolling_upgrade.sh` then gives the upgraded parties the mapping for the only epoch that `kms-init` creates: the default MPC context to the default epoch. Leave it off for other version pairs, because `v0.13.x` and `v0.14.x` cores reject the `[migration]` section. See [Upgrade from v0.14 to v0.15](../../docs/operations/upgrade-0.14-to-0.15.md) for the operator steps.
 
 #### Core-client compatibility
 
