@@ -167,7 +167,7 @@ pub async fn key_gen_impl<
     let sk = signing_identity_for(&service.base_kms, &signing_schemes, op_tag, Some(req_id))?;
 
     let token = CancellationToken::new();
-    {
+    let meta_permit = {
         let mut ongoing_key_gen = service.ongoing_key_gen.lock().await;
         if ongoing_key_gen.contains_key(&preproc_id) {
             return Err(MetricedError::new(
@@ -179,22 +179,17 @@ pub async fn key_gen_impl<
                 tonic::Code::AlreadyExists,
             ));
         }
-        // Consume the preprocessing before spawning, so no later request can resolve it.
+        // check that the request ID is not used yet
+        // and then insert the request ID only if it's unused
+        // all validation must be done before inserting the request ID
+        let meta_permit = add_req_to_meta_store(&service.key_meta_map, &req_id, op_tag).await?;
+        // Consume the preprocessing after all checks and before spawning: a rejected
+        // request keeps it and no later request can resolve it.
         try_delete_in_meta_store(&service.preprocessing_meta_store, &preproc_id)
             .await
             .map_err(|e| MetricedError::new(op_tag, Some(req_id), e.to_string(), e.code()))?;
         ongoing_key_gen.insert(preproc_id, token.clone());
-    }
-
-    // check that the request ID is not used yet
-    // and then insert the request ID only if it's unused
-    // all validation must be done before inserting the request ID
-    let meta_permit = match add_req_to_meta_store(&service.key_meta_map, &req_id, op_tag).await {
-        Ok(permit) => permit,
-        Err(e) => {
-            service.ongoing_key_gen.lock().await.remove(&preproc_id);
-            return Err(e);
-        }
+        meta_permit
     };
 
     let ongoing = Arc::clone(&service.ongoing_key_gen);

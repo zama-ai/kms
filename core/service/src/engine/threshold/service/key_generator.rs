@@ -2348,6 +2348,11 @@ mod tests {
                 .to_string()
                 .contains(ERR_FAILED_TO_READ_EXISTING_TAG)
         );
+        // A request rejected during setup keeps its preprocessing.
+        assert!(matches!(
+            kg.preproc_buckets.try_read().unwrap().retrieve(&prep_id),
+            Some(EntryState::Done(Ok(_)))
+        ));
     }
 
     #[tokio::test]
