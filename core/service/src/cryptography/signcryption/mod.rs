@@ -235,15 +235,8 @@ impl HasPkeScheme for UnifiedSigncryptionKey<'_> {
 pub enum SenderAuth<'a> {
     /// A single ECDSA verification key: the frozen layout.
     Ecdsa(&'a PublicSigKey),
-    /// One verification key per scheme, plus the set every signature must have
-    /// been made under: the multi-signature layout.
-    ///
-    /// `expected_schemes` is the reader's policy, not anything read off the
-    /// message, and an empty one is refused rather than treated as "any".
-    Multi {
-        keys: &'a VerfKeySet,
-        expected_schemes: &'a [SigningSchemeType],
-    },
+    /// One verification key per scheme: the multi-signature layout.
+    Multi(&'a VerfKeySet),
 }
 
 /// Internal reference type for unsigncryption keys, storing only references to the real internal keys.
@@ -273,19 +266,15 @@ impl<'a> UnifiedUnsigncryptionKey<'a> {
     }
 
     /// A reader of the multi-signature layout, requiring a signature under every
-    /// scheme in `expected_schemes`.
+    /// scheme `keys` holds a key for.
     pub fn new_multi(
         decryption_key: &'a UnifiedPrivateEncKey,
         encryption_key: &'a UnifiedPublicEncKey,
         keys: &'a VerfKeySet,
-        expected_schemes: &'a [SigningSchemeType],
         receiver_id: &'a [u8],
     ) -> Self {
         Self {
-            sender: SenderAuth::Multi {
-                keys,
-                expected_schemes,
-            },
+            sender: SenderAuth::Multi(keys),
             decryption_key,
             encryption_key,
             receiver_id,
@@ -304,14 +293,10 @@ impl<'a> UnifiedUnsigncryptionKey<'a> {
             SenderAuth::Ecdsa(sender_verf_key) => {
                 ecdsa_v0::inner_unsigncrypt(self, sender_verf_key, dsep, cipher)
             }
-            SenderAuth::Multi {
-                keys,
-                expected_schemes,
-            } => composite_v1::open(
+            SenderAuth::Multi(keys) => composite_v1::open(
                 self.decryption_key,
                 self.encryption_key,
                 keys,
-                expected_schemes,
                 self.receiver_id,
                 dsep,
                 cipher,

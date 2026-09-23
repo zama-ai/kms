@@ -147,17 +147,16 @@ impl CompositeSignature {
     }
 
     /// Check every signature against `keys`, having first checked that this
-    /// signature was made under exactly `expected`.
+    /// signature was made under exactly the schemes `keys` holds keys for.
     ///
     /// Every signature must verify.
     pub fn verify_uniform(
         &self,
         keys: &VerfKeySet,
-        expected: &[SigningSchemeType],
         dsep: &DomainSep,
         msg: &[u8],
     ) -> Result<(), SigningError> {
-        let expected = canonical_schemes(expected)?;
+        let expected = keys.schemes();
         // The scheme-set comparison happens before any cryptography,
         // so a composite signature presented with one of its parts removed is
         // rejected for being the wrong shape
@@ -171,12 +170,15 @@ impl CompositeSignature {
         let preimage = Self::preimage(&schemes, msg)?;
         for entry in &self.0 {
             let signature = Signature::new(entry.scheme, entry.signature.clone());
+            // Cannot fail: `schemes` equals `keys.schemes()` on this path.
             unified_verify(dsep, &preimage, &signature, keys.require(entry.scheme)?)?;
         }
         Ok(())
     }
 
-    /// The schemes this signature was made under, derived from its entries..
+    /// The schemes this signature was made under, derived from its entries.
+    ///
+    /// Canonical by construction: every constructor validates the entry order.
     pub fn schemes(&self) -> Vec<SigningSchemeType> {
         self.0.iter().map(|entry| entry.scheme).collect()
     }
@@ -271,7 +273,7 @@ mod tests {
         let (identity, keys, schemes) = setup(1);
         let sig = CompositeSignature::sign_uniform(&identity, &schemes, DSEP, MSG).unwrap();
         assert_eq!(sig.schemes(), schemes);
-        sig.verify_uniform(&keys, &schemes, DSEP, MSG).unwrap();
+        sig.verify_uniform(&keys, DSEP, MSG).unwrap();
     }
 
     /// Removing a signature must not leave something that verifies under the remaining scheme.
@@ -285,19 +287,17 @@ mod tests {
 
         // Against the original policy it is the wrong scheme set...
         assert!(matches!(
-            stripped.verify_uniform(&keys, &schemes, DSEP, MSG),
+            stripped.verify_uniform(&keys, DSEP, MSG),
             Err(SigningError::UnexpectedSchemeSet { .. })
         ));
 
-        // ...and even if a verifier were talked into asking only for ECDSA, the
-        // surviving signature covers a preimage naming the *pair*, so it does
-        // not verify against the single-scheme preimage either.
-        let ecdsa_only = vec![SigningSchemeType::Ecdsa256k1];
-        assert!(
-            stripped
-                .verify_uniform(&keys, &ecdsa_only, DSEP, MSG)
-                .is_err()
-        );
+        // ...and a verifier downgraded all the way to an ECDSA-only key set —
+        // the only way to ask for less, now that the key set *is* the policy —
+        // still rejects it: the surviving signature covers a preimage naming the
+        // *pair*, which does not match the single-scheme preimage.
+        let ecdsa_only =
+            VerfKeySet::from_identity(&identity, &[SigningSchemeType::Ecdsa256k1]).unwrap();
+        assert!(stripped.verify_uniform(&ecdsa_only, DSEP, MSG).is_err());
     }
 
     /// A list that is not ordered by scheme, or repeats one, is refused on
@@ -329,7 +329,7 @@ mod tests {
             entries[index].signature[0] ^= 0x01;
             let tampered = CompositeSignature::from_canonical(entries).unwrap();
             assert!(
-                tampered.verify_uniform(&keys, &schemes, DSEP, MSG).is_err(),
+                tampered.verify_uniform(&keys, DSEP, MSG).is_err(),
                 "tampering with signature {index} was not detected"
             );
         }
@@ -340,11 +340,11 @@ mod tests {
         let (identity, keys, schemes) = setup(5);
         let sig = CompositeSignature::sign_uniform(&identity, &schemes, DSEP, MSG).unwrap();
         assert!(
-            sig.verify_uniform(&keys, &schemes, DSEP, b"a different message")
+            sig.verify_uniform(&keys, DSEP, b"a different message")
                 .is_err()
         );
         assert!(
-            sig.verify_uniform(&keys, &schemes, b"OTHERDSP", MSG)
+            sig.verify_uniform(&keys, b"OTHERDSP", MSG)
                 .is_err()
         );
     }
@@ -357,9 +357,9 @@ mod tests {
         let (_, other_keys, _) = setup(7);
         let sig = CompositeSignature::sign_uniform(&identity, &schemes, DSEP, MSG).unwrap();
 
-        sig.verify_uniform(&keys, &schemes, DSEP, MSG).unwrap();
+        sig.verify_uniform(&keys, DSEP, MSG).unwrap();
         assert!(
-            sig.verify_uniform(&other_keys, &schemes, DSEP, MSG)
+            sig.verify_uniform(&other_keys, DSEP, MSG)
                 .is_err()
         );
     }
@@ -374,8 +374,8 @@ mod tests {
         let ecdsa_only =
             VerfKeySet::from_identity(&identity, &[SigningSchemeType::Ecdsa256k1]).unwrap();
         assert!(matches!(
-            sig.verify_uniform(&ecdsa_only, &schemes, DSEP, MSG),
-            Err(SigningError::NoVerificationKey(_))
+            sig.verify_uniform(&ecdsa_only, DSEP, MSG),
+            Err(SigningError::UnexpectedSchemeSet { .. })
         ));
     }
 
@@ -483,14 +483,12 @@ mod tests {
         ));
     }
 
-    /// An empty policy must not verify anything, including a signature that
-    /// carries entries.
+    /// An empty policy is unrepresentable rather than rejected: the policy *is*
+    /// the key set, and a [`VerfKeySet`] cannot be empty.
     #[test]
-    fn an_empty_expected_set_is_rejected() {
-        let (identity, keys, schemes) = setup(10);
-        let sig = CompositeSignature::sign_uniform(&identity, &schemes, DSEP, MSG).unwrap();
+    fn an_empty_policy_cannot_be_constructed() {
         assert!(matches!(
-            sig.verify_uniform(&keys, &[], DSEP, MSG),
+            VerfKeySet::new(std::collections::BTreeMap::new()),
             Err(SigningError::EmptySchemeSet)
         ));
     }

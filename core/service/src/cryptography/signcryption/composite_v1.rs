@@ -88,13 +88,11 @@ pub fn seal(
 /// Open a composite signcryption, returning the message only once every
 /// constituent signature has verified.
 ///
-/// `expected_schemes` is the verifier's policy, not anything read off the
-/// message.
+/// `sender_keys` is the verifier's policy, not anything read off the message
 pub(super) fn open(
     decryption_key: &UnifiedPrivateEncKey,
     encryption_key: &UnifiedPublicEncKey,
     sender_keys: &VerfKeySet,
-    expected_schemes: &[SigningSchemeType],
     receiver_id: &[u8],
     dsep: &DomainSep,
     cipher: &UnifiedSigncryption,
@@ -115,7 +113,7 @@ pub(super) fn open(
     let signed = Zeroizing::new([envelope.msg.as_slice(), binding.as_slice()].concat());
     envelope
         .signature
-        .verify_uniform(sender_keys, expected_schemes, dsep, &signed)
+        .verify_uniform(sender_keys, dsep, &signed)
         .map_err(|e| CryptographyError::VerificationError(e.to_string()))?;
 
     Ok(Zeroizing::new(envelope.msg))
@@ -180,17 +178,10 @@ mod tests {
 
     fn open_with(
         f: &Fixture,
-        expected: &[SigningSchemeType],
         cipher: &UnifiedSigncryption,
     ) -> Result<Zeroizing<Vec<u8>>, CryptographyError> {
-        UnifiedUnsigncryptionKey::new_multi(
-            &f.dec_key,
-            &f.enc_key,
-            &f.keys,
-            expected,
-            &f.receiver_id,
-        )
-        .open(DSEP, cipher)
+        UnifiedUnsigncryptionKey::new_multi(&f.dec_key, &f.enc_key, &f.keys, &f.receiver_id)
+            .open(DSEP, cipher)
     }
 
     /// Round-trips for both PKE schemes the backup and user-decryption paths use.
@@ -201,7 +192,7 @@ mod tests {
             let cipher = seal_msg(&mut f, b"a composite message");
             assert_eq!(cipher.pke_type, scheme);
 
-            let opened = open_with(&f, &pair(), &cipher).unwrap();
+            let opened = open_with(&f, &cipher).unwrap();
             assert_eq!(&*opened, b"a composite message", "{scheme}");
         }
     }
@@ -225,7 +216,7 @@ mod tests {
         )
         .unwrap();
 
-        let err = open_with(&f, &pair(), &cipher).unwrap_err();
+        let err = open_with(&f, &cipher).unwrap_err();
         assert!(
             matches!(err, CryptographyError::VerificationError(_)),
             "{err}"
@@ -239,7 +230,6 @@ mod tests {
             &f.dec_key,
             &f.enc_key,
             &weaker_keys,
-            &weaker,
             &f.receiver_id,
             DSEP,
             &cipher,
@@ -256,13 +246,8 @@ mod tests {
         let mut f = fixture(PkeSchemeType::MlKem512, 270);
         let cipher = seal_msg(&mut f, b"dispatched by key material");
 
-        let multi = UnifiedUnsigncryptionKey::new_multi(
-            &f.dec_key,
-            &f.enc_key,
-            &f.keys,
-            &pair(),
-            &f.receiver_id,
-        );
+        let multi =
+            UnifiedUnsigncryptionKey::new_multi(&f.dec_key, &f.enc_key, &f.keys, &f.receiver_id);
         assert_eq!(
             &*multi.open(DSEP, &cipher).unwrap(),
             b"dispatched by key material"
@@ -276,14 +261,6 @@ mod tests {
         let frozen_reader =
             UnifiedUnsigncryptionKey::new(&f.dec_key, &f.enc_key, &ecdsa, &f.receiver_id);
         assert!(frozen_reader.open(DSEP, &cipher).is_err());
-    }
-
-    /// An empty policy must not open anything.
-    #[test]
-    fn an_empty_expected_set_is_rejected() {
-        let mut f = fixture(PkeSchemeType::MlKem512, 260);
-        let cipher = seal_msg(&mut f, b"needs a policy");
-        assert!(open_with(&f, &[], &cipher).is_err());
     }
 
     /// Neither reader accepts the other's envelope.
@@ -331,7 +308,7 @@ mod tests {
         let frozen = ecdsa_key
             .signcrypt(&mut rng, DSEP, &TestType { i: 7 })
             .unwrap();
-        let err = open_with(&f, &pair(), &frozen).unwrap_err();
+        let err = open_with(&f, &frozen).unwrap_err();
         assert!(
             matches!(err, CryptographyError::SerializationError(_)),
             "the composite reader must reject a frozen envelope on deserialization, got: {err}"
@@ -374,7 +351,6 @@ mod tests {
                 &f.dec_key,
                 &f.enc_key,
                 &other_keys,
-                &pair(),
                 &f.receiver_id,
                 DSEP,
                 &cipher,
@@ -396,7 +372,6 @@ mod tests {
                 &f.dec_key,
                 &f.enc_key,
                 &f.keys,
-                &pair(),
                 &other_id,
                 DSEP,
                 &cipher,
@@ -412,14 +387,13 @@ mod tests {
 
         let mut flipped = cipher.clone();
         flipped.payload[0] ^= 0x01;
-        assert!(open_with(&f, &pair(), &flipped).is_err());
+        assert!(open_with(&f, &flipped).is_err());
 
         assert!(
             open(
                 &f.dec_key,
                 &f.enc_key,
                 &f.keys,
-                &pair(),
                 &f.receiver_id,
                 b"OTHERDSP",
                 &cipher,

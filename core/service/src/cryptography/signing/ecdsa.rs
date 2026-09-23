@@ -85,9 +85,8 @@ impl PublicSigKey {
     pub fn to_uncompressed_bytes(&self) -> Vec<u8> {
         self.pk.0.to_encoded_point(false).as_bytes().to_vec()
     }
-}
 
-impl PublicSigKey {
+    /// The scheme this key belongs to: always ECDSA/secp256k1.
     pub fn signing_scheme_type(&self) -> SigningSchemeType {
         SigningSchemeType::Ecdsa256k1
     }
@@ -244,9 +243,7 @@ impl PrivateSigKey {
         })?;
         Ok(PrivateSigKey::new(key))
     }
-}
 
-impl PrivateSigKey {
     pub fn signing_scheme_type(&self) -> SigningSchemeType {
         SigningSchemeType::Ecdsa256k1
     }
