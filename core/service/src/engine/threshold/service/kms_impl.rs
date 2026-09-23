@@ -849,7 +849,6 @@ where
         _init: PhantomData,
         _reshare: PhantomData,
     };
-    let slow_events = Arc::new(Mutex::new(HashMap::new()));
 
     let user_decryptor = RealUserDecryptor {
         base_kms: base_kms.new_instance(),
@@ -880,7 +879,7 @@ where
         dkg_pubinfo_meta_store,
         session_maker: immutable_session_maker.clone(),
         tracker: Arc::clone(&tracker),
-        ongoing: Arc::clone(&slow_events),
+        ongoing: Arc::new(Mutex::new(HashMap::new())),
         rate_limiter: rate_limiter.clone(),
         _kg: PhantomData,
         serial_lock: Arc::new(Mutex::new(())),
@@ -896,7 +895,7 @@ where
         preproc_factory,
         num_sessions_preproc,
         tracker: Arc::clone(&tracker),
-        ongoing: Arc::clone(&slow_events),
+        ongoing: Arc::new(Mutex::new(HashMap::new())),
         rate_limiter: rate_limiter.clone(),
         _producer_factory: PhantomData,
     };
@@ -907,7 +906,7 @@ where
         crs_meta_store,
         session_maker: immutable_session_maker.clone(),
         tracker: Arc::clone(&tracker),
-        ongoing: Arc::clone(&slow_events),
+        ongoing: Arc::new(Mutex::new(HashMap::new())),
         rate_limiter: rate_limiter.clone(),
         _ceremony: PhantomData,
     };
