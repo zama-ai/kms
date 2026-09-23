@@ -647,7 +647,7 @@ impl<
         }
     }
 
-    /// Resolve the preprocessing handle, parameters and whether a stored entry should be consumed.
+    /// Resolves the preprocessing handle and the DKG parameters without consuming the entry.
     async fn resolve_preprocessing(
         bucket_metastore: &RwLock<MetaStore<BucketMetaStore>>,
         key_req_id: RequestId,
