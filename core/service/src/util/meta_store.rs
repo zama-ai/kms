@@ -718,9 +718,23 @@ impl<T> MetaStore<T> {
         Ok(())
     }
 
-    /// Mark an existing entry as deleted, regardless of whether it was Pending
-    /// or Done. Consumes the permit. Returns the previous state. If the previous
-    /// state was `Done`, the entry is also removed from the completion queue.
+    /// Tombstones an existing `Pending` or `Done` entry and returns its previous state.
+    /// Consumes the permit.
+    ///
+    /// The entry stays in the store with the state `Deleted`, and its id goes into
+    /// `deleted_set`. A `Done` entry also leaves the completion queue. A waiter on the entry
+    /// wakes up, and a later read of the id returns `NotFound`.
+    ///
+    /// The tombstone keeps the request id known, so [`insert`](Self::insert) rejects it with
+    /// [`MetaStoreError::AlreadyExists`]. In the threshold KMS, MPC session ids derive from
+    /// request ids, so this also stops a second session under the same id. Eviction removes
+    /// only `Done` entries, so a tombstone stays for the life of the store and counts against
+    /// `capacity`.
+    ///
+    /// Returns [`MetaStoreError::NotFound`] if the entry does not exist,
+    /// [`MetaStoreError::CannotUpdate`] if it is already `Deleted`, and
+    /// [`MetaStoreError::Invariant`] if a `Done` entry is missing from the completion queue.
+    /// On error, the store does not change.
     fn delete(&mut self, mut permit: MetaStorePermit<T>) -> Result<EntryState<T>, MetaStoreError> {
         // We own the outcome (tombstone) from here on, so a later drop must not reap.
         permit.defuse();
