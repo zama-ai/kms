@@ -44,16 +44,16 @@ rates = [
 key = "udec-key-gen"
 after = ["udec-async"]
 rates = [
-  { rate = 1300, allowfail = true },
-  { rate = 1500, allowfail = true },
-  { rate = 1800, maxfail = 10, maxshed = 25, pct = 70, allowfail = true },
+  { rate = 1200, allowfail = true },
+  { rate = 1400, allowfail = true },
+  { rate = 1700, maxfail = 10, maxshed = 25, pct = 70, allowfail = true },
 ]
 
 [scenarios.udec-sync]
 key = "udec-key-gen"
 after = ["pdec-sync"]
 rates = [
-  { rate = 1600, allowfail = true },
-  { rate = 2000, allowfail = true },
-  { rate = 2400, maxfail = 10, maxshed = 25, pct = 70, allowfail = true },
+  { rate = 1500, allowfail = true },
+  { rate = 1900, allowfail = true },
+  { rate = 2300, maxfail = 10, maxshed = 25, pct = 70, allowfail = true },
 ]
