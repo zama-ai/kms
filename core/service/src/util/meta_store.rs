@@ -718,69 +718,64 @@ impl<T> MetaStore<T> {
         Ok(())
     }
 
-    /// Mark an existing entry as deleted, regardless of whether it was Pending
-    /// or Done. Consumes the permit. Returns the previous state. If the previous
-    /// state was `Done`, the entry is also removed from the completion queue.
+    /// Tombstones an existing `Pending` or `Done` entry and returns its previous state.
+    /// Consumes the permit.
+    ///
+    /// The entry stays in the store with the state `Deleted`, and its id goes into
+    /// `deleted_set`. A `Done` entry also leaves the completion queue. A waiter on the entry
+    /// wakes up, and a later read of the id returns `NotFound`.
+    ///
+    /// The tombstone keeps the request id known, so [`insert`](Self::insert) rejects it with
+    /// [`MetaStoreError::AlreadyExists`]. In the threshold KMS, MPC session ids derive from
+    /// request ids, so this also stops a second session under the same id. Eviction removes
+    /// only `Done` entries, so a tombstone stays for the life of the store and counts against
+    /// `capacity`.
+    ///
+    /// Returns [`MetaStoreError::NotFound`] if the entry does not exist,
+    /// [`MetaStoreError::CannotUpdate`] if it is already `Deleted`, and
+    /// [`MetaStoreError::Invariant`] if a `Done` entry is missing from the completion queue.
+    /// On error, the store does not change.
     fn delete(&mut self, mut permit: MetaStorePermit<T>) -> Result<EntryState<T>, MetaStoreError> {
         // We own the outcome (tombstone) from here on, so a later drop must not reap.
         permit.defuse();
         let req_id = permit.req_id;
+        let prev = {
+            let entry = self
+                .storage
+                .get(&req_id)
+                .ok_or(MetaStoreError::NotFound { req_id })?;
+            if entry.status() == EntryStatus::Deleted {
+                return Err(MetaStoreError::CannotUpdate { req_id });
+            }
+            EntryState::from(entry)
+        };
+        // Drop the completion-queue slot *before* tombstoning, as `redo_failed` does. Eviction
+        // only considers `Done` entries, so a `Deleted` entry left in the queue is never
+        // reclaimed.
+        if matches!(prev, EntryState::Done(_)) {
+            self.remove_completed(&req_id)?;
+        }
+        // Every fallible step above used a shared borrow, so a failure leaves the store unchanged.
+        // The entry is still present: only `complete_queue` changed since the check.
         let entry = self
             .storage
             .get_mut(&req_id)
-            .ok_or(MetaStoreError::NotFound { req_id })?;
-        if entry.status() == EntryStatus::Deleted {
-            return Err(MetaStoreError::CannotUpdate { req_id });
-        }
-        let prev = EntryState::from(&*entry);
-        let was_done = matches!(prev, EntryState::Done(_));
+            .expect("entry observed under this lock cannot vanish");
         entry.set_deleted();
         self.deleted_set.insert(req_id);
-        if was_done {
-            self.remove_completed(&req_id)?;
-        }
         Ok(prev)
     }
 
-    /// Like [`delete`], but for callers that do not hold a permit. Succeeds
-    /// for any non-Deleted state when no live permit is outstanding. Returns
-    /// the previous state.
+    /// Like [`delete`], but for callers that do not hold a permit: acquires one with
+    /// [`lock_entry`](Self::lock_entry) and passes it to [`delete`]. Fails with
+    /// [`MetaStoreError::Locked`] while another permit is outstanding. Returns the previous
+    /// state.
     pub(crate) fn try_delete(
         &mut self,
         request_id: &RequestId,
     ) -> Result<EntryState<T>, MetaStoreError> {
-        {
-            let entry = self
-                .storage
-                .get(request_id)
-                .ok_or(MetaStoreError::NotFound {
-                    req_id: *request_id,
-                })?;
-            match entry.status() {
-                EntryStatus::Pending | EntryStatus::Done => {
-                    if entry.is_permit_held() {
-                        return Err(MetaStoreError::Locked {
-                            req_id: *request_id,
-                        });
-                    }
-                }
-                EntryStatus::Deleted => {
-                    return Err(MetaStoreError::CannotUpdate {
-                        req_id: *request_id,
-                    });
-                }
-            }
-        }
-        // Safe: we just verified the entry exists and is not Deleted.
-        let entry = self.storage.get_mut(request_id).unwrap();
-        let prev = EntryState::from(&*entry);
-        let was_done = matches!(prev, EntryState::Done(_));
-        entry.set_deleted();
-        self.deleted_set.insert(*request_id);
-        if was_done {
-            self.remove_completed(request_id)?;
-        }
-        Ok(prev)
+        let permit = self.lock_entry(request_id)?;
+        self.delete(permit)
     }
 
     /// Reaper hook: if `req_id` names an *orphaned* `Pending` entry — one whose
@@ -1069,13 +1064,11 @@ pub(crate) async fn update_req_in_meta_store<
     }
 }
 
-// The `MetaStoreError` is recorded through `handle_unreturnable_error` and collapsed into a
-// bool instead of being propagated, which is what Dylint flags. The effect it names is
-// `update_arc`'s `HashMap::get_mut` (line 608), a `&mut` borrow that writes nothing: both of
-// that method's error paths -- the id is gone, or the entry is no longer `Pending` -- leave
-// the store unchanged, so there is no partial state for a caller to unwind.
-#[allow(unknown_lints)]
-#[allow(non_local_effect_before_unhandled_error)]
+// `update_arc` can fail, and this helper reports the error through
+// `handle_unreturnable_error` instead of returning it, which the lint flags. The failure
+// leaves the store unchanged, so there is nothing for a caller to undo.
+#[allow(unknown_lints, reason = "only known when running cargo dylint")]
+#[expect(non_local_effect_before_unhandled_error)]
 pub(crate) async fn update_ok_req_in_meta_store<T>(
     meta_store: &RwLock<MetaStore<T>>,
     permit: MetaStorePermit<T>,
@@ -1112,13 +1105,6 @@ pub(crate) async fn update_err_req_in_meta_store<T>(
     }
 }
 
-// Dylint flags the `delete` call below: its `MetaStoreError` is logged rather than propagated,
-// and `delete` performs a non-local effect (`HashMap::get_mut`, and its tombstone writes ahead
-// of the `remove_completed` invariant check) before it can return one. Recording the failure is
-// all this fire-and-forget path can do -- `context_manager.rs` has already destroyed the
-// underlying material by the time it runs.
-#[allow(unknown_lints)]
-#[allow(non_local_effect_before_unhandled_error)]
 pub(crate) async fn delete_in_meta_store<'a, T>(
     mut meta_store_guard: RwLockWriteGuard<'a, MetaStore<T>>,
     permit: MetaStorePermit<T>,
@@ -1455,6 +1441,35 @@ mod tests {
             store.remove_completed(&ids[0]),
             Err(MetaStoreError::Invariant(_))
         ));
+    }
+
+    #[test]
+    fn delete_leaves_done_entry_untouched_when_queue_slot_is_missing() {
+        // A `Done` entry without a completion-queue slot breaks the queue invariant. Both delete
+        // paths detect this before they write the tombstone, so the entry stays `Done` and out of
+        // `deleted_set`.
+        let mut store: MetaStore<String> = MetaStore::new_unlimited_inner();
+        let id = derive_request_id("del-missing-slot").unwrap();
+        insert_done_ok(&mut store, &id, "v");
+        store.complete_queue.clear();
+
+        let permit = store.lock_entry(&id).unwrap();
+        assert!(matches!(
+            store.delete(permit),
+            Err(MetaStoreError::Invariant(_))
+        ));
+        assert_done_ok(&store, &id, &"v".to_string());
+        assert_eq!(store.get_deleted_count(), 0);
+        assert!(store.verify_invariant());
+
+        // The failed `delete` consumed its permit, so the permit-less path is reachable too.
+        assert!(matches!(
+            store.try_delete(&id),
+            Err(MetaStoreError::Invariant(_))
+        ));
+        assert_done_ok(&store, &id, &"v".to_string());
+        assert_eq!(store.get_deleted_count(), 0);
+        assert!(store.verify_invariant());
     }
 
     #[test]
