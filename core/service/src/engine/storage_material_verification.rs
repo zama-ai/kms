@@ -545,7 +545,7 @@ fn verify_metadata_signatures(
     // outside: at boot there is no request, and the question is whether the
     // stored list is intact.
     let stored_schemes: Vec<_> = signatures.iter().map(|stored| stored.scheme).collect();
-    let signed_bytes = crate::cryptography::signing::composite::result_signed_bytes(
+    let signed_bytes = crate::cryptography::signing::composite::scheme_bound_preimage(
         &stored_schemes,
         payload_bytes,
     )?;
