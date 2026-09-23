@@ -41,7 +41,9 @@ impl<Z: Ring, Prss: PRSSPrimitives<Z>> GenericSmallSessionStruct<Z, Prss> {
     {
         let prss_setup = prss_init.init(&mut base_session).await?;
         let session_id = base_session.session_id();
-        let prss_state: Prss = prss_setup.new_prss_session_state(session_id).into();
+        let prss_state: Prss = prss_setup
+            .new_prss_session_state(session_id, base_session.my_role())?
+            .into();
         Self::new_from_prss_state(base_session, prss_state)
     }
 

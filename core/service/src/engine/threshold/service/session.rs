@@ -709,7 +709,7 @@ impl SessionMaker {
                 .get(&epoch_id)
                 .ok_or_else(|| anyhow::anyhow!("Epoch ID {} not found in epoch map", epoch_id))?;
             let prss_setup = &prss_setup_extended.prss.prss_setup_z128;
-            prss_setup.new_prss_session_state(session_id)
+            prss_setup.new_prss_session_state(session_id, base_session.my_role())?
         };
 
         let session = SmallSession {
@@ -737,7 +737,7 @@ impl SessionMaker {
                 .ok_or_else(|| anyhow::anyhow!("Epoch ID {} not found in epoch map", epoch_id))?;
             let prss_setup = &prss_setup_extended.prss.prss_setup_z64;
 
-            prss_setup.new_prss_session_state(session_id)
+            prss_setup.new_prss_session_state(session_id, base_session.my_role())?
         };
 
         let session = SmallSession {
