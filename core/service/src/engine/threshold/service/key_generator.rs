@@ -605,8 +605,9 @@ impl<
             add_req_to_meta_store(&self.dkg_pubinfo_meta_store, &req_id, op_tag).await?;
 
         tracing::info!(
-            "Keygen starting with request_id={:?}, insecure={}",
+            "Keygen starting with request_id={:?}, preproc_id={:?}, insecure={}",
             req_id,
+            resolved_preprocessing.handle.preprocessing_id(),
             insecure
         );
 

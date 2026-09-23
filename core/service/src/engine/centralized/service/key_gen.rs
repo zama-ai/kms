@@ -82,7 +82,11 @@ pub async fn key_gen_impl<
     ) = validate_key_gen_request(inner, op_tag)?;
     super::ensure_default_epoch(op_tag, req_id, &epoch_id)?;
 
-    tracing::info!("centralized key-gen with request id: {:?}", req_id);
+    tracing::info!(
+        "centralized key-gen with request id: {:?}, preproc id: {:?}",
+        req_id,
+        preproc_id
+    );
 
     if !service
         .context_manager
