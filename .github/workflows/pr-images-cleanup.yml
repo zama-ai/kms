@@ -1,17 +1,17 @@
 ##############################################################################
 # pr-images-cleanup workflow
 #
-# build-and-test tags the images it builds for a PR with the head commit sha
-# and keeps them, so a rerun of a failed kind job can still pull them. This
-# workflow deletes the tags of a head once nothing runs on it any more: when a
-# push replaces it, and when the PR closes, unless another open PR still has
-# that head. PRs labelled `docker` or `pr-preview-*` keep their images.
+# Images are kept for as long as the PR is open. When the PR closes, this
+# workflow deletes the images of all its heads. PRs labelled `docker` or
+# `pr-preview-*` keep their images. GitHub does not run pull_request workflows
+# for a PR with merge conflicts, so this workflow uses pull_request_target.
+# The job checks out nothing and skips forks.
 ##############################################################################
 name: pr-images-cleanup
 
 on:
-  pull_request:
-    types: [synchronize, closed]
+  pull_request_target:
+    types: [closed]
 
 permissions: {}
 
@@ -19,42 +19,37 @@ jobs:
   delete-head-images:
     name: pr-images-cleanup/delete-head-images
     if: >-
+      github.event.pull_request.head.repo.full_name == github.repository &&
       !contains(github.event.pull_request.labels.*.name, 'docker') &&
       !contains(toJSON(github.event.pull_request.labels.*.name), 'pr-preview-')
     runs-on: ubuntu-latest
     permissions:
-      actions: write # Required to cancel the head's build-and-test run
+      actions: write # Required to cancel the PR's build-and-test runs
       packages: write # Required to delete package versions
-      pull-requests: read # Required to see whether another open PR has the same head
     steps:
-      - name: Delete the images tagged with the replaced or closed head
+      - name: Delete the images tagged with the PR's heads
         shell: bash # -o pipefail: a failed gh api or jq must not pass as "nothing to delete"
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
-          PR_NUMBER: ${{ github.event.pull_request.number }}
-          # `before` is the head a push replaced; `closed` events have none.
-          COMMIT_HASH: ${{ github.event.before || github.event.pull_request.head.sha }}
+          PR_CREATED_AT: ${{ github.event.pull_request.created_at }}
+          HEAD_REF: ${{ github.event.pull_request.head.ref }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         run: |
-          # Tags name a commit, not a PR. Another open PR at the same head still builds, reruns
-          # and pulls them, so they are left to that PR's own cleanup.
-          others=$(gh api "repos/${GH_REPO}/commits/${COMMIT_HASH}/pulls" \
-            | jq --arg sha "${COMMIT_HASH}" --argjson pr "${PR_NUMBER}" \
-                '[.[] | select(.state == "open" and .head.sha == $sha and .number != $pr)] | length')
-          if [ "${others}" != 0 ]; then
-            echo "Another open PR has head ${COMMIT_HASH}; its images stay"
-            exit 0
-          fi
-          # A build-and-test run still working on this head would push images after the deletion
+          # Runs keep the heads a force-push replaced; --created skips earlier PRs on this branch.
+          runs=$(gh run list --workflow build-and-test.yml --branch "${HEAD_REF}" --event pull_request \
+            --created ">=${PR_CREATED_AT}" --limit 1000 --json databaseId,headSha,status)
+          prefixes=$(jq -c --arg head "${HEAD_SHA}" '[.[].headSha, $head] | unique | map(.[0:7])' <<<"${runs}")
+          # A build-and-test run still working on a head would push images after the deletion
           # or pull them during it. Its result no longer matters, so end it first.
-          for run in $(gh run list --workflow build-and-test.yml --commit "${COMMIT_HASH}" \
-              --json databaseId,status --jq '.[] | select(.status != "completed") | .databaseId'); do
+          for run in $(jq -r '.[] | select(.status != "completed") | .databaseId' <<<"${runs}"); do
             gh run cancel "${run}" || true
             gh run watch "${run}" >/dev/null
           done
           delete_package_versions_by_tag() {
             local package_name="$1"
-            local tag="$2"
+            local prefixes="$2"
+            local ids
 
             # URL-encode package name (slashes -> %2F)
             local encoded_name
@@ -62,20 +57,16 @@ jobs:
 
             local package_path="/orgs/zama-ai/packages/container/${encoded_name}"
 
-            gh api --paginate -H "Accept: application/vnd.github+json" "${package_path}/versions?per_page=100" \
-            | jq -r --arg tag "$tag" '
-                .[]
-                | [(.metadata.container.tags[]? // empty | select(startswith($tag)))] as $matched
-                | select(($matched | length) > 0)
-                | [.id, ($matched | join(","))] | @tsv
-              ' \
-            | while IFS=$'\t' read -r id matched_tags; do
-                [ -z "$id" ] && continue
-                echo "Deleting ${package_name} version_id=${id} tags=${matched_tags}"
-                gh api --method DELETE -H "Accept: application/vnd.github+json" "${package_path}/versions/${id}"
-              done
+            # List all matches before deleting any: a deletion shifts the pages not yet read.
+            ids=$(gh api --paginate -H "Accept: application/vnd.github+json" "${package_path}/versions?per_page=100" \
+              | jq -r --argjson prefixes "$prefixes" \
+                  '.[] | select(any(.metadata.container.tags[]?; .[0:7] | IN($prefixes[]))) | .id')
+            for id in ${ids}; do
+              echo "Deleting ${package_name} version_id=${id}"
+              gh api --method DELETE -H "Accept: application/vnd.github+json" "${package_path}/versions/${id}"
+            done
           }
           for package in core-service-enclave-insecure core-service-enclave core-service-insecure core-service \
               core-client-insecure core-client kms-binaries-insecure kms-binaries; do
-            delete_package_versions_by_tag "kms/${package}" "${COMMIT_HASH:0:7}"
+            delete_package_versions_by_tag "kms/${package}" "${prefixes}"
           done
