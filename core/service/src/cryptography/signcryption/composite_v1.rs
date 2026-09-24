@@ -9,13 +9,14 @@ use crate::cryptography::hybrid_ml_kem::HybridKemCt;
 use crate::cryptography::signatures::{
     CompositeSignature, NodeSigningIdentity, SigningSchemeType, VerfKeySet,
 };
+use crate::cryptography::zeroizing_writer::ZeroizingWriter;
 use hashing::DomainSep;
 use rand::{CryptoRng, RngCore};
 use serde::{Deserialize, Serialize};
 use tfhe::named::Named;
 use tfhe::safe_serialization::{safe_deserialize, safe_serialize};
 use tfhe_versionable::{Versionize, VersionsDispatch};
-use zeroize::Zeroizing;
+use zeroize::{Zeroize, Zeroizing};
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, VersionsDispatch)]
 pub enum CompositeEnvelopeVersions {
@@ -32,6 +33,13 @@ pub struct CompositeEnvelope {
 
 impl Named for CompositeEnvelope {
     const NAME: &'static str = "signcryption::CompositeEnvelope";
+}
+
+impl Zeroize for CompositeEnvelope {
+    fn zeroize(&mut self) {
+        // `signature` is public; `msg` is the secret this envelope exists to carry.
+        self.msg.zeroize();
+    }
 }
 
 /// Signcrypt `msg` in the composite layout.
@@ -56,16 +64,18 @@ pub fn seal(
     let signed = Zeroizing::new([msg, binding.as_slice()].concat());
     let signature = CompositeSignature::sign_uniform(identity, schemes, dsep, &signed)?;
 
-    let envelope = CompositeEnvelope {
+    let mut envelope = CompositeEnvelope {
         msg: msg.to_vec(),
         signature,
     };
-    let mut plaintext = Vec::new();
-    safe_serialize(&envelope, &mut plaintext, SAFE_SER_SIZE_LIMIT)
-        .map_err(|e| CryptographyError::SerializationError(e.to_string()))?;
-    let plaintext = Zeroizing::new(plaintext);
+    let mut plaintext = ZeroizingWriter::new();
+    let serialized = safe_serialize(&envelope, &mut plaintext, SAFE_SER_SIZE_LIMIT);
+    // The envelope owns a second copy of the payload and nothing wipes it on drop,
+    // so wipe it here, before either outcome leaves the function.
+    envelope.zeroize();
+    serialized.map_err(|e| CryptographyError::SerializationError(e.to_string()))?;
 
-    let ciphertext = hybrid_encrypt(rng, &plaintext, receiver_enc_key)?;
+    let ciphertext = hybrid_encrypt(rng, plaintext.as_slice(), receiver_enc_key)?;
     let mut payload = Vec::new();
     safe_serialize(&ciphertext, &mut payload, SAFE_SER_SIZE_LIMIT)
         .map_err(|e| CryptographyError::SerializationError(e.to_string()))?;
@@ -96,18 +106,20 @@ pub(super) fn open(
         safe_deserialize(std::io::Cursor::new(&cipher.payload), SAFE_SER_SIZE_LIMIT)
             .map_err(CryptographyError::SerializationError)?;
     let plaintext = hybrid_decrypt(kem_ct, decryption_key)?;
-    let envelope: CompositeEnvelope =
+    let mut envelope: CompositeEnvelope =
         safe_deserialize(std::io::Cursor::new(&*plaintext), SAFE_SER_SIZE_LIMIT)
             .map_err(CryptographyError::SerializationError)?;
 
+    let msg = Zeroizing::new(std::mem::take(&mut envelope.msg));
+
     let binding = receiver_binding(receiver_id, encryption_key)?;
-    let signed = Zeroizing::new([envelope.msg.as_slice(), binding.as_slice()].concat());
+    let signed = Zeroizing::new([msg.as_slice(), binding.as_slice()].concat());
     envelope
         .signature
         .verify_uniform(sender_keys, dsep, &signed)
         .map_err(|e| CryptographyError::VerificationError(e.to_string()))?;
 
-    Ok(Zeroizing::new(envelope.msg))
+    Ok(msg)
 }
 
 #[cfg(test)]
