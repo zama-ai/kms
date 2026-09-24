@@ -779,7 +779,10 @@ mod tests {
 
     /// A TCP proxy in front of the server of a party. [`FreezingProxy::restart_behind`] sends new
     /// connections to a new backend and freezes the existing ones: they stay open but forward
-    /// nothing more, like a connection to a pod that disappeared without closing its connections.
+    /// nothing more. The kernel of the proxy still acknowledges all data, like a peer whose TCP
+    /// stack is alive but whose server no longer answers. Thus only the HTTP/2 keepalive detects a
+    /// frozen connection. A pod that disappears stops acknowledging instead, and the kernel of the
+    /// sender gives up on that connection after about 15 minutes.
     struct FreezingProxy {
         backend: Arc<std::sync::Mutex<std::net::SocketAddr>>,
         generation: Arc<std::sync::atomic::AtomicU64>,
