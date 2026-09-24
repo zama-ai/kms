@@ -447,9 +447,7 @@ impl<
         let outcome = if ongoing.lock().await.remove(req_id).is_some() {
             outcome
         } else {
-            outcome.and(Err(format!(
-                "CRS generation of request {req_id} was aborted"
-            )))
+            Err(format!("CRS generation of request {req_id} was aborted"))
         };
 
         match outcome {
@@ -1039,11 +1037,17 @@ mod tests {
             .unwrap();
     }
 
-    /// An abort that removes the entry after generation finished, but before the claim, wins.
+    /// An abort that removes the entry after generation finished, but before the claim, wins,
+    /// whether generation succeeded or failed.
     #[tokio::test]
     async fn abort_after_generation_wins() {
+        assert_late_abort_wins::<InsecureCeremony>().await;
+        assert_late_abort_wins::<BrokenCeremony>().await;
+    }
+
+    async fn assert_late_abort_wins<C: Ceremony + 'static>() {
         let mut rng = AesRng::seed_from_u64(124);
-        let crs_gen = make_crs_gen::<InsecureCeremony>(&mut rng).await;
+        let crs_gen = make_crs_gen::<C>(&mut rng).await;
         let req_id = RequestId::new_random(&mut rng);
         let req = CrsGenRequest {
             signing_schemes: vec![kms_grpc::kms::v1::SigningSchemeType::Ecdsa256k1 as i32],

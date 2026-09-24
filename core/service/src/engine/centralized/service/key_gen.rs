@@ -393,7 +393,7 @@ pub(crate) async fn key_gen_background<
             let outcome = if ongoing.lock().await.remove(preproc_id).is_some() {
                 outcome
             } else {
-                outcome.and(Err("Key generation was aborted".to_string()))
+                Err("Key generation was aborted".to_string())
             };
 
             let keygen_result = match outcome {
@@ -459,7 +459,7 @@ pub(crate) async fn key_gen_background<
             let outcome = if ongoing.lock().await.remove(preproc_id).is_some() {
                 outcome
             } else {
-                outcome.and(Err("Key generation was aborted".to_string()))
+                Err("Key generation was aborted".to_string())
             };
             let decompression_key = match outcome {
                 Ok(k) => k,

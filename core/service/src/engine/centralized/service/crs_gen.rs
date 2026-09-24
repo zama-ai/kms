@@ -264,7 +264,7 @@ pub(crate) async fn crs_gen_background<
     let outcome = if ongoing.lock().await.remove(req_id).is_some() {
         outcome
     } else {
-        outcome.and(Err(format!("CRS generation aborted for request {req_id}")))
+        Err(format!("CRS generation aborted for request {req_id}"))
     };
 
     match outcome {
