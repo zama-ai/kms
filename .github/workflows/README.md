@@ -359,11 +359,11 @@ graph TD
     dockerBuild --> startRunner
     startRunner --> mainJob[rolling_upgrade_testing]
     mainJob --> step1[deploy_13_nodes_old]
-    step1 --> step2[baseline_perf_tests]
+    step1 --> step2[baseline_tests]
     step2 --> step3[upgrade_first_batch]
-    step3 --> step4[perf_tests_mixed_first_batch]
+    step3 --> step4[mixed_tests_first_batch]
     step4 --> step5[upgrade_second_batch]
-    step5 --> step6[perf_tests_mixed_second_batch]
+    step5 --> step6[mixed_tests_second_batch]
     step6 --> cleanup[cleanup]
     mainJob --> stopRunner[stop_runner]
 ```

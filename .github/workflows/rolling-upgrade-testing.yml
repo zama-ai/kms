@@ -23,13 +23,16 @@
 #     insecure key-gen + CRS + public/user-decrypt correctness smoke, all-old.
 #     Capture the generated key-id for the mixed-state decrypt runs.
 #   - Step 3: First rolling upgrade: upgrade first_batch_parties to NEW_IMAGE_TAG
-#     (default 1-5); core-client moves to new tag on all parties as required.
-#   - Step 4: Argo rolling-upgrade workflow: decrypt the baseline key-id on the
-#     mixed cluster (public + user decrypt, correctness-only; label
-#     mixed-<n>-of-13).
+#     (default 1-5). The core-client in each party's Helm release moves to
+#     NEW_IMAGE_TAG on all parties; the Argo tests use the harness core-client
+#     (core_client_image_tag) instead.
+#   - Step 4: Argo mixed-state tests (decrypt-test-during-upgrades.yaml, or the
+#     rolling-upgrade workflow for test_profile=prss-threshold): decrypt the
+#     baseline key-id on the mixed cluster (public + user decrypt,
+#     correctness-only; label mixed-<n>-of-13).
 #   - Step 5: Second rolling upgrade: upgrade second_batch_parties (default 6-9);
 #     cumulative upgraded set is first_batch + second_batch (9 of 13 by default).
-#   - Step 6: Argo rolling-upgrade workflow again.
+#   - Step 6: Argo mixed-state tests again.
 #   - Upload Argo and kms-core logs (with the metric snapshots); helm/kubectl
 #     cleanup; stop runner.
 #
@@ -570,7 +573,7 @@ jobs:
       - name: 'Step 3: Rolling upgrade - first batch'
         run: |
           echo "Upgrading first batch [${FIRST_BATCH}] to new tag: ${NEW_IMAGE_TAG}"
-          echo "Core-client will be upgraded to ${NEW_IMAGE_TAG} on all parties"
+          echo "Helm core-client moves to ${NEW_IMAGE_TAG} on all parties; the tests use ${KMS_CORE_CLIENT_HARNESS_IMAGE_NAME}:${KMS_CORE_CLIENT_IMAGE_TAG}"
           chmod +x ci/scripts/rolling_upgrade.sh
           ./ci/scripts/rolling_upgrade.sh \
             --old-tag "${OLD_IMAGE_TAG}" \
