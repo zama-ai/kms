@@ -100,6 +100,16 @@ impl RootSigningSeed {
         root
     }
 
+    /// A root seed built from `seed`.
+
+    #[cfg(feature = "non-wasm")]
+    pub(crate) fn from_seed_bytes(seed: &[u8; ROOT_SEED_LEN]) -> Self {
+        Self {
+            seed: WrappedSeed(*seed),
+            cache: DerivedKeyCache::default(),
+        }
+    }
+
     /// The memoized signing key this root derives for `scheme`.
     ///
     /// WARNING: This includes ECDSA, which will be _distinct_ from the node's

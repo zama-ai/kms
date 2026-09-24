@@ -1,18 +1,17 @@
 use crate::{
     backup::custodian::Custodian,
-    consts::{CUSTODIAN_ENTROPY_SIZE, RND_SIZE},
+    consts::CUSTODIAN_ENTROPY_SIZE,
     cryptography::{
         composite_mlkem1024_p384::{self, COMPOSITE_NIST_LEVEL_5_PRIVATE_KEY_LENGTH},
         encryption::{UnifiedPrivateEncKey, UnifiedPublicEncKey},
-        signatures::gen_sig_keys,
+        signatures::{ROOT_SEED_LEN, RootSigningSeed},
     },
 };
-use aes_prng::AesRng;
 use bip39::Mnemonic;
 use hashing::{DomainSep, hash_element_w_size};
 #[cfg(test)]
 use rand::{CryptoRng, Rng};
-use rand::{RngCore, SeedableRng, rngs::OsRng};
+use rand::{RngCore, rngs::OsRng};
 use std::str::FromStr;
 use threshold_types::role::Role;
 use zeroize::Zeroizing;
@@ -95,7 +94,7 @@ pub fn custodian_from_seed_phrase(seed_phrase: &str, role: Role) -> anyhow::Resu
     let key_material = Zeroizing::new(hash_element_w_size(
         &DSEP_MNEMONIC,
         &*entropy,
-        COMPOSITE_NIST_LEVEL_5_PRIVATE_KEY_LENGTH + RND_SIZE,
+        COMPOSITE_NIST_LEVEL_5_PRIVATE_KEY_LENGTH + ROOT_SEED_LEN,
     ));
     let (enc_bytes, sig_bytes) = key_material.split_at(COMPOSITE_NIST_LEVEL_5_PRIVATE_KEY_LENGTH);
 
@@ -105,16 +104,15 @@ pub fn custodian_from_seed_phrase(seed_phrase: &str, role: Role) -> anyhow::Resu
     let (dec_key, enc_key) = composite_mlkem1024_p384::keygen_from_seed(&enc_seed)
         .map_err(|e| anyhow::anyhow!("Failed to generate custodian keys from seed phrase: {e}"))?;
 
-    // The signing key keeps the narrower `AesRng` derivation: it is ECDSA over secp256k1, which
-    // offers about 128 bits of security itself, so widening its seed would buy nothing.
-    //
-    // TODO(https://github.com/zama-ai/kms-internal/issues/3168): this will
-    // change to a composite scheme too, so RND_SIZE needs to change to
-    // COMPOSITE_NIST_LEVEL_5_PRIVATE_KEY_LENGTH perhaps.
-    let mut sig_seed = Zeroizing::new([0u8; RND_SIZE]);
+    // TODO(https://github.com/zama-ai/kms-internal/issues/3168): the root itself is dropped here
+    // because `Custodian` holds a bare `PrivateSigKey`. Retain it as a `NodeSigningIdentity` once
+    // `Custodian` carries one, which is what lets a custodian sign the composite.
+    let mut sig_seed = Zeroizing::new([0u8; ROOT_SEED_LEN]);
     sig_seed.copy_from_slice(sig_bytes);
-    let mut sig_rng = AesRng::from_seed(*sig_seed);
-    let (_verf_key, sig_key) = gen_sig_keys(&mut sig_rng);
+    let root = RootSigningSeed::from_seed_bytes(&sig_seed);
+    let sig_key = root
+        .derive_ecdsa_signing_key()
+        .map_err(|e| anyhow::anyhow!("Failed to derive the custodian signing key: {e}"))?;
 
     Custodian::new(
         role,
@@ -133,10 +131,19 @@ mod tests {
         system_entropy_for_custodian,
     };
     use crate::consts::CUSTODIAN_ENTROPY_SIZE;
+    use crate::cryptography::composite_mlkem1024_p384::{
+        self, COMPOSITE_NIST_LEVEL_5_PRIVATE_KEY_LENGTH,
+    };
     use crate::cryptography::encryption::HasPkeScheme;
+    use crate::cryptography::encryption::UnifiedPublicEncKey;
+    use crate::cryptography::signatures::{PublicSigKey, ROOT_SEED_LEN, RootSigningSeed};
     use aes_prng::AesRng;
+    use bip39::Mnemonic;
+    use hashing::hash_element_w_size;
     use rand::SeedableRng;
+    use std::str::FromStr;
     use threshold_types::role::Role;
+    use zeroize::Zeroizing;
 
     /// A valid mnemonic carrying only 128 bits of entropy, which is no longer enough.
     const TWELVE_WORD_MNEMONIC: &str =
@@ -235,6 +242,45 @@ mod tests {
         assert_eq!(
             regeneratred_custodian.verification_key(),
             prune_custodian.verification_key()
+        );
+    }
+
+    /// The expansion is locked: one SHAKE-256 draw of
+    /// `COMPOSITE_NIST_LEVEL_5_PRIVATE_KEY_LENGTH + ROOT_SEED_LEN` bytes, encryption key first,
+    /// root signing seed second.
+    #[test]
+    fn seed_phrase_expansion_is_locked() {
+        let mnemonic = seed_phrase_from_entropy(&[9u8; CUSTODIAN_ENTROPY_SIZE]).unwrap();
+        let custodian = custodian_from_seed_phrase(&mnemonic, Role::indexed_from_one(1)).unwrap();
+
+        let entropy = Zeroizing::new(Mnemonic::from_str(&mnemonic).unwrap().to_entropy());
+        let material = Zeroizing::new(hash_element_w_size(
+            &crate::backup::seed_phrase::DSEP_MNEMONIC,
+            &*entropy,
+            COMPOSITE_NIST_LEVEL_5_PRIVATE_KEY_LENGTH + ROOT_SEED_LEN,
+        ));
+        let (enc_bytes, sig_bytes) = material.split_at(COMPOSITE_NIST_LEVEL_5_PRIVATE_KEY_LENGTH);
+
+        // First half: the MLKEM1024-P384 private key, used as its own seed.
+        let mut enc_seed = Zeroizing::new([0u8; COMPOSITE_NIST_LEVEL_5_PRIVATE_KEY_LENGTH]);
+        enc_seed.copy_from_slice(enc_bytes);
+        let (_dec, enc) = composite_mlkem1024_p384::keygen_from_seed(&enc_seed).unwrap();
+        assert_eq!(
+            custodian.public_enc_key(),
+            &UnifiedPublicEncKey::MlKem1024P384(enc),
+            "the encryption key is no longer the first half of the draw"
+        );
+
+        // Second half: a root signing seed, and the ECDSA key is the one it derives.
+        let mut sig_seed = Zeroizing::new([0u8; ROOT_SEED_LEN]);
+        sig_seed.copy_from_slice(sig_bytes);
+        let expected = RootSigningSeed::from_seed_bytes(&sig_seed)
+            .derive_ecdsa_signing_key()
+            .unwrap();
+        assert_eq!(
+            custodian.verification_key(),
+            PublicSigKey::from_sk(&expected),
+            "the signing key no longer comes from the root seed in the second half"
         );
     }
 
