@@ -66,7 +66,7 @@ const ALLOW_UNCOVERED: &[&str] = &[
     // field. Covered (in serialized-and-signcrypted form) via
     // OperatorBackupOutputTest.
     "BackupMaterial",
-    // TODO stop gap
+    // TODO stop gap https://github.com/zama-ai/kms-internal/issues/3168
     // Plaintext that composite_v1::seal safe_serializes into the
     // UnifiedSigncryption payload.
     "CompositeEnvelope",
