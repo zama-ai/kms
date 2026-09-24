@@ -92,6 +92,13 @@
 #                            Set it for v0.14.x -> v0.15+ upgrades: a 0.15+ core
 #                            does not start on legacy PRSS data without it, and
 #                            v0.13/v0.14 cores reject it.
+#   restart_parties        (string, default empty = none)
+#                            After each upgrade wave, restart the core pods of
+#                            these parties together before the mixed-state
+#                            tests: "all" or comma-separated party IDs. From
+#                            wave 2 on, only the upgraded parties restart
+#                            otherwise; restarting a subset shows which of the
+#                            running parties hold state that breaks the tests.
 #
 # Jobs
 # ----
@@ -177,6 +184,11 @@ on:
         required: true
         default: false
         type: boolean
+      restart_parties:
+        description: 'After each upgrade wave, restart the core pods of these parties together before the mixed-state tests: "all" or comma-separated party IDs (e.g. 1,2,3,4,5). Empty = no restart.'
+        required: false
+        default: ''
+        type: string
 
 permissions: {}
 
@@ -311,6 +323,7 @@ jobs:
           CLIENT_LOGS: ${{ inputs.client_logs }}
           TEST_PROFILE: ${{ inputs.test_profile }}
           EPOCH_MIGRATION_INPUT: ${{ inputs.epoch_migration }}
+          RESTART_PARTIES_INPUT: ${{ inputs.restart_parties }}
         run: |
           # Map the boolean client_logs input to the argo enabled/disabled value
           # (same convention as performance-testing.yml).
@@ -347,6 +360,7 @@ jobs:
             echo "MIXED_WORKFLOW_FILE=${MIXED_WORKFLOW_FILE}"
             echo "ENABLE_PRSS_THRESHOLD=${ENABLE_PRSS_THRESHOLD}"
             echo "EPOCH_MIGRATION=${EPOCH_MIGRATION_INPUT}"
+            echo "RESTART_PARTIES=${RESTART_PARTIES_INPUT}"
           } >> "$GITHUB_ENV"
 
       # ====================================================================

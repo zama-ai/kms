@@ -256,6 +256,7 @@ Dispatch inputs:
 | `first_batch_parties` / `second_batch_parties` | Party IDs upgraded in wave 1 / wave 2 (default `1,2,3,4,5` / `6,7,8,9`) |
 | `test_profile` | `decrypt` (default) or `prss-threshold` — see below |
 | `epoch_migration` | Pass the 0.15 epoch-data migration config to the upgraded parties (default off) — see below |
+| `restart_parties` | After each upgrade wave, restart the core pods of these parties together before the mixed-state tests: `all` or comma-separated party IDs (default empty = no restart). From wave 2 on, only the upgraded parties restart otherwise, so restarting a subset shows which of the running parties hold state that breaks the tests |
 | `client_logs` | Core-client tracing logs (default off) |
 | `fhe_params` | `Test` (default) or `Default` |
 | `build` / `kms_branch` | Build the new image from a branch instead of using `new_image_tag` |

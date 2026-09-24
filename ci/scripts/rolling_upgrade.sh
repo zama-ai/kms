@@ -164,10 +164,70 @@ fetch_pcrs_for_tag() {
 }
 
 #=============================================================================
+# Restart Parties
+#
+# Restarts the core pods of the selected parties at the same time, at the end
+# of each wave. The first wave restarts all parties anyway, because
+# trustedReleases changes on each of them. Later waves only restart the
+# upgraded parties, while the other parties keep running. Restarting a chosen
+# subset shows which of the running parties hold state that breaks the mixed
+# cluster. RESTART_PARTIES selects the parties: empty (none), "all", or
+# comma-separated party IDs.
+#=============================================================================
+RESTART_PARTY_IDS=()
+
+resolve_restart_parties() {
+    local spec="${RESTART_PARTIES:-}"
+    spec="$(echo "${spec}" | tr -d ' ')"
+    if [[ -z "${spec}" ]]; then
+        return 0
+    fi
+    if [[ "${spec}" == "all" ]]; then
+        mapfile -t RESTART_PARTY_IDS < <(seq 1 "${NUM_PARTIES}")
+        return 0
+    fi
+    local id
+    IFS=',' read -ra ids <<< "${spec}"
+    for id in "${ids[@]}"; do
+        if ! [[ "${id}" =~ ^[0-9]+$ ]] || (( id < 1 || id > NUM_PARTIES )); then
+            log_error "Invalid RESTART_PARTIES entry '${id}' in '${RESTART_PARTIES}': expected 'all' or comma-separated party IDs between 1 and ${NUM_PARTIES}"
+            exit 1
+        fi
+        RESTART_PARTY_IDS+=("${id}")
+    done
+}
+
+restart_parties() {
+    log_info "Restarting the core pods of parties [${RESTART_PARTY_IDS[*]}]..."
+    local i
+    for i in "${RESTART_PARTY_IDS[@]}"; do
+        kubectl rollout restart statefulset "${HELM_RELEASE_PREFIX}-${i}-core" -n "${NAMESPACE}"
+    done
+    for i in "${RESTART_PARTY_IDS[@]}"; do
+        kubectl rollout status statefulset "${HELM_RELEASE_PREFIX}-${i}-core" \
+            -n "${NAMESPACE}" --timeout=1200s
+    done
+    log_info "Parties [${RESTART_PARTY_IDS[*]}] restarted and ready."
+}
+
+#=============================================================================
+# Finish: optional restart of the selected parties, then the completion banner.
+#=============================================================================
+finish_rolling_upgrade() {
+    if [[ "${#RESTART_PARTY_IDS[@]}" -gt 0 ]]; then
+        restart_parties
+    fi
+    log_info "========================================="
+    log_info "Rolling Upgrade Complete!"
+    log_info "========================================="
+}
+
+#=============================================================================
 # Main
 #=============================================================================
 main() {
     parse_rolling_upgrade_args "$@"
+    resolve_restart_parties
 
     log_info "========================================="
     log_info "Rolling Upgrade Starting"
@@ -180,6 +240,7 @@ main() {
     log_info "Deployment type:       ${DEPLOYMENT_TYPE}"
     log_info "Num parties:           ${NUM_PARTIES}"
     log_info "Epoch migration:       ${EPOCH_MIGRATION:-false}"
+    log_info "Restart parties:       ${RESTART_PARTIES:-none}"
     log_info "========================================="
 
     #=========================================================================
@@ -242,9 +303,7 @@ main() {
     #=========================================================================
     if [[ "${ENABLE_PRSS_THRESHOLD:-false}" != "true" ]]; then
         log_info "Step 4: PRSS-Mask threshold rollout skipped (ENABLE_PRSS_THRESHOLD != true)."
-        log_info "========================================="
-        log_info "Rolling Upgrade Complete!"
-        log_info "========================================="
+        finish_rolling_upgrade
         return 0
     fi
 
@@ -306,9 +365,7 @@ main() {
     fi
     log_info "PRSS-Mask threshold enabled on all upgraded parties."
 
-    log_info "========================================="
-    log_info "Rolling Upgrade Complete!"
-    log_info "========================================="
+    finish_rolling_upgrade
 }
 
 main "$@"
