@@ -370,9 +370,9 @@ async fn setup_isolated_threshold_cli_test_with_prss(
     .await
 }
 
-/// Helper to setup isolated threshold KMS for CLI testing with backup vault
+/// Helper to setup isolated threshold KMS for CLI testing with backup vault, including a valid PRSS setup
 #[cfg(feature = "insecure")]
-async fn setup_isolated_threshold_cli_test_with_backup(
+async fn setup_isolated_threshold_cli_test_with_prss_with_backup(
     test_name: &str,
     party_count: usize,
 ) -> Result<(tempfile::TempDir, HashMap<u32, ServerHandle>, PathBuf)> {
@@ -2726,7 +2726,7 @@ async fn test_threshold_restore_from_backup() -> Result<()> {
 
     // Setup isolated threshold KMS servers (4 parties) with backup vaults
     let (material_dir, _servers, config_path) =
-        setup_isolated_threshold_cli_test_with_backup("threshold_restore", 4).await?;
+        setup_isolated_threshold_cli_test_with_prss_with_backup("threshold_restore", 4).await?;
 
     // Run insecure CRS generation and backup restore via CLI (use material_dir as keys_folder)
     let keys_folder = material_dir.path();
