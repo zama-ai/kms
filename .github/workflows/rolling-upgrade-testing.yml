@@ -29,15 +29,16 @@
 #     mixed-<n>-of-13).
 #   - Step 5: Second rolling upgrade: upgrade second_batch_parties (default 6-9);
 #     cumulative upgraded set is first_batch + second_batch (9/13 by default).
-#   - Step 6: Argo rolling-upgrade workflow again. A snapshot of the network
-#     metrics of all cores before and after it shows the transport events
-#     (sends, retries, dropped or late messages) per pod during the tests.
+#   - Step 6: Argo rolling-upgrade workflow again.
 #   - Upload Argo and kms-core logs (with the metric snapshots); helm/kubectl
 #     cleanup; stop runner.
 #
 # Each rolling upgrade (ci/scripts/rolling_upgrade.sh) passes the epoch-data
 # migration config to the upgraded parties if epoch_migration is set, and
-# restarts the parties in restart_parties at its end.
+# restarts the parties in restart_parties at its end. Around Step 4 and Step 6,
+# a snapshot of the network metrics of all cores shows the transport events
+# (sends, retries, dropped or late messages) per pod during the tests, and adds
+# a warning annotation when parties failed to talk to each other.
 #
 # Correctness signal: each decrypt encrypts a known value client-side (-e) and
 # fails on mismatch; runs use -a (expect a response from ALL 13 cores) so the
@@ -584,6 +585,20 @@ jobs:
             --tkms-infra-version "${TKMS_INFRA_CHART_VERSION}"
 
       # ====================================================================
+      # Network metrics snapshots around the mixed-state tests. Each pair
+      # shows the transport events (failed or retried sends, dropped or late
+      # messages) per pod during the tests, and warns when parties failed to
+      # talk to each other.
+      # ====================================================================
+      - name: 'Snapshot network metrics before 5/13 tests'
+        id: metrics-before-5of13
+        continue-on-error: true
+        run: |
+          python3 ci/scripts/sample_core_metrics.py "${NAMESPACE}" --once \
+            > kms-core-network-metrics-before-5of13.txt
+          grep -c "scrape_ok" kms-core-network-metrics-before-5of13.txt | xargs echo "Pods scraped:"
+
+      # ====================================================================
       # STEP 4: Run performance tests with 5/13 upgraded
       # ====================================================================
       - name: 'Step 4: Run performance tests (5/13 mixed state)'
@@ -658,6 +673,16 @@ jobs:
             exit 1
           fi
 
+      - name: 'Snapshot network metrics after 5/13 tests'
+        if: always() && steps.metrics-before-5of13.outcome == 'success'
+        continue-on-error: true
+        run: |
+          python3 ci/scripts/sample_core_metrics.py "${NAMESPACE}" --once \
+            > kms-core-network-metrics-after-5of13.txt
+          python3 ci/scripts/sample_core_metrics.py --label "5/13" --network-delta \
+            kms-core-network-metrics-before-5of13.txt \
+            kms-core-network-metrics-after-5of13.txt
+
       # ====================================================================
       # STEP 5: Rolling upgrade 9/13 (second batch)
       # ====================================================================
@@ -679,13 +704,8 @@ jobs:
             --new-kms-chart-version "${NEW_KMS_CHART_VERSION}" \
             --tkms-infra-version "${TKMS_INFRA_CHART_VERSION}"
 
-      # ====================================================================
-      # Network metrics snapshot before the 9/13 tests. Together with the
-      # snapshot after them, it shows which transport events (failed or
-      # retried sends, dropped or late messages) occur during the tests.
-      # ====================================================================
       - name: 'Snapshot network metrics before 9/13 tests'
-        id: metrics-before
+        id: metrics-before-9of13
         continue-on-error: true
         run: |
           python3 ci/scripts/sample_core_metrics.py "${NAMESPACE}" --once \
@@ -768,28 +788,14 @@ jobs:
           fi
 
       - name: 'Snapshot network metrics after 9/13 tests'
-        if: always() && steps.metrics-before.outcome == 'success'
+        if: always() && steps.metrics-before-9of13.outcome == 'success'
         continue-on-error: true
         run: |
-          BEFORE=kms-core-network-metrics-before-9of13.txt
-          AFTER=kms-core-network-metrics-after-9of13.txt
-          python3 ci/scripts/sample_core_metrics.py "${NAMESPACE}" --once > "${AFTER}"
-          grep -h "scrape_error\|scrape_partial" "${BEFORE}" "${AFTER}" || true
-          # Per pod and event, the change of kms_network_debug_events_total
-          # between the two snapshots. A negative value means that the pod
-          # restarted in between.
-          echo "Network debug events during the 9/13 tests (non-zero changes only):"
-          awk '
-            $3 ~ /^kms_network_debug_events_total[{]/ && match($3, /event="[a-z_]+"/) {
-              key = $2 " " substr($3, RSTART + 7, RLENGTH - 8)
-              if (FILENAME == ARGV[1]) { before[key] = $4 } else { after[key] = $4 }
-            }
-            END {
-              for (key in after) {
-                delta = after[key] - ((key in before) ? before[key] : 0)
-                if (delta != 0) { split(key, k, " "); printf "%-22s %-30s %d\n", k[1], k[2], delta }
-              }
-            }' "${BEFORE}" "${AFTER}" | sort -V
+          python3 ci/scripts/sample_core_metrics.py "${NAMESPACE}" --once \
+            > kms-core-network-metrics-after-9of13.txt
+          python3 ci/scripts/sample_core_metrics.py --label "9/13" --network-delta \
+            kms-core-network-metrics-before-9of13.txt \
+            kms-core-network-metrics-after-9of13.txt
 
       # ====================================================================
       # UPLOAD TEST LOGS

@@ -284,7 +284,7 @@ conclusion. Requires a threshold-aware new image and a request-ID-capable core-c
 
 #### Network metrics
 
-Around the tests after the second wave, the workflow takes a snapshot of the Prometheus metrics of all 13 cores (`sample_core_metrics.py --once`). The job log shows, per pod, the non-zero change of each `kms_network_debug_events_total` event during the tests: successful, retried and failed sends, received messages, and dropped or late messages. A negative value means that the pod restarted between the snapshots. Both snapshots are in the `kms-core-rolling-upgrade-logs` artifact (`kms-core-network-metrics-{before,after}-9of13.txt`). v0.14 and older cores do not export these events.
+Around the tests after each wave, the workflow takes a snapshot of the Prometheus metrics of all 13 cores (`sample_core_metrics.py --once`). `sample_core_metrics.py --network-delta` then prints, per pod, the non-zero change of each `kms_network_debug_events_total` event during the tests: successful, retried and failed sends, received messages, and dropped or late messages. A negative value means that the pod restarted between the snapshots. If `send_failed`, `send_retry` or `receive_wait_timeout` grew on any pod, the step adds a warning annotation to the run, also when the tests pass. The snapshots are in the `kms-core-rolling-upgrade-logs` artifact (`kms-core-network-metrics-{before,after}-{5of13,9of13}.txt`). v0.14 and older cores do not export these events.
 
 #### Epoch-data migration (v0.14 → v0.15+)
 

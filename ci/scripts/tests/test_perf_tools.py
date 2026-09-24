@@ -311,6 +311,58 @@ class DiagnosticTests(TemporaryWorkingDirectory):
         scrape.assert_called_once_with("ns", 9646, 4.0)
         sleep.assert_not_called()
 
+    def test_network_event_deltas_cover_labels_missing_pods_and_restarts(self):
+        before = [
+            't0 kms-core-1-core-1 kms_network_debug_events_total{event="send_retry"} 5',
+            't0 kms-core-1-core-1 kms_network_debug_events_total{event="send_active"} 100',
+            't0 kms-core-10-core-10 kms_network_debug_events_total{a="b",event="send_failed"} 7',
+            "t0 kms-core-1-core-1 kms_active_sessions 2",
+        ]
+        after = [
+            't1 kms-core-1-core-1 kms_network_debug_events_total{event="send_retry"} 45',
+            't1 kms-core-1-core-1 kms_network_debug_events_total{event="send_active"} 100',
+            't1 kms-core-10-core-10 kms_network_debug_events_total{a="b",event="send_failed"} 2',
+            't1 kms-core-6-core-6 kms_network_debug_events_total{event="receive_wait_timeout"} 3',
+            "t1 kms-core-1-core-1 kms_active_sessions 9",
+        ]
+        self.assertEqual(
+            metrics.network_event_deltas(before, after),
+            {
+                ("kms-core-1-core-1", "send_retry"): 40,
+                ("kms-core-10-core-10", "send_failed"): -5,
+                ("kms-core-6-core-6", "receive_wait_timeout"): 3,
+            },
+        )
+
+    def test_network_summary_warns_once_per_growing_event(self):
+        Path("before").write_text(
+            't0 kms-core-10-core-10 kms_network_debug_events_total{event="send_retry"} 1\n'
+            't0 kms-core-3-core-3 kms_network_debug_events_total{event="send_failed"} 9\n'
+        )
+        Path("after").write_text(
+            't1 kms-core-10-core-10 kms_network_debug_events_total{event="send_retry"} 4\n'
+            't1 kms-core-2-core-2 kms_network_debug_events_total{event="send_retry"} 2\n'
+            't1 kms-core-3-core-3 kms_network_debug_events_total{event="send_failed"} 1\n'
+            't1 kms-core-1-core-1 kms_network_debug_events_total{event="send_active"} 12\n'
+            't1 kms-core-5-core-5 scrape_error error="timeout"\n'
+        )
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output):
+            metrics.summarize_network_events(Path("before"), Path("after"), "9/13")
+        lines = output.getvalue().splitlines()
+        self.assertIn('t1 kms-core-5-core-5 scrape_error error="timeout"', lines)
+        self.assertEqual(
+            [line for line in lines if line.startswith("::warning")],
+            [
+                (
+                    "::warning title=Network events (9/13)::send_retry on "
+                    "kms-core-2-core-2 (+2), kms-core-10-core-10 (+3)"
+                )
+            ],
+        )
+        pods = [line.split()[0] for line in lines if line.startswith("kms-core-")]
+        self.assertEqual(pods[:2], ["kms-core-1-core-1", "kms-core-2-core-2"])
+
     def test_network_deltas_preserve_missing_and_reset_counter_semantics(self):
         row = dict(zip(network.HEADER, ["p", "c", "eth0", "9001", *(["10"] * 8)]))
         after = dict(row, rx_bytes="25", tx_bytes="2")
