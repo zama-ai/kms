@@ -135,10 +135,9 @@ The service crate is the main surface area. Key subdirectories under
   chain verification). Custodian backup uses MLKEM1024-P384 for all three of its
   keypairs — the custodian's long-term key, the operator's ephemeral recovery key,
   and the operator's per-context backup vault key — selected in one place,
-  `backup::BACKUP_PKE_SCHEME`. A new custodian context is rejected unless every
-  custodian encryption key, and the operator's own backup key, uses that scheme
-  (`InternalCustodianContext::new` / `validated_nodes`).
-  User decryption accepts ML-KEM-512 only. Randomly generated MLKEM1024-P384
+  `backup::BACKUP_PKE_SCHEME`. Nothing rejects a peer that advertises a weaker
+  scheme: the signcryption carries its own `pke_type` tag, so a mixed-scheme
+  custodian context works. User decryption accepts ML-KEM-512 only. Randomly generated MLKEM1024-P384
   keypairs use a 256-bit-seeded CSPRNG. The custodian key derives directly from 256-bit mnemonic entropy. Signing lives under
   [cryptography/signing/](../core/service/src/cryptography/signing/): a
   scheme-tagged `Signature` plus one backend per scheme — ECDSA/secp256k1
@@ -352,16 +351,13 @@ in server config and unified behind `KeychainProxy`
   with this keychain already, and the keychain can only encrypt once that call
   has installed a context, so a node configured for it makes no backups until
   its first context exists. New custodian contexts are rejected unless every custodian
-  encryption key and every custodian verification key is unique, and unless every
-  custodian encryption key uses `BACKUP_PKE_SCHEME`.
+  encryption key and every custodian verification key is unique.
   Every key in this path is MLKEM1024-P384 (`backup::BACKUP_PKE_SCHEME`), and the
   custodian's is derived from 256 bits of seed-phrase entropy — a 24-word mnemonic —
   so the phrase does not cap the scheme's security level. A vault written under an
   older ML-KEM-512 context is not readable by a node holding a composite key, but
   each ciphertext carries its own `pke_type`, so a vault spanning both schemes
-  decrypts as long as the matching key is installed. That remains true for
-  material already written; what is refused is *creating* a new context under a
-  weaker scheme.
+  decrypts as long as the matching key is installed.
 
 Custodian workflows are driven through the
 [kms-custodian](../core/service/src/bin/kms-custodian.rs) CLI and the
