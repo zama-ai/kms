@@ -1127,7 +1127,7 @@ upgrade_parties() {
         # epoch under DEFAULT_MPC_CONTEXT / DEFAULT_EPOCH_ID
         # (core/service/src/consts.rs). Older cores reject the unknown
         # [migration] section, so only upgraded parties get it. It is needed on
-        # every wave because the legacy data stays until 0.16 and each helm
+        # every batch because the legacy data stays until 0.16 and each helm
         # upgrade restarts the pod.
         if [[ "${EPOCH_MIGRATION:-false}" == "true" && -n "${upgrade_set[${i}]+_}" ]]; then
             HELM_ARGS+=(

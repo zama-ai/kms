@@ -71,7 +71,7 @@ epoch_ids = ["0x0800000000000000000000000000000000000000000000000000000000000001
 
 A v0.14 core rejects the `[migration]` section as an unknown field. During a rolling upgrade, set the migration config only on the parties that run v0.15.
 
-Each Helm upgrade can restart the core, and each restart runs the migration check again. Thus include the migration config in each Helm upgrade of an upgraded party, also in later upgrade waves.
+Each Helm upgrade can restart the core, and each restart runs the migration check again. Thus include the migration config in each Helm upgrade of an upgraded party, also in later upgrade batches.
 
 ## After the upgrade
 

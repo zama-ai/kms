@@ -24,8 +24,8 @@
 #
 # The --all-upgraded-parties flag is the cumulative list of all parties
 # that should be on the new version after this upgrade step. For the
-# first upgrade (5/13), this equals --parties-to-upgrade. For the second
-# upgrade (9/13), this should be "1,2,3,4,5,6,7,8,9". The script acts on
+# first batch, this equals --parties-to-upgrade. For the second batch with
+# the default party IDs, this is "1,2,3,4,5,6,7,8,9". The script acts on
 # --all-upgraded-parties only; --parties-to-upgrade is logged for reference.
 #
 # Optional environment variables:
@@ -180,8 +180,8 @@ fetch_pcrs_for_tag() {
 # Restart Parties
 #
 # Restarts the core pods of the selected parties at the same time, at the end
-# of each wave. The first wave restarts all parties anyway, because
-# trustedReleases changes on each of them. Later waves only restart the
+# of each batch. The first batch restarts all parties anyway, because
+# trustedReleases changes on each of them. Later batches only restart the
 # upgraded parties, while the other parties keep running. Restarting a chosen
 # subset shows which of the running parties hold state that breaks the mixed
 # cluster. RESTART_PARTIES selects the parties: empty (none), "all", or

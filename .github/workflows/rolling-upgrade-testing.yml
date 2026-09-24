@@ -28,7 +28,7 @@
 #     mixed cluster (public + user decrypt, correctness-only; label
 #     mixed-<n>-of-13).
 #   - Step 5: Second rolling upgrade: upgrade second_batch_parties (default 6-9);
-#     cumulative upgraded set is first_batch + second_batch (9/13 by default).
+#     cumulative upgraded set is first_batch + second_batch (9 of 13 by default).
 #   - Step 6: Argo rolling-upgrade workflow again.
 #   - Upload Argo and kms-core logs (with the metric snapshots); helm/kubectl
 #     cleanup; stop runner.
@@ -94,9 +94,9 @@
 #   tkms_infra_chart_version (string, default 0.3.2)
 #                            TKMS Infra Helm chart version.
 #   first_batch_parties    (string, default 1,2,3,4,5)
-#                            Comma-separated party IDs for the first upgrade wave.
+#                            Comma-separated party IDs for the first upgrade batch.
 #   second_batch_parties   (string, default 6,7,8,9)
-#                            Comma-separated party IDs for the second upgrade wave.
+#                            Comma-separated party IDs for the second upgrade batch.
 #   test_profile           (choice decrypt|prss-threshold, default decrypt)
 #                            decrypt = plain pdec/udec correctness on the mixed
 #                            cluster. prss-threshold = legacy-PRSS-mask request-ID
@@ -108,10 +108,10 @@
 #                            does not start on legacy PRSS data without it, and
 #                            v0.13/v0.14 cores reject it.
 #   restart_parties        (string, default empty = none)
-#                            After each upgrade wave, restart the core pods of
+#                            After each upgrade batch, restart the core pods of
 #                            these parties together before the mixed-state
 #                            tests: "all" or comma-separated party IDs. From
-#                            wave 2 on, only the upgraded parties restart
+#                            batch 2 on, only the upgraded parties restart
 #                            otherwise; restarting a subset shows which of the
 #                            running parties hold state that breaks the tests.
 #
@@ -208,7 +208,7 @@ on:
         default: false
         type: boolean
       restart_parties:
-        description: 'After each upgrade wave, restart the core pods of these parties together before the mixed-state tests: "all" or comma-separated party IDs (e.g. 1,2,3,4,5). Empty = no restart.'
+        description: 'After each upgrade batch, restart the core pods of these parties together before the mixed-state tests: "all" or comma-separated party IDs (e.g. 1,2,3,4,5). Empty = no restart.'
         required: false
         default: ''
         type: string
@@ -565,7 +565,7 @@ jobs:
           echo "BASELINE_KEY_ID=${BASELINE_KEY_ID}" >> "$GITHUB_ENV"
 
       # ====================================================================
-      # STEP 3: Rolling upgrade 5/13 (first batch)
+      # STEP 3: Rolling upgrade (first batch)
       # ====================================================================
       - name: 'Step 3: Rolling upgrade - first batch'
         run: |
@@ -590,24 +590,25 @@ jobs:
       # messages) per pod during the tests, and warns when parties failed to
       # talk to each other.
       # ====================================================================
-      - name: 'Snapshot network metrics before 5/13 tests'
-        id: metrics-before-5of13
+      - name: 'Snapshot network metrics before batch 1 tests'
+        id: metrics-before-batch1
         continue-on-error: true
         run: |
           python3 ci/scripts/sample_core_metrics.py "${NAMESPACE}" --once \
-            > kms-core-network-metrics-before-5of13.txt
-          grep -c "scrape_ok" kms-core-network-metrics-before-5of13.txt | xargs echo "Pods scraped:"
+            > kms-core-network-metrics-before-batch1.txt
+          grep -c "scrape_ok" kms-core-network-metrics-before-batch1.txt | xargs echo "Pods scraped:"
 
       # ====================================================================
-      # STEP 4: Run performance tests with 5/13 upgraded
+      # STEP 4: Run performance tests with the first batch upgraded
       # ====================================================================
-      - name: 'Step 4: Run performance tests (5/13 mixed state)'
+      - name: 'Step 4: Run performance tests (batch 1 mixed state)'
         env:
           SERVER_URL: ${{ github.server_url }}
           REPOSITORY: ${{ github.repository }}
           RUN_ID: ${{ github.run_id }}
         run: |
-          echo "Running decrypt correctness tests (public + user) with 5/13 nodes upgraded..."
+          NUM_UPGRADED=$(echo "${FIRST_BATCH}" | tr ',' '\n' | wc -l | tr -d ' ')
+          echo "Running decrypt correctness tests (public + user) with ${NUM_UPGRADED}/13 nodes upgraded (batch 1)..."
           echo "Reusing pre-upgrade BASELINE_KEY_ID=${BASELINE_KEY_ID}"
 
           if [[ "${TLS}" == "true" ]]; then
@@ -622,18 +623,16 @@ jobs:
           # The Argo workflow file depends on the profile; MIXED_WORKFLOW_FILE is
           # set in "Configure deployment parameters".
           cp ./ci/perf-testing/argo-workflow/"${MIXED_WORKFLOW_FILE}" \
-             /tmp/mixed-5-workflow.yaml
-          sed -i "s|hub.zama.org/ghcr/zama-ai/kms/core-client-insecure:<client-version>|${KMS_CORE_CLIENT_HARNESS_IMAGE_NAME}:<client-version>|g" /tmp/mixed-5-workflow.yaml
-          sed -i "s/<client-version>/${KMS_CORE_CLIENT_IMAGE_TAG}/g" /tmp/mixed-5-workflow.yaml
-          sed -i "s/<version>/${NEW_IMAGE_TAG}/g" /tmp/mixed-5-workflow.yaml
+             /tmp/mixed-batch1-workflow.yaml
+          sed -i "s|hub.zama.org/ghcr/zama-ai/kms/core-client-insecure:<client-version>|${KMS_CORE_CLIENT_HARNESS_IMAGE_NAME}:<client-version>|g" /tmp/mixed-batch1-workflow.yaml
+          sed -i "s/<client-version>/${KMS_CORE_CLIENT_IMAGE_TAG}/g" /tmp/mixed-batch1-workflow.yaml
+          sed -i "s/<version>/${NEW_IMAGE_TAG}/g" /tmp/mixed-batch1-workflow.yaml
 
-          # Count upgraded nodes from FIRST_BATCH
-          NUM_UPGRADED=$(echo "${FIRST_BATCH}" | tr ',' '\n' | wc -l | tr -d ' ')
           RUN_URL="${SERVER_URL}/${REPOSITORY}/actions/runs/${RUN_ID}"
 
           # The prss-threshold profile pins unique request-IDs straddling the
           # legacy-mask boundary; the decrypt profile uses random IDs. IDs must be
-          # globally unique across pub/user AND across the 5/13 and 9/13 runs.
+          # globally unique across pub/user AND across the batch 1 and batch 2 runs.
           REQID_ARGS=()
           if [[ "${ENABLE_PRSS_THRESHOLD}" == "true" ]]; then
             REQID_ARGS=(
@@ -644,7 +643,7 @@ jobs:
             )
           fi
 
-          argo submit -n argo /tmp/mixed-5-workflow.yaml \
+          argo submit -n argo /tmp/mixed-batch1-workflow.yaml \
             -p tls="${TLS_STATUS}" \
             -p client-logs="${CLIENT_LOGS_STATUS}" \
             -p fhe-params="${FHE_PARAMS}" \
@@ -657,9 +656,9 @@ jobs:
             -p num_total="13" \
             "${REQID_ARGS[@]}"
 
-          echo "Streaming mixed-5/13 workflow logs..."
-          argo logs @latest -f -n "${NAMESPACE}" | tee argo-mixed-5-logs.txt
-          echo "Mixed 5/13 tests completed."
+          echo "Streaming batch 1 mixed-state workflow logs..."
+          argo logs @latest -f -n "${NAMESPACE}" | tee argo-mixed-batch1-logs.txt
+          echo "Batch 1 mixed-state tests completed."
 
           # Correctness gate: fail if any non-warmup decrypt pod did not succeed.
           FAILED_NODES=$(argo get @latest -n "${NAMESPACE}" -o json | jq -r '
@@ -668,23 +667,25 @@ jobs:
                      and (.displayName | test("warmup|reqid-above") | not))
             | .displayName')
           if [[ -n "${FAILED_NODES}" ]]; then
-            echo "ERROR: mixed-5/13 test pods did not succeed:"
+            echo "ERROR: batch 1 mixed-state test pods did not succeed:"
             echo "${FAILED_NODES}"
             exit 1
           fi
 
-      - name: 'Snapshot network metrics after 5/13 tests'
-        if: always() && steps.metrics-before-5of13.outcome == 'success'
+      - name: 'Snapshot network metrics after batch 1 tests'
+        if: always() && steps.metrics-before-batch1.outcome == 'success'
         continue-on-error: true
         run: |
           python3 ci/scripts/sample_core_metrics.py "${NAMESPACE}" --once \
-            > kms-core-network-metrics-after-5of13.txt
-          python3 ci/scripts/sample_core_metrics.py --label "5/13" --network-delta \
-            kms-core-network-metrics-before-5of13.txt \
-            kms-core-network-metrics-after-5of13.txt
+            > kms-core-network-metrics-after-batch1.txt
+          NUM_UPGRADED=$(echo "${FIRST_BATCH}" | tr ',' '\n' | wc -l | tr -d ' ')
+          python3 ci/scripts/sample_core_metrics.py \
+            --label "batch 1, ${NUM_UPGRADED}/13 upgraded" --network-delta \
+            kms-core-network-metrics-before-batch1.txt \
+            kms-core-network-metrics-after-batch1.txt
 
       # ====================================================================
-      # STEP 5: Rolling upgrade 9/13 (second batch)
+      # STEP 5: Rolling upgrade (second batch)
       # ====================================================================
       - name: 'Step 5: Rolling upgrade - second batch'
         run: |
@@ -704,24 +705,26 @@ jobs:
             --new-kms-chart-version "${NEW_KMS_CHART_VERSION}" \
             --tkms-infra-version "${TKMS_INFRA_CHART_VERSION}"
 
-      - name: 'Snapshot network metrics before 9/13 tests'
-        id: metrics-before-9of13
+      - name: 'Snapshot network metrics before batch 2 tests'
+        id: metrics-before-batch2
         continue-on-error: true
         run: |
           python3 ci/scripts/sample_core_metrics.py "${NAMESPACE}" --once \
-            > kms-core-network-metrics-before-9of13.txt
-          grep -c "scrape_ok" kms-core-network-metrics-before-9of13.txt | xargs echo "Pods scraped:"
+            > kms-core-network-metrics-before-batch2.txt
+          grep -c "scrape_ok" kms-core-network-metrics-before-batch2.txt | xargs echo "Pods scraped:"
 
       # ====================================================================
-      # STEP 6: Run performance tests with 9/13 upgraded
+      # STEP 6: Run performance tests with both batches upgraded
       # ====================================================================
-      - name: 'Step 6: Run performance tests (9/13 mixed state)'
+      - name: 'Step 6: Run performance tests (batch 2 mixed state)'
         env:
           SERVER_URL: ${{ github.server_url }}
           REPOSITORY: ${{ github.repository }}
           RUN_ID: ${{ github.run_id }}
         run: |
-          echo "Running decrypt correctness tests (public + user) with 9/13 nodes upgraded..."
+          ALL_UPGRADED="${FIRST_BATCH},${SECOND_BATCH}"
+          NUM_UPGRADED=$(echo "${ALL_UPGRADED}" | tr ',' '\n' | wc -l | tr -d ' ')
+          echo "Running decrypt correctness tests (public + user) with ${NUM_UPGRADED}/13 nodes upgraded (batch 2)..."
           echo "Reusing pre-upgrade BASELINE_KEY_ID=${BASELINE_KEY_ID}"
 
           if [[ "${TLS}" == "true" ]]; then
@@ -736,17 +739,14 @@ jobs:
           # The Argo workflow file depends on the profile; MIXED_WORKFLOW_FILE is
           # set in "Configure deployment parameters".
           cp ./ci/perf-testing/argo-workflow/"${MIXED_WORKFLOW_FILE}" \
-             /tmp/mixed-9-workflow.yaml
-          sed -i "s|hub.zama.org/ghcr/zama-ai/kms/core-client-insecure:<client-version>|${KMS_CORE_CLIENT_HARNESS_IMAGE_NAME}:<client-version>|g" /tmp/mixed-9-workflow.yaml
-          sed -i "s/<client-version>/${KMS_CORE_CLIENT_IMAGE_TAG}/g" /tmp/mixed-9-workflow.yaml
-          sed -i "s/<version>/${NEW_IMAGE_TAG}/g" /tmp/mixed-9-workflow.yaml
+             /tmp/mixed-batch2-workflow.yaml
+          sed -i "s|hub.zama.org/ghcr/zama-ai/kms/core-client-insecure:<client-version>|${KMS_CORE_CLIENT_HARNESS_IMAGE_NAME}:<client-version>|g" /tmp/mixed-batch2-workflow.yaml
+          sed -i "s/<client-version>/${KMS_CORE_CLIENT_IMAGE_TAG}/g" /tmp/mixed-batch2-workflow.yaml
+          sed -i "s/<version>/${NEW_IMAGE_TAG}/g" /tmp/mixed-batch2-workflow.yaml
 
-          # Count all upgraded nodes (first + second batch)
-          ALL_UPGRADED="${FIRST_BATCH},${SECOND_BATCH}"
-          NUM_UPGRADED=$(echo "${ALL_UPGRADED}" | tr ',' '\n' | wc -l | tr -d ' ')
           RUN_URL="${SERVER_URL}/${REPOSITORY}/actions/runs/${RUN_ID}"
 
-          # prss-threshold pins unique request-IDs (distinct from the 5/13 run's
+          # prss-threshold pins unique request-IDs (distinct from the batch 1 run's
           # ids to avoid "already exists" collisions); decrypt uses random IDs.
           REQID_ARGS=()
           if [[ "${ENABLE_PRSS_THRESHOLD}" == "true" ]]; then
@@ -758,7 +758,7 @@ jobs:
             )
           fi
 
-          argo submit -n argo /tmp/mixed-9-workflow.yaml \
+          argo submit -n argo /tmp/mixed-batch2-workflow.yaml \
             -p tls="${TLS_STATUS}" \
             -p client-logs="${CLIENT_LOGS_STATUS}" \
             -p fhe-params="${FHE_PARAMS}" \
@@ -771,9 +771,9 @@ jobs:
             -p num_total="13" \
             "${REQID_ARGS[@]}"
 
-          echo "Streaming mixed-9/13 workflow logs..."
-          argo logs @latest -f -n "${NAMESPACE}" | tee argo-mixed-9-logs.txt
-          echo "Mixed 9/13 tests completed."
+          echo "Streaming batch 2 mixed-state workflow logs..."
+          argo logs @latest -f -n "${NAMESPACE}" | tee argo-mixed-batch2-logs.txt
+          echo "Batch 2 mixed-state tests completed."
 
           # Correctness gate: fail if any non-warmup decrypt pod did not succeed.
           FAILED_NODES=$(argo get @latest -n "${NAMESPACE}" -o json | jq -r '
@@ -782,20 +782,22 @@ jobs:
                      and (.displayName | test("warmup|reqid-above") | not))
             | .displayName')
           if [[ -n "${FAILED_NODES}" ]]; then
-            echo "ERROR: mixed-9/13 test pods did not succeed:"
+            echo "ERROR: batch 2 mixed-state test pods did not succeed:"
             echo "${FAILED_NODES}"
             exit 1
           fi
 
-      - name: 'Snapshot network metrics after 9/13 tests'
-        if: always() && steps.metrics-before-9of13.outcome == 'success'
+      - name: 'Snapshot network metrics after batch 2 tests'
+        if: always() && steps.metrics-before-batch2.outcome == 'success'
         continue-on-error: true
         run: |
           python3 ci/scripts/sample_core_metrics.py "${NAMESPACE}" --once \
-            > kms-core-network-metrics-after-9of13.txt
-          python3 ci/scripts/sample_core_metrics.py --label "9/13" --network-delta \
-            kms-core-network-metrics-before-9of13.txt \
-            kms-core-network-metrics-after-9of13.txt
+            > kms-core-network-metrics-after-batch2.txt
+          NUM_UPGRADED=$(echo "${FIRST_BATCH},${SECOND_BATCH}" | tr ',' '\n' | wc -l | tr -d ' ')
+          python3 ci/scripts/sample_core_metrics.py \
+            --label "batch 2, ${NUM_UPGRADED}/13 upgraded" --network-delta \
+            kms-core-network-metrics-before-batch2.txt \
+            kms-core-network-metrics-after-batch2.txt
 
       # ====================================================================
       # UPLOAD TEST LOGS

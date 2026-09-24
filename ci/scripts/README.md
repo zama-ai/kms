@@ -243,8 +243,8 @@ to run `kubectl top pod` in that namespace.
 
 `rolling_upgrade.sh`, driven by the `rolling-upgrade-testing.yml` GitHub Actions
 workflow (`workflow_dispatch` only), deploys 13 enclave parties on an OLD version,
-rolls them to a NEW version in two waves (5/13 then 9/13 by default), and checks
-decryption on the mixed-version cluster after each wave.
+rolls them to a NEW version in two batches (5, then 9 of 13 parties by default), and
+checks decryption on the mixed-version cluster after each batch.
 
 Dispatch inputs:
 
@@ -255,10 +255,10 @@ Dispatch inputs:
 | `core_client_image_tag` | Core-client (test harness) tag from the new side's repository; defaults to `old_image_tag` from the old repository. Must be ≤ the oldest server version in the run. Required for `prss-threshold` |
 | `old_kms_chart_version` / `new_kms_chart_version` | kms-core Helm chart per side (`repository` = in-tree chart) |
 | `tkms_infra_chart_version` | TKMS Infra Helm chart version (default `0.3.2`) |
-| `first_batch_parties` / `second_batch_parties` | Party IDs upgraded in wave 1 / wave 2 (default `1,2,3,4,5` / `6,7,8,9`) |
+| `first_batch_parties` / `second_batch_parties` | Party IDs upgraded in batch 1 / batch 2 (default `1,2,3,4,5` / `6,7,8,9`) |
 | `test_profile` | `decrypt` (default) or `prss-threshold` — see below |
 | `epoch_migration` | Pass the 0.15 epoch-data migration config to the upgraded parties (default off) — see below |
-| `restart_parties` | After each upgrade wave, restart the core pods of these parties together before the mixed-state tests: `all` or comma-separated party IDs (default empty = no restart). From wave 2 on, only the upgraded parties restart otherwise, so restarting a subset shows which of the running parties hold state that breaks the tests |
+| `restart_parties` | After each upgrade batch, restart the core pods of these parties together before the mixed-state tests: `all` or comma-separated party IDs (default empty = no restart). From batch 2 on, only the upgraded parties restart otherwise, so restarting a subset shows which of the running parties hold state that breaks the tests |
 | `client_logs` | Core-client tracing logs (default off) |
 | `fhe_params` | `Test` (default) or `Default` |
 | `build` / `kms_branch` | Build the new image from a branch instead of using `new_image_tag` |
@@ -284,7 +284,7 @@ conclusion. Requires a threshold-aware new image and a request-ID-capable core-c
 
 #### Network metrics
 
-Around the tests after each wave, the workflow takes a snapshot of the Prometheus metrics of all 13 cores (`sample_core_metrics.py --once`). `sample_core_metrics.py --network-delta` then prints, per pod, the non-zero change of each `kms_network_debug_events_total` event during the tests: successful, retried and failed sends, received messages, and dropped or late messages. A negative value means that the pod restarted between the snapshots. If `send_failed`, `send_retry` or `receive_wait_timeout` grew on any pod, the step adds a warning annotation to the run, also when the tests pass. The snapshots are in the `kms-core-rolling-upgrade-logs` artifact (`kms-core-network-metrics-{before,after}-{5of13,9of13}.txt`). v0.14 and older cores do not export these events.
+Around the tests after each batch, the workflow takes a snapshot of the Prometheus metrics of all 13 cores (`sample_core_metrics.py --once`). `sample_core_metrics.py --network-delta` then prints, per pod, the non-zero change of each `kms_network_debug_events_total` event during the tests: successful, retried and failed sends, received messages, and dropped or late messages. A negative value means that the pod restarted between the snapshots. If `send_failed`, `send_retry` or `receive_wait_timeout` grew on any pod, the step adds a warning annotation to the run, also when the tests pass. The snapshots are in the `kms-core-rolling-upgrade-logs` artifact (`kms-core-network-metrics-{before,after}-{batch1,batch2}.txt`). v0.14 and older cores do not export these events.
 
 #### Epoch-data migration (v0.14 → v0.15+)
 

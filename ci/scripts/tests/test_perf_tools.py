@@ -348,14 +348,14 @@ class DiagnosticTests(TemporaryWorkingDirectory):
         )
         output = io.StringIO()
         with contextlib.redirect_stdout(output):
-            metrics.summarize_network_events(Path("before"), Path("after"), "9/13")
+            metrics.summarize_network_events(Path("before"), Path("after"), "batch 2")
         lines = output.getvalue().splitlines()
         self.assertIn('t1 kms-core-5-core-5 scrape_error error="timeout"', lines)
         self.assertEqual(
             [line for line in lines if line.startswith("::warning")],
             [
                 (
-                    "::warning title=Network events (9/13)::send_retry on "
+                    "::warning title=Network events (batch 2)::send_retry on "
                     "kms-core-2-core-2 (+2), kms-core-10-core-10 (+3)"
                 )
             ],
