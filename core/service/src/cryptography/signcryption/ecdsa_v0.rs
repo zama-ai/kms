@@ -50,7 +50,7 @@ pub(super) fn inner_signcryption(
     let sig = internal_sign(dsep, &to_sign, signcrypt_key.signing_key)
         .map_err(|e| CryptographyError::SigningError(e.to_string()))?;
 
-    // Encrypt msg || sig || H(server_verification_key) || H(server_enc_pub_key)
+    // Encrypt msg || sig || H(server_verification_key)
     // OBSERVE: serialization is simply r concatenated with s. That is NOT an Ethereum compatible
     // signature since we preclude the v value.
     // The verification key is serialized based on the SEC1 standard.

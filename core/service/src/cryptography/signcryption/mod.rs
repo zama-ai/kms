@@ -23,10 +23,11 @@
 //! A layout tag on the message was tried and removed: it travels outside the
 //! ciphertext, so it could never be trusted over the caller's own knowledge of
 //! which opener it invoked. The two parsers reject each other's output on their
-//! own — a multi-signature envelope fails the frozen reader's
-//! `H(sender verification key)` check, and a frozen envelope fails
-//! `safe_deserialize` in the multi-signature reader. Both directions are checked
-//! by `composite_v1::tests::the_two_formats_do_not_cross`.
+//! own, and on the first field either one reads: the frozen layout writes its
+//! `HybridKemCt` with bincode and the multi-signature layout safe-serializes
+//! it, so neither reader gets as far as decrypting the other's envelope. Both
+//! directions are checked by
+//! `composite_v1::tests::the_two_formats_do_not_cross`.
 //!
 //! If a reader ever has to walk stored material of mixed vintage, prefer the
 //! type-name header `safe_serialize` already writes *inside* the ciphertext over

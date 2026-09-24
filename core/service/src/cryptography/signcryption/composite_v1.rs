@@ -66,9 +66,11 @@ pub fn seal(
     let plaintext = Zeroizing::new(plaintext);
 
     let ciphertext = hybrid_encrypt(rng, &plaintext, receiver_enc_key)?;
+    let mut payload = Vec::new();
+    safe_serialize(&ciphertext, &mut payload, SAFE_SER_SIZE_LIMIT)
+        .map_err(|e| CryptographyError::SerializationError(e.to_string()))?;
     Ok(UnifiedSigncryption::new(
-        bc2wrap::serialize(&ciphertext)
-            .map_err(|e| CryptographyError::BincodeError(e.to_string()))?,
+        payload,
         receiver_enc_key.encryption_scheme_type(),
     ))
 }
@@ -90,8 +92,9 @@ pub(super) fn open(
             "encryption type of cipher does not match the decryption key type".to_string(),
         ));
     }
-    let kem_ct: HybridKemCt = bc2wrap::deserialize_slice(&cipher.payload)
-        .map_err(|e| CryptographyError::BincodeError(e.to_string()))?;
+    let kem_ct: HybridKemCt =
+        safe_deserialize(std::io::Cursor::new(&cipher.payload), SAFE_SER_SIZE_LIMIT)
+            .map_err(CryptographyError::SerializationError)?;
     let plaintext = hybrid_decrypt(kem_ct, decryption_key)?;
     let envelope: CompositeEnvelope =
         safe_deserialize(std::io::Cursor::new(&*plaintext), SAFE_SER_SIZE_LIMIT)
@@ -238,9 +241,7 @@ mod tests {
         let mut f = fixture(PkeSchemeType::MlKem512, 300);
         let composite = seal_msg(&mut f, b"composite payload");
 
-        // Frozen reader, handed a composite envelope. It decrypts, then reads
-        // the trailing 32 bytes as `H(sender verification key)` — which they are
-        // not, being the tail of an ML-DSA signature.
+        // Frozen reader, handed a composite envelope.
         let legacy_verf = f
             .keys
             .require(SigningSchemeType::Ecdsa256k1)
@@ -256,14 +257,13 @@ mod tests {
             .unsigncrypt::<TestType>(DSEP, &composite)
             .unwrap_err();
         assert!(
-            err.to_string()
-                .contains("unexpected verification key digest"),
-            "the frozen reader must reject a composite envelope on the key digest, got: {err}"
+            matches!(err, CryptographyError::BincodeError(_)),
+            "the frozen reader must reject a composite envelope on the KEM ciphertext, got: {err}"
         );
 
-        // Composite reader, handed a frozen envelope. It decrypts, but the
-        // plaintext is `msg ‖ sig ‖ digest` rather than a serialized
-        // `CompositeEnvelope`, so `safe_deserialize` refuses it on the header.
+        // Composite reader, handed a frozen envelope. The frozen layout writes
+        // its `HybridKemCt` with bincode and no header, so `safe_deserialize`
+        // refuses it — again before anything is decrypted.
         let base = signcryption_fixture(PkeSchemeType::MlKem512, 300);
         let mut rng = base.rng;
         let ecdsa_key =
@@ -291,8 +291,8 @@ mod tests {
         assert_eq!(&*opened, b"ecdsa alone");
 
         // The frozen reader, holding the very key that signed this envelope,
-        // still rejects it: the plaintext is a serialized `CompositeEnvelope`,
-        // so its trailing 32 bytes are not `H(sender verification key)`.
+        // still rejects it: the payload is a safe-serialized KEM ciphertext,
+        // which its bincode parse refuses.
         let legacy_verf = f
             .keys
             .require(SigningSchemeType::Ecdsa256k1)
