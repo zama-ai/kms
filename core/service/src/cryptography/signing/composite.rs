@@ -5,10 +5,6 @@
 //! must not leave something a verifier accepts, or the hedge the composite was
 //! built for is gone.
 //!
-//! What makes that hold is that the scheme set is inside the bytes each
-//! signature covers. A signature produced under `{A, B}` attests to that set, so
-//! it cannot be re-presented as a complete signature under `{A}`.
-
 use super::identity::NodeSigningIdentity;
 use super::typed_signature::StoredTypedSignature;
 use super::verf_key_set::VerfKeySet;
@@ -87,9 +83,7 @@ fn ensure_canonical(schemes: &[SigningSchemeType]) -> Result<(), SigningError> {
 ///
 /// Entries are ordered by scheme and carry no duplicate scheme.
 ///
-/// The [`Deserialize`] impl *rejects* a non-canonical list rather than sorting it:
-/// a value arriving from storage or the wire is attacker-chosen, and silently
-/// reordering it would give one signature more than one encoding.
+/// The [`Deserialize`] impl *rejects* a non-canonical list rather than sorting it.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 #[serde(transparent)]
 pub struct CompositeSignature(Vec<StoredTypedSignature>);
@@ -187,25 +181,12 @@ impl CompositeSignature {
 /// The per-scheme signatures of a *result*: a keygen, CRS, preprocessing or
 /// decryption response.
 ///
-/// ECDSA signs `eip712_hash` recoverably, producing the signature the fhevm
-/// contracts verify on chain. Every other scheme signs
+/// ECDSA signs `eip712_hash`, every other scheme signs
 /// [`scheme_bound_preimage`] over `payload_bytes`, so it commits to the scheme
 /// set as well as to the payload.
 ///
 /// `schemes` may be given in any order; the entries come back ordered by
 /// scheme.
-///
-/// Returns a plain list rather than a [`CompositeSignature`] for two reasons,
-/// and they are the only two places the shapes differ:
-///
-/// - A result may legitimately request no schemes at all, which that type
-///   refuses to represent.
-/// - Its ECDSA entry is **not** scheme-bound. An EIP-712 hash is 32 bytes with
-///   nowhere to put a prefix, and the fhevm contracts must be able to recover
-///   the signer from it, so that entry signs the hash verbatim.
-///
-/// WARNING: that unbound ECDSA entry is why a verifier must still check the
-/// schemes it received against the ones it asked for.
 #[cfg(feature = "non-wasm")]
 pub fn sign_result_entries(
     identity: &NodeSigningIdentity,

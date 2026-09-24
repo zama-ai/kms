@@ -16,18 +16,12 @@ const DSEP_VERF_KEY_SET: DomainSep = *b"VKEYSET_";
 /// signs under several schemes, so a verifier needs several keys, and needs them
 /// to travel together.
 ///
+/// This type is not versioned as it is only meant to be an in-memory type.
+///
 /// # Invariants
 ///
 /// The set is non-empty, and every key is filed under the scheme it actually
 /// belongs to.
-///
-/// # Versioning
-///
-/// Not versioned, for the same reason as [`CompositeSignature`]: a
-/// `#[versionize(..)]` derive requires every field to implement `Version`, and
-/// `BTreeMap<SigningSchemeType, UnifiedPublicSigKey>` does not. The stored form
-/// is therefore the serde form — with `#[serde(transparent)]`, the bare map —
-/// and a later change of shape has to be absorbed by the containing type.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 #[serde(transparent)]
 pub struct VerfKeySet {
