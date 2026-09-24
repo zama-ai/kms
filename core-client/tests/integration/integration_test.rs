@@ -2653,6 +2653,11 @@ async fn test_threshold_mpc_context_switch() -> Result<()> {
     let err = execute_cmd(&ddec_config, test_path)
         .await
         .expect_err("a public decrypt must fail in a context that owns no epoch");
+    assert!(
+        err.to_string()
+            .contains("Only 0/4 public decrypt requests succeeded"),
+        "unexpected error: {err}"
+    );
     info!("the public decrypt in the new context failed as expected: {err}");
 
     // The default context still owns the epoch that holds the key shares.

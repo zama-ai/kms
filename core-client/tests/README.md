@@ -110,7 +110,7 @@ async fn test_my_feature() -> Result<()> {
 - `setup_isolated_threshold_cli_test` — basic threshold test
 - `setup_isolated_threshold_cli_test_signing_only` — signing without pre-loaded PRSS
 - `setup_isolated_threshold_cli_test_with_prss` — copies the fixture's default epoch (PRSS) for preprocessing/keygen flows
-- `setup_isolated_threshold_cli_test_with_backup` — with backup vault
+- `setup_isolated_threshold_cli_test_with_prss_with_backup` — with backup vault
 - `setup_isolated_threshold_cli_test_with_custodian_backup` — with custodian backup vault
 - `setup_isolated_threshold_cli_test_with_prss_default` — Default FHE + PRSS-enabled setup (requires `slow_tests` and pre-generated Default test material)
 
