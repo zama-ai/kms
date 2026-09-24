@@ -474,6 +474,7 @@ service CoreServiceEndpoint {
   // * `context_id` in `new_context` must be present, valid, fresh and unique [`RequestId`].
   // * `custodian_nodes` in `new_context` must be present and contain at least 2*`threshold` + 1 valid `CustodianSetupMessage`s.
   // * Every custodian encryption key and every custodian verification key must be unique within `new_context`.
+  // * Every custodian encryption key in `new_context` must use the backup encryption scheme (MLKEM1024-P384).
   // * `threshold` in `new_context` must be a positive integer satisfying 2*`threshold` < the amount of entries in `custodian_nodes`.
   // ## Post-condition:
   // * The `context_id` in `request` now represents a new custodian context.

@@ -480,10 +480,6 @@ impl Operator {
         self.custodian_keys.len()
     }
 
-    // We allow the following lints because we are fine with mutating the rng even if
-    // the function fails afterwards.
-    #[allow(unknown_lints)]
-    #[allow(non_local_effect_before_unhandled_error)]
     /// Construct a secret sharing of a `secret` and return a map of the basic backup recovery material,
     /// indexed by the role of each custodian. Also return a map of each commitment to the secret share,
     /// indexed by the role of each custodian.

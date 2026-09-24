@@ -20,6 +20,35 @@ pub use initiator::*;
 pub use key_gen::*;
 pub use preprocessing::*;
 
+use crate::consts::DEFAULT_EPOCH_ID;
+use crate::engine::utils::MetricedError;
+use kms_grpc::{RequestId, identifiers::EpochId};
+
+/// Refuses an epoch other than [`DEFAULT_EPOCH_ID`].
+///
+/// A centralized node keeps no epoch registry. It never stores epoch data, and the boot-time
+/// layout check treats that type as foreign material on such a node. Every epoch-scoped entry a
+/// centralized node holds therefore belongs to the default epoch, so a request naming another
+/// epoch would address storage that no other request reads.
+pub(crate) fn ensure_default_epoch(
+    op_tag: &'static str,
+    req_id: RequestId,
+    epoch_id: &EpochId,
+) -> Result<(), MetricedError> {
+    if *epoch_id == *DEFAULT_EPOCH_ID {
+        return Ok(());
+    }
+    Err(MetricedError::new(
+        op_tag,
+        Some(req_id),
+        anyhow::anyhow!(
+            "A centralized KMS serves epoch {} only, but the request names epoch {epoch_id}",
+            *DEFAULT_EPOCH_ID
+        ),
+        tonic::Code::InvalidArgument,
+    ))
+}
+
 #[cfg(test)]
 mod tests {
     use crate::conf::{CoreConfig, init_conf};

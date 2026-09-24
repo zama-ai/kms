@@ -44,6 +44,11 @@ pub async fn init_impl<
 ) -> Result<Response<Empty>, MetricedError> {
     let inner = request.into_inner();
     let verified_request = validate_new_mpc_epoch_request(inner)?;
+    super::ensure_default_epoch(
+        OP_NEW_EPOCH,
+        verified_request.epoch_id.into(),
+        &verified_request.epoch_id,
+    )?;
 
     if !service
         .context_manager
@@ -109,25 +114,20 @@ mod tests {
     use super::*;
     use crate::{
         consts::{DEFAULT_EPOCH_ID, DEFAULT_MPC_CONTEXT, default_extra_data},
-        engine::{
-            base::derive_request_id, centralized::service::tests::setup_central_test_kms,
-            utils::make_extra_data,
-        },
+        engine::{centralized::service::tests::setup_central_test_kms, utils::make_extra_data},
     };
 
     #[tokio::test]
     async fn sunshine() {
         let mut rng = AesRng::seed_from_u64(1234);
         let (kms, _) = setup_central_test_kms(&mut rng).await;
-        let req_id = derive_request_id("test_init_sunshine").unwrap();
-
         let preproc_req = NewMpcEpochRequest {
             signing_schemes: vec![kms_grpc::kms::v1::SigningSchemeType::Ecdsa256k1 as i32],
             context_id: Some((*DEFAULT_MPC_CONTEXT).into()),
-            epoch_id: Some(req_id.into()),
+            epoch_id: Some((*DEFAULT_EPOCH_ID).into()),
             previous_epoch: None,
             domain: None,
-            extra_data: make_extra_data(2, Some(&DEFAULT_MPC_CONTEXT), Some(&req_id.into()))
+            extra_data: make_extra_data(2, Some(&DEFAULT_MPC_CONTEXT), Some(&DEFAULT_EPOCH_ID))
                 .unwrap(),
         };
         let result = init_impl(&kms, Request::new(preproc_req)).await;
@@ -138,16 +138,14 @@ mod tests {
     async fn already_exists() {
         let mut rng = AesRng::seed_from_u64(1234);
         let (kms, _) = setup_central_test_kms(&mut rng).await;
-        let req_id1 = derive_request_id("test_init_already_exists").unwrap();
-
         // First initialization should succeed
         let preproc_req1 = NewMpcEpochRequest {
             signing_schemes: vec![kms_grpc::kms::v1::SigningSchemeType::Ecdsa256k1 as i32],
             context_id: Some((*DEFAULT_MPC_CONTEXT).into()),
-            epoch_id: Some(req_id1.into()),
+            epoch_id: Some((*DEFAULT_EPOCH_ID).into()),
             previous_epoch: None,
             domain: None,
-            extra_data: make_extra_data(2, Some(&DEFAULT_MPC_CONTEXT), Some(&req_id1.into()))
+            extra_data: make_extra_data(2, Some(&DEFAULT_MPC_CONTEXT), Some(&DEFAULT_EPOCH_ID))
                 .unwrap(),
         };
         let result1 = init_impl(&kms, Request::new(preproc_req1)).await;
@@ -157,10 +155,10 @@ mod tests {
         let preproc_req2 = NewMpcEpochRequest {
             signing_schemes: vec![kms_grpc::kms::v1::SigningSchemeType::Ecdsa256k1 as i32],
             context_id: Some((*DEFAULT_MPC_CONTEXT).into()),
-            epoch_id: Some(req_id1.into()),
+            epoch_id: Some((*DEFAULT_EPOCH_ID).into()),
             previous_epoch: None,
             domain: None,
-            extra_data: make_extra_data(2, Some(&DEFAULT_MPC_CONTEXT), Some(&req_id1.into()))
+            extra_data: make_extra_data(2, Some(&DEFAULT_MPC_CONTEXT), Some(&DEFAULT_EPOCH_ID))
                 .unwrap(),
         };
         let result2 = init_impl(&kms, Request::new(preproc_req2)).await;

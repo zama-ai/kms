@@ -154,13 +154,13 @@ jobs:
         with:
           persist-credentials: false
       - name: Login to Chainguard Container Registry
-        uses: docker/login-action@4907a6ddec9925e35a0a9e82d7399ccc52663121 # v4.1.0
+        uses: ./.github/actions/docker-login
         with:
           registry: cgr.dev
           username: ${{ secrets.CGR_USERNAME }} # zizmor: ignore[secrets-outside-env] CGR creds are shared by docker-build workflows.
           password: ${{ secrets.CGR_PASSWORD }} # zizmor: ignore[secrets-outside-env] CGR creds are shared by docker-build workflows.
       - name: Login to GitHub Container Registry
-        uses: docker/login-action@4907a6ddec9925e35a0a9e82d7399ccc52663121 # v4.1.0
+        uses: ./.github/actions/docker-login
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
@@ -287,8 +287,15 @@ jobs:
             echo "WARNING: algif_aead built-in - modprobe.d blacklist has no effect"
           fi
 
+      # docker-login is a local composite action, so the repo must be on disk
+      # before it is referenced.
+      - name: Checkout Project
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          persist-credentials: false
+
       - name: Login to GitHub Container Registry
-        uses: docker/login-action@4907a6ddec9925e35a0a9e82d7399ccc52663121 # v4.1.0
+        uses: ./.github/actions/docker-login
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
