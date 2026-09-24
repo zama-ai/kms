@@ -15,7 +15,9 @@ pub use crate::cryptography::signing::ecdsa::{
     recover_address_from_ext_signature,
 };
 pub use crate::cryptography::signing::identity::NodeSigningIdentity;
-pub use crate::cryptography::signing::seed::{ROOT_SEED_LEN, RootSigningSeed, RootSigningSeedVersions};
+pub use crate::cryptography::signing::seed::{
+    ROOT_SEED_LEN, RootSigningSeed, RootSigningSeedVersions,
+};
 pub use crate::cryptography::signing::{
     HasSigningScheme, SchemeVerfKeys, Signature, SigningError, SigningSchemeType,
     SigningSchemeTypeVersions, StoredTypedSignature, StoredTypedSignatureVersions,

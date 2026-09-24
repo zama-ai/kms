@@ -245,11 +245,14 @@ mod tests {
         );
     }
 
-    /// The expansion is locked: one SHAKE-256 draw of
-    /// `COMPOSITE_NIST_LEVEL_5_PRIVATE_KEY_LENGTH + ROOT_SEED_LEN` bytes, encryption key first,
-    /// root signing seed second.
+    /// The expansion is locked: one SHAKE-256 draw of 64 bytes, a 32-byte encryption key seed
+    /// first and a 32-byte root signing seed second.
     #[test]
     fn seed_phrase_expansion_is_locked() {
+        // Pinned against literals: every custodian key rotates silently if either width moves.
+        assert_eq!(COMPOSITE_NIST_LEVEL_5_PRIVATE_KEY_LENGTH, 32);
+        assert_eq!(ROOT_SEED_LEN, 32);
+
         let mnemonic = seed_phrase_from_entropy(&[9u8; CUSTODIAN_ENTROPY_SIZE]).unwrap();
         let custodian = custodian_from_seed_phrase(&mnemonic, Role::indexed_from_one(1)).unwrap();
 
