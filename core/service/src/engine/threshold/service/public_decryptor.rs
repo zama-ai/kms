@@ -8,6 +8,7 @@ use algebra::{
     structure_traits::{ErrorCorrect, Invert, Ring, Solve},
 };
 use anyhow::anyhow;
+use bytes::Bytes;
 use itertools::Itertools;
 use kms_grpc::{
     RequestId,
@@ -157,7 +158,7 @@ impl<
         context_id: ContextId,
         epoch_id: EpochId,
         session_maker: ImmutableSessionMaker,
-        ct: Vec<u8>,
+        ct: Bytes,
         fhe_type: FheTypes,
         ct_format: CiphertextFormat,
         fhe_keys: ThresholdFheKeys,
@@ -887,7 +888,7 @@ mod tests {
             signing_schemes: vec![SigningSchemeType::Ecdsa256k1 as i32],
             request_id: Some(req_id.into()),
             ciphertexts: vec![TypedCiphertext {
-                ciphertext: ct_buf,
+                ciphertext: ct_buf.into(),
                 fhe_type: FheTypes::Uint8 as i32,
                 external_handle: vec![],
                 // NOTE: because the way [setup_public_decryptor] is implemented,
