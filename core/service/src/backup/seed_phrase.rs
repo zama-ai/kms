@@ -4,7 +4,7 @@ use crate::{
     cryptography::{
         composite_mlkem1024_p384::{self, COMPOSITE_NIST_LEVEL_5_PRIVATE_KEY_LENGTH},
         encryption::{UnifiedPrivateEncKey, UnifiedPublicEncKey},
-        signatures::{ROOT_SEED_LEN, RootSigningSeed},
+        signatures::{NodeSigningIdentity, ROOT_SEED_LEN, RootSigningSeed},
     },
 };
 use bip39::Mnemonic;
@@ -104,9 +104,9 @@ pub fn custodian_from_seed_phrase(seed_phrase: &str, role: Role) -> anyhow::Resu
     let (dec_key, enc_key) = composite_mlkem1024_p384::keygen_from_seed(&enc_seed)
         .map_err(|e| anyhow::anyhow!("Failed to generate custodian keys from seed phrase: {e}"))?;
 
-    // TODO(https://github.com/zama-ai/kms-internal/issues/3168): the root itself is dropped here
-    // because `Custodian` holds a bare `PrivateSigKey`. Retain it as a `NodeSigningIdentity` once
-    // `Custodian` carries one, which is what lets a custodian sign the composite.
+    // The second half is a full root signing seed, and it is retained in the identity, so the
+    // custodian can sign under every scheme in `crate::backup::BACKUP_SIGNING_SCHEMES` rather
+    // than only ECDSA.
     let mut sig_seed = Zeroizing::new([0u8; ROOT_SEED_LEN]);
     sig_seed.copy_from_slice(sig_bytes);
     let root = RootSigningSeed::from_seed_bytes(&sig_seed);
@@ -116,7 +116,7 @@ pub fn custodian_from_seed_phrase(seed_phrase: &str, role: Role) -> anyhow::Resu
 
     Custodian::new(
         role,
-        sig_key,
+        NodeSigningIdentity::new(sig_key, root),
         UnifiedPublicEncKey::MlKem1024P384(enc_key),
         UnifiedPrivateEncKey::MlKem1024P384(dec_key),
     )

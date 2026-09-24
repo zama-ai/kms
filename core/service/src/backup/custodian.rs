@@ -1,9 +1,9 @@
 use crate::backup::BACKUP_PKE_SCHEME;
 use crate::backup::operator::DSEP_BACKUP_MATERIAL;
+use crate::cryptography::signatures::NodeSigningIdentity;
 use crate::cryptography::signing::SigningSchemeType;
 use crate::cryptography::{
     encryption::{HasPkeScheme, UnifiedPrivateEncKey, UnifiedPublicEncKey},
-    signatures::PrivateSigKey,
     signcryption::{
         Signcrypt, UnifiedSigncryption, UnifiedSigncryptionKey, UnifiedUnsigncryptionKey,
         Unsigncrypt,
@@ -345,7 +345,7 @@ impl InternalCustodianContext {
 
 pub struct Custodian {
     role: Role,
-    signing_key: PrivateSigKey,
+    signing_key: NodeSigningIdentity,
     enc_key: UnifiedPublicEncKey,
     dec_key: UnifiedPrivateEncKey,
 }
@@ -366,7 +366,7 @@ pub struct Custodian {
 impl Custodian {
     pub fn new(
         role: Role,
-        signing_key: PrivateSigKey,
+        signing_key: NodeSigningIdentity,
         enc_key: UnifiedPublicEncKey,
         dec_key: UnifiedPrivateEncKey,
     ) -> Result<Self, BackupError> {
@@ -463,8 +463,9 @@ impl Custodian {
 
         // re-encrypted share and sign it
         let operator_verf_id = operator_verification_key.verf_key_id();
+        // TODO stop gap https://github.com/zama-ai/kms-internal/issues/3168
         let signcrypt_key = UnifiedSigncryptionKey::new(
-            &self.signing_key,
+            self.signing_key.ecdsa(),
             operator_ephem_enc_key,
             &operator_verf_id,
         );

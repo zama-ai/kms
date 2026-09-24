@@ -11,7 +11,7 @@ use kms_grpc::rpc_types::PubDataType;
 use kms_lib::backup::BACKUP_PKE_SCHEME;
 use kms_lib::backup::custodian::Custodian;
 use kms_lib::cryptography::encryption::{Encryption, PkeScheme};
-use kms_lib::cryptography::signatures::gen_sig_keys;
+use kms_lib::cryptography::signatures::{NodeSigningIdentity, gen_sig_keys};
 use kms_lib::engine::base::{KeyGenMetadata, KeyGenMetadataInner};
 use rand::SeedableRng;
 use std::collections::BTreeMap;
@@ -97,7 +97,7 @@ fn internal_custodian_setup_message_serialization_is_deterministic() {
             let (private_key, public_key) = encryption.keygen().expect("keygen");
             let custodian = Custodian::new(
                 Role::indexed_from_one(1),
-                signing_key,
+                NodeSigningIdentity::ecdsa_only(signing_key),
                 public_key,
                 private_key,
             )

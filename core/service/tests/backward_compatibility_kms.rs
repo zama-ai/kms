@@ -1455,8 +1455,13 @@ fn test_internal_custodian_message(
     let (_verification_key, signing_key) = gen_sig_keys(&mut rng);
     let mut enc = Encryption::new(BACKUP_PKE_SCHEME, &mut rng);
     let (dec_key, enc_key) = enc.keygen().unwrap();
-    let custodian =
-        Custodian::new(Role::indexed_from_zero(0), signing_key, enc_key, dec_key).unwrap();
+    let custodian = Custodian::new(
+        Role::indexed_from_zero(0),
+        NodeSigningIdentity::ecdsa_only(signing_key),
+        enc_key,
+        dec_key,
+    )
+    .unwrap();
     // Use the same fixed timestamp the generator uses so the rebuilt message matches the
     // deterministic on-disk fixture exactly.
     let new_custodian_setup_message =
@@ -1490,7 +1495,13 @@ fn test_operator_backup_output(
             let (_verification_key, signing_key) = gen_sig_keys(&mut rng);
             let mut enc = Encryption::new(BACKUP_PKE_SCHEME, &mut rng);
             let (dec_key, enc_key) = enc.keygen().unwrap();
-            Custodian::new(custodian_role, signing_key, enc_key, dec_key).unwrap()
+            Custodian::new(
+                custodian_role,
+                NodeSigningIdentity::ecdsa_only(signing_key),
+                enc_key,
+                dec_key,
+            )
+            .unwrap()
         })
         .collect();
     let custodian_messages: Vec<_> = custodians
