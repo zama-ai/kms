@@ -83,10 +83,10 @@ impl TryFrom<InternalCustodianRecoveryOutput> for CustodianRecoveryOutput {
 
     fn try_from(value: InternalCustodianRecoveryOutput) -> Result<Self, Self::Error> {
         Ok(CustodianRecoveryOutput {
-            // TODO stop gap https://github.com/zama-ai/kms-internal/issues/3168
             backup_output: Some(OperatorBackupOutput {
                 signcryption: value.signcryption.payload,
                 pke_type: value.signcryption.pke_type as i32,
+                // TODO stop gap https://github.com/zama-ai/kms-internal/issues/3168
                 signing_type: SigningSchemeType::Ecdsa256k1.as_wire(),
             }),
             custodian_role: value.custodian_role.one_based() as u64,

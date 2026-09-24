@@ -33,8 +33,7 @@ fn sender_verf_key_digest(verf_key: &PublicSigKey) -> Result<Vec<u8>, Cryptograp
 
 // Implements the actual signcryption but without serialization
 //
-// This is the FROZEN layout; see the module
-// documentation for what depends on its bytes and on its RNG usage.
+// This is the FROZEN layout.
 pub(super) fn inner_signcryption(
     signcrypt_key: &UnifiedSigncryptionKey,
     rng: &mut (impl CryptoRng + RngCore),
@@ -71,8 +70,7 @@ pub(super) fn inner_signcryption(
 
 /// Implements the actual unsigncryption process, but without any deserialization
 ///
-/// This is the FROZEN layout; see the module
-/// documentation.
+/// This is the FROZEN layout.
 pub(super) fn inner_unsigncrypt(
     unsign_key: &UnifiedUnsigncryptionKey,
     sender_verf_key: &PublicSigKey,
@@ -232,8 +230,7 @@ mod tests {
     /// with the two tail fields fixed-size and in that order.
     ///
     /// This is the contract [`parse_msg`] relies on when it recovers `msg_len`
-    /// by subtracting from the end. Before this test, the layout was implied by
-    /// that arithmetic alone.
+    /// by subtracting from the end.
     #[test]
     fn ecdsa_v0_envelope_layout_is_locked() {
         const DSEP: &DomainSep = b"ECDSAV0T";
@@ -289,8 +286,7 @@ mod tests {
     }
 
     /// Truncating the plaintext below the two fixed tail fields is a length
-    /// error, not a panic. The arithmetic in [`parse_msg`] is the only thing
-    /// standing between a short plaintext and an out-of-bounds slice.
+    /// error, not a panic.
     #[test]
     fn a_short_plaintext_is_a_length_error() {
         let f = signcryption_fixture(PkeSchemeType::MlKem512, 400);

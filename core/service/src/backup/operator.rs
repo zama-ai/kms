@@ -192,6 +192,7 @@ impl TryFrom<InnerOperatorBackupOutput> for OperatorBackupOutput {
         Ok(Self {
             signcryption: value.signcryption.payload,
             pke_type: value.signcryption.pke_type as i32,
+            // TODO stop gap https://github.com/zama-ai/kms-internal/issues/3168
             signing_type: SigningSchemeType::Ecdsa256k1.as_wire(),
         })
     }
