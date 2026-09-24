@@ -16,7 +16,7 @@
 //! one. **A [`UnifiedSigncryption`] does not say which.** The layout follows from
 //! the key material a reader holds, named by [`SenderAuth`]: a single
 //! [`PublicSigKey`] can only open the frozen layout, and a [`VerfKeySet`] plus a
-//! scheme policy can only open the multi-signature one. 
+//! scheme policy can only open the multi-signature one.
 
 mod common;
 pub mod composite_v1;
@@ -411,8 +411,11 @@ pub enum SigncryptionPayloadVersions {
 /// - V0 (current): Initial version with `plaintext: TypedPlaintext` and `link: Vec<u8>`
 ///
 /// ## Testing
-/// - BC tests: `test_signcryption_payload` replays a fixture frozen at 0.13.0, which is
-///   what locks the binary format, and verifies v0.11.x data still deserializes
+/// - The BC test `test_signcryption_payload` replays the stored fixtures from 0.11.0
+///   onwards and compares each parsed value against its recorded metadata. It locks the
+///   read path. Bincode writes no field tags, so a field that is added, removed, reordered
+///   or retyped also breaks the replay.
+/// - The fixtures are LFS objects. The test cannot run without them.
 /// - It MUST pass before any changes to this type
 //
 // TODO(zama-ai/tfhe-rs-internal/issues/1535)

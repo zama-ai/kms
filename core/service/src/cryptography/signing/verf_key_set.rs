@@ -16,7 +16,8 @@ const DSEP_VERF_KEY_SET: DomainSep = *b"VKEYSET_";
 /// signs under several schemes, so a verifier needs several keys, and needs them
 /// to travel together.
 ///
-/// This type is not versioned as it is only meant to be an in-memory type.
+/// This type is in-memory only. The `impl_generic_versionize!` below gives it a
+/// no-op `Versionize` so that it can sit inside a versionized struct.
 ///
 /// # Invariants
 ///
