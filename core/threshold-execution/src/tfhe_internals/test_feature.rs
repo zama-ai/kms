@@ -330,8 +330,6 @@ where
 /// The compressed keyset is decompressed once internally to build the `KeySet`.
 // TODO(dp): Not convinced we need two key gen methods (this and gen_uncompressed_key_set). There's something weird with
 // this method: why do we need to return both compressed and uncompressed keys? Re-visit once the tests are sorted.
-#[allow(unknown_lints)]
-#[allow(non_local_effect_before_unhandled_error)]
 pub fn gen_key_set<R>(
     params: DKGParams,
     tag: tfhe::Tag,

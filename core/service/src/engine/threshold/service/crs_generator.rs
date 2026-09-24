@@ -37,7 +37,10 @@ use crate::{
             BaseKmsStruct, CrsGenMetadata, DSEP_PUBDATA_CRS, compute_info_crs,
             stored_scheme_signatures_to_proto,
         },
-        threshold::{service::session::ImmutableSessionMaker, traits::CrsGenerator},
+        threshold::{
+            service::session::{ImmutableSessionMaker, validate_context_and_epoch},
+            traits::CrsGenerator,
+        },
         validation::{RequestIdParsingErr, parse_grpc_request_id, validate_crs_gen_request},
     },
     util::{
@@ -106,14 +109,15 @@ impl<
         let inner = request.into_inner();
         let max_bits = inner.max_num_bits;
         let verified = validate_crs_gen_request(inner, op_tag)?;
-        // Find the role of the current server and validate the context exists
-        let my_role = self
-            .session_maker
-            .my_role(&verified.context_id)
-            .await
-            .map_err(|e| {
-                MetricedError::new(op_tag, Some(verified.req_id), e, tonic::Code::NotFound)
-            })?;
+        // Find the role of the current server and validate that the context and the epoch exist.
+        let my_role = validate_context_and_epoch(
+            op_tag,
+            &self.session_maker,
+            Some(verified.req_id),
+            &verified.context_id,
+            &verified.epoch_id,
+        )
+        .await?;
         let metric_tags = vec![(TAG_PARTY_ID, my_role.to_string())];
         timer.tags(metric_tags);
 
@@ -843,6 +847,41 @@ mod tests {
                 .unwrap_err()
                 .code(),
             tonic::Code::NotFound
+        );
+    }
+
+    /// When the requested epoch does not exist, then the CRS generation should be refused before anything
+    /// is written.
+    #[tokio::test]
+    async fn unknown_epoch() {
+        let mut rng = AesRng::seed_from_u64(123);
+        let crs_gen = make_crs_gen::<InsecureCeremony>(&mut rng).await;
+
+        let req_id = RequestId::new_random(&mut rng);
+        let unknown_epoch = EpochId::new_random(&mut rng);
+        let domain = alloy_to_protobuf_domain(&dummy_domain()).unwrap();
+        let req = CrsGenRequest {
+            signing_schemes: vec![kms_grpc::kms::v1::SigningSchemeType::Ecdsa256k1 as i32],
+            params: FheParameter::Default as i32,
+            max_num_bits: None,
+            request_id: Some(req_id.into()),
+            domain: Some(domain),
+            extra_data: vec![],
+            context_id: Some((*DEFAULT_MPC_CONTEXT).into()),
+            epoch_id: Some(unknown_epoch.into()),
+        };
+
+        assert_eq!(
+            crs_gen.crs_gen(Request::new(req)).await.unwrap_err().code(),
+            tonic::Code::NotFound
+        );
+        assert!(
+            !crs_gen
+                .crypto_storage
+                .inner
+                .crs_exists(&req_id, &unknown_epoch)
+                .await
+                .unwrap()
         );
     }
 

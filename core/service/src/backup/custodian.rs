@@ -355,10 +355,6 @@ impl Custodian {
     /// Obtain the operator ephemeral public key for reencryption,
     /// unsigncrypt the signcryption encrypted under the custodian's public key
     /// and then signcrypt it it under the operator's public key
-    // We allow the following lints because we are fine with mutating the rng even if
-    // we end up returning an error when signing the encrypted share.
-    #[allow(unknown_lints)]
-    #[allow(non_local_effect_before_unhandled_error)]
     pub fn verify_reencrypt<R: Rng + CryptoRng>(
         &self,
         rng: &mut R,
@@ -374,10 +370,6 @@ impl Custodian {
         )
     }
 
-    // Keep the body private so the Dylint public API pass does not exhaust its
-    // path-search work limit on this deliberately allowed pattern.
-    #[allow(unknown_lints)]
-    #[allow(non_local_effect_before_unhandled_error)]
     fn verify_reencrypt_inner<R: Rng + CryptoRng>(
         &self,
         rng: &mut R,
