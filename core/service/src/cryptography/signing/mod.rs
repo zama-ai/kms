@@ -782,16 +782,6 @@ mod tests {
                 scheme.as_wire()
             );
         }
-
-        // Stated once more as the property the rest of the crate relies on,
-        // so a failure names the consequence rather than an index mismatch.
-        let declared: Vec<_> = SigningSchemeType::iter().collect();
-        let mut by_wire = declared.clone();
-        by_wire.sort_by_key(|scheme| scheme.as_wire());
-        assert_eq!(
-            declared, by_wire,
-            "sorting by wire value reorders the schemes"
-        );
     }
 
     #[test]

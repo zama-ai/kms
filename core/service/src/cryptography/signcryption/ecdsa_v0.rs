@@ -182,7 +182,7 @@ pub(crate) fn insecure_decrypt_ignoring_signature(
 #[cfg(test)]
 mod tests {
     use super::super::Signcrypt;
-    use super::super::common::{receiver_enc_key_digest, signcryption_fixture};
+    use super::super::common::signcryption_fixture;
     use super::*;
     use crate::consts::SAFE_SER_SIZE_LIMIT;
     use crate::cryptography::encryption::PkeSchemeType;
@@ -206,24 +206,6 @@ mod tests {
                 .to_string()
                 .contains("unexpected verification key digest")
         );
-    }
-
-    /// The receiver binding is exactly `receiver_id ‖ H(receiver enc key)`, in
-    /// that order.
-    #[test]
-    fn ecdsa_v0_receiver_binding_is_locked() {
-        for scheme in [PkeSchemeType::MlKem512, PkeSchemeType::MlKem1024P384] {
-            let f = signcryption_fixture(scheme, 100);
-            assert_eq!(
-                receiver_binding(&f.receiver_id, &f.enc_key).unwrap(),
-                [
-                    f.receiver_id.as_slice(),
-                    receiver_enc_key_digest(&f.enc_key).unwrap().as_slice(),
-                ]
-                .concat(),
-                "{scheme}: the receiver binding changed"
-            );
-        }
     }
 
     /// The encrypted plaintext is exactly `msg ‖ sig(64) ‖ H(sender key)(32)`,

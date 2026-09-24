@@ -743,37 +743,24 @@ mod tests {
         (rng, keys)
     }
 
+    /// Round-trips under every PKE scheme signcryption supports.
     #[test]
     fn sunshine() {
-        let (mut rng, client_signcryption_keys) = test_setup();
-        let msg = TestType { i: 1333 };
-        let cipher = client_signcryption_keys
-            .signcrypt_key
-            .signcrypt(&mut rng, b"TESTTEST", &msg)
-            .unwrap();
-        assert_eq!(cipher.pke_type, PkeSchemeType::MlKem512);
-        let decrypted_msg = client_signcryption_keys
-            .unsigncryption_key
-            .unsigncrypt(b"TESTTEST", &cipher)
-            .unwrap();
-        assert_eq!(msg, decrypted_msg);
-    }
+        for scheme in [PkeSchemeType::MlKem512, PkeSchemeType::MlKem1024P384] {
+            let (mut rng, keys) = test_setup_with_scheme(scheme);
+            let msg = TestType { i: 1333 };
+            let cipher = keys
+                .signcrypt_key
+                .signcrypt(&mut rng, b"TESTTEST", &msg)
+                .unwrap();
+            assert_eq!(cipher.pke_type, scheme);
 
-    #[test]
-    fn sunshine_mlkem1024_p384() {
-        let (mut rng, keys) = test_setup_with_scheme(PkeSchemeType::MlKem1024P384);
-        let msg = TestType { i: 1333 };
-        let cipher = keys
-            .signcrypt_key
-            .signcrypt(&mut rng, b"TESTTEST", &msg)
-            .unwrap();
-        assert_eq!(cipher.pke_type, PkeSchemeType::MlKem1024P384);
-
-        let decrypted_msg = keys
-            .unsigncryption_key
-            .unsigncrypt(b"TESTTEST", &cipher)
-            .unwrap();
-        assert_eq!(msg, decrypted_msg);
+            let decrypted_msg = keys
+                .unsigncryption_key
+                .unsigncrypt(b"TESTTEST", &cipher)
+                .unwrap();
+            assert_eq!(msg, decrypted_msg, "{scheme}");
+        }
     }
 
     #[test]
@@ -942,13 +929,14 @@ mod tests {
                 signing_type: scheme,
             };
 
-            let upgraded = v0.clone().upgrade().unwrap();
-            assert_eq!(upgraded.payload, v0.payload);
-            assert_eq!(upgraded.pke_type, v0.pke_type);
-
             // The upgrade is exactly what the constructor builds, so a
             // regenerated artifact still compares equal to a frozen one.
-            assert_eq!(upgraded, UnifiedSigncryption::new(v0.payload, v0.pke_type));
+            let upgraded = v0.clone().upgrade().unwrap();
+            assert_eq!(
+                upgraded,
+                UnifiedSigncryption::new(v0.payload, v0.pke_type),
+                "{scheme}"
+            );
         }
     }
 }

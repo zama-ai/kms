@@ -128,6 +128,7 @@ mod tests {
     use super::super::{Signcrypt, UnifiedSigncryptionKey, UnifiedUnsigncryptionKey, Unsigncrypt};
     use super::*;
     use crate::cryptography::encryption::PkeSchemeType;
+    use crate::cryptography::signatures::{PublicSigKey, UnifiedPublicSigKey};
     use crate::cryptography::signing::test_support::seeded_identity;
     use crate::vault::storage::tests::TestType;
     use aes_prng::AesRng;
@@ -193,6 +194,15 @@ mod tests {
             .open(DSEP, cipher)
     }
 
+    /// The ECDSA member of the fixture's key set, in the form the frozen reader
+    /// takes.
+    fn ecdsa_member(f: &CompositeFixture) -> PublicSigKey {
+        match f.keys.require(SigningSchemeType::Ecdsa256k1).unwrap() {
+            UnifiedPublicSigKey::Ecdsa256k1(key) => key.clone(),
+            _ => unreachable!("the ECDSA member of the set is an ECDSA key"),
+        }
+    }
+
     /// Round-trips for both PKE schemes the backup and user-decryption paths use.
     #[test]
     fn round_trip() {
@@ -248,107 +258,67 @@ mod tests {
     }
 
     /// Neither reader accepts the other's envelope.
+    /// The single-ECDSA set holds the very key that signed the envelope and must still refuse
+    /// it, because the payload is a safe-serialized KEM ciphertext that its
+    /// bincode parse rejects before anything is decrypted.
     #[test]
     fn the_two_formats_do_not_cross() {
-        let mut f = fixture(PkeSchemeType::MlKem512, 300);
-        let composite = seal_msg(&mut f, b"composite payload");
+        for (seed, schemes) in [
+            (300_u64, pair()),
+            (400_u64, vec![SigningSchemeType::Ecdsa256k1]),
+        ] {
+            let mut f = fixture_under(PkeSchemeType::MlKem512, seed, schemes);
+            let composite = seal_msg(&mut f, b"composite payload");
 
-        // Frozen reader, handed a composite envelope.
-        let legacy_verf = f
-            .keys
-            .require(SigningSchemeType::Ecdsa256k1)
-            .unwrap()
-            .clone();
-        let legacy_ecdsa = match &legacy_verf {
-            crate::cryptography::signatures::UnifiedPublicSigKey::Ecdsa256k1(k) => k.clone(),
-            _ => unreachable!("the ECDSA member of the set is an ECDSA key"),
-        };
-        let legacy_key =
-            UnifiedUnsigncryptionKey::new(&f.dec_key, &f.enc_key, &legacy_ecdsa, &f.receiver_id);
-        let err = legacy_key
-            .unsigncrypt::<TestType>(DSEP, &composite)
-            .unwrap_err();
-        assert!(
-            matches!(err, CryptographyError::BincodeError(_)),
-            "the frozen reader must reject a composite envelope on the KEM ciphertext, got: {err}"
-        );
+            // The envelope does open for the reader it was made for, so each
+            // rejection below is the format mismatch and not a broken fixture.
+            assert_eq!(&*open_with(&f, &composite).unwrap(), b"composite payload");
 
-        // Composite reader, handed a frozen envelope. The frozen layout writes
-        // its `HybridKemCt` with bincode and no header, so `safe_deserialize`
-        // refuses it — again before anything is decrypted.
-        let base = signcryption_fixture(PkeSchemeType::MlKem512, 300);
-        let mut rng = base.rng;
-        let ecdsa_key =
-            UnifiedSigncryptionKey::new(&base.signing_key, &base.enc_key, &base.receiver_id);
-        let frozen = ecdsa_key
-            .signcrypt(&mut rng, DSEP, &TestType { i: 7 })
-            .unwrap();
-        let err = open_with(&f, &frozen).unwrap_err();
-        assert!(
-            matches!(err, CryptographyError::SerializationError(_)),
-            "the composite reader must reject a frozen envelope on deserialization, got: {err}"
-        );
+            // Frozen reader, handed a composite envelope.
+            let legacy_ecdsa = ecdsa_member(&f);
+            let legacy_key = UnifiedUnsigncryptionKey::new(
+                &f.dec_key,
+                &f.enc_key,
+                &legacy_ecdsa,
+                &f.receiver_id,
+            );
+            let err = legacy_key
+                .unsigncrypt::<TestType>(DSEP, &composite)
+                .unwrap_err();
+            assert!(
+                matches!(err, CryptographyError::BincodeError(_)),
+                "the frozen reader must reject a composite envelope on the KEM ciphertext, got: {err}"
+            );
+
+            // Composite reader, handed a frozen envelope. The frozen layout
+            // writes its `HybridKemCt` with bincode and no header, so
+            // `safe_deserialize` refuses it — again before any decryption.
+            let base = signcryption_fixture(PkeSchemeType::MlKem512, seed);
+            let mut rng = base.rng;
+            let frozen =
+                UnifiedSigncryptionKey::new(&base.signing_key, &base.enc_key, &base.receiver_id)
+                    .signcrypt(&mut rng, DSEP, &TestType { i: 7 })
+                    .unwrap();
+            let err = open_with(&f, &frozen).unwrap_err();
+            assert!(
+                matches!(err, CryptographyError::SerializationError(_)),
+                "the composite reader must reject a frozen envelope on deserialization, got: {err}"
+            );
+        }
     }
 
-    /// ECDSA alone is a legitimate scheme set for this layout.
+    /// Opening fails on every deviation from what was sealed.    
     #[test]
-    fn the_ecdsa_singleton_round_trips_and_still_does_not_cross() {
-        let mut f = fixture_under(
-            PkeSchemeType::MlKem512,
-            400,
-            vec![SigningSchemeType::Ecdsa256k1],
-        );
-        let cipher = seal_msg(&mut f, b"ecdsa alone");
-        let opened = open_with(&f, &cipher).unwrap();
-        assert_eq!(&*opened, b"ecdsa alone");
-
-        // The frozen reader, holding the very key that signed this envelope,
-        // still rejects it: the payload is a safe-serialized KEM ciphertext,
-        // which its bincode parse refuses.
-        let legacy_verf = f
-            .keys
-            .require(SigningSchemeType::Ecdsa256k1)
-            .unwrap()
-            .clone();
-        let legacy_ecdsa = match &legacy_verf {
-            crate::cryptography::signatures::UnifiedPublicSigKey::Ecdsa256k1(k) => k.clone(),
-            _ => unreachable!("the ECDSA member of the set is an ECDSA key"),
-        };
-        let legacy_key =
-            UnifiedUnsigncryptionKey::new(&f.dec_key, &f.enc_key, &legacy_ecdsa, &f.receiver_id);
-        assert!(
-            legacy_key.unsigncrypt::<TestType>(DSEP, &cipher).is_err(),
-            "the frozen reader must not accept a single-ECDSA composite envelope"
-        );
-
-        // ...and the composite reader still rejects a frozen envelope, even now
-        // that the set it demands is exactly {ECDSA}.
-        let base = signcryption_fixture(PkeSchemeType::MlKem512, 400);
-        let mut rng = base.rng;
-        let frozen =
-            UnifiedSigncryptionKey::new(&base.signing_key, &base.enc_key, &base.receiver_id)
-                .signcrypt(&mut rng, DSEP, &TestType { i: 7 })
-                .unwrap();
-        assert!(
-            matches!(
-                open_with(&f, &frozen),
-                Err(CryptographyError::SerializationError(_))
-            ),
-            "the composite reader must reject a frozen envelope on deserialization"
-        );
-    }
-
-    /// A sender whose key set differs from the one the receiver holds is
-    /// detected, even though the ciphertext decrypts. There is no sender
-    /// identifier in the envelope to compare.
-    #[test]
-    fn a_different_sender_key_set_is_rejected() {
+    fn open_rejects_any_deviation_from_what_was_sealed() {
         let mut f = fixture(PkeSchemeType::MlKem512, 500);
-        let cipher = seal_msg(&mut f, b"whose message is this");
+        let cipher = seal_msg(&mut f, b"bound to one sender and one receiver");
+
+        // The untouched envelope opens, so each rejection below is the
+        // deviation and not an unrelated failure.
+        open_with(&f, &cipher).unwrap();
 
         let mut rng = AesRng::seed_from_u64(999);
-        let other = seeded_identity(&mut rng);
-        let other_keys = VerfKeySet::from_identity(&other, &pair()).unwrap();
+        let other_keys = VerfKeySet::from_identity(&seeded_identity(&mut rng), &f.schemes).unwrap();
         assert!(
             open(
                 &f.dec_key,
@@ -356,31 +326,17 @@ mod tests {
                 &other_keys,
                 &f.receiver_id,
                 DSEP,
-                &cipher,
+                &cipher
             )
-            .is_err()
+            .is_err(),
+            "another party's key set opened the envelope"
         );
-    }
-
-    /// The receiver binding is covered by the signature, so opening with a
-    /// different receiver id fails.
-    #[test]
-    fn a_different_receiver_id_is_rejected() {
-        let mut f = fixture(PkeSchemeType::MlKem512, 600);
-        let cipher = seal_msg(&mut f, b"bound to a receiver");
 
         let other_id = b"a different receiver".to_vec();
-        assert!(open(&f.dec_key, &f.enc_key, &f.keys, &other_id, DSEP, &cipher,).is_err());
-    }
-
-    #[test]
-    fn a_tampered_ciphertext_or_dsep_fails() {
-        let mut f = fixture(PkeSchemeType::MlKem512, 700);
-        let cipher = seal_msg(&mut f, b"tamper with me");
-
-        let mut flipped = cipher.clone();
-        flipped.payload[0] ^= 0x01;
-        assert!(open_with(&f, &flipped).is_err());
+        assert!(
+            open(&f.dec_key, &f.enc_key, &f.keys, &other_id, DSEP, &cipher).is_err(),
+            "a different receiver id opened the envelope"
+        );
 
         assert!(
             open(
@@ -389,9 +345,17 @@ mod tests {
                 &f.keys,
                 &f.receiver_id,
                 b"OTHERDSP",
-                &cipher,
+                &cipher
             )
-            .is_err()
+            .is_err(),
+            "a different domain separator opened the envelope"
+        );
+
+        let mut flipped = cipher.clone();
+        flipped.payload[0] ^= 0x01;
+        assert!(
+            open_with(&f, &flipped).is_err(),
+            "a tampered ciphertext opened the envelope"
         );
     }
 }

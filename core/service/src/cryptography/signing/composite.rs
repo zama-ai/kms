@@ -248,12 +248,17 @@ mod tests {
         (identity, keys, schemes)
     }
 
+    /// A signature verifies under the key set that made it, and under no other
+    /// party's.
     #[test]
     fn round_trip_sunshine() {
         let (identity, keys, schemes) = setup(1);
         let sig = CompositeSignature::sign_uniform(&identity, &schemes, DSEP, MSG).unwrap();
         assert_eq!(sig.schemes(), schemes);
         sig.verify_uniform(&keys, DSEP, MSG).unwrap();
+
+        let (_, other_keys, _) = setup(7);
+        assert!(sig.verify_uniform(&other_keys, DSEP, MSG).is_err());
     }
 
     /// Removing a signature must not leave something that verifies under the
@@ -334,18 +339,6 @@ mod tests {
                 .is_err()
         );
         assert!(sig.verify_uniform(&keys, b"OTHERDSP", MSG).is_err());
-    }
-
-    /// Signatures are checked against the key set presented, so another party's
-    /// keys do not verify them.
-    #[test]
-    fn another_partys_keys_do_not_verify() {
-        let (identity, keys, schemes) = setup(6);
-        let (_, other_keys, _) = setup(7);
-        let sig = CompositeSignature::sign_uniform(&identity, &schemes, DSEP, MSG).unwrap();
-
-        sig.verify_uniform(&keys, DSEP, MSG).unwrap();
-        assert!(sig.verify_uniform(&other_keys, DSEP, MSG).is_err());
     }
 
     /// An identity with no root seed can only do ECDSA, so asking it for the

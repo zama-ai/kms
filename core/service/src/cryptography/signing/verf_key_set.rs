@@ -154,39 +154,17 @@ mod tests {
         ));
     }
 
+    /// A misfiled key and an empty set are both refused, by the constructor and
+    /// on deserialization alike.
     #[test]
-    fn a_key_filed_under_the_wrong_scheme_is_rejected() {
+    fn the_invariants_hold_for_a_built_and_a_deserialized_set() {
         let mut rng = AesRng::seed_from_u64(3);
         let identity = seeded_identity(&mut rng);
         let ecdsa = identity
             .unified_verifying_key(SigningSchemeType::Ecdsa256k1)
             .unwrap();
 
-        let mut keys = BTreeMap::new();
-        keys.insert(SigningSchemeType::MlDsa87, ecdsa);
-        assert!(matches!(
-            VerfKeySet::new(keys),
-            Err(SigningError::SchemeMismatch { .. })
-        ));
-
-        assert!(matches!(
-            VerfKeySet::new(BTreeMap::new()),
-            Err(SigningError::EmptySchemeSet)
-        ));
-    }
-
-    /// The invariants must hold for a set that is *read back*, not only for one
-    /// built in process. `#[serde(transparent)]` makes the encoding of a
-    /// `VerfKeySet` identical to that of its map, so a hand-crafted map is
-    /// exactly what an attacker would be able to present.
-    #[test]
-    fn a_deserialized_set_is_validated() {
-        let mut rng = AesRng::seed_from_u64(4);
-        let identity = seeded_identity(&mut rng);
-        let ecdsa = identity
-            .unified_verifying_key(SigningSchemeType::Ecdsa256k1)
-            .unwrap();
-
+        // A well-formed set survives the round trip.
         let good = VerfKeySet::new(BTreeMap::from([(
             SigningSchemeType::Ecdsa256k1,
             ecdsa.clone(),
@@ -200,11 +178,19 @@ mod tests {
 
         // A key filed under a scheme it does not belong to.
         let misfiled = BTreeMap::from([(SigningSchemeType::MlDsa87, ecdsa)]);
+        assert!(matches!(
+            VerfKeySet::new(misfiled.clone()),
+            Err(SigningError::SchemeMismatch { .. })
+        ));
         let bytes = bc2wrap::serialize(&misfiled).unwrap();
         assert!(bc2wrap::deserialize_slice::<VerfKeySet>(&bytes).is_err());
 
-        // An empty set, which would verify a signature against no keys at all.
+        // The empty set.
         let empty = BTreeMap::<SigningSchemeType, UnifiedPublicSigKey>::new();
+        assert!(matches!(
+            VerfKeySet::new(empty.clone()),
+            Err(SigningError::EmptySchemeSet)
+        ));
         let bytes = bc2wrap::serialize(&empty).unwrap();
         assert!(bc2wrap::deserialize_slice::<VerfKeySet>(&bytes).is_err());
     }
