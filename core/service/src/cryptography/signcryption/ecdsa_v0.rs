@@ -170,7 +170,19 @@ pub(crate) fn insecure_decrypt_ignoring_signature(
     let decrypted_plaintext = hybrid_decrypt(cipher, dec_key)?;
 
     // strip off the signature bytes (these are ignored here)
-    let msg_len = decrypted_plaintext.len() - DIGEST_BYTES - SIG_SIZE;
+    // The sender is not authenticated on this path, so the plaintext length is
+    // attacker-chosen and the subtraction is checked, as in `parse_msg`.
+    let msg_len = decrypted_plaintext
+        .len()
+        .checked_sub(DIGEST_BYTES)
+        .and_then(|len| len.checked_sub(SIG_SIZE))
+        .ok_or_else(|| {
+            CryptographyError::LengthError(format!(
+                "Message is too short ({} bytes) to contain sig || H(server_verification_key) ({} bytes) ",
+                decrypted_plaintext.len(),
+                DIGEST_BYTES + SIG_SIZE
+            ))
+        })?;
     let msg = &decrypted_plaintext[..msg_len];
     // LEGACY should be using safe_deserialization from tfhe-rs
     let signcrypted_msg: SigncryptionPayload = bc2wrap::deserialize_slice(msg)
