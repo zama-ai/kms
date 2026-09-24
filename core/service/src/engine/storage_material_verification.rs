@@ -542,6 +542,12 @@ fn verify_metadata_signatures(
         )?;
     }
 
+    // Metadata that names no scheme has no per-scheme entry to check, and no
+    // scheme set to bind a preimage to.
+    if signatures.is_empty() {
+        return Ok(());
+    }
+
     // The set is derived from the stored entries rather than requested from
     // outside: at boot there is no request to measure against.
     let stored_schemes: Vec<_> = signatures.iter().map(|stored| stored.scheme).collect();
