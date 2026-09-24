@@ -1195,6 +1195,7 @@ fn unpack_new_mpc_epoch_req(req: NewMpcEpochRequest) -> anyhow::Result<VerifiedN
 #[cfg(test)]
 mod tests {
     use crate::cryptography::signing::VerfKeySet;
+    use crate::cryptography::signing::composite::sign_result_entries;
     use aes_prng::AesRng;
     use alloy_dyn_abi::Eip712Domain;
     use kms_grpc::{
@@ -2371,19 +2372,23 @@ mod tests {
             ),
         };
 
-        // The post-quantum entry signs the versioned payload, which carries the
-        // response bytes and the extra data.
+        // The post-quantum entry signs the versioned payload — the response bytes
+        // together with the extra data — prefixed by the scheme set.
         let response_bytes = bc2wrap::serialize(&payload).unwrap();
         let payload_bytes =
             crate::engine::base::public_dec_payload_bytes(&response_bytes, &extra_data).unwrap();
         let scheme = SigningSchemeType::MlDsa65;
-        let signatures = vec![TypedSignature {
-            scheme: kms_grpc::kms::v1::SigningSchemeType::Mldsa65 as i32,
-            signature: identity
-                .unified_sign_with(scheme, &DSEP_PUBLIC_DECRYPTION, &payload_bytes)
-                .unwrap()
-                .to_bytes(),
-        }];
+        let signatures: Vec<TypedSignature> = sign_result_entries(
+            &identity,
+            &[scheme],
+            &DSEP_PUBLIC_DECRYPTION,
+            &[0u8; 32],
+            &payload_bytes,
+        )
+        .unwrap()
+        .iter()
+        .map(TypedSignature::from)
+        .collect();
 
         let server_pks = HashMap::from([(1u32, vk.clone())]);
         let scheme_verf_keys = HashMap::from([(
