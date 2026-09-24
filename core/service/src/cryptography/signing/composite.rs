@@ -9,9 +9,9 @@ use super::identity::NodeSigningIdentity;
 use super::typed_signature::StoredTypedSignature;
 use super::verf_key_set::VerfKeySet;
 use super::{Signature, SigningError, SigningSchemeType, unified_verify};
-use crate::impl_generic_versionize;
 use hashing::DomainSep;
 use serde::{Deserialize, Serialize};
+use tfhe_versionable::{Unversionize, UnversionizeError, Versionize, VersionizeOwned};
 
 /// Sort `schemes` into canonical order and drop duplicates.
 ///
@@ -83,12 +83,42 @@ fn ensure_canonical(schemes: &[SigningSchemeType]) -> Result<(), SigningError> {
 ///
 /// Entries are ordered by scheme and carry no duplicate scheme.
 ///
-/// The [`Deserialize`] impl *rejects* a non-canonical list rather than sorting it.
+/// Reading one back *rejects* a non-canonical list rather than sorting it, on
+/// the serde path and on the versioned path alike.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 #[serde(transparent)]
 pub struct CompositeSignature(Vec<StoredTypedSignature>);
 
-impl_generic_versionize!(CompositeSignature);
+// Versioned by hand rather than by `#[derive(Versionize)]`.
+//
+// The versioned form is the one `Vec<StoredTypedSignature>` already has, so
+// every entry carries its own version dispatch.
+impl Versionize for CompositeSignature {
+    type Versioned<'vers>
+        = <Vec<StoredTypedSignature> as Versionize>::Versioned<'vers>
+    where
+        Self: 'vers;
+
+    fn versionize(&self) -> Self::Versioned<'_> {
+        self.0.versionize()
+    }
+}
+
+impl VersionizeOwned for CompositeSignature {
+    type VersionedOwned = <Vec<StoredTypedSignature> as VersionizeOwned>::VersionedOwned;
+
+    fn versionize_owned(self) -> Self::VersionedOwned {
+        self.0.versionize_owned()
+    }
+}
+
+impl Unversionize for CompositeSignature {
+    fn unversionize(versioned: Self::VersionedOwned) -> Result<Self, UnversionizeError> {
+        let entries = <Vec<StoredTypedSignature> as Unversionize>::unversionize(versioned)?;
+        Self::from_canonical(entries)
+            .map_err(|error| UnversionizeError::conversion("CompositeSignature", error))
+    }
+}
 
 impl<'de> Deserialize<'de> for CompositeSignature {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
@@ -305,12 +335,26 @@ mod tests {
 
         let mut reversed = entries.clone();
         reversed.reverse();
-        assert!(CompositeSignature::from_canonical(reversed).is_err());
+        assert!(CompositeSignature::from_canonical(reversed.clone()).is_err());
 
         let duplicated = vec![entries[0].clone(), entries[0].clone()];
         assert!(CompositeSignature::from_canonical(duplicated).is_err());
 
         assert!(CompositeSignature::from_canonical(Vec::new()).is_err());
+
+        // The versioned path validates too. `Unversionize` is hand-written
+        // precisely so that a reversed list placed in storage does not read back
+        // as a valid signature.
+        assert!(matches!(
+            CompositeSignature::unversionize(reversed.versionize_owned()),
+            Err(UnversionizeError::Conversion { .. })
+        ));
+
+        // ...while the canonical one survives the round trip unchanged.
+        assert_eq!(
+            CompositeSignature::unversionize(sig.clone().versionize_owned()).unwrap(),
+            sig
+        );
     }
 
     /// Every constituent signature has to verify; one bad one fails the whole.
