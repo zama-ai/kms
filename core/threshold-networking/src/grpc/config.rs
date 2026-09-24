@@ -83,8 +83,7 @@ pub struct CoreToCoreNetworkConfig {
     #[validate(range(min = 1))]
     pub keepalive_interval_secs: Option<u64>,
     /// Time in seconds to wait for the reply to a keepalive ping before the connection to a peer
-    /// closes. Without this, a send to a peer whose connection died without closing hangs until
-    /// the operating system gives up on the TCP connection.
+    /// closes.
     #[validate(range(min = 1))]
     pub keepalive_timeout_secs: Option<u64>,
 }

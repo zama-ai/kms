@@ -916,8 +916,8 @@ mod tests {
         // the old server stops, so party 1 never sees that connection close.
         proxy.restart_behind(std::net::SocketAddr::new(ip_addr, restarted_backend_port_2));
         stop_2.send(()).unwrap();
-        // A graceful shutdown can wait for the frozen connection, which never closes.
-        let _ = tokio::time::timeout(Duration::from_secs(10), server_2).await;
+        // A graceful shutdown would wait for the frozen connection, which never closes.
+        server_2.abort();
         drop(networking_2);
         let networking_2 =
             GrpcNetworkingManager::new(None, CoreToCoreNetworkConfig::default()).unwrap();
