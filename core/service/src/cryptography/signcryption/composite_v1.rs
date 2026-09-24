@@ -48,9 +48,6 @@ impl Zeroize for CompositeEnvelope {
 /// `dsep ‖ schemes ‖ msg ‖ receiver_id ‖ H(receiver enc key)`, and the whole
 /// envelope is then encrypted to the receiver.
 #[cfg(feature = "non-wasm")]
-#[allow(unknown_lints)]
-// We allow modifying the rng before return
-#[allow(non_local_effect_before_error_return)]
 pub fn seal(
     identity: &NodeSigningIdentity,
     schemes: &[SigningSchemeType],

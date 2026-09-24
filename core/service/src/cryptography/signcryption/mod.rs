@@ -16,49 +16,7 @@
 //! one. **A [`UnifiedSigncryption`] does not say which.** The layout follows from
 //! the key material a reader holds, named by [`SenderAuth`]: a single
 //! [`PublicSigKey`] can only open the frozen layout, and a [`VerfKeySet`] plus a
-//! scheme policy can only open the multi-signature one. Those are the same
-//! choice, so they are the same value, and there is nothing for a tag to
-//! disagree with.
-//!
-//! A layout tag on the message was tried and removed: it travels outside the
-//! ciphertext, so it could never be trusted over the caller's own knowledge of
-//! which opener it invoked. The two parsers reject each other's output on their
-//! own, and on the first field either one reads: the frozen layout writes its
-//! `HybridKemCt` with bincode and the multi-signature layout safe-serializes
-//! it, so neither reader gets as far as decrypting the other's envelope. Both
-//! directions are checked by
-//! `composite_v1::tests::the_two_formats_do_not_cross`.
-//!
-//! If a reader ever has to walk stored material of mixed vintage, prefer the
-//! type-name header `safe_serialize` already writes *inside* the ciphertext over
-//! reinstating an outer tag: an attacker cannot forge it without the decryption
-//! key.
-//!
-//! One exception to "a signature names the schemes it was made under": the
-//! frozen layout is **not** scheme-set-bound, because its preimage cannot take a
-//! prefix. A reader of that layout learns the scheme only from the verification
-//! key it chose. Every other layout binds the set into the signed bytes.
-//!
-//! The frozen layout is the original one:
-//! every user-decryption ciphertext produced since 0.11 uses it, the deployed
-//! browser-side verifier in `crate::client::user_decryption_wasm` parses it, and
-//! because it carries no version tag of its own and is recovered by subtracting
-//! two fixed-size tail fields, it cannot be made self-describing after the fact
-//! either. What is locked, and by what:
-//!
-//! - The plaintext layout `msg ‖ sig ‖ H(sender verification key)` and the
-//!   signed preimage `dsep ‖ msg ‖ receiver_id ‖ H(receiver enc key)`, by
-//!   `ecdsa_v0::tests::ecdsa_v0_envelope_layout_is_locked`.
-//! - The whole artifact, including **the order in which the RNG is drawn from**,
-//!   by the backward-compatibility harness: `test_unified_signcryption` in
-//!   `core/service/tests/backward_compatibility_kms.rs` regenerates a
-//!   signcryption from a seeded RNG and compares it byte-for-byte against a
-//!   fixture frozen at 0.13.0. Moving an RNG draw in `ecdsa_v0::inner_signcryption`
-//!   breaks it.
-//!
-//! The multi-signature layout carries one signature per scheme, for the
-//! custodian-backup chain. Reading it goes through [`Unsigncrypt`] like the
-//! frozen layout, on a key built with [`UnifiedUnsigncryptionKey::new_multi`].
+//! scheme policy can only open the multi-signature one. 
 
 mod common;
 pub mod composite_v1;
