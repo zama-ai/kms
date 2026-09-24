@@ -308,12 +308,20 @@ grpcHeathProbe:
     tag: v0.4-dev
     pullPolicy: Always
 
-# Used by enclave proxy sidecars
+# Used by enclave proxy sidecars:
+# enclave-config, kms-core-enclave-logger, enclave-web-identity-token.
 socat:
   image:
     name: hub.zama.org/zama-protocol/zama.ai/socat
     tag: v1.8-dev
     pullPolicy: Always
+  resources:
+    requests:
+      cpu: 50m
+      memory: 64Mi
+    limits:
+      cpu: 200m
+      memory: 128Mi
 
 runMode: dev
 
