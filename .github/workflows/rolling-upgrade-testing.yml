@@ -117,6 +117,15 @@
 #                            batch 2 on, only the upgraded parties restart
 #                            otherwise; restarting a subset shows which of the
 #                            running parties hold state that breaks the tests.
+#   batch2_wait_minutes    (string, default 0)
+#                            Timing experiment: wait this long after the second
+#                            upgrade batch before its tests.
+#   batch2_retry_minutes   (string, default 0 = no rerun)
+#                            Timing experiment: if the batch 2 tests fail, rerun
+#                            them until they pass or this many minutes have
+#                            passed since the first attempt started. A metrics
+#                            sampler records the network events of all cores
+#                            every 30 s meanwhile. decrypt profile only.
 #
 # Jobs
 # ----
@@ -214,6 +223,16 @@ on:
         description: 'After each upgrade batch, restart the core pods of these parties together before the mixed-state tests: "all" or comma-separated party IDs (e.g. 1,2,3,4,5). Empty = no restart.'
         required: false
         default: ''
+        type: string
+      batch2_wait_minutes:
+        description: 'Timing experiment: minutes to wait after the second upgrade batch before its tests (0 = no wait).'
+        required: false
+        default: '0'
+        type: string
+      batch2_retry_minutes:
+        description: 'Timing experiment: if the batch 2 tests fail, rerun them until they pass or this many minutes have passed since the first attempt started (0 = no rerun). decrypt profile only.'
+        required: false
+        default: '0'
         type: string
 
 permissions: {}
@@ -359,7 +378,19 @@ jobs:
           TEST_PROFILE: ${{ inputs.test_profile }}
           EPOCH_MIGRATION_INPUT: ${{ inputs.epoch_migration }}
           RESTART_PARTIES_INPUT: ${{ inputs.restart_parties }}
+          BATCH2_WAIT_MINUTES_INPUT: ${{ inputs.batch2_wait_minutes || '0' }}
+          BATCH2_RETRY_MINUTES_INPUT: ${{ inputs.batch2_retry_minutes || '0' }}
         run: |
+          for value in "${BATCH2_WAIT_MINUTES_INPUT}" "${BATCH2_RETRY_MINUTES_INPUT}"; do
+            if ! [[ "${value}" =~ ^[0-9]+$ ]]; then
+              echo "ERROR: batch2_wait_minutes and batch2_retry_minutes must be whole minutes, got '${value}'"
+              exit 1
+            fi
+          done
+          if [[ "${TEST_PROFILE}" == "prss-threshold" && "${BATCH2_RETRY_MINUTES_INPUT}" != "0" ]]; then
+            echo "ERROR: batch2_retry_minutes needs test_profile=decrypt; the prss-threshold probes use fixed request IDs, which a rerun would reuse."
+            exit 1
+          fi
           # Map the boolean client_logs input to the argo enabled/disabled value
           # (same convention as performance-testing.yml).
           if [[ "${CLIENT_LOGS}" == "true" ]]; then
@@ -396,6 +427,8 @@ jobs:
             echo "ENABLE_PRSS_THRESHOLD=${ENABLE_PRSS_THRESHOLD}"
             echo "EPOCH_MIGRATION=${EPOCH_MIGRATION_INPUT}"
             echo "RESTART_PARTIES=${RESTART_PARTIES_INPUT}"
+            echo "BATCH2_WAIT_MINUTES=${BATCH2_WAIT_MINUTES_INPUT}"
+            echo "BATCH2_RETRY_MINUTES=${BATCH2_RETRY_MINUTES_INPUT}"
           } >> "$GITHUB_ENV"
 
       # ====================================================================
@@ -761,34 +794,66 @@ jobs:
             )
           fi
 
-          argo submit -n argo /tmp/mixed-batch2-workflow.yaml \
-            -p tls="${TLS_STATUS}" \
-            -p client-logs="${CLIENT_LOGS_STATUS}" \
-            -p fhe-params="${FHE_PARAMS}" \
-            -p run_url="${RUN_URL}" \
-            -p key-id="${BASELINE_KEY_ID}" \
-            -p test_label="mixed-${NUM_UPGRADED}-of-13" \
-            -p old_version="${OLD_IMAGE_TAG}" \
-            -p new_version="${NEW_IMAGE_TAG}" \
-            -p num_upgraded="${NUM_UPGRADED}" \
-            -p num_total="13" \
-            "${REQID_ARGS[@]}"
+          # Timing experiment: sample the network metrics of all cores every 30 s
+          # during the wait and the test attempts, to show when the connections
+          # of running parties to restarted peers fail.
+          python3 ci/scripts/sample_core_metrics.py "${NAMESPACE}" 30 \
+            > kms-core-network-metrics-timeline-batch2.txt 2>&1 &
+          SAMPLER_PID=$!
+          trap 'kill "${SAMPLER_PID}" 2>/dev/null || true' EXIT
 
-          echo "Streaming batch 2 mixed-state workflow logs..."
-          argo logs @latest -f -n "${NAMESPACE}" | tee argo-mixed-batch2-logs.txt
-          echo "Batch 2 mixed-state tests completed."
-
-          # Correctness gate: fail if any non-warmup decrypt pod did not succeed.
-          FAILED_NODES=$(argo get @latest -n "${NAMESPACE}" -o json | jq -r '
-            .status.nodes[]?
-            | select(.type == "Pod" and .phase != "Succeeded"
-                     and (.displayName | test("warmup|reqid-above") | not))
-            | .displayName')
-          if [[ -n "${FAILED_NODES}" ]]; then
-            echo "ERROR: batch 2 mixed-state test pods did not succeed:"
-            echo "${FAILED_NODES}"
-            exit 1
+          if (( BATCH2_WAIT_MINUTES > 0 )); then
+            echo "$(date -u +%T) Waiting ${BATCH2_WAIT_MINUTES} min before the batch 2 tests..."
+            sleep $(( BATCH2_WAIT_MINUTES * 60 ))
           fi
+
+          # Runs the batch 2 tests once; returns non-zero if a test pod failed.
+          run_batch2_tests() {
+            local attempt="$1"
+            echo "$(date -u +%T) Batch 2 attempt ${attempt}: submitting the mixed-state tests..."
+            argo submit -n argo /tmp/mixed-batch2-workflow.yaml \
+              -p tls="${TLS_STATUS}" \
+              -p client-logs="${CLIENT_LOGS_STATUS}" \
+              -p fhe-params="${FHE_PARAMS}" \
+              -p run_url="${RUN_URL}" \
+              -p key-id="${BASELINE_KEY_ID}" \
+              -p test_label="mixed-${NUM_UPGRADED}-of-13" \
+              -p old_version="${OLD_IMAGE_TAG}" \
+              -p new_version="${NEW_IMAGE_TAG}" \
+              -p num_upgraded="${NUM_UPGRADED}" \
+              -p num_total="13" \
+              "${REQID_ARGS[@]}" || return 1
+
+            argo logs @latest -f -n "${NAMESPACE}" | tee "argo-mixed-batch2-attempt${attempt}-logs.txt"
+
+            # Correctness gate: fail if any non-warmup decrypt pod did not succeed.
+            local failed_nodes
+            failed_nodes=$(argo get @latest -n "${NAMESPACE}" -o json | jq -r '
+              .status.nodes[]?
+              | select(.type == "Pod" and .phase != "Succeeded"
+                       and (.displayName | test("warmup|reqid-above") | not))
+              | .displayName') || return 1
+            if [[ -n "${failed_nodes}" ]]; then
+              echo "Batch 2 attempt ${attempt}: test pods did not succeed:"
+              echo "${failed_nodes}"
+              return 1
+            fi
+          }
+
+          FIRST_ATTEMPT_START=$(date +%s)
+          DEADLINE=$(( FIRST_ATTEMPT_START + BATCH2_RETRY_MINUTES * 60 ))
+          ATTEMPT=1
+          until run_batch2_tests "${ATTEMPT}"; do
+            ELAPSED_MIN=$(( ($(date +%s) - FIRST_ATTEMPT_START) / 60 ))
+            echo "$(date -u +%T) Batch 2 attempt ${ATTEMPT} failed, ${ELAPSED_MIN} min after the first attempt started."
+            if (( $(date +%s) >= DEADLINE )); then
+              echo "ERROR: batch 2 mixed-state tests did not pass within ${BATCH2_RETRY_MINUTES} min of the first attempt (${ATTEMPT} attempts)."
+              exit 1
+            fi
+            ATTEMPT=$(( ATTEMPT + 1 ))
+          done
+          ELAPSED_MIN=$(( ($(date +%s) - FIRST_ATTEMPT_START) / 60 ))
+          echo "::notice title=Batch 2 tests passed::attempt ${ATTEMPT}, ${ELAPSED_MIN} min after the first attempt started (after a ${BATCH2_WAIT_MINUTES} min wait)"
 
       - name: 'Snapshot network metrics after batch 2 tests'
         if: always() && steps.metrics-before-batch2.outcome == 'success'
