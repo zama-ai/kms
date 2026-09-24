@@ -243,8 +243,8 @@ to run `kubectl top pod` in that namespace.
 
 `rolling_upgrade.sh`, driven by the `rolling-upgrade-testing.yml` GitHub Actions
 workflow (`workflow_dispatch` only), deploys 13 enclave parties on an OLD version,
-rolls them to a NEW version in two waves (5/13 then 9/13), and checks decryption on
-the mixed-version cluster after each wave.
+rolls them to a NEW version in two waves (5/13 then 9/13 by default), and checks
+decryption on the mixed-version cluster after each wave.
 
 Dispatch inputs:
 
@@ -254,6 +254,7 @@ Dispatch inputs:
 | `new_image_repository` | Repositories for the new side: `insecure` (default; nightly and branch builds) or `legacy` (pre-split repositories with the release tags, e.g. `v0.14.2-0`). `build=true` requires `insecure` |
 | `core_client_image_tag` | Core-client (test harness) tag from the new side's repository; defaults to `old_image_tag` from the old repository. Must be ≤ the oldest server version in the run. Required for `prss-threshold` |
 | `old_kms_chart_version` / `new_kms_chart_version` | kms-core Helm chart per side (`repository` = in-tree chart) |
+| `tkms_infra_chart_version` | TKMS Infra Helm chart version (default `0.3.2`) |
 | `first_batch_parties` / `second_batch_parties` | Party IDs upgraded in wave 1 / wave 2 (default `1,2,3,4,5` / `6,7,8,9`) |
 | `test_profile` | `decrypt` (default) or `prss-threshold` — see below |
 | `epoch_migration` | Pass the 0.15 epoch-data migration config to the upgraded parties (default off) — see below |
@@ -280,6 +281,10 @@ mixed stages run four probes: public and user decrypt, each pinned to a request-
 Because `*-reqid-above` failures are expected, the job's correctness gate excludes
 `reqid-above` pods — read each probe's PASS/FAIL from the run summary, not the job
 conclusion. Requires a threshold-aware new image and a request-ID-capable core-client.
+
+#### Network metrics
+
+Around the tests after the second wave, the workflow takes a snapshot of the Prometheus metrics of all 13 cores (`sample_core_metrics.py --once`). The job log shows, per pod, the non-zero change of each `kms_network_debug_events_total` event during the tests: successful, retried and failed sends, received messages, and dropped or late messages. A negative value means that the pod restarted between the snapshots. Both snapshots are in the `kms-core-rolling-upgrade-logs` artifact (`kms-core-network-metrics-{before,after}-9of13.txt`). v0.14 and older cores do not export these events.
 
 #### Epoch-data migration (v0.14 → v0.15+)
 

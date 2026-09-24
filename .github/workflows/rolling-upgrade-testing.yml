@@ -15,21 +15,29 @@
 #
 # How it runs (high level)
 # ------------------------
-#   1. Optional: if workflow input build=true, call docker-build.yml to build the
-#      new image from the selected branch; its image_tag becomes the new tag.
-#   3. Deploy all 13 parties with OLD_IMAGE_TAG and old_kms_chart_version
-#      (ci/scripts/deploy.sh --target aws-perf).
-#   4. Baseline Argo test-suite (thresholdWithEnclave-test-suite-workflow):
-#      insecure key-gen + CRS + public/user-decrypt correctness smoke, all-old.
-#      Capture the generated key-id for the mixed-state decrypt runs.
-#   5. First rolling upgrade: upgrade first_batch_parties to NEW_IMAGE_TAG
-#      (default 1-5); core-client moves to new tag on all parties as required.
-#   6. Argo rolling-upgrade workflow: decrypt the baseline key-id on the mixed
-#      cluster (public + user decrypt, correctness-only; label mixed-5-of-13).
-#   7. Second rolling upgrade: upgrade second_batch_parties (default 6-9);
-#      cumulative upgraded set is first_batch + second_batch (9/13).
-#   8. Argo rolling-upgrade workflow again (label mixed-9-of-13).
-#   9. Upload Argo and kms-core logs; helm/kubectl cleanup; stop runner.
+#   - Optional: if workflow input build=true, call docker-build.yml to build the
+#     new image from the selected branch; its image_tag becomes the new tag.
+#   - Step 1: Deploy all 13 parties with OLD_IMAGE_TAG and old_kms_chart_version
+#     (ci/scripts/deploy.sh --target aws-perf).
+#   - Step 2: Baseline Argo test-suite (thresholdWithEnclave-test-suite-workflow):
+#     insecure key-gen + CRS + public/user-decrypt correctness smoke, all-old.
+#     Capture the generated key-id for the mixed-state decrypt runs.
+#   - Step 3: First rolling upgrade: upgrade first_batch_parties to NEW_IMAGE_TAG
+#     (default 1-5); core-client moves to new tag on all parties as required.
+#   - Step 4: Argo rolling-upgrade workflow: decrypt the baseline key-id on the
+#     mixed cluster (public + user decrypt, correctness-only; label
+#     mixed-<n>-of-13).
+#   - Step 5: Second rolling upgrade: upgrade second_batch_parties (default 6-9);
+#     cumulative upgraded set is first_batch + second_batch (9/13 by default).
+#   - Step 6: Argo rolling-upgrade workflow again. A snapshot of the network
+#     metrics of all cores before and after it shows the transport events
+#     (sends, retries, dropped or late messages) per pod during the tests.
+#   - Upload Argo and kms-core logs (with the metric snapshots); helm/kubectl
+#     cleanup; stop runner.
+#
+# Each rolling upgrade (ci/scripts/rolling_upgrade.sh) passes the epoch-data
+# migration config to the upgraded parties if epoch_migration is set, and
+# restarts the parties in restart_parties at its end.
 #
 # Correctness signal: each decrypt encrypts a known value client-side (-e) and
 # fails on mismatch; runs use -a (expect a response from ALL 13 cores) so the
@@ -78,7 +86,7 @@
 #   fhe_params             (choice Default|Test, default Test)
 #                            FHE parameters for preprocessing and keygen in Argo.
 #   old_kms_chart_version  (string, default 1.5.1)
-#                            KMS Helm chart version for the all-old deploy (step 3).
+#                            KMS Helm chart version for the all-old deploy (Step 1).
 #   new_kms_chart_version  (string, default repository)
 #                            KMS Helm chart for upgraded parties; use "repository"
 #                            to use charts from the checked-out branch.

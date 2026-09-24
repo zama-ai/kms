@@ -18,13 +18,26 @@
 #     --namespace <namespace> \
 #     --num-parties <n> \
 #     --deployment-type thresholdWithEnclave \
-#     [--kms-chart-version <version>] \
+#     [--old-kms-chart-version <version>] \
+#     [--new-kms-chart-version <version>] \
 #     [--tkms-infra-version <version>]
 #
 # The --all-upgraded-parties flag is the cumulative list of all parties
 # that should be on the new version after this upgrade step. For the
 # first upgrade (5/13), this equals --parties-to-upgrade. For the second
-# upgrade (9/13), this should be "1,2,3,4,5,6,7,8,9".
+# upgrade (9/13), this should be "1,2,3,4,5,6,7,8,9". The script acts on
+# --all-upgraded-parties only; --parties-to-upgrade is logged for reference.
+#
+# Optional environment variables:
+#   EPOCH_MIGRATION=true        Pass the 0.15 epoch-data migration config to
+#                               the upgraded parties (v0.14 -> v0.15+ only).
+#   RESTART_PARTIES=<ids|all>   Restart the core pods of these parties at the
+#                               end (comma-separated party IDs, or "all").
+#   ENABLE_PRSS_THRESHOLD=true  Enable the PRSS-Mask threshold on the upgraded
+#                               parties (prss-threshold profile);
+#                               LEGACY_PRSS_MASK_THRESHOLD sets it (default 100).
+#   OLD_* / NEW_KMS_CORE_{,CLIENT_,ENCLAVE_}IMAGE_NAME
+#                               Image repositories of the old and new side.
 #=============================================================================
 
 set -euo pipefail
