@@ -113,15 +113,12 @@ pub async fn mult_list<Z: Ring + ErrorCorrect, Ses: BaseSessionHandles>(
     }
     // Compute the linear equation of shares to get the result
     spawn_compute_bound(move || {
-        // `epsilonrho.len` is checked above to be guaranteed even, so `chunks_exact` drops nothing.
-        let epsilon_rho_vec = epsilonrho.chunks_exact(2);
+        // `epsilonrho.len` is checked above to be guaranteed even, so the remainder is empty.
+        let (epsilon_rho_pairs, _) = epsilonrho.as_chunks::<2>();
         y_vec
             .iter()
-            .zip_eq(epsilon_rho_vec.zip_eq(triples.iter()))
-            .map(|(curr_y, (curr_epsilonrho, triple))| {
-                //curr_epsilonrho is a pair of opened values, epsilon then rho
-                curr_y * curr_epsilonrho[0] - triple.a * curr_epsilonrho[1] + triple.c
-            })
+            .zip_eq(epsilon_rho_pairs.iter().zip_eq(triples.iter()))
+            .map(|(curr_y, (&[epsilon, rho], triple))| curr_y * epsilon - triple.a * rho + triple.c)
             .collect()
     })
     .await
