@@ -195,6 +195,7 @@ mod tests {
         NodeSigningIdentity, RootSigningSeed, compute_eip712_signature, gen_sig_keys,
     };
     use crate::cryptography::signing::SigningError;
+    use crate::cryptography::signing::composite::sign_result_entries;
     use crate::dummy_domain;
     use aes_prng::AesRng;
     use kms_grpc::RequestId;
@@ -252,31 +253,17 @@ mod tests {
         client
     }
 
-    /// The signatures `identity` produces for `schemes` over `payload`, in the
-    /// forms `engine::base::scheme_signing_jobs` defines.
+    /// The signatures `identity` produces for `schemes` over `payload`.
     fn signatures_for(
         identity: &NodeSigningIdentity,
         schemes: &[SigningSchemeType],
         payload: &[u8],
     ) -> Vec<TypedSignature> {
-        let domain = dummy_domain();
-        schemes
+        let eip712_hash = sol_type().eip712_signing_hash(&dummy_domain());
+        sign_result_entries(identity, schemes, DSEP, eip712_hash.as_slice(), payload)
+            .unwrap()
             .iter()
-            .map(|&scheme| {
-                let signature = match scheme {
-                    SigningSchemeType::Ecdsa256k1 => {
-                        compute_eip712_signature(identity.ecdsa(), &sol_type(), &domain).unwrap()
-                    }
-                    _ => identity
-                        .unified_sign_with(scheme, DSEP, payload)
-                        .unwrap()
-                        .to_bytes(),
-                };
-                TypedSignature {
-                    scheme: scheme.as_wire(),
-                    signature,
-                }
-            })
+            .map(TypedSignature::from)
             .collect()
     }
 
@@ -531,12 +518,11 @@ mod tests {
         let requested = [SigningSchemeType::Ecdsa256k1, SigningSchemeType::MlDsa65];
         let client = client_requesting(&identity, true, &requested);
 
-        let mut signatures = signatures_for(&identity, &[SigningSchemeType::Ecdsa256k1], PAYLOAD);
-        signatures.extend(signatures_for(
-            &other,
-            &[SigningSchemeType::MlDsa65],
-            PAYLOAD,
-        ));
+        // Both lists are signed under the whole requested set, so what is left
+        // for the verifier to object to is the two parties
+        let mine = signatures_for(&identity, &requested, PAYLOAD);
+        let theirs = signatures_for(&other, &requested, PAYLOAD);
+        let signatures = vec![mine[0].clone(), theirs[1].clone()];
 
         assert!(verify(&client, &signatures, PAYLOAD).is_err());
     }
@@ -546,7 +532,6 @@ mod tests {
     fn requested_schemes_cannot_be_stripped() {
         let identity = seeded_identity(10);
         let every_scheme: Vec<_> = SigningSchemeType::iter().collect();
-        let signatures = signatures_for(&identity, &every_scheme, PAYLOAD);
         let composite = vec![SigningSchemeType::Ecdsa256k1, SigningSchemeType::MlDsa65];
 
         for (case, requested, offered) in [
@@ -562,15 +547,8 @@ mod tests {
             if !requested.is_empty() {
                 client.set_signing_schemes(&requested).unwrap();
             }
-            let offered: Vec<_> = signatures
-                .iter()
-                .filter(|typed| {
-                    offered
-                        .iter()
-                        .any(|scheme| scheme.as_wire() == typed.scheme)
-                })
-                .cloned()
-                .collect();
+            // Signed under exactly the set offered, not a larger list
+            let offered = signatures_for(&identity, &offered, PAYLOAD);
             assert_eq!(
                 verify(&client, &offered, PAYLOAD).unwrap(),
                 (PARTY, identity.verf_key().address()),
