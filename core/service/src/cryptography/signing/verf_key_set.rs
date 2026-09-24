@@ -2,10 +2,14 @@
 
 use super::identity::NodeSigningIdentity;
 use super::{HasSigningScheme, SigningError, SigningSchemeType, UnifiedPublicSigKey};
-use crate::impl_generic_versionize;
 use hashing::{DomainSep, hash_element};
 use serde::{Deserialize, Deserializer, Serialize};
 use std::collections::BTreeMap;
+use tfhe::named::Named;
+use tfhe_versionable::{
+    Unversionize, UnversionizeError, Version, Versionize, VersionizeOwned, VersionsDispatch,
+    derived_traits::VersionsDispatch as VersionsDispatchTrait,
+};
 
 /// Domain separator for the digest that identifies a whole verification-key set.
 const DSEP_VERF_KEY_SET: DomainSep = *b"VKEYSET_";
@@ -16,8 +20,10 @@ const DSEP_VERF_KEY_SET: DomainSep = *b"VKEYSET_";
 /// signs under several schemes, so a verifier needs several keys, and needs them
 /// to travel together.
 ///
-/// This type is in-memory only. The `impl_generic_versionize!` below gives it a
-/// no-op `Versionize` so that it can sit inside a versionized struct.
+/// The set is persisted, so it is versioned. Its own shape is tagged by
+/// [`VerfKeySetVersions`], and the scheme tags and keys inside it each carry
+/// their own dispatch, so a later change to [`UnifiedPublicSigKey`] is handled
+/// by `UnifiedPublicSigKeyVersions` without a new version here.
 ///
 /// # Invariants
 ///
@@ -29,7 +35,83 @@ pub struct VerfKeySet {
     keys: BTreeMap<SigningSchemeType, UnifiedPublicSigKey>,
 }
 
-impl_generic_versionize!(VerfKeySet);
+impl Named for VerfKeySet {
+    const NAME: &'static str = "VerfKeySet";
+}
+
+/// The borrowed versioned form of [`VerfKeySet`].
+#[derive(Serialize)]
+pub struct VerfKeySetRef<'vers>(
+    <BTreeMap<SigningSchemeType, UnifiedPublicSigKey> as Versionize>::Versioned<'vers>,
+);
+
+impl<'vers> From<&'vers VerfKeySet> for VerfKeySetRef<'vers> {
+    fn from(value: &'vers VerfKeySet) -> Self {
+        Self(value.keys.versionize())
+    }
+}
+
+/// The owned versioned form of [`VerfKeySet`].
+#[derive(Serialize, Deserialize)]
+pub struct VerfKeySetOwned(
+    <BTreeMap<SigningSchemeType, UnifiedPublicSigKey> as VersionizeOwned>::VersionedOwned,
+);
+
+impl From<VerfKeySet> for VerfKeySetOwned {
+    fn from(value: VerfKeySet) -> Self {
+        Self(value.keys.versionize_owned())
+    }
+}
+
+/// Reading a set back re-establishes the invariants.
+///
+/// This is the whole reason the versionable traits are written out rather than
+/// derived: the derive converts the mirror type straight back into the struct,
+/// so the validating [`Deserialize`] impl below would not run on the versioned
+/// path.
+impl TryFrom<VerfKeySetOwned> for VerfKeySet {
+    type Error = UnversionizeError;
+
+    fn try_from(versioned: VerfKeySetOwned) -> Result<Self, Self::Error> {
+        let keys =
+            <BTreeMap<SigningSchemeType, UnifiedPublicSigKey> as Unversionize>::unversionize(
+                versioned.0,
+            )?;
+        Self::new(keys).map_err(|error| UnversionizeError::conversion("VerfKeySet", error))
+    }
+}
+
+impl Version for VerfKeySet {
+    type Ref<'vers> = VerfKeySetRef<'vers>;
+    type Owned = VerfKeySetOwned;
+}
+
+#[derive(VersionsDispatch)]
+pub enum VerfKeySetVersions {
+    V0(VerfKeySet),
+}
+
+impl Versionize for VerfKeySet {
+    type Versioned<'vers> = <VerfKeySetVersions as VersionsDispatchTrait<Self>>::Ref<'vers>;
+
+    fn versionize(&self) -> Self::Versioned<'_> {
+        self.into()
+    }
+}
+
+impl VersionizeOwned for VerfKeySet {
+    type VersionedOwned = <VerfKeySetVersions as VersionsDispatchTrait<Self>>::Owned;
+
+    fn versionize_owned(self) -> Self::VersionedOwned {
+        self.into()
+    }
+}
+
+impl Unversionize for VerfKeySet {
+    fn unversionize(versioned: Self::VersionedOwned) -> Result<Self, UnversionizeError> {
+        versioned.try_into()
+    }
+}
 
 impl<'de> Deserialize<'de> for VerfKeySet {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
@@ -186,7 +268,8 @@ mod tests {
         let bytes = bc2wrap::serialize(&misfiled).unwrap();
         assert!(bc2wrap::deserialize_slice::<VerfKeySet>(&bytes).is_err());
 
-        // The empty set.
+        // The empty set, which would make `verify_uniform` accept a signature
+        // list having checked nothing.
         let empty = BTreeMap::<SigningSchemeType, UnifiedPublicSigKey>::new();
         assert!(matches!(
             VerfKeySet::new(empty.clone()),
@@ -194,6 +277,19 @@ mod tests {
         ));
         let bytes = bc2wrap::serialize(&empty).unwrap();
         assert!(bc2wrap::deserialize_slice::<VerfKeySet>(&bytes).is_err());
+
+        // The versioned path re-checks both invariants as well.
+        assert_eq!(
+            VerfKeySet::unversionize(good.clone().versionize_owned()).unwrap(),
+            good
+        );
+        for bad in [misfiled, empty] {
+            let smuggled = VerfKeySetOwned(bad.versionize_owned());
+            assert!(matches!(
+                VerfKeySet::try_from(smuggled),
+                Err(UnversionizeError::Conversion { .. })
+            ));
+        }
     }
 
     /// The id names the whole set: swapping any single member key changes it.
