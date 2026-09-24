@@ -36,6 +36,7 @@ use super::{
     DSEP_SIGKEY_DERIVE, SIGKEY_DERIVATION_VERSION, SigningError, SigningSchemeType,
     UnifiedPrivateSigKey, UnifiedPublicSigKey,
 };
+#[cfg(feature = "non-wasm")]
 use crate::cryptography::signing::HasSigningScheme;
 use crate::impl_generic_versionize;
 use hashing::{DIGEST_BYTES, hash_element};

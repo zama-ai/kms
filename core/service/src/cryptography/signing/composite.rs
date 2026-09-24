@@ -4,7 +4,7 @@
 //! its parts is present. Dropping the post-quantum half of an ECDSA+ML-DSA pair
 //! must not leave something a verifier accepts, or the hedge the composite was
 //! built for is gone.
-//!
+#[cfg(feature = "non-wasm")]
 use super::identity::NodeSigningIdentity;
 use super::typed_signature::StoredTypedSignature;
 use super::verf_key_set::VerfKeySet;

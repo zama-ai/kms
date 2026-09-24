@@ -1,20 +1,26 @@
 //! The composite signcryption envelope.
 
 use super::UnifiedSigncryption;
-use super::common::{hybrid_decrypt, hybrid_encrypt, receiver_binding};
+#[cfg(feature = "non-wasm")]
+use super::common::hybrid_encrypt;
+use super::common::{hybrid_decrypt, receiver_binding};
 use crate::consts::SAFE_SER_SIZE_LIMIT;
 use crate::cryptography::encryption::{HasPkeScheme, UnifiedPrivateEncKey, UnifiedPublicEncKey};
 use crate::cryptography::error::CryptographyError;
 use crate::cryptography::hybrid_ml_kem::HybridKemCt;
-use crate::cryptography::signatures::{
-    CompositeSignature, NodeSigningIdentity, SigningSchemeType, VerfKeySet,
-};
+use crate::cryptography::signatures::{CompositeSignature, VerfKeySet};
+#[cfg(feature = "non-wasm")]
+use crate::cryptography::signatures::{NodeSigningIdentity, SigningSchemeType};
+#[cfg(feature = "non-wasm")]
 use crate::cryptography::zeroizing_writer::ZeroizingWriter;
 use hashing::DomainSep;
+#[cfg(feature = "non-wasm")]
 use rand::{CryptoRng, RngCore};
 use serde::{Deserialize, Serialize};
 use tfhe::named::Named;
-use tfhe::safe_serialization::{safe_deserialize, safe_serialize};
+use tfhe::safe_serialization::safe_deserialize;
+#[cfg(feature = "non-wasm")]
+use tfhe::safe_serialization::safe_serialize;
 use tfhe_versionable::{Versionize, VersionsDispatch};
 use zeroize::{Zeroize, Zeroizing};
 
