@@ -139,7 +139,7 @@ mod tests {
     use rand::SeedableRng;
 
     const DSEP: &DomainSep = b"COMPV1TT";
-
+    // TODO add to signing/mod.rs so it can be shared as similar is used in other signing tests
     fn pair() -> Vec<SigningSchemeType> {
         vec![SigningSchemeType::Ecdsa256k1, SigningSchemeType::MlDsa87]
     }

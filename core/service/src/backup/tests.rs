@@ -5,7 +5,7 @@ use super::{
 };
 use crate::{
     backup::{
-        BACKUP_PKE_SCHEME,
+        BACKUP_PKE_SCHEME, BACKUP_SIGNING_SCHEMES,
         custodian::{
             InternalCustodianContext, InternalCustodianRecoveryOutput,
             InternalCustodianSetupMessage,
@@ -16,7 +16,7 @@ use crate::{
     consts::DEFAULT_MPC_CONTEXT,
     cryptography::{
         encryption::{Encryption, PkeScheme, UnifiedPrivateEncKey, UnifiedPublicEncKey},
-        signatures::{PublicSigKey, gen_sig_keys},
+        signatures::{PublicSigKey, canonical_schemes, gen_sig_keys},
     },
     engine::base::derive_request_id,
 };
@@ -26,7 +26,6 @@ use kms_grpc::{ContextId, RequestId, kms::v1::CustodianContext};
 use rand::{RngCore, SeedableRng, rngs::OsRng};
 use std::{collections::BTreeMap, time::Duration};
 use threshold_types::role::Role;
-
 /// A valid 24-word phrase that is not any custodian's own — the all-zero BIP-39 entropy.
 ///
 /// Stands in for a custodian that supplies the wrong seed phrase: derivation succeeds, so the
@@ -763,4 +762,14 @@ fn operator_recover(
         }
     }
     res
+}
+
+/// The constant is already in canonical order, so `canonical_schemes` leaves it alone.
+#[test]
+fn backup_signing_schemes_are_canonical() {
+    assert_eq!(
+        canonical_schemes(BACKUP_SIGNING_SCHEMES).unwrap(),
+        BACKUP_SIGNING_SCHEMES,
+        "BACKUP_SIGNING_SCHEMES is no longer in canonical order"
+    );
 }

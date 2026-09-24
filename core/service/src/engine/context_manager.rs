@@ -1,7 +1,7 @@
 use crate::anyhow_error_and_log;
-use crate::backup::BACKUP_PKE_SCHEME;
 use crate::backup::custodian::InternalCustodianContext;
 use crate::backup::operator::{Operator, RecoveryValidationMaterial};
+use crate::backup::{BACKUP_PKE_SCHEME, BACKUP_SIGNING_SCHEMES};
 use crate::conf::threshold::{ThresholdPartyConf, TlsConf};
 use crate::consts::{DEFAULT_MPC_CONTEXT, SAFE_SER_SIZE_LIMIT};
 use crate::cryptography::encryption::{
@@ -388,6 +388,10 @@ where
         // restore. Setup and destruction take it before metadata locks and hold it across storage
         // I/O.
         let _context_guard = self.crypto_storage.custodian_context_lock.lock().await;
+        // Refuse before any key is generated.
+        self.base_kms
+            .signing_identity()?
+            .ensure_supported(BACKUP_SIGNING_SCHEMES)?;
         // The backup key and the signcryptions below are MLKEM1024-P384, so they need a seed
         // wider than the 128 bits `new_rng` provides.
         let mut rng = self.base_kms.new_rng_256();

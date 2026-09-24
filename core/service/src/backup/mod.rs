@@ -1,4 +1,5 @@
 use crate::cryptography::encryption::{PkeSchemeType, UnifiedCipher};
+use crate::cryptography::signatures::SigningSchemeType;
 use hashing::DomainSep;
 use kms_grpc::rpc_types::PrivDataType;
 use serde::{Deserialize, Serialize};
@@ -29,6 +30,14 @@ pub const RECOVERY_OUTPUT_DESC: &str = "The custodian recovery output is: ";
 /// lattice assumption: this is the composite of ML-KEM-1024 and P-384 rather than the ML-KEM-512
 /// that user decryption uses for its short-lived responses.
 pub const BACKUP_PKE_SCHEME: PkeSchemeType = PkeSchemeType::MlKem1024P384;
+
+/// Signature schemes every party in the custodian-backup chain signs under, and that every party
+/// in it is required to publish a verification key for.
+///
+/// The counterpart of [`BACKUP_PKE_SCHEME`] on the signing side, and chosen to match it: ML-DSA-87
+/// is NIST level 5, as MLKEM1024-P384 is.
+pub const BACKUP_SIGNING_SCHEMES: &[SigningSchemeType] =
+    &[SigningSchemeType::Ecdsa256k1, SigningSchemeType::MlDsa87];
 
 /// Domain separator for the digest of the operator's backup encryption key that
 /// `GetOperatorPublicKey` places in its attestation document.
