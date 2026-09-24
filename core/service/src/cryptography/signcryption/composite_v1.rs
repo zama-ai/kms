@@ -1,4 +1,4 @@
-//! The composite signcryption envelope: one signature per scheme.
+//! The composite signcryption envelope.
 
 use super::UnifiedSigncryption;
 use super::common::{hybrid_decrypt, hybrid_encrypt, receiver_binding};
@@ -23,8 +23,6 @@ pub enum CompositeEnvelopeVersions {
 }
 
 /// The plaintext of a composite signcryption, before encryption.
-///
-/// `signature` carries its own schemes, so this struct does not repeat them.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, Versionize)]
 #[versionize(CompositeEnvelopeVersions)]
 pub struct CompositeEnvelope {
@@ -78,7 +76,7 @@ pub fn seal(
 /// Open a composite signcryption, returning the message only once every
 /// constituent signature has verified.
 ///
-/// `sender_keys` is the verifier's policy, not anything read off the message
+/// `sender_keys` is the verifier's policy the signatures will be validated against.
 pub(super) fn open(
     decryption_key: &UnifiedPrivateEncKey,
     encryption_key: &UnifiedPublicEncKey,
@@ -111,7 +109,7 @@ pub(super) fn open(
 
 #[cfg(test)]
 mod tests {
-    use super::super::common::lock_fixture;
+    use super::super::common::signcryption_fixture;
     use super::super::{Signcrypt, UnifiedSigncryptionKey, UnifiedUnsigncryptionKey, Unsigncrypt};
     use super::*;
     use crate::cryptography::encryption::PkeSchemeType;
@@ -126,7 +124,7 @@ mod tests {
         vec![SigningSchemeType::Ecdsa256k1, SigningSchemeType::MlDsa87]
     }
 
-    struct Fixture {
+    struct CompositeFixture {
         rng: AesRng,
         identity: NodeSigningIdentity,
         keys: VerfKeySet,
@@ -136,16 +134,19 @@ mod tests {
         receiver_id: Vec<u8>,
     }
 
-    fn fixture(scheme: PkeSchemeType, seed: u64) -> Fixture {
+    fn fixture(scheme: PkeSchemeType, seed: u64) -> CompositeFixture {
         fixture_under(scheme, seed, pair())
     }
 
-    fn fixture_under(scheme: PkeSchemeType, seed: u64, schemes: Vec<SigningSchemeType>) -> Fixture {
-        let base = lock_fixture(scheme, seed);
-        let mut rng = AesRng::seed_from_u64(seed ^ 0xC0FFEE);
-        let identity = seeded_identity(&mut rng);
+    fn fixture_under(
+        scheme: PkeSchemeType,
+        seed: u64,
+        schemes: Vec<SigningSchemeType>,
+    ) -> CompositeFixture {
+        let mut base = signcryption_fixture(scheme, seed);
+        let identity = seeded_identity(&mut base.rng);
         let keys = VerfKeySet::from_identity(&identity, &schemes).unwrap();
-        Fixture {
+        CompositeFixture {
             rng: base.rng,
             identity,
             keys,
@@ -156,7 +157,7 @@ mod tests {
         }
     }
 
-    fn seal_msg(f: &mut Fixture, msg: &[u8]) -> UnifiedSigncryption {
+    fn seal_msg(f: &mut CompositeFixture, msg: &[u8]) -> UnifiedSigncryption {
         seal(
             &f.identity,
             &f.schemes,
@@ -170,7 +171,7 @@ mod tests {
     }
 
     fn open_with(
-        f: &Fixture,
+        f: &CompositeFixture,
         cipher: &UnifiedSigncryption,
     ) -> Result<Zeroizing<Vec<u8>>, CryptographyError> {
         UnifiedUnsigncryptionKey::new_multi(&f.dec_key, &f.enc_key, &f.keys, &f.receiver_id)
@@ -232,12 +233,6 @@ mod tests {
     }
 
     /// Neither reader accepts the other's envelope.
-    ///
-    /// This is what lets a [`UnifiedSigncryption`] carry no layout tag: the
-    /// rejection comes from each parser on its own, not from a dispatch step
-    /// reading an unauthenticated field. Both directions are asserted on the
-    /// *specific* failure, so a future change that makes one of them succeed —
-    /// or fail for an unrelated reason — is caught here.
     #[test]
     fn the_two_formats_do_not_cross() {
         let mut f = fixture(PkeSchemeType::MlKem512, 300);
@@ -269,7 +264,7 @@ mod tests {
         // Composite reader, handed a frozen envelope. It decrypts, but the
         // plaintext is `msg ‖ sig ‖ digest` rather than a serialized
         // `CompositeEnvelope`, so `safe_deserialize` refuses it on the header.
-        let base = lock_fixture(PkeSchemeType::MlKem512, 300);
+        let base = signcryption_fixture(PkeSchemeType::MlKem512, 300);
         let mut rng = base.rng;
         let ecdsa_key =
             UnifiedSigncryptionKey::new(&base.signing_key, &base.enc_key, &base.receiver_id);
@@ -316,7 +311,7 @@ mod tests {
 
         // ...and the composite reader still rejects a frozen envelope, even now
         // that the set it demands is exactly {ECDSA}.
-        let base = lock_fixture(PkeSchemeType::MlKem512, 400);
+        let base = signcryption_fixture(PkeSchemeType::MlKem512, 400);
         let mut rng = base.rng;
         let frozen =
             UnifiedSigncryptionKey::new(&base.signing_key, &base.enc_key, &base.receiver_id)

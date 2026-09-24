@@ -1,9 +1,7 @@
-//! Pieces shared by every signcryption envelope format.
+//! Code shared by every signcryption envelope format.
 //!
-//! Signing and verifying have to build *identical* receiver bindings or nothing
-//! verifies at all, and both formats encrypt the same way. Anything both
-//! [`super::ecdsa_v0`] and [`super::composite_v1`] need lives here, so the two
-//! cannot drift apart and neither has to copy it.
+//! Signing and verifying build *identical* receiver bindings or nothing
+//! verifies at all, and both formats encrypt the same way.
 
 use crate::cryptography::encryption::{UnifiedPrivateEncKey, UnifiedPublicEncKey};
 use crate::cryptography::error::CryptographyError;
@@ -88,7 +86,7 @@ use aes_prng::AesRng;
 use rand::SeedableRng;
 
 #[cfg(test)]
-pub(super) struct LockFixture {
+pub(super) struct SigncryptionFixture {
     pub(super) rng: AesRng,
     pub(super) dec_key: UnifiedPrivateEncKey,
     pub(super) enc_key: UnifiedPublicEncKey,
@@ -98,7 +96,7 @@ pub(super) struct LockFixture {
 }
 
 #[cfg(test)]
-pub(super) fn lock_fixture(scheme: PkeSchemeType, seed: u64) -> LockFixture {
+pub(super) fn signcryption_fixture(scheme: PkeSchemeType, seed: u64) -> SigncryptionFixture {
     let mut rng = AesRng::seed_from_u64(seed);
     let (sender_verf_key, signing_key) = gen_sig_keys(&mut rng);
     let (receiver_verf_key, _) = gen_sig_keys(&mut rng);
@@ -107,7 +105,7 @@ pub(super) fn lock_fixture(scheme: PkeSchemeType, seed: u64) -> LockFixture {
         let mut encryption = Encryption::new(scheme, &mut rng);
         encryption.keygen().unwrap()
     };
-    LockFixture {
+    SigncryptionFixture {
         rng,
         dec_key,
         enc_key,
@@ -125,8 +123,8 @@ mod tests {
     /// the only thing tying a signature to who may open it.
     #[test]
     fn receiver_binding_separates_recipients() {
-        let f = lock_fixture(PkeSchemeType::MlKem512, 500);
-        let other = lock_fixture(PkeSchemeType::MlKem512, 501);
+        let f = signcryption_fixture(PkeSchemeType::MlKem512, 500);
+        let other = signcryption_fixture(PkeSchemeType::MlKem512, 501);
 
         let base = receiver_binding(&f.receiver_id, &f.enc_key).unwrap();
         assert_eq!(base, receiver_binding(&f.receiver_id, &f.enc_key).unwrap());

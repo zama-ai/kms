@@ -3,9 +3,6 @@
 //! Every user-decryption ciphertext produced since 0.11 uses this layout and the
 //! deployed browser-side verifier parses it, so its bytes cannot change. See the
 //! module documentation of [`super`] for the full list of what pins them.
-//!
-//! Only the layout lives here. The receiver binding and the KEM/DEM plumbing are
-//! shared with every other format and live in [`super::common`].
 
 use super::common::{DSEP_SIGNCRYPTION, hybrid_decrypt, hybrid_encrypt, receiver_binding};
 use super::{
@@ -187,7 +184,7 @@ pub(crate) fn insecure_decrypt_ignoring_signature(
 #[cfg(test)]
 mod tests {
     use super::super::Signcrypt;
-    use super::super::common::{lock_fixture, receiver_enc_key_digest};
+    use super::super::common::{receiver_enc_key_digest, signcryption_fixture};
     use super::*;
     use crate::consts::SAFE_SER_SIZE_LIMIT;
     use crate::cryptography::encryption::PkeSchemeType;
@@ -218,7 +215,7 @@ mod tests {
     #[test]
     fn ecdsa_v0_receiver_binding_is_locked() {
         for scheme in [PkeSchemeType::MlKem512, PkeSchemeType::MlKem1024P384] {
-            let f = lock_fixture(scheme, 100);
+            let f = signcryption_fixture(scheme, 100);
             assert_eq!(
                 receiver_binding(&f.receiver_id, &f.enc_key).unwrap(),
                 [
@@ -241,7 +238,7 @@ mod tests {
     fn ecdsa_v0_envelope_layout_is_locked() {
         const DSEP: &DomainSep = b"ECDSAV0T";
         for scheme in [PkeSchemeType::MlKem512, PkeSchemeType::MlKem1024P384] {
-            let mut f = lock_fixture(scheme, 200);
+            let mut f = signcryption_fixture(scheme, 200);
             let payload = TestType { i: 4711 };
             let signcrypt_key =
                 UnifiedSigncryptionKey::new(&f.signing_key, &f.enc_key, &f.receiver_id);
@@ -296,7 +293,7 @@ mod tests {
     /// standing between a short plaintext and an out-of-bounds slice.
     #[test]
     fn a_short_plaintext_is_a_length_error() {
-        let f = lock_fixture(PkeSchemeType::MlKem512, 400);
+        let f = signcryption_fixture(PkeSchemeType::MlKem512, 400);
         for len in 0..(SIG_SIZE + DIGEST_BYTES) {
             let short = Zeroizing::new(vec![0u8; len]);
             assert!(
