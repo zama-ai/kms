@@ -99,11 +99,15 @@ The alternative backup mode — wrapping the same key under an AWS KMS CMK — i
 
 User decryption is unaffected by any of this and remains ML-KEM-512.
 
-Nothing in the backup path rejects a peer that advertises a weaker public key
-scheme. Every signcryption and ciphertext carries its own `pke_type` tag, so a
-context whose custodians publish different schemes works. On the other hand,
-there are no options to select a different scheme, so the backup process is
-initiated using built-in tools from KMS, MLKEM1024-P384 will be used.
+Creating a custodian context requires every custodian encryption key — and the
+operator's own backup key — to use MLKEM1024-P384. Every signcryption and
+ciphertext carries its own `pke_type` tag, so a context whose custodians
+published different schemes would otherwise work.
+The check is on creation only — an existing context is still readable, so a
+weak backup never becomes an unrecoverable one.
+
+There are no options to select a different scheme: a backup initiated with the
+built-in KMS tools uses MLKEM1024-P384.
 
 ### Parties
 
