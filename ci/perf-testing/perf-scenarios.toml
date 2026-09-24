@@ -39,13 +39,12 @@ rates = [
   { rate = 3200, maxfail = 10, maxshed = 25, pct = 70, allowfail = true },
 ]
 
-# Sync rates are exploratory until CI measurements establish their limits.
 [scenarios.pdec-sync]
 key = "udec-key-gen"
 after = ["udec-async"]
 rates = [
-  { rate = 1200, allowfail = true },
-  { rate = 1400, allowfail = true },
+  { rate = 1200 },
+  { rate = 1400 },
   { rate = 1700, maxfail = 10, maxshed = 25, pct = 70, allowfail = true },
 ]
 
@@ -53,7 +52,7 @@ rates = [
 key = "udec-key-gen"
 after = ["pdec-sync"]
 rates = [
-  { rate = 1500, allowfail = true },
-  { rate = 1900, allowfail = true },
+  { rate = 1500 },
+  { rate = 1900 },
   { rate = 2300, maxfail = 10, maxshed = 25, pct = 70, allowfail = true },
 ]

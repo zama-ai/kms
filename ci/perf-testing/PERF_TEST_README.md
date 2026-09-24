@@ -58,7 +58,7 @@ rates = [
 [scenarios.pdec-sync]
 key = "udec-key-gen"
 after = ["udec-async"]
-rates = [{ rate = 1100, allowfail = true }]
+rates = [{ rate = 1200 }]
 ```
 
 Rules:
@@ -75,9 +75,9 @@ The example shows one sync rung; the configuration file contains both complete s
 The ladders run sequentially to avoid competing workloads. Each ladder starts independently,
 even when a preceding ladder exceeds its limits. A failed rung skips only higher rates in its own ladder.
 
-Sync rates start at the async comparison rates: PDEC 1,100/1,300/1,500 and UDEC 2,400/2,800/3,200 requests/s.
-These sync rungs have `allowfail = true` until measurements establish their limits.
-Use the analyzer to check achieved rate, failures, shedding, latency, and client saturation before selecting mandatory rungs.
+Sync rates are PDEC 1,200/1,400/1,700 and UDEC 1,500/1,900/2,300 requests/s.
+The first two rungs of each sync ladder use the default limits and fail the run on a breach.
+The third rung has relaxed limits and `allowfail = true`, so a breach produces a warning.
 
 To preview the fully-expanded workflow locally:
 
@@ -316,7 +316,7 @@ python3 ci/scripts/analyze_perf_run.py \
 
 Run-ID mode requires an authenticated `gh` CLI. The analyzer reports missing or
 partial instrumentation while retaining any rate results it can parse.
-Report rows identify the operation, endpoint, and rate, such as `udec-sync-2400`.
+Report rows identify the operation, endpoint, and rate, such as `udec-sync-2300`.
 Skipped rungs appear with their reasons in Markdown and in the JSON `skipped_rates` list.
 Per-core service tables use the public or user decryption metrics for each scenario.
 For older metrics without a `scenario` field, the analyzer assumes the async variant of the operation.
