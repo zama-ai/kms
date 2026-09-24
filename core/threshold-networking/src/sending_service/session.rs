@@ -1686,8 +1686,8 @@ mod tests {
             max_opened_inactive_sessions_per_party: Some(2000),
             max_future_rounds: Some(16),
             max_buffered_future_msgs: Some(32),
-            keepalive_interval_secs: Some(10),
-            keepalive_timeout_secs: Some(20),
+            keepalive_interval_secs: Some(15),
+            keepalive_timeout_secs: Some(30),
         }
     }
 

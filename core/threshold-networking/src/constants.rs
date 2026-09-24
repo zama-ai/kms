@@ -61,8 +61,8 @@ pub(crate) const MAX_FUTURE_ROUNDS: usize = 16;
 pub(crate) const MAX_BUFFERED_FUTURE_MSGS: usize = 32;
 
 /// Interval between HTTP/2 keepalive pings on the channel to a peer.
-pub(crate) const KEEPALIVE_INTERVAL: Duration = Duration::from_secs(10);
+pub(crate) const KEEPALIVE_INTERVAL: Duration = Duration::from_secs(15);
 
 /// Time to wait for the reply to a keepalive ping before the connection to a peer closes. The next
 /// send then connects again, so it reaches a peer that restarted behind the same address.
-pub(crate) const KEEPALIVE_TIMEOUT: Duration = Duration::from_secs(20);
+pub(crate) const KEEPALIVE_TIMEOUT: Duration = Duration::from_secs(30);
