@@ -10,8 +10,6 @@ use super::typed_signature::StoredTypedSignature;
 use super::verf_key_set::VerfKeySet;
 use super::{Signature, SigningError, SigningSchemeType, unified_verify};
 use hashing::DomainSep;
-use serde::{Deserialize, Serialize};
-use tfhe_versionable::{Unversionize, UnversionizeError, Versionize, VersionizeOwned};
 
 /// Sort `schemes` into canonical order and drop duplicates.
 ///
@@ -66,146 +64,69 @@ pub fn scheme_bound_preimage(
     Ok([canonical_scheme_bytes(&schemes).as_slice(), msg].concat())
 }
 
-/// Accept `schemes` only if it is already canonical.
-fn ensure_canonical(schemes: &[SigningSchemeType]) -> Result<(), SigningError> {
-    let canonical = canonical_schemes(schemes)?;
-    if canonical != schemes {
-        return Err(SigningError::NonCanonicalSchemeSet(format!(
-            "expected {}, got {}",
-            render_schemes(&canonical),
-            render_schemes(schemes)
-        )));
+/// The schemes `entries` were made under, in the order they are stored.
+pub fn entry_schemes(entries: &[StoredTypedSignature]) -> Vec<SigningSchemeType> {
+    entries.iter().map(|entry| entry.scheme).collect()
+}
+
+/// Sign `msg` under every scheme in `schemes`, each over the same bytes.
+///
+/// The entries come back ordered by scheme, with no duplicate scheme, which is
+/// the shape [`verify_uniform`] requires.
+#[cfg(feature = "non-wasm")]
+pub fn sign_uniform(
+    identity: &NodeSigningIdentity,
+    schemes: &[SigningSchemeType],
+    dsep: &DomainSep,
+    msg: &[u8],
+) -> Result<Vec<StoredTypedSignature>, SigningError> {
+    let schemes = canonical_schemes(schemes)?;
+    identity.ensure_supported(&schemes)?;
+    let preimage = scheme_bound_preimage(&schemes, msg)?;
+    schemes
+        .iter()
+        .map(|&scheme| {
+            identity
+                .unified_sign_with(scheme, dsep, &preimage)
+                .map(|signature| StoredTypedSignature {
+                    scheme,
+                    signature: signature.to_bytes(),
+                })
+        })
+        .collect()
+}
+
+/// Check every signature in `entries` against `keys`, having first checked that
+/// they were made under exactly the schemes `keys` holds keys for.
+///
+/// Every signature must verify. `entries` is untrusted: it may come straight
+/// from storage or from the network, so its shape is checked here rather than
+/// assumed.
+pub fn verify_uniform(
+    entries: &[StoredTypedSignature],
+    keys: &VerfKeySet,
+    dsep: &DomainSep,
+    msg: &[u8],
+) -> Result<(), SigningError> {
+    let expected = keys.schemes();
+    // The scheme-set comparison happens before any cryptography, so a composite
+    // signature presented with one of its parts removed, reordered or repeated
+    // is rejected for being the wrong shape. `expected` is canonical and
+    // non-empty by the `VerfKeySet` invariants.
+    let schemes = entry_schemes(entries);
+    if schemes != expected {
+        return Err(SigningError::UnexpectedSchemeSet {
+            expected: render_schemes(&expected),
+            actual: render_schemes(&schemes),
+        });
+    }
+    let preimage = scheme_bound_preimage(&schemes, msg)?;
+    for entry in entries {
+        let signature = Signature::new(entry.scheme, entry.signature.clone());
+        // Cannot fail: `schemes` equals `keys.schemes()` on this path.
+        unified_verify(dsep, &preimage, &signature, keys.require(entry.scheme)?)?;
     }
     Ok(())
-}
-
-/// One signature per scheme, over a message that commits to the scheme set.
-///
-/// Entries are ordered by scheme and carry no duplicate scheme.
-///
-/// Reading one back *rejects* a non-canonical list rather than sorting it, on
-/// the serde path and on the versioned path alike.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
-#[serde(transparent)]
-pub struct CompositeSignature(Vec<StoredTypedSignature>);
-
-// Versioned by hand rather than by `#[derive(Versionize)]`.
-//
-// The versioned form is the one `Vec<StoredTypedSignature>` already has, so
-// every entry carries its own version dispatch.
-impl Versionize for CompositeSignature {
-    type Versioned<'vers>
-        = <Vec<StoredTypedSignature> as Versionize>::Versioned<'vers>
-    where
-        Self: 'vers;
-
-    fn versionize(&self) -> Self::Versioned<'_> {
-        self.0.versionize()
-    }
-}
-
-impl VersionizeOwned for CompositeSignature {
-    type VersionedOwned = <Vec<StoredTypedSignature> as VersionizeOwned>::VersionedOwned;
-
-    fn versionize_owned(self) -> Self::VersionedOwned {
-        self.0.versionize_owned()
-    }
-}
-
-impl Unversionize for CompositeSignature {
-    fn unversionize(versioned: Self::VersionedOwned) -> Result<Self, UnversionizeError> {
-        let entries = <Vec<StoredTypedSignature> as Unversionize>::unversionize(versioned)?;
-        Self::from_canonical(entries)
-            .map_err(|error| UnversionizeError::conversion("CompositeSignature", error))
-    }
-}
-
-impl<'de> Deserialize<'de> for CompositeSignature {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: serde::Deserializer<'de>,
-    {
-        let entries = Vec::<StoredTypedSignature>::deserialize(deserializer)?;
-        Self::from_canonical(entries).map_err(serde::de::Error::custom)
-    }
-}
-
-impl CompositeSignature {
-    /// Accept `entries` only if they are already ordered by scheme, carry no
-    /// duplicate scheme, and are non-empty.
-    pub fn from_canonical(entries: Vec<StoredTypedSignature>) -> Result<Self, SigningError> {
-        let schemes = entries.iter().map(|entry| entry.scheme).collect::<Vec<_>>();
-        ensure_canonical(&schemes)?;
-        Ok(Self(entries))
-    }
-
-    /// The entries, ordered by scheme.
-    pub fn entries(&self) -> &[StoredTypedSignature] {
-        &self.0
-    }
-
-    /// Sign `msg` under every scheme in `schemes`, each over the same bytes.
-    #[cfg(feature = "non-wasm")]
-    pub fn sign_uniform(
-        identity: &NodeSigningIdentity,
-        schemes: &[SigningSchemeType],
-        dsep: &DomainSep,
-        msg: &[u8],
-    ) -> Result<Self, SigningError> {
-        let schemes = canonical_schemes(schemes)?;
-        identity.ensure_supported(&schemes)?;
-        let preimage = scheme_bound_preimage(&schemes, msg)?;
-        let entries = schemes
-            .iter()
-            .map(|&scheme| {
-                identity
-                    .unified_sign_with(scheme, dsep, &preimage)
-                    .map(|signature| StoredTypedSignature {
-                        scheme,
-                        signature: signature.to_bytes(),
-                    })
-            })
-            .collect::<Result<Vec<_>, _>>()?;
-        // `schemes` is canonical, so the entries built from it are too.
-        Ok(Self(entries))
-    }
-
-    /// Check every signature against `keys`, having first checked that this
-    /// signature was made under exactly the schemes `keys` holds keys for.
-    ///
-    /// Every signature must verify.
-    pub fn verify_uniform(
-        &self,
-        keys: &VerfKeySet,
-        dsep: &DomainSep,
-        msg: &[u8],
-    ) -> Result<(), SigningError> {
-        let expected = keys.schemes();
-        // The scheme-set comparison happens before any cryptography,
-        // so a composite signature presented with one of its parts removed is
-        // rejected for being the wrong shape
-        let schemes = self.schemes();
-        if schemes != expected {
-            return Err(SigningError::UnexpectedSchemeSet {
-                expected: render_schemes(&expected),
-                actual: render_schemes(&schemes),
-            });
-        }
-        let preimage = scheme_bound_preimage(&schemes, msg)?;
-        for entry in &self.0 {
-            let signature = Signature::new(entry.scheme, entry.signature.clone());
-            // Cannot fail: `schemes` equals `keys.schemes()` on this path.
-            unified_verify(dsep, &preimage, &signature, keys.require(entry.scheme)?)?;
-        }
-        Ok(())
-    }
-
-    /// The schemes this signature was made under, derived from its entries.
-    ///
-    /// Canonical by construction: every constructor validates the entry order.
-    pub fn schemes(&self) -> Vec<SigningSchemeType> {
-        self.0.iter().map(|entry| entry.scheme).collect()
-    }
 }
 
 /// The per-scheme signatures of a *result*: a keygen, CRS, preprocessing or
@@ -283,12 +204,12 @@ mod tests {
     #[test]
     fn round_trip_sunshine() {
         let (identity, keys, schemes) = setup(1);
-        let sig = CompositeSignature::sign_uniform(&identity, &schemes, DSEP, MSG).unwrap();
-        assert_eq!(sig.schemes(), schemes);
-        sig.verify_uniform(&keys, DSEP, MSG).unwrap();
+        let sig = sign_uniform(&identity, &schemes, DSEP, MSG).unwrap();
+        assert_eq!(entry_schemes(&sig), schemes);
+        verify_uniform(&sig, &keys, DSEP, MSG).unwrap();
 
         let (_, other_keys, _) = setup(7);
-        assert!(sig.verify_uniform(&other_keys, DSEP, MSG).is_err());
+        assert!(verify_uniform(&sig, &other_keys, DSEP, MSG).is_err());
     }
 
     /// Removing a signature must not leave something that verifies under the
@@ -297,14 +218,14 @@ mod tests {
     #[test]
     fn a_stripped_signature_is_rejected() {
         let (identity, keys, schemes) = setup(2);
-        let sig = CompositeSignature::sign_uniform(&identity, &schemes, DSEP, MSG).unwrap();
+        let sig = sign_uniform(&identity, &schemes, DSEP, MSG).unwrap();
 
         // Drop the ML-DSA half and relabel the set as ECDSA-only
-        let stripped = CompositeSignature::from_canonical(vec![sig.entries()[0].clone()]).unwrap();
+        let stripped = vec![sig[0].clone()];
 
         // Against the original policy it is the wrong scheme set...
         assert!(matches!(
-            stripped.verify_uniform(&keys, DSEP, MSG),
+            verify_uniform(&stripped, &keys, DSEP, MSG),
             Err(SigningError::UnexpectedSchemeSet { .. })
         ));
 
@@ -314,61 +235,53 @@ mod tests {
         // *pair*, which does not match the single-scheme preimage.
         let ecdsa_only =
             VerfKeySet::from_identity(&identity, &[SigningSchemeType::Ecdsa256k1]).unwrap();
-        assert!(stripped.verify_uniform(&ecdsa_only, DSEP, MSG).is_err());
+        assert!(verify_uniform(&stripped, &ecdsa_only, DSEP, MSG).is_err());
 
         // The same mismatch from the other side: the *whole* pair signature
         // against that ECDSA-only key set is refused for its shape rather than
         // verified on the one entry the set holds a key for.
         assert!(matches!(
-            sig.verify_uniform(&ecdsa_only, DSEP, MSG),
+            verify_uniform(&sig, &ecdsa_only, DSEP, MSG),
             Err(SigningError::UnexpectedSchemeSet { .. })
         ));
     }
 
-    /// A list that is not ordered by scheme, or repeats one, is refused on
-    /// deserialization rather than normalised.
+    /// An entry list that is reordered, repeats a scheme, or is empty is refused.
     #[test]
     fn a_non_canonical_entry_list_is_rejected() {
-        let (identity, _keys, schemes) = setup(3);
-        let sig = CompositeSignature::sign_uniform(&identity, &schemes, DSEP, MSG).unwrap();
-        let entries = sig.entries().to_vec();
+        let (identity, keys, schemes) = setup(3);
+        let sig = sign_uniform(&identity, &schemes, DSEP, MSG).unwrap();
 
-        let mut reversed = entries.clone();
+        let mut reversed = sig.clone();
         reversed.reverse();
-        assert!(CompositeSignature::from_canonical(reversed.clone()).is_err());
+        let duplicated = vec![sig[0].clone(), sig[0].clone()];
 
-        let duplicated = vec![entries[0].clone(), entries[0].clone()];
-        assert!(CompositeSignature::from_canonical(duplicated).is_err());
-
-        assert!(CompositeSignature::from_canonical(Vec::new()).is_err());
-
-        // The versioned path validates too. `Unversionize` is hand-written
-        // precisely so that a reversed list placed in storage does not read back
-        // as a valid signature.
-        assert!(matches!(
-            CompositeSignature::unversionize(reversed.versionize_owned()),
-            Err(UnversionizeError::Conversion { .. })
-        ));
-
-        // ...while the canonical one survives the round trip unchanged.
-        assert_eq!(
-            CompositeSignature::unversionize(sig.clone().versionize_owned()).unwrap(),
-            sig
-        );
+        for (case, entries) in [
+            ("reversed", reversed),
+            ("duplicated", duplicated),
+            ("empty", Vec::new()),
+        ] {
+            assert!(
+                matches!(
+                    verify_uniform(&entries, &keys, DSEP, MSG),
+                    Err(SigningError::UnexpectedSchemeSet { .. })
+                ),
+                "a {case} entry list was not rejected"
+            );
+        }
     }
 
     /// Every constituent signature has to verify; one bad one fails the whole.
     #[test]
     fn one_tampered_signature_fails_the_composite() {
         let (identity, keys, schemes) = setup(4);
-        let base = CompositeSignature::sign_uniform(&identity, &schemes, DSEP, MSG).unwrap();
+        let base = sign_uniform(&identity, &schemes, DSEP, MSG).unwrap();
 
-        for index in 0..base.entries().len() {
-            let mut entries = base.entries().to_vec();
-            entries[index].signature[0] ^= 0x01;
-            let tampered = CompositeSignature::from_canonical(entries).unwrap();
+        for index in 0..base.len() {
+            let mut tampered = base.clone();
+            tampered[index].signature[0] ^= 0x01;
             assert!(
-                tampered.verify_uniform(&keys, DSEP, MSG).is_err(),
+                verify_uniform(&tampered, &keys, DSEP, MSG).is_err(),
                 "tampering with signature {index} was not detected"
             );
         }
@@ -377,12 +290,9 @@ mod tests {
     #[test]
     fn a_tampered_message_or_dsep_fails() {
         let (identity, keys, schemes) = setup(5);
-        let sig = CompositeSignature::sign_uniform(&identity, &schemes, DSEP, MSG).unwrap();
-        assert!(
-            sig.verify_uniform(&keys, DSEP, b"a different message")
-                .is_err()
-        );
-        assert!(sig.verify_uniform(&keys, b"OTHERDSP", MSG).is_err());
+        let sig = sign_uniform(&identity, &schemes, DSEP, MSG).unwrap();
+        assert!(verify_uniform(&sig, &keys, DSEP, b"a different message").is_err());
+        assert!(verify_uniform(&sig, &keys, b"OTHERDSP", MSG).is_err());
     }
 
     /// An identity with no root seed can only do ECDSA, so asking it for the
@@ -392,7 +302,7 @@ mod tests {
         let mut rng = AesRng::seed_from_u64(9);
         let identity = NodeSigningIdentity::ecdsa_only(gen_sig_keys(&mut rng).1);
         assert!(matches!(
-            CompositeSignature::sign_uniform(&identity, &pair(), DSEP, MSG),
+            sign_uniform(&identity, &pair(), DSEP, MSG),
             Err(SigningError::MissingRootSeed(_))
         ));
     }
@@ -434,7 +344,7 @@ mod tests {
         }
     }
 
-    /// Result entries use the same ordering convention as [`CompositeSignature`]:
+    /// Result entries use the same ordering convention as [`sign_uniform`]:
     /// by scheme, duplicate-free, whatever order the request arrived in.
     #[test]
     fn result_entries_are_ordered_by_scheme() {
@@ -455,12 +365,10 @@ mod tests {
             entries.iter().map(|e| e.scheme).collect::<Vec<_>>(),
             canonical
         );
-        // ...and that is exactly the list `CompositeSignature` would accept.
-        CompositeSignature::from_canonical(entries).unwrap();
     }
 
     /// No schemes requested means no per-scheme entries, which is why this
-    /// returns a plain list rather than a `CompositeSignature`.
+    /// returns a plain list of entries.
     #[test]
     fn result_entries_tolerate_an_empty_request() {
         let mut rng = AesRng::seed_from_u64(21);

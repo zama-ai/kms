@@ -8,9 +8,12 @@ use crate::consts::SAFE_SER_SIZE_LIMIT;
 use crate::cryptography::encryption::{HasPkeScheme, UnifiedPrivateEncKey, UnifiedPublicEncKey};
 use crate::cryptography::error::CryptographyError;
 use crate::cryptography::hybrid_ml_kem::HybridKemCt;
-use crate::cryptography::signatures::{CompositeSignature, VerfKeySet};
+use crate::cryptography::signatures::{StoredTypedSignature, VerfKeySet};
 #[cfg(feature = "non-wasm")]
 use crate::cryptography::signatures::{NodeSigningIdentity, SigningSchemeType};
+use crate::cryptography::signing::composite::verify_uniform;
+#[cfg(feature = "non-wasm")]
+use crate::cryptography::signing::composite::sign_uniform;
 #[cfg(feature = "non-wasm")]
 use crate::cryptography::zeroizing_writer::ZeroizingWriter;
 use hashing::DomainSep;
@@ -34,7 +37,7 @@ pub enum CompositeEnvelopeVersions {
 #[versionize(CompositeEnvelopeVersions)]
 pub struct CompositeEnvelope {
     pub msg: Vec<u8>,
-    pub signature: CompositeSignature,
+    pub signature: Vec<StoredTypedSignature>,
 }
 
 impl Named for CompositeEnvelope {
@@ -65,7 +68,7 @@ pub fn seal(
 ) -> Result<UnifiedSigncryption, CryptographyError> {
     let binding = receiver_binding(receiver_id, receiver_enc_key)?;
     let signed = Zeroizing::new([msg, binding.as_slice()].concat());
-    let signature = CompositeSignature::sign_uniform(identity, schemes, dsep, &signed)?;
+    let signature = sign_uniform(identity, schemes, dsep, &signed)?;
 
     let mut envelope = CompositeEnvelope {
         msg: msg.to_vec(),
@@ -117,9 +120,7 @@ pub(super) fn open(
 
     let binding = receiver_binding(receiver_id, encryption_key)?;
     let signed = Zeroizing::new([msg.as_slice(), binding.as_slice()].concat());
-    envelope
-        .signature
-        .verify_uniform(sender_keys, dsep, &signed)
+    verify_uniform(&envelope.signature, sender_keys, dsep, &signed)
         .map_err(|e| CryptographyError::VerificationError(e.to_string()))?;
 
     Ok(msg)

@@ -12,7 +12,7 @@ pub mod seed;
 pub mod typed_signature;
 pub mod verf_key_set;
 
-pub use composite::{CompositeSignature, canonical_schemes};
+pub use composite::canonical_schemes;
 pub use typed_signature::{StoredTypedSignature, StoredTypedSignatureVersions};
 pub use verf_key_set::VerfKeySet;
 
@@ -100,9 +100,6 @@ pub enum SigningError {
     /// verified" vacuously true.
     #[error("a signing scheme set must name at least one scheme")]
     EmptySchemeSet,
-    /// A set of signing schemes was not in its canonical encoding.
-    #[error("signing scheme set is not canonical: {0}")]
-    NonCanonicalSchemeSet(String),
     /// A composite signature carried a different set of schemes than the
     /// verifier required.
     #[error("signature was made under schemes {actual}, but {expected} were required")]
