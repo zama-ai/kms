@@ -149,7 +149,7 @@ mod tests {
     use super::*;
     use crate::cryptography::signatures::gen_sig_keys;
     use crate::cryptography::signing::test_support::seeded_identity;
-    use crate::cryptography::signing::unified_verify;
+    use crate::cryptography::signing::{HasSigningScheme, unified_verify};
     use aes_prng::AesRng;
     use rand::SeedableRng;
     use strum::IntoEnumIterator;

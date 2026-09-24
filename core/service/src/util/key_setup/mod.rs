@@ -1716,7 +1716,7 @@ mod tests {
     use crate::cryptography::signatures::{PrivateSigKey, PublicSigKey, gen_sig_keys};
     use crate::cryptography::signing::identity::NodeSigningIdentity;
     use crate::cryptography::signing::seed::RootSigningSeed;
-    use crate::cryptography::signing::{SigningSchemeType, unified_verify};
+    use crate::cryptography::signing::{HasSigningScheme, SigningSchemeType, unified_verify};
     use crate::engine::threshold::service::epoch_manager::EpochData;
     use crate::util::key_setup::{
         all_verf_material_slots, delete_all_verf_material, non_legacy_verf_material_slots,

@@ -1,6 +1,6 @@
 //! ECDSA over secp256k1 signing backend.
 
-use super::{Signature, SigningError, SigningScheme, SigningSchemeType};
+use super::{HasSigningScheme, Signature, SigningError, SigningScheme, SigningSchemeType};
 use crate::anyhow_tracked;
 use crate::cryptography::error::CryptographyError;
 use crate::cryptography::internal_crypto_types::LegacySerialization;
@@ -85,9 +85,10 @@ impl PublicSigKey {
     pub fn to_uncompressed_bytes(&self) -> Vec<u8> {
         self.pk.0.to_encoded_point(false).as_bytes().to_vec()
     }
+}
 
-    /// The scheme this key belongs to: always ECDSA/secp256k1.
-    pub fn signing_scheme_type(&self) -> SigningSchemeType {
+impl HasSigningScheme for PublicSigKey {
+    fn signing_scheme_type(&self) -> SigningSchemeType {
         SigningSchemeType::Ecdsa256k1
     }
 }
@@ -243,8 +244,10 @@ impl PrivateSigKey {
         })?;
         Ok(PrivateSigKey::new(key))
     }
+}
 
-    pub fn signing_scheme_type(&self) -> SigningSchemeType {
+impl HasSigningScheme for PrivateSigKey {
+    fn signing_scheme_type(&self) -> SigningSchemeType {
         SigningSchemeType::Ecdsa256k1
     }
 }

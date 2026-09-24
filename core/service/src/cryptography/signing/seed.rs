@@ -36,6 +36,7 @@ use super::{
     DSEP_SIGKEY_DERIVE, SIGKEY_DERIVATION_VERSION, SigningError, SigningSchemeType,
     UnifiedPrivateSigKey, UnifiedPublicSigKey,
 };
+use crate::cryptography::signing::HasSigningScheme;
 use crate::impl_generic_versionize;
 use hashing::{DIGEST_BYTES, hash_element};
 use ml_dsa::{MlDsa44, MlDsa65, MlDsa87};
@@ -313,7 +314,7 @@ impl Zeroize for DerivedKeyCache {
 mod tests {
     use super::*;
     use crate::consts::SAFE_SER_SIZE_LIMIT;
-    use crate::cryptography::signing::{unified_sign, unified_verify};
+    use crate::cryptography::signing::{HasSigningScheme, unified_sign, unified_verify};
     use aes_prng::AesRng;
     use hashing::DomainSep;
     use rand::SeedableRng;

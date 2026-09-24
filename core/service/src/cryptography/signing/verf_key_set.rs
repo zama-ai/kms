@@ -1,7 +1,7 @@
 //! The verification keys one party publishes, one per signature scheme.
 
 use super::identity::NodeSigningIdentity;
-use super::{SigningError, SigningSchemeType, UnifiedPublicSigKey};
+use super::{HasSigningScheme, SigningError, SigningSchemeType, UnifiedPublicSigKey};
 use crate::impl_generic_versionize;
 use hashing::{DomainSep, hash_element};
 use serde::{Deserialize, Deserializer, Serialize};
