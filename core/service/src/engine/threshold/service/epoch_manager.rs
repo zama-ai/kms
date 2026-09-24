@@ -119,6 +119,10 @@ const RESHARE_Z128_SESSION_COUNTER: u64 = 4;
 const RESHARE_SESSION_ONLINE_SET_2_COUNTER: u64 = 5;
 const RESHARE_COMMON_SESSION_ONLINE_COUNTER: u64 = 6;
 
+/// The private data types that a threshold node stores under an epoch.
+const EPOCH_SCOPED_PRIVATE_TYPES: [PrivDataType; 2] =
+    [PrivDataType::FheKeyInfo, PrivDataType::CrsInfo];
+
 #[derive(Debug, Clone, Serialize, Deserialize, VersionsDispatch)]
 pub enum EpochDataVersions {
     V0(EpochData),
@@ -917,17 +921,33 @@ impl<
             // Roll back any partial successes in case something fails during the resharing,
             // to not leave the storage in a partial state.
             let priv_storage = crypto_storage.get_private_storage();
-            match Self::purge_epoch_material(&new_epoch_id, &priv_storage).await {
-                Ok(()) => session_maker.remove_epoch(&new_epoch_id).await,
+            match Self::rollback_reshared_material(
+                &new_epoch_id,
+                verified_previous_epoch,
+                &priv_storage,
+                session_maker,
+            )
+            .await
+            {
+                Ok(true) => tracing::info!(
+                    "Rolled epoch {new_epoch_id} back: its reshared material and its epoch data are \
+                 deleted and the epoch is no longer registered. Retry is safe."
+                ),
+                // An operator has to resolve this: either re-run the resharing, or destroy the
+                // epoch once the other request's material is expendable.
+                Ok(false) => tracing::error!(
+                    "Epoch {new_epoch_id} holds material that this resharing did not write, so the \
+                 epoch remains registered and its epoch data remains in storage. Do not retry without checking first."
+                ),
                 Err(e) => tracing::error!(
                     "Rollback of epoch {new_epoch_id} failed to delete its private material: {e:?}. The \
-                 epoch remains registered so that the deletion can be retried."
+                 epoch remains registered so that the deletion can be retried. Do not retry without checking first."
                 ),
             }
             // Remove regardless of whether the rollback succeeded or not, to avoid leaving the in-memory cache in a partial state.
             let removed = crypto_storage.purge_epoch_from_cache(&new_epoch_id).await;
             tracing::info!(
-                "Freed {removed} in-memory FHE key cache entries for rolled back epoch {new_epoch_id}"
+                "Freed {removed} in-memory FHE key cache entries for rolled back epoch {new_epoch_id}. Retry is safe."
             );
 
             return Err(anyhow::anyhow!(storage_err_msg));
@@ -1270,99 +1290,135 @@ impl<
         Ok(task)
     }
 
-    /// Deletes every piece of private material that belongs to `epoch_id`: the FHE key shares and
-    /// the CRS metadata stored under the epoch, followed by the epoch data itself.
+    /// Rolls a failed resharing back: deletes the key shares and the CRS metadata of
+    /// `previous_epoch` under `epoch_id`, through [`Self::delete_epoch_entries`]. Returns whether
+    /// the epoch is gone, both from storage and from `session_maker`.
     ///
-    /// The deletion continues past a failure and the first error is returned.
-    /// However, only if all deletions succeed is the epoch data itself deleted, so that a restarted
-    /// node can still see the epoch and hence finish the deletion.
-    async fn purge_epoch_material(
+    /// Only the IDs reshared from `previous_epoch` are deleted, rather than everything stored under
+    /// `epoch_id`, so that material another request wrote under the epoch survives the rollback.
+    async fn rollback_reshared_material(
         epoch_id: &EpochId,
+        previous_epoch: &VerifiedPreviousEpochInfo,
         priv_storage: &tokio::sync::Mutex<PrivS>,
-    ) -> anyhow::Result<()> {
+        session_maker: &SessionMaker,
+    ) -> anyhow::Result<bool> {
+        let reshared: Vec<(kms_grpc::RequestId, PrivDataType)> = previous_epoch
+            .keys_info
+            .iter()
+            .map(|key| (key.key_id, PrivDataType::FheKeyInfo))
+            .chain(
+                previous_epoch
+                    .crs_info
+                    .iter()
+                    .map(|crs| (crs.crs_id, PrivDataType::CrsInfo)),
+            )
+            .collect();
         let mut priv_storage_guard = priv_storage.lock().await;
+        Self::delete_epoch_entries(epoch_id, reshared, &mut priv_storage_guard, session_maker).await
+    }
 
-        // At this point we're committed to deleting the epoch, so do not return if there's an error,
-        // but track the first error to report back to the caller.
+    /// Deletes `entries` under `epoch_id`, and then the epoch itself once the epoch holds nothing
+    /// more. Returns `true` when the epoch is gone, `false` when material of another request keeps
+    /// it alive, and the first error encountered otherwise.
+    ///
+    /// The epoch data goes last, and only once the epoch is listed and found empty. This is because the
+    /// epoch data holds the PRSS setup and is what resurrects the epoch after a restart, so leaving it
+    /// in place keeps whatever remains serviceable and lets a restarted node finish the deletion.
+    async fn delete_epoch_entries(
+        epoch_id: &EpochId,
+        entries: Vec<(kms_grpc::RequestId, PrivDataType)>,
+        priv_storage: &mut PrivS,
+        session_maker: &SessionMaker,
+    ) -> anyhow::Result<bool> {
         let mut first_error: Option<anyhow::Error> = None;
-
-        for priv_data_type in &[PrivDataType::FheKeyInfo, PrivDataType::CrsInfo] {
-            // Delete all data stored under this epoch for the given private data type
-            // first find all data IDs
-            let data_ids = match priv_storage_guard
-                .all_data_ids_at_epoch(epoch_id, &priv_data_type.to_string())
-                .await
+        for (data_id, data_type) in entries {
+            if let Err(e) = delete_at_request_and_epoch_id(
+                priv_storage,
+                &data_id,
+                epoch_id,
+                &data_type.to_string(),
+            )
+            .await
             {
-                Ok(ids) => ids,
-                Err(e) => {
-                    tracing::error!(
-                        "Error listing data IDs for type {priv_data_type} at epoch ID {epoch_id}: {e:?}"
-                    );
-                    if first_error.is_none() {
-                        first_error = Some(e);
-                    }
-                    continue;
+                tracing::error!(
+                    "Error deleting data {data_id} with type {data_type} at epoch ID {epoch_id}: {e:?}"
+                );
+                if first_error.is_none() {
+                    first_error = Some(e);
                 }
-            };
+            }
+        }
+        if let Some(e) = first_error {
+            return Err(e);
+        }
 
-            for data_id in &data_ids {
-                if let Err(e) = delete_at_request_and_epoch_id(
-                    &mut (*priv_storage_guard),
-                    data_id,
-                    epoch_id,
-                    &priv_data_type.to_string(),
-                )
+        for data_type in EPOCH_SCOPED_PRIVATE_TYPES {
+            let remaining = priv_storage
+                .all_data_ids_at_epoch(epoch_id, &data_type.to_string())
                 .await
-                {
-                    tracing::error!(
-                        "Error deleting data {data_id} with type {} at epoch ID {epoch_id}: {e:?}",
-                        &priv_data_type
-                    );
-                    if first_error.is_none() {
-                        first_error = Some(e);
-                    }
-                }
+                .map_err(|e| {
+                    anyhow::anyhow!(
+                        "Error listing data IDs for type {data_type} at epoch ID {epoch_id}: {e}"
+                    )
+                })?;
+            if !remaining.is_empty() {
+                tracing::warn!(
+                    "Epoch ID {epoch_id} still holds {} entries of type {data_type}, so its epoch data remains: {remaining:?}",
+                    remaining.len()
+                );
+                return Ok(false);
             }
         }
 
         // Delete legacy data to avoid it coming back on migration at restart.
         #[expect(deprecated)]
         let legacy_prss_type = PrivDataType::PrssSetupCombined.to_string();
-        if first_error.is_none()
-            && let Err(e) = delete_at_request_id(
-                &mut (*priv_storage_guard),
-                &epoch_id.into(),
-                &legacy_prss_type,
-            )
-            .await
-        {
-            tracing::error!("Error deleting PrssSetupCombined on epoch ID {epoch_id}: {e:?}");
-            first_error = Some(e);
+        delete_at_request_id(priv_storage, &epoch_id.into(), &legacy_prss_type).await?;
+        delete_at_request_id(
+            priv_storage,
+            &epoch_id.into(),
+            &PrivDataType::EpochData.to_string(),
+        )
+        .await?;
+
+        session_maker.remove_epoch(epoch_id).await;
+
+        Ok(true)
+    }
+
+    /// Deletes every piece of private material that belongs to `epoch_id`: the FHE key shares and
+    /// the CRS metadata stored under the epoch, followed by the epoch data itself, and finally
+    /// forgets the epoch in `session_maker`.
+    ///
+    /// Both the listing and the deletion continue past a failure, so that as much material as
+    /// possible is erased, and the first error is returned so that the operation can be retried.
+    async fn purge_epoch_material(
+        epoch_id: &EpochId,
+        priv_storage: &tokio::sync::Mutex<PrivS>,
+        session_maker: &SessionMaker,
+    ) -> anyhow::Result<()> {
+        let mut priv_storage_guard = priv_storage.lock().await;
+        let mut entries = Vec::new();
+        for data_type in EPOCH_SCOPED_PRIVATE_TYPES {
+            let data_ids = priv_storage_guard
+                .all_data_ids_at_epoch(epoch_id, &data_type.to_string())
+                .await
+                .map_err(|e| {
+                    anyhow::anyhow!(
+                        "Error listing data IDs for type {data_type} at epoch ID {epoch_id}: {e}"
+                    )
+                })?;
+            entries.extend(data_ids.into_iter().map(|data_id| (data_id, data_type)));
         }
 
-        // Delete the epoch data (stored under epoch_id as a request_id) only once every key/CRS
-        // meta data deletion above has succeeded. The epoch data (which holds the PRSS setup) is what
-        // resurrects the epoch after a restart — the session maker is rebuilt from epoch-data
-        // storage on startup — hence keeping the epoch data for last guarantees a restarted node still
-        // sees the epoch and can finish the deletion.
-        if first_error.is_none()
-            && let Err(e) = delete_at_request_id(
-                &mut (*priv_storage_guard),
-                &epoch_id.into(),
-                &PrivDataType::EpochData.to_string(),
-            )
-            .await
+        if !Self::delete_epoch_entries(epoch_id, entries, &mut priv_storage_guard, session_maker)
+            .await?
         {
-            tracing::error!("Error deleting EpochData epoch ID {epoch_id}: {e:?}");
-            first_error = Some(e);
+            anyhow::bail!(
+                "Epoch ID {epoch_id} still holds private material after its deletion, so its epoch data is kept"
+            );
         }
-
-        match first_error {
-            // If there was a problem, stop and signal the error here so that the operation can be
-            // retried.
-            Some(e) => Err(e),
-            None => Ok(()),
-        }
+        Ok(())
     }
 
     /// Destroys an epoch by removing all private data stored under the given epoch, dropping its
@@ -1400,7 +1456,7 @@ impl<
         }
 
         let priv_storage = crypto_storage.get_private_storage();
-        let purge_res = Self::purge_epoch_material(epoch_id, &priv_storage).await;
+        let purge_res = Self::purge_epoch_material(epoch_id, &priv_storage, session_maker).await;
 
         // The cache is dropped whatever the outcome of the deletion to avoid orphaned data in RAM.
         let removed = crypto_storage.purge_epoch_from_cache(epoch_id).await;
@@ -1416,9 +1472,6 @@ impl<
                 tonic::Code::Internal,
             )
         })?;
-
-        // Only forget the epoch once every piece of its private data has been deleted.
-        session_maker.remove_epoch(epoch_id).await;
 
         tracing::info!("Epoch {} destroyed successfully", epoch_id);
         Ok(Response::new(Empty {}))
