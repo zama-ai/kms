@@ -38,7 +38,7 @@ pub enum CompositeEnvelopeVersions {
 #[versionize(CompositeEnvelopeVersions)]
 pub struct CompositeEnvelope {
     pub msg: Vec<u8>,
-    pub signature: Vec<StoredTypedSignature>,
+    pub signatures: Vec<StoredTypedSignature>,
 }
 
 impl Named for CompositeEnvelope {
@@ -114,7 +114,7 @@ pub(super) fn seal(
 
     let mut envelope = CompositeEnvelope {
         msg: msg.to_vec(),
-        signature,
+        signatures: signature,
     };
     let mut plaintext = ZeroizingWriter::new();
     let serialized = safe_serialize(&envelope, &mut plaintext, SAFE_SER_SIZE_LIMIT);
@@ -158,7 +158,7 @@ pub(super) fn open(
         &unsign_key.receiver_id,
         &unsign_key.encryption_key,
     )?;
-    let verified = verify_composite(&envelope.signature, sender_keys, dsep, &signed);
+    let verified = verify_composite(&envelope.signatures, sender_keys, dsep, &signed);
     signed.zeroize();
     verified.map_err(|e| CryptographyError::VerificationError(e.to_string()))?;
 
