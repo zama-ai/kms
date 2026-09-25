@@ -538,7 +538,7 @@ impl<
         } else {
             OP_KEYGEN_REQUEST
         };
-        // Acquire the serial lock to make sure no other keygen is running concurrently
+        // Serialize keygen admission. The spawned DKG tasks still run concurrently.
         let _guard = self.serial_lock.lock().await;
         let permit = self.rate_limiter.start_keygen(op_tag).await?;
 
