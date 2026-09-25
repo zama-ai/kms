@@ -943,15 +943,15 @@ The response contains:
 Health status levels:
 - **Optimal**: All nodes online and reachable, perfect operational state
 - **Healthy**: Sufficient 2/3 majority but not all nodes online, functional but should investigate offline nodes
-- **Degraded**: At least threshold + 1 but below 2/3 majority, operational with reduced fault tolerance
+- **Degraded**: More than `n/3 + 1` of the `n` nodes reachable but below 2/3 majority, operational with reduced fault tolerance
 - **Unhealthy**: Insufficient nodes for operations, critical issues requiring immediate attention
 
 This endpoint is useful for:
 - Health monitoring and alerting
-- Load balancer health checks
-- Kubernetes readiness/liveness probes
 - Debugging connectivity issues
 - Operational dashboards
+
+Do not use this endpoint for Kubernetes probes or load balancer health checks. Its result depends on the peers, so a network fault could take every node out of service at the same time. The Kubernetes probes use the `liveness` and `readiness` gRPC health services. See [Health Endpoints](../../operations/advanced/metrics.md#health-endpoints).
 
 The endpoint performs real-time connectivity checks to peers and returns current system status.
 
