@@ -116,7 +116,6 @@ impl<R: RoleTrait> Networking<R> for NetworkSession {
             round_counter: round_counter as u64,
         };
 
-        // `Vec<u8> -> Bytes` takes ownership of the allocation; no copy.
         let tag = Bytes::from(
             bc2wrap::serialize(&tagged_value)
                 .map_err(|e| anyhow_error_and_log(format!("networking error: {e:?}")))?,
