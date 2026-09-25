@@ -154,11 +154,11 @@ impl<P: ProducerFactory<ResiduePolyF4Z128, SmallSession<ResiduePolyF4Z128>>> Rea
                     rate_limiting_permit,
                     meta_permit,
                     token,
-                    ongoing,
                     #[cfg(feature = "insecure")]
                     percentage_offline,
                 )
                 .await;
+                ongoing.lock().await.remove(&request_id);
             }
             .instrument(tracing::Span::current()),
         );
@@ -181,7 +181,6 @@ impl<P: ProducerFactory<ResiduePolyF4Z128, SmallSession<ResiduePolyF4Z128>>> Rea
         rate_limiting_permit: OwnedSemaphorePermit,
         meta_permit: MetaStorePermit<BucketMetaStore>,
         cancel_token: CancellationToken,
-        ongoing: Arc<Mutex<HashMap<RequestId, CancellationToken>>>,
         #[cfg(feature = "insecure")] partial_params: Option<
             kms_grpc::kms::v1::PartialKeyGenPreprocParams,
         >,
@@ -344,13 +343,6 @@ impl<P: ProducerFactory<ResiduePolyF4Z128, SmallSession<ResiduePolyF4Z128>>> Rea
                     }
                 }
             }
-        };
-
-        // An abort that removed the entry before this claim wins, even over a finished run.
-        let bucket_result = if ongoing.lock().await.remove(req_id).is_some() {
-            bucket_result
-        } else {
-            Err("aborted".to_string())
         };
 
         // Consume the meta-store permit in exactly one terminal-state write.
@@ -686,7 +678,7 @@ impl<P: ProducerFactory<ResiduePolyF4Z128, SmallSession<ResiduePolyF4Z128>> + Se
         // Step 1: If preprocessing is still running — cancel it
         let mut ongoing = self.ongoing.lock().await;
         if let Some(token) = ongoing.remove(&preproc_id) {
-            // The task records the abort, in its cancel arm or at its claim.
+            // Observe that the cancellation arm handles the abortion and clean-up
             token.cancel();
             tracing::info!("Cancelled preprocessing {}", preproc_id);
             Ok(Response::new(Empty {}))
@@ -1100,37 +1092,6 @@ mod tests {
         poll_result_until_ready(|| prep.get_result(tonic::Request::new(req_id.into())))
             .await
             .unwrap();
-    }
-
-    /// An abort that removes the entry after orchestration finished, but before the claim, wins.
-    #[tokio::test]
-    async fn abort_after_orchestration_wins() {
-        let mut rng = AesRng::seed_from_u64(24);
-        let prep = setup_prep::<DummyProducerFactory>(&mut rng, true).await;
-        let req_id = RequestId::new_random(&mut rng);
-        let request = KeyGenPreprocRequest {
-            signing_schemes: vec![kms_grpc::kms::v1::SigningSchemeType::Ecdsa256k1 as i32],
-            request_id: Some(req_id.into()),
-            params: FheParameter::Test as i32,
-            keyset_config: None,
-            context_id: Some((*DEFAULT_MPC_CONTEXT).into()),
-            domain: Some(alloy_to_protobuf_domain(&dummy_domain()).unwrap()),
-            epoch_id: None,
-            extra_data: vec![],
-        };
-        prep.key_gen_preproc(tonic::Request::new(request))
-            .await
-            .unwrap();
-        // Removing the entry without cancelling lets orchestration finish, as a late abort does.
-        assert!(prep.ongoing.try_lock().unwrap().remove(&req_id).is_some());
-
-        assert_eq!(
-            poll_result_until_ready(|| prep.get_result(tonic::Request::new(req_id.into())))
-                .await
-                .unwrap_err()
-                .code(),
-            tonic::Code::Aborted
-        );
     }
 
     #[cfg(feature = "insecure")]

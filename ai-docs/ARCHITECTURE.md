@@ -258,10 +258,8 @@ The primary service is `CoreServiceEndpoint`. Its RPCs group into:
   and includes the matching transciphering server key; as for the OPRF key,
   `UseExisting` keygen generates a fresh transciphering share when the existing
   keyset has none. Key generation and CRS generation write persistent material
-  only after generation completes. An abort of preprocessing, key generation or
-  CRS generation succeeds only before the task claims its result at the end of
-  generation. After that, the abort returns `NotFound`. An abort updates request
-  state but does not purge storage.
+  only after generation completes. An abort updates request state but does not
+  purge storage.
 - **Decryption** — `PublicDecrypt` (returns plaintext) and `UserDecrypt`
   (user-initiated, EIP-712 authenticated). `PublicDecryptSync` / `UserDecryptSync`
   start a decryption and wait for its result in the same call, so the caller does

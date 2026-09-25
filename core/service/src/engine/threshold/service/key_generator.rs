@@ -478,7 +478,6 @@ impl<
                         permit,
                         meta_permit,
                         token,
-                        ongoing,
                         op_tag,
                         existing_key_tag,
                         existing_compact_pk,
@@ -503,7 +502,6 @@ impl<
                         permit,
                         meta_permit,
                         token,
-                        ongoing,
                     )
                     .await
                 }
@@ -522,6 +520,7 @@ impl<
                     req_id,
                     preproc_id
                 );
+                ongoing.lock().await.remove(&preproc_id);
             }
             .instrument(tracing::Span::current()),
         );
@@ -633,7 +632,7 @@ impl<
     async fn inner_abort_key_gen(&self, preproc_id: RequestId) -> Status {
         match self.ongoing.lock().await.remove(&preproc_id) {
             Some(cancellation_token) => {
-                // The task records the abort, in its cancel arm or at its claim.
+                // Observe that the cancellation arm handles the abortion and clean-up
                 cancellation_token.cancel();
                 tracing::info!("Aborted key generation with preprocessing {}", preproc_id);
                 Status::ok("Key gen aborted successfully")
@@ -1072,11 +1071,9 @@ impl<
         permit: OwnedSemaphorePermit,
         meta_permit: MetaStorePermit<KeyGenMetadata>,
         cancel_token: CancellationToken,
-        ongoing: Arc<Mutex<HashMap<RequestId, CancellationToken>>>,
     ) {
         let _permit = permit;
         let start = Instant::now();
-        let preproc_id = preproc_handle_w_mode.preprocessing_id();
         // Race the (potentially long-running) DKG against an abort.
         let outcome = tokio::select! {
             biased;
@@ -1135,11 +1132,9 @@ impl<
         } } => Some(res),
         };
 
-        // An abort that removed the entry before this claim wins, even over a finished run.
-        let claimed = ongoing.lock().await.remove(&preproc_id).is_some();
         let (prep_id, dkg_res) = match outcome {
-            Some(res) if claimed => res,
-            _ => {
+            Some(res) => res,
+            None => {
                 // Persistent writes start after generation, so this branch has nothing to purge.
                 let _ = update_err_req_in_meta_store(
                     &meta_store,
@@ -1341,14 +1336,12 @@ impl<
         permit: OwnedSemaphorePermit,
         meta_permit: MetaStorePermit<KeyGenMetadata>,
         cancel_token: CancellationToken,
-        ongoing: Arc<Mutex<HashMap<RequestId, CancellationToken>>>,
         op_tag: &'static str,
         existing_key_tag: Option<tfhe::Tag>,
         existing_compact_pk: Option<tfhe::CompactPublicKey>,
     ) {
         let _permit = permit;
         let start = Instant::now();
-        let preproc_id = preproc_handle_w_mode.preprocessing_id();
         let outcome = tokio::select! {
             biased;
             () = cancel_token.cancelled() => None,
@@ -1531,11 +1524,9 @@ impl<
         } } => Some(res),
         };
 
-        // An abort that removed the entry before this claim wins, even over a finished run.
-        let claimed = ongoing.lock().await.remove(&preproc_id).is_some();
         let (prep_id, dkg_res) = match outcome {
-            Some(res) if claimed => res,
-            _ => {
+            Some(res) => res,
+            None => {
                 // Persistent writes start after generation, so this branch has nothing to purge.
                 let _ = update_err_req_in_meta_store(
                     &meta_store,
@@ -2553,37 +2544,6 @@ mod tests {
                 .unwrap_err()
                 .code(),
             tonic::Code::NotFound
-        );
-    }
-
-    /// An abort that removes the entry after the DKG finished, but before the claim, wins.
-    #[tokio::test]
-    async fn abort_after_dkg_wins() {
-        let (prep_ids, kg) = setup_key_generator::<
-            DroppingOnlineDistributedKeyGen128<{ ResiduePolyF4Z128::EXTENSION_DEGREE }>,
-        >()
-        .await;
-        let prep_id = prep_ids[0];
-        let key_id = RequestId::new_random(&mut AesRng::seed_from_u64(16));
-        let epoch_id = *DEFAULT_EPOCH_ID;
-
-        kg.key_gen(keygen_request(key_id, Some(prep_id)))
-            .await
-            .unwrap();
-        // Removing the entry without cancelling lets the DKG finish, as a late abort does.
-        assert!(kg.ongoing.try_lock().unwrap().remove(&prep_id).is_some());
-
-        let err = crate::testing::utils::poll_result_until_ready(|| {
-            kg.get_result(Request::new(key_id.into()))
-        })
-        .await
-        .unwrap_err();
-        assert_eq!(err.code(), tonic::Code::Aborted);
-        assert!(
-            !kg.crypto_storage
-                .fhe_keys_exists(&key_id, &epoch_id)
-                .await
-                .unwrap()
         );
     }
 
