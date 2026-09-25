@@ -15,7 +15,7 @@ use crate::engine::validation::{
     RequestIdParsingErr, parse_grpc_request_id, validate_key_gen_request,
 };
 use crate::util::meta_store::{
-    MetaStore, MetaStoreError, MetaStorePermit, add_req_to_meta_store, ensure_not_in_meta_store,
+    MetaStore, MetaStorePermit, add_req_to_meta_store, ensure_not_in_meta_store,
     retrieve_from_meta_store, try_delete_in_meta_store, update_err_req_in_meta_store,
 };
 use crate::vault::storage::crypto_material::{CentralizedCryptoMaterialStorage, PublicKeySet};
@@ -192,14 +192,7 @@ pub async fn key_gen_impl<
         // request keeps it and no later request can resolve it.
         try_delete_in_meta_store(&service.preprocessing_meta_store, &preproc_id)
             .await
-            .map_err(|e| {
-                // Another keygen consumed it after the lookup, and this request ID is taken.
-                let code = match e {
-                    MetaStoreError::CannotUpdate { .. } => tonic::Code::AlreadyExists,
-                    _ => e.code(),
-                };
-                MetricedError::new(op_tag, Some(req_id), e.to_string(), code)
-            })?;
+            .map_err(|e| MetricedError::new(op_tag, Some(req_id), e.to_string(), e.code()))?;
         ongoing_key_gen.insert(preproc_id, token.clone());
         meta_permit
     };
@@ -653,45 +646,6 @@ pub(crate) mod tests {
             .await
             .unwrap_err();
         assert_eq!(err.code(), tonic::Code::NotFound);
-    }
-
-    /// A keygen whose preprocessing another keygen consumes after the lookup fails with
-    /// `AlreadyExists`, since its request ID is already taken.
-    #[tokio::test]
-    async fn keygen_preproc_consumed_after_lookup() {
-        let mut rng = AesRng::seed_from_u64(42);
-        let preproc_id = derive_request_id("test_keygen_consumed_after_lookup_preproc").unwrap();
-        let (kms, _) = setup_test_kms_with_preproc(&mut rng, &preproc_id).await;
-        let request_id = derive_request_id("test_keygen_consumed_after_lookup").unwrap();
-        let request = KeyGenRequest {
-            signing_schemes: vec![kms_grpc::kms::v1::SigningSchemeType::Ecdsa256k1 as i32],
-            params: Some(FheParameter::Test.into()),
-            keyset_config: None,
-            keyset_added_info: None,
-            request_id: Some(request_id.into()),
-            context_id: None,
-            preproc_id: Some(preproc_id.into()),
-            domain: Some(alloy_to_protobuf_domain(&dummy_domain()).unwrap()),
-            epoch_id: None,
-            extra_data: vec![],
-        };
-        // Holding the ongoing map stops the keygen after its lookup; `unconstrained` keeps
-        // the task budget from yielding earlier.
-        let ongoing_guard = kms.ongoing_key_gen.lock().await;
-        let keygen =
-            tokio::task::unconstrained(key_gen_impl(&kms, tonic::Request::new(request), false));
-        tokio::pin!(keygen);
-        assert!(futures_util::poll!(&mut keygen).is_pending());
-        kms.preprocessing_meta_store
-            .write()
-            .await
-            .try_delete(&preproc_id)
-            .unwrap();
-        drop(ongoing_guard);
-
-        assert_eq!(keygen.await.unwrap_err().code(), tonic::Code::AlreadyExists);
-        // The keygen passed its lookup and failed at the consume.
-        assert!(kms.key_meta_map.read().await.has_existed(&request_id));
     }
 
     /// An abort that removes the entry after generation finished, but before the claim, wins.
