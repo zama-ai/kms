@@ -194,9 +194,7 @@ mod tests {
     use super::super::{Signcrypt, UnifiedSigncryptionKey, UnifiedUnsigncryptionKey, Unsigncrypt};
     use super::*;
     use crate::cryptography::encryption::{PkeSchemeType, UnifiedPrivateEncKey};
-    use crate::cryptography::signatures::{
-        NodeSigningIdentity, PublicSigKey, UnifiedPublicSigKey, VerfKeySet,
-    };
+    use crate::cryptography::signatures::{NodeSigningIdentity, UnifiedPublicSigKey, VerfKeySet};
     use crate::cryptography::signing::test_support::seeded_identity;
     use crate::vault::storage::tests::TestType;
     use aes_prng::AesRng;
@@ -219,11 +217,7 @@ mod tests {
         receiver_id: Vec<u8>,
     }
 
-    fn fixture(scheme: PkeSchemeType, seed: u64) -> CompositeFixture {
-        fixture_under(scheme, seed, pair())
-    }
-
-    fn fixture_under(
+    fn fixture(
         scheme: PkeSchemeType,
         seed: u64,
         schemes: Vec<SigningSchemeType>,
@@ -242,76 +236,26 @@ mod tests {
         }
     }
 
-    impl CompositeFixture {
-        /// Seal `msg` under the fixture's own scheme set: the set its reader
-        /// demands, so the result round trips.
-        fn seal_msg(&mut self, msg: &[u8]) -> UnifiedSigncryption {
-            let schemes = self.schemes.clone();
-            self.seal_under(&schemes, msg).unwrap()
-        }
-
-        /// Seal `msg` under `schemes`, which need not be what the fixture's
-        /// reader demands.
-        fn seal_under(
-            &mut self,
-            schemes: &[SigningSchemeType],
-            msg: &[u8],
-        ) -> Result<UnifiedSigncryption, CryptographyError> {
-            // Destructured so the sealer borrows the identity and the receiver
-            // material while `rng` is borrowed mutably.
-            let Self {
-                rng,
-                identity,
-                enc_key,
-                receiver_id,
-                ..
-            } = self;
-            let key = UnifiedSigncryptionKey::new_multi(identity, enc_key, receiver_id.as_slice());
-            seal(&key, rng, DSEP, schemes, msg)
-        }
-
-        /// The reader this fixture's envelopes are made for.
-        fn reader(&self) -> UnifiedUnsigncryptionKey<'_> {
-            self.reader_with(&self.keys, &self.receiver_id)
-        }
-
-        /// A reader deviating from the fixture in its key set or its receiver
-        /// id, so a test can vary one of them at a time.
-        fn reader_with<'a>(
-            &'a self,
-            keys: &'a VerfKeySet,
-            receiver_id: &'a [u8],
-        ) -> UnifiedUnsigncryptionKey<'a> {
-            UnifiedUnsigncryptionKey::new_multi(&self.dec_key, &self.enc_key, keys, receiver_id)
-        }
-
-        /// Open `cipher` with the fixture's own reader.
-        fn open(
-            &self,
-            cipher: &UnifiedSigncryption,
-        ) -> Result<Zeroizing<Vec<u8>>, CryptographyError> {
-            self.reader().open(DSEP, cipher)
-        }
-    }
-
-    /// The ECDSA member of the fixture's key set, in the form the frozen reader
-    /// takes.
-    fn ecdsa_member(f: &CompositeFixture) -> PublicSigKey {
-        match f.keys.require(SigningSchemeType::Ecdsa256k1).unwrap() {
-            UnifiedPublicSigKey::Ecdsa256k1(key) => key.clone(),
-            _ => unreachable!("the ECDSA member of the set is an ECDSA key"),
-        }
-    }
-
     /// Round-trips for both PKE schemes the backup and user-decryption paths use.
     #[test]
     fn round_trip() {
         for scheme in [PkeSchemeType::MlKem512, PkeSchemeType::MlKem1024P384] {
-            let mut f = fixture(scheme, 100);
-            let cipher = f.seal_msg(b"a composite message");
+            let mut f = fixture(scheme, 100, pair());
+            let sealer = UnifiedSigncryptionKey::new_multi(&f.identity, &f.enc_key, &f.receiver_id);
+            let cipher = seal(
+                &sealer,
+                &mut f.rng,
+                DSEP,
+                &f.schemes,
+                b"a composite message",
+            )
+            .unwrap();
             assert_eq!(cipher.pke_type, scheme);
 
-            let opened = f.open(&cipher).unwrap();
+            let opened =
+                UnifiedUnsigncryptionKey::new_multi(&f.dec_key, &f.enc_key, &f.keys, &f.receiver_id)
+                    .open(DSEP, &cipher)
+                    .unwrap();
             assert_eq!(&*opened, b"a composite message", "{scheme}");
         }
     }
@@ -320,13 +264,17 @@ mod tests {
     /// pair rejects a signcryption made under a weaker one.
     #[test]
     fn a_signature_under_another_scheme_set_is_rejected() {
-        let mut f = fixture(PkeSchemeType::MlKem512, 200);
+        let mut f = fixture(PkeSchemeType::MlKem512, 200, pair());
 
         // The sender signs under a weaker pair; using MlDsa44 instead of MlDsa87.
         let weaker = vec![SigningSchemeType::Ecdsa256k1, SigningSchemeType::MlDsa44];
-        let cipher = f.seal_under(&weaker, b"downgrade me").unwrap();
+        let sealer = UnifiedSigncryptionKey::new_multi(&f.identity, &f.enc_key, &f.receiver_id);
+        let cipher = seal(&sealer, &mut f.rng, DSEP, &weaker, b"downgrade me").unwrap();
 
-        let err = f.open(&cipher).unwrap_err();
+        let err =
+            UnifiedUnsigncryptionKey::new_multi(&f.dec_key, &f.enc_key, &f.keys, &f.receiver_id)
+                .open(DSEP, &cipher)
+                .unwrap_err();
         assert!(
             matches!(err, CryptographyError::VerificationError(_)),
             "{err}"
@@ -336,10 +284,14 @@ mod tests {
         // exactly what was signed, confirming the rejection above is the policy
         // check and not an unrelated failure.
         let weaker_keys = VerfKeySet::from_identity(&f.identity, &weaker).unwrap();
-        let opened = f
-            .reader_with(&weaker_keys, &f.receiver_id)
-            .open(DSEP, &cipher)
-            .unwrap();
+        let opened = UnifiedUnsigncryptionKey::new_multi(
+            &f.dec_key,
+            &f.enc_key,
+            &weaker_keys,
+            &f.receiver_id,
+        )
+        .open(DSEP, &cipher)
+        .unwrap();
         assert_eq!(&*opened, b"downgrade me");
     }
 
@@ -353,24 +305,30 @@ mod tests {
             (300_u64, pair()),
             (400_u64, vec![SigningSchemeType::Ecdsa256k1]),
         ] {
-            let mut f = fixture_under(PkeSchemeType::MlKem512, seed, schemes);
-            let composite = f.seal_msg(b"composite payload");
+            let mut f = fixture(PkeSchemeType::MlKem512, seed, schemes);
+            let sealer = UnifiedSigncryptionKey::new_multi(&f.identity, &f.enc_key, &f.receiver_id);
+            let composite = seal(&sealer, &mut f.rng, DSEP, &f.schemes, b"composite payload")
+                .unwrap();
 
             // The envelope does open for the reader it was made for, so each
             // rejection below is the format mismatch and not a broken fixture.
-            assert_eq!(&*f.open(&composite).unwrap(), b"composite payload");
+            let reader =
+                UnifiedUnsigncryptionKey::new_multi(&f.dec_key, &f.enc_key, &f.keys, &f.receiver_id);
+            assert_eq!(&*reader.open(DSEP, &composite).unwrap(), b"composite payload");
 
             // Frozen reader, handed a composite envelope.
-            let legacy_ecdsa = ecdsa_member(&f);
-            let legacy_key = UnifiedUnsigncryptionKey::new(
+            let legacy_ecdsa = match f.keys.require(SigningSchemeType::Ecdsa256k1).unwrap() {
+                UnifiedPublicSigKey::Ecdsa256k1(key) => key.clone(),
+                _ => unreachable!("the ECDSA member of the set is an ECDSA key"),
+            };
+            let err = UnifiedUnsigncryptionKey::new(
                 &f.dec_key,
                 &f.enc_key,
                 &legacy_ecdsa,
                 &f.receiver_id,
-            );
-            let err = legacy_key
-                .unsigncrypt::<TestType>(DSEP, &composite)
-                .unwrap_err();
+            )
+            .unsigncrypt::<TestType>(DSEP, &composite)
+            .unwrap_err();
             assert!(
                 matches!(err, CryptographyError::BincodeError(_)),
                 "the frozen reader must reject a composite envelope on the KEM ciphertext, got: {err}"
@@ -385,7 +343,7 @@ mod tests {
                 UnifiedSigncryptionKey::new(&base.signing_key, &base.enc_key, &base.receiver_id)
                     .signcrypt(&mut rng, DSEP, &[], &TestType { i: 7 })
                     .unwrap();
-            let err = f.open(&frozen).unwrap_err();
+            let err = reader.open(DSEP, &frozen).unwrap_err();
             assert!(
                 matches!(err, CryptographyError::SerializationError(_)),
                 "the composite reader must reject a frozen envelope on deserialization, got: {err}"
@@ -396,40 +354,55 @@ mod tests {
     /// Opening fails on every deviation from what was sealed.
     #[test]
     fn open_rejects_any_deviation_from_what_was_sealed() {
-        let mut f = fixture(PkeSchemeType::MlKem512, 500);
-        let cipher = f.seal_msg(b"bound to one sender and one receiver");
+        let mut f = fixture(PkeSchemeType::MlKem512, 500, pair());
+        let sealer = UnifiedSigncryptionKey::new_multi(&f.identity, &f.enc_key, &f.receiver_id);
+        let cipher = seal(
+            &sealer,
+            &mut f.rng,
+            DSEP,
+            &f.schemes,
+            b"bound to one sender and one receiver",
+        )
+        .unwrap();
 
         // The untouched envelope opens, so each rejection below is the
         // deviation and not an unrelated failure.
-        f.open(&cipher).unwrap();
-
-        let mut rng = AesRng::seed_from_u64(999);
-        let other_keys = VerfKeySet::from_identity(&seeded_identity(&mut rng), &f.schemes).unwrap();
-        assert!(
-            f.reader_with(&other_keys, &f.receiver_id)
-                .open(DSEP, &cipher)
-                .is_err(),
-            "another party's key set opened the envelope"
-        );
-
-        let other_id = b"a different receiver".to_vec();
-        assert!(
-            f.reader_with(&f.keys, &other_id)
-                .open(DSEP, &cipher)
-                .is_err(),
-            "a different receiver id opened the envelope"
-        );
+        let reader =
+            UnifiedUnsigncryptionKey::new_multi(&f.dec_key, &f.enc_key, &f.keys, &f.receiver_id);
+        reader.open(DSEP, &cipher).unwrap();
 
         assert!(
-            f.reader().open(b"OTHERDSP", &cipher).is_err(),
+            reader.open(b"OTHERDSP", &cipher).is_err(),
             "a different domain separator opened the envelope"
         );
 
         let mut flipped = cipher.clone();
         flipped.payload[0] ^= 0x01;
         assert!(
-            f.open(&flipped).is_err(),
+            reader.open(DSEP, &flipped).is_err(),
             "a tampered ciphertext opened the envelope"
+        );
+
+        let mut rng = AesRng::seed_from_u64(999);
+        let other_keys = VerfKeySet::from_identity(&seeded_identity(&mut rng), &f.schemes).unwrap();
+        assert!(
+            UnifiedUnsigncryptionKey::new_multi(
+                &f.dec_key,
+                &f.enc_key,
+                &other_keys,
+                &f.receiver_id
+            )
+            .open(DSEP, &cipher)
+            .is_err(),
+            "another party's key set opened the envelope"
+        );
+
+        let other_id = b"a different receiver".to_vec();
+        assert!(
+            UnifiedUnsigncryptionKey::new_multi(&f.dec_key, &f.enc_key, &f.keys, &other_id)
+                .open(DSEP, &cipher)
+                .is_err(),
+            "a different receiver id opened the envelope"
         );
     }
 
