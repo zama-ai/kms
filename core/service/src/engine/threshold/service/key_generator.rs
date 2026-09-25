@@ -675,12 +675,15 @@ impl<
             match retrieve_from_meta_store(bucket_metastore, &preproc_id, op_tag).await {
                 Ok(bucket) => bucket,
                 Err(e) => {
-                    // Remap the error to include the correct request ID
+                    // Remap the error to include the correct request ID, and defuse the
+                    // original so that the error is recorded once.
+                    let (msg, code) = (e.internal_err().to_string(), e.code());
+                    e.defuse();
                     return Err(MetricedError::new(
                         op_tag,
                         Some(key_req_id),
-                        anyhow::anyhow!(e.internal_err().to_string()),
-                        e.code(),
+                        anyhow::anyhow!(msg),
+                        code,
                     ));
                 }
             };
@@ -2201,6 +2204,37 @@ mod tests {
                 tonic::Code::NotFound
             );
         }
+    }
+
+    /// A failed preprocessing lookup records its error once, when the caller drops or returns it.
+    #[tokio::test]
+    async fn resolve_preprocessing_records_error_once() {
+        type Kg = DroppingOnlineDistributedKeyGen128<{ ResiduePolyF4Z128::EXTENSION_DEGREE }>;
+        let (_, kg) = setup_key_generator::<Kg>().await;
+        let mut rng = AesRng::seed_from_u64(3);
+
+        let recorded_errors_before = crate::engine::utils::handle_error_call_count();
+        let err = RealKeyGenerator::<ram::RamStorage, ram::RamStorage, Kg>::resolve_preprocessing(
+            &kg.preproc_buckets,
+            RequestId::new_random(&mut rng),
+            Some(RequestId::new_random(&mut rng)),
+            TEST_PARAM,
+            false,
+            false,
+        )
+        .await
+        .err()
+        .unwrap();
+        assert_eq!(err.code(), tonic::Code::NotFound);
+        assert_eq!(
+            crate::engine::utils::handle_error_call_count(),
+            recorded_errors_before
+        );
+        drop(err);
+        assert_eq!(
+            crate::engine::utils::handle_error_call_count(),
+            recorded_errors_before + 1
+        );
     }
 
     #[tokio::test]

@@ -126,13 +126,11 @@ pub async fn key_gen_impl<
             retrieve_from_meta_store(&service.preprocessing_meta_store, &preproc_id, op_tag)
                 .await
                 .map_err(|e| {
-                    // Remap the error to include the correct request ID
-                    MetricedError::new(
-                        op_tag,
-                        Some(req_id),
-                        anyhow::anyhow!(e.internal_err().to_string()),
-                        e.code(),
-                    )
+                    // Remap the error to include the correct request ID, and defuse the
+                    // original so that the error is recorded once.
+                    let (msg, code) = (e.internal_err().to_string(), e.code());
+                    e.defuse();
+                    MetricedError::new(op_tag, Some(req_id), anyhow::anyhow!(msg), code)
                 })?;
         // Request params take precedence; otherwise use the params stored during preprocessing.
         let params = if request_params_set {
@@ -1058,6 +1056,43 @@ pub(crate) mod tests {
                 get_key_gen_result_impl(&kms, Request::new(bad_key_id.into()), false).await;
             assert_eq!(get_result.unwrap_err().code(), tonic::Code::NotFound);
         }
+    }
+
+    /// A keygen rejected at the preprocessing lookup records its error once, when the caller
+    /// drops or returns it.
+    #[tokio::test]
+    async fn preproc_lookup_error_recorded_once() {
+        let mut rng = AesRng::seed_from_u64(42);
+        let (kms, _) = setup_central_test_kms(&mut rng).await;
+        let request_id = derive_request_id("test_lookup_error_key_id").unwrap();
+        let preproc_id = derive_request_id("test_lookup_error_preproc_id").unwrap();
+        let request = KeyGenRequest {
+            signing_schemes: vec![kms_grpc::kms::v1::SigningSchemeType::Ecdsa256k1 as i32],
+            params: Some(FheParameter::Test.into()),
+            keyset_config: None,
+            keyset_added_info: None,
+            request_id: Some(request_id.into()),
+            context_id: None,
+            preproc_id: Some(preproc_id.into()),
+            domain: Some(alloy_to_protobuf_domain(&dummy_domain()).unwrap()),
+            epoch_id: None,
+            extra_data: vec![],
+        };
+
+        let recorded_errors_before = crate::engine::utils::handle_error_call_count();
+        let err = key_gen_impl(&kms, tonic::Request::new(request), false)
+            .await
+            .unwrap_err();
+        assert_eq!(err.code(), tonic::Code::NotFound);
+        assert_eq!(
+            crate::engine::utils::handle_error_call_count(),
+            recorded_errors_before
+        );
+        drop(err);
+        assert_eq!(
+            crate::engine::utils::handle_error_call_count(),
+            recorded_errors_before + 1
+        );
     }
 
     #[tokio::test]
