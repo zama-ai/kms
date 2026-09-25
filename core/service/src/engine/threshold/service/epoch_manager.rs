@@ -2434,8 +2434,14 @@ pub(crate) mod tests {
 
     #[tokio::test]
     async fn multiple_reshares_from_same_epoch() {
+        use threshold_execution::small_execution::{
+            agree_random::DummyAgreeRandom, prss::AbortRealPrssInit,
+        };
+
         let mut rng = AesRng::seed_from_u64(42);
-        let epoch_manager = make_epoch_manager::<EmptyPrss>(&mut rng).await;
+        // Resharing constructs sessions from both the previous and the new epoch.
+        let epoch_manager =
+            make_epoch_manager::<AbortRealPrssInit<DummyAgreeRandom>>(&mut rng).await;
         let prev_epoch_id = EpochId::new_random(&mut rng);
         let prev_context_id = *DEFAULT_MPC_CONTEXT;
         let context_id = ContextId::new_random(&mut rng);
@@ -2446,20 +2452,19 @@ pub(crate) mod tests {
             .add_four_party_dummy_context(context_id)
             .await;
         // The epoch we reshare *from* must exist as well.
+        let role = Role::indexed_from_one(1);
         epoch_manager
             .session_maker
             .add_epoch(
                 prev_epoch_id,
                 EpochData {
                     prss: PRSSSetupCombined {
-                        prss_setup_z128: PRSSSetup::<ResiduePolyF4Z128>::new_testing_prss(
-                            vec![],
-                            vec![],
-                        ),
-                        prss_setup_z64: PRSSSetup::<ResiduePolyF4Z64>::new_testing_prss(
-                            vec![],
-                            vec![],
-                        ),
+                        prss_setup_z128: PRSSSetup::testing_party_epoch_init(4, 1, role)
+                            .await
+                            .unwrap(),
+                        prss_setup_z64: PRSSSetup::testing_party_epoch_init(4, 1, role)
+                            .await
+                            .unwrap(),
                         num_parties: 4,
                         threshold: 1,
                     },
