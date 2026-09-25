@@ -11,9 +11,7 @@ use kms_0_14_0::cryptography::{
     encryption::{Encryption, PkeScheme, PkeSchemeType},
     hybrid_ml_kem::HybridKemCt,
     signatures::{compute_eip712_signature, gen_sig_keys},
-    signcryption::{
-        Signcrypt, UnifiedSigncryption, UnifiedSigncryptionKeyOwned,
-    },
+    signcryption::{Signcrypt, UnifiedSigncryptionKeyOwned},
 };
 use kms_0_14_0::engine::base::{CrsGenMetadata, KeyGenMetadataInner, KmsFheKeyHandles};
 use kms_0_14_0::engine::centralized::central_kms::generate_client_fhe_key;
@@ -23,7 +21,7 @@ use kms_0_14_0::engine::threshold::service::{PublicKeyMaterial, ThresholdFheKeys
 use kms_0_14_0::util::key_setup::FhePublicKey;
 use kms_0_14_0::vault::keychain::AppKeyBlob;
 use kms_grpc_0_14_0::{
-    kms::v1::{CustodianContext, CustodianSetupMessage, TypedPlaintext},
+    kms::v1::TypedPlaintext,
     rpc_types::{PrivDataType, PubDataType, SignedPubDataHandleInternal},
     solidity_types::{
         CrsgenVerification, CrsgenVerificationQ126, KeygenVerification, KeygenVerificationQ126,
@@ -34,7 +32,6 @@ use rand::{RngCore, SeedableRng};
 use std::collections::BTreeMap;
 use std::num::Wrapping;
 use std::{borrow::Cow, collections::HashMap, fs::create_dir_all, path::PathBuf};
-use tfhe_1_6_2::safe_serialization::safe_serialize;
 use tfhe_1_6_2::shortint::parameters::{
     AtomicPatternParameters, Backend, LweCiphertextCount, MetaNoiseSquashingParameters,
     MetaParameters, NoiseSquashingClassicParameters, NoiseSquashingCompressionParameters,
@@ -82,8 +79,9 @@ use backward_compatibility::{
     NodeInfoTest, PRSSSetupTest, PrfKeyTest, PrivDataTypeTest, PrivateSigKeyTest, PrssSetTest,
     PrssSetupCombinedTest, PubDataTypeTest, PublicSigKeyTest, ReleasePCRValuesTest, ShareTest,
     SigncryptionPayloadTest, SignedPubDataHandleInternalTest, SoftwareVersionTest, TestMetadataDD,
-    TestMetadataKMS, TestMetadataKmsGrpc, ThresholdFheKeysTest, TypedPlaintextTest, UnifiedSigncryptionTest,
-    DISTRIBUTED_DECRYPTION_MODULE_NAME, KMS_GRPC_MODULE_NAME, KMS_MODULE_NAME,
+    TestMetadataKMS, TestMetadataKmsGrpc, ThresholdFheKeysTest, TypedPlaintextTest,
+    UnifiedSigncryptionTest, DISTRIBUTED_DECRYPTION_MODULE_NAME, KMS_GRPC_MODULE_NAME,
+    KMS_MODULE_NAME,
 };
 use hashing_0_14_0::hash_versioned;
 use kms_0_14_0::cryptography::signcryption::SigncryptionPayload;
@@ -104,13 +102,6 @@ macro_rules! store_versioned_auxiliary {
     ($msg:expr, $dir:expr, $test_name:expr, $filename:expr $(,)? ) => {
         store_versioned_auxiliary_05($msg, $dir, $test_name, $filename)
     };
-}
-
-/// Fixed timestamp (≈50 years after the Unix epoch) used when generating the custodian
-/// fixtures. Using a constant instead of `SystemTime::now()` keeps the generated v0.14.0
-/// data byte-for-byte reproducible, so re-running the generator never churns the LFS objects.
-fn fixed_fixture_timestamp() -> std::time::SystemTime {
-    std::time::UNIX_EPOCH + std::time::Duration::from_secs(50 * 8760 * 3600)
 }
 
 // The compact-public-key and compression parameters are left as `None` because they
@@ -398,8 +389,6 @@ const UNIFIED_SIGNCRYPTION_TEST: UnifiedSigncryptionTest = UnifiedSigncryptionTe
     state: 202,
 };
 
-
-
 // KMS test
 const PRSS_SETUP_COMBINED_TEST: PrssSetupCombinedTest = PrssSetupCombinedTest {
     test_filename: Cow::Borrowed("prss_setup_combined"),
@@ -451,10 +440,6 @@ const SOFTWARE_VERSION_TEST: SoftwareVersionTest = SoftwareVersionTest {
     patch: 4,
     tag: Cow::Borrowed("super fun version"),
 };
-
-
-
-
 
 fn dummy_domain() -> alloy_sol_types_1_6_0::Eip712Domain {
     alloy_sol_types_1_6_0::eip712_domain!(
