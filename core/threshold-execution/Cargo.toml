@@ -11,6 +11,7 @@ description = "Execution runtime for MPC protocols, including distributed key ge
 aes.workspace = true
 aes-prng.workspace = true
 algebra.workspace = true
+bytes.workspace = true
 anyhow.workspace = true
 async-trait.workspace = true
 bc2wrap.workspace = true

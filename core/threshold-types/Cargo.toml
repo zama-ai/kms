@@ -9,6 +9,7 @@ description = "Types used across crates in 'threshold'"
 
 [dependencies]
 async-trait.workspace = true
+bytes.workspace = true
 anyhow.workspace = true
 hashing.workspace = true
 serde = { workspace = true, features = ["derive", "rc"] }

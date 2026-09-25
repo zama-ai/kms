@@ -6,10 +6,11 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::{Duration, Instant};
 
-use super::ArcSendValueRequest;
 use crate::clock::{AtomicDuration, AtomicInstant};
+use crate::ggen::SendValueRequest;
 use crate::grpc::NETWORK_RECEIVED_MEASUREMENT;
 use crate::grpc::{CoreToCoreNetworkConfig, MessageQueueStore, NetworkRoundValue, Tag};
+use bytes::Bytes;
 use dashmap::DashSet;
 use error_utils::anyhow_error_and_log;
 use observability::metrics::{self, NetworkDebugEvent};
@@ -32,7 +33,7 @@ pub struct NetworkSession {
     pub(crate) session_id: SessionId,
     /// MPSC channels that are filled by parties and dealt with by the [`SendingService`](super::SendingService)
     /// Sending channels for this session
-    pub(crate) sending_channels: HashMap<RoleKind, UnboundedSender<ArcSendValueRequest>>,
+    pub(crate) sending_channels: HashMap<RoleKind, UnboundedSender<SendValueRequest>>,
     /// Channels which are filled by the grpc server receiving messages from the other parties
     /// owned by the session and thus automatically cleaned up on drop
     pub(crate) receiving_channels: MessageQueueStore,
@@ -100,7 +101,7 @@ impl<R: RoleTrait> Networking<R> for NetworkSession {
     ///
     //Note this need not be async, so do we want to keep the trait definition async
     //if we want to add other implems which may require async ?
-    async fn send(&self, value: Arc<Vec<u8>>, receiver: &R) -> anyhow::Result<()> {
+    async fn send(&self, value: Bytes, receiver: &R) -> anyhow::Result<()> {
         // Take the round-counter *read* guard for the duration of the send. This
         // is a read guard, not an exclusive lock: concurrent `send`/`receive`
         // calls (also readers) proceed in parallel, while `increase_round_counter`
@@ -115,14 +116,15 @@ impl<R: RoleTrait> Networking<R> for NetworkSession {
             round_counter: round_counter as u64,
         };
 
-        let tag = Arc::new(
+        // `Vec<u8> -> Bytes` takes ownership of the allocation; no copy.
+        let tag = Bytes::from(
             bc2wrap::serialize(&tagged_value)
                 .map_err(|e| anyhow_error_and_log(format!("networking error: {e:?}")))?,
         );
 
         self.num_byte_sent
             .fetch_add(tag.len() + value.len(), Ordering::Relaxed);
-        let request = ArcSendValueRequest::new(tag, value);
+        let request = SendValueRequest { tag, value };
 
         //Retrieve the local channel that corresponds to the party we want to send to and push into it
         match self.sending_channels.get(&receiver.get_role_kind()) {
@@ -368,7 +370,7 @@ impl NetworkSession {
     pub(crate) fn new(
         owner: Identity,
         session_id: SessionId,
-        sending_channels: HashMap<RoleKind, UnboundedSender<ArcSendValueRequest>>,
+        sending_channels: HashMap<RoleKind, UnboundedSender<SendValueRequest>>,
         receiving_channels: MessageQueueStore,
         completed_parties: Arc<DashSet<RoleKind>>,
         network_mode: NetworkMode,
@@ -458,6 +460,7 @@ impl NetworkSession {
 
 #[cfg(test)]
 mod tests {
+    use bytes::Bytes;
     use dashmap::{DashMap, DashSet};
     use tokio::sync::Mutex;
     use tokio::sync::mpsc::channel;
@@ -547,7 +550,7 @@ mod tests {
                     .unwrap();
 
                 let msg = vec![1u8; 10];
-                let arc_msg = Arc::new(msg.clone());
+                let arc_msg = Bytes::from(msg.clone());
 
                 // First send
                 tracing::info!("Sending ONCE");
@@ -771,7 +774,7 @@ mod tests {
         // try to send to a role that is not in the role assignment should fail
         {
             let e = session
-                .send(Arc::new(vec![1, 2, 3]), &Role::indexed_from_one(3))
+                .send(Bytes::from_static(&[1, 2, 3]), &Role::indexed_from_one(3))
                 .await
                 .unwrap_err();
             assert!(e.to_string().contains("Missing local channel for"));
@@ -1363,7 +1366,7 @@ mod tests {
                     .make_network_session(sid, &role_assignment, role, NetworkMode::Sync)
                     .await
                     .unwrap();
-                let msg = Arc::new(expected_message.get(&role).unwrap().clone());
+                let msg = Bytes::from(expected_message.get(&role).unwrap().clone());
                 for other in others.keys() {
                     network_session.send(msg.clone(), other).await.unwrap();
                 }

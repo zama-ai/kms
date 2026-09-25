@@ -61,7 +61,7 @@ where
             set.spawn(async move {
                 let _ = networking
                     .send(
-                        Arc::new(NetworkValue::VecRingValue(to_send).to_network()),
+                        NetworkValue::VecRingValue(to_send).to_network(),
                         &to_send_role,
                     )
                     .await;

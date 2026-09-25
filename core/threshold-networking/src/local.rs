@@ -14,6 +14,7 @@ use threshold_types::network::{NetworkMode, Networking, RoundClock};
 use threshold_types::role::RoleTrait;
 
 use async_trait::async_trait;
+use bytes::Bytes;
 use dashmap::DashMap;
 use futures_util::future::{join, join4};
 use tokio::sync::{
@@ -121,7 +122,7 @@ type SimulatedPairwiseChannels<R> = Arc<
 
 #[async_trait]
 impl<R: RoleTrait> Networking<R> for LocalNetworking<R> {
-    async fn send(&self, val: Arc<Vec<u8>>, receiver: &R) -> anyhow::Result<(), anyhow::Error> {
+    async fn send(&self, val: Bytes, receiver: &R) -> anyhow::Result<(), anyhow::Error> {
         let (tx, _) = self
             .pairwise_channels
             .get(&(self.owner, *receiver))
@@ -138,7 +139,7 @@ impl<R: RoleTrait> Networking<R> for LocalNetworking<R> {
 
         let tagged_value = LocalTaggedValue {
             send_counter: *net_round,
-            value: val.as_ref().clone(),
+            value: val.to_vec(),
         };
 
         let mut already_sent = self.already_sent.lock().await;
@@ -360,7 +361,7 @@ mod tests {
 
         let task2 = tokio::spawn(async move {
             let value = NetworkValue::RingValue(Wrapping::<u64>(1234));
-            net_alice.send(Arc::new(value.to_network()), &bob).await
+            net_alice.send(value.to_network(), &bob).await
         });
 
         let _ = tokio::try_join!(task1, task2).unwrap();
@@ -396,7 +397,7 @@ mod tests {
         let task2 = tokio::spawn(async move {
             let value = NetworkValue::RingValue(Wrapping::<u64>(1234));
             net_party_1_set_2
-                .send(Arc::new(value.to_network()), &role_1_set_1)
+                .send(value.to_network(), &role_1_set_1)
                 .await
         });
 
@@ -412,7 +413,7 @@ mod tests {
 
         let net_alice = net_producer.user_net(alice, NetworkMode::Sync, None);
 
-        let value = Arc::new(NetworkValue::RingValue(Wrapping::<u64>(1234)).to_network());
+        let value = NetworkValue::RingValue(Wrapping::<u64>(1234)).to_network();
         // First send should succeed
         let result1 = net_alice.send(value.clone(), &bob).await;
         assert!(result1.is_ok());
@@ -604,7 +605,7 @@ mod tests {
         let net_producer = LocalNetworkingProducer::from_roles(&HashSet::from([alice, bob]));
         let net_alice = net_producer.user_net(alice, NetworkMode::Sync, None);
         let net_bob = net_producer.user_net(bob, NetworkMode::Sync, None);
-        let payload = Arc::new(vec![7u8; 4]);
+        let payload = Bytes::from_static(&[7u8; 4]);
 
         let advance = 5;
         for _ in 0..advance {
