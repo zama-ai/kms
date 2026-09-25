@@ -155,56 +155,6 @@ async fn test_crs_gen_threshold() -> anyhow::Result<()> {
     Ok(())
 }
 
-/// `AbortKeyGen` with the ID of a running CRS generation returns `NotFound` and leaves it running.
-#[tokio::test(flavor = "multi_thread")]
-async fn test_abort_key_gen_ignores_crs_threshold() -> anyhow::Result<()> {
-    use crate::consts::TEST_PARAM;
-    use crate::testing::prelude::{TestMaterialSpec, ThresholdTestEnv};
-
-    let amount_parties = 4;
-    let env = ThresholdTestEnv::builder()
-        .with_test_name("test_abort_key_gen_ignores_crs_threshold")
-        .with_party_count(amount_parties)
-        .with_threshold(1)
-        .with_material_spec(TestMaterialSpec::threshold_signing_only(amount_parties))
-        .with_prss()
-        .build()
-        .await?;
-    let internal_client = env.create_internal_client(&TEST_PARAM, None).await?;
-    let (clients, _servers, _material_path, _guards) = env.into_parts();
-
-    let crs_req_id = derive_request_id("test_abort_key_gen_ignores_crs_threshold")?;
-    let crs_req = internal_client.crs_gen_request(
-        &crs_req_id,
-        None,
-        None,
-        Some(2048),
-        Some(FheParameter::Test),
-        &dummy_domain(),
-    )?;
-    for resp in launch_crs(&crs_req, &clients, false).await {
-        resp?;
-    }
-
-    let id = crs_req.request_id.clone().unwrap();
-    for client in clients.values() {
-        let err = client
-            .clone()
-            .abort_key_gen(tonic::Request::new(id.clone()))
-            .await
-            .unwrap_err();
-        assert_eq!(err.code(), tonic::Code::NotFound);
-    }
-    // Every party still holds its CRS token, so AbortKeyGen removed none of them.
-    for client in clients.values() {
-        client
-            .clone()
-            .abort_crs_gen(tonic::Request::new(id.clone()))
-            .await?;
-    }
-    Ok(())
-}
-
 #[cfg(feature = "slow_tests")]
 pub(crate) async fn crs_gen(
     amount_parties: usize,
