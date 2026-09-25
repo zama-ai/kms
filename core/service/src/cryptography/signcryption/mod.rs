@@ -36,9 +36,9 @@ use crate::cryptography::zeroizing_writer::ZeroizingWriter;
 use hashing::DomainSep;
 use kms_grpc::kms::v1::TypedPlaintext;
 use rand::{CryptoRng, RngCore};
-use std::sync::Arc;
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
+use std::sync::Arc;
 use tfhe::FheTypes;
 use tfhe::safe_serialization::{safe_deserialize, safe_serialize};
 use tfhe_versionable::{Upgrade, Version, Versionize, VersionsDispatch};
@@ -47,13 +47,21 @@ use zeroize::{Zeroize, Zeroizing};
 pub trait Signcrypt {
     /// Signcrypt a message of type T with a specified domain separator, in the
     /// frozen layout: one ECDSA signature, so there is no scheme set to name.
-    ///
-    /// For the multi-signature layout see
-    /// [`UnifiedSigncryptionKey::signcrypt_composite`].
     fn signcrypt<T: Serialize + tfhe::Versionize + tfhe::named::Named>(
         &self,
         rng: &mut (impl CryptoRng + RngCore),
         dsep: &DomainSep,
+        msg: &T,
+    ) -> Result<UnifiedSigncryption, CryptographyError>;
+
+    /// Signcrypt `msg` in the multi-signature layout, signed under exactly
+    /// `schemes`.
+    #[cfg(feature = "non-wasm")]
+    fn signcrypt_composite<T: Serialize + tfhe::Versionize + tfhe::named::Named>(
+        &self,
+        rng: &mut (impl CryptoRng + RngCore),
+        dsep: &DomainSep,
+        schemes: &[SigningSchemeType],
         msg: &T,
     ) -> Result<UnifiedSigncryption, CryptographyError>;
 }
@@ -429,13 +437,9 @@ impl Signcrypt for UnifiedSigncryptionKey {
         let serialized_msg = serialize_for_signcryption(msg)?;
         ecdsa_v0::seal(self, rng, dsep, serialized_msg.as_slice())
     }
-}
 
-impl UnifiedSigncryptionKey {
-    /// Signcrypt `msg` in the multi-signature layout, signed under exactly
-    /// `schemes`.
     #[cfg(feature = "non-wasm")]
-    pub fn signcrypt_composite<T>(
+    fn signcrypt_composite<T>(
         &self,
         rng: &mut (impl CryptoRng + RngCore),
         dsep: &DomainSep,
