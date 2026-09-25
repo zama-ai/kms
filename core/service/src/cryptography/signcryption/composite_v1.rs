@@ -15,8 +15,8 @@ use crate::cryptography::signatures::{StoredTypedSignature, VerfKeySet};
 use crate::cryptography::signcryption::UnifiedSigncryptionKey;
 use crate::cryptography::signcryption::UnifiedUnsigncryptionKey;
 #[cfg(feature = "non-wasm")]
-use crate::cryptography::signing::composite::sign_uniform;
-use crate::cryptography::signing::composite::verify_uniform;
+use crate::cryptography::signing::composite::sign_composite;
+use crate::cryptography::signing::composite::verify_composite;
 #[cfg(feature = "non-wasm")]
 use crate::cryptography::zeroizing_writer::ZeroizingWriter;
 use hashing::DomainSep;
@@ -112,9 +112,8 @@ pub(super) fn seal(
     let receiver_enc_key = &signcrypt_key.receiver_enc_key;
     let mut signed =
         SigncryptionSignedPayload::new(msg, &signcrypt_key.receiver_id, receiver_enc_key)?;
-    let signature = sign_uniform(&signcrypt_key.identity, schemes, dsep, &signed);
+    let signature = sign_composite(&signcrypt_key.identity, schemes, dsep, &signed)?;
     signed.zeroize();
-    let signature = signature?;
 
     let mut envelope = CompositeEnvelope {
         msg: msg.to_vec(),
@@ -159,7 +158,7 @@ pub(super) fn open(
 
     let mut signed =
         SigncryptionSignedPayload::new(&msg, &unsign_key.receiver_id, &unsign_key.encryption_key)?;
-    let verified = verify_uniform(&envelope.signature, sender_keys, dsep, &signed);
+    let verified = verify_composite(&envelope.signature, sender_keys, dsep, &signed);
     signed.zeroize();
     verified.map_err(|e| CryptographyError::VerificationError(e.to_string()))?;
 

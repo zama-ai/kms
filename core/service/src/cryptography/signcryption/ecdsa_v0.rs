@@ -94,6 +94,7 @@ pub(super) fn open(
 
 /// Split a decrypted frozen-layout plaintext into `msg`, `sig` and
 /// `H(sender verification key)`.
+#[allow(clippy::type_complexity)]
 fn split_frozen_plaintext(plaintext: &[u8]) -> Result<(&[u8], &[u8], &[u8]), CryptographyError> {
     // The plaintext contains msg || sig || H(server_verification_key)
     let msg_len = plaintext

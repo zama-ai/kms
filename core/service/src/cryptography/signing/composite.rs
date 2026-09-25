@@ -49,9 +49,9 @@
 //!
 //! # What the encoding gives, and what it does not
 //!
-//! - Verification is all or nothing. [`verify_uniform`] requires the set of
+//! - Verification is all or nothing. [`verify_composite`] requires the set of
 //!   entries to equal the set of keys, then checks every entry.
-//! - Every component of a [`sign_uniform`] signature names its scheme set and the
+//! - Every component of a [`sign_composite`] signature names its scheme set and the
 //!   type of what it signs, so none of them moves to another set, to another
 //!   usage, or out of the composite.
 //! - The composite is unforgeable if any one component is, as in the draft.
@@ -149,12 +149,8 @@ pub fn entry_schemes(entries: &[StoredTypedSignature]) -> Vec<SigningSchemeType>
 }
 
 /// Sign `payload` under every scheme in `schemes`, each over the same bytes.
-///
-/// The entries come back ordered by scheme, with no duplicate scheme, which is
-/// the shape [`verify_uniform`] requires. `verify_uniform` has to be called with
-/// an equal `payload` of the same type.
 #[cfg(feature = "non-wasm")]
-pub fn sign_uniform<T>(
+pub fn sign_composite<T>(
     identity: &NodeSigningIdentity,
     schemes: &[SigningSchemeType],
     dsep: &DomainSep,
@@ -185,7 +181,7 @@ where
 /// Every signature must verify. `entries` is untrusted: it may come straight
 /// from storage or from the network, so its shape is checked here rather than
 /// assumed.
-pub fn verify_uniform<T>(
+pub fn verify_composite<T>(
     entries: &[StoredTypedSignature],
     keys: &VerfKeySet,
     dsep: &DomainSep,
@@ -315,12 +311,12 @@ mod tests {
     #[test]
     fn round_trip_sunshine() {
         let (identity, keys, schemes) = setup(1);
-        let sig = sign_uniform(&identity, &schemes, DSEP, &msg()).unwrap();
+        let sig = sign_composite(&identity, &schemes, DSEP, &msg()).unwrap();
         assert_eq!(entry_schemes(&sig), schemes);
-        verify_uniform(&sig, &keys, DSEP, &msg()).unwrap();
+        verify_composite(&sig, &keys, DSEP, &msg()).unwrap();
 
         let (_, other_keys, _) = setup(7);
-        assert!(verify_uniform(&sig, &other_keys, DSEP, &msg()).is_err());
+        assert!(verify_composite(&sig, &other_keys, DSEP, &msg()).is_err());
     }
 
     /// Removing a signature must not leave something that verifies under the
@@ -329,14 +325,14 @@ mod tests {
     #[test]
     fn a_stripped_signature_is_rejected() {
         let (identity, keys, schemes) = setup(2);
-        let sig = sign_uniform(&identity, &schemes, DSEP, &msg()).unwrap();
+        let sig = sign_composite(&identity, &schemes, DSEP, &msg()).unwrap();
 
         // Drop the ML-DSA half and relabel the set as ECDSA-only
         let stripped = vec![sig[0].clone()];
 
         // Against the original policy it is the wrong scheme set...
         assert!(matches!(
-            verify_uniform(&stripped, &keys, DSEP, &msg()),
+            verify_composite(&stripped, &keys, DSEP, &msg()),
             Err(SigningError::UnexpectedSchemeSet { .. })
         ));
 
@@ -346,13 +342,13 @@ mod tests {
         // *pair*, which does not match the single-scheme preimage.
         let ecdsa_only =
             VerfKeySet::from_identity(&identity, &[SigningSchemeType::Ecdsa256k1]).unwrap();
-        assert!(verify_uniform(&stripped, &ecdsa_only, DSEP, &msg()).is_err());
+        assert!(verify_composite(&stripped, &ecdsa_only, DSEP, &msg()).is_err());
 
         // The same mismatch from the other side: the *whole* pair signature
         // against that ECDSA-only key set is refused for its shape rather than
         // verified on the one entry the set holds a key for.
         assert!(matches!(
-            verify_uniform(&sig, &ecdsa_only, DSEP, &msg()),
+            verify_composite(&sig, &ecdsa_only, DSEP, &msg()),
             Err(SigningError::UnexpectedSchemeSet { .. })
         ));
     }
@@ -361,7 +357,7 @@ mod tests {
     #[test]
     fn a_non_canonical_entry_list_is_rejected() {
         let (identity, keys, schemes) = setup(3);
-        let sig = sign_uniform(&identity, &schemes, DSEP, &msg()).unwrap();
+        let sig = sign_composite(&identity, &schemes, DSEP, &msg()).unwrap();
 
         let mut reversed = sig.clone();
         reversed.reverse();
@@ -374,7 +370,7 @@ mod tests {
         ] {
             assert!(
                 matches!(
-                    verify_uniform(&entries, &keys, DSEP, &msg()),
+                    verify_composite(&entries, &keys, DSEP, &msg()),
                     Err(SigningError::UnexpectedSchemeSet { .. })
                 ),
                 "a {case} entry list was not rejected"
@@ -386,13 +382,13 @@ mod tests {
     #[test]
     fn one_tampered_signature_fails_the_composite() {
         let (identity, keys, schemes) = setup(4);
-        let base = sign_uniform(&identity, &schemes, DSEP, &msg()).unwrap();
+        let base = sign_composite(&identity, &schemes, DSEP, &msg()).unwrap();
 
         for index in 0..base.len() {
             let mut tampered = base.clone();
             tampered[index].signature[0] ^= 0x01;
             assert!(
-                verify_uniform(&tampered, &keys, DSEP, &msg()).is_err(),
+                verify_composite(&tampered, &keys, DSEP, &msg()).is_err(),
                 "tampering with signature {index} was not detected"
             );
         }
@@ -401,9 +397,9 @@ mod tests {
     #[test]
     fn a_tampered_message_or_dsep_fails() {
         let (identity, keys, schemes) = setup(5);
-        let sig = sign_uniform(&identity, &schemes, DSEP, &msg()).unwrap();
-        assert!(verify_uniform(&sig, &keys, DSEP, &TestType { i: 4712 }).is_err());
-        assert!(verify_uniform(&sig, &keys, b"OTHERDSP", &msg()).is_err());
+        let sig = sign_composite(&identity, &schemes, DSEP, &msg()).unwrap();
+        assert!(verify_composite(&sig, &keys, DSEP, &TestType { i: 4712 }).is_err());
+        assert!(verify_composite(&sig, &keys, b"OTHERDSP", &msg()).is_err());
     }
 
     /// An identity with no root seed can only do ECDSA, so asking it for the
@@ -413,7 +409,7 @@ mod tests {
         let mut rng = AesRng::seed_from_u64(9);
         let identity = NodeSigningIdentity::ecdsa_only(gen_sig_keys(&mut rng).1);
         assert!(matches!(
-            sign_uniform(&identity, &pair(), DSEP, &msg()),
+            sign_composite(&identity, &pair(), DSEP, &msg()),
             Err(SigningError::MissingRootSeed(_))
         ));
     }
@@ -458,7 +454,8 @@ mod tests {
         }
     }
 
-    /// Result entries use the same ordering convention as [`sign_uniform`]:
+    /// Result entries use the same ordering convention as [`sign_composite
+    ///`]:
     /// by scheme, duplicate-free, whatever order the request arrived in.
     #[test]
     fn result_entries_are_ordered_by_scheme() {

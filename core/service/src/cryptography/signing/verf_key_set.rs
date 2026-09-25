@@ -222,7 +222,7 @@ mod tests {
         let bytes = bc2wrap::serialize(&misfiled).unwrap();
         assert!(bc2wrap::deserialize_slice::<VerfKeySet>(&bytes).is_err());
 
-        // The empty set, which would make `verify_uniform` accept a signature
+        // The empty set, which would make `verify_composite` accept a signature
         // list having checked nothing.
         let empty = BTreeMap::<SigningSchemeType, UnifiedPublicSigKey>::new();
         assert!(matches!(
