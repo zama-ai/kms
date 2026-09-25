@@ -6,10 +6,11 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::{Duration, Instant};
 
-use super::ArcSendValueRequest;
 use crate::clock::{AtomicDuration, AtomicInstant};
+use crate::ggen::SendValueRequest;
 use crate::grpc::NETWORK_RECEIVED_MEASUREMENT;
 use crate::grpc::{CoreToCoreNetworkConfig, MessageQueueStore, NetworkRoundValue, Tag};
+use bytes::Bytes;
 use dashmap::DashSet;
 use error_utils::anyhow_error_and_log;
 use observability::metrics::{self, NetworkDebugEvent};
@@ -32,7 +33,7 @@ pub struct NetworkSession {
     pub(crate) session_id: SessionId,
     /// MPSC channels that are filled by parties and dealt with by the [`SendingService`](super::SendingService)
     /// Sending channels for this session
-    pub(crate) sending_channels: HashMap<RoleKind, UnboundedSender<ArcSendValueRequest>>,
+    pub(crate) sending_channels: HashMap<RoleKind, UnboundedSender<SendValueRequest>>,
     /// Channels which are filled by the grpc server receiving messages from the other parties
     /// owned by the session and thus automatically cleaned up on drop
     pub(crate) receiving_channels: MessageQueueStore,
@@ -100,7 +101,7 @@ impl<R: RoleTrait> Networking<R> for NetworkSession {
     ///
     //Note this need not be async, so do we want to keep the trait definition async
     //if we want to add other implems which may require async ?
-    async fn send(&self, value: Arc<Vec<u8>>, receiver: &R) -> anyhow::Result<()> {
+    async fn send(&self, value: Bytes, receiver: &R) -> anyhow::Result<()> {
         // Take the round-counter *read* guard for the duration of the send. This
         // is a read guard, not an exclusive lock: concurrent `send`/`receive`
         // calls (also readers) proceed in parallel, while `increase_round_counter`
@@ -115,14 +116,14 @@ impl<R: RoleTrait> Networking<R> for NetworkSession {
             round_counter: round_counter as u64,
         };
 
-        let tag = Arc::new(
+        let tag = Bytes::from(
             bc2wrap::serialize(&tagged_value)
                 .map_err(|e| anyhow_error_and_log(format!("networking error: {e:?}")))?,
         );
 
         self.num_byte_sent
             .fetch_add(tag.len() + value.len(), Ordering::Relaxed);
-        let request = ArcSendValueRequest::new(tag, value);
+        let request = SendValueRequest { tag, value };
 
         //Retrieve the local channel that corresponds to the party we want to send to and push into it
         match self.sending_channels.get(&receiver.get_role_kind()) {
@@ -138,7 +139,7 @@ impl<R: RoleTrait> Networking<R> for NetworkSession {
     ///
     /// WARNING: A call to [`receive`] cannot be interleaved between a counter increase and a send.
     /// Thus sending and receiving MUST not be interleaved.
-    async fn receive(&self, sender: &R) -> anyhow::Result<Vec<u8>> {
+    async fn receive(&self, sender: &R) -> anyhow::Result<Bytes> {
         // Take the round-counter *read* guard for the whole receive. This is a
         // read guard, not an exclusive lock: other readers (`send`/`receive`) run
         // concurrently, while `increase_round_counter` (the sole writer) *waits*
@@ -368,7 +369,7 @@ impl NetworkSession {
     pub(crate) fn new(
         owner: Identity,
         session_id: SessionId,
-        sending_channels: HashMap<RoleKind, UnboundedSender<ArcSendValueRequest>>,
+        sending_channels: HashMap<RoleKind, UnboundedSender<SendValueRequest>>,
         receiving_channels: MessageQueueStore,
         completed_parties: Arc<DashSet<RoleKind>>,
         network_mode: NetworkMode,
@@ -458,6 +459,7 @@ impl NetworkSession {
 
 #[cfg(test)]
 mod tests {
+    use bytes::Bytes;
     use dashmap::{DashMap, DashSet};
     use tokio::sync::Mutex;
     use tokio::sync::mpsc::channel;
@@ -548,14 +550,11 @@ mod tests {
                     .unwrap();
 
                 let msg = vec![1u8; 10];
-                let arc_msg = Arc::new(msg.clone());
+                let msg = Bytes::from(msg.clone());
 
                 // First send
                 tracing::info!("Sending ONCE");
-                network_session
-                    .send(arc_msg.clone(), &role_2)
-                    .await
-                    .unwrap();
+                network_session.send(msg.clone(), &role_2).await.unwrap();
 
                 // Wait for signal to send second message
                 terminate_receiver_1.recv().await.unwrap();
@@ -563,10 +562,7 @@ mod tests {
 
                 // Second send
                 tracing::info!("Sending TWICE");
-                network_session
-                    .send(arc_msg.clone(), &role_2)
-                    .await
-                    .unwrap();
+                network_session.send(msg.clone(), &role_2).await.unwrap();
 
                 // Wait for final termination signal
                 terminate_receiver_1.recv().await.unwrap();
@@ -684,8 +680,8 @@ mod tests {
     ) {
         let role_1 = Role::indexed_from_one(1);
         let role_2 = Role::indexed_from_one(2);
-        let msg_1 = Arc::new(vec![1u8; 10]);
-        let msg_2 = Arc::new(vec![2u8; 10]);
+        let msg_1 = Bytes::from(vec![1u8; 10]);
+        let msg_2 = Bytes::from(vec![2u8; 10]);
 
         let session_1 = networking_1
             .make_network_session(sid, role_assignment, role_1, NetworkMode::Sync)
@@ -1029,7 +1025,7 @@ mod tests {
             tokio::spawn(async move {
                 tx_2.send(NetworkRoundValue {
                     round_counter: 0,
-                    value: expected_clone,
+                    value: expected_clone.into(),
                 })
                 .await
                 .unwrap();
@@ -1042,7 +1038,7 @@ mod tests {
         // try to send to a role that is not in the role assignment should fail
         {
             let e = session
-                .send(Arc::new(vec![1, 2, 3]), &Role::indexed_from_one(3))
+                .send(Bytes::from_static(&[1, 2, 3]), &Role::indexed_from_one(3))
                 .await
                 .unwrap_err();
             assert!(e.to_string().contains("Missing local channel for"));
@@ -1061,19 +1057,19 @@ mod tests {
             tokio::spawn(async move {
                 tx_2.send(NetworkRoundValue {
                     round_counter: 3,
-                    value: vec![],
+                    value: vec![].into(),
                 })
                 .await
                 .unwrap();
                 tx_2.send(NetworkRoundValue {
                     round_counter: 4,
-                    value: vec![],
+                    value: vec![].into(),
                 })
                 .await
                 .unwrap();
                 tx_2.send(NetworkRoundValue {
                     round_counter: 5,
-                    value: expected_clone,
+                    value: expected_clone.into(),
                 })
                 .await
                 .unwrap();
@@ -1186,13 +1182,13 @@ mod tests {
         // current-round packet.
         tx_2.send(NetworkRoundValue {
             round_counter: 5,
-            value: future_payload.clone(),
+            value: future_payload.clone().into(),
         })
         .await
         .unwrap();
         tx_2.send(NetworkRoundValue {
             round_counter: 0,
-            value: current_payload.clone(),
+            value: current_payload.clone().into(),
         })
         .await
         .unwrap();
@@ -1232,7 +1228,7 @@ mod tests {
         for r in 1..=flood {
             tx_2.send(NetworkRoundValue {
                 round_counter: r,
-                value: vec![r as u8],
+                value: vec![r as u8].into(),
             })
             .await
             .unwrap();
@@ -1242,7 +1238,7 @@ mod tests {
         let current_payload = vec![42u8; 8];
         tx_2.send(NetworkRoundValue {
             round_counter: 0,
-            value: current_payload.clone(),
+            value: current_payload.clone().into(),
         })
         .await
         .unwrap();
@@ -1285,20 +1281,20 @@ mod tests {
             // (yet inside the default window of 16, so this pins the config path).
             tx_2.send(NetworkRoundValue {
                 round_counter: 2,
-                value: vec![2],
+                value: vec![2].into(),
             })
             .await
             .unwrap();
             tx_2.send(NetworkRoundValue {
                 round_counter: 5,
-                value: vec![5],
+                value: vec![5].into(),
             })
             .await
             .unwrap();
             let current = vec![0u8; 4];
             tx_2.send(NetworkRoundValue {
                 round_counter: 0,
-                value: current.clone(),
+                value: current.clone().into(),
             })
             .await
             .unwrap();
@@ -1336,7 +1332,7 @@ mod tests {
             for r in 1..=5 {
                 tx_2.send(NetworkRoundValue {
                     round_counter: r,
-                    value: vec![r as u8],
+                    value: vec![r as u8].into(),
                 })
                 .await
                 .unwrap();
@@ -1344,7 +1340,7 @@ mod tests {
             let current = vec![9u8; 4];
             tx_2.send(NetworkRoundValue {
                 round_counter: 0,
-                value: current.clone(),
+                value: current.clone().into(),
             })
             .await
             .unwrap();
@@ -1498,13 +1494,13 @@ mod tests {
         let current = vec![2u8; 4];
         tx_2.send(NetworkRoundValue {
             round_counter: advance - 1,
-            value: stale,
+            value: stale.into(),
         })
         .await
         .unwrap();
         tx_2.send(NetworkRoundValue {
             round_counter: advance,
-            value: current.clone(),
+            value: current.clone().into(),
         })
         .await
         .unwrap();
@@ -1528,20 +1524,20 @@ mod tests {
         // Two packets for the same future round 2, plus the current-round packet.
         tx_2.send(NetworkRoundValue {
             round_counter: 2,
-            value: first.clone(),
+            value: first.clone().into(),
         })
         .await
         .unwrap();
         tx_2.send(NetworkRoundValue {
             round_counter: 2,
-            value: second.clone(),
+            value: second.clone().into(),
         })
         .await
         .unwrap();
         let current_payload = vec![9u8; 4];
         tx_2.send(NetworkRoundValue {
             round_counter: 0,
-            value: current_payload.clone(),
+            value: current_payload.clone().into(),
         })
         .await
         .unwrap();
@@ -1634,7 +1630,7 @@ mod tests {
                     .make_network_session(sid, &role_assignment, role, NetworkMode::Sync)
                     .await
                     .unwrap();
-                let msg = Arc::new(expected_message.get(&role).unwrap().clone());
+                let msg = Bytes::from(expected_message.get(&role).unwrap().clone());
                 for other in others.keys() {
                     network_session.send(msg.clone(), other).await.unwrap();
                 }
@@ -1786,7 +1782,7 @@ mod tests {
             tokio::time::sleep(Duration::from_millis(1500)).await;
             tx_2.send(NetworkRoundValue {
                 round_counter: 0,
-                value: expected_clone,
+                value: expected_clone.into(),
             })
             .await
             .unwrap();

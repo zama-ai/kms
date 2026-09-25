@@ -16,6 +16,7 @@ async-trait.workspace = true
 attestation-doc-validation.workspace = true
 backoff = { workspace = true, features = ["tokio"] }
 bc2wrap.workspace = true
+bytes.workspace = true
 dashmap.workspace = true
 hex = { workspace = true, features = ["serde"] }
 hyper-rustls-ring.workspace = true

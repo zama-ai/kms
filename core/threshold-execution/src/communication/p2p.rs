@@ -104,8 +104,9 @@ async fn internal_send_to_parties<'a, Z: Ring, B: BaseSessionHandles + 'a>(
             // Ensure the party we want to send to passes the check we specified
             if check_fn(cur_receiver, session)? {
                 let networking = Arc::clone(session.network());
-                let value_to_send = Arc::new(cur_value.to_network());
-                networking.send(value_to_send, cur_receiver).await?;
+                networking
+                    .send(cur_value.to_network(), cur_receiver)
+                    .await?;
             } else {
                 tracing::warn!(
                     "I am {:?} trying to send to receiver {:?}, who doesn't pass check",
@@ -212,14 +213,14 @@ where
     T: AsRef<NetworkValue<Z>>,
 {
     let my_role = session.my_role();
-    let serialized_message = Arc::new(msg.as_ref().to_network());
+    let serialized_message = msg.as_ref().to_network();
 
     session.network().increase_round_counter().await;
     for other_role in session.roles() {
         let networking = Arc::clone(session.network());
         if my_role != *other_role {
             networking
-                .send(Arc::clone(&serialized_message), other_role)
+                .send(serialized_message.clone(), other_role)
                 .await?;
         }
     }
