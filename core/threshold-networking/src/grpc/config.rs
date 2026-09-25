@@ -10,7 +10,7 @@ use crate::constants::{
 };
 use serde::{Deserialize, Serialize};
 use tokio::time::Duration;
-use validator::Validate;
+use validator::{Validate, ValidationError};
 
 /// Network configuration for core-to-core communication.
 ///
@@ -25,6 +25,7 @@ use validator::Validate;
 /// If minor secrets needs to be added, then ensure fields are annotated with `#[serde(skip_serializing)]` to avoid accidentally diclosing them.
 #[derive(Serialize, Deserialize, Clone, Copy, Debug, Default, Validate)]
 #[serde(deny_unknown_fields)]
+#[validate(schema(function = validate_keepalive_window))]
 pub struct CoreToCoreNetworkConfig {
     /// Maximum number of messages that can be buffered in the message queue.
     #[validate(range(min = 1))]
@@ -86,6 +87,24 @@ pub struct CoreToCoreNetworkConfig {
     /// closes.
     #[validate(range(min = 1))]
     pub keepalive_timeout_secs: Option<u64>,
+}
+
+fn validate_keepalive_window(conf: &CoreToCoreNetworkConfig) -> Result<(), ValidationError> {
+    let keepalive_window = conf
+        .get_keepalive_interval()
+        .checked_add(conf.get_keepalive_timeout())
+        .ok_or_else(|| ValidationError::new("keepalive duration overflow"))?;
+
+    if conf
+        .get_max_elapsed_time()
+        .is_some_and(|max_elapsed_time| max_elapsed_time > keepalive_window)
+    {
+        return Ok(());
+    }
+
+    Err(ValidationError::new(
+        "max_elapsed_time must be greater than keepalive_interval_secs + keepalive_timeout_secs",
+    ))
 }
 
 impl CoreToCoreNetworkConfig {
@@ -239,5 +258,17 @@ mod tests {
         let fields = errors.field_errors();
         assert!(fields.contains_key("keepalive_interval_secs"));
         assert!(fields.contains_key("keepalive_timeout_secs"));
+    }
+
+    #[test]
+    fn keepalive_rejects_window_that_exceeds_max_elapsed_time() {
+        let conf = CoreToCoreNetworkConfig {
+            max_elapsed_time: Some(4),
+            keepalive_interval_secs: Some(1),
+            keepalive_timeout_secs: Some(3),
+            ..Default::default()
+        };
+
+        assert!(conf.validate().is_err());
     }
 }
