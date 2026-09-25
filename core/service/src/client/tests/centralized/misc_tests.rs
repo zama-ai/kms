@@ -6,7 +6,7 @@
 use crate::client::tests::common::{PollConfig, retrying_poll};
 use crate::client::tests::common::{get_pub_dec_resp, send_dec_reqs};
 use crate::consts::TEST_CENTRAL_KEY_ID;
-use crate::engine::centralized::central_kms::RealCentralizedKms;
+use crate::engine::centralized::central_kms::CentralizedKms;
 use crate::testing::prelude::*;
 use crate::testing::utils::{get_health_client, get_status};
 use kms_grpc::kms_service::v1::core_service_endpoint_server::CoreServiceEndpointServer;
@@ -43,9 +43,8 @@ async fn test_central_health_endpoint_availability() -> Result<()> {
     let mut health_client = get_health_client(env.server.service_port)
         .await
         .expect("Failed to get health client");
-    let service_name = <CoreServiceEndpointServer<
-            RealCentralizedKms<FileStorage, FileStorage>,
-        > as NamedService>::NAME;
+    let service_name =
+        <CoreServiceEndpointServer<CentralizedKms<FileStorage, FileStorage>> as NamedService>::NAME;
     let request = tonic::Request::new(HealthCheckRequest {
         service: service_name.to_string(),
     });
@@ -94,9 +93,8 @@ async fn test_central_close_after_drop() -> Result<()> {
     let mut health_client = get_health_client(kms_server.service_port)
         .await
         .expect("Failed to get health client");
-    let service_name = <CoreServiceEndpointServer<
-            RealCentralizedKms<FileStorage, FileStorage>,
-        > as NamedService>::NAME;
+    let service_name =
+        <CoreServiceEndpointServer<CentralizedKms<FileStorage, FileStorage>> as NamedService>::NAME;
     let request = tonic::Request::new(HealthCheckRequest {
         service: service_name.to_string(),
     });
