@@ -1,8 +1,3 @@
-//! Code shared by every signcryption envelope format.
-//!
-//! Signing and verifying build *identical* receiver bindings or nothing
-//! verifies at all.
-
 use crate::cryptography::encryption::UnifiedPublicEncKey;
 use crate::cryptography::error::CryptographyError;
 use hashing::{DomainSep, serialize_hash_element};
@@ -29,8 +24,6 @@ pub(super) fn receiver_enc_key_digest(
 
 #[cfg(test)]
 pub(crate) mod test_support {
-    //! Fixtures shared by both envelope formats' tests.
-
     use super::super::{SenderAuth, UnifiedSigncryptionKey, UnifiedUnsigncryptionKey};
     use crate::cryptography::encryption::{
         Encryption, PkeScheme, PkeSchemeType, UnifiedPrivateEncKey, UnifiedPublicEncKey,

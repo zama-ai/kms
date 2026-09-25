@@ -38,10 +38,6 @@ impl Named for VerfKeySet {
 }
 
 /// The unvalidated mirror of [`VerfKeySet`] that carries the version dispatch.
-/// way back from a versioned artifact, so both paths check the same invariants.
-///
-/// The mirror is a newtype over the map, so the stored bytes hold the versioned
-/// map and no extra field.
 #[derive(Versionize)]
 #[versionize(VerfKeySetVersions)]
 pub struct VerfKeySetRepr(BTreeMap<SigningSchemeType, UnifiedPublicSigKey>);

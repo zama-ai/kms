@@ -46,17 +46,17 @@ pub(super) fn seal(
     // Note that H(client_verf_key) = client_address
     // Only serialize the inner structure to ensure backwards compatibility!!!
     let binding = receiver_binding(&signcrypt_key.receiver_id, &signcrypt_key.receiver_enc_key)?;
-    let signing_key = signcrypt_key.signing_key();
     // Wipe the temporary signed message after signing.
     let to_sign = Zeroizing::new([msg, binding.as_slice()].concat());
-    let sig = internal_sign(dsep, &to_sign, signing_key)
+    let sig = internal_sign(dsep, &to_sign, signcrypt_key.signing_key())
         .map_err(|e| CryptographyError::SigningError(e.to_string()))?;
 
     // Encrypt msg || sig || H(server_verification_key)
     // OBSERVE: serialization is simply r concatenated with s. That is NOT an Ethereum compatible
     // signature since we preclude the v value.
     // The verification key is serialized based on the SEC1 standard.
-    let verf_key_hash = sender_verf_key_digest(&PublicSigKey::from_sk(signing_key))?;
+    let verf_key_hash =
+        sender_verf_key_digest(&PublicSigKey::from_sk(signcrypt_key.signing_key()))?;
     // Wipe the temporary encrypted message after encryption.
     let to_encrypt =
         Zeroizing::new([msg, sig.to_bytes().as_ref(), verf_key_hash.as_ref()].concat());

@@ -136,11 +136,6 @@ impl UnifiedSigncryptionKey {
     }
 
     /// A sealer for a caller that holds only an ECDSA key.
-    ///
-    /// The key becomes a seedless identity: it writes the frozen envelope, and a
-    /// composite one under `Ecdsa256k1` alone. Asking it for any other scheme
-    /// fails with `CryptographyError::Signing`, wrapping the
-    /// `SigningError::MissingRootSeed` raised by the identity.
     pub fn from_signing_key(
         signing_key: PrivateSigKey,
         receiver_enc_key: UnifiedPublicEncKey,

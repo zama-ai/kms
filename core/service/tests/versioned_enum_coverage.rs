@@ -75,7 +75,7 @@ const ALLOW_UNCOVERED: &[&str] = &[
     // What every signature of a composite signcryption covers. Signed, never
     // stored or transmitted, so no artifact holds it. The generator pins a rev,
     // so the type has to reach main before a fixture can be produced for it.
-    "SigncryptionSignedPayload",
+    "CompositeSigncryptionPayload",
     // TODO(zama-ai/kms-internal#3168): needs its own fixture once the follow-up
     // actually writes a key set to storage. The generator pins a rev, so the
     // type has to reach main before a fixture can be produced for it.

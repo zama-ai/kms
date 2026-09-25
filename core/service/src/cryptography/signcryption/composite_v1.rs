@@ -1,5 +1,3 @@
-//! The composite signcryption envelope.
-
 use super::UnifiedSigncryption;
 use super::common::receiver_enc_key_digest;
 use crate::consts::SAFE_SER_SIZE_LIMIT;
@@ -55,33 +53,33 @@ impl Zeroize for CompositeEnvelope {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, VersionsDispatch)]
-pub enum SigncryptionSignedPayloadVersions {
-    V0(SigncryptionSignedPayload),
+pub enum CompositeSigncryptionPayloadVersions {
+    V0(CompositeSigncryptionPayload),
 }
 
 /// What every signature of a composite signcryption covers: the message, and the
 /// two values that tie it to one receiver.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, Versionize)]
-#[versionize(SigncryptionSignedPayloadVersions)]
-pub struct SigncryptionSignedPayload {
+#[versionize(CompositeSigncryptionPayloadVersions)]
+pub struct CompositeSigncryptionPayload {
     pub msg: Vec<u8>,
     /// The receiver's identifier, e.g. a blockchain address.
     pub receiver_id: Vec<u8>,
     pub enc_key_digest: Vec<u8>,
 }
 
-impl Named for SigncryptionSignedPayload {
-    const NAME: &'static str = "signcryption::SigncryptionSignedPayload";
+impl Named for CompositeSigncryptionPayload {
+    const NAME: &'static str = "signcryption::CompositeSigncryptionPayload";
 }
 
-impl Zeroize for SigncryptionSignedPayload {
+impl Zeroize for CompositeSigncryptionPayload {
     fn zeroize(&mut self) {
         // The receiver id and the digest are public; `msg` is the secret.
         self.msg.zeroize();
     }
 }
 
-impl SigncryptionSignedPayload {
+impl CompositeSigncryptionPayload {
     /// What the signatures of a signcryption of `msg` to this receiver cover.
     fn new(
         msg: &[u8],
@@ -98,9 +96,8 @@ impl SigncryptionSignedPayload {
 
 /// Signcrypt `msg` in the composite layout.
 ///
-/// Sign-then-encrypt, as in the frozen layout. Each signature covers a
-/// [`SigncryptionSignedPayload`]. The whole envelope is then encrypted to the
-/// receiver.
+/// Sign-then-encrypt where each signature covers a [`CompositeSigncryptionPayload`].
+/// The whole envelope is then signcrypted to the receiver for the exact choice of `schemes`.
 #[cfg(feature = "non-wasm")]
 pub(super) fn seal(
     signcrypt_key: &UnifiedSigncryptionKey,
@@ -111,7 +108,7 @@ pub(super) fn seal(
 ) -> Result<UnifiedSigncryption, CryptographyError> {
     let receiver_enc_key = &signcrypt_key.receiver_enc_key;
     let mut signed =
-        SigncryptionSignedPayload::new(msg, &signcrypt_key.receiver_id, receiver_enc_key)?;
+        CompositeSigncryptionPayload::new(msg, &signcrypt_key.receiver_id, receiver_enc_key)?;
     let signature = sign_composite(&signcrypt_key.identity, schemes, dsep, &signed)?;
     signed.zeroize();
 
@@ -156,8 +153,11 @@ pub(super) fn open(
 
     let msg = Zeroizing::new(std::mem::take(&mut envelope.msg));
 
-    let mut signed =
-        SigncryptionSignedPayload::new(&msg, &unsign_key.receiver_id, &unsign_key.encryption_key)?;
+    let mut signed = CompositeSigncryptionPayload::new(
+        &msg,
+        &unsign_key.receiver_id,
+        &unsign_key.encryption_key,
+    )?;
     let verified = verify_composite(&envelope.signature, sender_keys, dsep, &signed);
     signed.zeroize();
     verified.map_err(|e| CryptographyError::VerificationError(e.to_string()))?;

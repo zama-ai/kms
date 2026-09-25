@@ -33,19 +33,13 @@
 //!   the message type carries inside `safe_serialize(M)`. The draft's Label names
 //!   one registered combination of schemes and one usage. Ours names the set of
 //!   schemes, which the draft fixes per combination, and the usage, which the
-//!   message type states: `SigncryptionSignedPayload` for a signcryption,
+//!   message type states: `CompositeSigncryptionPayload` for a signcryption,
 //!   `KeygenSignedPayload` or `CrsSignedPayload` for a result, and so on.
 //! - **ctx** is the domain separator. A [`DomainSep`] is exactly 8 bytes, so the
 //!   length prefix the draft puts on ctx is not necessary.
 //! - **Hash(M)** is the message itself. The draft pre-hashes the message and
 //!   assumes that the hash resists collisions. The message keeps the same
 //!   unforgeability argument without that assumption.
-//!
-//! The message is a type rather than bytes, and this module serializes it. That
-//! is what lets the type name do the Label's second job, and it means every value
-//! the message binds is framed by `safe_serialize` rather than concatenated. A
-//! caller cannot pass bytes that name no usage, or declare a usage that does not
-//! match what it signs.
 //!
 //! # What the encoding gives, and what it does not
 //!
@@ -218,22 +212,9 @@ where
 /// contract every verifier relies on, so it lives here alone:
 ///
 /// - [`SigningSchemeType::Ecdsa256k1`] signs `eip712_hash`, producing the
-///   recoverable, on-chain-verifiable signature the fhevm contracts verify. It is
-///   byte-identical to the result's deprecated `external_signature`, so that
-///   `signatures` still carries it once that field goes away. The two match
-///   because the caller derives both from one hash and ECDSA signing here is
-///   deterministic.
+///   recoverable, on-chain-verifiable signature the fhevm contracts verify.
 /// - Every other scheme signs [`scheme_bound_preimage`] over `payload`, so it
 ///   commits to the scheme set and the payload type as well as to the payload.
-///
-/// The ECDSA entry is therefore the one component that binds neither the set nor
-/// the payload type, and a verifier cannot read it as evidence of either. EIP-712
-/// is an EVM and secp256k1 construction that a post-quantum scheme has no reason
-/// to be bound to, so the asymmetry stays. It costs less than it appears to,
-/// because `ensure_requested_verified` requires every requested scheme to verify,
-/// so a set-bound entry pins the set as soon as a verifier asks for more than
-/// ECDSA. A request for ECDSA alone, which is what an empty request resolves to,
-/// pins nothing.
 ///
 /// `schemes` may be given in any order; the entries come back ordered by
 /// scheme.

@@ -29,8 +29,6 @@ impl Named for UserDecSignedPayload {
 }
 
 /// What every non-ECDSA scheme signs for a user decryption result.
-///
-/// See [`super::base::public_dec_payload`]; this is the user-decryption twin.
 pub(crate) fn user_dec_payload(response_bytes: &[u8], extra_data: &[u8]) -> UserDecSignedPayload {
     UserDecSignedPayload {
         response_bytes: response_bytes.to_vec(),
