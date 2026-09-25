@@ -70,8 +70,8 @@ use crate::{
     },
     util::{
         meta_store::{
-            EntryState, MetaStore, MetaStorePermit, add_req_to_meta_store,
-            retrieve_from_meta_store, try_delete_in_meta_store, update_err_req_in_meta_store,
+            MetaStore, MetaStorePermit, add_req_to_meta_store, retrieve_from_meta_store,
+            try_delete_in_meta_store, update_err_req_in_meta_store,
         },
         rate_limiter::RateLimiter,
     },
@@ -362,8 +362,6 @@ impl<
 
         let preproc_id = preproc_handle_w_mode.preprocessing_id();
 
-        let preproc_bucket = self.preproc_buckets.clone();
-
         // we must validate the parameter before passing it into the background process
         internal_keyset_config.validate().map_err(|e| {
             MetricedError::new(op_tag, Some(req_id), e, tonic::Code::InvalidArgument)
@@ -440,32 +438,15 @@ impl<
                     tonic::Code::AlreadyExists,
                 ));
             }
+            // Consume the preprocessing after all checks and before spawning: a rejected
+            // request keeps it and no later request can resolve it.
+            try_delete_in_meta_store(&self.preproc_buckets, &preproc_id)
+                .await
+                .map_err(|e| MetricedError::new(op_tag, Some(req_id), e.to_string(), e.code()))?;
             ongoing_lock.insert(preproc_id, token.clone());
         }
 
         let keygen_background = async move {
-            // Remove the preprocessing entry from the meta store.
-            tracing::info!("Deleting preprocessed material with ID {preproc_id} from meta store");
-            match try_delete_in_meta_store(&preproc_bucket, &preproc_id).await {
-                Ok(EntryState::Done(_)) => {
-                    tracing::info!(
-                        "Successfully deleted preprocessing ID {preproc_id} before running keygen for request ID {req_id}"
-                    );
-                }
-                Ok(other) => {
-                    MetricedError::handle_unreturnable_error(
-                        op_tag,
-                        Some(req_id),
-                        anyhow::anyhow!(
-                            "Preprocessing ID {preproc_id} deleted but was in state {other}"
-                        ),
-                    );
-                }
-                Err(e) => {
-                    MetricedError::handle_unreturnable_error(op_tag, Some(req_id), e);
-                }
-            }
-
             match internal_keyset_config.keyset_config() {
                 ddec_keyset_config::KeySetConfig::Standard(inner_config) => {
                     Self::key_gen_background(
@@ -545,7 +526,7 @@ impl<
         } else {
             OP_KEYGEN_REQUEST
         };
-        // Acquire the serial lock to make sure no other keygen is running concurrently
+        // Serialize keygen admission. The spawned DKG tasks still run concurrently.
         let _guard = self.serial_lock.lock().await;
         let permit = self.rate_limiter.start_keygen(op_tag).await?;
 
@@ -612,8 +593,9 @@ impl<
             add_req_to_meta_store(&self.dkg_pubinfo_meta_store, &req_id, op_tag).await?;
 
         tracing::info!(
-            "Keygen starting with request_id={:?}, insecure={}",
+            "Keygen starting with request_id={:?}, preproc_id={:?}, insecure={}",
             req_id,
+            resolved_preprocessing.handle.preprocessing_id(),
             insecure
         );
 
@@ -652,7 +634,7 @@ impl<
         }
     }
 
-    /// Resolve the preprocessing handle, parameters and whether a stored entry should be consumed.
+    /// Resolves the preprocessing handle and the DKG parameters without consuming the entry.
     async fn resolve_preprocessing(
         bucket_metastore: &RwLock<MetaStore<BucketMetaStore>>,
         key_req_id: RequestId,
@@ -681,12 +663,15 @@ impl<
             match retrieve_from_meta_store(bucket_metastore, &preproc_id, op_tag).await {
                 Ok(bucket) => bucket,
                 Err(e) => {
-                    // Remap the error to include the correct request ID
+                    // Remap the error to include the correct request ID, and defuse the
+                    // original so that the error is recorded once.
+                    let (msg, code) = (e.internal_err().to_string(), e.code());
+                    e.defuse();
                     return Err(MetricedError::new(
                         op_tag,
                         Some(key_req_id),
-                        anyhow::anyhow!(e.internal_err().to_string()),
-                        e.code(),
+                        anyhow::anyhow!(msg),
+                        code,
                     ));
                 }
             };
@@ -1905,13 +1890,11 @@ mod tests {
     };
     use threshold_types::network::NetworkMode;
 
-    #[cfg(feature = "insecure")]
-    use crate::consts::MAX_TRIES;
     use crate::{
         consts::{DEFAULT_EPOCH_ID, DEFAULT_MPC_CONTEXT, TEST_PARAM},
         dummy_domain,
         engine::threshold::service::session::SessionMaker,
-        util::meta_store::update_ok_req_in_meta_store,
+        util::meta_store::{EntryState, update_ok_req_in_meta_store},
         vault::storage::{
             ram, read_versioned_at_request_and_epoch_id, read_versioned_at_request_id,
             store_versioned_at_request_and_epoch_id, store_versioned_at_request_id,
@@ -2212,6 +2195,37 @@ mod tests {
         }
     }
 
+    /// A failed preprocessing lookup records its error once, when the caller drops or returns it.
+    #[tokio::test]
+    async fn resolve_preprocessing_records_error_once() {
+        type Kg = DroppingOnlineDistributedKeyGen128<{ ResiduePolyF4Z128::EXTENSION_DEGREE }>;
+        let (_, kg) = setup_key_generator::<Kg>().await;
+        let mut rng = AesRng::seed_from_u64(3);
+
+        let recorded_errors_before = crate::engine::utils::handle_error_call_count();
+        let err = RealKeyGenerator::<ram::RamStorage, ram::RamStorage, Kg>::resolve_preprocessing(
+            &kg.preproc_buckets,
+            RequestId::new_random(&mut rng),
+            Some(RequestId::new_random(&mut rng)),
+            TEST_PARAM,
+            false,
+            false,
+        )
+        .await
+        .err()
+        .unwrap();
+        assert_eq!(err.code(), tonic::Code::NotFound);
+        assert_eq!(
+            crate::engine::utils::handle_error_call_count(),
+            recorded_errors_before
+        );
+        drop(err);
+        assert_eq!(
+            crate::engine::utils::handle_error_call_count(),
+            recorded_errors_before + 1
+        );
+    }
+
     #[tokio::test]
     async fn internal() {
         let (prep_ids, kg) = setup_key_generator::<
@@ -2358,6 +2372,11 @@ mod tests {
                 .to_string()
                 .contains(ERR_FAILED_TO_READ_EXISTING_TAG)
         );
+        // A request rejected during setup keeps its preprocessing.
+        assert!(matches!(
+            kg.preproc_buckets.try_read().unwrap().retrieve(&prep_id),
+            Some(EntryState::Done(Ok(_)))
+        ));
     }
 
     #[tokio::test]
@@ -2433,7 +2452,6 @@ mod tests {
         assert!(update_ok_req_in_meta_store(&kg.preproc_buckets, permit, bucket, "test").await)
     }
 
-    #[cfg(feature = "insecure")]
     fn keygen_request(
         key_id: RequestId,
         prep_id: Option<RequestId>,
@@ -2521,6 +2539,37 @@ mod tests {
         );
     }
 
+    /// A keygen consumes its preprocessing before it returns, so a second keygen
+    /// with the same preprocessing ID fails with `NotFound`.
+    #[tokio::test]
+    async fn keygen_consumes_preproc() {
+        let (prep_ids, kg) = setup_key_generator::<
+            DroppingOnlineDistributedKeyGen128<{ ResiduePolyF4Z128::EXTENSION_DEGREE }>,
+        >()
+        .await;
+        let prep_id = prep_ids[0];
+        let mut rng = AesRng::seed_from_u64(15);
+        let key_id = RequestId::new_random(&mut rng);
+
+        kg.key_gen(keygen_request(key_id, Some(prep_id)))
+            .await
+            .unwrap();
+        // No await point: the background task has not run yet.
+        assert!(matches!(
+            kg.preproc_buckets.try_read().unwrap().retrieve(&prep_id),
+            Some(EntryState::Deleted)
+        ));
+
+        let other_key_id = RequestId::new_random(&mut rng);
+        assert_eq!(
+            kg.key_gen(keygen_request(other_key_id, Some(prep_id)))
+                .await
+                .unwrap_err()
+                .code(),
+            tonic::Code::NotFound
+        );
+    }
+
     /// The insecure keygen consumes the insecure preprocessing entry, so a
     /// second keygen with the same preprocessing ID must fail with `NotFound`.
     #[cfg(feature = "insecure")]
@@ -2539,21 +2588,14 @@ mod tests {
         ikg.insecure_key_gen(keygen_request(key_id, Some(insecure_prep_id)))
             .await
             .unwrap();
-
-        // The preprocessing entry is deleted at the start of the background task,
-        // independently of whether the key generation itself succeeds.
-        let mut deleted = false;
-        for _ in 0..MAX_TRIES {
-            if matches!(
-                kg.preproc_buckets.read().await.retrieve(&insecure_prep_id),
-                Some(EntryState::Deleted)
-            ) {
-                deleted = true;
-                break;
-            }
-            tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
-        }
-        assert!(deleted, "insecure preprocessing entry was not consumed");
+        // No await point: the background task has not run yet.
+        assert!(matches!(
+            kg.preproc_buckets
+                .try_read()
+                .unwrap()
+                .retrieve(&insecure_prep_id),
+            Some(EntryState::Deleted)
+        ));
 
         // A second keygen with the same preprocessing ID must fail
         let other_key_id = RequestId::new_random(&mut rng);
