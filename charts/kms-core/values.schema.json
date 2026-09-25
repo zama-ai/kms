@@ -454,8 +454,8 @@
             }
           }
         },
-        "num_majority": { "type": "integer", "minimum": 0 },
-        "num_reconstruct": { "type": "integer", "minimum": 0 },
+        "num_majority": { "type": "integer", "minimum": 1 },
+        "num_reconstruct": { "type": "integer", "minimum": 1 }
         "decryption_mode": { "$ref": "#/definitions/decryptionMode" },
         "fhe_parameter": { "$ref": "#/definitions/fheParameter" },
         "resources": { "$ref": "#/definitions/k8sResources" },
