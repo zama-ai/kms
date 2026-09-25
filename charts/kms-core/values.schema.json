@@ -351,8 +351,9 @@
           "type": "array",
           "items": {
             "type": "object",
+            "required": ["id", "host", "port"],
             "properties": {
-              "id": { "type": "integer" },
+              "id": { "type": "integer", "minimum": 1 },
               "host": { "type": "string" },
               "port": { "$ref": "#/definitions/port" },
               "ca_certificate": { "$ref": "#/definitions/pemOrPath" }
