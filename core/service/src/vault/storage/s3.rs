@@ -108,7 +108,7 @@ impl S3Storage {
     }
 
     async fn data_exists_at_key(&self, key: &str) -> anyhow::Result<bool> {
-        tracing::info!(
+        tracing::debug!(
             "Checking if object exists in bucket {} under key {}",
             self.bucket,
             key
