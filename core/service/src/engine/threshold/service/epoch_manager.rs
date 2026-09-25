@@ -394,7 +394,7 @@ pub enum EpochOutput {
 }
 
 /// The Epoch Manager takes over the role of the Initiator and Resharer
-pub struct RealThresholdEpochManager<
+pub(crate) struct RealThresholdEpochManager<
     PubS: Storage + Send + Sync + 'static,
     PrivS: StorageExt + Send + Sync + 'static,
     Init: PRSSInit<ResiduePolyF4Z64> + PRSSInit<ResiduePolyF4Z128>,

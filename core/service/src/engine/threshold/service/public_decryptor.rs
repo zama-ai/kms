@@ -116,7 +116,7 @@ impl NoiseFloodDecryptor for SecureNoiseFloodDecryptor {
     }
 }
 
-pub struct RealPublicDecryptor<
+pub(crate) struct RealPublicDecryptor<
     PubS: Storage + Send + Sync + 'static,
     PrivS: StorageExt + Send + Sync + 'static,
     Dec: NoiseFloodDecryptor<

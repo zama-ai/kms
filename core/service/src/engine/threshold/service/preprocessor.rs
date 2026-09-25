@@ -60,8 +60,9 @@ use crate::{
 // === Current Module Imports ===
 use super::{BucketMetaStore, PreprocMaterial};
 
-pub struct RealPreprocessor<P: ProducerFactory<ResiduePolyF4Z128, SmallSession<ResiduePolyF4Z128>>>
-{
+pub(crate) struct RealPreprocessor<
+    P: ProducerFactory<ResiduePolyF4Z128, SmallSession<ResiduePolyF4Z128>>,
+> {
     // TODO eventually add mode to allow for nlarge as well.
     pub(crate) base_kms: BaseKmsStruct,
     pub preproc_buckets: Arc<RwLock<MetaStore<BucketMetaStore>>>,

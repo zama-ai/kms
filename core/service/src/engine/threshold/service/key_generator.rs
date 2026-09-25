@@ -124,7 +124,7 @@ use threshold_execution::tfhe_internals::{
     },
 };
 
-pub struct RealKeyGenerator<
+pub(crate) struct RealKeyGenerator<
     PubS: Storage + Sync + Send + 'static,
     PrivS: StorageExt + Sync + Send + 'static,
     KG: OnlineDistributedKeyGen<Z128, { ResiduePolyF4Z128::EXTENSION_DEGREE }> + 'static,
@@ -150,7 +150,7 @@ pub struct RealKeyGenerator<
 }
 
 #[cfg(feature = "insecure")]
-pub struct RealInsecureKeyGenerator<
+pub(crate) struct RealInsecureKeyGenerator<
     PubS: Storage + Sync + Send + 'static,
     PrivS: StorageExt + Sync + Send + 'static,
     KG: OnlineDistributedKeyGen<Z128, { ResiduePolyF4Z128::EXTENSION_DEGREE }> + 'static,

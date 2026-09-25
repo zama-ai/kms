@@ -130,7 +130,7 @@ impl NoiseFloodPartialDecryptor for SecureNoiseFloodPartialDecryptor {
     }
 }
 
-pub struct RealUserDecryptor<
+pub(crate) struct RealUserDecryptor<
     PubS: Storage + Send + Sync + 'static,
     PrivS: StorageExt + Send + Sync + 'static,
     Dec: NoiseFloodPartialDecryptor<

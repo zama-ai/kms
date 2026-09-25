@@ -65,7 +65,7 @@ cfg_if::cfg_if! {
     }
 }
 
-pub struct RealCrsGenerator<
+pub(crate) struct RealCrsGenerator<
     PubS: Storage + Send + Sync + 'static,
     PrivS: StorageExt + Send + Sync + 'static,
     C: Ceremony + Send + Sync + 'static,
@@ -504,7 +504,7 @@ impl<
 }
 
 #[cfg(feature = "insecure")]
-pub struct RealInsecureCrsGenerator<
+pub(crate) struct RealInsecureCrsGenerator<
     PubS: Storage + Send + Sync + 'static,
     PrivS: StorageExt + Send + Sync + 'static,
     C: Ceremony + Send + Sync + 'static,

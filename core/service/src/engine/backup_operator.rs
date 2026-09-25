@@ -65,7 +65,7 @@ use tokio::sync::{Mutex, MutexGuard};
 use tonic::{Request, Response};
 use zeroize::Zeroizing;
 
-pub struct RealBackupOperator<
+pub(crate) struct RealBackupOperator<
     PubS: Storage + Sync + Send + 'static,
     PrivS: StorageExt + Sync + Send + 'static,
 > {
@@ -189,7 +189,7 @@ where
             .map_err(fail)
     }
 
-    pub fn new(
+    pub(crate) fn new(
         base_kms: BaseKmsStruct,
         crypto_storage: CryptoMaterialStorage<PubS, PrivS>,
         security_module: Option<Arc<SecurityModuleProxy>>,
