@@ -19,7 +19,7 @@
 //! scheme policy can only open the multi-signature one.
 
 mod common;
-pub mod composite_v1;
+mod composite_v1;
 mod ecdsa_v0;
 
 pub(crate) use ecdsa_v0::insecure_decrypt_ignoring_signature;
@@ -69,17 +69,13 @@ pub trait Signcrypt {
 pub trait Unsigncrypt {
     /// Decrypt a signcrypted message and verify the signature before returning the result.
     /// If the signature verification fails, an error is returned.
-    ///
-    /// This fn also checks that the provided link parameter corresponds to the link in the signcryption
-    /// payload.
     fn unsigncrypt<T: DeserializeOwned + tfhe::Unversionize + tfhe::named::Named>(
         &self,
         dsep: &DomainSep,
         cipher: &UnifiedSigncryption,
     ) -> Result<T, CryptographyError>;
 
-    /// Validate the signature of a signcrypted message without decrypting the payload.
-    /// This can be used to check authenticity if decryption is not needed.
+    /// Authenticate a signcrypted message and discard the payload.
     fn validate_signcryption(
         &self,
         dsep: &DomainSep,
@@ -143,7 +139,8 @@ impl UnifiedSigncryptionKey {
     ///
     /// The key becomes a seedless identity: it writes the frozen envelope, and a
     /// composite one under `Ecdsa256k1` alone. Asking it for any other scheme
-    /// fails with `MissingRootSeed`.
+    /// fails with `CryptographyError::Signing`, wrapping the
+    /// `SigningError::MissingRootSeed` raised by the identity.
     pub fn from_signing_key(
         signing_key: PrivateSigKey,
         receiver_enc_key: UnifiedPublicEncKey,
@@ -232,11 +229,18 @@ impl UnifiedUnsigncryptionKey {
         dsep: &DomainSep,
         cipher: &UnifiedSigncryption,
     ) -> Result<Zeroizing<Vec<u8>>, CryptographyError> {
+        // Neither layout can open a ciphertext written for another KEM, so the
+        // check is made once here rather than at the head of each opener.
+        if cipher.pke_type != self.encryption_key.encryption_scheme_type() {
+            return Err(CryptographyError::VerificationError(
+                "encryption type of cipher does not match the decryption key type".to_string(),
+            ));
+        }
         match &self.sender {
             SenderAuth::Ecdsa(sender_verf_key) => {
                 ecdsa_v0::open(self, sender_verf_key, dsep, cipher)
             }
-            SenderAuth::Multi(_keys) => composite_v1::open(self, dsep, cipher),
+            SenderAuth::Multi(keys) => composite_v1::open(self, keys, dsep, cipher),
         }
     }
 }

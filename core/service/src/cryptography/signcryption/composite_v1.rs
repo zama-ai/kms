@@ -1,14 +1,14 @@
 //! The composite signcryption envelope.
 
 use super::UnifiedSigncryption;
-#[cfg(feature = "non-wasm")]
-use super::common::hybrid_encrypt;
-use super::common::{hybrid_decrypt, receiver_enc_key_digest};
+use super::common::receiver_enc_key_digest;
 use crate::consts::SAFE_SER_SIZE_LIMIT;
-use crate::cryptography::encryption::{HasPkeScheme, UnifiedPublicEncKey};
+#[cfg(feature = "non-wasm")]
+use crate::cryptography::encryption::HasPkeScheme;
+use crate::cryptography::encryption::UnifiedPublicEncKey;
 use crate::cryptography::error::CryptographyError;
 use crate::cryptography::hybrid_ml_kem::HybridKemCt;
-use crate::cryptography::signatures::StoredTypedSignature;
+use crate::cryptography::signatures::{StoredTypedSignature, VerfKeySet};
 #[cfg(feature = "non-wasm")]
 use crate::cryptography::signatures::SigningSchemeType;
 #[cfg(feature = "non-wasm")]
@@ -127,7 +127,7 @@ pub(super) fn seal(
     envelope.zeroize();
     serialized.map_err(|e| CryptographyError::SerializationError(e.to_string()))?;
 
-    let ciphertext = hybrid_encrypt(rng, plaintext.as_slice(), receiver_enc_key)?;
+    let ciphertext = receiver_enc_key.hybrid_encrypt(rng, plaintext.as_slice())?;
     let mut payload = Vec::new();
     safe_serialize(&ciphertext, &mut payload, SAFE_SER_SIZE_LIMIT)
         .map_err(|e| CryptographyError::SerializationError(e.to_string()))?;
@@ -140,30 +140,17 @@ pub(super) fn seal(
 /// Open a composite signcryption, returning the message only once every
 /// constituent signature has verified.
 ///
-/// `sender_keys` is the verifier's policy the signatures will be validated against.
+/// `sender_keys` is the reader's policy the signatures are validated against.
 pub(super) fn open(
     unsign_key: &UnifiedUnsigncryptionKey,
+    sender_keys: &VerfKeySet,
     dsep: &DomainSep,
     cipher: &UnifiedSigncryption,
 ) -> Result<Zeroizing<Vec<u8>>, CryptographyError> {
-    if cipher.pke_type != unsign_key.encryption_key.encryption_scheme_type() {
-        return Err(CryptographyError::VerificationError(
-            "encryption type of cipher does not match the decryption key type".to_string(),
-        ));
-    }
-    let sender_keys = match &unsign_key.sender {
-        super::SenderAuth::Ecdsa(_public_sig_key) => {
-            return Err(CryptographyError::VerificationError(
-                "Unsigncryption key for legacy scheme supplied for composite signcryption"
-                    .to_string(),
-            ));
-        }
-        super::SenderAuth::Multi(verf_key_set) => verf_key_set,
-    };
     let kem_ct: HybridKemCt =
         safe_deserialize(std::io::Cursor::new(&cipher.payload), SAFE_SER_SIZE_LIMIT)
             .map_err(CryptographyError::SerializationError)?;
-    let plaintext = hybrid_decrypt(kem_ct, &unsign_key.decryption_key)?;
+    let plaintext = unsign_key.decryption_key.hybrid_decrypt(kem_ct)?;
     let mut envelope: CompositeEnvelope =
         safe_deserialize(std::io::Cursor::new(&*plaintext), SAFE_SER_SIZE_LIMIT)
             .map_err(CryptographyError::SerializationError)?;

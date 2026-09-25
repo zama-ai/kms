@@ -4,7 +4,7 @@
 //! deployed browser-side verifier parses it, so its bytes cannot change. See the
 //! module documentation of [`super`] for the full list of what pins them.
 
-use super::common::{DSEP_SIGNCRYPTION, hybrid_decrypt, hybrid_encrypt};
+use super::common::DSEP_SIGNCRYPTION;
 use super::{
     SigncryptionPayload, UnifiedSigncryption, UnifiedSigncryptionKey, UnifiedUnsigncryptionKey,
 };
@@ -61,7 +61,7 @@ pub(super) fn seal(
     let to_encrypt =
         Zeroizing::new([msg, sig.to_bytes().as_ref(), verf_key_hash.as_ref()].concat());
 
-    let ciphertext = hybrid_encrypt(rng, &to_encrypt, &signcrypt_key.receiver_enc_key)?;
+    let ciphertext = signcrypt_key.receiver_enc_key.hybrid_encrypt(rng, &to_encrypt)?;
     // LEGACY: approach to serialization
     Ok(UnifiedSigncryption::new(
         bc2wrap::serialize(&ciphertext)
@@ -79,18 +79,35 @@ pub(super) fn open(
     dsep: &DomainSep,
     cipher: &UnifiedSigncryption,
 ) -> Result<Zeroizing<Vec<u8>>, CryptographyError> {
-    if cipher.pke_type != unsign_key.encryption_key.encryption_scheme_type() {
-        return Err(CryptographyError::VerificationError(
-            "encryption type of cipher does not match the decryption key type".to_string(),
-        ));
-    }
     // LEGACY Code: should be using safe_deserialization from tfhe-rs
     let deserialized_payload: HybridKemCt = bc2wrap::deserialize_slice(&cipher.payload)
         .map_err(|e| CryptographyError::BincodeError(e.to_string()))?;
-    let decrypted_plaintext = hybrid_decrypt(deserialized_payload, &unsign_key.decryption_key)?;
+    let decrypted_plaintext = unsign_key.decryption_key.hybrid_decrypt(deserialized_payload)?;
     let (msg, sig) = parse_msg(decrypted_plaintext, sender_verf_key)?;
     check_format_and_signature(dsep, &msg, &sig, unsign_key, sender_verf_key)?;
     Ok(msg)
+}
+
+/// Split a decrypted frozen-layout plaintext into `msg`, `sig` and
+/// `H(sender verification key)`.
+fn split_frozen_plaintext(plaintext: &[u8]) -> Result<(&[u8], &[u8], &[u8]), CryptographyError> {
+    // The plaintext contains msg || sig || H(server_verification_key)
+    let msg_len = plaintext
+        .len()
+        .checked_sub(DIGEST_BYTES)
+        .and_then(|len| len.checked_sub(SIG_SIZE))
+        .ok_or_else(|| {
+            CryptographyError::LengthError(format!(
+                "Message is too short ({} bytes) to contain sig || H(server_verification_key) ({} bytes) ",
+                plaintext.len(),
+                DIGEST_BYTES + SIG_SIZE
+            ))
+        })?;
+    Ok((
+        &plaintext[..msg_len],
+        &plaintext[msg_len..msg_len + SIG_SIZE],
+        &plaintext[msg_len + SIG_SIZE..],
+    ))
 }
 
 /// Helper method for parsing a signcrypted message consisting of the _true_ msg || sig ||
@@ -99,22 +116,7 @@ fn parse_msg(
     decrypted_plaintext: Zeroizing<Vec<u8>>,
     server_verf_key: &PublicSigKey,
 ) -> Result<(Zeroizing<Vec<u8>>, Signature), CryptographyError> {
-    // The plaintext contains msg || sig || H(server_verification_key)
-    let msg_len = decrypted_plaintext
-        .len()
-        .checked_sub(DIGEST_BYTES)
-        .and_then(|len| len.checked_sub(SIG_SIZE))
-        .ok_or_else(||
-            CryptographyError::LengthError(
-                format!("Message is too short ({} bytes) to contain sig || H(server_verification_key) ({} bytes) ",
-                decrypted_plaintext.len(),
-                DIGEST_BYTES + SIG_SIZE)
-            )
-        )?;
-    let msg = &decrypted_plaintext[..msg_len];
-    let sig_bytes = &decrypted_plaintext[msg_len..(msg_len + SIG_SIZE)];
-    let server_ver_key_digest =
-        &decrypted_plaintext[(msg_len + SIG_SIZE)..(msg_len + SIG_SIZE + DIGEST_BYTES)];
+    let (msg, sig_bytes, server_ver_key_digest) = split_frozen_plaintext(&decrypted_plaintext)?;
     // LEGACY: this should just be based on key id. Again legacy code that could be done more proper by using the notion of an id!
     // Verify verification key digest
     if sender_verf_key_digest(server_verf_key)? != server_ver_key_digest {
@@ -178,23 +180,10 @@ pub(crate) fn insecure_decrypt_ignoring_signature(
     // LEGACY should be using safe_deserialization from tfhe-rs
     let cipher: HybridKemCt = bc2wrap::deserialize_slice(cipher)
         .map_err(|e| CryptographyError::BincodeError(e.to_string()))?;
-    let decrypted_plaintext = hybrid_decrypt(cipher, dec_key)?;
+    let decrypted_plaintext = dec_key.hybrid_decrypt(cipher)?;
 
-    // strip off the signature bytes (these are ignored here)
-    // The sender is not authenticated on this path, so the plaintext length is
-    // attacker-chosen and the subtraction is checked, as in `parse_msg`.
-    let msg_len = decrypted_plaintext
-        .len()
-        .checked_sub(DIGEST_BYTES)
-        .and_then(|len| len.checked_sub(SIG_SIZE))
-        .ok_or_else(|| {
-            CryptographyError::LengthError(format!(
-                "Message is too short ({} bytes) to contain sig || H(server_verification_key) ({} bytes) ",
-                decrypted_plaintext.len(),
-                DIGEST_BYTES + SIG_SIZE
-            ))
-        })?;
-    let msg = &decrypted_plaintext[..msg_len];
+    // Strip off the signature and the sender key digest; this path checks neither.
+    let (msg, _sig, _sender_digest) = split_frozen_plaintext(&decrypted_plaintext)?;
     // LEGACY should be using safe_deserialization from tfhe-rs
     let signcrypted_msg: SigncryptionPayload = bc2wrap::deserialize_slice(msg)
         .map_err(|e| CryptographyError::BincodeError(e.to_string()))?;
@@ -254,7 +243,7 @@ mod tests {
             assert_eq!(cipher.pke_type, scheme);
 
             let kem_ct: HybridKemCt = bc2wrap::deserialize_slice(&cipher.payload).unwrap();
-            let plaintext = hybrid_decrypt(kem_ct, &f.unsigncryption_key.decryption_key).unwrap();
+            let plaintext = f.unsigncryption_key.decryption_key.hybrid_decrypt(kem_ct).unwrap();
 
             // Exactly three fields, the last two of fixed size.
             assert_eq!(
