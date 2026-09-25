@@ -4,12 +4,72 @@
 //! its parts is present. Dropping the post-quantum half of an ECDSA+ML-DSA pair
 //! must not leave something a verifier accepts, or the hedge the composite was
 //! built for is gone.
+//!
+//! # Relation to the IETF composite signature draft
+//!
+//! The IETF supports exactly one legacy scheme and ML-DSA, whereas we want more
+//! flexibility and hence will support both a single scheme choice and more than 2.
+//! Our construction follows `draft-ietf-lamps-pq-composite-sigs` in its form but
+//! does not interoperate with the draft.
+//!
+//! Concretely we transform a message to be signed, M, to another one, M', as follows:
+//! ```text
+//! M' = COMPOSITE_PREFIX ‖ scheme count ‖ scheme tags ‖ safe_serialize(M)
+//! ```
+//! In the IETF draft the format is as follows:
+//! ```text
+//! M' = COMPOSITE_PREFIX || Label || len(ctx) || ctx || Hash( M )
+//! ```
+//!
+//! Each backend prepends the domain separator, so a component signs
+//! `dsep ‖ preimage`. The parts of the draft map onto this encoding:
+//!
+//! - **[`COMPOSITE_PREFIX`]** marks the bytes as a composite
+//!   preimage, so no component reads as a signature of another construction. The
+//!   node's ECDSA key also signs EIP-712 messages and the frozen signcryption
+//!   layout, so the draft's prohibition on key reuse does not hold here. The
+//!   draft names the Prefix as what covers that case.
+//! - **Label** is the scheme count and the scheme tags, together with the name
+//!   the message type carries inside `safe_serialize(M)`. The draft's Label names
+//!   one registered combination of schemes and one usage. Ours names the set of
+//!   schemes, which the draft fixes per combination, and the usage, which the
+//!   message type states: `CompositeSigncryptionPayload` for a signcryption,
+//!   `KeygenSignedPayload` or `CrsSignedPayload` for a result, and so on.
+//! - **ctx** is the domain separator. A [`DomainSep`] is exactly 8 bytes, so the
+//!   length prefix the draft puts on ctx is not necessary.
+//! - **Hash(M)** is the message itself. The draft pre-hashes the message and
+//!   assumes that the hash resists collisions. The message keeps the same
+//!   unforgeability argument without that assumption.
+//!
+//! # What the encoding gives, and what it does not
+//!
+//! - Verification is all or nothing. [`verify_composite`] requires the set of
+//!   entries to equal the set of keys, then checks every entry.
+//! - Every component of a [`sign_composite`] signature names its scheme set and the
+//!   type of what it signs, so none of them moves to another set, to another
+//!   usage, or out of the composite.
+//! - The composite is unforgeable if any one component is, as in the draft.
+//! - The ECDSA entry of [`sign_result_entries`] is the deliberate exception. It
+//!   signs the EIP-712 hash, which binds the usage and the domain through the
+//!   struct type hash, but not the scheme set, so that entry moves freely
+//!   between sets. Requiring the set is left to the verifier.
 #[cfg(feature = "non-wasm")]
 use super::identity::NodeSigningIdentity;
 use super::typed_signature::StoredTypedSignature;
 use super::verf_key_set::VerfKeySet;
 use super::{Signature, SigningError, SigningSchemeType, unified_verify};
+use crate::consts::SAFE_SER_SIZE_LIMIT;
+use crate::cryptography::zeroizing_writer::ZeroizingWriter;
 use hashing::DomainSep;
+use serde::Serialize;
+use std::io::Write;
+use tfhe::Versionize;
+use tfhe::named::Named;
+use tfhe::safe_serialization::safe_serialize;
+use zeroize::Zeroizing;
+
+/// The marker every composite preimage starts with.
+pub const COMPOSITE_PREFIX: &[u8; 32] = b"ZamaKmsCompositeSignature2026_v1";
 
 /// Sort `schemes` into canonical order and drop duplicates.
 ///
@@ -51,17 +111,31 @@ fn render_schemes(schemes: &[SigningSchemeType]) -> String {
     )
 }
 
-/// The bytes a scheme-set-bound signature covers: the canonical scheme set,
-/// length-prefixed, followed by the message.
+/// The bytes one component of a composite signature covers.
+///
+/// The layout and the reason for each part are in the module documentation.
 ///
 /// `schemes` is canonicalised here, so callers may pass it in any order and
 /// still agree on the bytes.
-pub fn scheme_bound_preimage(
+///
+/// The result may hold a secret, because `payload` may. It is wiped on drop, and
+/// so is every buffer used to build it.
+pub fn scheme_bound_preimage<T>(
     schemes: &[SigningSchemeType],
-    msg: &[u8],
-) -> Result<Vec<u8>, SigningError> {
+    payload: &T,
+) -> Result<Zeroizing<Vec<u8>>, SigningError>
+where
+    T: Serialize + Versionize + Named,
+{
     let schemes = canonical_schemes(schemes)?;
-    Ok([canonical_scheme_bytes(&schemes).as_slice(), msg].concat())
+    let mut out = ZeroizingWriter::new();
+    let framed = |e: std::io::Error| SigningError::Serialization(e.to_string());
+    out.write_all(COMPOSITE_PREFIX).map_err(framed)?;
+    out.write_all(&canonical_scheme_bytes(&schemes))
+        .map_err(framed)?;
+    safe_serialize(payload, &mut out, SAFE_SER_SIZE_LIMIT)
+        .map_err(|e| SigningError::Serialization(e.to_string()))?;
+    Ok(out.into_inner())
 }
 
 /// The schemes `entries` were made under, in the order they are stored.
@@ -69,20 +143,20 @@ pub fn entry_schemes(entries: &[StoredTypedSignature]) -> Vec<SigningSchemeType>
     entries.iter().map(|entry| entry.scheme).collect()
 }
 
-/// Sign `msg` under every scheme in `schemes`, each over the same bytes.
-///
-/// The entries come back ordered by scheme, with no duplicate scheme, which is
-/// the shape [`verify_uniform`] requires.
+/// Sign `payload` under every scheme in `schemes`, each over the same bytes.
 #[cfg(feature = "non-wasm")]
-pub fn sign_uniform(
+pub fn sign_composite<T>(
     identity: &NodeSigningIdentity,
     schemes: &[SigningSchemeType],
     dsep: &DomainSep,
-    msg: &[u8],
-) -> Result<Vec<StoredTypedSignature>, SigningError> {
+    payload: &T,
+) -> Result<Vec<StoredTypedSignature>, SigningError>
+where
+    T: Serialize + Versionize + Named,
+{
     let schemes = canonical_schemes(schemes)?;
     identity.ensure_supported(&schemes)?;
-    let preimage = scheme_bound_preimage(&schemes, msg)?;
+    let preimage = scheme_bound_preimage(&schemes, payload)?;
     schemes
         .iter()
         .map(|&scheme| {
@@ -102,12 +176,15 @@ pub fn sign_uniform(
 /// Every signature must verify. `entries` is untrusted: it may come straight
 /// from storage or from the network, so its shape is checked here rather than
 /// assumed.
-pub fn verify_uniform(
+pub fn verify_composite<T>(
     entries: &[StoredTypedSignature],
     keys: &VerfKeySet,
     dsep: &DomainSep,
-    msg: &[u8],
-) -> Result<(), SigningError> {
+    payload: &T,
+) -> Result<(), SigningError>
+where
+    T: Serialize + Versionize + Named,
+{
     let expected = keys.schemes();
     // The scheme-set comparison happens before any cryptography, so a composite
     // signature presented with one of its parts removed, reordered or repeated
@@ -120,7 +197,7 @@ pub fn verify_uniform(
             actual: render_schemes(&schemes),
         });
     }
-    let preimage = scheme_bound_preimage(&schemes, msg)?;
+    let preimage = scheme_bound_preimage(&schemes, payload)?;
     for entry in entries {
         let signature = Signature::new(entry.scheme, entry.signature.clone());
         // Cannot fail: `schemes` equals `keys.schemes()` on this path.
@@ -132,27 +209,36 @@ pub fn verify_uniform(
 /// The per-scheme signatures of a *result*: a keygen, CRS, preprocessing or
 /// decryption response.
 ///
-/// ECDSA signs `eip712_hash`, every other scheme signs
-/// [`scheme_bound_preimage`] over `payload_bytes`, so it commits to the scheme
-/// set as well as to the payload.
+/// **A scheme determines what its signature covers.** This mapping is the
+/// contract every verifier relies on, so it lives here alone:
+///
+/// - [`SigningSchemeType::Ecdsa256k1`] signs `eip712_hash`, producing the
+///   recoverable, on-chain-verifiable signature the fhevm contracts verify.
+/// - Every other scheme signs [`scheme_bound_preimage`] over `payload`, so it
+///   commits to the scheme set and the payload type as well as to the payload.
+///
+/// The result is therefore not a composite in the sense of [`verify_composite`],
+/// which rejects it: the ECDSA entry is bound to the EIP-712 message rather than
+/// to the scheme set. A result is checked by `verify_response_signatures`, which
+/// requires the set the verifier asked for.
 ///
 /// `schemes` may be given in any order; the entries come back ordered by
 /// scheme.
 #[cfg(feature = "non-wasm")]
-pub fn sign_result_entries(
+pub fn sign_result_entries<T>(
     identity: &NodeSigningIdentity,
     schemes: &[SigningSchemeType],
     dsep: &DomainSep,
     eip712_hash: &[u8],
-    payload_bytes: &[u8],
-) -> Result<Vec<StoredTypedSignature>, SigningError> {
-    if schemes.is_empty() {
-        return Ok(Vec::new());
-    }
+    payload: &T,
+) -> Result<Vec<StoredTypedSignature>, SigningError>
+where
+    T: Serialize + Versionize + Named,
+{
     let schemes = canonical_schemes(schemes)?;
     // Every non-ECDSA entry commits to the scheme set, so one cannot be lifted
     // out of a larger response and presented as a complete smaller one.
-    let signed = scheme_bound_preimage(&schemes, payload_bytes)?;
+    let signed = scheme_bound_preimage(&schemes, payload)?;
     schemes
         .iter()
         .map(|&scheme| {
@@ -181,11 +267,16 @@ mod tests {
     use super::*;
     use crate::cryptography::signatures::{SigningSchemeType, gen_sig_keys};
     use crate::cryptography::signing::test_support::seeded_identity;
+    use crate::vault::storage::tests::TestType;
     use aes_prng::AesRng;
     use rand::SeedableRng;
 
     const DSEP: &DomainSep = b"COMPSIGT";
-    const MSG: &[u8] = b"a message signed under several schemes at once";
+
+    /// A stand-in for the signed payload types the real callers pass.
+    fn msg() -> TestType {
+        TestType { i: 4711 }
+    }
 
     fn pair() -> Vec<SigningSchemeType> {
         vec![SigningSchemeType::Ecdsa256k1, SigningSchemeType::MlDsa87]
@@ -204,12 +295,12 @@ mod tests {
     #[test]
     fn round_trip_sunshine() {
         let (identity, keys, schemes) = setup(1);
-        let sig = sign_uniform(&identity, &schemes, DSEP, MSG).unwrap();
+        let sig = sign_composite(&identity, &schemes, DSEP, &msg()).unwrap();
         assert_eq!(entry_schemes(&sig), schemes);
-        verify_uniform(&sig, &keys, DSEP, MSG).unwrap();
+        verify_composite(&sig, &keys, DSEP, &msg()).unwrap();
 
         let (_, other_keys, _) = setup(7);
-        assert!(verify_uniform(&sig, &other_keys, DSEP, MSG).is_err());
+        assert!(verify_composite(&sig, &other_keys, DSEP, &msg()).is_err());
     }
 
     /// Removing a signature must not leave something that verifies under the
@@ -218,14 +309,14 @@ mod tests {
     #[test]
     fn a_stripped_signature_is_rejected() {
         let (identity, keys, schemes) = setup(2);
-        let sig = sign_uniform(&identity, &schemes, DSEP, MSG).unwrap();
+        let sig = sign_composite(&identity, &schemes, DSEP, &msg()).unwrap();
 
         // Drop the ML-DSA half and relabel the set as ECDSA-only
         let stripped = vec![sig[0].clone()];
 
         // Against the original policy it is the wrong scheme set...
         assert!(matches!(
-            verify_uniform(&stripped, &keys, DSEP, MSG),
+            verify_composite(&stripped, &keys, DSEP, &msg()),
             Err(SigningError::UnexpectedSchemeSet { .. })
         ));
 
@@ -235,13 +326,13 @@ mod tests {
         // *pair*, which does not match the single-scheme preimage.
         let ecdsa_only =
             VerfKeySet::from_identity(&identity, &[SigningSchemeType::Ecdsa256k1]).unwrap();
-        assert!(verify_uniform(&stripped, &ecdsa_only, DSEP, MSG).is_err());
+        assert!(verify_composite(&stripped, &ecdsa_only, DSEP, &msg()).is_err());
 
         // The same mismatch from the other side: the *whole* pair signature
         // against that ECDSA-only key set is refused for its shape rather than
         // verified on the one entry the set holds a key for.
         assert!(matches!(
-            verify_uniform(&sig, &ecdsa_only, DSEP, MSG),
+            verify_composite(&sig, &ecdsa_only, DSEP, &msg()),
             Err(SigningError::UnexpectedSchemeSet { .. })
         ));
     }
@@ -250,7 +341,7 @@ mod tests {
     #[test]
     fn a_non_canonical_entry_list_is_rejected() {
         let (identity, keys, schemes) = setup(3);
-        let sig = sign_uniform(&identity, &schemes, DSEP, MSG).unwrap();
+        let sig = sign_composite(&identity, &schemes, DSEP, &msg()).unwrap();
 
         let mut reversed = sig.clone();
         reversed.reverse();
@@ -263,7 +354,7 @@ mod tests {
         ] {
             assert!(
                 matches!(
-                    verify_uniform(&entries, &keys, DSEP, MSG),
+                    verify_composite(&entries, &keys, DSEP, &msg()),
                     Err(SigningError::UnexpectedSchemeSet { .. })
                 ),
                 "a {case} entry list was not rejected"
@@ -275,13 +366,13 @@ mod tests {
     #[test]
     fn one_tampered_signature_fails_the_composite() {
         let (identity, keys, schemes) = setup(4);
-        let base = sign_uniform(&identity, &schemes, DSEP, MSG).unwrap();
+        let base = sign_composite(&identity, &schemes, DSEP, &msg()).unwrap();
 
         for index in 0..base.len() {
             let mut tampered = base.clone();
             tampered[index].signature[0] ^= 0x01;
             assert!(
-                verify_uniform(&tampered, &keys, DSEP, MSG).is_err(),
+                verify_composite(&tampered, &keys, DSEP, &msg()).is_err(),
                 "tampering with signature {index} was not detected"
             );
         }
@@ -290,9 +381,9 @@ mod tests {
     #[test]
     fn a_tampered_message_or_dsep_fails() {
         let (identity, keys, schemes) = setup(5);
-        let sig = sign_uniform(&identity, &schemes, DSEP, MSG).unwrap();
-        assert!(verify_uniform(&sig, &keys, DSEP, b"a different message").is_err());
-        assert!(verify_uniform(&sig, &keys, b"OTHERDSP", MSG).is_err());
+        let sig = sign_composite(&identity, &schemes, DSEP, &msg()).unwrap();
+        assert!(verify_composite(&sig, &keys, DSEP, &TestType { i: 4712 }).is_err());
+        assert!(verify_composite(&sig, &keys, b"OTHERDSP", &msg()).is_err());
     }
 
     /// An identity with no root seed can only do ECDSA, so asking it for the
@@ -302,7 +393,7 @@ mod tests {
         let mut rng = AesRng::seed_from_u64(9);
         let identity = NodeSigningIdentity::ecdsa_only(gen_sig_keys(&mut rng).1);
         assert!(matches!(
-            sign_uniform(&identity, &pair(), DSEP, MSG),
+            sign_composite(&identity, &pair(), DSEP, &msg()),
             Err(SigningError::MissingRootSeed(_))
         ));
     }
@@ -319,11 +410,11 @@ mod tests {
             SigningSchemeType::MlDsa65,
         ];
         let eip712_hash = [0x11u8; 32];
-        let payload = b"the serialized result payload";
-        let bound = scheme_bound_preimage(&schemes, payload).unwrap();
+        let payload = msg();
+        let bound = scheme_bound_preimage(&schemes, &payload).unwrap();
 
         let entries =
-            sign_result_entries(&identity, &schemes, DSEP, &eip712_hash, payload).unwrap();
+            sign_result_entries(&identity, &schemes, DSEP, &eip712_hash, &payload).unwrap();
         assert_eq!(entries.len(), 3);
 
         for entry in &entries {
@@ -338,13 +429,17 @@ mod tests {
             unified_verify(DSEP, &bound, &sig, &vk).unwrap_or_else(|e| {
                 panic!("{:?} should sign the bound payload: {e}", entry.scheme)
             });
-            // ...and neither the bare payload nor the EIP-712 hash.
-            assert!(unified_verify(DSEP, payload, &sig, &vk).is_err());
+            // ...and neither the serialized payload alone nor the EIP-712 hash.
+            let mut bare = Vec::new();
+            tfhe::safe_serialization::safe_serialize(&payload, &mut bare, SAFE_SER_SIZE_LIMIT)
+                .unwrap();
+            assert!(unified_verify(DSEP, &bare, &sig, &vk).is_err());
             assert!(unified_verify(DSEP, &eip712_hash, &sig, &vk).is_err());
         }
     }
 
-    /// Result entries use the same ordering convention as [`sign_uniform`]:
+    /// Result entries use the same ordering convention as [`sign_composite
+    ///`]:
     /// by scheme, duplicate-free, whatever order the request arrived in.
     #[test]
     fn result_entries_are_ordered_by_scheme() {
@@ -359,7 +454,7 @@ mod tests {
         let canonical = canonical_schemes(&requested).unwrap();
 
         let entries =
-            sign_result_entries(&identity, &requested, DSEP, &[0x11u8; 32], b"payload").unwrap();
+            sign_result_entries(&identity, &requested, DSEP, &[0x11u8; 32], &msg()).unwrap();
 
         assert_eq!(
             entries.iter().map(|e| e.scheme).collect::<Vec<_>>(),
@@ -367,17 +462,16 @@ mod tests {
         );
     }
 
-    /// No schemes requested means no per-scheme entries, which is why this
-    /// returns a plain list of entries.
+    /// An empty set is a caller mistake, not a request for no signatures: a
+    /// result nothing signed is one the verifier refuses.
     #[test]
-    fn result_entries_tolerate_an_empty_request() {
+    fn result_entries_reject_an_empty_request() {
         let mut rng = AesRng::seed_from_u64(21);
         let identity = seeded_identity(&mut rng);
-        assert!(
-            sign_result_entries(&identity, &[], DSEP, &[0u8; 32], b"payload")
-                .unwrap()
-                .is_empty()
-        );
+        assert!(matches!(
+            sign_result_entries(&identity, &[], DSEP, &[0u8; 32], &msg()),
+            Err(SigningError::EmptySchemeSet)
+        ));
     }
 
     /// Distinct scheme sets give distinct preimages, which is what stops a
@@ -386,16 +480,19 @@ mod tests {
     fn preimages_separate_scheme_sets() {
         let single = vec![SigningSchemeType::Ecdsa256k1];
         assert_ne!(
-            scheme_bound_preimage(&single, MSG).unwrap(),
-            scheme_bound_preimage(&pair(), MSG).unwrap()
+            scheme_bound_preimage(&single, &msg()).unwrap(),
+            scheme_bound_preimage(&pair(), &msg()).unwrap()
         );
 
-        // The length prefix is what separates a set from a longer one starting
-        // with it.
+        // The count in front of the tags is what separates a set from a longer
+        // one starting with it, so the shorter set's encoding appears nowhere in
+        // the longer set's preimage.
+        let pair_preimage = scheme_bound_preimage(&pair(), &msg()).unwrap();
+        let single_scheme_bytes = canonical_scheme_bytes(&single);
         assert!(
-            !scheme_bound_preimage(&pair(), MSG)
-                .unwrap()
-                .starts_with(&canonical_scheme_bytes(&single))
+            !pair_preimage
+                .windows(single_scheme_bytes.len())
+                .any(|window| window == single_scheme_bytes)
         );
     }
 
@@ -412,8 +509,8 @@ mod tests {
 
         // So callers may pass any order and still agree on the signed bytes.
         assert_eq!(
-            scheme_bound_preimage(&reordered, MSG).unwrap(),
-            scheme_bound_preimage(&pair(), MSG).unwrap()
+            scheme_bound_preimage(&reordered, &msg()).unwrap(),
+            scheme_bound_preimage(&pair(), &msg()).unwrap()
         );
 
         assert!(matches!(

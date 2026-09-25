@@ -44,11 +44,12 @@ fn dispatch_underlying_type_name(enum_name: &str) -> String {
 /// TODO(zama-ai/kms-internal#3028): this explicit list should go away after
 /// we have a proper way to identify which structs need to be tested.
 const ALLOW_UNCOVERED: &[&str] = &[
-    // Field of UnifiedSigncryptionKeyOwned.
-    // Covered via UnifiedSigncryptionKeyTest.
+    // Field of InternalCustodianContext, reached through a
+    // RecoveryValidationMaterial payload.
+    // Covered via RecoveryValidationMaterialTest.
     "UnifiedPublicEncKey",
-    // Field of UnifiedUnsigncryptionKeyOwned.
-    // Covered via UnifiedUnsigncryptionKeyTest.
+    // No fixture carries this wrapper itself; only the keys it wraps.
+    // Covered via MlKem1024P384PrivateKeyTest.
     "UnifiedPrivateEncKey",
     // Field of UnifiedCipher.
     // Covered via UnifiedCipherTest.
@@ -70,6 +71,11 @@ const ALLOW_UNCOVERED: &[&str] = &[
     // Plaintext that composite_v1::seal safe_serializes into the
     // UnifiedSigncryption payload.
     "CompositeEnvelope",
+    // TODO stop gap https://github.com/zama-ai/kms-internal/issues/3168
+    // What every signature of a composite signcryption covers. Signed, never
+    // stored or transmitted, so no artifact holds it. The generator pins a rev,
+    // so the type has to reach main before a fixture can be produced for it.
+    "CompositeSigncryptionPayload",
     // TODO(zama-ai/kms-internal#3168): needs its own fixture once the follow-up
     // actually writes a key set to storage. The generator pins a rev, so the
     // type has to reach main before a fixture can be produced for it.

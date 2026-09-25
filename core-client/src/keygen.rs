@@ -16,7 +16,7 @@ use kms_grpc::{ContextId, RequestId};
 use kms_lib::client::client_wasm::Client;
 use kms_lib::client::local_crypto::{load_material_from_pub_storage, load_pk_from_pub_storage};
 use kms_lib::engine::base::{
-    CurrentPublicMaterialLayout, DSEP_PUBDATA_KEY, keygen_payload_bytes, keygen_sol_type,
+    CurrentPublicMaterialLayout, DSEP_PUBDATA_KEY, keygen_payload, keygen_sol_type,
 };
 use std::collections::{BTreeMap, HashMap};
 use std::path::Path;
@@ -574,7 +574,7 @@ fn check_keyset_signatures(
     extra_data: Vec<u8>,
 ) -> anyhow::Result<()> {
     let sol_type = keygen_sol_type(layout, prep_id, key_id, &key_digests, &extra_data)?;
-    let payload_bytes = keygen_payload_bytes(prep_id, key_id, &key_digests, &extra_data)?;
+    let payload = keygen_payload(prep_id, key_id, &key_digests, &extra_data);
     internal_client
         .verify_result_signatures(
             signatures,
@@ -582,7 +582,7 @@ fn check_keyset_signatures(
             &sol_type,
             domain,
             &DSEP_PUBDATA_KEY,
-            &payload_bytes,
+            &payload,
         )
         .map(|(party_id, _address)| {
             tracing::info!("Keygen result verified as produced by party {party_id}");

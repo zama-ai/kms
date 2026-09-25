@@ -225,7 +225,7 @@ pub(crate) async fn user_decryption_centralized(
     let reqs: Vec<_> = (0..parallelism)
         .map(|j| {
             let typed_ciphertexts = vec![TypedCiphertext {
-                ciphertext: ct.clone(),
+                ciphertext: ct.clone().into(),
                 fhe_type: fhe_type as i32,
                 ciphertext_format: ct_format.into(),
                 external_handle: j.to_be_bytes().to_vec(),
@@ -326,7 +326,7 @@ pub(crate) async fn user_decryption_centralized(
                     .0
                     .typed_ciphertexts
                     .iter()
-                    .map(|typed_ct| typed_ct.ciphertext.clone())
+                    .map(|typed_ct| typed_ct.ciphertext.to_vec())
                     .collect::<Vec<_>>(),
                 request: Some(reqs[0].clone().0),
                 eph_sk: reqs[0].clone().2,

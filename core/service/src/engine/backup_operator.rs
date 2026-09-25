@@ -762,6 +762,7 @@ async fn filter_custodian_data(
     let outputs_len = recovery_material.custodian_context().custodian_nodes.len();
     let mut parsed_custodian_rec: HashMap<Role, Zeroizing<BackupMaterial>> = HashMap::new();
     let mut skip_reasons: Vec<RecoverySkipReason> = Vec::new();
+    let ephemeral_dec_key = Arc::new(ephemeral_dec_key.clone());
 
     for cur_recovery_output in &custodian_recovery_outputs {
         if cur_recovery_output.custodian_role == 0
@@ -807,7 +808,7 @@ async fn filter_custodian_data(
         match operator.validate_one_recovery_output(
             &internal,
             recovery_material,
-            ephemeral_dec_key,
+            &ephemeral_dec_key,
             ephemeral_enc_key,
         ) {
             Ok(backup_material) => match parsed_custodian_rec.entry(role) {

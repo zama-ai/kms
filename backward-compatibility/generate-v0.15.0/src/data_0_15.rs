@@ -29,9 +29,7 @@ use kms_0_15_0::cryptography::{
         compute_eip712_signature, gen_sig_keys, NodeSigningIdentity, RootSigningSeed,
         SigningSchemeType, StoredTypedSignature, UnifiedPublicSigKey,
     },
-    signcryption::{
-        Signcrypt, UnifiedSigncryption, UnifiedSigncryptionKeyOwned, UnifiedUnsigncryptionKeyOwned,
-    },
+    signcryption::{Signcrypt, UnifiedSigncryption, UnifiedSigncryptionKey},
 };
 use kms_0_15_0::engine::base::{
     CrsGenMetadata, CrsGenMetadataInner, CrsGenMetadataInnerV2, CrsSignedPayload,
@@ -113,11 +111,10 @@ use backward_compatibility::{
     PrepKeygenSignedPayloadTest, PrfKeyTest, PrivDataTypeTest, PrivateSigKeyTest, PrssSetTest,
     PrssSetupCombinedTest, PubDataTypeTest, PublicDecSignedPayloadTest, PublicSigKeyTest,
     RecoveryValidationMaterialTest, ReleasePCRValuesTest, RootSigningSeedTest, SchemeDigestsTest,
-    ShareTest, SigncryptionPayloadTest, SignedPubDataHandleInternalTest,
-    SoftwareVersionTest, StoredEip712DomainTest, StoredTypedSignatureTest, TestMetadataDD,
-    TestMetadataKMS, TestMetadataKmsGrpc, ThresholdFheKeysTest, TypedPlaintextTest,
-    UnifiedCipherTest, UnifiedPublicSigKeyTest, UnifiedSigncryptionKeyTest,
-    UnifiedSigncryptionTest, UnifiedUnsigncryptionKeyTest, UserDecSignedPayloadTest,
+    ShareTest, SigncryptionPayloadTest, SignedPubDataHandleInternalTest, SoftwareVersionTest,
+    StoredEip712DomainTest, StoredTypedSignatureTest, TestMetadataDD, TestMetadataKMS,
+    TestMetadataKmsGrpc, ThresholdFheKeysTest, TypedPlaintextTest, UnifiedCipherTest,
+    UnifiedPublicSigKeyTest, UnifiedSigncryptionTest, UserDecSignedPayloadTest,
     DISTRIBUTED_DECRYPTION_MODULE_NAME, KMS_GRPC_MODULE_NAME, KMS_MODULE_NAME,
 };
 use hashing_0_15_0::hash_versioned;
@@ -479,17 +476,7 @@ fn signcryption_payload_test() -> SigncryptionPayloadTest {
 }
 
 // KMS test
-const SIGNCRYPTION_KEY_TEST: UnifiedSigncryptionKeyTest = UnifiedSigncryptionKeyTest {
-    test_filename: Cow::Borrowed("signcryption_key"),
-    state: 100,
-};
-
 // KMS test
-const UNSIGNCRYPTION_KEY_TEST: UnifiedUnsigncryptionKeyTest = UnifiedUnsigncryptionKeyTest {
-    test_filename: Cow::Borrowed("designcryption_key"),
-    state: 200,
-};
-
 const MLKEM1024_P384_PUBLIC_KEY_TEST: MlKem1024P384PublicKeyTest = MlKem1024P384PublicKeyTest {
     test_filename: Cow::Borrowed("mlkem1024_p384_public_key"),
     state: 384,
@@ -1068,37 +1055,6 @@ impl KmsV0_15_0 {
         TestMetadataKMS::SigncryptionPayload(test)
     }
 
-    fn gen_signcryption_key(dir: &PathBuf) -> TestMetadataKMS {
-        let mut rng = AesRng::seed_from_u64(SIGNCRYPTION_KEY_TEST.state);
-        let (_verf_key, server_sig_key) = gen_sig_keys(&mut rng);
-        let (client_verf_key, _server_sig_key) = gen_sig_keys(&mut rng);
-        let mut encryption = Encryption::new(PkeSchemeType::MlKem512, &mut rng);
-        let (_dec_key, enc_key) = encryption.keygen().unwrap();
-        let signcrypt_key = UnifiedSigncryptionKeyOwned::new(
-            server_sig_key,
-            enc_key,
-            client_verf_key.verf_key_id(),
-        );
-        store_versioned_test!(&signcrypt_key, dir, &SIGNCRYPTION_KEY_TEST.test_filename);
-        TestMetadataKMS::UnifiedSigncryptionKeyOwned(SIGNCRYPTION_KEY_TEST)
-    }
-
-    fn gen_designcryption_key(dir: &PathBuf) -> TestMetadataKMS {
-        let mut rng = AesRng::seed_from_u64(UNSIGNCRYPTION_KEY_TEST.state);
-        let (sender_verf_key, _sender_sig_key) = gen_sig_keys(&mut rng);
-        let (receiver_verf_key, _receiver_sig_key) = gen_sig_keys(&mut rng);
-        let mut encryption = Encryption::new(PkeSchemeType::MlKem512, &mut rng);
-        let (dec_key, enc_key) = encryption.keygen().unwrap();
-        let signcrypt_key = UnifiedUnsigncryptionKeyOwned::new(
-            dec_key,
-            enc_key,
-            sender_verf_key,
-            receiver_verf_key.verf_key_id().to_vec(),
-        );
-        store_versioned_test!(&signcrypt_key, dir, &UNSIGNCRYPTION_KEY_TEST.test_filename);
-        TestMetadataKMS::UnifiedUnsigncryptionKeyOwned(UNSIGNCRYPTION_KEY_TEST)
-    }
-
     fn gen_mlkem1024_p384_public_key(dir: &PathBuf) -> TestMetadataKMS {
         let mut rng = AesRng::seed_from_u64(MLKEM1024_P384_PUBLIC_KEY_TEST.state);
         let mut encryption = Encryption::new(PkeSchemeType::MlKem1024P384, &mut rng);
@@ -1168,12 +1124,12 @@ impl KmsV0_15_0 {
     fn gen_unified_signcryption(dir: &PathBuf) -> TestMetadataKMS {
         let mut rng = AesRng::seed_from_u64(UNIFIED_SIGNCRYPTION_TEST.state);
         let (verf_key, server_sig_key) = gen_sig_keys(&mut rng);
-        let (client_verf_key, _server_sig_key) = gen_sig_keys(&mut rng);
+        let (client_verf_key, _client_sig_key) = gen_sig_keys(&mut rng);
         let mut encryption = Encryption::new(PkeSchemeType::MlKem512, &mut rng);
         let (_dec_key, enc_key) = encryption.keygen().unwrap();
-        let signcrypt_key = UnifiedSigncryptionKeyOwned::new(
+        let signcrypt_key = UnifiedSigncryptionKey::from_signing_key(
             server_sig_key,
-            enc_key,
+            enc_key.clone(),
             client_verf_key.verf_key_id(),
         );
         let signcryption = signcrypt_key
@@ -2170,8 +2126,6 @@ impl KMSCoreVersion for V0_15_0 {
             KmsV0_15_0::gen_stored_eip712_domain(&dir),
             KmsV0_15_0::gen_typed_plaintext(&dir),
             KmsV0_15_0::gen_signcryption_payload(&dir),
-            KmsV0_15_0::gen_signcryption_key(&dir),
-            KmsV0_15_0::gen_designcryption_key(&dir),
             KmsV0_15_0::gen_mlkem1024_p384_public_key(&dir),
             KmsV0_15_0::gen_mlkem1024_p384_private_key(&dir),
             KmsV0_15_0::gen_unified_signcryption(&dir),

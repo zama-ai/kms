@@ -46,6 +46,7 @@ use tokio::sync::{OwnedRwLockReadGuard, RwLock};
 use tokio_util::task::TaskTracker;
 use tonic::{Code, Request, Response};
 use tracing::Instrument;
+use zeroize::Zeroizing;
 
 // === Internal Crate ===
 use crate::{
@@ -55,7 +56,7 @@ use crate::{
         encryption::UnifiedPublicEncKey,
         error::CryptographyError,
         internal_crypto_types::LegacySerialization,
-        signcryption::{SigncryptFHEPlaintext, UnifiedSigncryptionKeyOwned},
+        signcryption::{SigncryptFHEPlaintext, UnifiedSigncryptionKey},
         signing::SigningSchemeType,
         signing::identity::NodeSigningIdentity,
         zeroizing_writer::ZeroizingWriter,
@@ -99,7 +100,7 @@ pub trait NoiseFloodPartialDecryptor: Send + Sync {
         ct: LowLevelCiphertextAndKeys,
         secret_key_share: &PrivateKeySet<{ ResiduePolyF4Z128::EXTENSION_DEGREE }>,
     ) -> anyhow::Result<(
-        HashMap<String, Vec<ResiduePoly<Z128, { ResiduePolyF4Z128::EXTENSION_DEGREE }>>>,
+        Zeroizing<Vec<ResiduePoly<Z128, { ResiduePolyF4Z128::EXTENSION_DEGREE }>>>,
         u32,
         std::time::Duration,
     )>
@@ -121,7 +122,7 @@ impl NoiseFloodPartialDecryptor for SecureNoiseFloodPartialDecryptor {
         ct: LowLevelCiphertextAndKeys,
         secret_key_share: &PrivateKeySet<{ ResiduePolyF4Z128::EXTENSION_DEGREE }>,
     ) -> anyhow::Result<(
-        HashMap<String, Vec<ResiduePoly<Z128, { ResiduePolyF4Z128::EXTENSION_DEGREE }>>>,
+        Zeroizing<Vec<ResiduePoly<Z128, { ResiduePolyF4Z128::EXTENSION_DEGREE }>>>,
         u32,
         std::time::Duration,
     )>
@@ -182,7 +183,7 @@ impl<
         rng: impl CryptoRng + RngCore + Send + 'static,
         typed_ciphertexts: Vec<TypedCiphertext>,
         link: Vec<u8>,
-        signcryption_key: Arc<UnifiedSigncryptionKeyOwned>,
+        signcryption_key: UnifiedSigncryptionKey,
         identity: Arc<NodeSigningIdentity>,
         client_enc_key_bytes_orig: Vec<u8>,
         fhe_keys: OwnedRwLockReadGuard<
@@ -265,7 +266,6 @@ impl<
                         Ok((server_key, ck))
                     })?;
 
-                    // TODO(github.com/zama-ai/kms-internal/issues/3159): make `partial_decrypt` return a zeroizing value.
                     let partial_decrypt_timer =
                         metrics::METRICS.time_user_decrypt_stage(UserDecryptStage::PartialDecrypt);
                     let pdec =
@@ -273,22 +273,11 @@ impl<
                     drop(partial_decrypt_timer);
 
                     let res = match pdec {
-                        Ok((partial_dec_map, packing_factor, time)) => {
-                            let pdec_serialized = match partial_dec_map.get(&session_id.to_string())
-                            {
-                                Some(partial_dec) => {
-                                    // Wipe the serialized partial plaintext after signcryption.
-                                    let partial_dec = pack_residue_poly(partial_dec);
-                                    let mut serialized = ZeroizingWriter::new();
-                                    bc2wrap::serialize_into(&partial_dec, &mut serialized)?;
-                                    serialized
-                                }
-                                None => {
-                                    return Err(anyhow!(
-                                        "User decryption with session ID {session_id} could not be retrieved for {dec_mode}"
-                                    ));
-                                }
-                            };
+                        Ok((partial_dec, packing_factor, time)) => {
+                            let partial_dec = Zeroizing::new(pack_residue_poly(&partial_dec));
+                            // Wipe the serialized partial plaintext after signcryption.
+                            let mut pdec_serialized = ZeroizingWriter::new();
+                            bc2wrap::serialize_into(&*partial_dec, &mut pdec_serialized)?;
 
                             (pdec_serialized, packing_factor, time)
                         }
@@ -323,22 +312,11 @@ impl<
                     drop(partial_decrypt_timer);
 
                     let res = match pdec {
-                        Ok((partial_dec_map, time)) => {
-                            let pdec_serialized = match partial_dec_map.get(&session_id.to_string())
-                            {
-                                Some(partial_dec) => {
-                                    // let partial_dec = pack_residue_poly(partial_dec); // TODO use more compact packing for bitdec?
-                                    // Wipe the serialized partial plaintext after signcryption.
-                                    let mut serialized = ZeroizingWriter::new();
-                                    bc2wrap::serialize_into(partial_dec, &mut serialized)?;
-                                    serialized
-                                }
-                                None => {
-                                    return Err(anyhow!(
-                                        "User decryption with session ID {session_id} could not be retrieved for {dec_mode}"
-                                    ));
-                                }
-                            };
+                        Ok((partial_dec, time)) => {
+                            // let partial_dec = pack_residue_poly(partial_dec); // TODO use more compact packing for bitdec?
+                            // Wipe the serialized partial plaintext after signcryption.
+                            let mut pdec_serialized = ZeroizingWriter::new();
+                            bc2wrap::serialize_into(&*partial_dec, &mut pdec_serialized)?;
 
                             // packing factor is always 1 with bitdec for now
                             // we may optionally pack it later
@@ -405,7 +383,7 @@ impl<
             signcrypted_ciphertexts: all_signcrypted_cts,
             digest: link,
             verification_key: signcryption_key
-                .signing_key
+                .signing_key()
                 .verf_key()
                 .to_legacy_bytes()
                 .map_err(|e| anyhow::anyhow!("Could not serialize verification key {}", e))?,
@@ -571,11 +549,8 @@ impl<
                 tonic::Code::Internal,
             )
         })?;
-        let signcryption_key = Arc::new(UnifiedSigncryptionKeyOwned::new(
-            identity.ecdsa().clone(),
-            client_enc_key,
-            client_address.to_vec(),
-        ));
+        let signcryption_key =
+            UnifiedSigncryptionKey::new(identity.clone(), client_enc_key, client_address.to_vec());
         // the result of the computation is tracked the tracker
         let session_maker = self.session_maker.clone();
 
@@ -724,7 +699,6 @@ mod tests {
     use rand::SeedableRng;
     use tfhe::FheTypes;
     use threshold_execution::{
-        runtime::sessions::session_parameters::GenericParameterHandles,
         small_execution::prss::PRSSSetup, tfhe_internals::utils::expanded_encrypt,
     };
 
@@ -752,18 +726,16 @@ mod tests {
         >;
 
         async fn partial_decrypt(
-            noiseflood_session: &mut Self::Prep,
+            _noiseflood_session: &mut Self::Prep,
             _ct: LowLevelCiphertextAndKeys,
             _secret_key_share: &PrivateKeySet<{ ResiduePolyF4Z128::EXTENSION_DEGREE }>,
         ) -> anyhow::Result<(
-            HashMap<String, Vec<ResiduePoly<Z128, { ResiduePolyF4Z128::EXTENSION_DEGREE }>>>,
+            Zeroizing<Vec<ResiduePoly<Z128, { ResiduePolyF4Z128::EXTENSION_DEGREE }>>>,
             u32,
             std::time::Duration,
         )> {
-            let session = noiseflood_session.get_mut_base_session();
-            let sid: u128 = session.session_id().into();
             Ok((
-                HashMap::from_iter([(format!("{sid}"), vec![])]),
+                Zeroizing::new(vec![]),
                 1,
                 std::time::Duration::from_millis(100),
             ))
@@ -803,7 +775,7 @@ mod tests {
             signing_schemes: vec![SigningSchemeType::Ecdsa256k1 as i32],
             enc_key: make_dummy_enc_pk(rng),
             typed_ciphertexts: vec![TypedCiphertext {
-                ciphertext: ct_buf,
+                ciphertext: ct_buf.into(),
                 fhe_type: FheTypes::Uint8 as i32,
                 external_handle: vec![],
                 // NOTE: because the way [setup_user_decryptor] is implemented,

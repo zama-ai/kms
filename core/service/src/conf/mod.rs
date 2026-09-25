@@ -415,6 +415,32 @@ mod tests {
         assert!(config.validate().is_err());
     }
 
+    /// `validate()` also checks the core-to-core network settings of a threshold config.
+    #[test]
+    fn config_validation_rejects_a_zero_keepalive() {
+        let config: CoreConfig =
+            init_conf("config/default_2").expect("default_2 config must parse");
+        config.validate().expect("default_2 config should validate");
+
+        let mut zero_interval = config.clone();
+        zero_interval
+            .threshold
+            .as_mut()
+            .expect("threshold section required for threshold config")
+            .core_to_core_net
+            .keepalive_interval_secs = Some(0);
+        assert!(zero_interval.validate().is_err());
+
+        let mut zero_timeout = config;
+        zero_timeout
+            .threshold
+            .as_mut()
+            .expect("threshold section required for threshold config")
+            .core_to_core_net
+            .keepalive_timeout_secs = Some(0);
+        assert!(zero_timeout.validate().is_err());
+    }
+
     #[test]
     fn test_threshold_config() {
         let core_config: CoreConfig =

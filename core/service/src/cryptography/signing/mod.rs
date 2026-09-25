@@ -1,8 +1,3 @@
-//! Multi-scheme signing support (issue #3078).
-//!
-//! Every backend signs `dsep ‖ msg` and applies its own normalization/encoding
-//! internally.
-
 pub mod composite;
 pub mod ecdsa;
 mod eddsa;
@@ -96,6 +91,8 @@ pub enum SigningError {
         expected = SigningSchemeType::VARIANTS.join(", ")
     )]
     UnknownSchemeName(String),
+    #[error("could not serialize the signed payload: {0}")]
+    Serialization(String),
     /// A set of signing schemes was empty, which would make "every signature
     /// verified" vacuously true.
     #[error("a signing scheme set must name at least one scheme")]
