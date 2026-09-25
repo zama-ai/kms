@@ -554,7 +554,7 @@ fn verify_metadata_signatures(
     let signed_bytes = crate::cryptography::signing::composite::scheme_bound_preimage(
         &stored_schemes,
         crate::cryptography::signing::composite::CompositeRole::Result,
-        &[payload_bytes],
+        payload_bytes,
     )?;
 
     for stored in signatures {

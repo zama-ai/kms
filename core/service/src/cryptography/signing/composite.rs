@@ -14,7 +14,7 @@
 //!
 //! Concretely we transform a message to be signed, M, to another one, M', as follows:
 //! ```text
-//! M' = COMPOSITE_PREFIX ‖ CompositeRole ‖ scheme count ‖ scheme tags ‖ field count ‖ (length ‖ field)*
+//! M' = COMPOSITE_PREFIX ‖ CompositeRole ‖ scheme count ‖ scheme tags ‖ M
 //! ```
 //! In the IETF draft the format is as follows:
 //! ```text
@@ -31,13 +31,15 @@
 //!   draft names the Prefix as what covers that case.
 //! - **Label** is [`CompositeRole`] which sets the context of signature usage,
 //!   e.g. for use in signcryption or for signing a result (without encryption).
-//!   Thus unlike the draft, our Label does not encode the choice of scheme itself.
+//!   Thus, unlike the draft, our Label does not encode the choice of scheme itself.
 //!   This is instead captured by the additional "scheme count" and "scheme tags".
 //! - **ctx** is the domain separator. A [`DomainSep`] is exactly 8 bytes, so the
 //!   length prefix the draft puts on ctx is not necessary.
-//! - **Hash(M)** is the message itself, in one or more length-prefixed fields. The
-//!   draft pre-hashes the message and assumes that the hash resists collisions.
-//!   The message keeps the same unforgeability argument without that assumption.
+//! - **Hash(M)** is the message itself. The draft pre-hashes the message and
+//!   assumes that the hash resists collisions. The message keeps the same
+//!   unforgeability argument without that assumption. Everything before it is
+//!   fixed width once the scheme set is known, so it carries no length of its
+//!   own.
 //!
 //! # What the encoding gives, and what it does not
 //!
@@ -120,34 +122,25 @@ fn render_schemes(schemes: &[SigningSchemeType]) -> String {
 
 /// The bytes one component of a composite signature covers.
 ///
-/// The layout and the reason for each part are in the module documentation. Every
-/// field of `fields` carries its own length, so no two field lists produce the
-/// same bytes, whatever the lengths of the fields inside them.
+/// The layout and the reason for each part are in the module documentation.
 ///
 /// `schemes` is canonicalised here, so callers may pass it in any order and
 /// still agree on the bytes.
 ///
-/// The result may hold a secret, because a field may. It is wiped on drop.
+/// The result may hold a secret, because `msg` may. It is wiped on drop.
 pub fn scheme_bound_preimage(
     schemes: &[SigningSchemeType],
     role: CompositeRole,
-    fields: &[&[u8]],
+    msg: &[u8],
 ) -> Result<Zeroizing<Vec<u8>>, SigningError> {
     let schemes = canonical_schemes(schemes)?;
-    let payload_len: usize = fields.iter().map(|field| field.len() + 8).sum();
     // Exactly the final length, so the buffer never grows. A reallocation would
-    // leave a copy of a field behind that the `Zeroizing` wrapper cannot reach.
-    let mut out = Vec::with_capacity(COMPOSITE_PREFIX.len() + 12 + 4 * schemes.len() + payload_len);
+    // leave a copy of `msg` behind that the `Zeroizing` wrapper cannot reach.
+    let mut out = Vec::with_capacity(COMPOSITE_PREFIX.len() + 8 + 4 * schemes.len() + msg.len());
     out.extend_from_slice(COMPOSITE_PREFIX);
     out.extend_from_slice(&role.tag());
     out.extend_from_slice(&canonical_scheme_bytes(&schemes));
-    // Bounded by the number of fields a call site writes out by hand, so the cast
-    // cannot truncate.
-    out.extend_from_slice(&(fields.len() as u32).to_le_bytes());
-    for field in fields {
-        out.extend_from_slice(&(field.len() as u64).to_le_bytes());
-        out.extend_from_slice(field);
-    }
+    out.extend_from_slice(msg);
     Ok(Zeroizing::new(out))
 }
 
@@ -156,22 +149,22 @@ pub fn entry_schemes(entries: &[StoredTypedSignature]) -> Vec<SigningSchemeType>
     entries.iter().map(|entry| entry.scheme).collect()
 }
 
-/// Sign `fields` under every scheme in `schemes`, each over the same bytes.
+/// Sign `msg` under every scheme in `schemes`, each over the same bytes.
 ///
 /// The entries come back ordered by scheme, with no duplicate scheme, which is
 /// the shape [`verify_uniform`] requires. `verify_uniform` has to be called with
-/// the same `role` and the same `fields`, in the same order.
+/// the same `role` and the same `msg`.
 #[cfg(feature = "non-wasm")]
 pub fn sign_uniform(
     identity: &NodeSigningIdentity,
     schemes: &[SigningSchemeType],
     role: CompositeRole,
     dsep: &DomainSep,
-    fields: &[&[u8]],
+    msg: &[u8],
 ) -> Result<Vec<StoredTypedSignature>, SigningError> {
     let schemes = canonical_schemes(schemes)?;
     identity.ensure_supported(&schemes)?;
-    let preimage = scheme_bound_preimage(&schemes, role, fields)?;
+    let preimage = scheme_bound_preimage(&schemes, role, msg)?;
     schemes
         .iter()
         .map(|&scheme| {
@@ -196,7 +189,7 @@ pub fn verify_uniform(
     keys: &VerfKeySet,
     role: CompositeRole,
     dsep: &DomainSep,
-    fields: &[&[u8]],
+    msg: &[u8],
 ) -> Result<(), SigningError> {
     let expected = keys.schemes();
     // The scheme-set comparison happens before any cryptography, so a composite
@@ -210,7 +203,7 @@ pub fn verify_uniform(
             actual: render_schemes(&schemes),
         });
     }
-    let preimage = scheme_bound_preimage(&schemes, role, fields)?;
+    let preimage = scheme_bound_preimage(&schemes, role, msg)?;
     for entry in entries {
         let signature = Signature::new(entry.scheme, entry.signature.clone());
         // Cannot fail: `schemes` equals `keys.schemes()` on this path.
@@ -259,7 +252,7 @@ pub fn sign_result_entries(
     let schemes = canonical_schemes(schemes)?;
     // Every non-ECDSA entry commits to the scheme set, so one cannot be lifted
     // out of a larger response and presented as a complete smaller one.
-    let signed = scheme_bound_preimage(&schemes, CompositeRole::Result, &[payload_bytes])?;
+    let signed = scheme_bound_preimage(&schemes, CompositeRole::Result, payload_bytes)?;
     schemes
         .iter()
         .map(|&scheme| {

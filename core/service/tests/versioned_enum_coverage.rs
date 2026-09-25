@@ -70,6 +70,11 @@ const ALLOW_UNCOVERED: &[&str] = &[
     // Plaintext that composite_v1::seal safe_serializes into the
     // UnifiedSigncryption payload.
     "CompositeEnvelope",
+    // TODO stop gap https://github.com/zama-ai/kms-internal/issues/3168
+    // What every signature of a composite signcryption covers. Signed, never
+    // stored or transmitted, so no artifact holds it. The generator pins a rev,
+    // so the type has to reach main before a fixture can be produced for it.
+    "SigncryptionSignedPayload",
     // TODO(zama-ai/kms-internal#3168): needs its own fixture once the follow-up
     // actually writes a key set to storage. The generator pins a rev, so the
     // type has to reach main before a fixture can be produced for it.

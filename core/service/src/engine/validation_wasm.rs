@@ -449,7 +449,7 @@ pub(crate) fn verify_response_signatures(
     let signed_bytes = crate::cryptography::signing::composite::scheme_bound_preimage(
         requested,
         crate::cryptography::signing::composite::CompositeRole::Result,
-        &[payloads.payload_bytes],
+        payloads.payload_bytes,
     )
     .map_err(|e| anyhow_tracked(format!("could not build the signed payload: {e}")))?;
     let mut verified: Vec<SigningSchemeType> = Vec::with_capacity(sigs.list.len() + 1);
