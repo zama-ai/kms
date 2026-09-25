@@ -371,6 +371,7 @@
               "type": "array",
               "items": {
                 "type": "object",
+                "required": ["pcr0", "pcr1", "pcr2"],
                 "properties": {
                   "pcr0": { "type": "string" },
                   "pcr1": { "type": "string" },
