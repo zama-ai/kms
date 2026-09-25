@@ -1,15 +1,11 @@
 //! Code shared by every signcryption envelope format.
 //!
 //! Signing and verifying build *identical* receiver bindings or nothing
-//! verifies at all, and both formats encrypt the same way.
+//! verifies at all.
 
-use crate::cryptography::encryption::{UnifiedPrivateEncKey, UnifiedPublicEncKey};
+use crate::cryptography::encryption::UnifiedPublicEncKey;
 use crate::cryptography::error::CryptographyError;
-use crate::cryptography::hybrid_composite_ml_kem;
-use crate::cryptography::hybrid_ml_kem::{self, HybridKemCt};
 use hashing::{DomainSep, serialize_hash_element};
-use rand::{CryptoRng, RngCore};
-use zeroize::Zeroizing;
 
 pub(super) const DSEP_SIGNCRYPTION: DomainSep = *b"SIGNCRYP";
 
@@ -31,46 +27,13 @@ pub(super) fn receiver_enc_key_digest(
     }
 }
 
-/// Encrypt `msg` under `enc_key` with the hybrid KEM/DEM matching its scheme.
-pub(super) fn hybrid_encrypt(
-    rng: &mut (impl CryptoRng + RngCore),
-    msg: &[u8],
-    enc_key: &UnifiedPublicEncKey,
-) -> Result<HybridKemCt, CryptographyError> {
-    match enc_key {
-        UnifiedPublicEncKey::MlKem512(public_enc_key) => {
-            hybrid_ml_kem::enc::<ml_kem::MlKem512, _>(rng, msg, &public_enc_key.0)
-        }
-        UnifiedPublicEncKey::MlKem1024(_) => Err(CryptographyError::MlKem1024Unsupported),
-        UnifiedPublicEncKey::MlKem1024P384(public_enc_key) => {
-            hybrid_composite_ml_kem::enc_ml_kem_1024_p384(rng, msg, public_enc_key)
-        }
-    }
-}
-
-/// Decrypt `ct` under `dec_key` with the hybrid KEM/DEM matching its scheme.
-pub(super) fn hybrid_decrypt(
-    ct: HybridKemCt,
-    dec_key: &UnifiedPrivateEncKey,
-) -> Result<Zeroizing<Vec<u8>>, CryptographyError> {
-    match dec_key {
-        UnifiedPrivateEncKey::MlKem512(dec_key) => {
-            hybrid_ml_kem::dec::<ml_kem::MlKem512>(ct, &dec_key.0)
-        }
-        UnifiedPrivateEncKey::MlKem1024(_) => Err(CryptographyError::MlKem1024Unsupported),
-        UnifiedPrivateEncKey::MlKem1024P384(dec_key) => {
-            hybrid_composite_ml_kem::dec_ml_kem_1024_p384(ct, dec_key)
-        }
-    }
-}
-
 // Test scaffolding shared by both envelope formats. At module level rather than
 // inside `tests` so that `ecdsa_v0` and `composite_v1` can reach it without a
 // copy.
 #[cfg(test)]
 use super::{UnifiedSigncryptionKey, UnifiedUnsigncryptionKey};
 #[cfg(test)]
-use crate::cryptography::encryption::{Encryption, PkeScheme, PkeSchemeType};
+use crate::cryptography::encryption::{Encryption, PkeScheme, PkeSchemeType, UnifiedPrivateEncKey};
 #[cfg(test)]
 use crate::cryptography::signatures::{
     PrivateSigKey, PublicSigKey, SigningSchemeType, VerfKeySet, gen_sig_keys,
