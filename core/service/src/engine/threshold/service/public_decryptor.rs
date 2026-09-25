@@ -919,8 +919,17 @@ mod tests {
         let param = TEST_PARAM;
         let epoch_id = EpochId::new_random(rng);
 
-        let prss_setup_z128 = Some(PRSSSetup::new_testing_prss(vec![], vec![]));
-        let prss_setup_z64 = Some(PRSSSetup::new_testing_prss(vec![], vec![]));
+        let role = threshold_types::role::Role::indexed_from_one(1);
+        let prss_setup_z128 = Some(
+            PRSSSetup::testing_party_epoch_init(4, 1, role)
+                .await
+                .unwrap(),
+        );
+        let prss_setup_z64 = Some(
+            PRSSSetup::testing_party_epoch_init(4, 1, role)
+                .await
+                .unwrap(),
+        );
         let session_maker = SessionMaker::four_party_dummy_session(
             prss_setup_z128,
             prss_setup_z64,
