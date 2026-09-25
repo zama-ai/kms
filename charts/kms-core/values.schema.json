@@ -8,7 +8,7 @@
     "kmsPeers": {
       "type": "object",
       "properties": {
-        "id": { "$ref": "#/definitions/nullableInteger" },
+        "id": { "oneOf": [{ "type": "integer", "minimum": 1 }, { "type": "null" }] }
         "count": { "type": "integer", "minimum": 1 }
       }
     },
