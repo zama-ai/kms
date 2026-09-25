@@ -57,7 +57,6 @@ use tfhe::shortint::Ciphertext;
 use tfhe::shortint::PBSOrder;
 use tfhe::shortint::ciphertext::SquashedNoiseCiphertext;
 use thread_handles::spawn_compute_bound;
-#[cfg(any(test, feature = "testing"))]
 use threshold_types::role::Role;
 #[cfg(any(test, feature = "testing"))]
 use tokio::task::JoinSet;
@@ -458,6 +457,58 @@ where
     }
 
     let execution_start_timer = Instant::now();
+    let (ct_large, ddec_key_type) = switch_and_squash_for_partial_decrypt(ct).await?;
+    let packing_factor = ct_large.packing_factor();
+    let mut preparation = noiseflood_session
+        .init_prep_noiseflooding(ct_large.len())
+        .await?;
+    let shared_masked_ptxts =
+        masked_partial_decrypt(secret_key_share, &ct_large, ddec_key_type, &mut preparation)?;
+    let elapsed_time = execution_start_timer.elapsed();
+    Ok((shared_masked_ptxts, packing_factor as u32, elapsed_time))
+}
+
+/// Same as [`partial_decrypt_using_noiseflooding`] for a small session, but takes the PRSS state
+/// directly instead of a session.
+///
+/// The partial decryption is purely local: the masks come from the PRSS and nothing is sent to
+/// the other parties. Passing only the PRSS state and the caller's role lets callers skip setting
+/// up networking for a session that never communicates. For the same PRSS state (that is, the
+/// same PRSS setup and session ID) the result is identical to the session-based variant.
+pub async fn partial_decrypt_using_noiseflooding_with_prss<const EXTENSION_DEGREE: usize, P>(
+    prss: &mut P,
+    my_role: Role,
+    ct: LowLevelCiphertextAndKeys,
+    secret_key_share: &PrivateKeySet<EXTENSION_DEGREE>,
+) -> anyhow::Result<(
+    Zeroizing<Vec<ResiduePoly<Z128, EXTENSION_DEGREE>>>,
+    u32,
+    Duration,
+)>
+where
+    P: PRSSPrimitives<ResiduePoly<Z128, EXTENSION_DEGREE>>,
+    ResiduePoly<Z128, EXTENSION_DEGREE>: ErrorCorrect + Invert + Solve,
+{
+    let execution_start_timer = Instant::now();
+    let (ct_large, ddec_key_type) = switch_and_squash_for_partial_decrypt(ct).await?;
+    let packing_factor = ct_large.packing_factor();
+    // Mirrors `SmallOfflineNoiseFloodSession::init_prep_noiseflooding`, so the masks are drawn and
+    // consumed in the same order as on the session-based path.
+    let mut preparation = InMemoryNoiseFloodPreprocessing::default();
+    preparation.append_masks(
+        prss.mask_next_vec(my_role, B_SWITCH_SQUASH, ct_large.len())
+            .await?,
+    );
+    let shared_masked_ptxts =
+        masked_partial_decrypt(secret_key_share, &ct_large, ddec_key_type, &mut preparation)?;
+    let elapsed_time = execution_start_timer.elapsed();
+    Ok((shared_masked_ptxts, packing_factor as u32, elapsed_time))
+}
+
+/// Brings a ciphertext to the large (noise-squashed) form that partial decryption works on.
+async fn switch_and_squash_for_partial_decrypt(
+    ct: LowLevelCiphertextAndKeys,
+) -> anyhow::Result<(SnsRadixOrBoolCiphertext, SnsDecryptionKeyType)> {
     let ddec_key_type = ct.decryption_key_type();
     let ct_large = match ct {
         LowLevelCiphertextAndKeys::BigCompressed(ct128) => ct128,
@@ -477,21 +528,36 @@ where
             ),
         },
     };
-    let packing_factor = ct_large.packing_factor();
+    Ok((ct_large, ddec_key_type))
+}
+
+/// Locally partially decrypts every packed block of `ct_large` and masks it with the next
+/// noise-flooding mask from `preparation`.
+fn masked_partial_decrypt<const EXTENSION_DEGREE: usize>(
+    secret_key_share: &PrivateKeySet<EXTENSION_DEGREE>,
+    ct_large: &SnsRadixOrBoolCiphertext,
+    ddec_key_type: SnsDecryptionKeyType,
+    preparation: &mut InMemoryNoiseFloodPreprocessing<EXTENSION_DEGREE>,
+) -> anyhow::Result<Zeroizing<Vec<ResiduePoly<Z128, EXTENSION_DEGREE>>>>
+where
+    ResiduePoly<Z128, EXTENSION_DEGREE>: ErrorCorrect + Invert + Solve,
+{
     #[cfg(test)]
     {
-        match &ct_large {
+        match ct_large {
             SnsRadixOrBoolCiphertext::Radix(_) => {
                 let msg_bits = secret_key_share.parameters.message_modulus_log();
                 let carry_bits = secret_key_share.parameters.carry_modulus_log();
-                assert_eq!(packing_factor as u32, (msg_bits + carry_bits) / msg_bits);
+                assert_eq!(
+                    ct_large.packing_factor() as u32,
+                    (msg_bits + carry_bits) / msg_bits
+                );
             }
             SnsRadixOrBoolCiphertext::Bool(_) => {}
         }
     }
 
     let len = ct_large.len();
-    let mut preparation = noiseflood_session.init_prep_noiseflooding(len).await?;
     // The capacity is exact, so the vector never reallocates and leaves no unwiped copy.
     let mut shared_masked_ptxts = Zeroizing::new(Vec::with_capacity(len));
     for current_ct_block in ct_large.packed_blocks() {
@@ -507,10 +573,7 @@ where
 
         shared_masked_ptxts.push(res);
     }
-
-    let execution_stop_timer = Instant::now();
-    let elapsed_time = execution_stop_timer.duration_since(execution_start_timer);
-    Ok((shared_masked_ptxts, packing_factor as u32, elapsed_time))
+    Ok(shared_masked_ptxts)
 }
 
 /// Decrypts a ciphertext using bit decomposition.
@@ -1537,6 +1600,113 @@ mod tests {
     #[tokio::test]
     async fn test_small_threshold_decrypt_f8() {
         test_small_threshold_decrypt::<8>(1, 4, HashSet::new()).await
+    }
+
+    /// A partial decryption and its packing factor.
+    type PartialDecryptionOutput = (Vec<ResiduePoly<Z128, 4>>, u32);
+
+    /// Runs both noise-flooding partial decryption entry points for party 1 of a 4-party,
+    /// threshold-1 setup on the same ciphertext and returns their outputs: the session-based one
+    /// for session ID 1, and the PRSS-based one for `prss_session_id`.
+    fn partial_decrypt_both_ways(
+        prss_session_id: threshold_types::session_id::SessionId,
+    ) -> (PartialDecryptionOutput, PartialDecryptionOutput) {
+        use crate::endpoints::decryption::SnsRadixOrBoolCiphertext;
+        use crate::endpoints::decryption_non_wasm::{
+            LowLevelCiphertextAndKeys, OfflineNoiseFloodSession, SmallOfflineNoiseFloodSession,
+            partial_decrypt_using_noiseflooding, partial_decrypt_using_noiseflooding_with_prss,
+        };
+        use crate::runtime::sessions::{
+            session_parameters::GenericParameterHandles, small_session::SmallSession,
+        };
+        use crate::small_execution::prss::{DerivePRSSState, PRSSSetup};
+        use crate::tests::helper::testing::{
+            get_dummy_prss_setup, get_networkless_base_session_for_parties,
+        };
+
+        ensure_test_data_setup();
+        let (num_parties, threshold) = (4, 1);
+        let role = Role::indexed_from_one(1);
+        let keyset: KeySet = read_element(SMALL_TEST_KEY_PATH).unwrap();
+        let params = keyset.get_cpu_params().unwrap();
+        let key_shares = keygen_all_party_shares_from_client_key::<_, 4>(
+            &keyset.client_key,
+            params,
+            &mut AesRng::seed_from_u64(0),
+            num_parties,
+            threshold,
+        )
+        .unwrap();
+        let key_share = &key_shares[role.one_based() - 1];
+
+        let (ct, _id, _tag, _rerand_metadata) =
+            FheUint8::encrypt(3_u8, &keyset.client_key).into_raw_parts();
+        let server_key = &keyset.public_keys.server_key;
+        let int_server_key: &tfhe::integer::ServerKey = server_key.as_ref();
+        let large_ct = SnsRadixOrBoolCiphertext::Radix(
+            server_key
+                .noise_squashing_key()
+                .unwrap()
+                .squash_radix_ciphertext_noise(int_server_key, &ct)
+                .unwrap(),
+        );
+
+        // `get_dummy_prss_setup` drives its own runtime, so it runs before the test's runtime.
+        let prss_setup: PRSSSetup<ResiduePoly<Z128, 4>> = get_dummy_prss_setup(
+            get_networkless_base_session_for_parties(num_parties, threshold as u8, role),
+        );
+        let base_session =
+            get_networkless_base_session_for_parties(num_parties, threshold as u8, role);
+        let session_id = base_session.session_id();
+
+        tokio::runtime::Runtime::new().unwrap().block_on(async {
+            let session = SmallSession::new_from_prss_state(
+                base_session,
+                prss_setup.new_prss_session_state(session_id),
+            )
+            .unwrap();
+            let mut noiseflood_session = SmallOfflineNoiseFloodSession::new(session);
+            let (via_session, packing_via_session, _) = partial_decrypt_using_noiseflooding(
+                &mut noiseflood_session,
+                LowLevelCiphertextAndKeys::BigStandard(large_ct.clone()),
+                key_share,
+            )
+            .await
+            .unwrap();
+
+            let mut prss_state = prss_setup.new_prss_session_state(prss_session_id);
+            let (via_prss, packing_via_prss, _) = partial_decrypt_using_noiseflooding_with_prss(
+                &mut prss_state,
+                role,
+                LowLevelCiphertextAndKeys::BigStandard(large_ct),
+                key_share,
+            )
+            .await
+            .unwrap();
+
+            (
+                (via_session.to_vec(), packing_via_session),
+                (via_prss.to_vec(), packing_via_prss),
+            )
+        })
+    }
+
+    #[test]
+    fn partial_decrypt_with_prss_matches_session_based() {
+        let (via_session, via_prss) =
+            partial_decrypt_both_ways(threshold_types::session_id::SessionId::from(1));
+        assert!(!via_session.0.is_empty());
+        assert_eq!(via_session, via_prss);
+    }
+
+    /// The masks depend on the session ID: a PRSS state for another session yields a different
+    /// partial decryption, so the equality above is not an artefact of unused masks.
+    #[test]
+    fn partial_decrypt_with_prss_depends_on_session_id() {
+        let (via_session, via_prss) =
+            partial_decrypt_both_ways(threshold_types::session_id::SessionId::from(2));
+        assert_eq!(via_session.1, via_prss.1);
+        assert_ne!(via_session.0, via_prss.0);
     }
 
     async fn test_small_threshold_decrypt<const EXTENSION_DEGREE: usize>(

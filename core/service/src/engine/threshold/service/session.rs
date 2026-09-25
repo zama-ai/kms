@@ -28,7 +28,7 @@ use threshold_execution::{
         },
         small_session::SmallSession,
     },
-    small_execution::prss::{DerivePRSSState, PRSSSetup},
+    small_execution::prss::{DerivePRSSState, PRSSSetup, SecurePRSSState},
 };
 use threshold_networking::{
     grpc::GrpcNetworkingManager, health_check::HealthCheckSession, tls::AttestedVerifier,
@@ -702,21 +702,32 @@ impl SessionMaker {
         let base_session = self
             .make_base_session(session_id, context_id, network_mode)
             .await?;
-
-        let prss_state = {
-            let epoch_map_guard = self.epoch_map.read().await;
-            let prss_setup_extended = epoch_map_guard
-                .get(&epoch_id)
-                .ok_or_else(|| anyhow::anyhow!("Epoch ID {} not found in epoch map", epoch_id))?;
-            let prss_setup = &prss_setup_extended.prss.prss_setup_z128;
-            prss_setup.new_prss_session_state(session_id)
-        };
+        let prss_state = self.prss_state_z128(session_id, epoch_id).await?;
 
         let session = SmallSession {
             base_session,
             prss_state,
         };
         Ok(session)
+    }
+
+    /// Derives the Z128 PRSS state of `session_id` from the PRSS setup of `epoch_id`.
+    ///
+    /// Unlike the session constructors, this sets up no networking, so it suits protocols that
+    /// only need local PRSS output.
+    async fn prss_state_z128(
+        &self,
+        session_id: SessionId,
+        epoch_id: EpochId,
+    ) -> anyhow::Result<SecurePRSSState<ResiduePolyF4Z128>> {
+        let epoch_map_guard = self.epoch_map.read().await;
+        let prss_setup_extended = epoch_map_guard
+            .get(&epoch_id)
+            .ok_or_else(|| anyhow::anyhow!("Epoch ID {} not found in epoch map", epoch_id))?;
+        Ok(prss_setup_extended
+            .prss
+            .prss_setup_z128
+            .new_prss_session_state(session_id))
     }
 
     async fn make_small_session_z64(
@@ -1011,6 +1022,15 @@ impl ImmutableSessionMaker {
         self.inner
             .make_small_async_session_z128(session_id, context_id, epoch_id)
             .await
+    }
+
+    /// Derives the Z128 PRSS state of `session_id` for `epoch_id`, without setting up networking.
+    pub(crate) async fn prss_state_z128(
+        &self,
+        session_id: SessionId,
+        epoch_id: EpochId,
+    ) -> anyhow::Result<SecurePRSSState<ResiduePolyF4Z128>> {
+        self.inner.prss_state_z128(session_id, epoch_id).await
     }
 
     pub(crate) async fn make_small_async_session_z64(
