@@ -31,15 +31,6 @@ pub(super) fn receiver_enc_key_digest(
     }
 }
 
-/// `receiver_id ‖ H(receiver public encryption key)`: the suffix that binds a
-/// signcryption to who it was made for.
-pub(super) fn receiver_binding(
-    receiver_id: &[u8],
-    enc_key: &UnifiedPublicEncKey,
-) -> Result<Vec<u8>, CryptographyError> {
-    Ok([receiver_id, receiver_enc_key_digest(enc_key)?.as_slice()].concat())
-}
-
 /// Encrypt `msg` under `enc_key` with the hybrid KEM/DEM matching its scheme.
 pub(super) fn hybrid_encrypt(
     rng: &mut (impl CryptoRng + RngCore),
@@ -112,29 +103,5 @@ pub(super) fn signcryption_fixture(scheme: PkeSchemeType, seed: u64) -> Signcryp
         sender_verf_key,
         signing_key,
         receiver_id: receiver_verf_key.verf_key_id(),
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    /// The binding must separate recipients on *both* of its inputs, since it is
-    /// the only thing tying a signature to who may open it.
-    #[test]
-    fn receiver_binding_separates_recipients() {
-        let f = signcryption_fixture(PkeSchemeType::MlKem512, 500);
-        let other = signcryption_fixture(PkeSchemeType::MlKem512, 501);
-
-        let base = receiver_binding(&f.receiver_id, &f.enc_key).unwrap();
-        assert_eq!(base, receiver_binding(&f.receiver_id, &f.enc_key).unwrap());
-        assert_ne!(
-            base,
-            receiver_binding(&other.receiver_id, &f.enc_key).unwrap()
-        );
-        assert_ne!(
-            base,
-            receiver_binding(&f.receiver_id, &other.enc_key).unwrap()
-        );
     }
 }

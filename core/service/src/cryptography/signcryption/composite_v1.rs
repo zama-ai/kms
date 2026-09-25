@@ -3,7 +3,7 @@
 use super::UnifiedSigncryption;
 #[cfg(feature = "non-wasm")]
 use super::common::hybrid_encrypt;
-use super::common::{hybrid_decrypt, receiver_binding};
+use super::common::{hybrid_decrypt, receiver_enc_key_digest};
 use crate::consts::SAFE_SER_SIZE_LIMIT;
 use crate::cryptography::encryption::{HasPkeScheme, UnifiedPrivateEncKey, UnifiedPublicEncKey};
 use crate::cryptography::error::CryptographyError;
@@ -13,7 +13,7 @@ use crate::cryptography::signatures::{NodeSigningIdentity, SigningSchemeType};
 use crate::cryptography::signatures::{StoredTypedSignature, VerfKeySet};
 #[cfg(feature = "non-wasm")]
 use crate::cryptography::signing::composite::sign_uniform;
-use crate::cryptography::signing::composite::verify_uniform;
+use crate::cryptography::signing::composite::{CompositeRole, verify_uniform};
 #[cfg(feature = "non-wasm")]
 use crate::cryptography::zeroizing_writer::ZeroizingWriter;
 use hashing::DomainSep;
@@ -53,9 +53,10 @@ impl Zeroize for CompositeEnvelope {
 
 /// Signcrypt `msg` in the composite layout.
 ///
-/// Sign-then-encrypt, as in the frozen layout: each signature covers
-/// `dsep ‖ schemes ‖ msg ‖ receiver_id ‖ H(receiver enc key)`, and the whole
-/// envelope is then encrypted to the receiver.
+/// Sign-then-encrypt, as in the frozen layout. Each signature covers the message,
+/// the receiver id and the digest of the receiver encryption key, as the three
+/// fields of a [`CompositeRole::Signcryption`] preimage. The whole envelope is
+/// then encrypted to the receiver.
 #[cfg(feature = "non-wasm")]
 pub fn seal(
     identity: &NodeSigningIdentity,
@@ -66,9 +67,14 @@ pub fn seal(
     dsep: &DomainSep,
     msg: &[u8],
 ) -> Result<UnifiedSigncryption, CryptographyError> {
-    let binding = receiver_binding(receiver_id, receiver_enc_key)?;
-    let signed = Zeroizing::new([msg, binding.as_slice()].concat());
-    let signature = sign_uniform(identity, schemes, dsep, &signed)?;
+    let enc_key_digest = receiver_enc_key_digest(receiver_enc_key)?;
+    let signature = sign_uniform(
+        identity,
+        schemes,
+        CompositeRole::Signcryption,
+        dsep,
+        &[msg, receiver_id, enc_key_digest.as_slice()],
+    )?;
 
     let mut envelope = CompositeEnvelope {
         msg: msg.to_vec(),
@@ -118,10 +124,15 @@ pub(super) fn open(
 
     let msg = Zeroizing::new(std::mem::take(&mut envelope.msg));
 
-    let binding = receiver_binding(receiver_id, encryption_key)?;
-    let signed = Zeroizing::new([msg.as_slice(), binding.as_slice()].concat());
-    verify_uniform(&envelope.signature, sender_keys, dsep, &signed)
-        .map_err(|e| CryptographyError::VerificationError(e.to_string()))?;
+    let enc_key_digest = receiver_enc_key_digest(encryption_key)?;
+    verify_uniform(
+        &envelope.signature,
+        sender_keys,
+        CompositeRole::Signcryption,
+        dsep,
+        &[msg.as_slice(), receiver_id, enc_key_digest.as_slice()],
+    )
+    .map_err(|e| CryptographyError::VerificationError(e.to_string()))?;
 
     Ok(msg)
 }

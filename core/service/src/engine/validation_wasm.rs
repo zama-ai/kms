@@ -444,10 +444,12 @@ pub(crate) fn verify_response_signatures(
         ));
     }
     // Bound to the set this verifier requested, so an entry lifted from a
-    // response signed under a larger set does not verify here.
+    // response signed under a larger set does not verify here. The ECDSA entry is
+    // the exception; see `sign_result_entries`.
     let signed_bytes = crate::cryptography::signing::composite::scheme_bound_preimage(
         requested,
-        payloads.payload_bytes,
+        crate::cryptography::signing::composite::CompositeRole::Result,
+        &[payloads.payload_bytes],
     )
     .map_err(|e| anyhow_tracked(format!("could not build the signed payload: {e}")))?;
     let mut verified: Vec<SigningSchemeType> = Vec::with_capacity(sigs.list.len() + 1);

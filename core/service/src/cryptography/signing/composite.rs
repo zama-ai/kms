@@ -4,12 +4,79 @@
 //! its parts is present. Dropping the post-quantum half of an ECDSA+ML-DSA pair
 //! must not leave something a verifier accepts, or the hedge the composite was
 //! built for is gone.
+//!
+//! # Relation to the IETF composite signature draft
+//!
+//! The IETF supports exactly one legacy scheme and ML-DSA, whereas we want more
+//! flexibility and hence will support both a single scheme choice and more than 2.
+//! Our construction follows `draft-ietf-lamps-pq-composite-sigs` in its form but
+//! does not interoperate with the draft.
+//!
+//! Concretely we transform a message to be signed, M, to another one, M', as follows:
+//! ```text
+//! M' = COMPOSITE_PREFIX ‖ CompositeRole ‖ scheme count ‖ scheme tags ‖ field count ‖ (length ‖ field)*
+//! ```
+//! In the IETF draft the format is as follows:
+//! ```text
+//! M' = COMPOSITE_PREFIX || Label || len(ctx) || ctx || Hash( M )
+//! ```
+//!
+//! Each backend prepends the domain separator, so a component signs
+//! `dsep ‖ preimage`. The parts of the draft map onto this encoding:
+//!
+//! - **[`COMPOSITE_PREFIX`]** marks the bytes as a composite
+//!   preimage, so no component reads as a signature of another construction. The
+//!   node's ECDSA key also signs EIP-712 messages and the frozen signcryption
+//!   layout, so the draft's prohibition on key reuse does not hold here. The
+//!   draft names the Prefix as what covers that case.
+//! - **Label** is [`CompositeRole`] which sets the context of signature usage,
+//!   e.g. for use in signcryption or for signing a result (without encryption).
+//!   Thus unlike the draft, our Label does not encode the choice of scheme itself.
+//!   This is instead captured by the additional "scheme count" and "scheme tags".
+//! - **ctx** is the domain separator. A [`DomainSep`] is exactly 8 bytes, so the
+//!   length prefix the draft puts on ctx is not necessary.
+//! - **Hash(M)** is the message itself, in one or more length-prefixed fields. The
+//!   draft pre-hashes the message and assumes that the hash resists collisions.
+//!   The message keeps the same unforgeability argument without that assumption.
+//!
+//! # What the encoding gives, and what it does not
+//!
+//! - Verification is all or nothing. [`verify_uniform`] requires the set of
+//!   entries to equal the set of keys, then checks every entry.
+//! - Every component of a [`sign_uniform`] signature names its scheme set and its
+//!   role in the bytes it signs, so none of them moves to another set, to another
+//!   role, or out of the composite.
+//! - The composite is unforgeable if any one component is, as in the draft.
+//! - The ECDSA entry of [`sign_result_entries`] is the deliberate exception. It
+//!   signs the EIP-712 hash, so it binds neither the set nor the role, and it
+//!   moves freely between them.
 #[cfg(feature = "non-wasm")]
 use super::identity::NodeSigningIdentity;
 use super::typed_signature::StoredTypedSignature;
 use super::verf_key_set::VerfKeySet;
 use super::{Signature, SigningError, SigningSchemeType, unified_verify};
 use hashing::DomainSep;
+use zeroize::Zeroizing;
+
+/// The marker every composite preimage starts with.
+pub const COMPOSITE_PREFIX: &[u8; 32] = b"ZamaKmsCompositeSignature2026_v1";
+
+/// What a composite signature signs over.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[repr(u32)]
+pub enum CompositeRole {
+    /// The signed part of a signcryption envelope.
+    Signcryption = 1,
+    /// The per-scheme signatures of a keygen, CRS, preprocessing or other result.
+    Result = 2,
+}
+
+impl CompositeRole {
+    /// The role's stable 4-byte tag, as it appears in the preimage.
+    fn tag(self) -> [u8; 4] {
+        (self as u32).to_le_bytes()
+    }
+}
 
 /// Sort `schemes` into canonical order and drop duplicates.
 ///
@@ -51,17 +118,37 @@ fn render_schemes(schemes: &[SigningSchemeType]) -> String {
     )
 }
 
-/// The bytes a scheme-set-bound signature covers: the canonical scheme set,
-/// length-prefixed, followed by the message.
+/// The bytes one component of a composite signature covers.
+///
+/// The layout and the reason for each part are in the module documentation. Every
+/// field of `fields` carries its own length, so no two field lists produce the
+/// same bytes, whatever the lengths of the fields inside them.
 ///
 /// `schemes` is canonicalised here, so callers may pass it in any order and
 /// still agree on the bytes.
+///
+/// The result may hold a secret, because a field may. It is wiped on drop.
 pub fn scheme_bound_preimage(
     schemes: &[SigningSchemeType],
-    msg: &[u8],
-) -> Result<Vec<u8>, SigningError> {
+    role: CompositeRole,
+    fields: &[&[u8]],
+) -> Result<Zeroizing<Vec<u8>>, SigningError> {
     let schemes = canonical_schemes(schemes)?;
-    Ok([canonical_scheme_bytes(&schemes).as_slice(), msg].concat())
+    let payload_len: usize = fields.iter().map(|field| field.len() + 8).sum();
+    // Exactly the final length, so the buffer never grows. A reallocation would
+    // leave a copy of a field behind that the `Zeroizing` wrapper cannot reach.
+    let mut out = Vec::with_capacity(COMPOSITE_PREFIX.len() + 12 + 4 * schemes.len() + payload_len);
+    out.extend_from_slice(COMPOSITE_PREFIX);
+    out.extend_from_slice(&role.tag());
+    out.extend_from_slice(&canonical_scheme_bytes(&schemes));
+    // Bounded by the number of fields a call site writes out by hand, so the cast
+    // cannot truncate.
+    out.extend_from_slice(&(fields.len() as u32).to_le_bytes());
+    for field in fields {
+        out.extend_from_slice(&(field.len() as u64).to_le_bytes());
+        out.extend_from_slice(field);
+    }
+    Ok(Zeroizing::new(out))
 }
 
 /// The schemes `entries` were made under, in the order they are stored.
@@ -69,20 +156,22 @@ pub fn entry_schemes(entries: &[StoredTypedSignature]) -> Vec<SigningSchemeType>
     entries.iter().map(|entry| entry.scheme).collect()
 }
 
-/// Sign `msg` under every scheme in `schemes`, each over the same bytes.
+/// Sign `fields` under every scheme in `schemes`, each over the same bytes.
 ///
 /// The entries come back ordered by scheme, with no duplicate scheme, which is
-/// the shape [`verify_uniform`] requires.
+/// the shape [`verify_uniform`] requires. `verify_uniform` has to be called with
+/// the same `role` and the same `fields`, in the same order.
 #[cfg(feature = "non-wasm")]
 pub fn sign_uniform(
     identity: &NodeSigningIdentity,
     schemes: &[SigningSchemeType],
+    role: CompositeRole,
     dsep: &DomainSep,
-    msg: &[u8],
+    fields: &[&[u8]],
 ) -> Result<Vec<StoredTypedSignature>, SigningError> {
     let schemes = canonical_schemes(schemes)?;
     identity.ensure_supported(&schemes)?;
-    let preimage = scheme_bound_preimage(&schemes, msg)?;
+    let preimage = scheme_bound_preimage(&schemes, role, fields)?;
     schemes
         .iter()
         .map(|&scheme| {
@@ -105,8 +194,9 @@ pub fn sign_uniform(
 pub fn verify_uniform(
     entries: &[StoredTypedSignature],
     keys: &VerfKeySet,
+    role: CompositeRole,
     dsep: &DomainSep,
-    msg: &[u8],
+    fields: &[&[u8]],
 ) -> Result<(), SigningError> {
     let expected = keys.schemes();
     // The scheme-set comparison happens before any cryptography, so a composite
@@ -120,7 +210,7 @@ pub fn verify_uniform(
             actual: render_schemes(&schemes),
         });
     }
-    let preimage = scheme_bound_preimage(&schemes, msg)?;
+    let preimage = scheme_bound_preimage(&schemes, role, fields)?;
     for entry in entries {
         let signature = Signature::new(entry.scheme, entry.signature.clone());
         // Cannot fail: `schemes` equals `keys.schemes()` on this path.
@@ -132,9 +222,26 @@ pub fn verify_uniform(
 /// The per-scheme signatures of a *result*: a keygen, CRS, preprocessing or
 /// decryption response.
 ///
-/// ECDSA signs `eip712_hash`, every other scheme signs
-/// [`scheme_bound_preimage`] over `payload_bytes`, so it commits to the scheme
-/// set as well as to the payload.
+/// **A scheme determines what its signature covers.** This mapping is the
+/// contract every verifier relies on, so it lives here alone:
+///
+/// - [`SigningSchemeType::Ecdsa256k1`] signs `eip712_hash`, producing the
+///   recoverable, on-chain-verifiable signature the fhevm contracts verify. It is
+///   byte-identical to the result's deprecated `external_signature`, so that
+///   `signatures` still carries it once that field goes away. The two match
+///   because the caller derives both from one hash and ECDSA signing here is
+///   deterministic.
+/// - Every other scheme signs [`scheme_bound_preimage`] over `payload_bytes`, so
+///   it commits to the scheme set and the role as well as to the payload.
+///
+/// The ECDSA entry is therefore the one component that binds neither the set nor
+/// the role, and a verifier cannot read it as evidence of either. EIP-712 is an
+/// EVM and secp256k1 construction that a post-quantum scheme has no reason to be
+/// bound to, so the asymmetry stays. It costs less than it appears to, because
+/// `ensure_requested_verified` requires every requested scheme to verify, so a
+/// set-bound entry pins the set as soon as a verifier asks for more than ECDSA. A
+/// request for ECDSA alone, which is what an empty request resolves to, pins
+/// neither the set nor the role.
 ///
 /// `schemes` may be given in any order; the entries come back ordered by
 /// scheme.
@@ -152,7 +259,7 @@ pub fn sign_result_entries(
     let schemes = canonical_schemes(schemes)?;
     // Every non-ECDSA entry commits to the scheme set, so one cannot be lifted
     // out of a larger response and presented as a complete smaller one.
-    let signed = scheme_bound_preimage(&schemes, payload_bytes)?;
+    let signed = scheme_bound_preimage(&schemes, CompositeRole::Result, &[payload_bytes])?;
     schemes
         .iter()
         .map(|&scheme| {

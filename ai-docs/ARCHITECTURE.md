@@ -591,8 +591,8 @@ Legacy metadata has no digest, so its public objects receive a raw presence chec
 with a stored domain reconstruct their signed Solidity payload and must recover the node's
 signing address. Older metadata versions upgrade with no domain and stay unverifiable. The
 entries of the other schemes sign the serialized result payload (`keygen_payload_bytes`,
-`crs_payload_bytes`) prefixed by the canonical scheme set, which needs no domain, so they are
-checked for every current entry. A node that cannot derive a scheme's key, because it holds no
+`crs_payload_bytes`) inside a composite preimage, which binds the canonical scheme set and the
+role and needs no domain, so they are checked for every current entry. A node that cannot derive a scheme's key, because it holds no
 root seed, fails boot on such an entry rather than passing it over.
 
 `PubDataType::DecompressionKey` has no private-storage counterpart at all

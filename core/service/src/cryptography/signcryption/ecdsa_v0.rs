@@ -8,12 +8,13 @@ use super::common::{DSEP_SIGNCRYPTION, hybrid_decrypt, hybrid_encrypt, receiver_
 use super::{
     SigncryptionPayload, UnifiedSigncryption, UnifiedSigncryptionKey, UnifiedUnsigncryptionKey,
 };
-use crate::cryptography::encryption::{HasPkeScheme, UnifiedPrivateEncKey};
+use crate::cryptography::encryption::{HasPkeScheme, UnifiedPrivateEncKey, UnifiedPublicEncKey};
 use crate::cryptography::error::CryptographyError;
 use crate::cryptography::hybrid_ml_kem::HybridKemCt;
 use crate::cryptography::signatures::{
     PublicSigKey, SIG_SIZE, Signature, check_normalized, internal_sign,
 };
+use crate::cryptography::signcryption::common::receiver_enc_key_digest;
 use ::signature::Verifier;
 use hashing::{DIGEST_BYTES, DomainSep, serialize_hash_element};
 use kms_grpc::kms::v1::TypedPlaintext;
@@ -155,6 +156,15 @@ fn check_format_and_signature(
         .map_err(|e| CryptographyError::VerificationError(e.to_string()))
 }
 
+/// `receiver_id ‖ H(receiver public encryption key)`: the suffix that binds a
+/// signcryption to who it was made for.
+fn receiver_binding(
+    receiver_id: &[u8],
+    enc_key: &UnifiedPublicEncKey,
+) -> Result<Vec<u8>, CryptographyError> {
+    Ok([receiver_id, receiver_enc_key_digest(enc_key)?.as_slice()].concat())
+}
+
 /// Decrypt a signcrypted message and ignore the signature
 ///
 /// This function does *not* do any verification and is thus insecure and should be used only for
@@ -294,5 +304,24 @@ mod tests {
                 "a {len}-byte plaintext must be rejected as too short"
             );
         }
+    }
+
+    /// The binding must separate recipients on *both* of its inputs, since it is
+    /// the only thing tying a signature to who may open it.
+    #[test]
+    fn receiver_binding_separates_recipients() {
+        let f = signcryption_fixture(PkeSchemeType::MlKem512, 500);
+        let other = signcryption_fixture(PkeSchemeType::MlKem512, 501);
+
+        let base = receiver_binding(&f.receiver_id, &f.enc_key).unwrap();
+        assert_eq!(base, receiver_binding(&f.receiver_id, &f.enc_key).unwrap());
+        assert_ne!(
+            base,
+            receiver_binding(&other.receiver_id, &f.enc_key).unwrap()
+        );
+        assert_ne!(
+            base,
+            receiver_binding(&f.receiver_id, &other.enc_key).unwrap()
+        );
     }
 }
