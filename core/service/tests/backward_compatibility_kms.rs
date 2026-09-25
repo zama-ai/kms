@@ -748,14 +748,13 @@ fn test_unified_signcryption(
     let original_versionized: UnifiedSigncryption = load_and_unversionize(dir, test, format)?;
     let mut rng = AesRng::seed_from_u64(test.state);
     let (verf_key, server_sig_key) = gen_sig_keys(&mut rng);
-    let (client_verf_key, _server_sig_key) = gen_sig_keys(&mut rng);
+    let (client_verf_key, _client_sig_key) = gen_sig_keys(&mut rng);
     let mut encryption = Encryption::new(PkeSchemeType::MlKem512, &mut rng);
     let (dec_key, enc_key) = encryption.keygen().unwrap();
-    let receiver_id = client_verf_key.verf_key_id();
     let signcrypt_key = UnifiedSigncryptionKey::from_signing_key(
         server_sig_key,
         enc_key.clone(),
-        receiver_id.clone(),
+        client_verf_key.verf_key_id(),
     );
     let new_versionized = signcrypt_key
         .signcrypt(&mut rng, b"TESTTEST", &verf_key)
@@ -779,7 +778,7 @@ fn test_unified_signcryption(
         std::sync::Arc::new(dec_key),
         enc_key,
         verf_key.clone(),
-        receiver_id,
+        client_verf_key.verf_key_id(),
     );
     let opened: PublicSigKey = unsign_key
         .unsigncrypt(b"TESTTEST", &original_versionized)

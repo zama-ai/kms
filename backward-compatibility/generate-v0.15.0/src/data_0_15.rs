@@ -56,7 +56,6 @@ use kms_grpc_0_15_0::{
 use rand::{RngCore, SeedableRng};
 use std::collections::BTreeMap;
 use std::num::Wrapping;
-use std::sync::Arc;
 use std::{borrow::Cow, collections::HashMap, fs::create_dir_all, path::PathBuf};
 use strum::IntoEnumIterator;
 use tfhe_1_8_1::safe_serialization::safe_serialize;
@@ -1124,14 +1123,13 @@ impl KmsV0_15_0 {
 
     fn gen_unified_signcryption(dir: &PathBuf) -> TestMetadataKMS {
         let mut rng = AesRng::seed_from_u64(UNIFIED_SIGNCRYPTION_TEST.state);
-        let (client_verf_key, _client_sig_key) = gen_sig_keys(&mut rng);
         let (verf_key, server_sig_key) = gen_sig_keys(&mut rng);
-        let server_id = NodeSigningIdentity::new(server_sig_key, RootSigningSeed::random(&mut rng));
+        let (client_verf_key, _client_sig_key) = gen_sig_keys(&mut rng);
         let mut encryption = Encryption::new(PkeSchemeType::MlKem512, &mut rng);
         let (_dec_key, enc_key) = encryption.keygen().unwrap();
-        let signcrypt_key = UnifiedSigncryptionKey::new(
-            Arc::new(server_id),
-            enc_key,
+        let signcrypt_key = UnifiedSigncryptionKey::from_signing_key(
+            server_sig_key,
+            enc_key.clone(),
             client_verf_key.verf_key_id(),
         );
         let signcryption = signcrypt_key
