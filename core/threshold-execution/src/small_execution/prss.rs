@@ -375,7 +375,7 @@ struct PrssSubsetData<Z> {
     f_a: Z,
 }
 
-/// Immutable session data. Key arrays follow the epoch setup's subset order.
+/// Prepared data for the local party. Key arrays follow the epoch setup's subset order.
 /// PRSS visits only `prss_subsets`, without stepping over the mask and PRZS keys.
 #[derive(Debug, Clone)]
 pub(crate) struct SessionPrfs<Z> {
@@ -847,6 +847,7 @@ where
         session: &mut S,
         ctr: u128,
     ) -> anyhow::Result<HashMap<Role, Z>> {
+        self.prfs.validate_role(session.my_role(), "prss.check")?;
         let sets = &self.prss_setup.sets;
 
         if sets.len() != self.prfs.prss_subsets.len() {
@@ -889,6 +890,7 @@ where
         session: &mut S,
         ctr: u128,
     ) -> anyhow::Result<HashMap<Role, Z>> {
+        self.prfs.validate_role(session.my_role(), "przs.check")?;
         let sets = &self.prss_setup.sets;
         if sets.len() != self.prfs.chi.len() {
             return Err(anyhow_error_and_log(
@@ -1287,7 +1289,8 @@ mod tests {
     async fn test_prepared_session_matches_epoch_data() {
         async fn check<Z: ErrorCorrect + Invert + PRSSConversions>() {
             let role = Role::indexed_from_one(3);
-            let setup = PRSSSetup::<Z>::testing_party_epoch_init(7, 2, role)
+            let threshold = 2;
+            let setup = PRSSSetup::<Z>::testing_party_epoch_init(7, threshold, role)
                 .await
                 .unwrap();
 
@@ -1315,7 +1318,7 @@ mod tests {
                         for idx in 0..amount {
                             let ctr = start + idx as u128;
                             expected_prss[idx] += f_a * psi(psi_key, ctr).unwrap();
-                            for j in 1..=2 {
+                            for j in 1..=threshold {
                                 expected_przs[idx] += (f_a * setup.alpha_powers[&role][j])
                                     * chi(chi_key, ctr, j as u8).unwrap();
                             }
@@ -1333,7 +1336,10 @@ mod tests {
                         expected_prss
                     );
                     assert_eq!(
-                        request.przs_next_vec(role, 2, amount).await.unwrap(),
+                        request
+                            .przs_next_vec(role, threshold as u8, amount)
+                            .await
+                            .unwrap(),
                         expected_przs
                     );
                     assert_eq!(request.counters.prss_ctr, start + amount as u128);
@@ -1419,6 +1425,21 @@ mod tests {
             .new_prss_session_state(SessionId::from(42), role)
             .unwrap();
         let wrong_role = Role::indexed_from_one(1);
+        let mut wrong_session = get_networkless_base_session_for_parties(4, 1, wrong_role);
+        for (operation, error) in [
+            (
+                "prss.check",
+                state.prss_check(&mut wrong_session, 0).await.unwrap_err(),
+            ),
+            (
+                "przs.check",
+                state.przs_check(&mut wrong_session, 0).await.unwrap_err(),
+            ),
+        ] {
+            assert!(error.to_string().contains(&format!(
+                "{operation}: PRSS session prepared for party {role} was called with party {wrong_role}"
+            )));
+        }
         for amount in [0, 1] {
             assert!(state.prss_next_vec(wrong_role, amount).await.is_err());
             assert!(state.przs_next_vec(wrong_role, 1, amount).await.is_err());
@@ -1468,15 +1489,15 @@ mod tests {
         let mut session = get_networkless_base_session_for_parties(4, 1, role);
 
         // Both checks must reject incomplete keys before attempting a broadcast.
-        let prfs = Arc::make_mut(&mut state.prfs);
-        prfs.prss_subsets = Box::default();
-        prfs.chi = Box::default();
-        let error = state.prss_check(&mut session, 0).await.unwrap_err();
+        let mut invalid_prss = state.clone();
+        Arc::make_mut(&mut invalid_prss.prfs).prss_subsets = Box::default();
+        let error = invalid_prss.prss_check(&mut session, 0).await.unwrap_err();
         assert!(
             error
                 .to_string()
                 .contains("prss.check: subset and PRF counts differ")
         );
+        Arc::make_mut(&mut state.prfs).chi = Box::default();
         let error = state.przs_check(&mut session, 0).await.unwrap_err();
         assert!(
             error
