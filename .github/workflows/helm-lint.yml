@@ -5,10 +5,14 @@ on:
   pull_request:
     paths:
       - 'charts/**'
+      - 'ci/**/kms-service/values*.yaml'
+      - 'ci/kube-testing/kms/values*.yaml'
   push:
     branches: ['main', 'release/*']
     paths:
       - 'charts/**'
+      - 'ci/**/kms-service/values*.yaml'
+      - 'ci/kube-testing/kms/values*.yaml'
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.head_ref || github.ref || github.run_id }}
@@ -48,16 +52,89 @@ jobs:
       - name: Validate values.schema.json
         run: |
           set -euo pipefail
+
+          expect_invalid() {
+            local name="$1"
+            local expected="$2"
+            shift 2
+            if output=$(helm template test charts/kms-core "$@" 2>&1); then
+              echo "expected schema validation to reject ${name}" >&2
+              exit 1
+            fi
+            if ! grep -Fq "values don't meet the specifications of the schema(s)" <<<"$output" || ! grep -Eq "$expected" <<<"$output"; then
+              printf '%s\n' "$output" >&2
+              exit 1
+            fi
+            echo "rejected ${name} as expected"
+          }
+
+          jq empty charts/kms-core/values.schema.json
           helm lint charts/kms-core
           helm template test charts/kms-core >/dev/null
           helm template test charts/kms-core -f charts/kms-core/values-example-local.yaml >/dev/null
           helm template test charts/kms-core -f ci/pr-preview/centralized/kms-service/values-kms-ci.yaml >/dev/null
-          if output=$(helm template test charts/kms-core -f charts/kms-core/ci/values-schema-invalid.yaml 2>&1); then
-            echo "expected schema validation to fail for charts/kms-core/ci/values-schema-invalid.yaml" >&2
+          helm template test charts/kms-core -f ci/pr-preview/centralizedWithEnclave/kms-service/values-kms-ci.yaml >/dev/null
+          helm template test charts/kms-core -f ci/pr-preview/threshold/kms-service/values-kms-ci.yaml \
+            --set kmsPeers.count=4 \
+            --set kmsCore.thresholdMode.thresholdValue=1 >/dev/null
+
+          overlay_count=0
+          while IFS= read -r values_file; do
+            helm template schema-check charts/kms-core -f "$values_file" \
+              --set kmsCore.enabled=false \
+              --set kmsCoreClient.enabled=false \
+              --set kmsCoreClientTesting.enabled=false \
+              --set kmsInit.enabled=false \
+              --set kmsGenCertAndKeys.enabled=false \
+              --set kmsGenKeys.enabled=false \
+              --set kyverno.enabled=false >/dev/null
+            ((overlay_count += 1))
+          done < <(git ls-files 'ci/**/kms-service/values*.yaml' 'ci/kube-testing/kms/values*.yaml')
+          echo "validated ${overlay_count} tracked values overlays"
+
+          expect_invalid "invalid fixture" 'kmsPeers\.count|/kmsPeers/count' \
+            -f charts/kms-core/ci/values-schema-invalid.yaml
+          expect_invalid "zero peer count" 'kmsPeers\.count|/kmsPeers/count' \
+            --set kmsPeers.count=0
+          expect_invalid "out-of-range client port" 'ports[/.]client' \
+            --set kmsCore.ports.client=65536
+          expect_invalid "invalid pull policy" 'pullPolicy' \
+            --set kmsCore.image.pullPolicy=Sometimes
+          expect_invalid "odd enclave CPU count" 'cpuCount' \
+            --set kmsCore.nitroEnclave.cpuCount=3
+          expect_invalid "incomplete explicit peer" 'port' \
+            --set-json 'kmsCore.thresholdMode.peersList=[{"id":1,"host":"kms-core-1"}]'
+          expect_invalid "zero gRPC timeout" 'grpcTimeout' \
+            --set kmsCore.resources.limits.grpcTimeout=0
+          expect_invalid "oversized gRPC message limit" 'grpcMaxMessageSize' \
+            --set kmsCore.resources.limits.grpcMaxMessageSize=2147483648
+          expect_invalid "zero rate-limit bucket" 'bucketSize' \
+            --set kmsCore.rateLimiter.bucketSize=0
+          expect_invalid "zero telemetry refresh interval" 'refreshIntervalMs' \
+            --set kmsCore.thresholdMode.refreshIntervalMs=0
+          expect_invalid "zero threshold" 'thresholdValue' \
+            --set kmsCore.thresholdMode.thresholdValue=0
+          expect_invalid "oversized preprocessing session count" 'numSessionsPreproc' \
+            --set kmsCore.thresholdMode.numSessionsPreproc=65536
+          expect_invalid "non-positive network tunnel queue count" 'queueCount' \
+            --set kmsCore.nitroEnclave.networkTunnel.queueCount=0
+          expect_invalid "empty tracing endpoint" 'endpoint' \
+            --set tracing.enabled=true --set-string tracing.endpoint=
+          expect_invalid "empty enclave signing key" 'eifSignKey' \
+            --set kmsCore.nitroEnclave.signed=true --set-string kmsCore.nitroEnclave.eifSignKey=
+          expect_invalid "invalid AWS KMS key spec" 'rootKeySpec' \
+            --set kmsCore.privateVault.awskms.enabled=true \
+            --set kmsCore.privateVault.awskms.rootKeySpec=invalid
+          expect_invalid "invalid Kubernetes resource quantity" 'cpu' \
+            --set-string kmsCore.resources.requests.cpu=invalid
+          expect_invalid "empty migration epoch list" 'epochIds' \
+            --set-json 'kmsCore.migration.contextAssociations=[{"contextId":"0x0700000000000000000000000000000000000000000000000000000000000001","epochIds":[]}]'
+
+          if output=$(helm template test charts/kms-core \
+            --set kmsCore.thresholdMode.enabled=true \
+            --set kmsPeers.count=4 \
+            --set kmsCore.thresholdMode.thresholdValue=2 2>&1); then
+            echo "expected invalid threshold topology to fail" >&2
             exit 1
           fi
-          if ! grep -Fq "values don't meet the specifications of the schema(s)" <<<"$output" || ! grep -Eq 'kmsPeers\.count|/kmsPeers/count' <<<"$output"; then
-            printf '%s\n' "$output" >&2
-            exit 1
-          fi
-          echo "invalid overlay was rejected as expected"
+          grep -Fq "threshold mode requires 3*t+1 parties" <<<"$output"

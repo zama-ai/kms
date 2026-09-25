@@ -1,5 +1,5 @@
 {
-  "$schema": "https://json-schema.org/draft-07/schema#",
+  "$schema": "http://json-schema.org/draft-07/schema#",
   "$id": "https://github.com/zama-ai/kms/charts/kms-core/values.schema.json",
   "title": "kms-core Helm values",
   "type": "object",
@@ -84,7 +84,21 @@
         "enabled": { "type": "boolean" },
         "endpoint": { "$ref": "#/definitions/nullableString" },
         "otlp_timeout_ms": { "type": "integer", "minimum": 0 }
-      }
+      },
+      "allOf": [
+        {
+          "if": {
+            "required": ["enabled"],
+            "properties": { "enabled": { "const": true } }
+          },
+          "then": {
+            "required": ["endpoint"],
+            "properties": {
+              "endpoint": { "type": "string", "minLength": 1 }
+            }
+          }
+        }
+      ]
     },
     "minio": {
       "type": "object",
@@ -135,6 +149,12 @@
     "nullableInteger": {
       "type": ["integer", "null"]
     },
+    "positiveNullableInteger": {
+      "oneOf": [
+        { "type": "integer", "minimum": 1 },
+        { "type": "null" }
+      ]
+    },
     "nullableObject": {
       "type": ["object", "null"]
     },
@@ -144,10 +164,17 @@
     "quantity": {
       "description": "Kubernetes resource quantity (e.g. 1, \"500m\", \"1Gi\")",
       "oneOf": [
-        { "type": "string" },
-        { "type": "number" },
+        {
+          "type": "string",
+          "pattern": "^(?:[0-9]+(?:\\.[0-9]+)?|\\.[0-9]+)(?:[eE][+-]?[0-9]+|[EPTGMK]i?|[numk])?$"
+        },
+        { "type": "number", "minimum": 0 },
         { "type": "null" }
       ]
+    },
+    "migrationId": {
+      "type": "string",
+      "pattern": "^(0x)?[0-9A-Fa-f]{64}$"
     },
     "port": {
       "type": "integer",
@@ -203,8 +230,16 @@
       "type": "object",
       "properties": {
         "enabled": { "type": "boolean" },
-        "rootKeyId": { "$ref": "#/definitions/nullableString" },
-        "rootKeySpec": { "$ref": "#/definitions/nullableString" }
+        "rootKeyId": {
+          "oneOf": [
+            { "type": "string", "minLength": 1 },
+            { "type": "null" }
+          ]
+        },
+        "rootKeySpec": {
+          "type": ["string", "null"],
+          "enum": ["symm", "asymm", null]
+        }
       }
     },
     "k8sResources": {
@@ -225,8 +260,12 @@
             "memory": { "$ref": "#/definitions/quantity" },
             "ephemeral-storage": { "$ref": "#/definitions/quantity" },
             "ephemeralStorage": { "$ref": "#/definitions/quantity" },
-            "grpcTimeout": { "type": "integer", "minimum": 0 },
-            "grpcMaxMessageSize": { "type": "integer", "minimum": 0 }
+            "grpcTimeout": { "type": "integer", "minimum": 1 },
+            "grpcMaxMessageSize": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 2147483647
+            }
           }
         }
       }
@@ -265,7 +304,7 @@
         "rateLimiter": {
           "type": "object",
           "properties": {
-            "bucketSize": { "type": "integer", "minimum": 0 }
+            "bucketSize": { "type": "integer", "minimum": 1 }
           }
         },
         "migration": {
@@ -277,10 +316,12 @@
                 "type": "object",
                 "required": ["contextId", "epochIds"],
                 "properties": {
-                  "contextId": { "type": "string" },
+                  "contextId": { "$ref": "#/definitions/migrationId" },
                   "epochIds": {
                     "type": "array",
-                    "items": { "type": "string" }
+                    "minItems": 1,
+                    "uniqueItems": true,
+                    "items": { "$ref": "#/definitions/migrationId" }
                   }
                 }
               }
@@ -390,13 +431,13 @@
         "initialIntervalMs": { "type": "integer", "minimum": 1 },
         "maxOpenedInactiveSessionsPerParty": { "type": "integer", "minimum": 0 },
         "enableSysMetrics": { "type": "boolean" },
-        "refreshIntervalMs": { "type": "integer", "minimum": 0 },
+        "refreshIntervalMs": { "type": "integer", "minimum": 1 },
         "tokioWorkerThreads": { "type": "integer", "minimum": 1 },
         "rayonNumThreads": { "type": "integer", "minimum": 1 },
-        "thresholdValue": { "type": "integer", "minimum": 0 },
+        "thresholdValue": { "type": "integer", "minimum": 1, "maximum": 255 },
         "decCapacity": { "type": "integer", "minimum": 0 },
         "minDecCache": { "type": "integer", "minimum": 0 },
-        "numSessionsPreproc": { "type": "integer", "minimum": 0 },
+        "numSessionsPreproc": { "type": "integer", "minimum": 0, "maximum": 65535 },
         "decryptionMode": { "$ref": "#/definitions/decryptionMode" },
         "initializationScript": {
           "type": "object",
@@ -419,8 +460,8 @@
           "type": "object",
           "properties": {
             "enabled": { "type": "boolean" },
-            "queueCount": { "$ref": "#/definitions/nullableInteger" },
-            "tokioWorkerThreads": { "$ref": "#/definitions/nullableInteger" },
+            "queueCount": { "$ref": "#/definitions/positiveNullableInteger" },
+            "tokioWorkerThreads": { "$ref": "#/definitions/positiveNullableInteger" },
             "interfaceName": { "type": "string" },
             "subnet": { "type": "string" },
             "parentAddress": { "type": "string" },
@@ -433,7 +474,21 @@
         "eifSignKey": { "$ref": "#/definitions/nullableString" },
         "userId": { "type": "integer" },
         "groupId": { "type": "integer" }
-      }
+      },
+      "allOf": [
+        {
+          "if": {
+            "required": ["signed"],
+            "properties": { "signed": { "const": true } }
+          },
+          "then": {
+            "required": ["eifSignKey"],
+            "properties": {
+              "eifSignKey": { "type": "string", "minLength": 1 }
+            }
+          }
+        }
+      ]
     },
     "kmsCoreClient": {
       "type": "object",
