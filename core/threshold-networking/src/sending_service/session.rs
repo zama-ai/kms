@@ -680,8 +680,8 @@ mod tests {
     ) {
         let role_1 = Role::indexed_from_one(1);
         let role_2 = Role::indexed_from_one(2);
-        let msg_1 = Arc::new(vec![1u8; 10]);
-        let msg_2 = Arc::new(vec![2u8; 10]);
+        let msg_1 = Bytes::from(vec![1u8; 10]);
+        let msg_2 = Bytes::from(vec![2u8; 10]);
 
         let session_1 = networking_1
             .make_network_session(sid, role_assignment, role_1, NetworkMode::Sync)
