@@ -194,7 +194,7 @@ impl<PubS: Storage + Sync + Send + 'static, PrivS: StorageExt + Sync + Send + 's
     ) -> Result<Response<kms_grpc::kms::v1::UserDecryptionResponse>, Status> {
         user_decrypt_sync_impl(self, request)
             .await
-            .map_err(|e| e.into())
+            .map_err(|e| Status::internal(format!("{e:?}")))
     }
 
     #[tracing::instrument(skip(self, request))]
@@ -224,7 +224,7 @@ impl<PubS: Storage + Sync + Send + 'static, PrivS: StorageExt + Sync + Send + 's
     ) -> Result<Response<kms_grpc::kms::v1::PublicDecryptionResponse>, Status> {
         public_decrypt_sync_impl(self, request)
             .await
-            .map_err(|e| e.into())
+            .map_err(|e| Status::internal(format!("{e:?}")))
     }
 
     #[tracing::instrument(skip(self, request))]

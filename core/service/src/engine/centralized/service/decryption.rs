@@ -7,15 +7,14 @@ use crate::engine::centralized::central_kms::{
 use crate::engine::traits::ContextManager;
 use crate::engine::utils::{MetricedError, format_unvalidated_id, signing_identity_for};
 use crate::engine::validation::{
-    RequestIdParsingErr, parse_grpc_request_id, parse_optional_grpc_request_id,
-    validate_public_decrypt_req, validate_user_decrypt_req,
+    RequestIdParsingErr, parse_grpc_request_id, validate_public_decrypt_req,
+    validate_user_decrypt_req,
 };
 use crate::util::meta_store::{
     add_or_redo_failed_in_meta_store, retrieve_from_meta_store_with_timeout,
     update_req_in_meta_store,
 };
 use crate::vault::storage::{Storage, StorageExt};
-use kms_grpc::RequestId;
 use kms_grpc::kms::v1::{
     Empty, PublicDecryptionRequest, PublicDecryptionResponse, PublicDecryptionResponsePayload,
     UserDecryptionRequest, UserDecryptionResponse,
@@ -27,7 +26,7 @@ use observability::metrics_names::{
 };
 use std::sync::Arc;
 use thread_handles::spawn_compute_bound;
-use tonic::{Code, Request, Response};
+use tonic::{Request, Response};
 use tracing::Instrument;
 
 /// Implementation of the user_decrypt endpoint
@@ -158,32 +157,80 @@ pub async fn user_decrypt_impl<
     Ok(Response::new(Empty {}))
 }
 
-/// Implementation of the user_decrypt_sync endpoint
+/// Stateless user decryption: no meta-store, runs inside the request handler.
 pub async fn user_decrypt_sync_impl<
     PubS: Storage + Sync + Send + 'static,
     PrivS: StorageExt + Sync + Send + 'static,
 >(
     service: &CentralizedKms<PubS, PrivS>,
     request: Request<UserDecryptionRequest>,
-) -> Result<Response<UserDecryptionResponse>, MetricedError> {
-    // `user_decrypt_impl` consumes the request, so keep the raw id for fetching the result below.
-    let raw_request_id = request.get_ref().request_id.clone();
-
-    match user_decrypt_impl(service, request).await {
-        Ok(_empty) => (),
-        // Already succeeded, in flight, or tombstoned: attach to the existing entry
-        Err(e) if e.code() == tonic::Code::AlreadyExists => e.defuse(),
-        Err(e) => return Err(e),
+) -> Result<Response<UserDecryptionResponse>, anyhow::Error> {
+    let inner = request.into_inner();
+    let (
+        typed_ciphertexts,
+        link,
+        client_enc_key_bytes,
+        client_address,
+        request_id,
+        key_id,
+        context_id,
+        epoch_id,
+        domain,
+        extra_data,
+        signing_schemes,
+    ) = validate_user_decrypt_req(&inner).map_err(|e| anyhow::anyhow!("Badness, {:?}", e))?;
+    super::ensure_default_epoch(OP_USER_DECRYPT_REQUEST, request_id, &epoch_id)
+        .map_err(|e| anyhow::anyhow!("Badness: {:?}", e))?;
+    if !service
+        .context_manager
+        .mpc_context_exists_in_cache(&context_id)
+        .await
+    {
+        anyhow::bail!("Badness, unknown context.")
     }
 
-    // `user_decrypt_impl` accepted the request, so its id must parse.
-    let request_id: RequestId =
-        parse_optional_grpc_request_id(&raw_request_id, RequestIdParsingErr::UserDecRequest)
-            .map_err(|e| {
-                MetricedError::new(OP_USER_DECRYPT_REQUEST, None, e, Code::InvalidArgument)
-            })?;
+    let keys = service
+        .crypto_storage
+        .read_centralized_fhe_keys(&key_id.into(), &epoch_id)
+        .await?;
+    let sig_key = signing_identity_for(
+        &service.base_kms,
+        &signing_schemes,
+        OP_USER_DECRYPT_REQUEST,
+        Some(request_id),
+    )
+    .map_err(|e| anyhow::anyhow!("Badness: {:?}", e))?;
+    let server_verf_key = sig_key.verf_key().to_legacy_bytes()?;
 
-    get_user_decryption_result_impl(service, Request::new(request_id.into())).await
+    let mut rng = service.base_kms.new_rng();
+    let UserDecryptCallValues {
+        payload,
+        signature,
+        external_signature,
+        extra_data,
+        signatures,
+    } = async_user_decrypt::<PubS, PrivS>(
+        &keys,
+        &sig_key,
+        &mut rng,
+        &typed_ciphertexts,
+        &link,
+        &client_enc_key_bytes,
+        &client_address,
+        server_verf_key,
+        &domain,
+        extra_data,
+        &signing_schemes,
+    )
+    .await?;
+
+    Ok(Response::new(UserDecryptionResponse {
+        signature,
+        signatures,
+        external_signature,
+        payload: Some(payload),
+        extra_data,
+    }))
 }
 
 /// Implementation of the get_user_decryption_result endpoint
@@ -394,32 +441,82 @@ pub async fn public_decrypt_impl<
     Ok(Response::new(Empty {}))
 }
 
-/// Implementation of the public_decrypt_sync endpoint
+/// Stateless public decryption: no meta-store, runs inside the request handler.
 pub async fn public_decrypt_sync_impl<
     PubS: Storage + Sync + Send + 'static,
     PrivS: StorageExt + Sync + Send + 'static,
 >(
     service: &CentralizedKms<PubS, PrivS>,
     request: Request<PublicDecryptionRequest>,
-) -> Result<Response<PublicDecryptionResponse>, MetricedError> {
-    // `public_decrypt_impl` consumes the request, so keep the raw id for fetching the result below
-    let raw_request_id = request.get_ref().request_id.clone();
-
-    match public_decrypt_impl(service, request).await {
-        Ok(_empty) => (),
-        // Already succeeded, in flight, or tombstoned: attach to the existing entry
-        Err(e) if e.code() == tonic::Code::AlreadyExists => e.defuse(),
-        Err(e) => return Err(e),
+) -> anyhow::Result<Response<PublicDecryptionResponse>> {
+    let inner = request.into_inner();
+    let (
+        ciphertexts,
+        request_id,
+        key_id,
+        context_id,
+        epoch_id,
+        eip712_domain,
+        extra_data,
+        signing_schemes,
+    ) = validate_public_decrypt_req(&inner).map_err(|e| anyhow::anyhow!("Badness: {:?}", e))?;
+    super::ensure_default_epoch(OP_PUBLIC_DECRYPT_REQUEST, request_id, &epoch_id)
+        .map_err(|e| anyhow::anyhow!("Badness: {:?}", e))?;
+    if !service
+        .context_manager
+        .mpc_context_exists_in_cache(&context_id)
+        .await
+    {
+        anyhow::bail!("Badness, unknown context.")
     }
 
-    // `public_decrypt_impl` accepted the request, so its id must parse.
-    let req_id: RequestId =
-        parse_optional_grpc_request_id(&raw_request_id, RequestIdParsingErr::PublicDecRequest)
-            .map_err(|e| {
-                MetricedError::new(OP_PUBLIC_DECRYPT_REQUEST, None, e, Code::InvalidArgument)
-            })?;
+    let keys = service
+        .crypto_storage
+        .read_centralized_fhe_keys(&key_id.into(), &epoch_id)
+        .await?;
+    let sig_key = signing_identity_for(
+        &service.base_kms,
+        &signing_schemes,
+        OP_PUBLIC_DECRYPT_REQUEST,
+        Some(request_id),
+    )
+    .map_err(|e| anyhow::anyhow!("Badness: {:?}", e))?;
+    let server_verf_key = service.base_kms.verf_key().to_legacy_bytes()?;
+    let ext_handles_bytes = ciphertexts
+        .iter()
+        .map(|c| c.external_handle.to_owned())
+        .collect::<Vec<_>>();
 
-    get_public_decryption_result_impl(service, Request::new(req_id.into())).await
+    let PubDecCallValues {
+        payload,
+        signature,
+        external_signature,
+        extra_data,
+        signatures,
+    } = spawn_compute_bound(move || {
+        let payload = PublicDecryptionResponsePayload {
+            plaintexts: central_public_decrypt::<PubS, PrivS>(&keys, &ciphertexts)?,
+            verification_key: server_verf_key,
+            request_id: Some(request_id.into()),
+        };
+        sign_public_decryption_result(
+            &sig_key,
+            &signing_schemes,
+            payload,
+            &ext_handles_bytes,
+            extra_data,
+            &eip712_domain,
+        )
+    })
+    .await??;
+
+    Ok(Response::new(PublicDecryptionResponse {
+        signature,
+        signatures,
+        payload: Some(payload),
+        external_signature,
+        extra_data,
+    }))
 }
 
 /// Implementation of the get_public_decryption_result endpoint
@@ -642,11 +739,6 @@ mod tests_public_decryption {
                 .await
                 .unwrap_err();
             assert_eq!(err.code(), tonic::Code::InvalidArgument);
-
-            let err = public_decrypt_sync_impl(&kms, tonic::Request::new(request))
-                .await
-                .unwrap_err();
-            assert_eq!(err.code(), tonic::Code::InvalidArgument);
         }
 
         // wrong request id
@@ -656,11 +748,6 @@ mod tests_public_decryption {
                 request_id: "wrong_id".to_string(),
             });
             let err = public_decrypt_impl(&kms, tonic::Request::new(request.clone()))
-                .await
-                .unwrap_err();
-            assert_eq!(err.code(), tonic::Code::InvalidArgument);
-
-            let err = public_decrypt_sync_impl(&kms, tonic::Request::new(request))
                 .await
                 .unwrap_err();
             assert_eq!(err.code(), tonic::Code::InvalidArgument);
@@ -674,11 +761,6 @@ mod tests_public_decryption {
                 .await
                 .unwrap_err();
             assert_eq!(err.code(), tonic::Code::InvalidArgument);
-
-            let err = public_decrypt_sync_impl(&kms, tonic::Request::new(request))
-                .await
-                .unwrap_err();
-            assert_eq!(err.code(), tonic::Code::InvalidArgument);
         }
 
         // missing ciphertexts
@@ -686,11 +768,6 @@ mod tests_public_decryption {
             let mut request = valid_request.clone();
             request.ciphertexts.clear();
             let err = public_decrypt_impl(&kms, tonic::Request::new(request.clone()))
-                .await
-                .unwrap_err();
-            assert_eq!(err.code(), tonic::Code::InvalidArgument);
-
-            let err = public_decrypt_sync_impl(&kms, tonic::Request::new(request))
                 .await
                 .unwrap_err();
             assert_eq!(err.code(), tonic::Code::InvalidArgument);
@@ -712,11 +789,6 @@ mod tests_public_decryption {
             let request = make_valid_request(request_id, wrong_key_id, ct, &domain);
 
             let err = public_decrypt_impl(&kms, tonic::Request::new(request.clone()))
-                .await
-                .unwrap_err();
-            assert_eq!(err.code(), tonic::Code::NotFound);
-
-            let err = public_decrypt_sync_impl(&kms, tonic::Request::new(request))
                 .await
                 .unwrap_err();
             assert_eq!(err.code(), tonic::Code::NotFound);
@@ -755,11 +827,6 @@ mod tests_public_decryption {
                 .await
                 .unwrap_err();
             assert_eq!(err.code(), tonic::Code::ResourceExhausted);
-
-            let err = public_decrypt_sync_impl(&kms, tonic::Request::new(request))
-                .await
-                .unwrap_err();
-            assert_eq!(err.code(), tonic::Code::ResourceExhausted);
         }
     }
 
@@ -770,7 +837,7 @@ mod tests_public_decryption {
         let (kms, pk, _) = setup_test_kms_with_key(&mut rng, &key_id).await;
         let domain = alloy_to_protobuf_domain(&dummy_domain()).unwrap();
         let request_id = derive_request_id("req_id_decryption_already_exists").unwrap();
-        let (msg, ct) = make_test_msg_ct(&pk, true);
+        let (_msg, ct) = make_test_msg_ct(&pk, true);
 
         let request = make_valid_request(request_id, key_id, ct, &domain);
 
@@ -784,41 +851,6 @@ mod tests_public_decryption {
             .await
             .unwrap_err();
         assert_eq!(err.code(), tonic::Code::AlreadyExists);
-
-        // The sync endpoint instead attaches to the existing entry and returns its result.
-        // Attaching is a success path, so it must not record an error: the `AlreadyExists`
-        // signal is defused rather than dropped.
-        let recorded_errors_before = crate::engine::utils::handle_error_call_count();
-        let response = public_decrypt_sync_impl(&kms, tonic::Request::new(request))
-            .await
-            .unwrap()
-            .into_inner();
-        assert_eq!(response.payload.unwrap().plaintexts[0].clone(), msg.into());
-        assert_eq!(
-            crate::engine::utils::handle_error_call_count(),
-            recorded_errors_before,
-            "attaching to an already-known request ID must not report a failure"
-        );
-    }
-
-    #[tokio::test]
-    async fn sync_call_shares_request_and_result_counters() {
-        let mut rng = AesRng::seed_from_u64(1234);
-        let key_id = derive_request_id("keyid_decryption_sync_counters").unwrap();
-        let (kms, pk, _) = setup_test_kms_with_key(&mut rng, &key_id).await;
-        let domain = alloy_to_protobuf_domain(&dummy_domain()).unwrap();
-        let request_id = derive_request_id("req_id_decryption_sync_counters").unwrap();
-        let (_msg, ciphertexts) = make_test_msg_ct(&pk, true);
-        let request = make_valid_request(request_id, key_id, ciphertexts, &domain);
-
-        let requests_before = METRICS.request_counter_value(OP_PUBLIC_DECRYPT_REQUEST);
-        let results_before = METRICS.request_counter_value(OP_PUBLIC_DECRYPT_RESULT);
-        public_decrypt_sync_impl(&kms, tonic::Request::new(request))
-            .await
-            .unwrap();
-        // Check global growth: the counters are shared at the process level.
-        assert!(METRICS.request_counter_value(OP_PUBLIC_DECRYPT_REQUEST) > requests_before);
-        assert!(METRICS.request_counter_value(OP_PUBLIC_DECRYPT_RESULT) > results_before);
     }
 
     #[tokio::test]
@@ -841,60 +873,11 @@ mod tests_public_decryption {
             .unwrap();
         assert_eq!(payload.plaintexts[0].clone(), msg.into());
 
-        // The request went through the meta-store, so the result stays
-        // retrievable through the async result endpoint...
-        let again = get_public_decryption_result_impl(&kms, tonic::Request::new(request_id.into()))
+        // Nothing was stored, so the async result endpoint knows nothing about the request.
+        let err = get_public_decryption_result_impl(&kms, tonic::Request::new(request_id.into()))
             .await
-            .unwrap()
-            .into_inner();
-        assert_eq!(Some(&payload), again.payload.as_ref());
-
-        // ...and re-sending the same sync request attaches to the existing
-        // entry and returns the result instead of failing with `AlreadyExists`.
-        let retry = public_decrypt_sync_impl(&kms, tonic::Request::new(request))
-            .await
-            .unwrap()
-            .into_inner();
-        assert_eq!(Some(&payload), retry.payload.as_ref());
-    }
-
-    /// A `request_id` whose previous attempt failed is redone, exactly as re-sending it to the
-    /// async endpoint would be, and the sync call returns the new attempt's outcome.
-    #[tokio::test]
-    async fn sync_redoes_failed_request() {
-        let mut rng = AesRng::seed_from_u64(1234);
-        let key_id = derive_request_id("keyid_decryption_sync_redo").unwrap();
-        let (kms, pk, _) = setup_test_kms_with_key(&mut rng, &key_id).await;
-        let domain = alloy_to_protobuf_domain(&dummy_domain()).unwrap();
-        let request_id = derive_request_id("req_id_decryption_sync_redo").unwrap();
-        let (msg, ciphertexts) = make_test_msg_ct(&pk, true);
-
-        let request = make_valid_request(request_id, key_id, ciphertexts, &domain);
-
-        // Leave the request ID in the state a failed attempt would leave it in.
-        let permit = kms
-            .pub_dec_meta_store
-            .write()
-            .await
-            .insert(&request_id)
-            .unwrap();
-        crate::util::meta_store::update_err_req_in_meta_store(
-            &kms.pub_dec_meta_store,
-            permit,
-            "forced failure".to_string(),
-            OP_PUBLIC_DECRYPT_REQUEST,
-        )
-        .await;
-
-        // The sync call redoes the decryption instead of returning the stored failure, and the
-        // plaintext it produces is the one this request asked for.
-        let payload = public_decrypt_sync_impl(&kms, tonic::Request::new(request))
-            .await
-            .unwrap()
-            .into_inner()
-            .payload
-            .unwrap();
-        assert_eq!(payload.plaintexts[0].clone(), msg.into());
+            .unwrap_err();
+        assert_eq!(err.code(), tonic::Code::NotFound);
     }
 }
 
@@ -1024,11 +1007,6 @@ mod test_user_decryption {
                 .await
                 .unwrap_err();
             assert_eq!(err.code(), tonic::Code::InvalidArgument);
-
-            let err = user_decrypt_sync_impl(&kms, tonic::Request::new(request))
-                .await
-                .unwrap_err();
-            assert_eq!(err.code(), tonic::Code::InvalidArgument);
         }
 
         // wrongly formatted request ID
@@ -1038,11 +1016,6 @@ mod test_user_decryption {
                 request_id: "wrong_id".to_string(),
             });
             let err = user_decrypt_impl(&kms, tonic::Request::new(request.clone()))
-                .await
-                .unwrap_err();
-            assert_eq!(err.code(), tonic::Code::InvalidArgument);
-
-            let err = user_decrypt_sync_impl(&kms, tonic::Request::new(request))
                 .await
                 .unwrap_err();
             assert_eq!(err.code(), tonic::Code::InvalidArgument);
@@ -1056,11 +1029,6 @@ mod test_user_decryption {
                 .await
                 .unwrap_err();
             assert_eq!(err.code(), tonic::Code::InvalidArgument);
-
-            let err = user_decrypt_sync_impl(&kms, tonic::Request::new(request))
-                .await
-                .unwrap_err();
-            assert_eq!(err.code(), tonic::Code::InvalidArgument);
         }
 
         // wrongly formatted client address
@@ -1068,11 +1036,6 @@ mod test_user_decryption {
             let mut request = valid_request.clone();
             request.client_address = "wrong_address".to_string();
             let err = user_decrypt_impl(&kms, tonic::Request::new(request.clone()))
-                .await
-                .unwrap_err();
-            assert_eq!(err.code(), tonic::Code::InvalidArgument);
-
-            let err = user_decrypt_sync_impl(&kms, tonic::Request::new(request))
                 .await
                 .unwrap_err();
             assert_eq!(err.code(), tonic::Code::InvalidArgument);
@@ -1096,11 +1059,6 @@ mod test_user_decryption {
                 make_valid_request(request_id, wrong_key_id, ciphertexts, enc_key_buf, &domain);
 
             let err = user_decrypt_impl(&kms, tonic::Request::new(request.clone()))
-                .await
-                .unwrap_err();
-            assert_eq!(err.code(), tonic::Code::NotFound);
-
-            let err = user_decrypt_sync_impl(&kms, tonic::Request::new(request))
                 .await
                 .unwrap_err();
             assert_eq!(err.code(), tonic::Code::NotFound);
@@ -1136,11 +1094,6 @@ mod test_user_decryption {
                 .await
                 .unwrap_err();
             assert_eq!(err.code(), tonic::Code::ResourceExhausted);
-
-            let err = user_decrypt_sync_impl(&kms, tonic::Request::new(request))
-                .await
-                .unwrap_err();
-            assert_eq!(err.code(), tonic::Code::ResourceExhausted);
         }
     }
 
@@ -1151,8 +1104,8 @@ mod test_user_decryption {
         let (kms, pk, _verf_key) = setup_test_kms_with_key(&mut rng, &key_id).await;
         let domain = alloy_to_protobuf_domain(&dummy_domain()).unwrap();
         let request_id = derive_request_id("req_id_decryption_already_exists").unwrap();
-        let (msg, ciphertexts) = make_test_msg_ct(&pk, true);
-        let (enc_key_buf, enc_sk) = make_test_pk(&mut rng);
+        let (_msg, ciphertexts) = make_test_msg_ct(&pk, true);
+        let (enc_key_buf, _enc_sk) = make_test_pk(&mut rng);
 
         let request = make_valid_request(request_id, key_id, ciphertexts, enc_key_buf, &domain);
 
@@ -1166,42 +1119,6 @@ mod test_user_decryption {
             .await
             .unwrap_err();
         assert_eq!(err.code(), tonic::Code::AlreadyExists);
-
-        // The sync endpoint instead attaches to the existing entry and returns its result.
-        // Attaching is a success path, so it must not record an error: the `AlreadyExists`
-        // signal is defused rather than dropped.
-        let recorded_errors_before = crate::engine::utils::handle_error_call_count();
-        let response = user_decrypt_sync_impl(&kms, tonic::Request::new(request))
-            .await
-            .unwrap()
-            .into_inner();
-        assert_payload_decrypts_to(&response.payload.unwrap(), &enc_sk, msg);
-        assert_eq!(
-            crate::engine::utils::handle_error_call_count(),
-            recorded_errors_before,
-            "attaching to an already-known request ID must not report a failure"
-        );
-    }
-
-    #[tokio::test]
-    async fn sync_call_shares_request_and_result_counters() {
-        let mut rng = AesRng::seed_from_u64(1234);
-        let key_id = derive_request_id("keyid_decryption_sync_counters").unwrap();
-        let (kms, pk, _verf_key) = setup_test_kms_with_key(&mut rng, &key_id).await;
-        let domain = alloy_to_protobuf_domain(&dummy_domain()).unwrap();
-        let request_id = derive_request_id("req_id_decryption_sync_counters").unwrap();
-        let (_msg, ciphertexts) = make_test_msg_ct(&pk, true);
-        let (enc_key_buf, _enc_sk) = make_test_pk(&mut rng);
-        let request = make_valid_request(request_id, key_id, ciphertexts, enc_key_buf, &domain);
-
-        let requests_before = METRICS.request_counter_value(OP_USER_DECRYPT_REQUEST);
-        let results_before = METRICS.request_counter_value(OP_USER_DECRYPT_RESULT);
-        user_decrypt_sync_impl(&kms, tonic::Request::new(request))
-            .await
-            .unwrap();
-        // Check global growth: the counters are shared at the process level.
-        assert!(METRICS.request_counter_value(OP_USER_DECRYPT_REQUEST) > requests_before);
-        assert!(METRICS.request_counter_value(OP_USER_DECRYPT_RESULT) > results_before);
     }
 
     #[tokio::test]
@@ -1225,60 +1142,10 @@ mod test_user_decryption {
             .unwrap();
         assert_payload_decrypts_to(&payload, &enc_sk, msg);
 
-        // The request went through the meta-store, so the result stays
-        // retrievable through the async result endpoint...
-        let again = get_user_decryption_result_impl(&kms, tonic::Request::new(request_id.into()))
+        // Nothing was stored, so the async result endpoint knows nothing about the request.
+        let err = get_user_decryption_result_impl(&kms, tonic::Request::new(request_id.into()))
             .await
-            .unwrap()
-            .into_inner();
-        assert_eq!(Some(&payload), again.payload.as_ref());
-
-        // ...and re-sending the same sync request attaches to the existing
-        // entry and returns the result instead of failing with `AlreadyExists`.
-        let retry = user_decrypt_sync_impl(&kms, tonic::Request::new(request))
-            .await
-            .unwrap()
-            .into_inner();
-        assert_eq!(Some(&payload), retry.payload.as_ref());
-    }
-
-    /// A `request_id` whose previous attempt failed is redone, exactly as re-sending it to the
-    /// async endpoint would be, and the sync call returns the new attempt's outcome.
-    #[tokio::test]
-    async fn sync_redoes_failed_request() {
-        let mut rng = AesRng::seed_from_u64(1234);
-        let key_id = derive_request_id("keyid_decryption_sync_redo").unwrap();
-        let (kms, pk, _verf_key) = setup_test_kms_with_key(&mut rng, &key_id).await;
-        let domain = alloy_to_protobuf_domain(&dummy_domain()).unwrap();
-        let request_id = derive_request_id("req_id_decryption_sync_redo").unwrap();
-        let (msg, ciphertexts) = make_test_msg_ct(&pk, true);
-        let (enc_key_buf, enc_sk) = make_test_pk(&mut rng);
-
-        let request = make_valid_request(request_id, key_id, ciphertexts, enc_key_buf, &domain);
-
-        // Leave the request ID in the state a failed attempt would leave it in.
-        let permit = kms
-            .user_dec_meta_store
-            .write()
-            .await
-            .insert(&request_id)
-            .unwrap();
-        crate::util::meta_store::update_err_req_in_meta_store(
-            &kms.user_dec_meta_store,
-            permit,
-            "forced failure".to_string(),
-            OP_USER_DECRYPT_REQUEST,
-        )
-        .await;
-
-        // The sync call redoes the decryption instead of returning the stored failure, and the
-        // plaintext it produces is the one this request asked for.
-        let payload = user_decrypt_sync_impl(&kms, tonic::Request::new(request))
-            .await
-            .unwrap()
-            .into_inner()
-            .payload
-            .unwrap();
-        assert_payload_decrypts_to(&payload, &enc_sk, msg);
+            .unwrap_err();
+        assert_eq!(err.code(), tonic::Code::NotFound);
     }
 }

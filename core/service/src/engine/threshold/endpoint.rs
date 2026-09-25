@@ -150,7 +150,7 @@ where
         self.user_decryptor
             .user_decrypt_sync(request)
             .await
-            .map_err(|e| e.into())
+            .map_err(|e| Status::internal(format!("{e:?}")))
     }
 
     #[tracing::instrument(skip(self, request))]
@@ -183,7 +183,7 @@ where
         self.decryptor
             .public_decrypt_sync(request)
             .await
-            .map_err(|e| e.into())
+            .map_err(|e| Status::internal(format!("{e:?}")))
     }
 
     #[tracing::instrument(skip(self, request))]
