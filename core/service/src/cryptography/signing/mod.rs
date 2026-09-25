@@ -1,8 +1,3 @@
-//! Multi-scheme signing support (issue #3078).
-//!
-//! Every backend signs `dsep ‖ msg` and applies its own normalization/encoding
-//! internally.
-
 pub mod composite;
 pub mod ecdsa;
 mod eddsa;
