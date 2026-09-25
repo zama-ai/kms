@@ -426,12 +426,27 @@ impl SessionMaker {
     async fn get_healthcheck_session_all_contexts(
         &self,
     ) -> anyhow::Result<HashMap<ContextId, HealthCheckSession<Role>>> {
-        let mut health_check_sessions = HashMap::new();
-        for (context_id, context) in self.context_map.read().await.iter() {
-            if context.my_role.is_some() {
-                health_check_sessions
-                    .insert(*context_id, self.get_healthcheck_session(context_id).await?);
+        // Copy the contexts and release the read guard before the sessions are built. Building a
+        // session awaits, and the tokio lock is fair: a second read of `context_map` behind a
+        // queued writer, while this guard is held, never completes.
+        let mut contexts = Vec::new();
+        {
+            let context_map_guard = self.context_map.read().await;
+            for (context_id, context) in context_map_guard.iter() {
+                if let Some(my_role) = context.my_role {
+                    contexts.push((*context_id, my_role, context.role_assignment.clone()));
+                }
             }
+        }
+
+        let nm = self.networking_manager.read().await;
+        let mut health_check_sessions = HashMap::new();
+        for (context_id, my_role, role_assignment) in contexts {
+            health_check_sessions.insert(
+                context_id,
+                nm.make_healthcheck_session(&role_assignment, my_role)
+                    .await?,
+            );
         }
         Ok(health_check_sessions)
     }
@@ -1148,11 +1163,69 @@ mod tests {
     };
     use observability::metrics_names::OP_CRS_GEN_REQUEST;
     use rcgen::{KeyPair, PKCS_ECDSA_P256_SHA256};
+    use std::time::Duration;
     use tokio_rustls::rustls::{
         client::danger::ServerCertVerifier,
         crypto::aws_lc_rs::default_provider,
         pki_types::{ServerName, UnixTime},
     };
+
+    /// Sunshine: one health check session per context that has a role for this party.
+    #[tokio::test]
+    async fn healthcheck_sessions_cover_contexts_with_my_role() {
+        let session_maker = SessionMaker::four_party_dummy_session(
+            None,
+            None,
+            &EpochId::new_random(&mut AesRng::seed_from_u64(5)),
+            TaskRngs::insecure_seed_from_u64(6),
+        );
+        let sessions = session_maker
+            .get_healthcheck_session_all_contexts()
+            .await
+            .unwrap();
+        assert_eq!(sessions.len(), 1);
+        let session = sessions.get(&*crate::consts::DEFAULT_MPC_CONTEXT).unwrap();
+        assert_eq!(session.get_num_parties(), 4);
+    }
+
+    /// A context change while the health check sessions are built must not deadlock. The test
+    /// holds the networking manager, so that the build waits between its read of `context_map`
+    /// and the next one, and queues a `context_map` writer in that gap.
+    #[tokio::test]
+    async fn healthcheck_sessions_do_not_block_a_context_change() {
+        let mut rng = AesRng::seed_from_u64(7);
+        let session_maker = SessionMaker::four_party_dummy_session(
+            None,
+            None,
+            &EpochId::new_random(&mut rng),
+            TaskRngs::insecure_seed_from_u64(8),
+        );
+        let networking_guard = session_maker.networking_manager.write().await;
+
+        let health_maker = session_maker.clone();
+        let health_task =
+            tokio::spawn(async move { health_maker.get_healthcheck_session_all_contexts().await });
+        tokio::time::sleep(Duration::from_millis(50)).await;
+
+        let writer_maker = session_maker.clone();
+        let new_context = ContextId::new_random(&mut rng);
+        let writer_task = tokio::spawn(async move {
+            writer_maker.add_four_party_dummy_context(new_context).await;
+        });
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        drop(networking_guard);
+
+        tokio::time::timeout(Duration::from_secs(5), writer_task)
+            .await
+            .expect("the context change must not wait for the health check")
+            .unwrap();
+        let sessions = tokio::time::timeout(Duration::from_secs(5), health_task)
+            .await
+            .expect("the health check must not deadlock")
+            .unwrap()
+            .unwrap();
+        assert!(sessions.contains_key(&*crate::consts::DEFAULT_MPC_CONTEXT));
+    }
 
     /// Sunshine: `epochs_for_context` returns exactly the epochs whose `EpochData` carries the
     /// requested context ID, and excludes epochs belonging to other contexts.
