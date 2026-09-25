@@ -8,9 +8,9 @@ use crate::cryptography::encryption::HasPkeScheme;
 use crate::cryptography::encryption::UnifiedPublicEncKey;
 use crate::cryptography::error::CryptographyError;
 use crate::cryptography::hybrid_ml_kem::HybridKemCt;
-use crate::cryptography::signatures::{StoredTypedSignature, VerfKeySet};
 #[cfg(feature = "non-wasm")]
 use crate::cryptography::signatures::SigningSchemeType;
+use crate::cryptography::signatures::{StoredTypedSignature, VerfKeySet};
 #[cfg(feature = "non-wasm")]
 use crate::cryptography::signcryption::UnifiedSigncryptionKey;
 use crate::cryptography::signcryption::UnifiedUnsigncryptionKey;
@@ -168,11 +168,11 @@ pub(super) fn open(
 
 #[cfg(test)]
 mod tests {
-    use super::super::common::{composite_fixture, signcryption_fixture};
-    use super::super::{SenderAuth, Signcrypt, UnifiedSigncryptionKey, Unsigncrypt};
+    use super::super::common::test_support::{composite_fixture, signcryption_fixture};
+    use super::super::{SenderAuth, Signcrypt, Unsigncrypt};
     use super::*;
     use crate::cryptography::encryption::PkeSchemeType;
-    use crate::cryptography::signatures::{UnifiedPublicSigKey, VerfKeySet};
+    use crate::cryptography::signatures::UnifiedPublicSigKey;
     use crate::cryptography::signing::test_support::seeded_identity;
     use crate::vault::storage::tests::TestType;
     use aes_prng::AesRng;
@@ -189,18 +189,17 @@ mod tests {
     fn round_trip() {
         for scheme in [PkeSchemeType::MlKem512, PkeSchemeType::MlKem1024P384] {
             let mut f = composite_fixture(scheme, 100, &pair());
-            let cipher = seal(
-                &f.signcryption_key,
-                &mut f.rng,
-                DSEP,
-                &f.schemes(),
-                b"a composite message",
-            )
-            .unwrap();
+            let schemes = f.schemes();
+            let msg = TestType { i: 4711 };
+
+            let cipher = f
+                .signcryption_key
+                .signcrypt_composite(&mut f.rng, DSEP, &schemes, &msg)
+                .unwrap();
             assert_eq!(cipher.pke_type, scheme);
 
-            let opened = f.unsigncryption_key.open(DSEP, &cipher).unwrap();
-            assert_eq!(&*opened, b"a composite message", "{scheme}");
+            let opened: TestType = f.unsigncryption_key.unsigncrypt(DSEP, &cipher).unwrap();
+            assert_eq!(opened, msg, "{scheme}");
         }
     }
 
@@ -230,46 +229,41 @@ mod tests {
         // ...and the same signcryption opens for a verifier that asked for
         // exactly what was signed, confirming the rejection above is the policy
         // check and not an unrelated failure.
-        let weaker_keys =
-            VerfKeySet::from_identity(&f.signcryption_key.identity, &weaker).unwrap();
+        let weaker_keys = VerfKeySet::from_identity(&f.signcryption_key.identity, &weaker).unwrap();
         let opened = f
-            .reader_with(
-                SenderAuth::Multi(weaker_keys),
-                f.signcryption_key.receiver_id.clone(),
-            )
+            .reader_for(SenderAuth::Multi(weaker_keys))
             .open(DSEP, &cipher)
             .unwrap();
         assert_eq!(&*opened, b"downgrade me");
     }
 
-    /// Neither reader accepts the other's envelope.
-    /// The single-ECDSA set holds the very key that signed the envelope and must still refuse
-    /// it, because the payload is a safe-serialized KEM ciphertext that its
-    /// bincode parse rejects before anything is decrypted.
+    /// A frozen reader must refuse a composite envelope even when it holds the
+    /// very ECDSA key that signed it: the payload is a safe-serialized KEM
+    /// ciphertext that its bincode parse rejects before anything is decrypted.
     #[test]
-    fn the_two_formats_do_not_cross() {
+    fn a_frozen_reader_rejects_a_composite_envelope() {
         for (seed, schemes) in [
             (300_u64, pair()),
             (400_u64, vec![SigningSchemeType::Ecdsa256k1]),
         ] {
             let mut f = composite_fixture(PkeSchemeType::MlKem512, seed, &schemes);
+            let demanded = f.schemes();
             let composite = seal(
                 &f.signcryption_key,
                 &mut f.rng,
                 DSEP,
-                &f.schemes(),
+                &demanded,
                 b"composite payload",
             )
             .unwrap();
 
-            // The envelope does open for the reader it was made for, so each
+            // The envelope does open for the reader it was made for, so the
             // rejection below is the format mismatch and not a broken fixture.
             assert_eq!(
                 &*f.unsigncryption_key.open(DSEP, &composite).unwrap(),
                 b"composite payload"
             );
 
-            // Frozen reader, handed a composite envelope.
             let legacy_ecdsa = match &f.unsigncryption_key.sender {
                 SenderAuth::Multi(keys) => {
                     match keys.require(SigningSchemeType::Ecdsa256k1).unwrap() {
@@ -280,42 +274,45 @@ mod tests {
                 SenderAuth::Ecdsa(_) => unreachable!("the fixture reader is a composite one"),
             };
             let err = f
-                .reader_with(
-                    SenderAuth::Ecdsa(legacy_ecdsa),
-                    f.signcryption_key.receiver_id.clone(),
-                )
+                .reader_for(SenderAuth::Ecdsa(legacy_ecdsa))
                 .unsigncrypt::<TestType>(DSEP, &composite)
                 .unwrap_err();
             assert!(
                 matches!(err, CryptographyError::BincodeError(_)),
                 "the frozen reader must reject a composite envelope on the KEM ciphertext, got: {err}"
             );
-
-            // Composite reader, handed a frozen envelope. The frozen layout
-            // writes its `HybridKemCt` with bincode and no header, so
-            // `safe_deserialize` refuses it — again before any decryption.
-            let mut frozen_f = signcryption_fixture(PkeSchemeType::MlKem512, seed);
-            let frozen = frozen_f
-                .signcryption_key
-                .signcrypt(&mut frozen_f.rng, DSEP, &TestType { i: 7 })
-                .unwrap();
-            let err = f.unsigncryption_key.open(DSEP, &frozen).unwrap_err();
-            assert!(
-                matches!(err, CryptographyError::SerializationError(_)),
-                "the composite reader must reject a frozen envelope on deserialization, got: {err}"
-            );
         }
+    }
+
+    /// ...and the converse. The frozen layout writes its `HybridKemCt` with
+    /// bincode and no header, so `safe_deserialize` refuses it, again before any
+    /// decryption. Independent of which schemes the reader demands.
+    #[test]
+    fn a_composite_reader_rejects_a_frozen_envelope() {
+        let f = composite_fixture(PkeSchemeType::MlKem512, 300, &pair());
+        let mut frozen_f = signcryption_fixture(PkeSchemeType::MlKem512, 300);
+        let frozen = frozen_f
+            .signcryption_key
+            .signcrypt(&mut frozen_f.rng, DSEP, &TestType { i: 7 })
+            .unwrap();
+
+        let err = f.unsigncryption_key.open(DSEP, &frozen).unwrap_err();
+        assert!(
+            matches!(err, CryptographyError::SerializationError(_)),
+            "the composite reader must reject a frozen envelope on deserialization, got: {err}"
+        );
     }
 
     /// Opening fails on every deviation from what was sealed.
     #[test]
     fn open_rejects_any_deviation_from_what_was_sealed() {
         let mut f = composite_fixture(PkeSchemeType::MlKem512, 500, &pair());
+        let demanded = f.schemes();
         let cipher = seal(
             &f.signcryption_key,
             &mut f.rng,
             DSEP,
-            &f.schemes(),
+            &demanded,
             b"bound to one sender and one receiver",
         )
         .unwrap();
@@ -337,25 +334,18 @@ mod tests {
         );
 
         let mut rng = AesRng::seed_from_u64(999);
-        let other_keys =
-            VerfKeySet::from_identity(&seeded_identity(&mut rng), &f.schemes()).unwrap();
+        let other_keys = VerfKeySet::from_identity(&seeded_identity(&mut rng), &demanded).unwrap();
         assert!(
-            f.reader_with(
-                SenderAuth::Multi(other_keys),
-                f.signcryption_key.receiver_id.clone()
-            )
-            .open(DSEP, &cipher)
-            .is_err(),
+            f.reader_for(SenderAuth::Multi(other_keys))
+                .open(DSEP, &cipher)
+                .is_err(),
             "another party's key set opened the envelope"
         );
 
         assert!(
-            f.reader_with(
-                f.unsigncryption_key.sender.clone(),
-                b"a different receiver".to_vec()
-            )
-            .open(DSEP, &cipher)
-            .is_err(),
+            f.reader_to(b"a different receiver".to_vec())
+                .open(DSEP, &cipher)
+                .is_err(),
             "a different receiver id opened the envelope"
         );
     }
@@ -375,7 +365,7 @@ mod tests {
             b"no seed here",
         )
         .unwrap_err();
-        assert!(matches!(err, CryptographyError::SigningError(_)), "{err}");
+        assert!(matches!(err, CryptographyError::Signing(_)), "{err}");
     }
 
     /// ...but ECDSA alone needs no seed, so a seedless node can still write a
@@ -396,13 +386,9 @@ mod tests {
         )
         .unwrap();
 
-        let keys =
-            VerfKeySet::from_identity(&f.signcryption_key.identity, &ecdsa_only).unwrap();
+        let keys = VerfKeySet::from_identity(&f.signcryption_key.identity, &ecdsa_only).unwrap();
         let opened = f
-            .reader_with(
-                SenderAuth::Multi(keys),
-                f.signcryption_key.receiver_id.clone(),
-            )
+            .reader_for(SenderAuth::Multi(keys))
             .open(DSEP, &cipher)
             .unwrap();
         assert_eq!(&*opened, b"one signature");

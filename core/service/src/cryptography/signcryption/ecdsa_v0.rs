@@ -194,7 +194,7 @@ pub(crate) fn insecure_decrypt_ignoring_signature(
 #[cfg(test)]
 mod tests {
     use super::super::Signcrypt;
-    use super::super::common::signcryption_fixture;
+    use super::super::common::test_support::signcryption_fixture;
     use super::*;
     use crate::consts::SAFE_SER_SIZE_LIMIT;
     use crate::cryptography::encryption::PkeSchemeType;
@@ -204,27 +204,41 @@ mod tests {
     use rand::SeedableRng;
     use tfhe::safe_serialization::safe_serialize;
 
+    /// `parse_msg` rejects a plaintext that is not `msg ‖ sig ‖ H(sender key)`, on
+    /// both of the things it can check: the length, and the key the tail names.
     #[test]
-    fn incorrect_server_verf_key() {
+    fn parse_msg_rejects_a_malformed_plaintext() {
         let mut rng = AesRng::seed_from_u64(42);
         let (server_verf_key, _server_sig_key) = gen_sig_keys(&mut rng);
-        let to_encrypt = [0_u8; 1 + DIGEST_BYTES + SIG_SIZE];
-        // Keep test input under the zeroizing ownership contract.
-        let res = parse_msg(Zeroizing::new(to_encrypt.to_vec()), &server_verf_key);
-        // unwrapping fails
-        assert!(res.is_err());
+
+        // Too short to hold the two fixed tail fields: a length error, not a panic.
+        for len in 0..(SIG_SIZE + DIGEST_BYTES) {
+            // Keep test input under the zeroizing ownership contract.
+            let short = Zeroizing::new(vec![0u8; len]);
+            assert!(
+                matches!(
+                    parse_msg(short, &server_verf_key),
+                    Err(CryptographyError::LengthError(_))
+                ),
+                "a {len}-byte plaintext must be rejected as too short"
+            );
+        }
+
+        // Long enough, but the tail names some other sender.
+        let attributed_elsewhere = Zeroizing::new(vec![0u8; 1 + DIGEST_BYTES + SIG_SIZE]);
+        let err = parse_msg(attributed_elsewhere, &server_verf_key).unwrap_err();
         assert!(
-            res.unwrap_err()
-                .to_string()
-                .contains("unexpected verification key digest")
+            err.to_string()
+                .contains("unexpected verification key digest"),
+            "{err}"
         );
     }
 
     /// The encrypted plaintext is exactly `msg ‖ sig(64) ‖ H(sender key)(32)`,
     /// with the two tail fields fixed-size and in that order.
     ///
-    /// This is the contract [`parse_msg`] relies on when it recovers `msg_len`
-    /// by subtracting from the end.
+    /// This is the contract [`split_frozen_plaintext`] relies on when it recovers
+    /// `msg_len` by subtracting from the end.
     #[test]
     fn ecdsa_v0_envelope_layout_is_locked() {
         const DSEP: &DomainSep = b"ECDSAV0T";
@@ -243,7 +257,11 @@ mod tests {
             assert_eq!(cipher.pke_type, scheme);
 
             let kem_ct: HybridKemCt = bc2wrap::deserialize_slice(&cipher.payload).unwrap();
-            let plaintext = f.unsigncryption_key.decryption_key.hybrid_decrypt(kem_ct).unwrap();
+            let plaintext = f
+                .unsigncryption_key
+                .decryption_key
+                .hybrid_decrypt(kem_ct)
+                .unwrap();
 
             // Exactly three fields, the last two of fixed size.
             assert_eq!(
@@ -279,23 +297,6 @@ mod tests {
                 &plaintext[msg_len + SIG_SIZE..],
                 sender_verf_key_digest(&sender_verf_key).unwrap().as_slice(),
                 "{scheme}: tail is not H(sender verification key)"
-            );
-        }
-    }
-
-    /// Truncating the plaintext below the two fixed tail fields is a length
-    /// error, not a panic.
-    #[test]
-    fn a_short_plaintext_is_a_length_error() {
-        let f = signcryption_fixture(PkeSchemeType::MlKem512, 400);
-        for len in 0..(SIG_SIZE + DIGEST_BYTES) {
-            let short = Zeroizing::new(vec![0u8; len]);
-            assert!(
-                matches!(
-                    parse_msg(short, &f.sender_verf_key()),
-                    Err(CryptographyError::LengthError(_))
-                ),
-                "a {len}-byte plaintext must be rejected as too short"
             );
         }
     }

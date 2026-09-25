@@ -552,237 +552,130 @@ pub struct UnifiedSigncryptionKeyPairOwned {
 
 #[cfg(test)]
 mod tests {
-    use core::panic;
+    use super::common::test_support::signcryption_fixture;
     use super::*;
-    use crate::cryptography::{
-        encryption::{Encryption, PkeScheme, PkeSchemeType},
-        signatures::gen_sig_keys,
-    };
+    use crate::cryptography::encryption::PkeSchemeType;
+    use crate::cryptography::signatures::gen_sig_keys;
     use crate::vault::storage::tests::TestType;
-    use aes_prng::AesRng;
-    use rand::SeedableRng;
     use tfhe::FheTypes;
 
-    /// Helper method that creates an rng, a valid client request (on a dummy fhe cipher) and client
-    /// signcryption keys SigncryptionPair Returns the rng, client request, client signcryption
-    /// keys and the dummy fhe cipher the request is made for.
-    fn test_setup() -> (AesRng, UnifiedSigncryptionKeyPairOwned) {
-        let mut rng = AesRng::seed_from_u64(1);
-        let (client_verf_key, _) = gen_sig_keys(&mut rng);
-        let keys =
-            ephemeral_signcryption_key_generation(&mut rng, &client_verf_key.verf_key_id(), None);
-        (rng, keys)
-    }
+    const DSEP: &DomainSep = b"TESTTEST";
 
-    fn test_setup_with_scheme(scheme: PkeSchemeType) -> (AesRng, UnifiedSigncryptionKeyPairOwned) {
-        let mut rng = AesRng::seed_from_u64(1);
-        let (client_verf_key, _) = gen_sig_keys(&mut rng);
-        let (server_verf_key, server_sig_key) = gen_sig_keys(&mut rng);
-        let mut encryption = Encryption::new(scheme, &mut rng);
-        let (dec_key, enc_key) = encryption.keygen().unwrap();
-        let receiver_id = client_verf_key.verf_key_id();
-        let keys = UnifiedSigncryptionKeyPairOwned {
-            signcrypt_key: UnifiedSigncryptionKey::from_signing_key(
-                server_sig_key,
-                enc_key.clone(),
-                receiver_id.clone(),
-            ),
-            unsigncryption_key: UnifiedUnsigncryptionKey::new(
-                Arc::new(dec_key),
-                enc_key,
-                server_verf_key,
-                receiver_id,
-            ),
-        };
-        (rng, keys)
-    }
-
-    /// Round-trips under every PKE scheme signcryption supports.
+    /// Round-trips under every PKE scheme signcryption supports, across the
+    /// bincode encoding the rest of the KMS moves a `UnifiedSigncryption` in.
     #[test]
     fn sunshine() {
         for scheme in [PkeSchemeType::MlKem512, PkeSchemeType::MlKem1024P384] {
-            let (mut rng, keys) = test_setup_with_scheme(scheme);
+            let mut f = signcryption_fixture(scheme, 1);
             let msg = TestType { i: 1333 };
-            let cipher = keys
-                .signcrypt_key
-                .signcrypt(&mut rng, b"TESTTEST", &msg)
+            let cipher = f
+                .signcryption_key
+                .signcrypt(&mut f.rng, DSEP, &msg)
                 .unwrap();
             assert_eq!(cipher.pke_type, scheme);
 
-            let decrypted_msg = keys
-                .unsigncryption_key
-                .unsigncrypt(b"TESTTEST", &cipher)
-                .unwrap();
+            let encoded = bc2wrap::serialize(&cipher).unwrap();
+            let cipher: UnifiedSigncryption = bc2wrap::deserialize_slice(&encoded).unwrap();
+
+            let decrypted_msg = f.unsigncryption_key.unsigncrypt(DSEP, &cipher).unwrap();
             assert_eq!(msg, decrypted_msg, "{scheme}");
         }
     }
 
+    /// A ciphertext written under one KEM does not open under another. This is the
+    /// check `UnifiedUnsigncryptionKey::open` makes before it touches the payload.
     #[test]
     fn mlkem1024_p384_cipher_is_rejected_by_an_ml_kem_512_key() {
-        let (mut rng, p384_keys) = test_setup_with_scheme(PkeSchemeType::MlKem1024P384);
-        let (_, ml_kem_512_keys) = test_setup();
-        let msg = TestType { i: 1333 };
-        let cipher = p384_keys
-            .signcrypt_key
-            .signcrypt(&mut rng, b"TESTTEST", &msg)
+        let mut p384 = signcryption_fixture(PkeSchemeType::MlKem1024P384, 1);
+        let ml_kem_512 = signcryption_fixture(PkeSchemeType::MlKem512, 1);
+        let cipher = p384
+            .signcryption_key
+            .signcrypt(&mut p384.rng, DSEP, &TestType { i: 1333 })
             .unwrap();
 
-        let err = ml_kem_512_keys
+        let err = ml_kem_512
             .unsigncryption_key
-            .unsigncrypt::<TestType>(b"TESTTEST", &cipher)
+            .unsigncrypt::<TestType>(DSEP, &cipher)
             .unwrap_err();
-        assert!(matches!(err, CryptographyError::VerificationError(_)));
-    }
-
-    #[test]
-    fn sunshine_encoding_decoding() {
-        // test the bincode serialization because that is what we use for all of kms
-        let (mut rng, client_signcryption_keys) = test_setup();
-        let msg = TestType { i: 1333 };
-        let cipher = client_signcryption_keys
-            .signcrypt_key
-            .signcrypt(&mut rng, b"TESTTEST", &msg)
-            .unwrap();
-        let serialized_cipher = bc2wrap::serialize(&cipher).unwrap();
-        let deserialized_cipher: UnifiedSigncryption =
-            bc2wrap::deserialize_slice(&serialized_cipher).unwrap();
-
-        let sender_verf_key = match &client_signcryption_keys.unsigncryption_key.sender {
-            SenderAuth::Ecdsa(verf_key) => Some(verf_key),
-            SenderAuth::Multi(_) => panic!("the test reader is a frozen one"),
-        };
-
-        let serialized_server_verf_key = bc2wrap::serialize(&sender_verf_key).unwrap();
-        let deserialized_server_verf_key: PublicSigKey =
-            bc2wrap::deserialize_slice(&serialized_server_verf_key).unwrap();
-        let client_id = client_signcryption_keys
-            .unsigncryption_key
-            .receiver_id
-            .clone();
-        let new_keys = UnifiedUnsigncryptionKey::new(
-            client_signcryption_keys
-                .unsigncryption_key
-                .decryption_key
-                .clone(),
-            client_signcryption_keys
-                .unsigncryption_key
-                .encryption_key
-                .clone(),
-            deserialized_server_verf_key,
-            client_id,
+        assert!(
+            matches!(err, CryptographyError::VerificationError(_)),
+            "{err}"
         );
-        let decrypted_msg = new_keys
-            .unsigncrypt(b"TESTTEST", &deserialized_cipher)
-            .unwrap();
-        assert_eq!(msg, decrypted_msg);
     }
 
+    /// Opening fails on every deviation from what was sealed.
     #[test]
     fn bad_signcryption() {
-        let (mut rng, client_signcryption_keys) = test_setup();
+        let mut f = signcryption_fixture(PkeSchemeType::MlKem512, 1);
         let msg = TestType { i: 1333 };
-        let correct_cipher = client_signcryption_keys
-            .signcrypt_key
-            .signcrypt(&mut rng, b"TESTTEST", &msg)
+        let correct_cipher = f
+            .signcryption_key
+            .signcrypt(&mut f.rng, DSEP, &msg)
             .unwrap();
 
         // flip a bit in the payload
         {
             let mut cipher = correct_cipher.clone();
             cipher.payload[0] ^= 1;
-
             assert!(
-                client_signcryption_keys
-                    .unsigncryption_key
-                    .unsigncrypt::<TestType>(b"TESTTEST", &cipher)
+                f.unsigncryption_key
+                    .unsigncrypt::<TestType>(DSEP, &cipher)
                     .is_err()
             );
         }
 
-        // wrong scheme
+        // use the wrong receiver decryption key, leaving the rest of the reader
+        // alone so that nothing but the key differs
         {
-            let mut cipher = correct_cipher.clone();
-            cipher.pke_type = PkeSchemeType::MlKem1024;
+            let other = signcryption_fixture(PkeSchemeType::MlKem512, 2);
+            let wrong_reader = UnifiedUnsigncryptionKey {
+                decryption_key: other.unsigncryption_key.decryption_key,
+                ..f.unsigncryption_key.clone()
+            };
             assert!(
-                client_signcryption_keys
-                    .unsigncryption_key
-                    .unsigncrypt::<TestType>(b"TESTTEST", &cipher)
+                wrong_reader
+                    .unsigncrypt::<TestType>(DSEP, &correct_cipher)
                     .is_err()
             );
         }
 
-        // use the wrong client signcryption key
+        // use the wrong sender verification key
         {
-            let mut rng = AesRng::seed_from_u64(2);
-            let wrong_keys = ephemeral_signcryption_key_generation(
-                &mut rng,
-                &client_signcryption_keys.unsigncryption_key.receiver_id,
-                Some(client_signcryption_keys.signcrypt_key.signing_key()),
-            );
+            let (wrong_verf_key, _) = gen_sig_keys(&mut f.rng);
             assert!(
-                wrong_keys
-                    .unsigncryption_key
-                    .unsigncrypt::<TestType>(b"TESTTEST", &correct_cipher)
-                    .is_err()
-            );
-        }
-
-        // use the wrong server key
-        {
-            let mut rng = AesRng::seed_from_u64(2);
-            let (wrong_verf_key, _) = gen_sig_keys(&mut rng);
-            let wrong_keys = UnifiedUnsigncryptionKey::new(
-                client_signcryption_keys
-                    .unsigncryption_key
-                    .decryption_key
-                    .clone(),
-                client_signcryption_keys
-                    .unsigncryption_key
-                    .encryption_key
-                    .clone(),
-                wrong_verf_key,
-                client_signcryption_keys
-                    .unsigncryption_key
-                    .receiver_id
-                    .clone(),
-            );
-            assert!(
-                wrong_keys
-                    .unsigncrypt::<TestType>(b"TESTTEST", &correct_cipher)
+                f.reader_for(SenderAuth::Ecdsa(wrong_verf_key))
+                    .unsigncrypt::<TestType>(DSEP, &correct_cipher)
                     .is_err()
             );
         }
 
         // use bad domain separator
-        {
-            assert!(
-                client_signcryption_keys
-                    .unsigncryption_key
-                    .unsigncrypt::<TestType>(b"blahblah", &correct_cipher)
-                    .is_err()
-            );
-        }
+        assert!(
+            f.unsigncryption_key
+                .unsigncrypt::<TestType>(b"blahblah", &correct_cipher)
+                .is_err()
+        );
 
         // happy path should still work at the end
-        let decrypted_msg = client_signcryption_keys
+        let decrypted_msg = f
             .unsigncryption_key
-            .unsigncrypt::<TestType>(b"TESTTEST", &correct_cipher)
+            .unsigncrypt::<TestType>(DSEP, &correct_cipher)
             .unwrap();
         assert_eq!(msg, decrypted_msg);
     }
 
     #[test]
     fn signcryption_with_bad_link() {
-        let (mut rng, client_signcryption_keys) = test_setup();
+        let mut f = signcryption_fixture(PkeSchemeType::MlKem512, 1);
         let link = vec![0, 1, 2, 3u8];
-        let cipher = client_signcryption_keys
-            .signcrypt_key
-            .signcrypt_plaintext(&mut rng, b"TESTTEST", &[1], FheTypes::Bool, &link)
+        let cipher = f
+            .signcryption_key
+            .signcrypt_plaintext(&mut f.rng, DSEP, &[1], FheTypes::Bool, &link)
             .unwrap();
         let bad_link = vec![1, 2, 3, 4u8];
-        let _ = client_signcryption_keys
+        let _ = f
             .unsigncryption_key
-            .unsigncrypt_plaintext(b"TESTTEST", &cipher.payload, &bad_link)
+            .unsigncrypt_plaintext(DSEP, &cipher.payload, &bad_link)
             .unwrap_err();
     }
 
