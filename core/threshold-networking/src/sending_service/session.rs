@@ -550,14 +550,11 @@ mod tests {
                     .unwrap();
 
                 let msg = vec![1u8; 10];
-                let arc_msg = Bytes::from(msg.clone());
+                let msg = Bytes::from(msg.clone());
 
                 // First send
                 tracing::info!("Sending ONCE");
-                network_session
-                    .send(arc_msg.clone(), &role_2)
-                    .await
-                    .unwrap();
+                network_session.send(msg.clone(), &role_2).await.unwrap();
 
                 // Wait for signal to send second message
                 terminate_receiver_1.recv().await.unwrap();
@@ -565,10 +562,7 @@ mod tests {
 
                 // Second send
                 tracing::info!("Sending TWICE");
-                network_session
-                    .send(arc_msg.clone(), &role_2)
-                    .await
-                    .unwrap();
+                network_session.send(msg.clone(), &role_2).await.unwrap();
 
                 // Wait for final termination signal
                 terminate_receiver_1.recv().await.unwrap();
