@@ -83,7 +83,7 @@
       "properties": {
         "enabled": { "type": "boolean" },
         "endpoint": { "$ref": "#/definitions/nullableString" },
-        "otlp_timeout_ms": { "type": "integer", "minimum": 0 }
+        "otlp_timeout_ms": { "type": "integer", "minimum": 1 }
       },
       "allOf": [
         {
