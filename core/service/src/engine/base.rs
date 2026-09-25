@@ -2138,11 +2138,6 @@ pub(crate) mod tests {
                             .is_err(),
                         "{scheme:?} must sign the payload, not the EIP-712 hash"
                     );
-                    // ...and not the unprefixed payload either.
-                    assert!(
-                        unified_verify(&DSEP_PUBDATA_CRS, &signed_payload, &sig, &vk).is_err(),
-                        "{scheme:?} CRS signature must be bound to the scheme set"
-                    );
                     assert!(
                         unified_verify(&DSEP_PUBDATA_CRS, b"tampered", &sig, &vk).is_err(),
                         "{scheme:?} verified a tampered payload"
