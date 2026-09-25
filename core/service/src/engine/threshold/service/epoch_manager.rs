@@ -426,21 +426,22 @@ impl<
     pub(crate) async fn init_all_epochs_from_storage(&self) -> anyhow::Result<()> {
         let all_epochs = self.crypto_storage.read_all_epoch_data().await?;
         if all_epochs.is_empty() {
-            tracing::warn!(
+            tracing::error!(
                 "No epoch data found in storage. Create an MPC epoch before using threshold operations"
             );
+            Err(anyhow::anyhow!("No epoch data found in storage. Create an MPC epoch before using threshold operations"))
+        } else {
+            for (epoch_id, prss) in all_epochs {
+                let context_id = prss.context_id;
+                self.session_maker.add_epoch(epoch_id, prss).await;
+                tracing::info!(
+                    context_id = %context_id,
+                    epoch_id = %epoch_id,
+                    "Loaded epoch data from storage"
+                );
+            }
+            Ok(())            
         }
-
-        for (epoch_id, prss) in all_epochs {
-            let context_id = prss.context_id;
-            self.session_maker.add_epoch(epoch_id, prss).await;
-            tracing::info!(
-                context_id = %context_id,
-                epoch_id = %epoch_id,
-                "Loaded epoch data from storage"
-            );
-        }
-        Ok(())
     }
 
     /// Execute the PRSS setup phase and store the epoch data in the storage backend (which includes the PRSS result)
