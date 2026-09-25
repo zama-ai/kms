@@ -175,30 +175,30 @@ impl HasPkeScheme for UnifiedSigncryptionKey {
 /// build a key that is ambiguous about the layout it reads, and no layout tag on
 /// the message for the two to disagree with.
 #[derive(Clone, Debug)]
-pub enum SenderAuth<'a> {
+pub enum SenderAuth {
     /// A single ECDSA verification key: the frozen layout.
-    Ecdsa(&'a PublicSigKey),
+    Ecdsa(PublicSigKey),
     /// One verification key per scheme: the multi-signature layout.
-    Multi(&'a VerfKeySet),
+    Multi(VerfKeySet),
 }
 
-/// Internal reference type for unsigncryption keys, storing only references to the real internal keys.
+/// Who is reading a signcryption, and what it will authenticate the sender with.
 #[derive(Clone, Debug)]
-pub struct UnifiedUnsigncryptionKey<'a> {
-    pub decryption_key: &'a UnifiedPrivateEncKey,
-    pub encryption_key: &'a UnifiedPublicEncKey, // Needed for validation of the signcrypted payload
-    pub sender: SenderAuth<'a>,
+pub struct UnifiedUnsigncryptionKey {
+    pub decryption_key: Arc<UnifiedPrivateEncKey>,
+    pub encryption_key: UnifiedPublicEncKey, // Needed for validation of the signcrypted payload
+    pub sender: SenderAuth,
     /// The ID of the receiver of the signcryption, e.g. blockchain address
-    pub receiver_id: &'a [u8],
+    pub receiver_id: Vec<u8>,
 }
 
-impl<'a> UnifiedUnsigncryptionKey<'a> {
+impl UnifiedUnsigncryptionKey {
     /// A reader of the frozen, single-ECDSA layout.
     pub fn new(
-        decryption_key: &'a UnifiedPrivateEncKey,
-        encryption_key: &'a UnifiedPublicEncKey,
-        sender_verf_key: &'a PublicSigKey,
-        receiver_id: &'a [u8],
+        decryption_key: Arc<UnifiedPrivateEncKey>,
+        encryption_key: UnifiedPublicEncKey,
+        sender_verf_key: PublicSigKey,
+        receiver_id: Vec<u8>,
     ) -> Self {
         Self {
             sender: SenderAuth::Ecdsa(sender_verf_key),
@@ -211,10 +211,10 @@ impl<'a> UnifiedUnsigncryptionKey<'a> {
     /// A reader of the multi-signature layout, requiring a signature under every
     /// scheme `keys` holds a key for.
     pub fn new_multi(
-        decryption_key: &'a UnifiedPrivateEncKey,
-        encryption_key: &'a UnifiedPublicEncKey,
-        keys: &'a VerfKeySet,
-        receiver_id: &'a [u8],
+        decryption_key: Arc<UnifiedPrivateEncKey>,
+        encryption_key: UnifiedPublicEncKey,
+        keys: VerfKeySet,
+        receiver_id: Vec<u8>,
     ) -> Self {
         Self {
             sender: SenderAuth::Multi(keys),
@@ -241,56 +241,7 @@ impl<'a> UnifiedUnsigncryptionKey<'a> {
     }
 }
 
-impl HasPkeScheme for UnifiedUnsigncryptionKey<'_> {
-    fn encryption_scheme_type(&self) -> PkeSchemeType {
-        self.encryption_key.encryption_scheme_type()
-    }
-}
-
-/// An owning reader, the counterpart of [`UnifiedSigncryptionKey`], and not
-/// serializable for the same reason.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct UnifiedUnsigncryptionKeyOwned {
-    pub decryption_key: UnifiedPrivateEncKey,
-    pub encryption_key: UnifiedPublicEncKey, // Needed for validation of the signcrypted payload
-    pub sender_verf_key: PublicSigKey,
-    /// The ID of the receiver of the signcryption, e.g. blockchain address]
-    pub receiver_id: Vec<u8>,
-}
-
-impl Zeroize for UnifiedUnsigncryptionKeyOwned {
-    fn zeroize(&mut self) {
-        // We only need to zeroize the private key
-        self.decryption_key.zeroize();
-    }
-}
-
-impl UnifiedUnsigncryptionKeyOwned {
-    pub fn new(
-        decryption_key: UnifiedPrivateEncKey,
-        encryption_key: UnifiedPublicEncKey,
-        sender_verf_key: PublicSigKey,
-        receiver_id: Vec<u8>,
-    ) -> Self {
-        Self {
-            sender_verf_key,
-            decryption_key,
-            encryption_key,
-            receiver_id,
-        }
-    }
-
-    pub fn reference<'a>(&'a self) -> UnifiedUnsigncryptionKey<'a> {
-        UnifiedUnsigncryptionKey {
-            decryption_key: &self.decryption_key,
-            encryption_key: &self.encryption_key,
-            sender: SenderAuth::Ecdsa(&self.sender_verf_key),
-            receiver_id: &self.receiver_id,
-        }
-    }
-}
-
-impl HasPkeScheme for UnifiedUnsigncryptionKeyOwned {
+impl HasPkeScheme for UnifiedUnsigncryptionKey {
     fn encryption_scheme_type(&self) -> PkeSchemeType {
         self.encryption_key.encryption_scheme_type()
     }
@@ -497,7 +448,7 @@ impl SigncryptFHEPlaintext for UnifiedSigncryptionKey {
     }
 }
 
-impl<'a> Unsigncrypt for UnifiedUnsigncryptionKey<'a> {
+impl Unsigncrypt for UnifiedUnsigncryptionKey {
     fn unsigncrypt<T: DeserializeOwned + tfhe::Unversionize + tfhe::named::Named>(
         &self,
         dsep: &DomainSep,
@@ -524,27 +475,7 @@ impl<'a> Unsigncrypt for UnifiedUnsigncryptionKey<'a> {
     }
 }
 
-impl Unsigncrypt for UnifiedUnsigncryptionKeyOwned {
-    fn unsigncrypt<T: DeserializeOwned + tfhe::Unversionize + tfhe::named::Named>(
-        &self,
-        dsep: &DomainSep,
-        cipher: &UnifiedSigncryption,
-    ) -> Result<T, CryptographyError> {
-        let ref_type = self.reference();
-        ref_type.unsigncrypt(dsep, cipher)
-    }
-
-    fn validate_signcryption(
-        &self,
-        dsep: &DomainSep,
-        signcryption: &UnifiedSigncryption,
-    ) -> Result<(), CryptographyError> {
-        let ref_type = self.reference();
-        ref_type.validate_signcryption(dsep, signcryption)
-    }
-}
-
-impl<'a> UnsigncryptFHEPlaintext for UnifiedUnsigncryptionKey<'a> {
+impl UnsigncryptFHEPlaintext for UnifiedUnsigncryptionKey {
     fn unsigncrypt_plaintext(
         &self,
         dsep: &DomainSep,
@@ -569,18 +500,6 @@ impl<'a> UnsigncryptFHEPlaintext for UnifiedUnsigncryptionKey<'a> {
             ));
         }
         Ok(signcrypted_msg)
-    }
-}
-
-impl UnsigncryptFHEPlaintext for UnifiedUnsigncryptionKeyOwned {
-    fn unsigncrypt_plaintext(
-        &self,
-        dsep: &DomainSep,
-        signcryption: &[u8],
-        link: &[u8],
-    ) -> Result<SigncryptionPayload, CryptographyError> {
-        let ref_type = self.reference();
-        ref_type.unsigncrypt_plaintext(dsep, signcryption, link)
     }
 }
 
@@ -609,8 +528,8 @@ pub fn ephemeral_signcryption_key_generation(
             enc_key.clone(),
             client_verf_key_id.to_vec(),
         ),
-        unsigncryption_key: UnifiedUnsigncryptionKeyOwned::new(
-            dec_key,
+        unsigncryption_key: UnifiedUnsigncryptionKey::new(
+            Arc::new(dec_key),
             enc_key,
             server_verf_key.clone(),
             client_verf_key_id.to_vec(),
@@ -624,7 +543,7 @@ pub fn ephemeral_signcryption_key_generation(
 #[derive(Clone, Debug)]
 pub struct UnifiedSigncryptionKeyPairOwned {
     pub signcrypt_key: UnifiedSigncryptionKey,
-    pub unsigncryption_key: UnifiedUnsigncryptionKeyOwned,
+    pub unsigncryption_key: UnifiedUnsigncryptionKey,
 }
 
 #[cfg(test)]
@@ -663,8 +582,8 @@ mod tests {
                 enc_key.clone(),
                 receiver_id.clone(),
             ),
-            unsigncryption_key: UnifiedUnsigncryptionKeyOwned::new(
-                dec_key,
+            unsigncryption_key: UnifiedUnsigncryptionKey::new(
+                Arc::new(dec_key),
                 enc_key,
                 server_verf_key,
                 receiver_id,

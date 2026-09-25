@@ -87,7 +87,7 @@ pub(super) fn open(
     // LEGACY Code: should be using safe_deserialization from tfhe-rs
     let deserialized_payload: HybridKemCt = bc2wrap::deserialize_slice(&cipher.payload)
         .map_err(|e| CryptographyError::BincodeError(e.to_string()))?;
-    let decrypted_plaintext = hybrid_decrypt(deserialized_payload, unsign_key.decryption_key)?;
+    let decrypted_plaintext = hybrid_decrypt(deserialized_payload, &unsign_key.decryption_key)?;
     let (msg, sig) = parse_msg(decrypted_plaintext, sender_verf_key)?;
     check_format_and_signature(dsep, &msg, &sig, unsign_key, sender_verf_key)?;
     Ok(msg)
@@ -139,8 +139,8 @@ fn check_format_and_signature(
 ) -> Result<(), CryptographyError> {
     // What should be signed is dsep || msg || H(client_verification_key) || H(client_enc_key)
     let binding = receiver_binding(
-        unsigncryption_key.receiver_id,
-        unsigncryption_key.encryption_key,
+        &unsigncryption_key.receiver_id,
+        &unsigncryption_key.encryption_key,
     )?;
 
     let msg_signed = Zeroizing::new([&dsep[..], msg, binding.as_slice()].concat());
@@ -242,20 +242,19 @@ mod tests {
         for scheme in [PkeSchemeType::MlKem512, PkeSchemeType::MlKem1024P384] {
             let mut f = signcryption_fixture(scheme, 200);
             let payload = TestType { i: 4711 };
-            let signcrypt_key = UnifiedSigncryptionKey::from_signing_key(
-                f.signing_key.clone(),
-                f.enc_key.clone(),
-                f.receiver_id.clone(),
-            );
+            let sender_verf_key = f.sender_verf_key();
 
             let mut expected_msg = Vec::new();
             safe_serialize(&payload, &mut expected_msg, SAFE_SER_SIZE_LIMIT).unwrap();
 
-            let cipher = signcrypt_key.signcrypt(&mut f.rng, DSEP, &payload).unwrap();
+            let cipher = f
+                .signcryption_key
+                .signcrypt(&mut f.rng, DSEP, &payload)
+                .unwrap();
             assert_eq!(cipher.pke_type, scheme);
 
             let kem_ct: HybridKemCt = bc2wrap::deserialize_slice(&cipher.payload).unwrap();
-            let plaintext = hybrid_decrypt(kem_ct, &f.dec_key).unwrap();
+            let plaintext = hybrid_decrypt(kem_ct, &f.unsigncryption_key.decryption_key).unwrap();
 
             // Exactly three fields, the last two of fixed size.
             assert_eq!(
@@ -267,14 +266,18 @@ mod tests {
             assert_eq!(&plaintext[..msg_len], expected_msg.as_slice());
 
             // The middle field is the ECDSA signature over the locked preimage.
-            let binding = receiver_binding(&f.receiver_id, &f.enc_key).unwrap();
+            let binding = receiver_binding(
+                &f.signcryption_key.receiver_id,
+                &f.signcryption_key.receiver_enc_key,
+            )
+            .unwrap();
             let signed = [expected_msg.as_slice(), binding.as_slice()].concat();
             let sig = Signature::from_ecdsa(
                 k256::ecdsa::Signature::from_slice(&plaintext[msg_len..msg_len + SIG_SIZE])
                     .unwrap(),
             );
             check_normalized(&sig).expect("the signature must be low-s normalized");
-            f.sender_verf_key
+            sender_verf_key
                 .raw_verifying_key()
                 .verify(
                     &[&DSEP[..], signed.as_slice()].concat(),
@@ -285,9 +288,7 @@ mod tests {
             // The tail field is the digest of the sender's verification key.
             assert_eq!(
                 &plaintext[msg_len + SIG_SIZE..],
-                sender_verf_key_digest(&f.sender_verf_key)
-                    .unwrap()
-                    .as_slice(),
+                sender_verf_key_digest(&sender_verf_key).unwrap().as_slice(),
                 "{scheme}: tail is not H(sender verification key)"
             );
         }
@@ -302,7 +303,7 @@ mod tests {
             let short = Zeroizing::new(vec![0u8; len]);
             assert!(
                 matches!(
-                    parse_msg(short, &f.sender_verf_key),
+                    parse_msg(short, &f.sender_verf_key()),
                     Err(CryptographyError::LengthError(_))
                 ),
                 "a {len}-byte plaintext must be rejected as too short"
@@ -317,15 +318,14 @@ mod tests {
         let f = signcryption_fixture(PkeSchemeType::MlKem512, 500);
         let other = signcryption_fixture(PkeSchemeType::MlKem512, 501);
 
-        let base = receiver_binding(&f.receiver_id, &f.enc_key).unwrap();
-        assert_eq!(base, receiver_binding(&f.receiver_id, &f.enc_key).unwrap());
-        assert_ne!(
-            base,
-            receiver_binding(&other.receiver_id, &f.enc_key).unwrap()
-        );
-        assert_ne!(
-            base,
-            receiver_binding(&f.receiver_id, &other.enc_key).unwrap()
-        );
+        let id = &f.signcryption_key.receiver_id;
+        let enc = &f.signcryption_key.receiver_enc_key;
+        let other_id = &other.signcryption_key.receiver_id;
+        let other_enc = &other.signcryption_key.receiver_enc_key;
+
+        let base = receiver_binding(id, enc).unwrap();
+        assert_eq!(base, receiver_binding(id, enc).unwrap());
+        assert_ne!(base, receiver_binding(other_id, enc).unwrap());
+        assert_ne!(base, receiver_binding(id, other_enc).unwrap());
     }
 }

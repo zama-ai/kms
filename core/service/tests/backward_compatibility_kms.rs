@@ -59,7 +59,7 @@ use kms_lib::{
         },
         signcryption::{
             Signcrypt, SigncryptionPayload, UnifiedSigncryption, UnifiedSigncryptionKey,
-            UnifiedUnsigncryptionKeyOwned, Unsigncrypt,
+            UnifiedUnsigncryptionKey, Unsigncrypt,
         },
     },
     engine::{
@@ -773,7 +773,12 @@ fn test_unified_signcryption(
     // frozen layout carries no version tag and is recovered by subtracting two
     // fixed-size tail fields, so a change there is silent until something tries.
     let unsign_key =
-        UnifiedUnsigncryptionKeyOwned::new(dec_key, enc_key, verf_key.clone(), receiver_id);
+        UnifiedUnsigncryptionKey::new(
+            std::sync::Arc::new(dec_key),
+            enc_key,
+            verf_key.clone(),
+            receiver_id,
+        );
     let opened: PublicSigKey = unsign_key
         .unsigncrypt(b"TESTTEST", &original_versionized)
         .map_err(|e| {
