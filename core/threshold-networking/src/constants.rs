@@ -30,7 +30,9 @@ pub(crate) const MAX_WAITING_TIME_MESSAGE_QUEUE: u64 = 60;
 pub const MAX_INTERVAL: Duration = Duration::from_secs(60);
 
 /// The default maximum elapsed time before giving up on retrying
-pub(crate) const MAX_ELAPSED_TIME: Duration = Duration::from_secs(60);
+/// NOTE: MAX_ELAPSED_TIME must be larger than KEEPALIVE_INTERVAL + KEEPALIVE_TIMEOUT,
+/// to allow recovery
+pub(crate) const MAX_ELAPSED_TIME: Duration = Duration::from_secs(90);
 
 /// maximum number of seconds that a party waits for a network message during a protocol
 pub(crate) const NETWORK_TIMEOUT: Duration = Duration::from_secs(5);
@@ -59,3 +61,12 @@ pub(crate) const MAX_FUTURE_ROUNDS: usize = 16;
 
 /// Hard cap on the number of distinct future-round messages buffered per sender.
 pub(crate) const MAX_BUFFERED_FUTURE_MSGS: usize = 32;
+
+/// Interval between HTTP/2 keepalive pings on the channel to a peer.
+/// NOTE: KEEPALIVE_INTERVAL + KEEPALIVE_TIMEOUT must be smaller than MAX_ELAPSED_TIME
+pub(crate) const KEEPALIVE_INTERVAL: Duration = Duration::from_secs(15);
+
+/// Time to wait for the reply to a keepalive ping before the connection to a peer closes. The next
+/// send then connects again, so it reaches a peer that restarted behind the same address.
+/// NOTE: KEEPALIVE_INTERVAL + KEEPALIVE_TIMEOUT must be smaller than MAX_ELAPSED_TIME
+pub(crate) const KEEPALIVE_TIMEOUT: Duration = Duration::from_secs(30);
