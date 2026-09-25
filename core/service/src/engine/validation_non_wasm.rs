@@ -9,7 +9,7 @@ use crate::{
         signatures::PublicSigKey,
         signing::{SchemeVerfKeys, SigningSchemeType},
     },
-    engine::base::{compute_public_decryption_message, public_dec_payload_bytes},
+    engine::base::{compute_public_decryption_message, public_dec_payload},
     engine::validation_wasm::{
         ExpectedSigner, ResponseSignatures, SignedPayloads, verify_response_signatures,
     },
@@ -483,7 +483,7 @@ fn check_public_decrypt_signatures(
     // NOTE that we cannot use `BaseKmsStruct::verify_sig`
     // because `BaseKmsStruct` cannot be compiled for wasm (it has an async mutex).
     let response_bytes = bc2wrap::serialize(&response)?;
-    let payload_bytes = public_dec_payload_bytes(&response_bytes, response_extra_data)?;
+    let payload = public_dec_payload(&response_bytes, response_extra_data);
 
     // Built only when a domain is available: without one no ECDSA signature of this
     // response can be checked, and the message would be of no use.
@@ -508,7 +508,7 @@ fn check_public_decrypt_signatures(
         &SignedPayloads {
             dsep: &DSEP_PUBLIC_DECRYPTION,
             internal_bytes: &response_bytes,
-            payload_bytes: &payload_bytes,
+            payload: &payload,
             eip712_hash,
         },
         &requested,
@@ -1194,6 +1194,8 @@ fn unpack_new_mpc_epoch_req(req: NewMpcEpochRequest) -> anyhow::Result<VerifiedN
 
 #[cfg(test)]
 mod tests {
+    use crate::cryptography::signing::VerfKeySet;
+    use crate::cryptography::signing::composite::sign_result_entries;
     use aes_prng::AesRng;
     use alloy_dyn_abi::Eip712Domain;
     use kms_grpc::{
@@ -2370,24 +2372,27 @@ mod tests {
             ),
         };
 
-        // The post-quantum entry signs the versioned payload, which carries the
-        // response bytes and the extra data.
+        // The post-quantum entry signs the versioned payload — the response bytes
+        // together with the extra data — inside a preimage naming the scheme set.
         let response_bytes = bc2wrap::serialize(&payload).unwrap();
-        let payload_bytes =
-            crate::engine::base::public_dec_payload_bytes(&response_bytes, &extra_data).unwrap();
+        let signed = crate::engine::base::public_dec_payload(&response_bytes, &extra_data);
         let scheme = SigningSchemeType::MlDsa65;
-        let signatures = vec![TypedSignature {
-            scheme: kms_grpc::kms::v1::SigningSchemeType::Mldsa65 as i32,
-            signature: identity
-                .unified_sign_with(scheme, &DSEP_PUBLIC_DECRYPTION, &payload_bytes)
-                .unwrap()
-                .to_bytes(),
-        }];
+        let signatures: Vec<TypedSignature> = sign_result_entries(
+            &identity,
+            &[scheme],
+            &DSEP_PUBLIC_DECRYPTION,
+            &[0u8; 32],
+            &signed,
+        )
+        .unwrap()
+        .iter()
+        .map(TypedSignature::from)
+        .collect();
 
         let server_pks = HashMap::from([(1u32, vk.clone())]);
         let scheme_verf_keys = HashMap::from([(
             1u32,
-            HashMap::from([(scheme, identity.unified_verifying_key(scheme).unwrap())]),
+            VerfKeySet::from_identity(&identity, &[scheme]).unwrap(),
         )]);
         let request_for = |schemes: Vec<i32>| PublicDecryptionRequest {
             signing_schemes: schemes,

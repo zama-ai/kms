@@ -1,5 +1,6 @@
 use crate::backup::BACKUP_PKE_SCHEME;
 use crate::backup::operator::DSEP_BACKUP_MATERIAL;
+use crate::cryptography::signing::SigningSchemeType;
 use crate::cryptography::{
     encryption::{HasPkeScheme, UnifiedPrivateEncKey, UnifiedPublicEncKey},
     signatures::PrivateSigKey,
@@ -18,6 +19,7 @@ use kms_grpc::kms::v1::{
 use rand::{CryptoRng, Rng};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
+use std::sync::Arc;
 use std::time::SystemTime;
 use tfhe::safe_serialization::safe_serialize;
 use tfhe::{Versionize, named::Named, safe_serialization::safe_deserialize};
@@ -76,7 +78,6 @@ impl TryFrom<CustodianRecoveryOutput> for InternalCustodianRecoveryOutput {
             signcryption: UnifiedSigncryption::new(
                 backup_output.signcryption.clone(),
                 backup_output.pke_type.try_into()?,
-                backup_output.signing_type.try_into()?,
             ),
             custodian_role: Role::indexed_from_one(value.custodian_role as usize),
         })
@@ -91,7 +92,8 @@ impl TryFrom<InternalCustodianRecoveryOutput> for CustodianRecoveryOutput {
             backup_output: Some(OperatorBackupOutput {
                 signcryption: value.signcryption.payload,
                 pke_type: value.signcryption.pke_type as i32,
-                signing_type: value.signcryption.signing_type as i32,
+                // TODO stop gap https://github.com/zama-ai/kms-internal/issues/3168
+                signing_type: SigningSchemeType::Ecdsa256k1.as_wire(),
             }),
             custodian_role: value.custodian_role.one_based() as u64,
         })
@@ -408,10 +410,10 @@ impl Custodian {
         );
         let custodian_id = self.verification_key().verf_key_id();
         let unsigncrypt_key = UnifiedUnsigncryptionKey::new(
-            &self.dec_key,
-            &self.enc_key,
-            operator_verification_key,
-            &custodian_id,
+            Arc::new(self.dec_key.clone()),
+            self.enc_key.clone(),
+            operator_verification_key.clone(),
+            custodian_id,
         );
 
         // BackupMaterial contains secret shares which should be zeroized when dropped
@@ -462,10 +464,10 @@ impl Custodian {
 
         // re-encrypted share and sign it
         let operator_verf_id = operator_verification_key.verf_key_id();
-        let signcrypt_key = UnifiedSigncryptionKey::new(
-            &self.signing_key,
-            operator_ephem_enc_key,
-            &operator_verf_id,
+        let signcrypt_key = UnifiedSigncryptionKey::from_signing_key(
+            self.signing_key.clone(),
+            operator_ephem_enc_key.clone(),
+            operator_verf_id,
         );
         let signcryption =
             signcrypt_key.signcrypt(rng, &DSEP_BACKUP_MATERIAL, &*backup_material)?;

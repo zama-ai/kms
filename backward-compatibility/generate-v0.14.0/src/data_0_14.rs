@@ -11,9 +11,7 @@ use kms_0_14_0::cryptography::{
     encryption::{Encryption, PkeScheme, PkeSchemeType},
     hybrid_ml_kem::HybridKemCt,
     signatures::{compute_eip712_signature, gen_sig_keys},
-    signcryption::{
-        Signcrypt, UnifiedSigncryption, UnifiedSigncryptionKeyOwned, UnifiedUnsigncryptionKeyOwned,
-    },
+    signcryption::{Signcrypt, UnifiedSigncryptionKeyOwned},
 };
 use kms_0_14_0::engine::base::{CrsGenMetadata, KeyGenMetadataInner, KmsFheKeyHandles};
 use kms_0_14_0::engine::centralized::central_kms::generate_client_fhe_key;
@@ -23,7 +21,7 @@ use kms_0_14_0::engine::threshold::service::{PublicKeyMaterial, ThresholdFheKeys
 use kms_0_14_0::util::key_setup::FhePublicKey;
 use kms_0_14_0::vault::keychain::AppKeyBlob;
 use kms_grpc_0_14_0::{
-    kms::v1::{CustodianContext, CustodianSetupMessage, TypedPlaintext},
+    kms::v1::TypedPlaintext,
     rpc_types::{PrivDataType, PubDataType, SignedPubDataHandleInternal},
     solidity_types::{
         CrsgenVerification, CrsgenVerificationQ126, KeygenVerification, KeygenVerificationQ126,
@@ -34,7 +32,6 @@ use rand::{RngCore, SeedableRng};
 use std::collections::BTreeMap;
 use std::num::Wrapping;
 use std::{borrow::Cow, collections::HashMap, fs::create_dir_all, path::PathBuf};
-use tfhe_1_6_2::safe_serialization::safe_serialize;
 use tfhe_1_6_2::shortint::parameters::{
     AtomicPatternParameters, Backend, LweCiphertextCount, MetaNoiseSquashingParameters,
     MetaParameters, NoiseSquashingClassicParameters, NoiseSquashingCompressionParameters,
@@ -83,8 +80,8 @@ use backward_compatibility::{
     PrssSetupCombinedTest, PubDataTypeTest, PublicSigKeyTest, ReleasePCRValuesTest, ShareTest,
     SigncryptionPayloadTest, SignedPubDataHandleInternalTest, SoftwareVersionTest, TestMetadataDD,
     TestMetadataKMS, TestMetadataKmsGrpc, ThresholdFheKeysTest, TypedPlaintextTest,
-    UnifiedSigncryptionKeyTest, UnifiedSigncryptionTest, UnifiedUnsigncryptionKeyTest,
-    DISTRIBUTED_DECRYPTION_MODULE_NAME, KMS_GRPC_MODULE_NAME, KMS_MODULE_NAME,
+    UnifiedSigncryptionTest, DISTRIBUTED_DECRYPTION_MODULE_NAME, KMS_GRPC_MODULE_NAME,
+    KMS_MODULE_NAME,
 };
 use hashing_0_14_0::hash_versioned;
 use kms_0_14_0::cryptography::signcryption::SigncryptionPayload;
@@ -105,13 +102,6 @@ macro_rules! store_versioned_auxiliary {
     ($msg:expr, $dir:expr, $test_name:expr, $filename:expr $(,)? ) => {
         store_versioned_auxiliary_05($msg, $dir, $test_name, $filename)
     };
-}
-
-/// Fixed timestamp (≈50 years after the Unix epoch) used when generating the custodian
-/// fixtures. Using a constant instead of `SystemTime::now()` keeps the generated v0.14.0
-/// data byte-for-byte reproducible, so re-running the generator never churns the LFS objects.
-fn fixed_fixture_timestamp() -> std::time::SystemTime {
-    std::time::UNIX_EPOCH + std::time::Duration::from_secs(50 * 8760 * 3600)
 }
 
 // The compact-public-key and compression parameters are left as `None` because they
@@ -392,24 +382,12 @@ fn signcryption_payload_test() -> SigncryptionPayloadTest {
 }
 
 // KMS test
-const SIGNCRYPTION_KEY_TEST: UnifiedSigncryptionKeyTest = UnifiedSigncryptionKeyTest {
-    test_filename: Cow::Borrowed("signcryption_key"),
-    state: 100,
-};
-
 // KMS test
-const UNSIGNCRYPTION_KEY_TEST: UnifiedUnsigncryptionKeyTest = UnifiedUnsigncryptionKeyTest {
-    test_filename: Cow::Borrowed("designcryption_key"),
-    state: 200,
-};
-
 // KMS test
 const UNIFIED_SIGNCRYPTION_TEST: UnifiedSigncryptionTest = UnifiedSigncryptionTest {
     test_filename: Cow::Borrowed("unified_signcryption"),
     state: 202,
 };
-
-
 
 // KMS test
 const PRSS_SETUP_COMBINED_TEST: PrssSetupCombinedTest = PrssSetupCombinedTest {
@@ -462,10 +440,6 @@ const SOFTWARE_VERSION_TEST: SoftwareVersionTest = SoftwareVersionTest {
     patch: 4,
     tag: Cow::Borrowed("super fun version"),
 };
-
-
-
-
 
 fn dummy_domain() -> alloy_sol_types_1_6_0::Eip712Domain {
     alloy_sol_types_1_6_0::eip712_domain!(
@@ -717,37 +691,6 @@ impl KmsV0_14_0 {
         std::fs::write(dir.join(&filename), serialized).unwrap();
 
         TestMetadataKMS::SigncryptionPayload(test)
-    }
-
-    fn gen_signcryption_key(dir: &PathBuf) -> TestMetadataKMS {
-        let mut rng = AesRng::seed_from_u64(SIGNCRYPTION_KEY_TEST.state);
-        let (_verf_key, server_sig_key) = gen_sig_keys(&mut rng);
-        let (client_verf_key, _server_sig_key) = gen_sig_keys(&mut rng);
-        let mut encryption = Encryption::new(PkeSchemeType::MlKem512, &mut rng);
-        let (_dec_key, enc_key) = encryption.keygen().unwrap();
-        let signcrypt_key = UnifiedSigncryptionKeyOwned::new(
-            server_sig_key,
-            enc_key,
-            client_verf_key.verf_key_id(),
-        );
-        store_versioned_test!(&signcrypt_key, dir, &SIGNCRYPTION_KEY_TEST.test_filename);
-        TestMetadataKMS::UnifiedSigncryptionKeyOwned(SIGNCRYPTION_KEY_TEST)
-    }
-
-    fn gen_designcryption_key(dir: &PathBuf) -> TestMetadataKMS {
-        let mut rng = AesRng::seed_from_u64(UNSIGNCRYPTION_KEY_TEST.state);
-        let (sender_verf_key, _sender_sig_key) = gen_sig_keys(&mut rng);
-        let (receiver_verf_key, _receiver_sig_key) = gen_sig_keys(&mut rng);
-        let mut encryption = Encryption::new(PkeSchemeType::MlKem512, &mut rng);
-        let (dec_key, enc_key) = encryption.keygen().unwrap();
-        let signcrypt_key = UnifiedUnsigncryptionKeyOwned::new(
-            dec_key,
-            enc_key,
-            sender_verf_key,
-            receiver_verf_key.verf_key_id().to_vec(),
-        );
-        store_versioned_test!(&signcrypt_key, dir, &UNSIGNCRYPTION_KEY_TEST.test_filename);
-        TestMetadataKMS::UnifiedUnsigncryptionKeyOwned(UNSIGNCRYPTION_KEY_TEST)
     }
 
     fn gen_unified_signcryption(dir: &PathBuf) -> TestMetadataKMS {
@@ -1283,8 +1226,6 @@ impl KMSCoreVersion for V0_14_0 {
             KmsV0_14_0::gen_crs_metadata_with_extra_data(&dir),
             KmsV0_14_0::gen_typed_plaintext(&dir),
             KmsV0_14_0::gen_signcryption_payload(&dir),
-            KmsV0_14_0::gen_signcryption_key(&dir),
-            KmsV0_14_0::gen_designcryption_key(&dir),
             KmsV0_14_0::gen_unified_signcryption(&dir),
             KmsV0_14_0::gen_hybrid_kem_ct(&dir),
             KmsV0_14_0::gen_prss_setup_combined(&dir),

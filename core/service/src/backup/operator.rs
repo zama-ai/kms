@@ -6,16 +6,19 @@ use super::{
 use crate::{
     anyhow_error_and_log,
     consts::SAFE_SER_SIZE_LIMIT,
-    cryptography::encryption::{UnifiedPrivateEncKey, UnifiedPublicEncKey},
-    cryptography::signatures::{PrivateSigKey, PublicSigKey, Signature},
-    cryptography::signcryption::{
-        Signcrypt, UnifiedSigncryption, UnifiedSigncryptionKey, UnifiedUnsigncryptionKey,
-        Unsigncrypt,
+    cryptography::{
+        encryption::{UnifiedPrivateEncKey, UnifiedPublicEncKey},
+        signatures::{PrivateSigKey, PublicSigKey, Signature},
+        signcryption::{
+            Signcrypt, UnifiedSigncryption, UnifiedSigncryptionKey, UnifiedUnsigncryptionKey,
+            Unsigncrypt,
+        },
+        signing::SigningSchemeType,
     },
 };
 use crate::{
     backup::custodian::DSEP_BACKUP_CUSTODIAN,
-    cryptography::signatures::{internal_sign, internal_verify_sig},
+    cryptography::signatures::{NodeSigningIdentity, internal_sign, internal_verify_sig},
 };
 use crate::{
     backup::{
@@ -39,6 +42,7 @@ use std::{
     collections::{BTreeMap, HashMap},
     fmt::Display,
     ops::{Add, Sub},
+    sync::Arc,
     time::{Duration, SystemTime},
 };
 use tfhe::{named::Named, safe_serialization::safe_deserialize};
@@ -178,11 +182,7 @@ impl TryFrom<OperatorBackupOutput> for InnerOperatorBackupOutput {
 
     fn try_from(value: OperatorBackupOutput) -> Result<Self, Self::Error> {
         Ok(Self {
-            signcryption: UnifiedSigncryption {
-                payload: value.signcryption,
-                pke_type: value.pke_type.try_into()?,
-                signing_type: value.signing_type.try_into()?,
-            },
+            signcryption: UnifiedSigncryption::new(value.signcryption, value.pke_type.try_into()?),
         })
     }
 }
@@ -193,7 +193,8 @@ impl TryFrom<InnerOperatorBackupOutput> for OperatorBackupOutput {
         Ok(Self {
             signcryption: value.signcryption.payload,
             pke_type: value.signcryption.pke_type as i32,
-            signing_type: value.signcryption.signing_type as i32,
+            // TODO stop gap https://github.com/zama-ai/kms-internal/issues/3168
+            signing_type: SigningSchemeType::Ecdsa256k1.as_wire(),
         })
     }
 }
@@ -499,6 +500,9 @@ impl Operator {
             }
             Some(sk) => sk,
         };
+        // Built once and shared by every per-custodian sealer below, so the
+        // signing key is not copied per custodian.
+        let identity = Arc::new(NodeSigningIdentity::from(sk.clone()));
         let n = self.custodian_keys.len();
         let t = self.threshold;
 
@@ -573,7 +577,11 @@ impl Operator {
                 shares,
             };
             let custodian_verf_id = custodian_verf_key.verf_key_id();
-            let signcryption_key = UnifiedSigncryptionKey::new(sk, cus_enc_key, &custodian_verf_id);
+            let signcryption_key = UnifiedSigncryptionKey::new(
+                identity.clone(),
+                cus_enc_key.clone(),
+                custodian_verf_id,
+            );
             let signcryption = signcryption_key
                 .signcrypt(rng, &DSEP_BACKUP_CUSTODIAN, &backup_material)
                 .map_err(BackupError::InternalCryptographyError)?;
@@ -623,7 +631,7 @@ impl Operator {
         &self,
         output: &InternalCustodianRecoveryOutput,
         recovery_material: &RecoveryValidationMaterial,
-        ephm_dec_key: &UnifiedPrivateEncKey,
+        ephm_dec_key: &Arc<UnifiedPrivateEncKey>,
         ephm_enc_key: &UnifiedPublicEncKey,
     ) -> Result<Zeroizing<BackupMaterial>, RecoverySkipReason> {
         let (_, custodian_verf_key) = self.custodian_keys.get(&output.custodian_role).ok_or({
@@ -632,10 +640,10 @@ impl Operator {
         })?;
         let operator_id = self.verification_key.verf_key_id();
         let unsign_key = UnifiedUnsigncryptionKey::new(
-            ephm_dec_key,
-            ephm_enc_key,
-            custodian_verf_key,
-            &operator_id,
+            ephm_dec_key.clone(),
+            ephm_enc_key.clone(),
+            custodian_verf_key.clone(),
+            operator_id.clone(),
         );
         let backup_material: Zeroizing<BackupMaterial> = Zeroizing::new(
             unsign_key
@@ -730,11 +738,12 @@ impl Operator {
     ) -> Result<Zeroizing<Vec<u8>>, BackupError> {
         let mut validated: HashMap<Role, Zeroizing<BackupMaterial>> = HashMap::new();
         let mut skip_reasons: Vec<RecoverySkipReason> = Vec::new();
+        let ephm_dec_key = Arc::new(ephm_dec_key.clone());
         for output in custodian_recovery_output {
             match self.validate_one_recovery_output(
                 output,
                 recovery_material,
-                ephm_dec_key,
+                &ephm_dec_key,
                 ephm_enc_key,
             ) {
                 Ok(bm) => match validated.entry(output.custodian_role) {
@@ -926,7 +935,7 @@ mod tests {
         consts::DEFAULT_MPC_CONTEXT,
         cryptography::{
             encryption::{Encryption, PkeScheme},
-            signatures::{SigningSchemeType, gen_sig_keys},
+            signatures::gen_sig_keys,
         },
         engine::base::derive_request_id,
     };
@@ -972,11 +981,7 @@ mod tests {
         commitments.insert(Role::indexed_from_one(3), vec![3_u8; 32]);
         let mut cts = BTreeMap::new();
         let cts_out = InnerOperatorBackupOutput {
-            signcryption: UnifiedSigncryption {
-                payload: vec![1, 2, 3],
-                pke_type: BACKUP_PKE_SCHEME,
-                signing_type: SigningSchemeType::Ecdsa256k1,
-            },
+            signcryption: UnifiedSigncryption::new(vec![1, 2, 3], BACKUP_PKE_SCHEME),
         };
         cts.insert(Role::indexed_from_one(1), cts_out.clone());
         cts.insert(Role::indexed_from_one(2), cts_out.clone());

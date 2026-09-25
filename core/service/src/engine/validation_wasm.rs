@@ -7,7 +7,7 @@ use crate::{
         signatures::{PublicSigKey, Signature, internal_verify_sig},
         signing::{SchemeVerfKeys, SigningSchemeType, unified_verify, verf_key_for},
     },
-    engine::signed_payload::user_dec_payload_bytes,
+    engine::signed_payload::user_dec_payload,
 };
 use alloy_dyn_abi::Eip712Domain;
 use alloy_primitives::{Address, B256};
@@ -188,7 +188,7 @@ pub(crate) fn user_decrypt_eip712_hash(
 /// scheme without producing a valid signature for it.
 ///
 /// ECDSA is not handled here — it signs the EIP-712 hash rather than
-/// `payload_bytes`, and what that hash covers differs per result kind.
+/// `signed_bytes`, and what that hash covers differs per result kind.
 ///
 /// The error is returned **unlogged**: whether a failure here is a fault or an
 /// expected Byzantine rejection is the caller's to know, and so is the level it
@@ -200,7 +200,7 @@ pub(crate) fn verify_scheme_entry(
     scheme: SigningSchemeType,
     signature: &[u8],
     dsep: &DomainSep,
-    payload_bytes: &[u8],
+    signed_bytes: &[u8],
 ) -> anyhow::Result<()> {
     debug_assert_ne!(
         scheme,
@@ -214,7 +214,7 @@ pub(crate) fn verify_scheme_entry(
         ))
     })?;
     let signature = Signature::new(scheme, signature.to_vec());
-    unified_verify(dsep, payload_bytes, &signature, verf_key).map_err(|e| {
+    unified_verify(dsep, signed_bytes, &signature, verf_key).map_err(|e| {
         anyhow_tracked(format!(
             "the {scheme} signature of party {party_id} did not verify: {e}"
         ))
@@ -268,14 +268,14 @@ pub(crate) struct ResponseSignatures<'a> {
 }
 
 /// What each signature of a [`ResponseSignatures`] covers.
-pub(crate) struct SignedPayloads<'a> {
+pub(crate) struct SignedPayloads<'a, T> {
     /// Domain separator of the raw and the per-scheme signatures.
     pub dsep: &'a DomainSep,
     /// The serialized response payload, which the deprecated internal signature covers.
     /// Unused when [`ResponseSignatures::internal`] is empty.
     pub internal_bytes: &'a [u8],
-    /// The versioned payload every non-ECDSA scheme covers.
-    pub payload_bytes: &'a [u8],
+    /// The payload every non-ECDSA scheme covers.
+    pub payload: &'a T,
     /// The EIP-712 signing hash both ECDSA signatures recover from, or `None` when no
     /// domain is available and neither can therefore be checked.
     pub eip712_hash: Option<B256>,
@@ -353,21 +353,14 @@ fn push_once(verified: &mut Vec<SigningSchemeType>, scheme: SigningSchemeType) {
 fn attribute_scheme_entry(
     signature: &[u8],
     scheme: SigningSchemeType,
-    payloads: &SignedPayloads,
+    dsep: &DomainSep,
+    signed_bytes: &[u8],
     expected: &ExpectedSigner,
     keys: &SchemeVerfKeys,
     signer: Option<(u32, Address)>,
 ) -> anyhow::Result<(u32, Address)> {
-    let check = |party_id: u32| {
-        verify_scheme_entry(
-            keys,
-            party_id,
-            scheme,
-            signature,
-            payloads.dsep,
-            payloads.payload_bytes,
-        )
-    };
+    let check =
+        |party_id: u32| verify_scheme_entry(keys, party_id, scheme, signature, dsep, signed_bytes);
     match expected {
         ExpectedSigner::Known {
             party_id, address, ..
@@ -386,9 +379,8 @@ fn attribute_scheme_entry(
                 let parsed = Signature::new(scheme, signature.to_vec());
                 keys.iter()
                     .find_map(|(party_id, party_keys)| {
-                        let verf_key = party_keys.get(&scheme)?;
-                        unified_verify(payloads.dsep, payloads.payload_bytes, &parsed, verf_key)
-                            .ok()?;
+                        let verf_key = party_keys.get(scheme)?;
+                        unified_verify(dsep, signed_bytes, &parsed, verf_key).ok()?;
                         addresses.get(party_id).map(|address| (*party_id, *address))
                     })
                     .ok_or_else(|| {
@@ -429,13 +421,16 @@ fn attribute_scheme_entry(
 ///
 /// The error is returned **unlogged**: whether a failure here is a fault or an expected
 /// Byzantine rejection is the caller's to know, and so is the level it deserves.
-pub(crate) fn verify_response_signatures(
+pub(crate) fn verify_response_signatures<T>(
     sigs: &ResponseSignatures,
-    payloads: &SignedPayloads,
+    payloads: &SignedPayloads<T>,
     requested: &[SigningSchemeType],
     expected: &ExpectedSigner,
     keys: &SchemeVerfKeys,
-) -> anyhow::Result<(u32, Address)> {
+) -> anyhow::Result<(u32, Address)>
+where
+    T: serde::Serialize + tfhe::Versionize + tfhe::named::Named,
+{
     if requested.is_empty() {
         return Err(anyhow_tracked(
             "the response was measured against no signing scheme at all, which any signature would \
@@ -443,6 +438,12 @@ pub(crate) fn verify_response_signatures(
                 .to_string(),
         ));
     }
+    // Bound to the set this verifier requested, so an entry lifted from a
+    // response signed under a larger set does not verify here. The ECDSA entry is
+    // the exception; see `sign_result_entries`.
+    let signed_bytes =
+        crate::cryptography::signing::composite::scheme_bound_preimage(requested, payloads.payload)
+            .map_err(|e| anyhow_tracked(format!("could not build the signed payload: {e}")))?;
     let mut verified: Vec<SigningSchemeType> = Vec::with_capacity(sigs.list.len() + 1);
     let mut signer: Option<(u32, Address)> = None;
 
@@ -528,7 +529,15 @@ pub(crate) fn verify_response_signatures(
             };
             expected.attribute(recover_address_from_eip712_hash(hash, &typed.signature)?)?
         } else {
-            attribute_scheme_entry(&typed.signature, scheme, payloads, expected, keys, signer)?
+            attribute_scheme_entry(
+                &typed.signature,
+                scheme,
+                payloads.dsep,
+                &signed_bytes,
+                expected,
+                keys,
+                signer,
+            )?
         };
         signer = Some(agree(signer, found)?);
         push_once(&mut verified, scheme);
@@ -599,10 +608,7 @@ fn authenticate_user_decrypt_and_check_meta_data(
         &SignedPayloads {
             dsep: &DSEP_USER_DECRYPTION,
             internal_bytes: &response_bytes,
-            payload_bytes: &user_dec_payload_bytes(
-                &response_bytes,
-                eip712_params.response_extra_data,
-            )?,
+            payload: &user_dec_payload(&response_bytes, eip712_params.response_extra_data),
             eip712_hash: Some(user_decrypt_eip712_hash(
                 response,
                 trusted_ctx.client_request,
@@ -1002,7 +1008,7 @@ mod tests {
     ) -> anyhow::Result<Vec<u8>> {
         Ok(sign_user_decryption_result(
             &NodeSigningIdentity::ecdsa_only(server_sk.clone()),
-            &[],
+            &[SigningSchemeType::Ecdsa256k1],
             payload.clone(),
             user_pk_buf,
             extra_data.to_vec(),
@@ -1088,11 +1094,7 @@ mod tests {
                 &SignedPayloads {
                     dsep: &DSEP_USER_DECRYPTION,
                     internal_bytes: &response_bytes,
-                    payload_bytes: &super::user_dec_payload_bytes(
-                        &response_bytes,
-                        request.extra_data(),
-                    )
-                    .unwrap(),
+                    payload: &super::user_dec_payload(&response_bytes, request.extra_data()),
                     eip712_hash: Some(
                         user_decrypt_eip712_hash(response, &request, eip712_domain).unwrap(),
                     ),

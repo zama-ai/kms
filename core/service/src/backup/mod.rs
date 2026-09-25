@@ -59,16 +59,9 @@ impl TryFrom<OperatorBackupOutput> for UnifiedSigncryption {
     type Error = anyhow::Error;
 
     fn try_from(value: OperatorBackupOutput) -> Result<Self, Self::Error> {
-        // Use the fallible conversion rather than prost's `pke_type()` / `signing_type()`
-        // accessors: those map an unrecognised discriminant to the default variant, which would
-        // silently relabel material as ML-KEM-512 instead of reporting the unknown scheme.
+        // TODO stop gap https://github.com/zama-ai/kms-internal/issues/3168
         let pke_type = value.pke_type.try_into()?;
-        let signing_type = value.signing_type.try_into()?;
-        Ok(UnifiedSigncryption::new(
-            value.signcryption,
-            pke_type,
-            signing_type,
-        ))
+        Ok(UnifiedSigncryption::new(value.signcryption, pke_type))
     }
 }
 
@@ -77,11 +70,9 @@ impl TryFrom<&OperatorBackupOutput> for UnifiedSigncryption {
 
     fn try_from(value: &OperatorBackupOutput) -> Result<Self, Self::Error> {
         let pke_type = value.pke_type.try_into()?;
-        let signing_type = value.signing_type.try_into()?;
         Ok(UnifiedSigncryption::new(
             value.signcryption.clone(),
             pke_type,
-            signing_type,
         ))
     }
 }

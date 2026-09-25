@@ -7,6 +7,7 @@ use crate::consts::{DEC_CAPACITY, MIN_DEC_CACHE};
 use crate::cryptography::attestation::SecurityModuleProxy;
 use crate::cryptography::decompression;
 use crate::cryptography::encryption::UnifiedPublicEncKey;
+use crate::cryptography::signatures::StoredTypedSignature;
 use crate::cryptography::signatures::{PrivateSigKey, PublicSigKey, Signature};
 use crate::cryptography::signcryption::SigncryptFHEPlaintext;
 use crate::cryptography::signcryption::UnifiedSigncryptionKey;
@@ -15,7 +16,6 @@ use crate::cryptography::signing::identity::NodeSigningIdentity;
 use crate::engine::Shutdown;
 use crate::engine::backup_operator::RealBackupOperator;
 use crate::engine::base::CrsGenMetadata;
-use crate::engine::base::StoredTypedSignature;
 use crate::engine::base::sign_user_decryption_result;
 use crate::engine::base::{BaseKmsStruct, KmsFheKeyHandles};
 use crate::engine::base::{KeyGenMetadata, PubDecCallValues, UserDecryptCallValues};
@@ -887,7 +887,11 @@ impl<
         client_enc_key: &UnifiedPublicEncKey,
         client_id: &[u8],
     ) -> anyhow::Result<Vec<u8>> {
-        let signcryption_key = UnifiedSigncryptionKey::new(sig_key, client_enc_key, client_id);
+        let signcryption_key = UnifiedSigncryptionKey::from_signing_key(
+            sig_key.clone(),
+            client_enc_key.clone(),
+            client_id.to_vec(),
+        );
         // Observe that we encrypt the plaintext itself, this is different from the threshold case
         // where it is first mapped to a Vec<ResiduePolyF4Z128> element
         // Keep the cleartext behind a zeroizing guard during signcryption.
@@ -1178,7 +1182,7 @@ pub(crate) mod tests {
     use crate::cryptography::signatures::PublicSigKey;
     use crate::cryptography::signatures::gen_sig_keys;
     use crate::cryptography::signcryption::{
-        UnsigncryptFHEPlaintext, ephemeral_signcryption_key_generation,
+        SenderAuth, UnsigncryptFHEPlaintext, ephemeral_signcryption_key_generation,
     };
     use crate::cryptography::signing::identity::NodeSigningIdentity;
     use crate::dummy_domain;
@@ -1854,7 +1858,7 @@ pub(crate) mod tests {
             if sim_type == SimulationType::BadSigKey {
                 // Change the signing key
                 let (server_sig_pk, _server_sig_sk) = gen_sig_keys(&mut rng);
-                keys.unsigncryption_key.sender_verf_key = server_sig_pk;
+                keys.unsigncryption_key.sender = SenderAuth::Ecdsa(server_sig_pk);
             }
             keys
         };

@@ -441,22 +441,6 @@
     (
         kms_core_version_min: "0.13.0",
         kms_core_module: "kms",
-        metadata: UnifiedSigncryptionKeyOwned((
-            test_filename: "signcryption_key",
-            state: 100,
-        )),
-    ),
-    (
-        kms_core_version_min: "0.13.0",
-        kms_core_module: "kms",
-        metadata: UnifiedUnsigncryptionKeyOwned((
-            test_filename: "designcryption_key",
-            state: 200,
-        )),
-    ),
-    (
-        kms_core_version_min: "0.13.0",
-        kms_core_module: "kms",
         metadata: UnifiedSigncryption((
             test_filename: "unified_signcryption",
             state: 202,
@@ -734,22 +718,6 @@
                 190,
                 239,
             ],
-        )),
-    ),
-    (
-        kms_core_version_min: "0.13.10",
-        kms_core_module: "kms",
-        metadata: UnifiedSigncryptionKeyOwned((
-            test_filename: "signcryption_key",
-            state: 100,
-        )),
-    ),
-    (
-        kms_core_version_min: "0.13.10",
-        kms_core_module: "kms",
-        metadata: UnifiedUnsigncryptionKeyOwned((
-            test_filename: "designcryption_key",
-            state: 200,
         )),
     ),
     (
@@ -1067,22 +1035,6 @@
     (
         kms_core_version_min: "0.13.20",
         kms_core_module: "kms",
-        metadata: UnifiedSigncryptionKeyOwned((
-            test_filename: "signcryption_key",
-            state: 100,
-        )),
-    ),
-    (
-        kms_core_version_min: "0.13.20",
-        kms_core_module: "kms",
-        metadata: UnifiedUnsigncryptionKeyOwned((
-            test_filename: "designcryption_key",
-            state: 200,
-        )),
-    ),
-    (
-        kms_core_version_min: "0.13.20",
-        kms_core_module: "kms",
         metadata: UnifiedSigncryption((
             test_filename: "unified_signcryption",
             state: 202,
@@ -1390,22 +1342,6 @@
                 190,
                 239,
             ],
-        )),
-    ),
-    (
-        kms_core_version_min: "0.14.0",
-        kms_core_module: "kms",
-        metadata: UnifiedSigncryptionKeyOwned((
-            test_filename: "signcryption_key",
-            state: 100,
-        )),
-    ),
-    (
-        kms_core_version_min: "0.14.0",
-        kms_core_module: "kms",
-        metadata: UnifiedUnsigncryptionKeyOwned((
-            test_filename: "designcryption_key",
-            state: 200,
         )),
     ),
     (
@@ -1761,22 +1697,6 @@
                 190,
                 239,
             ],
-        )),
-    ),
-    (
-        kms_core_version_min: "0.15.0",
-        kms_core_module: "kms",
-        metadata: UnifiedSigncryptionKeyOwned((
-            test_filename: "signcryption_key",
-            state: 100,
-        )),
-    ),
-    (
-        kms_core_version_min: "0.15.0",
-        kms_core_module: "kms",
-        metadata: UnifiedUnsigncryptionKeyOwned((
-            test_filename: "designcryption_key",
-            state: 200,
         )),
     ),
     (

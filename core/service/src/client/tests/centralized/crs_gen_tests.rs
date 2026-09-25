@@ -140,13 +140,12 @@ async fn crs_gen_centralized_manual(
         crsDigest: actual_digest.to_vec().into(),
         extraData: ceremony_req.extra_data.clone().into(),
     };
-    let payload_bytes = crate::engine::base::crs_payload_bytes(
+    let signed_payload = crate::engine::base::crs_payload(
         request_id,
         max_num_bits as u32,
         &actual_digest,
         &ceremony_req.extra_data,
-    )
-    .unwrap();
+    );
     internal_client
         .verify_result_signatures(
             &resp.signatures,
@@ -154,7 +153,7 @@ async fn crs_gen_centralized_manual(
             &sol_type,
             &domain,
             &DSEP_PUBDATA_CRS,
-            &payload_bytes,
+            &signed_payload,
         )
         .unwrap();
 

@@ -128,7 +128,7 @@ impl Client {
             let holders = self
                 .scheme_verf_keys
                 .values()
-                .filter(|keys| keys.contains_key(scheme))
+                .filter(|keys| keys.get(*scheme).is_some())
                 .count();
             if holders == 0 {
                 return Err(SigningError::NoVerificationKey(*scheme));
