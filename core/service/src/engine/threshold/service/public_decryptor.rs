@@ -82,7 +82,7 @@ pub trait NoiseFloodDecryptor: Send + Sync {
         noiseflood_session: &mut Self::Prep,
         ct: LowLevelCiphertextAndKeys,
         secret_key_share: Arc<PrivateKeySet<{ ResiduePolyF4Z128::EXTENSION_DEGREE }>>,
-    ) -> anyhow::Result<(HashMap<String, T>, Duration)>
+    ) -> anyhow::Result<(T, Duration)>
     where
         T: tfhe::integer::block_decomposition::Recomposable
             + tfhe::core_crypto::commons::traits::CastFrom<u128>,
@@ -102,7 +102,7 @@ impl NoiseFloodDecryptor for SecureNoiseFloodDecryptor {
         noiseflood_session: &mut Self::Prep,
         ct: LowLevelCiphertextAndKeys,
         secret_key_share: Arc<PrivateKeySet<{ ResiduePolyF4Z128::EXTENSION_DEGREE }>>,
-    ) -> anyhow::Result<(HashMap<String, T>, Duration)>
+    ) -> anyhow::Result<(T, Duration)>
     where
         T: tfhe::integer::block_decomposition::Recomposable
             + tfhe::core_crypto::commons::traits::CastFrom<u128>,
@@ -225,15 +225,7 @@ impl<
         };
 
         let raw_decryption = match dec {
-            Ok((partial_dec, time)) => {
-                let raw_decryption = match partial_dec.get(&session_id.to_string()) {
-                    Some(raw_decryption) => *raw_decryption,
-                    None => {
-                        return Err(anyhow!(
-                            "Public Decryption with session ID {session_id} could not be retrieved"
-                        ));
-                    }
-                };
+            Ok((raw_decryption, time)) => {
                 tracing::info!(
                     "Public decryption in session {session_id} completed. Inner thread took {:?} ms",
                     time.as_millis()
@@ -784,7 +776,6 @@ mod tests {
     };
     use rand::SeedableRng;
     use threshold_execution::{
-        runtime::sessions::session_parameters::GenericParameterHandles,
         small_execution::prss::PRSSSetup, tfhe_internals::utils::expanded_encrypt,
     };
 
@@ -800,21 +791,18 @@ mod tests {
         >;
 
         async fn decrypt<T>(
-            noiseflood_session: &mut Self::Prep,
+            _noiseflood_session: &mut Self::Prep,
             _ct: LowLevelCiphertextAndKeys,
             _secret_key_share: Arc<PrivateKeySet<{ ResiduePolyF4Z128::EXTENSION_DEGREE }>>,
-        ) -> anyhow::Result<(HashMap<String, T>, Duration)>
+        ) -> anyhow::Result<(T, Duration)>
         where
             T: tfhe::integer::block_decomposition::Recomposable
                 + tfhe::core_crypto::commons::traits::CastFrom<u128>,
             ResiduePoly<Z128, { ResiduePolyF4Z128::EXTENSION_DEGREE }>:
                 ErrorCorrect + Invert + Solve,
         {
-            let session = noiseflood_session.get_mut_base_session();
-            let sid: u128 = session.session_id().into();
-            let results = HashMap::from_iter([(format!("{sid}"), T::cast_from(0u128))]);
             let elapsed_time = Duration::from_secs(0);
-            Ok((results, elapsed_time))
+            Ok((T::cast_from(0u128), elapsed_time))
         }
     }
 
