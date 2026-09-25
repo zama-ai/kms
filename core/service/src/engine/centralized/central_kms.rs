@@ -1182,7 +1182,7 @@ pub(crate) mod tests {
     use crate::cryptography::signatures::PublicSigKey;
     use crate::cryptography::signatures::gen_sig_keys;
     use crate::cryptography::signcryption::{
-        UnsigncryptFHEPlaintext, ephemeral_signcryption_key_generation,
+        SenderAuth, UnsigncryptFHEPlaintext, ephemeral_signcryption_key_generation,
     };
     use crate::cryptography::signing::identity::NodeSigningIdentity;
     use crate::dummy_domain;
@@ -1858,7 +1858,7 @@ pub(crate) mod tests {
             if sim_type == SimulationType::BadSigKey {
                 // Change the signing key
                 let (server_sig_pk, _server_sig_sk) = gen_sig_keys(&mut rng);
-                keys.unsigncryption_key.sender_verf_key = server_sig_pk;
+                keys.unsigncryption_key.sender = SenderAuth::Ecdsa(server_sig_pk);
             }
             keys
         };

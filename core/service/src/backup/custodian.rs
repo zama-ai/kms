@@ -19,6 +19,7 @@ use kms_grpc::kms::v1::{
 use rand::{CryptoRng, Rng};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
+use std::sync::Arc;
 use std::time::SystemTime;
 use tfhe::safe_serialization::safe_serialize;
 use tfhe::{Versionize, named::Named, safe_serialization::safe_deserialize};
@@ -409,10 +410,10 @@ impl Custodian {
         );
         let custodian_id = self.verification_key().verf_key_id();
         let unsigncrypt_key = UnifiedUnsigncryptionKey::new(
-            &self.dec_key,
-            &self.enc_key,
-            operator_verification_key,
-            &custodian_id,
+            Arc::new(self.dec_key.clone()),
+            self.enc_key.clone(),
+            operator_verification_key.clone(),
+            custodian_id,
         );
 
         // BackupMaterial contains secret shares which should be zeroized when dropped

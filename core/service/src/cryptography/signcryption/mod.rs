@@ -548,6 +548,7 @@ pub struct UnifiedSigncryptionKeyPairOwned {
 
 #[cfg(test)]
 mod tests {
+    use core::panic;
     use super::*;
     use crate::cryptography::{
         encryption::{Encryption, PkeScheme, PkeSchemeType},
@@ -642,9 +643,12 @@ mod tests {
         let deserialized_cipher: UnifiedSigncryption =
             bc2wrap::deserialize_slice(&serialized_cipher).unwrap();
 
-        let serialized_server_verf_key =
-            bc2wrap::serialize(&client_signcryption_keys.unsigncryption_key.sender_verf_key)
-                .unwrap();
+        let sender_verf_key = match &client_signcryption_keys.unsigncryption_key.sender {
+            SenderAuth::Ecdsa(verf_key) => Some(verf_key),
+            SenderAuth::Multi(_) => panic!("the test reader is a frozen one"),
+        };
+
+        let serialized_server_verf_key = bc2wrap::serialize(&sender_verf_key).unwrap();
         let deserialized_server_verf_key: PublicSigKey =
             bc2wrap::deserialize_slice(&serialized_server_verf_key).unwrap();
         let client_id = client_signcryption_keys
@@ -652,10 +656,16 @@ mod tests {
             .receiver_id
             .clone();
         let new_keys = UnifiedUnsigncryptionKey::new(
-            &client_signcryption_keys.unsigncryption_key.decryption_key,
-            &client_signcryption_keys.unsigncryption_key.encryption_key,
-            &deserialized_server_verf_key,
-            &client_id,
+            client_signcryption_keys
+                .unsigncryption_key
+                .decryption_key
+                .clone(),
+            client_signcryption_keys
+                .unsigncryption_key
+                .encryption_key
+                .clone(),
+            deserialized_server_verf_key,
+            client_id,
         );
         let decrypted_msg = new_keys
             .unsigncrypt(b"TESTTEST", &deserialized_cipher)
@@ -703,7 +713,7 @@ mod tests {
             let wrong_keys = ephemeral_signcryption_key_generation(
                 &mut rng,
                 &client_signcryption_keys.unsigncryption_key.receiver_id,
-                Some(&client_signcryption_keys.signcrypt_key.signing_key),
+                Some(client_signcryption_keys.signcrypt_key.signing_key()),
             );
             assert!(
                 wrong_keys
@@ -718,10 +728,19 @@ mod tests {
             let mut rng = AesRng::seed_from_u64(2);
             let (wrong_verf_key, _) = gen_sig_keys(&mut rng);
             let wrong_keys = UnifiedUnsigncryptionKey::new(
-                &client_signcryption_keys.unsigncryption_key.decryption_key,
-                &client_signcryption_keys.unsigncryption_key.encryption_key,
-                &wrong_verf_key,
-                &client_signcryption_keys.unsigncryption_key.receiver_id,
+                client_signcryption_keys
+                    .unsigncryption_key
+                    .decryption_key
+                    .clone(),
+                client_signcryption_keys
+                    .unsigncryption_key
+                    .encryption_key
+                    .clone(),
+                wrong_verf_key,
+                client_signcryption_keys
+                    .unsigncryption_key
+                    .receiver_id
+                    .clone(),
             );
             assert!(
                 wrong_keys
