@@ -240,7 +240,7 @@ impl<'a> UnifiedUnsigncryptionKey<'a> {
     ) -> Result<Zeroizing<Vec<u8>>, CryptographyError> {
         match &self.sender {
             SenderAuth::Ecdsa(sender_verf_key) => {
-                ecdsa_v0::inner_unsigncrypt(self, sender_verf_key, dsep, cipher)
+                ecdsa_v0::open(self, sender_verf_key, dsep, cipher)
             }
             SenderAuth::Multi(keys) => composite_v1::open(
                 self.decryption_key,
@@ -462,7 +462,7 @@ impl<'a> Signcrypt for UnifiedSigncryptionKey<'a> {
         // This key holds one ECDSA signing key, so the frozen layout is the only
         // one it can produce. A multi-signature envelope needs a
         // `NodeSigningIdentity` and goes through `composite_v1::seal`.
-        ecdsa_v0::inner_signcryption(self, rng, dsep, serialized_msg.as_slice())
+        ecdsa_v0::seal(self, rng, dsep, serialized_msg.as_slice())
     }
 }
 
@@ -504,7 +504,7 @@ impl<'a> SigncryptFHEPlaintext for UnifiedSigncryptionKey<'a> {
         // `TypedSigncryptedCiphertext.signcrypted_ciphertext`, is a bare `bytes`
         // field, and the deployed browser-side verifier parses exactly one
         // layout. The frozen one is not a default here, it is the only option.
-        ecdsa_v0::inner_signcryption(self, rng, dsep, serialized_msg.as_slice())
+        ecdsa_v0::seal(self, rng, dsep, serialized_msg.as_slice())
     }
 }
 

@@ -35,7 +35,7 @@ fn sender_verf_key_digest(verf_key: &PublicSigKey) -> Result<Vec<u8>, Cryptograp
 // Implements the actual signcryption but without serialization
 //
 // This is the FROZEN layout.
-pub(super) fn inner_signcryption(
+pub(super) fn seal(
     signcrypt_key: &UnifiedSigncryptionKey,
     rng: &mut (impl CryptoRng + RngCore),
     dsep: &DomainSep,
@@ -72,7 +72,7 @@ pub(super) fn inner_signcryption(
 /// Implements the actual unsigncryption process, but without any deserialization
 ///
 /// This is the FROZEN layout.
-pub(super) fn inner_unsigncrypt(
+pub(super) fn open(
     unsign_key: &UnifiedUnsigncryptionKey,
     sender_verf_key: &PublicSigKey,
     dsep: &DomainSep,
@@ -161,8 +161,17 @@ fn check_format_and_signature(
 fn receiver_binding(
     receiver_id: &[u8],
     enc_key: &UnifiedPublicEncKey,
-) -> Result<Vec<u8>, CryptographyError> {
-    Ok([receiver_id, receiver_enc_key_digest(enc_key)?.as_slice()].concat())
+) -> Result<[u8; DIGEST_BYTES + 20], CryptographyError> {
+    if receiver_id.len() != 20 {
+        return Err(CryptographyError::LengthError(format!(
+            "Receiver ID must be 20 bytes (the Ethereum address), got {} bytes",
+            receiver_id.len()
+        )));
+    }
+    let mut out = [0u8; DIGEST_BYTES + 20];
+    out[..20].copy_from_slice(receiver_id);
+    out[20..].copy_from_slice(receiver_enc_key_digest(enc_key)?.as_slice());
+    Ok(out)
 }
 
 /// Decrypt a signcrypted message and ignore the signature
@@ -314,6 +323,7 @@ mod tests {
         let other = signcryption_fixture(PkeSchemeType::MlKem512, 501);
 
         let base = receiver_binding(&f.receiver_id, &f.enc_key).unwrap();
+        println!("base: {:?}", base.len());
         assert_eq!(base, receiver_binding(&f.receiver_id, &f.enc_key).unwrap());
         assert_ne!(
             base,
