@@ -42,6 +42,7 @@ use itertools::Itertools;
 #[cfg(any(test, feature = "testing"))]
 use rand::SeedableRng;
 use std::cell::RefCell;
+#[cfg(any(test, feature = "testing"))]
 use std::collections::HashMap;
 #[cfg(any(test, feature = "testing"))]
 use std::collections::HashSet;
@@ -62,7 +63,7 @@ use threshold_types::role::Role;
 use tokio::task::JoinSet;
 use tokio::time::{Duration, Instant};
 use tracing::instrument;
-use zeroize::{Zeroize, ZeroizeOnDrop};
+use zeroize::{Zeroize, ZeroizeOnDrop, Zeroizing};
 
 #[cfg(any(test, feature = "testing"))]
 use super::decryption::DecryptionMode;
@@ -336,9 +337,7 @@ impl<const EXTENSION_DEGREE: usize> OnlineNoiseFloodDecryption<EXTENSION_DEGREE>
 /// * `secret_key_share` - The secret key share of the party_keyshare
 ///
 /// # Returns
-/// * A tuple containing the results of the decryption and the time it took to execute the decryption
-/// * The results of the decryption are a hashmap containing the session id and the decrypted plaintexts
-/// * The time it took to execute the decryption
+/// * A tuple containing the decrypted plaintext and the time it took to execute the decryption
 ///
 /// # Remarks
 /// The decryption protocol is executed in the following steps:
@@ -352,7 +351,7 @@ pub async fn decrypt_using_noiseflooding<const EXTENSION_DEGREE: usize, P, O, T>
     noiseflood_session: &mut P,
     ct: LowLevelCiphertextAndKeys,
     secret_key_share: Arc<PrivateKeySet<EXTENSION_DEGREE>>,
-) -> anyhow::Result<(HashMap<String, T>, Duration)>
+) -> anyhow::Result<(T, Duration)>
 where
     P: OfflineNoiseFloodSession<EXTENSION_DEGREE>,
     O: OnlineNoiseFloodDecryption<EXTENSION_DEGREE>,
@@ -381,7 +380,6 @@ where
         },
     };
 
-    let mut results = HashMap::with_capacity(1);
     let len = ct_large.len();
     let preprocessing = noiseflood_session.init_prep_noiseflooding(len).await?;
     let session = noiseflood_session.get_mut_base_session();
@@ -403,11 +401,10 @@ where
         "Noiseflood result in session {:?} is ready",
         session.session_id()
     );
-    results.insert(format!("{}", session.session_id()), outputs);
 
     let execution_stop_timer = Instant::now();
     let elapsed_time = execution_stop_timer.duration_since(execution_start_timer);
-    Ok((results, elapsed_time))
+    Ok((outputs, elapsed_time))
 }
 
 /// Partially decrypt a ciphertext using noise flooding.
@@ -425,9 +422,8 @@ where
 /// * `secret_key_share` - The secret key share of the party_keyshare
 ///
 /// # Returns
-/// * A tuple containing the results of the partial decryption, the packing factor of the ciphertext blocks, and the time it took to execute
-/// * The results of the partial decryption are a hashmap containing the session id and the partially decrypted ciphertexts
-/// * The time it took to execute the partial decryption
+/// * A tuple containing the masked partial decryption of each packed block, the packing factor of the ciphertext blocks, and the time it took to execute
+/// * The partial decryptions are wrapped in [`Zeroizing`] because they are this party's share of the plaintext
 ///
 /// # Remarks
 /// The partial decryption protocol is executed in the following steps:
@@ -445,7 +441,7 @@ pub async fn partial_decrypt_using_noiseflooding<const EXTENSION_DEGREE: usize, 
     ct: LowLevelCiphertextAndKeys,
     secret_key_share: &PrivateKeySet<EXTENSION_DEGREE>,
 ) -> anyhow::Result<(
-    HashMap<String, Vec<ResiduePoly<Z128, EXTENSION_DEGREE>>>,
+    Zeroizing<Vec<ResiduePoly<Z128, EXTENSION_DEGREE>>>,
     u32,
     Duration,
 )>
@@ -453,14 +449,13 @@ where
     P: OfflineNoiseFloodSession<EXTENSION_DEGREE>,
     ResiduePoly<Z128, EXTENSION_DEGREE>: ErrorCorrect + Invert + Solve,
 {
-    let sid = {
+    {
         let session = noiseflood_session.get_mut_base_session();
         let sid: u128 = session.session_id().into();
         tracing::Span::current().record("sid", sid);
         let my_role = session.my_role();
         tracing::Span::current().record("my_role", my_role.to_string());
-        sid
-    };
+    }
 
     let execution_start_timer = Instant::now();
     let ddec_key_type = ct.decryption_key_type();
@@ -495,11 +490,17 @@ where
         }
     }
 
-    let mut results = HashMap::with_capacity(1);
     let len = ct_large.len();
     let mut preparation = noiseflood_session.init_prep_noiseflooding(len).await?;
-    let mut shared_masked_ptxts = Vec::with_capacity(len);
+    // The capacity is exact, so the vector never reallocates and leaves no unwiped copy.
+    let mut shared_masked_ptxts = Zeroizing::new(Vec::with_capacity(len));
     for current_ct_block in ct_large.packed_blocks() {
+        // TODO(https://github.com/zama-ai/kms-internal/issues/3159)
+        // The unmasked `partial_decrypt` is not wiped. `ResiduePoly` is `Copy`,
+        // so the compiler can leave copies of it on the stack. Also zeroize
+        // conflicts with versioning. We need to resolve
+        // github.com/zama-ai/kms-internal/issues/3176 (removing Copy) and
+        // github.com/zama-ai/tfhe-rs-internal/issues/1535 (versioning conflict with zeroize).
         let partial_decrypt =
             partial_decrypt128(secret_key_share, current_ct_block, ddec_key_type)?;
         let res = partial_decrypt + preparation.next_mask()?;
@@ -507,11 +508,9 @@ where
         shared_masked_ptxts.push(res);
     }
 
-    results.insert(format!("{sid}"), shared_masked_ptxts);
-
     let execution_stop_timer = Instant::now();
     let elapsed_time = execution_stop_timer.duration_since(execution_start_timer);
-    Ok((results, packing_factor as u32, elapsed_time))
+    Ok((shared_masked_ptxts, packing_factor as u32, elapsed_time))
 }
 
 /// Decrypts a ciphertext using bit decomposition.
@@ -527,9 +526,7 @@ where
 /// * `ksk` - The public keyswitch key
 ///
 /// # Returns
-/// * A tuple containing the results of the decryption and the time it took to execute the decryption
-/// * The results of the decryption are a hashmap containing the session id and the decrypted plaintexts
-/// * The time it took to execute the decryption
+/// * A tuple containing the decrypted plaintext and the time it took to execute the decryption
 ///
 /// # Remarks
 /// The decryption protocol is executed in the following steps:
@@ -543,7 +540,7 @@ pub async fn secure_decrypt_using_bitdec<const EXTENSION_DEGREE: usize, T>(
     ct: &RadixOrBoolCiphertext,
     secret_key_share: &PrivateKeySet<EXTENSION_DEGREE>,
     ksk: &LweKeyswitchKey<Vec<u64>>,
-) -> anyhow::Result<(HashMap<String, T>, Duration)>
+) -> anyhow::Result<(T, Duration)>
 where
     T: tfhe::integer::block_decomposition::Recomposable
         + tfhe::core_crypto::commons::traits::CastFrom<u128>,
@@ -551,7 +548,6 @@ where
     ResiduePoly<Z64, EXTENSION_DEGREE>: ErrorCorrect + Invert + Solve,
 {
     let execution_start_timer = Instant::now();
-    let mut results = HashMap::with_capacity(1);
 
     let sid = session.session_id();
 
@@ -567,11 +563,10 @@ where
     .await?;
 
     tracing::info!("Bitdec result in session {:?} is ready", sid);
-    results.insert(format!("{sid}"), outputs);
 
     let execution_stop_timer = Instant::now();
     let elapsed_time = execution_stop_timer.duration_since(execution_start_timer);
-    Ok((results, elapsed_time))
+    Ok((outputs, elapsed_time))
 }
 
 /// Partially decrypt a ciphertext using bit decomposition.
@@ -588,9 +583,8 @@ where
 /// * `ksk` - The public keyswitch key
 ///
 /// # Returns
-/// * A tuple containing the results of the partial decryption and the time it took to execute
-/// * The results of the partial decryption are a hashmap containing the session id and the partially decrypted ciphertexts
-/// * The time it took to execute the partial decryption
+/// * A tuple containing the partial decryption of each block and the time it took to execute
+/// * The partial decryptions are wrapped in [`Zeroizing`] because they are this party's share of the plaintext
 ///
 /// # Remarks
 /// The partial decryption protocol is executed in the following steps:
@@ -598,17 +592,13 @@ where
 /// 2. The partial interactive decryption is executed, without opening the result in the last step
 /// 4. The results are returned
 ///
-#[expect(clippy::type_complexity)]
 #[instrument(skip_all, fields(session_id = ?session.session_id(), my_role = ?session.my_role()))]
 pub async fn secure_partial_decrypt_using_bitdec<const EXTENSION_DEGREE: usize>(
     session: &mut SmallSession<ResiduePoly<Z64, EXTENSION_DEGREE>>,
     ct: &RadixOrBoolCiphertext,
     secret_key_share: &PrivateKeySet<EXTENSION_DEGREE>,
     ksk: &LweKeyswitchKey<Vec<u64>>,
-) -> anyhow::Result<(
-    HashMap<String, Vec<ResiduePoly<Z64, EXTENSION_DEGREE>>>,
-    Duration,
-)>
+) -> anyhow::Result<(Zeroizing<Vec<ResiduePoly<Z64, EXTENSION_DEGREE>>>, Duration)>
 where
     ResiduePoly<Z128, EXTENSION_DEGREE>: ErrorCorrect + Invert + Solve,
     ResiduePoly<Z64, EXTENSION_DEGREE>: ErrorCorrect + Invert + Solve,
@@ -618,8 +608,12 @@ where
     let own_role = session.my_role();
     let mut prep = secure_init_prep_bitdec_small_session(session, ct.len()).await?;
 
-    let mut results = HashMap::with_capacity(1);
-
+    // TODO(github.com/zama-ai/kms-internal/issues/3159)
+    // Neither `partial_dec` nor `pdec_blocks` is zeroized. `ResiduePoly` is `Copy`, so the
+    // compiler can leave copies of `partial_dec` that `Zeroize` cannot reach.
+    // Also ZeroizeOnDrop conflicts with versioning. We need to resolve
+    // github.com/zama-ai/kms-internal/issues/3176 (removing Copy) and
+    // github.com/zama-ai/tfhe-rs-internal/issues/1535 (versioning conflict with zeroize).
     let mut pdec_blocks = Vec::with_capacity(ct.len());
     for current_ct_block in ct.blocks() {
         let partial_dec = partial_decrypt64(secret_key_share, ksk, current_ct_block)?;
@@ -637,15 +631,16 @@ where
     let total_bits = secret_key_share.parameters.total_block_bits() as usize;
 
     // bit-compose the plaintexts
-    let ptxt_sums = BatchedBits::extract_ptxts(bits, total_bits, &mut prep, session).await?;
-    let ptxt_sums: Vec<_> = ptxt_sums.iter().map(|ptxt_sum| ptxt_sum.value()).collect();
+    let ptxt_sums =
+        Zeroizing::new(BatchedBits::extract_ptxts(bits, total_bits, &mut prep, session).await?);
+    let ptxt_sums: Zeroizing<Vec<_>> =
+        Zeroizing::new(ptxt_sums.iter().map(|ptxt_sum| ptxt_sum.value()).collect());
 
     tracing::info!("Bitdec result in session {:?} is ready", sid);
-    results.insert(format!("{sid}"), ptxt_sums);
 
     let execution_stop_timer = Instant::now();
     let elapsed_time = execution_stop_timer.duration_since(execution_start_timer);
-    Ok((results, elapsed_time))
+    Ok((ptxt_sums, elapsed_time))
 }
 
 /// Represent the blocks (decryptions of the LWE ciphertext)

@@ -185,7 +185,7 @@ pub(crate) async fn run_decryption_centralized(
         let (ct, ct_format, fhe_type) =
             compute_cipher_from_stored_key(test_path, msg, key_id, None, encryption_config).await;
         let ctt = TypedCiphertext {
-            ciphertext: ct,
+            ciphertext: ct.into(),
             fhe_type: fhe_type as i32,
             ciphertext_format: ct_format.into(),
             external_handle: i.to_be_bytes().to_vec(),
