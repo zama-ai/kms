@@ -46,6 +46,9 @@ rates = [
   { rate = 1200 },
   { rate = 1400 },
   { rate = 1700, maxfail = 10, maxshed = 25, pct = 70, allowfail = true },
+  { rate = 2000, maxfail = 10, maxshed = 25, pct = 70, allowfail = true },
+  { rate = 2400, maxfail = 10, maxshed = 25, pct = 70, allowfail = true },
+  { rate = 2800, maxfail = 10, maxshed = 25, pct = 70, allowfail = true },
 ]
 
 [scenarios.udec-sync]
@@ -55,4 +58,7 @@ rates = [
   { rate = 1500 },
   { rate = 1900 },
   { rate = 2300, maxfail = 10, maxshed = 25, pct = 70, allowfail = true },
+  { rate = 2700, maxfail = 10, maxshed = 25, pct = 70, allowfail = true },
+  { rate = 3100, maxfail = 10, maxshed = 25, pct = 70, allowfail = true },
+  { rate = 3500, maxfail = 10, maxshed = 25, pct = 70, allowfail = true },
 ]
