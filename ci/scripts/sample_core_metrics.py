@@ -5,6 +5,7 @@ import os
 import re
 import time
 from concurrent.futures import ThreadPoolExecutor
+from pathlib import Path
 
 from perf_common import best_effort, cli, timestamp
 
@@ -141,15 +142,84 @@ def scrape_once(namespace, port, timeout):
             print("\n".join(future.result()), flush=True)
 
 
+NETWORK_EVENT = re.compile(r'^kms_network_debug_events_total[{].*event="([a-z_]+)"')
+# A non-zero change of these events means that parties failed to talk to each other.
+WARN_EVENTS = ("send_failed", "send_retry", "receive_wait_timeout")
+
+
+def network_event_counts(lines):
+    """Maps (pod, event) to the value of kms_network_debug_events_total in a snapshot."""
+    counts = {}
+    for line in lines:
+        fields = line.split()
+        if len(fields) == 4 and (match := NETWORK_EVENT.match(fields[2])):
+            counts[(fields[1], match.group(1))] = float(fields[3])
+    return counts
+
+
+def network_event_deltas(before, after):
+    """Returns the non-zero change per (pod, event) between two snapshots.
+
+    A pod or event missing from `before` counts from zero. A negative change means that the
+    pod restarted between the snapshots.
+    """
+    old, new = network_event_counts(before), network_event_counts(after)
+    deltas = {key: value - old.get(key, 0) for key, value in new.items()}
+    return {key: delta for key, delta in deltas.items() if delta}
+
+
+def pod_order(pod):
+    return [int(part) if part.isdigit() else part for part in re.split(r"(\d+)", pod)]
+
+
+def summarize_network_events(before_path, after_path, label):
+    """Prints the network event changes between two snapshot files, plus scrape problems.
+
+    Emits one GitHub warning annotation per event in WARN_EVENTS that grew on any pod.
+    """
+    before = before_path.read_text().splitlines()
+    after = after_path.read_text().splitlines()
+    for line in before + after:
+        if " scrape_error " in line or " scrape_partial " in line:
+            print(line)
+    deltas = network_event_deltas(before, after)
+    print(f"Network debug events during the {label} tests (non-zero changes only):")
+    for (pod, event), delta in sorted(deltas.items(), key=lambda i: (pod_order(i[0][0]), i[0][1])):
+        print(f"{pod:<22} {event:<30} {delta:g}")
+    for event in WARN_EVENTS:
+        pods = [
+            f"{pod} (+{delta:g})"
+            for (pod, name), delta in sorted(deltas.items(), key=lambda i: pod_order(i[0][0]))
+            if name == event and delta > 0
+        ]
+        if pods:
+            print(f"::warning title=Network events ({label})::{event} on {', '.join(pods)}")
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("namespace", nargs="?", default="kms-ci")
     parser.add_argument("interval", nargs="?", type=float, default=5)
     parser.add_argument("port", nargs="?", type=int, default=9646)
+    parser.add_argument("--once", action="store_true", help="take one snapshot and exit")
+    parser.add_argument(
+        "--network-delta",
+        nargs=2,
+        type=Path,
+        metavar=("BEFORE", "AFTER"),
+        help="summarize the network events between two --once snapshots and exit",
+    )
+    parser.add_argument("--label", default="", help="test label for --network-delta output")
     args = parser.parse_args()
+    if args.network_delta:
+        summarize_network_events(*args.network_delta, args.label)
+        return
     timeout = float(os.environ.get("SCRAPE_TIMEOUT", "4"))
     if args.interval <= 0 or timeout <= 0 or not 0 < args.port < 65536:
         parser.error("interval and timeout must be positive; port must be 1..65535")
+    if args.once:
+        scrape_once(args.namespace, args.port, timeout)
+        return
     print(
         f"{timestamp()} sampler_start namespace={args.namespace} "
         f"interval={args.interval:g}s port={args.port}",

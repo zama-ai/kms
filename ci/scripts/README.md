@@ -243,18 +243,22 @@ to run `kubectl top pod` in that namespace.
 
 `rolling_upgrade.sh`, driven by the `rolling-upgrade-testing.yml` GitHub Actions
 workflow (`workflow_dispatch` only), deploys 13 enclave parties on an OLD version,
-rolls them to a NEW version in two waves (5/13 then 9/13), and checks decryption on
-the mixed-version cluster after each wave.
+rolls them to a NEW version in two batches (5, then 9 of 13 parties by default), and
+checks decryption on the mixed-version cluster after each batch.
 
 Dispatch inputs:
 
 | Input | Meaning |
 |-------|---------|
 | `old_image_tag` / `new_image_tag` | KMS core image tags before / after the upgrade |
-| `core_client_image_tag` | Core-client (test harness) tag; defaults to `new_image_tag`. Must be ≤ the oldest server version in the run |
+| `new_image_repository` | Repositories for the new side: `insecure` (default; nightly and branch builds) or `legacy` (pre-split repositories with the release tags, e.g. `v0.14.2-0`). `build=true` requires `insecure` |
+| `core_client_image_tag` | Core-client (test harness) tag from the new side's repository; defaults to `old_image_tag` from the old repository. Must be ≤ the oldest server version in the run. Required for `prss-threshold` |
 | `old_kms_chart_version` / `new_kms_chart_version` | kms-core Helm chart per side (`repository` = in-tree chart) |
-| `first_batch_parties` / `second_batch_parties` | Party IDs upgraded in wave 1 / wave 2 (default `1,2,3,4,5` / `6,7,8,9`) |
+| `tkms_infra_chart_version` | TKMS Infra Helm chart version (default `0.3.2`) |
+| `first_batch_parties` / `second_batch_parties` | Party IDs upgraded in batch 1 / batch 2 (default `1,2,3,4,5` / `6,7,8,9`) |
 | `test_profile` | `decrypt` (default) or `prss-threshold` — see below |
+| `epoch_migration` | Pass the 0.15 epoch-data migration config to the upgraded parties (default off) — see below |
+| `restart_parties` | After each upgrade batch, restart the core pods of these parties together before the mixed-state tests: `all` or comma-separated party IDs (default empty = no restart). From batch 2 on, only the upgraded parties restart otherwise, so restarting a subset shows which of the running parties hold state that breaks the tests |
 | `client_logs` | Core-client tracing logs (default off) |
 | `fhe_params` | `Test` (default) or `Default` |
 | `build` / `kms_branch` | Build the new image from a branch instead of using `new_image_tag` |
@@ -278,12 +282,19 @@ Because `*-reqid-above` failures are expected, the job's correctness gate exclud
 `reqid-above` pods — read each probe's PASS/FAIL from the run summary, not the job
 conclusion. Requires a threshold-aware new image and a request-ID-capable core-client.
 
+#### Network metrics
+
+Around the tests after each batch, the workflow takes a snapshot of the Prometheus metrics of all 13 cores (`sample_core_metrics.py --once`). `sample_core_metrics.py --network-delta` then prints, per pod, the non-zero change of each `kms_network_debug_events_total` event during the tests: successful, retried and failed sends, received messages, and dropped or late messages. A negative value means that the pod restarted between the snapshots. If `send_failed`, `send_retry` or `receive_wait_timeout` grew on any pod, the step adds a warning annotation to the run, also when the tests pass. The snapshots are in the `kms-core-rolling-upgrade-logs` artifact (`kms-core-network-metrics-{before,after}-{batch1,batch2}.txt`). v0.14 and older cores do not export these events.
+
+#### Epoch-data migration (v0.14 → v0.15+)
+
+A v0.15+ core moves the legacy PRSS setup into per-epoch storage at startup. On a node with legacy PRSS data, it does not start without a migration config that maps each epoch to its context (`kmsCore.migration.contextAssociations`). Set `epoch_migration=true` for a `v0.14.x` → `v0.15+` upgrade. `rolling_upgrade.sh` then gives the upgraded parties the mapping for the only epoch that `kms-init` creates: the default MPC context to the default epoch. Leave it off for other version pairs, because `v0.13.x` and `v0.14.x` cores reject the `[migration]` section. See [Upgrade from v0.14 to v0.15](../../docs/operations/upgrade-0.14-to-0.15.md) for the operator steps.
+
 #### Core-client compatibility
 
-The Argo command strings target the **`v0.13.x` core-client CLI**. A main / `v0.14+` client is **not** compatible as-is.
-So set `core_client_image_tag` to a `v0.13.x` tag, and **do not** use `build=true` (it would build a main-based client).
-Making the `decrypt` profile main-compatible means updating those commands; the `prss-threshold` profile is
-`v0.13.x`-only by design (`v0.14` rejects the `legacy_prss_mask_*` config).
+The Argo command strings target the **`v0.13.x` and `v0.14.x` core-client CLIs**. The baseline keygen step detects which insecure keygen form the client supports: one step (`v0.13.x`), or `insecure-preproc-key-gen` followed by `insecure-key-gen -i` (`v0.14.x`). The baseline pins the client to `old_image_tag`, so `old_image_tag` can be a `v0.13.x` or a `v0.14.x` tag.
+A main (`v0.15`) client is **not** compatible as-is, because it has no `--num-requests` option. Its replacement (`--rate`/`--duration`) does not fail the command when a request gets too few responses, so it cannot replace the `-a` correctness check. If `core_client_image_tag` is empty, the mixed-state runs use the `old_image_tag` client, which is compatible when `old_image_tag` is a `v0.13.x` or `v0.14.x` tag. Do not set `core_client_image_tag` to a main or `build=true` tag.
+The `prss-threshold` profile is `v0.13.x`-only by design (`v0.14` rejects the `legacy_prss_mask_*` config). Its probes pass `--request-id`, which no released core-client supports, so it also needs an explicit `core_client_image_tag`. The workflow fails at the start if either condition is not met.
 
 ### Debugging
 

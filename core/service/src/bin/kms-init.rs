@@ -16,7 +16,7 @@ use std::time::Duration;
 /// Alternatively, if the client-facing GRPC endpoint is not publicly reachable,
 /// then `kms-init` must be executed against every KMS core node.
 #[derive(Parser)]
-#[clap(name = "KMS initialization CLI")]
+#[clap(name = "KMS initialization CLI", version)]
 struct Args {
     /// A list of addresses of uninitialized cores.
     #[clap(short, long, required = true)]

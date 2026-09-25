@@ -15,21 +15,33 @@
 #
 # How it runs (high level)
 # ------------------------
-#   1. Optional: if workflow input build=true, call docker-build.yml to build the
-#      new image from the selected branch; its image_tag becomes the new tag.
-#   3. Deploy all 13 parties with OLD_IMAGE_TAG and old_kms_chart_version
-#      (ci/scripts/deploy.sh --target aws-perf).
-#   4. Baseline Argo test-suite (thresholdWithEnclave-test-suite-workflow):
-#      insecure key-gen + CRS + public/user-decrypt correctness smoke, all-old.
-#      Capture the generated key-id for the mixed-state decrypt runs.
-#   5. First rolling upgrade: upgrade first_batch_parties to NEW_IMAGE_TAG
-#      (default 1-5); core-client moves to new tag on all parties as required.
-#   6. Argo rolling-upgrade workflow: decrypt the baseline key-id on the mixed
-#      cluster (public + user decrypt, correctness-only; label mixed-5-of-13).
-#   7. Second rolling upgrade: upgrade second_batch_parties (default 6-9);
-#      cumulative upgraded set is first_batch + second_batch (9/13).
-#   8. Argo rolling-upgrade workflow again (label mixed-9-of-13).
-#   9. Upload Argo and kms-core logs; helm/kubectl cleanup; stop runner.
+#   - Optional: if workflow input build=true, call docker-build.yml to build the
+#     new image from the selected branch; its image_tag becomes the new tag.
+#   - Step 1: Deploy all 13 parties with OLD_IMAGE_TAG and old_kms_chart_version
+#     (ci/scripts/deploy.sh --target aws-perf).
+#   - Step 2: Baseline Argo test-suite (thresholdWithEnclave-test-suite-workflow):
+#     insecure key-gen + CRS + public/user-decrypt correctness smoke, all-old.
+#     Capture the generated key-id for the mixed-state decrypt runs.
+#   - Step 3: First rolling upgrade: upgrade first_batch_parties to NEW_IMAGE_TAG
+#     (default 1-5). The core-client in each party's Helm release moves to
+#     NEW_IMAGE_TAG on all parties; the Argo tests use the harness core-client
+#     (core_client_image_tag) instead.
+#   - Step 4: Argo mixed-state tests (decrypt-test-during-upgrades.yaml, or the
+#     rolling-upgrade workflow for test_profile=prss-threshold): decrypt the
+#     baseline key-id on the mixed cluster (public + user decrypt,
+#     correctness-only; label mixed-<n>-of-13).
+#   - Step 5: Second rolling upgrade: upgrade second_batch_parties (default 6-9);
+#     cumulative upgraded set is first_batch + second_batch (9 of 13 by default).
+#   - Step 6: Argo mixed-state tests again.
+#   - Upload Argo and kms-core logs (with the metric snapshots); helm/kubectl
+#     cleanup; stop runner.
+#
+# Each rolling upgrade (ci/scripts/rolling_upgrade.sh) passes the epoch-data
+# migration config to the upgraded parties if epoch_migration is set, and
+# restarts the parties in restart_parties at its end. Around Step 4 and Step 6,
+# a snapshot of the network metrics of all cores shows the transport events
+# (sends, retries, dropped or late messages) per pod during the tests, and adds
+# a warning annotation when parties failed to talk to each other.
 #
 # Correctness signal: each decrypt encrypts a known value client-side (-e) and
 # fails on mismatch; runs use -a (expect a response from ALL 13 cores) so the
@@ -48,14 +60,24 @@
 #                            Baseline KMS Core image tag for initial deploy from
 #                            the legacy, pre-split repositories.
 #   new_image_tag          (string, required)
-#                            Target KMS Core image tag from the new insecure
-#                            repositories (ignored if build=true; then the
-#                            docker-build output is used).
-#   core_client_image_tag  (string, optional, default = new_image_tag)
+#                            Target KMS Core image tag, from the repositories
+#                            that new_image_repository selects (ignored if
+#                            build=true; then the docker-build output is used).
+#   new_image_repository   (choice insecure|legacy, default insecure)
+#                            Repositories for the new side. insecure = the
+#                            split *-insecure repositories, which hold nightly
+#                            and branch builds. legacy = the pre-split
+#                            repositories, which hold the release tags (e.g.
+#                            v0.14.2-0). build=true requires insecure.
+#   core_client_image_tag  (string, optional, default = old_image_tag)
 #                            Core-client (test harness) image tag for the mixed-
 #                            state runs, decoupled from the core versions under
-#                            test. The baseline run instead pins the core-client
-#                            to old_image_tag so the harness matches the all-old
+#                            test. A set tag comes from the new side's
+#                            repository; the default comes from the old one, so
+#                            the harness is never newer than the oldest core.
+#                            Required for test_profile=prss-threshold. The
+#                            baseline run always pins the core-client to
+#                            old_image_tag so the harness matches the all-old
 #                            cluster.
 #   client_logs            (boolean, default false)
 #                            Enable core-client tracing logs.
@@ -68,20 +90,33 @@
 #   fhe_params             (choice Default|Test, default Test)
 #                            FHE parameters for preprocessing and keygen in Argo.
 #   old_kms_chart_version  (string, default 1.5.1)
-#                            KMS Helm chart version for the all-old deploy (step 3).
+#                            KMS Helm chart version for the all-old deploy (Step 1).
 #   new_kms_chart_version  (string, default repository)
 #                            KMS Helm chart for upgraded parties; use "repository"
 #                            to use charts from the checked-out branch.
 #   tkms_infra_chart_version (string, default 0.3.2)
 #                            TKMS Infra Helm chart version.
 #   first_batch_parties    (string, default 1,2,3,4,5)
-#                            Comma-separated party IDs for the first upgrade wave.
+#                            Comma-separated party IDs for the first upgrade batch.
 #   second_batch_parties   (string, default 6,7,8,9)
-#                            Comma-separated party IDs for the second upgrade wave.
+#                            Comma-separated party IDs for the second upgrade batch.
 #   test_profile           (choice decrypt|prss-threshold, default decrypt)
 #                            decrypt = plain pdec/udec correctness on the mixed
 #                            cluster. prss-threshold = legacy-PRSS-mask request-ID
 #                            boundary probe (below/above threshold reqids).
+#   epoch_migration        (boolean, default false)
+#                            Pass the 0.15 epoch-data migration config (default
+#                            context -> default epoch) to the upgraded parties.
+#                            Set it for v0.14.x -> v0.15+ upgrades: a 0.15+ core
+#                            does not start on legacy PRSS data without it, and
+#                            v0.13/v0.14 cores reject it.
+#   restart_parties        (string, default empty = none)
+#                            After each upgrade batch, restart the core pods of
+#                            these parties together before the mixed-state
+#                            tests: "all" or comma-separated party IDs. From
+#                            batch 2 on, only the upgraded parties restart
+#                            otherwise; restarting a subset shows which of the
+#                            running parties hold state that breaks the tests.
 #
 # Jobs
 # ----
@@ -103,8 +138,16 @@ on:
         description: 'New KMS Core image tag to roll out'
         required: true
         type: string
+      new_image_repository:
+        description: 'Repositories for the new side: insecure (nightly and branch builds) or legacy (pre-split repositories with the release tags, e.g. v0.14.2-0). build=true requires insecure.'
+        required: true
+        default: 'insecure'
+        type: choice
+        options:
+          - insecure
+          - legacy
       core_client_image_tag:
-        description: 'Core-client (test harness) image tag; independent of the core versions under test. Defaults to new_image_tag if empty.'
+        description: 'Core-client (test harness) image tag from the new side''s repository (see new_image_repository); independent of the core versions under test. Defaults to old_image_tag from the old repository if empty. Required for test_profile=prss-threshold.'
         required: false
         type: string
       client_logs:
@@ -162,6 +205,16 @@ on:
         options:
           - decrypt
           - prss-threshold
+      epoch_migration:
+        description: 'Pass the 0.15 epoch-data migration config to upgraded parties. Set for v0.14.x -> v0.15+ upgrades; v0.13/v0.14 cores reject it.'
+        required: true
+        default: false
+        type: boolean
+      restart_parties:
+        description: 'After each upgrade batch, restart the core pods of these parties together before the mixed-state tests: "all" or comma-separated party IDs (e.g. 1,2,3,4,5). Empty = no restart.'
+        required: false
+        default: ''
+        type: string
 
 permissions: {}
 
@@ -205,9 +258,11 @@ jobs:
       OLD_KMS_CORE_IMAGE_NAME: 'hub.zama.org/ghcr/zama-ai/kms/core-service'
       OLD_KMS_CORE_CLIENT_IMAGE_NAME: 'hub.zama.org/ghcr/zama-ai/kms/core-client'
       OLD_KMS_CORE_ENCLAVE_IMAGE_NAME: 'hub.zama.org/ghcr/zama-ai/kms/core-service-enclave'
-      NEW_KMS_CORE_IMAGE_NAME: 'hub.zama.org/ghcr/zama-ai/kms/core-service-insecure'
-      NEW_KMS_CORE_CLIENT_IMAGE_NAME: 'hub.zama.org/ghcr/zama-ai/kms/core-client-insecure'
-      NEW_KMS_CORE_ENCLAVE_IMAGE_NAME: 'hub.zama.org/ghcr/zama-ai/kms/core-service-enclave-insecure'
+      # The new side comes from the split *-insecure repositories (nightly and
+      # branch builds) or from the pre-split repositories (release tags).
+      NEW_KMS_CORE_IMAGE_NAME: ${{ inputs.new_image_repository == 'legacy' && 'hub.zama.org/ghcr/zama-ai/kms/core-service' || 'hub.zama.org/ghcr/zama-ai/kms/core-service-insecure' }}
+      NEW_KMS_CORE_CLIENT_IMAGE_NAME: ${{ inputs.new_image_repository == 'legacy' && 'hub.zama.org/ghcr/zama-ai/kms/core-client' || 'hub.zama.org/ghcr/zama-ai/kms/core-client-insecure' }}
+      NEW_KMS_CORE_ENCLAVE_IMAGE_NAME: ${{ inputs.new_image_repository == 'legacy' && 'hub.zama.org/ghcr/zama-ai/kms/core-service-enclave' || 'hub.zama.org/ghcr/zama-ai/kms/core-service-enclave-insecure' }}
     steps:
       - name: Setup Runs-on
         uses: runs-on/action@cd2b598b0515d39d78c38a02d529db87d2196d1e # v2.0.3
@@ -226,8 +281,16 @@ jobs:
           INPUT_OLD_TAG: ${{ inputs.old_image_tag }}
           INPUT_NEW_TAG: ${{ inputs.new_image_tag }}
           INPUT_CLIENT_TAG: ${{ inputs.core_client_image_tag }}
+          INPUT_TEST_PROFILE: ${{ inputs.test_profile }}
+          INPUT_BUILD: ${{ inputs.build }}
+          INPUT_NEW_REPOSITORY: ${{ inputs.new_image_repository }}
         run: |
           OLD_TAG="${INPUT_OLD_TAG}"
+
+          if [[ "${INPUT_BUILD}" == "true" && "${INPUT_NEW_REPOSITORY}" == "legacy" ]]; then
+            echo "ERROR: build=true pushes the new images to the insecure repositories. Set new_image_repository=insecure, or set build=false to roll out a release tag from the legacy repositories."
+            exit 1
+          fi
 
           if [[ -n "${DOCKER_BUILD_TAG}" ]]; then
             echo "Using freshly built image as new tag"
@@ -237,8 +300,15 @@ jobs:
           fi
 
           # The core-client is the test harness, deliberately decoupled from the
-          # old/new core images under test. Falls back to the new tag if unset.
-          CLIENT_TAG="${INPUT_CLIENT_TAG:-${NEW_TAG}}"
+          # old/new core images under test. It must not be newer than the oldest
+          # core in the run, so it falls back to the old tag and old repository.
+          if [[ -n "${INPUT_CLIENT_TAG}" ]]; then
+            CLIENT_TAG="${INPUT_CLIENT_TAG}"
+            CLIENT_IMAGE_NAME="${NEW_KMS_CORE_CLIENT_IMAGE_NAME}"
+          else
+            CLIENT_TAG="${OLD_TAG}"
+            CLIENT_IMAGE_NAME="${OLD_KMS_CORE_CLIENT_IMAGE_NAME}"
+          fi
 
           if [[ -z "${OLD_TAG}" ]]; then
             echo "ERROR: old_image_tag is required"
@@ -249,9 +319,20 @@ jobs:
             exit 1
           fi
 
+          if [[ "${INPUT_TEST_PROFILE}" == "prss-threshold" ]]; then
+            if [[ "${OLD_TAG}" != v0.13.* ]]; then
+              echo "ERROR: test_profile=prss-threshold needs a v0.13.x old_image_tag, got '${OLD_TAG}'. v0.14+ cores reject the legacy_prss_mask_* config. Use test_profile=decrypt for this upgrade."
+              exit 1
+            fi
+            if [[ -z "${INPUT_CLIENT_TAG}" ]]; then
+              echo "ERROR: test_profile=prss-threshold needs core_client_image_tag. Its probes pass --request-id, which no released core-client supports. Set it to a request-ID-capable core-client build."
+              exit 1
+            fi
+          fi
+
           echo "Old image tag:         ${OLD_TAG}"
-          echo "New image tag:         ${NEW_TAG}"
-          echo "Core-client (harness): ${CLIENT_TAG}"
+          echo "New image tag:         ${NEW_TAG} (${INPUT_NEW_REPOSITORY} repositories, e.g. ${NEW_KMS_CORE_ENCLAVE_IMAGE_NAME})"
+          echo "Core-client (harness): ${CLIENT_IMAGE_NAME}:${CLIENT_TAG}"
 
           {
             echo "OLD_IMAGE_TAG=${OLD_TAG}"
@@ -261,6 +342,7 @@ jobs:
             # (see core_client_image_tag input); used for the mixed-state runs.
             # The baseline run pins the core-client to OLD_IMAGE_TAG instead.
             echo "KMS_CORE_CLIENT_IMAGE_TAG=${CLIENT_TAG}"
+            echo "KMS_CORE_CLIENT_HARNESS_IMAGE_NAME=${CLIENT_IMAGE_NAME}"
           } >> "$GITHUB_ENV"
 
       - name: Configure deployment parameters
@@ -275,6 +357,8 @@ jobs:
           SYNC_SECRETS_CHART_VERSION: '0.2.1'
           CLIENT_LOGS: ${{ inputs.client_logs }}
           TEST_PROFILE: ${{ inputs.test_profile }}
+          EPOCH_MIGRATION_INPUT: ${{ inputs.epoch_migration }}
+          RESTART_PARTIES_INPUT: ${{ inputs.restart_parties }}
         run: |
           # Map the boolean client_logs input to the argo enabled/disabled value
           # (same convention as performance-testing.yml).
@@ -310,6 +394,8 @@ jobs:
             echo "TEST_PROFILE=${TEST_PROFILE}"
             echo "MIXED_WORKFLOW_FILE=${MIXED_WORKFLOW_FILE}"
             echo "ENABLE_PRSS_THRESHOLD=${ENABLE_PRSS_THRESHOLD}"
+            echo "EPOCH_MIGRATION=${EPOCH_MIGRATION_INPUT}"
+            echo "RESTART_PARTIES=${RESTART_PARTIES_INPUT}"
           } >> "$GITHUB_ENV"
 
       # ====================================================================
@@ -482,12 +568,12 @@ jobs:
           echo "BASELINE_KEY_ID=${BASELINE_KEY_ID}" >> "$GITHUB_ENV"
 
       # ====================================================================
-      # STEP 3: Rolling upgrade 5/13 (first batch)
+      # STEP 3: Rolling upgrade (first batch)
       # ====================================================================
       - name: 'Step 3: Rolling upgrade - first batch'
         run: |
           echo "Upgrading first batch [${FIRST_BATCH}] to new tag: ${NEW_IMAGE_TAG}"
-          echo "Core-client will be upgraded to ${NEW_IMAGE_TAG} on all parties"
+          echo "Helm core-client moves to ${NEW_IMAGE_TAG} on all parties; the tests use ${KMS_CORE_CLIENT_HARNESS_IMAGE_NAME}:${KMS_CORE_CLIENT_IMAGE_TAG}"
           chmod +x ci/scripts/rolling_upgrade.sh
           ./ci/scripts/rolling_upgrade.sh \
             --old-tag "${OLD_IMAGE_TAG}" \
@@ -502,15 +588,30 @@ jobs:
             --tkms-infra-version "${TKMS_INFRA_CHART_VERSION}"
 
       # ====================================================================
-      # STEP 4: Run performance tests with 5/13 upgraded
+      # Network metrics snapshots around the mixed-state tests. Each pair
+      # shows the transport events (failed or retried sends, dropped or late
+      # messages) per pod during the tests, and warns when parties failed to
+      # talk to each other.
       # ====================================================================
-      - name: 'Step 4: Run performance tests (5/13 mixed state)'
+      - name: 'Snapshot network metrics before batch 1 tests'
+        id: metrics-before-batch1
+        continue-on-error: true
+        run: |
+          python3 ci/scripts/sample_core_metrics.py "${NAMESPACE}" --once \
+            > kms-core-network-metrics-before-batch1.txt
+          grep -c "scrape_ok" kms-core-network-metrics-before-batch1.txt | xargs echo "Pods scraped:"
+
+      # ====================================================================
+      # STEP 4: Run performance tests with the first batch upgraded
+      # ====================================================================
+      - name: 'Step 4: Run performance tests (batch 1 mixed state)'
         env:
           SERVER_URL: ${{ github.server_url }}
           REPOSITORY: ${{ github.repository }}
           RUN_ID: ${{ github.run_id }}
         run: |
-          echo "Running decrypt correctness tests (public + user) with 5/13 nodes upgraded..."
+          NUM_UPGRADED=$(echo "${FIRST_BATCH}" | tr ',' '\n' | wc -l | tr -d ' ')
+          echo "Running decrypt correctness tests (public + user) with ${NUM_UPGRADED}/13 nodes upgraded (batch 1)..."
           echo "Reusing pre-upgrade BASELINE_KEY_ID=${BASELINE_KEY_ID}"
 
           if [[ "${TLS}" == "true" ]]; then
@@ -520,21 +621,21 @@ jobs:
           fi
 
           # Mixed-state run: decrypt the pre-upgrade BASELINE_KEY_ID on the mixed
-          # cluster. core-client runs the NEW tag; core images stay mixed.
+          # cluster. core-client runs the harness image (KMS_CORE_CLIENT_*); core
+          # images stay mixed.
           # The Argo workflow file depends on the profile; MIXED_WORKFLOW_FILE is
           # set in "Configure deployment parameters".
           cp ./ci/perf-testing/argo-workflow/"${MIXED_WORKFLOW_FILE}" \
-             /tmp/mixed-5-workflow.yaml
-          sed -i "s/<client-version>/${KMS_CORE_CLIENT_IMAGE_TAG}/g" /tmp/mixed-5-workflow.yaml
-          sed -i "s/<version>/${NEW_IMAGE_TAG}/g" /tmp/mixed-5-workflow.yaml
+             /tmp/mixed-batch1-workflow.yaml
+          sed -i "s|hub.zama.org/ghcr/zama-ai/kms/core-client-insecure:<client-version>|${KMS_CORE_CLIENT_HARNESS_IMAGE_NAME}:<client-version>|g" /tmp/mixed-batch1-workflow.yaml
+          sed -i "s/<client-version>/${KMS_CORE_CLIENT_IMAGE_TAG}/g" /tmp/mixed-batch1-workflow.yaml
+          sed -i "s/<version>/${NEW_IMAGE_TAG}/g" /tmp/mixed-batch1-workflow.yaml
 
-          # Count upgraded nodes from FIRST_BATCH
-          NUM_UPGRADED=$(echo "${FIRST_BATCH}" | tr ',' '\n' | wc -l | tr -d ' ')
           RUN_URL="${SERVER_URL}/${REPOSITORY}/actions/runs/${RUN_ID}"
 
           # The prss-threshold profile pins unique request-IDs straddling the
           # legacy-mask boundary; the decrypt profile uses random IDs. IDs must be
-          # globally unique across pub/user AND across the 5/13 and 9/13 runs.
+          # globally unique across pub/user AND across the batch 1 and batch 2 runs.
           REQID_ARGS=()
           if [[ "${ENABLE_PRSS_THRESHOLD}" == "true" ]]; then
             REQID_ARGS=(
@@ -545,7 +646,7 @@ jobs:
             )
           fi
 
-          argo submit -n argo /tmp/mixed-5-workflow.yaml \
+          argo submit -n argo /tmp/mixed-batch1-workflow.yaml \
             -p tls="${TLS_STATUS}" \
             -p client-logs="${CLIENT_LOGS_STATUS}" \
             -p fhe-params="${FHE_PARAMS}" \
@@ -558,9 +659,9 @@ jobs:
             -p num_total="13" \
             "${REQID_ARGS[@]}"
 
-          echo "Streaming mixed-5/13 workflow logs..."
-          argo logs @latest -f -n "${NAMESPACE}" | tee argo-mixed-5-logs.txt
-          echo "Mixed 5/13 tests completed."
+          echo "Streaming batch 1 mixed-state workflow logs..."
+          argo logs @latest -f -n "${NAMESPACE}" | tee argo-mixed-batch1-logs.txt
+          echo "Batch 1 mixed-state tests completed."
 
           # Correctness gate: fail if any non-warmup decrypt pod did not succeed.
           FAILED_NODES=$(argo get @latest -n "${NAMESPACE}" -o json | jq -r '
@@ -569,13 +670,25 @@ jobs:
                      and (.displayName | test("warmup|reqid-above") | not))
             | .displayName')
           if [[ -n "${FAILED_NODES}" ]]; then
-            echo "ERROR: mixed-5/13 test pods did not succeed:"
+            echo "ERROR: batch 1 mixed-state test pods did not succeed:"
             echo "${FAILED_NODES}"
             exit 1
           fi
 
+      - name: 'Snapshot network metrics after batch 1 tests'
+        if: always() && steps.metrics-before-batch1.outcome == 'success'
+        continue-on-error: true
+        run: |
+          python3 ci/scripts/sample_core_metrics.py "${NAMESPACE}" --once \
+            > kms-core-network-metrics-after-batch1.txt
+          NUM_UPGRADED=$(echo "${FIRST_BATCH}" | tr ',' '\n' | wc -l | tr -d ' ')
+          python3 ci/scripts/sample_core_metrics.py \
+            --label "batch 1, ${NUM_UPGRADED}/13 upgraded" --network-delta \
+            kms-core-network-metrics-before-batch1.txt \
+            kms-core-network-metrics-after-batch1.txt
+
       # ====================================================================
-      # STEP 5: Rolling upgrade 9/13 (second batch)
+      # STEP 5: Rolling upgrade (second batch)
       # ====================================================================
       - name: 'Step 5: Rolling upgrade - second batch'
         run: |
@@ -595,16 +708,26 @@ jobs:
             --new-kms-chart-version "${NEW_KMS_CHART_VERSION}" \
             --tkms-infra-version "${TKMS_INFRA_CHART_VERSION}"
 
+      - name: 'Snapshot network metrics before batch 2 tests'
+        id: metrics-before-batch2
+        continue-on-error: true
+        run: |
+          python3 ci/scripts/sample_core_metrics.py "${NAMESPACE}" --once \
+            > kms-core-network-metrics-before-batch2.txt
+          grep -c "scrape_ok" kms-core-network-metrics-before-batch2.txt | xargs echo "Pods scraped:"
+
       # ====================================================================
-      # STEP 6: Run performance tests with 9/13 upgraded
+      # STEP 6: Run performance tests with both batches upgraded
       # ====================================================================
-      - name: 'Step 6: Run performance tests (9/13 mixed state)'
+      - name: 'Step 6: Run performance tests (batch 2 mixed state)'
         env:
           SERVER_URL: ${{ github.server_url }}
           REPOSITORY: ${{ github.repository }}
           RUN_ID: ${{ github.run_id }}
         run: |
-          echo "Running decrypt correctness tests (public + user) with 9/13 nodes upgraded..."
+          ALL_UPGRADED="${FIRST_BATCH},${SECOND_BATCH}"
+          NUM_UPGRADED=$(echo "${ALL_UPGRADED}" | tr ',' '\n' | wc -l | tr -d ' ')
+          echo "Running decrypt correctness tests (public + user) with ${NUM_UPGRADED}/13 nodes upgraded (batch 2)..."
           echo "Reusing pre-upgrade BASELINE_KEY_ID=${BASELINE_KEY_ID}"
 
           if [[ "${TLS}" == "true" ]]; then
@@ -614,20 +737,19 @@ jobs:
           fi
 
           # Mixed-state run: decrypt the pre-upgrade BASELINE_KEY_ID on the mixed
-          # cluster. core-client runs the NEW tag; core images stay mixed.
+          # cluster. core-client runs the harness image (KMS_CORE_CLIENT_*); core
+          # images stay mixed.
           # The Argo workflow file depends on the profile; MIXED_WORKFLOW_FILE is
           # set in "Configure deployment parameters".
           cp ./ci/perf-testing/argo-workflow/"${MIXED_WORKFLOW_FILE}" \
-             /tmp/mixed-9-workflow.yaml
-          sed -i "s/<client-version>/${KMS_CORE_CLIENT_IMAGE_TAG}/g" /tmp/mixed-9-workflow.yaml
-          sed -i "s/<version>/${NEW_IMAGE_TAG}/g" /tmp/mixed-9-workflow.yaml
+             /tmp/mixed-batch2-workflow.yaml
+          sed -i "s|hub.zama.org/ghcr/zama-ai/kms/core-client-insecure:<client-version>|${KMS_CORE_CLIENT_HARNESS_IMAGE_NAME}:<client-version>|g" /tmp/mixed-batch2-workflow.yaml
+          sed -i "s/<client-version>/${KMS_CORE_CLIENT_IMAGE_TAG}/g" /tmp/mixed-batch2-workflow.yaml
+          sed -i "s/<version>/${NEW_IMAGE_TAG}/g" /tmp/mixed-batch2-workflow.yaml
 
-          # Count all upgraded nodes (first + second batch)
-          ALL_UPGRADED="${FIRST_BATCH},${SECOND_BATCH}"
-          NUM_UPGRADED=$(echo "${ALL_UPGRADED}" | tr ',' '\n' | wc -l | tr -d ' ')
           RUN_URL="${SERVER_URL}/${REPOSITORY}/actions/runs/${RUN_ID}"
 
-          # prss-threshold pins unique request-IDs (distinct from the 5/13 run's
+          # prss-threshold pins unique request-IDs (distinct from the batch 1 run's
           # ids to avoid "already exists" collisions); decrypt uses random IDs.
           REQID_ARGS=()
           if [[ "${ENABLE_PRSS_THRESHOLD}" == "true" ]]; then
@@ -639,7 +761,7 @@ jobs:
             )
           fi
 
-          argo submit -n argo /tmp/mixed-9-workflow.yaml \
+          argo submit -n argo /tmp/mixed-batch2-workflow.yaml \
             -p tls="${TLS_STATUS}" \
             -p client-logs="${CLIENT_LOGS_STATUS}" \
             -p fhe-params="${FHE_PARAMS}" \
@@ -652,9 +774,9 @@ jobs:
             -p num_total="13" \
             "${REQID_ARGS[@]}"
 
-          echo "Streaming mixed-9/13 workflow logs..."
-          argo logs @latest -f -n "${NAMESPACE}" | tee argo-mixed-9-logs.txt
-          echo "Mixed 9/13 tests completed."
+          echo "Streaming batch 2 mixed-state workflow logs..."
+          argo logs @latest -f -n "${NAMESPACE}" | tee argo-mixed-batch2-logs.txt
+          echo "Batch 2 mixed-state tests completed."
 
           # Correctness gate: fail if any non-warmup decrypt pod did not succeed.
           FAILED_NODES=$(argo get @latest -n "${NAMESPACE}" -o json | jq -r '
@@ -663,10 +785,22 @@ jobs:
                      and (.displayName | test("warmup|reqid-above") | not))
             | .displayName')
           if [[ -n "${FAILED_NODES}" ]]; then
-            echo "ERROR: mixed-9/13 test pods did not succeed:"
+            echo "ERROR: batch 2 mixed-state test pods did not succeed:"
             echo "${FAILED_NODES}"
             exit 1
           fi
+
+      - name: 'Snapshot network metrics after batch 2 tests'
+        if: always() && steps.metrics-before-batch2.outcome == 'success'
+        continue-on-error: true
+        run: |
+          python3 ci/scripts/sample_core_metrics.py "${NAMESPACE}" --once \
+            > kms-core-network-metrics-after-batch2.txt
+          NUM_UPGRADED=$(echo "${FIRST_BATCH},${SECOND_BATCH}" | tr ',' '\n' | wc -l | tr -d ' ')
+          python3 ci/scripts/sample_core_metrics.py \
+            --label "batch 2, ${NUM_UPGRADED}/13 upgraded" --network-delta \
+            kms-core-network-metrics-before-batch2.txt \
+            kms-core-network-metrics-after-batch2.txt
 
       # ====================================================================
       # UPLOAD TEST LOGS
