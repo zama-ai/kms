@@ -1,6 +1,6 @@
 //! This file provides methods to manage epochs, which includes dealing with PRSS setups
 //! as well as resharing of the secret keys.
-//! The main struct is [`RealThresholdEpochManager`] which implements the [`EpochManager`] trait.
+//! The main struct is [`RealThresholdEpochManager`].
 //!
 //! __PRSS__
 //!
@@ -86,7 +86,6 @@ use crate::{
             },
             session::{ImmutableSessionMaker, PRSSSetupCombined, SessionMaker},
         },
-        traits::EpochManager,
         utils::{MetricedError, signing_identity_for},
         validation::{
             RequestIdParsingErr, ResharingParams, VerifiedNewMpcEpochRequest,
@@ -423,6 +422,7 @@ impl<
 > RealThresholdEpochManager<PubS, PrivS, Init, Reshare>
 {
     /// This will load all epochs from storage into session maker.
+    #[cfg(test)]
     pub async fn init_all_epochs_from_storage(&self) -> anyhow::Result<()> {
         let all_epochs = self.crypto_storage.read_all_epoch_data().await?;
 
@@ -1754,7 +1754,6 @@ impl<
     }
 }
 
-#[tonic::async_trait]
 impl<
     PubS: Storage + Send + Sync + 'static,
     PrivS: StorageExt + Send + Sync + 'static,
@@ -1763,9 +1762,9 @@ impl<
         + Default
         + 'static,
     Reshare: ReshareSecretKeys + Default + 'static,
-> EpochManager for RealThresholdEpochManager<PubS, PrivS, Init, Reshare>
+> RealThresholdEpochManager<PubS, PrivS, Init, Reshare>
 {
-    async fn new_mpc_epoch(
+    pub(crate) async fn new_mpc_epoch(
         &self,
         request: Request<NewMpcEpochRequest>,
     ) -> Result<Response<Empty>, MetricedError> {
@@ -1921,7 +1920,7 @@ impl<
         Ok(Response::new(Empty {}))
     }
 
-    async fn destroy_mpc_epoch(
+    pub(crate) async fn destroy_mpc_epoch(
         &self,
         request: Request<DestroyMpcEpochRequest>,
     ) -> Result<Response<Empty>, MetricedError> {
@@ -1934,7 +1933,9 @@ impl<
         self.destroy_epoch_with_lease(&epoch_id).await
     }
 
-    async fn destroy_epochs_for_context(
+    /// Destroy every epoch associated with `context_id`.
+    /// This is needed for context destruction since the Context manager does not compose with the epoch manager.
+    pub(crate) async fn destroy_epochs_for_context(
         &self,
         context_id: &ContextId,
     ) -> Result<Vec<EpochId>, MetricedError> {
@@ -1942,7 +1943,13 @@ impl<
         self.destroy_mpc_epochs(&epochs_to_destroy).await
     }
 
-    async fn destroy_mpc_epochs(
+    /// Destroy every epoch in `epoch_ids` as part of a context destruction.
+    ///
+    /// Idempotent and best-effort: an epoch that is not present (already destroyed, or never
+    /// created on this party) is skipped; every listed epoch is attempted even if an earlier one
+    /// fails; the first deletion error is returned only after all attempts, so a failed run can be
+    /// retried until no shares remain.
+    pub(crate) async fn destroy_mpc_epochs(
         &self,
         epoch_ids: &[EpochId],
     ) -> Result<Vec<EpochId>, MetricedError> {
@@ -1974,7 +1981,7 @@ impl<
         }
     }
 
-    async fn get_epoch_result(
+    pub(crate) async fn get_epoch_result(
         &self,
         request: Request<RequestId>,
     ) -> Result<Response<EpochResultResponse>, MetricedError> {

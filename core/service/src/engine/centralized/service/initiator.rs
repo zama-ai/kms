@@ -1,8 +1,6 @@
 use crate::{
     engine::{
-        centralized::central_kms::CentralizedKms,
-        traits::{BackupOperator, ContextManager},
-        utils::MetricedError,
+        centralized::central_kms::CentralizedKms, traits::ContextManager, utils::MetricedError,
         validation::validate_new_mpc_epoch_request,
     },
     util::meta_store::{add_req_to_meta_store, update_req_in_meta_store},
@@ -19,7 +17,7 @@ use tonic::{Request, Response};
 /// Thus initialization is only allowed once and the request ID supplied in [`InitRequest`] must be valid.
 ///
 /// # Arguments
-/// - `service`: Reference to the `RealCentralizedKms` instance.
+/// - `service`: Reference to the `CentralizedKms` instance.
 /// - `request`: The gRPC request containing an `InitRequest`.
 ///
 /// # Returns
@@ -36,10 +34,8 @@ use tonic::{Request, Response};
 pub async fn init_impl<
     PubS: Storage + Sync + Send + 'static,
     PrivS: StorageExt + Sync + Send + 'static,
-    CM: ContextManager + Sync + Send + 'static,
-    BO: BackupOperator + Sync + Send + 'static,
 >(
-    service: &CentralizedKms<PubS, PrivS, CM, BO>,
+    service: &CentralizedKms<PubS, PrivS>,
     request: Request<NewMpcEpochRequest>,
 ) -> Result<Response<Empty>, MetricedError> {
     let inner = request.into_inner();

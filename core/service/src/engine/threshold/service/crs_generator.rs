@@ -37,10 +37,7 @@ use crate::{
             BaseKmsStruct, CrsGenMetadata, DSEP_PUBDATA_CRS, compute_info_crs,
             stored_scheme_signatures_to_proto,
         },
-        threshold::{
-            service::session::{ImmutableSessionMaker, validate_context_and_epoch},
-            traits::CrsGenerator,
-        },
+        threshold::service::session::{ImmutableSessionMaker, validate_context_and_epoch},
         validation::{RequestIdParsingErr, parse_grpc_request_id, validate_crs_gen_request},
     },
     util::{
@@ -56,7 +53,7 @@ use crate::{
 // === Insecure Feature-Specific Imports ===
 cfg_if::cfg_if! {
     if #[cfg(feature = "insecure")] {
-        use crate::engine::{centralized::central_kms::async_generate_crs, threshold::traits::InsecureCrsGenerator};
+        use crate::engine::centralized::central_kms::async_generate_crs;
         use threshold_execution::{tfhe_internals::test_feature::transfer_crs};
     }
 }
@@ -478,28 +475,27 @@ impl<
     }
 }
 
-#[tonic::async_trait]
 impl<
     PubS: Storage + Send + Sync + 'static,
     PrivS: StorageExt + Send + Sync + 'static,
     C: Ceremony + Send + Sync + 'static,
-> CrsGenerator for RealCrsGenerator<PubS, PrivS, C>
+> RealCrsGenerator<PubS, PrivS, C>
 {
-    async fn crs_gen(
+    pub(crate) async fn crs_gen(
         &self,
         request: Request<CrsGenRequest>,
     ) -> Result<Response<Empty>, MetricedError> {
         self.inner_crs_gen_from_request(request, false).await
     }
 
-    async fn get_result(
+    pub(crate) async fn get_result(
         &self,
         request: Request<v1::RequestId>,
     ) -> Result<Response<CrsGenResult>, MetricedError> {
         self.inner_get_result(request, false).await
     }
 
-    async fn abort_crs_gen(
+    pub(crate) async fn abort_crs_gen(
         &self,
         request: Request<v1::RequestId>,
     ) -> Result<Response<Empty>, MetricedError> {
@@ -540,14 +536,13 @@ impl<
 }
 
 #[cfg(feature = "insecure")]
-#[tonic::async_trait]
 impl<
     PubS: Storage + Send + Sync + 'static,
     PrivS: StorageExt + Send + Sync + 'static,
     C: Ceremony + Send + Sync + 'static,
-> InsecureCrsGenerator for RealInsecureCrsGenerator<PubS, PrivS, C>
+> RealInsecureCrsGenerator<PubS, PrivS, C>
 {
-    async fn insecure_crs_gen(
+    pub(crate) async fn insecure_crs_gen(
         &self,
         request: Request<CrsGenRequest>,
     ) -> Result<Response<Empty>, MetricedError> {
@@ -557,20 +552,13 @@ impl<
             .await
     }
 
-    async fn get_result(
+    pub(crate) async fn get_result(
         &self,
         request: Request<v1::RequestId>,
     ) -> Result<Response<CrsGenResult>, MetricedError> {
         self.real_crs_generator
             .inner_get_result(request, true)
             .await
-    }
-
-    async fn abort_crs_gen(
-        &self,
-        request: Request<v1::RequestId>,
-    ) -> Result<Response<Empty>, MetricedError> {
-        self.real_crs_generator.inner_abort_crs_gen(request).await
     }
 }
 

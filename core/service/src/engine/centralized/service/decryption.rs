@@ -4,7 +4,7 @@ use crate::engine::base::{PubDecCallValues, UserDecryptCallValues, sign_public_d
 use crate::engine::centralized::central_kms::{
     CentralizedKms, async_user_decrypt, central_public_decrypt,
 };
-use crate::engine::traits::{BackupOperator, ContextManager};
+use crate::engine::traits::ContextManager;
 use crate::engine::utils::{MetricedError, format_unvalidated_id, signing_identity_for};
 use crate::engine::validation::{
     RequestIdParsingErr, parse_grpc_request_id, parse_optional_grpc_request_id,
@@ -42,10 +42,8 @@ use tracing::Instrument;
 pub async fn user_decrypt_impl<
     PubS: Storage + Sync + Send + 'static,
     PrivS: StorageExt + Sync + Send + 'static,
-    CM: ContextManager + Sync + Send + 'static,
-    BO: BackupOperator + Sync + Send + 'static,
 >(
-    service: &CentralizedKms<PubS, PrivS, CM, BO>,
+    service: &CentralizedKms<PubS, PrivS>,
     request: Request<UserDecryptionRequest>,
 ) -> Result<Response<Empty>, MetricedError> {
     METRICS.increment_request_counter(OP_USER_DECRYPT_REQUEST);
@@ -164,10 +162,8 @@ pub async fn user_decrypt_impl<
 pub async fn user_decrypt_sync_impl<
     PubS: Storage + Sync + Send + 'static,
     PrivS: StorageExt + Sync + Send + 'static,
-    CM: ContextManager + Sync + Send + 'static,
-    BO: BackupOperator + Sync + Send + 'static,
 >(
-    service: &CentralizedKms<PubS, PrivS, CM, BO>,
+    service: &CentralizedKms<PubS, PrivS>,
     request: Request<UserDecryptionRequest>,
 ) -> Result<Response<UserDecryptionResponse>, MetricedError> {
     // `user_decrypt_impl` consumes the request, so keep the raw id for fetching the result below.
@@ -194,10 +190,8 @@ pub async fn user_decrypt_sync_impl<
 pub async fn get_user_decryption_result_impl<
     PubS: Storage + Sync + Send + 'static,
     PrivS: StorageExt + Sync + Send + 'static,
-    CM: ContextManager + Sync + Send + 'static,
-    BO: BackupOperator + Sync + Send + 'static,
 >(
-    service: &CentralizedKms<PubS, PrivS, CM, BO>,
+    service: &CentralizedKms<PubS, PrivS>,
     request: Request<kms_grpc::kms::v1::RequestId>,
 ) -> Result<Response<UserDecryptionResponse>, MetricedError> {
     METRICS.increment_request_counter(OP_USER_DECRYPT_RESULT);
@@ -250,10 +244,8 @@ pub async fn get_user_decryption_result_impl<
 pub async fn public_decrypt_impl<
     PubS: Storage + Sync + Send + 'static,
     PrivS: StorageExt + Sync + Send + 'static,
-    CM: ContextManager + Sync + Send + 'static,
-    BO: BackupOperator + Sync + Send + 'static,
 >(
-    service: &CentralizedKms<PubS, PrivS, CM, BO>,
+    service: &CentralizedKms<PubS, PrivS>,
     request: Request<PublicDecryptionRequest>,
 ) -> Result<Response<Empty>, MetricedError> {
     METRICS.increment_request_counter(OP_PUBLIC_DECRYPT_REQUEST);
@@ -406,10 +398,8 @@ pub async fn public_decrypt_impl<
 pub async fn public_decrypt_sync_impl<
     PubS: Storage + Sync + Send + 'static,
     PrivS: StorageExt + Sync + Send + 'static,
-    CM: ContextManager + Sync + Send + 'static,
-    BO: BackupOperator + Sync + Send + 'static,
 >(
-    service: &CentralizedKms<PubS, PrivS, CM, BO>,
+    service: &CentralizedKms<PubS, PrivS>,
     request: Request<PublicDecryptionRequest>,
 ) -> Result<Response<PublicDecryptionResponse>, MetricedError> {
     // `public_decrypt_impl` consumes the request, so keep the raw id for fetching the result below
@@ -436,10 +426,8 @@ pub async fn public_decrypt_sync_impl<
 pub async fn get_public_decryption_result_impl<
     PubS: Storage + Sync + Send + 'static,
     PrivS: StorageExt + Sync + Send + 'static,
-    CM: ContextManager + Sync + Send + 'static,
-    BO: BackupOperator + Sync + Send + 'static,
 >(
-    service: &CentralizedKms<PubS, PrivS, CM, BO>,
+    service: &CentralizedKms<PubS, PrivS>,
     request: Request<kms_grpc::kms::v1::RequestId>,
 ) -> Result<Response<PublicDecryptionResponse>, MetricedError> {
     METRICS.increment_request_counter(OP_PUBLIC_DECRYPT_RESULT);
@@ -510,7 +498,7 @@ pub(crate) mod tests {
     use crate::{
         cryptography::signatures::PublicSigKey,
         engine::centralized::{
-            central_kms::RealCentralizedKms,
+            central_kms::CentralizedKms,
             service::key_gen::tests::{setup_test_kms_with_preproc, test_standard_keygen},
         },
         util::key_setup::test_tools::{EncryptionConfig, TestingPlaintext, compute_cipher},
@@ -523,7 +511,7 @@ pub(crate) mod tests {
         rng: &mut AesRng,
         key_id: &RequestId,
     ) -> (
-        RealCentralizedKms<RamStorage, RamStorage>,
+        CentralizedKms<RamStorage, RamStorage>,
         tfhe::CompactPublicKey,
         PublicSigKey,
     ) {

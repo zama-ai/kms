@@ -322,7 +322,7 @@ store. Epoch IDs are compared as big-endian integers.
 
 ### Centralized
 
-A single `RealCentralizedKms` instance holds all key material. No MPC; keys
+A single `CentralizedKms` instance holds all key material. No MPC; keys
 live in the configured vault backend. Preprocessing / reshare RPCs are not
 applicable.
 

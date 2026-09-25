@@ -9,7 +9,7 @@ use crate::engine::centralized::central_kms::{
     async_generate_fhe_keys,
 };
 use crate::engine::keyset_configuration::InternalKeySetConfig;
-use crate::engine::traits::{BackupOperator, ContextManager};
+use crate::engine::traits::ContextManager;
 use crate::engine::utils::{MetricedError, signing_identity_for};
 use crate::engine::validation::{
     RequestIdParsingErr, parse_grpc_request_id, validate_key_gen_request,
@@ -43,10 +43,8 @@ use tracing::Instrument;
 pub async fn key_gen_impl<
     PubS: Storage + Sync + Send + 'static,
     PrivS: StorageExt + Sync + Send + 'static,
-    CM: ContextManager + Sync + Send + 'static,
-    BO: BackupOperator + Sync + Send + 'static,
 >(
-    service: &CentralizedKms<PubS, PrivS, CM, BO>,
+    service: &CentralizedKms<PubS, PrivS>,
     request: Request<KeyGenRequest>,
     insecure: bool,
 ) -> Result<Response<Empty>, MetricedError> {
@@ -263,10 +261,8 @@ pub async fn key_gen_impl<
 pub async fn get_key_gen_result_impl<
     PubS: Storage + Sync + Send + 'static,
     PrivS: StorageExt + Sync + Send + 'static,
-    CM: ContextManager + Sync + Send + 'static,
-    BO: BackupOperator + Sync + Send + 'static,
 >(
-    service: &CentralizedKms<PubS, PrivS, CM, BO>,
+    service: &CentralizedKms<PubS, PrivS>,
     request: Request<kms_grpc::kms::v1::RequestId>,
     insecure: bool,
 ) -> Result<Response<KeyGenResult>, MetricedError> {
@@ -342,10 +338,8 @@ pub async fn get_key_gen_result_impl<
 pub async fn abort_key_gen_impl<
     PubS: Storage + Sync + Send + 'static,
     PrivS: StorageExt + Sync + Send + 'static,
-    CM: ContextManager + Sync + Send + 'static,
-    BO: BackupOperator + Sync + Send + 'static,
 >(
-    service: &CentralizedKms<PubS, PrivS, CM, BO>,
+    service: &CentralizedKms<PubS, PrivS>,
     request: Request<kms_grpc::kms::v1::RequestId>,
 ) -> Result<Response<Empty>, MetricedError> {
     let preproc_id = parse_grpc_request_id(&request.into_inner(), RequestIdParsingErr::KeyGenAbort)
@@ -534,7 +528,7 @@ pub(crate) mod tests {
         engine::{
             base::derive_request_id,
             centralized::{
-                central_kms::RealCentralizedKms,
+                central_kms::CentralizedKms,
                 service::{preprocessing_impl, tests::setup_central_test_kms},
             },
         },
@@ -550,7 +544,7 @@ pub(crate) mod tests {
     pub(crate) async fn setup_test_kms_with_preproc(
         rng: &mut AesRng,
         preproc_id: &RequestId,
-    ) -> (RealCentralizedKms<RamStorage, RamStorage>, PublicSigKey) {
+    ) -> (CentralizedKms<RamStorage, RamStorage>, PublicSigKey) {
         let (kms, verf_key) = setup_central_test_kms(rng).await;
 
         // insert a preproc ID
@@ -575,7 +569,7 @@ pub(crate) mod tests {
     }
 
     pub(crate) async fn test_standard_keygen(
-        kms: &RealCentralizedKms<RamStorage, RamStorage>,
+        kms: &CentralizedKms<RamStorage, RamStorage>,
         req_id: &RequestId,
         preproc_id: Option<&RequestId>,
         insecure: bool,
