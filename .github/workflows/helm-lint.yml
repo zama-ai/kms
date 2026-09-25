@@ -52,8 +52,12 @@ jobs:
           helm template test charts/kms-core >/dev/null
           helm template test charts/kms-core -f charts/kms-core/values-example-local.yaml >/dev/null
           helm template test charts/kms-core -f ci/pr-preview/centralized/kms-service/values-kms-ci.yaml >/dev/null
-          if helm template test charts/kms-core -f charts/kms-core/ci/values-schema-invalid.yaml >/dev/null 2>&1; then
+          if output=$(helm template test charts/kms-core -f charts/kms-core/ci/values-schema-invalid.yaml 2>&1); then
             echo "expected schema validation to fail for charts/kms-core/ci/values-schema-invalid.yaml" >&2
+            exit 1
+          fi
+          if ! grep -Fq "values don't meet the specifications of the schema(s)" <<<"$output" || ! grep -Fq "kmsPeers.count" <<<"$output"; then
+            printf '%s\n' "$output" >&2
             exit 1
           fi
           echo "invalid overlay was rejected as expected"
