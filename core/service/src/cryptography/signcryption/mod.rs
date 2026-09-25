@@ -109,15 +109,12 @@ pub trait UnsigncryptFHEPlaintext: Unsigncrypt {
     ) -> Result<SigncryptionPayload, CryptographyError>;
 }
 
-#[derive(
-    Clone, Debug, Eq, PartialEq, Serialize, Deserialize, Zeroize, ZeroizeOnDrop, VersionsDispatch,
-)]
-pub enum UnifiedSigncryptionKeyOwnedVersions {
-    V0(UnifiedSigncryptionKeyOwned),
-}
-
-#[derive(Clone, Eq, PartialEq, Serialize, Deserialize, Debug, Zeroize, Versionize)]
-#[versionize(UnifiedSigncryptionKeyOwnedVersions)]
+/// An owning sealer, for a caller that cannot hold borrows across a task
+/// boundary.
+///
+/// Deliberately not serializable: no `PrivDataType` variant is a signcryption
+/// key, so nothing persists this. It needs no version dispatch.
+#[derive(Clone, Eq, PartialEq, Debug, Zeroize)]
 pub struct UnifiedSigncryptionKeyOwned {
     pub signing_key: PrivateSigKey,
     pub receiver_enc_key: UnifiedPublicEncKey,
@@ -297,15 +294,9 @@ impl HasPkeScheme for UnifiedUnsigncryptionKey<'_> {
     }
 }
 
-#[derive(
-    Clone, Debug, Eq, PartialEq, Serialize, Deserialize, Zeroize, ZeroizeOnDrop, VersionsDispatch,
-)]
-pub enum UnifiedUnsigncryptionKeyOwnedVersions {
-    V0(UnifiedUnsigncryptionKeyOwned),
-}
-
-#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, Versionize)]
-#[versionize(UnifiedUnsigncryptionKeyOwnedVersions)]
+/// An owning reader, the counterpart of [`UnifiedSigncryptionKeyOwned`], and
+/// not serializable for the same reason.
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct UnifiedUnsigncryptionKeyOwned {
     pub decryption_key: UnifiedPrivateEncKey,
     pub encryption_key: UnifiedPublicEncKey, // Needed for validation of the signcrypted payload
@@ -702,7 +693,7 @@ pub fn ephemeral_signcryption_key_generation(
 /// Helper struct that contains both signcryption and unsigncryption keys for a client
 /// For now only used for testing
 #[cfg(test)]
-#[derive(Clone, Debug, Serialize, Deserialize, Zeroize, ZeroizeOnDrop)]
+#[derive(Clone, Debug, Zeroize, ZeroizeOnDrop)]
 pub struct UnifiedSigncryptionKeyPairOwned {
     pub signcrypt_key: UnifiedSigncryptionKeyOwned,
     pub unsigncryption_key: UnifiedUnsigncryptionKeyOwned,
