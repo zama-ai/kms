@@ -12,7 +12,7 @@ use kms_grpc::rpc_types::{PubDataType, first_signature_with_scheme};
 use kms_grpc::{ContextId, EpochId, RequestId};
 use kms_lib::client::client_wasm::Client;
 use kms_lib::client::local_crypto::load_material_from_pub_storage;
-use kms_lib::engine::base::{DSEP_PUBDATA_CRS, crs_payload_bytes, crs_sol_type};
+use kms_lib::engine::base::{DSEP_PUBDATA_CRS, crs_payload, crs_sol_type};
 use std::collections::HashMap;
 use std::path::Path;
 use tfhe::zk::CompactPkeCrs;
@@ -365,7 +365,7 @@ pub(crate) fn check_crsgen_signatures(
 
     let max_num_bits = max_num_bits_from_crs(crs) as u32;
     let sol_type = crs_sol_type(crs_id, &crs_digest, max_num_bits, &extra_data);
-    let payload_bytes = crs_payload_bytes(crs_id, max_num_bits, &crs_digest, &extra_data)?;
+    let signed_payload = crs_payload(crs_id, max_num_bits, &crs_digest, &extra_data);
     internal_client
         .verify_result_signatures(
             signatures,
@@ -373,7 +373,7 @@ pub(crate) fn check_crsgen_signatures(
             &sol_type,
             domain,
             &DSEP_PUBDATA_CRS,
-            &payload_bytes,
+            &signed_payload,
         )
         .map(|(party_id, _address)| {
             tracing::info!("CRS gen result verified as produced by party {party_id}");

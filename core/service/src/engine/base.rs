@@ -2000,20 +2000,21 @@ pub(crate) mod tests {
                     assert_ne!(scheme_sig.signature, sigs.signature);
                 } else {
                     // Every other scheme signs the versioned payload — the response
-                    // bytes together with the extra data — prefixed by the scheme
-                    // set, so the entry commits to the set it was produced under.
-                    let payload_signed =
-                        super::public_dec_payload_bytes(&payload_bytes, extra_data).unwrap();
+                    // bytes together with the extra data — inside a preimage naming
+                    // the scheme set, so the entry commits to the set it was
+                    // produced under.
+                    let payload_signed = super::public_dec_payload(&payload_bytes, extra_data);
                     let signed = scheme_bound_preimage(&ordered, &payload_signed).unwrap();
                     let vk = sk.unified_verifying_key(*scheme).unwrap();
                     let sig = Signature::new(*scheme, scheme_sig.signature.clone());
                     unified_verify(&DSEP_PUBLIC_DECRYPTION, &signed, &sig, &vk)
                         .unwrap_or_else(|e| panic!("{scheme:?} signature should verify: {e}"));
 
-                    // The unprefixed payload is specifically not what was signed.
+                    // The payload on its own is specifically not what was signed.
+                    let mut bare = Vec::new();
+                    safe_serialize(&payload_signed, &mut bare, SAFE_SER_SIZE_LIMIT).unwrap();
                     assert!(
-                        unified_verify(&DSEP_PUBLIC_DECRYPTION, &payload_signed, &sig, &vk)
-                            .is_err(),
+                        unified_verify(&DSEP_PUBLIC_DECRYPTION, &bare, &sig, &vk).is_err(),
                         "{scheme:?} signature must be bound to the scheme set"
                     );
 
@@ -2034,8 +2035,7 @@ pub(crate) mod tests {
                     }
 
                     // The extra data is part of what that entry covers.
-                    let other_extra =
-                        super::public_dec_payload_bytes(&payload_bytes, b"other extra").unwrap();
+                    let other_extra = super::public_dec_payload(&payload_bytes, b"other extra");
                     let other = scheme_bound_preimage(&ordered, &other_extra).unwrap();
                     assert!(
                         unified_verify(&DSEP_PUBLIC_DECRYPTION, &other, &sig, &vk).is_err(),
@@ -2074,13 +2074,12 @@ pub(crate) mod tests {
         );
         let expected_external = compute_eip712_signature(sk.ecdsa(), &sol_type, &domain).unwrap();
         let eip712_hash = sol_type.eip712_signing_hash(&domain);
-        let payload_bytes = super::signed_payload_bytes(&super::CrsSignedPayload {
+        let payload = super::CrsSignedPayload {
             crs_id,
             max_num_bits: max_num_bits as u32,
             crs_digest: crs_digest.clone(),
             extra_data: extra_data.clone(),
-        })
-        .unwrap();
+        };
 
         // Go through the production entry point, so the payload the signer builds
         // is the one asserted against here.
@@ -2128,10 +2127,10 @@ pub(crate) mod tests {
                 // Every other scheme signs the serialized CRS payload, prefixed
                 // by the scheme set the response was produced under.
                 scheme => {
-                    let signed = scheme_bound_preimage(&schemes, &payload_bytes).unwrap();
+                    let signed_payload = scheme_bound_preimage(&schemes, &payload).unwrap();
                     let vk = sk.unified_verifying_key(scheme).unwrap();
                     let sig = Signature::new(scheme, stored.signature.clone());
-                    unified_verify(&DSEP_PUBDATA_CRS, &signed, &sig, &vk)
+                    unified_verify(&DSEP_PUBDATA_CRS, &signed_payload, &sig, &vk)
                         .unwrap_or_else(|e| panic!("{scheme:?} CRS signature should verify: {e}"));
                     // Specifically not the EIP-712 hash any more...
                     assert!(
@@ -2141,7 +2140,7 @@ pub(crate) mod tests {
                     );
                     // ...and not the unprefixed payload either.
                     assert!(
-                        unified_verify(&DSEP_PUBDATA_CRS, &payload_bytes, &sig, &vk).is_err(),
+                        unified_verify(&DSEP_PUBDATA_CRS, &signed_payload, &sig, &vk).is_err(),
                         "{scheme:?} CRS signature must be bound to the scheme set"
                     );
                     assert!(
@@ -2186,7 +2185,7 @@ pub(crate) mod tests {
             KeyGenMetadata::LegacyV0(_) => panic!("expected current metadata"),
         };
 
-        let expected_payload = super::keygen_payload_bytes(
+        let expected_payload = super::keygen_payload(
             &prep_id,
             &key_id,
             &BTreeMap::from([
@@ -2194,8 +2193,7 @@ pub(crate) mod tests {
                 (PubDataType::PublicKey, public_key_digest),
             ]),
             &extra_data,
-        )
-        .unwrap();
+        );
 
         assert_eq!(inner.signatures.len(), schemes.len());
         for stored in &inner.signatures {
@@ -2210,10 +2208,11 @@ pub(crate) mod tests {
                     unified_verify(&DSEP_PUBDATA_KEY, &signed, &sig, &vk).unwrap_or_else(|e| {
                         panic!("{scheme:?} keygen signature should verify: {e}")
                     });
-                    // The scheme-set prefix is load-bearing: without it the entry
-                    // could be replayed as a complete response under one scheme.
+                    // The scheme set in the preimage is load-bearing
+                    let mut bare = Vec::new();
+                    safe_serialize(&expected_payload, &mut bare, SAFE_SER_SIZE_LIMIT).unwrap();
                     assert!(
-                        unified_verify(&DSEP_PUBDATA_KEY, &expected_payload, &sig, &vk).is_err(),
+                        unified_verify(&DSEP_PUBDATA_KEY, &bare, &sig, &vk).is_err(),
                         "{scheme:?} keygen signature must be bound to the scheme set"
                     );
                 }

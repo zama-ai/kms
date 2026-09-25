@@ -16,9 +16,7 @@ use kms_lib::{
         user_decryption_wasm::ParsedUserDecryptionRequest,
     },
     cryptography::encryption::{UnifiedPrivateEncKey, UnifiedPublicEncKey},
-    engine::base::{
-        DSEP_PUBLIC_DECRYPTION, compute_public_decryption_message, public_dec_payload_bytes,
-    },
+    engine::base::{DSEP_PUBLIC_DECRYPTION, compute_public_decryption_message, public_dec_payload},
 };
 use prost::Message as _;
 use rand::{CryptoRng, Rng};
@@ -242,7 +240,7 @@ fn check_pt_signatures(
     );
     let sol_type =
         compute_public_decryption_message(external_handles, &payload.plaintexts, extra_data)?;
-    let payload_bytes = public_dec_payload_bytes(&bc2wrap::serialize(payload)?, extra_data)?;
+    let signed_payload = public_dec_payload(&bc2wrap::serialize(payload)?, extra_data);
 
     let (party_id, address) = internal_client.verify_result_signatures(
         &response.signatures,
@@ -250,7 +248,7 @@ fn check_pt_signatures(
         &sol_type,
         domain,
         &DSEP_PUBLIC_DECRYPTION,
-        &payload_bytes,
+        &signed_payload,
     )?;
 
     // check that the address is in the list of known KMS addresses

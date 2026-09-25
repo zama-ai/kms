@@ -1094,11 +1094,7 @@ mod tests {
                 &SignedPayloads {
                     dsep: &DSEP_USER_DECRYPTION,
                     internal_bytes: &response_bytes,
-                    payload_bytes: &super::user_dec_payload_bytes(
-                        &response_bytes,
-                        request.extra_data(),
-                    )
-                    .unwrap(),
+                    payload: &super::user_dec_payload(&response_bytes, request.extra_data()),
                     eip712_hash: Some(
                         user_decrypt_eip712_hash(response, &request, eip712_domain).unwrap(),
                     ),

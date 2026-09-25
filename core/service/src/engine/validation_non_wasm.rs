@@ -2373,17 +2373,16 @@ mod tests {
         };
 
         // The post-quantum entry signs the versioned payload — the response bytes
-        // together with the extra data — prefixed by the scheme set.
+        // together with the extra data — inside a preimage naming the scheme set.
         let response_bytes = bc2wrap::serialize(&payload).unwrap();
-        let payload_bytes =
-            crate::engine::base::public_dec_payload_bytes(&response_bytes, &extra_data).unwrap();
+        let signed = crate::engine::base::public_dec_payload(&response_bytes, &extra_data);
         let scheme = SigningSchemeType::MlDsa65;
         let signatures: Vec<TypedSignature> = sign_result_entries(
             &identity,
             &[scheme],
             &DSEP_PUBLIC_DECRYPTION,
             &[0u8; 32],
-            &payload_bytes,
+            &signed,
         )
         .unwrap()
         .iter()

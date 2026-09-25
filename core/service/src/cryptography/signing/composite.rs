@@ -287,11 +287,16 @@ mod tests {
     use super::*;
     use crate::cryptography::signatures::{SigningSchemeType, gen_sig_keys};
     use crate::cryptography::signing::test_support::seeded_identity;
+    use crate::vault::storage::tests::TestType;
     use aes_prng::AesRng;
     use rand::SeedableRng;
 
     const DSEP: &DomainSep = b"COMPSIGT";
-    const MSG: &[u8] = b"a message signed under several schemes at once";
+
+    /// A stand-in for the signed payload types the real callers pass.
+    fn msg() -> TestType {
+        TestType { i: 4711 }
+    }
 
     fn pair() -> Vec<SigningSchemeType> {
         vec![SigningSchemeType::Ecdsa256k1, SigningSchemeType::MlDsa87]
@@ -310,12 +315,12 @@ mod tests {
     #[test]
     fn round_trip_sunshine() {
         let (identity, keys, schemes) = setup(1);
-        let sig = sign_uniform(&identity, &schemes, DSEP, MSG).unwrap();
+        let sig = sign_uniform(&identity, &schemes, DSEP, &msg()).unwrap();
         assert_eq!(entry_schemes(&sig), schemes);
-        verify_uniform(&sig, &keys, DSEP, MSG).unwrap();
+        verify_uniform(&sig, &keys, DSEP, &msg()).unwrap();
 
         let (_, other_keys, _) = setup(7);
-        assert!(verify_uniform(&sig, &other_keys, DSEP, MSG).is_err());
+        assert!(verify_uniform(&sig, &other_keys, DSEP, &msg()).is_err());
     }
 
     /// Removing a signature must not leave something that verifies under the
@@ -324,14 +329,14 @@ mod tests {
     #[test]
     fn a_stripped_signature_is_rejected() {
         let (identity, keys, schemes) = setup(2);
-        let sig = sign_uniform(&identity, &schemes, DSEP, MSG).unwrap();
+        let sig = sign_uniform(&identity, &schemes, DSEP, &msg()).unwrap();
 
         // Drop the ML-DSA half and relabel the set as ECDSA-only
         let stripped = vec![sig[0].clone()];
 
         // Against the original policy it is the wrong scheme set...
         assert!(matches!(
-            verify_uniform(&stripped, &keys, DSEP, MSG),
+            verify_uniform(&stripped, &keys, DSEP, &msg()),
             Err(SigningError::UnexpectedSchemeSet { .. })
         ));
 
@@ -341,13 +346,13 @@ mod tests {
         // *pair*, which does not match the single-scheme preimage.
         let ecdsa_only =
             VerfKeySet::from_identity(&identity, &[SigningSchemeType::Ecdsa256k1]).unwrap();
-        assert!(verify_uniform(&stripped, &ecdsa_only, DSEP, MSG).is_err());
+        assert!(verify_uniform(&stripped, &ecdsa_only, DSEP, &msg()).is_err());
 
         // The same mismatch from the other side: the *whole* pair signature
         // against that ECDSA-only key set is refused for its shape rather than
         // verified on the one entry the set holds a key for.
         assert!(matches!(
-            verify_uniform(&sig, &ecdsa_only, DSEP, MSG),
+            verify_uniform(&sig, &ecdsa_only, DSEP, &msg()),
             Err(SigningError::UnexpectedSchemeSet { .. })
         ));
     }
@@ -356,7 +361,7 @@ mod tests {
     #[test]
     fn a_non_canonical_entry_list_is_rejected() {
         let (identity, keys, schemes) = setup(3);
-        let sig = sign_uniform(&identity, &schemes, DSEP, MSG).unwrap();
+        let sig = sign_uniform(&identity, &schemes, DSEP, &msg()).unwrap();
 
         let mut reversed = sig.clone();
         reversed.reverse();
@@ -369,7 +374,7 @@ mod tests {
         ] {
             assert!(
                 matches!(
-                    verify_uniform(&entries, &keys, DSEP, MSG),
+                    verify_uniform(&entries, &keys, DSEP, &msg()),
                     Err(SigningError::UnexpectedSchemeSet { .. })
                 ),
                 "a {case} entry list was not rejected"
@@ -381,13 +386,13 @@ mod tests {
     #[test]
     fn one_tampered_signature_fails_the_composite() {
         let (identity, keys, schemes) = setup(4);
-        let base = sign_uniform(&identity, &schemes, DSEP, MSG).unwrap();
+        let base = sign_uniform(&identity, &schemes, DSEP, &msg()).unwrap();
 
         for index in 0..base.len() {
             let mut tampered = base.clone();
             tampered[index].signature[0] ^= 0x01;
             assert!(
-                verify_uniform(&tampered, &keys, DSEP, MSG).is_err(),
+                verify_uniform(&tampered, &keys, DSEP, &msg()).is_err(),
                 "tampering with signature {index} was not detected"
             );
         }
@@ -396,9 +401,9 @@ mod tests {
     #[test]
     fn a_tampered_message_or_dsep_fails() {
         let (identity, keys, schemes) = setup(5);
-        let sig = sign_uniform(&identity, &schemes, DSEP, MSG).unwrap();
-        assert!(verify_uniform(&sig, &keys, DSEP, b"a different message").is_err());
-        assert!(verify_uniform(&sig, &keys, b"OTHERDSP", MSG).is_err());
+        let sig = sign_uniform(&identity, &schemes, DSEP, &msg()).unwrap();
+        assert!(verify_uniform(&sig, &keys, DSEP, &TestType { i: 4712 }).is_err());
+        assert!(verify_uniform(&sig, &keys, b"OTHERDSP", &msg()).is_err());
     }
 
     /// An identity with no root seed can only do ECDSA, so asking it for the
@@ -408,7 +413,7 @@ mod tests {
         let mut rng = AesRng::seed_from_u64(9);
         let identity = NodeSigningIdentity::ecdsa_only(gen_sig_keys(&mut rng).1);
         assert!(matches!(
-            sign_uniform(&identity, &pair(), DSEP, MSG),
+            sign_uniform(&identity, &pair(), DSEP, &msg()),
             Err(SigningError::MissingRootSeed(_))
         ));
     }
@@ -425,11 +430,11 @@ mod tests {
             SigningSchemeType::MlDsa65,
         ];
         let eip712_hash = [0x11u8; 32];
-        let payload = b"the serialized result payload";
-        let bound = scheme_bound_preimage(&schemes, payload).unwrap();
+        let payload = msg();
+        let bound = scheme_bound_preimage(&schemes, &payload).unwrap();
 
         let entries =
-            sign_result_entries(&identity, &schemes, DSEP, &eip712_hash, payload).unwrap();
+            sign_result_entries(&identity, &schemes, DSEP, &eip712_hash, &payload).unwrap();
         assert_eq!(entries.len(), 3);
 
         for entry in &entries {
@@ -444,8 +449,11 @@ mod tests {
             unified_verify(DSEP, &bound, &sig, &vk).unwrap_or_else(|e| {
                 panic!("{:?} should sign the bound payload: {e}", entry.scheme)
             });
-            // ...and neither the bare payload nor the EIP-712 hash.
-            assert!(unified_verify(DSEP, payload, &sig, &vk).is_err());
+            // ...and neither the serialized payload alone nor the EIP-712 hash.
+            let mut bare = Vec::new();
+            tfhe::safe_serialization::safe_serialize(&payload, &mut bare, SAFE_SER_SIZE_LIMIT)
+                .unwrap();
+            assert!(unified_verify(DSEP, &bare, &sig, &vk).is_err());
             assert!(unified_verify(DSEP, &eip712_hash, &sig, &vk).is_err());
         }
     }
@@ -465,7 +473,7 @@ mod tests {
         let canonical = canonical_schemes(&requested).unwrap();
 
         let entries =
-            sign_result_entries(&identity, &requested, DSEP, &[0x11u8; 32], b"payload").unwrap();
+            sign_result_entries(&identity, &requested, DSEP, &[0x11u8; 32], &msg()).unwrap();
 
         assert_eq!(
             entries.iter().map(|e| e.scheme).collect::<Vec<_>>(),
@@ -480,7 +488,7 @@ mod tests {
         let mut rng = AesRng::seed_from_u64(21);
         let identity = seeded_identity(&mut rng);
         assert!(
-            sign_result_entries(&identity, &[], DSEP, &[0u8; 32], b"payload")
+            sign_result_entries(&identity, &[], DSEP, &[0u8; 32], &msg())
                 .unwrap()
                 .is_empty()
         );
@@ -492,16 +500,19 @@ mod tests {
     fn preimages_separate_scheme_sets() {
         let single = vec![SigningSchemeType::Ecdsa256k1];
         assert_ne!(
-            scheme_bound_preimage(&single, MSG).unwrap(),
-            scheme_bound_preimage(&pair(), MSG).unwrap()
+            scheme_bound_preimage(&single, &msg()).unwrap(),
+            scheme_bound_preimage(&pair(), &msg()).unwrap()
         );
 
-        // The length prefix is what separates a set from a longer one starting
-        // with it.
+        // The count in front of the tags is what separates a set from a longer
+        // one starting with it, so the shorter set's encoding appears nowhere in
+        // the longer set's preimage.
+        let pair_preimage = scheme_bound_preimage(&pair(), &msg()).unwrap();
+        let single_scheme_bytes = canonical_scheme_bytes(&single);
         assert!(
-            !scheme_bound_preimage(&pair(), MSG)
-                .unwrap()
-                .starts_with(&canonical_scheme_bytes(&single))
+            !pair_preimage
+                .windows(single_scheme_bytes.len())
+                .any(|window| window == single_scheme_bytes)
         );
     }
 
@@ -518,8 +529,8 @@ mod tests {
 
         // So callers may pass any order and still agree on the signed bytes.
         assert_eq!(
-            scheme_bound_preimage(&reordered, MSG).unwrap(),
-            scheme_bound_preimage(&pair(), MSG).unwrap()
+            scheme_bound_preimage(&reordered, &msg()).unwrap(),
+            scheme_bound_preimage(&pair(), &msg()).unwrap()
         );
 
         assert!(matches!(
