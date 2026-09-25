@@ -44,10 +44,7 @@ use crate::{
         base::{
             BaseKmsStruct, compute_preprocessing_signatures, stored_scheme_signatures_to_proto,
         },
-        threshold::{
-            service::session::{ImmutableSessionMaker, validate_context_and_epoch},
-            traits::KeyGenPreprocessor,
-        },
+        threshold::service::session::{ImmutableSessionMaker, validate_context_and_epoch},
         utils::{MetricedError, signing_identity_for},
         validation::{RequestIdParsingErr, parse_grpc_request_id, validate_preproc_request},
     },
@@ -63,8 +60,9 @@ use crate::{
 // === Current Module Imports ===
 use super::{BucketMetaStore, PreprocMaterial};
 
-pub struct RealPreprocessor<P: ProducerFactory<ResiduePolyF4Z128, SmallSession<ResiduePolyF4Z128>>>
-{
+pub(crate) struct RealPreprocessor<
+    P: ProducerFactory<ResiduePolyF4Z128, SmallSession<ResiduePolyF4Z128>>,
+> {
     // TODO eventually add mode to allow for nlarge as well.
     pub(crate) base_kms: BaseKmsStruct,
     pub preproc_buckets: Arc<RwLock<MetaStore<BucketMetaStore>>>,
@@ -610,11 +608,10 @@ impl<P: ProducerFactory<ResiduePolyF4Z128, SmallSession<ResiduePolyF4Z128>>> Rea
     }
 }
 
-#[tonic::async_trait]
 impl<P: ProducerFactory<ResiduePolyF4Z128, SmallSession<ResiduePolyF4Z128>> + Send + Sync>
-    KeyGenPreprocessor for RealPreprocessor<P>
+    RealPreprocessor<P>
 {
-    async fn key_gen_preproc(
+    pub(crate) async fn key_gen_preproc(
         &self,
         request: Request<KeyGenPreprocRequest>,
     ) -> Result<Response<Empty>, MetricedError> {
@@ -627,7 +624,7 @@ impl<P: ProducerFactory<ResiduePolyF4Z128, SmallSession<ResiduePolyF4Z128>> + Se
     }
 
     #[cfg(feature = "insecure")]
-    async fn partial_key_gen_preproc(
+    pub(crate) async fn partial_key_gen_preproc(
         &self,
         request: Request<kms_grpc::kms::v1::PartialKeyGenPreprocRequest>,
     ) -> Result<Response<Empty>, MetricedError> {
@@ -644,8 +641,10 @@ impl<P: ProducerFactory<ResiduePolyF4Z128, SmallSession<ResiduePolyF4Z128>> + Se
             .await
     }
 
+    /// Insecure (dummy) preprocessing that records metadata but no preprocessing
+    /// material in the meta store, to be consumed by the insecure key generation.
     #[cfg(feature = "insecure")]
-    async fn insecure_key_gen_preproc(
+    pub(crate) async fn insecure_key_gen_preproc(
         &self,
         request: Request<KeyGenPreprocRequest>,
     ) -> Result<Response<Empty>, MetricedError> {
@@ -653,7 +652,7 @@ impl<P: ProducerFactory<ResiduePolyF4Z128, SmallSession<ResiduePolyF4Z128>> + Se
             .await
     }
 
-    async fn get_result(
+    pub(crate) async fn get_result(
         &self,
         request: Request<v1::RequestId>,
     ) -> Result<Response<KeyGenPreprocResult>, MetricedError> {
@@ -661,8 +660,10 @@ impl<P: ProducerFactory<ResiduePolyF4Z128, SmallSession<ResiduePolyF4Z128>> + Se
             .await
     }
 
+    /// Same as [`Self::get_result`] but for preprocessing started via
+    /// [`Self::insecure_key_gen_preproc`].
     #[cfg(feature = "insecure")]
-    async fn get_insecure_result(
+    pub(crate) async fn get_insecure_result(
         &self,
         request: Request<v1::RequestId>,
     ) -> Result<Response<KeyGenPreprocResult>, MetricedError> {
@@ -670,7 +671,7 @@ impl<P: ProducerFactory<ResiduePolyF4Z128, SmallSession<ResiduePolyF4Z128>> + Se
             .await
     }
 
-    async fn abort_key_gen_preproc(
+    pub(crate) async fn abort_key_gen_preproc(
         &self,
         preproc_id: RequestId,
         key_gen_cancel_res: Status,
@@ -700,7 +701,7 @@ impl<P: ProducerFactory<ResiduePolyF4Z128, SmallSession<ResiduePolyF4Z128>> + Se
         }
     }
 
-    async fn get_all_preprocessing_ids(&self) -> Result<Vec<String>, MetricedError> {
+    pub(crate) async fn get_all_preprocessing_ids(&self) -> Result<Vec<String>, MetricedError> {
         let guarded_meta_store = self.preproc_buckets.read().await;
         Ok(guarded_meta_store
             .get_successful_completed_request_ids()

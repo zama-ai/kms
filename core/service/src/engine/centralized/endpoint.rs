@@ -3,7 +3,7 @@ use crate::engine::centralized::service::{
     abort_crs_gen_impl, abort_key_gen_impl, get_preprocessing_res_impl, init_impl,
     preprocessing_impl,
 };
-use crate::engine::traits::{BackupOperator, ContextManager};
+use crate::engine::traits::ContextManager;
 use crate::engine::utils::query_key_material_availability;
 use crate::vault::storage::{Storage, StorageExt};
 use kms_grpc::kms::v1::{
@@ -34,12 +34,8 @@ use observability::metrics_names::OP_INSECURE_KEYGEN_REQUEST;
 use observability::{metrics::METRICS, metrics_names::*};
 
 #[tonic::async_trait]
-impl<
-    PubS: Storage + Sync + Send + 'static,
-    PrivS: StorageExt + Sync + Send + 'static,
-    CM: ContextManager + Sync + Send + 'static,
-    BO: BackupOperator + Sync + Send + 'static,
-> CoreServiceEndpoint for CentralizedKms<PubS, PrivS, CM, BO>
+impl<PubS: Storage + Sync + Send + 'static, PrivS: StorageExt + Sync + Send + 'static>
+    CoreServiceEndpoint for CentralizedKms<PubS, PrivS>
 {
     #[tracing::instrument(skip(self, request))]
     async fn key_gen_preproc(
@@ -198,7 +194,7 @@ impl<
     ) -> Result<Response<kms_grpc::kms::v1::UserDecryptionResponse>, Status> {
         user_decrypt_sync_impl(self, request)
             .await
-            .map_err(|e| e.into())
+            .map_err(|e| Status::internal(format!("{e:?}")))
     }
 
     #[tracing::instrument(skip(self, request))]
@@ -228,7 +224,7 @@ impl<
     ) -> Result<Response<kms_grpc::kms::v1::PublicDecryptionResponse>, Status> {
         public_decrypt_sync_impl(self, request)
             .await
-            .map_err(|e| e.into())
+            .map_err(|e| Status::internal(format!("{e:?}")))
     }
 
     #[tracing::instrument(skip(self, request))]

@@ -1,12 +1,11 @@
 pub use super::signed_payload::UserDecSignedPayload;
 use super::signed_payload::{signed_payload_bytes, user_dec_payload_bytes};
-use super::traits::BaseKms;
 use crate::consts::ID_LENGTH;
 use crate::consts::SAFE_SER_SIZE_LIMIT;
 use crate::cryptography::decompression;
 use crate::cryptography::internal_crypto_types::WrappedDKGParams;
+use crate::cryptography::signatures::PublicSigKey;
 use crate::cryptography::signatures::internal_sign;
-use crate::cryptography::signatures::{PublicSigKey, Signature};
 use crate::cryptography::signing::SigningSchemeType;
 use crate::cryptography::signing::identity::NodeSigningIdentity;
 use crate::engine::rng_source::RngSource;
@@ -18,7 +17,7 @@ use alloy_primitives::U256;
 use alloy_primitives::{Address, B256, Bytes, FixedBytes, Uint};
 use alloy_sol_types::Eip712Domain;
 use alloy_sol_types::SolStruct;
-use hashing::{DomainSep, hash_element, hash_versioned, serialize_hash_element};
+use hashing::{DomainSep, hash_versioned, serialize_hash_element};
 use kms_grpc::RequestId;
 use kms_grpc::kms::v1::{
     CiphertextFormat, FheParameter, PublicDecryptionResponsePayload, TypedPlaintext,
@@ -1300,26 +1299,6 @@ impl BaseKmsStruct {
     /// Returns the shared source for session construction and refresh.
     pub(crate) fn rng_source(&self) -> Arc<RngSource> {
         Arc::clone(&self.rng_source)
-    }
-}
-
-impl BaseKms for BaseKmsStruct {
-    /// sign `msg` using the KMS' private signing key
-    fn sign<T>(&self, dsep: &DomainSep, msg: &T) -> anyhow::Result<Signature>
-    where
-        T: Serialize + AsRef<[u8]>,
-    {
-        match self.signing_identity.as_ref() {
-            None => anyhow::bail!("KMS has no signing key"),
-            Some(identity) => internal_sign(dsep, msg, identity.ecdsa()),
-        }
-    }
-
-    fn digest<T>(domain_separator: &DomainSep, msg: &T) -> anyhow::Result<Vec<u8>>
-    where
-        T: ?Sized + AsRef<[u8]>,
-    {
-        Ok(hash_element(domain_separator, msg))
     }
 }
 

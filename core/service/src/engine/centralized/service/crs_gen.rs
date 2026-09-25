@@ -20,7 +20,7 @@ use crate::cryptography::signing::SigningSchemeType;
 use crate::cryptography::signing::identity::NodeSigningIdentity;
 use crate::engine::base::{CrsGenMetadata, stored_scheme_signatures_to_proto};
 use crate::engine::centralized::central_kms::{CentralizedKms, async_generate_crs};
-use crate::engine::traits::{BackupOperator, ContextManager};
+use crate::engine::traits::ContextManager;
 use crate::engine::utils::{MetricedError, signing_identity_for};
 use crate::engine::validation::{
     RequestIdParsingErr, parse_grpc_request_id, validate_crs_gen_request,
@@ -36,10 +36,8 @@ use crate::vault::storage::{Storage, StorageExt};
 pub async fn crs_gen_impl<
     PubS: Storage + Sync + Send + 'static,
     PrivS: StorageExt + Sync + Send + 'static,
-    CM: ContextManager + Sync + Send + 'static,
-    BO: BackupOperator + Sync + Send + 'static,
 >(
-    service: &CentralizedKms<PubS, PrivS, CM, BO>,
+    service: &CentralizedKms<PubS, PrivS>,
     request: Request<CrsGenRequest>,
     insecure: bool,
 ) -> Result<Response<Empty>, MetricedError> {
@@ -133,10 +131,8 @@ pub async fn crs_gen_impl<
 pub async fn get_crs_gen_result_impl<
     PubS: Storage + Sync + Send + 'static,
     PrivS: StorageExt + Sync + Send + 'static,
-    CM: ContextManager + Sync + Send + 'static,
-    BO: BackupOperator + Sync + Send + 'static,
 >(
-    service: &CentralizedKms<PubS, PrivS, CM, BO>,
+    service: &CentralizedKms<PubS, PrivS>,
     request: Request<kms_grpc::kms::v1::RequestId>,
     insecure: bool,
 ) -> Result<Response<CrsGenResult>, MetricedError> {
@@ -201,10 +197,8 @@ pub async fn get_crs_gen_result_impl<
 pub async fn abort_crs_gen_impl<
     PubS: Storage + Sync + Send + 'static,
     PrivS: StorageExt + Sync + Send + 'static,
-    CM: ContextManager + Sync + Send + 'static,
-    BO: BackupOperator + Sync + Send + 'static,
 >(
-    service: &CentralizedKms<PubS, PrivS, CM, BO>,
+    service: &CentralizedKms<PubS, PrivS>,
     request: Request<kms_grpc::kms::v1::RequestId>,
 ) -> Result<Response<Empty>, MetricedError> {
     let request_id = parse_grpc_request_id(&request.into_inner(), RequestIdParsingErr::CrsGenAbort)

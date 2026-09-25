@@ -58,12 +58,9 @@ use crate::{
         },
         keyset_configuration::InternalKeySetConfig,
         material_integrity::verify_public_key_digest_from_bytes,
-        threshold::{
-            service::{
-                PublicKeyMaterial, ThresholdFheKeys,
-                session::{ImmutableSessionMaker, validate_context_and_epoch},
-            },
-            traits::KeyGenerator,
+        threshold::service::{
+            PublicKeyMaterial, ThresholdFheKeys,
+            session::{ImmutableSessionMaker, validate_context_and_epoch},
         },
         utils::{MetricedError, signing_identity_for},
         validation::{
@@ -115,8 +112,6 @@ enum ThresholdKeyGenResult {
 
 // === Insecure Feature-Specific Imports ===
 #[cfg(feature = "insecure")]
-use crate::engine::threshold::traits::InsecureKeyGenerator;
-#[cfg(feature = "insecure")]
 use threshold_execution::runtime::sessions::session_parameters::GenericParameterHandles;
 #[cfg(feature = "insecure")]
 use threshold_execution::tfhe_internals::{
@@ -129,7 +124,7 @@ use threshold_execution::tfhe_internals::{
     },
 };
 
-pub struct RealKeyGenerator<
+pub(crate) struct RealKeyGenerator<
     PubS: Storage + Sync + Send + 'static,
     PrivS: StorageExt + Sync + Send + 'static,
     KG: OnlineDistributedKeyGen<Z128, { ResiduePolyF4Z128::EXTENSION_DEGREE }> + 'static,
@@ -155,7 +150,7 @@ pub struct RealKeyGenerator<
 }
 
 #[cfg(feature = "insecure")]
-pub struct RealInsecureKeyGenerator<
+pub(crate) struct RealInsecureKeyGenerator<
     PubS: Storage + Sync + Send + 'static,
     PrivS: StorageExt + Sync + Send + 'static,
     KG: OnlineDistributedKeyGen<Z128, { ResiduePolyF4Z128::EXTENSION_DEGREE }> + 'static,
@@ -188,14 +183,13 @@ impl<
     }
 }
 #[cfg(feature = "insecure")]
-#[tonic::async_trait]
 impl<
     PubS: Storage + Sync + Send + 'static,
     PrivS: StorageExt + Sync + Send + 'static,
     KG: OnlineDistributedKeyGen<Z128, { ResiduePolyF4Z128::EXTENSION_DEGREE }> + 'static,
-> InsecureKeyGenerator for RealInsecureKeyGenerator<PubS, PrivS, KG>
+> RealInsecureKeyGenerator<PubS, PrivS, KG>
 {
-    async fn insecure_key_gen(
+    pub(crate) async fn insecure_key_gen(
         &self,
         request: Request<KeyGenRequest>,
     ) -> Result<Response<Empty>, MetricedError> {
@@ -203,18 +197,12 @@ impl<
         self.real_key_generator.inner_key_gen(request, true).await
     }
 
-    async fn get_result(
+    pub(crate) async fn get_result(
         &self,
         request: Request<v1::RequestId>,
     ) -> Result<Response<KeyGenResult>, MetricedError> {
         self.real_key_generator
             .inner_get_result(request, true)
-            .await
-    }
-
-    async fn abort_key_gen(&self, preproc_id: RequestId) -> Status {
-        self.real_key_generator
-            .inner_abort_key_gen(preproc_id)
             .await
     }
 }
@@ -1855,28 +1843,29 @@ impl<
     }
 }
 
-#[tonic::async_trait]
 impl<
     PubS: Storage + Sync + Send + 'static,
     PrivS: StorageExt + Sync + Send + 'static,
     KG: OnlineDistributedKeyGen<Z128, { ResiduePolyF4Z128::EXTENSION_DEGREE }> + 'static,
-> KeyGenerator for RealKeyGenerator<PubS, PrivS, KG>
+> RealKeyGenerator<PubS, PrivS, KG>
 {
-    async fn key_gen(
+    pub(crate) async fn key_gen(
         &self,
         request: Request<KeyGenRequest>,
     ) -> Result<Response<Empty>, MetricedError> {
         self.inner_key_gen(request, false).await
     }
 
-    async fn get_result(
+    pub(crate) async fn get_result(
         &self,
         request: tonic::Request<v1::RequestId>,
     ) -> Result<Response<KeyGenResult>, MetricedError> {
         self.inner_get_result(request, false).await
     }
 
-    async fn abort_key_gen(&self, preproc_id: RequestId) -> Status {
+    // Note that the Status is returned, since this call is never directly mapped to the gRPC end-point,
+    // but instead used in conjunction with `abort_key_gen_preproc` in [`RealPreprocessor`]
+    pub(crate) async fn abort_key_gen(&self, preproc_id: RequestId) -> Status {
         self.inner_abort_key_gen(preproc_id).await
     }
 }

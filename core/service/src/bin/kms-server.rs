@@ -20,8 +20,8 @@ use kms_lib::{
         signatures::NodeSigningIdentity,
     },
     engine::{
-        base::BaseKmsStruct, centralized::central_kms::RealCentralizedKms,
-        context::SoftwareVersion, context_manager::create_default_centralized_context_in_storage,
+        base::BaseKmsStruct, centralized::central_kms::CentralizedKms, context::SoftwareVersion,
+        context_manager::create_default_centralized_context_in_storage,
         migration::migrate_to_0_15_x, rng_source::RngSource, run_server,
         threshold::service::new_real_threshold_kms,
     },
@@ -693,7 +693,7 @@ async fn main_exec() -> anyhow::Result<()> {
             let service_config = core_config.service.clone();
             create_default_centralized_context_in_storage(&mut private_vault, identity.ecdsa())
                 .await?;
-            let (kms, (health_reporter, health_service)) = RealCentralizedKms::new(
+            let (kms, (health_reporter, health_service)) = CentralizedKms::new(
                 core_config,
                 public_vault,
                 private_vault,
