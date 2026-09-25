@@ -62,6 +62,7 @@ aws-smithy-types = { workspace = true, optional = true }
 bc2wrap.workspace = true
 bincode.workspace = true
 bip39.workspace = true
+bytes.workspace = true
 cbc.workspace = true
 cfg-if.workspace = true
 ciborium.workspace = true
@@ -176,13 +177,9 @@ required-features = ["testing"]
 
 [features]
 default = ["non-wasm"]
-# `aws-sdk-s3?/test-util` is required by aws-smithy-mocks' `mock_client!`. The weak-dependency
-# (`?`) syntax only enables it when aws-sdk-s3 is already pulled in (i.e. via `non-wasm`), so
-# wasm / `--no-default-features` builds are unaffected and production never gets test-util.
 testing = [
     "dep:tempfile",
     "threshold-execution/testing",
-    "aws-sdk-s3?/test-util",
 ]
 non-wasm = [
     "kms-grpc/non-wasm",

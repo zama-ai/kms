@@ -2121,6 +2121,7 @@ pub async fn execute_cmd(
             // (a handle identifies a specific ciphertext/plaintext, so they must differ).
             let fhe_type = ptxt.fhe_type;
             let ciphertext_format: i32 = ct_format.into();
+            let ciphertext = bytes::Bytes::from(ciphertext);
             let ct_batch: Vec<TypedCiphertext> =
                 integration_test_handles(cipher_args.get_batch_size())
                     .into_iter()
@@ -2233,7 +2234,7 @@ pub async fn execute_cmd(
 
             let ct_batch = vec![
                 TypedCiphertext {
-                    ciphertext,
+                    ciphertext: ciphertext.into(),
                     fhe_type: ptxt.fhe_type,
                     external_handle: dummy_handle(),
                     ciphertext_format: ct_format.into(),

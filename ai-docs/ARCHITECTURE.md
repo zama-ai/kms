@@ -135,9 +135,10 @@ The service crate is the main surface area. Key subdirectories under
   chain verification). Custodian backup uses MLKEM1024-P384 for all three of its
   keypairs — the custodian's long-term key, the operator's ephemeral recovery key,
   and the operator's per-context backup vault key — selected in one place,
-  `backup::BACKUP_PKE_SCHEME`. Nothing rejects a peer that advertises a weaker
-  scheme: the signcryption carries its own `pke_type` tag, so a mixed-scheme
-  custodian context works. User decryption accepts ML-KEM-512 only. Randomly generated MLKEM1024-P384
+  `backup::BACKUP_PKE_SCHEME`. A new custodian context is rejected unless every
+  custodian encryption key, and the operator's own backup key, uses that scheme
+  (`InternalCustodianContext::new` / `validated_nodes`).
+  User decryption accepts ML-KEM-512 only. Randomly generated MLKEM1024-P384
   keypairs use a 256-bit-seeded CSPRNG. The custodian key derives directly from 256-bit mnemonic entropy. Signing lives under
   [cryptography/signing/](../core/service/src/cryptography/signing/): a
   scheme-tagged `Signature` plus one backend per scheme — ECDSA/secp256k1
@@ -280,11 +281,14 @@ The primary service is `CoreServiceEndpoint`. Its RPCs group into:
   sub-protocol is skipped and the reshared private keyset keeps that field
   absent. Which of these optional shares to reshare is decided from the input
   keyset, and every party must agree. A storage failure during
-  resharing rolls the new epoch back on the party that fails. That party attempts
-  to delete the key shares, the CRS metadata and the epoch data of the new epoch.
-  Public data remains because an epoch change does not affect it. If cleanup
-  succeeds, the party forgets the epoch. Otherwise, the party keeps the epoch
-  registered so that deletion can be retried. `DestroyMpcContext` takes a stable
+  resharing rolls the new epoch back on the party that fails. That party deletes
+  the key shares and the CRS metadata that its own resharing wrote under the new
+  epoch. The party deletes the epoch data and forgets the epoch only once
+  the epoch holds no key share and no CRS metadata. Public data remains because
+  an epoch change does not affect it. A failed deletion keeps the epoch
+  registered so that deletion can be retried. `DestroyMpcEpoch` erases a whole
+  epoch instead, and covers the material of every request.
+  `DestroyMpcContext` takes a stable
   snapshot of the context's registered epochs and erases their secret shares
   before it forgets the context and removes its TLS trust-root references. A trust
   root remains if another live context uses it. This order leaves no usable key
@@ -358,13 +362,16 @@ in server config and unified behind `KeychainProxy`
   with this keychain already, and the keychain can only encrypt once that call
   has installed a context, so a node configured for it makes no backups until
   its first context exists. New custodian contexts are rejected unless every custodian
-  encryption key and every custodian verification key is unique.
+  encryption key and every custodian verification key is unique, and unless every
+  custodian encryption key uses `BACKUP_PKE_SCHEME`.
   Every key in this path is MLKEM1024-P384 (`backup::BACKUP_PKE_SCHEME`), and the
   custodian's is derived from 256 bits of seed-phrase entropy — a 24-word mnemonic —
   so the phrase does not cap the scheme's security level. A vault written under an
   older ML-KEM-512 context is not readable by a node holding a composite key, but
   each ciphertext carries its own `pke_type`, so a vault spanning both schemes
-  decrypts as long as the matching key is installed.
+  decrypts as long as the matching key is installed. That remains true for
+  material already written; what is refused is *creating* a new context under a
+  weaker scheme.
 
 Custodian workflows are driven through the
 [kms-custodian](../core/service/src/bin/kms-custodian.rs) CLI and the
@@ -674,6 +681,11 @@ The [Cargo.toml](../Cargo.toml) should be considered the ground truth.
   `slow_tests` enables the long-running suite. `kms/insecure` enables development RPCs
   and mock enclave support. It forwards `threshold-networking/insecure`, which permits
   plaintext transport and mock attestation.
+
+The [performance suite](../ci/perf-testing/PERF_TEST_README.md) measures public and user
+decryption through both sync and async endpoints. The scenario configuration selects each
+operation, endpoint, and rate ladder. Client metrics identify the scenario; Slack and the
+Python analyzer report the ladders separately.
 
 See the "Building and testing" section of [README.md](../README.md) for the
 exact commands.

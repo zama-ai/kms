@@ -669,6 +669,9 @@ Options shared by public and user decryption are:
  - `--ciphertext-output-path <FILENAME>`: optionally write the ciphertext (the encryption of `to-encrypt`) to file
  - `--sync`: use the synchronous endpoint (request and result in a single call).
 
+For `public-decrypt` or `user-decrypt` in rate mode, add `--sync` to use `PublicDecryptSync` or `UserDecryptSync`, respectively.
+The `PUBLIC_DECRYPT_METRICS` and `USER_DECRYPT_METRICS` JSON records include `scenario`: `pdec-async`, `pdec-sync`, `udec-async`, or `udec-sync`.
+
 Public/user-decrypt rate-mode options are:
  - `--rate <REQUESTS_PER_SECOND>`: request launch rate. Must be used together with `--duration`.
  - `--duration <SECONDS>`: load-test duration. Must be used together with `--rate`.

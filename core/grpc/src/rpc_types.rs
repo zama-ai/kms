@@ -1193,6 +1193,25 @@ impl TypedCiphertext {
     }
 }
 
+// In the wasm build, `build.rs` hides the `ciphertext` field from wasm-bindgen
+// because `bytes::Bytes` cannot cross the JS boundary. These accessors convert
+// it to and from `Vec<u8>`, so JS still sees a `Uint8Array` property.
+#[cfg(not(feature = "non-wasm"))]
+#[wasm_bindgen::prelude::wasm_bindgen]
+impl TypedCiphertext {
+    /// The actual ciphertext to decrypt, taken directly from fhevm.
+    #[wasm_bindgen::prelude::wasm_bindgen(getter)]
+    pub fn ciphertext(&self) -> Vec<u8> {
+        self.ciphertext.to_vec()
+    }
+
+    /// Replaces the ciphertext bytes.
+    #[wasm_bindgen::prelude::wasm_bindgen(setter)]
+    pub fn set_ciphertext(&mut self, ciphertext: Vec<u8>) {
+        self.ciphertext = ciphertext.into();
+    }
+}
+
 impl TryFrom<(String, String)> for TypedPlaintext {
     type Error = anyhow::Error;
     fn try_from(value: (String, String)) -> Result<Self, Self::Error> {
@@ -1562,7 +1581,7 @@ mod tests {
         )
         .unwrap();
         let ciphertexts = vec![TypedCiphertext {
-            ciphertext: vec![],
+            ciphertext: vec![].into(),
             fhe_type: 0,
             external_handle: vec![],
             ciphertext_format: 0,
