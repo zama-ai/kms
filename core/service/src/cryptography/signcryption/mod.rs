@@ -236,7 +236,7 @@ impl<'a> UnifiedUnsigncryptionKey<'a> {
             SenderAuth::Ecdsa(sender_verf_key) => {
                 ecdsa_v0::open(self, sender_verf_key, dsep, cipher)
             }
-            SenderAuth::Multi(_keys) => composite_v1::open(&self, dsep, cipher),
+            SenderAuth::Multi(_keys) => composite_v1::open(self, dsep, cipher),
         }
     }
 }
