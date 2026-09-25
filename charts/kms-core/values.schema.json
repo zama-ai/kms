@@ -383,11 +383,11 @@
             "ignoreAwsCaChain": { "type": "boolean" }
           }
         },
-        "multiplier": { "type": "number" },
-        "maxInterval": { "type": "number" },
-        "maxElapsedTime": { "type": "number" },
-        "networkTimeout": { "type": "number" },
-        "initialIntervalMs": { "type": "integer", "minimum": 0 },
+        "multiplier": { "type": "number", "minimum": 1 },
+        "maxInterval": { "type": "integer", "minimum": 1 },
+        "maxElapsedTime": { "type": "integer", "minimum": 1 },
+        "networkTimeout": { "type": "integer", "minimum": 1 },
+        "initialIntervalMs": { "type": "integer", "minimum": 1 }
         "maxOpenedInactiveSessionsPerParty": { "type": "integer", "minimum": 0 },
         "enableSysMetrics": { "type": "boolean" },
         "refreshIntervalMs": { "type": "integer", "minimum": 0 },
