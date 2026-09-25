@@ -5,12 +5,13 @@ use super::UnifiedSigncryption;
 use super::common::hybrid_encrypt;
 use super::common::{hybrid_decrypt, receiver_enc_key_digest};
 use crate::consts::SAFE_SER_SIZE_LIMIT;
-use crate::cryptography::encryption::{HasPkeScheme, UnifiedPrivateEncKey, UnifiedPublicEncKey};
+use crate::cryptography::encryption::{HasPkeScheme, UnifiedPublicEncKey};
 use crate::cryptography::error::CryptographyError;
 use crate::cryptography::hybrid_ml_kem::HybridKemCt;
+use crate::cryptography::signatures::StoredTypedSignature;
 #[cfg(feature = "non-wasm")]
 use crate::cryptography::signatures::{NodeSigningIdentity, SigningSchemeType};
-use crate::cryptography::signatures::{StoredTypedSignature, VerfKeySet};
+use crate::cryptography::signcryption::UnifiedUnsigncryptionKey;
 #[cfg(feature = "non-wasm")]
 use crate::cryptography::signing::composite::sign_uniform;
 use crate::cryptography::signing::composite::verify_uniform;
@@ -139,29 +140,36 @@ pub fn seal(
 ///
 /// `sender_keys` is the verifier's policy the signatures will be validated against.
 pub(super) fn open(
-    decryption_key: &UnifiedPrivateEncKey,
-    encryption_key: &UnifiedPublicEncKey,
-    sender_keys: &VerfKeySet,
-    receiver_id: &[u8],
+    unsign_key: &UnifiedUnsigncryptionKey,
     dsep: &DomainSep,
     cipher: &UnifiedSigncryption,
 ) -> Result<Zeroizing<Vec<u8>>, CryptographyError> {
-    if cipher.pke_type != encryption_key.encryption_scheme_type() {
+    if cipher.pke_type != unsign_key.encryption_key.encryption_scheme_type() {
         return Err(CryptographyError::VerificationError(
             "encryption type of cipher does not match the decryption key type".to_string(),
         ));
     }
+    let sender_keys = match unsign_key.sender {
+        super::SenderAuth::Ecdsa(_public_sig_key) => {
+            return Err(CryptographyError::VerificationError(
+                "Unsigncryption key for legacy scheme supplied for composite signcryption"
+                    .to_string(),
+            ));
+        }
+        super::SenderAuth::Multi(verf_key_set) => verf_key_set,
+    };
     let kem_ct: HybridKemCt =
         safe_deserialize(std::io::Cursor::new(&cipher.payload), SAFE_SER_SIZE_LIMIT)
             .map_err(CryptographyError::SerializationError)?;
-    let plaintext = hybrid_decrypt(kem_ct, decryption_key)?;
+    let plaintext = hybrid_decrypt(kem_ct, unsign_key.decryption_key)?;
     let mut envelope: CompositeEnvelope =
         safe_deserialize(std::io::Cursor::new(&*plaintext), SAFE_SER_SIZE_LIMIT)
             .map_err(CryptographyError::SerializationError)?;
 
     let msg = Zeroizing::new(std::mem::take(&mut envelope.msg));
 
-    let mut signed = SigncryptionSignedPayload::new(&msg, receiver_id, encryption_key)?;
+    let mut signed =
+        SigncryptionSignedPayload::new(&msg, unsign_key.receiver_id, unsign_key.encryption_key)?;
     let verified = verify_uniform(&envelope.signature, sender_keys, dsep, &signed);
     signed.zeroize();
     verified.map_err(|e| CryptographyError::VerificationError(e.to_string()))?;
@@ -174,8 +182,8 @@ mod tests {
     use super::super::common::signcryption_fixture;
     use super::super::{Signcrypt, UnifiedSigncryptionKey, UnifiedUnsigncryptionKey, Unsigncrypt};
     use super::*;
-    use crate::cryptography::encryption::PkeSchemeType;
-    use crate::cryptography::signatures::{PublicSigKey, UnifiedPublicSigKey};
+    use crate::cryptography::encryption::{PkeSchemeType, UnifiedPrivateEncKey};
+    use crate::cryptography::signatures::{PublicSigKey, UnifiedPublicSigKey, VerfKeySet};
     use crate::cryptography::signing::test_support::seeded_identity;
     use crate::vault::storage::tests::TestType;
     use aes_prng::AesRng;
@@ -381,7 +389,7 @@ mod tests {
 
         let other_id = b"a different receiver".to_vec();
         assert!(
-            open(&f.dec_key, &f.enc_key, &f.keys, &other_id, DSEP, &cipher).is_err(),
+            open_as(&f, &f.keys, &other_id, DSEP, &cipher).is_err(),
             "a different receiver id opened the envelope"
         );
 
