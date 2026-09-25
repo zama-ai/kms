@@ -200,7 +200,7 @@ impl<Z: Ring> NetworkValue<Z> {
     }
 
     pub async fn from_network(
-        serialized: anyhow::Result<Vec<u8>>,
+        serialized: anyhow::Result<Bytes>,
         serialization_runtime: DeSerializationRunTime,
     ) -> anyhow::Result<Self> {
         match serialization_runtime {

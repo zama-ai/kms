@@ -33,7 +33,9 @@ pub trait Networking<R: RoleTrait> {
     /// parties (and re-sent on retry) without copying it.
     async fn send(&self, value: Bytes, receiver: &R) -> anyhow::Result<()>;
 
-    async fn receive(&self, sender: &R) -> anyhow::Result<Vec<u8>>;
+    /// Returns a [`Bytes`] so the gRPC implementation can hand out the payload as a
+    /// slice of the transport's receive buffer, without copying it.
+    async fn receive(&self, sender: &R) -> anyhow::Result<Bytes>;
 
     /// Increase the round counter
     ///

@@ -139,7 +139,7 @@ impl<R: RoleTrait> Networking<R> for LocalNetworking<R> {
 
         let tagged_value = LocalTaggedValue {
             send_counter: *net_round,
-            value: val.to_vec(),
+            value: val,
         };
 
         let mut already_sent = self.already_sent.lock().await;
@@ -155,7 +155,7 @@ impl<R: RoleTrait> Networking<R> for LocalNetworking<R> {
         tx.send(tagged_value).map_err(|e| e.into())
     }
 
-    async fn receive(&self, sender: &R) -> anyhow::Result<Vec<u8>> {
+    async fn receive(&self, sender: &R) -> anyhow::Result<Bytes> {
         let (_, rx) = self
             .pairwise_channels
             .get(&(*sender, self.owner))
@@ -318,7 +318,7 @@ impl<R: RoleTrait> Networking<R> for LocalNetworking<R> {
 
 #[derive(Debug, Clone)]
 struct LocalTaggedValue {
-    value: Vec<u8>,
+    value: Bytes,
     send_counter: usize,
 }
 

@@ -196,7 +196,7 @@ impl GrpcSendingService {
 
             let send_fn = || async {
                 // The fields are `Bytes`, so this clone (once per attempt) is a
-                // refcount bump; the only copy left is prost's wire encode.
+                // refcount bump.
                 let value = value.clone();
                 network_channel
                     .clone()

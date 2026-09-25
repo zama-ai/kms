@@ -1,5 +1,6 @@
 //! Per-sender message queues and the future-round reordering buffer.
 
+use bytes::Bytes;
 use dashmap::DashMap;
 use std::sync::Arc;
 use threshold_types::party::{MpcIdentity, RoleAssignment};
@@ -13,7 +14,7 @@ use tokio::sync::{
 // so that messages that haven't been pickup up using receive() calls will get dropped
 #[derive(Debug)]
 pub struct NetworkRoundValue {
-    pub value: Vec<u8>,
+    pub value: Bytes,
     pub round_counter: usize,
 }
 
@@ -34,7 +35,7 @@ pub(crate) struct ReceiverState {
     pub(crate) rx: Receiver<NetworkRoundValue>,
     /// Future-round messages, keyed by round counter (all strictly greater than
     /// the current round when inserted). Holds at most one value per round.
-    pub(crate) future: std::collections::BTreeMap<usize, Vec<u8>>,
+    pub(crate) future: std::collections::BTreeMap<usize, Bytes>,
 }
 
 impl ReceiverState {
@@ -48,7 +49,7 @@ impl ReceiverState {
 
     /// Drop every buffered message strictly older than `current`, then take the
     /// buffered message for exactly `current` if one is present.
-    pub(crate) fn take_current(&mut self, current: usize) -> Option<Vec<u8>> {
+    pub(crate) fn take_current(&mut self, current: usize) -> Option<Bytes> {
         // Keep only rounds >= current; everything below is stale and dropped.
         self.future = self.future.split_off(&current);
         self.future.remove(&current)
@@ -65,7 +66,7 @@ impl ReceiverState {
     pub(crate) fn buffer_future(
         &mut self,
         round: usize,
-        value: Vec<u8>,
+        value: Bytes,
         current: usize,
         max_future_rounds: usize,
         max_buffered_msgs: usize,
@@ -237,7 +238,7 @@ mod tests {
         for i in 0..10 {
             let res = receiver_state.buffer_future(
                 i,
-                vec![i as u8],
+                Bytes::from(vec![i as u8]),
                 current_round,
                 window_size,
                 window_size,
@@ -258,7 +259,7 @@ mod tests {
             let expected_msg = current_round as u8;
             assert_eq!(
                 current,
-                Some(vec![expected_msg]),
+                Some(Bytes::from(vec![expected_msg])),
                 "Expected message for round {current_round}: {expected_msg}"
             );
             current_round += 1;
@@ -270,16 +271,16 @@ mod tests {
         let (_, rx) = channel::<NetworkRoundValue>(10);
         let mut receiver_state = ReceiverState::new(rx);
 
-        assert!(receiver_state.buffer_future(1, vec![1], 0, 2, 10));
-        assert!(receiver_state.buffer_future(2, vec![2], 0, 2, 10));
-        assert!(!receiver_state.buffer_future(3, vec![3], 0, 2, 10));
+        assert!(receiver_state.buffer_future(1, Bytes::from(vec![1]), 0, 2, 10));
+        assert!(receiver_state.buffer_future(2, Bytes::from(vec![2]), 0, 2, 10));
+        assert!(!receiver_state.buffer_future(3, Bytes::from(vec![3]), 0, 2, 10));
 
         let (_, rx) = channel::<NetworkRoundValue>(10);
         let mut receiver_state = ReceiverState::new(rx);
 
-        assert!(receiver_state.buffer_future(1, vec![1], 0, 10, 2));
-        assert!(receiver_state.buffer_future(2, vec![2], 0, 10, 2));
-        assert!(!receiver_state.buffer_future(3, vec![3], 0, 10, 2));
+        assert!(receiver_state.buffer_future(1, Bytes::from(vec![1]), 0, 10, 2));
+        assert!(receiver_state.buffer_future(2, Bytes::from(vec![2]), 0, 10, 2));
+        assert!(!receiver_state.buffer_future(3, Bytes::from(vec![3]), 0, 10, 2));
     }
 
     #[test]
@@ -287,8 +288,8 @@ mod tests {
         let (_, rx) = channel::<NetworkRoundValue>(10);
         let mut receiver_state = ReceiverState::new(rx);
 
-        assert!(receiver_state.buffer_future(1, vec![1], 0, 10, 10));
-        assert!(!receiver_state.buffer_future(1, vec![2], 0, 10, 10));
-        assert_eq!(receiver_state.future.get(&1), Some(&vec![1]));
+        assert!(receiver_state.buffer_future(1, Bytes::from(vec![1]), 0, 10, 10));
+        assert!(!receiver_state.buffer_future(1, Bytes::from(vec![2]), 0, 10, 10));
+        assert_eq!(receiver_state.future.get(&1), Some(&Bytes::from(vec![1])));
     }
 }

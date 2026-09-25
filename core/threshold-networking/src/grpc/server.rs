@@ -448,8 +448,8 @@ impl Gnetworking for NetworkingImpl {
         let send_result = tokio::time::timeout(
             self.max_waiting_time_for_message_queue,
             tx.send(NetworkRoundValue {
-                // One copy out of the decode buffer
-                value: request.value.into(),
+                // A slice of tonic's decode buffer: no copy on the receive path.
+                value: request.value,
                 // Narrow the fixed-width wire round back to the in-memory `usize`.
                 round_counter: tag.round_counter as usize,
             }),
