@@ -778,7 +778,7 @@ mod tests {
             signing_schemes: vec![SigningSchemeType::Ecdsa256k1 as i32],
             enc_key: make_dummy_enc_pk(rng),
             typed_ciphertexts: vec![TypedCiphertext {
-                ciphertext: ct_buf,
+                ciphertext: ct_buf.into(),
                 fhe_type: FheTypes::Uint8 as i32,
                 external_handle: vec![],
                 // NOTE: because the way [setup_user_decryptor] is implemented,

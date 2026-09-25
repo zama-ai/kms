@@ -204,7 +204,7 @@ async fn test_largecipher() -> Result<()> {
     );
     let request_id = derive_request_id("TEST_USER_DECRYPT_ID_123").unwrap();
     let typed_ciphertexts = vec![TypedCiphertext {
-        ciphertext: ct,
+        ciphertext: ct.into(),
         fhe_type: fhe_type as i32,
         ciphertext_format: ct_format.into(),
         external_handle: vec![123],
