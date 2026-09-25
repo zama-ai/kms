@@ -44,11 +44,12 @@ fn dispatch_underlying_type_name(enum_name: &str) -> String {
 /// TODO(zama-ai/kms-internal#3028): this explicit list should go away after
 /// we have a proper way to identify which structs need to be tested.
 const ALLOW_UNCOVERED: &[&str] = &[
-    // Field of UnifiedSigncryptionKeyOwned.
-    // Covered via UnifiedSigncryptionKeyTest.
+    // Field of InternalCustodianContext, reached through a
+    // RecoveryValidationMaterial payload.
+    // Covered via RecoveryValidationMaterialTest.
     "UnifiedPublicEncKey",
-    // Field of UnifiedUnsigncryptionKeyOwned.
-    // Covered via UnifiedUnsigncryptionKeyTest.
+    // No fixture carries this wrapper itself; only the keys it wraps.
+    // Covered via MlKem1024P384PrivateKeyTest.
     "UnifiedPrivateEncKey",
     // Field of UnifiedCipher.
     // Covered via UnifiedCipherTest.
