@@ -51,6 +51,7 @@ pub struct ThresholdPartyConf {
     pub peers: Option<Vec<PeerConf>>,
     // `#[serde(default)]` lets the whole section be omitted from the config file.
     #[serde(default)]
+    #[validate(nested)]
     pub core_to_core_net: CoreToCoreNetworkConfig,
     pub decryption_mode: DecryptionMode,
 }
