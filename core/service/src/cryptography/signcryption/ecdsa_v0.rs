@@ -61,7 +61,9 @@ pub(super) fn seal(
     let to_encrypt =
         Zeroizing::new([msg, sig.to_bytes().as_ref(), verf_key_hash.as_ref()].concat());
 
-    let ciphertext = signcrypt_key.receiver_enc_key.hybrid_encrypt(rng, &to_encrypt)?;
+    let ciphertext = signcrypt_key
+        .receiver_enc_key
+        .hybrid_encrypt(rng, &to_encrypt)?;
     // LEGACY: approach to serialization
     Ok(UnifiedSigncryption::new(
         bc2wrap::serialize(&ciphertext)
@@ -82,7 +84,9 @@ pub(super) fn open(
     // LEGACY Code: should be using safe_deserialization from tfhe-rs
     let deserialized_payload: HybridKemCt = bc2wrap::deserialize_slice(&cipher.payload)
         .map_err(|e| CryptographyError::BincodeError(e.to_string()))?;
-    let decrypted_plaintext = unsign_key.decryption_key.hybrid_decrypt(deserialized_payload)?;
+    let decrypted_plaintext = unsign_key
+        .decryption_key
+        .hybrid_decrypt(deserialized_payload)?;
     let (msg, sig) = parse_msg(decrypted_plaintext, sender_verf_key)?;
     check_format_and_signature(dsep, &msg, &sig, unsign_key, sender_verf_key)?;
     Ok(msg)

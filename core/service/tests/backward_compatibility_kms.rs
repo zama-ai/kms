@@ -752,8 +752,11 @@ fn test_unified_signcryption(
     let mut encryption = Encryption::new(PkeSchemeType::MlKem512, &mut rng);
     let (dec_key, enc_key) = encryption.keygen().unwrap();
     let receiver_id = client_verf_key.verf_key_id();
-    let signcrypt_key =
-        UnifiedSigncryptionKey::from_signing_key(server_sig_key, enc_key.clone(), receiver_id.clone());
+    let signcrypt_key = UnifiedSigncryptionKey::from_signing_key(
+        server_sig_key,
+        enc_key.clone(),
+        receiver_id.clone(),
+    );
     let new_versionized = signcrypt_key
         .signcrypt(&mut rng, b"TESTTEST", &verf_key)
         .unwrap();
@@ -772,13 +775,12 @@ fn test_unified_signcryption(
     // whether a node can still open material an earlier release produced. The
     // frozen layout carries no version tag and is recovered by subtracting two
     // fixed-size tail fields, so a change there is silent until something tries.
-    let unsign_key =
-        UnifiedUnsigncryptionKey::new(
-            std::sync::Arc::new(dec_key),
-            enc_key,
-            verf_key.clone(),
-            receiver_id,
-        );
+    let unsign_key = UnifiedUnsigncryptionKey::new(
+        std::sync::Arc::new(dec_key),
+        enc_key,
+        verf_key.clone(),
+        receiver_id,
+    );
     let opened: PublicSigKey = unsign_key
         .unsigncrypt(b"TESTTEST", &original_versionized)
         .map_err(|e| {

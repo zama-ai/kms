@@ -571,11 +571,8 @@ impl<
                 tonic::Code::Internal,
             )
         })?;
-        let signcryption_key = UnifiedSigncryptionKey::new(
-            identity.clone(),
-            client_enc_key,
-            client_address.to_vec(),
-        );
+        let signcryption_key =
+            UnifiedSigncryptionKey::new(identity.clone(), client_enc_key, client_address.to_vec());
         // the result of the computation is tracked the tracker
         let session_maker = self.session_maker.clone();
 
