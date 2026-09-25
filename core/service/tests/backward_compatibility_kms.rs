@@ -821,7 +821,7 @@ fn test_unified_signcryption(
     let signcrypt_key =
         UnifiedSigncryptionKeyOwned::new(server_sig_key, enc_key.clone(), receiver_id.clone());
     let new_versionized = signcrypt_key
-        .signcrypt(&mut rng, b"TESTTEST", &verf_key)
+        .signcrypt(&mut rng, b"TESTTEST", &[], &verf_key)
         .unwrap();
 
     if original_versionized != new_versionized {

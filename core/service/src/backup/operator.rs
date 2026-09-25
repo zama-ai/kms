@@ -574,8 +574,9 @@ impl Operator {
             };
             let custodian_verf_id = custodian_verf_key.verf_key_id();
             let signcryption_key = UnifiedSigncryptionKey::new(sk, cus_enc_key, &custodian_verf_id);
+            // No scheme set: this is the frozen, ECDSA-only layout.
             let signcryption = signcryption_key
-                .signcrypt(rng, &DSEP_BACKUP_CUSTODIAN, &backup_material)
+                .signcrypt(rng, &DSEP_BACKUP_CUSTODIAN, &[], &backup_material)
                 .map_err(BackupError::InternalCryptographyError)?;
             // Commitment by the operator, which is a hash of [BackupMaterial].
             //
