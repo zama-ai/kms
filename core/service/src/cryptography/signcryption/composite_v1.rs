@@ -12,7 +12,7 @@ use crate::cryptography::signatures::StoredTypedSignature;
 #[cfg(feature = "non-wasm")]
 use crate::cryptography::signatures::SigningSchemeType;
 #[cfg(feature = "non-wasm")]
-use crate::cryptography::signcryption::{SignerAuth, UnifiedSigncryptionKey};
+use crate::cryptography::signcryption::UnifiedSigncryptionKey;
 use crate::cryptography::signcryption::UnifiedUnsigncryptionKey;
 #[cfg(feature = "non-wasm")]
 use crate::cryptography::signing::composite::sign_uniform;
@@ -109,19 +109,10 @@ pub(super) fn seal(
     schemes: &[SigningSchemeType],
     msg: &[u8],
 ) -> Result<UnifiedSigncryption, CryptographyError> {
-    let identity = match signcrypt_key.signer {
-        SignerAuth::Multi(identity) => identity,
-        SignerAuth::Ecdsa(_) => {
-            return Err(CryptographyError::SigningError(
-                "signcryption key for the legacy scheme supplied for composite signcryption"
-                    .to_string(),
-            ));
-        }
-    };
-    let receiver_enc_key = signcrypt_key.receiver_enc_key;
+    let receiver_enc_key = &signcrypt_key.receiver_enc_key;
     let mut signed =
-        SigncryptionSignedPayload::new(msg, signcrypt_key.receiver_id, receiver_enc_key)?;
-    let signature = sign_uniform(identity, schemes, dsep, &signed);
+        SigncryptionSignedPayload::new(msg, &signcrypt_key.receiver_id, receiver_enc_key)?;
+    let signature = sign_uniform(&signcrypt_key.identity, schemes, dsep, &signed);
     signed.zeroize();
     let signature = signature?;
 
@@ -199,6 +190,7 @@ mod tests {
     use crate::vault::storage::tests::TestType;
     use aes_prng::AesRng;
     use rand::SeedableRng;
+    use std::sync::Arc;
 
     const DSEP: &DomainSep = b"COMPV1TT";
 
@@ -207,9 +199,14 @@ mod tests {
     }
 
     /// The material one composite round trip needs.
+    ///
+    /// The sealer is held here rather than rebuilt per test: now that it owns
+    /// its fields it has no lifetime, so it can sit in the fixture beside the
+    /// `rng` it is used with.
     struct CompositeFixture {
         rng: AesRng,
-        identity: NodeSigningIdentity,
+        sealer: UnifiedSigncryptionKey,
+        identity: Arc<NodeSigningIdentity>,
         keys: VerfKeySet,
         schemes: Vec<SigningSchemeType>,
         dec_key: UnifiedPrivateEncKey,
@@ -223,10 +220,16 @@ mod tests {
         schemes: Vec<SigningSchemeType>,
     ) -> CompositeFixture {
         let mut base = signcryption_fixture(scheme, seed);
-        let identity = seeded_identity(&mut base.rng);
+        let identity = Arc::new(seeded_identity(&mut base.rng));
         let keys = VerfKeySet::from_identity(&identity, &schemes).unwrap();
+        let sealer = UnifiedSigncryptionKey::new(
+            identity.clone(),
+            base.enc_key.clone(),
+            base.receiver_id.clone(),
+        );
         CompositeFixture {
             rng: base.rng,
+            sealer,
             identity,
             keys,
             schemes,
@@ -241,9 +244,8 @@ mod tests {
     fn round_trip() {
         for scheme in [PkeSchemeType::MlKem512, PkeSchemeType::MlKem1024P384] {
             let mut f = fixture(scheme, 100, pair());
-            let sealer = UnifiedSigncryptionKey::new_multi(&f.identity, &f.enc_key, &f.receiver_id);
             let cipher = seal(
-                &sealer,
+                &f.sealer,
                 &mut f.rng,
                 DSEP,
                 &f.schemes,
@@ -268,8 +270,7 @@ mod tests {
 
         // The sender signs under a weaker pair; using MlDsa44 instead of MlDsa87.
         let weaker = vec![SigningSchemeType::Ecdsa256k1, SigningSchemeType::MlDsa44];
-        let sealer = UnifiedSigncryptionKey::new_multi(&f.identity, &f.enc_key, &f.receiver_id);
-        let cipher = seal(&sealer, &mut f.rng, DSEP, &weaker, b"downgrade me").unwrap();
+        let cipher = seal(&f.sealer, &mut f.rng, DSEP, &weaker, b"downgrade me").unwrap();
 
         let err =
             UnifiedUnsigncryptionKey::new_multi(&f.dec_key, &f.enc_key, &f.keys, &f.receiver_id)
@@ -306,9 +307,8 @@ mod tests {
             (400_u64, vec![SigningSchemeType::Ecdsa256k1]),
         ] {
             let mut f = fixture(PkeSchemeType::MlKem512, seed, schemes);
-            let sealer = UnifiedSigncryptionKey::new_multi(&f.identity, &f.enc_key, &f.receiver_id);
-            let composite = seal(&sealer, &mut f.rng, DSEP, &f.schemes, b"composite payload")
-                .unwrap();
+            let composite =
+                seal(&f.sealer, &mut f.rng, DSEP, &f.schemes, b"composite payload").unwrap();
 
             // The envelope does open for the reader it was made for, so each
             // rejection below is the format mismatch and not a broken fixture.
@@ -339,10 +339,13 @@ mod tests {
             // `safe_deserialize` refuses it — again before any decryption.
             let base = signcryption_fixture(PkeSchemeType::MlKem512, seed);
             let mut rng = base.rng;
-            let frozen =
-                UnifiedSigncryptionKey::new(&base.signing_key, &base.enc_key, &base.receiver_id)
-                    .signcrypt(&mut rng, DSEP, &[], &TestType { i: 7 })
-                    .unwrap();
+            let frozen = UnifiedSigncryptionKey::from_signing_key(
+                base.signing_key.clone(),
+                base.enc_key.clone(),
+                base.receiver_id.clone(),
+            )
+            .signcrypt(&mut rng, DSEP, &TestType { i: 7 })
+            .unwrap();
             let err = reader.open(DSEP, &frozen).unwrap_err();
             assert!(
                 matches!(err, CryptographyError::SerializationError(_)),
@@ -355,9 +358,8 @@ mod tests {
     #[test]
     fn open_rejects_any_deviation_from_what_was_sealed() {
         let mut f = fixture(PkeSchemeType::MlKem512, 500, pair());
-        let sealer = UnifiedSigncryptionKey::new_multi(&f.identity, &f.enc_key, &f.receiver_id);
         let cipher = seal(
-            &sealer,
+            &f.sealer,
             &mut f.rng,
             DSEP,
             &f.schemes,
@@ -406,32 +408,47 @@ mod tests {
         );
     }
 
-    /// `SignerAuth` names the layout, so the composite sealer refuses a frozen
-    /// signer rather than falling back to signing with its ECDSA key alone.
+    /// A node with no root seed has no post-quantum key to sign with, so the
+    /// composite layout is refused for the schemes that need one — rather than
+    /// quietly dropping them and sealing under what is left.
     #[test]
-    fn a_frozen_signer_cannot_seal_composite() {
+    fn a_seedless_identity_cannot_seal_a_post_quantum_composite() {
         let mut base = signcryption_fixture(PkeSchemeType::MlKem512, 600);
-        let key = UnifiedSigncryptionKey::new(&base.signing_key, &base.enc_key, &base.receiver_id);
+        let key = UnifiedSigncryptionKey::from_signing_key(
+            base.signing_key.clone(),
+            base.enc_key.clone(),
+            base.receiver_id.clone(),
+        );
 
-        let err = seal(&key, &mut base.rng, DSEP, &pair(), b"no identity here").unwrap_err();
+        let err = seal(&key, &mut base.rng, DSEP, &pair(), b"no seed here").unwrap_err();
         assert!(matches!(err, CryptographyError::SigningError(_)), "{err}");
     }
 
-    /// The frozen layout is ECDSA by definition and has no scheme set, so asking
-    /// it for one is an error rather than an ECDSA-only envelope the caller
-    /// believes is composite.
+    /// ...but ECDSA alone needs no seed, so a seedless node can still write a
+    /// one-signature composite envelope. That envelope is a composite, not the
+    /// frozen layout: it is only readable by a reader demanding exactly
+    /// `{Ecdsa256k1}`, which is what keeps the two apart.
     #[test]
-    fn the_frozen_layout_refuses_a_scheme_set() {
+    fn a_seedless_identity_can_seal_an_ecdsa_only_composite() {
         let mut base = signcryption_fixture(PkeSchemeType::MlKem512, 700);
-        let key = UnifiedSigncryptionKey::new(&base.signing_key, &base.enc_key, &base.receiver_id);
+        let key = UnifiedSigncryptionKey::from_signing_key(
+            base.signing_key.clone(),
+            base.enc_key.clone(),
+            base.receiver_id.clone(),
+        );
+        let ecdsa_only = [SigningSchemeType::Ecdsa256k1];
 
-        let err = key
-            .signcrypt(&mut base.rng, DSEP, &pair(), &TestType { i: 1 })
-            .unwrap_err();
-        assert!(matches!(err, CryptographyError::SigningError(_)), "{err}");
+        let cipher = seal(&key, &mut base.rng, DSEP, &ecdsa_only, b"one signature").unwrap();
 
-        // ...and with no set requested it seals as it always did.
-        key.signcrypt(&mut base.rng, DSEP, &[], &TestType { i: 1 })
-            .unwrap();
+        let keys = VerfKeySet::from_identity(&key.identity, &ecdsa_only).unwrap();
+        let opened = UnifiedUnsigncryptionKey::new_multi(
+            &base.dec_key,
+            &base.enc_key,
+            &keys,
+            &base.receiver_id,
+        )
+        .open(DSEP, &cipher)
+        .unwrap();
+        assert_eq!(&*opened, b"one signature");
     }
 }

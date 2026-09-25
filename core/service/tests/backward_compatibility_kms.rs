@@ -58,7 +58,7 @@ use kms_lib::{
             StoredTypedSignature, UnifiedPublicSigKey, compute_eip712_signature, gen_sig_keys,
         },
         signcryption::{
-            Signcrypt, SigncryptionPayload, UnifiedSigncryption, UnifiedSigncryptionKeyOwned,
+            Signcrypt, SigncryptionPayload, UnifiedSigncryption, UnifiedSigncryptionKey,
             UnifiedUnsigncryptionKeyOwned, Unsigncrypt,
         },
     },
@@ -753,9 +753,9 @@ fn test_unified_signcryption(
     let (dec_key, enc_key) = encryption.keygen().unwrap();
     let receiver_id = client_verf_key.verf_key_id();
     let signcrypt_key =
-        UnifiedSigncryptionKeyOwned::new(server_sig_key, enc_key.clone(), receiver_id.clone());
+        UnifiedSigncryptionKey::from_signing_key(server_sig_key, enc_key.clone(), receiver_id.clone());
     let new_versionized = signcrypt_key
-        .signcrypt(&mut rng, b"TESTTEST", &[], &verf_key)
+        .signcrypt(&mut rng, b"TESTTEST", &verf_key)
         .unwrap();
 
     if original_versionized != new_versionized {

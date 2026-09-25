@@ -463,14 +463,13 @@ impl Custodian {
 
         // re-encrypted share and sign it
         let operator_verf_id = operator_verification_key.verf_key_id();
-        let signcrypt_key = UnifiedSigncryptionKey::new(
-            &self.signing_key,
-            operator_ephem_enc_key,
-            &operator_verf_id,
+        let signcrypt_key = UnifiedSigncryptionKey::from_signing_key(
+            self.signing_key.clone(),
+            operator_ephem_enc_key.clone(),
+            operator_verf_id,
         );
-        // No scheme set: this is the frozen, ECDSA-only layout.
         let signcryption =
-            signcrypt_key.signcrypt(rng, &DSEP_BACKUP_MATERIAL, &[], &*backup_material)?;
+            signcrypt_key.signcrypt(rng, &DSEP_BACKUP_MATERIAL, &*backup_material)?;
         tracing::debug!(
             "Signed re-encrypted share for operator: {}",
             operator_verification_key.address()

@@ -45,8 +45,8 @@ pub(super) fn seal(
     // Sign msg || H(client_verf_key) || H(client_pub_key)
     // Note that H(client_verf_key) = client_address
     // Only serialize the inner structure to ensure backwards compatibility!!!
-    let binding = receiver_binding(signcrypt_key.receiver_id, signcrypt_key.receiver_enc_key)?;
-    let signing_key = signcrypt_key.signer.ecdsa();
+    let binding = receiver_binding(&signcrypt_key.receiver_id, &signcrypt_key.receiver_enc_key)?;
+    let signing_key = signcrypt_key.signing_key();
     // Wipe the temporary signed message after signing.
     let to_sign = Zeroizing::new([msg, binding.as_slice()].concat());
     let sig = internal_sign(dsep, &to_sign, signing_key)
@@ -61,7 +61,7 @@ pub(super) fn seal(
     let to_encrypt =
         Zeroizing::new([msg, sig.to_bytes().as_ref(), verf_key_hash.as_ref()].concat());
 
-    let ciphertext = hybrid_encrypt(rng, &to_encrypt, signcrypt_key.receiver_enc_key)?;
+    let ciphertext = hybrid_encrypt(rng, &to_encrypt, &signcrypt_key.receiver_enc_key)?;
     // LEGACY: approach to serialization
     Ok(UnifiedSigncryption::new(
         bc2wrap::serialize(&ciphertext)
@@ -242,15 +242,16 @@ mod tests {
         for scheme in [PkeSchemeType::MlKem512, PkeSchemeType::MlKem1024P384] {
             let mut f = signcryption_fixture(scheme, 200);
             let payload = TestType { i: 4711 };
-            let signcrypt_key =
-                UnifiedSigncryptionKey::new(&f.signing_key, &f.enc_key, &f.receiver_id);
+            let signcrypt_key = UnifiedSigncryptionKey::from_signing_key(
+                f.signing_key.clone(),
+                f.enc_key.clone(),
+                f.receiver_id.clone(),
+            );
 
             let mut expected_msg = Vec::new();
             safe_serialize(&payload, &mut expected_msg, SAFE_SER_SIZE_LIMIT).unwrap();
 
-            let cipher = signcrypt_key
-                .signcrypt(&mut f.rng, DSEP, &[], &payload)
-                .unwrap();
+            let cipher = signcrypt_key.signcrypt(&mut f.rng, DSEP, &payload).unwrap();
             assert_eq!(cipher.pke_type, scheme);
 
             let kem_ct: HybridKemCt = bc2wrap::deserialize_slice(&cipher.payload).unwrap();

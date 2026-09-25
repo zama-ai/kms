@@ -18,7 +18,7 @@ use crate::{
 };
 use crate::{
     backup::custodian::DSEP_BACKUP_CUSTODIAN,
-    cryptography::signatures::{internal_sign, internal_verify_sig},
+    cryptography::signatures::{NodeSigningIdentity, internal_sign, internal_verify_sig},
 };
 use crate::{
     backup::{
@@ -42,6 +42,7 @@ use std::{
     collections::{BTreeMap, HashMap},
     fmt::Display,
     ops::{Add, Sub},
+    sync::Arc,
     time::{Duration, SystemTime},
 };
 use tfhe::{named::Named, safe_serialization::safe_deserialize};
@@ -499,6 +500,9 @@ impl Operator {
             }
             Some(sk) => sk,
         };
+        // Built once and shared by every per-custodian sealer below, so the
+        // signing key is not copied per custodian.
+        let identity = Arc::new(NodeSigningIdentity::from(sk.clone()));
         let n = self.custodian_keys.len();
         let t = self.threshold;
 
@@ -573,10 +577,13 @@ impl Operator {
                 shares,
             };
             let custodian_verf_id = custodian_verf_key.verf_key_id();
-            let signcryption_key = UnifiedSigncryptionKey::new(sk, cus_enc_key, &custodian_verf_id);
-            // No scheme set: this is the frozen, ECDSA-only layout.
+            let signcryption_key = UnifiedSigncryptionKey::new(
+                identity.clone(),
+                cus_enc_key.clone(),
+                custodian_verf_id,
+            );
             let signcryption = signcryption_key
-                .signcrypt(rng, &DSEP_BACKUP_CUSTODIAN, &[], &backup_material)
+                .signcrypt(rng, &DSEP_BACKUP_CUSTODIAN, &backup_material)
                 .map_err(BackupError::InternalCryptographyError)?;
             // Commitment by the operator, which is a hash of [BackupMaterial].
             //

@@ -887,7 +887,11 @@ impl<
         client_enc_key: &UnifiedPublicEncKey,
         client_id: &[u8],
     ) -> anyhow::Result<Vec<u8>> {
-        let signcryption_key = UnifiedSigncryptionKey::new(sig_key, client_enc_key, client_id);
+        let signcryption_key = UnifiedSigncryptionKey::from_signing_key(
+            sig_key.clone(),
+            client_enc_key.clone(),
+            client_id.to_vec(),
+        );
         // Observe that we encrypt the plaintext itself, this is different from the threshold case
         // where it is first mapped to a Vec<ResiduePolyF4Z128> element
         // Keep the cleartext behind a zeroizing guard during signcryption.
