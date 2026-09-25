@@ -2169,7 +2169,7 @@ mod tests {
         let key_id = RequestId::new_random(&mut rng);
         let metadata = crate::engine::base::compute_info_standard_keygen_from_digests(
             &NodeSigningIdentity::ecdsa_only(signing_key.clone()),
-            &[],
+            &[SigningSchemeType::Ecdsa256k1],
             &prep_id,
             &key_id,
             vec![0x11; 32],
@@ -2216,7 +2216,7 @@ mod tests {
         let key_id = RequestId::new_random(&mut rng);
         let metadata = crate::engine::base::compute_info_compressed_keygen_from_digests(
             &NodeSigningIdentity::ecdsa_only(signing_key.clone()),
-            &[],
+            &[SigningSchemeType::Ecdsa256k1],
             &prep_id,
             &key_id,
             vec![0x11; 32],
@@ -2263,7 +2263,7 @@ mod tests {
         let crs_id = RequestId::new_random(&mut rng);
         let metadata = crate::engine::base::compute_info_crs_from_digest(
             &NodeSigningIdentity::ecdsa_only(signing_key.clone()),
-            &[],
+            &[SigningSchemeType::Ecdsa256k1],
             &crs_id,
             vec![0x33; 32],
             64,
@@ -3001,7 +3001,7 @@ mod tests {
         let metadata_identity = NodeSigningIdentity::ecdsa_only(metadata_sk.clone());
         let key_metadata = crate::engine::base::compute_info_standard_keygen_from_digests(
             &metadata_identity,
-            &[],
+            &[SigningSchemeType::Ecdsa256k1],
             &material.preproc_id,
             &material.key_id,
             material
@@ -3023,7 +3023,7 @@ mod tests {
         let crs_digest = setup_crs(&mut storage, &crs_id).await;
         let crs_metadata = crate::engine::base::compute_info_crs_from_digest(
             &metadata_identity,
-            &[],
+            &[SigningSchemeType::Ecdsa256k1],
             &crs_id,
             crs_digest,
             64,

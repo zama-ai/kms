@@ -3079,10 +3079,11 @@ pub(crate) mod tests {
         let preproc_id = RequestId::new_random(&mut rng);
         let domain = dummy_domain();
         let extra_data = vec![0x0Au8, 0x0B, 0x0C];
-        // `external_signature` is always produced regardless of requested schemes.
+        // The minimal scheme set, which is what an empty request resolves to.
+        // `external_signature` is produced either way.
         let (sig, _signatures) = compute_preprocessing_signatures(
             &NodeSigningIdentity::ecdsa_only(sk.clone()),
-            &[],
+            &[SigningSchemeType::Ecdsa256k1],
             &preproc_id,
             &domain,
             extra_data.clone(),
@@ -3125,7 +3126,7 @@ pub(crate) mod tests {
             let (_, bad_sk) = gen_sig_keys(&mut rng);
             let (sig, _signatures) = compute_preprocessing_signatures(
                 &NodeSigningIdentity::ecdsa_only(bad_sk.clone()),
-                &[],
+                &[SigningSchemeType::Ecdsa256k1],
                 &preproc_id,
                 &domain,
                 extra_data.clone(),

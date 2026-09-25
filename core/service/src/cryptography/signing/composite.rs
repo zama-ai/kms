@@ -50,8 +50,9 @@
 //!   usage, or out of the composite.
 //! - The composite is unforgeable if any one component is, as in the draft.
 //! - The ECDSA entry of [`sign_result_entries`] is the deliberate exception. It
-//!   signs the EIP-712 hash, so it binds neither the set nor the usage, and it
-//!   moves freely between them.
+//!   signs the EIP-712 hash, which binds the usage and the domain through the
+//!   struct type hash, but not the scheme set, so that entry moves freely
+//!   between sets. Requiring the set is left to the verifier.
 #[cfg(feature = "non-wasm")]
 use super::identity::NodeSigningIdentity;
 use super::typed_signature::StoredTypedSignature;
@@ -216,6 +217,11 @@ where
 /// - Every other scheme signs [`scheme_bound_preimage`] over `payload`, so it
 ///   commits to the scheme set and the payload type as well as to the payload.
 ///
+/// The result is therefore not a composite in the sense of [`verify_composite`],
+/// which rejects it: the ECDSA entry is bound to the EIP-712 message rather than
+/// to the scheme set. A result is checked by `verify_response_signatures`, which
+/// requires the set the verifier asked for.
+///
 /// `schemes` may be given in any order; the entries come back ordered by
 /// scheme.
 #[cfg(feature = "non-wasm")]
@@ -229,9 +235,6 @@ pub fn sign_result_entries<T>(
 where
     T: Serialize + Versionize + Named,
 {
-    if schemes.is_empty() {
-        return Ok(Vec::new());
-    }
     let schemes = canonical_schemes(schemes)?;
     // Every non-ECDSA entry commits to the scheme set, so one cannot be lifted
     // out of a larger response and presented as a complete smaller one.
@@ -459,17 +462,16 @@ mod tests {
         );
     }
 
-    /// No schemes requested means no per-scheme entries, which is why this
-    /// returns a plain list of entries.
+    /// An empty set is a caller mistake, not a request for no signatures: a
+    /// result nothing signed is one the verifier refuses.
     #[test]
-    fn result_entries_tolerate_an_empty_request() {
+    fn result_entries_reject_an_empty_request() {
         let mut rng = AesRng::seed_from_u64(21);
         let identity = seeded_identity(&mut rng);
-        assert!(
-            sign_result_entries(&identity, &[], DSEP, &[0u8; 32], &msg())
-                .unwrap()
-                .is_empty()
-        );
+        assert!(matches!(
+            sign_result_entries(&identity, &[], DSEP, &[0u8; 32], &msg()),
+            Err(SigningError::EmptySchemeSet)
+        ));
     }
 
     /// Distinct scheme sets give distinct preimages, which is what stops a

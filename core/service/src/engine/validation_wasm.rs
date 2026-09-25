@@ -1008,7 +1008,7 @@ mod tests {
     ) -> anyhow::Result<Vec<u8>> {
         Ok(sign_user_decryption_result(
             &NodeSigningIdentity::ecdsa_only(server_sk.clone()),
-            &[],
+            &[SigningSchemeType::Ecdsa256k1],
             payload.clone(),
             user_pk_buf,
             extra_data.to_vec(),
