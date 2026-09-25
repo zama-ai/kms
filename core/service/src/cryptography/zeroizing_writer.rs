@@ -24,6 +24,11 @@ impl ZeroizingWriter {
         &self.buf
     }
 
+    /// Take the bytes written so far, still wiped on drop.
+    pub(crate) fn into_inner(self) -> Zeroizing<Vec<u8>> {
+        self.buf
+    }
+
     /// Grow without releasing an unwiped allocation.
     fn grow_for(&mut self, additional: usize) {
         let required = self.buf.len() + additional;

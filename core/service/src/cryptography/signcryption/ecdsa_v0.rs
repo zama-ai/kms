@@ -4,7 +4,7 @@
 //! deployed browser-side verifier parses it, so its bytes cannot change. See the
 //! module documentation of [`super`] for the full list of what pins them.
 
-use super::common::{DSEP_SIGNCRYPTION, hybrid_decrypt, hybrid_encrypt, receiver_binding};
+use super::common::{DSEP_SIGNCRYPTION, hybrid_decrypt, hybrid_encrypt};
 use super::{
     SigncryptionPayload, UnifiedSigncryption, UnifiedSigncryptionKey, UnifiedUnsigncryptionKey,
 };

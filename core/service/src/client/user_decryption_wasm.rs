@@ -8,7 +8,7 @@ use crate::cryptography::{
     signcryption::{UnifiedUnsigncryptionKey, UnsigncryptFHEPlaintext},
     signing::SigningSchemeType,
 };
-use crate::engine::signed_payload::user_dec_payload_bytes;
+use crate::engine::signed_payload::user_dec_payload;
 use crate::engine::validation::{
     DSEP_USER_DECRYPTION, ERR_VALIDATE_USER_DECRYPTION_MISMATCH_EXTRA_DATA, ExpectedSigner,
     RejectedUserDecResponse, ResponseSignatures, SignedPayloads, UserDecRejectReason,
@@ -278,7 +278,7 @@ impl Client {
             &SignedPayloads {
                 dsep: &DSEP_USER_DECRYPTION,
                 internal_bytes: &response_bytes,
-                payload_bytes: &user_dec_payload_bytes(&response_bytes, &resp.extra_data)?,
+                payload: &user_dec_payload(&response_bytes, &resp.extra_data),
                 eip712_hash: Some(user_decrypt_eip712_hash(&payload, request, eip712_domain)?),
             },
             request.signing_schemes(),

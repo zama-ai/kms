@@ -9,7 +9,7 @@ use crate::{
         signatures::PublicSigKey,
         signing::{SchemeVerfKeys, SigningSchemeType},
     },
-    engine::base::{compute_public_decryption_message, public_dec_payload_bytes},
+    engine::base::{compute_public_decryption_message, public_dec_payload},
     engine::validation_wasm::{
         ExpectedSigner, ResponseSignatures, SignedPayloads, verify_response_signatures,
     },
@@ -483,7 +483,7 @@ fn check_public_decrypt_signatures(
     // NOTE that we cannot use `BaseKmsStruct::verify_sig`
     // because `BaseKmsStruct` cannot be compiled for wasm (it has an async mutex).
     let response_bytes = bc2wrap::serialize(&response)?;
-    let payload_bytes = public_dec_payload_bytes(&response_bytes, response_extra_data)?;
+    let payload = public_dec_payload(&response_bytes, response_extra_data);
 
     // Built only when a domain is available: without one no ECDSA signature of this
     // response can be checked, and the message would be of no use.
@@ -508,7 +508,7 @@ fn check_public_decrypt_signatures(
         &SignedPayloads {
             dsep: &DSEP_PUBLIC_DECRYPTION,
             internal_bytes: &response_bytes,
-            payload_bytes: &payload_bytes,
+            payload: &payload,
             eip712_hash,
         },
         &requested,

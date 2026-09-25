@@ -13,14 +13,17 @@ use crate::cryptography::signatures::{NodeSigningIdentity, SigningSchemeType};
 use crate::cryptography::signatures::{StoredTypedSignature, VerfKeySet};
 #[cfg(feature = "non-wasm")]
 use crate::cryptography::signing::composite::sign_uniform;
-use crate::cryptography::signing::composite::{CompositeRole, verify_uniform};
+use crate::cryptography::signing::composite::verify_uniform;
+#[cfg(feature = "non-wasm")]
 use crate::cryptography::zeroizing_writer::ZeroizingWriter;
 use hashing::DomainSep;
 #[cfg(feature = "non-wasm")]
 use rand::{CryptoRng, RngCore};
 use serde::{Deserialize, Serialize};
 use tfhe::named::Named;
-use tfhe::safe_serialization::{safe_deserialize, safe_serialize};
+use tfhe::safe_serialization::safe_deserialize;
+#[cfg(feature = "non-wasm")]
+use tfhe::safe_serialization::safe_serialize;
 use tfhe_versionable::{Versionize, VersionsDispatch};
 use zeroize::{Zeroize, Zeroizing};
 
@@ -75,31 +78,26 @@ impl Zeroize for SigncryptionSignedPayload {
     }
 }
 
-/// The bytes every signature of a composite signcryption covers.
-fn signcryption_signed_bytes(
-    msg: &[u8],
-    receiver_id: &[u8],
-    encryption_key: &UnifiedPublicEncKey,
-) -> Result<ZeroizingWriter, CryptographyError> {
-    let mut payload = SigncryptionSignedPayload {
-        msg: msg.to_vec(),
-        receiver_id: receiver_id.to_vec(),
-        enc_key_digest: receiver_enc_key_digest(encryption_key)?,
-    };
-    let mut bytes = ZeroizingWriter::new();
-    let serialized = safe_serialize(&payload, &mut bytes, SAFE_SER_SIZE_LIMIT);
-    // The payload owns a second copy of the message and nothing wipes it on
-    // drop, so wipe it here, before either outcome leaves the function.
-    payload.zeroize();
-    serialized.map_err(|e| CryptographyError::SerializationError(e.to_string()))?;
-    Ok(bytes)
+impl SigncryptionSignedPayload {
+    /// What the signatures of a signcryption of `msg` to this receiver cover.
+    fn new(
+        msg: &[u8],
+        receiver_id: &[u8],
+        encryption_key: &UnifiedPublicEncKey,
+    ) -> Result<Self, CryptographyError> {
+        Ok(Self {
+            msg: msg.to_vec(),
+            receiver_id: receiver_id.to_vec(),
+            enc_key_digest: receiver_enc_key_digest(encryption_key)?,
+        })
+    }
 }
 
 /// Signcrypt `msg` in the composite layout.
 ///
 /// Sign-then-encrypt, as in the frozen layout. Each signature covers a
-/// [`SigncryptionSignedPayload`], under the [`CompositeRole::Signcryption`]
-/// role. The whole envelope is then encrypted to the receiver.
+/// [`SigncryptionSignedPayload`]. The whole envelope is then encrypted to the
+/// receiver.
 #[cfg(feature = "non-wasm")]
 pub fn seal(
     identity: &NodeSigningIdentity,
@@ -110,14 +108,10 @@ pub fn seal(
     dsep: &DomainSep,
     msg: &[u8],
 ) -> Result<UnifiedSigncryption, CryptographyError> {
-    let signed = signcryption_signed_bytes(msg, receiver_id, receiver_enc_key)?;
-    let signature = sign_uniform(
-        identity,
-        schemes,
-        CompositeRole::Signcryption,
-        dsep,
-        signed.as_slice(),
-    )?;
+    let mut signed = SigncryptionSignedPayload::new(msg, receiver_id, receiver_enc_key)?;
+    let signature = sign_uniform(identity, schemes, dsep, &signed);
+    signed.zeroize();
+    let signature = signature?;
 
     let mut envelope = CompositeEnvelope {
         msg: msg.to_vec(),
@@ -167,15 +161,10 @@ pub(super) fn open(
 
     let msg = Zeroizing::new(std::mem::take(&mut envelope.msg));
 
-    let signed = signcryption_signed_bytes(&msg, receiver_id, encryption_key)?;
-    verify_uniform(
-        &envelope.signature,
-        sender_keys,
-        CompositeRole::Signcryption,
-        dsep,
-        signed.as_slice(),
-    )
-    .map_err(|e| CryptographyError::VerificationError(e.to_string()))?;
+    let mut signed = SigncryptionSignedPayload::new(&msg, receiver_id, encryption_key)?;
+    let verified = verify_uniform(&envelope.signature, sender_keys, dsep, &signed);
+    signed.zeroize();
+    verified.map_err(|e| CryptographyError::VerificationError(e.to_string()))?;
 
     Ok(msg)
 }

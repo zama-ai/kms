@@ -116,8 +116,8 @@ impl Client {
     /// * `domain` - the EIP-712 domain of the request the result answers.
     /// * `dsep` - the domain separator of the result kind, which the non-ECDSA entries
     ///   sign under.
-    /// * `payload_bytes` - the serialized result payload the non-ECDSA entries sign, as
-    ///   the `*_payload_bytes` helpers of [`crate::engine::base`] build it.
+    /// * `payload` - the result payload the non-ECDSA entries sign, as the
+    ///   `*_payload` helpers of [`crate::engine::base`] build it.
     ///
     /// Returns the party id and address of the signer.
     ///
@@ -126,15 +126,19 @@ impl Client {
     /// Fails when nothing about the result can be authenticated, when an entry names a
     /// scheme this client holds no key for, when an entry does not verify, when the
     /// entries do not agree on one party, and when a requested scheme ends up unverified.
-    pub fn verify_result_signatures<T: SolStruct>(
+    pub fn verify_result_signatures<S, T>(
         &self,
         signatures: &[TypedSignature],
         external_signature: &[u8],
-        sol_type: &T,
+        sol_type: &S,
         domain: &Eip712Domain,
         dsep: &DomainSep,
-        payload_bytes: &[u8],
-    ) -> anyhow::Result<(u32, alloy_primitives::Address)> {
+        payload: &T,
+    ) -> anyhow::Result<(u32, alloy_primitives::Address)>
+    where
+        S: SolStruct,
+        T: serde::Serialize + tfhe::Versionize + tfhe::named::Named,
+    {
         if signatures.is_empty() && external_signature.is_empty() {
             return Err(anyhow_error_and_log(
                 "the response carries no signatures and no legacy external signature".to_string(),
@@ -150,7 +154,7 @@ impl Client {
             &SignedPayloads {
                 dsep,
                 internal_bytes: &[],
-                payload_bytes,
+                payload,
                 eip712_hash: Some(sol_type.eip712_signing_hash(domain)),
             },
             &self.signing_schemes,
