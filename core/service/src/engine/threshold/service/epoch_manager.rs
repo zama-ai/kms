@@ -429,7 +429,9 @@ impl<
             tracing::error!(
                 "No epoch data found in storage. Create an MPC epoch before using threshold operations"
             );
-            Err(anyhow::anyhow!("No epoch data found in storage. Create an MPC epoch before using threshold operations"))
+            Err(anyhow::anyhow!(
+                "No epoch data found in storage. Create an MPC epoch before using threshold operations"
+            ))
         } else {
             for (epoch_id, prss) in all_epochs {
                 let context_id = prss.context_id;
@@ -440,7 +442,7 @@ impl<
                     "Loaded epoch data from storage"
                 );
             }
-            Ok(())            
+            Ok(())
         }
     }
 

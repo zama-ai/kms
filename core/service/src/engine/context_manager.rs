@@ -64,7 +64,8 @@ struct SharedContextManager<
     base_kms: BaseKmsStruct,
     crypto_storage: CryptoMaterialStorage<PubS, PrivS>,
     custodian_meta_store: Arc<RwLock<CustodianMetaStore>>,
-    /// Serializes MPC context creation and destruction across storage and in-memory updates.
+    /// Serializes all MPC context operations (creation, destruction, storage I/O, and in-memory updates).
+    /// This prevents concurrent modifications that could leave the system in an inconsistent state.
     mpc_context_update_lock: Mutex<()>,
     /// The node's task tracker; a shutdown waits for what runs on it.
     tracker: Arc<TaskTracker>,
@@ -1022,8 +1023,6 @@ pub struct ThresholdContextManager<
     inner: Arc<SharedContextManager<PubS, PrivS>>,
     session_maker: SessionMaker,
     require_pcr_allowlist: bool,
-    /// Serializes context creation across storage and in-memory registration.
-    context_creation_lock: Mutex<()>,
 }
 
 impl<PubS, PrivS> ThresholdContextManager<PubS, PrivS>
@@ -1049,7 +1048,6 @@ where
             }),
             session_maker,
             require_pcr_allowlist,
-            context_creation_lock: Mutex::new(()),
         }
     }
 
@@ -1238,8 +1236,6 @@ where
                 MetricedError::new(OP_NEW_MPC_CONTEXT, None, e, tonic::Code::InvalidArgument)
             })?;
         let _update_guard = self.inner.mpc_context_update_lock.lock().await;
-
-        let _creation_guard = self.context_creation_lock.lock().await;
 
         // First check if the context already exists
         if self
