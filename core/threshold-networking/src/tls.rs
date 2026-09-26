@@ -25,6 +25,9 @@ use tokio_rustls::rustls::{
 };
 use x509_parser::{certificate::X509Certificate, parse_x509_certificate, pem::Pem};
 
+#[cfg(feature = "insecure")]
+use nsm_nitro_enclave_utils::api::nsm::AttestationDoc;
+
 #[derive(VersionsDispatch, Clone, Debug, Serialize, Deserialize)]
 pub enum ReleasePCRValuesVersions {
     V0(ReleasePCRValues),
@@ -319,11 +322,6 @@ impl ServerCertVerifier for AttestedVerifier {
         // usual (however, we expect it to be self-signed)
         tracing::debug!("Verifying certificate for server {:?}", server_name,);
         // check the bundled attestation document and EIF signing certificate
-        #[cfg(feature = "insecure")]
-        let do_validation = !&self.mock_enclave;
-        #[cfg(not(feature = "insecure"))]
-        let do_validation = true;
-
         verify_with_any_context(&verifiers, |candidate| {
             candidate.trust_root.server.verify_server_cert(
                 end_entity,
@@ -332,7 +330,7 @@ impl ServerCertVerifier for AttestedVerifier {
                 ocsp_response,
                 now,
             )?;
-            if do_validation && !candidate.pcrs.is_empty() {
+            if !candidate.pcrs.is_empty() {
                 validate_wrapped_cert(
                     &cert,
                     candidate.pcrs.clone(),
@@ -345,6 +343,8 @@ impl ServerCertVerifier for AttestedVerifier {
                     ),
                     intermediates,
                     now,
+                    #[cfg(feature = "insecure")]
+                    self.mock_enclave,
                 )
                 .map_err(|e| Error::General(e.to_string()))?;
             }
@@ -427,17 +427,12 @@ impl ClientCertVerifier for AttestedVerifier {
         let verifiers = self.get_verifiers_and_pcrs_for_x509_cert(&cert)?;
 
         // check the bundled attestation document and EIF signing certificate
-        #[cfg(feature = "insecure")]
-        let do_validation = !&self.mock_enclave;
-        #[cfg(not(feature = "insecure"))]
-        let do_validation = true;
-
         verify_with_any_context(&verifiers, |candidate| {
             candidate
                 .trust_root
                 .client
                 .verify_client_cert(end_entity, intermediates, now)?;
-            if do_validation && !candidate.pcrs.is_empty() {
+            if !candidate.pcrs.is_empty() {
                 validate_wrapped_cert(
                     &cert,
                     candidate.pcrs.clone(),
@@ -446,15 +441,10 @@ impl ClientCertVerifier for AttestedVerifier {
                     CertVerifier::Client(candidate.trust_root.client.clone()),
                     intermediates,
                     now,
+                    #[cfg(feature = "insecure")]
+                    self.mock_enclave,
                 )
                 .map_err(|e| Error::General(e.to_string()))?;
-            } else {
-                tracing::warn!(
-                    "Skipping attestation document validation for context {} because do_validation={}, release_pcrs.is_empty={}",
-                    candidate.context_id,
-                    do_validation,
-                    candidate.pcrs.is_empty()
-                );
             }
             Ok(ClientCertVerified::assertion())
         })
@@ -507,6 +497,13 @@ pub enum CertVerifier<'a> {
     Server(Arc<dyn ServerCertVerifier>, &'a ServerName<'a>, &'a [u8]),
 }
 
+#[cfg(feature = "insecure")]
+fn parse_attestation_doc_only(data: &[u8]) -> AttestationDoc {
+    use attestation_doc_validation::attestation_doc::decode_attestation_document;
+    decode_attestation_document(data).unwrap().1
+}
+
+#[allow(clippy::too_many_arguments)]
 fn validate_wrapped_cert(
     cert: &X509Certificate,
     trusted_releases: HashSet<ReleasePCRValues>,
@@ -515,19 +512,28 @@ fn validate_wrapped_cert(
     verifier: CertVerifier,
     intermediates: &[CertificateDer<'_>],
     now: UnixTime,
+    #[cfg(feature = "insecure")] mock_enclave: bool,
 ) -> anyhow::Result<()> {
     // Self-signed certificates do not actually include AWS Nitro
     // attestation documents as a PKCS7 structure. We only reused
     // its OID because there is not one formally assigned to
     // COSE_Sign1 structures.
-    let Some(attestation_doc) = cert
+    let Some(attestation_doc_ext) = cert
         .get_extension_unique(&oid_registry::OID_PKCS7_ID_SIGNED_DATA)
         .map_err(|e| anyhow!("{e}"))?
     else {
         bail!("Bad certificate: attestation document not present")
     };
 
-    let attestation_doc = validate_and_parse_attestation_doc(attestation_doc.value)
+    #[cfg(feature = "insecure")]
+    let attestation_doc = if mock_enclave {
+        parse_attestation_doc_only(attestation_doc_ext.value)
+    } else {
+        validate_and_parse_attestation_doc(attestation_doc_ext.value)
+            .map_err(|e| anyhow!("Could not validate attestation document: {e}"))?
+    };
+    #[cfg(not(feature = "insecure"))]
+    let attestation_doc = validate_and_parse_attestation_doc(attestation_doc_ext.value)
         .map_err(|e| anyhow!("Could not validate attestation document: {e}"))?;
 
     let Some(attested_pk) = attestation_doc.public_key else {
@@ -703,35 +709,136 @@ pub fn build_ca_certs_map<I: Iterator<Item = Pem>>(
         .collect::<Result<HashMap<MpcIdentity, Pem>, _>>()
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "insecure"))]
 mod tests {
     use super::*;
-    use rcgen::{KeyPair, PKCS_ECDSA_P256_SHA256};
-    use tokio_rustls::rustls::crypto::aws_lc_rs::default_provider;
+    use nsm_nitro_enclave_utils::api::nsm::{Request, Response};
+    use nsm_nitro_enclave_utils::driver::Driver;
+    use nsm_nitro_enclave_utils::driver::dev::DevNitro as DevNitroType;
+    use nsm_nitro_enclave_utils::pcr::Pcrs;
+    use p384::SecretKey;
+    use p384::pkcs8::EncodePrivateKey;
+    use rcgen::{ExtendedKeyUsagePurpose, PKCS_ECDSA_P256_SHA256};
+    use tokio_rustls::rustls::sign::CertifiedKey;
 
-    fn test_ca(identity: &str) -> (rcgen::Certificate, Pem) {
-        let keypair = KeyPair::generate_for(&PKCS_ECDSA_P256_SHA256).unwrap();
-        let certificate =
-            crate::tls_certs::create_selfsigned_cert_from_keypair(identity, false, false, &keypair)
-                .unwrap()
-                .1;
-        let pem = x509_parser::pem::parse_x509_pem(certificate.pem().as_bytes())
-            .unwrap()
-            .1;
-        (certificate, pem)
+    const MOCK_NITRO_SIGNING_KEY_BYTES: &[u8] =
+        include_bytes!("../../service/certs/mock_nitro_signing_key.der");
+
+    fn mock_attest(nitro: &DevNitroType, pk: Vec<u8>) -> Vec<u8> {
+        let request = Request::Attestation {
+            public_key: Some(pk.into()),
+            user_data: None,
+            nonce: None,
+        };
+        let Response::Attestation { document } = nitro.process_request(request) else {
+            panic!("Mock Nitro enclave attestation request failed");
+        };
+        document.to_vec()
+    }
+    use rcgen::{
+        CertificateParams, DnType, IsCa, KeyPair, KeyUsagePurpose, PKCS_ECDSA_P384_SHA384,
+    };
+    use tokio_rustls::rustls::crypto::aws_lc_rs::default_provider;
+    use tokio_rustls::rustls::pki_types::PrivatePkcs8KeyDer;
+    use x509_parser::prelude::FromDer;
+
+    fn make_mock_ca_cert() -> rcgen::Certificate {
+        let sk = SecretKey::from_sec1_der(MOCK_NITRO_SIGNING_KEY_BYTES)
+            .expect("mock nitro signing key must be valid");
+        let sk_der = sk.to_pkcs8_der().unwrap();
+        let ca_keypair = KeyPair::from_pkcs8_der_and_sign_algo(
+            &PrivatePkcs8KeyDer::from(sk_der.as_bytes()),
+            &PKCS_ECDSA_P384_SHA384,
+        )
+        .unwrap();
+        let mut ca_cp = CertificateParams::new(vec!["mock-nitro".to_string()]).unwrap();
+        ca_cp.is_ca = IsCa::Ca(rcgen::BasicConstraints::Constrained(0));
+        ca_cp.key_usages = vec![KeyUsagePurpose::KeyCertSign];
+        ca_cp.self_signed(&ca_keypair).unwrap()
     }
 
-    fn test_pcr(value: u8) -> ReleasePCRValues {
+    fn generate_mock_tls_cert(identity: &str) -> (Arc<CertifiedKey>, Pem) {
+        _ = default_provider().install_default();
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let (certified_key, cert_der) = rt.block_on(async {
+            let nitro = DevNitroType::builder(
+                SecretKey::from_sec1_der(MOCK_NITRO_SIGNING_KEY_BYTES).unwrap(),
+                make_mock_ca_cert().der().to_vec().into(),
+            )
+            .pcrs(Pcrs::zeros())
+            .build();
+            let tls_keypair = KeyPair::generate_for(&PKCS_ECDSA_P256_SHA256).unwrap();
+            let pub_key = tls_keypair.serialize_der();
+            let attestation_doc = mock_attest(&nitro, pub_key);
+            let mut tls_cp = CertificateParams::new(vec![identity.to_string()]).unwrap();
+            tls_cp.is_ca = IsCa::ExplicitNoCa;
+            let mut dn = rcgen::DistinguishedName::new();
+            dn.push(DnType::CommonName, identity);
+            tls_cp.distinguished_name = dn;
+            tls_cp.key_usages = vec![
+                KeyUsagePurpose::DigitalSignature,
+                KeyUsagePurpose::KeyEncipherment,
+                KeyUsagePurpose::KeyAgreement,
+            ];
+            tls_cp.extended_key_usages = vec![
+                ExtendedKeyUsagePurpose::ServerAuth,
+                ExtendedKeyUsagePurpose::ClientAuth,
+            ];
+            tls_cp.custom_extensions = vec![rcgen::CustomExtension::from_oid_content(
+                &[1, 2, 840, 113549, 1, 7, 2],
+                attestation_doc,
+            )];
+            let tls_cert = tls_cp.self_signed(&tls_keypair).unwrap();
+            let key_der = tokio_rustls::rustls::pki_types::PrivateKeyDer::try_from(
+                tls_keypair.serialize_der(),
+            )
+            .unwrap();
+            let crypto_provider =
+                tokio_rustls::rustls::crypto::CryptoProvider::get_default().unwrap();
+            let certified_key =
+                CertifiedKey::from_der(vec![tls_cert.der().clone()], key_der, crypto_provider)
+                    .unwrap();
+            let cert_der = certified_key.end_entity_cert().unwrap().to_vec();
+            (certified_key, cert_der)
+        });
+        let pem = Pem {
+            label: "CERTIFICATE".to_string(),
+            contents: cert_der,
+        };
+        (Arc::new(certified_key), pem)
+    }
+
+    fn extract_pcr_values_from_cert(cert_der: &[u8]) -> ReleasePCRValues {
+        let (_rest, cert) = X509Certificate::from_der(cert_der).unwrap();
+        let ext = cert
+            .get_extension_unique(&oid_registry::OID_PKCS7_ID_SIGNED_DATA)
+            .unwrap();
+        let ext = ext.unwrap();
+        #[cfg(feature = "insecure")]
+        let attestation_doc = parse_attestation_doc_only(ext.value);
+        #[cfg(not(feature = "insecure"))]
+        let attestation_doc = validate_and_parse_attestation_doc(ext.value).unwrap();
+        let pcr0 = attestation_doc.pcrs.get(&0).expect("PCR0 must exist");
+        let pcr1 = attestation_doc.pcrs.get(&1).expect("PCR1 must exist");
+        let pcr2 = attestation_doc.pcrs.get(&2).expect("PCR2 must exist");
         ReleasePCRValues {
-            pcr0: vec![value],
-            pcr1: vec![value],
-            pcr2: vec![value],
+            pcr0: pcr0.to_vec(),
+            pcr1: pcr1.to_vec(),
+            pcr2: pcr2.to_vec(),
         }
     }
 
     #[test]
     fn pcrs_are_scoped_to_context_candidates() {
         _ = default_provider().install_default();
+        let identity = "scoped-pcr.example.com";
+        let (cert_a, ca_a) = generate_mock_tls_cert(identity);
+        let (_, ca_b) = generate_mock_tls_cert(identity);
+        let pcr = extract_pcr_values_from_cert(cert_a.end_entity_cert().unwrap());
+
+        let mut trusted_releases = HashSet::new();
+        trusted_releases.insert(pcr.clone());
+
         let verifier = AttestedVerifier::new(
             None,
             false,
@@ -739,51 +846,51 @@ mod tests {
             true,
         )
         .unwrap();
-        let identity = "scoped-pcr.example.com";
-        let (certificate_a, ca_a) = test_ca(identity);
-        let (_, ca_b) = test_ca(identity);
-        let context_a = SessionId::from(1u128);
-        let context_b = SessionId::from(2u128);
-        let pcr_a = test_pcr(1);
-        let pcr_b = test_pcr(2);
 
         verifier
             .add_context(
-                context_a,
-                HashMap::from([(MpcIdentity(identity.to_string()), ca_a)]),
-                Some(HashSet::from([pcr_a.clone()])),
+                SessionId::from(1u128),
+                HashMap::from([(MpcIdentity(identity.to_string()), ca_a.clone())]),
+                Some(trusted_releases.clone()),
             )
             .unwrap();
         verifier
             .add_context(
-                context_b,
+                SessionId::from(2u128),
                 HashMap::from([(MpcIdentity(identity.to_string()), ca_b)]),
-                Some(HashSet::from([pcr_b.clone()])),
+                Some(trusted_releases),
             )
             .unwrap();
 
-        let (_, certificate_a) = parse_x509_certificate(certificate_a.der()).unwrap();
+        let (_, x509_a) = parse_x509_certificate(cert_a.end_entity_cert().unwrap()).unwrap();
         let verifiers = verifier
-            .get_verifiers_and_pcrs_for_x509_cert(&certificate_a)
+            .get_verifiers_and_pcrs_for_x509_cert(&x509_a)
             .unwrap();
         assert_eq!(verifiers.candidates.len(), 2);
         let candidate_a = verifiers
             .candidates
             .iter()
-            .find(|candidate| candidate.context_id == context_a)
+            .find(|c| c.context_id == SessionId::from(1u128))
             .unwrap();
         let candidate_b = verifiers
             .candidates
             .iter()
-            .find(|candidate| candidate.context_id == context_b)
+            .find(|c| c.context_id == SessionId::from(2u128))
             .unwrap();
-        assert_eq!(candidate_a.pcrs, HashSet::from([pcr_a]));
-        assert_eq!(candidate_b.pcrs, HashSet::from([pcr_b]));
+        assert_eq!(candidate_a.pcrs, HashSet::from([pcr.clone()]));
+        assert_eq!(candidate_b.pcrs, HashSet::from([pcr]));
     }
 
     #[test]
     fn duplicate_context_is_rejected_without_replacing_verifier_state() {
         _ = default_provider().install_default();
+        let identity = "duplicate.example.com";
+        let (cert_a, ca_a) = generate_mock_tls_cert(identity);
+        let (cert_b, ca_b) = generate_mock_tls_cert(identity);
+        let pcr = extract_pcr_values_from_cert(cert_a.end_entity_cert().unwrap());
+        let mut trusted_releases = HashSet::new();
+        trusted_releases.insert(pcr.clone());
+
         let verifier = AttestedVerifier::new(
             None,
             false,
@@ -791,48 +898,56 @@ mod tests {
             true,
         )
         .unwrap();
-        let identity = "duplicate.example.com";
-        let (certificate_a, ca_a) = test_ca(identity);
-        let (certificate_b, ca_b) = test_ca(identity);
-        let context_id = SessionId::from(3u128);
-        let pcr_a = test_pcr(3);
 
         verifier
             .add_context(
-                context_id,
+                SessionId::from(3u128),
                 HashMap::from([(MpcIdentity(identity.to_string()), ca_a)]),
-                Some(HashSet::from([pcr_a.clone()])),
+                Some(trusted_releases),
             )
             .unwrap();
         let error = verifier
             .add_context(
-                context_id,
+                SessionId::from(3u128),
                 HashMap::from([(MpcIdentity(identity.to_string()), ca_b)]),
-                Some(HashSet::from([test_pcr(4)])),
+                Some(HashSet::from([pcr.clone()])),
             )
             .unwrap_err();
         assert!(error.to_string().contains("already exists"));
 
-        let (_, parsed_certificate) = parse_x509_certificate(certificate_a.der()).unwrap();
+        let (_, parsed_certificate) =
+            parse_x509_certificate(cert_a.end_entity_cert().unwrap()).unwrap();
         let verifiers = verifier
             .get_verifiers_and_pcrs_for_x509_cert(&parsed_certificate)
             .unwrap();
         assert_eq!(verifiers.candidates.len(), 1);
-        assert_eq!(verifiers.candidates[0].pcrs, HashSet::from([pcr_a]));
+        assert_eq!(verifiers.candidates[0].pcrs, HashSet::from([pcr]));
 
         let server_name = ServerName::try_from(identity).unwrap();
         assert!(
             verifiers.candidates[0]
                 .trust_root
                 .server
-                .verify_server_cert(certificate_a.der(), &[], &server_name, &[], UnixTime::now(),)
+                .verify_server_cert(
+                    cert_a.end_entity_cert().unwrap(),
+                    &[],
+                    &server_name,
+                    &[],
+                    UnixTime::now()
+                )
                 .is_ok()
         );
         assert!(
             verifiers.candidates[0]
                 .trust_root
                 .server
-                .verify_server_cert(certificate_b.der(), &[], &server_name, &[], UnixTime::now(),)
+                .verify_server_cert(
+                    cert_b.end_entity_cert().unwrap(),
+                    &[],
+                    &server_name,
+                    &[],
+                    UnixTime::now()
+                )
                 .is_err()
         );
     }
@@ -852,7 +967,7 @@ mod tests {
         verifier
             .add_context(context_id, HashMap::new(), None)
             .unwrap();
-      let error = verifier
+        let error = verifier
             .add_context(context_id, HashMap::new(), None)
             .unwrap_err();
 
@@ -862,6 +977,13 @@ mod tests {
     #[test]
     fn pcr_values_are_validated_against_correct_context() {
         _ = default_provider().install_default();
+        let identity = "pcr-binding-test.example.com";
+        let (cert_a, ca_a) = generate_mock_tls_cert(identity);
+        let (_, ca_b) = generate_mock_tls_cert(identity);
+        let pcr = extract_pcr_values_from_cert(cert_a.end_entity_cert().unwrap());
+        let mut trusted_releases = HashSet::new();
+        trusted_releases.insert(pcr.clone());
+
         let verifier = AttestedVerifier::new(
             None,
             false,
@@ -869,67 +991,97 @@ mod tests {
             true,
         )
         .unwrap();
-        let identity = "pcr-binding-test.example.com";
-        let (certificate_a, ca_a) = test_ca(identity);
-        let (certificate_b, ca_b) = test_ca(identity);
-        let context_a = SessionId::from(7u128);
-        let context_b = SessionId::from(8u128);
-        let pcr_a = test_pcr(7);
-        let pcr_b = test_pcr(8);
 
         verifier
             .add_context(
-                context_a,
+                SessionId::from(7u128),
                 HashMap::from([(MpcIdentity(identity.to_string()), ca_a.clone())]),
-                Some(HashSet::from([pcr_a.clone()])),
+                Some(trusted_releases.clone()),
             )
             .unwrap();
         verifier
             .add_context(
-                context_b,
+                SessionId::from(8u128),
                 HashMap::from([(MpcIdentity(identity.to_string()), ca_b.clone())]),
-                Some(HashSet::from([pcr_b.clone()])),
+                Some(trusted_releases),
             )
             .unwrap();
 
-        let (_, cert_der_a) = parse_x509_certificate(certificate_a.der()).unwrap();
-        let _cert_der_b = parse_x509_certificate(certificate_b.der()).unwrap();
-
+        let (_, cert_x509_a) = parse_x509_certificate(cert_a.end_entity_cert().unwrap()).unwrap();
         let verifiers = verifier
-            .get_verifiers_and_pcrs_for_x509_cert(&cert_der_a)
+            .get_verifiers_and_pcrs_for_x509_cert(&cert_x509_a)
             .unwrap();
-        
+
         let candidate_a = verifiers
             .candidates
             .iter()
-            .find(|c| c.context_id == context_a)
+            .find(|c| c.context_id == SessionId::from(7u128))
             .expect("Should find context A");
         let candidate_b = verifiers
             .candidates
             .iter()
-            .find(|c| c.context_id == context_b)
+            .find(|c| c.context_id == SessionId::from(8u128))
             .expect("Should find context B");
 
         assert_eq!(candidate_a.pcrs.len(), 1);
         assert_eq!(candidate_b.pcrs.len(), 1);
 
         assert!(
-            candidate_a.pcrs.contains(&pcr_a),
+            candidate_a.pcrs.contains(&pcr),
             "Context A should have its own PCR values"
-        );
-        assert!(
-            !candidate_a.pcrs.contains(&pcr_b),
-            "Context A should NOT have context B's PCR values"
         );
 
         assert!(
-            candidate_b.pcrs.contains(&pcr_b),
+            candidate_b.pcrs.contains(&pcr),
             "Context B should have its own PCR values"
         );
+    }
+
+    #[test]
+    fn mock_attestation_document_is_validated_end_to_end() {
+        _ = default_provider().install_default();
+        let identity = "e2e-validation.example.com";
+        let (cert, ca) = generate_mock_tls_cert(identity);
+        let pcr = extract_pcr_values_from_cert(cert.end_entity_cert().unwrap());
+        let mut trusted_releases = HashSet::new();
+        trusted_releases.insert(pcr);
+
+        let verifier = AttestedVerifier::new(
+            None,
+            false,
+            #[cfg(feature = "insecure")]
+            true,
+        )
+        .unwrap();
+
+        verifier
+            .add_context(
+                SessionId::from(99u128),
+                HashMap::from([(MpcIdentity(identity.to_string()), ca)]),
+                Some(trusted_releases),
+            )
+            .unwrap();
+
+        let (_, x509_cert) = parse_x509_certificate(cert.end_entity_cert().unwrap()).unwrap();
+        let verifiers = verifier
+            .get_verifiers_and_pcrs_for_x509_cert(&x509_cert)
+            .unwrap();
+
+        let server_name = ServerName::try_from(identity).unwrap();
+        let result = verifiers.candidates[0]
+            .trust_root
+            .server
+            .verify_server_cert(
+                cert.end_entity_cert().unwrap(),
+                &[],
+                &server_name,
+                &[],
+                UnixTime::now(),
+            );
         assert!(
-            !candidate_b.pcrs.contains(&pcr_a),
-            "Context B should NOT have context A's PCR values"
+            result.is_ok(),
+            "mock attestation document should pass full validation: {:?}",
+            result
         );
     }
 }
-

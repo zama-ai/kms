@@ -7942,9 +7942,11 @@ dependencies = [
 name = "threshold-networking"
 version = "0.15.0-1"
 dependencies = [
+ "aes-prng",
  "anyhow",
  "async-trait",
  "attestation-doc-validation",
+ "aws-nitro-enclaves-nsm-api 0.4.0",
  "backoff",
  "bc2wrap",
  "bytes",
@@ -7954,8 +7956,10 @@ dependencies = [
  "futures-util",
  "hex",
  "hyper-rustls",
+ "nsm-nitro-enclave-utils",
  "observability",
  "oid-registry 0.8.1",
+ "p384 0.13.1",
  "prost",
  "rand 0.8.6",
  "rcgen",

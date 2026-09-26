@@ -9,7 +9,9 @@ description = "Provides networking for all threshold network components. GRPC, s
 
 [dependencies]
 anyhow.workspace = true
+aws-nitro-enclaves-nsm-api = "=0.4.0"
 clap = { workspace = true, features = ["derive", "env"]}
+nsm-nitro-enclave-utils = { version = "0.1.2", features = ["pki"], optional = true }
 rand.workspace = true
 rcgen.workspace = true
 async-trait.workspace = true
@@ -46,6 +48,8 @@ validator.workspace = true
 x509-parser.workspace = true
 
 [dev-dependencies]
+aes-prng = "=0.2.1"
+p384 = "=0.13.1"
 rustls-webpki.workspace = true
 test-utils.workspace = true
 threshold-execution = { workspace = true, features = ["testing"] }
@@ -55,4 +59,4 @@ tonic-prost-build.workspace = true
 
 [features]
 # Allow plaintext transport and mocked enclave attestation in development artifacts.
-insecure = []
+insecure = ["dep:nsm-nitro-enclave-utils"]
