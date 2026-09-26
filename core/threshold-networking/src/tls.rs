@@ -267,16 +267,27 @@ Crypto provider should exist at this point"
             .release_pcrs
             .read()
             .map_err(|e| Error::General(format!("Failed to acquire read lock: {e}")))?;
+        let mut candidates: Vec<VerifierCandidate> = context_roots
+            .iter()
+            .map(|(context_id, trust_root)| VerifierCandidate {
+                context_id: *context_id,
+                trust_root: trust_root.clone(),
+                pcrs: release_pcrs.get(context_id).cloned().unwrap_or_default(),
+            })
+            .collect();
+        // Sort candidates so that contexts with non-empty PCR values are tried first.
+        // This ensures attestation validation is performed when required, even if a
+        // certificate would validate against a context with relaxed/empty PCR values.
+        candidates.sort_by(|a, b| {
+            let a_has_pcrs = !a.pcrs.is_empty();
+            let b_has_pcrs = !b.pcrs.is_empty();
+            // Sort in descending order: contexts with PCR values first
+            b_has_pcrs.cmp(&a_has_pcrs)
+        });
+
         Ok(Verifiers {
             subject,
-            candidates: context_roots
-                .iter()
-                .map(|(context_id, trust_root)| VerifierCandidate {
-                    context_id: *context_id,
-                    trust_root: trust_root.clone(),
-                    pcrs: release_pcrs.get(context_id).cloned().unwrap_or_default(),
-                })
-                .collect(),
+            candidates,
         })
     }
 
