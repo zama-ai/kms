@@ -3,7 +3,10 @@ use std::{
     collections::{BTreeMap, HashMap},
     convert::Infallible,
     marker::PhantomData,
-    sync::{Arc, OnceLock},
+    sync::{
+        Arc, OnceLock,
+        atomic::{AtomicBool, Ordering},
+    },
 };
 
 // === External Crates ===
@@ -16,6 +19,7 @@ use kms_grpc::{
 };
 use observability::{
     conf::TelemetryConfig,
+    health::HealthState,
     metrics::{self},
     metrics_names::OP_BOOT,
 };
@@ -52,10 +56,7 @@ use tokio::{
 use tokio_rustls::rustls::{client::ClientConfig, server::ServerConfig};
 use tokio_util::task::TaskTracker;
 use tonic::transport::{Server, server::TcpIncoming};
-use tonic_health::{
-    pb::health_server::{Health, HealthServer},
-    server::HealthReporter,
-};
+use tonic_health::pb::health_server::{Health, HealthServer};
 use tonic_tls::rustls::TlsIncoming;
 
 use crate::engine::threshold::service::epoch_manager::{EpochData, RealThresholdEpochManager};
@@ -521,7 +522,7 @@ pub async fn new_real_threshold_kms<PubS, PrivS, F>(
     shutdown_signal: F,
 ) -> anyhow::Result<(
     RealThresholdKms<PubS, PrivS>,
-    (HealthReporter, HealthServer<impl Health>),
+    (HealthState, HealthServer<impl Health>),
     MetaStoreStatusServiceImpl,
 )>
 where
@@ -685,6 +686,14 @@ where
     // the initial MPC node might not accept any peers because initially there's no context
     let mpc_socket_addr = mpc_listener.local_addr()?;
 
+    let (health, core_service_health_service) = HealthState::new().await;
+    // We are only serving after initialization
+    health
+        .reporter()
+        .set_not_serving::<CoreServiceEndpointServer<RealThresholdKms<PubS, PrivS>>>()
+        .await;
+    let mpc_server_health = health.clone();
+
     let (threshold_health_reporter, threshold_health_service) =
         tonic_health::server::health_reporter();
 
@@ -708,11 +717,21 @@ where
     let abort_handle = tokio::spawn(async move {
         let (tx, rx) = tokio::sync::oneshot::channel();
         tokio::spawn(prepare_shutdown_signals(shutdown_signal, tx));
+        let shutdown_requested = AtomicBool::new(false);
         let graceful_shutdown_signal = async {
             // Set the server to be serving when we boot
             threshold_health_reporter.set_serving::<GrpcServer>().await;
-            // await is the same as recv on a oneshot channel
-            _ = rx.await;
+            // await is the same as recv on a oneshot channel. A dropped sender means that the
+            // signal task ended without a signal, for example after a panic. That is no shutdown
+            // request, so the stop of the server that follows counts as a fault.
+            if rx.await.is_ok() {
+                shutdown_requested.store(true, Ordering::Release);
+            } else {
+                tracing::error!(
+                    "The shutdown signal task of the core-to-core server on {} ended without a signal",
+                    mpc_socket_addr
+                );
+            }
             // Observe that the following is the shut down of the core (which communicates with the other cores)
             // That is, not the threshold KMS server itself which picks up requests from the blockchain.
             tracing::info!(
@@ -733,7 +752,7 @@ where
         // Note that this decreases latency but increases network bandwidth usage. If bandwidth is a concern,
         // then this should be changed
         let tcp_incoming = tcp_incoming.with_nodelay(Some(true));
-        match tls_config {
+        let serve_result = match tls_config {
             Some((server_config, _, _)) => {
                 router
                     .serve_with_incoming_shutdown(
@@ -747,10 +766,27 @@ where
                     .serve_with_incoming_shutdown(tcp_incoming, graceful_shutdown_signal)
                     .await
             }
+        };
+        if let Some(reason) = core_to_core_stop_fault(
+            shutdown_requested.load(Ordering::Acquire),
+            serve_result
+                .as_ref()
+                .err()
+                .map(|e| e as &dyn std::fmt::Debug),
+        ) {
+            // Without the core-to-core server the node cannot take part in any MPC protocol, and
+            // only a restart starts the server again.
+            // `report_fatal` logs the fault, so the returned error does not log it again.
+            mpc_server_health
+                .report_fatal("core_to_core_server", &reason)
+                .await;
+            return Err(anyhow::anyhow!(
+                "Core-to-core server on {mpc_socket_addr} stopped outside a shutdown: {reason}"
+            ));
         }
-        .map_err(|e| {
+        serve_result.map_err(|e| {
             anyhow_error_and_log(format!(
-                "Failed to launch ddec server on {mpc_socket_addr} with error: {e:?}"
+                "Core-to-core server on {mpc_socket_addr} failed during its shutdown: {e:?}"
             ))
         })?;
         tracing::info!(
@@ -799,13 +835,6 @@ where
         Some(preproc_buckets.clone()),         // preproc_store
         Some(custodian_meta_store.clone()),    // custodian_context_store
     );
-
-    let (core_service_health_reporter, core_service_health_service) =
-        tonic_health::server::health_reporter();
-    // We are only serving after initialization
-    core_service_health_reporter
-        .set_not_serving::<CoreServiceEndpointServer<RealThresholdKms<PubS, PrivS>>>()
-        .await;
 
     let session_maker = SessionMaker::new_initialized(
         threshold_config.my_id.map(Role::indexed_from_one),
@@ -958,15 +987,33 @@ where
         Arc::clone(&tracker),
         immutable_session_maker,
         config.bandwidth_benchmark.clone().unwrap_or_default(),
-        core_service_health_reporter.clone(),
+        health.clone(),
         abort_handle,
     );
 
     Ok((
         kms,
-        (core_service_health_reporter, core_service_health_service),
+        (health, core_service_health_service),
         metastore_status_service,
     ))
+}
+
+/// Returns the reason to report a stop of the core-to-core server as a fatal fault, or `None` when
+/// the stop is part of a shutdown.
+///
+/// The server also stops without an error, when its stream of incoming connections ends. The TLS
+/// stream ends after an accept error such as `EMFILE`. So every stop outside a shutdown is a fault.
+fn core_to_core_stop_fault(
+    shutdown_requested: bool,
+    serve_error: Option<&dyn std::fmt::Debug>,
+) -> Option<String> {
+    if shutdown_requested {
+        return None;
+    }
+    Some(match serve_error {
+        Some(e) => format!("{e:?}"),
+        None => "the server stopped without an error and without a shutdown request".to_string(),
+    })
 }
 
 fn update_threshold_kms_system_metrics<PubS, PrivS>(
@@ -1029,6 +1076,21 @@ mod tests {
     use crate::consts::{SAFE_SER_SIZE_LIMIT, TEST_PARAM};
 
     use super::*;
+
+    #[test]
+    fn core_to_core_stop_outside_shutdown_is_fatal() {
+        let reason = core_to_core_stop_fault(false, None).expect("a stop without error is fatal");
+        assert!(reason.contains("without a shutdown request"));
+        let reason = core_to_core_stop_fault(false, Some(&"accept failed"))
+            .expect("a stop with an error is fatal");
+        assert!(reason.contains("accept failed"));
+    }
+
+    #[test]
+    fn core_to_core_stop_during_shutdown_is_not_fatal() {
+        assert_eq!(core_to_core_stop_fault(true, None), None);
+        assert_eq!(core_to_core_stop_fault(true, Some(&"accept failed")), None);
+    }
 
     // Minimal test-only wrapper for the historical V2 wire shape with the old fat nested
     // `PublicKeyMaterial::Compressed` variant. We need this because the current types _can_ deserialize

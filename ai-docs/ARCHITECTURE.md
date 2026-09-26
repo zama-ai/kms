@@ -707,9 +707,7 @@ exact commands.
   and `core-client`. Release compilation uses fat LTO, while other CI builds use
   thin LTO. The published runtime image for the service remains
   `ghcr.io/zama-ai/kms/core-service`.
-- **Kubernetes** — a Helm chart is provided at
-  [charts/kms-core/](../charts/kms-core/) for both centralized and threshold
-  deployments, including Nitro Enclaves when configured.
+- **Kubernetes** — a Helm chart is provided at [charts/kms-core/](../charts/kms-core/) for both centralized and threshold deployments, including Nitro Enclaves when configured. Its probes query the `liveness` and `readiness` gRPC health services on the service port. A `HealthState` from [observability/src/health.rs](../observability/src/health.rs) drives both services, and the HTTP endpoints `/liveness`, `/ready` and `/healthz` on the metrics port report the same state. Liveness fails only on a fault that needs a restart, such as a stop of the core-to-core server outside a shutdown. Readiness depends only on the end of startup and the start of shutdown. It does not depend on the peers or on MPC state, because Kubernetes routes the peer and connector traffic only to ready pods.
 
 ## Further reading
 
