@@ -18,7 +18,7 @@ const DSEP_VERF_KEY_SET: DomainSep = *b"VKEYSET_";
 /// to travel together.
 ///
 /// The set is persisted, so it is versioned. Its own shape is tagged by
-/// [`VerfKeySetVersions`], and the scheme tags and keys inside it each carry
+/// [`VerfKeySetReprVersions`], and the scheme tags and keys inside it each carry
 /// their own dispatch, so a later change to [`UnifiedPublicSigKey`] is handled
 /// by `UnifiedPublicSigKeyVersions` without a new version here.
 ///
@@ -28,7 +28,7 @@ const DSEP_VERF_KEY_SET: DomainSep = *b"VKEYSET_";
 /// belongs to.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Versionize)]
 #[serde(transparent)]
-#[versionize(try_convert = "VerfKeySet")]
+#[versionize(try_convert = "VerfKeySetRepr")]
 pub struct VerfKeySet {
     keys: BTreeMap<SigningSchemeType, UnifiedPublicSigKey>,
 }
@@ -38,26 +38,29 @@ impl Named for VerfKeySet {
 }
 
 /// The unvalidated mirror of [`VerfKeySet`] that carries the version dispatch.
+///
+/// `try_convert` versions the target type, not `VerfKeySet` itself, so the
+/// dispatch enum is named after this type rather than after the validated one.
 #[derive(Versionize)]
-#[versionize(VerfKeySetVersions)]
-pub struct VerfKeySet(BTreeMap<SigningSchemeType, UnifiedPublicSigKey>);
+#[versionize(VerfKeySetReprVersions)]
+pub struct VerfKeySetRepr(BTreeMap<SigningSchemeType, UnifiedPublicSigKey>);
 
 #[derive(VersionsDispatch)]
-pub enum VerfKeySetVersions {
-    V0(VerfKeySet),
+pub enum VerfKeySetReprVersions {
+    V0(VerfKeySetRepr),
 }
 
-impl From<VerfKeySet> for VerfKeySet {
+impl From<VerfKeySet> for VerfKeySetRepr {
     fn from(value: VerfKeySet) -> Self {
         Self(value.keys)
     }
 }
 
 /// Reading a set back re-establishes the invariants.
-impl TryFrom<VerfKeySet> for VerfKeySet {
+impl TryFrom<VerfKeySetRepr> for VerfKeySet {
     type Error = SigningError;
 
-    fn try_from(versioned: VerfKeySet) -> Result<Self, Self::Error> {
+    fn try_from(versioned: VerfKeySetRepr) -> Result<Self, Self::Error> {
         Self::new(versioned.0)
     }
 }
@@ -234,7 +237,7 @@ mod tests {
             good
         );
         for bad in [misfiled, empty] {
-            let smuggled = VerfKeySet(bad).versionize_owned();
+            let smuggled = VerfKeySetRepr(bad).versionize_owned();
             assert!(matches!(
                 VerfKeySet::unversionize(smuggled),
                 Err(UnversionizeError::Conversion { .. })

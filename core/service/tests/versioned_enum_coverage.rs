@@ -76,10 +76,11 @@ const ALLOW_UNCOVERED: &[&str] = &[
     // stored or transmitted, so no artifact holds it. The generator pins a rev,
     // so the type has to reach main before a fixture can be produced for it.
     "CompositeSigncryptionPayload",
+    // The versioned mirror of VerfKeySet; see its `try_convert` there.
     // TODO(zama-ai/kms-internal#3168): needs its own fixture once the follow-up
-    // actually writes a key set to storage. The generator pins a rev, so the
-    // type has to reach main before a fixture can be produced for it.
-    "VerfKeySet",
+    // actually writes a key set to storage and then VerfKeySetRepr should be made private.
+    // The generator pins a rev, so the type has to reach main before a fixture can be produced for it.
+    "VerfKeySetRepr",
     // Field of RecoveryValidationMaterial.payload.
     // Covered via RecoveryValidationMaterialTest.
     "RecoveryValidationMaterialPayload",
