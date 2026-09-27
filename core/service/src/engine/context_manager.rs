@@ -1117,6 +1117,15 @@ async fn atomic_update_context<
     my_role: Option<Role>,
     new_context: &ContextInfo,
 ) -> anyhow::Result<()> {
+    // Check if the context already exists in the session maker to avoid
+    // deleting the existing context during cleanup.
+    if session_maker.context_exists(new_context.context_id()).await {
+        return Err(anyhow::anyhow!(
+            "MPC context {} already exists in the session maker",
+            new_context.context_id()
+        ));
+    }
+
     let storage_error = match crypto_storage
         .write_context_info(new_context.context_id(), new_context, OP_NEW_MPC_CONTEXT)
         .await
