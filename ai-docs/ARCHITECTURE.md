@@ -292,25 +292,27 @@ The primary service is `CoreServiceEndpoint`. Its RPCs group into:
   shares before it forgets the context and removes its TLS trust-root
   references.
   
+  A trust root remains if another live context uses it. This ensures retiring a
+  party set leaves no usable key shares behind; the kms-connector is the source
+  of truth for which epochs belong to a context.  In-memory lifecycle leases
+  serialize creation against destruction: `NewMpcEpoch` holds shared leases for
+  its target context and epoch through all PRSS, resharing and persistence work,
+  while `DestroyMpcEpoch` and `DestroyMpcContext` require exclusive leases
+  before taking snapshots or deleting data. A conflicting destruction is refused
+  with `FailedPrecondition`, including while PRSS is still running and the new
+  epoch has not yet been registered in the session maker; callers retry once
+  creation has settled. MPC context updates serialize the existence check with
+  storage and cache or session updates. A failed deletion keeps the in-memory
+  context if its persistent entry remains, which permits a retry before or after
+  restart.
+  
   The TLS verifier stores one trust root per context and MPC identity. Different
   trust roots for one identity coexist while their contexts remain active. Each
   root is evaluated with only its context's PCR allowlist, and a handshake
   succeeds when one complete root and PCR check succeeds. The verifier rejects
   registration for an active context ID instead of replacing its trust roots or
   PCR values. Removing a context removes its roots, while another context's copy
-  of the same root remains trusted. A trust root remains if another live context
-  uses it. This ensures retiring a party set leaves no usable key shares behind;
-  the kms-connector is the source of truth for which epochs belong to a context.
-  In-memory lifecycle leases serialize creation against destruction:
-  `NewMpcEpoch` holds shared leases for its target context and epoch through all
-  PRSS, resharing and persistence work,
-  while `DestroyMpcEpoch` and `DestroyMpcContext` require exclusive leases before
-  taking snapshots or deleting data. A conflicting destruction is refused with
-  `FailedPrecondition`, including while PRSS is still running and the new epoch
-  has not yet been registered in the session maker; callers retry once creation
-  has settled. MPC context updates serialize the existence check with storage and
-  cache or session updates. A failed deletion keeps the in-memory context if its
-  persistent entry remains, which permits a retry before or after restart.
+  of the same root remains trusted.
 - **Session management** — creation, result retrieval, and cleanup for
   long-running threshold sessions.
 
