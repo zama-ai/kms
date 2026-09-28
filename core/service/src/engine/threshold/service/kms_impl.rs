@@ -3,6 +3,7 @@ use std::{
     collections::{BTreeMap, HashMap},
     convert::Infallible,
     marker::PhantomData,
+    panic::AssertUnwindSafe,
     sync::{
         Arc, OnceLock,
         atomic::{AtomicBool, Ordering},
@@ -11,6 +12,7 @@ use std::{
 
 // === External Crates ===
 use algebra::{galois_rings::degree_4::ResiduePolyF4Z128, structure_traits::Ring};
+use futures_util::FutureExt;
 use kms_grpc::{
     RequestId,
     identifiers::{ContextId, EpochId},
@@ -753,27 +755,36 @@ where
         // Note that this decreases latency but increases network bandwidth usage. If bandwidth is a concern,
         // then this should be changed
         let tcp_incoming = tcp_incoming.with_nodelay(Some(true));
-        let serve_result = match tls_config {
-            Some((server_config, _, _)) => {
-                router
-                    .serve_with_incoming_shutdown(
-                        TlsIncoming::new(tcp_incoming, server_config.into()),
-                        graceful_shutdown_signal,
-                    )
-                    .await
+        let serve = async {
+            match tls_config {
+                Some((server_config, _, _)) => {
+                    router
+                        .serve_with_incoming_shutdown(
+                            TlsIncoming::new(tcp_incoming, server_config.into()),
+                            graceful_shutdown_signal,
+                        )
+                        .await
+                }
+                None => {
+                    router
+                        .serve_with_incoming_shutdown(tcp_incoming, graceful_shutdown_signal)
+                        .await
+                }
             }
-            None => {
-                router
-                    .serve_with_incoming_shutdown(tcp_incoming, graceful_shutdown_signal)
-                    .await
-            }
+        };
+        // A panic of the server ends the server like an error. It is caught in this task, so that
+        // the fault decision below runs, and the shutdown can still abort this task.
+        let serve_error = match AssertUnwindSafe(serve).catch_unwind().await {
+            Ok(Ok(())) => None,
+            Ok(Err(e)) => Some(format!("{e:?}")),
+            Err(panic) => Some(format!(
+                "the server panicked: {}",
+                panic_message(panic.as_ref())
+            )),
         };
         if let Some(reason) = core_to_core_stop_fault(
             shutdown_requested.load(Ordering::Acquire),
-            serve_result
-                .as_ref()
-                .err()
-                .map(|e| e as &dyn std::fmt::Debug),
+            serve_error.as_deref(),
         ) {
             // Without the core-to-core server the node cannot take part in any MPC protocol, and
             // only a restart starts the server again.
@@ -785,11 +796,11 @@ where
                 "Core-to-core server on {mpc_socket_addr} stopped outside a shutdown: {reason}"
             ));
         }
-        serve_result.map_err(|e| {
-            anyhow_error_and_log(format!(
-                "Core-to-core server on {mpc_socket_addr} failed during its shutdown: {e:?}"
-            ))
-        })?;
+        if let Some(e) = serve_error {
+            return Err(anyhow_error_and_log(format!(
+                "Core-to-core server on {mpc_socket_addr} failed during its shutdown: {e}"
+            )));
+        }
         tracing::info!(
             "Threshold core on {} shutdown completed successfully",
             mpc_socket_addr
@@ -1009,17 +1020,26 @@ where
 ///
 /// The server also stops without an error, when its stream of incoming connections ends. The TLS
 /// stream ends after an accept error such as `EMFILE`. So every stop outside a shutdown is a fault.
-fn core_to_core_stop_fault(
-    shutdown_requested: bool,
-    serve_error: Option<&dyn std::fmt::Debug>,
-) -> Option<String> {
+/// `serve_error` describes the error or the panic that stopped the server, if any.
+fn core_to_core_stop_fault(shutdown_requested: bool, serve_error: Option<&str>) -> Option<String> {
     if shutdown_requested {
         return None;
     }
     Some(match serve_error {
-        Some(e) => format!("{e:?}"),
+        Some(e) => e.to_string(),
         None => "the server stopped without an error and without a shutdown request".to_string(),
     })
+}
+
+/// Returns the message of a panic payload, or a placeholder when the payload is not a string.
+fn panic_message(panic: &(dyn std::any::Any + Send)) -> &str {
+    if let Some(message) = panic.downcast_ref::<&'static str>() {
+        message
+    } else if let Some(message) = panic.downcast_ref::<String>() {
+        message
+    } else {
+        "the panic payload is not a string"
+    }
 }
 
 fn update_threshold_kms_system_metrics<PubS, PrivS>(
@@ -1087,7 +1107,7 @@ mod tests {
     fn core_to_core_stop_outside_shutdown_is_fatal() {
         let reason = core_to_core_stop_fault(false, None).expect("a stop without error is fatal");
         assert!(reason.contains("without a shutdown request"));
-        let reason = core_to_core_stop_fault(false, Some(&"accept failed"))
+        let reason = core_to_core_stop_fault(false, Some("accept failed"))
             .expect("a stop with an error is fatal");
         assert!(reason.contains("accept failed"));
     }
@@ -1095,7 +1115,20 @@ mod tests {
     #[test]
     fn core_to_core_stop_during_shutdown_is_not_fatal() {
         assert_eq!(core_to_core_stop_fault(true, None), None);
-        assert_eq!(core_to_core_stop_fault(true, Some(&"accept failed")), None);
+        assert_eq!(core_to_core_stop_fault(true, Some("accept failed")), None);
+    }
+
+    #[test]
+    fn panic_message_reads_string_payloads() {
+        let payload: Box<dyn std::any::Any + Send> = Box::new("static message");
+        assert_eq!(panic_message(payload.as_ref()), "static message");
+        let payload: Box<dyn std::any::Any + Send> = Box::new(format!("formatted {}", 1));
+        assert_eq!(panic_message(payload.as_ref()), "formatted 1");
+        let payload: Box<dyn std::any::Any + Send> = Box::new(7_u32);
+        assert_eq!(
+            panic_message(payload.as_ref()),
+            "the panic payload is not a string"
+        );
     }
 
     // Minimal test-only wrapper for the historical V2 wire shape with the old fat nested
