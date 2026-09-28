@@ -795,7 +795,7 @@ mod kms_custodian_binary_tests {
                 cur_res,
                 bc2wrap::serialize(&backup_dec_key).unwrap(),
                 "Decryption did not match expected data for operator {}",
-                operator.verification_key().address(),
+                operator.verification_key().ecdsa().unwrap().address(),
             );
         }
     }

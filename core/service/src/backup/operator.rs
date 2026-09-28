@@ -5,6 +5,7 @@ use super::{
 };
 use crate::{
     anyhow_error_and_log,
+    backup::{BACKUP_SIGNING_SCHEMES, ensure_backup_schemes},
     consts::SAFE_SER_SIZE_LIMIT,
     cryptography::{
         encryption::{UnifiedPrivateEncKey, UnifiedPublicEncKey},
@@ -142,9 +143,10 @@ impl TryFrom<RecoveryRequest> for InternalRecoveryRequest {
 #[derive(Clone)]
 pub struct Operator {
     custodian_keys: HashMap<Role, (UnifiedPublicEncKey, VerfKeySet)>,
-    signing_key: Option<PrivateSigKey>,
-    // the public component of [signing_key] above
-    verification_key: PublicSigKey,
+    /// The whole signing identity matching [`BACKUP_SIGNING_SCHEMES`]. `None` for an operator built only to validate.
+    signing_key: Option<Arc<NodeSigningIdentity>>,
+    /// The published counterpart of `signing_key`
+    verification_key: VerfKeySet,
     threshold: usize,
 }
 
@@ -383,7 +385,7 @@ pub struct BackupMaterial {
     pub custodian_pk: VerfKeySet,
     pub custodian_role: Role,
     // sender
-    pub operator_pk: PublicSigKey,
+    pub operator_pk: VerfKeySet,
     pub shares: Vec<Share<ResiduePolyF4Z64>>,
 }
 
@@ -408,7 +410,18 @@ impl BackupMaterial {
             tracing::error!("custodian_pk mismatch");
             return Err(RecoverySkipReason::CustodianKeyMismatchInPayload);
         }
-        if self.operator_pk.verf_key_id() != operator_pk_id {
+        // Still the ECDSA address rather than the key-set digest: the custodian only learns the
+        // operator's ECDSA key, because `RecoveryRequest.operator_verf_key` carries one key. Step
+        // E widens that field, and this becomes `self.operator_pk.id()`.
+        // TODO
+        let operator_pk_ecdsa = match self.operator_pk.ecdsa() {
+            Ok(key) => key,
+            Err(e) => {
+                tracing::error!("operator_pk has no usable ECDSA member: {e}");
+                return Err(RecoverySkipReason::OperatorMismatchInPayload);
+            }
+        };
+        if operator_pk_ecdsa.verf_key_id() != operator_pk_id {
             tracing::error!("operator_pk_id mismatch");
             return Err(RecoverySkipReason::OperatorMismatchInPayload);
         }
@@ -438,17 +451,22 @@ impl Operator {
     /// as this method does not require a signing key, nor will it validate (the likely expired) timestamps.
     pub fn new_for_sharing(
         custodian_messages: Vec<InternalCustodianSetupMessage>,
-        signing_key: PrivateSigKey,
+        signing_key: Arc<NodeSigningIdentity>,
         threshold: usize,
         amount_custodians: usize,
     ) -> Result<Self, BackupError> {
-        let verf_key = signing_key.verf_key();
+        let verification_key = VerfKeySet::from_identity(&signing_key, BACKUP_SIGNING_SCHEMES)
+            .map_err(|e| {
+                BackupError::SetupError(format!(
+                    "operator cannot publish the backup signing schemes: {e}"
+                ))
+            })?;
         let validated =
             validate_custodian_messages(custodian_messages, threshold, amount_custodians, true)?;
         Ok(Self {
             custodian_keys: validated.keys,
             signing_key: Some(signing_key),
-            verification_key: verf_key,
+            verification_key,
             threshold,
         })
     }
@@ -458,10 +476,11 @@ impl Operator {
     /// Furthermore, this will not validate the timestamps of the custodian setup messages.
     pub fn new_for_validating(
         custodian_messages: Vec<InternalCustodianSetupMessage>,
-        verf_key: PublicSigKey,
+        verf_key: VerfKeySet,
         threshold: usize,
         amount_custodians: usize,
     ) -> Result<Self, BackupError> {
+        ensure_backup_schemes(&verf_key)?;
         let validated =
             validate_custodian_messages(custodian_messages, threshold, amount_custodians, false)?;
         Ok(Self {
@@ -472,7 +491,7 @@ impl Operator {
         })
     }
 
-    pub fn verification_key(&self) -> &PublicSigKey {
+    pub fn verification_key(&self) -> &VerfKeySet {
         &self.verification_key
     }
 
@@ -498,11 +517,8 @@ impl Operator {
                     "Operator has no signing key".to_string(),
                 ));
             }
-            Some(sk) => sk,
+            Some(identity) => identity,
         };
-        // Built once and shared by every per-custodian sealer below, so the
-        // signing key is not copied per custodian.
-        let identity = Arc::new(NodeSigningIdentity::from(sk.clone()));
         let n = self.custodian_keys.len();
         let t = self.threshold;
 
@@ -642,7 +658,16 @@ impl Operator {
             tracing::warn!("missing custodian key for role {}", output.custodian_role);
             RecoverySkipReason::MissingVerificationKey
         })?;
-        let operator_id = self.verification_key.verf_key_id();
+        // See `check_expected_metadata`: the operator is still identified by its ECDSA address.
+        // TODO
+        let operator_id = self
+            .verification_key
+            .ecdsa()
+            .map_err(|e| {
+                tracing::warn!("operator key set has no usable ECDSA member: {e}");
+                RecoverySkipReason::MissingVerificationKey
+            })?
+            .verf_key_id();
         // The recovery direction still uses the frozen single-ECDSA layout, so only the ECDSA
         // member of the custodian's set verifies here.
         let custodian_ecdsa = custodian_verf_key.ecdsa().map_err(|e| {
@@ -905,6 +930,12 @@ fn validate_custodian_messages(
                 "Invalid custodian role in custodian setup message: {custodian_role}. Expected role between 1 and {amount_custodians}"
             );
             skip_reasons.push(SetupSkipReason::InvalidRole);
+            continue;
+        }
+
+        if let Err(e) = ensure_backup_schemes(&public_verf_key) {
+            tracing::warn!("Custodian {custodian_role} published an unusable key set: {e}");
+            skip_reasons.push(SetupSkipReason::UnusableVerificationKeys);
             continue;
         }
 

@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use super::{
     custodian,
     error::{BackupError, RecoverySkipReason},
@@ -66,7 +68,7 @@ fn operator_setup() {
         let mut wrong_custodian_messages = custodian_messages.clone();
         wrong_custodian_messages[0].header.push('z');
 
-        let (_verification_key, signing_key) = gen_sig_keys(&mut rng);
+        let signing_key = Arc::new(seeded_identity(&mut rng));
         let operator = Operator::new_for_sharing(
             wrong_custodian_messages,
             signing_key,
@@ -83,7 +85,7 @@ fn operator_setup() {
         let mut wrong_custodian_messages = custodian_messages.clone();
         wrong_custodian_messages[1].timestamp += Duration::from_secs(24 * 3700);
 
-        let (_verification_key, signing_key) = gen_sig_keys(&mut rng);
+        let signing_key = Arc::new(seeded_identity(&mut rng));
         let operator = Operator::new_for_sharing(
             wrong_custodian_messages,
             signing_key,
@@ -126,7 +128,7 @@ fn custodian_reencrypt() {
         .collect();
     let operators: Vec<_> = (0..operator_count)
         .map(|_i| {
-            let (_verification_key, signing_key) = gen_sig_keys(&mut rng);
+            let signing_key = Arc::new(seeded_identity(&mut rng));
             Operator::new_for_sharing(
                 custodian_messages.clone(),
                 signing_key,
@@ -157,7 +159,7 @@ fn custodian_reencrypt() {
         })
         .collect::<Vec<_>>();
 
-    let verification_key = operators[0].verification_key();
+    let verification_key = operators[0].verification_key().ecdsa().unwrap();
 
     let mut enc = Encryption::new(BACKUP_PKE_SCHEME, &mut rng);
     let (_ephemeral_dec_key, ephemeral_enc_key) = enc.keygen().unwrap();
@@ -352,7 +354,7 @@ fn full_flow_malicious_custodian_init() {
     setup_msgs_malicious.remove(1);
     // Should be fine since we just need at least 2+1 = 3 custodians
     for _op_idx in 1..=operator_count {
-        let (_verification_key, signing_key) = gen_sig_keys(&mut rng);
+        let signing_key = Arc::new(seeded_identity(&mut rng));
         let operator = Operator::new_for_sharing(
             setup_msgs_malicious.to_vec(),
             signing_key.clone(),
@@ -643,7 +645,8 @@ fn operator_handle_init(
         threshold: custodian_threshold as u32,
     };
     for _op_idx in 1..=operator_count {
-        let (verification_key, signing_key) = gen_sig_keys(rng);
+        let signing_key = Arc::new(seeded_identity(rng));
+        let verification_key = signing_key.verf_key();
         let operator = Operator::new_for_sharing(
             setup_msgs.to_vec(),
             signing_key.clone(),

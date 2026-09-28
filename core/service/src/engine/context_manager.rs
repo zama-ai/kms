@@ -7,7 +7,7 @@ use crate::consts::{DEFAULT_MPC_CONTEXT, SAFE_SER_SIZE_LIMIT};
 use crate::cryptography::encryption::{
     Encryption, PkeScheme, UnifiedPrivateEncKey, UnifiedPublicEncKey,
 };
-use crate::cryptography::signatures::{PrivateSigKey, PublicSigKey};
+use crate::cryptography::signatures::{NodeSigningIdentity, PrivateSigKey, PublicSigKey};
 use crate::engine::context::{ContextInfo, NodeInfo, SchemeDigests, SoftwareVersion};
 use crate::engine::threshold::service::session::SessionMaker;
 use crate::engine::traits::ContextManager;
@@ -402,7 +402,7 @@ where
             InternalCustodianContext::new(context, backup_enc_key.clone())?;
         let recovery_validation = gen_recovery_validation(
             &mut rng,
-            self.base_kms.signing_identity()?.ecdsa(),
+            self.base_kms.signing_identity()?,
             backup_dec_key,
             &inner_context,
             mpc_context_id,
@@ -1396,7 +1396,7 @@ where
 /// Generate a recovery request to the backup vault.
 async fn gen_recovery_validation(
     rng: &mut (impl CryptoRng + RngCore + Send + Sync + 'static),
-    sig_key: &PrivateSigKey,
+    signing_identity: Arc<NodeSigningIdentity>,
     backup_priv_key: UnifiedPrivateEncKey,
     custodian_context: &InternalCustodianContext,
     mpc_context_id: ContextId,
@@ -1407,7 +1407,7 @@ async fn gen_recovery_validation(
             .values()
             .cloned()
             .collect_vec(),
-        (*sig_key).clone(),
+        signing_identity.clone(),
         custodian_context.threshold as usize,
         // the amount of custodians are defined by the initial context
         custodian_context.custodian_nodes.len(),
@@ -2683,7 +2683,7 @@ mod tests {
             InternalCustodianContext::new(context, backup_enc_key.clone()).unwrap();
         let recovery_material = gen_recovery_validation(
             &mut rng,
-            &server_sig_key,
+            Arc::new(NodeSigningIdentity::from(server_sig_key.clone())),
             backup_dec_key.clone(),
             &internal_context,
             *DEFAULT_MPC_CONTEXT,

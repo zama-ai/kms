@@ -155,7 +155,7 @@ impl TryFrom<CustodianSetupMessage> for InternalCustodianSetupMessage {
         let mut buf = std::io::Cursor::new(value.payload);
         let payload: CustodianSetupMessagePayload =
             safe_deserialize(&mut buf, SAFE_SER_SIZE_LIMIT).map_err(|e| anyhow::anyhow!(e))?;
-        Ok(InternalCustodianSetupMessage {
+        let message = InternalCustodianSetupMessage {
             header: payload.header,
             name: value.name,
             custodian_role: Role::indexed_from_one(value.custodian_role as usize),
@@ -163,7 +163,11 @@ impl TryFrom<CustodianSetupMessage> for InternalCustodianSetupMessage {
             timestamp: payload.timestamp,
             public_enc_key: payload.public_enc_key,
             public_verf_key: payload.verification_key,
-        })
+        };
+        // Preemtive verification
+        ensure_backup_schemes(&message.public_verf_key)
+            .map_err(|e| anyhow::anyhow!("custodian role {}: {e}", message.custodian_role))?;
+        Ok(message)
     }
 }
 

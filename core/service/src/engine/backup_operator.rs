@@ -1,7 +1,8 @@
 use crate::backup::custodian::InternalCustodianRecoveryOutput;
 use crate::backup::error::{BackupError, RecoverySkipReason};
 use crate::backup::operator::BackupMaterial;
-use crate::backup::{BACKUP_PKE_SCHEME, DSEP_ATTESTED_BACKUP_PK};
+use crate::backup::{BACKUP_PKE_SCHEME, BACKUP_SIGNING_SCHEMES, DSEP_ATTESTED_BACKUP_PK};
+use crate::cryptography::signatures::VerfKeySet;
 use crate::consts::DEFAULT_EPOCH_ID;
 use crate::cryptography::internal_crypto_types::LegacySerialization;
 use crate::cryptography::signcryption::UnifiedSigncryption;
@@ -282,7 +283,10 @@ where
                 .values()
                 .cloned()
                 .collect_vec(),
-            (*self.base_kms.verf_key()).clone(),
+            VerfKeySet::from_identity(
+                &self.base_kms.signing_identity()?,
+                BACKUP_SIGNING_SCHEMES,
+            )?,
             recovery_material.custodian_context().threshold as usize,
             amount_custodians,
         )?;
@@ -1869,7 +1873,7 @@ mod tests {
     /// `filter_custodian_data` directly.
     fn build_operator_from_recovery_material(
         recovery_material: &RecoveryValidationMaterial,
-        verf_key: &PublicSigKey,
+        verf_key: &VerfKeySet,
     ) -> Operator {
         let amount_custodians = recovery_material.custodian_context().custodian_nodes.len();
         Operator::new_for_validating(
@@ -1889,7 +1893,7 @@ mod tests {
     async fn run_filter_expect_skip(
         outputs: Vec<CustodianRecoveryOutput>,
         recovery_material: &RecoveryValidationMaterial,
-        verf_key: &PublicSigKey,
+        verf_key: &VerfKeySet,
         dec_key: &UnifiedPrivateEncKey,
         enc_key: &UnifiedPublicEncKey,
         expected: RecoverySkipReason,
