@@ -14,6 +14,7 @@ algebra.workspace = true
 anyhow.workspace = true
 async-trait.workspace = true
 bc2wrap.workspace = true
+bytes.workspace = true
 cfg-if.workspace = true
 clap = { workspace = true, features = ["derive", "env"] }
 const_format.workspace = true
