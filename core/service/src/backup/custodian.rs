@@ -490,7 +490,7 @@ impl Custodian {
         let signcrypt_key = UnifiedSigncryptionKey::new(
             Arc::new(self.signing_identity.clone()),
             operator_ephem_enc_key.clone(),
-            operator_id,
+            operator_id.clone(),
         );
         // Sealed under every scheme in `BACKUP_SIGNING_SCHEMES`
         let signcryption = signcrypt_key.signcrypt_composite(
