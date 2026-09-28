@@ -18,10 +18,7 @@ use crate::{
     consts::DEFAULT_MPC_CONTEXT,
     cryptography::{
         encryption::{Encryption, PkeScheme, UnifiedPrivateEncKey, UnifiedPublicEncKey},
-        signatures::{
-            PublicSigKey, VerfKeySet, canonical_schemes, gen_sig_keys,
-            test_support::seeded_identity,
-        },
+        signatures::{VerfKeySet, canonical_schemes, gen_sig_keys, test_support::seeded_identity},
     },
     engine::base::derive_request_id,
 };
