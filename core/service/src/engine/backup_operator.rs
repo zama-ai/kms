@@ -2,9 +2,9 @@ use crate::backup::custodian::InternalCustodianRecoveryOutput;
 use crate::backup::error::{BackupError, RecoverySkipReason};
 use crate::backup::operator::BackupMaterial;
 use crate::backup::{BACKUP_PKE_SCHEME, BACKUP_SIGNING_SCHEMES, DSEP_ATTESTED_BACKUP_PK};
-use crate::cryptography::signatures::VerfKeySet;
 use crate::consts::DEFAULT_EPOCH_ID;
 use crate::cryptography::internal_crypto_types::LegacySerialization;
+use crate::cryptography::signatures::VerfKeySet;
 use crate::cryptography::signcryption::UnifiedSigncryption;
 use crate::cryptography::signing::seed::RootSigningSeed;
 use crate::engine::base::{CrsGenMetadata, KmsFheKeyHandles, derive_request_id};
@@ -283,10 +283,7 @@ where
                 .values()
                 .cloned()
                 .collect_vec(),
-            VerfKeySet::from_identity(
-                &self.base_kms.signing_identity()?,
-                BACKUP_SIGNING_SCHEMES,
-            )?,
+            VerfKeySet::from_identity(&*self.base_kms.signing_identity()?, BACKUP_SIGNING_SCHEMES)?,
             recovery_material.custodian_context().threshold as usize,
             amount_custodians,
         )?;

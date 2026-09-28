@@ -511,7 +511,7 @@ impl Operator {
         backup_id: RequestId,
         mpc_context_id: ContextId,
     ) -> Result<SigncryptResult, BackupError> {
-        let sk = match &self.signing_key {
+        let identity = match &self.signing_key {
             None => {
                 return Err(BackupError::OperatorError(
                     "Operator has no signing key".to_string(),

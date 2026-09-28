@@ -42,7 +42,7 @@ pub const BACKUP_SIGNING_SCHEMES: &[SigningSchemeType] =
 
 /// Refuses a party whose published key set does not cover [`BACKUP_SIGNING_SCHEMES`].
 ///
-/// A superset is however allowed in order to maintian backward compatibility in future 
+/// A superset is however allowed in order to maintian backward compatibility in future
 /// releases where [`BACKUP_SIGNING_SCHEMES`] might change.
 pub fn ensure_backup_schemes(keys: &VerfKeySet) -> Result<(), BackupError> {
     let published = keys.schemes();

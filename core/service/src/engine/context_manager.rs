@@ -1430,7 +1430,7 @@ async fn gen_recovery_validation(
         ct_map,
         commitments,
         custodian_context.to_owned(),
-        sig_key,
+        signing_identity.ecdsa(),
         mpc_context_id,
     )?;
     tracing::info!(

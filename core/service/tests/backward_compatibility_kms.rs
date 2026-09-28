@@ -1448,7 +1448,7 @@ fn test_operator_backup_output(
         let (_verification_key, signing_key) = gen_sig_keys(&mut rng);
         Operator::new_for_sharing(
             custodian_messages.clone(),
-            signing_key,
+            Arc::new(NodeSigningIdentity::ecdsa_only(signing_key)),
             test.custodian_threshold,
             custodian_messages.len(), // Testing a sunshine case where all custodians are present
         )
