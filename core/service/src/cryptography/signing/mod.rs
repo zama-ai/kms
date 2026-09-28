@@ -447,7 +447,7 @@ pub enum UnifiedPublicSigKeyVersions {
 }
 
 /// A verification key tagged with the scheme it belongs to.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, Versionize)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize, Versionize)]
 #[versionize(UnifiedPublicSigKeyVersions)]
 pub enum UnifiedPublicSigKey {
     Ecdsa256k1(PublicSigKey),

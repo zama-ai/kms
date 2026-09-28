@@ -311,7 +311,7 @@ impl InternalCustodianContext {
                 // Two custodians must not share *any* verification keys
                 let mut test_set: HashSet<_> = node.public_verf_key.keys.values().collect();
                 for cur_key in previous_node.public_verf_key.keys.values() {
-                    if test_set.insert(cur_key) {
+                    if !test_set.insert(cur_key) {
                         return Err(anyhow::anyhow!(
                             "{}: roles {} and {} share their {cur_key:?} key",
                             ERR_DUPLICATE_CUSTODIAN_VERIFICATION_KEYS,
@@ -482,7 +482,7 @@ impl Custodian {
         // re-encrypted share and sign it
         let operator_verf_id = operator_verification_key.verf_key_id();
         let signcrypt_key = UnifiedSigncryptionKey::from_signing_key(
-            *self.signing_key.ecdsa(),
+            self.signing_key.ecdsa().clone(),
             operator_ephem_enc_key.clone(),
             operator_verf_id,
         );

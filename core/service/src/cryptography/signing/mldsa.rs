@@ -11,6 +11,7 @@ use ml_dsa::{
 #[cfg(feature = "non-wasm")]
 use ml_dsa::{SignatureEncoding, Signer};
 use serde::{Deserialize, Serialize, de::Visitor};
+use std::hash::Hash;
 use tfhe::named::Named;
 
 /// The number of seed bytes consumed to build an ML-DSA signing key.
@@ -98,6 +99,12 @@ impl<P: MlDsaParams> std::fmt::Debug for MlDsaVerfKey<P> {
 impl<P: MlDsaParams> PartialEq for MlDsaVerfKey<P> {
     fn eq(&self, other: &Self) -> bool {
         self.0 == other.0
+    }
+}
+
+impl<P: MlDsaParams> Hash for MlDsaVerfKey<P> {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.0.encode().as_ref().hash(state);
     }
 }
 

@@ -78,7 +78,7 @@ impl Ed25519 {
 /// encoding, which doubles as the key's Solana address). Exists so
 /// [`super::UnifiedPublicSigKey`] can be versioned and stored in an externally
 /// compatible manner.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct Ed25519VerfKey(pub(crate) Ed25519VerifyingKey);
 
 impl_generic_versionize!(Ed25519VerfKey);

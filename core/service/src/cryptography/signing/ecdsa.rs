@@ -31,7 +31,7 @@ pub enum PublicSigKeyVersions {
 
 // Struct wrapping signature verification key used by both the user's wallet and server
 #[wasm_bindgen]
-#[derive(Clone, PartialEq, Eq, Debug, Hash, Serialize, Deserialize, Versionize)]
+#[derive(Clone, PartialEq, Eq, Hash, Debug, Serialize, Deserialize, Versionize)]
 #[versionize(PublicSigKeyVersions)]
 pub struct PublicSigKey {
     pk: WrappedVerifyingKey,
