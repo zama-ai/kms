@@ -168,7 +168,7 @@ Inputs of note:
 - `nextest-profile` — `ci` (default) or `ci-nightly`
 - `lfs` — pull Git-LFS objects on checkout
 - `skip-test-material` — skip material generation + custodian build
-- `run-redis`, `run-minio` — start the relevant sidecar
+- `run-redis`, `run-rustfs` — start the relevant sidecar
 - `runs-on`, `runner-volume` — runs-on slab selector
 
 Lint/format/security live in [`rust-lint.yml`](rust-lint.yml) and [`ci_lint.yml`](ci_lint.yml), not here.
