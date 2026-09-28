@@ -285,7 +285,7 @@ The KMS is healthy when it is ready and every dependency passed its last check. 
 |---|---|---|
 | `public_storage` | All | The public storage answers an existence request within 10 seconds. |
 | `private_storage` | All | The private storage answers an existence request within 10 seconds. |
-| `backup_storage` | All, with a backup vault | The storage of the backup vault answers an existence request within 10 seconds. |
+| `backup_storage` | All, with a backup vault | The backup vault answers an existence request for the backup of the signing key within 10 seconds. The KMS writes that backup at boot, so S3 needs only the read permission. A custodian backup vault has no backup before its first custodian context; until then the request asks for an object that does not exist, and S3 needs the `s3:ListBucket` permission to answer it with 404 instead of 403. |
 | `mpc_context` | Threshold | The KMS knows at least one MPC context and one epoch. The context does not need to include this KMS. |
 | `peers` | Threshold | The newest MPC context that includes this KMS, the one with the largest context ID among them, is not in the `Unhealthy` state of [the 13-party network health status](#13-party-network-health-status). Older contexts are not checked. |
 

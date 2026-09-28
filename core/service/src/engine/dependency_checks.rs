@@ -6,6 +6,7 @@
 //! sends the health message of the core-to-core protocol.
 
 use crate::consts::SIGNING_KEY_ID;
+use crate::engine::backup_operator::keychain_initialized;
 use crate::engine::threshold::service::session::ImmutableSessionMaker;
 use crate::vault::storage::{
     Storage, StorageExt, StorageReader, crypto_material::CryptoMaterialStorage,
@@ -155,17 +156,25 @@ async fn check_storages<PubS, PrivS>(
         )
         .await
     {
-        // The request goes to the storage under the vault, because the vault maps the data type
-        // through its keychain, and a custodian keychain has no mapping before its first backup.
+        // At boot, the server copies its signing key into the backup vault, under the data type
+        // that the vault keychain maps it to. So the request asks for an object that exists, and
+        // S3 answers it with the read permission alone. For an object that does not exist, S3
+        // answers 403 instead of 404 without the list permission. A custodian keychain has no
+        // mapping and no backup before its first custodian context, so until then the request
+        // goes to the storage under the vault.
         let data_type = PrivDataType::SigningKey.to_string();
-        check_storage(
-            health,
-            BACKUP_STORAGE,
-            &backup_vault.storage,
-            &data_type,
-            timeout,
-        )
-        .await;
+        if keychain_initialized(&backup_vault).await {
+            check_storage(health, BACKUP_STORAGE, &*backup_vault, &data_type, timeout).await;
+        } else {
+            check_storage(
+                health,
+                BACKUP_STORAGE,
+                &backup_vault.storage,
+                &data_type,
+                timeout,
+            )
+            .await;
+        }
     }
 }
 
@@ -329,7 +338,9 @@ mod tests {
     use super::*;
     use crate::engine::rng_source::TaskRngs;
     use crate::engine::threshold::service::session::SessionMaker;
+    use crate::vault::Vault;
     use crate::vault::storage::RootEntries;
+    use crate::vault::storage::StorageProxy;
     use crate::vault::storage::ram::RamStorage;
     use kms_grpc::RequestId;
     use kms_grpc::identifiers::ContextId;
@@ -400,6 +411,22 @@ mod tests {
                 (PRIVATE_STORAGE, DependencyStatus::Ok),
                 (PUBLIC_STORAGE, DependencyStatus::Ok)
             ])
+        );
+    }
+
+    #[tokio::test]
+    async fn reachable_backup_vault_passes() {
+        let (health, _service) = HealthState::new().await;
+        let backup_vault = Vault {
+            storage: StorageProxy::Ram(RamStorage::new()),
+            keychain: None,
+        };
+        let storage =
+            CryptoMaterialStorage::from(RamStorage::new(), RamStorage::new(), Some(backup_vault));
+        check_storages(&health, &storage, &mut SkippedRounds::new(), TEST_TIMEOUT).await;
+        assert_eq!(
+            health.dependencies().get(BACKUP_STORAGE),
+            Some(&DependencyStatus::Ok)
         );
     }
 
