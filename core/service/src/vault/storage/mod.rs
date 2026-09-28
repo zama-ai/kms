@@ -851,14 +851,14 @@ pub mod tests {
     use super::*;
     use crate::{
         backup::{
-            BACKUP_PKE_SCHEME,
+            BACKUP_PKE_SCHEME, BACKUP_SIGNING_SCHEMES,
             custodian::{CustodianSetupMessagePayload, HEADER, InternalCustodianContext},
             operator::InnerOperatorBackupOutput,
         },
         consts::{DEFAULT_MPC_CONTEXT, SAFE_SER_SIZE_LIMIT},
         cryptography::{
             encryption::{Encryption, PkeScheme, UnifiedPublicEncKey},
-            signatures::{PrivateSigKey, gen_sig_keys},
+            signatures::{PrivateSigKey, gen_sig_keys, test_support::seeded_verf_key_set},
             signcryption::UnifiedSigncryption,
         },
     };
@@ -915,7 +915,7 @@ pub mod tests {
                     random_value: [4_u8; 32],
                     timestamp: SystemTime::now(),
                     public_enc_key: enc_key(&mut rng),
-                    verification_key: gen_sig_keys(&mut rng).0,
+                    verification_key: seeded_verf_key_set(&mut rng, BACKUP_SIGNING_SCHEMES),
                 };
                 let mut payload_serial = Vec::new();
                 safe_serialize(&payload, &mut payload_serial, SAFE_SER_SIZE_LIMIT).unwrap();

@@ -1456,7 +1456,7 @@ mod tests {
         consts::DEFAULT_EPOCH_ID,
         cryptography::{
             encryption::{Encryption, HasPkeScheme, PkeScheme, PkeSchemeType},
-            signatures::{PublicSigKey, gen_sig_keys},
+            signatures::{PublicSigKey, gen_sig_keys, test_support::seeded_verf_key_set},
             signcryption::{UnifiedUnsigncryptionKey, Unsigncrypt},
             signing::SigningSchemeType,
         },
@@ -2360,7 +2360,7 @@ mod tests {
         for custodian_index in 1..=amount_custodians {
             let mut enc = Encryption::new(BACKUP_PKE_SCHEME, &mut rng);
             let (_sk_dec_key, pk_enc_key) = enc.keygen().unwrap();
-            let (verf_key, _sig_key) = gen_sig_keys(&mut rng);
+            let verf_key = seeded_verf_key_set(&mut rng, BACKUP_SIGNING_SCHEMES);
             let cur_msg = InternalCustodianSetupMessage {
                 header: HEADER.to_string(),
                 custodian_role: Role::indexed_from_one(custodian_index),
@@ -2581,7 +2581,7 @@ mod tests {
         for role in 1..=3 {
             let mut enc = Encryption::new(BACKUP_PKE_SCHEME, &mut rng);
             let (_, public_enc_key) = enc.keygen().unwrap();
-            let (public_verf_key, _) = gen_sig_keys(&mut rng);
+            let public_verf_key = seeded_verf_key_set(&mut rng, BACKUP_SIGNING_SCHEMES);
             setup_messages.push(InternalCustodianSetupMessage {
                 header: HEADER.to_string(),
                 custodian_role: Role::indexed_from_one(role),
@@ -2700,7 +2700,7 @@ mod tests {
         assert_eq!(internal_rec_req.operator_verf_key(), &server_verf_key);
         // And the signcryption destined for custodian 1 must validate under that
         // custodian's unsigncryption key, confirming the backup material was sealed correctly.
-        let custodian_id = custodian1.verification_key().verf_key_id();
+        let custodian_id = custodian1.verification_key_set().id().unwrap();
         let unsign_key = UnifiedUnsigncryptionKey::new(
             std::sync::Arc::new(custodian1.public_dec_key().clone()),
             custodian1.public_enc_key().clone(),
@@ -2752,7 +2752,7 @@ mod tests {
         for custodian_index in 1..=amount_custodians {
             let mut enc = Encryption::new(BACKUP_PKE_SCHEME, &mut rng);
             let (_sk_dec_key, pk_enc_key) = enc.keygen().unwrap();
-            let (verf_key, _sig_key) = gen_sig_keys(&mut rng);
+            let verf_key = seeded_verf_key_set(&mut rng, BACKUP_SIGNING_SCHEMES);
             let cur_msg = InternalCustodianSetupMessage {
                 header: HEADER.to_string(),
                 custodian_role: Role::indexed_from_one(custodian_index),
@@ -2844,7 +2844,7 @@ mod tests {
             .map(|index| {
                 let mut enc = Encryption::new(BACKUP_PKE_SCHEME, &mut rng);
                 let (_dec_key, public_enc_key) = enc.keygen().unwrap();
-                let (public_verf_key, _sig_key) = gen_sig_keys(&mut rng);
+                let public_verf_key = seeded_verf_key_set(&mut rng, BACKUP_SIGNING_SCHEMES);
                 InternalCustodianSetupMessage {
                     header: HEADER.to_string(),
                     custodian_role: Role::indexed_from_one(index),
@@ -3070,7 +3070,7 @@ mod tests {
         for custodian_index in 1..=amount_custodians {
             let mut enc = Encryption::new(BACKUP_PKE_SCHEME, &mut rng);
             let (_sk_dec_key, pk_enc_key) = enc.keygen().unwrap();
-            let (verf_key, _sig_key) = gen_sig_keys(&mut rng);
+            let verf_key = seeded_verf_key_set(&mut rng, BACKUP_SIGNING_SCHEMES);
             setup_msgs.push(
                 InternalCustodianSetupMessage {
                     header: HEADER.to_string(),

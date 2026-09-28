@@ -119,7 +119,7 @@ async fn main() -> Result<(), anyhow::Error> {
             let setup_msg: InternalCustodianSetupMessage = base64_deserialize(&params.setup_msg)?;
             let recovered_keys =
                 custodian_from_seed_phrase(&params.seed_phrase, setup_msg.custodian_role)?;
-            if setup_msg.public_verf_key != recovered_keys.verification_key() {
+            if &setup_msg.public_verf_key != recovered_keys.verification_key_set() {
                 tracing::warn!(
                     "Verification failed: Public verification key does not match the generated key!"
                 );

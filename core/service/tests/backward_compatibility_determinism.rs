@@ -11,7 +11,7 @@ use kms_grpc::rpc_types::PubDataType;
 use kms_lib::backup::BACKUP_PKE_SCHEME;
 use kms_lib::backup::custodian::Custodian;
 use kms_lib::cryptography::encryption::{Encryption, PkeScheme};
-use kms_lib::cryptography::signatures::{NodeSigningIdentity, gen_sig_keys};
+use kms_lib::cryptography::signatures::test_support::seeded_identity;
 use kms_lib::engine::base::{KeyGenMetadata, KeyGenMetadataInner};
 use rand::SeedableRng;
 use std::collections::BTreeMap;
@@ -92,16 +92,16 @@ fn internal_custodian_setup_message_serialization_is_deterministic() {
     let runs: Vec<Vec<u8>> = (0..REPEATS)
         .map(|_| {
             let mut rng = AesRng::seed_from_u64(SEED);
-            let (_verification_key, signing_key) = gen_sig_keys(&mut rng);
+            let signing_key = seeded_identity(&mut rng);
             let mut encryption = Encryption::new(BACKUP_PKE_SCHEME, &mut rng);
             let (private_key, public_key) = encryption.keygen().expect("keygen");
             let custodian = Custodian::new(
                 Role::indexed_from_one(1),
-                NodeSigningIdentity::ecdsa_only(signing_key),
+                signing_key,
                 public_key,
                 private_key,
             )
-            .expect("Custodian::new is actually infallible");
+            .expect("a seeded identity covers the backup signing schemes");
             let setup_message = custodian.generate_setup_message_with_timestamp(
                 &mut rng,
                 "custodian-1".to_string(),

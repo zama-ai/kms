@@ -16,7 +16,7 @@ use crate::{
     consts::DEFAULT_MPC_CONTEXT,
     cryptography::{
         encryption::{Encryption, PkeScheme, UnifiedPrivateEncKey, UnifiedPublicEncKey},
-        signatures::{NodeSigningIdentity, PublicSigKey, canonical_schemes, gen_sig_keys},
+        signatures::{PublicSigKey, canonical_schemes, gen_sig_keys, test_support::seeded_identity},
     },
     engine::base::derive_request_id,
 };
@@ -44,16 +44,10 @@ fn operator_setup() {
     let custodians: Vec<_> = (0..custodian_count)
         .map(|i| {
             let custodian_role = Role::indexed_from_zero(i);
-            let (_verification_key, signing_key) = gen_sig_keys(&mut rng);
+            let signing_key = seeded_identity(&mut rng);
             let mut enc = Encryption::new(BACKUP_PKE_SCHEME, &mut rng);
             let (dec_key, enc_key) = enc.keygen().unwrap();
-            custodian::Custodian::new(
-                custodian_role,
-                NodeSigningIdentity::ecdsa_only(signing_key),
-                enc_key,
-                dec_key,
-            )
-            .unwrap()
+            custodian::Custodian::new(custodian_role, signing_key, enc_key, dec_key).unwrap()
         })
         .collect();
     let custodian_messages: Vec<_> = custodians
@@ -114,16 +108,10 @@ fn custodian_reencrypt() {
     let custodians: Vec<_> = (0..custodian_count)
         .map(|i| {
             let custodian_role = Role::indexed_from_zero(i);
-            let (_verification_key, signing_key) = gen_sig_keys(&mut rng);
+            let signing_key = seeded_identity(&mut rng);
             let mut enc = Encryption::new(BACKUP_PKE_SCHEME, &mut rng);
             let (dec_key, enc_key) = enc.keygen().unwrap();
-            custodian::Custodian::new(
-                custodian_role,
-                NodeSigningIdentity::ecdsa_only(signing_key),
-                enc_key,
-                dec_key,
-            )
-            .unwrap()
+            custodian::Custodian::new(custodian_role, signing_key, enc_key, dec_key).unwrap()
         })
         .collect();
     let custodian_messages: Vec<_> = custodians

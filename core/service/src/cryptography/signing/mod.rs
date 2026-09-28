@@ -556,27 +556,42 @@ pub fn unified_verify(
     }
 }
 
-/// Scaffolding shared by the test modules of this module and its backends.
-#[cfg(test)]
-pub(crate) mod test_support {
+/// Scaffolding shared by the test modules of this module and its backends, and by the integration
+/// tests under `core/service/tests/`.
+///
+/// Not `#[cfg(test)]`, because an integration test is a separate crate and cannot see this one's
+/// test configuration. Re-exported as [`crate::cryptography::signatures::test_support`], since this
+/// module is only `pub(crate)`.
+pub mod test_support {
     use super::*;
     use crate::cryptography::signatures::gen_sig_keys;
     use crate::cryptography::signing::identity::NodeSigningIdentity;
     use crate::cryptography::signing::seed::RootSigningSeed;
     use rand::RngCore;
 
-    pub(crate) fn random_seed<R: RngCore>(rng: &mut R) -> [u8; 32] {
+    /// 32 bytes drawn from `rng`, for a backend that takes its key material as a seed.
+    pub fn random_seed<R: RngCore>(rng: &mut R) -> [u8; 32] {
         let mut s = [0u8; 32];
         rng.fill_bytes(&mut s);
         s
     }
 
     /// A complete node signing identity: an ECDSA key with a root seed attached.
-    pub(crate) fn seeded_identity<R: rand::CryptoRng + RngCore>(
-        rng: &mut R,
-    ) -> NodeSigningIdentity {
+    pub fn seeded_identity<R: rand::CryptoRng + RngCore>(rng: &mut R) -> NodeSigningIdentity {
         let (_pk, sk) = gen_sig_keys(rng);
         NodeSigningIdentity::new(sk, RootSigningSeed::random(rng))
+    }
+
+    /// The published key set of a freshly seeded identity, for a party that has to cover `schemes`.
+    ///
+    /// Tests that build a peer's setup message need a set covering
+    /// [`crate::backup::BACKUP_SIGNING_SCHEMES`], which an ECDSA-only identity cannot produce.
+    pub fn seeded_verf_key_set<R: rand::CryptoRng + RngCore>(
+        rng: &mut R,
+        schemes: &[SigningSchemeType],
+    ) -> VerfKeySet {
+        VerfKeySet::from_identity(&seeded_identity(rng), schemes)
+            .expect("a seeded identity covers every scheme")
     }
 
     /// The contract every [`SigningScheme`] backend owes, checked in one place so that a new
@@ -585,7 +600,8 @@ pub(crate) mod test_support {
     /// A freshly produced signature verifies, and a tampered message, a different domain
     /// separator, and a tampered signature all reject. Key generation is not part of the trait,
     /// so the caller supplies the signing key.
-    pub(crate) fn exercise_backend<S: SigningScheme>(dsep: &DomainSep, sk: &S::SigningKey) {
+    #[cfg(feature = "non-wasm")]
+    pub fn exercise_backend<S: SigningScheme>(dsep: &DomainSep, sk: &S::SigningKey) {
         let vk = S::verifying_key(sk).expect("the backend must derive its verification key");
         let sig = S::sign(dsep, b"hello", sk).expect("the backend must sign");
         S::verify(dsep, b"hello", &sig, &vk).expect("a fresh signature must verify");

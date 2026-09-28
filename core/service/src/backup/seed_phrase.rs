@@ -162,8 +162,8 @@ mod tests {
             regenerated_custodian.public_enc_key()
         );
         assert_eq!(
-            custodian.verification_key(),
-            regenerated_custodian.verification_key()
+            custodian.verification_key_set(),
+            regenerated_custodian.verification_key_set()
         )
     }
 
@@ -240,8 +240,8 @@ mod tests {
             prune_custodian.public_enc_key()
         );
         assert_eq!(
-            regeneratred_custodian.verification_key(),
-            prune_custodian.verification_key()
+            regeneratred_custodian.verification_key_set(),
+            prune_custodian.verification_key_set()
         );
     }
 
@@ -281,8 +281,8 @@ mod tests {
             .derive_ecdsa_signing_key()
             .unwrap();
         assert_eq!(
-            custodian.verification_key(),
-            PublicSigKey::from_sk(&expected),
+            custodian.verification_key_set().ecdsa().unwrap(),
+            &PublicSigKey::from_sk(&expected),
             "the signing key no longer comes from the root seed in the second half"
         );
     }

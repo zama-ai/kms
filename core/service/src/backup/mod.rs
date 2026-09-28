@@ -1,5 +1,6 @@
+use crate::backup::error::BackupError;
 use crate::cryptography::encryption::{PkeSchemeType, UnifiedCipher};
-use crate::cryptography::signatures::SigningSchemeType;
+use crate::cryptography::signatures::{SigningSchemeType, VerfKeySet};
 use hashing::DomainSep;
 use kms_grpc::rpc_types::PrivDataType;
 use serde::{Deserialize, Serialize};
@@ -38,6 +39,18 @@ pub const BACKUP_PKE_SCHEME: PkeSchemeType = PkeSchemeType::MlKem1024P384;
 /// is NIST level 5, as MLKEM1024-P384 is.
 pub const BACKUP_SIGNING_SCHEMES: &[SigningSchemeType] =
     &[SigningSchemeType::Ecdsa256k1, SigningSchemeType::MlDsa87];
+
+/// Refuses a party whose published key set is not exactly [`BACKUP_SIGNING_SCHEMES`].
+pub fn ensure_backup_schemes(keys: &VerfKeySet) -> Result<(), BackupError> {
+    let published = keys.schemes();
+    if published != BACKUP_SIGNING_SCHEMES {
+        return Err(BackupError::SetupError(format!(
+            "custodian-backup parties must publish exactly {BACKUP_SIGNING_SCHEMES:?}, but this \
+             one published {published:?}"
+        )));
+    }
+    Ok(())
+}
 
 /// Domain separator for the digest of the operator's backup encryption key that
 /// `GetOperatorPublicKey` places in its attestation document.

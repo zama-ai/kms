@@ -34,6 +34,8 @@ use kms_grpc::{
         CrsgenVerification, CrsgenVerificationQ126, KeygenVerification, KeygenVerificationQ126,
     },
 };
+use kms_lib::backup::BACKUP_SIGNING_SCHEMES;
+use kms_lib::cryptography::signatures::test_support::{seeded_identity, seeded_verf_key_set};
 use kms_lib::{
     backup::{
         BACKUP_PKE_SCHEME, BackupCiphertext,
@@ -1095,7 +1097,7 @@ fn test_recovery_material(
     let mut cts = BTreeMap::new();
     for role_j in 1..=test.custodian_count {
         let cus_role = Role::indexed_from_one(role_j);
-        let (custodian_pk, _) = gen_sig_keys(&mut rng);
+        let custodian_pk = seeded_verf_key_set(&mut rng, BACKUP_SIGNING_SCHEMES);
         let backup_material = BackupMaterial {
             backup_id,
             mpc_context_id: kms_grpc::identifiers::ContextId::from_bytes([9u8; 32]),
@@ -1188,7 +1190,7 @@ fn test_internal_custodian_context(
     let mut cus_nodes = BTreeMap::new();
     for role_j in 1..=test.custodian_count {
         let cus_role = Role::indexed_from_one(role_j);
-        let (custodian_verf_key, _) = gen_sig_keys(&mut rng);
+        let custodian_verf_key = seeded_verf_key_set(&mut rng, BACKUP_SIGNING_SCHEMES);
         let mut encryption = Encryption::new(BACKUP_PKE_SCHEME, &mut rng);
         let (_, cus_enc_key) = encryption.keygen().unwrap();
         let mut rnd = [0_u8; 32];
@@ -1392,16 +1394,11 @@ fn test_internal_custodian_message(
 
     let mut rng = AesRng::seed_from_u64(test.state);
     let name = "custodian-1".to_string();
-    let (_verification_key, signing_key) = gen_sig_keys(&mut rng);
+    let signing_key = seeded_identity(&mut rng);
     let mut enc = Encryption::new(BACKUP_PKE_SCHEME, &mut rng);
     let (dec_key, enc_key) = enc.keygen().unwrap();
-    let custodian = Custodian::new(
-        Role::indexed_from_zero(0),
-        NodeSigningIdentity::ecdsa_only(signing_key),
-        enc_key,
-        dec_key,
-    )
-    .unwrap();
+    let custodian = Custodian::new(Role::indexed_from_zero(0), signing_key, enc_key, dec_key)
+        .expect("a seeded identity covers the backup signing schemes");
     // Use the same fixed timestamp the generator uses so the rebuilt message matches the
     // deterministic on-disk fixture exactly.
     let new_custodian_setup_message =
@@ -1432,16 +1429,10 @@ fn test_operator_backup_output(
     let custodians: Vec<_> = (1..=test.custodian_count)
         .map(|i| {
             let custodian_role = Role::indexed_from_one(i);
-            let (_verification_key, signing_key) = gen_sig_keys(&mut rng);
+            let signing_key = seeded_identity(&mut rng);
             let mut enc = Encryption::new(BACKUP_PKE_SCHEME, &mut rng);
             let (dec_key, enc_key) = enc.keygen().unwrap();
-            Custodian::new(
-                custodian_role,
-                NodeSigningIdentity::ecdsa_only(signing_key),
-                enc_key,
-                dec_key,
-            )
-            .unwrap()
+            Custodian::new(custodian_role, signing_key, enc_key, dec_key).unwrap()
         })
         .collect();
     let custodian_messages: Vec<_> = custodians

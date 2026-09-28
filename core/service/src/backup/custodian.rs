@@ -1,6 +1,6 @@
-use crate::backup::BACKUP_PKE_SCHEME;
 use crate::backup::operator::DSEP_BACKUP_MATERIAL;
-use crate::cryptography::signatures::NodeSigningIdentity;
+use crate::backup::{BACKUP_PKE_SCHEME, BACKUP_SIGNING_SCHEMES, ensure_backup_schemes};
+use crate::cryptography::signatures::{NodeSigningIdentity, VerfKeySet};
 use crate::cryptography::signing::SigningSchemeType;
 use crate::cryptography::{
     encryption::{HasPkeScheme, UnifiedPrivateEncKey, UnifiedPublicEncKey},
@@ -18,7 +18,7 @@ use kms_grpc::kms::v1::{
 };
 use rand::{CryptoRng, Rng};
 use serde::{Deserialize, Serialize};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashSet};
 use std::sync::Arc;
 use std::time::SystemTime;
 use tfhe::safe_serialization::safe_serialize;
@@ -113,7 +113,7 @@ pub struct CustodianSetupMessagePayload {
     pub random_value: [u8; 32],
     pub timestamp: SystemTime,
     pub public_enc_key: UnifiedPublicEncKey,
-    pub verification_key: PublicSigKey,
+    pub verification_key: VerfKeySet,
 }
 
 impl Named for CustodianSetupMessagePayload {
@@ -140,7 +140,7 @@ pub struct InternalCustodianSetupMessage {
     pub random_value: [u8; 32],
     pub timestamp: SystemTime,
     pub public_enc_key: UnifiedPublicEncKey, // The public encrypt key of the custodian
-    pub public_verf_key: PublicSigKey,       // The custodian's verification key
+    pub public_verf_key: VerfKeySet,         // The custodian's published verification keys
 }
 
 impl Named for InternalCustodianSetupMessage {
@@ -283,6 +283,7 @@ impl InternalCustodianContext {
 
         let nodes = node_map.values().collect::<Vec<_>>();
         for node in &nodes {
+            node.public_verf_key.ensure_backup_schemes()?;
             // Reject a custodian whose encryption key is weaker than the scheme
             // this path is built around, rather than encrypting its share of the
             // backup key under it anyway.
@@ -306,13 +307,17 @@ impl InternalCustodianContext {
                         node.custodian_role
                     ));
                 }
-                if previous_node.public_verf_key == node.public_verf_key {
-                    return Err(anyhow::anyhow!(
-                        "{}: roles {} and {}",
-                        ERR_DUPLICATE_CUSTODIAN_VERIFICATION_KEYS,
-                        previous_node.custodian_role,
-                        node.custodian_role
-                    ));
+                // Two custodians must not share *any* verification keys
+                let mut test_set: HashSet<_> = node.public_verf_key.keys.values().collect();
+                for cur_key in previous_node.public_verf_key.keys.values() {
+                    if test_set.insert(cur_key) {
+                        return Err(anyhow::anyhow!(
+                            "{}: roles {} and {} share their {cur_key:?} key",
+                            ERR_DUPLICATE_CUSTODIAN_VERIFICATION_KEYS,
+                            previous_node.custodian_role,
+                            node.custodian_role
+                        ));
+                    }
                 }
             }
         }
@@ -347,6 +352,7 @@ impl InternalCustodianContext {
 pub struct Custodian {
     role: Role,
     signing_key: NodeSigningIdentity,
+    verification_keys: VerfKeySet,
     enc_key: UnifiedPublicEncKey,
     dec_key: UnifiedPrivateEncKey,
 }
@@ -365,15 +371,23 @@ pub struct Custodian {
 /// AWS Secret Manager because post quantum algorithms are not
 /// supported on AWS KMS at the moment.
 impl Custodian {
+    /// A custodian for `role` that signs with `signing_key`.
     pub fn new(
         role: Role,
         signing_key: NodeSigningIdentity,
         enc_key: UnifiedPublicEncKey,
         dec_key: UnifiedPrivateEncKey,
     ) -> Result<Self, BackupError> {
+        let verification_keys = VerfKeySet::from_identity(&signing_key, BACKUP_SIGNING_SCHEMES)
+            .map_err(|e| {
+                BackupError::SetupError(format!(
+                    "custodian role {role} cannot publish the backup signing schemes: {e}"
+                ))
+            })?;
         Ok(Self {
             role,
             signing_key,
+            verification_keys,
             enc_key,
             dec_key,
         })
@@ -408,7 +422,9 @@ impl Custodian {
             "Verifying and re-encrypting backup for operator: {}",
             operator_verification_key.address(),
         );
-        let custodian_id = self.verification_key().verf_key_id();
+        let custodian_id = self.verification_key_set().id().map_err(|e| {
+            BackupError::SetupError(format!("could not compute the custodian key set id: {e}"))
+        })?;
         let unsigncrypt_key = UnifiedUnsigncryptionKey::new(
             Arc::new(self.dec_key.clone()),
             self.enc_key.clone(),
@@ -451,7 +467,7 @@ impl Custodian {
         }
         // check the decrypted result
         if let Err(e) = backup_material.check_expected_metadata(
-            &self.signing_key.verf_key(),
+            self.verification_key_set(),
             self.role,
             &operator_verification_key.verf_key_id(),
         ) {
@@ -506,7 +522,7 @@ impl Custodian {
             random_value,
             timestamp,
             public_enc_key: self.enc_key.clone(),
-            public_verf_key: self.verification_key().clone(),
+            public_verf_key: self.verification_key_set().clone(),
             name: custodian_name,
         }
     }
@@ -519,8 +535,9 @@ impl Custodian {
         &self.enc_key
     }
 
-    pub fn verification_key(&self) -> PublicSigKey {
-        self.signing_key.verf_key()
+    /// The keys this custodian publishes, one per scheme in [`BACKUP_SIGNING_SCHEMES`].
+    pub fn verification_key_set(&self) -> &VerfKeySet {
+        &self.verification_keys
     }
 
     pub fn role(&self) -> Role {
@@ -534,7 +551,7 @@ mod tests {
     use crate::backup::BACKUP_PKE_SCHEME;
     use crate::cryptography::{
         encryption::{Encryption, PkeScheme, PkeSchemeType},
-        signatures::gen_sig_keys,
+        signatures::{gen_sig_keys, test_support::seeded_verf_key_set},
     };
     use aes_prng::AesRng;
     use rand::SeedableRng;
@@ -611,7 +628,7 @@ mod tests {
         let mut enc = Encryption::new(BACKUP_PKE_SCHEME, &mut rng);
         let (_, backup_pk) = enc.keygen().unwrap();
         let (_, payload_pk) = enc.keygen().unwrap();
-        let (payload_verf_key, _) = gen_sig_keys(&mut rng);
+        let payload_verf_key = seeded_verf_key_set(&mut rng, BACKUP_SIGNING_SCHEMES);
         let payload = CustodianSetupMessagePayload {
             header: HEADER.to_string(),
             random_value: [0u8; 32],
@@ -665,7 +682,7 @@ mod tests {
                 let mut enc = Encryption::new(BACKUP_PKE_SCHEME, &mut rng);
                 enc.keygen().unwrap()
             };
-            let (public_verf_key, _) = gen_sig_keys(&mut rng);
+            let public_verf_key = seeded_verf_key_set(&mut rng, BACKUP_SIGNING_SCHEMES);
             setup_messages.push(InternalCustodianSetupMessage {
                 header: HEADER.to_string(),
                 custodian_role: Role::indexed_from_one(role),
@@ -733,7 +750,7 @@ mod tests {
                 let mut enc = Encryption::new(scheme, &mut rng);
                 enc.keygen().unwrap()
             };
-            let (public_verf_key, _) = gen_sig_keys(&mut rng);
+            let public_verf_key = seeded_verf_key_set(&mut rng, BACKUP_SIGNING_SCHEMES);
             setup_messages.push(InternalCustodianSetupMessage {
                 header: HEADER.to_string(),
                 custodian_role: Role::indexed_from_one(role),
@@ -764,6 +781,78 @@ mod tests {
         assert!(
             error.contains("role 2"),
             "the error does not name the role: {error}"
+        );
+    }
+
+    /// A custodian that publishes fewer schemes than [`BACKUP_SIGNING_SCHEMES`] is refused at
+    /// context creation, rather than having its weaker signatures accepted later.
+    #[test]
+    fn custodian_key_set_below_the_backup_schemes_should_fail() {
+        let mut rng = AesRng::seed_from_u64(44);
+        let (_, backup_pk) = {
+            let mut enc = Encryption::new(BACKUP_PKE_SCHEME, &mut rng);
+            enc.keygen().unwrap()
+        };
+
+        let mut setup_messages = Vec::new();
+        for role in 1..=3 {
+            let (_, public_enc_key) = {
+                let mut enc = Encryption::new(BACKUP_PKE_SCHEME, &mut rng);
+                enc.keygen().unwrap()
+            };
+            // Role 2 publishes ECDSA alone; the others are correct, so the context fails on that
+            // role alone rather than on its overall shape.
+            let schemes: &[SigningSchemeType] = if role == 2 {
+                &[SigningSchemeType::Ecdsa256k1]
+            } else {
+                BACKUP_SIGNING_SCHEMES
+            };
+            setup_messages.push(InternalCustodianSetupMessage {
+                header: HEADER.to_string(),
+                custodian_role: Role::indexed_from_one(role),
+                name: format!("Custodian-{role}"),
+                random_value: [role as u8; 32],
+                timestamp: SystemTime::now(),
+                public_enc_key,
+                public_verf_key: seeded_verf_key_set(&mut rng, schemes),
+            });
+        }
+
+        let context = CustodianContext {
+            custodian_nodes: setup_messages
+                .into_iter()
+                .map(|message| message.try_into().unwrap())
+                .collect(),
+            custodian_context_id: None,
+            threshold: 1,
+        };
+
+        let error = InternalCustodianContext::new(context, backup_pk)
+            .expect_err("a custodian key set below the backup schemes must be rejected")
+            .to_string();
+        assert!(
+            error.contains("custodian role 2"),
+            "the error does not name the role: {error}"
+        );
+    }
+
+    /// A custodian whose identity holds no root seed cannot publish
+    /// [`BACKUP_SIGNING_SCHEMES`], so it cannot be constructed at all.
+    #[test]
+    fn a_seedless_custodian_cannot_be_constructed() {
+        let mut rng = AesRng::seed_from_u64(45);
+        let (dec_key, enc_key) = {
+            let mut enc = Encryption::new(BACKUP_PKE_SCHEME, &mut rng);
+            enc.keygen().unwrap()
+        };
+        let (_verf_key, sig_key) = gen_sig_keys(&mut rng);
+        let seedless = NodeSigningIdentity::ecdsa_only(sig_key);
+
+        let error = Custodian::new(Role::indexed_from_one(1), seedless, enc_key, dec_key)
+            .expect_err("a seedless custodian cannot publish the backup signing schemes");
+        assert!(
+            matches!(error, BackupError::SetupError(_)),
+            "unexpected error: {error}"
         );
     }
 

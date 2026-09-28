@@ -8,7 +8,7 @@ use crate::{
     consts::SAFE_SER_SIZE_LIMIT,
     cryptography::{
         encryption::{UnifiedPrivateEncKey, UnifiedPublicEncKey},
-        signatures::{PrivateSigKey, PublicSigKey, Signature},
+        signatures::{PrivateSigKey, PublicSigKey, Signature, VerfKeySet},
         signcryption::{
             Signcrypt, UnifiedSigncryption, UnifiedSigncryptionKey, UnifiedUnsigncryptionKey,
             Unsigncrypt,
@@ -141,7 +141,7 @@ impl TryFrom<RecoveryRequest> for InternalRecoveryRequest {
 
 #[derive(Clone)]
 pub struct Operator {
-    custodian_keys: HashMap<Role, (UnifiedPublicEncKey, PublicSigKey)>,
+    custodian_keys: HashMap<Role, (UnifiedPublicEncKey, VerfKeySet)>,
     signing_key: Option<PrivateSigKey>,
     // the public component of [signing_key] above
     verification_key: PublicSigKey,
@@ -380,7 +380,7 @@ pub struct BackupMaterial {
     /// The MPC context this backup was produced under.
     pub mpc_context_id: ContextId,
     // receiver
-    pub custodian_pk: PublicSigKey,
+    pub custodian_pk: VerfKeySet,
     pub custodian_role: Role,
     // sender
     pub operator_pk: PublicSigKey,
@@ -392,7 +392,7 @@ impl BackupMaterial {
     /// `BackupMaterial` against the expected routing parameters.
     pub fn check_expected_metadata(
         &self,
-        custodian_verf_key: &PublicSigKey,
+        custodian_verf_key: &VerfKeySet,
         custodian_role: Role,
         operator_pk_id: &[u8],
     ) -> Result<(), RecoverySkipReason> {
@@ -576,7 +576,11 @@ impl Operator {
                 operator_pk: self.verification_key.clone(),
                 shares,
             };
-            let custodian_verf_id = custodian_verf_key.verf_key_id();
+            // The custodian's identity is the digest of its whole published key set; see
+            // `Custodian::verification_key`.
+            let custodian_verf_id = custodian_verf_key.id().map_err(|e| {
+                BackupError::SetupError(format!("could not compute the custodian key set id: {e}"))
+            })?;
             let signcryption_key = UnifiedSigncryptionKey::new(
                 identity.clone(),
                 cus_enc_key.clone(),
@@ -639,10 +643,19 @@ impl Operator {
             RecoverySkipReason::MissingVerificationKey
         })?;
         let operator_id = self.verification_key.verf_key_id();
+        // The recovery direction still uses the frozen single-ECDSA layout, so only the ECDSA
+        // member of the custodian's set verifies here.
+        let custodian_ecdsa = custodian_verf_key.ecdsa().map_err(|e| {
+            tracing::warn!(
+                "custodian key set for role {} has no usable ECDSA member: {e}",
+                output.custodian_role
+            );
+            RecoverySkipReason::MissingVerificationKey
+        })?;
         let unsign_key = UnifiedUnsigncryptionKey::new(
             ephm_dec_key.clone(),
             ephm_enc_key.clone(),
-            custodian_verf_key.clone(),
+            custodian_ecdsa.clone(),
             operator_id.clone(),
         );
         let backup_material: Zeroizing<BackupMaterial> = Zeroizing::new(
@@ -818,7 +831,7 @@ impl Operator {
 /// validated keys and the reasons any messages were skipped.
 #[derive(Debug)]
 struct CustodianValidationResult {
-    keys: HashMap<Role, (UnifiedPublicEncKey, PublicSigKey)>,
+    keys: HashMap<Role, (UnifiedPublicEncKey, VerfKeySet)>,
     #[cfg_attr(not(test), allow(dead_code))]
     skip_reasons: Vec<SetupSkipReason>,
 }
@@ -929,13 +942,13 @@ fn validate_custodian_messages(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::backup::BACKUP_PKE_SCHEME;
+    use crate::backup::{BACKUP_PKE_SCHEME, BACKUP_SIGNING_SCHEMES};
     use crate::{
         backup::{custodian::CustodianSetupMessagePayload, operator::RecoveryValidationMaterial},
         consts::DEFAULT_MPC_CONTEXT,
         cryptography::{
             encryption::{Encryption, PkeScheme},
-            signatures::gen_sig_keys,
+            signatures::{gen_sig_keys, test_support::seeded_verf_key_set},
         },
         engine::base::derive_request_id,
     };
@@ -959,7 +972,7 @@ mod tests {
                 let mut encryption = Encryption::new(BACKUP_PKE_SCHEME, &mut rng);
                 encryption.keygen().unwrap()
             };
-            let (custodian_verf_key, _) = gen_sig_keys(&mut rng);
+            let custodian_verf_key = seeded_verf_key_set(&mut rng, BACKUP_SIGNING_SCHEMES);
             let payload = CustodianSetupMessagePayload {
                 header: HEADER.to_string(),
                 random_value: [4_u8; 32],
@@ -1007,7 +1020,7 @@ mod tests {
     fn valid_custodian_msg(
         role: Role,
         enc_key: UnifiedPublicEncKey,
-        verf_key: PublicSigKey,
+        verf_key: VerfKeySet,
     ) -> InternalCustodianSetupMessage {
         InternalCustodianSetupMessage {
             header: HEADER.to_owned(),
@@ -1064,7 +1077,7 @@ mod tests {
         let mut rng = AesRng::seed_from_u64(4);
         let mut encryption = Encryption::new(BACKUP_PKE_SCHEME, &mut rng);
         let (_dec_key, enc_key) = encryption.keygen().unwrap();
-        let (verf_key, _) = gen_sig_keys(&mut rng);
+        let verf_key = seeded_verf_key_set(&mut rng, BACKUP_SIGNING_SCHEMES);
         let msg = valid_custodian_msg(Role::indexed_from_one(1), enc_key.clone(), verf_key.clone());
         let result = validate_custodian_messages(vec![msg], 1, 3, true);
         assert!(matches!(result, Err(BackupError::SetupError(_))));
@@ -1082,7 +1095,7 @@ mod tests {
         let mut rng = AesRng::seed_from_u64(5);
         let mut encryption = Encryption::new(BACKUP_PKE_SCHEME, &mut rng);
         let (_dec_key, enc_key) = encryption.keygen().unwrap();
-        let (verf_key, _) = gen_sig_keys(&mut rng);
+        let verf_key = seeded_verf_key_set(&mut rng, BACKUP_SIGNING_SCHEMES);
         let mut msg1 =
             valid_custodian_msg(Role::indexed_from_one(1), enc_key.clone(), verf_key.clone());
         let msg2 =
@@ -1110,7 +1123,7 @@ mod tests {
         let mut rng = AesRng::seed_from_u64(6);
         let mut encryption = Encryption::new(BACKUP_PKE_SCHEME, &mut rng);
         let (_dec_key, enc_key) = encryption.keygen().unwrap();
-        let (verf_key, _) = gen_sig_keys(&mut rng);
+        let verf_key = seeded_verf_key_set(&mut rng, BACKUP_SIGNING_SCHEMES);
         let mut msg1 =
             valid_custodian_msg(Role::indexed_from_one(1), enc_key.clone(), verf_key.clone());
         msg1.timestamp = SystemTime::now() - Duration::from_hours(666); // too far in the past
@@ -1138,7 +1151,7 @@ mod tests {
         let mut rng = AesRng::seed_from_u64(6);
         let mut encryption = Encryption::new(BACKUP_PKE_SCHEME, &mut rng);
         let (_dec_key, enc_key) = encryption.keygen().unwrap();
-        let (verf_key, _) = gen_sig_keys(&mut rng);
+        let verf_key = seeded_verf_key_set(&mut rng, BACKUP_SIGNING_SCHEMES);
         let mut msg1 =
             valid_custodian_msg(Role::indexed_from_one(1), enc_key.clone(), verf_key.clone());
         let present = SystemTime::now();
@@ -1167,7 +1180,7 @@ mod tests {
         let mut rng = AesRng::seed_from_u64(5);
         let mut encryption = Encryption::new(BACKUP_PKE_SCHEME, &mut rng);
         let (_dec_key, enc_key) = encryption.keygen().unwrap();
-        let (verf_key, _) = gen_sig_keys(&mut rng);
+        let verf_key = seeded_verf_key_set(&mut rng, BACKUP_SIGNING_SCHEMES);
         let present = SystemTime::now();
         let mut msg1 =
             valid_custodian_msg(Role::indexed_from_one(1), enc_key.clone(), verf_key.clone());
@@ -1192,7 +1205,7 @@ mod tests {
         let mut rng = AesRng::seed_from_u64(7);
         let mut encryption = Encryption::new(BACKUP_PKE_SCHEME, &mut rng);
         let (_dec_key, enc_key) = encryption.keygen().unwrap();
-        let (verf_key, _) = gen_sig_keys(&mut rng);
+        let verf_key = seeded_verf_key_set(&mut rng, BACKUP_SIGNING_SCHEMES);
         let msg1 = valid_custodian_msg(
             Role::indexed_from_one(10),
             enc_key.clone(),
@@ -1223,7 +1236,7 @@ mod tests {
         let mut rng = AesRng::seed_from_u64(8);
         let mut encryption = Encryption::new(BACKUP_PKE_SCHEME, &mut rng);
         let (_dec_key, enc_key) = encryption.keygen().unwrap();
-        let (verf_key, _) = gen_sig_keys(&mut rng);
+        let verf_key = seeded_verf_key_set(&mut rng, BACKUP_SIGNING_SCHEMES);
         let msg1 =
             valid_custodian_msg(Role::indexed_from_one(1), enc_key.clone(), verf_key.clone());
         let msg2 =
@@ -1252,9 +1265,9 @@ mod tests {
     #[test]
     fn check_expected_metadata_sunshine_and_mismatches() {
         let mut rng = AesRng::seed_from_u64(101);
-        let (custodian_verf_key, _) = gen_sig_keys(&mut rng);
+        let custodian_verf_key = seeded_verf_key_set(&mut rng, BACKUP_SIGNING_SCHEMES);
         let (operator_verf_key, _) = gen_sig_keys(&mut rng);
-        let (other_custodian_verf_key, _) = gen_sig_keys(&mut rng);
+        let other_custodian_verf_key = seeded_verf_key_set(&mut rng, BACKUP_SIGNING_SCHEMES);
         let (other_operator_verf_key, _) = gen_sig_keys(&mut rng);
 
         let custodian_role = Role::indexed_from_one(2);
@@ -1314,7 +1327,7 @@ mod tests {
         let mut rng = AesRng::seed_from_u64(8);
         let mut encryption = Encryption::new(BACKUP_PKE_SCHEME, &mut rng);
         let (_dec_key, enc_key) = encryption.keygen().unwrap();
-        let (verf_key, _) = gen_sig_keys(&mut rng);
+        let verf_key = seeded_verf_key_set(&mut rng, BACKUP_SIGNING_SCHEMES);
         let msg1 =
             valid_custodian_msg(Role::indexed_from_one(1), enc_key.clone(), verf_key.clone());
         let msg2 =

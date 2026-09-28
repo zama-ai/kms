@@ -1454,8 +1454,14 @@ mod tests {
         tests::{TestType, store_dummy_recovery_material},
     };
     use crate::{
-        backup::custodian::{CustodianSetupMessagePayload, HEADER, InternalCustodianContext},
-        cryptography::{signatures::gen_sig_keys, signcryption::UnifiedSigncryption},
+        backup::{
+            BACKUP_SIGNING_SCHEMES,
+            custodian::{CustodianSetupMessagePayload, HEADER, InternalCustodianContext},
+        },
+        cryptography::{
+            signatures::{gen_sig_keys, test_support::seeded_verf_key_set},
+            signcryption::UnifiedSigncryption,
+        },
         engine::base::derive_request_id,
     };
     use aes_prng::AesRng;
@@ -1793,7 +1799,7 @@ mod tests {
                 let mut enc = Encryption::new(BACKUP_PKE_SCHEME, &mut rng);
                 enc.keygen().unwrap()
             };
-            let (custodian_verf_key, _) = gen_sig_keys(&mut rng);
+            let custodian_verf_key = seeded_verf_key_set(&mut rng, BACKUP_SIGNING_SCHEMES);
             let payload = CustodianSetupMessagePayload {
                 header: HEADER.to_string(),
                 random_value: [4_u8; 32],

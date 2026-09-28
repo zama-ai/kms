@@ -171,7 +171,6 @@ mod tests {
     use super::super::{SenderAuth, Signcrypt, Unsigncrypt};
     use super::*;
     use crate::cryptography::encryption::PkeSchemeType;
-    use crate::cryptography::signatures::UnifiedPublicSigKey;
     use crate::cryptography::signing::test_support::seeded_identity;
     use crate::vault::storage::tests::TestType;
     use aes_prng::AesRng;
@@ -264,12 +263,7 @@ mod tests {
             );
 
             let legacy_ecdsa = match &f.unsigncryption_key.sender {
-                SenderAuth::Multi(keys) => {
-                    match keys.require(SigningSchemeType::Ecdsa256k1).unwrap() {
-                        UnifiedPublicSigKey::Ecdsa256k1(key) => key.clone(),
-                        _ => unreachable!("the ECDSA member of the set is an ECDSA key"),
-                    }
-                }
+                SenderAuth::Multi(keys) => keys.ecdsa().unwrap().clone(),
                 SenderAuth::Ecdsa(_) => unreachable!("the fixture reader is a composite one"),
             };
             let err = f

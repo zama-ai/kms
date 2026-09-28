@@ -1,5 +1,6 @@
 //! The verification keys one party publishes, one per signature scheme.
 
+use super::ecdsa::PublicSigKey;
 use super::identity::NodeSigningIdentity;
 use super::{HasSigningScheme, SigningError, SigningSchemeType, UnifiedPublicSigKey};
 use hashing::{DomainSep, hash_element};
@@ -30,7 +31,7 @@ const DSEP_VERF_KEY_SET: DomainSep = *b"VKEYSET_";
 #[serde(transparent)]
 #[versionize(try_convert = "VerfKeySetRepr")]
 pub struct VerfKeySet {
-    keys: BTreeMap<SigningSchemeType, UnifiedPublicSigKey>,
+    pub(crate) keys: BTreeMap<SigningSchemeType, UnifiedPublicSigKey>,
 }
 
 impl Named for VerfKeySet {
@@ -114,6 +115,20 @@ impl VerfKeySet {
     /// The key for `scheme`, if the set holds one.
     pub fn get(&self, scheme: SigningSchemeType) -> Option<&UnifiedPublicSigKey> {
         self.keys.get(&scheme)
+    }
+
+    /// The ECDSA member of this set.
+    /// Purely a convenience helper method
+    pub fn ecdsa(&self) -> Result<&PublicSigKey, SigningError> {
+        match self.require(SigningSchemeType::Ecdsa256k1)? {
+            UnifiedPublicSigKey::Ecdsa256k1(key) => Ok(key),
+            // `new` files every key under the scheme it reports, so the ECDSA slot holds an ECDSA
+            // key.
+            other => Err(SigningError::SchemeMismatch {
+                signature: SigningSchemeType::Ecdsa256k1,
+                key: other.signing_scheme_type(),
+            }),
+        }
     }
 
     /// The key for `scheme`, or an error naming the scheme that is missing.

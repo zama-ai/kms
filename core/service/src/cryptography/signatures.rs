@@ -18,6 +18,7 @@ pub use crate::cryptography::signing::identity::NodeSigningIdentity;
 pub use crate::cryptography::signing::seed::{
     ROOT_SEED_LEN, RootSigningSeed, RootSigningSeedVersions,
 };
+pub use crate::cryptography::signing::test_support;
 pub use crate::cryptography::signing::{
     HasSigningScheme, SchemeVerfKeys, Signature, SigningError, SigningSchemeType,
     SigningSchemeTypeVersions, StoredTypedSignature, StoredTypedSignatureVersions,
