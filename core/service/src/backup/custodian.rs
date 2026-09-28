@@ -350,6 +350,7 @@ impl InternalCustodianContext {
     }
 }
 
+#[derive(Debug)]
 pub struct Custodian {
     role: Role,
     signing_key: NodeSigningIdentity,
