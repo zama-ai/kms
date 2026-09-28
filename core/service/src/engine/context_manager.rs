@@ -1456,7 +1456,10 @@ mod tests {
         consts::DEFAULT_EPOCH_ID,
         cryptography::{
             encryption::{Encryption, HasPkeScheme, PkeScheme, PkeSchemeType},
-            signatures::{PublicSigKey, gen_sig_keys, test_support::seeded_verf_key_set},
+            signatures::{
+                PublicSigKey, gen_sig_keys,
+                test_support::{seeded_identity, seeded_verf_key_set},
+            },
             signcryption::{UnifiedUnsigncryptionKey, Unsigncrypt},
             signing::SigningSchemeType,
         },
@@ -2649,7 +2652,10 @@ mod tests {
     async fn test_gen_recovery_request_payloads() {
         let mut rng = AesRng::seed_from_u64(40);
         let backup_id = RequestId::new_random(&mut rng);
-        let (server_verf_key, server_sig_key) = gen_sig_keys(&mut rng);
+        // A seeded identity, not an ECDSA-only one: the operator publishes a key set covering
+        // `BACKUP_SIGNING_SCHEMES`, which an identity with no root seed cannot produce.
+        let server_identity = Arc::new(seeded_identity(&mut rng));
+        let server_verf_key = server_identity.verf_key();
         let mut enc = Encryption::new(BACKUP_PKE_SCHEME, &mut rng);
         let (backup_dec_key, backup_enc_key) = enc.keygen().unwrap();
         let mnemonic1 = seed_phrase_from_rng(&mut rng).expect("Failed to generate seed phrase");
@@ -2683,7 +2689,7 @@ mod tests {
             InternalCustodianContext::new(context, backup_enc_key.clone()).unwrap();
         let recovery_material = gen_recovery_validation(
             &mut rng,
-            Arc::new(NodeSigningIdentity::from(server_sig_key.clone())),
+            server_identity.clone(),
             backup_dec_key.clone(),
             &internal_context,
             *DEFAULT_MPC_CONTEXT,

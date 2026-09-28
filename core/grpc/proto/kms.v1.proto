@@ -750,7 +750,6 @@ message CustodianRecoveryRequest {
 message OperatorBackupOutput {
   bytes signcryption = 1;
   PkeSchemeType pke_type = 2;
-  SigningSchemeType signing_type = 3;
 }
 
 enum PkeSchemeType {
