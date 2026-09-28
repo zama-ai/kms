@@ -283,7 +283,8 @@ impl InternalCustodianContext {
 
         let nodes = node_map.values().collect::<Vec<_>>();
         for node in &nodes {
-            node.public_verf_key.ensure_backup_schemes()?;
+            ensure_backup_schemes(&node.public_verf_key)
+                .map_err(|e| anyhow::anyhow!("custodian role {}: {e}", node.custodian_role))?;
             // Reject a custodian whose encryption key is weaker than the scheme
             // this path is built around, rather than encrypting its share of the
             // backup key under it anyway.
@@ -481,7 +482,7 @@ impl Custodian {
         // re-encrypted share and sign it
         let operator_verf_id = operator_verification_key.verf_key_id();
         let signcrypt_key = UnifiedSigncryptionKey::from_signing_key(
-            self.signing_key.clone(),
+            *self.signing_key.ecdsa(),
             operator_ephem_enc_key.clone(),
             operator_verf_id,
         );
@@ -786,54 +787,90 @@ mod tests {
 
     /// A custodian that publishes fewer schemes than [`BACKUP_SIGNING_SCHEMES`] is refused at
     /// context creation, rather than having its weaker signatures accepted later.
+    /// A custodian with a superset of [`BACKUP_SIGNING_SCHEMES`] is however accepted to ensure
+    /// backwards compatibility with future releases expanding [`BACKUP_SIGNING_SCHEMES`].
     #[test]
-    fn custodian_key_set_below_the_backup_schemes_should_fail() {
-        let mut rng = AesRng::seed_from_u64(44);
-        let (_, backup_pk) = {
-            let mut enc = Encryption::new(BACKUP_PKE_SCHEME, &mut rng);
-            enc.keygen().unwrap()
-        };
+    fn a_custodian_key_set_must_cover_the_backup_schemes() {
+        let cases: [(&str, &[SigningSchemeType], bool); 3] = [
+            ("fewer", &[SigningSchemeType::Ecdsa256k1], false),
+            (
+                "exact",
+                &[SigningSchemeType::MlDsa87, SigningSchemeType::Ecdsa256k1],
+                true,
+            ),
+            (
+                "more",
+                &[
+                    SigningSchemeType::Ecdsa256k1,
+                    SigningSchemeType::Ed25519,
+                    SigningSchemeType::MlDsa87,
+                ],
+                true,
+            ),
+        ];
 
-        let mut setup_messages = Vec::new();
-        for role in 1..=3 {
-            let (_, public_enc_key) = {
+        for (case, role_two_schemes, should_be_accepted) in cases {
+            let mut rng = AesRng::seed_from_u64(44);
+            let (_, backup_pk) = {
                 let mut enc = Encryption::new(BACKUP_PKE_SCHEME, &mut rng);
                 enc.keygen().unwrap()
             };
-            // Role 2 publishes ECDSA alone; the others are correct, so the context fails on that
-            // role alone rather than on its overall shape.
-            let schemes: &[SigningSchemeType] = if role == 2 {
-                &[SigningSchemeType::Ecdsa256k1]
-            } else {
-                BACKUP_SIGNING_SCHEMES
+
+            let mut setup_messages = Vec::new();
+            for role in 1..=3 {
+                let (_, public_enc_key) = {
+                    let mut enc = Encryption::new(BACKUP_PKE_SCHEME, &mut rng);
+                    enc.keygen().unwrap()
+                };
+                // Only role 2 deviates, so a rejection is attributable to that role rather than
+                // to the overall shape of the context.
+                let schemes: &[SigningSchemeType] = if role == 2 {
+                    role_two_schemes
+                } else {
+                    BACKUP_SIGNING_SCHEMES
+                };
+                setup_messages.push(InternalCustodianSetupMessage {
+                    header: HEADER.to_string(),
+                    custodian_role: Role::indexed_from_one(role),
+                    name: format!("Custodian-{role}"),
+                    random_value: [role as u8; 32],
+                    timestamp: SystemTime::now(),
+                    public_enc_key,
+                    public_verf_key: seeded_verf_key_set(&mut rng, schemes),
+                });
+            }
+
+            let context = CustodianContext {
+                custodian_nodes: setup_messages
+                    .into_iter()
+                    .map(|message| message.try_into().unwrap())
+                    .collect(),
+                custodian_context_id: None,
+                threshold: 1,
             };
-            setup_messages.push(InternalCustodianSetupMessage {
-                header: HEADER.to_string(),
-                custodian_role: Role::indexed_from_one(role),
-                name: format!("Custodian-{role}"),
-                random_value: [role as u8; 32],
-                timestamp: SystemTime::now(),
-                public_enc_key,
-                public_verf_key: seeded_verf_key_set(&mut rng, schemes),
-            });
+
+            match (
+                should_be_accepted,
+                InternalCustodianContext::new(context, backup_pk),
+            ) {
+                (true, Ok(_)) => {}
+                (true, Err(error)) => {
+                    panic!(
+                        "{case}: a key set covering the backup schemes must be accepted: {error}"
+                    )
+                }
+                (false, Ok(_)) => {
+                    panic!("{case}: a key set below the backup schemes must be rejected")
+                }
+                (false, Err(error)) => {
+                    let error = error.to_string();
+                    assert!(
+                        error.contains("custodian role 2"),
+                        "{case}: the error does not name the role: {error}"
+                    );
+                }
+            }
         }
-
-        let context = CustodianContext {
-            custodian_nodes: setup_messages
-                .into_iter()
-                .map(|message| message.try_into().unwrap())
-                .collect(),
-            custodian_context_id: None,
-            threshold: 1,
-        };
-
-        let error = InternalCustodianContext::new(context, backup_pk)
-            .expect_err("a custodian key set below the backup schemes must be rejected")
-            .to_string();
-        assert!(
-            error.contains("custodian role 2"),
-            "the error does not name the role: {error}"
-        );
     }
 
     /// A custodian whose identity holds no root seed cannot publish

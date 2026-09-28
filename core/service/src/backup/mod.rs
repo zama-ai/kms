@@ -40,13 +40,21 @@ pub const BACKUP_PKE_SCHEME: PkeSchemeType = PkeSchemeType::MlKem1024P384;
 pub const BACKUP_SIGNING_SCHEMES: &[SigningSchemeType] =
     &[SigningSchemeType::Ecdsa256k1, SigningSchemeType::MlDsa87];
 
-/// Refuses a party whose published key set is not exactly [`BACKUP_SIGNING_SCHEMES`].
+/// Refuses a party whose published key set does not cover [`BACKUP_SIGNING_SCHEMES`].
+///
+/// A superset is however allowed in order to maintian backward compatibility in future 
+/// releases where [`BACKUP_SIGNING_SCHEMES`] might change.
 pub fn ensure_backup_schemes(keys: &VerfKeySet) -> Result<(), BackupError> {
     let published = keys.schemes();
-    if published != BACKUP_SIGNING_SCHEMES {
+    let missing: Vec<SigningSchemeType> = BACKUP_SIGNING_SCHEMES
+        .iter()
+        .copied()
+        .filter(|scheme| !published.contains(scheme))
+        .collect();
+    if !missing.is_empty() {
         return Err(BackupError::SetupError(format!(
-            "custodian-backup parties must publish exactly {BACKUP_SIGNING_SCHEMES:?}, but this \
-             one published {published:?}"
+            "custodian-backup parties must publish at least {BACKUP_SIGNING_SCHEMES:?}, but this \
+             one published {published:?} and is missing {missing:?}"
         )));
     }
     Ok(())
