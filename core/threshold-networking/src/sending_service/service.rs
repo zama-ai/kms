@@ -31,27 +31,6 @@ use tonic::service::interceptor::InterceptedService;
 use tonic::transport::Uri;
 use tonic::{async_trait, transport::Channel};
 
-pub struct ArcSendValueRequest {
-    tag: Arc<Vec<u8>>,
-    value: Arc<Vec<u8>>,
-}
-
-impl ArcSendValueRequest {
-    /// Build a request from an already-serialized tag and value. Used by
-    /// [`NetworkSession::send`](super::NetworkSession) (a sibling module), which
-    /// cannot name the private fields directly.
-    pub(crate) fn new(tag: Arc<Vec<u8>>, value: Arc<Vec<u8>>) -> Self {
-        Self { tag, value }
-    }
-
-    fn deep_clone(&self) -> SendValueRequest {
-        SendValueRequest {
-            tag: self.tag.as_ref().clone(),
-            value: self.value.as_ref().clone(),
-        }
-    }
-}
-
 #[async_trait]
 pub trait SendingService: Send + Sync {
     /// Init and start the sending service
@@ -65,14 +44,14 @@ pub trait SendingService: Send + Sync {
         other_identity: &Identity,
         other_role_kind: RoleKind,
         aborted: Arc<DashSet<RoleKind>>,
-    ) -> anyhow::Result<UnboundedSender<ArcSendValueRequest>>;
+    ) -> anyhow::Result<UnboundedSender<SendValueRequest>>;
 
     ///Adds multiple connections at once
     async fn add_connections<R: RoleTrait>(
         &self,
         others: &RoleAssignment<R>,
     ) -> anyhow::Result<(
-        HashMap<RoleKind, UnboundedSender<ArcSendValueRequest>>,
+        HashMap<RoleKind, UnboundedSender<SendValueRequest>>,
         Arc<DashSet<RoleKind>>,
     )>;
 }
@@ -200,7 +179,7 @@ impl GrpcSendingService {
     }
 
     async fn run_network_task(
-        mut receiver: UnboundedReceiver<ArcSendValueRequest>,
+        mut receiver: UnboundedReceiver<SendValueRequest>,
         network_channel: GnetworkingClient<InterceptedService<Channel, ContextPropagator>>,
         exponential_backoff: ExponentialBackoff<SystemClock>,
         other_role_kind: RoleKind,
@@ -222,7 +201,7 @@ impl GrpcSendingService {
             }
 
             let send_fn = || async {
-                let value = value.deep_clone();
+                let value = value.clone();
                 network_channel
                     .clone()
                     .send_value(value)
@@ -326,9 +305,9 @@ impl SendingService for GrpcSendingService {
         other_identity: &Identity,
         other_role_kind: RoleKind,
         aborted: Arc<DashSet<RoleKind>>,
-    ) -> anyhow::Result<UnboundedSender<ArcSendValueRequest>> {
+    ) -> anyhow::Result<UnboundedSender<SendValueRequest>> {
         // 1. Create channel first (no allocation issues)
-        let (sender, receiver) = unbounded_channel::<ArcSendValueRequest>();
+        let (sender, receiver) = unbounded_channel::<SendValueRequest>();
 
         // 2. Connect to party (can fail, so do before any spawning)
         let network_channel = self.connect_to_party(other_identity).await?;
@@ -365,7 +344,7 @@ impl SendingService for GrpcSendingService {
         &self,
         others: &RoleAssignment<R>,
     ) -> anyhow::Result<(
-        HashMap<RoleKind, UnboundedSender<ArcSendValueRequest>>,
+        HashMap<RoleKind, UnboundedSender<SendValueRequest>>,
         Arc<DashSet<RoleKind>>,
     )> {
         let mut result = HashMap::with_capacity(others.len());
@@ -398,6 +377,7 @@ impl SendingService for GrpcSendingService {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use bytes::Bytes;
     use test_utils::random_free_port::get_listeners_random_free_ports;
 
     /// Verify that after receiving `Status::Completed`, the `UnboundedReceiver` is NOT dropped, so
@@ -480,7 +460,7 @@ mod tests {
         );
 
         // Create channel and shared state
-        let (sender, receiver) = unbounded_channel::<ArcSendValueRequest>();
+        let (sender, receiver) = unbounded_channel::<SendValueRequest>();
         let completed_parties = Arc::new(DashSet::new());
         let role_kind = threshold_types::role::Role::indexed_from_one(1).get_role_kind();
 
@@ -499,7 +479,10 @@ mod tests {
         ));
 
         // Send first message — triggers Status::Completed
-        let msg = ArcSendValueRequest::new(Arc::new(vec![1, 2, 3]), Arc::new(vec![4, 5, 6]));
+        let msg = SendValueRequest {
+            tag: Bytes::from_static(&[1, 2, 3]),
+            value: Bytes::from_static(&[4, 5, 6]),
+        };
         assert!(sender.send(msg).is_ok(), "first send should succeed");
 
         // Wait (with timeout) for the task to process the Completed response
@@ -517,7 +500,10 @@ mod tests {
         // Send a second message — with the old `break` bug, this would fail
         // because the receiver was dropped. With the fix, the receiver is
         // still alive (draining), so this succeeds.
-        let msg2 = ArcSendValueRequest::new(Arc::new(vec![7, 8, 9]), Arc::new(vec![10, 11, 12]));
+        let msg2 = SendValueRequest {
+            tag: Bytes::from_static(&[7, 8, 9]),
+            value: Bytes::from_static(&[10, 11, 12]),
+        };
         assert!(
             sender.send(msg2).is_ok(),
             "second send should succeed — receiver must not be dropped after Completed"
