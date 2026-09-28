@@ -1327,7 +1327,9 @@ mod tests {
     use crate::backup::operator::RecoveryValidationMaterial;
     use crate::consts::{DEFAULT_EPOCH_ID, DEFAULT_MPC_CONTEXT};
     use crate::cryptography::encryption::{Encryption, PkeScheme, PkeSchemeType};
-    use crate::cryptography::signatures::{RootSigningSeed, gen_sig_keys};
+    use crate::cryptography::signatures::{
+        RootSigningSeed, gen_sig_keys, test_support::seeded_identity,
+    };
     use crate::engine::base::KeyGenMetadataInner;
     use crate::engine::base::{DSEP_PUBDATA_CRS, ERR_INVALID_CURRENT_PUBLIC_KEY_SHAPE};
     use crate::engine::context::{ContextInfo, SoftwareVersion};
@@ -2288,9 +2290,8 @@ mod tests {
     #[test]
     fn private_metadata_scheme_signatures_are_verified() {
         let mut rng = AesRng::seed_from_u64(177);
-        let (_verf_key, signing_key) = gen_sig_keys(&mut rng);
-        let identity =
-            NodeSigningIdentity::new(signing_key.clone(), RootSigningSeed::random(&mut rng));
+        let identity = seeded_identity(&mut rng);
+        let signing_key = identity.ecdsa().clone();
         let schemes = [
             SigningSchemeType::Ecdsa256k1,
             SigningSchemeType::Ed25519,

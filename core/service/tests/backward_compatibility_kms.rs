@@ -659,8 +659,7 @@ fn test_unified_public_sig_key(
     format: DataFormat,
 ) -> Result<TestSuccess, TestFailure> {
     let mut rng = AesRng::seed_from_u64(test.state);
-    let (_pk, sk) = gen_sig_keys(&mut rng);
-    let identity = NodeSigningIdentity::new(sk, RootSigningSeed::random(&mut rng));
+    let identity = seeded_identity(&mut rng);
 
     // Primary file: the ECDSA variant.
     let original: UnifiedPublicSigKey = load_and_unversionize(dir, test, format)?;

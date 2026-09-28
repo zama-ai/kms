@@ -195,17 +195,14 @@ async fn read_all_verf_keys<S: StorageReader>(storage: &S) -> anyhow::Result<Opt
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::cryptography::signatures::{
-        NodeSigningIdentity, RootSigningSeed, compute_eip712_signature, gen_sig_keys,
-    };
+    use crate::cryptography::signatures::{NodeSigningIdentity, compute_eip712_signature};
     use crate::cryptography::signing::SigningError;
     use crate::cryptography::signing::composite::sign_result_entries;
+    use crate::cryptography::signing::test_support::seeded_identity;
     use crate::dummy_domain;
     use crate::engine::base::CrsSignedPayload;
-    use aes_prng::AesRng;
     use kms_grpc::RequestId;
     use kms_grpc::solidity_types::CrsgenVerification;
-    use rand::SeedableRng;
 
     const DSEP: &DomainSep = b"CLNTTEST";
     const PARTY: u32 = 1;
@@ -218,12 +215,6 @@ mod tests {
             crs_digest: vec![7u8; 32],
             extra_data: vec![],
         }
-    }
-
-    fn seeded_identity(seed: u64) -> NodeSigningIdentity {
-        let mut rng = AesRng::seed_from_u64(seed);
-        let (_pk, sk) = gen_sig_keys(&mut rng);
-        NodeSigningIdentity::new(sk, RootSigningSeed::random(&mut rng))
     }
 
     /// The result the ECDSA entry of every test signature list covers.

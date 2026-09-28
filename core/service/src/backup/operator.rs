@@ -387,7 +387,7 @@ pub struct BackupMaterial {
     pub custodian_pk: VerfKeySet,
     pub custodian_role: Role,
     // sender
-    pub operator_pk: VerfKeySet,
+    pub operator_pk: VerfKeySet, // todo rename
     pub shares: Vec<Share<ResiduePolyF4Z64>>,
 }
 

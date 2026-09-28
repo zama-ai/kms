@@ -16,7 +16,7 @@ use kms_0_15_0::backup::{
         BackupMaterial, InnerOperatorBackupOutput, InternalRecoveryRequest, Operator,
         RecoveryValidationMaterial, DSEP_BACKUP_COMMITMENT,
     },
-    BackupCiphertext, BACKUP_PKE_SCHEME,
+    BackupCiphertext, BACKUP_PKE_SCHEME, BACKUP_SIGNING_SCHEMES,
 };
 use kms_0_15_0::consts::SAFE_SER_SIZE_LIMIT;
 use kms_0_15_0::cryptography::{
@@ -26,8 +26,10 @@ use kms_0_15_0::cryptography::{
     },
     hybrid_ml_kem::HybridKemCt,
     signatures::{
-        compute_eip712_signature, gen_sig_keys, NodeSigningIdentity, RootSigningSeed,
-        SigningSchemeType, StoredTypedSignature, UnifiedPublicSigKey,
+        compute_eip712_signature, gen_sig_keys,
+        test_support::{seeded_identity, seeded_verf_key_set},
+        NodeSigningIdentity, RootSigningSeed, SigningSchemeType, StoredTypedSignature,
+        UnifiedPublicSigKey, VerfKeySet,
     },
     signcryption::{Signcrypt, UnifiedSigncryption, UnifiedSigncryptionKey},
 };
@@ -773,8 +775,7 @@ impl KmsV0_15_0 {
 
     fn gen_unified_public_sig_key(dir: &PathBuf) -> TestMetadataKMS {
         let mut rng = AesRng::seed_from_u64(UNIFIED_PUBLIC_SIG_KEY_TEST.state);
-        let (_public_sig_key, sig_key) = gen_sig_keys(&mut rng);
-        let sig_key = NodeSigningIdentity::new(sig_key, RootSigningSeed::random(&mut rng));
+        let sig_key = seeded_identity(&mut rng);
 
         // Primary file: the ECDSA variant.
         let ecdsa_vk: UnifiedPublicSigKey = sig_key
@@ -1354,12 +1355,15 @@ impl KmsV0_15_0 {
     fn gen_recovery_material(dir: &PathBuf) -> TestMetadataKMS {
         let mut rng = AesRng::seed_from_u64(RECOVERY_MATERIAL_TEST.state);
         let backup_id: RequestId = RequestId::new_random(&mut rng);
-        let (operator_pk, operator_sk) = gen_sig_keys(&mut rng);
+        let operator_identity = seeded_identity(&mut rng);
+        let operator_pk =
+            VerfKeySet::from_identity(&operator_identity, BACKUP_SIGNING_SCHEMES).unwrap();
+        let operator_sk = operator_identity.ecdsa().clone();
         let mut commitments = BTreeMap::new();
         let mut cts = BTreeMap::new();
         for role_j in 1..=RECOVERY_MATERIAL_TEST.custodian_count {
             let cus_role = Role::indexed_from_one(role_j);
-            let (custodian_pk, _) = gen_sig_keys(&mut rng);
+            let custodian_pk = seeded_verf_key_set(&mut rng, BACKUP_SIGNING_SCHEMES);
             let backup_material = BackupMaterial {
                 backup_id,
                 mpc_context_id: kms_grpc_0_15_0::ContextId::from_bytes([9u8; 32]),
@@ -1390,7 +1394,7 @@ impl KmsV0_15_0 {
         for role_j in 1..=RECOVERY_MATERIAL_TEST.custodian_count {
             let mut encryption = Encryption::new(BACKUP_PKE_SCHEME, &mut rng);
             let (_dec_key, enc_key) = encryption.keygen().unwrap();
-            let (cus_pk, _) = gen_sig_keys(&mut rng);
+            let cus_pk = seeded_verf_key_set(&mut rng, BACKUP_SIGNING_SCHEMES);
             let payload = CustodianSetupMessagePayload {
                 header: "header".to_string(),
                 random_value: [role_j as u8; 32],
@@ -1440,7 +1444,7 @@ impl KmsV0_15_0 {
         let mut rng = AesRng::seed_from_u64(INTERNAL_RECOVERY_REQUEST_TEST.state);
         let mut encryption = Encryption::new(BACKUP_PKE_SCHEME, &mut rng);
         let (_dec_key, enc_key) = encryption.keygen().unwrap();
-        let (operator_verf_key, _operator_sig_key) = gen_sig_keys(&mut rng);
+        let operator_verf_key = seeded_verf_key_set(&mut rng, BACKUP_SIGNING_SCHEMES);
         let mut cts = BTreeMap::new();
         for role_j in 1..=INTERNAL_RECOVERY_REQUEST_TEST.amount {
             let cur_role = Role::indexed_from_one(role_j as usize);
@@ -1468,7 +1472,7 @@ impl KmsV0_15_0 {
         let mut cus_nodes = BTreeMap::new();
         for role_j in 1..=INTERNAL_CUS_CONTEXT_TEST.custodian_count {
             let cus_role = Role::indexed_from_one(role_j);
-            let (custodian_verf_key, _) = gen_sig_keys(&mut rng);
+            let custodian_verf_key = seeded_verf_key_set(&mut rng, BACKUP_SIGNING_SCHEMES);
             let mut encryption = Encryption::new(BACKUP_PKE_SCHEME, &mut rng);
             let (_, cus_enc_key) = encryption.keygen().unwrap();
             let mut rnd = [0_u8; 32];
@@ -1684,7 +1688,7 @@ impl KmsV0_15_0 {
     /// Generates the _internal_ custodian setup message
     fn gen_internal_cus_setup_msg(dir: &PathBuf) -> TestMetadataKMS {
         let mut rng = AesRng::seed_from_u64(INTERNAL_CUS_SETUP_MSG_TEST.state);
-        let (_verification_key, signing_key) = gen_sig_keys(&mut rng);
+        let signing_key = seeded_identity(&mut rng);
         let mut encryption = Encryption::new(BACKUP_PKE_SCHEME, &mut rng);
         let (private_key, public_key) = encryption.keygen().unwrap();
         let custodian = Custodian::new(
@@ -1728,7 +1732,7 @@ impl KmsV0_15_0 {
 
         let custodians: Vec<_> = (1..=OPERATOR_BACKUP_OUTPUT_TEST.custodian_count)
             .map(|i| {
-                let (_verification_key, signing_key) = gen_sig_keys(&mut rng);
+                let signing_key = seeded_identity(&mut rng);
                 let mut encryption = Encryption::new(BACKUP_PKE_SCHEME, &mut rng);
                 let (private_key, public_key) = encryption.keygen().unwrap();
                 Custodian::new(
@@ -1750,7 +1754,7 @@ impl KmsV0_15_0 {
             .collect();
 
         let operator = {
-            let (_verification_key, signing_key) = gen_sig_keys(&mut rng);
+            let signing_key = std::sync::Arc::new(seeded_identity(&mut rng));
             Operator::new_for_sharing(
                 custodian_messages,
                 signing_key,

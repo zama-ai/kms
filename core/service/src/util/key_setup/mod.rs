@@ -1723,6 +1723,7 @@ mod tests {
     use crate::cryptography::signatures::{PrivateSigKey, PublicSigKey, gen_sig_keys};
     use crate::cryptography::signing::identity::NodeSigningIdentity;
     use crate::cryptography::signing::seed::RootSigningSeed;
+    use crate::cryptography::signing::test_support::seeded_identity;
     use crate::cryptography::signing::{HasSigningScheme, SigningSchemeType, unified_verify};
     use crate::engine::threshold::service::epoch_manager::EpochData;
     use crate::util::key_setup::{
@@ -1801,11 +1802,6 @@ mod tests {
             .unwrap();
             assert_eq!(max_num_bits as usize, max_num_bits_from_crs(&crs));
         }
-    }
-
-    fn seeded_identity(rng: &mut AesRng) -> NodeSigningIdentity {
-        let (_pk, sk) = gen_sig_keys(rng);
-        NodeSigningIdentity::new(sk, RootSigningSeed::random(rng))
     }
 
     /// Asserts every scheme's canonical verification key and address match `sk`,
