@@ -158,42 +158,65 @@ def network_event_counts(lines):
 
 
 def network_event_deltas(before, after):
-    """Returns the non-zero change per (pod, event) between two snapshots.
+    """Returns the non-zero increase per (pod, event) between two snapshots, and the restarted pods.
 
-    A pod or event missing from `before` counts from zero. A negative change means that the
-    pod restarted between the snapshots.
+    A pod or event missing from `before` counts from zero. A pod restarted between the snapshots
+    if one of its counters went down or disappeared. Its counters then started again from zero, so
+    its increase is its value in `after`, and the events before the restart are lost.
     """
     old, new = network_event_counts(before), network_event_counts(after)
-    deltas = {key: value - old.get(key, 0) for key, value in new.items()}
-    return {key: delta for key, delta in deltas.items() if delta}
+    scraped = {pod for pod, _ in new}
+    restarted = {
+        pod
+        for (pod, event), value in old.items()
+        if pod in scraped and new.get((pod, event), 0) < value
+    }
+    deltas = {}
+    for (pod, event), value in new.items():
+        delta = value if pod in restarted else value - old.get((pod, event), 0)
+        if delta:
+            deltas[(pod, event)] = delta
+    return deltas, restarted
 
 
 def pod_order(pod):
     return [int(part) if part.isdigit() else part for part in re.split(r"(\d+)", pod)]
 
 
+def escape_annotation_property(value):
+    """Escapes a property value of a GitHub workflow command, such as the title of a warning."""
+    for char, code in (("%", "%25"), ("\r", "%0D"), ("\n", "%0A"), (":", "%3A"), (",", "%2C")):
+        value = value.replace(char, code)
+    return value
+
+
 def summarize_network_events(before_path, after_path, label):
     """Prints the network event changes between two snapshot files, plus scrape problems.
 
-    Emits one GitHub warning annotation per event in WARN_EVENTS that grew on any pod.
+    Emits one GitHub warning annotation per event in WARN_EVENTS that grew on any pod, including
+    pods that restarted between the snapshots.
     """
     before = before_path.read_text().splitlines()
     after = after_path.read_text().splitlines()
     for line in before + after:
         if " scrape_error " in line or " scrape_partial " in line:
             print(line)
-    deltas = network_event_deltas(before, after)
+    deltas, restarted = network_event_deltas(before, after)
     print(f"Network debug events during the {label} tests (non-zero changes only):")
+    if restarted:
+        pods = ", ".join(sorted(restarted, key=pod_order))
+        print(f"Restarted between the snapshots, counted from the restart: {pods}")
     for (pod, event), delta in sorted(deltas.items(), key=lambda i: (pod_order(i[0][0]), i[0][1])):
         print(f"{pod:<22} {event:<30} {delta:g}")
+    title = escape_annotation_property(f"Network events ({label})")
     for event in WARN_EVENTS:
         pods = [
-            f"{pod} (+{delta:g})"
+            f"{pod} (+{delta:g}{' since restart' if pod in restarted else ''})"
             for (pod, name), delta in sorted(deltas.items(), key=lambda i: pod_order(i[0][0]))
             if name == event and delta > 0
         ]
         if pods:
-            print(f"::warning title=Network events ({label})::{event} on {', '.join(pods)}")
+            print(f"::warning title={title}::{event} on {', '.join(pods)}")
 
 
 def main():
