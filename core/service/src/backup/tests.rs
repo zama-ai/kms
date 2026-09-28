@@ -700,7 +700,7 @@ fn operator_handle_init(
 type CustodianBackupsMap = BTreeMap<
     Vec<u8>,
     (
-        PublicSigKey,
+        VerfKeySet,
         UnifiedPublicEncKey,
         BTreeMap<Role, InnerOperatorBackupOutput>,
     ),

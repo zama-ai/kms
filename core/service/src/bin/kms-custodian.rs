@@ -1,7 +1,8 @@
 use clap::Parser;
 use kms_lib::backup::{
-    RECOVERY_OUTPUT_DESC, SEED_PHRASE_DESC, SETUP_MESSAGE_DESC,
+    BACKUP_SIGNING_SCHEMES, RECOVERY_OUTPUT_DESC, SEED_PHRASE_DESC, SETUP_MESSAGE_DESC,
     custodian::{Custodian, InternalCustodianSetupMessage},
+    error::BackupError,
     operator::{InnerOperatorBackupOutput, InternalRecoveryRequest},
     seed_phrase::{
         custodian_from_seed_phrase, seed_phrase_from_entropy, system_entropy_for_custodian,
@@ -176,14 +177,14 @@ async fn main() -> Result<(), anyhow::Error> {
             tracing::info!("Verified reencryption successfully.");
             let operator_keys = recovery_request.operator_verf_key();
             for cur_type in BACKUP_SIGNING_SCHEMES {
-                let cur_verf_key = operator_verification_key.get(*cur_type).ok_or_else(|| {
+                let cur_verf_key = operator_keys.get(*cur_type).ok_or_else(|| {
                     BackupError::SetupError(format!(
                         "missing verification key for scheme: {cur_type}"
                     ))
                 })?;
                 tracing::warn!(
                     "MANUALLY VALIDATE THE OPERATOR VERIFICATION KEY BEFORE RETURNING DECRYPTION RESULT TO OPERATOR! Operator verification key type {cur_type} and with ID: {}",
-                    hex::encode(cur_verf_key),
+                    hex::encode(cur_verf_key.digest()),
                 );
             }
             // Use println to lower the risk of accidental file logging of the recovery output

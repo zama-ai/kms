@@ -431,7 +431,7 @@ impl Custodian {
             })?;
             tracing::info!(
                 "Verifying and re-encrypting backup with key type {cur_type} and id: {}",
-                hex::encode(&cur_verf_key.digest())
+                hex::encode(cur_verf_key.digest())
             );
         }
         let custodian_id = self.verification_key_set().id().map_err(|e| {
@@ -561,6 +561,7 @@ impl Custodian {
 mod tests {
     use super::*;
     use crate::backup::BACKUP_PKE_SCHEME;
+    use crate::cryptography::signing::SigningSchemeType;
     use crate::cryptography::{
         encryption::{Encryption, PkeScheme, PkeSchemeType},
         signatures::{gen_sig_keys, test_support::seeded_verf_key_set},

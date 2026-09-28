@@ -1443,7 +1443,7 @@ async fn gen_recovery_validation(
 #[cfg(test)]
 mod tests {
     mod custodian_side_effects;
-    use crate::engine::rng_source::test_rng_source;
+    use crate::{cryptography::signing::VerfKeySet, engine::rng_source::test_rng_source};
     mod lifecycle_side_effects;
 
     use super::*;

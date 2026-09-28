@@ -366,7 +366,6 @@ async fn decrypt_after_recovery(amount_custodians: usize, threshold: u32) {
         recovery_req_resp,
         env.req_new_cus,
         env.mnemonics.clone(),
-        env.test_path(),
     )
     .await;
     let _recovery_output = kms_client
@@ -486,7 +485,6 @@ async fn test_recovery_names_the_context_after_rotation_central() {
         recovery_req_resp,
         second_id,
         second_mnemonics,
-        env.test_path(),
     )
     .await;
     kms_client
@@ -588,7 +586,6 @@ async fn decrypt_after_recovery_negative(amount_custodians: usize, threshold: u3
         recovery_req_resp,
         env.req_new_cus,
         env.mnemonics.clone(),
-        env.test_path(),
     )
     .await;
     // Flip a bit in custodian #1's signcryption (byte 11).
@@ -754,7 +751,6 @@ async fn emulate_custodian(
     recovery_request: RecoveryRequest,
     custodian_context_id: RequestId,
     mnemonics: Vec<String>,
-    test_path: Option<&Path>,
 ) -> CustodianRecoveryRequest {
     let mut cus_outputs = Vec::new();
     for (cur_idx, cur_mnemonic) in mnemonics.iter().enumerate() {
