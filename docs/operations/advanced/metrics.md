@@ -279,7 +279,7 @@ The KMS is live until a component reports a fault that only a restart can repair
 
 The KMS is ready when it is live, it finished its startup, and it did not start its shutdown. Readiness does not depend on the peers, on the MPC contexts, or on the key material. Kubernetes routes the peer traffic and the connector traffic only to ready pods, so such a dependency could cut off the node that must repair it.
 
-The KMS is healthy when it is ready and every dependency passed its last check. A background task checks the dependencies. Each check runs again 60 seconds after its last round ends, and the peer check runs apart from the storage checks, so a slow peer does not delay them. The `dependencies` object of `/healthz` gives `ok` or `fail` for each checked dependency, and the `kms_health_dependency_up` metric gives the same result. The log line of a failed check gives the cause. The dependency checks change neither liveness nor readiness.
+The KMS is healthy when it is ready and every dependency passed its last check. A background task checks the dependencies. Each check runs again 60 seconds after its last round ends, and the peer check runs apart from the storage checks, so a slow peer does not delay them. The `dependencies` object of `/healthz` gives `ok`, `fail` or `pending` for each dependency. A dependency is `pending` until its first check finishes, and the KMS is not healthy while any dependency is `pending`. The `kms_health_dependency_up` metric gives the same result, and it has a sample for a dependency only after the first check. The log line of a failed check gives the cause. The dependency checks change neither liveness nor readiness.
 
 | Dependency | Mode | The check passes when |
 |---|---|---|

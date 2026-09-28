@@ -53,6 +53,17 @@ where
     PubS: Storage + Send + Sync + 'static,
     PrivS: StorageExt + Send + Sync + 'static,
 {
+    // Register the dependencies before the first round, so that the server is not healthy while
+    // the first checks run.
+    health.expect_dependency(PUBLIC_STORAGE);
+    health.expect_dependency(PRIVATE_STORAGE);
+    if storage.backup_vault.is_some() {
+        health.expect_dependency(BACKUP_STORAGE);
+    }
+    if session_maker.is_some() {
+        health.expect_dependency(MPC_CONTEXT);
+        health.expect_dependency(PEERS);
+    }
     tokio::spawn(async move {
         // Separate loops, so that a slow peer check does not delay the storage checks.
         let storage_checks = async {
@@ -322,6 +333,7 @@ mod tests {
     use crate::vault::storage::ram::RamStorage;
     use kms_grpc::RequestId;
     use kms_grpc::identifiers::ContextId;
+    use observability::health::DependencyStatus;
     use serde::de::DeserializeOwned;
     use std::collections::HashMap;
     use std::collections::{BTreeMap, HashSet};
@@ -384,7 +396,10 @@ mod tests {
         check_storages(&health, &storage, &mut SkippedRounds::new(), TEST_TIMEOUT).await;
         assert_eq!(
             health.dependencies(),
-            BTreeMap::from([(PRIVATE_STORAGE, true), (PUBLIC_STORAGE, true)])
+            BTreeMap::from([
+                (PRIVATE_STORAGE, DependencyStatus::Ok),
+                (PUBLIC_STORAGE, DependencyStatus::Ok)
+            ])
         );
     }
 
@@ -395,7 +410,7 @@ mod tests {
         check_storage(&health, PUBLIC_STORAGE, &storage, "VerfKey", TEST_TIMEOUT).await;
         assert_eq!(
             health.dependencies(),
-            BTreeMap::from([(PUBLIC_STORAGE, false)])
+            BTreeMap::from([(PUBLIC_STORAGE, DependencyStatus::Failed)])
         );
     }
 
@@ -406,7 +421,7 @@ mod tests {
         check_storage(&health, PUBLIC_STORAGE, &storage, "VerfKey", TEST_TIMEOUT).await;
         assert_eq!(
             health.dependencies(),
-            BTreeMap::from([(PUBLIC_STORAGE, false)])
+            BTreeMap::from([(PUBLIC_STORAGE, DependencyStatus::Failed)])
         );
     }
 
@@ -420,7 +435,10 @@ mod tests {
         check_storages(&health, &storage, &mut SkippedRounds::new(), TEST_TIMEOUT).await;
         assert_eq!(
             health.dependencies(),
-            BTreeMap::from([(PRIVATE_STORAGE, true), (PUBLIC_STORAGE, false)])
+            BTreeMap::from([
+                (PRIVATE_STORAGE, DependencyStatus::Ok),
+                (PUBLIC_STORAGE, DependencyStatus::Failed)
+            ])
         );
     }
 
@@ -430,20 +448,32 @@ mod tests {
         let storage = CryptoMaterialStorage::from(RamStorage::new(), RamStorage::new(), None);
         let mut skipped_rounds = SkippedRounds::new();
         check_storages(&health, &storage, &mut skipped_rounds, TEST_TIMEOUT).await;
-        assert_eq!(health.dependencies().get(PUBLIC_STORAGE), Some(&true));
+        assert_eq!(
+            health.dependencies().get(PUBLIC_STORAGE),
+            Some(&DependencyStatus::Ok)
+        );
 
         let write_in_progress = storage.public_storage.lock().await;
         for _ in 1..MAX_SKIPPED_ROUNDS {
             check_storages(&health, &storage, &mut skipped_rounds, TEST_TIMEOUT).await;
-            assert_eq!(health.dependencies().get(PUBLIC_STORAGE), Some(&true));
+            assert_eq!(
+                health.dependencies().get(PUBLIC_STORAGE),
+                Some(&DependencyStatus::Ok)
+            );
         }
         check_storages(&health, &storage, &mut skipped_rounds, TEST_TIMEOUT).await;
-        assert_eq!(health.dependencies().get(PUBLIC_STORAGE), Some(&false));
+        assert_eq!(
+            health.dependencies().get(PUBLIC_STORAGE),
+            Some(&DependencyStatus::Failed)
+        );
 
         // Once the lock is free again, the next round checks the storage and resets the count.
         drop(write_in_progress);
         check_storages(&health, &storage, &mut skipped_rounds, TEST_TIMEOUT).await;
-        assert_eq!(health.dependencies().get(PUBLIC_STORAGE), Some(&true));
+        assert_eq!(
+            health.dependencies().get(PUBLIC_STORAGE),
+            Some(&DependencyStatus::Ok)
+        );
         assert!(skipped_rounds.is_empty());
     }
 
@@ -456,7 +486,10 @@ mod tests {
         // Without a context there is no peer to reach, so only the MPC state check fails.
         assert_eq!(
             health.dependencies(),
-            BTreeMap::from([(MPC_CONTEXT, false), (PEERS, true)])
+            BTreeMap::from([
+                (MPC_CONTEXT, DependencyStatus::Failed),
+                (PEERS, DependencyStatus::Ok)
+            ])
         );
     }
 
@@ -465,12 +498,23 @@ mod tests {
         let (health, _service) = HealthState::new().await;
         let storage = CryptoMaterialStorage::from(RamStorage::new(), RamStorage::new(), None);
         let checks = spawn_dependency_checks(health.clone(), storage, None);
+        // The paused clock keeps the first round from running before this check.
+        assert_eq!(
+            health.dependencies(),
+            BTreeMap::from([
+                (PRIVATE_STORAGE, DependencyStatus::Pending),
+                (PUBLIC_STORAGE, DependencyStatus::Pending)
+            ])
+        );
 
         tokio::time::sleep(3 * CHECK_INTERVAL).await;
         assert!(!checks.is_finished());
         assert_eq!(
             health.dependencies(),
-            BTreeMap::from([(PRIVATE_STORAGE, true), (PUBLIC_STORAGE, true)])
+            BTreeMap::from([
+                (PRIVATE_STORAGE, DependencyStatus::Ok),
+                (PUBLIC_STORAGE, DependencyStatus::Ok)
+            ])
         );
 
         health.mark_shutting_down().await;

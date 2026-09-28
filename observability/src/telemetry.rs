@@ -1,5 +1,5 @@
 use crate::conf::{ENVIRONMENT, ExecutionEnvironment, TelemetryConfig};
-use crate::health::{HealthState, process_health};
+use crate::health::{DependencyStatus, HealthState, process_health};
 use crate::metrics::{METRICS, METRICS_LABELS_ENV};
 use crate::metrics_names::OP_SYSTEM_STARTUP;
 use crate::sys_metrics::start_sys_metrics_collection;
@@ -85,11 +85,13 @@ fn healthz_response(health: Option<&HealthState>) -> Response {
     let (healthy, dependencies) = health.map(HealthState::health_snapshot).unwrap_or_default();
     let dependencies: serde_json::Map<String, serde_json::Value> = dependencies
         .into_iter()
-        .map(|(name, healthy)| {
-            (
-                name.to_string(),
-                (if healthy { "ok" } else { "fail" }).into(),
-            )
+        .map(|(name, status)| {
+            let status = match status {
+                DependencyStatus::Pending => "pending",
+                DependencyStatus::Ok => "ok",
+                DependencyStatus::Failed => "fail",
+            };
+            (name.to_string(), status.into())
         })
         .collect();
     let (code, status) = if healthy {
@@ -696,6 +698,27 @@ mod tests {
         assert_eq!(
             code_and_status(healthz_response(Some(&health))).await,
             (StatusCode::OK, "healthy".to_string())
+        );
+    }
+
+    #[tokio::test]
+    async fn pending_dependency_fails_healthz() {
+        let (health, _service) = HealthState::new().await;
+        health.mark_initialized().await;
+        health.expect_dependency("test_storage");
+
+        let response = healthz_response(Some(&health));
+        assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+        let body = axum::body::to_bytes(response.into_body(), 1024)
+            .await
+            .unwrap();
+        let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(
+            json,
+            serde_json::json!({
+                "status": "unhealthy",
+                "dependencies": { "test_storage": "pending" }
+            })
         );
     }
 
