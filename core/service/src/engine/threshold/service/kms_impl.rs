@@ -28,16 +28,9 @@ use tfhe::{
     xof_key_set::CompressedXofKeySet,
 };
 use tfhe_versionable::{Upgrade, Version, VersionsDispatch};
-use threshold_execution::endpoints::reshare_sk::SecureReshareSecretKeys;
 use threshold_execution::{
-    endpoints::keygen::SecureOnlineDistributedKeyGen128,
-    online::preprocessing::{
-        DKGPreprocessing, create_memory_factory,
-        orchestration::producer_traits::SecureSmallProducerFactory,
-    },
-    small_execution::prss::RobustSecurePrssInit,
+    online::preprocessing::{DKGPreprocessing, create_memory_factory},
     tfhe_internals::{parameters::DKGParams, private_keysets::PrivateKeySet},
-    zk::ceremony::SecureCeremony,
 };
 use threshold_networking::{
     grpc::{GrpcNetworkingManager, GrpcServer, TlsExtensionGetter},
@@ -79,11 +72,7 @@ use crate::{
             verify_storage_material,
         },
         threshold::{
-            service::{
-                public_decryptor::SecureNoiseFloodDecryptor,
-                session::{ImmutableSessionMaker, SessionMaker},
-                user_decryptor::SecureNoiseFloodPartialDecryptor,
-            },
+            service::session::{ImmutableSessionMaker, SessionMaker},
             threshold_kms::ThresholdKms,
         },
         traits::PrivateKeyMaterialMetadata,
@@ -470,44 +459,6 @@ pub(crate) fn new_insecure_preproc_bucket(
     })
 }
 
-#[cfg(not(feature = "insecure"))]
-pub type RealThresholdKms<PubS, PrivS> = ThresholdKms<
-    RealThresholdEpochManager<PubS, PrivS, RobustSecurePrssInit, SecureReshareSecretKeys>,
-    RealUserDecryptor<PubS, PrivS, SecureNoiseFloodPartialDecryptor>,
-    RealPublicDecryptor<PubS, PrivS, SecureNoiseFloodDecryptor>,
-    RealKeyGenerator<
-        PubS,
-        PrivS,
-        SecureOnlineDistributedKeyGen128<{ ResiduePolyF4Z128::EXTENSION_DEGREE }>,
-    >,
-    RealPreprocessor<SecureSmallProducerFactory<ResiduePolyF4Z128>>,
-    RealCrsGenerator<PubS, PrivS, SecureCeremony>,
-    ThresholdContextManager<PubS, PrivS>,
-    RealBackupOperator<PubS, PrivS>,
->;
-
-#[cfg(feature = "insecure")]
-pub type RealThresholdKms<PubS, PrivS> = ThresholdKms<
-    RealThresholdEpochManager<PubS, PrivS, RobustSecurePrssInit, SecureReshareSecretKeys>,
-    RealUserDecryptor<PubS, PrivS, SecureNoiseFloodPartialDecryptor>,
-    RealPublicDecryptor<PubS, PrivS, SecureNoiseFloodDecryptor>,
-    RealKeyGenerator<
-        PubS,
-        PrivS,
-        SecureOnlineDistributedKeyGen128<{ ResiduePolyF4Z128::EXTENSION_DEGREE }>,
-    >,
-    RealInsecureKeyGenerator<
-        PubS,
-        PrivS,
-        SecureOnlineDistributedKeyGen128<{ ResiduePolyF4Z128::EXTENSION_DEGREE }>,
-    >,
-    RealPreprocessor<SecureSmallProducerFactory<ResiduePolyF4Z128>>,
-    RealCrsGenerator<PubS, PrivS, SecureCeremony>,
-    RealInsecureCrsGenerator<PubS, PrivS, SecureCeremony>, // doesn't matter which ceremony we use here
-    ThresholdContextManager<PubS, PrivS>,
-    RealBackupOperator<PubS, PrivS>,
->;
-
 #[expect(clippy::too_many_arguments)]
 pub async fn new_real_threshold_kms<PubS, PrivS, F>(
     config: CoreConfig,
@@ -520,7 +471,7 @@ pub async fn new_real_threshold_kms<PubS, PrivS, F>(
     tls_config: Option<(ServerConfig, ClientConfig, Arc<AttestedVerifier>)>,
     shutdown_signal: F,
 ) -> anyhow::Result<(
-    RealThresholdKms<PubS, PrivS>,
+    ThresholdKms<PubS, PrivS>,
     (HealthReporter, HealthServer<impl Health>),
     MetaStoreStatusServiceImpl,
 )>
@@ -804,7 +755,7 @@ where
         tonic_health::server::health_reporter();
     // We are only serving after initialization
     core_service_health_reporter
-        .set_not_serving::<CoreServiceEndpointServer<RealThresholdKms<PubS, PrivS>>>()
+        .set_not_serving::<CoreServiceEndpointServer<ThresholdKms<PubS, PrivS>>>()
         .await;
 
     let session_maker = SessionMaker::new_initialized(
