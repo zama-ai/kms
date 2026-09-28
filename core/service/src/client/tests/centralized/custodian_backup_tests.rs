@@ -480,13 +480,8 @@ async fn test_recovery_names_the_context_after_rotation_central() {
         .await
         .unwrap()
         .into_inner();
-    let cus_rec_req = emulate_custodian(
-        &mut rng,
-        recovery_req_resp,
-        second_id,
-        second_mnemonics,
-    )
-    .await;
+    let cus_rec_req =
+        emulate_custodian(&mut rng, recovery_req_resp, second_id, second_mnemonics).await;
     kms_client
         .custodian_backup_recovery(tonic::Request::new(cus_rec_req))
         .await
