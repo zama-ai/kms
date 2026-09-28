@@ -672,7 +672,8 @@ fn operator_handle_init(
             cur_op_output.to_owned(),
             cur_comm.to_owned(),
             operator_cus_context,
-            &signing_key,
+            // TODO Still the frozen ECDSA signature; step C moves this to `sign_composite`.
+            signing_key.ecdsa(),
             *DEFAULT_MPC_CONTEXT,
         )
         .unwrap();

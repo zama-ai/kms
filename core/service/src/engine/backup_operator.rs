@@ -1460,7 +1460,10 @@ mod tests {
             custodian::{CustodianSetupMessagePayload, HEADER, InternalCustodianContext},
         },
         cryptography::{
-            signatures::{gen_sig_keys, test_support::seeded_verf_key_set},
+            signatures::{
+                gen_sig_keys,
+                test_support::{seeded_identity, seeded_verf_key_set},
+            },
             signcryption::UnifiedSigncryption,
         },
         engine::base::derive_request_id,
@@ -1779,12 +1782,14 @@ mod tests {
         threshold: u32,
     ) -> (
         RecoveryValidationMaterial,
-        PublicSigKey,
+        VerfKeySet,
         UnifiedPrivateEncKey,
         UnifiedPublicEncKey,
     ) {
         let mut rng = AesRng::seed_from_u64(0);
-        let (verf_key, sig_key) = gen_sig_keys(&mut rng);
+        let identity = seeded_identity(&mut rng);
+        let verf_key = VerfKeySet::from_identity(&identity, BACKUP_SIGNING_SCHEMES).unwrap();
+        let sig_key = identity.ecdsa().clone();
         let (dec_key, enc_key) = {
             let mut enc = Encryption::new(BACKUP_PKE_SCHEME, &mut rng);
             enc.keygen().unwrap()
@@ -1930,7 +1935,8 @@ mod tests {
     #[tokio::test]
     async fn test_filter_custodian_data_invalid_operator_role() {
         let (rec, _verf_key, dec_key, enc_key) = dummy_recovery_material(1);
-        let (bad_verf_key, _bad_sig_key) = gen_sig_keys(&mut AesRng::seed_from_u64(42));
+        let bad_verf_key =
+            seeded_verf_key_set(&mut AesRng::seed_from_u64(42), BACKUP_SIGNING_SCHEMES);
         run_filter_expect_skip(
             vec![dummy_output_for_operator(1)],
             &rec,

@@ -1297,9 +1297,11 @@ mod tests {
     fn check_expected_metadata_sunshine_and_mismatches() {
         let mut rng = AesRng::seed_from_u64(101);
         let custodian_verf_key = seeded_verf_key_set(&mut rng, BACKUP_SIGNING_SCHEMES);
-        let (operator_verf_key, _) = gen_sig_keys(&mut rng);
+        let operator_keys = seeded_verf_key_set(&mut rng, BACKUP_SIGNING_SCHEMES);
+        let operator_verf_key = operator_keys.ecdsa().unwrap().clone();
         let other_custodian_verf_key = seeded_verf_key_set(&mut rng, BACKUP_SIGNING_SCHEMES);
-        let (other_operator_verf_key, _) = gen_sig_keys(&mut rng);
+        let other_operator_keys = seeded_verf_key_set(&mut rng, BACKUP_SIGNING_SCHEMES);
+        let other_operator_verf_key = other_operator_keys.ecdsa().unwrap().clone();
 
         let custodian_role = Role::indexed_from_one(2);
         let backup_id = derive_request_id("check_expected_metadata").unwrap();
@@ -1309,7 +1311,7 @@ mod tests {
             mpc_context_id: *DEFAULT_MPC_CONTEXT,
             custodian_pk: custodian_verf_key.clone(),
             custodian_role,
-            operator_pk: operator_verf_key.clone(),
+            operator_pk: operator_keys.clone(),
             shares: Vec::new(),
         };
 

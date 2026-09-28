@@ -57,7 +57,8 @@ use kms_lib::{
         hybrid_ml_kem::HybridKemCt,
         signatures::{
             NodeSigningIdentity, PrivateSigKey, PublicSigKey, RootSigningSeed, SigningSchemeType,
-            StoredTypedSignature, UnifiedPublicSigKey, compute_eip712_signature, gen_sig_keys,
+            StoredTypedSignature, UnifiedPublicSigKey, VerfKeySet, compute_eip712_signature,
+            gen_sig_keys,
         },
         signcryption::{
             Signcrypt, SigncryptionPayload, UnifiedSigncryption, UnifiedSigncryptionKey,
@@ -1092,7 +1093,9 @@ fn test_recovery_material(
         load_and_unversionize_auxiliary(dir, test, &test.internal_cus_context_filename, format)?;
     let mut rng = AesRng::seed_from_u64(test.state);
     let backup_id: RequestId = RequestId::new_random(&mut rng);
-    let (operator_pk, operator_sk) = gen_sig_keys(&mut rng);
+    let operator_identity = seeded_identity(&mut rng);
+    let operator_pk = VerfKeySet::from_identity(&operator_identity, BACKUP_SIGNING_SCHEMES).unwrap();
+    let operator_sk = operator_identity.ecdsa().clone();
     let mut commitments = BTreeMap::new();
     let mut cts = BTreeMap::new();
     for role_j in 1..=test.custodian_count {
