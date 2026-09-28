@@ -668,19 +668,10 @@ impl Operator {
                 RecoverySkipReason::MissingVerificationKey
             })?
             .verf_key_id();
-        // The recovery direction still uses the frozen single-ECDSA layout, so only the ECDSA
-        // member of the custodian's set verifies here.
-        let custodian_ecdsa = custodian_verf_key.ecdsa().map_err(|e| {
-            tracing::warn!(
-                "custodian key set for role {} has no usable ECDSA member: {e}",
-                output.custodian_role
-            );
-            RecoverySkipReason::MissingVerificationKey
-        })?;
-        let unsign_key = UnifiedUnsigncryptionKey::new(
+        let unsign_key = UnifiedUnsigncryptionKey::new_multi(
             ephm_dec_key.clone(),
             ephm_enc_key.clone(),
-            custodian_ecdsa.clone(),
+            custodian_verf_key.clone(),
             operator_id.clone(),
         );
         let backup_material: Zeroizing<BackupMaterial> = Zeroizing::new(

@@ -357,7 +357,7 @@ impl InternalCustodianContext {
 #[derive(Debug)]
 pub struct Custodian {
     role: Role,
-    signing_key: NodeSigningIdentity,
+    signing_identity: NodeSigningIdentity,
     verification_keys: VerfKeySet,
     enc_key: UnifiedPublicEncKey,
     dec_key: UnifiedPrivateEncKey,
@@ -380,19 +380,19 @@ impl Custodian {
     /// A custodian for `role` that signs with `signing_key`.
     pub fn new(
         role: Role,
-        signing_key: NodeSigningIdentity,
+        signing_identity: NodeSigningIdentity,
         enc_key: UnifiedPublicEncKey,
         dec_key: UnifiedPrivateEncKey,
     ) -> Result<Self, BackupError> {
-        let verification_keys = VerfKeySet::from_identity(&signing_key, BACKUP_SIGNING_SCHEMES)
-            .map_err(|e| {
+        let verification_keys =
+            VerfKeySet::from_identity(&signing_identity, BACKUP_SIGNING_SCHEMES).map_err(|e| {
                 BackupError::SetupError(format!(
                     "custodian role {role} cannot publish the backup signing schemes: {e}"
                 ))
             })?;
         Ok(Self {
             role,
-            signing_key,
+            signing_identity,
             verification_keys,
             enc_key,
             dec_key,
@@ -486,13 +486,18 @@ impl Custodian {
 
         // re-encrypted share and sign it
         let operator_verf_id = operator_verification_key.verf_key_id();
-        let signcrypt_key = UnifiedSigncryptionKey::from_signing_key(
-            self.signing_key.ecdsa().clone(),
+        let signcrypt_key = UnifiedSigncryptionKey::new(
+            Arc::new(self.signing_identity.clone()),
             operator_ephem_enc_key.clone(),
             operator_verf_id,
         );
-        let signcryption =
-            signcrypt_key.signcrypt(rng, &DSEP_BACKUP_MATERIAL, &*backup_material)?;
+        // Sealed under every scheme in `BACKUP_SIGNING_SCHEMES`
+        let signcryption = signcrypt_key.signcrypt_composite(
+            rng,
+            &DSEP_BACKUP_MATERIAL,
+            BACKUP_SIGNING_SCHEMES,
+            &*backup_material,
+        )?;
         tracing::debug!(
             "Signed re-encrypted share for operator: {}",
             operator_verification_key.address()

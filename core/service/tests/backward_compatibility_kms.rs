@@ -1094,7 +1094,8 @@ fn test_recovery_material(
     let mut rng = AesRng::seed_from_u64(test.state);
     let backup_id: RequestId = RequestId::new_random(&mut rng);
     let operator_identity = seeded_identity(&mut rng);
-    let operator_pk = VerfKeySet::from_identity(&operator_identity, BACKUP_SIGNING_SCHEMES).unwrap();
+    let operator_pk =
+        VerfKeySet::from_identity(&operator_identity, BACKUP_SIGNING_SCHEMES).unwrap();
     let operator_sk = operator_identity.ecdsa().clone();
     let mut commitments = BTreeMap::new();
     let mut cts = BTreeMap::new();
