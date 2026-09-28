@@ -630,7 +630,8 @@ mod kms_custodian_binary_tests {
     use kms_grpc::{RequestId, kms::v1::CustodianContext};
     use kms_lib::{
         backup::{
-            BACKUP_PKE_SCHEME, KMS_CUSTODIAN, RECOVERY_OUTPUT_DESC, SEED_PHRASE_DESC,
+            BACKUP_PKE_SCHEME, BACKUP_SIGNING_SCHEMES, KMS_CUSTODIAN, RECOVERY_OUTPUT_DESC,
+            SEED_PHRASE_DESC,
             custodian::{
                 InternalCustodianContext, InternalCustodianRecoveryOutput,
                 InternalCustodianSetupMessage,
@@ -641,7 +642,7 @@ mod kms_custodian_binary_tests {
         consts::DEFAULT_MPC_CONTEXT,
         cryptography::{
             encryption::{Encryption, PkeScheme, UnifiedPrivateEncKey, UnifiedPublicEncKey},
-            signatures::test_support::seeded_identity,
+            signatures::{VerfKeySet, test_support::seeded_identity},
         },
         engine::{
             base::derive_request_id,
@@ -849,8 +850,6 @@ mod kms_custodian_binary_tests {
         let mut rng = AesRng::seed_from_u64(40);
         // Note that in the actual deployment, the operator keys are generated before the encryption keys
         let signing_identity = Arc::new(seeded_identity(&mut rng));
-        // The custodian still learns only the operator's ECDSA key; see `check_expected_metadata`.
-        let verification_key = signing_identity.verf_key();
 
         let mut enc = Encryption::new(BACKUP_PKE_SCHEME, &mut rng);
         let (ephemeral_priv_key, ephemeral_pub_key) = enc.keygen().unwrap();
@@ -900,7 +899,7 @@ mod kms_custodian_binary_tests {
         }
         let recovery_request = InternalRecoveryRequest::new(
             ephemeral_pub_key.clone(),
-            verification_key.clone(),
+            VerfKeySet::from_identity(&signing_identity, BACKUP_SIGNING_SCHEMES).unwrap(),
             ciphertexts,
         )
         .unwrap();

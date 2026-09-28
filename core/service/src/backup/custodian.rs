@@ -1,7 +1,7 @@
 use crate::backup::operator::DSEP_BACKUP_MATERIAL;
 use crate::backup::{BACKUP_PKE_SCHEME, BACKUP_SIGNING_SCHEMES, ensure_backup_schemes};
+use crate::consts::SAFE_SER_SIZE_LIMIT;
 use crate::cryptography::signatures::{NodeSigningIdentity, VerfKeySet};
-use crate::cryptography::signing::SigningSchemeType;
 use crate::cryptography::{
     encryption::{HasPkeScheme, UnifiedPrivateEncKey, UnifiedPublicEncKey},
     signcryption::{
@@ -10,7 +10,6 @@ use crate::cryptography::{
     },
 };
 use crate::engine::validation::{RequestIdParsingErr, parse_optional_grpc_request_id};
-use crate::{consts::SAFE_SER_SIZE_LIMIT, cryptography::signatures::PublicSigKey};
 use hashing::DomainSep;
 use kms_grpc::RequestId;
 use kms_grpc::kms::v1::{
@@ -404,7 +403,7 @@ impl Custodian {
         &self,
         rng: &mut R,
         backup: &InnerOperatorBackupOutput,
-        operator_verification_key: &PublicSigKey,
+        operator_verification_key: &VerfKeySet,
         operator_ephem_enc_key: &UnifiedPublicEncKey,
     ) -> Result<InternalCustodianRecoveryOutput, BackupError> {
         self.verify_reencrypt_inner(
@@ -419,17 +418,26 @@ impl Custodian {
         &self,
         rng: &mut R,
         backup: &InnerOperatorBackupOutput,
-        operator_verification_key: &PublicSigKey,
+        operator_verification_key: &VerfKeySet,
         operator_ephem_enc_key: &UnifiedPublicEncKey,
     ) -> Result<InternalCustodianRecoveryOutput, BackupError> {
-        tracing::debug!(
-            "Verifying and re-encrypting backup for operator: {}",
-            operator_verification_key.address(),
-        );
+        let operator_id = operator_verification_key.id().map_err(|e| {
+            BackupError::SetupError(format!("could not compute the operator key set id: {e}"))
+        })?;
+        // Tracing for completeness
+        for cur_type in BACKUP_SIGNING_SCHEMES {
+            let cur_verf_key = operator_verification_key.get(*cur_type).ok_or_else(|| {
+                BackupError::SetupError(format!("missing verification key for scheme: {cur_type}"))
+            })?;
+            tracing::info!(
+                "Verifying and re-encrypting backup with key type {cur_type} and id: {}",
+                hex::encode(&cur_verf_key.digest())
+            );
+        }
         let custodian_id = self.verification_key_set().id().map_err(|e| {
             BackupError::SetupError(format!("could not compute the custodian key set id: {e}"))
         })?;
-        let unsigncrypt_key = UnifiedUnsigncryptionKey::new(
+        let unsigncrypt_key = UnifiedUnsigncryptionKey::new_multi(
             Arc::new(self.dec_key.clone()),
             self.enc_key.clone(),
             operator_verification_key.clone(),
@@ -443,29 +451,25 @@ impl Custodian {
                 .unsigncrypt(&DSEP_BACKUP_CUSTODIAN, &backup.signcryption)
                 .map_err(|e| {
                     tracing::warn!(
-                        "Unsigncryption failed for operator {}: {e}",
-                        operator_verification_key.address(),
+                        "Unsigncryption failed for operator id {}: {e}",
+                        hex::encode(&operator_id)
                     );
                     BackupError::CustodianRecoveryError
                 })?,
         );
-        tracing::debug!(
-            "Decrypted ciphertext for operator: {}",
-            operator_verification_key.address()
-        );
         if !backup_material.backup_id.is_valid() {
             tracing::error!(
-                "Invalid backup_id {} in the decrypted backup material for operator with address: {}",
+                "Invalid backup_id {} in the decrypted backup material for operator with id: {}",
                 backup_material.backup_id,
-                operator_verification_key.address()
+                hex::encode(&operator_id)
             );
             return Err(BackupError::CustodianRecoveryError);
         }
         if !backup_material.mpc_context_id.is_valid() {
             tracing::error!(
-                "Invalid MPC context ID {} in the decrypted backup material for operator with address: {}",
+                "Invalid MPC context ID {} in the decrypted backup material for operator with id: {}",
                 backup_material.mpc_context_id,
-                operator_verification_key.address()
+                hex::encode(&operator_id)
             );
             return Err(BackupError::CustodianRecoveryError);
         }
@@ -473,21 +477,20 @@ impl Custodian {
         if let Err(e) = backup_material.check_expected_metadata(
             self.verification_key_set(),
             self.role,
-            &operator_verification_key.verf_key_id(),
+            &operator_id,
         ) {
             tracing::error!(
-                "Backup material did not match expected metadata ({e:?}) for operator: {}",
-                operator_verification_key.address()
+                "Backup material did not match expected metadata ({e:?}) for operator id: {}",
+                hex::encode(&operator_id)
             );
             return Err(BackupError::CustodianRecoveryError);
         }
 
         // re-encrypted share and sign it
-        let operator_verf_id = operator_verification_key.verf_key_id();
         let signcrypt_key = UnifiedSigncryptionKey::new(
             Arc::new(self.signing_identity.clone()),
             operator_ephem_enc_key.clone(),
-            operator_verf_id,
+            operator_id,
         );
         // Sealed under every scheme in `BACKUP_SIGNING_SCHEMES`
         let signcryption = signcrypt_key.signcrypt_composite(
@@ -497,8 +500,8 @@ impl Custodian {
             &*backup_material,
         )?;
         tracing::debug!(
-            "Signed re-encrypted share for operator: {}",
-            operator_verification_key.address()
+            "Signed re-encrypted share for operator id: {}",
+            hex::encode(&operator_id)
         );
         Ok(InternalCustodianRecoveryOutput {
             signcryption,

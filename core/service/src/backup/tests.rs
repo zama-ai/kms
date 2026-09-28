@@ -19,7 +19,8 @@ use crate::{
     cryptography::{
         encryption::{Encryption, PkeScheme, UnifiedPrivateEncKey, UnifiedPublicEncKey},
         signatures::{
-            PublicSigKey, canonical_schemes, gen_sig_keys, test_support::seeded_identity,
+            PublicSigKey, VerfKeySet, canonical_schemes, gen_sig_keys,
+            test_support::seeded_identity,
         },
     },
     engine::base::derive_request_id,
@@ -159,7 +160,7 @@ fn custodian_reencrypt() {
         })
         .collect::<Vec<_>>();
 
-    let verification_key = operators[0].verification_key().ecdsa().unwrap();
+    let verification_key = operators[0].verification_key();
 
     let mut enc = Encryption::new(BACKUP_PKE_SCHEME, &mut rng);
     let (_ephemeral_dec_key, ephemeral_enc_key) = enc.keygen().unwrap();
@@ -646,7 +647,8 @@ fn operator_handle_init(
     };
     for _op_idx in 1..=operator_count {
         let signing_key = Arc::new(seeded_identity(rng));
-        let verification_key = signing_key.verf_key();
+        let verification_key =
+            VerfKeySet::from_identity(&signing_key, BACKUP_SIGNING_SCHEMES).unwrap();
         let operator = Operator::new_for_sharing(
             setup_msgs.to_vec(),
             signing_key.clone(),
@@ -678,7 +680,7 @@ fn operator_handle_init(
         )
         .unwrap();
         operators.insert(
-            verification_key.verf_key_id(),
+            verification_key.id().unwrap(),
             (
                 operator,
                 validation_material,
@@ -687,7 +689,7 @@ fn operator_handle_init(
             ),
         );
         payload_for_custodians.insert(
-            verification_key.verf_key_id(),
+            verification_key.id().unwrap(),
             (verification_key, backup_enc_key, cur_op_output),
         );
     }

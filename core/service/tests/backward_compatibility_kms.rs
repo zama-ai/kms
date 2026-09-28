@@ -1150,7 +1150,7 @@ fn test_internal_recovery_request(
     let mut rng = AesRng::seed_from_u64(test.state);
     let mut encryption = Encryption::new(BACKUP_PKE_SCHEME, &mut rng);
     let (_dec_key, enc_key) = encryption.keygen().unwrap();
-    let (verification_key, _signing_key) = gen_sig_keys(&mut rng);
+    let verification_key = seeded_verf_key_set(&mut rng, BACKUP_SIGNING_SCHEMES);
     let mut cts = BTreeMap::new();
     for role_j in 1..=test.amount {
         let cur_role = Role::indexed_from_one(role_j as usize);

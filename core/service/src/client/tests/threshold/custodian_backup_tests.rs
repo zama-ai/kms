@@ -52,6 +52,7 @@ use kms_grpc::rpc_types::PubDataType;
 use kms_grpc::{RequestId, kms::v1::FheParameter, rpc_types::PrivDataType};
 use rand::SeedableRng;
 use std::collections::HashMap;
+use crate::cryptography::signatures::VerfKeySet;
 use tfhe::safe_serialization::safe_deserialize;
 use threshold_types::role::Role;
 use tokio::task::JoinSet;
@@ -1416,6 +1417,13 @@ async fn emulate_custodian(
             let cur_verf_key = operator_verf_keys
                 .get(i)
                 .expect("operator verification key missing for party {cur_idx}");
+            // The custodian learns the operator's key set from the request itself; the map
+            // above is still what names the operator by address.
+            let cur_verf_keys: VerfKeySet = safe_deserialize(
+                std::io::Cursor::new(&cur_recovery_req.operator_verf_key),
+                SAFE_SER_SIZE_LIMIT,
+            )
+            .unwrap();
             let cur_cus_reenc = cur_recovery_req.cts.get(&((cur_idx + 1) as u64)).unwrap();
             let cur_enc_key = safe_deserialize(
                 std::io::Cursor::new(&cur_recovery_req.ephem_op_enc_key),
@@ -1426,7 +1434,7 @@ async fn emulate_custodian(
                 .verify_reencrypt(
                     rng,
                     &cur_cus_reenc.to_owned().try_into().unwrap(),
-                    cur_verf_key,
+                    &cur_verf_keys,
                     &cur_enc_key,
                 )
                 .unwrap();

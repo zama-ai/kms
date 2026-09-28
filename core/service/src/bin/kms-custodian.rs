@@ -174,10 +174,18 @@ async fn main() -> Result<(), anyhow::Error> {
             )?;
             let serialized_res = base64_serialize(&res)?;
             tracing::info!("Verified reencryption successfully.");
-            tracing::warn!(
-                "MANUALLY VALIDATE THE OPERATOR VERIFICATION KEY BEFORE RETURNING DECRYPTION RESULT TO OPERATOR! Operator verification key address: {:?}",
-                recovery_request.operator_verf_key().address()
-            );
+            let operator_keys = recovery_request.operator_verf_key();
+            for cur_type in BACKUP_SIGNING_SCHEMES {
+                let cur_verf_key = operator_verification_key.get(*cur_type).ok_or_else(|| {
+                    BackupError::SetupError(format!(
+                        "missing verification key for scheme: {cur_type}"
+                    ))
+                })?;
+                tracing::warn!(
+                    "MANUALLY VALIDATE THE OPERATOR VERIFICATION KEY BEFORE RETURNING DECRYPTION RESULT TO OPERATOR! Operator verification key type {cur_type} and with ID: {}",
+                    hex::encode(cur_verf_key),
+                );
+            }
             // Use println to lower the risk of accidental file logging of the recovery output
             println!("{RECOVERY_OUTPUT_DESC}{serialized_res}");
             tracing::info!("Reencryption successful!");

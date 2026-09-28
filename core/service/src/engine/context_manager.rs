@@ -2696,14 +2696,16 @@ mod tests {
         )
         .await
         .unwrap();
+        let server_verf_keys =
+            VerfKeySet::from_identity(&server_identity, BACKUP_SIGNING_SCHEMES).unwrap();
         let internal_rec_req = InternalRecoveryRequest::new(
             recovery_material.payload.custodian_context.backup_enc_key,
-            server_verf_key.clone(),
+            server_verf_keys.clone(),
             recovery_material.payload.cts,
         )
         .unwrap();
-        // The constructed request must round-trip the operator's verification key.
-        assert_eq!(internal_rec_req.operator_verf_key(), &server_verf_key);
+        // The constructed request must round-trip the operator's published key set.
+        assert_eq!(internal_rec_req.operator_verf_key(), &server_verf_keys);
         // And the signcryption destined for custodian 1 must validate under that
         // custodian's unsigncryption key, confirming the backup material was sealed correctly.
         let custodian_id = custodian1.verification_key_set().id().unwrap();

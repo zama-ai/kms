@@ -9,6 +9,7 @@ use crate::client::tests::centralized::key_gen_tests::run_key_gen_centralized;
 use crate::client::tests::centralized::public_decryption_tests::run_decryption_centralized;
 use crate::consts::{DEFAULT_EPOCH_ID, DEFAULT_MPC_CONTEXT, SAFE_SER_SIZE_LIMIT, SIGNING_KEY_ID};
 use crate::cryptography::signatures::PublicSigKey;
+use crate::cryptography::signatures::VerfKeySet;
 use crate::engine::context::{ContextInfo, SchemeDigests};
 use crate::testing::setup::CentralizedTestEnv;
 use crate::util::key_setup::test_tools::{EncryptionConfig, TestingPlaintext};
@@ -759,13 +760,10 @@ async fn emulate_custodian(
     for (cur_idx, cur_mnemonic) in mnemonics.iter().enumerate() {
         let custodian: Custodian =
             custodian_from_seed_phrase(cur_mnemonic, Role::indexed_from_zero(cur_idx)).unwrap();
-        let pub_storage = FileStorage::new(test_path, StorageType::PUB, None).unwrap();
-        let verf_key = read_versioned_at_request_id(
-            &pub_storage,
-            &SIGNING_KEY_ID,
-            &PubDataType::VerfKey.to_string(),
+        let verf_key: VerfKeySet = safe_deserialize(
+            std::io::Cursor::new(&recovery_request.operator_verf_key),
+            SAFE_SER_SIZE_LIMIT,
         )
-        .await
         .unwrap();
         let cur_cus_reenc = recovery_request.cts.get(&((cur_idx + 1) as u64)).unwrap();
         let cur_enc_key = safe_deserialize(

@@ -3,7 +3,6 @@ use crate::backup::error::{BackupError, RecoverySkipReason};
 use crate::backup::operator::BackupMaterial;
 use crate::backup::{BACKUP_PKE_SCHEME, BACKUP_SIGNING_SCHEMES, DSEP_ATTESTED_BACKUP_PK};
 use crate::consts::DEFAULT_EPOCH_ID;
-use crate::cryptography::internal_crypto_types::LegacySerialization;
 use crate::cryptography::signatures::VerfKeySet;
 use crate::cryptography::signcryption::UnifiedSigncryption;
 use crate::cryptography::signing::seed::RootSigningSeed;
@@ -219,7 +218,10 @@ where
         // The ephemeral keypair is MLKEM1024-P384, so it needs a seed wider than the 128 bits
         // `new_rng` provides.
         let mut rng = self.base_kms.new_rng_256();
-        let operator_verf_key = self.base_kms.verf_key().to_legacy_bytes()?;
+        let signing_identity = self.base_kms.signing_identity()?;
+        let operator_keys = VerfKeySet::from_identity(&signing_identity, BACKUP_SIGNING_SCHEMES)?;
+        let mut operator_verf_key = Vec::new();
+        safe_serialize(&operator_keys, &mut operator_verf_key, SAFE_SER_SIZE_LIMIT)?;
         // Generate asymmetric ephemeral keys for the operator to use to encrypt the backup
         let mut enc = Encryption::new(BACKUP_PKE_SCHEME, &mut rng);
         let (ephem_operator_priv_key, ephem_operator_pub_key) = enc.keygen()?;

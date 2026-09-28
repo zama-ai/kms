@@ -3,6 +3,10 @@ use super::{
     error::{BackupError, SetupSkipReason},
     secretsharing,
 };
+use crate::backup::{
+    custodian::{InternalCustodianContext, InternalCustodianRecoveryOutput},
+    error::RecoverySkipReason,
+};
 use crate::{
     anyhow_error_and_log,
     backup::{BACKUP_SIGNING_SCHEMES, ensure_backup_schemes},
@@ -19,13 +23,6 @@ use crate::{
 use crate::{
     backup::custodian::DSEP_BACKUP_CUSTODIAN,
     cryptography::signatures::{NodeSigningIdentity, internal_sign, internal_verify_sig},
-};
-use crate::{
-    backup::{
-        custodian::{InternalCustodianContext, InternalCustodianRecoveryOutput},
-        error::RecoverySkipReason,
-    },
-    cryptography::internal_crypto_types::LegacySerialization,
 };
 use algebra::{
     galois_rings::degree_4::ResiduePolyF4Z64,
@@ -77,7 +74,7 @@ impl Named for InternalRecoveryRequest {
 #[versionize(InternalRecoveryRequestVersions)]
 pub struct InternalRecoveryRequest {
     ephem_op_enc_key: UnifiedPublicEncKey,
-    operator_verf_key: PublicSigKey,
+    operator_verf_key: VerfKeySet,
     cts: BTreeMap<Role, InnerOperatorBackupOutput>,
 }
 
@@ -85,7 +82,7 @@ impl InternalRecoveryRequest {
     /// Optimistically create a new internal recovery request, WITHOUT validating it against the custodians' unsigncryption keys.
     pub fn new(
         ephem_op_enc_key: UnifiedPublicEncKey,
-        operator_verf_key: PublicSigKey,
+        operator_verf_key: VerfKeySet,
         cts: BTreeMap<Role, InnerOperatorBackupOutput>,
     ) -> anyhow::Result<Self> {
         let res = InternalRecoveryRequest {
@@ -100,7 +97,7 @@ impl InternalRecoveryRequest {
         &self.ephem_op_enc_key
     }
 
-    pub fn operator_verf_key(&self) -> &PublicSigKey {
+    pub fn operator_verf_key(&self) -> &VerfKeySet {
         &self.operator_verf_key
     }
 
@@ -130,7 +127,15 @@ impl TryFrom<RecoveryRequest> for InternalRecoveryRequest {
             let inner_ct: InnerOperatorBackupOutput = cur_backup_out.try_into()?;
             cts.insert(role, inner_ct);
         }
-        let operator_verf_key = PublicSigKey::from_legacy_bytes(&value.operator_verf_key)?;
+        let operator_verf_key: VerfKeySet = safe_deserialize(
+            std::io::Cursor::new(&value.operator_verf_key),
+            SAFE_SER_SIZE_LIMIT,
+        )
+        .map_err(|e| {
+            anyhow_error_and_log(format!("Could not deserialize operator_verf_key: {e:?}"))
+        })?;
+        // A peer's key set crosses a boundary here, so it is checked rather than trusted.
+        ensure_backup_schemes(&operator_verf_key)?;
         Ok(Self {
             ephem_op_enc_key,
             operator_verf_key,
@@ -407,18 +412,14 @@ impl BackupMaterial {
             tracing::error!("custodian_pk mismatch");
             return Err(RecoverySkipReason::CustodianKeyMismatchInPayload);
         }
-        // Still the ECDSA address rather than the key-set digest: the custodian only learns the
-        // operator's ECDSA key, because `RecoveryRequest.operator_verf_key` carries one key. Step
-        // E widens that field, and this becomes `self.operator_pk.id()`.
-        // TODO
-        let operator_pk_ecdsa = match self.operator_pk.ecdsa() {
-            Ok(key) => key,
+        let operator_pk_digest = match self.operator_pk.id() {
+            Ok(id) => id,
             Err(e) => {
-                tracing::error!("operator_pk has no usable ECDSA member: {e}");
+                tracing::error!("could not compute the operator key set id: {e}");
                 return Err(RecoverySkipReason::OperatorMismatchInPayload);
             }
         };
-        if operator_pk_ecdsa.verf_key_id() != operator_pk_id {
+        if operator_pk_digest != operator_pk_id {
             tracing::error!("operator_pk_id mismatch");
             return Err(RecoverySkipReason::OperatorMismatchInPayload);
         }
@@ -600,7 +601,12 @@ impl Operator {
                 custodian_verf_id,
             );
             let signcryption = signcryption_key
-                .signcrypt(rng, &DSEP_BACKUP_CUSTODIAN, &backup_material)
+                .signcrypt_composite(
+                    rng,
+                    &DSEP_BACKUP_CUSTODIAN,
+                    BACKUP_SIGNING_SCHEMES,
+                    &backup_material,
+                )
                 .map_err(BackupError::InternalCryptographyError)?;
             // Commitment by the operator, which is a hash of [BackupMaterial].
             //
@@ -655,16 +661,10 @@ impl Operator {
             tracing::warn!("missing custodian key for role {}", output.custodian_role);
             RecoverySkipReason::MissingVerificationKey
         })?;
-        // See `check_expected_metadata`: the operator is still identified by its ECDSA address.
-        // TODO
-        let operator_id = self
-            .verification_key
-            .ecdsa()
-            .map_err(|e| {
-                tracing::warn!("operator key set has no usable ECDSA member: {e}");
-                RecoverySkipReason::MissingVerificationKey
-            })?
-            .verf_key_id();
+        let operator_id = self.verification_key.id().map_err(|e| {
+            tracing::warn!("could not compute the operator key set id: {e}");
+            RecoverySkipReason::MissingVerificationKey
+        })?;
         let unsign_key = UnifiedUnsigncryptionKey::new_multi(
             ephm_dec_key.clone(),
             ephm_enc_key.clone(),
