@@ -3,6 +3,7 @@ use crate::vault::storage::{StorageExt, StorageReaderExt, all_data_ids_from_all_
 use crate::{consts::SAFE_SER_SIZE_LIMIT, vault::storage_prefix_safety};
 use aws_config::{self, Region, SdkConfig};
 use aws_sdk_s3::{Client as S3Client, error::ProvideErrorMetadata, primitives::ByteStream};
+use aws_smithy_types::error::display::DisplayErrorContext;
 use kms_grpc::{RequestId, identifiers::EpochId};
 use serde::{Serialize, de::DeserializeOwned};
 #[cfg(test)]
@@ -132,7 +133,13 @@ impl S3Storage {
                 {
                     Ok(false)
                 } else {
-                    Err(sdk_error.into())
+                    // The `Display` of an SDK error is only its kind, such as "service error".
+                    // `DisplayErrorContext` adds the error code and every cause.
+                    Err(anyhow::anyhow!(
+                        "S3 existence check of key {key} in bucket {} fails: {}",
+                        self.bucket,
+                        DisplayErrorContext(&sdk_error)
+                    ))
                 }
             }
         }
@@ -1134,9 +1141,13 @@ mod tests {
             let err = mock!(aws_sdk_s3::Client::head_object).then_error(move || {
                 HeadObjectError::generic(ErrorMetadata::builder().code(code).build())
             });
+            let error = storage_for(&err)
+                .data_exists_at_key(KEY)
+                .await
+                .expect_err("a head_object error other than NotFound must propagate");
             assert!(
-                storage_for(&err).data_exists_at_key(KEY).await.is_err(),
-                "head_object {code} error should propagate, not map to Ok(false)"
+                format!("{error:#}").contains(code),
+                "the error must name the S3 error code {code}: {error:#}"
             );
         }
     }

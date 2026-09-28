@@ -322,7 +322,7 @@ impl StorageReader for Vault {
         self.storage
             .data_exists(data_id, &backup_type)
             .await
-            .map_err(|e| anyhow!("Existence check failed: {e}"))
+            .map_err(|e| anyhow!("Existence check failed: {e:#}"))
     }
 
     async fn all_data_ids(&self, data_type: &str) -> anyhow::Result<HashSet<RequestId>> {
@@ -412,7 +412,7 @@ impl StorageReaderExt for Vault {
         self.storage
             .data_exists_at_epoch(data_id, epoch_id, &backup_type)
             .await
-            .map_err(|e| anyhow!("Existence check failed: {e}"))
+            .map_err(|e| anyhow!("Existence check failed: {e:#}"))
     }
 
     async fn read_data_at_epoch<T: DeserializeOwned + Unversionize + Named + Send>(
