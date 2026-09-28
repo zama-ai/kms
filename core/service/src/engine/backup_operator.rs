@@ -1852,7 +1852,6 @@ mod tests {
             backup_output: Some(OperatorBackupOutput {
                 signcryption: vec![1, 2, 3],
                 pke_type: 0,
-                signing_type: 0,
             }),
         }
     }
