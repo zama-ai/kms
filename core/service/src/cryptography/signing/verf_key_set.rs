@@ -19,7 +19,7 @@ const DSEP_VERF_KEY_SET: DomainSep = *b"VKEYSET_";
 /// to travel together.
 ///
 /// The set is persisted, so it is versioned. Its own shape is tagged by
-/// [`VerfKeySetVersions`], and the scheme tags and keys inside it each carry
+/// [`VerfKeySetReprVersions`], and the scheme tags and keys inside it each carry
 /// their own dispatch, so a later change to [`UnifiedPublicSigKey`] is handled
 /// by `UnifiedPublicSigKeyVersions` without a new version here.
 ///
@@ -39,12 +39,15 @@ impl Named for VerfKeySet {
 }
 
 /// The unvalidated mirror of [`VerfKeySet`] that carries the version dispatch.
+///
+/// `try_convert` versions the target type, not `VerfKeySet` itself, so the
+/// dispatch enum is named after this type rather than after the validated one.
 #[derive(Versionize)]
-#[versionize(VerfKeySetVersions)]
+#[versionize(VerfKeySetReprVersions)]
 pub struct VerfKeySetRepr(BTreeMap<SigningSchemeType, UnifiedPublicSigKey>);
 
 #[derive(VersionsDispatch)]
-pub enum VerfKeySetVersions {
+pub enum VerfKeySetReprVersions {
     V0(VerfKeySetRepr),
 }
 

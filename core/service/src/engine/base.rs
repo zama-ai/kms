@@ -2084,7 +2084,7 @@ pub(crate) mod tests {
         // Go through the production entry point, so the payload the signer builds
         // is the one asserted against here.
         let signatures_for = |schemes: &[SigningSchemeType]| {
-            let meta = super::compute_info_crs_from_digest(
+            super::compute_info_crs_from_digest(
                 &sk,
                 schemes,
                 &crs_id,
@@ -2093,19 +2093,20 @@ pub(crate) mod tests {
                 &domain,
                 extra_data.clone(),
             )
-            .unwrap();
-            match meta {
+            .map(|meta| match meta {
                 super::CrsGenMetadata::Current(inner) => {
                     (inner.external_signature, inner.signatures)
                 }
                 super::CrsGenMetadata::LegacyV0(_) => panic!("expected current metadata"),
-            }
+            })
         };
 
-        // Requesting no scheme: `external_signature` is still produced, `signatures` is empty.
-        let (external_signature, sigs) = signatures_for(&[]);
-        assert_eq!(external_signature, expected_external);
-        assert!(sigs.is_empty(), "no schemes requested ⇒ empty signatures");
+        // Requesting no scheme is refused rather than answered with an empty
+        // list.
+        assert!(
+            signatures_for(&[]).is_err(),
+            "an empty scheme set must be refused"
+        );
 
         // Requesting a classic + two post-quantum schemes: `signatures` reflects
         // exactly the request.
@@ -2114,7 +2115,7 @@ pub(crate) mod tests {
             SigningSchemeType::Ed25519,
             SigningSchemeType::MlDsa65,
         ];
-        let (external_signature, sigs) = signatures_for(&schemes);
+        let (external_signature, sigs) = signatures_for(&schemes).unwrap();
         assert_eq!(external_signature, expected_external);
         assert_eq!(sigs.len(), schemes.len());
 
@@ -2232,19 +2233,17 @@ pub(crate) mod tests {
         };
 
         // ECDSA needs no seed, so an ECDSA-only request still succeed
-        for schemes in [vec![], vec![SigningSchemeType::Ecdsa256k1]] {
-            let (external_signature, sigs) = signatures_for(&schemes)
-                .unwrap_or_else(|e| panic!("{schemes:?} must not need a root seed: {e}"));
-            assert_eq!(sigs.len(), schemes.len());
-            let sol_type = PrepKeygenVerification::new(&prep_id, extra_data.clone());
-            assert_eq!(
-                recover_address_from_ext_signature(&sol_type, &domain, &external_signature)
-                    .unwrap(),
-                sk.verf_key().address()
-            );
-            for stored in &sigs {
-                assert_eq!(stored.signature, external_signature);
-            }
+        let schemes = vec![SigningSchemeType::Ecdsa256k1];
+        let (external_signature, sigs) = signatures_for(&schemes)
+            .unwrap_or_else(|e| panic!("{schemes:?} must not need a root seed: {e}"));
+        assert_eq!(sigs.len(), schemes.len());
+        let sol_type = PrepKeygenVerification::new(&prep_id, extra_data.clone());
+        assert_eq!(
+            recover_address_from_ext_signature(&sol_type, &domain, &external_signature).unwrap(),
+            sk.verf_key().address()
+        );
+        for stored in &sigs {
+            assert_eq!(stored.signature, external_signature);
         }
 
         // Every other scheme fails, whether asked for alone or beside ECDSA, and the
