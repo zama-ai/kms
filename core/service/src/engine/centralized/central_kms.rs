@@ -20,6 +20,7 @@ use crate::engine::base::sign_user_decryption_result;
 use crate::engine::base::{BaseKmsStruct, KmsFheKeyHandles};
 use crate::engine::base::{KeyGenMetadata, PubDecCallValues, UserDecryptCallValues};
 use crate::engine::context_manager::CentralizedContextManager;
+use crate::engine::dependency_checks::spawn_dependency_checks;
 use crate::engine::rng_source::RngSource;
 #[cfg(feature = "non-wasm")]
 use crate::engine::storage_material_verification::{
@@ -1027,6 +1028,7 @@ impl<
         );
         let (health, health_service) = HealthState::new().await;
         // We will serve as soon as the server is started
+        spawn_dependency_checks(health.clone(), crypto_storage.inner.clone(), None);
 
         Ok((
             CentralizedKms {

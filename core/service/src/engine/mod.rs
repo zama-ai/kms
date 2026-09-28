@@ -14,6 +14,8 @@ pub mod context;
 #[cfg(feature = "non-wasm")]
 pub mod context_manager;
 #[cfg(feature = "non-wasm")]
+pub(crate) mod dependency_checks;
+#[cfg(feature = "non-wasm")]
 pub mod keyset_configuration;
 #[cfg(feature = "non-wasm")]
 pub mod material_integrity;

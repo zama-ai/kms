@@ -80,13 +80,28 @@ async fn healthz_handler() -> Response {
     healthz_response(process_health())
 }
 
-/// Reports the overall health. The server is healthy when it is ready.
+/// Reports the overall health and the result of the last check of each dependency.
 fn healthz_response(health: Option<&HealthState>) -> Response {
-    status_response(
-        health.is_some_and(HealthState::is_ready),
-        "healthy",
-        "unhealthy",
+    let (healthy, dependencies) = health.map(HealthState::health_snapshot).unwrap_or_default();
+    let dependencies: serde_json::Map<String, serde_json::Value> = dependencies
+        .into_iter()
+        .map(|(name, healthy)| {
+            (
+                name.to_string(),
+                (if healthy { "ok" } else { "fail" }).into(),
+            )
+        })
+        .collect();
+    let (code, status) = if healthy {
+        (StatusCode::OK, "healthy")
+    } else {
+        (StatusCode::SERVICE_UNAVAILABLE, "unhealthy")
+    };
+    (
+        code,
+        Json(serde_json::json!({ "status": status, "dependencies": dependencies })),
     )
+        .into_response()
 }
 
 async fn version_handler() -> impl IntoResponse {
@@ -642,6 +657,42 @@ mod tests {
             code_and_status(readiness_response(Some(&health))).await,
             (StatusCode::OK, "ready".to_string())
         );
+        assert_eq!(
+            code_and_status(healthz_response(Some(&health))).await,
+            (StatusCode::OK, "healthy".to_string())
+        );
+    }
+
+    #[tokio::test]
+    async fn failed_dependency_fails_only_healthz() {
+        let (health, _service) = HealthState::new().await;
+        health.mark_initialized().await;
+        health.set_dependency("test_storage", true);
+        health.set_dependency("test_peers", false);
+
+        let response = healthz_response(Some(&health));
+        assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+        let body = axum::body::to_bytes(response.into_body(), 1024)
+            .await
+            .unwrap();
+        let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(
+            json,
+            serde_json::json!({
+                "status": "unhealthy",
+                "dependencies": { "test_peers": "fail", "test_storage": "ok" }
+            })
+        );
+        assert_eq!(
+            code_and_status(readiness_response(Some(&health))).await,
+            (StatusCode::OK, "ready".to_string())
+        );
+        assert_eq!(
+            code_and_status(liveness_response(Some(&health))).await,
+            (StatusCode::OK, "alive".to_string())
+        );
+
+        health.set_dependency("test_peers", true);
         assert_eq!(
             code_and_status(healthz_response(Some(&health))).await,
             (StatusCode::OK, "healthy".to_string())

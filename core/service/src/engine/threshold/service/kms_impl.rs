@@ -59,6 +59,7 @@ use tonic::transport::{Server, server::TcpIncoming};
 use tonic_health::pb::health_server::{Health, HealthServer};
 use tonic_tls::rustls::TlsIncoming;
 
+use crate::engine::dependency_checks::spawn_dependency_checks;
 use crate::engine::threshold::service::epoch_manager::{EpochData, RealThresholdEpochManager};
 // === Internal Crate ===
 use crate::{
@@ -969,6 +970,11 @@ where
         Arc::clone(&pub_dec_meta_store),
         crypto_storage.clone(),
         telemetry_conf.refresh_interval(),
+    );
+    spawn_dependency_checks(
+        health.clone(),
+        crypto_storage.inner.clone(),
+        Some(immutable_session_maker.clone()),
     );
 
     let kms = ThresholdKms::new(

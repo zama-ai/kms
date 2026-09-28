@@ -2,7 +2,9 @@ use crate::metrics_names::{
     TAG_OPERATION_TYPE, TAG_PARTY_ID, TAG_PUBLIC_DECRYPTION_KIND, TAG_TFHE_TYPE,
     TAG_USER_DECRYPTION_KIND,
 };
-use prometheus::{Gauge, HistogramOpts, HistogramVec, IntCounter, IntCounterVec, IntGauge, Opts};
+use prometheus::{
+    Gauge, HistogramOpts, HistogramVec, IntCounter, IntCounterVec, IntGauge, IntGaugeVec, Opts,
+};
 use std::collections::{BTreeMap, HashMap};
 use std::sync::{Arc, LazyLock, Mutex};
 use std::time::{Duration, Instant};
@@ -87,6 +89,7 @@ pub struct CoreMetrics {
     meta_storage_pub_dec_total_gauge: IntGauge, // Total number of public decryptions in meta storage
     meta_storage_user_dec_total_gauge: IntGauge, // Total number of user decryptions in meta storage
     fhe_key_cache_size_gauge: IntGauge, // Number of FHE key entries in the in-memory crypto-material cache
+    health_dependency_gauge: IntGaugeVec, // Last health check result per dependency: 1 passes, 0 fails
 
     // System metrics
     total_cpus_gauge: IntGauge,     // Total number of CPUs
@@ -522,6 +525,18 @@ impl CoreMetrics {
             .register(Box::new(fhe_key_cache_size_gauge.clone()))
             .expect("failed to register FHE key cache size gauge");
 
+        let health_dependency_gauge = IntGaugeVec::new(
+            opts(
+                format!("{prefix}_health_dependency_up"),
+                "Result of the last health check of a dependency: 1 when it passes, 0 when it fails",
+            ),
+            &["dependency"],
+        )
+        .expect("failed to create health dependency gauge");
+        registry
+            .register(Box::new(health_dependency_gauge.clone()))
+            .expect("failed to register health dependency gauge");
+
         let active_session_gauge = IntGauge::with_opts(opts(
             format!("{prefix}_active_sessions"),
             "Number of active sessions in the KMS",
@@ -665,6 +680,7 @@ impl CoreMetrics {
             network_sender_tasks_gauge,
             rate_limiter_gauge,
             fhe_key_cache_size_gauge,
+            health_dependency_gauge,
             active_session_gauge,
             inactive_session_gauge,
             completed_session_gauge,
@@ -895,6 +911,13 @@ impl CoreMetrics {
     /// Record the sum of active sessions done with other parties into the gauge
     pub fn record_active_sessions(&self, count: u64) {
         self.active_session_gauge.set(count as i64);
+    }
+
+    /// Record the result of the last health check of `dependency`.
+    pub fn record_health_dependency(&self, dependency: &str, healthy: bool) {
+        self.health_dependency_gauge
+            .with_label_values(&[dependency])
+            .set(i64::from(healthy));
     }
 
     /// Record the sum of inactive sessions done with other parties into the gauge
@@ -1174,11 +1197,20 @@ fn is_valid_label_name(name: &str) -> bool {
 
 /// Label names already reserved by built-in metrics: the duration tags in [`DURATION_LABEL_KEYS`]
 /// (which include `operation_type`), plus `operation` (used by the counters and the payload-size
-/// histogram), `error`, the `version` const-label, and the `le` histogram bucket-boundary label. A
-/// configured const-label colliding with any of these would make Prometheus reject the metric at
-/// registration (panicking the `.expect`), so it is skipped instead.
+/// histogram), `error`, `event`, `stage`, `dependency` (used by the health dependency gauge), the
+/// `version` const-label, and the `le` histogram bucket-boundary label. The registry accepts a
+/// configured const-label with one of these names, but each sample of the metric then carries the
+/// label twice, and the Prometheus server rejects such a scrape. So the const-label is skipped.
 fn is_reserved_label_name(name: &str) -> bool {
-    const EXTRA_RESERVED: &[&str] = &["operation", "error", "event", "stage", "version", "le"];
+    const EXTRA_RESERVED: &[&str] = &[
+        "operation",
+        "error",
+        "event",
+        "stage",
+        "dependency",
+        "version",
+        "le",
+    ];
     DURATION_LABEL_KEYS.contains(&name) || EXTRA_RESERVED.contains(&name)
 }
 
@@ -1198,6 +1230,7 @@ mod tests {
         METRICS.increment_backup_error_counter("_test", "_test");
         METRICS.observe_duration("_test", Duration::from_millis(0));
         METRICS.observe_size("_test", 1.0);
+        METRICS.record_health_dependency("_test", true);
 
         let families = prometheus::gather();
         let mut names: Vec<&str> = families.iter().map(|f| f.name()).collect();
@@ -1213,6 +1246,7 @@ mod tests {
             "kms_cpu_load",
             "kms_fhe_key_cache_size",
             "kms_file_descriptors",
+            "kms_health_dependency_up",
             "kms_inactive_sessions",
             "kms_memory_usage",
             "kms_meta_storage_pub_decryptions",
@@ -1459,6 +1493,7 @@ mod tests {
         assert!(is_reserved_label_name("error"));
         assert!(is_reserved_label_name("version"));
         assert!(is_reserved_label_name("le"));
+        assert!(is_reserved_label_name("dependency"));
         assert!(is_reserved_label_name(TAG_OPERATION_TYPE));
         assert!(!is_reserved_label_name("deployment_profile"));
     }
@@ -1466,7 +1501,7 @@ mod tests {
     #[test]
     fn parse_metrics_labels_skips_reserved_and_colliding_names() {
         let labels = parse_metrics_labels(Some(
-            "operation=x,error=y,version=z,le=bucket,operation_type=w,__r=1,deployment_profile=kind-ci",
+            "operation=x,error=y,version=z,le=bucket,operation_type=w,dependency=v,__r=1,deployment_profile=kind-ci",
         ));
         assert_eq!(
             labels.get("deployment_profile").map(String::as_str),

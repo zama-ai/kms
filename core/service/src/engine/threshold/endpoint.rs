@@ -1,3 +1,4 @@
+use crate::engine::dependency_checks::{min_threshold, peer_quorum_status};
 use crate::engine::threshold::bandwidth_bench::run_bandwidth_benchmark;
 use crate::engine::threshold::threshold_kms::ThresholdKms;
 use crate::engine::threshold::traits::{
@@ -415,8 +416,7 @@ impl_endpoint! {
             for (context_id,health_check_session) in health_check_sessions {
                 let my_role = health_check_session.get_my_role().one_based() as u32;
                 let total_nodes = health_check_session.get_num_parties() as u32;
-                let min_nodes_for_healthy = (2 * total_nodes) / 3 + 1; // 2/3 majority + 1
-                let min_threshold = (total_nodes / 3) + 1; // Minimum threshold to be able to reconstruct anything
+                let min_threshold = min_threshold(total_nodes);
                 let health_check_results = health_check_session.run_healthcheck().await;
                 let mut peers_status = Vec::new();
                 let mut nodes_reachable = 1; //I am reachable
@@ -454,16 +454,7 @@ impl_endpoint! {
                     tracing::warn!("Health check failed for context {:?}", context_id);
                 }
 
-                 // Determine overall health status
-                let status = if nodes_reachable >= total_nodes {
-                    HealthStatus::Optimal.into() // HEALTH_STATUS_OPTIMAL - all nodes online and reachable
-                } else if nodes_reachable >= min_nodes_for_healthy {
-                    HealthStatus::Healthy.into() // HEALTH_STATUS_HEALTHY - sufficient 2/3 majority but not all nodes
-                } else if nodes_reachable > min_threshold {
-                    HealthStatus::Degraded.into() // HEALTH_STATUS_DEGRADED - above minimum threshold but below 2/3
-                } else {
-                    HealthStatus::Unhealthy.into() // HEALTH_STATUS_UNHEALTHY - insufficient nodes for operations
-                };
+                let status = peer_quorum_status(nodes_reachable, total_nodes).into();
 
                 let peers_from_context = PeersFromContext {
                     context_id: Some(context_id.into()),

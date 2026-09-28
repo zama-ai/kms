@@ -21,8 +21,8 @@
 |--------|-------------------------------------|-----------------|
 | **Optimal** | All 13 parties reachable | Normal operations |
 | **Healthy** | 9+ parties reachable | Monitor offline parties |
-| **Degraded** | 5-8 parties reachable | Check connectivity issues |
-| **Unhealthy** | < 5 parties reachable | Cannot perform threshold operations |
+| **Degraded** | 6-8 parties reachable | Check connectivity issues |
+| **Unhealthy** | < 6 parties reachable | Cannot perform threshold operations |
 
 ## KMS Core Metrics
 
@@ -171,6 +171,12 @@ these operations therefore work unchanged whether clients use the async or the s
 - **Description**: Memory used by KMS in bytes.
 - **Alarm**: If memory usage exceeds 85% of available memory.
 
+#### Metric Name: `kms_health_dependency_up`
+- **Type**: Gauge
+- **Labels**: `dependency` (see the dependency table under [Health Endpoints](#health-endpoints))
+- **Description**: Result of the last health check of a dependency: `1` when it passes, `0` when it fails.
+- **Alarm**: If the value is `0` for more than a few minutes. A check runs again 60 seconds after its last round ends.
+
 #### Metric Name: `kms_fhe_key_cache_size`
 - **Type**: Gauge
 - **Description**: Number of FHE key entries held in the in-memory crypto-material cache. Each entry can hold multi-GiB decompressed key material, so this gauge tracks the dominant driver of KMS memory usage.
@@ -257,7 +263,7 @@ curl http://localhost:<METRICS_PORT>/metrics
 # Health endpoints
 curl http://localhost:<METRICS_PORT>/liveness  # {"status":"alive"} or 503 {"status":"not_responding"}
 curl http://localhost:<METRICS_PORT>/ready     # {"status":"ready"} or 503 {"status":"not_ready"}
-curl http://localhost:<METRICS_PORT>/healthz   # {"status":"healthy"} or 503 {"status":"unhealthy"}
+curl http://localhost:<METRICS_PORT>/healthz   # {"status":"healthy","dependencies":{...}} or 503 {"status":"unhealthy","dependencies":{...}}
 curl http://localhost:<METRICS_PORT>/live      # Same response as /liveness
 curl http://localhost:<METRICS_PORT>/health    # Same response as /healthz
 
@@ -272,6 +278,18 @@ kms-health-check live --endpoint localhost:<GRPC_PORT>
 The KMS is live until a component reports a fault that only a restart can repair. An example is a stop of the core-to-core server outside a shutdown. The log line of the fault names the component. A slow, busy, or partly connected KMS stays live, because Kubernetes restarts a pod when its liveness probe fails.
 
 The KMS is ready when it is live, it finished its startup, and it did not start its shutdown. Readiness does not depend on the peers, on the MPC contexts, or on the key material. Kubernetes routes the peer traffic and the connector traffic only to ready pods, so such a dependency could cut off the node that must repair it.
+
+The KMS is healthy when it is ready and every dependency passed its last check. A background task checks the dependencies. Each check runs again 60 seconds after its last round ends, and the peer check runs apart from the storage checks, so a slow peer does not delay them. The `dependencies` object of `/healthz` gives `ok` or `fail` for each checked dependency, and the `kms_health_dependency_up` metric gives the same result. The log line of a failed check gives the cause. The dependency checks change neither liveness nor readiness.
+
+| Dependency | Mode | The check passes when |
+|---|---|---|
+| `public_storage` | All | The public storage answers an existence request within 10 seconds. |
+| `private_storage` | All | The private storage answers an existence request within 10 seconds. |
+| `backup_storage` | All, with a backup vault | The storage of the backup vault answers an existence request within 10 seconds. |
+| `mpc_context` | Threshold | The KMS knows at least one MPC context and one epoch. The context does not need to include this KMS. |
+| `peers` | Threshold | The newest MPC context that includes this KMS, the one with the largest context ID among them, is not in the `Unhealthy` state of [the 13-party network health status](#13-party-network-health-status). Older contexts are not checked. |
+
+A storage check sends no request when another task holds the storage lock for more than 10 seconds, for example during the upload of a large key. The dependency then keeps the result of its last check. After 3 such rounds in a row, the dependency fails, because a request that hangs also holds the lock.
 
 The Helm chart points the Kubernetes liveness probe at the `liveness` gRPC service, and the startup and readiness probes at the `readiness` gRPC service.
 

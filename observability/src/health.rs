@@ -7,9 +7,15 @@
 //! Liveness fails only when a component reports a fault that the process cannot recover from
 //! without a restart, because Kubernetes restarts the pod on a liveness failure. A restart drops the
 //! in-memory meta stores and every running protocol, so a slow or overloaded node stays live.
+//!
+//! The results of the dependency checks, such as storage reachability, change neither liveness nor
+//! readiness. They only change the overall health that `/healthz` and the
+//! `kms_health_dependency_up` metric report, for monitoring and alerts.
 
+use crate::metrics::METRICS;
+use std::collections::BTreeMap;
 use std::sync::{
-    Arc, OnceLock,
+    Arc, Mutex, OnceLock, PoisonError,
     atomic::{AtomicBool, Ordering},
 };
 use tonic_health::{
@@ -23,11 +29,12 @@ pub const LIVENESS_SERVICE: &str = "liveness";
 /// Name of the gRPC health service that reports readiness.
 pub const READINESS_SERVICE: &str = "readiness";
 
-/// Shared handle to the liveness and readiness of one KMS server.
+/// Shared handle to the liveness, readiness and overall health of one KMS server.
 ///
 /// Clones share the same state. A server is live until [`HealthState::report_fatal`] is called. It
 /// is ready when it is live, [`HealthState::mark_initialized`] was called, and
-/// [`HealthState::mark_shutting_down`] was not called.
+/// [`HealthState::mark_shutting_down`] was not called. It is healthy when it is ready and every
+/// dependency that [`HealthState::set_dependency`] recorded passed its last check.
 #[derive(Clone)]
 pub struct HealthState {
     inner: Arc<HealthInner>,
@@ -38,6 +45,7 @@ struct HealthInner {
     initialized: AtomicBool,
     shutting_down: AtomicBool,
     fatal_component: OnceLock<&'static str>,
+    dependencies: Mutex<BTreeMap<&'static str, bool>>,
     // Serializes the updates of the gRPC statuses, so that a slow update cannot overwrite a
     // later one with a stale status.
     publish_lock: tokio::sync::Mutex<()>,
@@ -53,6 +61,7 @@ impl HealthState {
                 initialized: AtomicBool::new(false),
                 shutting_down: AtomicBool::new(false),
                 fatal_component: OnceLock::new(),
+                dependencies: Mutex::new(BTreeMap::new()),
                 publish_lock: tokio::sync::Mutex::new(()),
             }),
         };
@@ -80,6 +89,44 @@ impl HealthState {
     /// Returns `true` after [`HealthState::mark_shutting_down`] was called.
     pub fn is_shutting_down(&self) -> bool {
         self.inner.shutting_down.load(Ordering::Acquire)
+    }
+
+    /// Returns `true` when the server is ready and every recorded dependency passed its last check.
+    pub fn is_healthy(&self) -> bool {
+        self.health_snapshot().0
+    }
+
+    /// Returns [`HealthState::is_healthy`] and the dependency results that the answer is based on,
+    /// from one read of the dependency results.
+    pub fn health_snapshot(&self) -> (bool, BTreeMap<&'static str, bool>) {
+        let dependencies = self.dependencies();
+        let healthy = self.is_ready() && dependencies.values().all(|healthy| *healthy);
+        (healthy, dependencies)
+    }
+
+    /// Returns the result of the last check of each dependency, by dependency name.
+    pub fn dependencies(&self) -> BTreeMap<&'static str, bool> {
+        self.lock_dependencies().clone()
+    }
+
+    /// Records the result of the last check of the dependency `name`.
+    ///
+    /// The caller logs the cause of a failed check. This function logs when a dependency recovers.
+    pub fn set_dependency(&self, name: &'static str, healthy: bool) {
+        let previous = self.lock_dependencies().insert(name, healthy);
+        METRICS.record_health_dependency(name, healthy);
+        if healthy && previous == Some(false) {
+            tracing::info!(dependency = name, "Health dependency check passes again");
+        }
+    }
+
+    // A panic while the lock is held cannot leave the map inconsistent, because every access
+    // is a single map operation. So a poisoned lock is safe to use.
+    fn lock_dependencies(&self) -> std::sync::MutexGuard<'_, BTreeMap<&'static str, bool>> {
+        self.inner
+            .dependencies
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
     }
 
     /// Records that the server finished its startup and accepts requests.
@@ -236,12 +283,82 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn clones_share_state() {
+    async fn failed_dependency_fails_health_but_not_readiness() {
         let (state, _service) = HealthState::new().await;
-        let clone = state.clone();
-        clone.mark_initialized().await;
+        state.mark_initialized().await;
+        assert!(state.is_healthy());
+
+        state.set_dependency("test_storage", true);
+        state.set_dependency("test_peers", false);
+        assert!(!state.is_healthy());
         assert!(state.is_ready());
+        assert!(state.is_live());
         assert_grpc(&state, true, true).await;
+        assert_eq!(
+            state.dependencies(),
+            BTreeMap::from([("test_peers", false), ("test_storage", true)])
+        );
+
+        state.set_dependency("test_peers", true);
+        assert!(state.is_healthy());
+    }
+
+    /// Returns the value of `kms_health_dependency_up` for `dependency`, or `None` without a sample.
+    fn dependency_gauge(dependency: &str) -> Option<f64> {
+        let family = prometheus::gather()
+            .into_iter()
+            .find(|family| family.name() == "kms_health_dependency_up")?;
+        let metric = family.get_metric().iter().find(|metric| {
+            metric
+                .get_label()
+                .iter()
+                .any(|label| label.name() == "dependency" && label.value() == dependency)
+        })?;
+        Some(metric.get_gauge().value())
+    }
+
+    #[tokio::test]
+    async fn set_dependency_updates_the_metric() {
+        let (state, _service) = HealthState::new().await;
+        // A name that no other test uses, because the metrics registry is global.
+        let dependency = "test_metric_dependency";
+        assert_eq!(dependency_gauge(dependency), None);
+
+        state.set_dependency(dependency, true);
+        assert_eq!(dependency_gauge(dependency), Some(1.0));
+        state.set_dependency(dependency, false);
+        assert_eq!(dependency_gauge(dependency), Some(0.0));
+    }
+
+    #[tokio::test]
+    async fn health_snapshot_matches_its_dependencies() {
+        let (state, _service) = HealthState::new().await;
+        state.mark_initialized().await;
+        assert_eq!(state.health_snapshot(), (true, BTreeMap::new()));
+
+        state.set_dependency("test_storage", false);
+        assert_eq!(
+            state.health_snapshot(),
+            (false, BTreeMap::from([("test_storage", false)]))
+        );
+
+        state.set_dependency("test_storage", true);
+        assert_eq!(
+            state.health_snapshot(),
+            (true, BTreeMap::from([("test_storage", true)]))
+        );
+    }
+
+    #[tokio::test]
+    async fn not_ready_state_is_not_healthy() {
+        let (state, _service) = HealthState::new().await;
+        state.set_dependency("test_storage", true);
+        assert!(!state.is_healthy());
+        state.mark_initialized().await;
+        assert!(state.is_healthy());
+        state.mark_shutting_down().await;
+        assert!(state.is_shutting_down());
+        assert!(!state.is_healthy());
     }
 
     #[tokio::test]

@@ -374,6 +374,23 @@ impl SessionMaker {
         .await;
     }
 
+    /// Registers a test context in which this party has role 1 and the parties are at the
+    /// addresses of `role_assignment`.
+    #[cfg(test)]
+    pub(crate) async fn add_test_context(
+        &self,
+        context_id: ContextId,
+        role_assignment: RoleAssignment<Role>,
+    ) {
+        self.add_context(
+            context_id,
+            Some(Role::indexed_from_one(1)),
+            role_assignment,
+            1,
+        )
+        .await;
+    }
+
     #[cfg(test)]
     pub(crate) fn four_party_dummy_session(
         prss_setup_z128: Option<PRSSSetup<ResiduePolyF4Z128>>,
@@ -449,6 +466,45 @@ impl SessionMaker {
             );
         }
         Ok(health_check_sessions)
+    }
+
+    // Returns a health check session for the newest context that I belong to, or `None` if I
+    // belong to no context.
+    async fn get_healthcheck_session_newest_context(
+        &self,
+    ) -> anyhow::Result<Option<(ContextId, HealthCheckSession<Role>)>> {
+        // The protocol config contract issues context IDs from a counter, and the gateway accepts
+        // only a larger ID for a new context. So the largest ID is the newest context. As in
+        // `get_healthcheck_session_all_contexts`, the read guard is released before the session
+        // is built.
+        let newest = {
+            let context_map_guard = self.context_map.read().await;
+            let mut newest: Option<(&ContextId, Role, &RoleAssignment<Role>)> = None;
+            for (context_id, context) in context_map_guard.iter() {
+                let Some(my_role) = context.my_role else {
+                    continue;
+                };
+                let is_newer = match &newest {
+                    Some((newest_id, _, _)) => context_id.as_bytes() > newest_id.as_bytes(),
+                    None => true,
+                };
+                if is_newer {
+                    newest = Some((context_id, my_role, &context.role_assignment));
+                }
+            }
+            newest.map(|(context_id, my_role, role_assignment)| {
+                (*context_id, my_role, role_assignment.clone())
+            })
+        };
+        let Some((context_id, my_role, role_assignment)) = newest else {
+            return Ok(None);
+        };
+
+        let nm = self.networking_manager.read().await;
+        let session = nm
+            .make_healthcheck_session(&role_assignment, my_role)
+            .await?;
+        Ok(Some((context_id, session)))
     }
 
     async fn get_healthcheck_session(
@@ -1099,6 +1155,16 @@ impl ImmutableSessionMaker {
         self.inner.active_sessions().await
     }
 
+    /// Returns the number of MPC contexts that the server knows.
+    pub(crate) async fn context_count(&self) -> usize {
+        self.inner.context_count().await
+    }
+
+    /// Returns the number of epochs that the server knows, over all MPC contexts.
+    pub(crate) async fn epoch_count(&self) -> usize {
+        self.inner.epoch_count().await
+    }
+
     /// Returns the number of inactive sessions.
     pub(crate) async fn inactive_sessions(&self) -> u64 {
         self.inner.inactive_sessions().await
@@ -1109,6 +1175,14 @@ impl ImmutableSessionMaker {
         &self,
     ) -> anyhow::Result<HashMap<ContextId, HealthCheckSession<Role>>> {
         self.inner.get_healthcheck_session_all_contexts().await
+    }
+
+    /// Returns a health check session for the newest context that this party belongs to, or `None`
+    /// if it belongs to no context.
+    pub(crate) async fn get_healthcheck_session_newest_context(
+        &self,
+    ) -> anyhow::Result<Option<(ContextId, HealthCheckSession<Role>)>> {
+        self.inner.get_healthcheck_session_newest_context().await
     }
 
     // Returns a health check session for the given context.
@@ -1179,12 +1253,64 @@ mod tests {
             &EpochId::new_random(&mut AesRng::seed_from_u64(5)),
             TaskRngs::insecure_seed_from_u64(6),
         );
+        // A context in which this party has no role gets no session.
+        let foreign_context = ContextId::new_random(&mut AesRng::seed_from_u64(9));
+        session_maker
+            .add_context(foreign_context, None, four_party_dummy_role_assignment(), 1)
+            .await;
         let sessions = session_maker
             .get_healthcheck_session_all_contexts()
             .await
             .unwrap();
         assert_eq!(sessions.len(), 1);
         let session = sessions.get(&*crate::consts::DEFAULT_MPC_CONTEXT).unwrap();
+        assert_eq!(session.get_num_parties(), 4);
+    }
+
+    /// Returns a context ID in the format of the protocol config contract: type byte 7, then the
+    /// counter.
+    fn counter_context_id(counter: u8) -> ContextId {
+        let mut bytes = [0u8; 32];
+        bytes[0] = 7;
+        bytes[31] = counter;
+        ContextId::from_bytes(bytes)
+    }
+
+    /// The newest context is the one with the largest ID among the contexts that this party
+    /// belongs to.
+    #[tokio::test]
+    async fn newest_healthcheck_session_is_largest_context_with_my_role() {
+        let session_maker = SessionMaker::empty_dummy_session(TaskRngs::insecure_seed_from_u64(10));
+        assert!(
+            session_maker
+                .get_healthcheck_session_newest_context()
+                .await
+                .unwrap()
+                .is_none()
+        );
+
+        let assignment = four_party_dummy_role_assignment();
+        let role = Some(Role::indexed_from_one(1));
+        session_maker
+            .add_context(counter_context_id(2), role, assignment.clone(), 1)
+            .await;
+        session_maker
+            .add_context(counter_context_id(3), role, assignment.clone(), 1)
+            .await;
+        session_maker
+            .add_context(counter_context_id(1), role, assignment.clone(), 1)
+            .await;
+        // The largest context ID, but this party has no role in it.
+        session_maker
+            .add_context(counter_context_id(4), None, assignment, 1)
+            .await;
+
+        let (context_id, session) = session_maker
+            .get_healthcheck_session_newest_context()
+            .await
+            .unwrap()
+            .expect("this party belongs to three contexts");
+        assert_eq!(context_id, counter_context_id(3));
         assert_eq!(session.get_num_parties(), 4);
     }
 
