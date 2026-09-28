@@ -164,17 +164,24 @@ pub(crate) async fn new_epoch_with_reshare_and_crs(
 
         let (client_key, compressed_keyset, public_key) = keyset.get_compressed();
 
-        // compute the key digest for compressed keyset
+        // compute the key digests for compressed keyset and its public key
         let compressed_keyset_digest =
             hash_versioned(&DSEP_PUBDATA_KEY, &compressed_keyset).unwrap();
+        let public_key_digest = hash_versioned(&DSEP_PUBDATA_KEY, &public_key).unwrap();
         keys_info.push(KeyInfo {
             key_id: Some((*key_req_id).into()),
             preproc_id: Some((*preproc_req_id).into()),
             key_parameters: parameters.into(),
-            key_digests: vec![kms_grpc::kms::v1::KeyDigest {
-                key_type: PubDataType::CompressedXofKeySet.to_string(),
-                digest: compressed_keyset_digest,
-            }],
+            key_digests: vec![
+                kms_grpc::kms::v1::KeyDigest {
+                    key_type: PubDataType::CompressedXofKeySet.to_string(),
+                    digest: compressed_keyset_digest,
+                },
+                kms_grpc::kms::v1::KeyDigest {
+                    key_type: PubDataType::PublicKey.to_string(),
+                    digest: public_key_digest,
+                },
+            ],
         });
         keysets.push((
             key_req_id,

@@ -3,7 +3,7 @@ use crate::{
         context::ContextInfo,
         utils::{
             MetricedError, verify_compressed_key_digest_from_bytes, verify_crs_digest_from_bytes,
-            verify_key_digest_from_bytes,
+            verify_key_digest_from_bytes, verify_public_key_digest_from_bytes,
         },
     },
     vault::storage::{
@@ -115,17 +115,32 @@ async fn fetch_public_fhe_materials_from_peers<
             let expected_compressed_digest = key_digests
                 .get(&PubDataType::CompressedXofKeySet)
                 .ok_or_else(|| anyhow::anyhow!("missing digest for compressed xof keyset"))?;
+            let expected_public_key_digest = key_digests
+                .get(&PubDataType::PublicKey)
+                .ok_or_else(|| anyhow::anyhow!("missing digest for public key"))?;
 
             let compressed_keyset_bytes = pub_storage
                 .load_bytes(key_id, &PubDataType::CompressedXofKeySet.to_string())
                 .await;
 
-            match compressed_keyset_bytes {
-                Ok(compressed_keyset_bytes) => {
+            // The public key is not needed for resharing, but its digest is signed for the new
+            // epoch, so it must match the bytes in storage.
+            let public_key_bytes = pub_storage
+                .load_bytes(key_id, &PubDataType::PublicKey.to_string())
+                .await;
+
+            match (compressed_keyset_bytes, public_key_bytes) {
+                (Ok(compressed_keyset_bytes), Ok(public_key_bytes)) => {
                     match verify_compressed_key_digest_from_bytes(
                         &compressed_keyset_bytes,
                         expected_compressed_digest,
-                    ) {
+                    )
+                    .and_then(|()| {
+                        verify_public_key_digest_from_bytes(
+                            &public_key_bytes,
+                            expected_public_key_digest,
+                        )
+                    }) {
                         Ok(()) => {
                             let compressed_keyset: CompressedXofKeySet =
                                 tfhe::safe_serialization::safe_deserialize(
@@ -150,7 +165,7 @@ async fn fetch_public_fhe_materials_from_peers<
                         }
                     }
                 }
-                Err(e) => {
+                (Err(e), _) | (_, Err(e)) => {
                     let msg = format!(
                         "{} from peer {}: {e:?}",
                         ERR_FAILED_TO_FETCH_PUBLIC_MATERIALS, node.party_id
@@ -279,22 +294,46 @@ pub(crate) async fn get_verified_fhe_public_materials<
                     tonic::Code::Internal,
                 )
             })?;
+        let expected_public_key_digest =
+            key_digests.get(&PubDataType::PublicKey).ok_or_else(|| {
+                MetricedError::new(
+                    OP_NEW_EPOCH,
+                    Some(*request_id),
+                    anyhow::anyhow!("missing digest for public key"),
+                    tonic::Code::Internal,
+                )
+            })?;
 
-        // Load raw bytes from own public storage
-        let compressed_keyset_bytes_res: anyhow::Result<Vec<u8>> = {
+        // Load raw bytes from own public storage.
+        // The public key is not needed for resharing, but its digest is signed for the new
+        // epoch, so it must match the bytes in storage.
+        let (compressed_keyset_bytes_res, public_key_bytes_res): (
+            anyhow::Result<Vec<u8>>,
+            anyhow::Result<Vec<u8>>,
+        ) = {
             let pub_storage = crypto_storage.inner.get_public_storage();
             let guard_storage = pub_storage.lock().await;
-            guard_storage
+            let compressed_keyset_bytes = guard_storage
                 .load_bytes(key_id, &PubDataType::CompressedXofKeySet.to_string())
-                .await
+                .await;
+            let public_key_bytes = guard_storage
+                .load_bytes(key_id, &PubDataType::PublicKey.to_string())
+                .await;
+            (compressed_keyset_bytes, public_key_bytes)
         };
 
-        match compressed_keyset_bytes_res {
-            Ok(compressed_keyset_bytes) => {
+        match (compressed_keyset_bytes_res, public_key_bytes_res) {
+            (Ok(compressed_keyset_bytes), Ok(public_key_bytes)) => {
                 verify_compressed_key_digest_from_bytes(
                     &compressed_keyset_bytes,
                     expected_compressed_digest,
                 )
+                .and_then(|()| {
+                    verify_public_key_digest_from_bytes(
+                        &public_key_bytes,
+                        expected_public_key_digest,
+                    )
+                })
                 .map_err(|e| {
                     MetricedError::new(
                         OP_NEW_EPOCH,
@@ -320,7 +359,7 @@ pub(crate) async fn get_verified_fhe_public_materials<
 
                 Ok(VerifiedPublicMaterial::Compressed(compressed_keyset))
             }
-            Err(_) => {
+            _ => {
                 // If local retrieval fails, attempt to fetch from s3 of another party
                 fetch_public_fhe_materials_from_peers::<_, _, G, R>(
                     crypto_storage,
@@ -999,7 +1038,9 @@ mod tests {
 
     // ==================== Compressed Key Tests ====================
     use super::VerifiedPublicMaterial;
-    use crate::engine::utils::ERR_COMPRESSED_KEYSET_DIGEST_MISMATCH;
+    use crate::engine::utils::{
+        ERR_COMPRESSED_KEYSET_DIGEST_MISMATCH, ERR_PUBLIC_KEY_DIGEST_MISMATCH,
+    };
     use tfhe::core_crypto::prelude::NormalizedHammingWeightBound;
     use tfhe::xof_key_set::CompressedXofKeySet;
 
@@ -1011,9 +1052,9 @@ mod tests {
         ThresholdCryptoMaterialStorage<RamStorage, RamStorage>,
         HashMap<PubDataType, Vec<u8>>,
         DummyReadOnlyS3StorageGetter,
-        CompressedXofKeySet,
+        (CompressedXofKeySet, CompactPublicKey),
     ) {
-        // create memory storage that contains a compressed keyset
+        // create memory storage that contains a compressed keyset and its public key
         let mut ram_storage = RamStorage::new();
 
         // generate the compressed keyset using to_tfhe_config() which includes
@@ -1030,21 +1071,21 @@ mod tests {
             CompressedXofKeySet::generate(config, vec![42, 43, 44, 45], 128, max_norm_hwt, tag)
                 .unwrap();
 
-        // generate digest
+        let public_key = compressed_keyset.decompress().unwrap().into_raw_parts().0;
+
+        // generate digests
         let compressed_keyset_digest =
             hash_versioned(&crate::engine::base::DSEP_PUBDATA_KEY, &compressed_keyset).unwrap();
-        let key_digests: HashMap<PubDataType, Vec<u8>> =
-            HashMap::from_iter([(PubDataType::CompressedXofKeySet, compressed_keyset_digest)]);
+        let public_key_digest =
+            hash_versioned(&crate::engine::base::DSEP_PUBDATA_KEY, &public_key).unwrap();
+        let key_digests: HashMap<PubDataType, Vec<u8>> = HashMap::from_iter([
+            (PubDataType::CompressedXofKeySet, compressed_keyset_digest),
+            (PubDataType::PublicKey, public_key_digest),
+        ]);
 
-        // store the compressed keyset in ram storage
-        store_versioned_at_request_id(
-            &mut ram_storage,
-            &key_id,
-            &compressed_keyset,
-            &PubDataType::CompressedXofKeySet.to_string(),
-        )
-        .await
-        .unwrap();
+        // store the compressed keyset and the public key in ram storage
+        store_compressed_materials(&mut ram_storage, &key_id, &compressed_keyset, &public_key)
+            .await;
 
         // create dummy crypto storage
         let crypto_storage = ThresholdCryptoMaterialStorage::new(
@@ -1113,8 +1154,32 @@ mod tests {
             crypto_storage,
             key_digests,
             ro_storage_getter,
-            compressed_keyset,
+            (compressed_keyset, public_key),
         )
+    }
+
+    async fn store_compressed_materials(
+        storage: &mut RamStorage,
+        key_id: &RequestId,
+        compressed_keyset: &CompressedXofKeySet,
+        public_key: &CompactPublicKey,
+    ) {
+        store_versioned_at_request_id(
+            storage,
+            key_id,
+            compressed_keyset,
+            &PubDataType::CompressedXofKeySet.to_string(),
+        )
+        .await
+        .unwrap();
+        store_versioned_at_request_id(
+            storage,
+            key_id,
+            public_key,
+            &PubDataType::PublicKey.to_string(),
+        )
+        .await
+        .unwrap();
     }
 
     #[tokio::test]
@@ -1148,12 +1213,12 @@ mod tests {
         let mut rng = AesRng::seed_from_u64(2333);
         let key_id = RequestId::new_random(&mut rng);
         let context_id = ContextId::new_random(&mut rng);
-        let (crypto_storage, _key_digests, ro_storage_getter, _) =
+        let (crypto_storage, key_digests, ro_storage_getter, _) =
             setup_public_materials_test_compressed(key_id, context_id, false).await;
 
         // use wrong digests to trigger error
-        let wrong_key_digests: HashMap<PubDataType, Vec<u8>> =
-            HashMap::from_iter([(PubDataType::CompressedXofKeySet, vec![0, 1, 2, 4])]);
+        let mut wrong_key_digests = key_digests.clone();
+        wrong_key_digests.insert(PubDataType::CompressedXofKeySet, vec![0, 1, 2, 4]);
         let err = fetch_public_fhe_materials_from_peers::<_, _, _, DummyReadOnlyS3Storage>(
             &crypto_storage,
             &key_id,
@@ -1175,21 +1240,20 @@ mod tests {
         let req_id = RequestId::new_random(&mut rng);
         let key_id = RequestId::new_random(&mut rng);
         let context_id = ContextId::new_random(&mut rng);
-        let (crypto_storage, key_digests, ro_storage_getter, compressed_keyset) =
+        let (crypto_storage, key_digests, ro_storage_getter, (compressed_keyset, public_key)) =
             setup_public_materials_test_compressed(key_id, context_id, false).await;
 
-        // store compressed keyset in own public storage
+        // store compressed keyset and public key in own public storage
         let public_storage = crypto_storage.inner.get_public_storage();
         {
             let mut guard_storage = public_storage.lock().await;
-            store_versioned_at_request_id(
-                &mut (*guard_storage),
+            store_compressed_materials(
+                &mut guard_storage,
                 &key_id,
                 &compressed_keyset,
-                &PubDataType::CompressedXofKeySet.to_string(),
+                &public_key,
             )
-            .await
-            .unwrap();
+            .await;
         }
 
         let verified_material = get_verified_fhe_public_materials(
@@ -1217,25 +1281,24 @@ mod tests {
         let req_id = RequestId::new_random(&mut rng);
         let key_id = RequestId::new_random(&mut rng);
         let context_id = ContextId::new_random(&mut rng);
-        let (crypto_storage, _key_digests, ro_storage_getter, compressed_keyset) =
+        let (crypto_storage, key_digests, ro_storage_getter, (compressed_keyset, public_key)) =
             setup_public_materials_test_compressed(key_id, context_id, false).await;
 
-        // store compressed keyset in own public storage
+        // store compressed keyset and public key in own public storage
         let public_storage = crypto_storage.inner.get_public_storage();
         {
             let mut guard_storage = public_storage.lock().await;
-            store_versioned_at_request_id(
-                &mut (*guard_storage),
+            store_compressed_materials(
+                &mut guard_storage,
                 &key_id,
                 &compressed_keyset,
-                &PubDataType::CompressedXofKeySet.to_string(),
+                &public_key,
             )
-            .await
-            .unwrap();
+            .await;
         }
 
-        let bad_key_digests: HashMap<PubDataType, Vec<u8>> =
-            HashMap::from_iter([(PubDataType::CompressedXofKeySet, vec![9, 8, 7, 6])]);
+        let mut bad_key_digests = key_digests.clone();
+        bad_key_digests.insert(PubDataType::CompressedXofKeySet, vec![9, 8, 7, 6]);
         let err = get_verified_fhe_public_materials(
             &crypto_storage,
             &req_id,
@@ -1246,10 +1309,79 @@ mod tests {
         )
         .await
         .unwrap_err();
-
         assert!(format!("{err:?}").contains(ERR_COMPRESSED_KEYSET_DIGEST_MISMATCH));
+
+        // The public key digest is signed for the new epoch, so it must be verified too.
+        let mut bad_key_digests = key_digests.clone();
+        bad_key_digests.insert(PubDataType::PublicKey, vec![9, 8, 7, 6]);
+        let err = get_verified_fhe_public_materials(
+            &crypto_storage,
+            &req_id,
+            &key_id,
+            &context_id,
+            &bad_key_digests,
+            &ro_storage_getter,
+        )
+        .await
+        .unwrap_err();
+        assert!(format!("{err:?}").contains(ERR_PUBLIC_KEY_DIGEST_MISMATCH));
 
         // we should've used the public storage directly, so the counter here should be 0
         assert_eq!(*ro_storage_getter.counter.borrow(), 0);
+    }
+
+    #[tokio::test]
+    async fn missing_public_key_digest_get_verified_public_materials_compressed() {
+        let mut rng = AesRng::seed_from_u64(2335);
+        let req_id = RequestId::new_random(&mut rng);
+        let key_id = RequestId::new_random(&mut rng);
+        let context_id = ContextId::new_random(&mut rng);
+        let (crypto_storage, mut key_digests, ro_storage_getter, _) =
+            setup_public_materials_test_compressed(key_id, context_id, false).await;
+        key_digests.remove(&PubDataType::PublicKey);
+
+        let err = get_verified_fhe_public_materials(
+            &crypto_storage,
+            &req_id,
+            &key_id,
+            &context_id,
+            &key_digests,
+            &ro_storage_getter,
+        )
+        .await
+        .unwrap_err();
+        assert!(format!("{err:?}").contains("missing digest for public key"));
+
+        let err = fetch_public_fhe_materials_from_peers::<_, _, _, DummyReadOnlyS3Storage>(
+            &crypto_storage,
+            &key_id,
+            &context_id,
+            &key_digests,
+            &ro_storage_getter,
+        )
+        .await
+        .unwrap_err();
+        assert!(err.to_string().contains("missing digest for public key"));
+    }
+
+    #[tokio::test]
+    async fn wrong_public_key_fetch_public_materials_from_peers_compressed() {
+        let mut rng = AesRng::seed_from_u64(2336);
+        let key_id = RequestId::new_random(&mut rng);
+        let context_id = ContextId::new_random(&mut rng);
+        let (crypto_storage, mut key_digests, ro_storage_getter, _) =
+            setup_public_materials_test_compressed(key_id, context_id, false).await;
+        key_digests.insert(PubDataType::PublicKey, vec![0, 1, 2, 4]);
+
+        let err = fetch_public_fhe_materials_from_peers::<_, _, _, DummyReadOnlyS3Storage>(
+            &crypto_storage,
+            &key_id,
+            &context_id,
+            &key_digests,
+            &ro_storage_getter,
+        )
+        .await
+        .unwrap_err();
+        assert!(err.to_string().contains(ERR_PUBLIC_KEY_DIGEST_MISMATCH));
     }
 }

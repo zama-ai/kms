@@ -50,16 +50,28 @@ impl PreviousEpochParameters {
                         },
                     ]
                 }
-                DigestKeySet::CompressedKeySet(xof_key_digest) => vec![KeyDigest {
-                    key_type: PubDataType::CompressedXofKeySet.to_string(),
-                    digest: hex::decode(xof_key_digest).map_err(|e| {
-                        anyhow::anyhow!(
-                            "Unable to decode the provided xof key digest {:?}: {:?}",
-                            xof_key_digest,
-                            e
-                        )
-                    })?,
-                }],
+                DigestKeySet::CompressedKeySet(xof_key_digest, public_key_digest) => vec![
+                    KeyDigest {
+                        key_type: PubDataType::CompressedXofKeySet.to_string(),
+                        digest: hex::decode(xof_key_digest).map_err(|e| {
+                            anyhow::anyhow!(
+                                "Unable to decode the provided xof key digest {:?}: {:?}",
+                                xof_key_digest,
+                                e
+                            )
+                        })?,
+                    },
+                    KeyDigest {
+                        key_type: PubDataType::PublicKey.to_string(),
+                        digest: hex::decode(public_key_digest).map_err(|e| {
+                            anyhow::anyhow!(
+                                "Unable to decode the provided public key digest {:?}: {:?}",
+                                public_key_digest,
+                                e
+                            )
+                        })?,
+                    },
+                ],
             };
 
             keys_info.push(KeyInfo {
