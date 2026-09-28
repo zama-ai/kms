@@ -104,7 +104,7 @@ impl<P: MlDsaParams> PartialEq for MlDsaVerfKey<P> {
 
 impl<P: MlDsaParams> Hash for MlDsaVerfKey<P> {
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
-        self.0.encode().as_ref().hash(state);
+        self.0.encode().as_slice().hash(state);
     }
 }
 
