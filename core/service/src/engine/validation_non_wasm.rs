@@ -1301,7 +1301,7 @@ mod tests {
 
         // ciphertexts are not directly verified except the length
         let ciphertexts = vec![TypedCiphertext {
-            ciphertext: vec![],
+            ciphertext: vec![].into(),
             fhe_type: 0,
             external_handle: vec![],
             ciphertext_format: 0,
@@ -1428,7 +1428,7 @@ mod tests {
 
         // ciphertexts are not directly verified except the length
         let ciphertexts = vec![TypedCiphertext {
-            ciphertext: vec![],
+            ciphertext: vec![].into(),
             fhe_type: 0,
             external_handle: vec![],
             ciphertext_format: 0,
@@ -1629,7 +1629,7 @@ mod tests {
         let key_id = derive_request_id("key_id").unwrap();
 
         let typed_ciphertext = TypedCiphertext {
-            ciphertext,
+            ciphertext: ciphertext.into(),
             fhe_type: tfhe::FheTypes::Uint4 as i32,
             ciphertext_format: 0,
             external_handle: vec![123],
@@ -2001,7 +2001,7 @@ mod tests {
 
         let request_id = Some(derive_request_id("PublicDecryptionRequest").unwrap().into());
         let ciphertexts = vec![TypedCiphertext {
-            ciphertext: vec![1, 2, 3, 4],
+            ciphertext: vec![1, 2, 3, 4].into(),
             fhe_type: tfhe::FheTypes::Uint8 as i32,
             external_handle: vec![1, 2, 3, 4],
             ciphertext_format: 1,
@@ -2093,7 +2093,7 @@ mod tests {
                 signing_schemes: vec![],
                 request_id: Some(derive_request_id("PublicDecryptionRequest").unwrap().into()),
                 ciphertexts: vec![TypedCiphertext {
-                    ciphertext: vec![1, 2, 3, 4],
+                    ciphertext: vec![1, 2, 3, 4].into(),
                     fhe_type: 3, // we change the fhe_type so it's the wrong request
                     external_handle: vec![1, 2, 3, 4],
                     ciphertext_format: 1,
@@ -2144,7 +2144,7 @@ mod tests {
                         .into(),
                 ),
                 ciphertexts: vec![TypedCiphertext {
-                    ciphertext: vec![1, 2, 3, 4],
+                    ciphertext: vec![1, 2, 3, 4].into(),
                     fhe_type: tfhe::FheTypes::Uint8 as i32,
                     external_handle: vec![1, 2, 3, 4],
                     ciphertext_format: 1,

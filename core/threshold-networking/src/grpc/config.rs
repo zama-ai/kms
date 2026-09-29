@@ -1,15 +1,16 @@
 //! Core-to-core network configuration and its default-resolving accessors.
 
 use crate::constants::{
-    DISCARD_INACTIVE_SESSION_INTERVAL_SECS, INITIAL_INTERVAL_MS, MAX_BUFFERED_FUTURE_MSGS,
-    MAX_ELAPSED_TIME, MAX_EN_DECODE_MESSAGE_SIZE, MAX_FUTURE_ROUNDS, MAX_INTERVAL,
-    MAX_OPENED_INACTIVE_SESSIONS_PER_PARTY, MAX_WAITING_TIME_MESSAGE_QUEUE, MESSAGE_LIMIT,
-    MULTIPLIER, NETWORK_TIMEOUT_BK, NETWORK_TIMEOUT_BK_SNS, NETWORK_TIMEOUT_LONG,
-    SESSION_CLEANUP_INTERVAL_SECS, SESSION_STATUS_UPDATE_INTERVAL_SECS,
+    DISCARD_INACTIVE_SESSION_INTERVAL_SECS, INITIAL_INTERVAL_MS, KEEPALIVE_INTERVAL,
+    KEEPALIVE_TIMEOUT, MAX_BUFFERED_FUTURE_MSGS, MAX_ELAPSED_TIME, MAX_EN_DECODE_MESSAGE_SIZE,
+    MAX_FUTURE_ROUNDS, MAX_INTERVAL, MAX_OPENED_INACTIVE_SESSIONS_PER_PARTY,
+    MAX_WAITING_TIME_MESSAGE_QUEUE, MESSAGE_LIMIT, MULTIPLIER, NETWORK_TIMEOUT_BK,
+    NETWORK_TIMEOUT_BK_SNS, NETWORK_TIMEOUT_LONG, SESSION_CLEANUP_INTERVAL_SECS,
+    SESSION_STATUS_UPDATE_INTERVAL_SECS,
 };
 use serde::{Deserialize, Serialize};
 use tokio::time::Duration;
-use validator::Validate;
+use validator::{Validate, ValidationError};
 
 /// Network configuration for core-to-core communication.
 ///
@@ -24,6 +25,7 @@ use validator::Validate;
 /// If minor secrets needs to be added, then ensure fields are annotated with `#[serde(skip_serializing)]` to avoid accidentally diclosing them.
 #[derive(Serialize, Deserialize, Clone, Copy, Debug, Default, Validate)]
 #[serde(deny_unknown_fields)]
+#[validate(schema(function = validate_keepalive_window))]
 pub struct CoreToCoreNetworkConfig {
     /// Maximum number of messages that can be buffered in the message queue.
     #[validate(range(min = 1))]
@@ -78,6 +80,31 @@ pub struct CoreToCoreNetworkConfig {
     /// memory against a peer flooding many distinct future round numbers.
     /// Should be `>= 1` to tolerate any reordering.
     pub max_buffered_future_msgs: Option<u64>,
+    /// Interval in seconds between HTTP/2 keepalive pings on the channel to each peer.
+    #[validate(range(min = 1))]
+    pub keepalive_interval_secs: Option<u64>,
+    /// Time in seconds to wait for the reply to a keepalive ping before the connection to a peer
+    /// closes.
+    #[validate(range(min = 1))]
+    pub keepalive_timeout_secs: Option<u64>,
+}
+
+fn validate_keepalive_window(conf: &CoreToCoreNetworkConfig) -> Result<(), ValidationError> {
+    let keepalive_window = conf
+        .get_keepalive_interval()
+        .checked_add(conf.get_keepalive_timeout())
+        .ok_or_else(|| ValidationError::new("keepalive duration overflow"))?;
+
+    if conf
+        .get_max_elapsed_time()
+        .is_some_and(|max_elapsed_time| max_elapsed_time > keepalive_window)
+    {
+        return Ok(());
+    }
+
+    Err(ValidationError::new(
+        "max_elapsed_time must be greater than keepalive_interval_secs + keepalive_timeout_secs",
+    ))
 }
 
 impl CoreToCoreNetworkConfig {
@@ -180,5 +207,68 @@ impl CoreToCoreNetworkConfig {
         self.max_future_rounds
             .map(|v| v as usize)
             .unwrap_or(MAX_FUTURE_ROUNDS)
+    }
+
+    /// Returns the interval between HTTP/2 keepalive pings on the channel to each peer.
+    pub fn get_keepalive_interval(&self) -> Duration {
+        self.keepalive_interval_secs
+            .map(Duration::from_secs)
+            .unwrap_or(KEEPALIVE_INTERVAL)
+    }
+
+    /// Returns how long to wait for the reply to a keepalive ping before the connection to a
+    /// peer closes.
+    pub fn get_keepalive_timeout(&self) -> Duration {
+        self.keepalive_timeout_secs
+            .map(Duration::from_secs)
+            .unwrap_or(KEEPALIVE_TIMEOUT)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn keepalive_uses_defaults_when_unset() {
+        let conf = CoreToCoreNetworkConfig::default();
+        assert_eq!(conf.get_keepalive_interval(), KEEPALIVE_INTERVAL);
+        assert_eq!(conf.get_keepalive_timeout(), KEEPALIVE_TIMEOUT);
+    }
+
+    #[test]
+    fn keepalive_uses_configured_values() {
+        let conf = CoreToCoreNetworkConfig {
+            keepalive_interval_secs: Some(3),
+            keepalive_timeout_secs: Some(7),
+            ..Default::default()
+        };
+        assert_eq!(conf.get_keepalive_interval(), Duration::from_secs(3));
+        assert_eq!(conf.get_keepalive_timeout(), Duration::from_secs(7));
+    }
+
+    #[test]
+    fn keepalive_rejects_zero() {
+        let conf = CoreToCoreNetworkConfig {
+            keepalive_interval_secs: Some(0),
+            keepalive_timeout_secs: Some(0),
+            ..Default::default()
+        };
+        let errors = conf.validate().unwrap_err();
+        let fields = errors.field_errors();
+        assert!(fields.contains_key("keepalive_interval_secs"));
+        assert!(fields.contains_key("keepalive_timeout_secs"));
+    }
+
+    #[test]
+    fn keepalive_rejects_window_that_exceeds_max_elapsed_time() {
+        let conf = CoreToCoreNetworkConfig {
+            max_elapsed_time: Some(4),
+            keepalive_interval_secs: Some(1),
+            keepalive_timeout_secs: Some(3),
+            ..Default::default()
+        };
+
+        assert!(conf.validate().is_err());
     }
 }

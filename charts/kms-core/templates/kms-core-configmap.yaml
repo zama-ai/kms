@@ -1,6 +1,16 @@
 {{- if or .Values.kmsCore.enabled .Values.kmsGenCertAndKeys.enabled -}}
 {{- $kmsCoreName := include "kmsCoreName" . }}
 {{- $peersIDList := untilStep (include "kmsPeersStartID" . | int) (.Values.kmsPeers.count | add1 | int) 1  }}
+{{- if .Values.kmsCore.thresholdMode.enabled }}
+{{- $partyCount := int .Values.kmsPeers.count }}
+{{- if .Values.kmsCore.thresholdMode.peersList }}
+{{- $partyCount = len .Values.kmsCore.thresholdMode.peersList }}
+{{- end }}
+{{- $expectedPartyCount := add (mul 3 (int .Values.kmsCore.thresholdMode.thresholdValue)) 1 }}
+{{- if ne (int $partyCount) (int $expectedPartyCount) }}
+{{- fail (printf "threshold mode requires 3*t+1 parties: thresholdValue=%d requires %d parties, got %d" (int .Values.kmsCore.thresholdMode.thresholdValue) (int $expectedPartyCount) (int $partyCount)) }}
+{{- end }}
+{{- end }}
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -172,7 +182,7 @@ data:
         {{- range $i := $peersIDList }}
     [[threshold.peers]]
     party_id = {{ int $i }}
-    mpc_identity = {{ .host | quote }}
+    mpc_identity = {{ (printf "%s-%d" $kmsCoreName $i) | quote }}
     address = {{ (printf "%s-%d" $kmsCoreName $i) | quote }}
     port = {{ int $.Values.kmsCore.ports.peer }}
         {{- end }}

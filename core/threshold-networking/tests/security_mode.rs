@@ -77,7 +77,10 @@ mod secure_requests {
         .unwrap();
 
         let error = client()
-            .send_value(proto::SendValueRequest { tag, value: vec![] })
+            .send_value(proto::SendValueRequest {
+                tag: tag.into(),
+                value: Default::default(),
+            })
             .await
             .unwrap_err();
 

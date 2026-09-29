@@ -849,7 +849,6 @@ where
         _init: PhantomData,
         _reshare: PhantomData,
     };
-    let slow_events = Arc::new(Mutex::new(HashMap::new()));
 
     let user_decryptor = RealUserDecryptor {
         base_kms: base_kms.new_instance(),
@@ -880,7 +879,7 @@ where
         dkg_pubinfo_meta_store,
         session_maker: immutable_session_maker.clone(),
         tracker: Arc::clone(&tracker),
-        ongoing: Arc::clone(&slow_events),
+        ongoing: Arc::new(Mutex::new(HashMap::new())),
         rate_limiter: rate_limiter.clone(),
         _kg: PhantomData,
         serial_lock: Arc::new(Mutex::new(())),
@@ -896,7 +895,7 @@ where
         preproc_factory,
         num_sessions_preproc,
         tracker: Arc::clone(&tracker),
-        ongoing: Arc::clone(&slow_events),
+        ongoing: Arc::new(Mutex::new(HashMap::new())),
         rate_limiter: rate_limiter.clone(),
         _producer_factory: PhantomData,
     };
@@ -907,7 +906,7 @@ where
         crs_meta_store,
         session_maker: immutable_session_maker.clone(),
         tracker: Arc::clone(&tracker),
-        ongoing: Arc::clone(&slow_events),
+        ongoing: Arc::new(Mutex::new(HashMap::new())),
         rate_limiter: rate_limiter.clone(),
         _ceremony: PhantomData,
     };
@@ -1313,5 +1312,47 @@ mod tests {
             v2_bytes.len(),
             v3_bytes.len()
         );
+    }
+
+    /// An abort looks up the ID in its own service's map only, so the maps must be distinct.
+    #[tokio::test]
+    async fn services_have_separate_ongoing_maps() {
+        use crate::{
+            conf::init_conf, cryptography::signatures::gen_sig_keys,
+            engine::rng_source::test_rng_source, vault::storage::ram::RamStorage,
+        };
+
+        let mut config: CoreConfig =
+            init_conf(&format!("{}/config/default_1", env!("CARGO_MANIFEST_DIR"))).unwrap();
+        // No peers, so no default context to seed.
+        config.threshold.as_mut().unwrap().peers = None;
+        let (verf_key, _) = gen_sig_keys(&mut AesRng::seed_from_u64(1));
+        // Without a signing key, the constructor skips the storage checks.
+        let base_kms = BaseKmsStruct::new_no_signing_key(
+            kms_grpc::rpc_types::KMSType::Threshold,
+            verf_key,
+            test_rng_source(),
+        );
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let (kms, _, _) = new_real_threshold_kms(
+            config,
+            RamStorage::new(),
+            RamStorage::new(),
+            None,
+            None,
+            listener,
+            base_kms,
+            None,
+            std::future::pending(),
+        )
+        .await
+        .unwrap();
+
+        let key_gen = &kms.key_generator.ongoing;
+        let preproc = &kms.keygen_preprocessor.ongoing;
+        let crs_gen = &kms.crs_generator.ongoing;
+        assert!(!Arc::ptr_eq(key_gen, preproc));
+        assert!(!Arc::ptr_eq(key_gen, crs_gen));
+        assert!(!Arc::ptr_eq(preproc, crs_gen));
     }
 }
