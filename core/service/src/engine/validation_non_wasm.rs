@@ -2449,53 +2449,75 @@ mod tests {
         let no_request_ctx = ctx_for(None);
         assert!(!verify(&no_request_ctx, &extra_data));
 
-        // An entry of a scheme nobody asked for carries no weight either way: it
-        // neither rescues a response that is missing a requested scheme, nor sinks
-        // one that carries every requested scheme.
+        // A response signed under a superset of the request is accepted: the
+        // post-quantum entry is checked against the set the response presents,
+        // and the entry nobody asked for is not checked at all.
+        let superset = [SigningSchemeType::Ed25519, scheme];
+        let superset_signatures: Vec<TypedSignature> = sign_result_entries(
+            &identity,
+            &superset,
+            &DSEP_PUBLIC_DECRYPTION,
+            &[0u8; 32],
+            &signed,
+        )
+        .unwrap()
+        .iter()
+        .map(TypedSignature::from)
+        .collect();
+        let verify_list = |ctx: &PublicDecTrustedValidationContext, list: &[TypedSignature]| {
+            verify_public_decrypt_signatures(ctx, &payload, 1, &vk, &[], &[], list, &extra_data)
+        };
+        assert!(verify_list(&pq_ctx, &superset_signatures));
+
+        // So is the same response for a verifier that asked for the whole superset
+        // and holds a key for each of its schemes.
+        let superset_keys = HashMap::from([(
+            1u32,
+            VerfKeySet::from_identity(&identity, &superset).unwrap(),
+        )]);
+        let superset_request = request_for(vec![
+            kms_grpc::kms::v1::SigningSchemeType::Ed25519 as i32,
+            kms_grpc::kms::v1::SigningSchemeType::Mldsa65 as i32,
+        ]);
+        let superset_ctx = PublicDecTrustedValidationContext::new(
+            &server_pks,
+            &superset_keys,
+            None,
+            &[],
+            None,
+            Some(&superset_request),
+        )
+        .unwrap();
+        assert!(verify_list(&superset_ctx, &superset_signatures));
+
+        // Dropping the unrequested entry changes the presented set, which the
+        // requested entry is bound to, so what is left no longer verifies.
+        let stripped: Vec<_> = superset_signatures
+            .iter()
+            .filter(|typed| typed.scheme == scheme.as_wire())
+            .cloned()
+            .collect();
+        assert!(!verify_list(&pq_ctx, &stripped));
+
+        // Appending an entry the server did not sign changes the presented set in
+        // the same way, so it breaks a response that was otherwise complete.
         let mut with_junk = signatures.clone();
         with_junk.push(TypedSignature {
             scheme: kms_grpc::kms::v1::SigningSchemeType::Ed25519 as i32,
             signature: vec![0u8; 64],
         });
-        assert!(verify_public_decrypt_signatures(
-            &pq_ctx,
-            &payload,
-            1,
-            &vk,
-            &[],
-            &[],
-            &with_junk,
-            &extra_data
-        ));
+        assert!(!verify_list(&pq_ctx, &with_junk));
         let junk_only = vec![with_junk.pop().unwrap()];
-        assert!(!verify_public_decrypt_signatures(
-            &pq_ctx,
-            &payload,
-            1,
-            &vk,
-            &[],
-            &[],
-            &junk_only,
-            &extra_data
-        ));
+        assert!(!verify_list(&pq_ctx, &junk_only));
 
-        // An entry of a scheme this release does not know is skipped the same way, so a
-        // newer node can add a scheme during a rolling upgrade.
+        // An entry of a scheme this release does not know is bound into the preimage
+        // like any other, so appending one the server did not sign is rejected too.
         let mut with_unknown = signatures.clone();
         with_unknown.push(TypedSignature {
             scheme: i32::MAX,
             signature: vec![0u8; 64],
         });
-        assert!(verify_public_decrypt_signatures(
-            &pq_ctx,
-            &payload,
-            1,
-            &vk,
-            &[],
-            &[],
-            &with_unknown,
-            &extra_data
-        ));
+        assert!(!verify_list(&pq_ctx, &with_unknown));
     }
 
     #[test]
