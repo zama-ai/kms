@@ -21,42 +21,44 @@ maxshed = 0        # max shed (rate-limited) requests, % of offered
 pct = 98           # min achieved/target rate, %
 allowfail = false  # false → a limit breach fails the run; true → warns only
 
-[scenarios.pdec-async]
-key = "udec-key-gen"
-after = ["crs-gen"]
-rates = [
-  { rate = 1100 },
-  { rate = 1300, maxfail = 1, maxshed = 1, pct = 90 },
-  { rate = 1500, maxfail = 10, maxshed = 25, pct = 70, allowfail = true },
-]
+# EXPERIMENT: every ladder except udec-sync is commented out, so a party knocked over by
+# pdec-sync cannot void the udec-sync measurement. Restore before merging.
+# [scenarios.pdec-async]
+# key = "udec-key-gen"
+# after = ["crs-gen"]
+# rates = [
+#   { rate = 1100 },
+#   { rate = 1300, maxfail = 1, maxshed = 1, pct = 90 },
+#   { rate = 1500, maxfail = 10, maxshed = 25, pct = 70, allowfail = true },
+# ]
 
-[scenarios.udec-async]
-key = "udec-key-gen"                          # task whose request-id becomes each rate's key_id
-after = ["pdec-async"]                              # extra deps for the first rate (run after pdec)
-rates = [
-  { rate = 2400 },
-  { rate = 2800, maxfail = 1, maxshed = 1, pct = 95 },
-  { rate = 3200, maxfail = 10, maxshed = 25, pct = 70, allowfail = true },
-]
+# [scenarios.udec-async]
+# key = "udec-key-gen"                          # task whose request-id becomes each rate's key_id
+# after = ["pdec-async"]                              # extra deps for the first rate (run after pdec)
+# rates = [
+#   { rate = 2400 },
+#   { rate = 2800, maxfail = 1, maxshed = 1, pct = 95 },
+#   { rate = 3200, maxfail = 10, maxshed = 25, pct = 70, allowfail = true },
+# ]
 
-[scenarios.pdec-sync]
-key = "udec-key-gen"
-after = ["udec-async"]
-rates = [
-  { rate = 1200 },
-  { rate = 1400 },
-  { rate = 1700, maxfail = 10, maxshed = 25, pct = 70, allowfail = true },
-  { rate = 2000, maxfail = 10, maxshed = 25, pct = 70, allowfail = true },
-  { rate = 2400, maxfail = 10, maxshed = 25, pct = 70, allowfail = true },
-  { rate = 2800, maxfail = 10, maxshed = 25, pct = 70, allowfail = true },
-]
+# [scenarios.pdec-sync]
+# key = "udec-key-gen"
+# after = ["udec-async"]
+# rates = [
+#   { rate = 1200 },
+#   { rate = 1400 },
+#   { rate = 1700, maxfail = 10, maxshed = 25, pct = 70, allowfail = true },
+#   { rate = 2000, maxfail = 10, maxshed = 25, pct = 70, allowfail = true },
+#   { rate = 2400, maxfail = 10, maxshed = 25, pct = 70, allowfail = true },
+#   { rate = 2800, maxfail = 10, maxshed = 25, pct = 70, allowfail = true },
+# ]
 
 [scenarios.udec-sync]
 key = "udec-key-gen"
-after = ["pdec-sync"]
+after = ["crs-gen"]  # EXPERIMENT: only udec-sync runs; normally after = ["pdec-sync"]
 rates = [
-  { rate = 1500 },
-  { rate = 1900 },
+  { rate = 1500, allowfail = true },
+  { rate = 1900, allowfail = true },
   { rate = 2300, maxfail = 10, maxshed = 25, pct = 70, allowfail = true },
   { rate = 2700, maxfail = 10, maxshed = 25, pct = 70, allowfail = true },
   { rate = 3100, maxfail = 10, maxshed = 25, pct = 70, allowfail = true },
