@@ -17,11 +17,6 @@ const DSEP_VERF_KEY_SET: DomainSep = *b"VKEYSET_";
 /// signs under several schemes, so a verifier needs several keys, and needs them
 /// to travel together.
 ///
-/// The set is persisted, so it is versioned. Its own shape is tagged by
-/// [`VerfKeySetReprVersions`], and the scheme tags and keys inside it each carry
-/// their own dispatch, so a later change to [`UnifiedPublicSigKey`] is handled
-/// by `UnifiedPublicSigKeyVersions` without a new version here.
-///
 /// # Invariants
 ///
 /// The set is non-empty, and every key is filed under the scheme it actually

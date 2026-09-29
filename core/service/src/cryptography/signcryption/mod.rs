@@ -3,10 +3,8 @@
 //! Client requests to the server should be validated against the client's wallet address,
 //! which is derived from a ECDSA secp256k1 key.
 //! Based on the request the server does sign-then-encrypt to securely encrypt a payload for the
-//! client. Signing for the server is also carried out using ECDSA with secp256k1 and the client
-//! can validate this against the server's public key.
-//! Unfortunately we cannot use PQ signatures such as ML-DSA because the server identities
-//! must be compatible with EVM on-chain verification.
+//! client. Signing for the server is also carried out using ECDSA with secp256k1 (and possibly
+//! other signing schemes as well) and the client can validate this against the server's public key(s).
 //!
 //! For encryption a hybrid encryption scheme is used based on ML-KEM and AES GCM.
 //!
@@ -15,8 +13,8 @@
 //! A signcryption's encrypted plaintext has a layout, and there is more than
 //! one. **A [`UnifiedSigncryption`] does not say which.** The layout follows from
 //! the key material a reader holds, named by [`SenderAuth`]: a single
-//! [`PublicSigKey`] can only open the frozen layout, and a [`VerfKeySet`] plus a
-//! scheme policy can only open the multi-signature one.
+//! [`PublicSigKey`] can only open the frozen layout, and a [`VerfKeySet`] (defining the choice
+//! of signing schemes) can only open the multi-signature one.
 
 mod common;
 mod composite_v1;

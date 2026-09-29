@@ -7,8 +7,9 @@
 //!
 //! # Relation to the IETF composite signature draft
 //!
-//! The IETF supports exactly one legacy scheme and ML-DSA, whereas we want more
-//! flexibility and hence will support both a single scheme choice and more than 2.
+//! The IETF supports exactly one legacy scheme and ML-DSA, whereas we need more
+//! flexibility, and thus we support both the choice of a single scheme, along
+//! with the choice of more than two schemes.
 //! Our construction follows `draft-ietf-lamps-pq-composite-sigs` in its form but
 //! does not interoperate with the draft.
 //!
@@ -438,8 +439,7 @@ mod tests {
         }
     }
 
-    /// Result entries use the same ordering convention as [`sign_composite
-    ///`]:
+    /// Result entries use the same ordering convention as [`sign_composite`]:
     /// by scheme, duplicate-free, whatever order the request arrived in.
     #[test]
     fn result_entries_are_ordered_by_scheme() {
