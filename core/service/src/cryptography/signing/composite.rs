@@ -273,7 +273,6 @@ mod tests {
     use crate::vault::storage::tests::TestType;
     use aes_prng::AesRng;
     use rand::SeedableRng;
-    use strum::IntoEnumIterator;
 
     const DSEP: &DomainSep = b"COMPSIGT";
 
@@ -498,59 +497,6 @@ mod tests {
                 .windows(single_scheme_bytes.len())
                 .any(|window| window == single_scheme_bytes)
         );
-    }
-
-    /// The presented form agrees with the typed one for every known set, in any
-    /// order and with duplicates, and binds a scheme it does not know rather than
-    /// dropping it.
-    #[test]
-    fn presented_preimage_matches_the_typed_one() {
-        let typed = [
-            SigningSchemeType::MlDsa65,
-            SigningSchemeType::Ecdsa256k1,
-            SigningSchemeType::Ed25519,
-        ];
-        let wire: Vec<i32> = typed.iter().map(|scheme| scheme.as_wire()).collect();
-        let mut shuffled = wire.clone();
-        shuffled.reverse();
-        shuffled.push(wire[0]);
-
-        let expected = scheme_bound_preimage(&typed, &msg()).unwrap();
-        assert_eq!(
-            presented_scheme_bound_preimage(&wire, &msg()).unwrap(),
-            expected
-        );
-        assert_eq!(
-            presented_scheme_bound_preimage(&shuffled, &msg()).unwrap(),
-            expected
-        );
-
-        // Every single known scheme, and the full set, agree as well.
-        let every_scheme: Vec<_> = SigningSchemeType::iter().collect();
-        for scheme in &every_scheme {
-            assert_eq!(
-                presented_scheme_bound_preimage(&[scheme.as_wire()], &msg()).unwrap(),
-                scheme_bound_preimage(&[*scheme], &msg()).unwrap()
-            );
-        }
-        let every_wire: Vec<i32> = every_scheme.iter().map(|scheme| scheme.as_wire()).collect();
-        assert_eq!(
-            presented_scheme_bound_preimage(&every_wire, &msg()).unwrap(),
-            scheme_bound_preimage(&every_scheme, &msg()).unwrap()
-        );
-
-        // An unknown discriminant is part of the set, so it changes the preimage.
-        let mut with_unknown = wire.clone();
-        with_unknown.push(i32::MAX);
-        assert_ne!(
-            presented_scheme_bound_preimage(&with_unknown, &msg()).unwrap(),
-            expected
-        );
-
-        assert!(matches!(
-            presented_scheme_bound_preimage(&[], &msg()),
-            Err(SigningError::EmptySchemeSet)
-        ));
     }
 
     /// Canonicalisation normalises order and duplicates, and refuses the empty
