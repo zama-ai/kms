@@ -90,7 +90,7 @@
         "enabled": { "type": "boolean" },
         "host": { "type": "string" }
       }
-    }
+    },
     "runMode": { "type": "string" },
     "tracing": {
       "type": "object",

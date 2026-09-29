@@ -87,7 +87,7 @@ args:
   - -d0
   - {{ .from }}
   - {{ .to }}
-{{ with .resources -}}
+{{- with .resources }}
 resources:
   {{- toYaml . | nindent 2 }}
 {{- end }}
