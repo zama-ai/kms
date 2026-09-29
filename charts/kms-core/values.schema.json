@@ -71,6 +71,12 @@
         "image": { "$ref": "#/definitions/image" }
       }
     },
+    "kubeUtils": {
+      "type": "object",
+      "properties": {
+        "image": { "$ref": "#/definitions/image" }
+      }
+    },
     "socat": {
       "type": "object",
       "properties": {
@@ -78,6 +84,13 @@
         "resources": { "$ref": "#/definitions/k8sResources" }
       }
     },
+    "redis": {
+      "type": "object",
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "host": { "type": "string" }
+      }
+    }
     "runMode": { "type": "string" },
     "tracing": {
       "type": "object",
