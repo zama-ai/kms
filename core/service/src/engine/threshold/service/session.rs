@@ -522,6 +522,22 @@ impl SessionMaker {
 
         let context_id = *info.context_id();
 
+        let mut context_map = self.context_map.write().await;
+        if context_map.contains_key(&context_id) {
+            tracing::error!("Refusing to replace existing MPC context {context_id}");
+            anyhow::bail!("MPC context {context_id} already exists");
+        }
+
+        context_map.insert(
+            context_id,
+            Context {
+                my_role,
+                role_assignment,
+                threshold: info.threshold as u8,
+            },
+        );
+        drop(context_map);
+
         if let Some(verifier) = &self.verifier {
             let verifier_context_id = context_id.derive_session_id()?;
             let release_pcrs = if info.pcr_values.is_empty() {
@@ -537,21 +553,6 @@ impl SessionMaker {
                 .add_context(verifier_context_id, ca_certs_map, release_pcrs)
                 .map_err(|e| anyhow::anyhow!("Failed to add context to verifier: {e}"))?;
         }
-
-        let mut context_map = self.context_map.write().await;
-        if context_map.contains_key(&context_id) {
-            tracing::error!("Refusing to replace existing MPC context {context_id}");
-            anyhow::bail!("MPC context {context_id} already exists");
-        }
-
-        context_map.insert(
-            context_id,
-            Context {
-                my_role,
-                role_assignment,
-                threshold: info.threshold as u8,
-            },
-        );
 
         Ok(())
     }
