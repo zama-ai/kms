@@ -52,10 +52,18 @@ if [ "$SESSION_TYPE" = "small" ]; then
 else
     HAS_PRSS_INIT_FLAG=0
 fi
-# This common script always runs CRS gen and Reshare; record so the parser
-# can build the expected operation schedule without re-parsing this file.
-HAS_CRS_FLAG=1
+# CRS generation has been factored out to test_scripts/crs_reproducible.sh
+# (it sweeps multiple parameter sets in one cluster lifecycle). This common
+# script therefore no longer emits a CRS_GEN line.
+HAS_CRS_FLAG=0
 HAS_RESHARE_FLAG=1
+
+# Message types decrypted per DDEC mode. Recorded in BENCH_PARAMS.txt so
+# the parser drives the expected schedule + the ptxt_type CSV column off
+# it (rather than hardcoding the list on its side). The DDEC loop at the
+# bottom of this script iterates this same array, so it's the single
+# source of truth for "which TFHE types this run decrypts".
+CTXT_TYPES_LIST=(bool u4 u8 u16 u32 u64 u128)
 
 cat > "$RUN_DEST/BENCH_PARAMS.txt" <<EOF
 === ${RUN_DATE} ===
@@ -71,9 +79,13 @@ NUM_CTXTS=${NUM_CTXTS}
 NUM_SESSIONS=${NUM_SESSIONS}
 PERCENTAGE_OFFLINE=${PERCENTAGE_OFFLINE}
 DDEC_MODES=${DDEC_MODES}
+CTXT_TYPES=${CTXT_TYPES_LIST[*]}
 HAS_PRSS_INIT=${HAS_PRSS_INIT_FLAG}
+HAS_DKG=1
 HAS_CRS=${HAS_CRS_FLAG}
 HAS_RESHARE=${HAS_RESHARE_FLAG}
+REGIONS=${REGIONS:-local}
+MACHINE_TYPE=${MACHINE_TYPE:-Baseline}
 EOF
 
 #build mobygo
@@ -83,7 +95,6 @@ MOBYGO_EXEC="${ROOT_DIR}/target/debug/mobygo"
 CURR_SID=1
 KEY_PATH="${MAIN_PATH}/key"
 RESHARED_KEY_PATH="${MAIN_PATH}/key-reshared"
-CRS_PATH="${MAIN_PATH}/crs"
 CTXT_PATH="${MAIN_PATH}/ctxt"
 
 INIT_VALUE=1
@@ -91,7 +102,6 @@ KEY_SID=0
 
 mkdir -p $KEY_PATH
 mkdir -p $RESHARED_KEY_PATH
-mkdir -p $CRS_PATH
 mkdir -p $CTXT_PATH
 
 export RUN_MODE=dev
@@ -117,7 +127,7 @@ fi
 ##KEY GEN
 echo "Generating keys"
 #Create preproc for dkg with test parameters
-$MOBYGO_EXEC -c $1 preproc-key-gen --dkg-params $PARAMS --num-sessions 5 --session-type $SESSION_TYPE --sid $CURR_SID --seed $SEED
+$MOBYGO_EXEC -c $1 preproc-key-gen --dkg-params $PARAMS --num-sessions $NUM_SESSIONS --session-type $SESSION_TYPE --sid $CURR_SID --seed $SEED
 #Checking every 30s
 $MOBYGO_EXEC -c $1 status-check --sid $CURR_SID  --keep-retry true --interval 30
 CURR_SID=$(( CURR_SID + 1 ))
@@ -158,23 +168,12 @@ else
     echo "Skipping ctxt generation"
 fi
 
-### CRS generation
-echo "Generating CRS"
-$MOBYGO_EXEC -c $1 crs-gen --parameters $PARAMS --sid $CURR_SID --seed $SEED
-$MOBYGO_EXEC -c $1 status-check --sid $CURR_SID  --keep-retry true
-$MOBYGO_EXEC -c $1 crs-gen-result --sid $CURR_SID  --storage-path $CRS_PATH
+# CRS generation lives in test_scripts/crs_reproducible.sh now. The bumps
+# below replace what CRS-gen used to consume so the Reshare step downstream
+# picks up the same (sid, seed) pair it did before this refactor — that
+# keeps EXPECTED_RESHARED_KEY_HASH stable.
 CURR_SID=$(( CURR_SID + 1 ))
 SEED=$(( SEED + 1 ))
-
-# Make sure the generated CRS has the expected hash
-CRS_HASH=$(sha256sum $CRS_PATH/crs.bin|cut -d ' ' -f 1)
-if [ "$CRS_HASH" != "$EXPECTED_CRS_HASH" ]; then
-    echo "❌ CRS hash does not match expected value. Got $CRS_HASH, expected $EXPECTED_CRS_HASH"
-    exit 1
-else
-    echo "✅ CRS hash matches expected value: $CRS_HASH"
-fi
-
 
 ### Reshare
 echo "Resharing key"
@@ -198,7 +197,7 @@ for DDEC_MODE in $DDEC_MODES
  do
     VALUE=$INIT_VALUE
     echo "### STARTING REQUESTS ON DDEC MODE $DDEC_MODE ###"
-    for CTXT_TYPE in bool u4 u8 u16 u32 u64
+    for CTXT_TYPE in "${CTXT_TYPES_LIST[@]}"
     do
         echo "#TYPE $CTXT_TYPE#"
         #Create preproc
