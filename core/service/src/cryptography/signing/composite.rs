@@ -7,8 +7,9 @@
 //!
 //! # Relation to the IETF composite signature draft
 //!
-//! The IETF supports exactly one legacy scheme and ML-DSA, whereas we want more
-//! flexibility and hence will support both a single scheme choice and more than 2.
+//! The IETF supports exactly one legacy scheme and ML-DSA, whereas we need more
+//! flexibility, and thus we support both the choice of a single scheme, along
+//! with the choice of more than two schemes.
 //! Our construction follows `draft-ietf-lamps-pq-composite-sigs` in its form but
 //! does not interoperate with the draft.
 //!
@@ -86,15 +87,15 @@ pub fn canonical_schemes(
     Ok(canonical)
 }
 
-/// The unambiguous byte encoding of `schemes`, for use inside a signed preimage.
+/// The unambiguous byte encoding of a set of schemes, given by their wire discriminants.
 ///
 /// Length-prefixed, so no set's encoding is a prefix of a longer set's.
-fn canonical_scheme_bytes(schemes: &[SigningSchemeType]) -> Vec<u8> {
+fn canonical_wire_scheme_bytes(schemes: &[i32]) -> Vec<u8> {
     let mut out = Vec::with_capacity(4 + 4 * schemes.len());
     // Bounded by the number of known schemes, so the cast cannot truncate.
     out.extend_from_slice(&(schemes.len() as u32).to_le_bytes());
     for scheme in schemes {
-        out.extend_from_slice(&scheme.tag());
+        out.extend_from_slice(&scheme.to_le_bytes());
     }
     out
 }
@@ -127,12 +128,35 @@ pub fn scheme_bound_preimage<T>(
 where
     T: Serialize + Versionize + Named,
 {
-    let schemes = canonical_schemes(schemes)?;
+    let wire: Vec<i32> = schemes.iter().map(|scheme| scheme.as_wire()).collect();
+    wire_scheme_bound_preimage(&wire, payload)
+}
+
+/// [`scheme_bound_preimage`] for schemes given by their wire discriminants, the
+/// form a received response carries them in.
+///
+/// A discriminant this release does not know is bound like any other, since the
+/// encoding uses nothing but the discriminant.
+///
+/// Errors when `schemes` is empty.
+pub fn wire_scheme_bound_preimage<T>(
+    schemes: &[i32],
+    payload: &T,
+) -> Result<Zeroizing<Vec<u8>>, SigningError>
+where
+    T: Serialize + Versionize + Named,
+{
+    let mut canonical = schemes.to_vec();
+    canonical.sort_unstable();
+    canonical.dedup();
+    if canonical.is_empty() {
+        return Err(SigningError::EmptySchemeSet);
+    }
+    let scheme_bytes = canonical_wire_scheme_bytes(&canonical);
     let mut out = ZeroizingWriter::new();
     let framed = |e: std::io::Error| SigningError::Serialization(e.to_string());
     out.write_all(COMPOSITE_PREFIX).map_err(framed)?;
-    out.write_all(&canonical_scheme_bytes(&schemes))
-        .map_err(framed)?;
+    out.write_all(&scheme_bytes).map_err(framed)?;
     safe_serialize(payload, &mut out, SAFE_SER_SIZE_LIMIT)
         .map_err(|e| SigningError::Serialization(e.to_string()))?;
     Ok(out.into_inner())
@@ -220,7 +244,8 @@ where
 /// The result is therefore not a composite in the sense of [`verify_composite`],
 /// which rejects it: the ECDSA entry is bound to the EIP-712 message rather than
 /// to the scheme set. A result is checked by `verify_response_signatures`, which
-/// requires the set the verifier asked for.
+/// rebuilds the preimage from the entries it receives and requires every scheme
+/// the verifier asked for to be among them, so the signed set may be larger.
 ///
 /// `schemes` may be given in any order; the entries come back ordered by
 /// scheme.
@@ -438,8 +463,7 @@ mod tests {
         }
     }
 
-    /// Result entries use the same ordering convention as [`sign_composite
-    ///`]:
+    /// Result entries use the same ordering convention as [`sign_composite`]:
     /// by scheme, duplicate-free, whatever order the request arrived in.
     #[test]
     fn result_entries_are_ordered_by_scheme() {
@@ -488,12 +512,42 @@ mod tests {
         // one starting with it, so the shorter set's encoding appears nowhere in
         // the longer set's preimage.
         let pair_preimage = scheme_bound_preimage(&pair(), &msg()).unwrap();
-        let single_scheme_bytes = canonical_scheme_bytes(&single);
+        let wire: Vec<i32> = single.iter().map(|scheme| scheme.as_wire()).collect();
+        let single_scheme_bytes = canonical_wire_scheme_bytes(&wire);
         assert!(
             !pair_preimage
                 .windows(single_scheme_bytes.len())
                 .any(|window| window == single_scheme_bytes)
         );
+    }
+
+    /// The wire form agrees with the typed one for a known set, in any order and
+    /// with duplicates, and binds a scheme this release does not know rather than
+    /// dropping it, so a newer signer's preimage can be rebuilt.
+    #[test]
+    fn wire_preimage_matches_the_typed_one_and_binds_unknown_schemes() {
+        let expected = scheme_bound_preimage(&pair(), &msg()).unwrap();
+        let mut wire: Vec<i32> = pair().iter().map(|scheme| scheme.as_wire()).collect();
+        wire.reverse();
+        wire.push(wire[0]);
+        assert_eq!(wire_scheme_bound_preimage(&wire, &msg()).unwrap(), expected);
+
+        // An unknown discriminant is part of the set, so it changes the preimage,
+        // and where it sits in the input does not.
+        let mut with_unknown = wire.clone();
+        with_unknown.push(i32::MAX);
+        let unknown_first: Vec<i32> = std::iter::once(i32::MAX).chain(wire).collect();
+        let bound = wire_scheme_bound_preimage(&with_unknown, &msg()).unwrap();
+        assert_ne!(bound, expected);
+        assert_eq!(
+            wire_scheme_bound_preimage(&unknown_first, &msg()).unwrap(),
+            bound
+        );
+
+        assert!(matches!(
+            wire_scheme_bound_preimage(&[], &msg()),
+            Err(SigningError::EmptySchemeSet)
+        ));
     }
 
     /// Canonicalisation normalises order and duplicates, and refuses the empty

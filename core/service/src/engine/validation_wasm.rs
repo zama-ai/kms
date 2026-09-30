@@ -1,3 +1,4 @@
+use crate::cryptography::signing::composite::wire_scheme_bound_preimage;
 use crate::cryptography::signing::ecdsa::recover_address_from_eip712_hash;
 use crate::{
     anyhow_error_and_log, anyhow_tracked,
@@ -17,6 +18,7 @@ use kms_grpc::kms::v1::{TypedSignature, UserDecryptionResponse, UserDecryptionRe
 use std::collections::{HashMap, HashSet};
 use tfhe::FheTypes;
 use threshold_types::role::Role;
+use zeroize::Zeroizing;
 
 pub(crate) const DSEP_USER_DECRYPTION: DomainSep = *b"USER_DEC";
 
@@ -402,16 +404,24 @@ fn attribute_scheme_entry(
 ///
 /// # What gets checked
 ///
+/// - First, before any cryptography, that `list` has an entry for every requested
+///   scheme. Only when `list` is empty may a deprecated field meet a requested ECDSA
+///   instead.
 /// - The deprecated internal `signature`, when the result kind carries one. It covers the
 ///   payload alone, so it satisfies a requested ECDSA only when no EIP-712 domain is
 ///   available.
 /// - The deprecated `external_signature`, whenever an EIP-712 domain is available. It is
 ///   checked *in addition to* the internal one, not instead of it.
 /// - Every entry of `list` for a requested scheme. An entry for a scheme nobody asked
-///   for carries no weight either way, so it is skipped, and so is an entry of a scheme
-///   this release does not know.
+///   for is not checked, and neither is an entry of a scheme this release does not
+///   know, so a response signed under a superset of the request is accepted.
 /// - Finally, that every requested scheme was verified, and that every signature agreed
 ///   on one party.
+///
+/// The non-ECDSA entries are checked against a preimage bound to the schemes `list`
+/// presents, which is the set the server signed under, not against `requested`. An
+/// unchecked entry still counts towards that set, so adding or removing one makes every
+/// non-ECDSA entry fail.
 ///
 /// A result whose `list` is empty is still authenticated by the deprecated fields, which
 /// is what a node from a release before the list sends. A `requested` that is empty, by
@@ -438,12 +448,30 @@ where
                 .to_string(),
         ));
     }
-    // Bound to the set this verifier requested, so an entry lifted from a
-    // response signed under a larger set does not verify here. The ECDSA entry is
-    // the exception; see `sign_result_entries`.
-    let signed_bytes =
-        crate::cryptography::signing::composite::scheme_bound_preimage(requested, payloads.payload)
-            .map_err(|e| anyhow_tracked(format!("could not build the signed payload: {e}")))?;
+    // A node that sends `list` signs every requested scheme into it, ECDSA included.
+    // Only a node from before `list` sends it empty, and then a deprecated field may
+    // meet a requested ECDSA, which the final check decides. Nothing else can be met
+    // without an entry.
+    let presented: Vec<i32> = sigs.list.iter().map(|typed| typed.scheme).collect();
+    let legacy_only = presented.is_empty();
+    if let Some(missing) = requested
+        .iter()
+        .filter(|scheme| !(legacy_only && **scheme == SigningSchemeType::Ecdsa256k1))
+        .find(|scheme| !presented.contains(&scheme.as_wire()))
+    {
+        return Err(anyhow_tracked(format!(
+            "the response carries no {missing} signature, but {missing} was requested"
+        )));
+    }
+    // Bound to the set the response presents, which may be a superset of `requested`
+    // and may name schemes this release does not know. The ECDSA entry is the
+    // exception; see `sign_result_entries`.
+    let signed_bytes = if presented.is_empty() {
+        Zeroizing::new(Vec::new())
+    } else {
+        wire_scheme_bound_preimage(&presented, payloads.payload)
+            .map_err(|e| anyhow_tracked(format!("could not build the signed payload: {e}")))?
+    };
     let mut verified: Vec<SigningSchemeType> = Vec::with_capacity(sigs.list.len() + 1);
     let mut signer: Option<(u32, Address)> = None;
 
@@ -505,8 +533,9 @@ where
 
     for typed in sigs.list {
         // A scheme this release does not know cannot have been requested, so its entry
-        // is passed over like an unrequested one. That keeps a verifier working while a
-        // newer node adds a scheme during a rolling upgrade.
+        // is passed over like an unrequested one. Its discriminant is still bound into
+        // the preimage above, so a verifier keeps working when a newer node signs
+        // under a scheme this release has never heard of.
         let Ok(scheme) = SigningSchemeType::try_from(typed.scheme) else {
             tracing::warn!(
                 "A response carries a signature of the unknown scheme {}, which is skipped",
