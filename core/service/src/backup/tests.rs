@@ -18,7 +18,7 @@ use crate::{
     consts::DEFAULT_MPC_CONTEXT,
     cryptography::{
         encryption::{Encryption, PkeScheme, UnifiedPrivateEncKey, UnifiedPublicEncKey},
-        signatures::{VerfKeySet, canonical_schemes, gen_sig_keys, test_support::seeded_identity},
+        signatures::{VerfKeySet, canonical_schemes, test_support::seeded_identity},
     },
     engine::base::derive_request_id,
 };
@@ -552,7 +552,7 @@ fn verify_and_recover_rejects_mpc_context_mismatch() {
     let wrong_mpc_context = ContextId::from_bytes([0x99u8; crate::consts::ID_LENGTH]);
     for op_state in operators.values_mut() {
         let original_payload = op_state.1.payload.clone();
-        let (_, sk) = gen_sig_keys(&mut rng);
+        let sk = seeded_identity(&mut rng);
         // Change the validation material to contain the wrong context id
         op_state.1 = RecoveryValidationMaterial::new(
             original_payload.cts,
@@ -671,8 +671,7 @@ fn operator_handle_init(
             cur_op_output.to_owned(),
             cur_comm.to_owned(),
             operator_cus_context,
-            // TODO Still the frozen ECDSA signature; step C moves this to `sign_composite`.
-            signing_key.ecdsa(),
+            &signing_key,
             *DEFAULT_MPC_CONTEXT,
         )
         .unwrap();

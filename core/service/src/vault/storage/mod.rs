@@ -858,7 +858,10 @@ pub mod tests {
         consts::{DEFAULT_MPC_CONTEXT, SAFE_SER_SIZE_LIMIT},
         cryptography::{
             encryption::{Encryption, PkeScheme, UnifiedPublicEncKey},
-            signatures::{PrivateSigKey, gen_sig_keys, test_support::seeded_verf_key_set},
+            signatures::{
+                NodeSigningIdentity,
+                test_support::{seeded_identity, seeded_verf_key_set},
+            },
             signcryption::UnifiedSigncryption,
         },
     };
@@ -891,17 +894,17 @@ pub mod tests {
     pub async fn store_dummy_recovery_material(
         storage: &mut impl Storage,
         id: &RequestId,
-        sig_key: &PrivateSigKey,
+        identity: &NodeSigningIdentity,
     ) {
-        store_recovery_material(storage, &dummy_recovery_material_at_id(id, sig_key))
+        store_recovery_material(storage, &dummy_recovery_material_at_id(id, identity))
             .await
             .unwrap();
     }
 
-    /// Build recovery material for the custodian context `context_id`, signed by `sig_key`.
+    /// Build recovery material for the custodian context `context_id`, signed by `identity`.
     pub fn dummy_recovery_material_at_id(
         context_id: &RequestId,
-        sig_key: &PrivateSigKey,
+        identity: &NodeSigningIdentity,
     ) -> RecoveryValidationMaterial {
         fn enc_key(rng: &mut AesRng) -> UnifiedPublicEncKey {
             Encryption::new(BACKUP_PKE_SCHEME, rng).keygen().unwrap().1
@@ -947,7 +950,7 @@ pub mod tests {
             cts,
             commitments,
             InternalCustodianContext::new(custodian_context, enc_key(&mut rng)).unwrap(),
-            sig_key,
+            identity,
             *DEFAULT_MPC_CONTEXT,
         )
         .unwrap()
@@ -956,8 +959,8 @@ pub mod tests {
     /// Build recovery material under a context id derived from `caller_name`, signed by a
     /// throw-away key.
     pub fn dummy_recovery_material(caller_name: &str) -> RecoveryValidationMaterial {
-        let (_verf_key, sig_key) = gen_sig_keys(&mut AesRng::seed_from_u64(0));
-        dummy_recovery_material_at_id(&derive_request_id(caller_name).unwrap(), &sig_key)
+        let identity = seeded_identity(&mut AesRng::seed_from_u64(0));
+        dummy_recovery_material_at_id(&derive_request_id(caller_name).unwrap(), &identity)
     }
 
     #[tokio::test]

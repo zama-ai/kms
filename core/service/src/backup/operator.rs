@@ -13,7 +13,8 @@ use crate::{
     consts::SAFE_SER_SIZE_LIMIT,
     cryptography::{
         encryption::{UnifiedPrivateEncKey, UnifiedPublicEncKey},
-        signatures::{PrivateSigKey, PublicSigKey, Signature, VerfKeySet},
+        signatures::{StoredTypedSignature, VerfKeySet},
+        signing::composite::{sign_composite, verify_composite},
         signcryption::{
             Signcrypt, UnifiedSigncryption, UnifiedSigncryptionKey, UnifiedUnsigncryptionKey,
             Unsigncrypt,
@@ -22,7 +23,7 @@ use crate::{
 };
 use crate::{
     backup::custodian::DSEP_BACKUP_CUSTODIAN,
-    cryptography::signatures::{NodeSigningIdentity, internal_sign, internal_verify_sig},
+    cryptography::signatures::NodeSigningIdentity,
 };
 use algebra::{
     galois_rings::degree_4::ResiduePolyF4Z64,
@@ -235,13 +236,13 @@ pub enum RecoveryValidationMaterialVersions {
 /// The data stored by an operator after a custodian context switch.
 /// The data contains the contains the signcrypted shares for each custodian
 /// along with information about the custodians.
-/// Furthermore, the data is signed by the operator to allow it to verify the
-/// data upon load.
+/// Furthermore, the data is signed by the operator, under every scheme in
+/// [`BACKUP_SIGNING_SCHEMES`], to allow it to verify the data upon load.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, Versionize)]
 #[versionize(RecoveryValidationMaterialVersions)]
 pub struct RecoveryValidationMaterial {
     pub(crate) payload: RecoveryValidationMaterialPayload,
-    signature: Vec<u8>,
+    signatures: Vec<StoredTypedSignature>,
 }
 
 impl Named for RecoveryValidationMaterial {
@@ -253,7 +254,7 @@ impl RecoveryValidationMaterial {
         cts: BTreeMap<Role, InnerOperatorBackupOutput>,
         commitments: BTreeMap<Role, Vec<u8>>,
         custodian_context: InternalCustodianContext,
-        sk: &PrivateSigKey,
+        identity: &NodeSigningIdentity,
         mpc_context: ContextId,
     ) -> anyhow::Result<Self> {
         if custodian_context.custodian_nodes.len() != cts.len() {
@@ -278,21 +279,26 @@ impl RecoveryValidationMaterial {
             custodian_context,
             mpc_context,
         };
-        let serialized_payload = bc2wrap::serialize(&payload).map_err(|e| {
-            anyhow_error_and_log(format!("Could not serialize inner recovery request: {e:?}"))
+        let signatures = sign_composite(
+            identity,
+            BACKUP_SIGNING_SCHEMES,
+            &DSEP_BACKUP_RECOVERY,
+            &payload,
+        )
+        .map_err(|e| {
+            anyhow_error_and_log(format!("Could not sign recovery validation material: {e}"))
         })?;
-        let signature = &internal_sign(&DSEP_BACKUP_RECOVERY, &serialized_payload, sk)?;
-        let signature_buf = signature.to_bytes();
         let res = Self {
             payload,
-            signature: signature_buf,
+            signatures,
         };
         // Sanity check
-        if !res.validate(&PublicSigKey::from_sk(sk)) {
-            return Err(anyhow_error_and_log(
-                "Could not validate newly created recovery validation material",
-            ));
-        }
+        let verf_keys = VerfKeySet::from_identity(identity, BACKUP_SIGNING_SCHEMES)?;
+        res.validate(&verf_keys).map_err(|e| {
+            anyhow_error_and_log(format!(
+                "Could not validate newly created recovery validation material: {e}"
+            ))
+        })?;
         Ok(res)
     }
 
@@ -317,36 +323,26 @@ impl RecoveryValidationMaterial {
         self.payload.mpc_context
     }
 
-    /// Validated the signature on the recovery validation material.
-    /// This is useful after deserializing from untrusted storage such as public storage
-    pub fn validate(&self, verf_key: &PublicSigKey) -> bool {
-        let serialized_payload = match bc2wrap::serialize(&self.payload) {
-            Ok(v) => v,
-            Err(e) => {
-                tracing::error!("Could not serialize recovery validation material payload: {e:?}");
-                return false;
-            }
-        };
-        let sig = match k256::ecdsa::Signature::from_slice(&self.signature) {
-            Ok(sig) => sig,
-            Err(e) => {
-                tracing::warn!("Could not parse recovery validation material signature: {e:?}");
-                return false;
-            }
-        };
-        let signature = Signature::from_ecdsa(sig);
-        match internal_verify_sig(
+    /// Validate the signatures on the recovery validation material against the operator's
+    /// `verf_keys`.
+    /// This is useful after deserializing from untrusted storage such as public storage.
+    ///
+    /// The material is signed under exactly the [`BACKUP_SIGNING_SCHEMES`], and every one of the
+    /// signatures must verify. `verf_keys` must cover those schemes and may hold more.
+    pub fn validate(&self, verf_keys: &VerfKeySet) -> Result<(), BackupError> {
+        ensure_backup_schemes(verf_keys)?;
+        verify_composite(
+            &self.signatures,
+            verf_keys,
+            BACKUP_SIGNING_SCHEMES,
             &DSEP_BACKUP_RECOVERY,
-            &serialized_payload,
-            &signature,
-            verf_key,
-        ) {
-            Ok(_) => true,
-            Err(e) => {
-                tracing::info!("Could not verify recovery validation material signature: {e:?}");
-                false
-            }
-        }
+            &self.payload,
+        )
+        .map_err(|e| {
+            BackupError::SignatureVerificationError(format!(
+                "could not verify the recovery validation material: {e}"
+            ))
+        })
     }
 }
 
@@ -971,7 +967,10 @@ mod tests {
         consts::DEFAULT_MPC_CONTEXT,
         cryptography::{
             encryption::{Encryption, PkeScheme},
-            signatures::{gen_sig_keys, test_support::seeded_verf_key_set},
+            signatures::{
+                gen_sig_keys,
+                test_support::{seeded_identity, seeded_verf_key_set},
+            },
         },
         engine::base::derive_request_id,
     };
@@ -983,7 +982,7 @@ mod tests {
     #[test]
     fn validate_recovery_validation_material() {
         let mut rng = AesRng::seed_from_u64(0);
-        let (verf_key, sig_key) = gen_sig_keys(&mut rng);
+        let identity = seeded_identity(&mut rng);
         let (_dec_key, enc_key) = {
             let mut encryption = Encryption::new(BACKUP_PKE_SCHEME, &mut rng);
             encryption.keygen().unwrap()
@@ -1029,15 +1028,56 @@ mod tests {
         };
         let internal_custodian_context =
             InternalCustodianContext::new(custodian_context, enc_key).unwrap();
+        // A seedless identity cannot sign under ML-DSA, so it cannot produce the material at all.
+        let (_pk, ecdsa_only) = gen_sig_keys(&mut rng);
+        assert!(
+            RecoveryValidationMaterial::new(
+                cts.clone(),
+                commitments.clone(),
+                internal_custodian_context.clone(),
+                &NodeSigningIdentity::ecdsa_only(ecdsa_only),
+                *DEFAULT_MPC_CONTEXT,
+            )
+            .is_err()
+        );
+
         let rvm = RecoveryValidationMaterial::new(
             cts,
             commitments,
             internal_custodian_context,
-            &sig_key,
+            &identity,
             *DEFAULT_MPC_CONTEXT,
         )
         .unwrap();
-        assert!(rvm.validate(&verf_key));
+        let verf_keys = VerfKeySet::from_identity(&identity, BACKUP_SIGNING_SCHEMES).unwrap();
+        rvm.validate(&verf_keys).unwrap();
+
+        // Another operator's keys do not verify it.
+        let other = seeded_verf_key_set(&mut rng, BACKUP_SIGNING_SCHEMES);
+        assert!(rvm.validate(&other).is_err());
+
+        // Nor does a set below the backup floor, even one holding the right ECDSA key.
+        use crate::cryptography::signatures::SigningSchemeType;
+        let ecdsa_only_keys =
+            VerfKeySet::from_identity(&identity, &[SigningSchemeType::Ecdsa256k1]).unwrap();
+        assert!(rvm.validate(&ecdsa_only_keys).is_err());
+
+        // A published superset of the backup schemes still verifies it.
+        let superset = VerfKeySet::from_identity(
+            &identity,
+            &[
+                SigningSchemeType::Ecdsa256k1,
+                SigningSchemeType::Ed25519,
+                SigningSchemeType::MlDsa87,
+            ],
+        )
+        .unwrap();
+        rvm.validate(&superset).unwrap();
+
+        // Nor does the material verify once a signature is stripped.
+        let mut stripped = rvm.clone();
+        stripped.signatures.pop();
+        assert!(stripped.validate(&verf_keys).is_err());
     }
 
     fn valid_custodian_msg(

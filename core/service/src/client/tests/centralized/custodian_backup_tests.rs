@@ -198,7 +198,7 @@ async fn test_planted_public_recovery_material_ignored_central() {
     let priv_storage = FileStorage::new(env.test_path(), StorageType::PRIV, None).unwrap();
     let node_identity = get_core_signing_identity(&priv_storage).await.unwrap();
     let mut pub_storage = FileStorage::new(env.test_path(), StorageType::PUB, None).unwrap();
-    store_dummy_recovery_material(&mut pub_storage, &rogue_id, node_identity.ecdsa()).await;
+    store_dummy_recovery_material(&mut pub_storage, &rogue_id, &node_identity).await;
 
     let (_kms_server, _kms_client) = env.spawn_server_on_existing_material().await;
 

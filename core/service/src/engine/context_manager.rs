@@ -1430,7 +1430,7 @@ async fn gen_recovery_validation(
         ct_map,
         commitments,
         custodian_context.to_owned(),
-        signing_identity.ecdsa(),
+        &signing_identity,
         mpc_context_id,
     )?;
     tracing::info!(
@@ -1443,7 +1443,10 @@ async fn gen_recovery_validation(
 #[cfg(test)]
 mod tests {
     mod custodian_side_effects;
-    use crate::{cryptography::signing::VerfKeySet, engine::rng_source::test_rng_source};
+    use crate::{
+        cryptography::{signatures::RootSigningSeed, signing::VerfKeySet},
+        engine::rng_source::test_rng_source,
+    };
     mod lifecycle_side_effects;
 
     use super::*;
@@ -2351,14 +2354,17 @@ mod tests {
 
     #[tokio::test]
     async fn test_custodian_context() {
+        let mut rng = AesRng::seed_from_u64(42);
         // We need the default MPC context to be able to use calls to custodian context APIs
-        let (verification_key, sig_key, crypto_storage) = setup_crypto_storage(true).await;
-        let base_kms = BaseKmsStruct::new(KMSType::Threshold, sig_key, test_rng_source());
+        let (_verification_key, sig_key, crypto_storage) = setup_crypto_storage(true).await;
+        let identity = NodeSigningIdentity::new(sig_key, RootSigningSeed::random(&mut rng));
+        let verification_keys =
+            VerfKeySet::from_identity(&identity, BACKUP_SIGNING_SCHEMES).unwrap();
+        let base_kms = BaseKmsStruct::new(KMSType::Threshold, identity, test_rng_source());
         // Generate custodian keys
         let threshold = 1;
         let amount_custodians = 2 * threshold + 1; // Minimum amount of custodians is 2 * threshold + 1
         let mut setup_msgs = Vec::new();
-        let mut rng = AesRng::seed_from_u64(42);
         let epoch_id = *DEFAULT_EPOCH_ID;
         for custodian_index in 1..=amount_custodians {
             let mut enc = Encryption::new(BACKUP_PKE_SCHEME, &mut rng);
@@ -2414,7 +2420,7 @@ mod tests {
                     .await
                     .unwrap();
 
-            assert!(stored_context.validate(&verification_key));
+            stored_context.validate(&verification_keys).unwrap();
             // The vault key the operator generated for this context, and therefore the key every
             // backup ciphertext is encrypted under, must be the composite scheme.
             assert_eq!(

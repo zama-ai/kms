@@ -1096,7 +1096,6 @@ fn test_recovery_material(
     let operator_identity = seeded_identity(&mut rng);
     let operator_pk =
         VerfKeySet::from_identity(&operator_identity, BACKUP_SIGNING_SCHEMES).unwrap();
-    let operator_sk = operator_identity.ecdsa().clone();
     let mut commitments = BTreeMap::new();
     let mut cts = BTreeMap::new();
     for role_j in 1..=test.custodian_count {
@@ -1123,7 +1122,7 @@ fn test_recovery_material(
         cts,
         commitments,
         icc,
-        &operator_sk,
+        &operator_identity,
         kms_grpc::identifiers::ContextId::from_bytes([7u8; 32]),
     )
     .unwrap();
