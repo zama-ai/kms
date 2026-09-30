@@ -833,11 +833,23 @@ mod tests {
         _ = default_provider().install_default();
         let identity = "scoped-pcr.example.com";
         let (cert_a, ca_a) = generate_mock_tls_cert(identity);
-        let (_, ca_b) = generate_mock_tls_cert(identity);
-        let pcr = extract_pcr_values_from_cert(cert_a.end_entity_cert().unwrap());
+        let (cert_b, ca_b) = generate_mock_tls_cert(identity);
 
-        let mut trusted_releases = HashSet::new();
-        trusted_releases.insert(pcr.clone());
+        let pcr_a = ReleasePCRValues {
+            pcr0: vec![1, 2, 3, 4],
+            pcr1: vec![5, 6, 7, 8],
+            pcr2: vec![9, 10, 11, 12],
+        };
+        let pcr_b = ReleasePCRValues {
+            pcr0: vec![13, 14, 15, 16],
+            pcr1: vec![17, 18, 19, 20],
+            pcr2: vec![21, 22, 23, 24],
+        };
+
+        let mut trusted_releases_a = HashSet::new();
+        trusted_releases_a.insert(pcr_a.clone());
+        let mut trusted_releases_b = HashSet::new();
+        trusted_releases_b.insert(pcr_b.clone());
 
         let verifier = AttestedVerifier::new(
             None,
@@ -851,14 +863,14 @@ mod tests {
             .add_context(
                 SessionId::from(1u128),
                 HashMap::from([(MpcIdentity(identity.to_string()), ca_a.clone())]),
-                Some(trusted_releases.clone()),
+                Some(trusted_releases_a),
             )
             .unwrap();
         verifier
             .add_context(
                 SessionId::from(2u128),
                 HashMap::from([(MpcIdentity(identity.to_string()), ca_b)]),
-                Some(trusted_releases),
+                Some(trusted_releases_b),
             )
             .unwrap();
 
@@ -867,6 +879,7 @@ mod tests {
             .get_verifiers_and_pcrs_for_x509_cert(&x509_a)
             .unwrap();
         assert_eq!(verifiers.candidates.len(), 2);
+
         let candidate_a = verifiers
             .candidates
             .iter()
@@ -877,8 +890,20 @@ mod tests {
             .iter()
             .find(|c| c.context_id == SessionId::from(2u128))
             .unwrap();
-        assert_eq!(candidate_a.pcrs, HashSet::from([pcr.clone()]));
-        assert_eq!(candidate_b.pcrs, HashSet::from([pcr]));
+
+        // Context A should only have its own PCR, not PCR from context B
+        assert_eq!(candidate_a.pcrs, HashSet::from([pcr_a.clone()]));
+        assert!(
+            !candidate_a.pcrs.contains(&pcr_b),
+            "Context A must not contain PCR from context B"
+        );
+
+        // Context B should only have its own PCR, not PCR from context A
+        assert_eq!(candidate_b.pcrs, HashSet::from([pcr_b]));
+        assert!(
+            !candidate_b.pcrs.contains(&pcr_a),
+            "Context B must not contain PCR from context A"
+        );
     }
 
     #[test]
@@ -972,69 +997,6 @@ mod tests {
             .unwrap_err();
 
         assert!(error.to_string().contains("already exists"));
-    }
-
-    #[test]
-    fn pcr_values_are_validated_against_correct_context() {
-        _ = default_provider().install_default();
-        let identity = "pcr-binding-test.example.com";
-        let (cert_a, ca_a) = generate_mock_tls_cert(identity);
-        let (_, ca_b) = generate_mock_tls_cert(identity);
-        let pcr = extract_pcr_values_from_cert(cert_a.end_entity_cert().unwrap());
-        let mut trusted_releases = HashSet::new();
-        trusted_releases.insert(pcr.clone());
-
-        let verifier = AttestedVerifier::new(
-            None,
-            false,
-            #[cfg(feature = "insecure")]
-            true,
-        )
-        .unwrap();
-
-        verifier
-            .add_context(
-                SessionId::from(7u128),
-                HashMap::from([(MpcIdentity(identity.to_string()), ca_a.clone())]),
-                Some(trusted_releases.clone()),
-            )
-            .unwrap();
-        verifier
-            .add_context(
-                SessionId::from(8u128),
-                HashMap::from([(MpcIdentity(identity.to_string()), ca_b.clone())]),
-                Some(trusted_releases),
-            )
-            .unwrap();
-
-        let (_, cert_x509_a) = parse_x509_certificate(cert_a.end_entity_cert().unwrap()).unwrap();
-        let verifiers = verifier
-            .get_verifiers_and_pcrs_for_x509_cert(&cert_x509_a)
-            .unwrap();
-
-        let candidate_a = verifiers
-            .candidates
-            .iter()
-            .find(|c| c.context_id == SessionId::from(7u128))
-            .expect("Should find context A");
-        let candidate_b = verifiers
-            .candidates
-            .iter()
-            .find(|c| c.context_id == SessionId::from(8u128))
-            .expect("Should find context B");
-
-        assert_eq!(candidate_a.pcrs.len(), 1);
-        assert_eq!(candidate_b.pcrs.len(), 1);
-
-        assert!(
-            candidate_a.pcrs.contains(&pcr),
-            "Context A should have its own PCR values"
-        );
-
-        assert!(
-            candidate_b.pcrs.contains(&pcr),
-            "Context B should have its own PCR values"
-        );
     }
 
     #[test]
