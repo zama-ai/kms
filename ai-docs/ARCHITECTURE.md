@@ -167,7 +167,8 @@ The primary service is `CoreServiceEndpoint`. Its RPCs group into:
   reshared private keyset keeps that field absent. A storage failure during
   resharing rolls the new epoch back on the party that fails. 
   That party attempts to delete the key shares, the CRS metadata and the epoch data of the new epoch. 
-  Observe that no public data is deleted as this is, and should be, unaffected by an epoch change. 
+  Observe that public data that existed before the reshare is not deleted as this is, and should be, unaffected by an epoch change;
+  only public data that the party fetched from its peers during this reshare (see below) is deleted again.
   If cleanup succeeds, it forgets the epoch; otherwise, it keeps the epoch registered so that deletion can be retried. 
   `DestroyMpcContext` carries
   the context's epoch IDs and erases their secret shares (cascading to the
@@ -267,7 +268,12 @@ or if private key material exists at the requested epoch. CRS writes similarly r
 public CRS or private metadata at that epoch. This prevents combining old and new material after
 an incomplete write. Rejection leaves storage and the FHE cache unchanged and records an error
 in the request's meta store. Resharing still reuses public material and writes only the new epoch's
-private material. Retained flat CRS metadata from older releases does not block an epoch-scoped write.
+private material. The exception is a party, typically a new one, whose public storage lacks the public material
+of a reshared key or CRS: it fetches the raw bytes from a peer, verifies them against the request's
+digests, and stores them unchanged together with its private material, so its public storage ends up
+byte-identical to the peers'. Any public artifact already present locally must be byte-identical to
+the fetched artifact or the reshare is rejected. Retained flat CRS metadata from older releases does
+not block an epoch-scoped write.
 
 ## Backward compatibility
 
