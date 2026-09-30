@@ -128,9 +128,31 @@ pub fn scheme_bound_preimage<T>(
 where
     T: Serialize + Versionize + Named,
 {
-    let schemes = canonical_schemes(schemes)?;
     let wire: Vec<i32> = schemes.iter().map(|scheme| scheme.as_wire()).collect();
-    let scheme_bytes = canonical_wire_scheme_bytes(&wire);
+    wire_scheme_bound_preimage(&wire, payload)
+}
+
+/// [`scheme_bound_preimage`] for schemes given by their wire discriminants, the
+/// form a received response carries them in.
+///
+/// A discriminant this release does not know is bound like any other, since the
+/// encoding uses nothing but the discriminant.
+///
+/// Errors when `schemes` is empty.
+pub fn wire_scheme_bound_preimage<T>(
+    schemes: &[i32],
+    payload: &T,
+) -> Result<Zeroizing<Vec<u8>>, SigningError>
+where
+    T: Serialize + Versionize + Named,
+{
+    let mut canonical = schemes.to_vec();
+    canonical.sort_unstable();
+    canonical.dedup();
+    if canonical.is_empty() {
+        return Err(SigningError::EmptySchemeSet);
+    }
+    let scheme_bytes = canonical_wire_scheme_bytes(&canonical);
     let mut out = ZeroizingWriter::new();
     let framed = |e: std::io::Error| SigningError::Serialization(e.to_string());
     out.write_all(COMPOSITE_PREFIX).map_err(framed)?;
@@ -497,6 +519,35 @@ mod tests {
                 .windows(single_scheme_bytes.len())
                 .any(|window| window == single_scheme_bytes)
         );
+    }
+
+    /// The wire form agrees with the typed one for a known set, in any order and
+    /// with duplicates, and binds a scheme this release does not know rather than
+    /// dropping it, so a newer signer's preimage can be rebuilt.
+    #[test]
+    fn wire_preimage_matches_the_typed_one_and_binds_unknown_schemes() {
+        let expected = scheme_bound_preimage(&pair(), &msg()).unwrap();
+        let mut wire: Vec<i32> = pair().iter().map(|scheme| scheme.as_wire()).collect();
+        wire.reverse();
+        wire.push(wire[0]);
+        assert_eq!(wire_scheme_bound_preimage(&wire, &msg()).unwrap(), expected);
+
+        // An unknown discriminant is part of the set, so it changes the preimage,
+        // and where it sits in the input does not.
+        let mut with_unknown = wire.clone();
+        with_unknown.push(i32::MAX);
+        let unknown_first: Vec<i32> = std::iter::once(i32::MAX).chain(wire).collect();
+        let bound = wire_scheme_bound_preimage(&with_unknown, &msg()).unwrap();
+        assert_ne!(bound, expected);
+        assert_eq!(
+            wire_scheme_bound_preimage(&unknown_first, &msg()).unwrap(),
+            bound
+        );
+
+        assert!(matches!(
+            wire_scheme_bound_preimage(&[], &msg()),
+            Err(SigningError::EmptySchemeSet)
+        ));
     }
 
     /// Canonicalisation normalises order and duplicates, and refuses the empty

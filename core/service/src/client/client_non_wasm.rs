@@ -559,12 +559,16 @@ mod tests {
         assert!(verify(&client, &signatures, &payload()).is_err());
     }
 
-    /// Every requested scheme must verify, even when other entries verify.
+    /// Every requested scheme must have an entry in the list, even when the other
+    /// entries and the legacy signature verify.
     #[test]
     fn requested_schemes_cannot_be_stripped() {
         let identity = seeded_identity(10);
         let every_scheme: Vec<_> = SigningSchemeType::iter().collect();
         let composite = vec![SigningSchemeType::Ecdsa256k1, SigningSchemeType::MlDsa65];
+        // A current node always sends the legacy external signature alongside the
+        // list, so every response here carries it.
+        let legacy = legacy_external_signature(&identity);
 
         for (case, requested, offered) in [
             (
@@ -582,7 +586,7 @@ mod tests {
             // Signed under exactly the set offered, not a larger list
             let offered = signatures_for(&identity, &offered, &payload());
             assert_eq!(
-                verify(&client, &offered, &payload()).unwrap(),
+                verify_with_legacy(&client, &offered, &legacy, &payload()).unwrap(),
                 (PARTY, identity.verf_key().address()),
                 "{case}"
             );
@@ -593,7 +597,7 @@ mod tests {
                     .filter(|typed| typed.scheme != dropped.as_wire())
                     .cloned()
                     .collect();
-                let err = verify(&client, &stripped, &payload())
+                let err = verify_with_legacy(&client, &stripped, &legacy, &payload())
                     .unwrap_err()
                     .to_string();
                 assert!(

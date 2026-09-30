@@ -1,4 +1,4 @@
-use crate::cryptography::signing::composite::scheme_bound_preimage;
+use crate::cryptography::signing::composite::wire_scheme_bound_preimage;
 use crate::cryptography::signing::ecdsa::recover_address_from_eip712_hash;
 use crate::{
     anyhow_error_and_log, anyhow_tracked,
@@ -405,7 +405,8 @@ fn attribute_scheme_entry(
 /// # What gets checked
 ///
 /// - First, before any cryptography, that `list` has an entry for every requested
-///   scheme, save an ECDSA that a deprecated field may meet.
+///   scheme. Only when `list` is empty may a deprecated field meet a requested ECDSA
+///   instead.
 /// - The deprecated internal `signature`, when the result kind carries one. It covers the
 ///   payload alone, so it satisfies a requested ECDSA only when no EIP-712 domain is
 ///   available.
@@ -447,29 +448,28 @@ where
                 .to_string(),
         ));
     }
-    // Every requested scheme other than ECDSA must only be met by an entry in `list`.
-    // ECDSA may also be met by a deprecated field, which the final check decides.
+    // A node that sends `list` signs every requested scheme into it, ECDSA included.
+    // Only a node from before `list` sends it empty, and then a deprecated field may
+    // meet a requested ECDSA, which the final check decides. Nothing else can be met
+    // without an entry.
     let presented: Vec<i32> = sigs.list.iter().map(|typed| typed.scheme).collect();
+    let legacy_only = presented.is_empty();
     if let Some(missing) = requested
         .iter()
-        .filter(|scheme| **scheme != SigningSchemeType::Ecdsa256k1)
+        .filter(|scheme| !(legacy_only && **scheme == SigningSchemeType::Ecdsa256k1))
         .find(|scheme| !presented.contains(&scheme.as_wire()))
     {
         return Err(anyhow_tracked(format!(
             "the response carries no {missing} signature, but {missing} was requested"
         )));
     }
-    // Bound to the set this verifier response, as we just checked if any schemes were missing.
-    // The ECDSA entry is the exception; see `sign_result_entries`.
-    let signed_bytes = if sigs.list.is_empty() {
+    // Bound to the set the response presents, which may be a superset of `requested`
+    // and may name schemes this release does not know. The ECDSA entry is the
+    // exception; see `sign_result_entries`.
+    let signed_bytes = if presented.is_empty() {
         Zeroizing::new(Vec::new())
     } else {
-        let presented: Vec<SigningSchemeType> = sigs
-            .list
-            .iter()
-            .map(|typed| typed.scheme.try_into())
-            .collect::<Result<Vec<SigningSchemeType>, _>>()?;
-        scheme_bound_preimage(&presented, payloads.payload)
+        wire_scheme_bound_preimage(&presented, payloads.payload)
             .map_err(|e| anyhow_tracked(format!("could not build the signed payload: {e}")))?
     };
     let mut verified: Vec<SigningSchemeType> = Vec::with_capacity(sigs.list.len() + 1);
