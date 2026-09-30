@@ -195,13 +195,28 @@ where
         .collect()
 }
 
+/// Verify each of `entries` against its key in `keys`, over `preimage`.
+pub fn verify_scheme_bound_entries<'a>(
+    entries: impl IntoIterator<Item = (SigningSchemeType, &'a [u8])>,
+    keys: &VerfKeySet,
+    dsep: &DomainSep,
+    preimage: &[u8],
+) -> Result<(), SigningError> {
+    for (scheme, signature) in entries {
+        let key = keys.require(scheme)?;
+        let signature = Signature::new(scheme, signature.to_vec());
+        unified_verify(dsep, preimage, &signature, key)?;
+    }
+    Ok(())
+}
+
 /// Check every signature in `entries` against `keys`, having first checked that
 /// they were made under exactly the schemes in `schemes`, given in any order.
 ///
 /// `schemes` is the verifier's policy; `keys` is every key the sender publishes
-/// and must hold one for each of `schemes`. Every signature must verify. `entries` is untrusted: it may come straight
-/// from storage or from the network, so its shape is checked here rather than
-/// assumed.
+/// and must hold one for each of `schemes`. Every signature must verify.
+/// `entries` is untrusted: it may come straight from storage or from the
+/// network, so its shape is checked here rather than assumed.
 pub fn verify_composite<T>(
     entries: &[StoredTypedSignature],
     keys: &VerfKeySet,
@@ -224,11 +239,14 @@ where
         });
     }
     let preimage = scheme_bound_preimage(&schemes, payload)?;
-    for entry in entries {
-        let signature = Signature::new(entry.scheme, entry.signature.clone());
-        unified_verify(dsep, &preimage, &signature, keys.require(entry.scheme)?)?;
-    }
-    Ok(())
+    verify_scheme_bound_entries(
+        entries
+            .iter()
+            .map(|entry| (entry.scheme, entry.signature.as_slice())),
+        keys,
+        dsep,
+        &preimage,
+    )
 }
 
 /// The per-scheme signatures of a *result*: a keygen, CRS, preprocessing or

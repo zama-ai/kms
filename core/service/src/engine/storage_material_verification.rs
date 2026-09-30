@@ -35,13 +35,12 @@
 
 use crate::backup::operator::RecoveryValidationMaterial;
 use crate::consts::{SIGNING_KEY_ID, signing_material_id};
+use crate::cryptography::signing::composite::{scheme_bound_preimage, verify_scheme_bound_entries};
 use crate::cryptography::signing::ecdsa::{
     PrivateSigKey, PublicSigKey, recover_address_from_eip712_hash,
 };
 use crate::cryptography::signing::identity::NodeSigningIdentity;
-use crate::cryptography::signing::{
-    Signature, SigningSchemeType, StoredTypedSignature, unified_verify,
-};
+use crate::cryptography::signing::{SigningSchemeType, StoredTypedSignature, VerfKeySet};
 use crate::engine::base::{
     CrsGenMetadata, CrsGenMetadataInner, CurrentPublicMaterialLayout, DSEP_PUBDATA_CRS,
     DSEP_PUBDATA_KEY, KeyGenMetadata, KeyGenMetadataInner, classify_current_public_material,
@@ -549,41 +548,45 @@ where
         return Ok(());
     }
 
+    let mut keys = BTreeMap::new();
+    let mut scheme_entries = Vec::new();
+    for stored in signatures {
+        let scheme = stored.scheme;
+        if scheme == SigningSchemeType::Ecdsa256k1 {
+            if let Some(hash) = eip712_hash {
+                verify_eip712_metadata_signature(
+                    metadata_kind,
+                    metadata_id,
+                    hash,
+                    &stored.signature,
+                    expected_address,
+                )?;
+            }
+            continue;
+        }
+        let verf_key = identity.unified_verifying_key(scheme).map_err(|e| {
+            anyhow::anyhow!(
+                "Private {metadata_kind} metadata for id={metadata_id} carries a {scheme} signature, but this node cannot derive the {scheme} verification key to check it against: {e}"
+            )
+        })?;
+        keys.insert(scheme, verf_key);
+        scheme_entries.push((scheme, stored.signature.as_slice()));
+    }
+    if scheme_entries.is_empty() {
+        return Ok(());
+    }
+
     // The set is derived from the stored entries rather than requested from
     // outside: at boot there is no request to measure against.
     let stored_schemes: Vec<_> = signatures.iter().map(|stored| stored.scheme).collect();
-    let signed_bytes =
-        crate::cryptography::signing::composite::scheme_bound_preimage(&stored_schemes, payload)?;
-
-    for stored in signatures {
-        match stored.scheme {
-            SigningSchemeType::Ecdsa256k1 => {
-                if let Some(hash) = eip712_hash {
-                    verify_eip712_metadata_signature(
-                        metadata_kind,
-                        metadata_id,
-                        hash,
-                        &stored.signature,
-                        expected_address,
-                    )?;
-                }
-            }
-            scheme => {
-                let verf_key = identity.unified_verifying_key(scheme).map_err(|e| {
-                    anyhow::anyhow!(
-                        "Private {metadata_kind} metadata for id={metadata_id} carries a {scheme} signature, but this node cannot derive the {scheme} verification key to check it against: {e}"
-                    )
-                })?;
-                let signature = Signature::new(scheme, stored.signature.clone());
-                unified_verify(dsep, &signed_bytes, &signature, &verf_key).map_err(|e| {
-                    anyhow::anyhow!(
-                        "Invalid {scheme} signature in private {metadata_kind} metadata for id={metadata_id}: {e}"
-                    )
-                })?;
-            }
-        }
-    }
-    Ok(())
+    let preimage = scheme_bound_preimage(&stored_schemes, payload)?;
+    verify_scheme_bound_entries(scheme_entries, &VerfKeySet::new(keys)?, dsep, &preimage).map_err(
+        |e| {
+            anyhow::anyhow!(
+                "Invalid signature in private {metadata_kind} metadata for id={metadata_id}: {e}",
+            )
+        },
+    )
 }
 
 fn verify_eip712_metadata_signature(

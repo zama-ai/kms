@@ -1,4 +1,6 @@
-use crate::cryptography::signing::composite::wire_scheme_bound_preimage;
+use crate::cryptography::signing::composite::{
+    verify_scheme_bound_entries, wire_scheme_bound_preimage,
+};
 use crate::cryptography::signing::ecdsa::recover_address_from_eip712_hash;
 use crate::{
     anyhow_error_and_log, anyhow_tracked,
@@ -6,7 +8,7 @@ use crate::{
     cryptography::{
         compute_user_decrypt_message,
         signatures::{PublicSigKey, Signature, internal_verify_sig},
-        signing::{SchemeVerfKeys, SigningSchemeType, unified_verify, verf_key_for},
+        signing::{SchemeVerfKeys, SigningError, SigningSchemeType},
     },
     engine::signed_payload::user_dec_payload,
 };
@@ -15,10 +17,9 @@ use alloy_primitives::{Address, B256};
 use alloy_sol_types::SolStruct;
 use hashing::DomainSep;
 use kms_grpc::kms::v1::{TypedSignature, UserDecryptionResponse, UserDecryptionResponsePayload};
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeSet, HashMap, HashSet};
 use tfhe::FheTypes;
 use threshold_types::role::Role;
-use zeroize::Zeroizing;
 
 pub(crate) const DSEP_USER_DECRYPTION: DomainSep = *b"USER_DEC";
 
@@ -158,8 +159,6 @@ pub(crate) struct Eip712VerificationParams<'a> {
     pub trusted_eip712_domain: &'a Eip712Domain,
 }
 
-const ERR_VALIDATE_USER_DECRYPTION_MISSING_SIGNATURE: &str =
-    "Missing signature in user decryption response";
 const ERR_VALIDATE_USER_DECRYPTION_ID_NOT_FOUND: &str = "ID claimed in payload not found";
 const ERR_VALIDATE_USER_DECRYPTION_WRONG_ADDRESS: &str =
     "ID or address claimed in payload is incorrect";
@@ -182,83 +181,11 @@ pub(crate) fn user_decrypt_eip712_hash(
     Ok(message.eip712_signing_hash(eip712_domain))
 }
 
-/// Verify one non-ECDSA entry of a result's `signatures` list against the key
-/// `party_id` published for that scheme.
-///
-/// A scheme the verifier holds no key for is a rejection rather than a skip:
-/// accepting an entry nobody can check would let a party satisfy a requested
-/// scheme without producing a valid signature for it.
-///
-/// ECDSA is not handled here — it signs the EIP-712 hash rather than
-/// `signed_bytes`, and what that hash covers differs per result kind.
-///
-/// The error is returned **unlogged**: whether a failure here is a fault or an
-/// expected Byzantine rejection is the caller's to know, and so is the level it
-/// deserves. Public-decryption validation logs it at `warn!`, the client paths at
-/// `error!`.
-pub(crate) fn verify_scheme_entry(
-    keys: &SchemeVerfKeys,
-    party_id: u32,
-    scheme: SigningSchemeType,
-    signature: &[u8],
-    dsep: &DomainSep,
-    signed_bytes: &[u8],
-) -> anyhow::Result<()> {
-    debug_assert_ne!(
-        scheme,
-        SigningSchemeType::Ecdsa256k1,
-        "the ECDSA entry covers the EIP-712 hash, not the serialized payload"
-    );
-    let verf_key = verf_key_for(keys, party_id, scheme).ok_or_else(|| {
-        anyhow_tracked(format!(
-            "party {party_id} signed under {scheme}, but no {scheme} verification key is known \
-             for it"
-        ))
-    })?;
-    let signature = Signature::new(scheme, signature.to_vec());
-    unified_verify(dsep, signed_bytes, &signature, verf_key).map_err(|e| {
-        anyhow_tracked(format!(
-            "the {scheme} signature of party {party_id} did not verify: {e}"
-        ))
-    })
-}
-
-/// Check that every scheme the request asked for was actually *verified*, not
-/// merely present in the list.
-///
-/// If `requested` is empty, the request is also rejected.
-///
-/// `party_id` is the party the response was attributed to, if any signature identified
-/// one. The error is unlogged.
-pub(crate) fn ensure_requested_verified(
-    verified: &[SigningSchemeType],
-    requested: &[SigningSchemeType],
-    party_id: Option<u32>,
-) -> anyhow::Result<()> {
-    let response = || match party_id {
-        Some(party_id) => format!("the response of party {party_id}"),
-        None => "the response".to_string(),
-    };
-    if requested.is_empty() {
-        return Err(anyhow_tracked(format!(
-            "{} was measured against no signing scheme at all, which any signature would \
-             satisfy and none would fail",
-            response()
-        )));
-    }
-    match requested.iter().find(|scheme| !verified.contains(scheme)) {
-        Some(missing) => Err(anyhow_tracked(format!(
-            "{} carries no verified {missing} signature, but {missing} was requested",
-            response()
-        ))),
-        None => Ok(()),
-    }
-}
-
 /// The signatures one server response carries, whatever kind of result it is.
 ///
-/// All three are checked. They are independent statements about the same result, so a
-/// verifier that read only one would accept a response whose other copy disagrees.
+/// A node from 0.15 on carries every signature in `list`, and the deprecated fields
+/// are then ignored. They are only checked for a node from before `list`, which sends
+/// it empty.
 pub(crate) struct ResponseSignatures<'a> {
     /// The deprecated raw ECDSA signature over the serialized response payload. Only a
     /// decryption response carries one; every other result kind leaves this empty.
@@ -278,9 +205,9 @@ pub(crate) struct SignedPayloads<'a, T> {
     pub internal_bytes: &'a [u8],
     /// The payload every non-ECDSA scheme covers.
     pub payload: &'a T,
-    /// The EIP-712 signing hash both ECDSA signatures recover from, or `None` when no
-    /// domain is available and neither can therefore be checked.
-    pub eip712_hash: Option<B256>,
+    /// The EIP-712 signing hash the ECDSA signatures recover from. Every result is
+    /// signed under a domain, so the verifier always has one.
+    pub eip712_hash: B256,
 }
 
 /// The party a response has to belong to.
@@ -334,98 +261,83 @@ impl ExpectedSigner<'_> {
     }
 }
 
-/// Hold every signature of one response to the same party.
-fn agree(signer: Option<(u32, Address)>, found: (u32, Address)) -> anyhow::Result<(u32, Address)> {
-    match signer {
-        Some((party, _)) if party != found.0 => Err(anyhow_tracked(format!(
-            "the response mixes signatures of party {party} and party {}",
-            found.0
-        ))),
-        _ => Ok(found),
-    }
-}
-
-fn push_once(verified: &mut Vec<SigningSchemeType>, scheme: SigningSchemeType) {
-    if !verified.contains(&scheme) {
-        verified.push(scheme);
-    }
-}
-
-/// Verify one non-ECDSA entry and say which party it belongs to.
-fn attribute_scheme_entry(
-    signature: &[u8],
-    scheme: SigningSchemeType,
-    dsep: &DomainSep,
-    signed_bytes: &[u8],
-    expected: &ExpectedSigner,
-    keys: &SchemeVerfKeys,
+/// What the signatures of a response checked so far establish: who signed it, and
+/// under which schemes.
+#[derive(Default)]
+struct Attribution {
     signer: Option<(u32, Address)>,
-) -> anyhow::Result<(u32, Address)> {
-    let check =
-        |party_id: u32| verify_scheme_entry(keys, party_id, scheme, signature, dsep, signed_bytes);
-    match expected {
-        ExpectedSigner::Known {
-            party_id, address, ..
-        } => {
-            check(*party_id)?;
-            Ok((*party_id, *address))
+    verified: BTreeSet<SigningSchemeType>,
+}
+
+impl Attribution {
+    /// Record a verified signature of `party`, which meets `scheme` if one is given.
+    /// Every signature of one response has to belong to the same party.
+    fn record(
+        &mut self,
+        party: (u32, Address),
+        scheme: Option<SigningSchemeType>,
+    ) -> anyhow::Result<()> {
+        if let Some((known, _)) = self.signer
+            && known != party.0
+        {
+            return Err(anyhow_tracked(format!(
+                "the response mixes signatures of party {known} and party {}",
+                party.0
+            )));
         }
-        // A party another signature already fixed decides which key this entry must
-        // verify under, rather than whichever key happens to match.
-        ExpectedSigner::Discover { addresses } => match signer {
-            Some((party_id, address)) => {
-                check(party_id)?;
-                Ok((party_id, address))
-            }
-            None => {
-                let parsed = Signature::new(scheme, signature.to_vec());
-                keys.iter()
-                    .find_map(|(party_id, party_keys)| {
-                        let verf_key = party_keys.get(scheme)?;
-                        unified_verify(dsep, signed_bytes, &parsed, verf_key).ok()?;
-                        addresses.get(party_id).map(|address| (*party_id, *address))
-                    })
-                    .ok_or_else(|| {
-                        anyhow_tracked(format!(
-                            "the {scheme} signature of the response verifies under no known \
-                             party key"
-                        ))
-                    })
-            }
-        },
+        self.signer = Some(party);
+        if let Some(scheme) = scheme {
+            self.verified.insert(scheme);
+        }
+        Ok(())
+    }
+
+    /// The party that signed, once every requested scheme was verified.
+    fn finish(self, requested: &[SigningSchemeType]) -> anyhow::Result<(u32, Address)> {
+        // A requested scheme that was never verified is the actionable cause, so it is
+        // reported before the absence of any signer.
+        if let Some(missing) = requested
+            .iter()
+            .find(|scheme| !self.verified.contains(scheme))
+        {
+            let response = match self.signer {
+                Some((party_id, _)) => format!("the response of party {party_id}"),
+                None => "the response".to_string(),
+            };
+            return Err(anyhow_tracked(format!(
+                "{response} carries no verified {missing} signature, but {missing} was requested"
+            )));
+        }
+        self.signer.ok_or_else(|| {
+            anyhow_tracked(
+                "no signature of the response could be checked, so it identified no party"
+                    .to_string(),
+            )
+        })
     }
 }
 
-/// Verify **every** signature a server response carries that can be checked, and
-/// require every requested scheme to end up verified. This is the one signature check
-/// behind decryption, key generation, CRS generation and preprocessing.
+/// Verify the signatures of a server response that meet the request, and return the
+/// party that signed it. This is the one signature check behind decryption, key
+/// generation, CRS generation and preprocessing.
 ///
-/// Returns the party the response is attributed to.
+/// # What gets checked, in order
 ///
-/// # What gets checked
+/// 1. `requested` names at least one scheme; an empty request is a rejection rather
+///    than a lenient one.
+/// 2. Before any cryptography, `list` carries an entry for every requested scheme.
+///    Only when `list` is empty, as a node from before it sends, may a deprecated
+///    field meet a requested ECDSA instead.
+/// 3. When ECDSA was requested: the ECDSA entry of `list`, or for a node from before
+///    `list`, the deprecated fields. Both need the EIP-712 domain.
+/// 4. Every other requested entry of `list`, against the keys of the party that
+///    signed. These entries are bound to the scheme set `list` presents, which may be
+///    a superset of `requested` and may name schemes this release does not know.
+/// 5. Every requested scheme ended up verified, and every signature agreed on one
+///    party.
 ///
-/// - First, before any cryptography, that `list` has an entry for every requested
-///   scheme. Only when `list` is empty may a deprecated field meet a requested ECDSA
-///   instead.
-/// - The deprecated internal `signature`, when the result kind carries one. It covers the
-///   payload alone, so it satisfies a requested ECDSA only when no EIP-712 domain is
-///   available.
-/// - The deprecated `external_signature`, whenever an EIP-712 domain is available. It is
-///   checked *in addition to* the internal one, not instead of it.
-/// - Every entry of `list` for a requested scheme. An entry for a scheme nobody asked
-///   for is not checked, and neither is an entry of a scheme this release does not
-///   know, so a response signed under a superset of the request is accepted.
-/// - Finally, that every requested scheme was verified, and that every signature agreed
-///   on one party.
-///
-/// The non-ECDSA entries are checked against a preimage bound to the schemes `list`
-/// presents, which is the set the server signed under, not against `requested`. An
-/// unchecked entry still counts towards that set, so adding or removing one makes every
-/// non-ECDSA entry fail.
-///
-/// A result whose `list` is empty is still authenticated by the deprecated fields, which
-/// is what a node from a release before the list sends. A `requested` that is empty, by
-/// contrast, is a rejection rather than a lenient request.
+/// A signature nobody requested carries no weight either way: it is not checked,
+/// whether it is an entry of `list` or one of the deprecated fields.
 ///
 /// # Errors
 ///
@@ -441,145 +353,240 @@ pub(crate) fn verify_response_signatures<T>(
 where
     T: serde::Serialize + tfhe::Versionize + tfhe::named::Named,
 {
+    // 1–2. Something was requested, and the list carries all of it.
+    ensure_requested_present(requested, sigs.list)?;
+    let (ecdsa_entries, scheme_entries) = requested_entries(sigs.list, requested);
+    let mut attribution = Attribution::default();
+    // 3. ECDSA in each form it is carried in, when it was requested.
+    if requested.contains(&SigningSchemeType::Ecdsa256k1) {
+        verify_ecdsa(sigs, &ecdsa_entries, payloads, expected, &mut attribution)?;
+    }
+    // 4. Every other requested scheme, against the signing party's keys.
+    verify_scheme_entries(
+        &scheme_entries,
+        sigs.list,
+        payloads,
+        expected,
+        keys,
+        &mut attribution,
+    )?;
+    // 5. Every requested scheme verified, all by one party.
+    attribution.finish(requested)
+}
+
+/// Steps 1 and 2: `requested` names at least one scheme, and `list` carries an entry
+/// for each of them.
+///
+/// A node that sends `list` must sign using every requested scheme, ECDSA included.
+/// A legacy node is allowed to send an empty list, in which case ECDSA must be verified.
+fn ensure_requested_present(
+    requested: &[SigningSchemeType],
+    list: &[TypedSignature],
+) -> anyhow::Result<()> {
     if requested.is_empty() {
         return Err(anyhow_tracked(
-            "the response was measured against no signing scheme at all, which any signature would \
-             satisfy and none would fail"
+            "the response was measured against no signing scheme at all, which any signature \
+             would satisfy and none would fail"
                 .to_string(),
         ));
     }
-    // A node that sends `list` signs every requested scheme into it, ECDSA included.
-    // Only a node from before `list` sends it empty, and then a deprecated field may
-    // meet a requested ECDSA, which the final check decides. Nothing else can be met
-    // without an entry.
-    let presented: Vec<i32> = sigs.list.iter().map(|typed| typed.scheme).collect();
-    let legacy_only = presented.is_empty();
-    if let Some(missing) = requested
-        .iter()
-        .filter(|scheme| !(legacy_only && **scheme == SigningSchemeType::Ecdsa256k1))
-        .find(|scheme| !presented.contains(&scheme.as_wire()))
-    {
+    if let Some(missing) = requested.iter().find(|scheme| {
+        let in_list = list.iter().any(|typed| typed.scheme == scheme.as_wire());
+        // A legacy node may send an empty list, in which case an ECDSA signature must be
+        // done. Step 3 verifies such signatures.
+        let met_by_deprecated_fields = list.is_empty() && **scheme == SigningSchemeType::Ecdsa256k1;
+        !in_list && !met_by_deprecated_fields
+    }) {
         return Err(anyhow_tracked(format!(
             "the response carries no {missing} signature, but {missing} was requested"
         )));
     }
-    // Bound to the set the response presents, which may be a superset of `requested`
-    // and may name schemes this release does not know. The ECDSA entry is the
-    // exception; see `sign_result_entries`.
-    let signed_bytes = if presented.is_empty() {
-        Zeroizing::new(Vec::new())
-    } else {
-        wire_scheme_bound_preimage(&presented, payloads.payload)
-            .map_err(|e| anyhow_tracked(format!("could not build the signed payload: {e}")))?
-    };
-    let mut verified: Vec<SigningSchemeType> = Vec::with_capacity(sigs.list.len() + 1);
-    let mut signer: Option<(u32, Address)> = None;
+    Ok(())
+}
 
-    // The deprecated raw ECDSA signature is not recoverable, so it is checked against
-    // the key the caller established rather than used to find one.
-    if !sigs.internal.is_empty() {
-        let ExpectedSigner::Known {
-            party_id,
-            address,
-            verf_key,
-        } = expected
-        else {
-            return Err(anyhow_tracked(
-                "the response carries a deprecated internal signature, but its signer has to be \
-                 discovered from its signatures and that field is not recoverable"
-                    .to_string(),
-            ));
-        };
-        let parsed = k256::ecdsa::Signature::from_slice(sigs.internal).map_err(|e| {
-            anyhow_tracked(format!(
-                "could not parse the deprecated internal signature: {e}"
-            ))
-        })?;
-        internal_verify_sig(
-            payloads.dsep,
-            payloads.internal_bytes,
-            &Signature::from_ecdsa(parsed),
-            verf_key,
-        )
-        .map_err(|e| {
-            anyhow_tracked(format!(
-                "the deprecated internal signature of party {party_id} did not verify: {e}"
-            ))
-        })?;
-        signer = Some((*party_id, *address));
-        // The internal signature covers the response payload alone, not the fields the
-        // EIP-712 message binds, such as the handles and the extra data. So it meets a
-        // requested ECDSA only when no EIP-712 form can be checked; with a domain, one of
-        // the two EIP-712 forms has to verify.
-        if payloads.eip712_hash.is_none() {
-            push_once(&mut verified, SigningSchemeType::Ecdsa256k1);
-        }
-    }
-
-    if !sigs.external.is_empty() {
-        match payloads.eip712_hash.as_ref() {
-            Some(hash) => {
-                let found =
-                    expected.attribute(recover_address_from_eip712_hash(hash, sigs.external)?)?;
-                signer = Some(agree(signer, found)?);
-                push_once(&mut verified, SigningSchemeType::Ecdsa256k1);
-            }
-            None => tracing::warn!(
-                "No EIP-712 domain is available, so the deprecated external signature of a \
-                 response cannot be checked"
-            ),
-        }
-    }
-
-    for typed in sigs.list {
-        // A scheme this release does not know cannot have been requested, so its entry
-        // is passed over like an unrequested one. Its discriminant is still bound into
-        // the preimage above, so a verifier keeps working when a newer node signs
-        // under a scheme this release has never heard of.
+/// The entries of `list` for a requested scheme, split into the ECDSA signatures and
+/// the scheme-bound rest.
+///
+/// An entry for a scheme that was not requested is skipped, but does not cause a failure.
+/// Still, even if it was not requested, it still count towards the scheme set the preimage
+/// which is signed such that a verifier keeps working when a newer node signs under more schemes.
+fn requested_entries<'a>(
+    list: &'a [TypedSignature],
+    requested: &[SigningSchemeType],
+) -> (Vec<&'a [u8]>, Vec<(SigningSchemeType, &'a [u8])>) {
+    let mut ecdsa = Vec::new();
+    let mut scheme_bound = Vec::new();
+    for typed in list {
         let Ok(scheme) = SigningSchemeType::try_from(typed.scheme) else {
             tracing::warn!(
                 "A response carries a signature of the unknown scheme {}, which is skipped",
                 typed.scheme
             );
+            // Skip validation of un-requested schemes
             continue;
         };
         if !requested.contains(&scheme) {
             tracing::warn!("A response carries a {scheme} signature that was not requested");
-            continue;
-        }
-        let found = if scheme == SigningSchemeType::Ecdsa256k1 {
-            // Only this entry is an EIP-712 signature, so only it needs the domain.
-            let Some(hash) = payloads.eip712_hash.as_ref() else {
-                tracing::warn!(
-                    "No EIP-712 domain is available, so the ECDSA entry of a response cannot \
-                     be checked"
-                );
-                continue;
-            };
-            expected.attribute(recover_address_from_eip712_hash(hash, &typed.signature)?)?
+        } else if scheme == SigningSchemeType::Ecdsa256k1 {
+            ecdsa.push(typed.signature.as_slice());
         } else {
-            attribute_scheme_entry(
-                &typed.signature,
-                scheme,
-                payloads.dsep,
-                &signed_bytes,
-                expected,
-                keys,
-                signer,
-            )?
-        };
-        signer = Some(agree(signer, found)?);
-        push_once(&mut verified, scheme);
+            scheme_bound.push((scheme, typed.signature.as_slice()));
+        }
     }
+    (ecdsa, scheme_bound)
+}
 
-    // A requested scheme that was never verified is the actionable cause, so it is
-    // reported before the absence of any signer.
-    ensure_requested_verified(&verified, requested, signer.map(|(party_id, _)| party_id))?;
-    signer.ok_or_else(|| {
-        anyhow_tracked(
-            "no signature of the response could be checked, so it identified no party".to_string(),
-        )
-    })
+/// Step 3: ECDSA, as the ECDSA entry of `list` or, for a node from before `list`, the
+/// deprecated fields.
+fn verify_ecdsa<T>(
+    sigs: &ResponseSignatures,
+    ecdsa_entries: &[&[u8]],
+    payloads: &SignedPayloads<T>,
+    expected: &ExpectedSigner,
+    attribution: &mut Attribution,
+) -> anyhow::Result<()> {
+    let hash = &payloads.eip712_hash;
+    if ecdsa_entries.is_empty() {
+        return verify_legacy_ecdsa(sigs, hash, payloads, expected, attribution);
+    }
+    for signature in ecdsa_entries {
+        let party = expected.attribute(recover_address_from_eip712_hash(hash, signature)?)?;
+        attribution.record(party, Some(SigningSchemeType::Ecdsa256k1))?;
+    }
+    Ok(())
+}
+
+/// The deprecated fields of a node from before `list`. `external_signature` is the
+/// EIP-712 signature that meets ECDSA. The internal `signature`, which a decryption
+/// response carries, covers the payload alone, so it only confirms the signing party.
+///
+/// TODO(0.16): remove together with the fields.
+fn verify_legacy_ecdsa<T>(
+    sigs: &ResponseSignatures,
+    hash: &B256,
+    payloads: &SignedPayloads<T>,
+    expected: &ExpectedSigner,
+    attribution: &mut Attribution,
+) -> anyhow::Result<()> {
+    if !sigs.external.is_empty() {
+        let party = expected.attribute(recover_address_from_eip712_hash(hash, sigs.external)?)?;
+        attribution.record(party, Some(SigningSchemeType::Ecdsa256k1))?;
+    }
+    if sigs.internal.is_empty() {
+        return Ok(());
+    }
+    // The raw signature is not recoverable, so it is checked against the key the
+    // caller established rather than used to find one.
+    let ExpectedSigner::Known {
+        party_id,
+        address,
+        verf_key,
+    } = expected
+    else {
+        return Err(anyhow_tracked(
+            "the response carries a deprecated internal signature, but its signer has to be \
+             discovered from its signatures and that field is not recoverable"
+                .to_string(),
+        ));
+    };
+    let parsed = k256::ecdsa::Signature::from_slice(sigs.internal).map_err(|e| {
+        anyhow_tracked(format!(
+            "could not parse the deprecated internal signature: {e}"
+        ))
+    })?;
+    internal_verify_sig(
+        payloads.dsep,
+        payloads.internal_bytes,
+        &Signature::from_ecdsa(parsed),
+        verf_key,
+    )
+    .map_err(|e| {
+        anyhow_tracked(format!(
+            "the deprecated internal signature of party {party_id} did not verify: {e}"
+        ))
+    })?;
+    attribution.record((*party_id, *address), None)
+}
+
+/// Step 4: every requested non-ECDSA entry, against the keys of the party that signed.
+///
+/// That party is the one the caller expects, else the one an ECDSA signature recovered
+/// to, else the one whose key the first entry verifies under. The entries are bound to
+/// the scheme set `list` presents, not to `requested`, so adding or removing any entry
+/// makes them all fail.
+fn verify_scheme_entries<T>(
+    entries: &[(SigningSchemeType, &[u8])],
+    list: &[TypedSignature],
+    payloads: &SignedPayloads<T>,
+    expected: &ExpectedSigner,
+    keys: &SchemeVerfKeys,
+    attribution: &mut Attribution,
+) -> anyhow::Result<()>
+where
+    T: serde::Serialize + tfhe::Versionize + tfhe::named::Named,
+{
+    let Some(&first) = entries.first() else {
+        return Ok(());
+    };
+    let presented: Vec<i32> = list.iter().map(|typed| typed.scheme).collect();
+    let preimage = wire_scheme_bound_preimage(&presented, payloads.payload)
+        .map_err(|e| anyhow_tracked(format!("could not build the signed payload: {e}")))?;
+    let party = match (expected, attribution.signer) {
+        (
+            ExpectedSigner::Known {
+                party_id, address, ..
+            },
+            _,
+        ) => (*party_id, *address),
+        (ExpectedSigner::Discover { .. }, Some(found)) => found,
+        (ExpectedSigner::Discover { addresses }, None) => {
+            identify_party(first, keys, addresses, payloads.dsep, &preimage)?
+        }
+    };
+    let party_id = party.0;
+    // A missing key is a rejection rather than a skip: accepting an entry nobody can
+    // check would let a party satisfy a requested scheme without a valid signature.
+    keys.get(&party_id)
+        .ok_or(SigningError::NoVerificationKey(first.0))
+        .and_then(|party_keys| {
+            verify_scheme_bound_entries(
+                entries.iter().copied(),
+                party_keys,
+                payloads.dsep,
+                &preimage,
+            )
+        })
+        .map_err(|e| {
+            anyhow_tracked(format!(
+                "a signature of party {party_id} did not verify: {e}"
+            ))
+        })?;
+    for &(scheme, _) in entries {
+        attribution.record(party, Some(scheme))?;
+    }
+    Ok(())
+}
+
+/// The party whose published key `entry` verifies under, for a response whose signer
+/// neither the caller nor an ECDSA signature identified.
+fn identify_party(
+    entry: (SigningSchemeType, &[u8]),
+    keys: &SchemeVerfKeys,
+    addresses: &HashMap<u32, Address>,
+    dsep: &DomainSep,
+    preimage: &[u8],
+) -> anyhow::Result<(u32, Address)> {
+    keys.iter()
+        .find(|(_, party_keys)| {
+            verify_scheme_bound_entries([entry], party_keys, dsep, preimage).is_ok()
+        })
+        .and_then(|(party_id, _)| addresses.get(party_id).map(|address| (*party_id, *address)))
+        .ok_or_else(|| {
+            anyhow_tracked(format!(
+                "the {} signature of the response verifies under no known party key",
+                entry.0
+            ))
+        })
 }
 
 /// Authenticate a single (untrusted) response: look its `party_id` up in
@@ -619,14 +626,6 @@ fn authenticate_user_decrypt_and_check_meta_data(
         ));
     }
 
-    // A response has to carry at least one of the two deprecated fields until 0.16, so
-    // that a node from a release before `signatures` stays verifiable.
-    if signature.is_empty() && eip712_params.response_external_signature.is_empty() {
-        return Err(anyhow_error_and_log(
-            ERR_VALIDATE_USER_DECRYPTION_MISSING_SIGNATURE,
-        ));
-    }
-
     let response_bytes = bc2wrap::serialize(&response)?;
     verify_response_signatures(
         &ResponseSignatures {
@@ -638,11 +637,11 @@ fn authenticate_user_decrypt_and_check_meta_data(
             dsep: &DSEP_USER_DECRYPTION,
             internal_bytes: &response_bytes,
             payload: &user_dec_payload(&response_bytes, eip712_params.response_extra_data),
-            eip712_hash: Some(user_decrypt_eip712_hash(
+            eip712_hash: user_decrypt_eip712_hash(
                 response,
                 trusted_ctx.client_request,
                 eip712_params.trusted_eip712_domain,
-            )?),
+            )?,
         },
         trusted_ctx.client_request.signing_schemes(),
         &ExpectedSigner::Known {
@@ -966,7 +965,8 @@ mod tests {
     use aes_prng::AesRng;
     use alloy_dyn_abi::Eip712Domain;
     use kms_grpc::kms::v1::{
-        TypedSigncryptedCiphertext, UserDecryptionResponse, UserDecryptionResponsePayload,
+        TypedSignature, TypedSigncryptedCiphertext, UserDecryptionResponse,
+        UserDecryptionResponsePayload,
     };
     use rand::SeedableRng;
     use strum::IntoEnumIterator;
@@ -996,34 +996,37 @@ mod tests {
     };
 
     use super::{
-        DSEP_USER_DECRYPTION, ERR_VALIDATE_USER_DECRYPTION_MISSING_SIGNATURE,
-        ERR_VALIDATE_USER_DECRYPTION_NOT_ENOUGH_RESP, Eip712VerificationParams, ExpectedSigner,
-        ResponseSignatures, SignedPayloads, UserDecTrustedValidationContext,
-        UserDecryptionInvariants, user_decrypt_eip712_hash, validate_user_decrypt_responses,
-        verify_response_signatures,
+        DSEP_USER_DECRYPTION, ERR_VALIDATE_USER_DECRYPTION_NOT_ENOUGH_RESP,
+        Eip712VerificationParams, ExpectedSigner, ResponseSignatures, SignedPayloads,
+        UserDecTrustedValidationContext, UserDecryptionInvariants, user_decrypt_eip712_hash,
+        validate_user_decrypt_responses, verify_response_signatures,
     };
 
-    /// Asking for no scheme at all is a rejection, whatever the response verified
-    /// under.
+    /// Asking for no scheme at all is a rejection, whatever the response carries.
     #[test]
     fn no_requested_scheme_is_a_rejection() {
         let every_scheme: Vec<_> = SigningSchemeType::iter().collect();
+        let full_list: Vec<_> = every_scheme
+            .iter()
+            .map(|scheme| TypedSignature {
+                scheme: scheme.as_wire(),
+                signature: vec![],
+            })
+            .collect();
 
-        for verified in [&[][..], &[SigningSchemeType::Ecdsa256k1][..], &every_scheme] {
-            for party_id in [None, Some(1)] {
-                let err = super::ensure_requested_verified(verified, &[], party_id)
-                    .unwrap_err()
-                    .to_string();
-                assert!(
-                    err.contains("no signing scheme at all"),
-                    "the error does not name the cause: {err}"
-                );
-            }
+        for list in [&[][..], &full_list[..]] {
+            let err = super::ensure_requested_present(&[], list)
+                .unwrap_err()
+                .to_string();
+            assert!(
+                err.contains("no signing scheme at all"),
+                "the error does not name the cause: {err}"
+            );
         }
 
-        // A scheme that was asked for and verified still passes, so the new rejection
-        // did not swallow the ordinary case.
-        super::ensure_requested_verified(&every_scheme, &every_scheme, Some(1)).unwrap();
+        // A request whose schemes are all present still passes, so the rejection did
+        // not swallow the ordinary case.
+        super::ensure_requested_present(&every_scheme, &full_list).unwrap();
     }
 
     /// Helper method to be removed in 0.16 when the external signature is no longer used in production.
@@ -1124,9 +1127,8 @@ mod tests {
                     dsep: &DSEP_USER_DECRYPTION,
                     internal_bytes: &response_bytes,
                     payload: &super::user_dec_payload(&response_bytes, request.extra_data()),
-                    eip712_hash: Some(
-                        user_decrypt_eip712_hash(response, &request, eip712_domain).unwrap(),
-                    ),
+                    eip712_hash: user_decrypt_eip712_hash(response, &request, eip712_domain)
+                        .unwrap(),
                 },
                 request.signing_schemes(),
                 &ExpectedSigner::Known {
@@ -1272,7 +1274,7 @@ mod tests {
         // done here — they are a single `UserDecryptionInvariants` equality in
         // `classify_user_decrypt_response`, exercised via `test_validate_user_decrypt_responses`.
 
-        // no signatures are provided
+        // no signatures are provided, so the requested ECDSA is left unverified
         {
             let params = Eip712VerificationParams {
                 response_external_signature: &[],
@@ -1283,13 +1285,13 @@ mod tests {
                 authenticate_user_decrypt_and_check_meta_data(
                     &trusted_ctx,
                     &pivot_resp,
-                    &[], // the ECDSA signature may be empty, thus we check the external one
+                    &[],
                     &[],
                     &params,
                 )
                 .unwrap_err()
                 .to_string()
-                .contains(ERR_VALIDATE_USER_DECRYPTION_MISSING_SIGNATURE)
+                .contains("carries no verified Ecdsa256k1 signature")
             );
         }
 
@@ -1313,27 +1315,6 @@ mod tests {
                 .unwrap_err()
                 .to_string()
                 .contains(ERR_VALIDATE_USER_DECRYPTION_ID_NOT_FOUND)
-            );
-        }
-
-        // no signatures are provided
-        {
-            let params = Eip712VerificationParams {
-                response_external_signature: &[],
-                response_extra_data: &extra_data,
-                trusted_eip712_domain: &dummy_domain,
-            };
-            assert!(
-                authenticate_user_decrypt_and_check_meta_data(
-                    &trusted_ctx,
-                    &pivot_resp,
-                    &[], // the ECDSA signature may be empty, thus we check the external one
-                    &[],
-                    &params,
-                )
-                .unwrap_err()
-                .to_string()
-                .contains(ERR_VALIDATE_USER_DECRYPTION_MISSING_SIGNATURE)
             );
         }
 

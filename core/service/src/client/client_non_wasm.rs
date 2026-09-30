@@ -155,7 +155,7 @@ impl Client {
                 dsep,
                 internal_bytes: &[],
                 payload,
-                eip712_hash: Some(sol_type.eip712_signing_hash(domain)),
+                eip712_hash: sol_type.eip712_signing_hash(domain),
             },
             &self.signing_schemes,
             &ExpectedSigner::Discover {
@@ -382,36 +382,25 @@ mod tests {
         assert!(verify_with_legacy(&client, &[], &[0u8; 65], &payload()).is_err());
     }
 
-    /// The legacy signature is checked *alongside* the list, not instead of it. A result
-    /// whose list verifies but whose deprecated field does not is still rejected: the two
-    /// are independent statements about the same result, and they have to agree.
+    /// The legacy signature is only checked for a node from before the list. Once the
+    /// list carries the ECDSA signature, the legacy field beside it is not checked; without
+    /// the list, a bad legacy signature is a rejection.
     #[test]
-    fn a_bad_legacy_signature_is_rejected_even_when_the_list_verifies() {
+    fn a_bad_legacy_signature_is_ignored_once_the_list_carries_ecdsa() {
         let identity = seeded_identity(16);
         let client = client_for(&identity, &[]);
         let signatures = signatures_for(&identity, &[SigningSchemeType::Ecdsa256k1], &payload());
+        let bad_legacy = [
+            vec![0xAA; 65],
+            legacy_external_signature(&seeded_identity(17)),
+        ];
 
-        // Both copies present and agreeing is the honest case.
-        let (party_id, _address) = verify_with_legacy(
-            &client,
-            &signatures,
-            &legacy_external_signature(&identity),
-            &payload(),
-        )
-        .unwrap();
-        assert_eq!(party_id, PARTY);
-
-        // A garbage legacy signature is a rejection, and so is one of another party.
-        assert!(verify_with_legacy(&client, &signatures, &[0xAA; 65], &payload()).is_err());
-        assert!(
-            verify_with_legacy(
-                &client,
-                &signatures,
-                &legacy_external_signature(&seeded_identity(17)),
-                &payload(),
-            )
-            .is_err()
-        );
+        for legacy in &bad_legacy {
+            let (party_id, _address) =
+                verify_with_legacy(&client, &signatures, legacy, &payload()).unwrap();
+            assert_eq!(party_id, PARTY);
+            assert!(verify_with_legacy(&client, &[], legacy, &payload()).is_err());
+        }
     }
 
     /// A MlDsa65 signature is attributed to the correct signing party, provided
@@ -536,8 +525,8 @@ mod tests {
             .unwrap_err()
             .to_string();
         assert!(
-            err.contains("party 1 signed under Ed25519")
-                && err.contains("no Ed25519 verification key is known"),
+            err.contains("party 1")
+                && err.contains("no party published a Ed25519 verification key"),
             "the error does not name the missing key: {err}"
         );
     }

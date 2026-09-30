@@ -53,9 +53,10 @@ pub(crate) struct PublicDecTrustedValidationContext<'a> {
     /// client built without storage access, such as the browser, supplies an
     /// empty map and can then only check ECDSA.
     scheme_verf_keys: &'a SchemeVerfKeys,
-    eip712_domain: Option<&'a Eip712Domain>,
+    /// Every result is signed under an EIP-712 domain, so the verifier always has one.
+    eip712_domain: &'a Eip712Domain,
     ext_handles_bytes: &'a [Vec<u8>],
-    extra_data: Option<&'a [u8]>,
+    extra_data: &'a [u8],
     request: Option<&'a PublicDecryptionRequest>,
 }
 
@@ -63,9 +64,9 @@ impl<'a> PublicDecTrustedValidationContext<'a> {
     pub fn new(
         server_pks: &'a HashMap<u32, PublicSigKey>,
         scheme_verf_keys: &'a SchemeVerfKeys,
-        eip712_domain: Option<&'a Eip712Domain>,
+        eip712_domain: &'a Eip712Domain,
         ext_handles_bytes: &'a [Vec<u8>],
-        extra_data: Option<&'a [u8]>,
+        extra_data: &'a [u8],
         request: Option<&'a PublicDecryptionRequest>,
     ) -> anyhow::Result<Self> {
         // Sanity check uniqueness of server public keys. This is a trusted context, so if the server keys are not unique, it is a configuration error.
@@ -485,19 +486,12 @@ fn check_public_decrypt_signatures(
     let response_bytes = bc2wrap::serialize(&response)?;
     let payload = public_dec_payload(&response_bytes, response_extra_data);
 
-    // Built only when a domain is available: without one no ECDSA signature of this
-    // response can be checked, and the message would be of no use.
-    let eip712_hash = match trusted_ctx.eip712_domain {
-        Some(domain) => Some(
-            compute_public_decryption_message(
-                trusted_ctx.ext_handles_bytes,
-                &response.plaintexts,
-                response_extra_data,
-            )?
-            .eip712_signing_hash(domain),
-        ),
-        None => None,
-    };
+    let eip712_hash = compute_public_decryption_message(
+        trusted_ctx.ext_handles_bytes,
+        &response.plaintexts,
+        response_extra_data,
+    )?
+    .eip712_signing_hash(trusted_ctx.eip712_domain);
 
     verify_response_signatures(
         &ResponseSignatures {
@@ -675,9 +669,7 @@ fn authenticate_public_decrypt_response(
         tracing::warn!("A request ID must be present!");
         return Err(PublicRejectReason::MissingRequestId);
     }
-    if let Some(expected_extra_data) = trusted_ctx.extra_data
-        && cur_resp.extra_data != expected_extra_data
-    {
+    if cur_resp.extra_data != trusted_ctx.extra_data {
         tracing::warn!("Extra data mismatch in public decryption!");
         return Err(PublicRejectReason::ExtraDataMismatch);
     }
@@ -1728,9 +1720,9 @@ mod tests {
         let ctx = PublicDecTrustedValidationContext::new(
             &server_pks,
             &scheme_verf_keys,
-            Some(&domain),
+            &domain,
             &[],
-            None,
+            &[],
             None,
         )
         .unwrap();
@@ -1836,9 +1828,9 @@ mod tests {
 
         let trusted_ctx = PublicDecTrustedValidationContext {
             server_pks: &pks,
-            eip712_domain: Some(&alloy_domain),
+            eip712_domain: &alloy_domain,
             ext_handles_bytes: &ext_handles_bytes,
-            extra_data: Some(&extra_data_0),
+            extra_data: &extra_data_0,
             request: None,
             scheme_verf_keys: &HashMap::new(),
         };
@@ -2059,9 +2051,9 @@ mod tests {
 
         let trusted_ctx = PublicDecTrustedValidationContext {
             server_pks: &pks,
-            eip712_domain: Some(&alloy_domain),
+            eip712_domain: &alloy_domain,
             ext_handles_bytes: &ext_handles_bytes,
-            extra_data: Some(&extra_data),
+            extra_data: &extra_data,
             request: Some(&request),
             scheme_verf_keys: &HashMap::new(),
         };
@@ -2112,9 +2104,9 @@ mod tests {
             };
             let bad_ctx = PublicDecTrustedValidationContext {
                 server_pks: &pks,
-                eip712_domain: Some(&alloy_domain),
+                eip712_domain: &alloy_domain,
                 ext_handles_bytes: &ext_handles_bytes,
-                extra_data: Some(&extra_data),
+                extra_data: &extra_data,
                 request: Some(&bad_request),
                 scheme_verf_keys: &HashMap::new(),
             };
@@ -2163,9 +2155,9 @@ mod tests {
             };
             let bad_ctx = PublicDecTrustedValidationContext {
                 server_pks: &pks,
-                eip712_domain: Some(&alloy_domain),
+                eip712_domain: &alloy_domain,
                 ext_handles_bytes: &ext_handles_bytes,
-                extra_data: Some(&extra_data),
+                extra_data: &extra_data,
                 request: Some(&bad_request),
                 scheme_verf_keys: &HashMap::new(),
             };
@@ -2177,18 +2169,19 @@ mod tests {
             );
         }
 
-        // request is empty, which should pass
+        // Without the request the responses are not bound to it, but are still
+        // verified against the domain, the handles and the extra data it would carry.
         {
             let agg_resp = vec![resp0.clone(), resp1.clone()];
-            let none_ctx = PublicDecTrustedValidationContext {
+            let external_ctx = PublicDecTrustedValidationContext {
                 server_pks: &pks,
-                eip712_domain: None,
-                ext_handles_bytes: &[],
-                extra_data: None,
+                eip712_domain: &alloy_domain,
+                ext_handles_bytes: &ext_handles_bytes,
+                extra_data: &extra_data,
                 request: None,
                 scheme_verf_keys: &HashMap::new(),
             };
-            validate_public_decrypt_responses(&none_ctx, 2, &agg_resp).unwrap();
+            validate_public_decrypt_responses(&external_ctx, 2, &agg_resp).unwrap();
         }
 
         // happy path
@@ -2244,114 +2237,60 @@ mod tests {
 
         let server_pks = HashMap::from([(1u32, vk_of(&pivot))]);
         let scheme_verf_keys = HashMap::new();
-        let ctx = |domain| {
-            PublicDecTrustedValidationContext::new(
-                &server_pks,
-                &scheme_verf_keys,
-                domain,
-                &ext_handles_bytes,
-                None,
-                None,
-            )
-            .unwrap()
-        };
-        let verify = |ctx: &PublicDecTrustedValidationContext, sigs: &[TypedSignature]| {
+        let ctx = PublicDecTrustedValidationContext::new(
+            &server_pks,
+            &scheme_verf_keys,
+            &alloy_domain,
+            &ext_handles_bytes,
+            &extra_data,
+            None,
+        )
+        .unwrap();
+        let verify = |internal: &[u8], external: &[u8], list: &[TypedSignature]| {
             verify_public_decrypt_signatures(
-                ctx,
+                &ctx,
                 &pivot,
                 1,
                 &vk_of(&pivot),
-                &[],
-                &[],
-                sigs,
+                internal,
+                external,
+                list,
                 &extra_data,
             )
         };
 
         // an empty list, with no internal field to fall back on
-        assert!(!verify(&ctx(Some(&alloy_domain)), &[]));
+        assert!(!verify(&[], &[], &[]));
 
         // a tampered ECDSA signature recovers to another address
-        assert!(!verify(&ctx(Some(&alloy_domain)), &tampered));
-
-        // without a domain the EIP-712 message cannot be rebuilt, so the only entry
-        // there is gets passed over and the requested ECDSA is left unverified
-        assert!(!verify(&ctx(None), &signatures));
+        assert!(!verify(&[], &[], &tampered));
 
         // happy path
-        assert!(verify(&ctx(Some(&alloy_domain)), &signatures));
+        assert!(verify(&[], &[], &signatures));
 
-        // The deprecated internal fields authenticate the same response. The raw ECDSA
-        // signature needs no domain.
-        let domainless = ctx(None);
-        assert!(verify_public_decrypt_signatures(
-            &domainless,
-            &pivot,
-            1,
-            &vk_of(&pivot),
-            &signed.signature,
-            &[],
-            &[],
-            &extra_data,
-        ));
-        // `external_signature` does the same, but only with a domain to rebuild the
-        // EIP-712 message from.
-        let with_domain = ctx(Some(&alloy_domain));
-        assert!(verify_public_decrypt_signatures(
-            &with_domain,
-            &pivot,
-            1,
-            &vk_of(&pivot),
-            &[],
-            &signed.external_signature,
-            &[],
-            &extra_data,
-        ));
-        assert!(!verify_public_decrypt_signatures(
-            &domainless,
-            &pivot,
-            1,
-            &vk_of(&pivot),
-            &[],
-            &signed.external_signature,
-            &[],
-            &extra_data,
-        ));
-        // With a domain the internal signature does not stand in for the EIP-712 forms:
-        // it covers the payload alone, not the handles or the extra data the EIP-712
-        // message binds, so the requested ECDSA is left unverified.
-        assert!(!verify_public_decrypt_signatures(
-            &with_domain,
-            &pivot,
-            1,
-            &vk_of(&pivot),
-            &signed.signature,
-            &[],
-            &[],
-            &extra_data,
-        ));
-        // A corrupt internal signature is a rejection, not something the list can
-        // paper over.
+        // A node from before the list is authenticated by `external_signature`.
+        assert!(verify(&[], &signed.external_signature, &[]));
+
+        // The internal signature does not stand in for the EIP-712 forms: it covers
+        // the payload alone, not the handles or the extra data the EIP-712 message
+        // binds, so it only confirms the party and the requested ECDSA is left
+        // unverified.
+        assert!(!verify(&signed.signature, &[], &[]));
+
+        // For a node from before the list, a corrupt internal signature is a rejection
+        // even beside a valid `external_signature`...
         let mut bad_internal = signed.signature.clone();
         bad_internal[0] ^= 1;
-        assert!(!verify_public_decrypt_signatures(
-            &with_domain,
-            &pivot,
-            1,
-            &vk_of(&pivot),
-            &bad_internal,
-            &[],
-            &signatures,
-            &extra_data,
-        ));
+        assert!(!verify(&bad_internal, &signed.external_signature, &[]));
+        // ...but once the list carries ECDSA, the deprecated fields are not checked.
+        assert!(verify(&bad_internal, &[], &signatures));
     }
 
-    /// The EIP-712 domain is a precondition of the ECDSA entry alone, so a
-    /// request that asked only for a post-quantum scheme is verified without one,
-    /// while a request that also asked for ECDSA needs both the domain and the
-    /// ECDSA entry.
+    /// A request that asked only for a post-quantum scheme is satisfied by that entry
+    /// of the list, a request that also asked for ECDSA needs the ECDSA entry too, and
+    /// the list may be a superset of what was asked for.
     #[test]
-    fn test_public_decrypt_signatures_without_an_eip712_domain() {
+    fn test_public_decrypt_signatures_per_scheme() {
         use crate::cryptography::signatures::RootSigningSeed;
 
         let mut rng = AesRng::seed_from_u64(77);
@@ -2389,6 +2328,7 @@ mod tests {
         .map(TypedSignature::from)
         .collect();
 
+        let domain = dummy_domain();
         let server_pks = HashMap::from([(1u32, vk.clone())]);
         let scheme_verf_keys = HashMap::from([(
             1u32,
@@ -2398,14 +2338,14 @@ mod tests {
             signing_schemes: schemes,
             ..Default::default()
         };
-        // No domain in either context: what differs is only what was asked for.
+        // What differs between the contexts is only what was asked for.
         let ctx_for = |request| {
             PublicDecTrustedValidationContext::new(
                 &server_pks,
                 &scheme_verf_keys,
-                None,
+                &domain,
                 &[],
-                None,
+                &extra_data,
                 request,
             )
             .unwrap()
@@ -2428,7 +2368,7 @@ mod tests {
         let pq_only = request_for(vec![kms_grpc::kms::v1::SigningSchemeType::Mldsa65 as i32]);
         let pq_ctx = ctx_for(Some(&pq_only));
 
-        // No domain, yet the post-quantum entry the request asked for verifies.
+        // The post-quantum entry the request asked for verifies on its own.
         assert!(verify(&pq_ctx, &extra_data));
 
         // The extra data is part of what that entry covers.
@@ -2443,9 +2383,8 @@ mod tests {
         let composite_ctx = ctx_for(Some(&composite));
         assert!(!verify(&composite_ctx, &extra_data));
 
-        // Neither is an absent request, which names nothing and so means ECDSA:
-        // the domain that entry needs is missing, and the list has no ECDSA entry
-        // to check in any case.
+        // Neither is an absent request, which names nothing and so means ECDSA, for
+        // which the list has no entry.
         let no_request_ctx = ctx_for(None);
         assert!(!verify(&no_request_ctx, &extra_data));
 
@@ -2482,9 +2421,9 @@ mod tests {
         let superset_ctx = PublicDecTrustedValidationContext::new(
             &server_pks,
             &superset_keys,
-            None,
+            &domain,
             &[],
-            None,
+            &extra_data,
             Some(&superset_request),
         )
         .unwrap();
@@ -2690,9 +2629,17 @@ mod tests {
         let (vk0, _sk0) = gen_sig_keys(&mut rng);
         let (vk1, _sk1) = gen_sig_keys(&mut rng);
         let server_pks = HashMap::from([(1, vk0.clone()), (2, vk1.clone())]);
+        let domain = dummy_domain();
 
-        PublicDecTrustedValidationContext::new(&server_pks, &HashMap::new(), None, &[], None, None)
-            .unwrap();
+        PublicDecTrustedValidationContext::new(
+            &server_pks,
+            &HashMap::new(),
+            &domain,
+            &[],
+            &[],
+            None,
+        )
+        .unwrap();
 
         // Error if the server_pks has duplicate keys
         let server_pks = HashMap::from([(1, vk1.clone()), (2, vk1)]);
@@ -2700,9 +2647,9 @@ mod tests {
             PublicDecTrustedValidationContext::new(
                 &server_pks,
                 &HashMap::new(),
-                None,
+                &domain,
                 &[],
-                None,
+                &[],
                 None
             )
             .is_err()

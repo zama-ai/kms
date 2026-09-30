@@ -2177,10 +2177,16 @@ fn verify_public_decrypt_responses(
     kms_addrs: &[alloy_primitives::Address],
     num_expected_responses: usize,
 ) -> anyhow::Result<()> {
-    // Resolve the verification material into (domain, external handles, extra_data) plus the
-    // optional original request used for the internal request-binding check.
-    let (domain, external_handles, extra_data, request) = match verification {
+    // Resolve the verification material into (domain, external handles, extra_data).
+    let (domain, external_handles, extra_data) = match verification {
         PubDecVerificationMaterial::Request(decryption_request) => {
+            // With the request at hand, the responses are also validated against it:
+            // bound to it, and accepted by majority.
+            internal_client.process_decryption_resp(
+                &decryption_request,
+                num_expected_responses as u32,
+                resp_response_vec,
+            )?;
             let domain_msg = decryption_request
                 .domain
                 .as_ref()
@@ -2192,19 +2198,13 @@ fn verify_public_decrypt_responses(
                 .iter()
                 .map(|ct| ct.external_handle.clone())
                 .collect();
-            let extra_data = decryption_request.extra_data.clone();
-            (
-                domain,
-                external_handles,
-                extra_data,
-                Some(decryption_request),
-            )
+            (domain, external_handles, decryption_request.extra_data)
         }
         PubDecVerificationMaterial::External {
             domain,
             external_handles,
             extra_data,
-        } => (domain, external_handles, extra_data, None),
+        } => (domain, external_handles, extra_data),
     };
 
     // If an expected answer is provided, use it; otherwise consider the first answer.
@@ -2222,15 +2222,8 @@ fn verify_public_decrypt_responses(
             .clone(),
     };
 
-    // check the internal signatures (verifies responses are signed by the trusted KMS keys;
-    // request-binding only applies for the `Request` variant)
-    internal_client.process_decryption_resp(
-        request,
-        num_expected_responses as u32,
-        resp_response_vec,
-    )?;
-
-    // check the per-scheme signatures
+    // Check every response's signatures, signer and plaintext. For `External` material this
+    // is the only check, since without the request there is nothing to bind the responses to.
     check_external_decryption_signature(
         resp_response_vec,
         ptxt,

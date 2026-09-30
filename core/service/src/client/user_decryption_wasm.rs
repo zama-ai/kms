@@ -263,12 +263,6 @@ impl Client {
             ));
         }
 
-        // A response has to carry at least one of the two deprecated fields until 0.16,
-        // so that a node from a release before `signatures` stays verifiable.
-        if resp.signature.is_empty() && resp.external_signature.is_empty() {
-            return Err(anyhow_error_and_log("empty signature"));
-        }
-
         let response_bytes = bc2wrap::serialize(&payload)?;
         verify_response_signatures(
             &ResponseSignatures {
@@ -280,7 +274,7 @@ impl Client {
                 dsep: &DSEP_USER_DECRYPTION,
                 internal_bytes: &response_bytes,
                 payload: &user_dec_payload(&response_bytes, &resp.extra_data),
-                eip712_hash: Some(user_decrypt_eip712_hash(&payload, request, eip712_domain)?),
+                eip712_hash: user_decrypt_eip712_hash(&payload, request, eip712_domain)?,
             },
             request.signing_schemes(),
             &ExpectedSigner::Known {
