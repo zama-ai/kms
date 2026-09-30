@@ -127,8 +127,12 @@ lint-package:
 # auto-installed by rustup on the first `cargo dylint --all` run, driven by the
 # `rust-toolchain` file each library ships (e.g. `tfhe-lints` in the tfhe-rs
 # repo at the tag pinned in `dylint.toml`).
+# `cargo-dylint` and `dylint-link` are pinned because newer releases can require
+# a newer rustc than `rust-toolchain.toml` provides (6.1.0 needs rustc 1.96).
+# Keep in sync with `ci/scripts/backward_snapshot.sh`.
+DYLINT_VERSION := 6.0.4
 install-dylint:
-	cargo install cargo-dylint dylint-link --locked
+	cargo install cargo-dylint@$(DYLINT_VERSION) dylint-link@$(DYLINT_VERSION) --locked
 
 lint-dylint:
 	DYLINT_RUSTFLAGS="$(DYLINT_RUSTFLAGS)" cargo dylint --all

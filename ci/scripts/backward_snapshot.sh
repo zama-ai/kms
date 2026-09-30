@@ -128,8 +128,11 @@ install_tools() {
     local source_git source_tag
     read -r source_git source_tag < <(tfhe_lints_source)
 
-    log_info "Installing cargo-dylint, dylint-link"
-    cargo install cargo-dylint dylint-link --locked
+    # Pinned to match DYLINT_VERSION in the Makefile; newer releases can
+    # require a newer rustc than rust-toolchain.toml provides.
+    local dylint_version=6.0.4
+    log_info "Installing cargo-dylint, dylint-link ${dylint_version}"
+    cargo install "cargo-dylint@${dylint_version}" "dylint-link@${dylint_version}" --locked
     log_info "Installing tfhe-backward-compat-checker from ${source_git}@${source_tag}"
     cargo install --force --git "${source_git}" --tag "${source_tag}" tfhe-backward-compat-checker --locked
 }

@@ -288,6 +288,18 @@ kubeUtils:
     tag: v0.4.0
     pullPolicy: Always
 
+# Used by enclave proxy sidecars:
+# enclave-config, kms-core-enclave-logger, enclave-web-identity-token.
+# The image itself stays kubeUtils.image on this release branch.
+socat:
+  resources:
+    requests:
+      cpu: 50m
+      memory: 64Mi
+    limits:
+      cpu: 200m
+      memory: 128Mi
+
 runMode: dev
 
 redis:

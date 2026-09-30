@@ -131,10 +131,10 @@ All Rust test jobs delegate to [`common-testing.yml`](common-testing.yml) for th
 ### `test-core-service` matrix
 
 Two parallel entries on PRs:
-1. `-F slow_tests -F s3_tests --lib -- --skip nightly` — workspace lib tests
-2. `-E kind(test) -F slow_tests -F s3_tests -- --skip threshold --skip nightly` — integration tests excluding threshold (those run in `test-core-service-slow-threshold`)
+1. `-F slow_tests --lib -- --skip nightly` — workspace lib tests
+2. `-E kind(test) -F slow_tests -- --skip threshold --skip nightly` — integration tests excluding threshold (those run in `test-core-service-slow-threshold`)
 
-Schedule entry: `--release -F slow_tests -F s3_tests nightly` — nightly-suffixed tests in release mode.
+Schedule entry: `--release -F slow_tests nightly` — nightly-suffixed tests in release mode.
 
 ### Test material
 
@@ -154,7 +154,7 @@ Steps (subset):
 | GHCR + CGR registry login | OIDC + repo secrets |
 | Setup Rust + Protoc | Toolchain pinned via `rust-toolchain.toml` |
 | Swatinem rust-cache | Saves only on `main` |
-| Setup Redis / MinIO | Optional, gated by inputs |
+| Setup Redis | Optional, gated by inputs |
 | Generate Test Material | Unless `skip-test-material: true` |
 | Build `kms-custodian` binary | Required by integration tests |
 | Run Tests | `cargo nextest --profile <ci\|ci-nightly> run …` |
@@ -168,7 +168,7 @@ Inputs of note:
 - `nextest-profile` — `ci` (default) or `ci-nightly`
 - `lfs` — pull Git-LFS objects on checkout
 - `skip-test-material` — skip material generation + custodian build
-- `run-redis`, `run-minio` — start the relevant sidecar
+- `run-redis` — start the Redis sidecar
 - `runs-on`, `runner-volume` — runs-on slab selector
 
 Lint/format/security live in [`rust-lint.yml`](rust-lint.yml) and [`ci_lint.yml`](ci_lint.yml), not here.

@@ -74,7 +74,8 @@ centralized
 {{/* takes a (dict "name" string
      	     	   "image" (dict "name" string "tag" string)
      	     	   "from" string
-		      "to" string */}}
+		      "to" string
+		      "resources" k8s resources dict) */}}
 {{- define "socatContainer" -}}
 name: {{ .name }}
 image: {{ .image.name }}:{{ .image.tag }}
@@ -86,16 +87,22 @@ args:
   - -d0
   - {{ .from }}
   - {{ .to }}
+{{- with .resources }}
+resources:
+  {{- toYaml . | nindent 2 }}
+{{- end }}
 {{- end -}}
 
 {{/* takes a (dict "name" string
      	     	   "image" (dict "name" string "tag" string)
                    "vsockPort" int
-		           "to" string) */}}
+		           "to" string
+		           "resources" k8s resources dict) */}}
 {{- define "proxyFromEnclave" -}}
 {{- include "socatContainer"
       (dict "name" .name
             "image" .image
+            "resources" .resources
             "from" (printf "VSOCK-LISTEN:%d,fork,reuseaddr" (int .vsockPort))
 	      "to" .to) }}
 {{- end -}}
