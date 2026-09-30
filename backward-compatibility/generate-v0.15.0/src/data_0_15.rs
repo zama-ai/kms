@@ -31,7 +31,10 @@ use kms_0_15_0::cryptography::{
         NodeSigningIdentity, RootSigningSeed, SigningSchemeType, StoredTypedSignature,
         UnifiedPublicSigKey, VerfKeySet,
     },
-    signcryption::{Signcrypt, UnifiedSigncryption, UnifiedSigncryptionKey},
+    signcryption::{
+        CompositeEnvelope, CompositeSigncryptionPayload, Signcrypt, UnifiedSigncryption,
+        UnifiedSigncryptionKey,
+    },
 };
 use kms_0_15_0::engine::base::{
     CrsGenMetadata, CrsGenMetadataInner, CrsGenMetadataInnerV2, CrsSignedPayload,
@@ -103,20 +106,21 @@ use backward_compatibility::parameters::{
     SwitchAndSquashParametersTest,
 };
 use backward_compatibility::{
-    AppKeyBlobTest, BackupCiphertextTest, ContextInfoTest, CrsGenMetadataTest,
-    CrsGenMetadataWithExtraDataTest, CrsSignedPayloadTest, CustodianContextAnchorTest,
-    Eip712DomainTest, EpochDataTest, HybridKemCtTest, InternalCustodianContextTest,
-    InternalCustodianRecoveryOutputTest, InternalCustodianSetupMessageTest,
-    InternalRecoveryRequestTest, KeyGenMetadataTest, KeyGenMetadataWithExtraDataTest,
-    KeygenSignedPayloadTest, KmsFheKeyHandlesTest, MlKem1024P384PrivateKeyTest,
-    MlKem1024P384PublicKeyTest, NodeInfoTest, OperatorBackupOutputTest, PRSSSetupTest,
-    PrepKeygenSignedPayloadTest, PrfKeyTest, PrivDataTypeTest, PrivateSigKeyTest, PrssSetTest,
-    PrssSetupCombinedTest, PubDataTypeTest, PublicDecSignedPayloadTest, PublicSigKeyTest,
-    RecoveryValidationMaterialTest, ReleasePCRValuesTest, RootSigningSeedTest, SchemeDigestsTest,
-    ShareTest, SigncryptionPayloadTest, SignedPubDataHandleInternalTest, SoftwareVersionTest,
+    AppKeyBlobTest, BackupCiphertextTest, CompositeEnvelopeTest, CompositeSigncryptionPayloadTest,
+    ContextInfoTest, CrsGenMetadataTest, CrsGenMetadataWithExtraDataTest, CrsSignedPayloadTest,
+    CustodianContextAnchorTest, Eip712DomainTest, EpochDataTest, HybridKemCtTest,
+    InternalCustodianContextTest, InternalCustodianRecoveryOutputTest,
+    InternalCustodianSetupMessageTest, InternalRecoveryRequestTest, KeyGenMetadataTest,
+    KeyGenMetadataWithExtraDataTest, KeygenSignedPayloadTest, KmsFheKeyHandlesTest,
+    MlKem1024P384PrivateKeyTest, MlKem1024P384PublicKeyTest, NodeInfoTest,
+    OperatorBackupOutputTest, PRSSSetupTest, PrepKeygenSignedPayloadTest, PrfKeyTest,
+    PrivDataTypeTest, PrivateSigKeyTest, PrssSetTest, PrssSetupCombinedTest, PubDataTypeTest,
+    PublicDecSignedPayloadTest, PublicSigKeyTest, RecoveryValidationMaterialTest,
+    ReleasePCRValuesTest, RootSigningSeedTest, SchemeDigestsTest, ShareTest,
+    SigncryptionPayloadTest, SignedPubDataHandleInternalTest, SoftwareVersionTest,
     StoredEip712DomainTest, StoredTypedSignatureTest, TestMetadataDD, TestMetadataKMS,
     TestMetadataKmsGrpc, ThresholdFheKeysTest, TypedPlaintextTest, UnifiedCipherTest,
-    UnifiedPublicSigKeyTest, UnifiedSigncryptionTest, UserDecSignedPayloadTest,
+    UnifiedPublicSigKeyTest, UnifiedSigncryptionTest, UserDecSignedPayloadTest, VerfKeySetTest,
     DISTRIBUTED_DECRYPTION_MODULE_NAME, KMS_GRPC_MODULE_NAME, KMS_MODULE_NAME,
 };
 use hashing_0_15_0::hash_versioned;
@@ -689,6 +693,29 @@ const USER_DEC_SIGNED_PAYLOAD_TEST: UserDecSignedPayloadTest = UserDecSignedPayl
     test_filename: Cow::Borrowed("user_dec_signed_payload"),
     response_bytes: Cow::Borrowed(&[0xEE; 48]),
     extra_data: Cow::Borrowed(&[0x11, 0x12, 0x13, 0x14]),
+};
+
+// KMS test — the plaintext of a composite signcryption: the message and one signature per scheme.
+const COMPOSITE_ENVELOPE_TEST: CompositeEnvelopeTest = CompositeEnvelopeTest {
+    test_filename: Cow::Borrowed("composite_envelope"),
+    msg: Cow::Borrowed(&[0x21; 40]),
+    schemes: Cow::Borrowed(&[Cow::Borrowed("Ecdsa256k1"), Cow::Borrowed("MlDsa87")]),
+    signature: Cow::Borrowed(&[0x22; 16]),
+};
+
+// KMS test — what every signature of a composite signcryption covers.
+const COMPOSITE_SIGNCRYPTION_PAYLOAD_TEST: CompositeSigncryptionPayloadTest =
+    CompositeSigncryptionPayloadTest {
+        test_filename: Cow::Borrowed("composite_signcryption_payload"),
+        msg: Cow::Borrowed(&[0x31; 40]),
+        receiver_id: Cow::Borrowed(&[0x32; 20]),
+        enc_key_digest: Cow::Borrowed(&[0x33; 32]),
+    };
+
+// KMS test — a key set covering every signing scheme.
+const VERF_KEY_SET_TEST: VerfKeySetTest = VerfKeySetTest {
+    test_filename: Cow::Borrowed("verf_key_set"),
+    state: 703,
 };
 
 /// Maps the scheme names pinned in [`STORED_SCHEME_SIGNATURE_TEST`] and
@@ -1899,6 +1926,54 @@ impl KmsV0_15_0 {
 
         TestMetadataKMS::UserDecSignedPayload(USER_DEC_SIGNED_PAYLOAD_TEST)
     }
+
+    /// `CompositeEnvelope` containing plaintext a composite signcryption encrypts.
+    /// It is only ever held encrypted, so the fixture pins the envelope itself.
+    fn gen_composite_envelope(dir: &PathBuf) -> TestMetadataKMS {
+        let envelope = CompositeEnvelope {
+            msg: COMPOSITE_ENVELOPE_TEST.msg.to_vec(),
+            signatures: COMPOSITE_ENVELOPE_TEST
+                .schemes
+                .iter()
+                .map(|name| StoredTypedSignature {
+                    scheme: scheme_from_name(name),
+                    signature: COMPOSITE_ENVELOPE_TEST.signature.to_vec(),
+                })
+                .collect(),
+        };
+
+        store_versioned_test!(&envelope, dir, &COMPOSITE_ENVELOPE_TEST.test_filename);
+
+        TestMetadataKMS::CompositeEnvelope(COMPOSITE_ENVELOPE_TEST)
+    }
+
+    /// `CompositeSigncryptionPayload` represent the content that the composite signature signs.
+    fn gen_composite_signcryption_payload(dir: &PathBuf) -> TestMetadataKMS {
+        let payload = CompositeSigncryptionPayload {
+            msg: COMPOSITE_SIGNCRYPTION_PAYLOAD_TEST.msg.to_vec(),
+            receiver_id: COMPOSITE_SIGNCRYPTION_PAYLOAD_TEST.receiver_id.to_vec(),
+            enc_key_digest: COMPOSITE_SIGNCRYPTION_PAYLOAD_TEST.enc_key_digest.to_vec(),
+        };
+
+        store_versioned_test!(
+            &payload,
+            dir,
+            &COMPOSITE_SIGNCRYPTION_PAYLOAD_TEST.test_filename
+        );
+
+        TestMetadataKMS::CompositeSigncryptionPayload(COMPOSITE_SIGNCRYPTION_PAYLOAD_TEST)
+    }
+
+    /// `VerfKeySet` contains the verification keys a party publishes.
+    fn gen_verf_key_set(dir: &PathBuf) -> TestMetadataKMS {
+        let mut rng = AesRng::seed_from_u64(VERF_KEY_SET_TEST.state);
+        let schemes: Vec<SigningSchemeType> = SigningSchemeType::iter().collect();
+        let key_set = seeded_verf_key_set(&mut rng, &schemes);
+
+        store_versioned_test!(&key_set, dir, &VERF_KEY_SET_TEST.test_filename);
+
+        TestMetadataKMS::VerfKeySet(VERF_KEY_SET_TEST)
+    }
 }
 
 struct DistributedDecryptionV0_15_0;
@@ -2156,6 +2231,9 @@ impl KMSCoreVersion for V0_15_0 {
             KmsV0_15_0::gen_crs_signed_payload(&dir),
             KmsV0_15_0::gen_public_dec_signed_payload(&dir),
             KmsV0_15_0::gen_user_dec_signed_payload(&dir),
+            KmsV0_15_0::gen_composite_envelope(&dir),
+            KmsV0_15_0::gen_composite_signcryption_payload(&dir),
+            KmsV0_15_0::gen_verf_key_set(&dir),
         ]
     }
 
