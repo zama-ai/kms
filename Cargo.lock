@@ -7946,7 +7946,7 @@ dependencies = [
  "anyhow",
  "async-trait",
  "attestation-doc-validation",
- "aws-nitro-enclaves-nsm-api 0.4.0",
+ "aws-nitro-enclaves-nsm-api 0.5.2",
  "backoff",
  "bc2wrap",
  "bytes",
