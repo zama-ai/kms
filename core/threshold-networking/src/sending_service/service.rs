@@ -8,6 +8,7 @@ use std::str::FromStr;
 use std::sync::Arc;
 use std::time::Duration;
 
+use crate::constants::SEND_DEADLINE;
 use crate::ggen::SendValueRequest;
 use crate::ggen::Status;
 use crate::ggen::gnetworking_client::GnetworkingClient;
@@ -26,6 +27,7 @@ use tokio::sync::{
     RwLock,
     mpsc::{UnboundedReceiver, UnboundedSender, unbounded_channel},
 };
+use tokio::time::timeout;
 use tokio_rustls::rustls::{client::ClientConfig, pki_types::ServerName};
 use tonic::service::interceptor::InterceptedService;
 use tonic::transport::Uri;
@@ -246,8 +248,16 @@ impl GrpcSendingService {
             };
 
             // Single unified retry strategy
-            let res: Result<_, _> =
-                retry_notify(exponential_backoff.clone(), send_fn, on_network_fail).await;
+            let res: Result<_, _> = timeout(
+                SEND_DEADLINE,
+                retry_notify(exponential_backoff.clone(), send_fn, on_network_fail),
+            )
+            .await
+            .unwrap_or_else(|_| {
+                Err(tonic::Status::deadline_exceeded(format!(
+                    "no delivery within {SEND_DEADLINE:?}"
+                )))
+            });
             match res {
                 Ok(send_response) => {
                     match send_response.status() {

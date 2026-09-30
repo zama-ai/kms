@@ -34,6 +34,11 @@ pub const MAX_INTERVAL: Duration = Duration::from_secs(60);
 /// to allow recovery
 pub(crate) const MAX_ELAPSED_TIME: Duration = Duration::from_secs(90);
 
+/// EXPERIMENT: upper bound on delivering one message to a peer, retries included, so a slow or
+/// unresponsive peer cannot keep a network task alive. Shorter than the keepalive window below,
+/// so a send no longer waits for a restarted peer to come back.
+pub(crate) const SEND_DEADLINE: Duration = Duration::from_secs(10);
+
 /// maximum number of seconds that a party waits for a network message during a protocol
 pub(crate) const NETWORK_TIMEOUT: Duration = Duration::from_secs(5);
 
