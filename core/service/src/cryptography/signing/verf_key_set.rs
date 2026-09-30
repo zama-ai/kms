@@ -1,14 +1,17 @@
 //! The verification keys one party publishes, one per signature scheme.
 
+use super::ecdsa::PublicSigKey;
 use super::identity::NodeSigningIdentity;
-use super::{HasSigningScheme, SigningError, SigningSchemeType, UnifiedPublicSigKey};
+use super::{
+    HasSigningScheme, SigningError, SigningSchemeType, UnifiedPublicSigKey, canonical_schemes,
+};
 use hashing::{DomainSep, hash_element};
 use serde::{Deserialize, Deserializer, Serialize};
 use std::collections::BTreeMap;
 use tfhe::named::Named;
 use tfhe_versionable::{Versionize, VersionsDispatch};
 
-/// Domain separator for the digest that identifies a whole verification-key set.
+/// Domain separator for the digest that identifies the keys a signature is made with.
 const DSEP_VERF_KEY_SET: DomainSep = *b"VKEYSET_";
 
 /// One party's verification keys, keyed by the scheme each belongs to.
@@ -91,6 +94,17 @@ impl VerfKeySet {
         Ok(Self { keys })
     }
 
+    /// The set holding nothing but the ECDSA key `key`.
+    pub fn ecdsa_only(key: PublicSigKey) -> Self {
+        // Non-empty and correctly filed, so the invariants hold without `new`.
+        Self {
+            keys: BTreeMap::from([(
+                SigningSchemeType::Ecdsa256k1,
+                UnifiedPublicSigKey::Ecdsa256k1(key),
+            )]),
+        }
+    }
+
     /// The key set `identity` publishes for `schemes`.
     pub fn from_identity(
         identity: &NodeSigningIdentity,
@@ -120,23 +134,35 @@ impl VerfKeySet {
             .ok_or(SigningError::NoVerificationKey(scheme))
     }
 
-    /// The identifier of this key set.
-    ///
-    /// A digest over every member key, so changing, adding or removing one
-    /// changes the identity.
-    pub fn id(&self) -> Result<Vec<u8>, SigningError> {
-        Ok(hash_element(&DSEP_VERF_KEY_SET, &self.canonical_bytes()?))
+    /// The ECDSA key of the set, or an error if it holds none.
+    pub fn ecdsa(&self) -> Result<&PublicSigKey, SigningError> {
+        match self.require(SigningSchemeType::Ecdsa256k1)? {
+            UnifiedPublicSigKey::Ecdsa256k1(key) => Ok(key),
+            // Unreachable: `new` files every key under its own scheme.
+            _ => Err(SigningError::NoVerificationKey(
+                SigningSchemeType::Ecdsa256k1,
+            )),
+        }
     }
 
-    /// The unambiguous byte encoding of this key set, for use inside a digest.
-    fn canonical_bytes(&self) -> Result<Vec<u8>, SigningError> {
+    /// The identifier of the keys a signature under `schemes` is made with.
+    pub fn id(&self, schemes: &[SigningSchemeType]) -> Result<Vec<u8>, SigningError> {
+        let schemes = canonical_schemes(schemes)?;
+        Ok(hash_element(
+            &DSEP_VERF_KEY_SET,
+            &self.canonical_bytes(&schemes)?,
+        ))
+    }
+
+    /// The unambiguous byte encoding of the keys for the canonical `schemes`,
+    /// for use inside a digest.
+    fn canonical_bytes(&self, schemes: &[SigningSchemeType]) -> Result<Vec<u8>, SigningError> {
         let mut out = Vec::new();
         // Bounded by the number of known schemes, so the cast cannot truncate.
-        out.extend_from_slice(&(self.keys.len() as u32).to_le_bytes());
-        // Note that this is deterministic based on the `Ord` implementation of SigningSchemeType.
-        for (scheme, key) in &self.keys {
+        out.extend_from_slice(&(schemes.len() as u32).to_le_bytes());
+        for &scheme in schemes {
             out.extend_from_slice(&scheme.tag());
-            let bytes = key.digest();
+            let bytes = self.require(scheme)?.digest();
             out.extend_from_slice(&(bytes.len() as u64).to_le_bytes());
             out.extend_from_slice(&bytes);
         }
@@ -166,6 +192,26 @@ mod tests {
             assert_eq!(key.signing_scheme_type(), scheme);
             assert_eq!(key, &identity.unified_verifying_key(scheme).unwrap());
         }
+    }
+
+    /// An ECDSA-only set holds and returns exactly its key, and a set without an
+    /// ECDSA key says so.
+    #[test]
+    fn an_ecdsa_only_set_holds_and_returns_its_key() {
+        let mut rng = AesRng::seed_from_u64(6);
+        let (pk, _sk) = crate::cryptography::signatures::gen_sig_keys(&mut rng);
+        let set = VerfKeySet::ecdsa_only(pk.clone());
+        assert_eq!(set.schemes(), vec![SigningSchemeType::Ecdsa256k1]);
+        assert_eq!(set.ecdsa().unwrap(), &pk);
+
+        let identity = seeded_identity(&mut rng);
+        let no_ecdsa = VerfKeySet::from_identity(&identity, &[SigningSchemeType::MlDsa65]).unwrap();
+        assert!(matches!(
+            no_ecdsa.ecdsa(),
+            Err(SigningError::NoVerificationKey(
+                SigningSchemeType::Ecdsa256k1
+            ))
+        ));
     }
 
     /// A seedless identity can only do ECDSA, so asking it for more must fail
@@ -216,8 +262,8 @@ mod tests {
         let bytes = bc2wrap::serialize(&misfiled).unwrap();
         assert!(bc2wrap::deserialize_slice::<VerfKeySet>(&bytes).is_err());
 
-        // The empty set, which would make `verify_composite` accept a signature
-        // list having checked nothing.
+        // The empty set, which publishes nothing any signature could be checked
+        // against.
         let empty = BTreeMap::<SigningSchemeType, UnifiedPublicSigKey>::new();
         assert!(matches!(
             VerfKeySet::new(empty.clone()),
@@ -240,37 +286,34 @@ mod tests {
         }
     }
 
-    /// The id names the whole set: swapping any single member key changes it.
+    /// The id names the selected keys: swapping a selected key, or changing the
+    /// selection, changes it, while a key outside the selection does not.
     #[test]
-    fn id_changes_when_any_member_key_changes() {
+    fn id_names_exactly_the_selected_keys() {
         let mut rng = AesRng::seed_from_u64(4);
         let identity = seeded_identity(&mut rng);
         let other_identity = seeded_identity(&mut rng);
-        let schemes: Vec<_> = SigningSchemeType::iter().collect();
+        let every_scheme: Vec<_> = SigningSchemeType::iter().collect();
+        let selected = [SigningSchemeType::Ecdsa256k1, SigningSchemeType::MlDsa87];
 
-        let base = VerfKeySet::from_identity(&identity, &schemes).unwrap();
-        let base_id = base.id().unwrap();
-        assert_eq!(base_id, base.id().unwrap(), "the id is not deterministic");
+        let base = VerfKeySet::from_identity(&identity, &every_scheme).unwrap();
+        let base_id = base.id(&selected).unwrap();
 
-        for &scheme in &schemes {
+        for &scheme in &every_scheme {
             let mut swapped = base.keys.clone();
             swapped.insert(
                 scheme,
                 other_identity.unified_verifying_key(scheme).unwrap(),
             );
-            let swapped = VerfKeySet::new(swapped).unwrap();
-            assert_ne!(
-                base_id,
-                swapped.id().unwrap(),
-                "swapping the {scheme} key left the set id unchanged"
+            let swapped_id = VerfKeySet::new(swapped).unwrap().id(&selected).unwrap();
+            assert_eq!(
+                base_id == swapped_id,
+                !selected.contains(&scheme),
+                "swapping the {scheme} key had the wrong effect on the id"
             );
         }
 
-        // Dropping a scheme is also a different identity, not a weaker form of
-        // the same one.
-        let mut fewer = base.keys.clone();
-        fewer.remove(&SigningSchemeType::MlDsa87);
-        let fewer = VerfKeySet::new(fewer).unwrap();
-        assert_ne!(base_id, fewer.id().unwrap());
+        assert_ne!(base_id, base.id(&[SigningSchemeType::Ecdsa256k1]).unwrap());
+        assert_ne!(base_id, base.id(&every_scheme).unwrap());
     }
 }

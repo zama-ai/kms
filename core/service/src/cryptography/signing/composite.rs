@@ -45,7 +45,8 @@
 //! # What the encoding gives, and what it does not
 //!
 //! - Verification is all or nothing. [`verify_composite`] requires the set of
-//!   entries to equal the set of keys, then checks every entry.
+//!   entries to equal the set of schemes the verifier requires, then checks
+//!   every entry.
 //! - Every component of a [`sign_composite`] signature names its scheme set and the
 //!   type of what it signs, so none of them moves to another set, to another
 //!   usage, or out of the composite.
@@ -195,25 +196,26 @@ where
 }
 
 /// Check every signature in `entries` against `keys`, having first checked that
-/// they were made under exactly the schemes `keys` holds keys for.
+/// they were made under exactly the schemes in `schemes`, given in any order.
 ///
-/// Every signature must verify. `entries` is untrusted: it may come straight
+/// `schemes` is the verifier's policy; `keys` is every key the sender publishes
+/// and must hold one for each of `schemes`. Every signature must verify. `entries` is untrusted: it may come straight
 /// from storage or from the network, so its shape is checked here rather than
 /// assumed.
 pub fn verify_composite<T>(
     entries: &[StoredTypedSignature],
     keys: &VerfKeySet,
+    schemes: &[SigningSchemeType],
     dsep: &DomainSep,
     payload: &T,
 ) -> Result<(), SigningError>
 where
     T: Serialize + Versionize + Named,
 {
-    let expected = keys.schemes();
+    let expected = canonical_schemes(schemes)?;
     // The scheme-set comparison happens before any cryptography, so a composite
     // signature presented with one of its parts removed, reordered or repeated
-    // is rejected for being the wrong shape. `expected` is canonical and
-    // non-empty by the `VerfKeySet` invariants.
+    // is rejected for being the wrong shape.
     let schemes = entry_schemes(entries);
     if schemes != expected {
         return Err(SigningError::UnexpectedSchemeSet {
@@ -224,7 +226,6 @@ where
     let preimage = scheme_bound_preimage(&schemes, payload)?;
     for entry in entries {
         let signature = Signature::new(entry.scheme, entry.signature.clone());
-        // Cannot fail: `schemes` equals `keys.schemes()` on this path.
         unified_verify(dsep, &preimage, &signature, keys.require(entry.scheme)?)?;
     }
     Ok(())
@@ -322,10 +323,29 @@ mod tests {
         let (identity, keys, schemes) = setup(1);
         let sig = sign_composite(&identity, &schemes, DSEP, &msg()).unwrap();
         assert_eq!(entry_schemes(&sig), schemes);
-        verify_composite(&sig, &keys, DSEP, &msg()).unwrap();
+        verify_composite(&sig, &keys, &schemes, DSEP, &msg()).unwrap();
 
         let (_, other_keys, _) = setup(7);
-        assert!(verify_composite(&sig, &other_keys, DSEP, &msg()).is_err());
+        assert!(verify_composite(&sig, &other_keys, &schemes, DSEP, &msg()).is_err());
+    }
+
+    /// A policy naming a scheme the sender has no key for is refused rather than
+    /// checked on the keys it has, and so is an empty policy.
+    #[test]
+    fn a_policy_the_keys_cannot_cover_is_rejected() {
+        let (identity, keys, schemes) = setup(11);
+        let sig = sign_composite(&identity, &schemes, DSEP, &msg()).unwrap();
+
+        let ecdsa_only =
+            VerfKeySet::from_identity(&identity, &[SigningSchemeType::Ecdsa256k1]).unwrap();
+        assert!(matches!(
+            verify_composite(&sig, &ecdsa_only, &schemes, DSEP, &msg()),
+            Err(SigningError::NoVerificationKey(SigningSchemeType::MlDsa87))
+        ));
+        assert!(matches!(
+            verify_composite(&sig, &keys, &[], DSEP, &msg()),
+            Err(SigningError::EmptySchemeSet)
+        ));
     }
 
     /// Removing a signature must not leave something that verifies under the
@@ -341,23 +361,21 @@ mod tests {
 
         // Against the original policy it is the wrong scheme set...
         assert!(matches!(
-            verify_composite(&stripped, &keys, DSEP, &msg()),
+            verify_composite(&stripped, &keys, &schemes, DSEP, &msg()),
             Err(SigningError::UnexpectedSchemeSet { .. })
         ));
 
-        // ...and a verifier downgraded all the way to an ECDSA-only key set —
-        // the only way to ask for less, now that the key set *is* the policy —
-        // still rejects it: the surviving signature covers a preimage naming the
+        // ...and a verifier downgraded all the way to an ECDSA-only policy still
+        // rejects it: the surviving signature covers a preimage naming the
         // *pair*, which does not match the single-scheme preimage.
-        let ecdsa_only =
-            VerfKeySet::from_identity(&identity, &[SigningSchemeType::Ecdsa256k1]).unwrap();
-        assert!(verify_composite(&stripped, &ecdsa_only, DSEP, &msg()).is_err());
+        let ecdsa_only = [SigningSchemeType::Ecdsa256k1];
+        assert!(verify_composite(&stripped, &keys, &ecdsa_only, DSEP, &msg()).is_err());
 
         // The same mismatch from the other side: the *whole* pair signature
-        // against that ECDSA-only key set is refused for its shape rather than
-        // verified on the one entry the set holds a key for.
+        // against that ECDSA-only policy is refused for its shape rather than
+        // verified on the one entry the policy names.
         assert!(matches!(
-            verify_composite(&sig, &ecdsa_only, DSEP, &msg()),
+            verify_composite(&sig, &keys, &ecdsa_only, DSEP, &msg()),
             Err(SigningError::UnexpectedSchemeSet { .. })
         ));
     }
@@ -379,7 +397,7 @@ mod tests {
         ] {
             assert!(
                 matches!(
-                    verify_composite(&entries, &keys, DSEP, &msg()),
+                    verify_composite(&entries, &keys, &schemes, DSEP, &msg()),
                     Err(SigningError::UnexpectedSchemeSet { .. })
                 ),
                 "a {case} entry list was not rejected"
@@ -397,7 +415,7 @@ mod tests {
             let mut tampered = base.clone();
             tampered[index].signature[0] ^= 0x01;
             assert!(
-                verify_composite(&tampered, &keys, DSEP, &msg()).is_err(),
+                verify_composite(&tampered, &keys, &schemes, DSEP, &msg()).is_err(),
                 "tampering with signature {index} was not detected"
             );
         }
@@ -407,8 +425,8 @@ mod tests {
     fn a_tampered_message_or_dsep_fails() {
         let (identity, keys, schemes) = setup(5);
         let sig = sign_composite(&identity, &schemes, DSEP, &msg()).unwrap();
-        assert!(verify_composite(&sig, &keys, DSEP, &TestType { i: 4712 }).is_err());
-        assert!(verify_composite(&sig, &keys, b"OTHERDSP", &msg()).is_err());
+        assert!(verify_composite(&sig, &keys, &schemes, DSEP, &TestType { i: 4712 }).is_err());
+        assert!(verify_composite(&sig, &keys, &schemes, b"OTHERDSP", &msg()).is_err());
     }
 
     /// An identity with no root seed can only do ECDSA, so asking it for the

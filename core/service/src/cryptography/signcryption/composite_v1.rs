@@ -6,9 +6,7 @@ use crate::cryptography::encryption::HasPkeScheme;
 use crate::cryptography::encryption::UnifiedPublicEncKey;
 use crate::cryptography::error::CryptographyError;
 use crate::cryptography::hybrid_ml_kem::HybridKemCt;
-#[cfg(feature = "non-wasm")]
-use crate::cryptography::signatures::SigningSchemeType;
-use crate::cryptography::signatures::{StoredTypedSignature, VerfKeySet};
+use crate::cryptography::signatures::{SigningSchemeType, StoredTypedSignature, VerfKeySet};
 #[cfg(feature = "non-wasm")]
 use crate::cryptography::signcryption::UnifiedSigncryptionKey;
 use crate::cryptography::signcryption::UnifiedUnsigncryptionKey;
@@ -136,10 +134,12 @@ pub(super) fn seal(
 /// Open a composite signcryption, returning the message only once every
 /// constituent signature has verified.
 ///
-/// `sender_keys` is the reader's policy the signatures are validated against.
+/// The envelope must be signed under exactly `schemes`, each signature checked
+/// against its key in `sender_keys`.
 pub(super) fn open(
     unsign_key: &UnifiedUnsigncryptionKey,
     sender_keys: &VerfKeySet,
+    schemes: &[SigningSchemeType],
     dsep: &DomainSep,
     cipher: &UnifiedSigncryption,
 ) -> Result<Zeroizing<Vec<u8>>, CryptographyError> {
@@ -158,7 +158,7 @@ pub(super) fn open(
         &unsign_key.receiver_id,
         &unsign_key.encryption_key,
     )?;
-    let verified = verify_composite(&envelope.signatures, sender_keys, dsep, &signed);
+    let verified = verify_composite(&envelope.signatures, sender_keys, schemes, dsep, &signed);
     signed.zeroize();
     verified.map_err(|e| CryptographyError::VerificationError(e.to_string()))?;
 
@@ -168,10 +168,9 @@ pub(super) fn open(
 #[cfg(test)]
 mod tests {
     use super::super::common::test_support::{composite_fixture, signcryption_fixture};
-    use super::super::{SenderAuth, Signcrypt, Unsigncrypt};
+    use super::super::{Signcrypt, Unsigncrypt};
     use super::*;
     use crate::cryptography::encryption::PkeSchemeType;
-    use crate::cryptography::signatures::UnifiedPublicSigKey;
     use crate::cryptography::signing::test_support::seeded_identity;
     use crate::vault::storage::tests::TestType;
     use aes_prng::AesRng;
@@ -197,7 +196,10 @@ mod tests {
                 .unwrap();
             assert_eq!(cipher.pke_type, scheme);
 
-            let opened: TestType = f.unsigncryption_key.unsigncrypt(DSEP, &cipher).unwrap();
+            let opened: TestType = f
+                .unsigncryption_key
+                .unsigncrypt_composite(DSEP, &schemes, &cipher)
+                .unwrap();
             assert_eq!(opened, msg, "{scheme}");
         }
     }
@@ -219,28 +221,31 @@ mod tests {
         )
         .unwrap();
 
-        let err = f.unsigncryption_key.open(DSEP, &cipher).unwrap_err();
+        let err = f
+            .unsigncryption_key
+            .open_composite(DSEP, &f.schemes(), &cipher)
+            .unwrap_err();
         assert!(
             matches!(err, CryptographyError::VerificationError(_)),
             "{err}"
         );
 
-        // ...and the same signcryption opens for a verifier that asked for
-        // exactly what was signed, confirming the rejection above is the policy
-        // check and not an unrelated failure.
-        let weaker_keys = VerfKeySet::from_identity(&f.signcryption_key.identity, &weaker).unwrap();
+        // ...and the same reader opens it when asked for exactly what was
+        // signed, confirming the rejection above is the policy check and not an
+        // unrelated failure. The policy is the call's, not the reader's.
         let opened = f
-            .reader_for(SenderAuth::Multi(weaker_keys))
-            .open(DSEP, &cipher)
+            .unsigncryption_key
+            .open_composite(DSEP, &weaker, &cipher)
             .unwrap();
         assert_eq!(&*opened, b"downgrade me");
     }
 
-    /// A frozen reader must refuse a composite envelope even when it holds the
-    /// very ECDSA key that signed it: the payload is a safe-serialized KEM
-    /// ciphertext that its bincode parse rejects before anything is decrypted.
+    /// The frozen opener refuses a composite envelope even though the reader
+    /// holds the very ECDSA key that signed it: the payload is a safe-serialized
+    /// KEM ciphertext that its bincode parse rejects before anything is
+    /// decrypted. So calling the wrong method cannot downgrade a composite.
     #[test]
-    fn a_frozen_reader_rejects_a_composite_envelope() {
+    fn the_frozen_opener_rejects_a_composite_envelope() {
         for (seed, schemes) in [
             (300_u64, pair()),
             (400_u64, vec![SigningSchemeType::Ecdsa256k1]),
@@ -256,38 +261,31 @@ mod tests {
             )
             .unwrap();
 
-            // The envelope does open for the reader it was made for, so the
+            // The envelope does open through the composite opener, so the
             // rejection below is the format mismatch and not a broken fixture.
             assert_eq!(
-                &*f.unsigncryption_key.open(DSEP, &composite).unwrap(),
+                &*f.unsigncryption_key
+                    .open_composite(DSEP, &demanded, &composite)
+                    .unwrap(),
                 b"composite payload"
             );
 
-            let legacy_ecdsa = match &f.unsigncryption_key.sender {
-                SenderAuth::Multi(keys) => {
-                    match keys.require(SigningSchemeType::Ecdsa256k1).unwrap() {
-                        UnifiedPublicSigKey::Ecdsa256k1(key) => key.clone(),
-                        _ => unreachable!("the ECDSA member of the set is an ECDSA key"),
-                    }
-                }
-                SenderAuth::Ecdsa(_) => unreachable!("the fixture reader is a composite one"),
-            };
             let err = f
-                .reader_for(SenderAuth::Ecdsa(legacy_ecdsa))
+                .unsigncryption_key
                 .unsigncrypt::<TestType>(DSEP, &composite)
                 .unwrap_err();
             assert!(
                 matches!(err, CryptographyError::BincodeError(_)),
-                "the frozen reader must reject a composite envelope on the KEM ciphertext, got: {err}"
+                "the frozen opener must reject a composite envelope on the KEM ciphertext, got: {err}"
             );
         }
     }
 
     /// ...and the converse. The frozen layout writes its `HybridKemCt` with
     /// bincode and no header, so `safe_deserialize` refuses it, again before any
-    /// decryption. Independent of which schemes the reader demands.
+    /// decryption. Independent of which schemes the call demands.
     #[test]
-    fn a_composite_reader_rejects_a_frozen_envelope() {
+    fn the_composite_opener_rejects_a_frozen_envelope() {
         let f = composite_fixture(PkeSchemeType::MlKem512, 300, &pair());
         let mut frozen_f = signcryption_fixture(PkeSchemeType::MlKem512, 300);
         let frozen = frozen_f
@@ -295,10 +293,13 @@ mod tests {
             .signcrypt(&mut frozen_f.rng, DSEP, &TestType { i: 7 })
             .unwrap();
 
-        let err = f.unsigncryption_key.open(DSEP, &frozen).unwrap_err();
+        let err = f
+            .unsigncryption_key
+            .open_composite(DSEP, &f.schemes(), &frozen)
+            .unwrap_err();
         assert!(
             matches!(err, CryptographyError::SerializationError(_)),
-            "the composite reader must reject a frozen envelope on deserialization, got: {err}"
+            "the composite opener must reject a frozen envelope on deserialization, got: {err}"
         );
     }
 
@@ -318,32 +319,38 @@ mod tests {
 
         // The untouched envelope opens, so each rejection below is the
         // deviation and not an unrelated failure.
-        f.unsigncryption_key.open(DSEP, &cipher).unwrap();
+        f.unsigncryption_key
+            .open_composite(DSEP, &demanded, &cipher)
+            .unwrap();
 
         assert!(
-            f.unsigncryption_key.open(b"OTHERDSP", &cipher).is_err(),
+            f.unsigncryption_key
+                .open_composite(b"OTHERDSP", &demanded, &cipher)
+                .is_err(),
             "a different domain separator opened the envelope"
         );
 
         let mut flipped = cipher.clone();
         flipped.payload[0] ^= 0x01;
         assert!(
-            f.unsigncryption_key.open(DSEP, &flipped).is_err(),
+            f.unsigncryption_key
+                .open_composite(DSEP, &demanded, &flipped)
+                .is_err(),
             "a tampered ciphertext opened the envelope"
         );
 
         let mut rng = AesRng::seed_from_u64(999);
         let other_keys = VerfKeySet::from_identity(&seeded_identity(&mut rng), &demanded).unwrap();
         assert!(
-            f.reader_for(SenderAuth::Multi(other_keys))
-                .open(DSEP, &cipher)
+            f.reader_for(other_keys)
+                .open_composite(DSEP, &demanded, &cipher)
                 .is_err(),
             "another party's key set opened the envelope"
         );
 
         assert!(
             f.reader_to(b"a different receiver".to_vec())
-                .open(DSEP, &cipher)
+                .open_composite(DSEP, &demanded, &cipher)
                 .is_err(),
             "a different receiver id opened the envelope"
         );
@@ -387,8 +394,8 @@ mod tests {
 
         let keys = VerfKeySet::from_identity(&f.signcryption_key.identity, &ecdsa_only).unwrap();
         let opened = f
-            .reader_for(SenderAuth::Multi(keys))
-            .open(DSEP, &cipher)
+            .reader_for(keys)
+            .open_composite(DSEP, &ecdsa_only, &cipher)
             .unwrap();
         assert_eq!(&*opened, b"one signature");
     }
