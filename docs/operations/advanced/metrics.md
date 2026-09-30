@@ -255,13 +255,27 @@ The KMS health check system provides additional operational metrics through the 
 curl http://localhost:<METRICS_PORT>/metrics
 
 # Health endpoints
-curl http://localhost:<METRICS_PORT>/health    # Returns "ok"
-curl http://localhost:<METRICS_PORT>/ready     # Readiness check
-curl http://localhost:<METRICS_PORT>/live      # Liveness check
+curl http://localhost:<METRICS_PORT>/liveness  # {"status":"alive"} or 503 {"status":"not_responding"}
+curl http://localhost:<METRICS_PORT>/ready     # {"status":"ready"} or 503 {"status":"not_ready"}
+curl http://localhost:<METRICS_PORT>/healthz   # {"status":"healthy"} or 503 {"status":"unhealthy"}
+curl http://localhost:<METRICS_PORT>/live      # Same response as /liveness
+curl http://localhost:<METRICS_PORT>/health    # Same response as /healthz
+
+# The same liveness and readiness as gRPC health services on the service port
+grpc_health_probe --addr=localhost:<GRPC_PORT> -service=liveness
+grpc_health_probe --addr=localhost:<GRPC_PORT> -service=readiness
 
 # Health check tool integration
 kms-health-check live --endpoint localhost:<GRPC_PORT>
 ```
+
+The KMS is live until a component reports a fault that only a restart can repair. An example is a stop of the core-to-core server outside a shutdown. The log line of the fault names the component. A slow, busy, or partly connected KMS stays live, because Kubernetes restarts a pod when its liveness probe fails.
+
+The KMS is ready when it is live, it finished its startup, and it did not start its shutdown. Readiness does not depend on the peers, on the MPC contexts, or on the key material. Kubernetes routes the peer traffic and the connector traffic only to ready pods, so such a dependency could cut off the node that must repair it.
+
+The KMS is healthy when it is ready. The health endpoints report only the state of the KMS process itself: they do not check the storage or the peers.
+
+The Helm chart points the Kubernetes liveness probe at the `liveness` gRPC service, and the startup and readiness probes at the `readiness` gRPC service.
 
 ## Prometheus Integration
 
