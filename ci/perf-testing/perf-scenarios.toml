@@ -21,8 +21,8 @@ maxshed = 0        # max shed (rate-limited) requests, % of offered
 pct = 98           # min achieved/target rate, %
 allowfail = false  # false → a limit breach fails the run; true → warns only
 
-# EXPERIMENT: every ladder except udec-sync is commented out, so a party knocked over by
-# pdec-sync cannot void the udec-sync measurement. Restore before merging.
+# EXPERIMENT: the async ladders are commented out; only pdec-sync followed by udec-sync runs,
+# to test whether pdec-sync leaves state behind that slows udec-sync. Restore before merging.
 # [scenarios.pdec-async]
 # key = "udec-key-gen"
 # after = ["crs-gen"]
@@ -41,21 +41,21 @@ allowfail = false  # false → a limit breach fails the run; true → warns only
 #   { rate = 3200, maxfail = 10, maxshed = 25, pct = 70, allowfail = true },
 # ]
 
-# [scenarios.pdec-sync]
-# key = "udec-key-gen"
-# after = ["udec-async"]
-# rates = [
-#   { rate = 1200 },
-#   { rate = 1400 },
-#   { rate = 1700, maxfail = 10, maxshed = 25, pct = 70, allowfail = true },
-#   { rate = 2000, maxfail = 10, maxshed = 25, pct = 70, allowfail = true },
-#   { rate = 2400, maxfail = 10, maxshed = 25, pct = 70, allowfail = true },
-#   { rate = 2800, maxfail = 10, maxshed = 25, pct = 70, allowfail = true },
-# ]
+[scenarios.pdec-sync]
+key = "udec-key-gen"
+after = ["crs-gen"]  # EXPERIMENT: normally after = ["udec-async"]
+rates = [
+  { rate = 1200, allowfail = true },
+  { rate = 1400, allowfail = true },
+  { rate = 1700, maxfail = 10, maxshed = 25, pct = 70, allowfail = true },
+  { rate = 2000, maxfail = 10, maxshed = 25, pct = 70, allowfail = true },
+  { rate = 2400, maxfail = 10, maxshed = 25, pct = 70, allowfail = true },
+  { rate = 2800, maxfail = 10, maxshed = 25, pct = 70, allowfail = true },
+]
 
 [scenarios.udec-sync]
 key = "udec-key-gen"
-after = ["crs-gen"]  # EXPERIMENT: only udec-sync runs; normally after = ["pdec-sync"]
+after = ["pdec-sync"]
 rates = [
   { rate = 1500, allowfail = true },
   { rate = 1900, allowfail = true },
