@@ -184,6 +184,12 @@ async fn run_failed_reshare_storage_test(fail_rollback: bool, foreign_material: 
         &key_id,
         &preproc_id,
         crate::consts::TEST_PARAM,
+        // The reshare signs these digests, so it needs them before any storage write.
+        HashMap::from([
+            (PubDataType::CompressedXofKeySet, vec![1; 32]),
+            (PubDataType::PublicKey, vec![2; 32]),
+        ]),
+        vec![],
     );
     previous_epoch.crs_info.push(VerifiedCrsInfo {
         crs_id,

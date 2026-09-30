@@ -3036,6 +3036,14 @@ async fn test_threshold_mpc_context_switch_6() -> Result<()> {
     .await;
     let compressed_keyset_digest =
         hex::encode(hash_versioned(&DSEP_PUBDATA_KEY, &compressed_keyset)?);
+    let public_key: tfhe::CompactPublicKey = load_material_from_pub_storage(
+        Some(test_path),
+        &key_id,
+        PubDataType::PublicKey,
+        Some(&key_cores[0].object_folder),
+    )
+    .await;
+    let public_key_digest = hex::encode(hash_versioned(&DSEP_PUBDATA_KEY, &public_key)?);
 
     let crs_id = RequestId::from_str(&crs_id_str)?;
     let crs_cores =
@@ -3089,7 +3097,7 @@ async fn test_threshold_mpc_context_switch_6() -> Result<()> {
         vec![PreviousKeyInfo {
             key_id: key_id.into(),
             preproc_id: RequestId::from_str(&preproc_id_str)?,
-            key_digest: DigestKeySet::CompressedKeySet(compressed_keyset_digest),
+            key_digest: DigestKeySet::CompressedKeySet(compressed_keyset_digest, public_key_digest),
         }],
         vec![PreviousCrsInfo {
             crs_id,
@@ -3371,6 +3379,14 @@ async fn test_threshold_reshare() -> Result<()> {
 
     let compressed_keyset_digest =
         hex::encode(hash_versioned(&DSEP_PUBDATA_KEY, &compressed_keyset)?);
+    let public_key: tfhe::CompactPublicKey = load_material_from_pub_storage(
+        Some(test_path),
+        &key_id,
+        PubDataType::PublicKey,
+        Some(&storage_prefix),
+    )
+    .await;
+    let public_key_digest = hex::encode(hash_versioned(&DSEP_PUBDATA_KEY, &public_key)?);
 
     let _ids =
         fetch_public_elements(&crs_id, &[PubDataType::CRS], &cc_conf, test_path, false).await?;
@@ -3392,7 +3408,7 @@ async fn test_threshold_reshare() -> Result<()> {
     let previous_key_info = PreviousKeyInfo {
         key_id: key_id.into(),
         preproc_id,
-        key_digest: DigestKeySet::CompressedKeySet(compressed_keyset_digest),
+        key_digest: DigestKeySet::CompressedKeySet(compressed_keyset_digest, public_key_digest),
     };
     let previous_crs_info = PreviousCrsInfo {
         crs_id,

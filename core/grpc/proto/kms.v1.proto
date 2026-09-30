@@ -903,7 +903,9 @@ message KeyInfo {
   // Mapping of key type string to digest
   // e.g., ("ServerKey", vec![1,2,3,4]), ("PublicKey", vec![2,3,4,5]).
   // The domain separator DSEP_PUBDATA_KEY="PDAT_KEY" is used when hashing the keys.
-  // If there are no key_digests, the digest verification is skipped.
+  // Uncompressed keys need the "ServerKey" and "PublicKey" digests, compressed keys the
+  // "CompressedXofKeySet" and "PublicKey" digests. The digests are checked against the stored
+  // public material and signed for the new epoch.
   repeated KeyDigest key_digests = 4;
 }
 
