@@ -2655,7 +2655,6 @@ mod tests {
         // A seeded identity, not an ECDSA-only one: the operator publishes a key set covering
         // `BACKUP_SIGNING_SCHEMES`, which an identity with no root seed cannot produce.
         let server_identity = Arc::new(seeded_identity(&mut rng));
-        let server_verf_key = server_identity.verf_key();
         let mut enc = Encryption::new(BACKUP_PKE_SCHEME, &mut rng);
         let (backup_dec_key, backup_enc_key) = enc.keygen().unwrap();
         let mnemonic1 = seed_phrase_from_rng(&mut rng).expect("Failed to generate seed phrase");
@@ -2708,11 +2707,14 @@ mod tests {
         assert_eq!(internal_rec_req.operator_verf_key(), &server_verf_keys);
         // And the signcryption destined for custodian 1 must validate under that
         // custodian's unsigncryption key, confirming the backup material was sealed correctly.
-        let custodian_id = custodian1.verification_key_set().id().unwrap();
-        let unsign_key = UnifiedUnsigncryptionKey::new(
+        let custodian_id = custodian1
+            .verification_key_set()
+            .id(BACKUP_SIGNING_SCHEMES)
+            .unwrap();
+        let unsign_key = UnifiedUnsigncryptionKey::new_multi(
             std::sync::Arc::new(custodian1.public_dec_key().clone()),
             custodian1.public_enc_key().clone(),
-            server_verf_key.clone(),
+            server_verf_keys.clone(),
             custodian_id,
         );
         let role_1_ct = internal_rec_req
@@ -2721,7 +2723,11 @@ mod tests {
             .expect("recovery request must contain a ciphertext for custodian role 1");
         assert!(
             unsign_key
-                .validate_signcryption(&DSEP_BACKUP_CUSTODIAN, &role_1_ct.signcryption)
+                .unsigncrypt_composite::<crate::backup::operator::BackupMaterial>(
+                    &DSEP_BACKUP_CUSTODIAN,
+                    BACKUP_SIGNING_SCHEMES,
+                    &role_1_ct.signcryption,
+                )
                 .is_ok()
         );
     }
