@@ -37,7 +37,7 @@ use threshold_execution::{
     tfhe_internals::private_keysets::PrivateKeySet,
 };
 use threshold_types::session_id::SessionId;
-use tokio::sync::RwLock;
+use tokio::sync::{OwnedSemaphorePermit, RwLock};
 use tokio_util::task::TaskTracker;
 use tonic::{Request, Response};
 use tracing::Instrument;
@@ -667,10 +667,15 @@ impl<
 
     /// Stateless public decryption: no meta-store. The per-ciphertext work runs on
     /// `self.tracker`, so a client disconnect does not abort MPC sessions other parties wait on.
+    ///
+    /// `permit` is the caller's rate-limiter permit for this request. The per-ciphertext tasks
+    /// share it, so it bounds the work in flight even after the client has gone away.
     pub(crate) async fn public_decrypt_sync(
         &self,
         request: Request<PublicDecryptionRequest>,
+        permit: OwnedSemaphorePermit,
     ) -> anyhow::Result<Response<PublicDecryptionResponse>> {
+        let permit = Arc::new(permit);
         let inner = request.into_inner();
         let (
             ciphertexts,
@@ -712,7 +717,7 @@ impl<
             .into_iter()
             .enumerate()
             .map(|(ctr, typed_ciphertext)| {
-                self.tracker.spawn(Self::decrypt_typed_ciphertext(
+                let decryption = Self::decrypt_typed_ciphertext(
                     ctr,
                     req_id,
                     context_id,
@@ -724,7 +729,12 @@ impl<
                     metrics::METRICS
                         .time_operation(OP_PUBLIC_DECRYPT_INNER)
                         .start(),
-                ))
+                );
+                let permit = Arc::clone(&permit);
+                self.tracker.spawn(async move {
+                    let _permit = permit;
+                    decryption.await
+                })
             })
             .collect();
         drop(fhe_keys);
@@ -1259,7 +1269,14 @@ mod tests {
 
         // The sync endpoint returns the response directly, no polling needed.
         let response = public_decryptor
-            .public_decrypt_sync(Request::new(request.clone()))
+            .public_decrypt_sync(
+                Request::new(request.clone()),
+                public_decryptor
+                    .rate_limiter
+                    .start_pub_decrypt()
+                    .await
+                    .unwrap(),
+            )
             .await
             .unwrap()
             .into_inner();
@@ -1269,6 +1286,8 @@ mod tests {
             .expect("sync response carries a payload");
         assert_eq!(payload.plaintexts.len(), 1);
         assert!(!response.signature.is_empty());
+        // The rate-limiter permit is released once the decryption is done.
+        assert_eq!(public_decryptor.rate_limiter.tokens_used(), 0);
 
         // Nothing was stored, so the async result endpoint knows nothing about the request.
         let err = public_decryptor

@@ -42,7 +42,7 @@ use threshold_execution::{
     tfhe_internals::private_keysets::PrivateKeySet,
 };
 use threshold_types::role::Role;
-use tokio::sync::{OwnedRwLockReadGuard, RwLock};
+use tokio::sync::{OwnedRwLockReadGuard, OwnedSemaphorePermit, RwLock};
 use tokio_util::task::TaskTracker;
 use tonic::{Request, Response};
 use tracing::Instrument;
@@ -609,10 +609,15 @@ impl<
     }
 
     /// Stateless user decryption: no meta-store, runs inside the request handler.
+    ///
+    /// `permit` is the caller's rate-limiter permit for this request; it is held until the
+    /// decryption finishes.
     pub(crate) async fn user_decrypt_sync(
         &self,
         request: Request<UserDecryptionRequest>,
+        permit: OwnedSemaphorePermit,
     ) -> anyhow::Result<Response<UserDecryptionResponse>> {
+        let _permit = permit;
         let inner = request.into_inner();
         let (
             typed_ciphertexts,
@@ -1105,7 +1110,14 @@ mod tests {
 
         // The sync endpoint returns the response directly, no polling needed.
         let response = user_decryptor
-            .user_decrypt_sync(Request::new(request.clone()))
+            .user_decrypt_sync(
+                Request::new(request.clone()),
+                user_decryptor
+                    .rate_limiter
+                    .start_user_decrypt()
+                    .await
+                    .unwrap(),
+            )
             .await
             .unwrap()
             .into_inner();
@@ -1115,6 +1127,8 @@ mod tests {
             .expect("sync response carries a payload");
         assert_eq!(payload.signcrypted_ciphertexts.len(), 1);
         assert!(!response.signature.is_empty());
+        // The rate-limiter permit is released once the decryption is done.
+        assert_eq!(user_decryptor.rate_limiter.tokens_used(), 0);
 
         // Nothing was stored, so the async result endpoint knows nothing about the request.
         let err = user_decryptor

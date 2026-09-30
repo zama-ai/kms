@@ -3,6 +3,11 @@ kmsPeers:
   count: 1
 
 kmsCore:
+  # EXPERIMENT: bound public decryptions in flight per core to 50000 / 12 = 4166 (about 8-16 GiB at
+  # the 2-4 MiB each measured under backlog), so an overloaded core sheds load instead of running
+  # its 96 GiB enclave out of memory.
+  rateLimiter:
+    pubDecrypt: 12
   thresholdMode:
     enabled: true
     decCapacity: 30000

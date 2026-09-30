@@ -147,8 +147,15 @@ where
         &self,
         request: Request<UserDecryptionRequest>,
     ) -> Result<Response<UserDecryptionResponse>, Status> {
+        // Acquired here rather than in `user_decrypt_sync` so that a full bucket reaches the client as
+        // `ResourceExhausted`, which it retries, rather than as a generic internal error.
+        let permit = self
+            .user_decryptor
+            .rate_limiter
+            .start_user_decrypt()
+            .await?;
         self.user_decryptor
-            .user_decrypt_sync(request)
+            .user_decrypt_sync(request, permit)
             .await
             .map_err(|e| Status::internal(format!("{e:?}")))
     }
@@ -180,8 +187,11 @@ where
         &self,
         request: Request<PublicDecryptionRequest>,
     ) -> Result<Response<PublicDecryptionResponse>, Status> {
+        // Acquired here rather than in `public_decrypt_sync` so that a full bucket reaches the client as
+        // `ResourceExhausted`, which it retries, rather than as a generic internal error.
+        let permit = self.decryptor.rate_limiter.start_pub_decrypt().await?;
         self.decryptor
-            .public_decrypt_sync(request)
+            .public_decrypt_sync(request, permit)
             .await
             .map_err(|e| Status::internal(format!("{e:?}")))
     }

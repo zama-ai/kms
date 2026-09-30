@@ -45,6 +45,9 @@ kmsCore:
         backupVaultKeychainAWSKMSRootKeyID: KMS_CORE__BACKUP_VAULT__KEYCHAIN__AWS_KMS__ROOT_KEY_ID
   rateLimiter:
     bucketSize: 50000
+    # Tokens each public decryption holds while in flight, so at most bucketSize / pubDecrypt
+    # run at once. Each one keeps its ciphertext and MPC session in enclave memory until done.
+    pubDecrypt: 1
   # One-time migration input associating existing epochs with the context they belong to.
   # Consumed once by the epoch-data migration on startup; idempotent, so it can be left in place.
   # Each epoch belongs to exactly one context, so a given epoch ID must appear under a single entry.
