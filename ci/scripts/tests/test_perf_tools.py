@@ -422,24 +422,31 @@ class DiagnosticTests(TemporaryWorkingDirectory):
         self.assertEqual(rows[1][7:], [False, 0, "", "", ""])
         self.assertIn("\tfalse\t", common.tsv(rows[1]))
 
+    @patch.object(diagnostics, "finish_core")
     @patch.object(diagnostics, "finish")
     @patch.object(diagnostics, "stop_samplers")
     @patch.object(diagnostics, "start_sampler", side_effect=["cpu", OSError("start failed")])
     @patch.object(diagnostics, "best_effort", return_value=result())
-    def test_controller_finalizes_after_partial_start(self, command, start, stop, finish):
+    def test_controller_finalizes_after_partial_start(
+        self, command, start, stop, finish, finish_core
+    ):
         with self.assertRaises(OSError):
             diagnostics.sample("ns", Path("diagnostics"))
         stop.assert_called_once_with(["cpu"])
         finish.assert_called_once_with("ns", Path("diagnostics"))
+        finish_core.assert_called_once_with("ns", Path("diagnostics/core-restarts"))
 
+    @patch.object(diagnostics, "finish_core")
     @patch.object(diagnostics, "finish")
     @patch.object(diagnostics, "stop_samplers")
-    @patch.object(diagnostics, "start_sampler", side_effect=["cpu", "metrics", "placement"])
+    @patch.object(
+        diagnostics, "start_sampler", side_effect=["cpu", "metrics", "placement", "logs"]
+    )
     @patch.object(diagnostics, "best_effort", return_value=result())
     @patch.object(diagnostics, "kube_json", return_value={})
     @patch.object(diagnostics.time, "sleep", side_effect=KeyboardInterrupt())
     def test_controller_stops_all_samplers_on_cancellation(
-        self, sleep, kube, command, start, stop, finish
+        self, sleep, kube, command, start, stop, finish, finish_core
     ):
         with self.assertRaises(KeyboardInterrupt):
             diagnostics.sample("ns", Path("diagnostics"))
@@ -451,8 +458,53 @@ class DiagnosticTests(TemporaryWorkingDirectory):
                 "core-cpu-samples.log",
             ),
         )
-        stop.assert_called_once_with(["cpu", "metrics", "placement"])
+        self.assertEqual(
+            start.call_args_list[3].args,
+            (
+                "sample_core_logs.py",
+                ["ns", str(Path("diagnostics/core-logs"))],
+                Path("diagnostics/core-logs-sampler.log"),
+            ),
+        )
+        stop.assert_called_once_with(["cpu", "metrics", "placement", "logs"])
         finish.assert_called_once_with("ns", Path("diagnostics"))
+        finish_core.assert_called_once_with("ns", Path("diagnostics/core-restarts"))
+
+    def test_core_lifecycle_records_restarts_and_last_termination(self):
+        pods = {
+            "items": [
+                {
+                    "metadata": {"name": "kms-core-4-core-4"},
+                    "status": {
+                        "containerStatuses": [
+                            {
+                                "name": "kms-core",
+                                "ready": True,
+                                "restartCount": 1,
+                                "state": {"running": {"startedAt": "t2"}},
+                                "lastState": {
+                                    "terminated": {
+                                        "reason": "Error",
+                                        "exitCode": 137,
+                                        "startedAt": "t0",
+                                        "finishedAt": "t1",
+                                    }
+                                },
+                            },
+                            {"name": "kms-core-enclave-logger", "state": {}},
+                        ]
+                    },
+                },
+                {"metadata": {"name": "pending"}, "status": {}},
+            ]
+        }
+        self.assertEqual(
+            diagnostics.core_lifecycle_rows(pods, "now"),
+            [
+                ["now", "kms-core-4-core-4", "kms-core", True, 1, "t2", "", "Error", 137, "t0", "t1"],
+                ["now", "kms-core-4-core-4", "kms-core-enclave-logger", False, 0, "", "", "", "", "", ""],
+            ],
+        )
 
 
 class ProcessTests(unittest.TestCase):
