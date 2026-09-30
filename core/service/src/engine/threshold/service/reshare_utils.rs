@@ -300,7 +300,7 @@ pub(crate) async fn get_verified_fhe_public_materials<
                     OP_NEW_EPOCH,
                     Some(*request_id),
                     anyhow::anyhow!("missing digest for public key"),
-                    tonic::Code::Internal,
+                    tonic::Code::InvalidArgument,
                 )
             })?;
 
