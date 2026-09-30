@@ -302,6 +302,81 @@ Crypto provider should exist at this point"
             parse_x509_certificate(cert.as_ref()).map_err(|e| Error::General(e.to_string()))?;
         self.get_verifiers_and_pcrs_for_x509_cert(&x509_cert)
     }
+
+    fn verify_with_attestation(
+        &self,
+        cert: &X509Certificate,
+        verifiers: &Verifiers,
+        end_entity: &CertificateDer<'_>,
+        intermediates: &[CertificateDer<'_>],
+        now: UnixTime,
+        server_data: Option<(&ServerName<'_>, &[u8])>,
+    ) -> Result<(), Error> {
+        let mut last_error = None;
+
+        for candidate in &verifiers.candidates {
+            let x509_ok = match server_data {
+                Some((server_name, ocsp_response)) => {
+                    candidate.trust_root.server.verify_server_cert(
+                        end_entity,
+                        intermediates,
+                        server_name,
+                        ocsp_response,
+                        now,
+                    )
+                    .is_ok()
+                }
+                None => {
+                    candidate.trust_root.client.verify_client_cert(end_entity, intermediates, now).is_ok()
+                }
+            };
+
+            if !x509_ok {
+                last_error = Some((candidate.context_id, Error::General(format!(
+                    "X.509 verification failed for context {}", candidate.context_id
+                ))));
+                continue;
+            }
+
+            let cert_verifier_for_attestation = match server_data {
+                Some((server_name, ocsp_response)) => CertVerifier::Server(
+                    candidate.trust_root.server.clone(), server_name, ocsp_response
+                ),
+                None => CertVerifier::Client(candidate.trust_root.client.clone()),
+            };
+            match validate_wrapped_cert(
+                cert,
+                candidate.pcrs.clone(),
+                self.user_data_verifier.as_ref().map(Arc::clone),
+                self.pcr8_expected,
+                cert_verifier_for_attestation,
+                intermediates,
+                now,
+                #[cfg(feature = "insecure")]
+                self.mock_enclave,
+            ) {
+                Ok(_) => return Ok(()),
+                Err(e) => {
+                    tracing::error!(
+                        "attestation validation failed for context {}: {}",
+                        candidate.context_id,
+                        e
+                    );
+                }
+            }
+        }
+
+        if let Some((context_id, error)) = last_error {
+            Err(Error::General(format!(
+                "certificate for {} failed validation against all active contexts; last failure was for context {context_id}: {error}",
+                verifiers.subject
+            )))
+        } else {
+            Err(Error::General(
+                "attestation validation failed for all contexts".to_string()
+            ))
+        }
+    }
 }
 
 /// Verifies our wrapped certificates that carry AWS Nitro attestation
@@ -322,34 +397,8 @@ impl ServerCertVerifier for AttestedVerifier {
         // usual (however, we expect it to be self-signed)
         tracing::debug!("Verifying certificate for server {:?}", server_name,);
         // check the bundled attestation document and EIF signing certificate
-        verify_with_any_context(&verifiers, |candidate| {
-            candidate.trust_root.server.verify_server_cert(
-                end_entity,
-                intermediates,
-                server_name,
-                ocsp_response,
-                now,
-            )?;
-            if !candidate.pcrs.is_empty() {
-                validate_wrapped_cert(
-                    &cert,
-                    candidate.pcrs.clone(),
-                    self.user_data_verifier.as_ref().map(Arc::clone),
-                    self.pcr8_expected,
-                    CertVerifier::Server(
-                        candidate.trust_root.server.clone(),
-                        server_name,
-                        ocsp_response,
-                    ),
-                    intermediates,
-                    now,
-                    #[cfg(feature = "insecure")]
-                    self.mock_enclave,
-                )
-                .map_err(|e| Error::General(e.to_string()))?;
-            }
-            Ok(ServerCertVerified::assertion())
-        })
+        self.verify_with_attestation(&cert, &verifiers, end_entity, intermediates, now, Some((server_name, ocsp_response)))
+        .map(|_| ServerCertVerified::assertion())
         .inspect_err(|e| {
             tracing::error!(
                 "server certificate validation error for party {}: {e}, supported algorithms: {:?}",
@@ -427,27 +476,8 @@ impl ClientCertVerifier for AttestedVerifier {
         let verifiers = self.get_verifiers_and_pcrs_for_x509_cert(&cert)?;
 
         // check the bundled attestation document and EIF signing certificate
-        verify_with_any_context(&verifiers, |candidate| {
-            candidate
-                .trust_root
-                .client
-                .verify_client_cert(end_entity, intermediates, now)?;
-            if !candidate.pcrs.is_empty() {
-                validate_wrapped_cert(
-                    &cert,
-                    candidate.pcrs.clone(),
-                    self.user_data_verifier.as_ref().map(Arc::clone),
-                    self.pcr8_expected,
-                    CertVerifier::Client(candidate.trust_root.client.clone()),
-                    intermediates,
-                    now,
-                    #[cfg(feature = "insecure")]
-                    self.mock_enclave,
-                )
-                .map_err(|e| Error::General(e.to_string()))?;
-            }
-            Ok(ClientCertVerified::assertion())
-        })
+        self.verify_with_attestation(&cert, &verifiers, end_entity, intermediates, now, None)
+        .map(|_| ClientCertVerified::assertion())
         .inspect_err(|e| {
             tracing::error!(
                 "client certificate validation error for party {}: {e}, supported algorithms: {:?}",
@@ -903,6 +933,55 @@ mod tests {
         assert!(
             !candidate_b.pcrs.contains(&pcr_a),
             "Context B must not contain PCR from context A"
+        );
+    }
+
+    #[test]
+    fn attestation_required_when_any_context_has_pcrs() {
+        _ = default_provider().install_default();
+        let identity = "attestation-required.example.com";
+        let (cert_a, ca_a) = generate_mock_tls_cert(identity);
+        let (cert_b, ca_b) = generate_mock_tls_cert(identity);
+        let _pcr_a = extract_pcr_values_from_cert(cert_a.end_entity_cert().unwrap());
+
+        let mut trusted_releases_a = HashSet::new();
+        trusted_releases_a.insert(_pcr_a.clone());
+
+        let verifier = AttestedVerifier::new(
+            None,
+            false,
+            #[cfg(feature = "insecure")]
+            true,
+        )
+        .unwrap();
+
+        verifier
+            .add_context(
+                SessionId::from(10u128),
+                HashMap::from([(MpcIdentity(identity.to_string()), ca_a)]),
+                Some(trusted_releases_a),
+            )
+            .unwrap();
+
+        verifier
+            .add_context(
+                SessionId::from(11u128),
+                HashMap::from([(MpcIdentity(identity.to_string()), ca_b)]),
+                Some(HashSet::new()),
+            )
+            .unwrap();
+
+        let result = verifier.verify_server_cert(
+            cert_b.end_entity_cert().unwrap(),
+            &[],
+            &ServerName::try_from(identity).unwrap(),
+            &[],
+            UnixTime::now(),
+        );
+
+        assert!(
+            result.is_err(),
+            "Certificate should be rejected when attestation is required but cert doesn't match PCR-enabled context"
         );
     }
 
