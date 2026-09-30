@@ -24,17 +24,18 @@ pub(super) fn receiver_enc_key_digest(
 
 #[cfg(test)]
 pub(crate) mod test_support {
-    use super::super::{SenderAuth, UnifiedSigncryptionKey, UnifiedUnsigncryptionKey};
+    use super::super::{UnifiedSigncryptionKey, UnifiedUnsigncryptionKey};
     use crate::cryptography::encryption::{
         Encryption, PkeScheme, PkeSchemeType, UnifiedPrivateEncKey, UnifiedPublicEncKey,
     };
     use crate::cryptography::signatures::{
-        PrivateSigKey, PublicSigKey, SigningSchemeType, VerfKeySet, gen_sig_keys,
+        PrivateSigKey, PublicSigKey, SigningSchemeType, VerfKeySet, canonical_schemes, gen_sig_keys,
     };
     use crate::cryptography::signing::test_support::seeded_identity;
     use aes_prng::AesRng;
     use rand::SeedableRng;
     use std::sync::Arc;
+    use strum::IntoEnumIterator;
 
     /// One sender, one receiver, and the rng that produced them.
     pub(crate) struct SigncryptionFixture {
@@ -51,36 +52,37 @@ pub(crate) mod test_support {
             PublicSigKey::from_sk(self.signcryption_key.signing_key())
         }
 
-        /// The schemes this fixture's reader demands.
+        /// The schemes this fixture's tests demand of a composite envelope.
         pub(crate) fn schemes(&self) -> Vec<SigningSchemeType> {
             self.schemes.clone()
         }
 
-        /// A reader deviating from this fixture's in its sender policy alone.
-        pub(crate) fn reader_for(&self, sender: SenderAuth) -> UnifiedUnsigncryptionKey {
-            self.reader_with(sender, self.unsigncryption_key.receiver_id.clone())
+        /// A reader deviating from this fixture's in the sender keys it holds alone.
+        pub(crate) fn reader_for(&self, sender_keys: VerfKeySet) -> UnifiedUnsigncryptionKey {
+            self.reader_with(sender_keys, self.unsigncryption_key.receiver_id.clone())
         }
 
         /// A reader deviating from this fixture's in its receiver id alone.
         pub(crate) fn reader_to(&self, receiver_id: Vec<u8>) -> UnifiedUnsigncryptionKey {
-            self.reader_with(self.unsigncryption_key.sender.clone(), receiver_id)
+            self.reader_with(self.unsigncryption_key.sender_keys.clone(), receiver_id)
         }
 
         fn reader_with(
             &self,
-            sender: SenderAuth,
+            sender_keys: VerfKeySet,
             receiver_id: Vec<u8>,
         ) -> UnifiedUnsigncryptionKey {
             UnifiedUnsigncryptionKey {
                 decryption_key: self.unsigncryption_key.decryption_key.clone(),
                 encryption_key: self.unsigncryption_key.encryption_key.clone(),
-                sender,
+                sender_keys,
                 receiver_id,
             }
         }
     }
 
-    /// A fixture whose reader demands the frozen, single-ECDSA layout.
+    /// A fixture whose sender publishes a single ECDSA key and writes the frozen
+    /// layout.
     pub(crate) fn signcryption_fixture(scheme: PkeSchemeType, seed: u64) -> SigncryptionFixture {
         let p = fixture_parts(scheme, seed);
         let sender_verf_key = PublicSigKey::from_sk(&p.signing_key);
@@ -112,9 +114,10 @@ pub(crate) mod test_support {
         // same keys.
         let mut p = fixture_parts(scheme, seed);
         let identity = Arc::new(seeded_identity(&mut p.rng));
-        let keys = VerfKeySet::from_identity(&identity, schemes).unwrap();
+        let every_scheme: Vec<_> = SigningSchemeType::iter().collect();
+        let keys = VerfKeySet::from_identity(&identity, &every_scheme).unwrap();
         // Canonical order, which is what the reader will demand.
-        let demanded = keys.schemes();
+        let demanded = canonical_schemes(schemes).unwrap();
         SigncryptionFixture {
             signcryption_key: UnifiedSigncryptionKey::new(
                 identity,

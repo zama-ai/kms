@@ -1179,10 +1179,10 @@ pub(crate) mod tests {
         DEFAULT_EPOCH_ID, DEFAULT_PARAM, OTHER_CENTRAL_TEST_ID, TEST_CENTRAL_KEY_ID, TEST_PARAM,
     };
     use crate::cryptography::error::CryptographyError;
-    use crate::cryptography::signatures::PublicSigKey;
     use crate::cryptography::signatures::gen_sig_keys;
+    use crate::cryptography::signatures::{PublicSigKey, VerfKeySet};
     use crate::cryptography::signcryption::{
-        SenderAuth, UnsigncryptFHEPlaintext, ephemeral_signcryption_key_generation,
+        UnsigncryptFHEPlaintext, ephemeral_signcryption_key_generation,
     };
     use crate::cryptography::signing::identity::NodeSigningIdentity;
     use crate::dummy_domain;
@@ -1858,7 +1858,7 @@ pub(crate) mod tests {
             if sim_type == SimulationType::BadSigKey {
                 // Change the signing key
                 let (server_sig_pk, _server_sig_sk) = gen_sig_keys(&mut rng);
-                keys.unsigncryption_key.sender = SenderAuth::Ecdsa(server_sig_pk);
+                keys.unsigncryption_key.sender_keys = VerfKeySet::ecdsa_only(server_sig_pk);
             }
             keys
         };

@@ -11,10 +11,10 @@
 //! # Envelope formats
 //!
 //! A signcryption's encrypted plaintext has a layout, and there is more than
-//! one. **A [`UnifiedSigncryption`] does not say which.** The layout follows from
-//! the key material a reader holds, named by [`SenderAuth`]: a single
-//! [`PublicSigKey`] can only open the frozen layout, and a [`VerfKeySet`] (defining the choice
-//! of signing schemes) can only open the multi-signature one.
+//! one. **A [`UnifiedSigncryption`] does not say which.** The code that opens it
+//! chooses, by calling [`Unsigncrypt::unsigncrypt`] for the frozen layout or
+//! [`Unsigncrypt::unsigncrypt_composite`] for the multi-signature one, just as the
+//! writer chooses between `signcrypt` and `signcrypt_composite`.
 
 mod common;
 mod composite_v1;
@@ -67,11 +67,21 @@ pub trait Signcrypt {
 }
 
 pub trait Unsigncrypt {
-    /// Decrypt a signcrypted message and verify the signature before returning the result.
-    /// If the signature verification fails, an error is returned.
+    /// Decrypt a signcrypted message in the frozen layout and verify the signature
+    /// before returning the result.
     fn unsigncrypt<T: DeserializeOwned + tfhe::Unversionize + tfhe::named::Named>(
         &self,
         dsep: &DomainSep,
+        cipher: &UnifiedSigncryption,
+    ) -> Result<T, CryptographyError>;
+
+    /// Decrypt a signcrypted message in the multi-signature layout, requiring it to
+    /// be signed under exactly `schemes`, and verify every signature before
+    /// returning the result.
+    fn unsigncrypt_composite<T: DeserializeOwned + tfhe::Unversionize + tfhe::named::Named>(
+        &self,
+        dsep: &DomainSep,
+        schemes: &[SigningSchemeType],
         cipher: &UnifiedSigncryption,
     ) -> Result<T, CryptographyError>;
 
@@ -160,32 +170,22 @@ impl HasPkeScheme for UnifiedSigncryptionKey {
     }
 }
 
-/// What a reader authenticates a signcryption with — and therefore which
-/// envelope layout it can open.
+/// Who is reading a signcryption, and the keys it authenticates the sender with.
 ///
-/// The two are the same choice, so they are the same value. There is no way to
-/// build a key that is ambiguous about the layout it reads, and no layout tag on
-/// the message for the two to disagree with.
-#[derive(Clone, Debug)]
-pub enum SenderAuth {
-    /// A single ECDSA verification key: the frozen layout.
-    Ecdsa(PublicSigKey),
-    /// One verification key per scheme: the multi-signature layout.
-    Multi(VerfKeySet),
-}
-
-/// Who is reading a signcryption, and what it will authenticate the sender with.
+/// Key material only: the layout, and the schemes a composite must carry, are
+/// chosen by the method called.
 #[derive(Clone, Debug)]
 pub struct UnifiedUnsigncryptionKey {
     pub decryption_key: Arc<UnifiedPrivateEncKey>,
     pub encryption_key: UnifiedPublicEncKey, // Needed for validation of the signcrypted payload
-    pub sender: SenderAuth,
+    /// Every verification key the sender publishes.
+    pub sender_keys: VerfKeySet,
     /// The ID of the receiver of the signcryption, e.g. blockchain address
     pub receiver_id: Vec<u8>,
 }
 
 impl UnifiedUnsigncryptionKey {
-    /// A reader of the frozen, single-ECDSA layout.
+    /// A reader for a sender that publishes a single ECDSA key.
     pub fn new(
         decryption_key: Arc<UnifiedPrivateEncKey>,
         encryption_key: UnifiedPublicEncKey,
@@ -193,9 +193,9 @@ impl UnifiedUnsigncryptionKey {
         receiver_id: Vec<u8>,
     ) -> Self {
         Self {
-            sender: SenderAuth::Ecdsa(sender_verf_key),
             decryption_key,
             encryption_key,
+            sender_keys: VerfKeySet::ecdsa_only(sender_verf_key),
             receiver_id,
         }
     }
@@ -205,38 +205,48 @@ impl UnifiedUnsigncryptionKey {
     pub fn new_multi(
         decryption_key: Arc<UnifiedPrivateEncKey>,
         encryption_key: UnifiedPublicEncKey,
-        keys: VerfKeySet,
+        sender_keys: VerfKeySet,
         receiver_id: Vec<u8>,
     ) -> Self {
         Self {
-            sender: SenderAuth::Multi(keys),
             decryption_key,
             encryption_key,
+            sender_keys,
             receiver_id,
         }
     }
 
-    /// Decrypt and authenticate `cipher`, returning the message bytes.
-    ///
-    /// The layout follows from `sender`; see the module documentation.
+    /// Decrypt `cipher` in the frozen layout and check it against the sender's
+    /// ECDSA key.
     fn open(
         &self,
         dsep: &DomainSep,
         cipher: &UnifiedSigncryption,
     ) -> Result<Zeroizing<Vec<u8>>, CryptographyError> {
-        // Neither layout can open a ciphertext written for another KEM, so the
-        // check is made once here rather than at the head of each opener.
+        self.check_pke_type(cipher)?;
+        ecdsa_v0::open(self, self.sender_keys.ecdsa()?, dsep, cipher)
+    }
+
+    /// Decrypt `cipher` in the multi-signature layout, requiring it to be signed
+    /// under exactly `schemes`.
+    fn open_composite(
+        &self,
+        dsep: &DomainSep,
+        schemes: &[SigningSchemeType],
+        cipher: &UnifiedSigncryption,
+    ) -> Result<Zeroizing<Vec<u8>>, CryptographyError> {
+        self.check_pke_type(cipher)?;
+        composite_v1::open(self, &self.sender_keys, schemes, dsep, cipher)
+    }
+
+    /// Neither layout can open a ciphertext written for another KEM.
+    fn check_pke_type(&self, cipher: &UnifiedSigncryption) -> Result<(), CryptographyError> {
         if cipher.pke_type != self.encryption_key.encryption_scheme_type() {
             return Err(CryptographyError::VerificationError(
                 "encryption type of cipher does not match the decryption key type".to_string(),
             ));
         }
-        match &self.sender {
-            SenderAuth::Ecdsa(sender_verf_key) => {
-                ecdsa_v0::open(self, sender_verf_key, dsep, cipher)
-            }
-            SenderAuth::Multi(keys) => composite_v1::open(self, keys, dsep, cipher),
-        }
+        Ok(())
     }
 }
 
@@ -458,6 +468,17 @@ impl Unsigncrypt for UnifiedUnsigncryptionKey {
             .map_err(CryptographyError::SerializationError)
     }
 
+    fn unsigncrypt_composite<T: DeserializeOwned + tfhe::Unversionize + tfhe::named::Named>(
+        &self,
+        dsep: &DomainSep,
+        schemes: &[SigningSchemeType],
+        cipher: &UnifiedSigncryption,
+    ) -> Result<T, CryptographyError> {
+        let msg_vec = self.open_composite(dsep, schemes, cipher)?;
+        safe_deserialize(std::io::Cursor::new(&*msg_vec), SAFE_SER_SIZE_LIMIT)
+            .map_err(CryptographyError::SerializationError)
+    }
+
     fn validate_signcryption(
         &self,
         dsep: &DomainSep,
@@ -638,7 +659,7 @@ mod tests {
         {
             let (wrong_verf_key, _) = gen_sig_keys(&mut f.rng);
             assert!(
-                f.reader_for(SenderAuth::Ecdsa(wrong_verf_key))
+                f.reader_for(VerfKeySet::ecdsa_only(wrong_verf_key))
                     .unsigncrypt::<TestType>(DSEP, &correct_cipher)
                     .is_err()
             );
