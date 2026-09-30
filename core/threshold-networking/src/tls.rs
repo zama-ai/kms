@@ -876,7 +876,7 @@ mod tests {
         _ = default_provider().install_default();
         let identity = "scoped-pcr.example.com";
         let (cert_a, ca_a) = generate_mock_tls_cert(identity);
-        let (cert_b, ca_b) = generate_mock_tls_cert(identity);
+        let (_cert_b, ca_b) = generate_mock_tls_cert(identity);
 
         let pcr_a = ReleasePCRValues {
             pcr0: vec![1, 2, 3, 4],
