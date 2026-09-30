@@ -421,7 +421,7 @@ impl Custodian {
         operator_verification_key: &VerfKeySet,
         operator_ephem_enc_key: &UnifiedPublicEncKey,
     ) -> Result<InternalCustodianRecoveryOutput, BackupError> {
-        let operator_id = operator_verification_key.id().map_err(|e| {
+        let operator_id = operator_verification_key.id(BACKUP_SIGNING_SCHEMES).map_err(|e| {
             BackupError::SetupError(format!("could not compute the operator key set id: {e}"))
         })?;
         // Tracing for completeness
@@ -434,9 +434,12 @@ impl Custodian {
                 hex::encode(cur_verf_key.digest())
             );
         }
-        let custodian_id = self.verification_key_set().id().map_err(|e| {
-            BackupError::SetupError(format!("could not compute the custodian key set id: {e}"))
-        })?;
+        let custodian_id = self
+            .verification_key_set()
+            .id(BACKUP_SIGNING_SCHEMES)
+            .map_err(|e| {
+                BackupError::SetupError(format!("could not compute the custodian key set id: {e}"))
+            })?;
         let unsigncrypt_key = UnifiedUnsigncryptionKey::new_multi(
             Arc::new(self.dec_key.clone()),
             self.enc_key.clone(),
@@ -448,7 +451,11 @@ impl Custodian {
         // so we put it behind a Zeroizing.
         let backup_material: Zeroizing<BackupMaterial> = Zeroizing::new(
             unsigncrypt_key
-                .unsigncrypt(&DSEP_BACKUP_CUSTODIAN, &backup.signcryption)
+                .unsigncrypt_composite(
+                    &DSEP_BACKUP_CUSTODIAN,
+                    BACKUP_SIGNING_SCHEMES,
+                    &backup.signcryption,
+                )
                 .map_err(|e| {
                     tracing::warn!(
                         "Unsigncryption failed for operator id {}: {e}",

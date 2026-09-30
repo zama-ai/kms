@@ -148,17 +148,6 @@ impl VerfKeySet {
             .ok_or(SigningError::NoVerificationKey(scheme))
     }
 
-    /// The ECDSA key of the set, or an error if it holds none.
-    pub fn ecdsa(&self) -> Result<&PublicSigKey, SigningError> {
-        match self.require(SigningSchemeType::Ecdsa256k1)? {
-            UnifiedPublicSigKey::Ecdsa256k1(key) => Ok(key),
-            // Unreachable: `new` files every key under its own scheme.
-            _ => Err(SigningError::NoVerificationKey(
-                SigningSchemeType::Ecdsa256k1,
-            )),
-        }
-    }
-
     /// The identifier of the keys a signature under `schemes` is made with.
     pub fn id(&self, schemes: &[SigningSchemeType]) -> Result<Vec<u8>, SigningError> {
         let schemes = canonical_schemes(schemes)?;

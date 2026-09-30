@@ -412,7 +412,7 @@ impl BackupMaterial {
             tracing::error!("custodian_pk mismatch");
             return Err(RecoverySkipReason::CustodianKeyMismatchInPayload);
         }
-        let operator_pk_digest = match self.operator_pk.id() {
+        let operator_pk_digest = match self.operator_pk.id(BACKUP_SIGNING_SCHEMES) {
             Ok(id) => id,
             Err(e) => {
                 tracing::error!("could not compute the operator key set id: {e}");
@@ -590,9 +590,9 @@ impl Operator {
                 operator_pk: self.verification_key.clone(),
                 shares,
             };
-            // The custodian's identity is the digest of its whole published key set; see
-            // `Custodian::verification_key`.
-            let custodian_verf_id = custodian_verf_key.id().map_err(|e| {
+            // The custodian's identity is the digest of its keys for the backup signing schemes;
+            // see `Custodian::verification_key`.
+            let custodian_verf_id = custodian_verf_key.id(BACKUP_SIGNING_SCHEMES).map_err(|e| {
                 BackupError::SetupError(format!("could not compute the custodian key set id: {e}"))
             })?;
             let signcryption_key = UnifiedSigncryptionKey::new(
@@ -661,7 +661,7 @@ impl Operator {
             tracing::warn!("missing custodian key for role {}", output.custodian_role);
             RecoverySkipReason::MissingVerificationKey
         })?;
-        let operator_id = self.verification_key.id().map_err(|e| {
+        let operator_id = self.verification_key.id(BACKUP_SIGNING_SCHEMES).map_err(|e| {
             tracing::warn!("could not compute the operator key set id: {e}");
             RecoverySkipReason::MissingVerificationKey
         })?;
@@ -673,7 +673,11 @@ impl Operator {
         );
         let backup_material: Zeroizing<BackupMaterial> = Zeroizing::new(
             unsign_key
-                .unsigncrypt(&DSEP_BACKUP_MATERIAL, &output.signcryption)
+                .unsigncrypt_composite(
+                    &DSEP_BACKUP_MATERIAL,
+                    BACKUP_SIGNING_SCHEMES,
+                    &output.signcryption,
+                )
                 .map_err(|e| {
                     tracing::warn!(
                         "Could not unsigncrypt backup share for custodian role {} (wrong operator or tampered): {e}",

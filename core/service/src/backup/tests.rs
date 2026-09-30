@@ -677,7 +677,7 @@ fn operator_handle_init(
         )
         .unwrap();
         operators.insert(
-            verification_key.id().unwrap(),
+            verification_key.id(BACKUP_SIGNING_SCHEMES).unwrap(),
             (
                 operator,
                 validation_material,
@@ -686,7 +686,7 @@ fn operator_handle_init(
             ),
         );
         payload_for_custodians.insert(
-            verification_key.id().unwrap(),
+            verification_key.id(BACKUP_SIGNING_SCHEMES).unwrap(),
             (verification_key, backup_enc_key, cur_op_output),
         );
     }
