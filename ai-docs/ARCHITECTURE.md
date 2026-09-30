@@ -284,8 +284,11 @@ The primary service is `CoreServiceEndpoint`. Its RPCs group into:
   resharing rolls the new epoch back on the party that fails. That party deletes
   the key shares and the CRS metadata that its own resharing wrote under the new
   epoch. The party deletes the epoch data and forgets the epoch only once
-  the epoch holds no key share and no CRS metadata. Public data remains because
-  an epoch change does not affect it. A failed deletion keeps the epoch
+  the epoch holds no key share and no CRS metadata. Public data that existed
+  before the reshare remains, because an epoch change does not affect it. The
+  party deletes only public data that it fetched from its peers during this
+  reshare (see [Paired material writes](#paired-material-writes)). A failed
+  deletion keeps the epoch
   registered so that deletion can be retried. `DestroyMpcEpoch` erases a whole
   epoch instead, and covers the material of every request.
   `DestroyMpcContext` takes a stable
@@ -457,7 +460,12 @@ Threshold calls to `CryptoMaterialStorage::write_all` use two public/private pai
 The public half has no epoch. The private half has an epoch and contains one party's material.
 Initial generation writes both halves through `CryptoMaterialStorage::write_all`. The method also
 accepts one-sided writes. Resharing writes only the private half for the new epoch and reuses the
-public half. A `ContextInfo` write stores one request-scoped private entry with no public half.
+public half. The exception is a party, typically a new one, whose public storage lacks the public
+material of a reshared key or CRS. It fetches the raw bytes from a peer, verifies them against the
+request's digests, and stores them unchanged with its private material, so its public storage ends
+up byte-identical to the peers'. A public artifact that already exists locally must be
+byte-identical to the fetched one, or the reshare is rejected. A `ContextInfo` write stores one
+request-scoped private entry with no public half.
 
 Complete FHE key writes reject any public key, server key, or compressed keyset at the key ID,
 and any private entry at the requested epoch, before writing material. They cannot combine an old pair half with newly generated keys

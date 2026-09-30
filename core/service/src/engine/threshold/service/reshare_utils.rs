@@ -9,8 +9,9 @@ use crate::{
         utils::MetricedError,
     },
     vault::storage::{
-        Storage, StorageExt, StorageReader, crypto_material::ThresholdCryptoMaterialStorage,
-        read_context_at_id, s3::ReadOnlyS3StorageGetter,
+        Storage, StorageExt, StorageReader, StoreWriteOutcome,
+        crypto_material::ThresholdCryptoMaterialStorage, read_context_at_id,
+        s3::ReadOnlyS3StorageGetter,
     },
 };
 use kms_grpc::{ContextId, RequestId, rpc_types::PubDataType};
@@ -19,54 +20,168 @@ use std::collections::{BTreeMap, HashMap};
 use tfhe::{ServerKey, xof_key_set::CompressedXofKeySet, zk::CompactPkeCrs};
 use threshold_execution::tfhe_internals::public_keysets::FhePubKeySet;
 
-/// Enum to represent verified public materials that can be either uncompressed or compressed.
+/// Enum to represent verified public keys that can be either uncompressed or compressed.
 /// This allows resharing to work with both standard keys (ServerKey + PublicKey) and
 /// compressed keys (CompressedXofKeySet).
 // It's ok to have a big enum here since the way this type is used is only temporary.
 #[expect(clippy::large_enum_variant)]
-pub(crate) enum VerifiedPublicMaterial {
+pub(crate) enum VerifiedFheKeys {
     /// Standard uncompressed keyset with server key and public key
     Uncompressed(FhePubKeySet),
     /// Compressed keyset
     Compressed(CompressedXofKeySet),
 }
 
-impl std::fmt::Debug for VerifiedPublicMaterial {
+impl std::fmt::Debug for VerifiedFheKeys {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            VerifiedPublicMaterial::Uncompressed(_) => {
-                write!(f, "VerifiedPublicMaterial::Uncompressed(...)")
+            VerifiedFheKeys::Uncompressed(_) => {
+                write!(f, "VerifiedPublicKeys::Uncompressed(...)")
             }
-            VerifiedPublicMaterial::Compressed(_) => {
-                write!(f, "VerifiedPublicMaterial::Compressed(...)")
+            VerifiedFheKeys::Compressed(_) => {
+                write!(f, "VerifiedPublicKeys::Compressed(...)")
             }
         }
     }
 }
 
+/// The public keys of a key that is reshared, verified against the digests in the request.
+///
+/// A party that joins in the new epoch starts without the public material of the reshared keys,
+/// but must hold it once the epoch exists. Such a party fetches the material from a peer, and
+/// then also keeps the raw bytes it verified, so that they can be stored as-is: our public
+/// storage then holds exactly the bytes the digests were computed from.
+pub(crate) struct VerifiedPublicMaterial {
+    keys: VerifiedFheKeys,
+    /// Raw bytes per public data type, if the material was fetched from a peer. Empty if it was
+    /// loaded from our own public storage.
+    peer_bytes: Vec<(PubDataType, Vec<u8>)>,
+}
+
+impl std::fmt::Debug for VerifiedPublicMaterial {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("VerifiedPublicMaterial")
+            .field("keys", &self.keys)
+            .field(
+                "peer_bytes",
+                &self
+                    .peer_bytes
+                    .iter()
+                    .map(|(data_type, bytes)| (data_type, bytes.len()))
+                    .collect::<Vec<_>>(),
+            )
+            .finish()
+    }
+}
+
 impl VerifiedPublicMaterial {
+    /// Material loaded from our own public storage, which needs not be stored again.
+    pub(crate) fn from_own_storage(keys: VerifiedFheKeys) -> Self {
+        Self {
+            keys,
+            peer_bytes: vec![],
+        }
+    }
+
+    /// Material fetched from a peer, together with the verified raw bytes it was deserialized from.
+    pub(crate) fn from_peer(
+        keys: VerifiedFheKeys,
+        peer_bytes: Vec<(PubDataType, Vec<u8>)>,
+    ) -> Self {
+        Self { keys, peer_bytes }
+    }
+
+    /// The verified public keys.
+    #[cfg(test)]
+    pub(crate) fn keys(&self) -> &VerifiedFheKeys {
+        &self.keys
+    }
+
+    /// The raw bytes fetched from a peer, per public data type. Empty if the material was loaded
+    /// from our own public storage.
+    #[cfg(test)]
+    pub(crate) fn peer_bytes(&self) -> &[(PubDataType, Vec<u8>)] {
+        &self.peer_bytes
+    }
+
+    /// Split into the verified public keys and the raw bytes fetched from a peer.
+    pub(crate) fn into_parts(self) -> (VerifiedFheKeys, Vec<(PubDataType, Vec<u8>)>) {
+        (self.keys, self.peer_bytes)
+    }
+
     pub(crate) fn has_oprf_key(&self) -> bool {
-        match self {
-            VerifiedPublicMaterial::Uncompressed(fhe_pubkeys) => {
-                fhe_pubkeys.server_key.has_oprf_key()
-            }
-            VerifiedPublicMaterial::Compressed(compressed_keyset) => {
-                compressed_keyset.has_oprf_key()
-            }
+        match &self.keys {
+            VerifiedFheKeys::Uncompressed(fhe_pubkeys) => fhe_pubkeys.server_key.has_oprf_key(),
+            VerifiedFheKeys::Compressed(compressed_keyset) => compressed_keyset.has_oprf_key(),
         }
     }
 
     /// Whether the public material carries a transciphering server key.
     pub(crate) fn has_transciphering_key(&self) -> bool {
-        match self {
-            VerifiedPublicMaterial::Uncompressed(fhe_pubkeys) => {
+        match &self.keys {
+            VerifiedFheKeys::Uncompressed(fhe_pubkeys) => {
                 fhe_pubkeys.server_key.has_transciphering_key()
             }
-            VerifiedPublicMaterial::Compressed(compressed_keyset) => {
+            VerifiedFheKeys::Compressed(compressed_keyset) => {
                 compressed_keyset.has_transciphering_key()
             }
         }
     }
+}
+
+/// Store `entries` of raw public bytes fetched from peers in `pub_storage`.
+///
+/// An entry that already exists is kept only if its bytes exactly match the fetched bytes.
+/// Returns the entries created by this call, so that a failed reshare can delete them again,
+/// together with the outcome of the writes. The writes stop at the first error. An entry whose
+/// write failed is returned too, since a backend may apply a write and still report an error.
+pub(crate) async fn store_peer_public_bytes<PubS: Storage>(
+    pub_storage: &mut PubS,
+    entries: &[(RequestId, PubDataType, Vec<u8>)],
+) -> (Vec<(RequestId, PubDataType)>, anyhow::Result<()>) {
+    let mut created = Vec::new();
+    for (data_id, data_type, bytes) in entries {
+        let data_type_str = data_type.to_string();
+        created.push((*data_id, *data_type));
+        match pub_storage
+            .store_bytes(bytes, data_id, &data_type_str)
+            .await
+        {
+            Ok(StoreWriteOutcome::Created) => {}
+            Ok(StoreWriteOutcome::SkippedExisting) => {
+                // The existing entry is not ours to delete if this reshare later fails.
+                created.pop();
+                match pub_storage.load_bytes(data_id, &data_type_str).await {
+                    Ok(existing_bytes) if existing_bytes == *bytes => {}
+                    Ok(_) => {
+                        return (
+                            created,
+                            Err(anyhow::anyhow!(
+                                "Existing {data_type} of {data_id} differs from the bytes fetched from a peer"
+                            )),
+                        );
+                    }
+                    Err(e) => {
+                        return (
+                            created,
+                            Err(e.context(format!(
+                                "Failed to verify existing {data_type} of {data_id} against the bytes fetched from a peer"
+                            ))),
+                        );
+                    }
+                }
+            }
+            Err(e) => {
+                return (
+                    created,
+                    Err(e.context(format!(
+                        "Failed to store {data_type} of {data_id} fetched from a peer"
+                    ))),
+                );
+            }
+        }
+    }
+    (created, Ok(()))
 }
 
 async fn fetch_context_from_storage<
@@ -129,13 +244,22 @@ async fn fetch_public_fhe_materials_from_peers<
         let compressed_keyset_bytes = verified
             .remove(&PubDataType::CompressedXofKeySet)
             .expect("fetcher returns every requested entry");
+        let public_key_bytes = verified
+            .remove(&PubDataType::PublicKey)
+            .expect("fetcher returns every requested entry");
         let compressed_keyset: CompressedXofKeySet = tfhe::safe_serialization::safe_deserialize(
             std::io::Cursor::new(&compressed_keyset_bytes),
             crate::consts::SAFE_SER_SIZE_LIMIT,
         )
         .map_err(|e| anyhow::anyhow!("Failed to deserialize compressed xof keyset: {}", e))?;
 
-        Ok(VerifiedPublicMaterial::Compressed(compressed_keyset))
+        Ok(VerifiedPublicMaterial::from_peer(
+            VerifiedFheKeys::Compressed(compressed_keyset),
+            vec![
+                (PubDataType::CompressedXofKeySet, compressed_keyset_bytes),
+                (PubDataType::PublicKey, public_key_bytes),
+            ],
+        ))
     } else {
         let public_key_bytes = verified
             .remove(&PubDataType::PublicKey)
@@ -156,15 +280,25 @@ async fn fetch_public_fhe_materials_from_peers<
         )
         .map_err(|e| anyhow::anyhow!("Failed to deserialize server key: {}", e))?;
 
-        Ok(VerifiedPublicMaterial::Uncompressed(FhePubKeySet {
-            public_key,
-            server_key,
-        }))
+        Ok(VerifiedPublicMaterial::from_peer(
+            VerifiedFheKeys::Uncompressed(FhePubKeySet {
+                public_key,
+                server_key,
+            }),
+            vec![
+                (PubDataType::ServerKey, server_key_bytes),
+                (PubDataType::PublicKey, public_key_bytes),
+            ],
+        ))
     }
 }
 
 /// Attempt to get and verify the public materials needed for resharing.
 /// Supports both compressed (CompressedXofKeySet) and uncompressed (FhePubKeySet) keys.
+///
+/// The material is read from our own public storage, or fetched from the peers of `context_id`
+/// if it is missing there. In the latter case the verified raw bytes are kept in the result (see
+/// [`VerifiedPublicMaterial::into_parts`]), so that they can be stored once the reshare succeeds.
 pub(crate) async fn get_verified_fhe_public_materials<
     PubS: Storage + Send + Sync + 'static,
     PrivS: StorageExt + Send + Sync + 'static,
@@ -256,7 +390,9 @@ pub(crate) async fn get_verified_fhe_public_materials<
                         )
                     })?;
 
-                Ok(VerifiedPublicMaterial::Compressed(compressed_keyset))
+                Ok(VerifiedPublicMaterial::from_own_storage(
+                    VerifiedFheKeys::Compressed(compressed_keyset),
+                ))
             }
             _ => {
                 // If local retrieval fails, attempt to fetch from s3 of another party
@@ -366,10 +502,12 @@ pub(crate) async fn get_verified_fhe_public_materials<
                     )
                 })?;
 
-                Ok(VerifiedPublicMaterial::Uncompressed(FhePubKeySet {
-                    public_key,
-                    server_key,
-                }))
+                Ok(VerifiedPublicMaterial::from_own_storage(
+                    VerifiedFheKeys::Uncompressed(FhePubKeySet {
+                        public_key,
+                        server_key,
+                    }),
+                ))
             }
             _ => {
                 // if local retrieval fails, attempt to fetch from s3 of another party
@@ -405,7 +543,7 @@ async fn fetch_public_crs_materials_from_peers<
     context_id: &ContextId,
     crs_digests: &[u8],
     ro_storage_getter: &G,
-) -> anyhow::Result<CompactPkeCrs> {
+) -> anyhow::Result<(CompactPkeCrs, Vec<u8>)> {
     // fetch the context info
     let context = fetch_context_from_storage(crypto_storage, context_id).await?;
 
@@ -424,13 +562,19 @@ async fn fetch_public_crs_materials_from_peers<
     let crs_bytes = verified
         .remove(&PubDataType::CRS)
         .expect("fetcher returns every requested entry");
-    tfhe::safe_serialization::safe_deserialize(
+    let crs = tfhe::safe_serialization::safe_deserialize(
         std::io::Cursor::new(&crs_bytes),
         crate::consts::SAFE_SER_SIZE_LIMIT,
     )
-    .map_err(|e| anyhow::anyhow!("Failed to deserialize CRS: {}", e))
+    .map_err(|e| anyhow::anyhow!("Failed to deserialize CRS: {}", e))?;
+    Ok((crs, crs_bytes))
 }
 
+/// Attempt to get and verify the CRS for resharing.
+///
+/// The CRS is read from our own public storage, or fetched from the peers of `context_id` if it
+/// is missing there. In the latter case the verified raw bytes are returned as well, so that they
+/// can be stored once the reshare succeeds; they are `None` otherwise.
 pub(crate) async fn get_verified_crs_material<
     PubS: Storage + Send + Sync + 'static,
     PrivS: StorageExt + Send + Sync + 'static,
@@ -443,7 +587,7 @@ pub(crate) async fn get_verified_crs_material<
     context_id: &ContextId,
     crs_digest: &[u8],
     ro_storage_getter: &G,
-) -> Result<CompactPkeCrs, MetricedError> {
+) -> Result<(CompactPkeCrs, Option<Vec<u8>>), MetricedError> {
     // Load raw bytes from own public storage
     let crs_bytes_res: anyhow::Result<Vec<u8>> = {
         let pub_storage = crypto_storage.inner.get_public_storage();
@@ -464,7 +608,7 @@ pub(crate) async fn get_verified_crs_material<
                 )
             })?;
 
-            tfhe::safe_serialization::safe_deserialize(
+            let crs = tfhe::safe_serialization::safe_deserialize(
                 std::io::Cursor::new(&crs_bytes),
                 crate::consts::SAFE_SER_SIZE_LIMIT,
             )
@@ -475,7 +619,8 @@ pub(crate) async fn get_verified_crs_material<
                     anyhow::anyhow!("Failed to deserialize CRS: {}", e),
                     tonic::Code::Internal,
                 )
-            })
+            })?;
+            Ok((crs, None))
         }
         Err(_) => fetch_public_crs_materials_from_peers::<_, _, G, R>(
             crypto_storage,
@@ -485,6 +630,7 @@ pub(crate) async fn get_verified_crs_material<
             ro_storage_getter,
         )
         .await
+        .map(|(crs, crs_bytes)| (crs, Some(crs_bytes)))
         .map_err(|e| {
             MetricedError::new(
                 OP_NEW_EPOCH,
@@ -508,12 +654,16 @@ mod tests {
     use crate::engine::public_material_sync::ERR_FAILED_TO_FETCH_PUBLIC_MATERIALS;
     use crate::engine::threshold::service::reshare_utils::fetch_public_fhe_materials_from_peers;
     use crate::engine::threshold::service::reshare_utils::get_verified_fhe_public_materials;
+    use crate::engine::threshold::service::reshare_utils::{
+        get_verified_crs_material, store_peer_public_bytes,
+    };
     use crate::vault::storage::crypto_material::ThresholdCryptoMaterialStorage;
     use crate::vault::storage::ram::RamStorage;
     use crate::vault::storage::s3::DummyReadOnlyS3Storage;
     use crate::vault::storage::s3::DummyReadOnlyS3StorageGetter;
     use crate::vault::storage::store_versioned_at_request_id;
 
+    use crate::vault::storage::{Storage, StorageReader};
     use aes_prng::AesRng;
     use hashing::hash_versioned;
     use kms_grpc::ContextId;
@@ -524,6 +674,7 @@ mod tests {
     use tfhe::CompactPublicKey;
     use tfhe::ServerKey;
     use tfhe::shortint::ClassicPBSParameters;
+    use tfhe::zk::CompactPkeCrs;
 
     use crate::vault::storage::s3::split_url;
 
@@ -756,18 +907,28 @@ mod tests {
         {
             // sunshine
             // use the dummy s3 storage to fetch the keys from ram storage
-            let _keyset = fetch_public_fhe_materials_from_peers::<_, _, _, DummyReadOnlyS3Storage>(
-                &crypto_storage,
-                &key_id,
-                &context_id,
-                &key_digests,
-                &ro_storage_getter,
-            )
-            .await
-            .unwrap();
+            let verified_material =
+                fetch_public_fhe_materials_from_peers::<_, _, _, DummyReadOnlyS3Storage>(
+                    &crypto_storage,
+                    &key_id,
+                    &context_id,
+                    &key_digests,
+                    &ro_storage_getter,
+                )
+                .await
+                .unwrap();
 
             // we should've used the read-only storage, so counter should be 1
             assert_eq!(*ro_storage_getter.counter.borrow(), 1);
+
+            // the returned bytes must be exactly the ones in the peer's storage
+            assert_peer_bytes_match(
+                verified_material.peer_bytes(),
+                &ro_storage_getter.ram_storages[0],
+                &key_id,
+                &[PubDataType::ServerKey, PubDataType::PublicKey],
+            )
+            .await;
         }
         {
             // sunshine
@@ -777,15 +938,16 @@ mod tests {
                 ram_storages: vec![RamStorage::new(), ro_storage_getter.ram_storages[0].clone()],
             };
 
-            let _keyset = fetch_public_fhe_materials_from_peers::<_, _, _, DummyReadOnlyS3Storage>(
-                &crypto_storage,
-                &key_id,
-                &context_id,
-                &key_digests,
-                &two_ro_storage_getter,
-            )
-            .await
-            .unwrap();
+            let _verified_material =
+                fetch_public_fhe_materials_from_peers::<_, _, _, DummyReadOnlyS3Storage>(
+                    &crypto_storage,
+                    &key_id,
+                    &context_id,
+                    &key_digests,
+                    &two_ro_storage_getter,
+                )
+                .await
+                .unwrap();
 
             // the first storage should've failed, the second one should work, so counter should be 2
             assert_eq!(*two_ro_storage_getter.counter.borrow(), 2);
@@ -880,7 +1042,7 @@ mod tests {
                 .unwrap();
             }
 
-            let _key = get_verified_fhe_public_materials(
+            let verified_material = get_verified_fhe_public_materials(
                 &crypto_storage,
                 &req_id,
                 &key_id,
@@ -893,11 +1055,13 @@ mod tests {
 
             // we should've used the public storage directly, so the counter here should be 0
             assert_eq!(*ro_storage_getter.counter.borrow(), 0);
+            // and there is nothing that needs to be stored
+            assert!(verified_material.peer_bytes().is_empty());
         }
     }
 
     // ==================== Compressed Key Tests ====================
-    use super::VerifiedPublicMaterial;
+    use super::{VerifiedFheKeys, VerifiedPublicMaterial};
     use crate::engine::material_integrity::{
         ERR_COMPRESSED_KEYSET_DIGEST_MISMATCH, ERR_PUBLIC_KEY_DIGEST_MISMATCH,
     };
@@ -1038,18 +1202,18 @@ mod tests {
             transciphering_params.transciphering_params().is_some(),
             "TEST_PARAM is expected to enable transciphering"
         );
-        let with_transciphering = VerifiedPublicMaterial::Compressed(generate_compressed_keyset(
-            transciphering_params,
-            &key_id,
-        ));
+        let with_transciphering = VerifiedPublicMaterial::from_own_storage(
+            VerifiedFheKeys::Compressed(generate_compressed_keyset(transciphering_params, &key_id)),
+        );
         assert!(with_transciphering.has_transciphering_key());
         assert!(with_transciphering.has_oprf_key());
 
         let mut no_transciphering_params = transciphering_params;
         no_transciphering_params.meta.transciphering_parameters = None;
-        let without_transciphering = VerifiedPublicMaterial::Compressed(
-            generate_compressed_keyset(no_transciphering_params, &key_id),
-        );
+        let without_transciphering =
+            VerifiedPublicMaterial::from_own_storage(VerifiedFheKeys::Compressed(
+                generate_compressed_keyset(no_transciphering_params, &key_id),
+            ));
         assert!(!without_transciphering.has_transciphering_key());
         // the dedicated OPRF key is enabled independently of transciphering
         assert!(without_transciphering.has_oprf_key());
@@ -1099,10 +1263,17 @@ mod tests {
             .unwrap();
 
         assert!(matches!(
-            verified_material,
-            VerifiedPublicMaterial::Compressed(_)
+            verified_material.keys(),
+            VerifiedFheKeys::Compressed(_)
         ));
         assert_eq!(*ro_storage_getter.counter.borrow(), 1);
+        assert_peer_bytes_match(
+            verified_material.peer_bytes(),
+            &ro_storage_getter.ram_storages[0],
+            &key_id,
+            &[PubDataType::CompressedXofKeySet, PubDataType::PublicKey],
+        )
+        .await;
     }
 
     #[tokio::test]
@@ -1165,11 +1336,13 @@ mod tests {
         .unwrap();
 
         assert!(matches!(
-            verified_material,
-            VerifiedPublicMaterial::Compressed(_)
+            verified_material.keys(),
+            VerifiedFheKeys::Compressed(_)
         ));
         // we should've used my own storage directly, so the counter here should be 0
         assert_eq!(*ro_storage_getter.counter.borrow(), 0);
+        // and there is nothing that needs to be stored
+        assert!(verified_material.peer_bytes().is_empty());
     }
 
     #[tokio::test]
@@ -1280,5 +1453,156 @@ mod tests {
         .await
         .unwrap_err();
         assert!(err.to_string().contains(ERR_PUBLIC_KEY_DIGEST_MISMATCH));
+    }
+
+    /// Assert that `peer_bytes` holds, for each of `data_types` in order, exactly the bytes that
+    /// `peer_storage` holds for `data_id`.
+    async fn assert_peer_bytes_match(
+        peer_bytes: &[(PubDataType, Vec<u8>)],
+        peer_storage: &RamStorage,
+        data_id: &RequestId,
+        data_types: &[PubDataType],
+    ) {
+        assert_eq!(peer_bytes.len(), data_types.len());
+        for ((entry_type, bytes), data_type) in peer_bytes.iter().zip(data_types) {
+            assert_eq!(entry_type, data_type);
+            let stored = peer_storage
+                .load_bytes(data_id, &data_type.to_string())
+                .await
+                .unwrap();
+            assert_eq!(bytes, &stored, "{data_type} bytes differ from the peer's");
+        }
+    }
+
+    #[tokio::test]
+    async fn sunshine_get_verified_crs_material_from_peers() {
+        let mut rng = AesRng::seed_from_u64(2337);
+        let req_id = RequestId::new_random(&mut rng);
+        let key_id = RequestId::new_random(&mut rng);
+        let crs_id = RequestId::new_random(&mut rng);
+        let context_id = ContextId::new_random(&mut rng);
+        let (crypto_storage, _key_digests, mut ro_storage_getter, _) =
+            setup_public_materials_test(key_id, context_id, false).await;
+
+        let params = crate::consts::TEST_PARAM;
+        let crs_config = tfhe::ConfigBuilder::with_custom_parameters(params.classic_pbs())
+            .use_dedicated_compact_public_key_parameters(params.dedicated_pk_params().unwrap())
+            .build();
+        let crs = CompactPkeCrs::from_config(crs_config, 256).unwrap();
+        let crs_digest = hash_versioned(&crate::engine::base::DSEP_PUBDATA_CRS, &crs).unwrap();
+        store_versioned_at_request_id(
+            &mut ro_storage_getter.ram_storages[0],
+            &crs_id,
+            &crs,
+            &PubDataType::CRS.to_string(),
+        )
+        .await
+        .unwrap();
+
+        // the CRS is missing from my own storage, so it is fetched from the peer
+        let (_crs, crs_bytes) = get_verified_crs_material(
+            &crypto_storage,
+            &req_id,
+            &crs_id,
+            &context_id,
+            &crs_digest,
+            &ro_storage_getter,
+        )
+        .await
+        .unwrap();
+        assert_eq!(*ro_storage_getter.counter.borrow(), 1);
+        assert_peer_bytes_match(
+            &[(
+                PubDataType::CRS,
+                crs_bytes.expect("the CRS was fetched from the peer"),
+            )],
+            &ro_storage_getter.ram_storages[0],
+            &crs_id,
+            &[PubDataType::CRS],
+        )
+        .await;
+    }
+
+    #[tokio::test]
+    async fn store_peer_public_bytes_keeps_matching_existing_entries() {
+        let mut rng = AesRng::seed_from_u64(2338);
+        let existing_id = RequestId::new_random(&mut rng);
+        let missing_id = RequestId::new_random(&mut rng);
+        let mut storage = RamStorage::new();
+        storage
+            .store_bytes(b"from peer", &existing_id, &PubDataType::CRS.to_string())
+            .await
+            .unwrap();
+
+        let (created, res) = store_peer_public_bytes(
+            &mut storage,
+            &[
+                (existing_id, PubDataType::CRS, b"from peer".to_vec()),
+                (missing_id, PubDataType::ServerKey, b"server key".to_vec()),
+            ],
+        )
+        .await;
+        res.unwrap();
+
+        // Only the missing entry is reported as created, and the matching existing one is kept.
+        assert_eq!(created, vec![(missing_id, PubDataType::ServerKey)]);
+        assert_eq!(
+            storage
+                .load_bytes(&existing_id, &PubDataType::CRS.to_string())
+                .await
+                .unwrap(),
+            b"from peer"
+        );
+        assert_eq!(
+            storage
+                .load_bytes(&missing_id, &PubDataType::ServerKey.to_string())
+                .await
+                .unwrap(),
+            b"server key"
+        );
+    }
+
+    #[tokio::test]
+    async fn store_peer_public_bytes_rejects_mismatched_partial_storage() {
+        let mut rng = AesRng::seed_from_u64(2339);
+        let existing_id = RequestId::new_random(&mut rng);
+        let missing_id = RequestId::new_random(&mut rng);
+        let mut storage = RamStorage::new();
+        storage
+            .store_bytes(b"existing", &existing_id, &PubDataType::CRS.to_string())
+            .await
+            .unwrap();
+
+        let (created, res) = store_peer_public_bytes(
+            &mut storage,
+            &[
+                (missing_id, PubDataType::ServerKey, b"server key".to_vec()),
+                (existing_id, PubDataType::CRS, b"from peer".to_vec()),
+            ],
+        )
+        .await;
+
+        assert_eq!(created, vec![(missing_id, PubDataType::ServerKey)]);
+        assert!(
+            res.unwrap_err()
+                .to_string()
+                .contains("differs from the bytes fetched from a peer")
+        );
+        assert_eq!(
+            storage
+                .load_bytes(&missing_id, &PubDataType::ServerKey.to_string())
+                .await
+                .unwrap(),
+            b"server key",
+            "the newly created entry must be returned for caller rollback"
+        );
+        assert_eq!(
+            storage
+                .load_bytes(&existing_id, &PubDataType::CRS.to_string())
+                .await
+                .unwrap(),
+            b"existing",
+            "the mismatched existing entry must not be overwritten"
+        );
     }
 }

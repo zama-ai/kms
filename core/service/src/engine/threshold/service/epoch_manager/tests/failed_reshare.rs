@@ -210,10 +210,12 @@ async fn run_failed_reshare_storage_test(fail_rollback: bool, foreign_material: 
         new_epoch_id,
         vec![],
         &previous_epoch,
-        vec![VerifiedPublicMaterial::Compressed(compressed_keyset)],
+        vec![VerifiedPublicMaterial::from_own_storage(
+            VerifiedFheKeys::Compressed(compressed_keyset),
+        )],
         vec![PrivateKeySet::init_dummy(crate::consts::TEST_PARAM)],
         &dummy_domain(),
-        vec![crs],
+        vec![(crs, None)],
     )
     .await;
     assert!(
