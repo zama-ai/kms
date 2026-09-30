@@ -1385,7 +1385,6 @@ impl KmsV0_15_0 {
         let operator_identity = seeded_identity(&mut rng);
         let operator_pk =
             VerfKeySet::from_identity(&operator_identity, BACKUP_SIGNING_SCHEMES).unwrap();
-        let operator_sk = operator_identity.ecdsa().clone();
         let mut commitments = BTreeMap::new();
         let mut cts = BTreeMap::new();
         for role_j in 1..=RECOVERY_MATERIAL_TEST.custodian_count {
@@ -1455,7 +1454,7 @@ impl KmsV0_15_0 {
             cts,
             commitments,
             internal_custodian_context,
-            &operator_sk,
+            &operator_identity,
             kms_grpc_0_15_0::ContextId::from_bytes(RECOVERY_MATERIAL_TEST.mpc_context_id),
         )
         .unwrap();

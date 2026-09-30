@@ -69,7 +69,6 @@ const ALLOW_UNCOVERED: &[&str] = &[
     "BackupMaterial",
     // The versioned mirror of VerfKeySet, reached through VerfKeySet's `try_convert`.
     // Covered via VerfKeySetTest.
-    // TODO(zama-ai/kms-internal#3168): make VerfKeySetRepr private.
     "VerfKeySetRepr",
     // Field of RecoveryValidationMaterial.payload.
     // Covered via RecoveryValidationMaterialTest.
