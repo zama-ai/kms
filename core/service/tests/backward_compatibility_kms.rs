@@ -8,8 +8,9 @@ mod common;
 use aes_prng::AesRng;
 use algebra::galois_rings::degree_4::{ResiduePolyF4Z64, ResiduePolyF4Z128};
 use backward_compatibility::{
-    AppKeyBlobTest, BackupCiphertextTest, ContextInfoTest, CrsGenMetadataTest,
-    CrsGenMetadataWithExtraDataTest, CrsSignedPayloadTest, CustodianContextAnchorTest,
+    AppKeyBlobTest, BackupCiphertextTest, CompositeEnvelopeTest, CompositeSigncryptionPayloadTest,
+    ContextInfoTest, CrsGenMetadataTest, CrsGenMetadataWithExtraDataTest, CrsSignedPayloadTest,
+    CustodianContextAnchorTest,
     Eip712DomainTest, EpochDataTest, HybridKemCtTest, InternalCustodianContextTest,
     InternalCustodianRecoveryOutputTest, InternalCustodianSetupMessageTest,
     InternalRecoveryRequestTest, KeyGenMetadataTest, KeyGenMetadataWithExtraDataTest,
@@ -20,7 +21,7 @@ use backward_compatibility::{
     RootSigningSeedTest, SchemeDigestsTest, SigncryptionPayloadTest, SoftwareVersionTest,
     StoredEip712DomainTest, StoredTypedSignatureTest, TestMetadataKMS, TestType, Testcase,
     ThresholdFheKeysTest, TypedPlaintextTest, UnifiedCipherTest, UnifiedPublicSigKeyTest,
-    UnifiedSigncryptionTest, UserDecSignedPayloadTest, data_dir,
+    UnifiedSigncryptionTest, UserDecSignedPayloadTest, VerfKeySetTest, data_dir,
     load::{DataFormat, TestFailure, TestResult, TestSuccess},
     tests::{TestedModule, run_all_tests},
 };
@@ -61,8 +62,8 @@ use kms_lib::{
             gen_sig_keys,
         },
         signcryption::{
-            Signcrypt, SigncryptionPayload, UnifiedSigncryption, UnifiedSigncryptionKey,
-            UnifiedUnsigncryptionKey, Unsigncrypt,
+            CompositeEnvelope, CompositeSigncryptionPayload, Signcrypt, SigncryptionPayload,
+            UnifiedSigncryption, UnifiedSigncryptionKey, UnifiedUnsigncryptionKey, Unsigncrypt,
         },
     },
     engine::{
@@ -1696,6 +1697,86 @@ fn test_user_dec_signed_payload(
     }
 }
 
+fn test_composite_envelope(
+    dir: &Path,
+    test: &CompositeEnvelopeTest,
+    format: DataFormat,
+) -> Result<TestSuccess, TestFailure> {
+    let original_versionized: CompositeEnvelope = load_and_unversionize(dir, test, format)?;
+
+    let new_versionized = CompositeEnvelope {
+        msg: test.msg.to_vec(),
+        signatures: test
+            .schemes
+            .iter()
+            .map(|name| StoredTypedSignature {
+                scheme: scheme_from_name(name),
+                signature: test.signature.to_vec(),
+            })
+            .collect(),
+    };
+
+    if original_versionized != new_versionized {
+        Err(test.failure(
+            format!(
+                "Invalid CompositeEnvelope:\n Expected :\n{original_versionized:?}\nGot:\n{new_versionized:?}"
+            ),
+            format,
+        ))
+    } else {
+        Ok(test.success(format))
+    }
+}
+
+fn test_composite_signcryption_payload(
+    dir: &Path,
+    test: &CompositeSigncryptionPayloadTest,
+    format: DataFormat,
+) -> Result<TestSuccess, TestFailure> {
+    let original_versionized: CompositeSigncryptionPayload =
+        load_and_unversionize(dir, test, format)?;
+
+    let new_versionized = CompositeSigncryptionPayload {
+        msg: test.msg.to_vec(),
+        receiver_id: test.receiver_id.to_vec(),
+        enc_key_digest: test.enc_key_digest.to_vec(),
+    };
+
+    if original_versionized != new_versionized {
+        Err(test.failure(
+            format!(
+                "Invalid CompositeSigncryptionPayload:\n Expected :\n{original_versionized:?}\nGot:\n{new_versionized:?}"
+            ),
+            format,
+        ))
+    } else {
+        Ok(test.success(format))
+    }
+}
+
+fn test_verf_key_set(
+    dir: &Path,
+    test: &VerfKeySetTest,
+    format: DataFormat,
+) -> Result<TestSuccess, TestFailure> {
+    let original_versionized: VerfKeySet = load_and_unversionize(dir, test, format)?;
+
+    let mut rng = AesRng::seed_from_u64(test.state);
+    let schemes: Vec<SigningSchemeType> = SigningSchemeType::iter().collect();
+    let new_versionized = seeded_verf_key_set(&mut rng, &schemes);
+
+    if original_versionized != new_versionized {
+        Err(test.failure(
+            format!(
+                "Invalid VerfKeySet:\n Expected :\n{original_versionized:?}\nGot:\n{new_versionized:?}"
+            ),
+            format,
+        ))
+    } else {
+        Ok(test.success(format))
+    }
+}
+
 pub struct KMS;
 
 impl TestedModule for KMS {
@@ -1844,6 +1925,15 @@ impl TestedModule for KMS {
             }
             Self::Metadata::UserDecSignedPayload(test) => {
                 test_user_dec_signed_payload(test_dir.as_ref(), test, format).into()
+            }
+            Self::Metadata::CompositeEnvelope(test) => {
+                test_composite_envelope(test_dir.as_ref(), test, format).into()
+            }
+            Self::Metadata::CompositeSigncryptionPayload(test) => {
+                test_composite_signcryption_payload(test_dir.as_ref(), test, format).into()
+            }
+            Self::Metadata::VerfKeySet(test) => {
+                test_verf_key_set(test_dir.as_ref(), test, format).into()
             }
         }
     }

@@ -22,6 +22,8 @@ mod common;
 mod composite_v1;
 mod ecdsa_v0;
 
+// Public so the backward-compatibility fixtures can name the versioned types of the composite layout.
+pub use composite_v1::{CompositeEnvelope, CompositeSigncryptionPayload};
 pub(crate) use ecdsa_v0::insecure_decrypt_ignoring_signature;
 
 use crate::consts::SAFE_SER_SIZE_LIMIT;
