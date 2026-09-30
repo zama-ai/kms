@@ -1206,8 +1206,7 @@ mod tests {
         cryptography::{
             encryption::{Encryption, PkeScheme, PkeSchemeType, UnifiedPublicEncKey},
             signatures::{
-                NodeSigningIdentity, PrivateSigKey, PublicSigKey, compute_eip712_signature,
-                gen_sig_keys, internal_sign,
+                NodeSigningIdentity, PrivateSigKey, PublicSigKey, gen_sig_keys, internal_sign,
             },
             signing::SigningSchemeType,
         },
@@ -1683,121 +1682,6 @@ mod tests {
     }
 
     #[test]
-    fn test_validate_public_decrypt_meta_response() {
-        let mut rng = AesRng::seed_from_u64(0);
-        let (vk0, sk0) = gen_sig_keys(&mut rng);
-        let (vk1, sk1) = gen_sig_keys(&mut rng);
-        let (vk2, _sk2) = gen_sig_keys(&mut rng);
-
-        let pks: HashMap<u32, PublicSigKey> = HashMap::from_iter(
-            [vk0, vk1, vk2]
-                .into_iter()
-                .enumerate()
-                .map(|(i, k)| (i as u32 + 1, k)),
-        );
-
-        let request_id = Some(
-            derive_request_id("test_validate_public_decrypt_meta_response")
-                .unwrap()
-                .into(),
-        );
-        let pivot = PublicDecryptionResponsePayload {
-            verification_key: bc2wrap::serialize(&pks[&1]).unwrap(),
-            plaintexts: vec![TypedPlaintext {
-                bytes: vec![1],
-                fhe_type: tfhe::FheTypes::Uint8 as i32, // Uint8, supported for ABI encoding
-            }],
-            request_id: request_id.clone(),
-        };
-
-        // `verify_public_decrypt_signatures` checks *authenticity* only (every entry of the
-        // response's `signatures` list); agreement with the consensus invariants is checked
-        // separately in the match pass of `partition_public_decrypt_responses` (exercised by
-        // `test_validate_public_decrypt_responses`).
-        let domain = dummy_domain();
-        let server_pks = pks.clone();
-        let scheme_verf_keys = HashMap::new();
-        let ctx = PublicDecTrustedValidationContext::new(
-            &server_pks,
-            &scheme_verf_keys,
-            &domain,
-            &[],
-            &[],
-            None,
-        )
-        .unwrap();
-        // The ECDSA entry is the recoverable EIP-712 signature over the handles, the plaintexts
-        // and the extra data.
-        let ecdsa_entry = |sk: &PrivateSigKey, payload: &PublicDecryptionResponsePayload| {
-            let message = compute_public_decryption_message(&[], &payload.plaintexts, &[]).unwrap();
-            kms_grpc::rpc_types::ecdsa_signatures(
-                compute_eip712_signature(sk, &message, &domain).unwrap(),
-            )
-        };
-        let verify = |payload: &PublicDecryptionResponsePayload, sigs: &[TypedSignature]| {
-            verify_public_decrypt_signatures(&ctx, payload, 1, &vk_of(payload), &[], &[], sigs, &[])
-        };
-
-        // an empty list and no internal field either, so nothing can be authenticated
-        assert!(!verify(&pivot, &[]));
-
-        // signed with the wrong private key
-        assert!(!verify(&pivot, &ecdsa_entry(&sk1, &pivot)));
-
-        // a malformed signature
-        assert!(!verify(
-            &pivot,
-            &kms_grpc::rpc_types::ecdsa_signatures(vec![0u8; 65])
-        ));
-
-        // signing the wrong value: the plaintexts differ, and the EIP-712 message covers them.
-        //
-        // NOTE: `request_id` is deliberately not part of this message — see
-        // `PublicDecryptVerification`. The request-id linkage of a response is established by
-        // `PublicDecryptionInvariants::sanity_check` against the client's own request, not by
-        // this signature.
-        {
-            let other_value = PublicDecryptionResponsePayload {
-                verification_key: bc2wrap::serialize(&pks[&1]).unwrap(),
-                plaintexts: vec![TypedPlaintext {
-                    bytes: vec![2],
-                    fhe_type: tfhe::FheTypes::Uint8 as i32,
-                }],
-                request_id: request_id.clone(),
-            };
-            assert!(!verify(&pivot, &ecdsa_entry(&sk0, &other_value)));
-        }
-
-        // a response whose key did not sign it: the payload carries a fresh key, but the
-        // signature is by `sk0`, so the recovered address is not the one the payload claims
-        {
-            let (vk, _sk) = gen_sig_keys(&mut rng);
-            let bad_value = PublicDecryptionResponsePayload {
-                verification_key: bc2wrap::serialize(&vk).unwrap(),
-                plaintexts: vec![TypedPlaintext {
-                    bytes: vec![1],
-                    fhe_type: tfhe::FheTypes::Uint8 as i32,
-                }],
-                request_id,
-            };
-            assert!(!verify(&bad_value, &ecdsa_entry(&sk0, &bad_value)));
-        }
-
-        // an entry of some other scheme does not stand in for the ECDSA one this
-        // context asks for, whether or not it could have been checked
-        assert!(!verify(
-            &pivot,
-            &[TypedSignature {
-                scheme: kms_grpc::kms::v1::SigningSchemeType::Mldsa65 as i32,
-                signature: vec![0u8; 64],
-            }]
-        ));
-
-        // happy path
-        assert!(verify(&pivot, &ecdsa_entry(&sk0, &pivot)));
-    }
-
-    #[test]
     fn test_validate_public_decrypt_responses() {
         let mut rng = AesRng::seed_from_u64(0);
         let (vk0, sk0) = gen_sig_keys(&mut rng);
@@ -2118,14 +2002,6 @@ mod tests {
             );
         }
 
-        // bad external signature
-        {
-            let mut bad_resp = resp1.clone();
-            bad_resp.external_signature[0] ^= 1;
-            let agg_resp = vec![resp0.clone(), bad_resp];
-            validate_public_decrypt_responses(&trusted_ctx, 1, &agg_resp).unwrap();
-        }
-
         // request ID
         {
             let agg_resp = vec![resp0.clone(), resp1.clone()];
@@ -2267,6 +2143,50 @@ mod tests {
 
         // happy path
         assert!(verify(&[], &[], &signatures));
+
+        // the EIP-712 message covers the plaintexts, so an entry signed over other ones fails
+        let other_value = PublicDecryptionResponsePayload {
+            plaintexts: vec![TypedPlaintext {
+                bytes: vec![2],
+                fhe_type: tfhe::FheTypes::Uint8 as i32,
+            }],
+            ..pivot.clone()
+        };
+        let other_signatures = sign_ecdsa_public_decrypt_result(
+            &sk0,
+            other_value,
+            &ext_handles_bytes,
+            extra_data.clone(),
+            &alloy_domain,
+        )
+        .signatures;
+        assert!(!verify(&[], &[], &other_signatures));
+
+        // a response whose key did not sign it: the payload carries a fresh key, but the
+        // signature is by `sk0`, so the recovered address is not the one the payload claims
+        let (fresh_vk, _) = gen_sig_keys(&mut rng);
+        let bad_value = PublicDecryptionResponsePayload {
+            verification_key: bc2wrap::serialize(&fresh_vk).unwrap(),
+            ..pivot.clone()
+        };
+        let bad_signatures = sign_ecdsa_public_decrypt_result(
+            &sk0,
+            bad_value.clone(),
+            &ext_handles_bytes,
+            extra_data.clone(),
+            &alloy_domain,
+        )
+        .signatures;
+        assert!(!verify_public_decrypt_signatures(
+            &ctx,
+            &bad_value,
+            1,
+            &fresh_vk,
+            &[],
+            &[],
+            &bad_signatures,
+            &extra_data,
+        ));
 
         // A node from before the list is authenticated by `external_signature`.
         assert!(verify(&[], &signed.external_signature, &[]));
