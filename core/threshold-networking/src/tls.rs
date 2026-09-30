@@ -316,31 +316,34 @@ Crypto provider should exist at this point"
 
         for candidate in &verifiers.candidates {
             let x509_ok = match server_data {
-                Some((server_name, ocsp_response)) => {
-                    candidate.trust_root.server.verify_server_cert(
-                        end_entity,
-                        intermediates,
-                        server_name,
-                        ocsp_response,
-                        now,
-                    )
-                    .is_ok()
-                }
-                None => {
-                    candidate.trust_root.client.verify_client_cert(end_entity, intermediates, now).is_ok()
-                }
+                Some((server_name, ocsp_response)) => candidate
+                    .trust_root
+                    .server
+                    .verify_server_cert(end_entity, intermediates, server_name, ocsp_response, now)
+                    .is_ok(),
+                None => candidate
+                    .trust_root
+                    .client
+                    .verify_client_cert(end_entity, intermediates, now)
+                    .is_ok(),
             };
 
             if !x509_ok {
-                last_error = Some((candidate.context_id, Error::General(format!(
-                    "X.509 verification failed for context {}", candidate.context_id
-                ))));
+                last_error = Some((
+                    candidate.context_id,
+                    Error::General(format!(
+                        "X.509 verification failed for context {}",
+                        candidate.context_id
+                    )),
+                ));
                 continue;
             }
 
             let cert_verifier_for_attestation = match server_data {
                 Some((server_name, ocsp_response)) => CertVerifier::Server(
-                    candidate.trust_root.server.clone(), server_name, ocsp_response
+                    candidate.trust_root.server.clone(),
+                    server_name,
+                    ocsp_response,
                 ),
                 None => CertVerifier::Client(candidate.trust_root.client.clone()),
             };
@@ -373,7 +376,7 @@ Crypto provider should exist at this point"
             )))
         } else {
             Err(Error::General(
-                "attestation validation failed for all contexts".to_string()
+                "attestation validation failed for all contexts".to_string(),
             ))
         }
     }
@@ -397,7 +400,14 @@ impl ServerCertVerifier for AttestedVerifier {
         // usual (however, we expect it to be self-signed)
         tracing::debug!("Verifying certificate for server {:?}", server_name,);
         // check the bundled attestation document and EIF signing certificate
-        self.verify_with_attestation(&cert, &verifiers, end_entity, intermediates, now, Some((server_name, ocsp_response)))
+        self.verify_with_attestation(
+            &cert,
+            &verifiers,
+            end_entity,
+            intermediates,
+            now,
+            Some((server_name, ocsp_response)),
+        )
         .map(|_| ServerCertVerified::assertion())
         .inspect_err(|e| {
             tracing::error!(
@@ -528,9 +538,11 @@ pub enum CertVerifier<'a> {
 }
 
 #[cfg(feature = "insecure")]
-fn parse_attestation_doc_only(data: &[u8]) -> AttestationDoc {
+fn parse_attestation_doc_only(data: &[u8]) -> anyhow::Result<AttestationDoc> {
     use attestation_doc_validation::attestation_doc::decode_attestation_document;
-    decode_attestation_document(data).unwrap().1
+    decode_attestation_document(data)
+        .map_err(|e| anyhow!("Could not decode attestation document: {e}"))
+        .map(|(_, doc)| doc)
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -558,6 +570,7 @@ fn validate_wrapped_cert(
     #[cfg(feature = "insecure")]
     let attestation_doc = if mock_enclave {
         parse_attestation_doc_only(attestation_doc_ext.value)
+            .map_err(|e| anyhow!("Could not decode attestation document: {e}"))?
     } else {
         validate_and_parse_attestation_doc(attestation_doc_ext.value)
             .map_err(|e| anyhow!("Could not validate attestation document: {e}"))?
@@ -845,7 +858,7 @@ mod tests {
             .unwrap();
         let ext = ext.unwrap();
         #[cfg(feature = "insecure")]
-        let attestation_doc = parse_attestation_doc_only(ext.value);
+        let attestation_doc = parse_attestation_doc_only(ext.value).unwrap();
         #[cfg(not(feature = "insecure"))]
         let attestation_doc = validate_and_parse_attestation_doc(ext.value).unwrap();
         let pcr0 = attestation_doc.pcrs.get(&0).expect("PCR0 must exist");
