@@ -96,8 +96,8 @@ async fn test_threshold_health_endpoint_availability() -> Result<()> {
         ServingStatus::Serving as i32,
         "Service is not in NOT_SERVING status. Got status: {status}"
     );
-    // The server has no PRSS for the new epoch yet, and it is still live and ready: the request
-    // that creates the epoch reaches the server only through a ready pod.
+    // The server has no PRSS yet, but it must already be live and ready. Readiness must not wait
+    // for the PRSS, because the request that creates it reaches the server only when it is ready.
     for probe_service in [LIVENESS_SERVICE, READINESS_SERVICE] {
         let status = get_status(&mut main_health_client, probe_service)
             .await

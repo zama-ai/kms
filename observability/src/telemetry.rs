@@ -181,10 +181,12 @@ pub fn init_metrics<T: Serialize + ConfigTracing>(config: &T) -> Result<(), anyh
         let app = Router::new()
             .route("/metrics", get(metrics_handler))
             .route("/healthz", get(healthz_handler))
+            // Deprecated alias of /healthz, for existing monitors
             .route("/health", get(healthz_handler))
             .route("/ready", get(readiness_handler))
             .route("/version", get(version_handler))
             .route("/liveness", get(liveness_handler))
+            // Deprecated alias of /liveness, for existing monitors
             .route("/live", get(liveness_handler))
             .route("/config", get(config_handler))
             .with_state(state);

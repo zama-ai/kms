@@ -258,8 +258,8 @@ curl http://localhost:<METRICS_PORT>/metrics
 curl http://localhost:<METRICS_PORT>/liveness  # {"status":"alive"} or 503 {"status":"not_responding"}
 curl http://localhost:<METRICS_PORT>/ready     # {"status":"ready"} or 503 {"status":"not_ready"}
 curl http://localhost:<METRICS_PORT>/healthz   # {"status":"healthy"} or 503 {"status":"unhealthy"}
-curl http://localhost:<METRICS_PORT>/live      # Same response as /liveness
-curl http://localhost:<METRICS_PORT>/health    # Same response as /healthz
+curl http://localhost:<METRICS_PORT>/live      # Deprecated: same response as /liveness, use /liveness
+curl http://localhost:<METRICS_PORT>/health    # Deprecated: same response as /healthz, use /healthz
 
 # The same liveness and readiness as gRPC health services on the service port
 grpc_health_probe --addr=localhost:<GRPC_PORT> -service=liveness
