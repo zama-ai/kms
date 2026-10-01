@@ -733,7 +733,7 @@ pub async fn setup_centralized_no_client<
     let (tx, rx) = tokio::sync::oneshot::channel();
     let sk = get_core_signing_identity(&priv_storage).await.unwrap();
 
-    create_default_centralized_context_in_storage(&mut priv_storage, sk.ecdsa())
+    create_default_centralized_context_in_storage(&mut priv_storage, &sk.verf_key())
         .await
         .unwrap();
     let config_path = format!("{}/config/default_centralized", env!("CARGO_MANIFEST_DIR"));

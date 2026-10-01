@@ -718,17 +718,18 @@ async fn main_exec() -> anyhow::Result<()> {
                 SoftwareVersion::current()?
             );
             // create the default context if it does not exist
-            let identity = (*base_kms.signing_identity()?).clone();
             let service_config = core_config.service.clone();
-            create_default_centralized_context_in_storage(&mut private_vault, identity.ecdsa())
+            create_default_centralized_context_in_storage(&mut private_vault, &base_kms.verf_key())
                 .await?;
-            let (kms, (health_reporter, health_service)) = RealCentralizedKms::new(
+            // A node without its signing key boots in recovery mode, as a threshold node does,
+            // so that it can recover its keys from the custodians.
+            let (kms, (health_reporter, health_service)) = RealCentralizedKms::new_from_base_kms(
                 core_config,
                 public_vault,
                 private_vault,
                 backup_vault,
                 security_module,
-                identity,
+                base_kms,
             )
             .await?;
             let meta_store_status_service = Arc::new(MetaStoreStatusServiceImpl::new(

@@ -7,7 +7,7 @@ use crate::consts::{DEFAULT_MPC_CONTEXT, SAFE_SER_SIZE_LIMIT};
 use crate::cryptography::encryption::{
     Encryption, PkeScheme, UnifiedPrivateEncKey, UnifiedPublicEncKey,
 };
-use crate::cryptography::signatures::{NodeSigningIdentity, PrivateSigKey, PublicSigKey};
+use crate::cryptography::signatures::{NodeSigningIdentity, PublicSigKey};
 use crate::engine::context::{ContextInfo, NodeInfo, SchemeDigests, SoftwareVersion};
 use crate::engine::threshold::service::session::SessionMaker;
 use crate::engine::traits::ContextManager;
@@ -606,10 +606,9 @@ pub async fn create_default_centralized_context_in_storage<
     PrivS: StorageExt + Sync + Send + 'static,
 >(
     priv_storage: &mut PrivS,
-    sk: &PrivateSigKey,
+    verification_key: &PublicSigKey,
 ) -> anyhow::Result<()> {
     // Create and store the default context for centralized mode testing
-    let verification_key = PublicSigKey::from_sk(sk);
     let context_info = ContextInfo {
         mpc_nodes: vec![NodeInfo {
             mpc_identity: CENTRALIZED_MPC_IDENTITY.to_string(), // identity is not used in centralized KMS
@@ -619,7 +618,7 @@ pub async fn create_default_centralized_context_in_storage<
             public_storage_url: "".to_string(),
             public_storage_prefix: None, // None will default to "PUB"
             extra_signer_addresses: vec![],
-            scheme_digests: SchemeDigests::from_ecdsa_verification_key(&verification_key),
+            scheme_digests: SchemeDigests::from_ecdsa_verification_key(verification_key),
         }],
         context_id: *DEFAULT_MPC_CONTEXT,
         software_version: SoftwareVersion::current()?,
@@ -1460,7 +1459,7 @@ mod tests {
         cryptography::{
             encryption::{Encryption, HasPkeScheme, PkeScheme, PkeSchemeType},
             signatures::{
-                PublicSigKey, gen_sig_keys,
+                PrivateSigKey, PublicSigKey, gen_sig_keys,
                 test_support::{seeded_identity, seeded_verf_key_set},
             },
             signcryption::{UnifiedUnsigncryptionKey, Unsigncrypt},
