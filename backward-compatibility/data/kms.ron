@@ -2649,6 +2649,13 @@
         metadata: VerfKeySet((
             test_filename: "verf_key_set",
             state: 703,
+            schemes: [
+                "Ecdsa256k1",
+                "Ed25519",
+                "MlDsa44",
+                "MlDsa65",
+                "MlDsa87",
+            ],
         )),
     ),
 ]

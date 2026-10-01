@@ -1301,6 +1301,8 @@ impl TestType for CompositeSigncryptionPayloadTest {
 pub struct VerfKeySetTest {
     pub test_filename: Cow<'static, str>,
     pub state: u64,
+    /// Signing-scheme names that the key set holds a verification key for.
+    pub schemes: Cow<'static, [Cow<'static, str>]>,
 }
 
 impl TestType for VerfKeySetTest {

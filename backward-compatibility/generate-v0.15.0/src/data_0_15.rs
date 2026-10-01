@@ -712,14 +712,22 @@ const COMPOSITE_SIGNCRYPTION_PAYLOAD_TEST: CompositeSigncryptionPayloadTest =
         enc_key_digest: Cow::Borrowed(&[0x33; 32]),
     };
 
-// KMS test — a key set covering every signing scheme.
+// KMS test — a key set covering every signing scheme of v0.15.0. The schemes are pinned so
+// that a scheme added later does not change the expected key set.
 const VERF_KEY_SET_TEST: VerfKeySetTest = VerfKeySetTest {
     test_filename: Cow::Borrowed("verf_key_set"),
     state: 703,
+    schemes: Cow::Borrowed(&[
+        Cow::Borrowed("Ecdsa256k1"),
+        Cow::Borrowed("Ed25519"),
+        Cow::Borrowed("MlDsa44"),
+        Cow::Borrowed("MlDsa65"),
+        Cow::Borrowed("MlDsa87"),
+    ]),
 };
 
-/// Maps the scheme names pinned in [`STORED_SCHEME_SIGNATURE_TEST`] and
-/// [`SCHEME_DIGESTS_TEST`] onto `SigningSchemeType` variants. The test side has the same mapping.
+/// Maps the scheme names pinned in [`STORED_SCHEME_SIGNATURE_TEST`], [`SCHEME_DIGESTS_TEST`]
+/// and [`VERF_KEY_SET_TEST`] onto `SigningSchemeType` variants. The test side has the same mapping.
 fn scheme_from_name(name: &str) -> SigningSchemeType {
     match name {
         "Ecdsa256k1" => SigningSchemeType::Ecdsa256k1,
@@ -1966,7 +1974,11 @@ impl KmsV0_15_0 {
     /// `VerfKeySet` contains the verification keys a party publishes.
     fn gen_verf_key_set(dir: &PathBuf) -> TestMetadataKMS {
         let mut rng = AesRng::seed_from_u64(VERF_KEY_SET_TEST.state);
-        let schemes: Vec<SigningSchemeType> = SigningSchemeType::iter().collect();
+        let schemes: Vec<SigningSchemeType> = VERF_KEY_SET_TEST
+            .schemes
+            .iter()
+            .map(|name| scheme_from_name(name))
+            .collect();
         let key_set = seeded_verf_key_set(&mut rng, &schemes);
 
         store_versioned_test!(&key_set, dir, &VERF_KEY_SET_TEST.test_filename);

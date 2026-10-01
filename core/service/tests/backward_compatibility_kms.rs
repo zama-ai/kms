@@ -1761,7 +1761,11 @@ fn test_verf_key_set(
     let original_versionized: VerfKeySet = load_and_unversionize(dir, test, format)?;
 
     let mut rng = AesRng::seed_from_u64(test.state);
-    let schemes: Vec<SigningSchemeType> = SigningSchemeType::iter().collect();
+    let schemes: Vec<SigningSchemeType> = test
+        .schemes
+        .iter()
+        .map(|name| scheme_from_name(name))
+        .collect();
     let new_versionized = seeded_verf_key_set(&mut rng, &schemes);
 
     if original_versionized != new_versionized {
