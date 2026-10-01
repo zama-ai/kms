@@ -201,8 +201,10 @@ mod tests {
     use crate::cryptography::signing::test_support::seeded_identity;
     use crate::dummy_domain;
     use crate::engine::base::CrsSignedPayload;
+    use aes_prng::AesRng;
     use kms_grpc::RequestId;
     use kms_grpc::solidity_types::CrsgenVerification;
+    use rand::SeedableRng;
 
     const DSEP: &DomainSep = b"CLNTTEST";
     const PARTY: u32 = 1;
@@ -307,7 +309,8 @@ mod tests {
     /// signature to fall back on either.
     #[test]
     fn a_result_with_no_signature_at_all_is_rejected() {
-        let identity = seeded_identity(2);
+        let mut rng = AesRng::seed_from_u64(2);
+        let identity = seeded_identity(&mut rng);
         let client = client_for(&identity, &[]);
 
         let err = verify(&client, &[], &payload()).unwrap_err().to_string();
@@ -322,7 +325,8 @@ mod tests {
     /// the result for a client asking only for ECDSA.
     #[test]
     fn an_empty_list_falls_back_to_the_legacy_signature() {
-        let identity = seeded_identity(12);
+        let mut rng = AesRng::seed_from_u64(12);
+        let identity = seeded_identity(&mut rng);
         let client = client_for(&identity, &[]);
 
         let (party_id, address) = verify_with_legacy(
@@ -341,7 +345,8 @@ mod tests {
     /// otherwise any server could drop a requested scheme and still be accepted.
     #[test]
     fn the_legacy_fallback_does_not_satisfy_a_post_quantum_request() {
-        let identity = seeded_identity(13);
+        let mut rng = AesRng::seed_from_u64(13);
+        let identity = seeded_identity(&mut rng);
         let client = client_requesting(
             &identity,
             true,
@@ -365,9 +370,10 @@ mod tests {
     /// The fallback is a real signature check, not a waiver for an empty list.
     #[test]
     fn the_legacy_fallback_rejects_a_signature_of_another_party() {
-        let identity = seeded_identity(14);
+        let mut rng = AesRng::seed_from_u64(15);
+        let identity = seeded_identity(&mut rng);
         let client = client_for(&identity, &[]);
-        let stranger = legacy_external_signature(&seeded_identity(15));
+        let stranger = legacy_external_signature(&seeded_identity(&mut rng));
 
         assert!(verify_with_legacy(&client, &[], &stranger, &payload()).is_err());
         assert!(verify_with_legacy(&client, &[], &[0u8; 65], &payload()).is_err());
@@ -378,7 +384,8 @@ mod tests {
     /// are independent statements about the same result, and they have to agree.
     #[test]
     fn a_bad_legacy_signature_is_rejected_even_when_the_list_verifies() {
-        let identity = seeded_identity(16);
+        let mut rng = AesRng::seed_from_u64(16);
+        let identity = seeded_identity(&mut rng);
         let client = client_for(&identity, &[]);
         let signatures = signatures_for(&identity, &[SigningSchemeType::Ecdsa256k1], &payload());
 
@@ -398,7 +405,7 @@ mod tests {
             verify_with_legacy(
                 &client,
                 &signatures,
-                &legacy_external_signature(&seeded_identity(17)),
+                &legacy_external_signature(&seeded_identity(&mut rng)),
                 &payload(),
             )
             .is_err()
@@ -409,7 +416,8 @@ mod tests {
     /// MlDsa65 is what the client asked for.
     #[test]
     fn a_result_without_an_ecdsa_entry_is_attributed() {
-        let identity = seeded_identity(3);
+        let mut rng = AesRng::seed_from_u64(3);
+        let identity = seeded_identity(&mut rng);
         let client = client_requesting(&identity, true, &[SigningSchemeType::MlDsa65]);
         let signatures = signatures_for(&identity, &[SigningSchemeType::MlDsa65], &payload());
 
@@ -420,7 +428,8 @@ mod tests {
     /// Each entry covers the payload it was signed over, and nothing else.
     #[test]
     fn a_tampered_payload_is_rejected() {
-        let identity = seeded_identity(4);
+        let mut rng = AesRng::seed_from_u64(4);
+        let identity = seeded_identity(&mut rng);
 
         for scheme in SigningSchemeType::iter().filter(|s| *s != SigningSchemeType::Ecdsa256k1) {
             // Ask for exactly the scheme under test, so the rejection can only come
@@ -446,7 +455,8 @@ mod tests {
     /// since no signature under it could ever be checked. ECDSA needs no key.
     #[test]
     fn set_signing_schemes_needs_a_key_for_every_non_ecdsa_scheme() {
-        let identity = seeded_identity(21);
+        let mut rng = AesRng::seed_from_u64(21);
+        let identity = seeded_identity(&mut rng);
         let composite = [SigningSchemeType::Ecdsa256k1, SigningSchemeType::MlDsa65];
 
         client_for(&identity, &[])
@@ -473,7 +483,8 @@ mod tests {
     /// can add a scheme without breaking a verifier still on this release.
     #[test]
     fn an_entry_of_an_unknown_scheme_is_skipped() {
-        let identity = seeded_identity(20);
+        let mut rng = AesRng::seed_from_u64(20);
+        let identity = seeded_identity(&mut rng);
         let client = client_for(&identity, &[]);
         let mut signatures =
             signatures_for(&identity, &[SigningSchemeType::Ecdsa256k1], &payload());
@@ -493,10 +504,11 @@ mod tests {
     /// Another party's signatures are not accepted as this party's.
     #[test]
     fn another_partys_signatures_are_rejected() {
-        let identity = seeded_identity(5);
+        let mut rng = AesRng::seed_from_u64(5);
+        let identity = seeded_identity(&mut rng);
         let client = client_for(&identity, &[]);
         let signatures = signatures_for(
-            &seeded_identity(6),
+            &seeded_identity(&mut rng),
             &[SigningSchemeType::Ecdsa256k1],
             &payload(),
         );
@@ -511,7 +523,8 @@ mod tests {
     /// that was checked.
     #[test]
     fn an_entry_with_no_known_key_is_rejected() {
-        let identity = seeded_identity(7);
+        let mut rng = AesRng::seed_from_u64(7);
+        let identity = seeded_identity(&mut rng);
         let requested = [SigningSchemeType::Ecdsa256k1, SigningSchemeType::Ed25519];
         // ECDSA identifies the party before Ed25519 encounters its missing key.
         let client = client_requesting(&identity, false, &requested);
@@ -536,8 +549,9 @@ mod tests {
     /// Entries have to agree on one signing party.
     #[test]
     fn mixed_party_entries_are_rejected() {
-        let identity = seeded_identity(8);
-        let other = seeded_identity(9);
+        let mut rng = AesRng::seed_from_u64(8);
+        let identity = seeded_identity(&mut rng);
+        let other = seeded_identity(&mut rng);
         let requested = [SigningSchemeType::Ecdsa256k1, SigningSchemeType::MlDsa65];
         let client = client_requesting(&identity, true, &requested);
 
@@ -554,7 +568,8 @@ mod tests {
     /// entries and the legacy signature verify.
     #[test]
     fn requested_schemes_cannot_be_stripped() {
-        let identity = seeded_identity(10);
+        let mut rng = AesRng::seed_from_u64(10);
+        let identity = seeded_identity(&mut rng);
         let every_scheme: Vec<_> = SigningSchemeType::iter().collect();
         let composite = vec![SigningSchemeType::Ecdsa256k1, SigningSchemeType::MlDsa65];
         // A current node always sends the legacy external signature alongside the
@@ -602,7 +617,8 @@ mod tests {
     /// ECDSA signatures must parse and authenticate the expected signer and message.
     #[test]
     fn invalid_ecdsa_signatures_are_rejected() {
-        let identity = seeded_identity(18);
+        let mut rng = AesRng::seed_from_u64(18);
+        let identity = seeded_identity(&mut rng);
         let client = client_for(&identity, &[]);
         let valid = legacy_external_signature(&identity);
         let other_message = CrsgenVerification::new(&RequestId::zeros(), 65, vec![7u8; 32], vec![]);
@@ -613,7 +629,7 @@ mod tests {
             ("malformed", vec![0u8; 65]),
             (
                 "wrong signer",
-                legacy_external_signature(&seeded_identity(19)),
+                legacy_external_signature(&seeded_identity(&mut rng)),
             ),
             ("wrong message", wrong_message),
         ];
