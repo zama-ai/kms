@@ -148,7 +148,7 @@ cfg_if::cfg_if! {
         pub const DEFAULT_CENTRAL_WASM_TRANSCRIPT_PATH: &str = "temp/default-central-wasm-transcript";
         pub const DEFAULT_THRESHOLD_WASM_TRANSCRIPT_PATH: &str = "temp/default-threshold-wasm-transcript";
         pub const TEST_SOLANA_THRESHOLD_WASM_TRANSCRIPT_PATH: &str =
-            "temp/test-solana-threshold-wasm-transcript.json";
+            "temp/test-solana-threshold-wasm-transcript";
 
 
         pub const TEST_SEC_PAR: u64 = 40;

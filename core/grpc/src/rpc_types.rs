@@ -26,11 +26,11 @@ cfg_if::cfg_if! {
             "client address is the same as verifying contract address";
         const ERR_DOMAIN_NOT_FOUND: &str = "domain not found";
         const ERR_VERIFYING_CONTRACT_NOT_FOUND: &str = "verifying contract not found";
-        const ERR_THERE_ARE_NO_HANDLES: &str = "there are no handles";
     }
 }
 
 const ERR_PARSE_CHECKSUMMED: &str = "error parsing checksummed address";
+const ERR_THERE_ARE_NO_HANDLES: &str = "there are no handles";
 
 pub static KEY_GEN_REQUEST_NAME: &str = "key_gen_request";
 pub static CRS_GEN_REQUEST_NAME: &str = "crs_gen_request";
@@ -190,36 +190,56 @@ pub enum PlaintextReceiver {
     Solana([u8; 32]),
 }
 
-impl PlaintextReceiver {
-    /// Reads the user address of a request in the format of the host chain its handles come from,
-    /// so an address is never read as another chain's kind of address. All handles must come from
-    /// the same kind of host chain.
-    pub fn for_handles<'a>(
-        user_address: &str,
-        handles: impl IntoIterator<Item = &'a [u8]>,
-    ) -> anyhow::Result<Self> {
-        let mut chain_type = None;
-        for (index, handle) in handles.into_iter().enumerate() {
+/// The handles of a user-decryption request as the linker hashes them: each left-padded to 32
+/// bytes. A request needs at least one handle.
+pub fn left_padded_handles<'a>(
+    handles: impl IntoIterator<Item = &'a [u8]>,
+) -> anyhow::Result<Vec<B256>> {
+    let handles = handles
+        .into_iter()
+        .enumerate()
+        .map(|(index, handle)| {
             if handle.len() > 32 {
                 anyhow::bail!(
                     "external_handle at index {index} too long: {} bytes (max 32)",
                     handle.len()
                 );
             }
-            let handle_chain_type = B256::left_padding_from(handle)[HANDLE_CHAIN_TYPE_INDEX];
-            match chain_type {
-                None => chain_type = Some(handle_chain_type),
-                Some(first) if first != handle_chain_type => anyhow::bail!(
-                    "handles come from different kinds of host chain: 0x{first:02x}, then 0x{handle_chain_type:02x} at index {index}"
-                ),
-                Some(_) => {}
-            }
+            Ok(B256::left_padding_from(handle))
+        })
+        .collect::<anyhow::Result<Vec<_>>>()?;
+    if handles.is_empty() {
+        anyhow::bail!(ERR_THERE_ARE_NO_HANDLES);
+    }
+    Ok(handles)
+}
+
+/// The longest base58 encoding of 32 bytes.
+const MAX_BASE58_PUBLIC_KEY_LEN: usize = 44;
+
+impl PlaintextReceiver {
+    /// Reads the user address of a request in the format of the host chain its handles come from,
+    /// so an address is never read as another chain's kind of address. All handles must come from
+    /// the same kind of host chain.
+    pub fn for_handles(user_address: &str, handles: &[B256]) -> anyhow::Result<Self> {
+        let first = handles
+            .first()
+            .ok_or_else(|| anyhow::anyhow!(ERR_THERE_ARE_NO_HANDLES))?[HANDLE_CHAIN_TYPE_INDEX];
+        if let Some((index, other)) = handles
+            .iter()
+            .map(|handle| handle[HANDLE_CHAIN_TYPE_INDEX])
+            .enumerate()
+            .find(|(_, chain_type)| *chain_type != first)
+        {
+            anyhow::bail!(
+                "handles come from different kinds of host chain: 0x{first:02x}, then 0x{other:02x} at index {index}"
+            );
         }
-        match chain_type {
-            None => anyhow::bail!("there are no handles"),
-            Some(EVM_CHAIN_TYPE) => Self::parse_evm(user_address),
-            Some(SOLANA_CHAIN_TYPE) => Self::parse_solana(user_address),
-            Some(other) => anyhow::bail!("unknown host chain type 0x{other:02x} in the handles"),
+        match first {
+            EVM_CHAIN_TYPE => Self::parse_evm(user_address),
+            SOLANA_CHAIN_TYPE => Self::parse_solana(user_address)
+                .map_err(|e| anyhow::anyhow!("the handles name a Solana host: {e}")),
+            other => anyhow::bail!("unknown host chain type 0x{other:02x} in the handles"),
         }
     }
 
@@ -241,6 +261,13 @@ impl PlaintextReceiver {
     }
 
     fn parse_solana(user_address: &str) -> anyhow::Result<Self> {
+        // Checked before decoding: base58 decoding is quadratic in the input length.
+        if user_address.len() > MAX_BASE58_PUBLIC_KEY_LEN {
+            anyhow::bail!(
+                "a base58 Solana address has at most {MAX_BASE58_PUBLIC_KEY_LEN} characters, got {}",
+                user_address.len()
+            );
+        }
         let bytes = bs58::decode(user_address).into_vec().map_err(|e| {
             anyhow::anyhow!("error parsing base58 Solana address: {user_address} - {e}")
         })?;
@@ -726,31 +753,12 @@ impl crate::kms::v1::UserDecryptionRequest {
                 .ok_or_else(|| anyhow::anyhow!(ERR_DOMAIN_NOT_FOUND))?,
         )?;
 
-        let handles = self
-            .typed_ciphertexts
-            .iter()
-            .enumerate()
-            .map(|(idx, c)| {
-                if c.external_handle.len() > 32 {
-                    anyhow::bail!(
-                        "external_handle at index {idx} too long: {} bytes (max 32)",
-                        c.external_handle.len()
-                    );
-                }
-                Ok(alloy_primitives::FixedBytes::<32>::left_padding_from(
-                    &c.external_handle,
-                ))
-            })
-            .collect::<anyhow::Result<Vec<_>>>()?;
-
-        if handles.is_empty() {
-            anyhow::bail!(ERR_THERE_ARE_NO_HANDLES);
-        }
-
-        let receiver = PlaintextReceiver::for_handles(
-            &self.client_address,
-            handles.iter().map(|handle| handle.as_slice()),
+        let handles = left_padded_handles(
+            self.typed_ciphertexts
+                .iter()
+                .map(|c| c.external_handle.as_slice()),
         )?;
+        let receiver = PlaintextReceiver::for_handles(&self.client_address, &handles)?;
         let verifying_contract = domain
             .verifying_contract
             .ok_or_else(|| anyhow::anyhow!(ERR_VERIFYING_CONTRACT_NOT_FOUND))?;
@@ -1816,7 +1824,8 @@ mod tests {
         let solana_handle = handle_with_chain_type(SOLANA_CHAIN_TYPE);
 
         let receiver = |address: &str, handles: &[&Vec<u8>]| {
-            PlaintextReceiver::for_handles(address, handles.iter().map(|h| h.as_slice()))
+            let handles = left_padded_handles(handles.iter().map(|h| h.as_slice()))?;
+            PlaintextReceiver::for_handles(address, &handles)
         };
 
         assert_eq!(
@@ -1834,18 +1843,38 @@ mod tests {
         ));
 
         // An address is only read in its host chain's format.
-        assert!(receiver(&solana_address, &[&evm_handle]).is_err());
-        assert!(receiver(evm_address, &[&solana_handle]).is_err());
-        // A Solana address is exactly 32 bytes.
-        for wrong_length in [31, 33] {
+        assert!(
+            receiver(&solana_address, &[&evm_handle])
+                .unwrap_err()
+                .to_string()
+                .starts_with("error parsing checksummed address")
+        );
+        assert!(
+            receiver(evm_address, &[&solana_handle])
+                .unwrap_err()
+                .to_string()
+                .starts_with("the handles name a Solana host: error parsing base58 Solana address")
+        );
+        // A Solana address is exactly 32 bytes; 33 bytes already exceed the base58 length cap.
+        for (wrong_length, error) in [
+            (31, "a Solana address is 32 bytes, got 31"),
+            (33, "at most 44 characters, got 45"),
+        ] {
             let address = bs58::encode(vec![0x11u8; wrong_length]).into_string();
             assert!(
                 receiver(&address, &[&solana_handle])
                     .unwrap_err()
                     .to_string()
-                    .contains("a Solana address is 32 bytes")
+                    .contains(error)
             );
         }
+        // An over-long address is refused before it is decoded.
+        assert!(
+            receiver(&"2".repeat(1_000_000), &[&solana_handle])
+                .unwrap_err()
+                .to_string()
+                .contains("at most 44 characters, got 1000000")
+        );
 
         // One request, one kind of host chain, and only the kinds we know.
         assert!(
@@ -1860,7 +1889,12 @@ mod tests {
                 .to_string()
                 .contains("unknown host chain type 0x02")
         );
-        assert!(receiver(evm_address, &[]).is_err());
+        assert!(
+            receiver(evm_address, &[])
+                .unwrap_err()
+                .to_string()
+                .contains(ERR_THERE_ARE_NO_HANDLES)
+        );
     }
 
     #[test]
@@ -1876,46 +1910,6 @@ mod tests {
         }
         assert_eq!(solana.as_bytes().len(), 32);
         assert_eq!(evm.as_bytes().len(), 20);
-    }
-
-    #[test]
-    fn a_solana_request_links_under_the_solana_linker() {
-        let alloy_domain = alloy_sol_types::eip712_domain!(
-            name: "Authorization token",
-            version: "1",
-            chain_id: 8006,
-            verifying_contract: alloy_primitives::address!("66f9664f97F2b50F62D13eA064982f936dE76657"),
-        );
-        let solana_key = [0x11u8; 32];
-        let handle = handle_with_chain_type(SOLANA_CHAIN_TYPE);
-        let req = v1::UserDecryptionRequest {
-            signing_schemes: vec![],
-            request_id: None,
-            typed_ciphertexts: vec![TypedCiphertext {
-                ciphertext: vec![].into(),
-                fhe_type: 0,
-                external_handle: handle.clone(),
-                ciphertext_format: 0,
-            }],
-            key_id: None,
-            client_address: bs58::encode(solana_key).into_string(),
-            enc_key: vec![1, 2, 3],
-            domain: Some(alloy_to_protobuf_domain(&alloy_domain).unwrap()),
-            extra_data: vec![],
-            context_id: None,
-            epoch_id: None,
-        };
-
-        let (link, _, receiver) = req.compute_link_checked().unwrap();
-
-        assert_eq!(receiver, PlaintextReceiver::Solana(solana_key));
-        let expected = crate::solidity_types::SolanaUserDecryptionLinker {
-            publicKey: vec![1, 2, 3].into(),
-            handles: vec![B256::from_slice(&handle)],
-            userAddress: B256::from(solana_key),
-        }
-        .eip712_signing_hash(&alloy_domain);
-        assert_eq!(link, expected.to_vec());
     }
 
     #[test]

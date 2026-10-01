@@ -150,7 +150,7 @@ test('threshold user decryption response', (_t) => {
 test('solana threshold user decryption response', (_t) => {
     // TEST_SOLANA_THRESHOLD_WASM_TRANSCRIPT_PATH: the same entry point as EVM; the handles' host
     // chain type makes the base58 client address a Solana user and picks the Solana linker.
-    const { data, client, enc_pk, enc_sk } = loadVector('test-solana-threshold-wasm-transcript.json');
+    const { data, client, enc_pk, enc_sk } = loadVector('test-solana-threshold-wasm-transcript.8.json');
 
     const pt = process_user_decryption_resp_from_js(
         client, data.request, data.eip712_domain, data.responses, enc_pk, enc_sk, data.threshold, true);

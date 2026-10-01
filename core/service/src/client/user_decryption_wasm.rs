@@ -27,7 +27,7 @@ use algebra::{
 use alloy_sol_types::Eip712Domain;
 use itertools::Itertools;
 use kms_grpc::kms::v1::{TypedPlaintext, UserDecryptionRequest, UserDecryptionResponse};
-use kms_grpc::rpc_types::{PlaintextReceiver, fhe_types_to_num_blocks};
+use kms_grpc::rpc_types::{PlaintextReceiver, fhe_types_to_num_blocks, left_padded_handles};
 use std::num::Wrapping;
 use tfhe::FheTypes;
 use tfhe::shortint::ClassicPBSParameters;
@@ -1115,11 +1115,12 @@ impl TryFrom<&ParsedUserDecryptionRequestHex> for ParsedUserDecryptionRequest {
             .iter()
             .map(|hdl_str| hex_decode_js_err(hdl_str).map(CiphertextHandle))
             .collect::<Result<Vec<_>, JsError>>()?;
-        let client_address = PlaintextReceiver::for_handles(
-            &req_hex.client_address,
-            ciphertext_handles.iter().map(|handle| handle.0.as_slice()),
-        )
-        .map_err(|e| JsError::new(&e.to_string()))?;
+        let client_address =
+            left_padded_handles(ciphertext_handles.iter().map(|handle| handle.0.as_slice()))
+                .and_then(|handles| {
+                    PlaintextReceiver::for_handles(&req_hex.client_address, &handles)
+                })
+                .map_err(|e| JsError::new(&e.to_string()))?;
         let eip712_verifying_contract =
             alloy_primitives::Address::parse_checksummed(&req_hex.eip712_verifying_contract, None)
                 .map_err(|e| JsError::new(&e.to_string()))?;
@@ -1234,13 +1235,13 @@ impl TryFrom<&UserDecryptionRequest> for ParsedUserDecryptionRequest {
             .as_ref()
             .ok_or_else(|| anyhow::anyhow!("Missing domain"))?;
 
-        let client_address = PlaintextReceiver::for_handles(
-            &value.client_address,
+        let handles = left_padded_handles(
             value
                 .typed_ciphertexts
                 .iter()
                 .map(|ct| ct.external_handle.as_slice()),
         )?;
+        let client_address = PlaintextReceiver::for_handles(&value.client_address, &handles)?;
 
         let eip712_verifying_contract =
             alloy_primitives::Address::parse_checksummed(domain.verifying_contract.clone(), None)?;
@@ -1270,21 +1271,7 @@ pub fn compute_link(
     req: &ParsedUserDecryptionRequest,
     domain: &Eip712Domain,
 ) -> anyhow::Result<Vec<u8>> {
-    // check consistency
-    let handles = req
-        .ciphertext_handles
-        .iter()
-        .enumerate()
-        .map(|(idx, c)| {
-            if c.0.len() > 32 {
-                anyhow::bail!(
-                    "external_handle at index {idx} too long: {} bytes (max 32)",
-                    c.0.len()
-                );
-            }
-            Ok(alloy_primitives::FixedBytes::<32>::left_padding_from(&c.0))
-        })
-        .collect::<anyhow::Result<Vec<_>>>()?;
+    let handles = left_padded_handles(req.ciphertext_handles.iter().map(|c| c.0.as_slice()))?;
 
     // TODO(#2781) ensure s is normalized!!!
     Ok(req

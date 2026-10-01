@@ -26,7 +26,6 @@ pub mod user_decryption_wasm;
 pub(crate) mod tests {
     mod centralized;
     mod common;
-    mod solana_user_decryption_tests;
     #[cfg(any(test, feature = "testing"))]
     mod testing_infra_tests;
     mod threshold;

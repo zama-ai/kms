@@ -1,5 +1,5 @@
 use crate::client::client_wasm::ServerIdentities;
-use crate::client::tests::common::{PollConfig, retrying_poll};
+use crate::client::tests::common::{PollConfig, TestHost, retrying_poll};
 use crate::client::user_decryption_wasm::ParsedUserDecryptionRequest;
 use crate::consts::DEFAULT_CENTRAL_KEY_ID;
 use crate::consts::DEFAULT_PARAM;
@@ -23,7 +23,10 @@ use tokio::task::JoinSet;
 
 #[rstest::rstest]
 #[tokio::test(flavor = "multi_thread")]
-async fn test_user_decryption_centralized(#[values(true, false)] secure: bool) -> Result<()> {
+async fn test_user_decryption_centralized(
+    #[values(true, false)] secure: bool,
+    #[values(TestHost::Evm, TestHost::Solana)] host: TestHost,
+) -> Result<()> {
     user_decryption_centralized(
         &TEST_PARAM,
         &TEST_CENTRAL_KEY_ID,
@@ -37,6 +40,7 @@ async fn test_user_decryption_centralized(#[values(true, false)] secure: bool) -
         },
         4,
         secure,
+        host,
     )
     .await
 }
@@ -60,6 +64,7 @@ async fn test_user_decryption_centralized_precompute_sns(
         },
         4,
         secure,
+        TestHost::Evm,
     )
     .await
 }
@@ -81,6 +86,7 @@ async fn test_user_decryption_centralized_and_write_transcript() -> Result<()> {
         },
         1, // wasm tests are single-threaded
         true,
+        TestHost::Evm,
     )
     .await
 }
@@ -103,6 +109,7 @@ async fn default_user_decryption_centralized_and_write_transcript() -> Result<()
         },
         1, // wasm tests are single-threaded
         true,
+        TestHost::Evm,
     )
     .await
 }
@@ -125,6 +132,7 @@ async fn default_user_decryption_centralized(#[values(true, false)] secure: bool
         },
         parallelism,
         secure,
+        TestHost::Evm,
     )
     .await
 }
@@ -149,6 +157,7 @@ async fn default_user_decryption_centralized_no_compression(
         },
         parallelism,
         secure,
+        TestHost::Evm,
     )
     .await
 }
@@ -174,6 +183,7 @@ async fn default_user_decryption_centralized_precompute_sns(
         },
         parallelism,
         secure,
+        TestHost::Evm,
     )
     .await
 }
@@ -189,6 +199,7 @@ pub(crate) async fn user_decryption_centralized(
     enc_config: EncryptionConfig,
     parallelism: usize,
     secure: bool,
+    host: TestHost,
 ) -> Result<()> {
     assert!(parallelism > 0);
     let spec = match material_type {
@@ -202,6 +213,7 @@ pub(crate) async fn user_decryption_centralized(
         .build()
         .await?;
     let mut internal_client = env.create_internal_client(dkg_params).await?;
+    host.set_user(&mut internal_client);
     let (kms_server, kms_client, material_path, _guard) = env.into_parts();
     let (ct, ct_format, fhe_type) = compute_cipher_from_stored_key(
         Some(material_path.as_path()),
@@ -228,7 +240,7 @@ pub(crate) async fn user_decryption_centralized(
                 ciphertext: ct.clone().into(),
                 fhe_type: fhe_type as i32,
                 ciphertext_format: ct_format.into(),
-                external_handle: j.to_be_bytes().to_vec(),
+                external_handle: host.handle(j),
             }];
             let request_id = derive_request_id(&format!("TEST_USER_DECRYPT_ID_{j}")).unwrap();
 
