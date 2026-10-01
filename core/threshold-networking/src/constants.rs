@@ -42,6 +42,14 @@ pub(crate) const SEND_DEADLINE_LIVE_SESSION: Duration = Duration::from_secs(30);
 /// queued for a slow or unresponsive peer cannot keep the network task alive.
 pub(crate) const SEND_DEADLINE_CLOSED_SESSION: Duration = Duration::from_secs(10);
 
+/// Once a peer has reported a session `Completed`, how long `receive` still waits for a message
+/// that peer may have sent before completing. Delivery of an in-flight message takes well under
+/// this.
+pub(crate) const COMPLETED_PEER_GRACE: Duration = Duration::from_secs(30);
+
+/// How often `receive` checks whether the peer it waits on has reported the session `Completed`.
+pub(crate) const COMPLETION_POLL_INTERVAL: Duration = Duration::from_secs(1);
+
 /// maximum number of seconds that a party waits for a network message during a protocol
 pub(crate) const NETWORK_TIMEOUT: Duration = Duration::from_secs(5);
 

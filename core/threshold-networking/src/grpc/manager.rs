@@ -69,6 +69,14 @@ impl GrpcNetworkingManager {
     /// and if not, marks them as completed.
     ///
     /// Finally it also updates the counts of inactive and active sessions.
+    ///
+    /// TODO: replace the full sweep. Every `update_interval` it walks the whole store with
+    /// `iter_mut`, holding each shard's write lock, so `send_value` lookups queue behind it; and
+    /// with completed sessions kept for `cleanup_interval` (24h by default) the store holds every
+    /// session of the last day. Entries are created and complete in roughly time order, so a queue
+    /// of `(Instant, SessionId)` popped from the front, or one bucket per interval dropped whole,
+    /// would expire them without visiting the rest. The sweep also detects active sessions whose
+    /// `NetworkSession` was dropped; that would have to move to the session's `Drop`.
     fn start_background_cleaning_task(
         session_store: Arc<SessionStore>,
         inactive_session_count: Arc<AtomicU64>,
@@ -101,6 +109,12 @@ impl GrpcNetworkingManager {
                         }
                         SessionStatus::Inactive((_, started)) => {
                             // Remove inactive sessions that have been inactive for awhile
+                            // TODO: discarding an inactive session must give its senders' slots
+                            // back in `opened_sessions_tracker`; today only activation does
+                            // (`MessageQueueStore::init`). Every inactive session that is never
+                            // activated, e.g. one this party rejected while its peers accepted it,
+                            // leaks one slot per sender for good, until the sender hits
+                            // `max_opened_inactive_sessions` and all its new sessions are refused.
                             if started.elapsed() > discard_inactive_interval {
                                 metrics::METRICS.increment_network_event(
                                     NetworkDebugEvent::SessionInactiveDiscarded,
@@ -318,6 +332,43 @@ impl GrpcNetworkingManager {
         Ok(session)
     }
 
+    /// Records that this party refused to run the given sessions, e.g. because its rate limiter rejected the request
+    /// they belong to.
+    ///
+    /// This gives other peers that is sending to this one a chance to hang up and stop trying to receive.
+    ///
+    /// A rejected session is marked `Completed` to avoid changing the wire format; we should add a `Rejected` variant
+    /// at some point in the future.
+    ///
+    /// A session marked this way cannot be run later: a retry of the same request on this party fails, since its peers
+    /// have already stopped sending to this party.
+    pub fn mark_sessions_rejected(&self, session_ids: &[SessionId]) {
+        for session_id in session_ids {
+            // Lock order: the session store entry before `opened_sessions_tracker`.
+            match self.session_store.entry(*session_id) {
+                dashmap::Entry::Vacant(vacant) => {
+                    vacant.insert(SessionStatus::Completed(Instant::now()));
+                }
+                dashmap::Entry::Occupied(mut occupied) => {
+                    if let SessionStatus::Inactive((queue, _)) = occupied.get() {
+                        if let MessageQueueStore::Uninitialized(channel_maps) = queue {
+                            for sender in channel_maps.iter() {
+                                if let Some(mut count) =
+                                    self.opened_sessions_tracker.get_mut(sender.key())
+                                {
+                                    *count = count.saturating_sub(1);
+                                }
+                            }
+                        }
+                        occupied.insert(SessionStatus::Completed(Instant::now()));
+                    }
+                    // An active session is being run by this party after all, and a completed
+                    // one already answers `Completed`: leave both alone.
+                }
+            }
+        }
+    }
+
     pub async fn active_session_count(&self) -> u64 {
         self.active_session_count.load(Ordering::Relaxed)
     }
@@ -332,6 +383,65 @@ mod tests {
     use super::*;
     use threshold_types::party::Identity;
     use threshold_types::role::Role;
+
+    /// Rejected sessions answer `Completed` to other peers. A session this party is running is left alone.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn test_mark_sessions_rejected() {
+        use crate::grpc::{ChannelPair, MessageQueueStore, NetworkRoundValue, ReceiverState};
+        use tokio::sync::{Mutex, mpsc::channel};
+
+        let manager = GrpcNetworkingManager::new(None, CoreToCoreNetworkConfig::default()).unwrap();
+        let role_1 = Role::indexed_from_one(1);
+        let role_2 = Role::indexed_from_one(2);
+        let mut role_assignment = RoleAssignment::default();
+        role_assignment.insert(role_1, Identity::new("127.0.0.1".to_string(), 1, None));
+        role_assignment.insert(role_2, Identity::new("127.0.0.1".to_string(), 2, None));
+
+        // Unknown to this party.
+        let unknown_id = SessionId::from(1);
+        // Already opened by a message from a peer, counted against that peer.
+        let inactive_id = SessionId::from(2);
+        let peer = MpcIdentity("peer".to_string());
+        let channel_maps = DashMap::new();
+        let (tx, rx) = channel::<NetworkRoundValue>(1);
+        channel_maps.insert(
+            peer.clone(),
+            ChannelPair {
+                tx: Arc::new(tx),
+                rx: Arc::new(Mutex::new(ReceiverState::new(rx))),
+            },
+        );
+        manager.session_store.insert(
+            inactive_id,
+            SessionStatus::Inactive((
+                MessageQueueStore::new_uninitialized(channel_maps),
+                Instant::now(),
+            )),
+        );
+        manager.opened_sessions_tracker.insert(peer.clone(), 1);
+        // Being run by this party.
+        let active_id = SessionId::from(3);
+        let active = manager
+            .make_network_session(active_id, &role_assignment, role_1, NetworkMode::Async)
+            .await
+            .unwrap();
+
+        manager.mark_sessions_rejected(&[unknown_id, inactive_id, active_id]);
+
+        for id in [unknown_id, inactive_id] {
+            assert_eq!(
+                status_name(manager.session_store.get(&id).as_deref()),
+                "completed",
+                "rejected session {id} must answer completed"
+            );
+        }
+        assert_eq!(*manager.opened_sessions_tracker.get(&peer).unwrap(), 0);
+        assert_eq!(
+            status_name(manager.session_store.get(&active_id).as_deref()),
+            "active"
+        );
+        drop(active);
+    }
 
     /// Name of a session store entry's status, for assertion messages.
     fn status_name(status: Option<&SessionStatus>) -> &'static str {

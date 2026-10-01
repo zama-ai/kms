@@ -188,8 +188,14 @@ where
         request: Request<PublicDecryptionRequest>,
     ) -> Result<Response<PublicDecryptionResponse>, Status> {
         // Acquired here rather than in `public_decrypt_sync` so that a full bucket reaches the client as
-        // `ResourceExhausted`, which it retries, rather than as a generic internal error.
-        let permit = self.decryptor.rate_limiter.start_pub_decrypt().await?;
+        // `ResourceExhausted` rather than as a generic internal error.
+        let permit = match self.decryptor.rate_limiter.start_pub_decrypt().await {
+            Ok(permit) => permit,
+            Err(e) => {
+                self.decryptor.reject_sync_request(request.get_ref()).await;
+                return Err(e.into());
+            }
+        };
         self.decryptor
             .public_decrypt_sync(request, permit)
             .await

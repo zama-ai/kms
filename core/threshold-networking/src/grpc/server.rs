@@ -222,6 +222,9 @@ impl NetworkingImpl {
 // We do the measurement of received bytes here because
 // some messages may never reach the application level
 // (i.e. in the Networking trait)
+// TODO: entries are never removed, so this grows by one entry per session ever received, for the
+// life of the process (~150M entries a day at ~1700 sessions/s). Remove a session's entry when it
+// is completed or discarded, or move the counter into the session store entry itself.
 pub static NETWORK_RECEIVED_MEASUREMENT: LazyLock<DashMap<SessionId, usize>> =
     LazyLock::new(DashMap::new);
 

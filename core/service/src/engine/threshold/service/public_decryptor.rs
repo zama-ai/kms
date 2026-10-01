@@ -54,7 +54,10 @@ use crate::{
         },
         threshold::service::session::{ImmutableSessionMaker, validate_context_and_epoch},
         utils::{MetricedError, format_handle, format_unvalidated_id, signing_identity_for},
-        validation::{RequestIdParsingErr, parse_grpc_request_id, validate_public_decrypt_req},
+        validation::{
+            RequestIdParsingErr, parse_grpc_request_id, parse_optional_grpc_request_id,
+            validate_public_decrypt_req,
+        },
     },
     util::{
         meta_store::{
@@ -663,6 +666,28 @@ impl<
                 "Threshold decryption failed for ciphertext #{ctr} (handle {external_handle}): {e}"
             )),
         }
+    }
+
+    /// Tells the peers that this party will not run `request`, by marking the MPC session of each
+    /// of its ciphertexts as rejected. Without this, peers that did admit the request wait for
+    /// this party's shares indefinitely, holding their rate-limiter permits and memory.
+    ///
+    /// Only the sync endpoint does this: on the async endpoint a rejected request is meant to be
+    /// retried with the same request ID, and a rejected session cannot be run later.
+    pub(crate) async fn reject_sync_request(&self, request: &PublicDecryptionRequest) {
+        let Ok(req_id) = parse_optional_grpc_request_id::<RequestId>(
+            &request.request_id,
+            RequestIdParsingErr::PublicDecRequest,
+        ) else {
+            // No valid request ID means no session the peers could be waiting in.
+            return;
+        };
+        let session_ids: Vec<_> = (0..request.ciphertexts.len())
+            .filter_map(|ctr| req_id.derive_session_id_with_counter(ctr as u64).ok())
+            .collect();
+        self.session_maker
+            .mark_sessions_rejected(&session_ids)
+            .await;
     }
 
     /// Stateless public decryption: no meta-store. The per-ciphertext work runs on

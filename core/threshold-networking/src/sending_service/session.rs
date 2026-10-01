@@ -8,6 +8,7 @@ use std::time::{Duration, Instant};
 
 use super::ArcSendValueRequest;
 use crate::clock::{AtomicDuration, AtomicInstant};
+use crate::constants::{COMPLETED_PEER_GRACE, COMPLETION_POLL_INTERVAL};
 use crate::grpc::NETWORK_RECEIVED_MEASUREMENT;
 use crate::grpc::{CoreToCoreNetworkConfig, MessageQueueStore, NetworkRoundValue, Tag};
 use dashmap::DashSet;
@@ -18,7 +19,6 @@ use threshold_types::party::Identity;
 use threshold_types::role::{RoleKind, RoleTrait};
 use threshold_types::session_id::SessionId;
 use tokio::sync::mpsc::UnboundedSender;
-use tokio::time::timeout;
 use tonic::async_trait;
 
 /// This acts as an interface with the real networking processes.
@@ -177,89 +177,82 @@ impl<R: RoleTrait> Networking<R> for NetworkSession {
             (Instant::now() + self.conf.get_max_waiting_time_for_message_queue()).into(),
             self.conf.get_max_waiting_time_for_message_queue(),
         );
-        // EXPERIMENT: bound the whole wait, not just per-tick, so a session stuck waiting on a
-        // peer that never sends and never reports itself `Completed` (e.g. because that peer's
-        // own rate limiter rejected the request and it never created the session) eventually
-        // errors out instead of holding its rate-limiter permit and memory forever. Hard-coded,
-        // not the configured per-session deadline (900s/300s), which is too long to be useful here.
-        let wait_deadline = Duration::from_secs(45);
-        timeout(wait_deadline, async {
-            loop {
-                // Wait for the next packet from this sender's channel, applying the
-                // completed-party grace period. All the subtle wait/abort control
-                // flow lives in `recv_next`; here we only act on its verdict.
-                let packet = match self
-                    .recv_next(&mut state.rx, &mut tick_interval, sender)
-                    .await
-                {
-                    RecvOutcome::Packet(packet) => packet,
-                    // Nothing decided this tick — keep waiting.
-                    RecvOutcome::Retry => continue,
-                    // The channel is closed.
-                    RecvOutcome::Closed => {
-                        return Err(anyhow_error_and_log(
-                            "Trying to receive from a closed channel.",
-                        ));
-                    }
-                    // Sender completed and the grace period elapsed with no message.
-                    RecvOutcome::Aborted => {
-                        return Err(anyhow_error_and_log(format!(
-                            "Session {} has been aborted with {}",
-                            self.session_id,
-                            sender.get_role_kind()
-                        )));
-                    }
-                };
+        // Fires immediately, then every second: notices a sender that completed (or refused the
+        // session) without waiting for the next tick.
+        let mut completion_poll = tokio::time::interval(COMPLETION_POLL_INTERVAL);
+        loop {
+            // Wait for the next packet from this sender's channel, applying the
+            // completed-party grace period. All the subtle wait/abort control
+            // flow lives in `recv_next`; here we only act on its verdict.
+            let packet = match self
+                .recv_next(
+                    &mut state.rx,
+                    &mut tick_interval,
+                    &mut completion_poll,
+                    sender,
+                )
+                .await
+            {
+                RecvOutcome::Packet(packet) => packet,
+                // Nothing decided this tick — keep waiting.
+                RecvOutcome::Retry => continue,
+                // The channel is closed.
+                RecvOutcome::Closed => {
+                    return Err(anyhow_error_and_log(
+                        "Trying to receive from a closed channel.",
+                    ));
+                }
+                // Sender completed and the grace period elapsed with no message.
+                RecvOutcome::Aborted => {
+                    return Err(anyhow_error_and_log(format!(
+                        "Session {} has been aborted with {}",
+                        self.session_id,
+                        sender.get_role_kind()
+                    )));
+                }
+            };
 
-                // Classify the packet against the current round. The round counter
-                // is peer-controlled and unauthenticated, so a packet is only
-                // deliverable when it is tagged with *exactly* the current round.
-                match packet.round_counter.cmp(&network_round) {
-                    // Stale: a message for a round we already passed. Drop it and
-                    // keep waiting.
-                    std::cmp::Ordering::Less => {
-                        let val_len = packet.value.len();
-                        tracing::debug!(
-                            "@ round {} - dropped value {:?} from stale round {}",
-                            network_round,
-                            packet.value[..val_len.min(16)].to_vec(),
-                            packet.round_counter
-                        );
-                        continue;
+            // Classify the packet against the current round. The round counter
+            // is peer-controlled and unauthenticated, so a packet is only
+            // deliverable when it is tagged with *exactly* the current round.
+            match packet.round_counter.cmp(&network_round) {
+                // Stale: a message for a round we already passed. Drop it and
+                // keep waiting.
+                std::cmp::Ordering::Less => {
+                    let val_len = packet.value.len();
+                    tracing::debug!(
+                        "@ round {} - dropped value {:?} from stale round {}",
+                        network_round,
+                        packet.value[..val_len.min(16)].to_vec(),
+                        packet.round_counter
+                    );
+                    continue;
+                }
+                // Exactly our round: deliver.
+                std::cmp::Ordering::Equal => return Ok(packet.value),
+                // Future round: buffer it (within bounds) until the session
+                // advances, so it can never satisfy an earlier round's receive.
+                // The look-ahead window, per-sender cap and the
+                // at-most-one-value-per-round rule live in `buffer_future`.
+                std::cmp::Ordering::Greater => {
+                    let round = packet.round_counter;
+                    if !state.buffer_future(
+                        round,
+                        packet.value,
+                        network_round,
+                        self.conf.get_max_future_rounds(),
+                        self.conf.get_max_buffered_future_msgs(),
+                    ) {
+                        // Note that the sender is never warned of this failure, so a honest party
+                        // won't try and re-send the message. But, this is a DoS mitigation: a malicious peer could
+                        // otherwise flood us with future-round messages and exhaust memory.
+                        metrics::METRICS
+                            .increment_network_event(NetworkDebugEvent::FutureMessageDropped);
                     }
-                    // Exactly our round: deliver.
-                    std::cmp::Ordering::Equal => return Ok(packet.value),
-                    // Future round: buffer it (within bounds) until the session
-                    // advances, so it can never satisfy an earlier round's receive.
-                    // The look-ahead window, per-sender cap and the
-                    // at-most-one-value-per-round rule live in `buffer_future`.
-                    std::cmp::Ordering::Greater => {
-                        let round = packet.round_counter;
-                        if !state.buffer_future(
-                            round,
-                            packet.value,
-                            network_round,
-                            self.conf.get_max_future_rounds(),
-                            self.conf.get_max_buffered_future_msgs(),
-                        ) {
-                            // Note that the sender is never warned of this failure, so a honest party
-                            // won't try and re-send the message. But, this is a DoS mitigation: a malicious peer could
-                            // otherwise flood us with future-round messages and exhaust memory.
-                            metrics::METRICS
-                                .increment_network_event(NetworkDebugEvent::FutureMessageDropped);
-                        }
-                        continue;
-                    }
+                    continue;
                 }
             }
-        })
-        .await
-        .unwrap_or_else(|_| {
-            Err(anyhow_error_and_log(format!(
-                "Session {} timed out after {:?} waiting on {:?}",
-                self.session_id, wait_deadline, sender
-            )))
-        })
+        }
     }
 
     /// Increase the round counter
@@ -432,24 +425,41 @@ impl NetworkSession {
         &self,
         rx: &mut tokio::sync::mpsc::Receiver<NetworkRoundValue>,
         tick_interval: &mut tokio::time::Interval,
+        completion_poll: &mut tokio::time::Interval,
         sender: &R,
     ) -> RecvOutcome {
+        let completed = || self.completed_parties.contains(&sender.get_role_kind());
         tokio::select! {
             _ = tick_interval.tick() => {
                 metrics::METRICS
                     .increment_network_event(NetworkDebugEvent::ReceiveWaitTimeout);
-                if self.completed_parties.contains(&sender.get_role_kind()) {
-                    // The sender has said the session is complete: wait one more
-                    // grace period for any lingering in-flight message, but still
-                    // deliver it if it arrives before the timeout.
-                    tokio::select! {
-                        _ = tokio::time::sleep(self.conf.get_max_waiting_time_for_message_queue()) => RecvOutcome::Aborted,
-                        local_packet = rx.recv() => RecvOutcome::from_recv(local_packet),
-                    }
+                if completed() {
+                    self.completed_grace(rx).await
                 } else {
                     RecvOutcome::Retry
                 }
             },
+            // The sender is marked completed by our send task, which nothing here is woken by,
+            // so poll for it rather than only noticing on the (much longer) tick above.
+            _ = completion_poll.tick() => {
+                if completed() {
+                    self.completed_grace(rx).await
+                } else {
+                    RecvOutcome::Retry
+                }
+            },
+            local_packet = rx.recv() => RecvOutcome::from_recv(local_packet),
+        }
+    }
+
+    /// The sender has said the session is complete: wait one more grace period for any lingering
+    /// in-flight message, but still deliver it if it arrives before the timeout.
+    async fn completed_grace(
+        &self,
+        rx: &mut tokio::sync::mpsc::Receiver<NetworkRoundValue>,
+    ) -> RecvOutcome {
+        tokio::select! {
+            _ = tokio::time::sleep(COMPLETED_PEER_GRACE) => RecvOutcome::Aborted,
             local_packet = rx.recv() => RecvOutcome::from_recv(local_packet),
         }
     }

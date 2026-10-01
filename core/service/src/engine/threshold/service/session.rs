@@ -711,6 +711,15 @@ impl SessionMaker {
         Ok(session)
     }
 
+    /// Marks sessions this party refused to run, so that peers stop waiting for it in them.
+    /// See [`GrpcNetworkingManager::mark_sessions_rejected`].
+    async fn mark_sessions_rejected(&self, session_ids: &[SessionId]) {
+        self.networking_manager
+            .read()
+            .await
+            .mark_sessions_rejected(session_ids);
+    }
+
     /// Derives the Z128 PRSS state of `session_id` from the PRSS setup of `epoch_id`.
     ///
     /// Unlike the session constructors, this sets up no networking, so it suits protocols that
@@ -1022,6 +1031,11 @@ impl ImmutableSessionMaker {
         self.inner
             .make_small_async_session_z128(session_id, context_id, epoch_id)
             .await
+    }
+
+    /// Marks sessions this party refused to run, so that peers stop waiting for it in them.
+    pub(crate) async fn mark_sessions_rejected(&self, session_ids: &[SessionId]) {
+        self.inner.mark_sessions_rejected(session_ids).await
     }
 
     /// Derives the Z128 PRSS state of `session_id` for `epoch_id`, without setting up networking.
