@@ -2385,30 +2385,54 @@ mod tests {
 
     #[test]
     fn test_validate_new_mpc_epoch_request() {
-        // When previous_epoch is set but domain is None, optional_protobuf_to_alloy_domain
-        // should fail, and validate_new_mpc_epoch_request should surface InvalidArgument.
+        let epoch_id = derive_request_id("test_validate_new_mpc_epoch_request").unwrap();
+        // Every case but the first carries a valid epoch ID, so that each can only be
+        // rejected for the reason it names.
+        let resharing_req = || NewMpcEpochRequest {
+            signing_schemes: vec![kms_grpc::kms::v1::SigningSchemeType::Ecdsa256k1 as i32],
+            epoch_id: Some(epoch_id.into()),
+            previous_epoch: Some(PreviousEpochInfo::default()),
+            domain: Some(alloy_to_protobuf_domain(&dummy_domain()).unwrap()),
+            ..Default::default()
+        };
+
+        // A request without an epoch ID is rejected.
         {
             let req = NewMpcEpochRequest {
-                signing_schemes: vec![kms_grpc::kms::v1::SigningSchemeType::Ecdsa256k1 as i32],
-                previous_epoch: Some(PreviousEpochInfo::default()),
-                domain: None,
-                ..Default::default()
+                epoch_id: None,
+                ..resharing_req()
             };
             let err = validate_new_mpc_epoch_request(req)
-                .expect_err("request without domain must be rejected");
+                .expect_err("request without epoch ID must be rejected");
             assert_eq!(err.code(), tonic::Code::InvalidArgument);
         }
-        // Happy path
+        // A resharing request has to carry the EIP-712 domain its results are signed under.
         {
             let req = NewMpcEpochRequest {
-                signing_schemes: vec![kms_grpc::kms::v1::SigningSchemeType::Ecdsa256k1 as i32],
-                previous_epoch: Some(PreviousEpochInfo::default()),
-                domain: Some(alloy_to_protobuf_domain(&dummy_domain()).unwrap()),
-                ..Default::default()
+                domain: None,
+                ..resharing_req()
             };
             let err = validate_new_mpc_epoch_request(req)
-                .expect_err("request without domain must be rejected");
+                .expect_err("resharing request without domain must be rejected");
             assert_eq!(err.code(), tonic::Code::InvalidArgument);
+        }
+        // A resharing request with a domain is accepted, and keeps that domain.
+        {
+            let verified = validate_new_mpc_epoch_request(resharing_req()).unwrap();
+            let resharing = verified
+                .resharing
+                .expect("a request with a previous epoch is a resharing");
+            assert_eq!(resharing.signing_domain, dummy_domain());
+        }
+        // Without a previous epoch nothing is reshared, so no domain is needed.
+        {
+            let req = NewMpcEpochRequest {
+                previous_epoch: None,
+                domain: None,
+                ..resharing_req()
+            };
+            let verified = validate_new_mpc_epoch_request(req).unwrap();
+            assert!(verified.resharing.is_none());
         }
     }
 
