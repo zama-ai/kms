@@ -582,6 +582,7 @@ spec:
             failureThreshold: {{ .Values.kmsCore.startupProbe.failureThreshold }}
             initialDelaySeconds: {{ .Values.kmsCore.startupProbe.initialDelaySeconds }}
             periodSeconds: {{ .Values.kmsCore.startupProbe.periodSeconds }}
+            timeoutSeconds: {{ .Values.kmsCore.startupProbe.timeoutSeconds }}
           livenessProbe:
             grpc:
               port: {{ .Values.kmsCore.ports.client }}
