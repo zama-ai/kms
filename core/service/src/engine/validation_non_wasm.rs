@@ -1195,7 +1195,9 @@ fn unpack_new_mpc_epoch_req(req: NewMpcEpochRequest) -> anyhow::Result<VerifiedN
 #[cfg(test)]
 mod tests {
     use crate::cryptography::signing::VerfKeySet;
-    use crate::cryptography::signing::composite::{sign_result_entries, wire_scheme_bound_preimage};
+    use crate::cryptography::signing::composite::{
+        sign_result_entries, wire_scheme_bound_preimage,
+    };
     use aes_prng::AesRng;
     use alloy_dyn_abi::Eip712Domain;
     use kms_grpc::{
