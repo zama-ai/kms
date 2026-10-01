@@ -96,6 +96,18 @@ impl<P: MlDsaParams> std::fmt::Debug for MlDsaVerfKey<P> {
     }
 }
 
+/// Prints only the key's `0x`-prefixed digest, the same text published as its address, rather than
+/// its full encoding.
+impl<P: MlDsaParams + MlDsaParamSet> std::fmt::Display for MlDsaVerfKey<P> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "0x{}",
+            hex::encode(MlDsa::<P>::digest(P::SCHEME, &self.0))
+        )
+    }
+}
+
 impl<P: MlDsaParams> PartialEq for MlDsaVerfKey<P> {
     fn eq(&self, other: &Self) -> bool {
         self.0 == other.0
@@ -112,21 +124,26 @@ impl<P: MlDsaParams> Hash for MlDsaVerfKey<P> {
 /// relation and this marker is sound.
 impl<P: MlDsaParams> Eq for MlDsaVerfKey<P> {}
 
-/// The FIPS-204 parameter set's own name.
+/// What identifies a FIPS-204 parameter set: its own name and the signing scheme it implements.
 pub trait MlDsaParamSet {
     const PARAM_SET_NAME: &'static str;
+    /// The signing scheme this parameter set implements.
+    const SCHEME: SigningSchemeType;
 }
 
 impl MlDsaParamSet for ml_dsa::MlDsa44 {
     const PARAM_SET_NAME: &'static str = "MlDsa44VerfKey";
+    const SCHEME: SigningSchemeType = SigningSchemeType::MlDsa44;
 }
 
 impl MlDsaParamSet for ml_dsa::MlDsa65 {
     const PARAM_SET_NAME: &'static str = "MlDsa65VerfKey";
+    const SCHEME: SigningSchemeType = SigningSchemeType::MlDsa65;
 }
 
 impl MlDsaParamSet for ml_dsa::MlDsa87 {
     const PARAM_SET_NAME: &'static str = "MlDsa87VerfKey";
+    const SCHEME: SigningSchemeType = SigningSchemeType::MlDsa87;
 }
 
 impl<P: MlDsaParams + MlDsaParamSet> Named for MlDsaVerfKey<P> {
@@ -203,5 +220,16 @@ mod tests {
         exercise_param_set::<MlDsa44>(1);
         exercise_param_set::<MlDsa65>(2);
         exercise_param_set::<MlDsa87>(3);
+    }
+
+    /// A key displays as its published address, never as its full encoding.
+    #[test]
+    fn display_prints_the_digest() {
+        let mut rng = AesRng::seed_from_u64(4);
+        let sk = MlDsa::<MlDsa87>::keygen_from_seed(&random_seed(&mut rng));
+        let vk = MlDsaVerfKey(MlDsa::<MlDsa87>::verifying_key(&sk).unwrap());
+        let unified =
+            crate::cryptography::signing::UnifiedPublicSigKey::MlDsa87(Box::new(vk.clone()));
+        assert_eq!(vk.to_string(), unified.address_text());
     }
 }
