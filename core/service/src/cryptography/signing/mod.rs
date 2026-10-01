@@ -559,9 +559,10 @@ pub fn unified_verify(
 /// Scaffolding shared by the test modules of this module and its backends, and by the integration
 /// tests under `core/service/tests/`.
 ///
-/// Not `#[cfg(test)]`, because an integration test is a separate crate and cannot see this one's
-/// test configuration. Re-exported as [`crate::cryptography::signatures::test_support`], since this
-/// module is only `pub(crate)`.
+/// Also compiled under the `testing` feature, because an integration test is a separate crate and
+/// cannot see this one's `cfg(test)`. Re-exported as
+/// [`crate::cryptography::signatures::test_support`], since this module is only `pub(crate)`.
+#[cfg(any(test, feature = "testing"))]
 pub mod test_support {
     use super::*;
     use crate::cryptography::signatures::gen_sig_keys;

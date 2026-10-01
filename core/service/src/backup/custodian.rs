@@ -161,7 +161,7 @@ impl TryFrom<CustodianSetupMessage> for InternalCustodianSetupMessage {
             public_enc_key: payload.public_enc_key,
             public_verf_key: payload.verification_key,
         };
-        // Preemtive verification
+        // A peer's key set crosses a boundary here, so it is checked rather than trusted.
         ensure_backup_schemes(&message.public_verf_key)
             .map_err(|e| anyhow::anyhow!("custodian role {}: {e}", message.custodian_role))?;
         Ok(message)
@@ -310,14 +310,16 @@ impl InternalCustodianContext {
                     ));
                 }
                 // Two custodians must not share *any* verification keys
-                let mut test_set: HashSet<_> = node.public_verf_key.keys.values().collect();
-                for cur_key in previous_node.public_verf_key.keys.values() {
+                let mut test_set: HashSet<_> =
+                    node.public_verf_key.iter().map(|(_, key)| key).collect();
+                for (scheme, cur_key) in previous_node.public_verf_key.iter() {
                     if !test_set.insert(cur_key) {
                         return Err(anyhow::anyhow!(
-                            "{}: roles {} and {} share their {cur_key:?} key",
+                            "{}: roles {} and {} share their {scheme} key {}",
                             ERR_DUPLICATE_CUSTODIAN_VERIFICATION_KEYS,
                             previous_node.custodian_role,
-                            node.custodian_role
+                            node.custodian_role,
+                            cur_key.address_text()
                         ));
                     }
                 }
@@ -374,7 +376,7 @@ pub struct Custodian {
 /// AWS Secret Manager because post quantum algorithms are not
 /// supported on AWS KMS at the moment.
 impl Custodian {
-    /// A custodian for `role` that signs with `signing_key`.
+    /// A custodian for `role` that signs with `signing_identity`.
     pub fn new(
         role: Role,
         signing_identity: NodeSigningIdentity,
