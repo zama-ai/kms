@@ -1674,7 +1674,10 @@ mod tests {
         // A list with no scheme this client can verify rejects: Ed25519-only, an unknown scheme
         // number, and a duplicated ECDSA entry all fail closed, valid legacy signatures included.
         for list in [
-            vec![typed(kms_grpc::kms::v1::SigningSchemeType::Ed25519 as i32, vec![1; 64])],
+            vec![typed(
+                kms_grpc::kms::v1::SigningSchemeType::Ed25519 as i32,
+                vec![1; 64],
+            )],
             vec![typed(999, ecdsa_signature.clone())],
             vec![
                 typed(ecdsa, ecdsa_signature.clone()),

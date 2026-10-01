@@ -38,12 +38,14 @@ pub(super) fn validate_solana_request(
 
     let verifying_program_id = solana.verifying_program_id.as_slice();
 
-    let transport_key =
-        UnifiedPublicEncKey::deserialize_and_validate_hybrid_ml_kem_512(&req.enc_key).map_err(|error| {
-            anyhow::anyhow!(
-                "Error deserializing UnifiedPublicEncKey from Solana UserDecryptionRequest: {error}"
-            )
-        })?;
+    let transport_key = UnifiedPublicEncKey::deserialize_and_validate_hybrid_ml_kem_512(
+        &req.enc_key,
+    )
+    .map_err(|error| {
+        anyhow::anyhow!(
+            "Error deserializing UnifiedPublicEncKey from Solana UserDecryptionRequest: {error}"
+        )
+    })?;
     require_mlkem512_transport_key(&transport_key)?;
 
     // The Gateway `Decryption` domain the request carries: a required input of the link, and the
