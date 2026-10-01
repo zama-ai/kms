@@ -1831,7 +1831,7 @@ async fn fetch_verification_keys(
     destination_prefix: &Path,
     signing_schemes: &[SigningSchemeType],
 ) -> Result<Vec<alloy_primitives::Address>, Box<dyn std::error::Error + 'static>> {
-    // Always fetch the public verfication keys, as otherwise the internal Client will complain when being constructed as it cannot validate the connection with the servers
+    // Always fetch the public verification keys, as otherwise the internal Client will complain when being constructed as it cannot validate the connection with the servers
     tracing::info!("Fetching verification keys. ({command:?})");
     let public_verf_types = vec![PubDataType::VerfAddress, PubDataType::VerfKey];
     let _ = fetch_public_elements(

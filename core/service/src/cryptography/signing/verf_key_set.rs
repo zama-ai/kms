@@ -28,7 +28,7 @@ const DSEP_VERF_KEY_SET: DomainSep = *b"VKEYSET_";
 #[serde(transparent)]
 #[versionize(try_convert = "VerfKeySetRepr")]
 pub struct VerfKeySet {
-    pub(crate) keys: BTreeMap<SigningSchemeType, UnifiedPublicSigKey>,
+    keys: BTreeMap<SigningSchemeType, UnifiedPublicSigKey>,
 }
 
 impl Named for VerfKeySet {
@@ -143,11 +143,16 @@ impl VerfKeySet {
         self.keys.keys().copied().collect()
     }
 
+    /// Every key in the set with the scheme it is filed under, in canonical scheme order.
+    pub fn iter(&self) -> impl Iterator<Item = (SigningSchemeType, &UnifiedPublicSigKey)> + '_ {
+        self.keys.iter().map(|(scheme, key)| (*scheme, key))
+    }
+
     /// The fingerprint of every key in the set, in canonical scheme order, for the operator and
     /// custodians to check by hand. Every tool that prints keys for that check prints these.
     pub fn all_fingerprints(&self) -> impl Iterator<Item = KeyFingerprint> + '_ {
-        self.keys.iter().map(|(scheme, key)| KeyFingerprint {
-            scheme: *scheme,
+        self.iter().map(|(scheme, key)| KeyFingerprint {
+            scheme,
             text: key.address_text(),
             digest: hex::encode(key.digest()),
         })
@@ -159,7 +164,6 @@ impl VerfKeySet {
     }
 
     /// The ECDSA member of this set.
-    /// Purely a convenience helper method
     pub fn ecdsa(&self) -> Result<&PublicSigKey, SigningError> {
         match self.require(SigningSchemeType::Ecdsa256k1)? {
             UnifiedPublicSigKey::Ecdsa256k1(key) => Ok(key),
