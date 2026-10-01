@@ -450,20 +450,19 @@ where
                 })?
         };
         // Validate that the recovery material is correct
-        let verf_keys = self.own_backup_verf_keys(&recovery_material).map_err(|e| {
+        let identity = self.base_kms.signing_identity().ok();
+        let verf_keys = validated_backup_verf_keys(
+            &recovery_material,
+            &backup_id,
+            identity.as_deref(),
+            &self.base_kms.verf_key(),
+        )
+        .map_err(|e| {
             MetricedError::new(
                 OP_CUSTODIAN_RECOVERY_INIT,
                 None,
-                anyhow::anyhow!("Could not load this operator's backup verification keys: {e}"),
-                tonic::Code::FailedPrecondition,
-            )
-        })?;
-        recovery_material.validate(&verf_keys).map_err(|e| {
-            MetricedError::new(
-                OP_CUSTODIAN_RECOVERY_INIT,
-                None,
-                anyhow::anyhow!("Could not validate the signature on the recovery material: {e}"),
-                tonic::Code::InvalidArgument,
+                anyhow::anyhow!("Could not validate the recovery material: {e}"),
+                e.code(),
             )
         })?;
         let (recovery_request, ephem_op_dec_key, ephem_op_enc_key) = self
@@ -523,7 +522,7 @@ where
             ));
         };
         let inner = request.into_inner();
-        let custodian_context_id = parse_optional_grpc_request_id(
+        let custodian_context_id: ContextId = parse_optional_grpc_request_id(
             &inner.custodian_context_id,
             RequestIdParsingErr::BackupRecovery,
         )
@@ -547,13 +546,10 @@ where
             )
         })?;
         let adopting = installed.is_none();
-        let identity = self.base_kms.signing_identity().ok();
-        let recovery_material = load_recovery_validation_material(
+        let (context_id, recovery_material) = recovery_context(
             backup_vault,
             installed,
-            &custodian_context_id,
-            identity.as_deref(),
-            &self.base_kms.verf_key(),
+            Some(RequestId::from(&custodian_context_id)),
         )
         .await
         .map_err(|e| {
@@ -561,6 +557,21 @@ where
                 OP_CUSTODIAN_BACKUP_RECOVERY,
                 None,
                 anyhow::anyhow!("Failed to select the custodian context to recover: {e}"),
+                e.code(),
+            )
+        })?;
+        let identity = self.base_kms.signing_identity().ok();
+        validated_backup_verf_keys(
+            &recovery_material,
+            &context_id,
+            identity.as_deref(),
+            &self.base_kms.verf_key(),
+        )
+        .map_err(|e| {
+            MetricedError::new(
+                OP_CUSTODIAN_BACKUP_RECOVERY,
+                None,
+                anyhow::anyhow!("Could not validate the recovery material: {e}"),
                 e.code(),
             )
         })?;
@@ -765,45 +776,25 @@ fn backup_verf_keys_for(
     }
 }
 
-/// Load and validate the recovery validation material associated with the provided context ID.
+/// Returns the backup key set that `material`, the recovery material at `id`, validates under.
 ///
-/// The operator signature is what authenticates it, checked against the keys
+/// The operator signature is what authenticates the material, checked against the keys
 /// [`backup_verf_keys_for`] picks.
-async fn load_recovery_validation_material(
-    backup_vault: &Mutex<Vault>,
-    installed_cus_context_id: Option<RequestId>,
-    custodian_context_id: &ContextId,
+fn validated_backup_verf_keys(
+    material: &RecoveryValidationMaterial,
+    id: &RequestId,
     identity: Option<&NodeSigningIdentity>,
     ecdsa: &PublicSigKey,
-) -> Result<RecoveryValidationMaterial, RecoveryContextError> {
-    let id = &custodian_context_id.into();
-    let recovery_material = {
-        let guarded_vault = backup_vault.lock().await;
-        if let Some(installed) = installed_cus_context_id {
-            // The node has a context, so it recovers under that one; a request naming another must
-            // not be able to move it, least of all onto a retired one an attacker replayed.
-            if installed != *id {
-                return Err(RecoveryContextError::Conflict {
-                    installed,
-                    requested: *id,
-                });
-            }
-            read_recovery_material_at_id(&guarded_vault.storage, id).await?
-        } else {
-            read_vault_material(&guarded_vault.storage, id).await?
-        }
-    };
-    let validated =
-        backup_verf_keys_for(identity, ecdsa, &recovery_material).and_then(|verf_keys| {
-            recovery_material
-                .validate(&verf_keys)
-                .map_err(anyhow::Error::from)
-        });
-    if let Err(e) = validated {
-        tracing::warn!("Recovery validation material for {id} did not validate: {e}");
-        return Err(RecoveryContextError::InvalidSignature(*id));
-    }
-    Ok(recovery_material)
+) -> Result<VerfKeySet, RecoveryContextError> {
+    backup_verf_keys_for(identity, ecdsa, material)
+        .and_then(|verf_keys| {
+            material.validate(&verf_keys)?;
+            Ok(verf_keys)
+        })
+        .map_err(|e| {
+            tracing::warn!("Recovery validation material for {id} did not validate: {e}");
+            RecoveryContextError::InvalidSignature(*id)
+        })
 }
 
 /// Proto-side adapter for the operator-side validator.
@@ -1615,45 +1606,19 @@ mod tests {
         assert_eq!(selected, second);
     }
 
-    /// The operator's mistakes come back with their own status codes, not as bad requests.
+    /// Material another operator signed is refused as a bad request, not as the node's own error.
     #[tokio::test]
-    async fn loading_recovery_material_reports_operator_errors() {
+    async fn recovery_material_signed_by_another_operator_is_rejected() {
         let sk = seeded_identity(&mut AesRng::seed_from_u64(0));
         let other_sk = seeded_identity(&mut AesRng::seed_from_u64(1));
-        let installed = ContextId::from_bytes([1; 32]);
-        let other = ContextId::from_bytes([2; 32]);
+        let id = RequestId::from_bytes([1; 32]);
         let vault = uninstalled_vault();
-        store_dummy_recovery_material(
-            &mut vault.lock().await.storage,
-            &RequestId::from(&installed),
-            &sk,
-        )
-        .await;
+        store_dummy_recovery_material(&mut vault.lock().await.storage, &id, &sk).await;
 
-        let conflict = load_recovery_validation_material(
-            &vault,
-            Some(RequestId::from(&installed)),
-            &other,
-            Some(&sk),
-            &sk.verf_key(),
-        )
-        .await
-        .unwrap_err();
-        assert_eq!(conflict.code(), tonic::Code::FailedPrecondition);
-        let unknown =
-            load_recovery_validation_material(&vault, None, &other, Some(&sk), &sk.verf_key())
-                .await
+        let (_, material) = recovery_context(&vault, None, Some(id)).await.unwrap();
+        let foreign =
+            validated_backup_verf_keys(&material, &id, Some(&other_sk), &other_sk.verf_key())
                 .unwrap_err();
-        assert_eq!(unknown.code(), tonic::Code::NotFound);
-        let foreign = load_recovery_validation_material(
-            &vault,
-            None,
-            &installed,
-            Some(&other_sk),
-            &other_sk.verf_key(),
-        )
-        .await
-        .unwrap_err();
         assert_eq!(foreign.code(), tonic::Code::InvalidArgument);
     }
 
@@ -1664,25 +1629,33 @@ mod tests {
     async fn recovery_mode_validates_with_the_ecdsa_key_alone() {
         let sk = seeded_identity(&mut AesRng::seed_from_u64(0));
         let other_sk = seeded_identity(&mut AesRng::seed_from_u64(1));
-        let id = ContextId::from_bytes([1; 32]);
+        let id = RequestId::from_bytes([1; 32]);
         let vault = uninstalled_vault();
-        store_dummy_recovery_material(&mut vault.lock().await.storage, &RequestId::from(&id), &sk)
-            .await;
+        store_dummy_recovery_material(&mut vault.lock().await.storage, &id, &sk).await;
 
-        let material = load_recovery_validation_material(&vault, None, &id, None, &sk.verf_key())
-            .await
-            .expect("the ECDSA key alone must be enough to recover");
+        let (_, material) = recovery_context(&vault, None, Some(id)).await.unwrap();
         assert_eq!(
-            backup_verf_keys_for(None, &sk.verf_key(), &material).unwrap(),
+            validated_backup_verf_keys(&material, &id, None, &sk.verf_key())
+                .expect("the ECDSA key alone must be enough to recover"),
             VerfKeySet::from_identity(&sk, BACKUP_SIGNING_SCHEMES).unwrap(),
             "recovery mode must use the keys the node published"
         );
 
         let foreign =
-            load_recovery_validation_material(&vault, None, &id, None, &other_sk.verf_key())
-                .await
-                .unwrap_err();
+            validated_backup_verf_keys(&material, &id, None, &other_sk.verf_key()).unwrap_err();
         assert_eq!(foreign.code(), tonic::Code::InvalidArgument);
+    }
+
+    /// A vault without a secret-sharing keychain cannot recover from custodians, so the node
+    /// reports it as unavailable before it reads any material.
+    #[tokio::test]
+    async fn recovery_context_requires_a_secret_sharing_keychain() {
+        let vault = Arc::new(Mutex::new(make_unencrypted_vault()));
+        let refused = recovery_context(&vault, None, Some(RequestId::from_bytes([1; 32])))
+            .await
+            .unwrap_err();
+        assert!(matches!(refused, RecoveryContextError::NoKeychain));
+        assert_eq!(refused.code(), tonic::Code::Unavailable);
     }
 
     /// A node that has a context recovers under that one: a request naming another is refused, so
