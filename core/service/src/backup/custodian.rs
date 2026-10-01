@@ -421,9 +421,11 @@ impl Custodian {
         operator_verification_key: &VerfKeySet,
         operator_ephem_enc_key: &UnifiedPublicEncKey,
     ) -> Result<InternalCustodianRecoveryOutput, BackupError> {
-        let operator_id = operator_verification_key.id(BACKUP_SIGNING_SCHEMES).map_err(|e| {
-            BackupError::SetupError(format!("could not compute the operator key set id: {e}"))
-        })?;
+        let operator_id = operator_verification_key
+            .id(BACKUP_SIGNING_SCHEMES)
+            .map_err(|e| {
+                BackupError::SetupError(format!("could not compute the operator key set id: {e}"))
+            })?;
         // Tracing for completeness
         for cur_type in BACKUP_SIGNING_SCHEMES {
             let cur_verf_key = operator_verification_key.get(*cur_type).ok_or_else(|| {

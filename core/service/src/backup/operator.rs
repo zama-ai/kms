@@ -14,16 +14,15 @@ use crate::{
     cryptography::{
         encryption::{UnifiedPrivateEncKey, UnifiedPublicEncKey},
         signatures::{StoredTypedSignature, VerfKeySet},
-        signing::composite::{sign_composite, verify_composite},
         signcryption::{
             Signcrypt, UnifiedSigncryption, UnifiedSigncryptionKey, UnifiedUnsigncryptionKey,
             Unsigncrypt,
         },
+        signing::composite::{sign_composite, verify_composite},
     },
 };
 use crate::{
-    backup::custodian::DSEP_BACKUP_CUSTODIAN,
-    cryptography::signatures::NodeSigningIdentity,
+    backup::custodian::DSEP_BACKUP_CUSTODIAN, cryptography::signatures::NodeSigningIdentity,
 };
 use algebra::{
     galois_rings::degree_4::ResiduePolyF4Z64,
@@ -657,10 +656,13 @@ impl Operator {
             tracing::warn!("missing custodian key for role {}", output.custodian_role);
             RecoverySkipReason::MissingVerificationKey
         })?;
-        let operator_id = self.verification_key.id(BACKUP_SIGNING_SCHEMES).map_err(|e| {
-            tracing::warn!("could not compute the operator key set id: {e}");
-            RecoverySkipReason::MissingVerificationKey
-        })?;
+        let operator_id = self
+            .verification_key
+            .id(BACKUP_SIGNING_SCHEMES)
+            .map_err(|e| {
+                tracing::warn!("could not compute the operator key set id: {e}");
+                RecoverySkipReason::MissingVerificationKey
+            })?;
         let unsign_key = UnifiedUnsigncryptionKey::new_multi(
             ephm_dec_key.clone(),
             ephm_enc_key.clone(),

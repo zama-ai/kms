@@ -887,7 +887,7 @@ mod kms_custodian_binary_tests {
             ct_map.clone(),
             commitments.clone(),
             custodian_context,
-            signing_identity.ecdsa(),
+            &signing_identity,
             *DEFAULT_MPC_CONTEXT,
         )
         .unwrap();
