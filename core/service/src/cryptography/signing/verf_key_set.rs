@@ -35,6 +35,26 @@ impl Named for VerfKeySet {
     const NAME: &'static str = "VerfKeySet";
 }
 
+/// What a person compares by hand to check one key of a [`VerfKeySet`].
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct KeyFingerprint {
+    pub scheme: SigningSchemeType,
+    /// The key's `0x` text: the address for ECDSA, the key digest for the other schemes.
+    pub text: String,
+    /// The hex-encoded key digest.
+    pub digest: String,
+}
+
+impl std::fmt::Display for KeyFingerprint {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "{} key {} (digest {})",
+            self.scheme, self.text, self.digest
+        )
+    }
+}
+
 /// The unvalidated mirror of [`VerfKeySet`] that carries the version dispatch.
 ///
 /// `try_convert` versions the target type, not `VerfKeySet` itself, so the
@@ -121,6 +141,16 @@ impl VerfKeySet {
     pub fn schemes(&self) -> Vec<SigningSchemeType> {
         // Canonical order is based on the underlying BTreeMap order
         self.keys.keys().copied().collect()
+    }
+
+    /// The fingerprint of every key in the set, in canonical scheme order, for the operator and
+    /// custodians to check by hand. Every tool that prints keys for that check prints these.
+    pub fn all_fingerprints(&self) -> impl Iterator<Item = KeyFingerprint> + '_ {
+        self.keys.iter().map(|(scheme, key)| KeyFingerprint {
+            scheme: *scheme,
+            text: key.address_text(),
+            digest: hex::encode(key.digest()),
+        })
     }
 
     /// The key for `scheme`, if the set holds one.

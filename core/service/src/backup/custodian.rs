@@ -426,15 +426,8 @@ impl Custodian {
             .map_err(|e| {
                 BackupError::SetupError(format!("could not compute the operator key set id: {e}"))
             })?;
-        // Tracing for completeness
-        for cur_type in BACKUP_SIGNING_SCHEMES {
-            let cur_verf_key = operator_verification_key.get(*cur_type).ok_or_else(|| {
-                BackupError::SetupError(format!("missing verification key for scheme: {cur_type}"))
-            })?;
-            tracing::info!(
-                "Verifying and re-encrypting backup with key type {cur_type} and id: {}",
-                hex::encode(cur_verf_key.digest())
-            );
+        for fingerprint in operator_verification_key.all_fingerprints() {
+            tracing::info!("Verifying and re-encrypting backup for operator {fingerprint}");
         }
         let custodian_id = self
             .verification_key_set()

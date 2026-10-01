@@ -134,13 +134,24 @@ where
         read_custodian_context_anchor(&*self.crypto_storage.private_storage.lock().await).await
     }
 
-    /// The operator's own backup key set, to validate `material` with and to recover under.
-    fn own_backup_verf_keys(
+    /// The operator's own backup key set that `material`, the recovery material at `id`,
+    /// validates under, to recover under. A failure is reported under `op_metric`.
+    fn validated_own_backup_verf_keys(
         &self,
+        op_metric: &'static str,
         material: &RecoveryValidationMaterial,
-    ) -> anyhow::Result<VerfKeySet> {
+        id: &RequestId,
+    ) -> Result<VerfKeySet, MetricedError> {
         let identity = self.base_kms.signing_identity().ok();
-        backup_verf_keys_for(identity.as_deref(), &self.base_kms.verf_key(), material)
+        validated_backup_verf_keys(material, id, identity.as_deref(), &self.base_kms.verf_key())
+            .map_err(|e| {
+                MetricedError::new(
+                    op_metric,
+                    None,
+                    anyhow::anyhow!("Could not validate the recovery material: {e}"),
+                    e.code(),
+                )
+            })
     }
 
     /// Anchors the context a recovery just restored under, so the next boot adopts the same one.
@@ -270,6 +281,8 @@ where
     /// Validate the custodians' recovery outputs against `recovery_material` and return the
     /// fully-validated, decrypted per-role `BackupMaterial`s.
     ///
+    /// `operator_verf_keys` is the key set `recovery_material` was validated under.
+    ///
     /// Returns (validated_rec, operator).
     pub(crate) async fn validate_custodian_backup_recovery_request(
         &self,
@@ -277,6 +290,7 @@ where
         ephemeral_enc_key: &UnifiedPublicEncKey,
         custodian_recovery_outputs: Vec<CustodianRecoveryOutput>,
         recovery_material: &RecoveryValidationMaterial,
+        operator_verf_keys: VerfKeySet,
     ) -> anyhow::Result<(HashMap<Role, Zeroizing<BackupMaterial>>, Operator)> {
         // The MPC context to validate against is taken from the operator-signed `RecoveryValidationMaterial`
         // stored at backup time. `filter_custodian_data` enforces the per-share equality.
@@ -295,7 +309,7 @@ where
                 .values()
                 .cloned()
                 .collect_vec(),
-            self.own_backup_verf_keys(recovery_material)?,
+            operator_verf_keys,
             recovery_material.custodian_context().threshold as usize,
             amount_custodians,
         )?;
@@ -450,21 +464,11 @@ where
                 })?
         };
         // Validate that the recovery material is correct
-        let identity = self.base_kms.signing_identity().ok();
-        let verf_keys = validated_backup_verf_keys(
+        let verf_keys = self.validated_own_backup_verf_keys(
+            OP_CUSTODIAN_RECOVERY_INIT,
             &recovery_material,
             &backup_id,
-            identity.as_deref(),
-            &self.base_kms.verf_key(),
-        )
-        .map_err(|e| {
-            MetricedError::new(
-                OP_CUSTODIAN_RECOVERY_INIT,
-                None,
-                anyhow::anyhow!("Could not validate the recovery material: {e}"),
-                e.code(),
-            )
-        })?;
+        )?;
         let (recovery_request, ephem_op_dec_key, ephem_op_enc_key) = self
             .gen_outer_recovery_request(backup_id, recovery_material.payload.cts, &verf_keys)
             .await
@@ -560,27 +564,18 @@ where
                 e.code(),
             )
         })?;
-        let identity = self.base_kms.signing_identity().ok();
-        validated_backup_verf_keys(
+        let verf_keys = self.validated_own_backup_verf_keys(
+            OP_CUSTODIAN_BACKUP_RECOVERY,
             &recovery_material,
             &context_id,
-            identity.as_deref(),
-            &self.base_kms.verf_key(),
-        )
-        .map_err(|e| {
-            MetricedError::new(
-                OP_CUSTODIAN_BACKUP_RECOVERY,
-                None,
-                anyhow::anyhow!("Could not validate the recovery material: {e}"),
-                e.code(),
-            )
-        })?;
+        )?;
         let (parsed_custodian_rec, operator) = self
             .validate_custodian_backup_recovery_request(
                 &ephemeral_dec_key,
                 &ephemeral_enc_key,
                 inner.custodian_recovery_outputs,
                 &recovery_material,
+                verf_keys,
             )
             .await
             .map_err(|e| {

@@ -1822,6 +1822,49 @@ async fn read_kms_addresses_local(
     Ok(kms_addrs)
 }
 
+/// Fetch the verification keys the internal client checks the cores' responses against: the
+/// ECDSA key and address of every core, and its key for every other scheme in `signing_schemes`.
+/// Returns the cores' addresses.
+async fn fetch_verification_keys(
+    command: &CCCommand,
+    cc_conf: &CoreClientConfig,
+    destination_prefix: &Path,
+    signing_schemes: &[SigningSchemeType],
+) -> Result<Vec<alloy_primitives::Address>, Box<dyn std::error::Error + 'static>> {
+    // Always fetch the public verfication keys, as otherwise the internal Client will complain when being constructed as it cannot validate the connection with the servers
+    tracing::info!("Fetching verification keys. ({command:?})");
+    let public_verf_types = vec![PubDataType::VerfAddress, PubDataType::VerfKey];
+    let _ = fetch_public_elements(
+        &SIGNING_KEY_ID.to_string(),
+        &public_verf_types,
+        cc_conf,
+        destination_prefix,
+        true, // we always need to download all verification keys
+    )
+    .await?;
+
+    // The client checks the entry of every other requested scheme against the key each
+    // core publishes for that scheme, so those keys are fetched as well. The two objects
+    // above cover ECDSA.
+    for scheme in signing_schemes
+        .iter()
+        .filter(|scheme| **scheme != SigningSchemeType::Ecdsa256k1)
+    {
+        fetch_public_elements(
+            &signing_material_id(*scheme).to_string(),
+            &[PubDataType::TypedVerfKey],
+            cc_conf,
+            destination_prefix,
+            true,
+        )
+        .await
+        .map_err(|e| anyhow::anyhow!("no KMS core publishes a {scheme} verification key: {e}"))?;
+    }
+
+    // read the addresses we just fetched from disk
+    read_kms_addresses_local(destination_prefix, cc_conf).await
+}
+
 /// execute a command based on the provided configuration
 pub async fn execute_cmd(
     cmd_config: &CmdConfig,
@@ -1907,40 +1950,9 @@ pub async fn execute_cmd(
         // Don't need to fetch or connect if we just do nothing
     } else {
         if needs_verf_keys {
-            // Otherwise always fetch the public verfication keys, as otherwise the internal Client will complain when being constructed as it cannot validate the connection with the servers
-            tracing::info!("Fetching verification keys. ({command:?})");
-            let public_verf_types = vec![PubDataType::VerfAddress, PubDataType::VerfKey];
-            let _ = fetch_public_elements(
-                &SIGNING_KEY_ID.to_string(),
-                &public_verf_types,
-                &cc_conf,
-                destination_prefix,
-                true, // we always need to download all verification keys
-            )
-            .await?;
-
-            // The client checks the entry of every other requested scheme against the key each
-            // core publishes for that scheme, so those keys are fetched as well. The two objects
-            // above cover ECDSA.
-            for scheme in signing_schemes
-                .iter()
-                .filter(|scheme| **scheme != SigningSchemeType::Ecdsa256k1)
-            {
-                fetch_public_elements(
-                    &signing_material_id(*scheme).to_string(),
-                    &[PubDataType::TypedVerfKey],
-                    &cc_conf,
-                    destination_prefix,
-                    true,
-                )
-                .await
-                .map_err(|e| {
-                    anyhow::anyhow!("no KMS core publishes a {scheme} verification key: {e}")
-                })?;
-            }
-
-            // read the addresses we just fetched from disk
-            addr_vec.append(&mut read_kms_addresses_local(destination_prefix, &cc_conf).await?);
+            addr_vec =
+                fetch_verification_keys(command, &cc_conf, destination_prefix, &signing_schemes)
+                    .await?;
         }
 
         match cc_conf.kms_type {
@@ -1977,18 +1989,6 @@ pub async fn execute_cmd(
                     1,
                     FileStorage::new(Some(destination_prefix), StorageType::PUB, None).unwrap(),
                 );
-                if needs_verf_keys {
-                    internal_client = Some(
-                        Client::new_client(
-                            client_storage,
-                            pub_storage,
-                            &client_param,
-                            cc_conf.decryption_mode,
-                        )
-                        .await
-                        .unwrap(),
-                    );
-                }
                 tracing::info!("Centralized Client setup done.");
             }
             KmsType::Threshold => {
@@ -2057,21 +2057,21 @@ pub async fn execute_cmd(
                         .unwrap(),
                     );
                 }
-                if needs_verf_keys {
-                    internal_client = Some(
-                        Client::new_client(
-                            client_storage,
-                            pub_storage,
-                            &client_param,
-                            cc_conf.decryption_mode,
-                        )
-                        .await
-                        .unwrap(),
-                    );
-                }
                 tracing::info!("Threshold Client setup done.");
             }
         };
+        if needs_verf_keys {
+            internal_client = Some(
+                Client::new_client(
+                    client_storage,
+                    pub_storage,
+                    &client_param,
+                    cc_conf.decryption_mode,
+                )
+                .await
+                .unwrap(),
+            );
+        }
     }
     if let Some(client) = internal_client.as_mut() {
         client.set_signing_schemes(&signing_schemes)?;

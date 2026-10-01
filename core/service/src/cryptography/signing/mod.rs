@@ -9,7 +9,7 @@ pub mod verf_key_set;
 
 pub use composite::canonical_schemes;
 pub use typed_signature::{StoredTypedSignature, StoredTypedSignatureVersions};
-pub use verf_key_set::VerfKeySet;
+pub use verf_key_set::{KeyFingerprint, VerfKeySet};
 
 use alloy_primitives::Address;
 use ecdsa::Ecdsa256k1;

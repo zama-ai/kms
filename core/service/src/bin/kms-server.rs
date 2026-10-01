@@ -630,13 +630,9 @@ async fn main_exec() -> anyhow::Result<()> {
                         )
                     })?;
                     let verf_keys = operator_backup_keys_from_vault(vault).await?;
-                    for scheme in verf_keys.schemes() {
-                        let key = verf_keys.require(scheme)?;
+                    for fingerprint in verf_keys.all_fingerprints() {
                         tracing::warn!(
-                            "VALIDATE THIS VERIFICATION KEY BEFORE PROCEEDING! {scheme} key {} \
-                             (digest {})",
-                            key.address_text(),
-                            hex::encode(key.digest()),
+                            "VALIDATE THIS VERIFICATION KEY BEFORE PROCEEDING! {fingerprint}"
                         );
                     }
                     verf_keys.ecdsa()?.clone()

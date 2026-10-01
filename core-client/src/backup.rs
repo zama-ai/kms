@@ -277,16 +277,13 @@ pub(crate) fn report_operator_keys(
             anyhow::bail!("the operator {scheme} key is {actual}, but {value} is expected");
         }
     }
-    for scheme in keys.schemes() {
-        let key = keys.require(scheme)?;
-        let text = key.address_text();
-        let digest = hex::encode(key.digest());
-        if expected.contains_key(&scheme) {
-            tracing::info!("Operator {scheme} key {text} (digest {digest}) is the expected one");
+    for fingerprint in keys.all_fingerprints() {
+        if expected.contains_key(&fingerprint.scheme) {
+            tracing::info!("Operator {fingerprint} is the expected one");
         } else {
             tracing::warn!(
                 "MANUALLY VALIDATE THE OPERATOR VERIFICATION KEY BEFORE PASSING THE RECOVERY \
-                 REQUEST TO THE CUSTODIANS! Operator {scheme} key {text} (digest {digest})"
+                 REQUEST TO THE CUSTODIANS! Operator {fingerprint}"
             );
         }
     }

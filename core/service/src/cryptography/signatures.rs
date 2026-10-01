@@ -20,7 +20,7 @@ pub use crate::cryptography::signing::seed::{
 };
 pub use crate::cryptography::signing::test_support;
 pub use crate::cryptography::signing::{
-    HasSigningScheme, SchemeVerfKeys, Signature, SigningError, SigningSchemeType,
+    HasSigningScheme, KeyFingerprint, SchemeVerfKeys, Signature, SigningError, SigningSchemeType,
     SigningSchemeTypeVersions, StoredTypedSignature, StoredTypedSignatureVersions,
     UnifiedPublicSigKey, UnifiedPublicSigKeyVersions, VerfKeySet, canonical_schemes,
 };

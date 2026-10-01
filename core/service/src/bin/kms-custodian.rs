@@ -1,8 +1,7 @@
 use clap::Parser;
 use kms_lib::backup::{
-    BACKUP_SIGNING_SCHEMES, RECOVERY_OUTPUT_DESC, SEED_PHRASE_DESC, SETUP_MESSAGE_DESC,
+    RECOVERY_OUTPUT_DESC, SEED_PHRASE_DESC, SETUP_MESSAGE_DESC,
     custodian::{Custodian, InternalCustodianSetupMessage},
-    error::BackupError,
     operator::{InnerOperatorBackupOutput, InternalRecoveryRequest},
     seed_phrase::{
         custodian_from_seed_phrase, seed_phrase_from_entropy, system_entropy_for_custodian,
@@ -176,15 +175,10 @@ async fn main() -> Result<(), anyhow::Error> {
             let serialized_res = base64_serialize(&res)?;
             tracing::info!("Verified reencryption successfully.");
             let operator_keys = recovery_request.operator_verf_key();
-            for cur_type in BACKUP_SIGNING_SCHEMES {
-                let cur_verf_key = operator_keys.get(*cur_type).ok_or_else(|| {
-                    BackupError::SetupError(format!(
-                        "missing verification key for scheme: {cur_type}"
-                    ))
-                })?;
+            // `verify_reencrypt` has already required a key for every backup signing scheme.
+            for fingerprint in operator_keys.all_fingerprints() {
                 tracing::warn!(
-                    "MANUALLY VALIDATE THE OPERATOR VERIFICATION KEY BEFORE RETURNING DECRYPTION RESULT TO OPERATOR! Operator verification key type {cur_type} and with ID: {}",
-                    hex::encode(cur_verf_key.digest()),
+                    "MANUALLY VALIDATE THE OPERATOR VERIFICATION KEY BEFORE RETURNING DECRYPTION RESULT TO OPERATOR! Operator {fingerprint}"
                 );
             }
             // Use println to lower the risk of accidental file logging of the recovery output
