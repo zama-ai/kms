@@ -132,6 +132,7 @@ backoff = "=0.4.0"  # Retry with exponential backoff - HIGH RISK: Individual mai
 # See https://www.reddit.com/r/rust/comments/1pnz1iz/bincode_development_has_ceased_permanently/
 bincode = { version = "=2.0.1", features = ["serde"] }  # Binary serialization - CRITICAL RISK: bincode-org, 147M+ downloads
 bip39 = { version = "=2.2.2", features = ["alloc"] }  # BIP39 mnemonic seed phrases - LOW RISK: rust-bitcoin org (reputable), CI enabled
+bs58 = "=0.5.1"  # Base58 codec for Solana user addresses - MEDIUM RISK: individual maintainer, used across the Solana ecosystem
 bytes = "=1.12.1"  # Byte buffer utilities - LOW RISK: tokio team, 100M+ downloads
 cargo_metadata = "=0.23.1"  # Workspace metadata extraction - LOW RISK: oli-obk (rust-lang member) + community, 60M+ downloads, test-only dependency
 cbc = { version = "=0.2.1", features = ["alloc"] }  # CBC block cipher mode - LOW RISK: RustCrypto org, standard cipher mode
@@ -150,7 +151,6 @@ futures = "=0.3.34"  # Async futures - LOW RISK: rust-lang team
 futures-util = "=0.3.34"  # Futures utilities - LOW RISK: rust-lang team
 getrandom = "=0.4.3" # OS entropy for RNG reseeding - LOW RISK: maintained by the rust-random team
 g2p = "=1.2.2"  # Galois field arithmetic (GF(2^p)) - LOW RISK: Essential for threshold cryptography, finite field operations
-bs58 = "=0.5.1"  # Base58 codec for Solana user addresses - MEDIUM RISK: individual maintainer, used across the Solana ecosystem
 hex = "=0.4.3"  # Hex encoding/decoding - HIGH RISK: Individual maintainer (KokaKiwi), despite 284M downloads
 # NOTE for hpke: this needs to be consistent with `p384_hpke` below.
 hpke = { version = "=0.14.1", default-features = false, features = ["aes", "mlkem", "nistp"] } # Implementation of various composite/hybrid KEM/PKE - MEDIUM RISK: security-critical pure-Rust crypto crate. Not independently audited, 8M+ downloads.

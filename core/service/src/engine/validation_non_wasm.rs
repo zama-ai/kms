@@ -287,15 +287,7 @@ fn unpack_user_decrypt_req(
         return Err(anyhow::anyhow!(ERR_VALIDATE_USER_DECRYPTION_EMPTY_CTS).into());
     }
 
-    let domain = match verify_user_decrypt_eip712(req) {
-        Ok(domain) => {
-            tracing::debug!("🔒 Signature verified successfully");
-            domain
-        }
-        Err(e) => return Err(anyhow::anyhow!("Failed to verify the EIP-712 domain: {e}").into()),
-    };
-
-    let (link, _, receiver) = req.compute_link_checked()?;
+    let (link, domain, receiver) = req.compute_link_checked()?;
     // Deserialize to validate the enc_key bytes, but don't return the typed key —
     // callers use raw bytes for EIP-712 and deserialize at point-of-use for crypto.
     let _client_enc_key = UnifiedPublicEncKey::deserialize_and_validate_hybrid_ml_kem_512(
@@ -403,14 +395,6 @@ fn unpack_public_decrypt_req(
         req.extra_data.clone(),
         SigningSchemeType::resolve_requested(&req.signing_schemes)?,
     ))
-}
-
-/// Verify the EIP-712 encoded payload in the request.
-pub(crate) fn verify_user_decrypt_eip712(
-    request: &UserDecryptionRequest,
-) -> anyhow::Result<alloy_sol_types::Eip712Domain> {
-    let (_, domain, _) = request.compute_link_checked()?;
-    Ok(domain)
 }
 
 /// Verify every signature a public-decryption response carries, and check that
@@ -1230,7 +1214,7 @@ mod tests {
         ERR_VALIDATE_PUBLIC_DECRYPTION_EMPTY_CTS, ERR_VALIDATE_USER_DECRYPTION_EMPTY_CTS,
         PublicDecTrustedValidationContext, TypedSignature, compute_public_decryption_message,
         unpack_public_decrypt_req, unpack_user_decrypt_req, verify_max_num_bits,
-        verify_public_decrypt_signatures, verify_user_decrypt_eip712,
+        verify_public_decrypt_signatures,
     };
 
     /// Sign a public decryption result the way the server does, under ECDSA only.
@@ -1608,76 +1592,6 @@ mod tests {
         assert!(
             parse_grpc_request_id::<RequestId>(&good_req_id, RequestIdParsingErr::Epoch).is_err()
         );
-    }
-
-    #[test]
-    fn test_verify_user_decrypt_eip712() {
-        let mut rng = AesRng::from_random_seed();
-        let (client_pk, _client_sk) = gen_sig_keys(&mut rng);
-        let client_address = client_pk.address();
-        let ciphertext = vec![1, 2, 3];
-        let mut encryption = Encryption::new(PkeSchemeType::MlKem512, &mut rng);
-        let (_enc_sk, enc_pk) = encryption.keygen().unwrap();
-        let key_id = derive_request_id("key_id").unwrap();
-
-        let typed_ciphertext = TypedCiphertext {
-            ciphertext: ciphertext.into(),
-            fhe_type: tfhe::FheTypes::Uint4 as i32,
-            ciphertext_format: 0,
-            external_handle: vec![123],
-        };
-        let domain = dummy_domain();
-        let domain_msg = alloy_to_protobuf_domain(&domain).unwrap();
-
-        let inner_key = match &enc_pk {
-            UnifiedPublicEncKey::MlKem512(pk) => pk,
-            _ => panic!("expected MlKem512 key"),
-        };
-        let req = UserDecryptionRequest {
-            signing_schemes: vec![SigningSchemeType::Ecdsa256k1 as i32],
-            request_id: Some(v1::RequestId {
-                request_id: "dummy request ID".to_owned(),
-            }),
-            enc_key: bc2wrap::serialize(&inner_key).unwrap(),
-            client_address: client_address.to_checksum(None),
-            key_id: Some(key_id.into()),
-            typed_ciphertexts: vec![typed_ciphertext],
-            domain: Some(domain_msg),
-            extra_data: vec![],
-            context_id: None,
-            epoch_id: None,
-        };
-
-        {
-            // happy path
-            verify_user_decrypt_eip712(&req).unwrap();
-        }
-        {
-            // use a wrong client address (invalid string length)
-            let mut bad_req = req.clone();
-            bad_req.client_address = "66f9664f97F2b50F62D13eA064982f936dE76657".to_string();
-            match verify_user_decrypt_eip712(&bad_req) {
-                Ok(_) => panic!("expected failure"),
-                Err(e) => {
-                    assert_eq!(
-                        e.to_string(),
-                        "error parsing checksummed address: 66f9664f97F2b50F62D13eA064982f936dE76657 - invalid string length"
-                    );
-                }
-            }
-        }
-        {
-            // use the same address for verifying contract and client address should fail
-            // we don't explicitly test the error string, it is tested in the grpc crate
-            let mut bad_domain = domain.clone();
-            bad_domain.verifying_contract = Some(client_address);
-            let mut bad_req = req.clone();
-            bad_req.domain = Some(alloy_to_protobuf_domain(&bad_domain).unwrap());
-            match verify_user_decrypt_eip712(&bad_req) {
-                Ok(_) => panic!("expected failure"),
-                Err(_e) => {}
-            }
-        }
     }
 
     #[test]

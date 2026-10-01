@@ -991,6 +991,21 @@ mod tests {
             );
         }
 
+        // use the wrong receiver, e.g. another user's 32-byte Solana key
+        {
+            let wrong_keys = UnifiedUnsigncryptionKey::new(
+                &client_signcryption_keys.unsigncryption_key.decryption_key,
+                &client_signcryption_keys.unsigncryption_key.encryption_key,
+                &client_signcryption_keys.unsigncryption_key.sender_verf_key,
+                &[0x22; 32],
+            );
+            assert!(
+                wrong_keys
+                    .unsigncrypt::<TestType>(b"TESTTEST", &correct_cipher)
+                    .is_err()
+            );
+        }
+
         // use bad domain separator
         {
             assert!(

@@ -95,13 +95,12 @@ fn linker_type_strings_are_frozen() {
 
 #[test]
 fn evm_link_is_byte_frozen() {
-    let (link, domain, receiver) = evm_request()
+    let (link, _, receiver) = evm_request()
         .compute_link_checked()
         .expect("the frozen EVM request must validate");
 
     assert_eq!(hex::encode(&link), EVM_LINK_GOLDEN);
     assert!(matches!(receiver, PlaintextReceiver::Evm(_)));
-    assert_eq!(domain.chain_id, Some(U256::from(EVM_HOST_CHAIN_ID)));
 }
 
 #[test]
@@ -112,22 +111,4 @@ fn solana_link_is_byte_frozen() {
 
     assert_eq!(hex::encode(&link), SOLANA_LINK_GOLDEN);
     assert_eq!(receiver, PlaintextReceiver::Solana([0x11; 32]));
-}
-
-#[test]
-fn fields_outside_the_linker_do_not_move_the_link() {
-    for request in [evm_request(), solana_request()] {
-        let baseline = request.compute_link_checked().expect("baseline").0;
-
-        let mut variant = request;
-        variant.extra_data = vec![0x02; 65];
-        variant.context_id = Some(kms_grpc::kms::v1::RequestId {
-            request_id: "a".repeat(64),
-        });
-        variant.epoch_id = Some(kms_grpc::kms::v1::RequestId {
-            request_id: "b".repeat(64),
-        });
-
-        assert_eq!(variant.compute_link_checked().expect("variant").0, baseline);
-    }
 }

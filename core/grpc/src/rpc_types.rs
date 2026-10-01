@@ -180,6 +180,8 @@ pub fn alloy_to_protobuf_domain(domain: &Eip712Domain) -> anyhow::Result<Eip712D
 const HANDLE_CHAIN_TYPE_INDEX: usize = 22;
 const EVM_CHAIN_TYPE: u8 = 0x00;
 const SOLANA_CHAIN_TYPE: u8 = 0x01;
+/// The longest base58 encoding of 32 bytes.
+const MAX_BASE58_PUBLIC_KEY_LEN: usize = 44;
 
 /// The user a user-decryption result is signcrypted to.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -189,33 +191,6 @@ pub enum PlaintextReceiver {
     /// A Solana public key, written base58.
     Solana([u8; 32]),
 }
-
-/// The handles of a user-decryption request as the linker hashes them: each left-padded to 32
-/// bytes. A request needs at least one handle.
-pub fn left_padded_handles<'a>(
-    handles: impl IntoIterator<Item = &'a [u8]>,
-) -> anyhow::Result<Vec<B256>> {
-    let handles = handles
-        .into_iter()
-        .enumerate()
-        .map(|(index, handle)| {
-            if handle.len() > 32 {
-                anyhow::bail!(
-                    "external_handle at index {index} too long: {} bytes (max 32)",
-                    handle.len()
-                );
-            }
-            Ok(B256::left_padding_from(handle))
-        })
-        .collect::<anyhow::Result<Vec<_>>>()?;
-    if handles.is_empty() {
-        anyhow::bail!(ERR_THERE_ARE_NO_HANDLES);
-    }
-    Ok(handles)
-}
-
-/// The longest base58 encoding of 32 bytes.
-const MAX_BASE58_PUBLIC_KEY_LEN: usize = 44;
 
 impl PlaintextReceiver {
     /// Reads the user address of a request in the format of the host chain its handles come from,
@@ -329,6 +304,30 @@ impl fmt::Display for PlaintextReceiver {
             Self::Solana(public_key) => write!(f, "{}", bs58::encode(public_key).into_string()),
         }
     }
+}
+
+/// The handles of a user-decryption request as the linker hashes them: each left-padded to 32
+/// bytes. A request needs at least one handle.
+pub fn left_padded_handles<'a>(
+    handles: impl IntoIterator<Item = &'a [u8]>,
+) -> anyhow::Result<Vec<B256>> {
+    let handles = handles
+        .into_iter()
+        .enumerate()
+        .map(|(index, handle)| {
+            if handle.len() > 32 {
+                anyhow::bail!(
+                    "external_handle at index {index} too long: {} bytes (max 32)",
+                    handle.len()
+                );
+            }
+            Ok(B256::left_padding_from(handle))
+        })
+        .collect::<anyhow::Result<Vec<_>>>()?;
+    if handles.is_empty() {
+        anyhow::bail!(ERR_THERE_ARE_NO_HANDLES);
+    }
+    Ok(handles)
 }
 
 #[derive(
