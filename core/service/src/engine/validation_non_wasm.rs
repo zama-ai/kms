@@ -1229,9 +1229,9 @@ mod tests {
     use super::{
         ERR_VALIDATE_PUBLIC_DECRYPTION_BAD_FHE_TYPE, ERR_VALIDATE_PUBLIC_DECRYPTION_BAD_LINK,
         ERR_VALIDATE_PUBLIC_DECRYPTION_EMPTY_CTS, ERR_VALIDATE_USER_DECRYPTION_EMPTY_CTS,
-        PublicDecTrustedValidationContext, TypedSignature, compute_public_decryption_message,
-        unpack_public_decrypt_req, unpack_user_decrypt_req, verify_max_num_bits,
-        verify_public_decrypt_signatures, verify_user_decrypt_eip712,
+        PublicDecTrustedValidationContext, TypedSignature, unpack_public_decrypt_req,
+        unpack_user_decrypt_req, verify_max_num_bits, verify_public_decrypt_signatures,
+        verify_user_decrypt_eip712,
     };
 
     /// Sign a public decryption result the way the server does, under ECDSA only.

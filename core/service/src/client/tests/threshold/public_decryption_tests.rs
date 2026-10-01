@@ -447,7 +447,7 @@ pub async fn run_decryption_threshold_optionally_fail(
         let threshold = max_threshold(amount_parties);
         let min_count_agree = (threshold + 1) as u32;
         let received_plaintexts = internal_client
-            .process_decryption_resp(&req, min_count_agree, &responses)
+            .process_decryption_resp(req, min_count_agree, &responses)
             .unwrap();
 
         // we need 1 plaintext for each ciphertext in the batch

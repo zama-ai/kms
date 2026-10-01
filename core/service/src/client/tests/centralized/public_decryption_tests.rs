@@ -287,7 +287,7 @@ pub(crate) async fn run_decryption_centralized(
         assert_eq!(responses.len(), 1);
 
         let received_plaintexts = internal_client
-            .process_decryption_resp(&req, 1, &responses)
+            .process_decryption_resp(req, 1, &responses)
             .unwrap();
 
         // we need 1 plaintext for each ciphertext in the batch
