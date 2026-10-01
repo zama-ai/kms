@@ -366,7 +366,7 @@ in server config and unified behind `KeychainProxy`
   with this keychain already, and the keychain can only encrypt once that call
   has installed a context, so a node configured for it makes no backups until
   its first context exists. New custodian contexts are rejected unless every custodian
-  encryption key and every custodian verification key is unique, unless every
+  encryption key is unique and no two custodians share any verification key, unless every
   custodian encryption key uses `BACKUP_PKE_SCHEME`, and unless every custodian
   publishes a verification key for every scheme in `BACKUP_SIGNING_SCHEMES`.
   Every key in this path is MLKEM1024-P384 (`backup::BACKUP_PKE_SCHEME`), and the
@@ -448,11 +448,14 @@ A threshold or centralized node without its signing key boots in **recovery mode
 boot-time storage checks and serves only backup recovery. It runs with its ECDSA verification key
 from public storage. When public storage no longer holds that key, the node takes its backup key set
 from the `operator_verf_keys` that its recovery material embeds. It refuses to boot if the contexts
-in the vault embed different key sets. Recovery always uses the embedded non-ECDSA keys, because no
-other place publishes them. These keys authenticate nothing on their own. A recovery is therefore as
+in the vault embed different key sets, or if any of that material is not validly signed under the
+key set it embeds. Recovery always uses the embedded non-ECDSA keys: the node also publishes them in
+public storage, but the gateway does not hold them, so a copy there is no more trustworthy than the
+material. These keys authenticate nothing on their own. A recovery is therefore as
 secure as the keys that the operator and the custodians check by hand. The core-client's
 `custodian-recovery-init` prints them, and it refuses a mismatch with `--expected-operator-key`.
-`kms-custodian decrypt` prints their digests. After the restore, the node checks the material again
+`kms-custodian decrypt` logs the fingerprint of every key, its address text and digest, as a
+warning. After the restore, the node checks the material again
 with its restored identity before it anchors the context. The node stays in recovery mode until it
 restarts.
 
